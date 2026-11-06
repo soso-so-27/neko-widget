@@ -285,10 +285,12 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             // Fetch every immutable-ID page before changing display order.
             // Arrival dates come only from photos already received on this phone.
             var received: [String: Date] = [:]
+#if os(iOS) && !NEKO_SHARE_EXTENSION
             for window in result {
                 received[window.id] = await GroupWindowLocalPhotoStore.shared.entries(windowID: window.id)
                     .map(\.createdAt).max()
             }
+#endif
             let created = Dictionary(uniqueKeysWithValues: items.map { ($0.windowID, $0.createdAt) })
             return result.sorted {
                 GroupWindowListOrder.precedes(id: $0.id, received: received[$0.id], created: created[$0.id] ?? nil,
