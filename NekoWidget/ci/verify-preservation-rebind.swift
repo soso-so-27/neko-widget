@@ -6,7 +6,7 @@
         let c=AppRecordDataset.control, id=UUID()
         let old=AppRecordDataset.Pointer(version:1,datasetID:id,owner:"old-owner",origin:"https://staging.invalid",manifests:["CatCare/state.json"])
         let raw=try JSONEncoder().encode(old)
-        let root=AppRecordDataset.datasets.appendingPathComponent(id.uuidString)
+        let root=AppRecordDataset.datasets.appendingPathComponent(id.uuidString, isDirectory: true)
         let data=Data("{\"retained\":\"cat and notes\"}".utf8)
         try AppRecordRebinding.write(data,to:root.appendingPathComponent("CatCare/state.json"))
         try AppRecordRebinding.write(raw,to:root.appendingPathComponent("dataset.json"))

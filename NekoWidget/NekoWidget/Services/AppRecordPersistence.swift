@@ -2219,7 +2219,7 @@ private final class AppRecordFixture {
         try FamilyNotebookBackup.refresh()
         let originalRoot = try AppRecordDataset.root()
         let id = UUID(), oldOwner = UUID().uuidString.lowercased(), oldOrigin = "https://old-preservation.fixture.invalid"
-        let root = AppRecordDataset.datasets.appendingPathComponent(id.uuidString)
+        let root = AppRecordDataset.datasets.appendingPathComponent(id.uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         for tool in ToolBackupIndex.manifests.keys {
             let source = originalRoot.appendingPathComponent(tool)
