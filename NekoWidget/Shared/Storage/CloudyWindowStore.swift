@@ -116,6 +116,9 @@ private struct CloudyWindowState: Codable {
     /// Only a successful host WidgetCenter query can grant image preparation.
     /// Nil is an older install, not permission to render in the background.
     var installedSources: Set<String>? = nil
+    /// Windows that have ever been given a photo. Without Plus, a window not
+    /// in here still gets its first photo once (ADR-027 「最初の1枚」).
+    var issuedScopeIDs: Set<String>? = nil
 }
 
 /// All experiment metadata and derived files are local. Every operation is
@@ -426,6 +429,8 @@ struct CloudyWindowStore: Sendable {
             var state = try read()
             guard supports(scopeID, in: state), authority?.isAuthorized == true else { return [] }
             reconcile(&state, authority: authority, now: now)
+            // Older installs: any window with a selection was issued one.
+            let issued = (state.issuedScopeIDs ?? []).union(state.selections.map(\.scopeID))
             let today = Self.calendar.startOfDay(for: now)
             let tomorrow = Self.nextDay(after: now)
             var entries: [CloudyWindowEntry] = []
@@ -439,6 +444,15 @@ struct CloudyWindowStore: Sendable {
                         $0.scopeID == scopeID && $0.day <= now
                     }.filter { value in selectionValidUntil.map { value.day < $0 } ?? true }
                         .max { $0.day < $1.day }
+                    // Never given a photo: without Plus the window still gets
+                    // its first one, kept from then on. Only once per window,
+                    // so an expired window does not start choosing again
+                    // (11/6: a free widget stayed empty).
+                    if selection == nil, date == today, !issued.contains(scopeID),
+                       let first = choose(state: state, scopeID: scopeID, date: date) {
+                        selection = first
+                        state.selections.append(first)
+                    }
                     if let selection {
                         var frozen = state.frozenSelectionIDs ?? [:]
                         frozen[scopeID] = selection.id
@@ -475,6 +489,7 @@ struct CloudyWindowStore: Sendable {
                 }
                 entries.append(.init(date: date == today ? now : date, selection: visibleSelection, photo: photo))
             }
+            state.issuedScopeIDs = issued.union(state.selections.map(\.scopeID))
             try write(state)
             return entries
         }

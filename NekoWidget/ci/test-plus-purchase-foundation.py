@@ -392,6 +392,34 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
                       '                    WorkingLabel(title: "購入を復元", workingTitle: "確認しています…", '
                       'working: authentication.membershipRestoring)', persistence)
 
+    def test_empty_purchase_history_opens_paid_entry_points_without_unlocking_access(self) -> None:
+        reconcile = section(self.store, "private func performCurrentEntitlementReconciliation()", "@discardableResult")
+        fresh = section(reconcile, "await hasFreshLocalPurchaseEligibility()", "_ = await refreshServerAuthority()")
+        self.assertIn("entitlementState = .inactive", fresh)
+        self.assertNotIn("markServerConfirmationIndeterminate()", fresh)
+        authority = section(self.store, "if authority.status == .unconfirmed", "guard authority.status.grantsAccess")
+        empty = section(authority, "if authorityAllowsNewPurchase {", "markServerConfirmationIndeterminate()")
+        self.assertIn("entitlementState = .inactive", empty)
+        self.assertIn("return .denied", empty)
+        self.assertIn("markServerConfirmationIndeterminate()", authority)
+        context = source("NekoWidget/Services/MembershipAccessContext.swift")
+        self.assertIn("case .inactive: personal = .inactive", context)
+        # The executable operation matrix covers all three requested entry points,
+        # bounded paid-offline access, and expired -> membershipRequired.
+        matrix = source("ci/verify-membership-access.swift")
+        for operation in (".createOwnWindow", ".createPersonalMemo", ".openGrowingSummary"):
+            self.assertIn(operation, matrix)
+        self.assertIn('("offline within prior authority",', matrix)
+        self.assertIn('("expired", .verified(validUntil: past), .membershipRequired)', matrix)
+
+    def test_foreground_deadline_rechecks_authority_without_extending_it(self) -> None:
+        expiry = section(self.store, "private func scheduleAuthorityExpiry()", "func start()")
+        self.assertIn("expiry > .now", expiry)
+        self.assertIn("await self.refreshAfterForegroundEntry()", expiry)
+        self.assertNotIn("canStartNewPurchase = true", expiry)
+        self.assertNotIn("AppStore.sync", expiry)
+        self.assertIn("scheduleAuthorityExpiry()", section(self.store, "var entitlementState", "let membershipActions"))
+
     def test_new_purchase_presentation_never_uses_network_failure_or_incomplete_identity_as_fresh(self) -> None:
         reconcile = section(self.store, "private func performCurrentEntitlementReconciliation()", "@discardableResult")
         fresh = section(self.store, "private func hasFreshLocalPurchaseEligibility()", "private func scanCurrentEntitlements()")
