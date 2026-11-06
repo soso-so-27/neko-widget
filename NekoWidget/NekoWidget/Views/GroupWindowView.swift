@@ -204,7 +204,10 @@ final class GroupWindowScreenModel: ObservableObject {
 
     /// Reads the window, keeps every new photo on this iPhone, then tells the
     /// relay it arrived. A failed step keeps what is already shown.
-    func sync() async {
+    func sync() async { await sync(background: false) }
+
+    func sync(background: Bool) async {
+        guard !Task.isCancelled else { return }
         if isFormer {
             // A window this iPhone left: only what is kept here.
             entries = await store.entries(windowID: windowID)
@@ -215,7 +218,7 @@ final class GroupWindowScreenModel: ObservableObject {
         defer { isSyncing = false }
         do {
             var latest = try await client.window(id: windowID)
-            if latest.state == .rotationRequired, latest.canManage,
+            if !background, latest.state == .rotationRequired, latest.canManage,
                let renewed = try? await client.rotate(
                    windowID: windowID, operation: GroupOperation(expectedRevision: latest.revision)) {
                 // Someone left: the creator's iPhone renews the key, so the window goes on.
@@ -229,7 +232,9 @@ final class GroupWindowScreenModel: ObservableObject {
             for (photoID, pending) in pendingHearts { applyMyHeart(pending.active, to: photoID) }
             await store.saveHearts(hearts, windowID: windowID)
             var waiting: GroupPhotoModeration.Verdict?
+            await GroupSafety.shared.loadRecords(windowID: windowID)
             for photo in photos {
+                try Task.checkCancellation()
                 guard !(await store.contains(photoID: photo.id, windowID: windowID)) else { continue }
                 if let deferred = await receive(photo, me: latest.myParticipantID), waiting != .checkOff {
                     waiting = deferred
@@ -262,6 +267,12 @@ final class GroupWindowScreenModel: ObservableObject {
     /// could not be read, so hiding or reporting offline still takes the
     /// photo off the home screen (11/6).
     func updateHomeScreenPhoto() async {
+        guard !Task.isCancelled else { return }
+        if isGone || window?.state == .closed {
+            try? GroupWidgetCache.remove(windowID: windowID)
+            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+            return
+        }
         guard let windowName = window?.name ?? GroupWidgetCache.entry(windowID: windowID)?.windowName else { return }
         let safety = GroupSafety.shared
         let newest = entries.first { !$0.isHidden && !safety.hasReported($0.id, in: windowID) }
@@ -269,6 +280,11 @@ final class GroupWindowScreenModel: ObservableObject {
         if let newest, let url = await store.imageURL(photoID: newest.id, windowID: windowID) {
             jpeg = try? Data(contentsOf: url)
         }
+        // A foreground hide may happen while the JPEG is being read above.
+        let current = await store.entries(windowID: windowID)
+        if let newest, !current.contains(where: { $0.id == newest.id && !$0.isHidden })
+            || safety.hasReported(newest.id, in: windowID) { return }
+        guard !Task.isCancelled else { return }
         let previous = GroupWidgetCache.entry(windowID: windowID)
         do {
             try GroupWidgetCache.update(
