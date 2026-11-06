@@ -3585,6 +3585,10 @@ class JoinOwnWindowTests(unittest.TestCase):
         self.assertIn('Label("もうこのまどに入っています", systemImage: "checkmark.circle")', setup)
         self.assertIn("windowID: invitation.windowID)", setup)
         self.assertNotIn('Text("招待されたまど")', setup)
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        self.assertNotIn("このiPhoneから消", window)
+        self.assertIn('Button("自分のまどから消す", systemImage: "trash", role: .destructive)', window)
+        self.assertIn("写真アプリの写真と、ほかの人のまどには残ります。", window)
 
 
 class ReviewBRestTests(unittest.TestCase):

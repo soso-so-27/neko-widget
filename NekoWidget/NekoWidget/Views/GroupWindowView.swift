@@ -129,7 +129,7 @@ final class GroupWindowScreenModel: ObservableObject {
     @Published private(set) var receiveNotice: String?
     /// The photo that could not be delivered, kept to send again.
     @Published private(set) var failedDelivery: FailedDelivery?
-    /// The result of 「お気に入りに追加」 or 「このiPhoneから消す」.
+    /// The result of 「お気に入りに追加」 or 「自分のまどから消す」.
     @Published var actionMessage: String?
     /// The photo being copied by 「お気に入りに追加」, so its button says so (11/6).
     @Published private(set) var addingFavoriteID: String?
@@ -787,7 +787,7 @@ struct GroupWindowScreen: View {
             ToolbarItem(placement: .topBarTrailing) {
                 if model.isFormer {
                     Menu {
-                        Button("このiPhoneから消す", systemImage: "trash", role: .destructive) {
+                        Button("このまどを一覧から消す", systemImage: "trash", role: .destructive) {
                             showsForgetConfirmation = true
                         }
                     } label: {
@@ -804,7 +804,8 @@ struct GroupWindowScreen: View {
                 }
             }
         }
-        .confirmationDialog("このまどの写真を、このiPhoneから消しますか？",
+        // 「このiPhoneから」 read as the Photos library (11/6): say what goes and what stays.
+        .confirmationDialog("このまどと届いた写真を、一覧から消しますか？",
                             isPresented: $showsForgetConfirmation, titleVisibility: .visible) {
             Button("消す", role: .destructive) {
                 Task {
@@ -814,7 +815,7 @@ struct GroupWindowScreen: View {
             }
             Button("戻る", role: .cancel) {}
         } message: {
-            Text("消したあとは元に戻せません。")
+            Text("写真アプリの写真は消えません。消したあとは元に戻せません。")
         }
         .safeAreaInset(edge: .bottom) {
             if !model.isFormer && !model.isGone { sendBar }
@@ -1376,7 +1377,7 @@ private struct GroupPhotoDetail: View {
                             }
                             .accessibilityIdentifier("group-photo-block")
                         }
-                        Button("このiPhoneから消す", systemImage: "trash", role: .destructive) {
+                        Button("自分のまどから消す", systemImage: "trash", role: .destructive) {
                             showsRemoveConfirmation = true
                         }
                     } label: {
@@ -1429,7 +1430,7 @@ private struct GroupPhotoDetail: View {
                 await model.hideSender(of: blocked, blocked: true)
                 if model.entries.isEmpty { dismiss() } else if let first = model.entries.first { selection = first.id }
             })
-            .confirmationDialog("この写真を、このiPhoneから消しますか？",
+            .confirmationDialog("この写真を、自分のまどから消しますか？",
                                 isPresented: $showsRemoveConfirmation, titleVisibility: .visible) {
                 Button("消す", role: .destructive) {
                     guard let current else { return }
@@ -1441,7 +1442,7 @@ private struct GroupPhotoDetail: View {
                 }
                 Button("戻る", role: .cancel) {}
             } message: {
-                Text("消したあとは元に戻せません。")
+                Text("写真アプリの写真と、ほかの人のまどには残ります。消したあとは元に戻せません。")
             }
         }
         .preferredColorScheme(.dark)
