@@ -1601,20 +1601,24 @@ struct GroupInvitationJoinSheet: View {
     /// the まど tab still opens the window. Waiting: it stays, and the まど tab
     /// offers it again.
     private func settleInvitation() {
+        // Another link opened while this sheet was up now holds the inbox:
+        // settling this one must not clear or relabel that one (11/6).
+        let inbox = GroupInvitationInbox.shared
+        let isCurrent = inbox.pending?.id == invitation.id
         switch model?.phase {
         case .approved?:
             if !openedWindow, GroupWindowOpenInbox.shared.pendingWindowID == nil {
                 GroupWindowOpenInbox.shared.open(windowID: invitation.windowID)
             }
-            GroupInvitationInbox.shared.discard()
+            if isCurrent { inbox.discard() }
         case .rejected?, .expired?, .cancelled?:
-            GroupInvitationInbox.shared.discard()
+            if isCurrent { inbox.discard() }
         case .pending?:
-            GroupInvitationInbox.shared.markWaiting()
+            if isCurrent { inbox.markWaiting() }
         default:
             // Closed in the まど tab before applying: not offered again. The
             // first-run guide keeps it for the まど tab (AppRootView).
-            if GroupInvitationInbox.shared.isSetAside { GroupInvitationInbox.shared.discard() }
+            if isCurrent, inbox.isSetAside { inbox.discard() }
         }
     }
 }

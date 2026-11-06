@@ -524,7 +524,7 @@ struct ManagedPreservationView: View {
         case (false, true): what = "記録の件数の上限"
         case (false, false): return nil
         }
-        return "\(what)を超えたため、新しく保存できません。保存したコピーを削除すると、また保存できます。保存した写真とメモは、これまでどおり見たり書き出したりできます。"
+        return "\(what)を超えたため、新しく保存できません。保存する写真やメモを減らすと、また保存できます。保存した写真とメモは、これまでどおり見たり書き出したりできます。"
     }
 
 #if DEBUG || INTERNAL_PRESENTATION

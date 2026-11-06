@@ -3577,6 +3577,27 @@ class SharedWorkMarkTests(unittest.TestCase):
         self.assertIn('"この季節も、ここまで"', ending)
 
 
+class ReviewBRestTests(unittest.TestCase):
+    def test_remaining_review_items_on_screen(self) -> None:
+        client = source("NekoWidget/Services/ManagedPreservationClient.swift")
+        self.assertNotIn("保存したコピーを削除すると", client)
+        self.assertEqual(client.count("保存する写真やメモを減らすと、また保存できます。"), 3)
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        self.assertIn("Plusの支払いは、ここでは止まりません。", window)
+        offer = source("NekoWidget/Services/MembershipOfferModel.swift")
+        prompt = section(offer, "struct PlusOfferPrompt: View {", "struct PlusSettingsSection")
+        # The sheet sits on the whole prompt, after both branches.
+        self.assertLess(prompt.index("MembershipAccessNotice(decision: decision)"), prompt.index(".sheet(isPresented: $showsOffer"))
+        sharing = source("NekoWidget/Services/FamilyNotebookSharing.swift")
+        self.assertIn("static func waitingForCheck<T>(_ read: () async throws -> T) async throws -> T {", sharing)
+        care = source("NekoWidget/Views/CatCareView.swift")
+        self.assertIn("FamilyNotebookSharing.waitingForCheck({ try await service.loadFarewellSharing(toolCatID: catID) })", care)
+        setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        self.assertIn("let isCurrent = inbox.pending?.id == invitation.id", setup)
+        care_page = section(care, "private func takeFamilyWrites() {", "private func apply(")
+        self.assertIn("fresh[keyPath: path] != storedDraft[keyPath: path]", care_page)
+
+
 class CodexWiringTests(unittest.TestCase):
     def test_outcomes_from_the_relay_reach_the_screen(self) -> None:
         settings = source("NekoWidget/Views/SettingsView.swift")
@@ -3924,7 +3945,7 @@ class OnboardingInvitationSequenceTests(unittest.TestCase):
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
         settle = section(setup, "private func settleInvitation()", "// MARK: - DEBUG fixture entry")
         self.assertIn("case .approved?:", settle)
-        self.assertIn("GroupInvitationInbox.shared.discard()", settle)
+        self.assertIn("if isCurrent { inbox.discard() }", settle)
 
 
 class CatCareOnePlaceTests(unittest.TestCase):
@@ -4018,7 +4039,7 @@ class NavigationAfterActionTests(unittest.TestCase):
         self.assertNotIn("invitationInbox.discard()", windows)
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
         settle = section(setup, "private func settleInvitation()", "// MARK: - DEBUG fixture entry")
-        self.assertIn("case .pending?:\n            GroupInvitationInbox.shared.markWaiting()", settle)
+        self.assertIn("case .pending?:\n            if isCurrent { inbox.markWaiting() }", settle)
         self.assertIn("if !openedWindow, GroupWindowOpenInbox.shared.pendingWindowID == nil {", settle)
         window = source("NekoWidget/Views/GroupWindowView.swift")
         listing = section(window, "struct GroupWindowListSection: View {", "private func row(")
