@@ -3324,6 +3324,14 @@ class WindowCreationEntryTests(unittest.TestCase):
         create = section(window, "struct GroupWindowCreateScreen: View {", "struct GroupWindowListSection: View {")
         self.assertIn("GroupWindowMembersScreen(client: model.client, windowID: createdWindowID)", create)
 
+    def test_create_says_it_is_making_and_puts_the_keyboard_away(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        create = section(window, "struct GroupWindowCreateScreen: View {", "struct GroupWindowListSection: View {")
+        self.assertIn("typing = nil", section(create, "private func create() {", "private var trimmed"))
+        self.assertIn('HStack(spacing: 8) { ProgressView(); Text("作っています…") }', create)
+        self.assertEqual(create.count(".focused($typing, equals:"), 2)
+        self.assertEqual(create.count(".disabled(model.isWorking)"), 2)
+
 
 class AlbumPurposeTests(unittest.TestCase):
     def test_album_shows_each_cat_upcoming_summaries_and_plus_honestly(self) -> None:

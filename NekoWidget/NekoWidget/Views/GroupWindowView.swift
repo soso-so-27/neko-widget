@@ -1687,6 +1687,8 @@ struct GroupWindowCreateScreen: View {
     @State private var name = ""
     @State private var ownerName = GroupDisplayName.remembered
     @State private var createdWindowID: String?
+    private enum Field { case name, owner }
+    @FocusState private var typing: Field?
     /// Plus was bought from the relay's 「Plus required」: make the window
     /// once more by itself, without a second 「作る」.
     @State private var createsAfterPurchase = false
@@ -1697,6 +1699,8 @@ struct GroupWindowCreateScreen: View {
     }
 
     private func create() {
+        // The keyboard goes away at once, so the button saying it is making shows (11/6).
+        typing = nil
         Task { createdWindowID = await model.create(name: trimmed, ownerName: trimmedOwner)?.id }
     }
 
@@ -1718,11 +1722,15 @@ struct GroupWindowCreateScreen: View {
         Form {
             Section {
                 TextField("例：実家のまど", text: $name)
+                    .focused($typing, equals: .name)
+                    .disabled(model.isWorking)
                     .accessibilityIdentifier("group-window-create-name")
             } header: { Text("まどの名前") }
             Section {
                 TextField("例：お母さん", text: $ownerName)
                     .textContentType(.nickname)
+                    .focused($typing, equals: .owner)
+                    .disabled(model.isWorking)
                     .accessibilityIdentifier("group-window-create-owner-name")
             } header: { Text("あなたの名前") }
               footer: {
@@ -1743,7 +1751,15 @@ struct GroupWindowCreateScreen: View {
                     Button {
                         create()
                     } label: {
-                        Text("作る").font(.headline).frame(maxWidth: .infinity, minHeight: 44)
+                        // While the relay makes it, the button says so instead of only graying out.
+                        Group {
+                            if model.isWorking {
+                                HStack(spacing: 8) { ProgressView(); Text("作っています…") }
+                            } else {
+                                Text("作る")
+                            }
+                        }
+                        .font(.headline).frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(trimmed.isEmpty || trimmedOwner.isEmpty || tooLong || model.isWorking)
