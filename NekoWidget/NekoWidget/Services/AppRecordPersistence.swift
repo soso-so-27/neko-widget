@@ -23,10 +23,10 @@ private enum AppRecordPhotoIdentity {
         if missing.isEmpty { return known }
         let added: [String: String] = await Task.detached(priority: .utility) {
             guard !missing.isEmpty, [.authorized, .limited].contains(PHPhotoLibrary.authorizationStatus(for: .readWrite)) else { return [:] }
-            let values = PHPhotoLibrary.shared().cloudIdentifiers(forLocalIdentifiers: missing)
-            guard values.count == missing.count else { return [:] }
+            let values = PHPhotoLibrary.shared().cloudIdentifierMappings(forLocalIdentifiers: missing)
             var result: [String: String] = [:]
-            for (local, cloud) in zip(missing, values) where cloud != PHCloudIdentifier.notFound {
+            for local in missing {
+                guard let mapping = values[local], case let .success(cloud) = mapping else { continue }
                 result[local] = cloud.stringValue
             }
             return result
@@ -37,10 +37,11 @@ private enum AppRecordPhotoIdentity {
     static func local(_ cloudIDs: [String]) async -> [String: String] {
         await Task.detached(priority: .utility) {
             guard !cloudIDs.isEmpty, [.authorized, .limited].contains(PHPhotoLibrary.authorizationStatus(for: .readWrite)) else { return [:] }
-            let values = PHPhotoLibrary.shared().localIdentifiers(for: cloudIDs.map(PHCloudIdentifier.init(stringValue:)))
-            guard values.count == cloudIDs.count else { return [:] }
+            let identifiers = cloudIDs.map(PHCloudIdentifier.init(stringValue:))
+            let values = PHPhotoLibrary.shared().localIdentifierMappings(for: identifiers)
             var result: [String: String] = [:]
-            for (cloud, local) in zip(cloudIDs, values) where local != PHLocalIdentifierNotFound && !local.isEmpty {
+            for (cloud, identifier) in zip(cloudIDs, identifiers) {
+                guard let mapping = values[identifier], case let .success(local) = mapping, !local.isEmpty else { continue }
                 guard PHAsset.fetchAssets(withLocalIdentifiers: [local], options: nil).count == 1 else { continue }
                 result[cloud] = local
             }
@@ -1080,7 +1081,7 @@ final class AppRecordPersistence: ObservableObject {
         try Task.checkCancellation()
         try await client.requireSessionCheckpoint(checkpoint)
         try AppRecordDataset.requireScope(owner: value.owner, origin: value.origin)
-        guard checkpoint.ownerID == value.owner, let current = try binding(),
+        guard enabled, checkpoint.ownerID == value.owner, let current = try binding(),
               current.owner == value.owner, current.origin == value.origin, current.enabled,
               current.consent == value.consent else { throw ManagedPreservationError.staleSession }
     }
@@ -1196,7 +1197,7 @@ final class AppRecordPersistence: ObservableObject {
     }
     private func synchronizeOnce() async {
         let intent = saveIntent.ticket()
-        guard active || requested, !busy, !conflict, Date() >= nextAttempt else { return }
+        guard enabled, active || requested, !busy, !conflict, Date() >= nextAttempt else { return }
         busy = true
         defer { busy = false }
         var phase = "保存設定を確認"

@@ -27,7 +27,8 @@
         do { try fence { published = true }; preconditionFailure("paused restore published") }
         catch is CancellationError {}
         check(!published, "pause wins over a late restore/authentication publication")
-        try intent.fence(intent.ticket(), { try $0() }) { published = true }
+        let nextFence = intent.fence(intent.ticket(), { try $0() })
+        try nextFence { published = true }
         check(published, "a later explicit start has a fresh intent")
         do {
             let(c,old,next,root,data)=try seed(sameOrigin:true)
