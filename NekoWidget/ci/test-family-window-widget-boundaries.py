@@ -3470,6 +3470,17 @@ class InvitationAppLinkTests(unittest.TestCase):
         self.assertIn("let url = InvitationAppLink.universal(from: incoming) ?? incoming", handle)
 
 
+class FreeFirstPhotoTests(unittest.TestCase):
+    def test_a_free_window_gets_its_first_photo_once(self) -> None:
+        store = source("Shared/Storage/CloudyWindowStore.swift")
+        self.assertIn("var issuedScopeIDs: Set<String>? = nil", store)
+        frozen = section(store, "if !maySelect {", "} else if date == today {")
+        self.assertIn("if selection == nil, date == today, !issued.contains(scopeID),", frozen)
+        self.assertLess(frozen.index("state.selections.append(first)"), frozen.index("frozen[scopeID] = selection.id"))
+        verify = source("ci/verify-cloudy-window.swift")
+        self.assertIn("try freeWindowGetsItsFirstPhotoOnce()", verify)
+
+
 class FamilyInviteMessageTests(unittest.TestCase):
     def test_family_invitation_carries_a_line_like_a_window(self) -> None:
         notebook = source("NekoWidget/Views/FamilyNotebookView.swift")

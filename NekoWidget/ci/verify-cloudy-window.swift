@@ -90,6 +90,7 @@ private struct Fixture {
 private enum CloudyWindowVerifier {
     static func main() throws {
         try dailyReveal()
+        try freeWindowGetsItsFirstPhotoOnce()
         try staleDisplayReveal()
         try cacheReleaseKeepsSelection()
         try widgetSelectionWithoutSwitch()
@@ -283,6 +284,18 @@ private enum CloudyWindowVerifier {
             selectionValidUntil: closing.addingTimeInterval(60))
         try check(frozen.allSatisfy { $0.selection.id == arrived.selection.id && $0.isCloudy
             && $0.selection.albumPeriod == nil }, "membership freeze keeps photograph and reveal, not yesterday's delivery label")
+    }
+
+    private static func freeWindowGetsItsFirstPhotoOnce() throws {
+        let f = try Fixture(count: 6)
+        defer { f.cleanup() }
+        let cutoff = baseline.addingTimeInterval(-60)
+        let first = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: baseline,
+            allowsSelection: false, selectionValidUntil: cutoff)
+        try check(!first.isEmpty, "a never-paid window still shows its first photo")
+        let later = try f.store.timeline(scopeID: CloudyWindowStore.personalScope,
+            now: baseline.addingTimeInterval(3 * day), allowsSelection: false, selectionValidUntil: cutoff)
+        try check(later.first?.selection.id == first[0].selection.id, "the first photo stays; no new day without Plus")
     }
 
     private static func dailyReveal() throws {
