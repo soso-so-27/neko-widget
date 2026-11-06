@@ -38,6 +38,21 @@ private enum PersonalWidgetMembershipVerifier {
         let unknown = PersonalWidgetMembershipSnapshot.updated(for: .checking, previous: nil, now: now)
         precondition(unknown.validUntil == now && !unknown.allowsSelection(at: now))
 
+        // Background wake after the old 36h lease: a new server deadline,
+        // not the wake time plus a local grace period, authorizes the next day.
+        let oldCutoff = now.addingTimeInterval(36 * 3600)
+        let old = PersonalWidgetMembershipSnapshot.updated(
+            for: .verified(validUntil: oldCutoff), previous: nil, now: now)
+        let wake = oldCutoff.addingTimeInterval(1)
+        precondition(!old.allowsSelection(at: wake))
+        let serverCutoff = wake.addingTimeInterval(900)
+        let background = PersonalWidgetMembershipSnapshot.updated(
+            for: .verified(validUntil: serverCutoff), previous: old, now: wake)
+        precondition(background.allowsSelection(at: wake))
+        precondition(!background.allowsSelection(at: serverCutoff))
+        let denied = PersonalWidgetMembershipSnapshot.updated(for: .inactive, previous: background, now: wake)
+        precondition(!denied.allowsSelection(at: wake))
+
         let malformed = PersonalWidgetMembershipSnapshot(membershipRequired: false,
             validUntil: Date(timeIntervalSinceReferenceDate: .infinity), recordedAt: now)
         precondition(!malformed.allowsSelection(at: now))

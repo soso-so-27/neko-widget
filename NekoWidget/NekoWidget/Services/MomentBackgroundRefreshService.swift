@@ -318,7 +318,11 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
                 return
             }
             let protectedDataAvailable = UIApplication.shared.isProtectedDataAvailable
-            if protectedDataAvailable { await GroupAdmissionService.shared.refresh() }
+            if protectedDataAvailable {
+                await PlusPurchaseStore.productionShared.refreshWidgetAuthorityInBackground()
+                await GroupAdmissionService.shared.refresh()
+                await GroupAdmissionService.shared.refreshWidgetPhotos()
+            }
             backgroundTask.setTaskCompleted(success: protectedDataAvailable && !Task.isCancelled)
         }
         activeRefresh = operation
@@ -369,6 +373,7 @@ final class GroupAdmissionService: ObservableObject {
     private var running = false
     private var rerun = false
     private var permissionRequested = false
+    private var refreshingWidgets = Set<String>()
 
     func register(deviceToken: Data, epoch: UInt64) async {
         guard epoch >= tokenEpoch else { return }
@@ -402,10 +407,32 @@ final class GroupAdmissionService: ObservableObject {
             else if !allowed { try? await client.updatePushSubscriptions(deviceToken: nil, environment: environment) }
         } while rerun && !Task.isCancelled
     }
+    /// Use the same verified receive/moderation/cache path as an open window.
+    /// A push is only a hint; fresh membership and signed photo checks still run.
+    func refreshWidgetPhotos(windowID: String? = nil) async {
+        guard UIApplication.shared.isProtectedDataAvailable, !Task.isCancelled,
+              let client = GroupWindowClientProvider.production,
+              (try? await client.hasLocalGroupState()) == true else { return }
+        let ids: [String]
+        if let windowID { ids = [windowID] }
+        else {
+            guard let windows = try? await client.windows() else { return }
+            ids = windows.filter { $0.state != .closed }.map(\.id)
+        }
+        for id in ids {
+            guard !Task.isCancelled else { return }
+            guard refreshingWidgets.insert(id).inserted else { continue }
+            let model = GroupWindowScreenModel(client: client, windowID: id)
+            await model.sync(background: true)
+            refreshingWidgets.remove(id)
+        }
+    }
+
     func receive(_ route: GroupNotificationRoute, open: Bool) async -> Bool {
         guard let client = GroupWindowClientProvider.production,
               (try? await client.acceptsNotification(windowID: route.windowID, requestID: route.requestID, kind: route.kind)) == true else { return false }
         await refresh()
+        await refreshWidgetPhotos(windowID: route.windowID)
         // Explicit tap may navigate only AFTER authenticated membership, roster and key loading.
         if open, (try? await client.window(id: route.windowID)) != nil {
             GroupWindowOpenInbox.shared.open(windowID: route.windowID)

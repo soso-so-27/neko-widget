@@ -4,7 +4,7 @@ import Photos
 import UIKit
 import WidgetKit
 
-/// Independent of sharing, accounts and notifications. iOS may choose not to
+/// Refreshes existing Plus authority without opening a purchase UI. iOS may choose not to
 /// run this job; the persisted finite pool remains usable without it.
 @MainActor
 enum PersonalWidgetBackgroundRefresh {
@@ -47,6 +47,8 @@ enum PersonalWidgetBackgroundRefresh {
                 return
             }
             do {
+                await PlusPurchaseStore.productionShared.refreshWidgetAuthorityInBackground()
+                try Task.checkCancellation()
                 let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
                 guard status == .authorized || status == .limited else {
                     // Access was taken away while the app stayed closed: the

@@ -346,6 +346,22 @@ final class PlusPurchaseStore: ObservableObject {
         refreshTask = nil
     }
 
+    /// A background wake never purchases, restores, or invents a grace period.
+    /// Only a validated server response replaces the Widget's finite grant.
+    func refreshWidgetAuthorityInBackground() async {
+        guard configuration.isConfigured, !Task.isCancelled,
+              !isPurchasing, !isRestoring else { return }
+        let result = await refreshServerAuthority()
+        guard !Task.isCancelled else { return }
+        switch result {
+        case .confirmed, .denied:
+            try? PersonalWidgetMembershipStore.publish(
+                MembershipAccessContext(entitlement: entitlementState).personal)
+        case .indeterminate:
+            break // Keep the existing exact deadline; never extend it offline.
+        }
+    }
+
     private func performRefresh() async {
         await reconcileCurrentEntitlements()
         await loadProducts()
