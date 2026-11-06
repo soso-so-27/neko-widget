@@ -15,6 +15,20 @@ extension Notification.Name {
 
 enum AppRecordEditingError: Error { case inProgress }
 
+/// A settings mismatch is not a corrupt tool record. Keep all bytes untouched.
+enum AppRecordBindingError: String, LocalizedError {
+    case destination = "P01", format = "P02", consent = "P03"
+    var errorDescription: String? {
+        switch self {
+        case .destination:
+            "以前の保存先と、この版の保存先が異なります。このiPhoneの記録と、以前の保存データは残っています（P01）。"
+        case .format, .consent:
+            "自動保存の設定を確認できません。このiPhoneの記録と、保存したデータは残っています（\(rawValue)）。"
+        }
+    }
+}
+
+
 /// These leases outlive hidden editors and nested presentations. They protect
 /// memory-only drafts, which a fingerprint of committed files cannot detect.
 final class AppRecordEditingLease: ObservableObject, @unchecked Sendable {
@@ -672,8 +686,9 @@ final class AppRecordPersistence: ObservableObject {
     private func binding() throws -> Binding? {
         guard FileManager.default.fileExists(atPath: bindingURL.path) else { return nil }
         let value = try JSONDecoder().decode(Binding.self, from: ToolBackupFiles.read(bindingURL, maximum: 8192))
-        guard value.version == 1, value.consent == Self.consentVersion,
-              value.origin == configuration.origin?.absoluteString else { throw ToolBackupError.invalid }
+        guard value.version == 1 else { throw AppRecordBindingError.format }
+        guard value.consent == Self.consentVersion else { throw AppRecordBindingError.consent }
+        guard value.origin == configuration.origin?.absoluteString else { throw AppRecordBindingError.destination }
         return value
     }
     private func write(_ value: Binding) throws {
@@ -1541,6 +1556,8 @@ struct AppRecordSettingsView: View {
                 if case .success = result { starting = true }
                 authentication.completeSignIn(result)
             }
+            .id(challenge.state)
+            .disabled(authentication.isBusy)
             .frame(height: 48).accessibilityIdentifier("app-record-signin")
         } else if authentication.isBusy {
             ProgressView("準備しています…")
