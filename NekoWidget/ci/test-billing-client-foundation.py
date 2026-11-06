@@ -427,6 +427,12 @@ class BillingClientFoundationTests(unittest.TestCase):
         ]
         self.assertIn("configuration.isEnabled", coordinator)
         self.assertIn("recoverFromExplicitUserAction", coordinator)
+        self.assertLess(coordinator.index("collectEvidence().validated()"),
+                        coordinator.index("return previous"))
+        existing = coordinator[coordinator.index("let previous = try loadCredential()"):
+                               coordinator.index("return previous")]
+        self.assertIn("previous.billingAccountID == currentEvidence.billingAccountID", existing)
+
         self.assertIn("insertRecoveryAttempt(candidate)", coordinator)
         self.assertIn("attempt.persistedEvidence", coordinator)
         self.assertLess(

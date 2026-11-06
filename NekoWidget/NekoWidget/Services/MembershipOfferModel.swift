@@ -476,6 +476,9 @@ final class MembershipOfferModel: ObservableObject {
             message = applePending
                 ? "Appleでの購入手続きが終わるのを待っています。もう一度購入しないでください。"
                 : "購入の確認を待っています。もう一度購入せずに、「購入を復元」を押してください。"
+        } else if purchases?.hasBillingIssue == true {
+            purchaseTitle = "お支払い方法の確認が必要です"
+            message = "Appleでお支払いを確認できていません。「サブスクリプションを管理」からお支払い方法を確認してください。"
         } else if verificationRequired {
             purchaseTitle = "購入状況の確認が必要です"
             message = "購入状況を確認できません。もう一度購入せずに、「購入を復元」を押してください。"
