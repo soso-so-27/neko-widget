@@ -901,7 +901,7 @@ final class AppRecordPersistence: ObservableObject {
     }
     func enable() async {
         await yieldCleanup()
-        guard !busy else { detail = AppRecordBindingError.busy.errorDescription; return }
+        guard !busy else { report(AppRecordBindingError.busy); return }
         guard let origin = configuration.origin?.absoluteString else { report(AppRecordBindingError.rebinding); return }
         busy = true
         title = "保存の準備中…"; detail = nil
@@ -935,11 +935,8 @@ final class AppRecordPersistence: ObservableObject {
         } catch {
             busy = false
             report(error)
-            if changingDestinationError(error) { detail = (detail ?? "保存を始められませんでした。") + "（P04）" }
+            if !(error is AppRecordBindingError) { detail = (detail ?? "保存を始められませんでした。") + "（P04）" }
         }
-    }
-    private func changingDestinationError(_ error: Error) -> Bool {
-        !(error is AppRecordBindingError) && !(error is ManagedPreservationError)
     }
     func pause() {
         cleanupYield = true; cachedIndex = nil; cachedMembership = nil
