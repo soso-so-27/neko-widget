@@ -244,7 +244,8 @@ class DisabledReleaseConfigTests(unittest.TestCase):
             encoding="utf-8"
         )
         family_case = app_model.split("case .familyWindow:", 1)[1].split("guard let readyRoute", 1)[0]
-        self.assertIn("errorMessage =", family_case)
+        # Link problems use their own message (11/6), still an error and not an open.
+        self.assertIn("ErrorMessage =", family_case)
         self.assertIn("return", family_case)
         self.assertNotIn("activatePrivateWindow", family_case)
         self.assertNotIn("isFamilyWindowPresented = true", family_case)

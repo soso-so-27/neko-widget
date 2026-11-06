@@ -3458,6 +3458,21 @@ class CatPageSharedLabelTests(unittest.TestCase):
         self.assertNotIn("家族と一緒に書いています。", care)
 
 
+class OnboardingEndingTests(unittest.TestCase):
+    def test_guide_endings_scan_errors_and_widget_steps(self) -> None:
+        root_view = source("NekoWidget/App/AppRootView.swift")
+        plus = section(root_view, "private func skipOnboardingPlusOffer() {", "private func completeOnboardingWithoutPhotoAccess()")
+        self.assertIn("hasSeenInitialScanResult = true", plus)
+        guide = section(root_view, "private func completeWidgetPlacementGuideIfNeeded() {", "@MainActor")
+        self.assertIn("hasSeenInitialScanResult = true", guide)
+        self.assertIn(".onChange(of: viewModel.linkErrorMessage)", root_view)
+        self.assertIn(".onChange(of: viewModel.isScanning)", root_view)
+        model = source("NekoWidget/ViewModels/AppViewModel.swift")
+        self.assertIn('linkErrorMessage = "この招待リンクは開けませんでした。', model)
+        steps = source("NekoWidget/Views/WidgetPlacementGuideView.swift")
+        self.assertIn('["onboarding-widget-step-1", "", "onboarding-widget-step-3"]', steps)
+
+
 class WidgetHygieneTests(unittest.TestCase):
     def test_reported_hidden_and_gone_windows_leave_the_home_screen(self) -> None:
         window = source("NekoWidget/Views/GroupWindowView.swift")
