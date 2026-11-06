@@ -1643,15 +1643,23 @@ struct FamilyNotebookCatSelectionView: View {
 /// out of the way for anyone who keeps it to themselves (test builds only).
 struct FamilyNotebookButton: View {
     var accessibilityIdentifier = "cat-care-family-notebook"
+    /// On a cat that is in the notebook: the family's names, shown as faces.
+    var sharedNames: [String]? = nil
     @ObservedObject private var model = FamilyNotebookPrototype.shared
     @State private var shows = false
 
     var body: some View {
-        // Words beside the icon: a bare person icon was not found (1031).
         Button { shows = true } label: {
-            Label(model.hasFamily ? "家族の手帳" : "家族と書く",
-                  systemImage: model.hasFamily ? "person.2.fill" : "person.badge.plus")
-                .labelStyle(.titleAndIcon)
+            Group {
+                if let sharedNames {
+                    FamilyFaces(names: sharedNames)
+                } else {
+                    // Words beside the icon: a bare person icon was not found (1031).
+                    Label(model.hasFamily ? "家族の手帳" : "家族と書く",
+                          systemImage: model.hasFamily ? "person.2.fill" : "person.badge.plus")
+                        .labelStyle(.titleAndIcon)
+                }
+            }
                 .overlay(alignment: .topTrailing) {
                     if model.hasNewFromFamily {
                         Circle().fill(Color.accentColor).frame(width: 7, height: 7).offset(x: 3, y: -3)
@@ -1660,6 +1668,35 @@ struct FamilyNotebookButton: View {
         }
         .accessibilityIdentifier(accessibilityIdentifier)
         .sheet(isPresented: $shows) { FamilyNotebookView() }
+    }
+}
+
+/// The family on a shared cat's page: the first letter of each name in a small
+/// circle, overlapped, at most three and then 「+N」. No sentence (11/6).
+struct FamilyFaces: View {
+    let names: [String]
+    private static let tints: [Color] = [.orange, .teal, .indigo, .pink]
+
+    var body: some View {
+        HStack(spacing: -8) {
+            ForEach(Array(names.prefix(3).enumerated()), id: \.offset) { index, name in
+                Text(String(name.prefix(1)))
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 28, height: 28)
+                    .background(Circle().fill(Self.tints[index % Self.tints.count]))
+                    .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
+            }
+            if names.count > 3 {
+                Text("+\(names.count - 3)")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 12)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("家族の手帳：" + names.joined(separator: "、"))
+        .accessibilityIdentifier("cat-care-family-faces")
     }
 }
 

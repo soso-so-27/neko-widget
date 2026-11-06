@@ -248,17 +248,6 @@ struct CatCareDetailView: View {
                         .accessibilityIdentifier("cat-care-save-retry")
                 }
             }
-            // The same page opens from ツール and from the family notebook. At
-            // the top, only for a cat in the notebook: what is written here is
-            // the family's too (11/6: "two places to write water?").
-            if sharedWithFamily {
-                Section {
-                    Label("家族の手帳で共有しています", systemImage: "person.2.fill")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("cat-care-family-shared")
-                }
-            }
             if farewell == nil {
                 // The same ring as on the ツール tab, so writing here visibly fills it.
                 // One line beside it, not a dashboard: what the next entry is for.
@@ -299,7 +288,18 @@ struct CatCareDetailView: View {
         .toolbar {
             // The family, at the top right like sharing in Notes, so it is
             // out of the way for anyone who keeps to themselves.
-            if !insideFamilyNotebook, Version1.familyNotebook || familyNotebook.hasFamily {
+            // The same page opens from ツール and from the family notebook. A
+            // cat in the notebook shows the family's faces here, so whose page
+            // it is can be seen without words (11/6: "two places to write water?").
+            if sharedWithFamily {
+                ToolbarItem(placement: .topBarTrailing) {
+                    if insideFamilyNotebook {
+                        FamilyFaces(names: familyNotebook.members.map(\.displayName))
+                    } else {
+                        FamilyNotebookButton(sharedNames: familyNotebook.members.map(\.displayName))
+                    }
+                }
+            } else if !insideFamilyNotebook, Version1.familyNotebook || familyNotebook.hasFamily {
                 ToolbarItem(placement: .topBarTrailing) { FamilyNotebookButton() }
             }
         }
