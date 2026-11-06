@@ -1486,12 +1486,13 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["保存・復元"].waitForExistence(timeout: 60), app.debugDescription)
         app.buttons["保存・復元"].tap()
         let count = app.descendants(matching: .any)["preservation-quota-records"].firstMatch
-        XCTAssertTrue(count.waitForExistence(timeout: 15), app.debugDescription)
-        XCTAssertTrue(count.label.contains("0 / 3,000"), count.label)
+        // Before enable the quota section is intentionally hidden. The fixture's
+        // opening GET returns zero; after the first saved head it returns three.
         let start = app.buttons["app-record-enable"]
         if !start.isHittable { app.swipeUp() }
         XCTAssertTrue(start.waitForExistence(timeout: 10), app.debugDescription)
         start.tap()
+        XCTAssertTrue(count.waitForExistence(timeout: 120), app.debugDescription)
         let saved = NSPredicate(format: "label CONTAINS %@", "3 / 3,000")
         expectation(for: saved, evaluatedWith: count)
         waitForExpectations(timeout: 120)
