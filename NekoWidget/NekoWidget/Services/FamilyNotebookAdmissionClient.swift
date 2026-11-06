@@ -6,7 +6,7 @@ import Foundation
 actor FamilyNotebookAdmissionClient {
     struct Family: Decodable, Sendable { let familyID: UUID; let generation: Int64; let role: String }
     struct PendingJoin: Decodable, Sendable { let familyID: UUID, requestID: UUID, invitationID: UUID; let expiresAt: Int64 }
-    struct JoinResult: Decodable, Sendable {
+    struct JoinResult: Decodable, Equatable, Sendable {
         enum State: String, Decodable, Sendable { case pending, approved, rejected, cancelled, expired }
         let familyID: UUID, requestID: UUID, invitationID: UUID
         let expiresAt: Int64
@@ -258,6 +258,16 @@ actor FamilyNotebookAdmissionClient {
     }
     func preview(_ link: URL) async throws -> FamilyInvitationPreview {
         let capability = try FamilyNotebookInvitationCapability(url: link), operation = UUID()
+        // A consumed invitation is not an expired application. Read this
+        // person's authenticated result before asking for a new preview.
+        let ownDirectory = try await directory()
+        if let prior = ownDirectory.joinRequests?.last(where: {
+            $0.familyID == capability.familyID && $0.invitationID == capability.invitationID
+        }), let saved = try? savedPreview(capability.invitationID, enforceExpiry: false) {
+            return .init(inviterName: saved.content.inviterName, catNames: saved.content.catNames,
+                         expiresAt: saved.expiresAt, contextID: capability.invitationID,
+                         priorRequestState: prior.state.rawValue)
+        }
         let body = try Body(operationID: operation.uuidString.lowercased(), proofSignature:
             capability.proof(personID: identity.personID, deviceID: identity.deviceID, action: "preview", operationID: operation))
         let route = path("preview", capability.familyID, capability.invitationID)

@@ -37,6 +37,9 @@ struct FamilyInvitationPreview: Equatable, Sendable {
     /// Opaque reference to a verified invitation kept in the private store.
     /// The screen never receives its capability secret.
     var contextID: UUID? = nil
+    /// Fresh authenticated application result, even after the link was consumed.
+    /// pending / approved / rejected / cancelled / expired; never inferred locally.
+    var priorRequestState: String? = nil
 }
 
 struct FamilyFarewellPreview: Equatable, Sendable {

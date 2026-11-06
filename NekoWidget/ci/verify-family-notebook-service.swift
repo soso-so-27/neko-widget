@@ -46,7 +46,12 @@ private actor Relay: GroupHTTPTransport {
                 if let join, join["personId"] as? String == identity.personID, !members.contains(identity.personID) {
                     pending = [["familyId": familyString, "requestId": join["requestId"]!, "invitationId": join["invitationId"]!, "expiresAt": join["expiresAt"]!]]
                 }
-                return try reply(["schemaVersion": 1, "personId": identity.personID, "family": own, "pendingRequests": pending])
+                var results: [[String: Any]] = []
+                if let join, join["personId"] as? String == identity.personID {
+                    results = [["familyId": familyString, "requestId": join["requestId"]!, "invitationId": join["invitationId"]!,
+                                "expiresAt": join["expiresAt"]!, "state": members.contains(identity.personID) ? "approved" : "pending"]]
+                }
+                return try reply(["schemaVersion": 1, "personId": identity.personID, "family": own, "pendingRequests": pending, "joinRequests": results])
             }
             if path.hasSuffix("/members") {
                 let rows = identities.values.filter { members.contains($0.personID) }.map {
@@ -187,6 +192,10 @@ private actor Relay: GroupHTTPTransport {
         try check(await relay.bodies("/join").count == 2, "restart does not reseal join name or proof")
         let requests = try await creator.admission.requests(family)
         try check(requests.requests.count == 1, "only one request after lost ACK")
+        let previewsBefore = await relay.bodies("/preview").count
+        let reopened = try await resumedGuest.admission.preview(invitation.link)
+        try check(reopened.priorRequestState == "pending", "reopened link gives authenticated pending result")
+        try check(await relay.bodies("/preview").count == previewsBefore, "consumed invitation needs no second preview request")
         try check(try await creator.admission.requestName(requests.requests[0], family: family) == "合成の参加者", "approved UI name is decrypted and authenticated")
         await relay.corruptNextReceipt()
         try await rejects { try await creator.admission.decide(family: family, request: requests.requests[0], generation: 1, approve: true, operation: UUID()) }
@@ -198,6 +207,7 @@ private actor Relay: GroupHTTPTransport {
         try check(try await resumedGuest.admission.knownNames(family: family)[a.personID] == "合成の招待者", "join retains authenticated inviter name without a notebook edit")
         let directory = try await resumedGuest.admission.members(family)
         try check(directory.members.count == 2, "actual person roots and admitted generations validate")
+        try check(try await resumedGuest.admission.preview(invitation.link).priorRequestState == "approved", "reopened invitation reports acceptance after approval")
         // Private-date preview is read-only; only the exact explicit action
         // creates a sendable operation. No UI or network side effect grants it.
         let farewellStore = try resumedCreator.activate(family: family, admittedGeneration: 1)
