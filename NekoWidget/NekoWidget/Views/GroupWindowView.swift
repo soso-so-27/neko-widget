@@ -367,7 +367,9 @@ final class GroupWindowScreenModel: ObservableObject {
         guard canSend, let me = window?.myParticipantID else { return }
         isSending = true
         sendCompleted = false
-        failedDelivery = nil
+        // Only this photo's own retry clears its row; a different photo sent
+        // meanwhile leaves the earlier undelivered one offered (11/7).
+        if failedDelivery?.photo.operationID == prepared.operationID { failedDelivery = nil }
         defer { isSending = false }
         do {
             let operationID = prepared.operationID
@@ -731,7 +733,7 @@ struct GroupWindowScreen: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if model.isFormer {
-                    Label("このまどから抜けました。",
+                    Label("このまどには、もう入っていません。",
                           systemImage: "person.2.slash")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -1895,6 +1897,31 @@ struct GroupWindowStandardsAgreement: View {
     }
 }
 
+extension GroupWidgetCache {
+    /// Chooses a window's home-screen photo again from what this iPhone keeps,
+    /// outside the window's own screen (11/7: 「表示する」 in Settings left the
+    /// widget as it was). Only a window already on the home screen is touched.
+    @MainActor static func refreshKept(windowID: String) async {
+        guard let previous = entry(windowID: windowID) else { return }
+        let store = GroupWindowLocalPhotoStore.shared
+        let safety = GroupSafety.shared
+        await safety.loadRecords(windowID: windowID)
+        let newest = await store.entries(windowID: windowID)
+            .first { !$0.isHidden && !safety.hasReported($0.id, in: windowID) }
+        var jpeg: Data?
+        if let newest, let url = await store.imageURL(photoID: newest.id, windowID: windowID) {
+            jpeg = try? Data(contentsOf: url)
+        }
+        try? update(windowID: windowID, windowName: previous.windowName, photoID: newest?.id, jpeg: jpeg,
+                    senderDisplayName: newest.flatMap { $0.isOwn ? nil : $0.senderDisplayName },
+                    capturedAt: newest?.createdAt, isPaused: previous.isPaused,
+                    myHeartActive: newest?.id == previous.photoID ? previous.myHeartActive : false)
+        if previous != entry(windowID: windowID) {
+            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+        }
+    }
+}
+
 /// While a press is being done, the button says so instead of only graying out (11/6).
 struct WorkingLabel: View {
     let title: String
@@ -2090,8 +2117,11 @@ struct GroupWindowListSection: View {
                 GroupWindowListNavigation.shared.openedWindow = GroupWindowRoute(windowID: requested)
             } else if model.hasLoaded, model.message == nil {
                 // A Widget of a window left or ended: say so, once (E1).
-                // Offline says nothing; the window may still be there.
                 showsLeftWindowNotice = true
+            } else if model.message != nil, GroupWidgetCache.entry(windowID: requested) != nil {
+                // Offline: open what this iPhone kept; the window reads again
+                // when it can (11/7: the tap did nothing).
+                GroupWindowListNavigation.shared.openedWindow = GroupWindowRoute(windowID: requested)
             }
         }
         .alert("このまどはもうありません", isPresented: $showsLeftWindowNotice) {
@@ -2129,7 +2159,7 @@ struct GroupWindowListSection: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(name).font(.body.weight(.semibold))
-                Text("抜けたまどです。届いた写真は見られます").font(.caption).foregroundStyle(.secondary)
+                Text("前のまどです。届いた写真は見られます").font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
             Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.tertiary)
@@ -2334,6 +2364,7 @@ struct GroupHiddenMembersView: View {
             guard lifted != nil else { return }
         }
         await GroupWindowLocalPhotoStore.shared.unhide(memberID: item.member.id, windowID: item.window.id)
+        await GroupWidgetCache.refreshKept(windowID: item.window.id)
         windows = await GroupWindowLocalPhotoStore.shared.knownWindows()
     }
 }

@@ -3577,6 +3577,24 @@ class SharedWorkMarkTests(unittest.TestCase):
         self.assertIn('"この季節も、ここまで"', ending)
 
 
+class ReviewCTests(unittest.TestCase):
+    def test_small_review_items(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        self.assertIn("if failedDelivery?.photo.operationID == prepared.operationID { failedDelivery = nil }", window)
+        self.assertNotIn("このまどから抜けました", window)
+        self.assertNotIn("抜けたまどです", window)
+        self.assertIn("} else if model.message != nil, GroupWidgetCache.entry(windowID: requested) != nil {", window)
+        self.assertIn("await GroupWidgetCache.refreshKept(windowID: item.window.id)", window)
+        tab = source("NekoWidget/Views/MainTabView.swift")
+        group_open = section(tab, ".onChange(of: groupWindowOpenInbox.pendingWindowID, initial: true)", ".onChange(of: photosTabInbox.pending")
+        self.assertIn("relatedPhotoRoute = nil", group_open)
+        root_view = source("NekoWidget/App/AppRootView.swift")
+        self.assertIn("if windowID != nil { officialWindowRoute = nil }", root_view)
+        self.assertIn(".onReceive(NotificationCenter.default.publisher(for: .onboardingPlusSheetClosed))", root_view)
+        onboarding = source("NekoWidget/Views/OnboardingView.swift")
+        self.assertIn("NotificationCenter.default.post(name: .onboardingPlusSheetClosed, object: nil)", onboarding)
+
+
 class FormerReportsEntryTests(unittest.TestCase):
     def test_a_left_window_shows_its_report_answers(self) -> None:
         window = source("NekoWidget/Views/GroupWindowView.swift")
