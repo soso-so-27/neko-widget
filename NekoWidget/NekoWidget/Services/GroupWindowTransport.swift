@@ -136,6 +136,8 @@ enum GroupHTTPRequest {
             switch error.code {
             case "invalid_authentication", "invalid_proof", "replay", "stale_request", "invalid_billing_authentication", "stale_billing_request", "replayed_billing_request": throw GroupClientError.authenticationRequired
             case "not_found", "not_member", "epoch_not_authorized": throw GroupClientError.notMember
+            case "already_member": throw GroupInvitationError.alreadyMember
+            case "window_closed": throw GroupInvitationError.windowClosed
             case "owner_required": throw GroupClientError.ownerRequired
             case "owner_plus_required": throw GroupSubscriptionError.ownerPlusRequired
             case "window_paused": throw GroupSubscriptionError.windowPaused

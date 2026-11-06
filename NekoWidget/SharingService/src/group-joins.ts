@@ -33,12 +33,13 @@ async function joinRequestResponse(env:Env,actor:GroupActor,windowId:string,valu
   return jsonResponse({...response,admissionPaused:active!==null&&!active.has(actor.personId)},status);
 }
 export async function groupInvitation(env:Env,windowId:string,invitationId:string,now:number) {
-  const value=await env.DB.prepare(`SELECT i.id,i.proof_public_key,i.expires_at,i.revoked_at,w.owner_person_id,
+  const value=await env.DB.prepare(`SELECT i.id,i.proof_public_key,i.expires_at,i.revoked_at,w.owner_person_id,w.mode,
       p.identity_public_key AS ownerIdentityPublicKey FROM group_invitations i
       JOIN group_windows w ON w.space_id=i.space_id JOIN group_people p ON p.id=w.owner_person_id
-      WHERE i.id=? AND i.space_id=? AND w.mode='active'`).bind(groupId(invitationId),groupId(windowId))
-    .first<{id:string;proof_public_key:string;expires_at:number;revoked_at:number|null;owner_person_id:string;ownerIdentityPublicKey:string}>();
+      WHERE i.id=? AND i.space_id=?`).bind(groupId(invitationId),groupId(windowId))
+    .first<{id:string;proof_public_key:string;expires_at:number;revoked_at:number|null;owner_person_id:string;mode:string;ownerIdentityPublicKey:string}>();
   if(!value) throw new ApiError(404,"not_found","The invitation was not found.");
+  if(value.mode!=='active') throw new ApiError(410,"window_closed","The window is closed.");
   if(value.revoked_at!==null) throw new ApiError(410,"invitation_revoked","The invitation is no longer available.");
   if(value.expires_at<=now) throw new ApiError(410,"invitation_expired","The invitation has expired.");
   return value;
@@ -83,6 +84,9 @@ export async function createGroupJoinRequest(env:Env,actor:GroupActor,windowId:s
   const member=await env.DB.prepare("SELECT participant_id FROM group_window_devices WHERE space_id=? AND device_id=? AND state='active'")
     .bind(windowId,actor.deviceId).first();
   if(member) throw new ApiError(409,"already_member","This device already participates in this window.");
+  const count=await env.DB.prepare("SELECT COUNT(*) AS count FROM group_members WHERE space_id=? AND state='active'")
+    .bind(windowId).first<{count:number}>();
+  if((count?.count??0)>=6) throw new ApiError(409,"member_limit","The window is full.");
   const requestId=randomBase64url(16),response={operationId,requestId,windowId,invitationId:invitation.id,personId:actor.personId,
     candidateDeviceId:actor.deviceId,state:"pending",expiresAt:invitation.expires_at,serverNow:actor.now};
   await env.DB.batch([...groupAuthorizationStatements(env,actor),
@@ -106,7 +110,13 @@ export async function getGroupJoinStatus(env:Env,actor:GroupActor,windowId:strin
   if(row.candidate_device_id!==actor.deviceId || row.person_id!==actor.personId) throw new ApiError(404,"not_found","The join request was not found.");
   await env.DB.batch(groupAuthorizationStatements(env,actor));
   const active=await groupAdmissionPause(env,windowId);
-  return jsonResponse({requestId:row.id,windowId,state:row.state==='pending' && row.expires_at<=actor.now?'expired':row.state,
+  // Approval is historical; leaving/removal must allow a fresh request using
+  // a still-valid invitation, without rewriting the old approval record.
+  const stillMember=row.state==='approved'?await env.DB.prepare(`SELECT 1 FROM group_window_devices d JOIN group_members m ON m.participant_id=d.participant_id
+    WHERE d.space_id=? AND d.device_id=? AND m.person_id=? AND d.state='active' AND m.state='active'`)
+    .bind(windowId,actor.deviceId,actor.personId).first():null;
+  const state=row.state==='approved'&&!stillMember?'cancelled':row.state==='pending'&&row.expires_at<=actor.now?'expired':row.state;
+  return jsonResponse({requestId:row.id,windowId,state,
     admissionPaused:row.state==='pending'&&row.expires_at>actor.now&&active!==null&&!active.has(row.person_id),
     resultRevision:row.result_revision,expiresAt:row.expires_at,invitationId:row.invitation_id,personId:row.person_id,
     candidateDeviceId:row.candidate_device_id,serverNow:actor.now});

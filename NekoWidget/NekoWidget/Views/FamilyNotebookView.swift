@@ -85,6 +85,7 @@ final class FamilyNotebookPrototype: ObservableObject {
         if let liveStore = service.notebook { store = liveStore }
         if let author = service.author { realAuthor = author }
         realMemberIDs = service.lastMembers.map(\.personID)
+        realMemberNames = service.memberNames
         if let store, let author = realAuthor, let saved = try? store.snapshot(),
            let binding = try? FamilyNotebookLocalBinding(directory: store.localDirectory, support: AppRecordDataset.support,
                familyID: saved.familyID, deviceID: store.localDeviceID, author: author),
@@ -120,7 +121,8 @@ final class FamilyNotebookPrototype: ObservableObject {
         let visits = try await VeterinaryVisitStore.shared.visits().filter { selected.contains($0.catID) }
         let source = try FamilyNotebookMigrationSource(catCare: .init(state: care, unreadableCatCount: 0), handoff: handoff, visits: visits)
         let prepared = try FamilyNotebookMigration.prepare(source: source, familyID: snapshot.familyID, mappings: mappings)
-        _ = try store.applyImport(prepared.plan, author: writer())
+        let relinked = try FamilyNotebookCatRelink.preserving(prepared.plan, previous: snapshot)
+        _ = try store.applyImport(relinked, author: writer())
         reload()
     }
 
@@ -518,13 +520,14 @@ final class FamilyNotebookPrototype: ObservableObject {
 
     /// The family, you first. Like Apple's family and shared lists, nobody
     /// is labelled; who can do what shows only on a person's own page.
+    private var realMemberNames: [String: String] = [:]
     var members: [FamilyNotebookAuthor] {
         if isReal {
             if realMemberIDs.isEmpty, let shown { return shown.members }
             return realMemberIDs.map { id in
                 if id == realAuthor?.personID, let realAuthor { return realAuthor }
                 return snapshot?.operations.filter { $0.author.personID == id }.max { $0.version < $1.version }?.author
-                    ?? .init(personID: id, displayName: "家族の人")
+                    ?? .init(personID: id, displayName: realMemberNames[id] ?? "家族の人")
             }
         }
         let removed = Set(UserDefaults.standard.stringArray(forKey: Self.removedKey) ?? [])

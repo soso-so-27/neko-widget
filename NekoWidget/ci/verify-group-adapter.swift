@@ -558,6 +558,8 @@ private struct GroupAdapterChecks {
         let memory = MemorySecrets(), relay = EchoTransport(), folder = FileManager.default.temporaryDirectory.appendingPathComponent("group-adapter-" + UUID().uuidString, isDirectory: true)
         let endpoint = URL(string: "https://group.invalid")!, op = UUID()
         var client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: memory, transport: relay, outboxDirectory: folder, billingSigner: SyntheticBillingSigner())
+        try check(try await client.windows().isEmpty, "opening a fresh window list stays empty")
+        try check(try memory.read("identity") == nil, "opening the list must not create a person")
         do { _ = try await client.createWindow(name: "うちのまど", operationID: op); throw Failure.check("lost response was not simulated") }
         catch GroupClientError.offline { }
         let store = try GroupOperationStore(directory: folder.appendingPathComponent("http-operations", isDirectory: true))

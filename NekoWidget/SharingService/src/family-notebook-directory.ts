@@ -62,9 +62,14 @@ async function ownFamilies(env: Env, actor: GroupActor): Promise<Response> {
       WHERE m.person_id=? AND m.state='active' AND f.state='active' LIMIT 2`).bind(actor.personId),
     env.DB.prepare(`SELECT j.family_id AS familyId,j.id AS requestId,j.invitation_id AS invitationId,j.expires_at AS expiresAt
       FROM family_notebook_join_requests j JOIN family_notebook_spaces f ON f.id=j.family_id AND f.state='active'
-      WHERE j.person_id=? AND j.state='pending' AND j.expires_at>unixepoch() ORDER BY j.created_at DESC,j.id LIMIT 64`).bind(actor.personId)]);
-  if (batch.at(-3)?.results[0]?.enabled !== 1) throw new ApiError(503, 'family_notebook_disabled', 'Family notebooks are unavailable.');
-  const families = batch.at(-2)!.results;
+      WHERE j.person_id=? AND j.state='pending' AND j.expires_at>unixepoch() ORDER BY j.created_at DESC,j.id LIMIT 64`).bind(actor.personId),
+    env.DB.prepare(`SELECT j.family_id AS familyId,j.id AS requestId,j.invitation_id AS invitationId,j.expires_at AS expiresAt,
+      CASE WHEN j.state='pending' AND j.expires_at<=unixepoch() THEN 'expired'
+           WHEN j.state='pending' AND f.state<>'active' THEN 'cancelled' ELSE j.state END AS state
+      FROM family_notebook_join_requests j JOIN family_notebook_spaces f ON f.id=j.family_id
+      WHERE j.person_id=? ORDER BY j.created_at DESC,j.id LIMIT 64`).bind(actor.personId)]);
+  if (batch.at(-4)?.results[0]?.enabled !== 1) throw new ApiError(503, 'family_notebook_disabled', 'Family notebooks are unavailable.');
+  const families = batch.at(-3)!.results;
   if (families.length > 1) throw new ApiError(503, 'family_notebook_unavailable', 'The current family could not be confirmed.');
-  return jsonResponse({ schemaVersion: 1, personId: actor.personId, family: families[0] ?? null, pendingRequests: batch.at(-1)!.results });
+  return jsonResponse({ schemaVersion: 1, personId: actor.personId, family: families[0] ?? null, pendingRequests: batch.at(-2)!.results, joinRequests: batch.at(-1)!.results });
 }

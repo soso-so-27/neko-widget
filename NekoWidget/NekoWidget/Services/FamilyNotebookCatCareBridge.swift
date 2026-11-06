@@ -16,18 +16,26 @@ enum FamilyNotebookCatCareBridge {
             if !result.contains(where: { $0.familyCatID == cat && $0.recordID == nil && $0.toolCatID != nil }) {
                 // A tombstone without a local copy need not create an empty cat.
                 if snapshot.fieldState(for: .init(familyCatID: cat, field: nil))?.isDeleted == true { continue }
-                let local = makeID()
-                guard !existingLocalIDs.contains(local), !result.contains(where: { $0.toolCatID == local }) else { throw FamilyNotebookError.mappingConflict }
-                result.append(.init(sourceKey: "cat:" + local.uuidString.lowercased(), familyCatID: cat, toolCatID: local))
+                let previous = FamilyNotebookCatRelink.previousCat(cat, in: snapshot).flatMap { prior in
+                    snapshot.mappings.first { $0.familyCatID == prior && $0.recordID == nil && $0.toolCatID != nil }
+                }
+                let local = previous?.toolCatID ?? makeID()
+                guard (previous != nil || !existingLocalIDs.contains(local)),
+                      !result.contains(where: { $0.toolCatID == local }) else { throw FamilyNotebookError.mappingConflict }
+                result.append(.init(sourceKey: "cat:" + local.uuidString.lowercased(), familyCatID: cat,
+                                    profileID: previous?.profileID, toolCatID: local))
             }
             guard let local = result.first(where: { $0.familyCatID == cat && $0.recordID == nil && $0.toolCatID != nil })?.toolCatID else { continue }
             for collection in lists {
                 let ids = Set(snapshot.operations.filter { $0.target.familyCatID == cat && $0.target.collection == collection }.compactMap { $0.target.recordID })
                 for record in ids.sorted(by: { $0.uuidString < $1.uuidString }) {
-                    if collection == .vaccination && [FamilyNotebookVaccinationAnswer.recordID(cat: cat), FamilyNotebookMicrochipAnswer.recordID(cat: cat)].contains(record) { continue }
+                    if collection == .vaccination && [FamilyNotebookVaccinationAnswer.recordID(cat: cat), FamilyNotebookMicrochipAnswer.recordID(cat: cat), FamilyNotebookCatRelink.recordID(cat: cat)].contains(record) { continue }
                     let prefix = sourcePrefix(local, collection)
                     if result.contains(where: { $0.familyCatID == cat && $0.recordID == record && $0.sourceKey.hasPrefix(prefix) }) { continue }
-                    result.append(.init(sourceKey: prefix + makeID().uuidString.lowercased(), familyCatID: cat, recordID: record))
+                    let retained = try FamilyNotebookCatRelink.retainedMapping(cat: cat, record: record, in: snapshot)
+                    let source = retained?.sourceKey.hasPrefix(prefix) == true ? retained!.sourceKey : prefix + makeID().uuidString.lowercased()
+                    guard !result.contains(where: { $0.sourceKey == source }) else { throw FamilyNotebookError.mappingConflict }
+                    result.append(.init(sourceKey: source, familyCatID: cat, recordID: record))
                 }
             }
         }
@@ -61,7 +69,7 @@ enum FamilyNotebookCatCareBridge {
             for collection in lists {
                 for item in snapshot.activeMappings where item.familyCatID == cat && item.recordID != nil {
                     guard let record = item.recordID, let localID = localRecordID(item, cat: local, collection: collection) else { continue }
-                    if collection == .vaccination && [FamilyNotebookVaccinationAnswer.recordID(cat: cat), FamilyNotebookMicrochipAnswer.recordID(cat: cat)].contains(record) { continue }
+                    if collection == .vaccination && [FamilyNotebookVaccinationAnswer.recordID(cat: cat), FamilyNotebookMicrochipAnswer.recordID(cat: cat), FamilyNotebookCatRelink.recordID(cat: cat)].contains(record) { continue }
                     let values = Values(snapshot: snapshot, cat: cat, collection: collection, record: record)
                     try apply(values, localID: localID, into: &state.cats[index])
                 }

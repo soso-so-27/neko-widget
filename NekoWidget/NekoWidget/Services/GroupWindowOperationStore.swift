@@ -69,4 +69,20 @@ final class GroupOperationStore: GroupSecretStore, @unchecked Sendable {
         defer { sqlite3_finalize(statement) }; try bind(account, to: statement)
         guard sqlite3_step(statement) == SQLITE_DONE else { throw GroupClientError.unavailable }
     }
+    func accounts(prefix: String) throws -> [String] {
+        guard prefix.hasPrefix("op:"), prefix.utf8.count <= 80 else { throw GroupClientError.invalidResponse }
+        lock.lock(); defer { lock.unlock() }
+        let statement = try prepare("SELECT account FROM group_http_operations WHERE substr(account,1,?)=? ORDER BY account")
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_int(statement, 1, Int32(prefix.count))
+        guard prefix.withCString({ sqlite3_bind_text(statement, 2, $0, -1, transient) }) == SQLITE_OK else { throw GroupClientError.unavailable }
+        var result: [String] = []
+        while true {
+            let status = sqlite3_step(statement)
+            if status == SQLITE_DONE { return result }
+            guard status == SQLITE_ROW, let text = sqlite3_column_text(statement, 0) else { throw GroupClientError.unavailable }
+            result.append(String(cString: text))
+        }
+    }
+
 }

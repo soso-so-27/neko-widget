@@ -42,6 +42,13 @@ final class FamilyNotebookSession {
         if let notebook { _ = try notebook.endSharing() }
         let next = Participation(familyID: family, admittedGeneration: admittedGeneration), store = try open(next)
         guard try !store.snapshot().sharingEnded else { throw FamilySharingError.removedOrDissolved }
+        if participation?.familyID == family, let notebook {
+            // Only the private ID correspondence crosses admissions. Old edits,
+            // acknowledgements and the departed outbox never resume.
+            let links = try notebook.snapshot().activeMappings
+            try store.applyLocalChanges(.init(familyID: family, entries: [], mappings: links),
+                author: .init(personID: identity.personID, displayName: "local mapping"))
+        }
         try journal.write(GroupWire.encode(next), account: account, createOnly: false)
         participation = next; notebook = store
         return store
@@ -65,6 +72,8 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     typealias SessionProvider = @MainActor () async throws -> FamilyNotebookSession
     private let provider: SessionProvider
     private let billing: @MainActor () async throws -> Void
+    private let hasExistingIdentity: @MainActor () async throws -> Bool
+    private let hasPersonalPlus: @MainActor () -> Bool
     private let displayName: @MainActor () throws -> String
     private let catNames: @MainActor () -> [String]
     private let privateFarewellDay: @MainActor (UUID, UUID?) throws -> String?
@@ -81,6 +90,8 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     private var working = false
     private(set) var needsAnotherPass = false
     private(set) var currentFamilyID: UUID?
+    private(set) var memberNames: [String: String] = [:]
+    private(set) var lastJoinResults: [FamilyNotebookAdmissionClient.JoinResult] = []
     private(set) var lastMembers: [FamilyNotebookAdmissionClient.Member] = []
     var notebook: FamilyNotebookStore? { session?.notebook }
     var author: FamilyNotebookAuthor? {
@@ -92,9 +103,12 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     init(provider: @escaping SessionProvider, billing: @escaping @MainActor () async throws -> Void,
          displayName: @escaping @MainActor () throws -> String, catNames: @escaping @MainActor () -> [String],
          privateFarewellDay: @escaping @MainActor (UUID, UUID?) throws -> String? = { _, _ in nil },
-         now: @escaping @MainActor () -> Date = { Date() }) {
+         now: @escaping @MainActor () -> Date = { Date() },
+         hasPersonalPlus: @escaping @MainActor () -> Bool = { false },
+         hasExistingIdentity: @escaping @MainActor () async throws -> Bool = { true }) {
         self.provider = provider; self.billing = billing; self.displayName = displayName; self.catNames = catNames
         self.privateFarewellDay = privateFarewellDay; self.now = now
+        self.hasPersonalPlus = hasPersonalPlus; self.hasExistingIdentity = hasExistingIdentity
     }
     private func run<T>(_ action: (FamilyNotebookSession) async throws -> T) async throws -> T {
         guard !working else { throw FamilySharingError.unknownOutcome }
@@ -135,11 +149,16 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
         return try await context.membership.loadPayer(familyID: family.familyID, minimumGeneration: family.generation)
     }
     func loadState() async throws -> FamilySharingState {
-        try await run { context in
+        guard try await hasExistingIdentity() else {
+            currentFamilyID = nil; lastMembers = []; session = nil
+            return .notInFamily
+        }
+        return try await run { context in
             needsAnotherPass = false
             try await context.admission.resumePending()
             try await context.membership.resumePending(notebook: context.notebook)
             let directory = try await context.admission.directory()
+            lastJoinResults = directory.joinRequests ?? []
             guard let family = directory.family else {
                 currentFamilyID = nil; lastMembers = []
                 try context.confirmedOutsideFamily()
@@ -157,6 +176,7 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
                 person: context.identity.personID, minimumGeneration: members.generation)
             let store = try context.activate(family: family.familyID, admittedGeneration: own.admittedGeneration)
             currentFamilyID = family.familyID; lastMembers = members.members
+            memberNames = try await context.admission.knownNames(family: family.familyID)
             // Paused sharing still has a real membership and a retained local
             // notebook. Do not turn a write-gate rejection into an endless spinner.
             if state.sharingStatus == .paused { return .inFamily(.init(role: state.role == .payer ? .payer : .member)) }
@@ -171,7 +191,14 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
         }
     }
     func loadPause() async throws -> FamilySharingPause? {
-        try await run { FamilySharingPause(try await payer($0)) }
+        try await run { context in
+            // An existing member who just purchased/restored must connect that
+            // verified billing credential before the relay can offer payer claim.
+            // This neither creates family membership nor buys a subscription.
+            _ = try await family(context)
+            if hasPersonalPlus() { try await billing() }
+            return FamilySharingPause(try await payer(context))
+        }
     }
 
     private func farewellMapping(_ context: FamilyNotebookSession, tool: UUID) throws -> (FamilyNotebookStore, FamilyNotebookLocalMapping) {

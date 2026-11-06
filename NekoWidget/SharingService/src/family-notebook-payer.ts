@@ -70,6 +70,7 @@ export function safeFailure(error: unknown): never {
     ['family_notebook_plus_required', 403, 'plus_entitlement_required'],
     ['family_notebook_already_in_family', 409, 'family_notebook_already_in_family'],
     ['family_notebook_invitation_unavailable', 410, 'family_notebook_invitation_unavailable'],
+    ['family_notebook_request_already_pending', 409, 'family_notebook_request_already_pending'],
     ['family_notebook_request_not_pending', 409, 'family_notebook_request_not_pending'],
     ['family_notebook_not_allowed', 403, 'family_notebook_not_allowed'],
     ['family_notebook_member_limit', 409, 'family_notebook_member_limit'],

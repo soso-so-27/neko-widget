@@ -17,6 +17,7 @@ final class FamilyNotebookSharing: ObservableObject {
     @Published private(set) var isWorking = false
     private var refreshing = false
     @Published private(set) var requests: [FamilyNotebookJoinRequest] = []
+    @Published private(set) var ownJoinResults: [FamilyNotebookAdmissionClient.JoinResult] = []
     let service: any FamilyNotebookSharingService
 
     init(service: any FamilyNotebookSharingService) {
@@ -40,6 +41,7 @@ final class FamilyNotebookSharing: ObservableObject {
             if next != state { state = next }
             if nextPause != pause { pause = nextPause }
             if let real = service as? ProductionFamilyNotebookSharingService {
+                if ownJoinResults != real.lastJoinResults { ownJoinResults = real.lastJoinResults }
                 FamilyNotebookPrototype.shared.attachReal(real, reportsFailure: reportsFailure)
                 let nextRequests = next.membership == nil ? [] : syncing ? requests : try await real.pendingRequests()
                 if nextRequests != requests { requests = nextRequests }

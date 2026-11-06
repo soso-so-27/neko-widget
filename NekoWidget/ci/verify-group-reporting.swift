@@ -593,8 +593,10 @@ private struct VerifyGroupReporting {
         await env.echo.lose(.block)
         try await fails(.offline, "block response loss") { try await service.setBlock(windowID: env.windowID, participantID: target, active: true, operationID: operation) }
         let restarted = try env.service()
+        try require(try await restarted.pendingBlocks(windowID: env.windowID).map(\.id) == [operation], "failed block remains discoverable after restart")
         try await restarted.setBlock(windowID: env.windowID, participantID: target, active: true, operationID: operation)
         try await restarted.setBlock(windowID: env.windowID, participantID: target, active: true, operationID: operation)
+        try require(try await restarted.pendingBlocks(windowID: env.windowID).isEmpty, "acknowledged block no longer asks for retry")
         let mutations = await env.mutationLog()
         try require(mutations.count == 2 && mutations[0].body == mutations[1].body, "block retries exact body and completed operation is local")
         try await fails(.conflict, "same block operation cannot change intent") { try await restarted.setBlock(windowID: env.windowID, participantID: target, active: false, operationID: operation) }

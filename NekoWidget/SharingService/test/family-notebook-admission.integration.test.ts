@@ -187,4 +187,25 @@ describe('independent family admission, not publicly enabled', () => {
     expect((await approve(p, f.id, overflow.id, 4, { ...enabled, FAMILY_NOTEBOOK_MAX_MEMBERS: '2' })).data.error.code).toBe('family_notebook_member_limit');
     expect((await db.prepare("SELECT COUNT(*) n FROM family_notebook_members WHERE family_id=? AND state='active'").bind(f.id).first())?.n).toBe(2);
   });
+  it('returns only the applicant outcomes and rejects duplicate live applications atomically', async () => {
+    const owner = await plusOwner(), guest = await person(), outsider = await person(), f = await family(owner);
+    const first = await invitation(owner, f.id), second = await invitation(owner, f.id);
+    const pending = await join(guest, f.id, first); ok(pending.reply);
+    const duplicate = await join(guest, f.id, second);
+    expect(duplicate.reply.data.error.code).toBe('family_notebook_request_already_pending');
+    expect((await db.prepare("SELECT COUNT(*) n FROM family_notebook_join_requests WHERE person_id=? AND state='pending'").bind(guest.id).first())?.n).toBe(1);
+    let directory = ok(await send(await signed(guest, root + '/me'), enabled));
+    expect(directory.joinRequests).toEqual([expect.objectContaining({ requestId: pending.id, state: 'pending' })]);
+    expect(ok(await send(await signed(outsider, root + '/me'), enabled)).joinRequests).toEqual([]);
+    ok(await call(owner, `${root}/${f.id}/requests/${pending.id}/reject`, { operationId: crypto.randomUUID(), expectedGeneration: 1 }));
+    directory = ok(await send(await signed(guest, root + '/me'), enabled));
+    expect(directory.pendingRequests).toEqual([]);
+    expect(directory.joinRequests).toEqual([expect.objectContaining({ requestId: pending.id, state: 'rejected' })]);
+    const retry = await join(guest, f.id, second); ok(retry.reply);
+    await db.prepare('UPDATE family_notebook_join_requests SET expires_at=unixepoch()-1 WHERE id=?').bind(retry.id).run();
+    directory = ok(await send(await signed(guest, root + '/me'), enabled));
+    expect(directory.pendingRequests).toEqual([]);
+    expect(directory.joinRequests).toContainEqual(expect.objectContaining({ requestId: retry.id, state: 'expired' }));
+  });
+
 });

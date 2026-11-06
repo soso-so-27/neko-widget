@@ -93,6 +93,7 @@ const expectedMigrationNames = [
   "0073_group_deleted_delivery_reports.sql",
   "0074_group_identity_report_erasure.sql",
   "0075_group_identity_deletion_checkpoint.sql",
+  "0076_family_pending_person.sql",
 ];
 
 const databaseGateColumns = [

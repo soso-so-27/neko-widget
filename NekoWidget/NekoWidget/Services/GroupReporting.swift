@@ -90,6 +90,12 @@ enum GroupSafetyError: Error, Equatable, Sendable {
     }
 }
 
+struct GroupPendingBlock: Identifiable, Equatable, Sendable {
+    let id: UUID
+    let windowID: String, participantID: String
+    let active: Bool
+}
+
 @MainActor
 protocol GroupReportingService: AnyObject {
     /// False hides reporting and blocking (the server flags are off by default).
@@ -106,11 +112,13 @@ protocol GroupReportingService: AnyObject {
     func reports(windowID: String) async -> [GroupReportRecord]
     /// Asks the server for this exact report's state and answer.
     func refreshReport(draftID: String) async throws -> GroupReportRecord
+    func pendingBlocks(windowID: String) async throws -> [GroupPendingBlock]
     func setBlock(windowID: String, participantID: String, active: Bool, operationID: UUID) async throws
 }
 
 extension GroupReportingService {
     func refreshAvailability() async {}
+    func pendingBlocks(windowID: String) async throws -> [GroupPendingBlock] { [] }
 }
 
 /// What the screens hold.
@@ -119,6 +127,7 @@ final class GroupSafety: ObservableObject {
     static let shared = GroupSafety(service: GroupReportingProvider.make())
 
     @Published private(set) var records: [String: [GroupReportRecord]] = [:]
+    @Published private(set) var pendingBlocks: [String: [GroupPendingBlock]] = [:]
     @Published var failure: GroupSafetyError?
     @Published private(set) var isWorking = false
     let service: any GroupReportingService
@@ -135,6 +144,8 @@ final class GroupSafety: ObservableObject {
     /// This iPhone's own records only, without asking the server.
     func loadRecords(windowID: String) async {
         records[windowID] = await service.reports(windowID: windowID)
+        do { pendingBlocks[windowID] = try await service.pendingBlocks(windowID: windowID) }
+        catch { failure = error as? GroupSafetyError ?? .storageUnavailable }
     }
 
     /// A photo this person reported stays covered on their iPhone, whatever
