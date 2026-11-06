@@ -1202,7 +1202,7 @@ struct FamilyFarewellShareSheet: View {
 
     private func load() async {
         do {
-            state = try await service.loadFarewellSharing(toolCatID: toolCatID)
+            state = try await FamilyNotebookSharing.waitingForCheck { try await service.loadFarewellSharing(toolCatID: toolCatID) }
         } catch {
             errorMessage = (error as? FamilySharingError ?? .serviceUnavailable).message
         }
@@ -1212,7 +1212,7 @@ struct FamilyFarewellShareSheet: View {
         working = true; defer { working = false }
         errorMessage = nil
         do {
-            preview = try await service.previewFarewellSharing(toolCatID: toolCatID)
+            preview = try await FamilyNotebookSharing.waitingForCheck { try await service.previewFarewellSharing(toolCatID: toolCatID) }
             consentOperation = nil
         } catch {
             errorMessage = (error as? FamilySharingError ?? .serviceUnavailable).message

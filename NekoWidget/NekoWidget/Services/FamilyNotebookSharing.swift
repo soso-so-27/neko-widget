@@ -24,6 +24,20 @@ final class FamilyNotebookSharing: ObservableObject {
         self.service = service
     }
 
+    /// The service takes one call at a time and answers a second one with
+    /// unknownOutcome. A read started while the notebook's own check runs
+    /// waits for it (a few seconds at most) instead of failing (11/6: the
+    /// farewell row went missing and the sheet said 「結果を確かめています」).
+    static func waitingForCheck<T>(_ read: () async throws -> T) async throws -> T {
+        for attempt in 0..<5 {
+            do { return try await read() }
+            catch FamilySharingError.unknownOutcome where attempt < 4 {
+                try await Task.sleep(for: .seconds(1))
+            }
+        }
+        return try await read()
+    }
+
     /// Background passes stay quiet: only something the person did, or asked to
     /// check again, shows a failure (11/5: the alert repeated while polling).
     func refresh(reportsFailure: Bool = false) async {

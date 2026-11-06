@@ -2326,6 +2326,10 @@ struct GroupIdentityDeletionView: View {
                         .disabled(working)
                 } else {
                     Text("参加しているまどと家族の手帳から抜け、あなたが届けた写真・ひとこと・ハートと、まどの ID をサーバーから消します。")
+                    // Leaving is not cancelling: Apple keeps billing until the
+                    // subscription itself is cancelled (11/6).
+                    Text("Plusの支払いは、ここでは止まりません。止めるときは、iPhoneの「設定」→ Apple アカウント →「サブスクリプション」から解約してください。")
+                        .font(.footnote).foregroundStyle(.secondary)
                     Button(role: .destructive) { confirms = true } label: {
                         WorkingLabel(title: "まどと家族の手帳から抜ける", workingTitle: "抜けています…", working: working)
                     }

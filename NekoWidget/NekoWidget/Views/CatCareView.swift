@@ -203,6 +203,10 @@ struct CatCareDetailView: View {
     @State private var draft = CatCareDraft()
     @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
     @State private var savedDraft = CatCareDraft()
+    /// What the store held when this page last read or wrote it. A choice
+    /// not stored yet (持病「あり」 before its text) differs from it on purpose,
+    /// so only a value that changed in the store is taken in (11/6).
+    @State private var storedDraft = CatCareDraft()
     @State private var catID: UUID?
     @State private var autosave: Task<Void, Never>?
     @State private var saveFailed = false
@@ -577,7 +581,11 @@ struct CatCareDetailView: View {
             farewellSharing = nil
             return
         }
-        farewellSharing = try? await FamilyNotebookSharing.shared.service.loadFarewellSharing(toolCatID: catID)
+        // Kept as shown when the read fails; a busy service is waited for.
+        let service = FamilyNotebookSharing.shared.service
+        if let loaded = try? await FamilyNotebookSharing.waitingForCheck({ try await service.loadFarewellSharing(toolCatID: catID) }) {
+            farewellSharing = loaded
+        }
     }
 
     private var currentRecord: CatCareRecord? { catID.flatMap { store.state?.record(catID: $0) } }
@@ -608,6 +616,7 @@ struct CatCareDetailView: View {
         catID = record.catID
         draft = CatCareDraft(record: record, household: store.state?.household ?? CatCareHousehold())
         savedDraft = draft
+        storedDraft = draft
         microchipInvalid = false
     }
 
@@ -635,6 +644,9 @@ struct CatCareDetailView: View {
         }
         // What was actually stored: an unfinished chip number stays out of it.
         if saved { savedDraft = value }
+        if saved, let state = store.state, let record = state.record(catID: catID) {
+            storedDraft = CatCareDraft(record: record, household: state.household)
+        }
         autosaveFailed = !saved
     }
 
@@ -644,8 +656,11 @@ struct CatCareDetailView: View {
         guard let catID, let state = store.state, let record = state.record(catID: catID) else { return }
         let fresh = CatCareDraft(record: record, household: state.household)
         var next = draft
+        // Taken: an item untouched here whose stored value someone else changed.
         func take<Value: Equatable>(_ path: WritableKeyPath<CatCareDraft, Value>) {
-            if draft[keyPath: path] == savedDraft[keyPath: path] { next[keyPath: path] = fresh[keyPath: path] }
+            if draft[keyPath: path] == savedDraft[keyPath: path], fresh[keyPath: path] != storedDraft[keyPath: path] {
+                next[keyPath: path] = fresh[keyPath: path]
+            }
         }
         take(\.sex); take(\.neutered); take(\.indoorOnly); take(\.allergyStatus); take(\.conditionsStatus)
         take(\.microchipStatus); take(\.vaccinationStatus); take(\.vetStatus)
@@ -654,6 +669,7 @@ struct CatCareDetailView: View {
             \.temperament, \.ownerContact, \.backupContact, \.vetName, \.vetPhone, \.meetingPlace]
         for path in texts { take(path) }
         savedDraft = fresh
+        storedDraft = fresh
         draft = next
     }
 

@@ -798,6 +798,10 @@ struct PlusOfferPrompt: View {
     @State private var didPresent = false
 
     var body: some View {
+        // The sheet hangs on the prompt as a whole, not on one branch: buying
+        // flips the state to 「確認中」 for a moment, and the sheet must not
+        // close under the person mid-purchase (11/6).
+        Group {
         if decision == .membershipRequired {
             VStack(spacing: 14) {
                 if let reason = context.reason {
@@ -817,13 +821,14 @@ struct PlusOfferPrompt: View {
                 didPresent = true
                 showsOffer = true
             }
-            .sheet(isPresented: $showsOffer, onDismiss: {
-                NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
-            }) {
-                MembershipOfferSheet(model: .live(), context: context) { _ in showsOffer = false }
-            }
         } else {
             MembershipAccessNotice(decision: decision)
+        }
+        }
+        .sheet(isPresented: $showsOffer, onDismiss: {
+            NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
+        }) {
+            MembershipOfferSheet(model: .live(), context: context) { _ in showsOffer = false }
         }
     }
 }
