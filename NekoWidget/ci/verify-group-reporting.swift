@@ -614,6 +614,11 @@ private struct VerifyGroupReporting {
             try require([.disabled, .authenticationRequired, .notAuthorized].contains(error), "replacement identity refused")
         }
         try require(await env.mutationLog().count == before, "replacement identity sends no report mutation")
+        // Corrupt only this disposable fixture row: failed reads must not expose photos.
+        try reportingSQL(env.directory, "UPDATE reports SET data=X'00'")
+        let safety = GroupSafety(service: restarted)
+        await safety.loadRecords(windowID: env.windowID)
+        try require(safety.hasReported(env.photoID, in: env.windowID), "unreadable suppression fails closed")
     }
 
     private static func blocking(_ root: URL, _ jpeg: Data) async throws {
