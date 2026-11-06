@@ -152,6 +152,10 @@ final class GroupWindowScreenModel: ObservableObject {
     }
 
     var isFormer: Bool { formerName != nil }
+    /// The relay no longer counts this iPhone in the window: its owner ended
+    /// it, or took this person out. Nothing can be sent; what arrived stays
+    /// (11/6: 「写真を届ける」 stayed and failed every time).
+    @Published private(set) var isGone = false
 
     var isPaused: Bool { window.map(GroupWindowPresentation.isPaused) ?? false }
 
@@ -235,6 +239,7 @@ final class GroupWindowScreenModel: ObservableObject {
             }
             receiveNotice = waiting.map(GroupPhotoModeration.receiveMessage)
             message = nil
+            isGone = false
             // A photo whose sending stopped when the app closed: offer it again.
             if failedDelivery == nil, !isSending, latest.state == .active,
                let pending = await client.pendingDelivery(windowID: windowID) {
@@ -242,6 +247,8 @@ final class GroupWindowScreenModel: ObservableObject {
                     photo: PreparedPhoto(jpeg: pending.jpeg, photoIdentifier: nil, operationID: pending.operationID),
                     memo: pending.caption ?? "")
             }
+        } catch GroupClientError.notMember {
+            window = nil; failedDelivery = nil; message = nil; isGone = true
         } catch {
             message = GroupWindowPresentation.message(for: error)
         }
@@ -368,7 +375,10 @@ final class GroupWindowScreenModel: ObservableObject {
                     ? prepared : PreparedPhoto(jpeg: prepared.jpeg, photoIdentifier: prepared.photoIdentifier)
                 failedDelivery = FailedDelivery(photo: retry, memo: memo)
             }
+            let reason = message
             await sync()
+            // A sync that works must not erase why this photo was not sent.
+            if message == nil, !isGone { message = reason }
         }
     }
 
@@ -705,8 +715,27 @@ struct GroupWindowScreen: View {
                         .padding(.horizontal, 16)
                         .accessibilityIdentifier("group-window-former")
                 }
+                if model.isGone {
+                    Label("このまどは終わったか、メンバーから外れました。届いた写真は、このiPhoneに残っています。",
+                          systemImage: "person.2.slash")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 16)
+                        .accessibilityIdentifier("group-window-gone")
+                }
                 if let window = model.window, model.isPaused {
                     pausedCard(window)
+                }
+                // Someone left and the key is being renewed on the creator's
+                // iPhone: say why sending waits, here and not only in メンバー.
+                if let window = model.window, window.state == .rotationRequired, !window.canManage {
+                    Label(GroupWindowPresentation.message(for: GroupClientError.rotationPending), systemImage: "key")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 16)
+                        .accessibilityIdentifier("group-window-rotation-wait")
                 }
                 if let message = model.message {
                     screenMessage(message)
@@ -784,7 +813,7 @@ struct GroupWindowScreen: View {
             Text("消したあとは元に戻せません。")
         }
         .safeAreaInset(edge: .bottom) {
-            if !model.isFormer { sendBar }
+            if !model.isFormer && !model.isGone { sendBar }
         }
         .sheet(isPresented: $showsCatPicker) {
             GroupCatPhotoPickerSheet(photos: catPhotos, pickedItem: $pickedItem) { identifier in
@@ -1155,7 +1184,9 @@ private struct GroupLibraryDeliveryStep: View {
                 }
                 .safeAreaInset(edge: .bottom) {
                     Button {
-                        Task { await model.deliver(prepared, memo: memo) }
+                        // After a failure, the copy the model kept (a new seal
+                        // when the window's key changed), not the first one.
+                        Task { await model.deliver(model.failedDelivery?.photo ?? prepared, memo: memo) }
                     } label: {
                         Group {
                             if model.isSending {
@@ -1167,7 +1198,7 @@ private struct GroupLibraryDeliveryStep: View {
                         .font(.headline).frame(maxWidth: .infinity, minHeight: 50)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(model.isSending || GroupPhotoCaption.validationMessage(for: memo) != nil)
+                    .disabled(model.isSending || !model.canSend || GroupPhotoCaption.validationMessage(for: memo) != nil)
                     .accessibilityIdentifier("group-library-delivery-send")
                     .padding().background(.regularMaterial)
                 }
