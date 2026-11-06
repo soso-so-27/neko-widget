@@ -208,6 +208,7 @@ final class PlusPurchaseStore: ObservableObject {
         didSet {
             let access = MembershipAccessContext(entitlement: entitlementState)
             membershipActions.update(enforcementEnabled: access.enforcementEnabled, personal: access.personal)
+            scheduleAuthorityExpiry()
         }
     }
     /// Updated synchronously with authority, independent of View lifetimes.
@@ -218,6 +219,8 @@ final class PlusPurchaseStore: ObservableObject {
     @Published private(set) var awaitingServerConfirmation = false
     /// Presentation eligibility only; this never grants an entitlement.
     @Published private(set) var canStartNewPurchase = false
+    @Published private(set) var hasBillingIssue = false
+    private var authorityExpiryTask: Task<Void, Never>?
 
     private struct EntitlementScan {
         var events: [PlusVerifiedTransactionEvent] = []
@@ -285,6 +288,21 @@ final class PlusPurchaseStore: ObservableObject {
     deinit {
         transactionUpdatesTask?.cancel()
         storefrontUpdatesTask?.cancel()
+        authorityExpiryTask?.cancel()
+    }
+
+    /// Refresh at the existing signed deadline even if the app stays foreground.
+    /// A failed refresh never extends that deadline or makes a new purchase eligible.
+    private func scheduleAuthorityExpiry() {
+        authorityExpiryTask?.cancel()
+        guard let expiry = entitlementState.lastServerConfirmed?.expirationDate,
+              expiry > .now else { return }
+        authorityExpiryTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(max(0, expiry.timeIntervalSinceNow))) }
+            catch { return }
+            guard !Task.isCancelled, let self else { return }
+            await self.refreshAfterForegroundEntry()
+        }
     }
 
     func start() async {
@@ -342,6 +360,7 @@ final class PlusPurchaseStore: ObservableObject {
     }
 
     func stop() {
+        authorityExpiryTask?.cancel()
         startTask?.cancel()
         refreshTask?.cancel()
         reconciliationTask?.cancel()
@@ -671,7 +690,9 @@ final class PlusPurchaseStore: ObservableObject {
                !awaitingServerConfirmation,
                await hasFreshLocalPurchaseEligibility() {
                 guard purchaseEligibilityGeneration == eligibilityGeneration else { return }
-                markServerConfirmationIndeterminate()
+                // A verified empty local history with fresh-account eligibility
+                // is not a failed verification. All paid entry points may offer Plus.
+                entitlementState = .inactive
                 canStartNewPurchase = true
                 return
             }
@@ -715,9 +736,16 @@ final class PlusPurchaseStore: ObservableObject {
                 authorityAllowsNewPurchase = authority.productId == nil
                     && authority.accessUntilMs == nil && authority.authorityStaleAtMs == nil
                 discardCachedAuthority()
+                if authorityAllowsNewPurchase {
+                    hasBillingIssue = false
+                    entitlementState = .inactive
+                    awaitingServerConfirmation = false
+                    return .denied
+                }
                 markServerConfirmationIndeterminate()
                 return .indeterminate
             }
+            hasBillingIssue = authority.status == .billingRetry
             guard authority.status.grantsAccess else {
                 discardCachedAuthority()
                 authorityAllowsNewPurchase = authority.status == .expired || authority.status == .revoked
