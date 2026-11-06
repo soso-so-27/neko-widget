@@ -1776,11 +1776,12 @@ struct FamilyFaces: View {
 
 /// Keep the existing authenticated service moving while a shared tool is open.
 private struct FamilyNotebookToolSyncModifier: ViewModifier {
+    var enabled: Bool
     @ObservedObject private var model = FamilyNotebookPrototype.shared
     @Environment(\.scenePhase) private var phase
     func body(content: Content) -> some View {
-        content.task(id: phase == .active && model.hasFamily) {
-            guard phase == .active, model.hasFamily, model.isReal else { return }
+        content.task(id: enabled && phase == .active && model.hasFamily) {
+            guard enabled, phase == .active, model.hasFamily, model.isReal else { return }
             while !Task.isCancelled {
                 if !FamilyNotebookSharing.shared.isWorking { await FamilyNotebookSharing.shared.refresh() }
                 do { try await Task.sleep(for: .seconds(5)) } catch { return }
@@ -1791,7 +1792,9 @@ private struct FamilyNotebookToolSyncModifier: ViewModifier {
 extension View {
     /// Poll only while an actual shared tool is visible in the foreground.
     /// The sharing service still enforces participation, pause and entitlement.
-    func familyNotebookToolSync() -> some View { modifier(FamilyNotebookToolSyncModifier()) }
+    func familyNotebookToolSync(enabled: Bool = true) -> some View {
+        modifier(FamilyNotebookToolSyncModifier(enabled: enabled))
+    }
 }
 
 /// How the notebook's items read on screen.

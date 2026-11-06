@@ -3,8 +3,7 @@ import SwiftUI
 import UIKit
 
 // 「この子のこと」: each cat's information in one place, read by every tool.
-// Stored on this iPhone only. Nothing here is sent anywhere; it leaves the
-// iPhone only when the owner exports a tool's sheet themselves.
+// Local records are shared only for cats explicitly added to the family notebook.
 
 /// Entry from the Tools tab: pick a cat (with several), then its page.
 struct CatCareEntryView: View {
@@ -288,6 +287,7 @@ struct CatCareDetailView: View {
         }
         .onDisappear { autosave?.cancel(); save() }
         .appRecordEditing(retainWhileHidden: draft != savedDraft || editing != nil || saveFailed || autosaveFailed)
+        .familyNotebookToolSync(enabled: sharedWithFamily)
         .onChange(of: familyNotebook.familyWritesToCatCare) { _, _ in takeFamilyWrites() }
         .toolbar {
             // The family, at the top right like sharing in Notes, so it is
