@@ -1583,9 +1583,12 @@ struct AppRecordSettingsView: View {
             }
             // Signing in again to continue an export must not start other reads.
             guard !exporter.preparing else { return }
-            authentication.refreshUsage()
             if starting { Task { await persistence.enable() } }
             linkPlusIfStarting()
+        }
+        .onChange(of: persistence.title) { _, title in
+            guard title == "保存済み", !exporter.preparing else { return }
+            authentication.refreshUsage()
         }
         .onChange(of: authentication.membership?.linked) { _, _ in linkPlusIfStarting() }
         .onChange(of: authentication.isBusy) { _, busy in if !busy { linkPlusIfStarting() } }
@@ -2430,6 +2433,19 @@ private final class AppRecordFixture {
         try await settle(account)
         guard !account.isSignedIn, account.preparedSignIn == nil, account.errorMessage != nil,
               try store.load() == expired, await server.counts().0 == before else { throw ToolBackupError.storage }
+        account.stop()
+
+        Self.preparationPhase = "初回の期限切れは一度だけ静かに再確認"
+        _ = try installRenewableFixtureCredential(expired: true)
+        let renewForFixture = Task { @MainActor in
+            try await Task.sleep(for: .milliseconds(100))
+            return try self.installRenewableFixtureCredential(expired: false)
+        }
+        account.start(observingOnly: true)
+        try await settle(account)
+        let renewedForFixture = try await renewForFixture.value
+        guard account.isSignedIn, account.errorMessage == nil, account.preparedSignIn == nil,
+              try store.load() == renewedForFixture else { throw ToolBackupError.storage }
         account.stop()
 
         Self.preparationPhase = "照会中の本当のowner切替は拒否"
