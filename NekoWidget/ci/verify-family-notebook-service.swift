@@ -193,8 +193,8 @@ private actor Relay: GroupHTTPTransport {
         let requests = try await creator.admission.requests(family)
         try check(requests.requests.count == 1, "only one request after lost ACK")
         let previewsBefore = await relay.bodies("/preview").count
-        let reopened = try await resumedGuest.admission.preview(invitation.link)
-        try check(reopened.priorRequestState == "pending", "reopened link gives authenticated pending result")
+        let reopenedInvitation = try await resumedGuest.admission.preview(invitation.link)
+        try check(reopenedInvitation.priorRequestState == "pending", "reopened link gives authenticated pending result")
         try check(await relay.bodies("/preview").count == previewsBefore, "consumed invitation needs no second preview request")
         try check(try await creator.admission.requestName(requests.requests[0], family: family) == "合成の参加者", "approved UI name is decrypted and authenticated")
         await relay.corruptNextReceipt()
