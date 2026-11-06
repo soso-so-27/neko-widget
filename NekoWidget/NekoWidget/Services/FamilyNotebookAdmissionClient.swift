@@ -261,7 +261,7 @@ actor FamilyNotebookAdmissionClient {
         // A consumed invitation is not an expired application. Read this
         // person's authenticated result before asking for a new preview.
         let ownDirectory = try await directory()
-        if let prior = ownDirectory.joinRequests?.last(where: {
+        if let prior = ownDirectory.joinRequests?.first(where: {
             $0.familyID == capability.familyID && $0.invitationID == capability.invitationID
         }), let saved = try? savedPreview(capability.invitationID, enforceExpiry: false) {
             return .init(inviterName: saved.content.inviterName, catNames: saved.content.catNames,
