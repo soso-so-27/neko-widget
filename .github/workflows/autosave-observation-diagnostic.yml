@@ -2,7 +2,7 @@ name: Automatic-save observation diagnostic
 
 on:
   push:
-    branches: ['diagnostic/autosave-status-*', 'diagnostic/autosave-efficiency-*', 'diagnostic/autosave-rebind-model-*', 'diagnostic/autosave-rebind-ui-*']
+    branches: ['diagnostic/autosave-status-*', 'diagnostic/autosave-efficiency-*', 'diagnostic/autosave-rebind-model-*', 'diagnostic/autosave-rebind-ui-*', 'diagnostic/autosave-opening-ui-*']
     paths:
       - '.github/workflows/autosave-observation-diagnostic.yml'
       - 'NekoWidget/NekoWidget/Services/AppRecordPersistence.swift'
@@ -74,6 +74,10 @@ jobs:
           if [[ "$GITHUB_REF" == refs/heads/diagnostic/autosave-rebind-ui-* ]]; then
             tests=(-only-testing:NekoWidgetUITests/SoloMemoriesUITests/testAutomaticSaveDestinationRebind)
           fi
+          if [[ "$GITHUB_REF" == refs/heads/diagnostic/autosave-opening-ui-* ]]; then
+            tests=(-only-testing:NekoWidgetUITests/SoloMemoriesUITests/testAutomaticSaveSettingsDoNotInvalidateSession
+                   -only-testing:NekoWidgetUITests/SoloMemoriesUITests/testAutomaticSaveRefreshesVisibleUsage)
+          fi
           xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Debug \
             -sdk iphonesimulator -destination "platform=iOS Simulator,id=$device" \
             -derivedDataPath "$RUNNER_TEMP/autosave-build" \
@@ -92,6 +96,8 @@ jobs:
                     'testAutomaticPartitionedRecordsMigrationAndRestore']
           if os.environ['GITHUB_REF'].startswith('refs/heads/diagnostic/autosave-rebind-ui-'):
               expected=['testAutomaticSaveDestinationRebind']
+          if os.environ['GITHUB_REF'].startswith('refs/heads/diagnostic/autosave-opening-ui-'):
+              expected=['testAutomaticSaveSettingsDoNotInvalidateSession', 'testAutomaticSaveRefreshesVisibleUsage']
           for name in expected:
               found=[state for case,state in cases if case == 'NekoWidgetUITests.SoloMemoriesUITests '+name]
               if found != ['started','passed']:

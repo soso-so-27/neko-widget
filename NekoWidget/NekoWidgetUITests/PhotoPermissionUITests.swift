@@ -1477,6 +1477,31 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testAutomaticSaveRefreshesVisibleUsage() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-records-ui-fixture", "--app-records-opening-usage-ui",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        XCTAssertTrue(app.buttons["保存・復元"].waitForExistence(timeout: 60), app.debugDescription)
+        app.buttons["保存・復元"].tap()
+        let count = app.descendants(matching: .any)["preservation-quota-records"].firstMatch
+        XCTAssertTrue(count.waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(count.label.contains("0 / 3,000"), count.label)
+        let start = app.buttons["app-record-enable"]
+        if !start.isHittable { app.swipeUp() }
+        XCTAssertTrue(start.waitForExistence(timeout: 10), app.debugDescription)
+        start.tap()
+        let saved = NSPredicate(format: "label CONTAINS %@", "3 / 3,000")
+        expectation(for: saved, evaluatedWith: count)
+        waitForExpectations(timeout: 120)
+        let storage = app.descendants(matching: .any)["preservation-quota-storage"].firstMatch
+        XCTAssertFalse(storage.label.contains("0 KB /"), storage.label)
+        XCTAssertTrue(app.staticTexts["保存済み"].exists, app.debugDescription)
+        capture("automatic-save-usage-after-save")
+    }
+
+    @MainActor
     func testAutomaticSaveSettingsDoNotInvalidateSession() {
         continueAfterFailure = false
         let app = XCUIApplication()
