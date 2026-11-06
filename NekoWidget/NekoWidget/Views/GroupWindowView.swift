@@ -680,6 +680,9 @@ struct GroupWindowScreen: View {
     @State private var prepared: GroupWindowScreenModel.PreparedPhoto?
     @State private var openedEntry: GroupWindowLocalPhotoStore.Entry?
     @State private var showsForgetConfirmation = false
+    /// A window this person left keeps its reports: their answers stay
+    /// readable from here, as the report sheet promises (11/7).
+    @State private var showsFormerReports = false
     @State private var confirmsDiscardFailedDelivery = false
     @Environment(\.dismiss) private var dismiss
 
@@ -799,10 +802,27 @@ struct GroupWindowScreen: View {
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle(model.window?.name ?? model.formerName ?? "まど")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showsFormerReports) {
+            NavigationStack {
+                GroupReportsView(windowID: model.windowID)
+                    .navigationTitle("通報への返答")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("閉じる") { showsFormerReports = false }
+                        }
+                    }
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 if model.isFormer {
                     Menu {
+                        if !(GroupSafety.shared.records[model.windowID] ?? []).isEmpty {
+                            Button("通報への返答", systemImage: "exclamationmark.bubble") {
+                                showsFormerReports = true
+                            }
+                        }
                         Button("このまどを一覧から消す", systemImage: "trash", role: .destructive) {
                             showsForgetConfirmation = true
                         }
