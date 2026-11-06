@@ -2,7 +2,7 @@ name: Automatic-save observation diagnostic
 
 on:
   push:
-    branches: ['diagnostic/autosave-status-*', 'diagnostic/autosave-efficiency-*']
+    branches: ['diagnostic/autosave-status-*', 'diagnostic/autosave-efficiency-*', 'diagnostic/autosave-rebind-model-*', 'diagnostic/autosave-rebind-ui-*']
     paths:
       - '.github/workflows/autosave-observation-diagnostic.yml'
       - 'NekoWidget/NekoWidget/Services/AppRecordPersistence.swift'
@@ -20,7 +20,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  rebind-model:
+    if: startsWith(github.ref, 'refs/heads/diagnostic/autosave-rebind-model-')
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Check actual metadata transaction with interrupted synthetic files
+        working-directory: NekoWidget
+        run: |
+          set -euo pipefail
+          python3 ci/prepare-preservation-rebind-probe.py "$RUNNER_TEMP/rebind.swift"
+          swiftc -parse-as-library "$RUNNER_TEMP/rebind.swift" -o "$RUNNER_TEMP/rebind"
+          "$RUNNER_TEMP/rebind"
+          python3 ci/prepare-preservation-signin-probe.py "$RUNNER_TEMP/signin.swift"
+          swiftc -parse-as-library "$RUNNER_TEMP/signin.swift" -o "$RUNNER_TEMP/signin"
+          "$RUNNER_TEMP/signin"
   observation:
+    if: ${{ !startsWith(github.ref, 'refs/heads/diagnostic/autosave-rebind-model-') }}
     name: Synthetic automatic-save observation only (not release evidence)
     runs-on: macos-15
     timeout-minutes: 35
@@ -46,13 +65,17 @@ jobs:
           python3 ci/prepare-save-lifetime-check.py "$RUNNER_TEMP/save-lifetime.swift"
           swiftc -parse-as-library "$RUNNER_TEMP/save-lifetime.swift" ci/verify-save-lifetime.swift -o "$RUNNER_TEMP/save-lifetime"
           "$RUNNER_TEMP/save-lifetime"
+          tests=(-only-testing:NekoWidgetUITests/SoloMemoriesUITests/testAutomaticSaveSettingsDoNotInvalidateSession
+                 -only-testing:NekoWidgetUITests/SoloMemoriesUITests/testAutomaticSaveEfficiencyAndCleanupPriority
+                 -only-testing:NekoWidgetUITests/SoloMemoriesUITests/testAutomaticPartitionedRecordsMigrationAndRestore)
+          if [[ "$GITHUB_REF" == refs/heads/diagnostic/autosave-rebind-ui-* ]]; then
+            tests=(-only-testing:NekoWidgetUITests/SoloMemoriesUITests/testAutomaticSaveDestinationRebind)
+          fi
           xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Debug \
             -sdk iphonesimulator -destination "platform=iOS Simulator,id=$device" \
             -derivedDataPath "$RUNNER_TEMP/autosave-build" \
             -resultBundlePath "$RUNNER_TEMP/autosave-observation.xcresult" \
-            -only-testing:NekoWidgetUITests/SoloMemoriesUITests/testAutomaticSaveSettingsDoNotInvalidateSession \
-            -only-testing:NekoWidgetUITests/SoloMemoriesUITests/testAutomaticSaveEfficiencyAndCleanupPriority \
-            -only-testing:NekoWidgetUITests/SoloMemoriesUITests/testAutomaticPartitionedRecordsMigrationAndRestore \
+            "${tests[@]}" \
             -parallel-testing-enabled NO -testLanguage ja -testRegion JP \
             COMPILER_INDEX_STORE_ENABLE=NO CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- \
             AD_HOC_CODE_SIGNING_ALLOWED=YES test 2>&1 | tee "$RUNNER_TEMP/autosave-observation.log"
@@ -64,6 +87,8 @@ jobs:
           expected=['testAutomaticSaveSettingsDoNotInvalidateSession',
                     'testAutomaticSaveEfficiencyAndCleanupPriority',
                     'testAutomaticPartitionedRecordsMigrationAndRestore']
+          if os.environ['GITHUB_REF'].startswith('refs/heads/diagnostic/autosave-rebind-ui-'):
+              expected=['testAutomaticSaveDestinationRebind']
           for name in expected:
               found=[state for case,state in cases if case == 'NekoWidgetUITests.SoloMemoriesUITests '+name]
               if found != ['started','passed']:

@@ -1451,6 +1451,18 @@ final class SoloMemoriesUITests: XCTestCase {
         app.terminate()
     }
     @MainActor
+    func testAutomaticSaveDestinationRebind() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-records-ui-fixture", "--app-records-rebind-probe",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["保存先を切り替えて保存済みまで確認しました"].waitForExistence(timeout: 120), app.debugDescription)
+        print(app.staticTexts["autosave-measurements"].label)
+        capture("automatic-save-destination-rebind")
+    }
+
+    @MainActor
     func testAutomaticSaveEfficiencyAndCleanupPriority() {
         continueAfterFailure = false
         let app = XCUIApplication()

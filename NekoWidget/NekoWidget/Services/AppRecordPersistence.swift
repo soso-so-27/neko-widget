@@ -17,17 +17,85 @@ enum AppRecordEditingError: Error { case inProgress }
 
 /// A settings mismatch is not a corrupt tool record. Keep all bytes untouched.
 enum AppRecordBindingError: String, LocalizedError {
-    case destination = "P01", format = "P02", consent = "P03"
+    case destination = "P01", format = "P02", consent = "P03", rebinding = "P04", busy = "P05"
     var errorDescription: String? {
         switch self {
         case .destination:
             "以前の保存先と、この版の保存先が異なります。このiPhoneの記録と、以前の保存データは残っています（P01）。"
+        case .rebinding, .busy:
+            "保存を始められませんでした。このiPhoneの記録は残っています。もう一度試してください（\(rawValue)）。"
         case .format, .consent:
             "自動保存の設定を確認できません。このiPhoneの記録と、保存したデータは残っています（\(rawValue)）。"
         }
     }
 }
 
+
+/// A recoverable metadata-only transaction. The live dataset is never a target.
+/// The pending marker is published only after the previous bytes and plan exist.
+enum AppRecordRebinding {
+    struct Marker: Codable { let id: UUID; let planHash: Data; var pending: Bool }
+    struct Plan: Codable { let previous: [String: Data]; let next: [String: Data] }
+    static let names: Set<String> = ["binding.json", "owner.json", "active.json"]
+    static func bytes(_ url: URL) throws -> Data? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let value = try Data(contentsOf: url)
+        guard value.count <= 65_536 else { throw AppRecordBindingError.rebinding }
+        return value
+    }
+    static func write(_ bytes: Data, to url: URL) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+#if os(iOS)
+        try FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: url.deletingLastPathComponent().path)
+        try bytes.write(to: url, options: [.atomic, .completeFileProtection])
+#else
+        try bytes.write(to: url, options: .atomic)
+#endif
+    }
+    static func recover(at control: URL) throws {
+        let markerURL = control.appendingPathComponent("rebind.json")
+        guard let raw = try bytes(markerURL) else { return }
+        var marker = try JSONDecoder().decode(Marker.self, from: raw)
+        guard marker.pending else { return }
+        let folder = control.appendingPathComponent("previous-settings/" + marker.id.uuidString)
+        let planBytes = try Data(contentsOf: folder.appendingPathComponent("plan.json"))
+        guard planBytes.count <= 262_144, Data(SHA256.hash(data: planBytes)) == marker.planHash else { throw AppRecordBindingError.rebinding }
+        let plan = try JSONDecoder().decode(Plan.self, from: planBytes)
+        guard Set(plan.previous.keys).isSubset(of: names), Set(plan.next.keys).isSubset(of: names),
+              plan.previous["binding.json"] != nil, plan.next["binding.json"] != nil,
+              plan.next["owner.json"] != nil,
+              (plan.previous["active.json"] == nil) == (plan.next["active.json"] == nil) else { throw AppRecordBindingError.rebinding }
+        for name in names {
+            let current = try bytes(control.appendingPathComponent(name))
+            guard current == plan.previous[name] || current == plan.next[name],
+                  try bytes(folder.appendingPathComponent(name)) == plan.previous[name] else { throw AppRecordBindingError.rebinding }
+        }
+        for (name, next) in plan.next {
+            let url = control.appendingPathComponent(name)
+            if try bytes(url) != next { try write(next, to: url) }
+        }
+        for (name, next) in plan.next {
+            guard try bytes(control.appendingPathComponent(name)) == next else { throw AppRecordBindingError.rebinding }
+        }
+        marker.pending = false
+        try write(JSONEncoder().encode(marker), to: markerURL)
+    }
+    static func begin(at control: URL, previous: [String: Data], next: [String: Data], fence: () throws -> Void) throws {
+        try recover(at: control)
+        guard Set(previous.keys).isSubset(of: names), Set(next.keys).isSubset(of: names) else { throw AppRecordBindingError.rebinding }
+        for name in names {
+            guard try bytes(control.appendingPathComponent(name)) == previous[name] else { throw AppRecordBindingError.rebinding }
+        }
+        let planBytes = try JSONEncoder().encode(Plan(previous: previous, next: next))
+        let marker = Marker(id: UUID(), planHash: Data(SHA256.hash(data: planBytes)), pending: true)
+        let folder = control.appendingPathComponent("previous-settings/" + marker.id.uuidString)
+        for (name, raw) in previous { try write(raw, to: folder.appendingPathComponent(name)) }
+        try write(planBytes, to: folder.appendingPathComponent("plan.json"))
+        try fence()
+        try write(JSONEncoder().encode(marker), to: control.appendingPathComponent("rebind.json"))
+        try recover(at: control)
+    }
+}
 
 /// These leases outlive hidden editors and nested presentations. They protect
 /// memory-only drafts, which a fingerprint of committed files cannot detect.
@@ -83,6 +151,7 @@ enum AppRecordDataset {
         let owner: String
         let origin: String
         var manifests: [String]? = nil
+        var sourceReceipt: Data? = nil
     }
     #if DEBUG
     private static var fixtureSupport: URL? = {
@@ -111,17 +180,22 @@ enum AppRecordDataset {
     static var datasets: URL { support.appendingPathComponent("AppRecordDatasets", isDirectory: true) }
     private static var pointerURL: URL { control.appendingPathComponent("active.json") }
     static func pointer() throws -> Pointer? {
+        writeLock.lock(); defer { writeLock.unlock() }
+        try AppRecordRebinding.recover(at: control)
         guard FileManager.default.fileExists(atPath: pointerURL.path) else { return nil }
-        let value = try JSONDecoder().decode(Pointer.self, from: ToolBackupFiles.read(pointerURL, maximum: 4096))
+        let value = try JSONDecoder().decode(Pointer.self, from: ToolBackupFiles.read(pointerURL, maximum: 8192))
         guard value.version == 1, !value.owner.isEmpty,
               URL(string: value.origin)?.scheme == "https" else { throw ToolBackupError.invalid }
         return value
     }
     static func root() throws -> URL {
+        writeLock.lock(); defer { writeLock.unlock() }
         guard let pointer = try pointer() else { return support }
         let root = datasets.appendingPathComponent(pointer.datasetID.uuidString, isDirectory: true)
         let receipt = try JSONDecoder().decode(Pointer.self, from: ToolBackupFiles.read(root.appendingPathComponent("dataset.json"), maximum: 4096))
-        guard receipt == pointer else { throw ToolBackupError.invalid }
+        let expected = try pointer.sourceReceipt.map { try JSONDecoder().decode(Pointer.self, from: $0) } ?? pointer
+        guard receipt == expected, expected.datasetID == pointer.datasetID,
+              expected.manifests == pointer.manifests else { throw ToolBackupError.invalid }
         for path in receipt.manifests ?? [] {
             guard knownManifestPaths.contains(path), FileManager.default.fileExists(atPath: root.appendingPathComponent(path).path) else { throw ToolBackupError.invalid }
         }
@@ -190,6 +264,8 @@ enum AppRecordDataset {
            let active = try pointer(), active.version == 1 { throw ToolBackupError.changed }
     }
     static func requireScope(owner: String, origin: String) throws {
+        writeLock.lock(); defer { writeLock.unlock() }
+        try AppRecordRebinding.recover(at: control)
         if let pointer = try pointer() {
             guard pointer.owner == owner, pointer.origin == origin else { throw ManagedPreservationError.staleSession }
         }
@@ -684,6 +760,8 @@ final class AppRecordPersistence: ObservableObject {
         catch { detail = "自動保存の設定を読み込めません。このiPhoneの記録は残っています。" }
     }
     private func binding() throws -> Binding? {
+        AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
+        try AppRecordRebinding.recover(at: bindingURL.deletingLastPathComponent())
         guard FileManager.default.fileExists(atPath: bindingURL.path) else { return nil }
         let value = try JSONDecoder().decode(Binding.self, from: ToolBackupFiles.read(bindingURL, maximum: 8192))
         guard value.version == 1 else { throw AppRecordBindingError.format }
@@ -768,23 +846,100 @@ final class AppRecordPersistence: ObservableObject {
             await cleanupTask.value
         }
     }
+    /// Called only by the explicit start button, never by the background loop.
+    private func rebind(origin: String, checkpoint: ManagedPreservationClient.SessionCheckpoint,
+                        fence: ManagedPreservationClient.LocalSessionFence) throws {
+        try fence {
+            AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
+            try AppRecordEditingLease.requireIdle()
+            let control = AppRecordDataset.control
+            guard bindingURL.standardizedFileURL == control.appendingPathComponent("binding.json").standardizedFileURL else { throw AppRecordBindingError.rebinding }
+            try AppRecordRebinding.recover(at: control)
+            var previous: [String: Data] = [:]
+            for name in AppRecordRebinding.names { previous[name] = try AppRecordRebinding.bytes(control.appendingPathComponent(name)) }
+            guard let raw = previous["binding.json"] else { throw AppRecordBindingError.rebinding }
+            let old = try JSONDecoder().decode(Binding.self, from: raw)
+            guard old.version == 1, old.consent == Self.consentVersion, !old.owner.isEmpty,
+                  URL(string: old.origin)?.scheme == "https", old.origin != origin else { throw AppRecordBindingError.rebinding }
+            try AppRecordDataset.requireScope(owner: old.owner, origin: old.origin)
+            let root = try AppRecordDataset.root()
+            let pointer = try AppRecordDataset.pointer()
+            let present = try AppRecordDataset.presentManifestPaths()
+            if old.requiredDatasetID == pointer?.datasetID {
+                guard Set(old.requiredManifests ?? []).isSubset(of: Set(present)) else { throw ToolBackupError.invalid }
+            }
+            // Read only: fingerprint() refreshes the notebook's local backup.
+            // The normal capture/validation still runs before any remote save.
+            for path in present {
+                let parts = path.split(separator: "/").map(String.init)
+                let url = parts[0] == "CatIdentity" ? AppRecordDataset.identityURL() : AppRecordDataset.directory(parts[0]).appendingPathComponent(parts[1])
+                guard let url else { throw ToolBackupError.invalid }
+                _ = try AppRecordJSON.read(url)
+            }
+            var next: [String: Data] = [:]
+            if let pointer {
+                let receipt = try ToolBackupFiles.read(root.appendingPathComponent("dataset.json"), maximum: 4096)
+                let active = AppRecordDataset.Pointer(version: 1, datasetID: pointer.datasetID,
+                    owner: checkpoint.ownerID, origin: origin, manifests: pointer.manifests, sourceReceipt: receipt)
+                next["active.json"] = try JSONEncoder().encode(active)
+            }
+            if let claim = previous["owner.json"] {
+                let oldClaim = try JSONDecoder().decode(AppRecordDataset.Pointer.self, from: claim)
+                guard oldClaim.version == 1, oldClaim.owner == old.owner, oldClaim.origin == old.origin else { throw AppRecordBindingError.rebinding }
+            }
+            next["owner.json"] = try JSONEncoder().encode(AppRecordDataset.Pointer(version: 1,
+                datasetID: pointer?.datasetID ?? UUID(), owner: checkpoint.ownerID, origin: origin))
+            var value = Binding(version: 1, origin: origin, owner: checkpoint.ownerID, consent: Self.consentVersion, enabled: true)
+            value.requiredDatasetID = pointer?.datasetID
+            value.requiredManifests = present
+            next["binding.json"] = try JSONEncoder().encode(value)
+            try AppRecordRebinding.begin(at: control, previous: previous, next: next, fence: {})
+            try AppRecordDataset.requireScope(owner: checkpoint.ownerID, origin: origin)
+            guard try AppRecordDataset.root() == root else { throw AppRecordBindingError.rebinding }
+            enabled = true
+        }
+    }
     func enable() async {
         await yieldCleanup()
-        guard !busy, let origin = configuration.origin?.absoluteString else { return }
+        guard !busy else { detail = AppRecordBindingError.busy.errorDescription; return }
+        guard let origin = configuration.origin?.absoluteString else { report(AppRecordBindingError.rebinding); return }
+        busy = true
+        title = "保存の準備中…"; detail = nil
         do {
-            let checkpoint = try await client.prepareSession(expectedOwner: try binding()?.owner)
-            try AppRecordDataset.requireScope(owner: checkpoint.ownerID, origin: origin)
-            try AppRecordDataset.claim(owner: checkpoint.ownerID, origin: origin)
-            if let previous = try binding() {
-                guard previous.owner == checkpoint.ownerID else { throw ManagedPreservationError.staleSession }
-                var value = previous; value.enabled = true; try write(value)
+            var previous: Binding?
+            var changingDestination = false
+            do { previous = try binding() }
+            catch AppRecordBindingError.destination { changingDestination = true }
+            let checkpoint = try await client.prepareSession(expectedOwner: previous?.owner)
+            let fence = try await client.localSessionFence(checkpoint)
+            if changingDestination {
+                try rebind(origin: origin, checkpoint: checkpoint, fence: fence)
             } else {
-                try write(Binding(version: 1, origin: origin, owner: checkpoint.ownerID,
-                    consent: Self.consentVersion, enabled: true))
+                try fence {
+                    AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
+                    try AppRecordDataset.requireScope(owner: checkpoint.ownerID, origin: origin)
+                    try AppRecordDataset.claim(owner: checkpoint.ownerID, origin: origin)
+                    if var value = previous {
+                        guard value.owner == checkpoint.ownerID else { throw ManagedPreservationError.staleSession }
+                        value.enabled = true; try write(value)
+                    } else {
+                        try write(Binding(version: 1, origin: origin, owner: checkpoint.ownerID,
+                            consent: Self.consentVersion, enabled: true))
+                    }
+                }
             }
-            requested = true; conflict = false; nextAttempt = .distantPast
+            cachedIndex = nil; cachedMembership = nil
+            requested = true; conflict = false; nextAttempt = .distantPast; flushEdits()
+            busy = false
             await synchronize()
-        } catch { report(error) }
+        } catch {
+            busy = false
+            report(error)
+            if changingDestinationError(error) { detail = (detail ?? "保存を始められませんでした。") + "（P04）" }
+        }
+    }
+    private func changingDestinationError(_ error: Error) -> Bool {
+        !(error is AppRecordBindingError) && !(error is ManagedPreservationError)
     }
     func pause() {
         cleanupYield = true; cachedIndex = nil; cachedMembership = nil
@@ -2059,6 +2214,54 @@ private final class AppRecordFixture {
         guard try store.load() == value else { throw ToolBackupError.invalid }
         return value
     }
+    func verifyDestinationRebind() async throws {
+        Self.preparationPhase = "旧保存先の設定を合成"
+        try FamilyNotebookBackup.refresh()
+        let originalRoot = try AppRecordDataset.root()
+        let id = UUID(), oldOwner = UUID().uuidString.lowercased(), oldOrigin = "https://old-preservation.fixture.invalid"
+        let root = AppRecordDataset.datasets.appendingPathComponent(id.uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        for tool in ToolBackupIndex.manifests.keys {
+            let source = originalRoot.appendingPathComponent(tool)
+            if FileManager.default.fileExists(atPath: source.path) {
+                try FileManager.default.copyItem(at: source, to: root.appendingPathComponent(tool))
+            }
+        }
+        let paths = try AppRecordDataset.presentManifestPaths()
+        let pointer = AppRecordDataset.Pointer(version: 1, datasetID: id, owner: oldOwner, origin: oldOrigin, manifests: paths)
+        let pointerData = try JSONEncoder().encode(pointer)
+        try AppRecordRebinding.write(pointerData, to: root.appendingPathComponent("dataset.json"))
+        let control = AppRecordDataset.control
+        let oldBinding = AppRecordPersistence.Binding(version: 1, origin: oldOrigin, owner: oldOwner,
+            consent: AppRecordPersistence.consentVersion, enabled: true, revision: 9,
+            requiredManifests: paths, requiredDatasetID: id)
+        let old = ["binding.json": try JSONEncoder().encode(oldBinding), "owner.json": pointerData, "active.json": pointerData]
+        for (name, raw) in old { try AppRecordRebinding.write(raw, to: control.appendingPathComponent(name)) }
+        var records: [URL: Data] = [:]
+        for case let url as URL in FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey])! {
+            if try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true { records[url] = try Data(contentsOf: url) }
+        }
+        Self.preparationPhase = "本人の保存開始から初回ACKまで"
+        await server.useUninterruptedMetadataBatches()
+        await persistence.enable()
+        guard persistence.title == "保存済み", persistence.enabled, persistence.detail == nil || !persistence.detail!.contains("P01") else {
+            Self.preparationPhase += ": " + persistence.title + " / " + (persistence.detail ?? "")
+            throw ToolBackupError.storage
+        }
+        Self.preparationPhase = "旧設定と記録のバイトを照合"
+        let marker = try JSONDecoder().decode(AppRecordRebinding.Marker.self, from: Data(contentsOf: control.appendingPathComponent("rebind.json")))
+        guard !marker.pending else { throw ToolBackupError.invalid }
+        for (name, raw) in old {
+            guard try Data(contentsOf: control.appendingPathComponent("previous-settings/" + marker.id.uuidString + "/" + name)) == raw else { throw ToolBackupError.changed }
+        }
+        for (url, raw) in records { guard try Data(contentsOf: url) == raw else { throw ToolBackupError.changed } }
+        let value = try JSONDecoder().decode(AppRecordPersistence.Binding.self, from: Data(contentsOf: control.appendingPathComponent("binding.json")))
+        guard value.origin == configuration.origin!.absoluteString, value.owner != oldOwner,
+              value.revision != nil, value.snapshotID != nil, value.pending == nil else { throw ToolBackupError.invalid }
+        try AppRecordDataset.requireScope(owner: value.owner, origin: value.origin)
+        guard try AppRecordDataset.root() == root else { throw ToolBackupError.changed }
+        Self.measurementSummary = "P01→保存済み、旧3設定保持、記録の全バイト一致、同一データセット"
+    }
     func verifyEfficientAutomaticSave() async throws {
         await server.useUninterruptedMetadataBatches()
         await persistence.enable()
@@ -2785,6 +2988,14 @@ struct AppRecordPersistenceFixtureView: View {
             }
         }
         .task {
+            if CommandLine.arguments.contains("--app-records-rebind-probe") {
+                do {
+                    let probe = try await AppRecordFixture.make()
+                    try await probe.verifyDestinationRebind()
+                    result = "保存先を切り替えて保存済みまで確認しました"
+                } catch { result = "保存先切り替えの検査失敗: " + AppRecordFixture.preparationPhase }
+                return
+            }
             if CommandLine.arguments.contains("--app-records-efficiency-probe") {
                 do {
                     let probe = try await AppRecordFixture.make()
