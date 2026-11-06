@@ -282,7 +282,18 @@ actor ProductionGroupWindowClient: GroupWindowClient {
                     result.append(fresh)
                 }
             }
-            return result
+            // Fetch every immutable-ID page before changing display order.
+            // Arrival dates come only from photos already received on this phone.
+            var received: [String: Date] = [:]
+            for window in result {
+                received[window.id] = await GroupWindowLocalPhotoStore.shared.entries(windowID: window.id)
+                    .map(\.createdAt).max()
+            }
+            let created = Dictionary(uniqueKeysWithValues: items.map { ($0.windowID, $0.createdAt) })
+            return result.sorted {
+                GroupWindowListOrder.precedes(id: $0.id, received: received[$0.id], created: created[$0.id] ?? nil,
+                    otherID: $1.id, otherReceived: received[$1.id], otherCreated: created[$1.id] ?? nil)
+            }
         } catch {
             verifiedListEntries.removeAll()
             throw error

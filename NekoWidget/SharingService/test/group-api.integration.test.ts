@@ -139,11 +139,14 @@ describe('gated group HTTP identity, invitation and membership',()=>{
       const invite=await invitation(owner,w),request=await apply(bob,w,invite);ok(request.response,201);
       ok((await transition(owner,w,'admit',request.id,[...w.roster.members,request.member])).response);
     }
+    await db.prepare('UPDATE group_windows SET created_at=12345 WHERE space_id=?').bind(w1.windowId).run();
     const first=ok(await call(bob,'/v3/group-windows/list',{after:null,limit:1}));
     expect(first.items).toHaveLength(1);expect(first.next).toBeTypeOf('string');
     const second=ok(await call(bob,'/v3/group-windows/list',{after:first.next,limit:1}));
     expect(second.items).toHaveLength(1);expect(second.next).toBeNull();
     expect(first.items[0].windowId).not.toBe(second.items[0].windowId);
+    expect([...first.items,...second.items].find(i=>i.windowId===w1.windowId).createdAt).toBe(12345);
+    expect(first.items[0].windowId < second.items[0].windowId).toBe(true);
     expect((await call(firstOwner,'/v3/group-windows/list',{after:first.next,limit:1})).data.error.code).toBe('invalid_cursor');
     expect(ok(await call(secondOwner,'/v3/group-windows/list',{after:null,limit:50})).items).toHaveLength(1);
   });

@@ -295,3 +295,16 @@ struct GroupNotificationRoute: Sendable {
         value.utf8.count == 22 && value.utf8.allSatisfy { (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95 }
     }
 }
+
+// Presentation only: never use these mutable dates as a pagination cursor.
+enum GroupWindowListOrder {
+    static func precedes(id: String, received: Date?, created: Int?,
+                         otherID: String, otherReceived: Date?, otherCreated: Int?) -> Bool {
+        if received != otherReceived {
+            if let received, let otherReceived { return received > otherReceived }
+            return received != nil
+        }
+        if created != otherCreated { return (created ?? Int.max) < (otherCreated ?? Int.max) }
+        return id < otherID
+    }
+}
