@@ -108,7 +108,14 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertNotIn("MomentNotificationTapMailbox.shared.enqueue", self.service)
 
     def test_group_background_and_album_notice_paths_survive(self):
-        self.assertIn("if protectedDataAvailable { await GroupAdmissionService.shared.refresh() }", self.service)
+        protected = self.service.split("if protectedDataAvailable {", 1)[1].split("}", 1)[0]
+        authority = "await PlusPurchaseStore.productionShared.refreshWidgetAuthorityInBackground()"
+        admission = "await GroupAdmissionService.shared.refresh()"
+        photos = "await GroupAdmissionService.shared.refreshWidgetPhotos()"
+        for call in (authority, admission, photos):
+            self.assertIn(call, protected)
+        self.assertLess(protected.index(authority), protected.index(admission))
+        self.assertLess(protected.index(admission), protected.index(photos))
         self.assertIn("backgroundTask.expirationHandler", self.service)
         self.assertIn("operation.cancel()", self.service)
         self.assertIn("GroupAdmissionService.shared.register(deviceToken: deviceToken, epoch: callbackEpoch)", self.service)
