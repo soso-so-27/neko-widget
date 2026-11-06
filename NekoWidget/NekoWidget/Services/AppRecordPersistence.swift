@@ -517,6 +517,25 @@ struct AppRecordHead: Codable, Equatable, Sendable {
 
 /// Owns the actual save, independently of the timer or a disappearing view's Task.
 /// A background grant can only finish work that has already started.
+/// A pause invalidates outstanding asynchronous work before it can publish.
+/// The lock makes the final check atomic with the dataset pointer swap.
+final class AppRecordSaveIntent: @unchecked Sendable {
+    private let lock = NSRecursiveLock()
+    private var generation: UInt64 = 0
+    func ticket() -> UInt64 { lock.lock(); defer { lock.unlock() }; return generation }
+    func invalidate() { lock.lock(); defer { lock.unlock() }; generation &+= 1 }
+    func require(_ ticket: UInt64) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard ticket == generation else { throw CancellationError() }
+    }
+    func fence(_ ticket: UInt64, _ base: @escaping ManagedPreservationClient.LocalSessionFence) -> ManagedPreservationClient.LocalSessionFence {
+        { [self] publish in
+            lock.lock(); defer { lock.unlock() }
+            try require(ticket); try base(publish)
+        }
+    }
+}
+
 @MainActor
 final class AppRecordSaveLifetime {
     typealias Begin = (@escaping @MainActor @Sendable () -> Void) -> Int?
@@ -625,6 +644,7 @@ final class AppRecordPersistence: ObservableObject {
     private let bindingURL: URL
     private var loop: Task<Void, Never>?
     private let saveLifetime = AppRecordSaveLifetime.system()
+    private let saveIntent = AppRecordSaveIntent()
     private var active = false
     private var observer: NSObjectProtocol?
     private var datasetObserver: NSObjectProtocol?
@@ -709,6 +729,7 @@ final class AppRecordPersistence: ObservableObject {
     }
 
     private func reportSyncFailure(_ error: Error, cleanup: Bool, accepted: AcceptedSave?) {
+        guard enabled else { title = "自動保存はオフです"; detail = nil; return }
         // A cleanup failure is not an upload failure. Keep its retry scheduled,
         // including when the last retirement ID was already durably removed.
         requested = true
@@ -862,7 +883,8 @@ final class AppRecordPersistence: ObservableObject {
             guard let raw = previous["binding.json"] else { throw AppRecordBindingError.rebinding }
             let old = try JSONDecoder().decode(Binding.self, from: raw)
             guard old.version == 1, old.consent == Self.consentVersion, !old.owner.isEmpty,
-                  URL(string: old.origin)?.scheme == "https", old.origin != origin else { throw AppRecordBindingError.rebinding }
+                  URL(string: old.origin)?.scheme == "https",
+                  old.origin != origin || old.owner != checkpoint.ownerID else { throw AppRecordBindingError.rebinding }
             try AppRecordDataset.requireScope(owner: old.owner, origin: old.origin)
             let root = try AppRecordDataset.root()
             let pointer = try AppRecordDataset.pointer()
@@ -902,7 +924,9 @@ final class AppRecordPersistence: ObservableObject {
         }
     }
     func enable() async {
+        let intent = saveIntent.ticket()
         await yieldCleanup()
+        guard (try? saveIntent.require(intent)) != nil else { return }
         guard !busy else { report(AppRecordBindingError.busy); return }
         guard let origin = configuration.origin?.absoluteString else { report(AppRecordBindingError.rebinding); return }
         busy = true
@@ -912,9 +936,11 @@ final class AppRecordPersistence: ObservableObject {
             var changingDestination = false
             do { previous = try binding() }
             catch AppRecordBindingError.destination { changingDestination = true }
-            let checkpoint = try await client.prepareSession(expectedOwner: previous?.owner)
-            let fence = try await client.localSessionFence(checkpoint)
-            if changingDestination {
+            // Explicit start may use the newly authenticated Apple account.
+            // Automatic/background work remains fenced to the previous owner.
+            let checkpoint = try await client.prepareSession()
+            let fence = saveIntent.fence(intent, try await client.localSessionFence(checkpoint))
+            if changingDestination || (previous != nil && previous?.owner != checkpoint.ownerID) {
                 try rebind(origin: origin, checkpoint: checkpoint, fence: fence)
             } else {
                 try fence {
@@ -936,11 +962,15 @@ final class AppRecordPersistence: ObservableObject {
             await synchronize()
         } catch {
             busy = false
+            guard (try? saveIntent.require(intent)) != nil else { return }
             report(error)
             if !(error is AppRecordBindingError) { detail = (detail ?? "保存を始められませんでした。") + "（P04）" }
         }
     }
     func pause() {
+        saveIntent.invalidate()
+        enabled = false; requested = false; conflict = false
+        title = "自動保存はオフです"; detail = nil
         cleanupYield = true; cachedIndex = nil; cachedMembership = nil
         do {
             guard var value = try binding() else { return }
@@ -950,7 +980,9 @@ final class AppRecordPersistence: ObservableObject {
     }
     func retry() async { flushEdits(); requested = true; conflict = false; nextAttempt = .distantPast; await synchronize() }
     func resolveConflict(useRemote: Bool) async {
+        let intent = saveIntent.ticket()
         await yieldCleanup()
+        guard (try? saveIntent.require(intent)) != nil else { return }
         guard !busy else { return }
         busy = true
         do {
@@ -968,8 +1000,9 @@ final class AppRecordPersistence: ObservableObject {
             try await require(value, restoredCheckpoint)
             guard try await remoteHead(headID)?.0.revision == remote.0.revision else { throw ManagedPreservationError.conflict }
             if useRemote {
-                let fence = try await client.localSessionFence(restoredCheckpoint)
+                let fence = saveIntent.fence(intent, try await client.localSessionFence(restoredCheckpoint))
                 try await AppRecordDataset.activate(saved, origin: value.origin, expectedFingerprint: fingerprint, validateSession: fence)
+                try saveIntent.require(intent)
                 value.fingerprint = try AppRecordDataset.fingerprint()
                 value.pending = nil; value.pendingFingerprint = nil; value.pendingBase = nil
             } else {
@@ -981,10 +1014,14 @@ final class AppRecordPersistence: ObservableObject {
             }
             value.revision = remote.0.revision; value.snapshotID = remote.1.snapshotID
             try await require(value, restoredCheckpoint); try write(value)
-            conflict = false; requested = true; detail = "切り替える前の記録も、このiPhoneに残っています。"
-        } catch { report(error) }
+            try saveIntent.require(intent)
+            conflict = false; requested = true; nextAttempt = .distantPast; flushEdits()
+            title = "保存の準備中…"; detail = nil
+        } catch {
+            if (try? saveIntent.require(intent)) != nil { report(error) }
+        }
         busy = false
-        if !conflict { await synchronize() }
+        if enabled, !conflict, (try? saveIntent.require(intent)) != nil { await synchronize() }
     }
     private func require(_ value: Binding, _ checkpoint: ManagedPreservationClient.SessionCheckpoint) async throws {
         try Task.checkCancellation()
@@ -1105,6 +1142,7 @@ final class AppRecordPersistence: ObservableObject {
         }
     }
     private func synchronizeOnce() async {
+        let intent = saveIntent.ticket()
         guard active || requested, !busy, !conflict, Date() >= nextAttempt else { return }
         busy = true
         defer { busy = false }
@@ -1165,8 +1203,9 @@ final class AppRecordPersistence: ObservableObject {
                     let saved = restored.saved
                     try await require(value, restored.checkpoint)
                     guard try await remoteHead(headID)?.0.revision == remote.0.revision else { throw ManagedPreservationError.conflict }
-                    let fence = try await client.localSessionFence(restored.checkpoint)
+                    let fence = saveIntent.fence(intent, try await client.localSessionFence(restored.checkpoint))
                     try await AppRecordDataset.activate(saved, origin: value.origin, expectedFingerprint: currentFingerprint, validateSession: fence)
+                    try saveIntent.require(intent)
                     value.revision = remote.0.revision; value.snapshotID = saved.id
                     value.fingerprint = try AppRecordDataset.fingerprint(); value.pending = nil
                     value.pendingFingerprint = nil; value.pendingBase = nil; try write(value)
