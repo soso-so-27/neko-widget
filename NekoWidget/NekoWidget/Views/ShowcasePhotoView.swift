@@ -496,6 +496,8 @@ struct ShowcasePreparationView: View {
     @State private var showsViewer = false
     @State private var isPreparing = false
     @State private var errorMessage: String?
+    /// 「おすすめで選ぶ」 or 「おすすめで選び直す」 was pressed, so that place says so (11/6).
+    @State private var running: String?
 
     private enum PickerMode: Identifiable {
         case add
@@ -609,6 +611,7 @@ struct ShowcasePreparationView: View {
             }
             .navigationTitle("見せる写真")
             .navigationBarTitleDisplayMode(.inline)
+            .onChange(of: isPreparing) { _, preparing in if !preparing { running = nil } }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("閉じる") { dismiss() }
@@ -616,15 +619,24 @@ struct ShowcasePreparationView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        Button("おすすめで選び直す") { Task { await selectRecommendations() } }
+                        Button {
+                            running = "おすすめで選び直す"
+                            Task { await selectRecommendations() }
+                        } label: {
+                            WorkingLabel(title: "おすすめで選び直す", workingTitle: "選んでいます…",
+                                         working: running == "おすすめで選び直す")
+                        }
                             .disabled(isPreparing || recommendationCandidates.isEmpty
                                       || allEntries.count > ShowcasePhotoStore.maximumCount
                                       || allEntries.filter(\.pinned).count >= ShowcasePhotoStore.maximumCount)
                     } label: {
-                        Image(systemName: "ellipsis")
+                        // The menu closes on the tap, so its place shows the work (11/6).
+                        Group {
+                            if running == "おすすめで選び直す" { ProgressView() } else { Image(systemName: "ellipsis") }
+                        }
                             .frame(width: 44, height: 44)
                     }
-                    .accessibilityLabel("見せる写真の操作")
+                    .accessibilityLabel(running == "おすすめで選び直す" ? "選んでいます" : "見せる写真の操作")
                 }
             }
             .safeAreaInset(edge: .bottom) {
@@ -700,8 +712,15 @@ struct ShowcasePreparationView: View {
                 .font(.headline)
             if allEntries.isEmpty {
                 if !recommendationCandidates.isEmpty {
-                    Button("おすすめで選ぶ") { Task { await selectRecommendations() } }
+                    Button {
+                        running = "おすすめで選ぶ"
+                        Task { await selectRecommendations() }
+                    } label: {
+                        WorkingLabel(title: "おすすめで選ぶ", workingTitle: "選んでいます…",
+                                     working: running == "おすすめで選ぶ")
+                    }
                         .buttonStyle(.borderedProminent)
+                        .disabled(isPreparing)
                 }
                 Button("写真を選ぶ") { pickerMode = .add }
                     .accessibilityIdentifier("showcase-preparation-select")
@@ -883,7 +902,7 @@ private struct ShowcaseCandidatePicker: View {
                 Text("写真へのアクセスと空き容量を確認してください")
             }
             .safeAreaInset(edge: .bottom) {
-                Button("\(selected.count)枚を\(maximumSelection == 1 ? "選ぶ" : "追加")") {
+                Button {
                     isSaving = true
                     Task {
                         let ordered = candidates.map(\.localIdentifier).filter { selected.contains($0) }
@@ -892,6 +911,10 @@ private struct ShowcaseCandidatePicker: View {
                         if saved { dismiss() }
                         else { saveFailed = true }
                     }
+                } label: {
+                    // Photos are copied from the library; say so instead of only graying out (11/6).
+                    WorkingLabel(title: "\(selected.count)枚を\(maximumSelection == 1 ? "選ぶ" : "追加")",
+                                 workingTitle: "追加しています…", working: isSaving)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isSaving || selected.isEmpty)

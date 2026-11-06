@@ -12,6 +12,8 @@ struct EvacuationPreparationView: View {
     @State private var book: EvacuationExporter.Export?
     @State private var retainedBookDirectory: URL?
     @State private var bookError: String?
+    /// True while the one PDF is being made (11/6).
+    @State private var makingBook = false
 
     var body: some View {
         Group {
@@ -50,13 +52,19 @@ struct EvacuationPreparationView: View {
                     }
                     Section {
                         Button { confirmBook = true } label: {
-                            Label("1冊のPDFにまとめる", systemImage: "book.closed")
+                            Group {
+                                if makingBook {
+                                    WorkingLabel(title: "1冊のPDFにまとめる", workingTitle: "作っています…", working: true)
+                                } else {
+                                    Label("1冊のPDFにまとめる", systemImage: "book.closed")
+                                }
+                            }
                                 .frame(maxWidth: .infinity, minHeight: 40)
                         }
                         .buttonStyle(.bordered)
                         .listRowBackground(Color.clear)
                         .listRowInsets(EdgeInsets())
-                        .disabled(store.saveError != nil)
+                        .disabled(store.saveError != nil || makingBook)
                         .accessibilityIdentifier("evacuation-book-open")
                         if let bookError { Text(bookError).foregroundStyle(.red) }
                     }
@@ -74,7 +82,7 @@ struct EvacuationPreparationView: View {
             CatCareStore.shared.importBirthdays(profiles)
         }
         .confirmationDialog("1冊のPDFを作ります", isPresented: $confirmBook, titleVisibility: .visible) {
-            Button("PDFを作る") { makeBook() }
+            Button("PDFを作る") { Task { await makeBook() } }
         } message: {
             Text("病歴・薬・連絡先・ワクチン・マイクロチップ番号も載ります。")
         }
@@ -85,7 +93,12 @@ struct EvacuationPreparationView: View {
         }) { EvacuationActivitySheet(items: $0.files) }
     }
 
-    private func makeBook() {
+    private func makeBook() async {
+        // The PDF is drawn on the main thread, which stops the screen; give
+        // 「作っています…」 a moment to show first, so the press is not silent (11/6).
+        makingBook = true
+        defer { makingBook = false }
+        try? await Task.sleep(for: .milliseconds(100))
         do {
             let made = try EvacuationExporter.createBook(store.bookRecords())
             retainedBookDirectory = made.directory; book = made
@@ -696,7 +709,7 @@ private struct EvacuationDisplayView: View {
         .accessibilityIdentifier("evacuation-share-preview")
         .disabled(busy)
         .confirmationDialog("この内容で作りますか？", isPresented: $confirmShare, titleVisibility: .visible) {
-            Button(wantsPrint == true ? "PDFを作って渡す" : "画像を作って渡す") { createExport() }
+            Button(wantsPrint == true ? "PDFを作って渡す" : "画像を作って渡す") { Task { await createExport() } }
         } message: {
             Text(record.includesPrivateInformation
                  ? "選んだ病歴や連絡先が載るので、渡す相手を確かめてください。"
@@ -709,22 +722,39 @@ private struct EvacuationDisplayView: View {
     }
     @ViewBuilder private var exportButtons: some View {
         Button { wantsPrint = true; confirmShare = true } label: {
-            Label("PDFで渡す", systemImage: "doc").frame(maxWidth: .infinity, minHeight: 44)
+            Group {
+                if busy && wantsPrint == true {
+                    WorkingLabel(title: "PDFで渡す", workingTitle: "作っています…", working: true)
+                } else {
+                    Label("PDFで渡す", systemImage: "doc")
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.borderedProminent).accessibilityIdentifier("evacuation-share-pdf")
         Button { wantsPrint = false; confirmShare = true } label: {
-            Label("画像で渡す", systemImage: "photo").frame(maxWidth: .infinity, minHeight: 44)
+            Group {
+                if busy && wantsPrint == false {
+                    WorkingLabel(title: "画像で渡す", workingTitle: "作っています…", working: true)
+                } else {
+                    Label("画像で渡す", systemImage: "photo")
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.bordered).accessibilityIdentifier("evacuation-share-images")
     }
 
-    private func createExport() {
+    private func createExport() async {
+        // Set and cleared in one call before, so it never showed. The file is
+        // drawn on the main thread; give 「作っています…」 a moment first (11/6).
         busy = true
+        defer { busy = false }
+        try? await Task.sleep(for: .milliseconds(100))
         do {
             let made = try EvacuationExporter.create(record, printCopy: wantsPrint == true)
             retainedDirectory = made.directory; export = made; error = nil
         } catch { self.error = "作れませんでした。空き容量や記録の長さを確かめてください。" }
-        busy = false
     }
 }
 

@@ -507,6 +507,8 @@ private struct CareDisplayView: View {
     @State private var pdf = false
     @State private var confirmShare = false
     @State private var error: String?
+    /// True while the memo is being made (11/6).
+    @State private var exporting = false
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
@@ -535,7 +537,7 @@ private struct CareDisplayView: View {
                 .padding().background(.regularMaterial)
             }
             .confirmationDialog("この内容で作りますか？", isPresented: $confirmShare, titleVisibility: .visible) {
-                Button(pdf ? "PDFを作って渡す" : "画像を作って渡す") { createExport() }
+                Button(pdf ? "PDFを作って渡す" : "画像を作って渡す") { Task { await createExport() } }
             } message: {
                 Text("次の画面で、渡す相手をよく確かめて選んでください。")
             }
@@ -555,15 +557,28 @@ private struct CareDisplayView: View {
     /// PDF is the main way out; the image is the second.
     @ViewBuilder private func shareButton(_ title: String, pdf: Bool) -> some View {
         let button = Button { self.pdf = pdf; confirmShare = true } label: {
-            Label(title, systemImage: pdf ? "doc" : "photo").frame(maxWidth: .infinity, minHeight: 44)
+            Group {
+                if exporting && self.pdf == pdf {
+                    WorkingLabel(title: title, workingTitle: "作っています…", working: true)
+                } else {
+                    Label(title, systemImage: pdf ? "doc" : "photo")
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 44)
         }
+        .disabled(exporting)
         if pdf {
             button.buttonStyle(.borderedProminent).accessibilityIdentifier("care-share-pdf")
         } else {
             button.buttonStyle(.bordered).accessibilityIdentifier("care-share-images")
         }
     }
-    private func createExport() {
+    private func createExport() async {
+        // The file is drawn on the main thread, which stops the screen; give
+        // 「作っています…」 a moment to show first, so the press is not silent (11/6).
+        exporting = true
+        defer { exporting = false }
+        try? await Task.sleep(for: .milliseconds(100))
         do {
             let made = try CareHandoffExporter.create(record, pdf: pdf)
             retainedDirectory = made.directory; export = made; error = nil

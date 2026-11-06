@@ -23,6 +23,9 @@ struct ManagedPreservationView: View {
     /// 自動保存 → アカウント: signed out, or a finished deletion closed. Back to
     /// 自動保存 when that is done, not a second 「Appleでサインイン」 here (11/6).
     @State private var returnsWhenDone = false
+    /// 「メモを保存」 was pressed: that button says so, and the keyboard goes away (11/6).
+    @State private var running: String?
+    @FocusState private var editingMemo: Bool
     @Environment(\.dismiss) private var dismiss
     private let onUnsecuredMemoChange: ((Bool) -> Void)?
     private let allowsRecordBrowsing: Bool
@@ -142,6 +145,7 @@ struct ManagedPreservationView: View {
         } message: {
             Text("Appleでサインインしたこのアカウントに、このiPhoneのPlusを連携します。あとから別のアカウントに付け替えることはできません。ここで購入や自動更新、写真の保存が始まることはありません。")
         }
+        .onChange(of: coordinator.isBusy) { _, busy in if !busy { running = nil } }
         .appRecordEditing(retainWhileHidden: coordinator.hasUnsecuredMemo)
     }
 
@@ -361,7 +365,9 @@ struct ManagedPreservationView: View {
             } else if coordinator.membership?.canSave != true {
                 // One button for the re-check and the App Store restore (11/5),
                 // reachable while a check is still running.
-                Button("購入を復元") { coordinator.restoreMembership() }
+                Button { coordinator.restoreMembership() } label: {
+                    WorkingLabel(title: "購入を復元", workingTitle: "確認しています…", working: coordinator.membershipRestoring)
+                }
                     .accessibilityIdentifier("preservation-membership-check")
                     .disabled(coordinator.membershipRestoring)
             }
@@ -692,7 +698,9 @@ struct ManagedPreservationView: View {
             } else {
                 Text("いまは新しく保存できません。保存した記録は下の一覧から開けます。")
                     .font(.footnote).foregroundStyle(.secondary)
-                Button("購入を復元") { coordinator.restoreMembership() }
+                Button { coordinator.restoreMembership() } label: {
+                    WorkingLabel(title: "購入を復元", workingTitle: "確認しています…", working: coordinator.membershipRestoring)
+                }
                     .disabled(coordinator.membershipRestoring)
                     .accessibilityIdentifier("preservation-eligibility-retry")
             }
@@ -768,11 +776,19 @@ struct ManagedPreservationView: View {
                 }
                 TextEditor(text: $coordinator.editedText)
                     .frame(minHeight: 120).accessibilityLabel("保存したメモ")
+                    .focused($editingMemo)
+                    .disabled(coordinator.isBusy)
                     .onChange(of: coordinator.editedText) { _, _ in coordinator.retainUnsentEdit() }
                 if let weight = snapshot.document.weight { PhotoMemoWeightLabel(weight: weight) }
                 Text("\(coordinator.editedText.count) / 500文字")
                     .font(.caption).foregroundStyle(.secondary)
-                Button("メモを保存") { coordinator.saveEditedNote() }
+                Button {
+                    editingMemo = false
+                    running = "メモを保存"
+                    coordinator.saveEditedNote()
+                } label: {
+                    WorkingLabel(title: "メモを保存", workingTitle: "保存しています…", working: running == "メモを保存")
+                }
                     .disabled(coordinator.editedText == snapshot.document.text)
                 if coordinator.canExport {
                     Button("この記録を書き出す") { coordinator.exportSelectedCopy() }

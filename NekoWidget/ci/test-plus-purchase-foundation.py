@@ -375,9 +375,12 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertIn("guard isSignedIn, !membershipRestoring, let owner = authenticatedOwnerID else { return }",
                       restore_membership)
         view = source("NekoWidget/Views/ManagedPreservationView.swift")
-        self.assertEqual(view.count('Button("購入を復元") { coordinator.restoreMembership() }'), 2)
+        # 11/6: the button says 「確認しています…」 while the restore runs.
+        self.assertEqual(view.count('Button { coordinator.restoreMembership() } label: {'), 2)
         self.assertEqual(len(re.findall(
-            r'Button\("購入を復元"\) \{ coordinator\.restoreMembership\(\) \}\n'
+            r'Button \{ coordinator\.restoreMembership\(\) \} label: \{\n'
+            r'\s*WorkingLabel\(title: "購入を復元", workingTitle: "確認しています…", working: coordinator\.membershipRestoring\)\n'
+            r'\s*\}\n'
             r'(?:\s*\.accessibilityIdentifier\("[^"]+"\)\n)?\s*\.disabled\(coordinator\.membershipRestoring\)', view)), 2)
         # A connection failure keeps its own retry: never an Apple sign-in.
         retry = section(view, "} else if coordinator.membership == nil {", "} else if coordinator.membership?.canSave != true {")
@@ -385,7 +388,9 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertNotIn("restoreMembership", retry)
         self.assertIn("「もう一度確認」を押してから", coordinator)
         persistence = source("NekoWidget/Services/AppRecordPersistence.swift")
-        self.assertIn('Button("購入を復元") { authentication.restoreMembership() }', persistence)
+        self.assertIn('Button { authentication.restoreMembership() } label: {\n'
+                      '                    WorkingLabel(title: "購入を復元", workingTitle: "確認しています…", '
+                      'working: authentication.membershipRestoring)', persistence)
 
     def test_new_purchase_presentation_never_uses_network_failure_or_incomplete_identity_as_fresh(self) -> None:
         reconcile = section(self.store, "private func performCurrentEntitlementReconciliation()", "@discardableResult")

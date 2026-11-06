@@ -1517,6 +1517,8 @@ struct AppRecordSettingsView: View {
     @State private var confirmsPause = false
     @State private var confirmsRemote = false
     @State private var showsPlusOffer = false
+    /// The record choice that was confirmed, so only that button says so (11/6).
+    @State private var running: String?
 #if DEBUG || INTERNAL_PRESENTATION
     @AppStorage(ManagedPreservationView.QuotaTrial.key)
     private var quotaTrial: ManagedPreservationView.QuotaTrial = .real
@@ -1610,11 +1612,18 @@ struct AppRecordSettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: ASAuthorizationAppleIDProvider.credentialRevokedNotification)
             .receive(on: DispatchQueue.main)) { _ in exporter.invalidate() }
         .confirmationDialog("このiPhoneの記録で保存を続けますか？", isPresented: $confirmsLocal, titleVisibility: .visible) {
-            Button("このiPhoneの記録を使う") { Task { await persistence.resolveConflict(useRemote: false) } }
+            Button("このiPhoneの記録を使う") {
+                running = "このiPhoneの記録を使う"
+                Task { await persistence.resolveConflict(useRemote: false) }
+            }
         } message: { Text("ほかのiPhoneの記録も、このiPhoneに残しておきます。") }
         .confirmationDialog("ほかのiPhoneで保存した記録に切り替えますか？", isPresented: $confirmsRemote, titleVisibility: .visible) {
-            Button("ほかのiPhoneの記録を使う") { Task { await persistence.resolveConflict(useRemote: true) } }
+            Button("ほかのiPhoneの記録を使う") {
+                running = "ほかのiPhoneの記録を使う"
+                Task { await persistence.resolveConflict(useRemote: true) }
+            }
         } message: { Text("このiPhoneのいまの記録も残したまま、ほかのiPhoneの記録に切り替えます。") }
+        .onChange(of: persistence.busy) { _, busy in if !busy { running = nil } }
     }
 
     /// One status, one action. How it works is in the privacy policy, not on this screen.
@@ -1625,7 +1634,9 @@ struct AppRecordSettingsView: View {
                 // This iPhone has Plus; the saving side has not caught up yet (11/5).
                 Label("Plusを確認しています", systemImage: "arrow.clockwise.icloud")
                     .accessibilityIdentifier("app-record-save-status")
-                Button("購入を復元") { authentication.restoreMembership() }
+                Button { authentication.restoreMembership() } label: {
+                    WorkingLabel(title: "購入を復元", workingTitle: "確認しています…", working: authentication.membershipRestoring)
+                }
                     .disabled(authentication.membershipRestoring)
                     .accessibilityIdentifier("app-record-membership-restore")
             } else if plusEnded {
@@ -1727,8 +1738,16 @@ struct AppRecordSettingsView: View {
         Section {
             if persistence.conflict {
                 Text("ほかのiPhoneでも保存しています。どちらの記録を使うか選んでください。")
-                Button("このiPhoneの記録を使う") { confirmsLocal = true }
-                Button("ほかのiPhoneの記録を使う") { confirmsRemote = true }
+                Button { confirmsLocal = true } label: {
+                    WorkingLabel(title: "このiPhoneの記録を使う", workingTitle: "切り替えています…",
+                                 working: running == "このiPhoneの記録を使う")
+                }
+                .disabled(persistence.busy)
+                Button { confirmsRemote = true } label: {
+                    WorkingLabel(title: "ほかのiPhoneの記録を使う", workingTitle: "切り替えています…",
+                                 working: running == "ほかのiPhoneの記録を使う")
+                }
+                .disabled(persistence.busy)
             }
             if let quota = displayedQuota {
                 ProductQuotaSummary(quota: quota)
