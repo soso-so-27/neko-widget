@@ -192,6 +192,9 @@ xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0
 bash ci/run-family-notebook-network-checks.sh
 python3 ci/prepare-preservation-signin-probe.py "$RUNNER_TEMP/preservation-signin-probe.swift"
 xcrun --sdk macosx swiftc -parse-as-library "$RUNNER_TEMP/preservation-signin-probe.swift" -o "$RUNNER_TEMP/preservation-signin-probe"
+python3 ci/prepare-preservation-rebind-probe.py "$RUNNER_TEMP/preservation-rebind-probe.swift"
+xcrun --sdk macosx swiftc -parse-as-library "$RUNNER_TEMP/preservation-rebind-probe.swift" -o "$RUNNER_TEMP/preservation-rebind-probe"
+"$RUNNER_TEMP/preservation-rebind-probe"
 "$RUNNER_TEMP/preservation-signin-probe"
 
 xcrun --sdk macosx swiftc -D INTERNAL_PRESENTATION -parse-as-library -target "$(uname -m)-apple-macos14.0" \
