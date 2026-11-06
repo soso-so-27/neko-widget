@@ -150,8 +150,6 @@ final class GroupWindowMembersModel: ObservableObject {
     @Published private(set) var loadFailureMessage: String?
     @Published private(set) var actionErrorMessage: String?
     @Published private(set) var actionCompletionMessage: String?
-    /// True only while load() runs; read only by the load-failure retry (11/6).
-    @Published private(set) var isLoading = false
 
     let windowID: String
     private let client: any GroupWindowClient
@@ -210,8 +208,6 @@ final class GroupWindowMembersModel: ObservableObject {
     /// The 8-second pass stays quiet: the orange line is for a load the person
     /// started, or when nothing is on screen yet (11/5: it came and went).
     func load(reportsFailure: Bool = true) async {
-        isLoading = true
-        defer { isLoading = false }
         do {
             let results = (try? await client.reconcileAdmissions()) ?? []
             admissionResults = results.filter { $0.windowID == windowID && !$0.joinedLocally }
@@ -422,6 +418,9 @@ struct GroupWindowMembersView: View {
     /// The button whose action is running, so only it says so (11/6). Set in
     /// the confirm action; cleared when the model stops working.
     @State private var running: String?
+    /// 「もう一度」 was pressed and its load is running. Kept here, not on the
+    /// model, so the 8-second pass does not redraw this screen (11/6).
+    @State private var reloading = false
     /// Renaming, Plus or a confirmation is open: the list underneath is not
     /// redrawn by the 8-second pass (11/5: the screen moved under the person).
     private var presentsSheet: Bool {
@@ -462,10 +461,13 @@ struct GroupWindowMembersView: View {
                         .foregroundStyle(.red)
                         .accessibilityIdentifier("group-window-load-failure")
                         .announcesWhenShown(model.loadFailureMessage)
-                    Button { Task { await model.load() } } label: {
-                        WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: model.isLoading)
+                    Button {
+                        reloading = true
+                        Task { defer { reloading = false }; await model.load() }
+                    } label: {
+                        WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: reloading)
                     }
-                        .disabled(model.isWorking || model.isLoading)
+                        .disabled(model.isWorking || reloading)
                         .accessibilityIdentifier("group-window-load-retry")
                 }
             } else {

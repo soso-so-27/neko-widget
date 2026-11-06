@@ -3350,14 +3350,14 @@ class WorkingFeedbackTests(unittest.TestCase):
         expected = {
             "NekoWidget/Views/GroupWindowView.swift": (
                 'WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: model.isSyncing)',
-                'WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: model.isLoading)',
+                'WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: reloading)',
                 'workingTitle: "追加しています…"',
                 'WorkingLabel(title: "確かめる", workingTitle: "確かめています…", working: working)',
                 '"解除しています…" : "表示しています…"',
                 'WorkingLabel(title: "もう一度送る", workingTitle: "送っています…", working: running == record.id)',
             ),
             "NekoWidget/Views/GroupWindowSetupView.swift": (
-                'WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: model.isLoading)',
+                'WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: reloading)',
                 'WorkingLabel(title: "外す", workingTitle: "外しています…"',
                 'workingTitle: "取り消しています…"',
                 'workingTitle: "終わりにしています…"',
@@ -3398,13 +3398,14 @@ class WorkingFeedbackTests(unittest.TestCase):
 
     def test_new_flags_are_set_only_while_their_work_runs(self) -> None:
         window = source("NekoWidget/Views/GroupWindowView.swift")
-        load = section(window, "    func load() async {", "    func create(name: String, ownerName: String)")
-        self.assertIn("isLoading = true\n        defer { isLoading = false }", load)
+        # Retry progress is the view's own: background loads must not redraw the list.
+        self.assertNotIn("isLoading", window)
+        self.assertEqual(window.count("reloading = true; Task { defer { reloading = false }; await model.load() }"), 2)
         favorite = section(window, "func addToFavorites(", "func remove(")
         self.assertIn("addingFavoriteID = entry.id\n        defer { addingFavoriteID = nil }", favorite)
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
-        members = section(setup, "func load(reportsFailure: Bool = true) async {", "func createInvitation()")
-        self.assertIn("isLoading = true\n        defer { isLoading = false }", members)
+        self.assertNotIn("isLoading", setup)
+        self.assertIn("Task { defer { reloading = false }; await model.load() }", setup)
         # Family changes show in the bar, never as a new row in the notebook list.
         notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
         bar = section(notebook, "@ToolbarContentBuilder private var closeToolbar", "var body: some View {")

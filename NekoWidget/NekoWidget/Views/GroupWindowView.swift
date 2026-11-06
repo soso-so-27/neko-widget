@@ -1599,8 +1599,6 @@ final class GroupWindowListModel: ObservableObject {
     @Published private(set) var message: String?
     @Published private(set) var isWorking = false
     @Published private(set) var hasLoaded = false
-    /// True only while load() runs; read only by the retry buttons (11/6).
-    @Published private(set) var isLoading = false
     let client: any GroupWindowMediaClient
 
     init(client: any GroupWindowMediaClient) { self.client = client }
@@ -1613,8 +1611,6 @@ final class GroupWindowListModel: ObservableObject {
 
 #endif
     func load() async {
-        isLoading = true
-        defer { isLoading = false }
 #if DEBUG || INTERNAL_PRESENTATION
         let started = ProcessInfo.processInfo.systemUptime
         let trace = InternalBuildPresentationAvailability.isAvailable ? GroupListTrace() : nil
@@ -1833,6 +1829,9 @@ struct WorkingLabel: View {
 /// Shown in the まど tab only in builds with group windows turned on.
 struct GroupWindowListSection: View {
     @StateObject private var model: GroupWindowListModel
+    /// 「もう一度」 was pressed and its load is running. Kept here, not on the
+    /// model, so background loads do not redraw the list (11/6).
+    @State private var reloading = false
     @State private var formerWindows: [GroupWindowLocalPhotoStore.KnownWindow] = []
     @State private var showsLeftWindowNotice = false
     @ObservedObject private var openInbox = GroupWindowOpenInbox.shared
@@ -1945,10 +1944,10 @@ struct GroupWindowListSection: View {
                     // Nothing to show and the relay could not be reached: say so, with a retry.
                     VStack(spacing: 12) {
                         Text(message).font(.footnote).foregroundStyle(.secondary)
-                        Button { Task { await model.load() } } label: {
-                            WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: model.isLoading)
+                        Button { reloading = true; Task { defer { reloading = false }; await model.load() } } label: {
+                            WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: reloading)
                         }
-                            .disabled(model.isWorking || model.isLoading)
+                            .disabled(model.isWorking || reloading)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 20)
@@ -1957,11 +1956,11 @@ struct GroupWindowListSection: View {
                     // A refresh that failed is not an emergency: say so quietly, with a retry.
                     HStack(spacing: 8) {
                         Text("いまは新しい内容を読み込めません。").font(.footnote).foregroundStyle(.secondary)
-                        Button { Task { await model.load() } } label: {
-                            WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: model.isLoading)
+                        Button { reloading = true; Task { defer { reloading = false }; await model.load() } } label: {
+                            WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: reloading)
                         }
                             .font(.footnote.weight(.semibold))
-                            .disabled(model.isWorking || model.isLoading)
+                            .disabled(model.isWorking || reloading)
                     }
                     .accessibilityIdentifier("group-window-list-stale")
                 }
