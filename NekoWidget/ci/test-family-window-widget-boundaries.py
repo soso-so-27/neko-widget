@@ -3444,6 +3444,20 @@ class WorkingFeedbackTests(unittest.TestCase):
         self.assertIn(".disabled(record != nil || safety.isWorking)", report)
 
 
+class CatPageSharedLabelTests(unittest.TestCase):
+    def test_only_a_cat_in_the_notebook_says_it_is_shared(self) -> None:
+        care = source("NekoWidget/Views/CatCareView.swift")
+        self.assertIn("familyNotebook.familyCats.contains { $0.toolID == catID }", care)
+        # Faces, not a sentence: in the notebook as a picture, elsewhere as the way in.
+        self.assertIn("FamilyFaces(names: familyNotebook.members.map(\\.displayName))", care)
+        self.assertIn("FamilyNotebookButton(sharedNames: familyNotebook.members.map(\\.displayName))", care)
+        self.assertNotIn("家族の手帳で共有しています", care)
+        notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
+        self.assertIn("struct FamilyFaces: View {", notebook)
+        # The old note showed for every cat once the person had a family.
+        self.assertNotIn("家族と一緒に書いています。", care)
+
+
 class AlbumPurposeTests(unittest.TestCase):
     def test_album_shows_each_cat_upcoming_summaries_and_plus_honestly(self) -> None:
         album = source("NekoWidget/Views/LikedPhotosView.swift")

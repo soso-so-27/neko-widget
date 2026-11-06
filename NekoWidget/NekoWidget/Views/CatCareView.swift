@@ -212,6 +212,12 @@ struct CatCareDetailView: View {
     @State private var editing: CatCareListEditor?
     @State private var microchipInvalid = false
 
+    /// This cat is in the family notebook (not just: this person has a family).
+    private var sharedWithFamily: Bool {
+        guard let catID else { return false }
+        return familyNotebook.familyCats.contains { $0.toolID == catID }
+    }
+
     var body: some View {
         Form {
             if otherProfiles.count > 1 {
@@ -264,12 +270,6 @@ struct CatCareDetailView: View {
             folded("health", "健康", progress.health) { healthSection }
             folded("living", "暮らし", progress.living) { livingSection }
             folded("household", "家の情報", progress.household) { householdSection }
-            if familyNotebook.hasFamily {
-                Section { Text("家族と一緒に書いています。") }
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("cat-care-autosave-note")
-            }
         }
         .onChange(of: draft) { _, _ in
             autosave?.cancel()
@@ -288,7 +288,18 @@ struct CatCareDetailView: View {
         .toolbar {
             // The family, at the top right like sharing in Notes, so it is
             // out of the way for anyone who keeps to themselves.
-            if !insideFamilyNotebook, Version1.familyNotebook || familyNotebook.hasFamily {
+            // The same page opens from ツール and from the family notebook. A
+            // cat in the notebook shows the family's faces here, so whose page
+            // it is can be seen without words (11/6: "two places to write water?").
+            if sharedWithFamily {
+                ToolbarItem(placement: .topBarTrailing) {
+                    if insideFamilyNotebook {
+                        FamilyFaces(names: familyNotebook.members.map(\.displayName))
+                    } else {
+                        FamilyNotebookButton(sharedNames: familyNotebook.members.map(\.displayName))
+                    }
+                }
+            } else if !insideFamilyNotebook, Version1.familyNotebook || familyNotebook.hasFamily {
                 ToolbarItem(placement: .topBarTrailing) { FamilyNotebookButton() }
             }
         }
