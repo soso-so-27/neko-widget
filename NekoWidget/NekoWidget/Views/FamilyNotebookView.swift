@@ -1409,6 +1409,11 @@ struct FamilyNotebookInvitationCard: View {
 /// LINE. Nothing can be sent before the family works between iPhones, so
 /// this shows the invitation as it will arrive.
 struct FamilyNotebookInviteView: View {
+    static func inviteMessage(cats: [String]) -> String {
+        let who = cats.isEmpty ? "うちの猫" : cats.joined(separator: "・")
+        return "ねこのまどの家族の手帳で、\(who)のことを一緒に書こう。このリンクから参加してね。"
+    }
+
     @ObservedObject private var model = FamilyNotebookPrototype.shared
     @ObservedObject private var sharing = FamilyNotebookSharing.shared
     @Environment(\.dismiss) private var dismiss
@@ -1421,7 +1426,10 @@ struct FamilyNotebookInviteView: View {
                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                 Spacer()
                 if let invitation {
-                    ShareLink(item: invitation.link) {
+                    // A line beside the link, as for a まど: a bare URL said
+                    // nothing about what it was (11/6).
+                    ShareLink(item: invitation.link,
+                              message: Text(FamilyNotebookInviteView.inviteMessage(cats: model.catNames))) {
                         Label("招待を送る", systemImage: "square.and.arrow.up")
                             .font(.headline).frame(maxWidth: .infinity, minHeight: 50)
                     }

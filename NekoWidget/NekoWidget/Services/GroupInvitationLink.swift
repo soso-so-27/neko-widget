@@ -1,6 +1,26 @@
 import Foundation
 import CryptoKit
 
+/// The invitation page's 「アプリで開く」 uses the app's own scheme, because a
+/// tap on a link to the same site stays in the browser. `nekowidget://join#…`
+/// and `nekowidget://family-join#…` become the https link with the same
+/// fragment, and then go through exactly the same checks (11/6).
+enum InvitationAppLink {
+    static func universal(from url: URL) -> URL? {
+        guard url.scheme?.lowercased() == "nekowidget",
+              let host = url.host?.lowercased(), host == "join" || host == "family-join",
+              let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.path.isEmpty || parts.path == "/", parts.query == nil,
+              parts.user == nil, parts.password == nil, parts.port == nil,
+              let fragment = parts.percentEncodedFragment, !fragment.isEmpty, fragment.utf8.count <= 4096
+        else { return nil }
+        var https = URLComponents()
+        https.scheme = "https"; https.host = "nekonomado.com"; https.path = "/" + host
+        https.percentEncodedFragment = fragment
+        return https.url
+    }
+}
+
 /// An invitation link opened on this iPhone:
 /// `https://nekonomado.com/join#v=3&w=<window>&i=<invitation>&s=<invite key>&o=<owner key>`.
 /// Both keys live only in the fragment, which a browser never sends to the

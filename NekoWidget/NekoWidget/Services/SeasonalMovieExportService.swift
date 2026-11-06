@@ -741,6 +741,20 @@ actor SeasonalMovieExportService {
                     ),
                     withAttributes: attributes
                 )
+                // Where the movie was made, small, under the last line (11/6).
+                let mark = "ねこのまど" as NSString
+                let markAttributes: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 22, weight: .medium),
+                    .foregroundColor: UIColor.white.withAlphaComponent(0.6)
+                ]
+                let markSize = mark.size(withAttributes: markAttributes)
+                mark.draw(
+                    at: CGPoint(
+                        x: (Self.outputSize.width - markSize.width) / 2,
+                        y: (Self.outputSize.height + textSize.height) / 2 + 28
+                    ),
+                    withAttributes: markAttributes
+                )
             }
         }
         guard let cgImage = image.cgImage else {

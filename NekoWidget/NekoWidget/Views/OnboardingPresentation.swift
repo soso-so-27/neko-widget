@@ -246,6 +246,16 @@ struct OnboardingPresentationState: Equatable, Sendable {
         self.currentPage = nil
     }
 
+    /// Joined from an invitation link while the first run was open, on any
+    /// page: the guide ends and the まど tab opens the joined window. Photos
+    /// and the widget stay reachable from their own places (11/6: after
+    /// joining from the first page, the guide stayed).
+    mutating func finishForInvitation() {
+        guard mode == .firstRun, currentPage != nil else { return }
+        completedVersion = OnboardingPresentationPersistence.currentCompletedVersion
+        currentPage = nil
+    }
+
     /// A Widget cannot demonstrate its value until at least one cat photo is
     /// available. Finish the first run on the scan page and let Photos remain
     /// the recovery point instead of teaching an empty Widget setup.

@@ -3458,6 +3458,54 @@ class CatPageSharedLabelTests(unittest.TestCase):
         self.assertNotIn("家族と一緒に書いています。", care)
 
 
+class InvitationAppLinkTests(unittest.TestCase):
+    def test_app_scheme_invitation_becomes_the_same_https_link(self) -> None:
+        link = source("NekoWidget/Services/GroupInvitationLink.swift")
+        app = section(link, "enum InvitationAppLink {", "struct GroupInvitationLink:")
+        self.assertIn('host == "join" || host == "family-join"', app)
+        self.assertIn('https.scheme = "https"; https.host = "nekonomado.com"; https.path = "/" + host', app)
+        self.assertIn("parts.query == nil", app)
+        root_view = source("NekoWidget/App/AppRootView.swift")
+        handle = section(root_view, "private func handleNonPhotoURL(_ incoming: URL) {", "if FamilyNotebookServiceFactory.productionRequested")
+        self.assertIn("let url = InvitationAppLink.universal(from: incoming) ?? incoming", handle)
+
+
+class FamilyInviteMessageTests(unittest.TestCase):
+    def test_family_invitation_carries_a_line_like_a_window(self) -> None:
+        notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
+        self.assertIn("message: Text(FamilyNotebookInviteView.inviteMessage(cats: model.catNames))", notebook)
+        self.assertIn("のことを一緒に書こう。このリンクから参加してね。", notebook)
+
+
+class ReviewRequestTests(unittest.TestCase):
+    def test_review_is_asked_once_at_the_end_of_a_monthly_book(self) -> None:
+        album = source("NekoWidget/Views/AlbumPrototypeView.swift")
+        book = section(album, "struct MonthlyBookView: View {", "struct PageCurlView<Page: View>")
+        self.assertIn("@Environment(\\.requestReview) private var requestReview", book)
+        self.assertIn('@AppStorage("review.requestedAfterMonthlyBook.v1") private var reviewRequested = false', book)
+        self.assertIn("case .colophon = leaves[index]", book)
+        self.assertEqual(album.count("requestReview()"), 1)
+
+
+class RecommendAppTests(unittest.TestCase):
+    def test_settings_can_recommend_the_app_once_the_listing_exists(self) -> None:
+        settings = source("NekoWidget/Views/SettingsView.swift")
+        self.assertIn("enum AppStoreListing {", settings)
+        self.assertIn('https://apps.apple.com/jp/app/id', settings)
+        self.assertIn("if let url = AppStoreListing.pageURL {", settings)
+        self.assertIn('Label("ねこのまどを紹介する", systemImage: "square.and.arrow.up")', settings)
+
+
+class SharedWorkMarkTests(unittest.TestCase):
+    def test_shared_pictures_and_movies_say_where_they_were_made(self) -> None:
+        showcase = source("NekoWidget/Views/ShowcasePhotoView.swift")
+        composer = section(showcase, "enum BestNineComposer {", "struct ShowcasePreparationView: View {")
+        self.assertIn('let mark = "ねこのまど" as NSString', composer)
+        movie = source("NekoWidget/Services/SeasonalMovieExportService.swift")
+        ending = section(movie, "case .ending:", 'let mark = "ねこのまど" as NSString')
+        self.assertIn('"この季節も、ここまで"', ending)
+
+
 class AlbumPurposeTests(unittest.TestCase):
     def test_album_shows_each_cat_upcoming_summaries_and_plus_honestly(self) -> None:
         album = source("NekoWidget/Views/LikedPhotosView.swift")
@@ -3613,7 +3661,14 @@ class FirstLaunchInvitationTests(unittest.TestCase):
         self.assertIn("GroupInvitationJoinSheet(invitation: invitation)", root_view)
         # The guide ends only after a window was joined and opened.
         dismiss = section(root_view, ".sheet(item: $onboardingInvitation, onDismiss: {", "GroupInvitationJoinSheet(invitation: invitation)")
-        self.assertLess(dismiss.index("GroupWindowOpenInbox.shared.pendingWindowID != nil"), dismiss.index("completeOnboardingWithoutPhotoAccess()"))
+        self.assertLess(dismiss.index("GroupWindowOpenInbox.shared.pendingWindowID != nil"), dismiss.index("completeOnboardingForInvitation()"))
+        # Joining ends the guide from any page, not only the Photos page (11/6).
+        presentation = source("NekoWidget/Views/OnboardingPresentation.swift")
+        finish = section(presentation, "mutating func finishForInvitation() {", "mutating func completeWithoutWidgetPhoto()")
+        self.assertIn("guard mode == .firstRun, currentPage != nil else { return }", finish)
+        self.assertIn("state.finishForInvitation()", root_view)
+        family = section(root_view, ".sheet(item: $familyLink, onDismiss: {", "FamilyNotebookJoinView(link:")
+        self.assertIn("completeOnboardingForInvitation()", family)
         self.assertIn("OnboardingInvitationHelpView()", root_view)
         onboarding = source("NekoWidget/Views/OnboardingView.swift")
         self.assertIn("struct OnboardingInvitationHelpView: View", onboarding)
