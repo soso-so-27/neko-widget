@@ -212,6 +212,12 @@ struct CatCareDetailView: View {
     @State private var editing: CatCareListEditor?
     @State private var microchipInvalid = false
 
+    /// This cat is in the family notebook (not just: this person has a family).
+    private var sharedWithFamily: Bool {
+        guard let catID else { return false }
+        return familyNotebook.familyCats.contains { $0.toolID == catID }
+    }
+
     var body: some View {
         Form {
             if otherProfiles.count > 1 {
@@ -242,6 +248,17 @@ struct CatCareDetailView: View {
                         .accessibilityIdentifier("cat-care-save-retry")
                 }
             }
+            // The same page opens from ツール and from the family notebook. At
+            // the top, only for a cat in the notebook: what is written here is
+            // the family's too (11/6: "two places to write water?").
+            if sharedWithFamily {
+                Section {
+                    Label("家族の手帳で共有しています", systemImage: "person.2.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("cat-care-family-shared")
+                }
+            }
             if farewell == nil {
                 // The same ring as on the ツール tab, so writing here visibly fills it.
                 // One line beside it, not a dashboard: what the next entry is for.
@@ -264,12 +281,6 @@ struct CatCareDetailView: View {
             folded("health", "健康", progress.health) { healthSection }
             folded("living", "暮らし", progress.living) { livingSection }
             folded("household", "家の情報", progress.household) { householdSection }
-            if familyNotebook.hasFamily {
-                Section { Text("家族と一緒に書いています。") }
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("cat-care-autosave-note")
-            }
         }
         .onChange(of: draft) { _, _ in
             autosave?.cancel()
