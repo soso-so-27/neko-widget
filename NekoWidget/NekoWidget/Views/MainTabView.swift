@@ -644,7 +644,8 @@ struct MainTabView: View {
             // The window screens start 「写真を届ける」 from these cat photos.
             // Set on the stack: pushed screens take the stack's environment.
             .environment(\.groupWindowCatPhotos, catPhotos)
-            .id(groupShareNavigationGeneration)
+            // Opening a window from a widget or notification starts again at the list.
+            .id([groupShareNavigationGeneration, groupWindowOpenInbox.listGeneration])
             .tabItem {
                 Label("まど", systemImage: "window.vertical.closed")
                     .accessibilityIdentifier("main-tab-windows")
@@ -3130,6 +3131,7 @@ private struct WindowListView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ObservedObject private var invitationInbox = GroupInvitationInbox.shared
+    @ObservedObject private var listNavigation = GroupWindowListNavigation.shared
     @State private var publicStates: [String: OfficialWindowState]
     @State private var publicRefreshFailures: [String: UUID] = [:]
     @State private var addingPublicWindowID: String?
@@ -3191,11 +3193,19 @@ private struct WindowListView: View {
         .onReceive(NotificationCenter.default.publisher(for: .officialWindowPresentationDidChange)) { _ in
             reloadPublicStates()
         }
+        // Closed while the join waits: kept, and offered again in the list.
+        // The sheet settles used invitations itself.
         .sheet(item: Binding(
-            get: { GroupWindowClientProvider.ui != nil ? invitationInbox.pending : nil },
-            set: { if $0 == nil { invitationInbox.discard() } }
+            get: { GroupWindowClientProvider.ui != nil && !invitationInbox.isSetAside ? invitationInbox.pending : nil },
+            set: { if $0 == nil { invitationInbox.setAside() } }
         )) { invitation in
             GroupInvitationJoinSheet(invitation: invitation)
+        }
+        // Outside the lazy stacks: the window page sits right on the list.
+        .navigationDestination(item: $listNavigation.openedWindow) { route in
+            if let client = GroupWindowClientProvider.ui {
+                GroupWindowScreen(client: client, windowID: route.windowID)
+            }
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }

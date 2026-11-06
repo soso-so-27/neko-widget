@@ -3692,5 +3692,77 @@ class CatCareOnePlaceTests(unittest.TestCase):
         self.assertIn('fields.append(("年齢", CatCareLostCat.age(', summary)
 
 
+class NavigationAfterActionTests(unittest.TestCase):
+    """After a change of state, Back never leads to a page whose action already
+    happened or to something that is gone (11/6)."""
+
+    def test_a_window_opened_from_anywhere_sits_on_the_list(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        inbox = section(window, "final class GroupWindowOpenInbox", "// MARK: - The list in the まど tab")
+        opening = section(inbox, "func open(windowID: String) {", "func consume()")
+        self.assertLess(opening.index("GroupWindowListNavigation.shared.openedWindow = nil"), opening.index("pendingWindowID = windowID"))
+        self.assertLess(opening.index("listGeneration = UUID()"), opening.index("pendingWindowID = windowID"))
+        self.assertIn("GroupWindowListNavigation.shared.openedWindow = nil", section(inbox, "func showCreateFromShare()", "func dismissCreatePrompt()"))
+        tab = source("NekoWidget/Views/MainTabView.swift")
+        self.assertIn(".id([groupShareNavigationGeneration, groupWindowOpenInbox.listGeneration])", tab)
+        # The window page is declared on the list's root, outside its lazy stacks.
+        windows = section(tab, "private struct WindowListView: View {", "private var receivingPublicWindows")
+        self.assertIn(".navigationDestination(item: $listNavigation.openedWindow)", windows)
+        listing = section(window, "struct GroupWindowListSection: View {", "private func row(")
+        self.assertNotIn("navigationDestination", listing)
+        self.assertNotIn("GroupWindowScreen(client: model.client, windowID: window.id)", listing)
+        self.assertIn("GroupWindowListNavigation.shared.openedWindow = GroupWindowRoute(windowID: requested)", listing)
+
+    def test_leaving_a_window_returns_to_the_list(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        leave = section(window, "private func closeAfterLeaving() {", "private var membersScreen")
+        self.assertIn("navigation.returnToList()", leave)
+        self.assertIn(".groupWindowListNeedsReload", leave)
+        deletion = section(window, "struct GroupIdentityDeletionView: View {", "private func refresh() async {")
+        delete = section(deletion, "private func delete() async {", "} catch {")
+        self.assertIn("GroupWindowListNavigation.shared.returnToList()", delete)
+        self.assertIn("NotificationCenter.default.post(name: .groupWindowListNeedsReload, object: nil)", delete)
+
+    def test_a_waiting_invitation_is_kept_and_offered_again(self) -> None:
+        tab = source("NekoWidget/Views/MainTabView.swift")
+        windows = section(tab, "private struct WindowListView: View {", "private var receivingPublicWindows")
+        self.assertIn("set: { if $0 == nil { invitationInbox.setAside() } }", windows)
+        self.assertNotIn("invitationInbox.discard()", windows)
+        setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        settle = section(setup, "private func settleInvitation()", "// MARK: - DEBUG fixture entry")
+        self.assertIn("case .pending?:\n            GroupInvitationInbox.shared.markWaiting()", settle)
+        self.assertIn("if !openedWindow, GroupWindowOpenInbox.shared.pendingWindowID == nil {", settle)
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        listing = section(window, "struct GroupWindowListSection: View {", "private func row(")
+        self.assertIn("invitationInbox.isSetAside, invitationInbox.isWaiting", listing)
+        self.assertIn("invitationInbox.reopen()", listing)
+        self.assertIn('"group-window-waiting-invitation"', listing)
+
+    def test_buying_plus_from_create_makes_the_window_once(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        create = section(window, "struct GroupWindowCreateScreen: View {", "struct GroupWindowStandardsAgreement: View {")
+        self.assertIn("createsAfterPurchase = result == .completed", create)
+        self.assertIn("guard createsAfterPurchase, !retriedAfterPurchase else { return }", create)
+
+    def test_family_pages_close_before_the_family_changes(self) -> None:
+        notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
+        run = section(notebook, "private func run(_ action: Action) {", "var body: some View {")
+        self.assertLess(run.index("dismiss()"), run.index("sharing.perform"))
+        self.assertEqual(notebook.count("insideFamilyNotebook: true)"), 2)
+        self.assertNotIn("CatCareDetailView(toolCatID: cat.toolID, name: cat.name)", notebook)
+        self.assertIn("if joined == .joined { onJoined?(); dismiss() }", notebook)
+        care = source("NekoWidget/Views/CatCareView.swift")
+        self.assertIn("if !insideFamilyNotebook, Version1.familyNotebook || familyNotebook.hasFamily {", care)
+        root_view = source("NekoWidget/App/AppRootView.swift")
+        self.assertIn("FamilyNotebookJoinView(link: $0.url, onJoined: { joinedFamilyFromLink = true })", root_view)
+        self.assertIn(".sheet(isPresented: $showsFamilyNotebook) { FamilyNotebookView() }", root_view)
+
+    def test_account_page_returns_to_auto_save_after_sign_out(self) -> None:
+        view = source("NekoWidget/Views/ManagedPreservationView.swift")
+        self.assertIn("returnsWhenDone = isAccountEntry\n                                coordinator.signOut()", view)
+        self.assertEqual(view.count("returnsWhenDone = isAccountEntry; coordinator.dismissCompletedDeletion()"), 2)
+        self.assertIn("if coordinator.errorMessage == nil, !coordinator.isSignedIn, !coordinator.hasUnsecuredMemo { dismiss() }", view)
+
+
 if __name__ == "__main__":
     unittest.main()

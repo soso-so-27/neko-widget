@@ -729,7 +729,7 @@ struct FamilyNotebookView: View {
                     List {
                         Section {
                             ForEach(model.familyCats) { cat in
-                                NavigationLink(cat.name) { CatCareDetailView(toolCatID: cat.toolID, name: cat.name) }
+                                NavigationLink(cat.name) { CatCareDetailView(toolCatID: cat.toolID, name: cat.name, insideFamilyNotebook: true) }
 
                             }
                         } footer: { Text("このiPhoneに残っている記録です。家族との共有を確認しています。") }
@@ -840,7 +840,7 @@ struct FamilyNotebookView: View {
                         FamilyNotebookSharedCatRow(name: cat.name, remove: {
                             do { try model.unshareCat(cat.id); Task { await sharing.refresh() } }
                             catch { sharing.failure = error as? FamilySharingError ?? .serviceUnavailable }
-                        }) { CatCareDetailView(toolCatID: cat.toolID, name: cat.name) }
+                        }) { CatCareDetailView(toolCatID: cat.toolID, name: cat.name, insideFamilyNotebook: true) }
                     }
                     Button { showsCats = true } label: { Label("猫を追加", systemImage: "plus") }
                         .accessibilityIdentifier("family-notebook-add-cat")
@@ -1228,17 +1228,23 @@ struct FamilyNotebookMemberView: View {
         }
     }
 
-    private func run(_ action: Action) async {
+    /// Back to the notebook first, then the operation: its refresh replaces the
+    /// list that opened this page, which must not happen under it (11/6). A
+    /// failure shows on the notebook.
+    private func run(_ action: Action) {
+        let sharing = self.sharing
         let service = sharing.service
         let personID = member.personID
-        let done = await sharing.perform { operationID in
-            switch action {
-            case .dissolve: _ = try await service.dissolveFamily(operationID: operationID)
-            case .leave: _ = try await service.leaveFamily(operationID: operationID)
-            case .remove: try await service.removeMember(personID: personID, operationID: operationID)
+        dismiss()
+        Task {
+            await sharing.perform { operationID in
+                switch action {
+                case .dissolve: _ = try await service.dissolveFamily(operationID: operationID)
+                case .leave: _ = try await service.leaveFamily(operationID: operationID)
+                case .remove: try await service.removeMember(personID: personID, operationID: operationID)
+                }
             }
         }
-        if done { dismiss() }
     }
 
     var body: some View {
@@ -1266,9 +1272,7 @@ struct FamilyNotebookMemberView: View {
         .navigationBarTitleDisplayMode(.inline)
         .confirmationDialog(selectedAction.map(question) ?? "", isPresented: $confirms, titleVisibility: .visible) {
             if let action = selectedAction, actions.contains(action) {
-                Button(confirmation(action), role: .destructive) {
-                    Task { await run(action) }
-                }
+                Button(confirmation(action), role: .destructive) { run(action) }
             }
         }
     }
@@ -1423,6 +1427,8 @@ struct FamilyNotebookInviteView: View {
 /// family at a time, as in Apple's family sharing. Joining is free.
 struct FamilyNotebookJoinView: View {
     var link: URL? = nil
+    /// Joined from a link: the caller opens the notebook after this sheet.
+    var onJoined: (() -> Void)? = nil
     @ObservedObject private var sharing = FamilyNotebookSharing.shared
     @Environment(\.dismiss) private var dismiss
     @State private var preview: FamilyInvitationPreview?
@@ -1469,7 +1475,7 @@ struct FamilyNotebookJoinView: View {
                             var joined: FamilyJoinResult?
                             await sharing.perform { joined = try await service.join(preview, operationID: $0) }
                             result = joined
-                            if joined == .joined { dismiss() }
+                            if joined == .joined { onJoined?(); dismiss() }
                         }
                     } label: {
                         Group { if sharing.isWorking { ProgressView() } else { Text("参加する").font(.headline) } }

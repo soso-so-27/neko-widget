@@ -1406,14 +1406,26 @@ final class GroupInvitationInbox: ObservableObject {
     static let shared = GroupInvitationInbox()
 
     @Published private(set) var pending: GroupInvitationLink?
+    /// Closed in the まど tab: kept, but not shown again by itself.
+    @Published private(set) var isSetAside = false
+    /// Its join waits for approval: the まど tab offers it again.
+    @Published private(set) var isWaiting = false
 
     func receive(_ link: GroupInvitationLink) {
         pending = link
+        isSetAside = false
+        isWaiting = false
     }
 
     func discard() {
         pending = nil
+        isSetAside = false
+        isWaiting = false
     }
+
+    func setAside() { isSetAside = pending != nil }
+    func markWaiting() { isWaiting = pending != nil }
+    func reopen() { isSetAside = false }
 }
 
 /// Where the group screens get their client. The production adapter exists
@@ -1482,6 +1494,7 @@ struct GroupInvitationJoinSheet: View {
     let invitation: GroupInvitationLink
     @Environment(\.dismiss) private var dismiss
     @State private var model: GroupJoinModel?
+    @State private var openedWindow = false
 
     init(invitation: GroupInvitationLink) {
         self.invitation = invitation
@@ -1492,6 +1505,10 @@ struct GroupInvitationJoinSheet: View {
             Group {
                 if let model {
                     GroupJoinView(model: model, onOpenWindow: {
+                        // Joined: not offered again, and the rebuilt まど tab
+                        // does not show this sheet a second time.
+                        openedWindow = true
+                        GroupInvitationInbox.shared.discard()
                         // The group list in the まど tab opens it once this iPhone is a member.
                         GroupWindowOpenInbox.shared.open(windowID: invitation.windowID)
                         dismiss()
@@ -1519,18 +1536,23 @@ struct GroupInvitationJoinSheet: View {
     }
 
     /// A used invitation is not offered again. Joined and closed with 「閉じる」:
-    /// the まど tab still opens the window. Still applying or waiting: it stays.
+    /// the まど tab still opens the window. Waiting: it stays, and the まど tab
+    /// offers it again.
     private func settleInvitation() {
         switch model?.phase {
         case .approved?:
-            if GroupWindowOpenInbox.shared.pendingWindowID == nil {
+            if !openedWindow, GroupWindowOpenInbox.shared.pendingWindowID == nil {
                 GroupWindowOpenInbox.shared.open(windowID: invitation.windowID)
             }
             GroupInvitationInbox.shared.discard()
         case .rejected?, .expired?, .cancelled?:
             GroupInvitationInbox.shared.discard()
+        case .pending?:
+            GroupInvitationInbox.shared.markWaiting()
         default:
-            break
+            // Closed in the まど tab before applying: not offered again. The
+            // first-run guide keeps it for the まど tab (AppRootView).
+            if GroupInvitationInbox.shared.isSetAside { GroupInvitationInbox.shared.discard() }
         }
     }
 }
