@@ -7,11 +7,18 @@ def method(file, signature):
     start=source.index(signature)
     end=source.index("\n    }",start)+len("\n    }")
     return source[start:end]
+client=Path("NekoWidget/Services/ManagedPreservationClient.swift").read_text(encoding="utf-8")
+step_start=client.index("    enum AuthenticationStep:")
+step_end=client.index("\n    }",step_start)+len("\n    }")
 source=Path("NekoWidget/Services/AppRecordPersistence.swift").read_text(encoding="utf-8")
 a=source.index("enum AppRecordBindingError:")
 b=source.index("\n}\n",a)+2
 program=r'''import Foundation
 ERROR_ENUM
+enum ServerProbe {
+SERVER_ENUM
+SERVER_METHOD
+}
 struct ToolBackupFiles {
     static func read(_ url: URL, maximum: Int) throws -> Data {
         let data = try Data(contentsOf: url)
@@ -47,6 +54,10 @@ SIGNIN_METHOD
 }
 @main struct Check {
     @MainActor static func main() async throws {
+        precondition(ServerProbe.signInServerStep("APPLE_UNAVAILABLE") == .appleUnavailable)
+        precondition(ServerProbe.signInServerStep("identity_key_unavailable") == .identityProtection)
+        precondition(ServerProbe.signInServerStep("secret-or-arbitrary-body") == nil)
+        precondition(ServerProbe.signInServerStep(nil) == nil)
         let model = SignInProbe()
         model.prepareSignIn()
         precondition(model.preparedSignIn == nil && model.isBusy, "old challenge must leave before suspension")
@@ -73,5 +84,5 @@ SIGNIN_METHOD
     }
 }
 '''
-program=program.replace("ERROR_ENUM",source[a:b]).replace("BINDING_METHOD",method("NekoWidget/Services/AppRecordPersistence.swift","    private func binding() throws -> Binding? {")).replace("SIGNIN_METHOD",method("NekoWidget/Services/ManagedPreservationCoordinator.swift","    func prepareSignIn() {"))
+program=program.replace("SERVER_ENUM",client[step_start:step_end]).replace("SERVER_METHOD",method("NekoWidget/Services/ManagedPreservationClient.swift","    static func signInServerStep(_ code: String?) -> AuthenticationStep? {")).replace("ERROR_ENUM",source[a:b]).replace("BINDING_METHOD",method("NekoWidget/Services/AppRecordPersistence.swift","    private func binding() throws -> Binding? {")).replace("SIGNIN_METHOD",method("NekoWidget/Services/ManagedPreservationCoordinator.swift","    func prepareSignIn() {"))
 Path(sys.argv[1]).write_text(program,encoding="utf-8")
