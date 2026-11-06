@@ -11,6 +11,7 @@ enum GroupAPIModel {
     }
     struct WindowItem: Decodable {
         let windowID: String
+        let createdAt: Int?
         // Older relays may only return the ID. Incomplete version information
         // always takes the full detail/roster/member verification path.
         let revision: Int?; let keyEpoch: Int?; let rotationRequired: Bool?

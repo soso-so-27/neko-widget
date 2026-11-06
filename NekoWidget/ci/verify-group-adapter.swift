@@ -489,6 +489,16 @@ private struct GroupAdapterChecks {
         } catch { throw Failure.check("Admission lifecycle \(stage): \(error)") }
     }
     static func main() async throws {
+        let recent = Date(timeIntervalSince1970: 20), older = Date(timeIntervalSince1970: 10)
+        try check(GroupWindowListOrder.precedes(id: "z", received: recent, created: 9,
+            otherID: "a", otherReceived: older, otherCreated: 1), "newest received first")
+        try check(GroupWindowListOrder.precedes(id: "z", received: older, created: 9,
+            otherID: "a", otherReceived: nil, otherCreated: 1), "received before empty")
+        try check(GroupWindowListOrder.precedes(id: "z", received: nil, created: 1,
+            otherID: "a", otherReceived: nil, otherCreated: 9), "empty windows creation order")
+        try check(GroupWindowListOrder.precedes(id: "a", received: recent, created: 1,
+            otherID: "z", otherReceived: recent, otherCreated: 1), "stable tie")
+
         let receiptOperation = UUID()
         let receipt = GroupPhotoCommitReceipt(operationID: receiptOperation.uuidString.lowercased(), momentID: "photo", windowID: "window",
             revision: 3, keyEpoch: 2, state: "committed", senderParticipantID: "person", senderDeviceID: "device", createdAt: 1)

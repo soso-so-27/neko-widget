@@ -296,6 +296,19 @@ struct GroupNotificationRoute: Sendable {
     }
 }
 
+// Presentation only: never use these mutable dates as a pagination cursor.
+enum GroupWindowListOrder {
+    static func precedes(id: String, received: Date?, created: Int?,
+                         otherID: String, otherReceived: Date?, otherCreated: Int?) -> Bool {
+        if received != otherReceived {
+            if let received, let otherReceived { return received > otherReceived }
+            return received != nil
+        }
+        if created != otherCreated { return (created ?? Int.max) < (otherCreated ?? Int.max) }
+        return id < otherID
+    }
+}
+
 struct GroupDeliveryConfirmationPending: Error { let photoID: String }
 
 struct GroupPhotoCommitReceipt: Decodable {

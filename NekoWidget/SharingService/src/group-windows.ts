@@ -75,7 +75,7 @@ export async function createGroupWindow(env:Env,actor:GroupActor,body:JsonRecord
 export async function listGroupWindows(env:Env,actor:GroupActor,body:JsonRecord):Promise<Response> {
   const cursorScope=`windows:${actor.deviceId}`,page=groupPage(body,cursorScope);
   const result=await env.DB.prepare(`SELECT w.space_id AS windowId,w.revision,w.key_epoch AS keyEpoch,w.rotation_required AS rotationRequired,
-      m.participant_id AS myParticipantId,m.role AS myRole,n.encrypted_name AS encryptedName
+      m.participant_id AS myParticipantId,m.role AS myRole,n.encrypted_name AS encryptedName,w.created_at AS createdAt
       FROM group_windows w JOIN group_members m ON m.space_id=w.space_id
       JOIN group_window_devices d ON d.space_id=w.space_id AND d.participant_id=m.participant_id
       JOIN group_window_metadata n ON n.space_id=w.space_id
