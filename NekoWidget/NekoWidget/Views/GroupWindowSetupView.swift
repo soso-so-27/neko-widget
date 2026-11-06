@@ -1056,6 +1056,9 @@ final class GroupJoinModel: ObservableObject {
     @Published private(set) var phase: Phase = .enteringName
     @Published private(set) var isWorking = false
     @Published private(set) var errorMessage: String?
+    /// This iPhone is already in the window the link is for (its own link,
+    /// or one opened again after joining): open it, nothing to apply (11/6).
+    @Published private(set) var alreadyMember = false
 
     let invitationID: String
     let invitationContext: GroupInvitationContext?
@@ -1065,11 +1068,15 @@ final class GroupJoinModel: ObservableObject {
     /// Kept so an offline retry resends the same application, not a second.
     private let applyOperationID = UUID()
 
-    init(client: (any GroupWindowClient)?, invitationID: String, context: GroupInvitationContext? = nil) {
+    init(client: (any GroupWindowClient)?, invitationID: String, context: GroupInvitationContext? = nil,
+         windowID: String? = nil) {
         self.client = client
         self.invitationID = invitationID
         self.invitationContext = context
         displayName = GroupDisplayName.remembered
+        // The home-screen copy only holds windows this iPhone is in (pruned
+        // after every list load), so it answers before any request.
+        alreadyMember = windowID.map { GroupWidgetCache.entry(windowID: $0) != nil } ?? false
     }
 
     var isAvailable: Bool { client != nil }
@@ -1112,6 +1119,8 @@ final class GroupJoinModel: ObservableObject {
             GroupDisplayName.remember(trimmedName)
             update(with: request)
             Task { await GroupAdmissionService.shared.refresh(requestPermission: true) }
+        } catch GroupInvitationError.alreadyMember {
+            alreadyMember = true
         } catch {
             errorMessage = GroupWindowPresentation.message(for: error)
         }
@@ -1232,6 +1241,19 @@ struct GroupJoinView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        } else if model.alreadyMember {
+            Section {
+                Label("もうこのまどに入っています", systemImage: "checkmark.circle")
+                    .font(.headline)
+                    .accessibilityIdentifier("group-join-already-member")
+                if let onOpenWindow {
+                    Button("まどを開く") { onOpenWindow() }
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("group-join-open-own-window")
+                }
+            }
         } else {
             applySection
         }
@@ -1262,7 +1284,7 @@ struct GroupJoinView: View {
             .disabled(!model.canApply)
             .accessibilityIdentifier("group-join-apply")
         } header: {
-            Text("招待されたまど")
+            Text("あなたの名前")
         } footer: {
             VStack(alignment: .leading, spacing: 8) {
                 Text("まどを作った人に、この名前が届きます。")
@@ -1582,7 +1604,8 @@ struct GroupInvitationJoinSheet: View {
                 .task {
                     guard model == nil else { return }
                     if let joined = await GroupWindowClientProvider.joinClient(for: invitation) {
-                        model = GroupJoinModel(client: joined.client, invitationID: joined.invitationID, context: invitation.context)
+                        model = GroupJoinModel(client: joined.client, invitationID: joined.invitationID, context: invitation.context,
+                                               windowID: invitation.windowID)
                     } else {
                         model = GroupJoinModel(client: nil, invitationID: invitation.invitationID)
                     }
