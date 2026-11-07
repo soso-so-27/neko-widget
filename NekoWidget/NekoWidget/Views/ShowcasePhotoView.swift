@@ -1,3 +1,4 @@
+import ImageIO
 import Photos
 import SwiftUI
 import UIKit
@@ -54,6 +55,99 @@ private struct ShowcaseSquare<Content: View>: View {
     }
 }
 
+/// 1 枚、2×2、3×2、3×3. Only as many photos as fill the shape are shown, on
+/// screen and in the shared picture, so no empty black cell appears (11/8).
+enum ShowcaseLayout {
+    static func tileCount(for count: Int) -> Int {
+        switch count {
+        case 9...: 9
+        case 6...: 6
+        case 4...: 4
+        default: min(max(count, 0), 1)
+        }
+    }
+
+    static func columns(for tileCount: Int) -> Int {
+        tileCount >= 6 ? 3 : tileCount == 4 ? 2 : 1
+    }
+}
+
+/// The name band under the grid, the same on screen and in the shared picture.
+enum ShowcaseBand {
+    static let color = Color(white: 0.14)
+    static let uiColor = UIColor(white: 0.14, alpha: 1)
+}
+
+/// Kept JPEGs are drawn from small cached renditions, never decoded at full
+/// size on each redraw (11/8). A square is cut around the cat when the photo
+/// kept its box, and from the centre otherwise.
+enum ShowcaseImageLoader {
+    private static let cache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 48
+        return cache
+    }()
+
+    private static func key(_ url: URL, box: CGRect?, side: Int, square: Bool) -> NSString {
+        let crop = box.map { "\($0.minX),\($0.minY),\($0.width),\($0.height)" } ?? "-"
+        return "\(url.lastPathComponent)#\(side)#\(square)#\(crop)" as NSString
+    }
+
+    static func cached(_ url: URL, box: CGRect?, side: Int, square: Bool) -> UIImage? {
+        cache.object(forKey: key(url, box: box, side: side, square: square))
+    }
+
+    static func load(_ url: URL, box: CGRect?, side: Int, square: Bool) async -> UIImage? {
+        if let hit = cached(url, box: box, side: side, square: square) { return hit }
+        let image = await Task.detached(priority: .userInitiated) {
+            render(url, box: box, side: side, square: square)
+        }.value
+        if let image { cache.setObject(image, forKey: key(url, box: box, side: side, square: square)) }
+        return image
+    }
+
+    /// `side` is the square's side, or the longest side of a fitted copy.
+    static func render(_ url: URL, box: CGRect?, side: Int, square: Bool) -> UIImage? {
+        guard side > 0, let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        var longest = side
+        if square,
+           let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+           let width = properties[kCGImagePropertyPixelWidth] as? Int,
+           let height = properties[kCGImagePropertyPixelHeight] as? Int,
+           width > 0, height > 0 {
+            // The short side must still cover the square.
+            longest = Int((CGFloat(side) * CGFloat(max(width, height)) / CGFloat(min(width, height))).rounded(.up))
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: longest
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        guard square else { return UIImage(cgImage: image) }
+        return UIImage(cgImage: squareCrop(image, box: box) ?? image)
+    }
+
+    /// A square around the cat's box (Vision, bottom-left origin), or the centre.
+    static func squareCrop(_ image: CGImage, box: CGRect?) -> CGImage? {
+        let size = CGSize(width: image.width, height: image.height)
+        guard size.width > 0, size.height > 0 else { return nil }
+        let side = min(size.width, size.height)
+        let centre = CGRect(x: (1 - side / size.width) / 2, y: (1 - side / size.height) / 2,
+                            width: side / size.width, height: side / size.height)
+        var crop = centre
+        if let box, let around = PhotoThumbnailCropPolicy.cropRect(
+            aroundVisionRect: box, imagePixelSize: size, targetAspectRatio: 1
+        ) {
+            crop = around
+        }
+        let pixels = CGRect(x: crop.minX * size.width, y: crop.minY * size.height,
+                            width: crop.width * size.width, height: crop.height * size.height).integral
+        return image.cropping(to: pixels)
+    }
+}
+
 /// The selected set is the browsing boundary. Open its grid first; enlarge only
 /// the photo the viewer chooses. Closing is an ordinary navigation action.
 struct ShowcasePhotoView: View {
@@ -76,7 +170,7 @@ struct ShowcasePhotoView: View {
     }
 
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.openURL) private var openURL
     @ObservedObject var store: ShowcasePhotoStore
     let items: [Item]
     let title: String
@@ -85,20 +179,31 @@ struct ShowcasePhotoView: View {
     var initialScopeID: String? = nil
     var profiles: [CatProfilePresentation] = []
     var candidates: [PhotoPresentation] = []
+    /// Scopes whose first set is being chosen now: the screen opens at once and
+    /// says 「選んでいます…」 instead of 「写真がありません」 (11/8).
+    var preparingScopes: Set<String> = []
+    /// Scopes whose first choice could not be made: the owner chooses instead.
+    var failedScopes: Set<String> = []
     var onScopeSelected: ((String, Bool) -> Void)? = nil
     @State private var selectedIndex: Int?
     @State private var selectedScopeID: String?
     @State private var showsPreparation = false
     @State private var showsCatPicker = false
     @State private var accessRevision = 0
-    /// The nine photos as one picture, for the share sheet. Built off the main
+    /// The shown photos as one picture, for the share sheet. Built off the main
     /// thread when the set changes; nil until then or when nothing can be drawn.
     @State private var bestNineImage: UIImage?
-    /// The 9-photo image is being made: its button shows, disabled (11/7).
+    @State private var bestNineCount = 0
+    /// The picture is being made: its button shows, disabled (11/7).
     @State private var isPreparingBestNine = false
     @AppStorage("showcase-shows-name-and-age") private var showsCaption = true
 
     private var scopeID: String { selectedScopeID ?? initialScopeID ?? "" }
+
+    private var scopeProfile: CatProfilePresentation? {
+        guard initialScopeID != nil, !scopeID.isEmpty else { return nil }
+        return profiles.first(where: { $0.identifier == scopeID })
+    }
 
     /// 「むぎ・3歳」 for one chosen cat. 「すべての猫」 has no caption: a photo's cat is not guessed.
     private var caption: String? {
@@ -112,23 +217,36 @@ struct ShowcasePhotoView: View {
     }
     private var storedScopeIDs: [String] { Array(Set(store.entries.map(\.scopeID))).sorted() }
 
+    /// Sets kept for a cat that is no longer registered (「前の写真」).
+    private var formerScopeIDs: [String] {
+        storedScopeIDs.filter { scope in !scope.isEmpty && !profiles.contains { $0.identifier == scope } }
+    }
+
+    /// The arrow shows only when there is another set to switch to (11/8).
+    private var canSwitchScope: Bool { !profiles.isEmpty || !formerScopeIDs.isEmpty }
+
+    /// The band (under the grid and in the shared picture) and the enlarged
+    /// photo's tag follow the one switch.
+    private var shownCaption: String? { showsCaption ? caption : nil }
+
     private var visibleItems: [Item] {
         guard initialScopeID != nil else { return items }
 #if DEBUG && targetEnvironment(simulator)
         if Self.layoutFixtureItems != nil { return items }
 #endif
-        return store.availableEntries(in: scopeID).compactMap { entry in
-            store.imageURL(for: entry).map { .prepared(entry, $0) }
-        }
+        return store.availableImages(in: scopeID).map { .prepared($0.entry, $0.url) }
     }
-
-    /// The band under the nine: the cat's name.
-    private var bandTitle: String? { scopeID.isEmpty ? nil : visibleTitle }
 
     private var visibleTitle: String {
         guard initialScopeID != nil else { return title }
         return profiles.first(where: { $0.identifier == scopeID })?.displayName
-            ?? (scopeID.isEmpty ? "すべての猫" : "前に選んだ猫")
+            ?? (scopeID.isEmpty ? "すべての猫" : "前に選んだ写真")
+    }
+
+    /// 「むぎの9枚」, or 「うちの猫の9枚」 for all cats (11/8).
+    private func shareTitle(_ count: Int) -> String {
+        if let profile = scopeProfile { return "\(profile.displayName)の\(count)枚" }
+        return "うちの猫の\(count)枚"
     }
 
     private var isDirectPhoto: Bool {
@@ -139,219 +257,24 @@ struct ShowcasePhotoView: View {
     private var detailIndex: Int? { selectedIndex ?? (isDirectPhoto ? 0 : nil) }
 
     var body: some View {
-        let displayedItems = visibleItems
+        let all = visibleItems
+        let tiles = Array(all.prefix(ShowcaseLayout.tileCount(for: all.count)))
         VStack(spacing: 0) {
-            HStack {
-                Button {
-                    if selectedIndex != nil && !isDirectPhoto { selectedIndex = nil }
-                    else { onClose() }
-                } label: {
-                    Image(systemName: detailIndex != nil && !isDirectPhoto ? "chevron.left" : "xmark")
-                        .frame(width: 44, height: 44)
-                        .background(.ultraThinMaterial, in: Circle())
-                }
-                .accessibilityLabel(detailIndex != nil && !isDirectPhoto ? "写真の一覧に戻る" : "閉じる")
-                .accessibilityIdentifier("showcase-back")
-                Spacer(minLength: 8)
-                if detailIndex == nil && initialScopeID != nil {
-                    Button { showsCatPicker = true } label: {
-                        Label(visibleTitle, systemImage: "chevron.down").font(.headline).frame(minHeight: 44)
-                    }
-                    .accessibilityLabel("見せる猫、\(visibleTitle)")
-                    .accessibilityIdentifier("showcase-gallery-scope")
-                } else {
-                    Text(visibleTitle).font(.headline).lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                if detailIndex == nil && initialScopeID != nil {
-                    Button { showsPreparation = true } label: {
-                        Image(systemName: "pencil")
-                            .frame(width: 44, height: 44)
-                            .background(.ultraThinMaterial, in: Circle())
-                    }
-                    .accessibilityLabel("見せる写真を編集")
-                    .accessibilityIdentifier("showcase-gallery-edit")
-                } else if detailIndex == nil, let onManage {
-                    Button(action: onManage) {
-                        Image(systemName: "pencil")
-                            .frame(width: 44, height: 44)
-                            .background(.ultraThinMaterial, in: Circle())
-                    }
-                    .accessibilityLabel("見せる写真を編集")
-                } else if detailIndex != nil, caption != nil {
-                    // 11/7: a name tag (shown) or a struck-out tag (hidden), not
-                    // a speech bubble; read aloud as one on/off switch.
-                    Button { showsCaption.toggle() } label: {
-                        Image(systemName: showsCaption ? "tag.fill" : "tag.slash")
-                            .frame(width: 44, height: 44)
-                            .background(.ultraThinMaterial, in: Circle())
-                    }
-                    .accessibilityLabel("名前と年齢を表示")
-                    .accessibilityValue(showsCaption ? "オン" : "オフ")
-                    .accessibilityAddTraits(.isToggle)
-                    .accessibilityIdentifier("showcase-caption-toggle")
-                } else {
-                    Color.clear.frame(width: 44, height: 44)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-
-            if !displayedItems.isEmpty {
+            topBar
+            if !tiles.isEmpty {
                 ZStack {
-                    ScrollView {
-                    // A tight 3×3: the nine read as one picture, with the cat's
-                    // name on a band at the bottom.
-                    LazyVGrid(columns: Array(
-                        repeating: GridItem(.flexible(), spacing: 3),
-                        count: dynamicTypeSize.isAccessibilitySize ? 2 : 3
-                    ), spacing: 3) {
-                        ForEach(Array(displayedItems.enumerated()), id: \.element.id) { index, item in
-                            Button { selectedIndex = index } label: {
-                                ShowcaseSquare { image(for: item, fillsSquare: true) }
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityElement(children: .ignore)
-                            .accessibilityAddTraits(.isButton)
-                            .accessibilityAction { selectedIndex = index }
-                            .accessibilityLabel("写真\(index + 1)を開く")
-                            .accessibilityIdentifier("showcase-gallery-photo")
-                        }
-                    }
-                    .overlay(alignment: .bottom) {
-                        if initialScopeID != nil, let bandTitle {
-                            Text(bandTitle)
-                                .font(.headline)
-                                .tracking(2)
-                                .frame(maxWidth: .infinity, minHeight: 40)
-                                .background(.black.opacity(0.55))
-                                .accessibilityHidden(true)
-                        }
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .padding(16)
-                    if detailIndex == nil, initialScopeID != nil {
-                        if let bestNineImage {
-                            ShareLink(item: Image(uiImage: bestNineImage),
-                                      preview: SharePreview("\(visibleTitle)の自慢の 9 枚",
-                                                            image: Image(uiImage: bestNineImage))) {
-                                Label("画像を書き出す", systemImage: "square.and.arrow.up")
-                                    .font(.headline)
-                                    .frame(maxWidth: .infinity, minHeight: 50)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .padding(.horizontal, 16)
-                            .accessibilityIdentifier("showcase-share-best-nine")
-                            .simultaneousGesture(TapGesture().onEnded { UsageCounter.shared.count(.nineExported) })  // Usage (11/7): ShareLink reports no completion
-                        } else if isPreparingBestNine {
-                            // 11/7: the button is there while the image is made,
-                            // not missing until it is ready.
-                            Button {} label: {
-                                HStack(spacing: 8) {
-                                    ProgressView()
-                                    Text("画像を書き出す")
-                                }
-                                .font(.headline)
-                                .frame(maxWidth: .infinity, minHeight: 50)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(true)
-                            .padding(.horizontal, 16)
-                            .accessibilityLabel("画像を準備しています")
-                            .accessibilityIdentifier("showcase-share-best-nine-preparing")
-                        }
-                        Text("写真をタップすると大きく見られます。鉛筆のボタンで入れ替えられます。")
-                            .font(.footnote)
-                            .foregroundStyle(.white.opacity(0.7))
-                            .padding(.top, 10)
-                    }
-                    }
-                    .id(scopeID)
-                    .task(id: displayedItems.map(\.id).joined(separator: ",") + (bandTitle ?? "")) {
-                        bestNineImage = nil
-                        isPreparingBestNine = !displayedItems.isEmpty
-                        var sources: [UIImage] = []
-                        for item in displayedItems.prefix(9) {
-                            if let image = await Self.image(of: item) { sources.append(image) }
-                        }
-                        let title = bandTitle
-                        let composed = await Task.detached(priority: .userInitiated) {
-                            BestNineComposer.image(sources, title: title)
-                        }.value
-                        // A newer run (other photos) owns the result.
-                        guard !Task.isCancelled else { return }
-                        bestNineImage = composed
-                        isPreparingBestNine = false
-                    }
-                    .opacity(detailIndex == nil ? 1 : 0)
-                    .allowsHitTesting(detailIndex == nil)
-                    .accessibilityHidden(detailIndex != nil)
-                    .accessibilityIdentifier("showcase-gallery")
+                    gallery(tiles)
+                        .opacity(detailIndex == nil ? 1 : 0)
+                        .allowsHitTesting(detailIndex == nil)
+                        .accessibilityHidden(detailIndex != nil)
+                        .accessibilityIdentifier("showcase-gallery")
 
-                    if let index = detailIndex, displayedItems.indices.contains(index) {
-                        VStack {
-                            image(for: displayedItems[index], fillsSquare: false)
-                                .id("\(displayedItems[index].id)-\(accessRevision)")
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .contentShape(Rectangle())
-                                .gesture(DragGesture(minimumDistance: 35).onEnded { value in
-                                    if value.translation.width < -50 {
-                                        selectedIndex = min(index + 1, displayedItems.count - 1)
-                                    }
-                                    if value.translation.width > 50 {
-                                        selectedIndex = max(index - 1, 0)
-                                    }
-                                })
-                                .accessibilityAction(named: Text("次の写真")) {
-                                    selectedIndex = min(index + 1, displayedItems.count - 1)
-                                }
-                                .accessibilityAction(named: Text("前の写真")) {
-                                    selectedIndex = max(index - 1, 0)
-                                }
-                                .accessibilityLabel(caption.map { "\($0)の写真" } ?? "写真\(index + 1)枚目")
-                                .accessibilityIdentifier("showcase-detail-photo")
-                                .overlay(alignment: .bottomLeading) {
-                                    if showsCaption, let caption {
-                                        Text(caption).font(.subheadline.bold())
-                                            .padding(.horizontal, 10).padding(.vertical, 6)
-                                            .background(.black.opacity(0.5), in: Capsule())
-                                            .padding(12)
-                                            .accessibilityIdentifier("showcase-caption")
-                                    }
-                                }
-                            if displayedItems.count > 1 {
-                                HStack(spacing: 16) {
-                                    Button { selectedIndex = max(index - 1, 0) } label: {
-                                        Image(systemName: "chevron.left").frame(width: 44, height: 44)
-                                            .background(.ultraThinMaterial, in: Circle())
-                                    }
-                                    .disabled(index == 0)
-                                    .accessibilityLabel("前の写真")
-                                    Text("\(index + 1) / \(displayedItems.count)")
-                                        .font(.footnote.monospacedDigit())
-                                        .accessibilityLabel("\(displayedItems.count)枚中\(index + 1)枚目")
-                                    Button { selectedIndex = min(index + 1, displayedItems.count - 1) } label: {
-                                        Image(systemName: "chevron.right").frame(width: 44, height: 44)
-                                            .background(.ultraThinMaterial, in: Circle())
-                                    }
-                                    .disabled(index == displayedItems.count - 1)
-                                    .accessibilityLabel("次の写真")
-                                }
-                                .padding(16)
-                            }
-                        }
+                    if let index = detailIndex, tiles.indices.contains(index) {
+                        detail(tiles, index: index)
                     }
                 }
             } else {
-                VStack(spacing: 16) {
-                    ContentUnavailableView("見せる写真がありません", systemImage: "photo")
-                    if initialScopeID != nil {
-                        Button("写真を選ぶ") { showsPreparation = true }
-                            .buttonStyle(.borderedProminent)
-                            .accessibilityIdentifier("showcase-gallery-select")
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                emptyState
             }
         }
         .foregroundStyle(.white)
@@ -361,7 +284,9 @@ struct ShowcasePhotoView: View {
             if phase == .active { accessRevision &+= 1 }
         }
         .sheet(isPresented: $showsCatPicker) {
-            ShowcaseToolCatPicker(profiles: profiles, storedScopes: storedScopeIDs) { selectScope($0) }
+            ShowcaseToolCatPicker(profiles: profiles, storedScopes: storedScopeIDs,
+                                  select: { selectScope($0) },
+                                  remove: { removeFormerScope($0) })
         }
         .sheet(isPresented: $showsPreparation) {
             // 11/7: the cat is chosen only here; the edit screen edits this cat's set.
@@ -374,6 +299,259 @@ struct ShowcasePhotoView: View {
         }
     }
 
+    private var topBar: some View {
+        HStack {
+            Button {
+                if selectedIndex != nil && !isDirectPhoto { selectedIndex = nil }
+                else { onClose() }
+            } label: {
+                Image(systemName: detailIndex != nil && !isDirectPhoto ? "chevron.left" : "xmark")
+                    .frame(width: 44, height: 44)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+            .accessibilityLabel(detailIndex != nil && !isDirectPhoto ? "写真の一覧に戻る" : "閉じる")
+            .accessibilityIdentifier("showcase-back")
+            Spacer(minLength: 8)
+            if detailIndex == nil && initialScopeID != nil && canSwitchScope {
+                Button { showsCatPicker = true } label: {
+                    HStack(spacing: 4) {
+                        Text(visibleTitle).lineLimit(1)
+                        Image(systemName: "chevron.down").font(.footnote.weight(.semibold))
+                    }
+                    .font(.headline)
+                    .frame(minHeight: 44)
+                }
+                .accessibilityLabel("見せる猫、\(visibleTitle)")
+                .accessibilityIdentifier("showcase-gallery-scope")
+            } else {
+                Text(visibleTitle).font(.headline).lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            if detailIndex == nil && initialScopeID != nil {
+                editButton { showsPreparation = true }
+                    .accessibilityIdentifier("showcase-gallery-edit")
+            } else if detailIndex == nil, let onManage {
+                editButton(onManage)
+            } else if detailIndex != nil, caption != nil {
+                // 11/7: a name tag (shown) or a struck-out tag (hidden), not
+                // a speech bubble; read aloud as one on/off switch.
+                Button { showsCaption.toggle() } label: {
+                    Image(systemName: showsCaption ? "tag.fill" : "tag.slash")
+                        .frame(width: 44, height: 44)
+                        .background(.ultraThinMaterial, in: Circle())
+                }
+                .accessibilityLabel("名前と年齢を表示")
+                .accessibilityValue(showsCaption ? "オン" : "オフ")
+                .accessibilityAddTraits(.isToggle)
+                .accessibilityIdentifier("showcase-caption-toggle")
+            } else {
+                Color.clear.frame(width: 44, height: 44)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    /// 11/8: a word, not a pencil.
+    private func editButton(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text("編集")
+                .font(.headline)
+                .frame(minWidth: 44, minHeight: 44)
+                .padding(.horizontal, 12)
+                .background(.ultraThinMaterial, in: Capsule())
+        }
+        .accessibilityLabel("見せる写真を編集")
+    }
+
+    private func gallery(_ tiles: [Item]) -> some View {
+        ScrollView {
+            // A tight grid read as one picture, with the cat's name on a band
+            // under it (not over the photos). Three columns at every text size.
+            VStack(spacing: 0) {
+                LazyVGrid(columns: Array(
+                    repeating: GridItem(.flexible(), spacing: 3),
+                    count: ShowcaseLayout.columns(for: tiles.count)
+                ), spacing: 3) {
+                    ForEach(Array(tiles.enumerated()), id: \.element.id) { index, item in
+                        Button { selectedIndex = index } label: {
+                            ShowcaseSquare { ShowcaseItemImage(item: item, square: true) }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityAction { selectedIndex = index }
+                        .accessibilityLabel("写真\(index + 1)を開く")
+                        .accessibilityIdentifier("showcase-gallery-photo")
+                    }
+                }
+                if initialScopeID != nil, let band = shownCaption {
+                    Text(band)
+                        .font(.headline)
+                        .tracking(2)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                        .padding(.horizontal, 12)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(ShowcaseBand.color)
+                        .padding(.top, 3)
+                        .accessibilityIdentifier("showcase-band")
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .padding(16)
+            if detailIndex == nil, initialScopeID != nil {
+                if let bestNineImage {
+                    ShareLink(item: Image(uiImage: bestNineImage),
+                              preview: SharePreview(shareTitle(bestNineCount),
+                                                    image: Image(uiImage: bestNineImage))) {
+                        Label("画像を共有", systemImage: "square.and.arrow.up")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .padding(.horizontal, 16)
+                    .accessibilityIdentifier("showcase-share-best-nine")
+                    .simultaneousGesture(TapGesture().onEnded { UsageCounter.shared.count(.nineExported) })  // Usage (11/7): ShareLink reports no completion
+                } else if isPreparingBestNine {
+                    // 11/7: the button is there while the image is made,
+                    // not missing until it is ready.
+                    Button {} label: {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("画像を共有")
+                        }
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(true)
+                    .padding(.horizontal, 16)
+                    .accessibilityLabel("画像を作っています")
+                    .accessibilityIdentifier("showcase-share-best-nine-preparing")
+                }
+                if caption != nil {
+                    // One switch for the band here and in the shared picture.
+                    Toggle("名前と年齢", isOn: $showsCaption)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 14)
+                        .accessibilityIdentifier("showcase-band-toggle")
+                }
+            }
+        }
+        .id(scopeID)
+        .task(id: tiles.map(\.id).joined(separator: ",") + "|" + (shownCaption ?? "")) {
+            bestNineImage = nil
+            isPreparingBestNine = !tiles.isEmpty
+            let side = BestNineComposer.cellSide(for: tiles.count)
+            var squares: [UIImage] = []
+            for item in tiles {
+                if let image = await Self.squareImage(of: item, side: side) { squares.append(image) }
+            }
+            let band = initialScopeID == nil ? nil : shownCaption
+            let photos = squares
+            let composed = await Task.detached(priority: .userInitiated) {
+                BestNineComposer.image(photos, title: band)
+            }.value
+            // A newer run (other photos) owns the result.
+            guard !Task.isCancelled else { return }
+            bestNineImage = composed
+            bestNineCount = ShowcaseLayout.tileCount(for: photos.count)
+            isPreparingBestNine = false
+        }
+    }
+
+    private func detail(_ tiles: [Item], index: Int) -> some View {
+        VStack {
+            ShowcaseDetailPhoto(
+                item: tiles[index],
+                label: caption.map { "\($0)の写真" } ?? "写真\(index + 1)枚目",
+                canGoBack: index > 0,
+                canGoForward: index < tiles.count - 1,
+                page: { step in selectedIndex = min(max(index + step, 0), tiles.count - 1) },
+                close: {
+                    if isDirectPhoto { onClose() } else { selectedIndex = nil }
+                }
+            )
+            .id("\(tiles[index].id)-\(accessRevision)")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityAction(named: Text("次の写真")) {
+                selectedIndex = min(index + 1, tiles.count - 1)
+            }
+            .accessibilityAction(named: Text("前の写真")) {
+                selectedIndex = max(index - 1, 0)
+            }
+            .accessibilityIdentifier("showcase-detail-photo")
+            .overlay(alignment: .bottomLeading) {
+                if showsCaption, let caption {
+                    Text(caption).font(.subheadline.bold())
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(.black.opacity(0.5), in: Capsule())
+                        .padding(12)
+                        .allowsHitTesting(false)
+                        .accessibilityIdentifier("showcase-caption")
+                }
+            }
+            if tiles.count > 1 {
+                HStack(spacing: 16) {
+                    Button { selectedIndex = max(index - 1, 0) } label: {
+                        Image(systemName: "chevron.left").frame(width: 44, height: 44)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .disabled(index == 0)
+                    .accessibilityLabel("前の写真")
+                    Text("\(index + 1) / \(tiles.count)")
+                        .font(.footnote.monospacedDigit())
+                        .accessibilityLabel("\(tiles.count)枚中\(index + 1)枚目")
+                    Button { selectedIndex = min(index + 1, tiles.count - 1) } label: {
+                        Image(systemName: "chevron.right").frame(width: 44, height: 44)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .disabled(index == tiles.count - 1)
+                    .accessibilityLabel("次の写真")
+                }
+                .padding(16)
+            }
+        }
+    }
+
+    /// One state, one sentence at most, one button (11/8: no 「写真がありません」
+    /// while the first set is still being chosen).
+    @ViewBuilder
+    private var emptyState: some View {
+        VStack(spacing: 16) {
+            if initialScopeID == nil {
+                ContentUnavailableView("見せる写真がありません", systemImage: "photo")
+            } else if preparingScopes.contains(scopeID) {
+                ProgressView("選んでいます…")
+                    .tint(.white)
+                    .accessibilityIdentifier("showcase-gallery-preparing")
+            } else if store.hasCorruptManifest {
+                ContentUnavailableView("見せる写真を読み込めませんでした", systemImage: "exclamationmark.triangle")
+            } else if !store.allEntries(in: scopeID).isEmpty {
+                // Chosen, but this iPhone cannot show them now.
+                ContentUnavailableView("写真を表示できません", systemImage: "photo",
+                                       description: Text("写真へのアクセスを確かめてください。"))
+                Button("設定を開く") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("showcase-gallery-settings")
+            } else if failedScopes.contains(scopeID) {
+                ContentUnavailableView("おすすめで選べませんでした", systemImage: "photo")
+                Button("自分で選ぶ") { showsPreparation = true }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("showcase-gallery-select")
+            } else {
+                ContentUnavailableView("まだ写真を選んでいません", systemImage: "photo")
+                Button("写真を選ぶ") { showsPreparation = true }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("showcase-gallery-select")
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     private func selectScope(_ newScopeID: String, preparesIfNeeded: Bool = true) {
         guard initialScopeID != nil else { return }
         selectedScopeID = newScopeID
@@ -381,67 +559,53 @@ struct ShowcasePhotoView: View {
         onScopeSelected?(newScopeID, preparesIfNeeded)
     }
 
-    @ViewBuilder
-    private func image(for item: Item, fillsSquare: Bool) -> some View {
+    /// 「前の写真」 swiped away. The screen moves to the first cat if it was showing it.
+    private func removeFormerScope(_ removed: String) {
+        do { try store.removeScope(removed) } catch { return }
+        if removed == scopeID { selectScope(profiles.first?.identifier ?? "") }
+    }
+
+    /// A square for the shared picture: cut around the cat when known.
+    private static func squareImage(of item: Item, side: Int) async -> UIImage? {
         switch item {
         case let .prepared(entry, url):
-            if store.availableEntries.contains(entry),
-               let image = UIImage(contentsOfFile: url.path) {
-                if fillsSquare {
-                    Image(uiImage: image).resizable().scaledToFill()
-                } else {
-                    Image(uiImage: image).resizable().scaledToFit()
-                }
-            } else {
-                Image(systemName: "photo").accessibilityLabel("写真を開けません")
-            }
+            return await ShowcaseImageLoader.load(url, box: entry.catBoundingBox, side: side, square: true)
         case let .current(identifier):
-            PhotoAssetImageView(
-                localIdentifier: identifier,
-                targetPixelSize: CGSize(width: fillsSquare ? 400 : 1600, height: fillsSquare ? 400 : 1600),
-                targetAspectRatio: 1,
-                showsFullImage: !fillsSquare
-            )
+            guard let image = await libraryImage(identifier),
+                  let cgImage = image.cgImage,
+                  let square = ShowcaseImageLoader.squareCrop(cgImage, box: nil) else { return nil }
+            return UIImage(cgImage: square)
 #if DEBUG && targetEnvironment(simulator)
         case let .fixture(_, image):
-            if fillsSquare { Image(uiImage: image).resizable().scaledToFill() }
-            else { Image(uiImage: image).resizable().scaledToFit() }
+            guard let cgImage = image.cgImage,
+                  let square = ShowcaseImageLoader.squareCrop(cgImage, box: nil) else { return image }
+            return UIImage(cgImage: square)
 #endif
         }
     }
 
-    /// The picture behind an item, for the composed image: the kept file, or
-    /// a Photos rendition fetched on this iPhone (no network).
-    private static func image(of item: Item) async -> UIImage? {
-        switch item {
-        case let .prepared(_, url):
-            return UIImage(contentsOfFile: url.path)
-        case let .current(identifier):
+    /// A Photos rendition fetched on this iPhone (no network).
+    private static func libraryImage(_ identifier: String) async -> UIImage? {
 #if DEBUG
-            if let fixture = AppStoreScreenshotFixture.image(for: identifier) { return fixture }
+        if let fixture = AppStoreScreenshotFixture.image(for: identifier) { return fixture }
 #endif
-            guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject
-            else { return nil }
-            return await withCheckedContinuation { continuation in
-                let options = PHImageRequestOptions()
-                options.deliveryMode = .highQualityFormat
-                options.resizeMode = .fast
-                options.isNetworkAccessAllowed = false
-                var completed = false
-                PHImageManager.default().requestImage(
-                    for: asset, targetSize: CGSize(width: 800, height: 800),
-                    contentMode: .aspectFill, options: options
-                ) { image, info in
-                    if info?[PHImageResultIsDegradedKey] as? Bool == true { return }
-                    guard !completed else { return }
-                    completed = true
-                    continuation.resume(returning: image)
-                }
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject
+        else { return nil }
+        return await withCheckedContinuation { continuation in
+            let options = PHImageRequestOptions()
+            options.deliveryMode = .highQualityFormat
+            options.resizeMode = .fast
+            options.isNetworkAccessAllowed = false
+            var completed = false
+            PHImageManager.default().requestImage(
+                for: asset, targetSize: CGSize(width: 800, height: 800),
+                contentMode: .aspectFill, options: options
+            ) { image, info in
+                if info?[PHImageResultIsDegradedKey] as? Bool == true { return }
+                guard !completed else { return }
+                completed = true
+                continuation.resume(returning: image)
             }
-#if DEBUG && targetEnvironment(simulator)
-        case let .fixture(_, image):
-            return image
-#endif
         }
     }
 
@@ -465,34 +629,68 @@ struct ShowcasePhotoView: View {
 #endif
 }
 
-/// Draws up to nine photos as one square picture: three by three, square
-/// crops, a thin gap. No title band (11/7: the photos speak for themselves);
-/// the app's name sits faintly on the last photo's corner, like a watermark,
+/// Draws the shown photos as one picture: 1, 2×2, 3×2 or 3×3 squares with a
+/// thin gap, the squares already cut around the cat. Under them, the name
+/// band when it is on (11/8: the same band as on screen, never over a photo).
+/// The app's name sits faintly on the last photo's corner, like a watermark,
 /// so a shared picture still says where it was made. Nothing but pixels from
-/// the kept photos goes into it, plus that mark. `title` stays for callers
-/// and is not drawn.
+/// the kept photos goes into it, plus that mark and the band.
 enum BestNineComposer {
+    static let width: CGFloat = 1212
+    static let gap: CGFloat = 6
+    static let bandHeight: CGFloat = 112
+
+    /// The pixel side of one square for this many photos.
+    static func cellSide(for count: Int) -> Int {
+        let columns = CGFloat(ShowcaseLayout.columns(for: ShowcaseLayout.tileCount(for: count)))
+        return Int(((width - gap * (columns + 1)) / columns).rounded(.down))
+    }
+
     static func image(_ photos: [UIImage], title: String?) -> UIImage? {
-        guard !photos.isEmpty else { return nil }
-        let cell: CGFloat = 400, gap: CGFloat = 6
-        let side = cell * 3 + gap * 4
-        let size = CGSize(width: side, height: side)
+        let count = ShowcaseLayout.tileCount(for: photos.count)
+        guard count > 0 else { return nil }
+        let columns = ShowcaseLayout.columns(for: count)
+        let rows = count / columns
+        let cell = (width - gap * CGFloat(columns + 1)) / CGFloat(columns)
+        let gridHeight = gap + CGFloat(rows) * (cell + gap)
+        let band = title.flatMap { $0.isEmpty ? nil : $0 }
+        let size = CGSize(width: width, height: gridHeight + (band == nil ? 0 : bandHeight))
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         return UIGraphicsImageRenderer(size: size, format: format).image { context in
             UIColor.black.setFill()
             context.fill(CGRect(origin: .zero, size: size))
-            for (index, photo) in photos.prefix(9).enumerated() {
-                let column = CGFloat(index % 3), row = CGFloat(index / 3)
+            for (index, photo) in photos.prefix(count).enumerated() {
+                let column = CGFloat(index % columns), row = CGFloat(index / columns)
                 let frame = CGRect(x: gap + column * (cell + gap), y: gap + row * (cell + gap), width: cell, height: cell)
                 context.cgContext.saveGState()
                 context.cgContext.clip(to: frame)
-                // Centre crop to a square.
+                // Squares arrive cut around the cat; anything else fills from its centre.
                 let scale = max(cell / photo.size.width, cell / photo.size.height)
                 let drawn = CGSize(width: photo.size.width * scale, height: photo.size.height * scale)
                 photo.draw(in: CGRect(x: frame.midX - drawn.width / 2, y: frame.midY - drawn.height / 2,
                                       width: drawn.width, height: drawn.height))
                 context.cgContext.restoreGState()
+            }
+            if let band {
+                let bandRect = CGRect(x: gap, y: gridHeight, width: width - gap * 2, height: bandHeight - gap)
+                ShowcaseBand.uiColor.setFill()
+                context.fill(bandRect)
+                var fontSize: CGFloat = 44
+                var attributes: [NSAttributedString.Key: Any] = [:]
+                var textSize = CGSize.zero
+                repeat {
+                    attributes = [
+                        .font: UIFont.systemFont(ofSize: fontSize, weight: .semibold),
+                        .foregroundColor: UIColor.white,
+                        .kern: 4
+                    ]
+                    textSize = (band as NSString).size(withAttributes: attributes)
+                    fontSize -= 2
+                } while textSize.width > bandRect.width - 48 && fontSize > 20
+                (band as NSString).draw(at: CGPoint(x: bandRect.midX - textSize.width / 2,
+                                                    y: bandRect.midY - textSize.height / 2),
+                                        withAttributes: attributes)
             }
             let mark = "ねこのまど" as NSString
             let shadow = NSShadow()
@@ -506,9 +704,170 @@ enum BestNineComposer {
                 .kern: 1
             ]
             let markSize = mark.size(withAttributes: markAttributes)
-            mark.draw(at: CGPoint(x: side - gap - markSize.width - 16, y: side - gap - markSize.height - 12),
+            mark.draw(at: CGPoint(x: width - gap - markSize.width - 16, y: gridHeight - gap - markSize.height - 12),
                       withAttributes: markAttributes)
         }
+    }
+}
+
+/// One item's picture: a cached square for a grid, a larger fitted copy when
+/// enlarged. Loaded off the main thread, once per file and size.
+private struct ShowcaseItemImage: View {
+    let item: ShowcasePhotoView.Item
+    let square: Bool
+    @State private var loaded: UIImage?
+    @State private var failed = false
+
+    private var side: Int { square ? 600 : 2400 }
+
+    var body: some View {
+        switch item {
+        case let .prepared(entry, url):
+            Group {
+                if let image = loaded
+                    ?? ShowcaseImageLoader.cached(url, box: entry.catBoundingBox, side: side, square: square) {
+                    if square {
+                        Image(uiImage: image).resizable().scaledToFill()
+                    } else {
+                        Image(uiImage: image).resizable().scaledToFit()
+                    }
+                } else if failed {
+                    Image(systemName: "photo").accessibilityLabel("写真を開けません")
+                } else {
+                    Color.clear
+                }
+            }
+            .task(id: url.lastPathComponent + "\(square)") {
+                guard loaded == nil else { return }
+                loaded = await ShowcaseImageLoader.load(url, box: entry.catBoundingBox, side: side, square: square)
+                failed = loaded == nil
+            }
+        case let .current(identifier):
+            PhotoAssetImageView(
+                localIdentifier: identifier,
+                targetPixelSize: CGSize(width: square ? 400 : 1600, height: square ? 400 : 1600),
+                targetAspectRatio: 1,
+                showsFullImage: !square
+            )
+#if DEBUG && targetEnvironment(simulator)
+        case let .fixture(_, image):
+            if square { Image(uiImage: image).resizable().scaledToFill() }
+            else { Image(uiImage: image).resizable().scaledToFit() }
+#endif
+        }
+    }
+}
+
+/// The enlarged photo (11/8): swipe sideways for the next one, pinch or
+/// double-tap to zoom, drag down to close. Zoomed, a drag moves the photo.
+private struct ShowcaseDetailPhoto: View {
+    let item: ShowcasePhotoView.Item
+    let label: String
+    let canGoBack: Bool
+    let canGoForward: Bool
+    let page: (Int) -> Void
+    let close: () -> Void
+    @State private var scale: CGFloat = 1
+    @State private var baseScale: CGFloat = 1
+    @State private var pan: CGSize = .zero
+    @State private var basePan: CGSize = .zero
+    /// The finger, before a page turn or a close.
+    @State private var follow: CGSize = .zero
+
+    var body: some View {
+        switch item {
+        case let .current(identifier):
+            // One photo opened directly: the library view zooms on its own.
+            PhotoAssetImageView(
+                localIdentifier: identifier,
+                targetPixelSize: CGSize(width: 1600, height: 1600),
+                targetAspectRatio: 1,
+                showsFullImage: true,
+                allowsZoom: true
+            )
+            .accessibilityLabel(label)
+        default:
+            zoomable
+        }
+    }
+
+    private var zoomable: some View {
+        GeometryReader { geometry in
+            ShowcaseItemImage(item: item, square: false)
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .scaleEffect(scale)
+                .offset(x: pan.width + follow.width, y: pan.height + follow.height)
+                .opacity(follow.height > 0 ? max(0.4, 1 - follow.height / 400) : 1)
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        if scale > 1 { reset() } else { zoom(to: 2.5) }
+                    }
+                }
+                .gesture(drag)
+                .simultaneousGesture(magnify)
+        }
+        .clipped()
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isImage)
+        .accessibilityLabel(label)
+        .accessibilityValue(scale > 1.05 ? "拡大中" : "")
+        .accessibilityAction(named: Text("拡大")) { withAnimation { zoom(to: min(scale * 2, 4)) } }
+        .accessibilityAction(named: Text("元の大きさに戻す")) { withAnimation { reset() } }
+    }
+
+    private var drag: some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onChanged { value in
+                let moved = value.translation
+                if scale > 1 {
+                    pan = CGSize(width: basePan.width + moved.width, height: basePan.height + moved.height)
+                } else if abs(moved.width) > abs(moved.height) {
+                    follow = CGSize(width: moved.width, height: 0)
+                } else {
+                    follow = CGSize(width: 0, height: max(0, moved.height))
+                }
+            }
+            .onEnded { value in
+                let moved = value.translation
+                if scale > 1 {
+                    basePan = pan
+                    return
+                }
+                if abs(moved.width) > abs(moved.height) {
+                    if moved.width < -60, canGoForward { page(1); return }
+                    if moved.width > 60, canGoBack { page(-1); return }
+                } else if moved.height > 110 {
+                    close()
+                    return
+                }
+                withAnimation(.easeOut(duration: 0.2)) { follow = .zero }
+            }
+    }
+
+    private var magnify: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                scale = min(max(baseScale * value.magnification, 1), 4)
+            }
+            .onEnded { _ in
+                baseScale = scale
+                if scale <= 1.01 { withAnimation(.easeOut(duration: 0.2)) { reset() } }
+            }
+    }
+
+    private func zoom(to value: CGFloat) {
+        scale = value
+        baseScale = value
+        follow = .zero
+    }
+
+    private func reset() {
+        scale = 1
+        baseScale = 1
+        pan = .zero
+        basePan = .zero
+        follow = .zero
     }
 }
 
@@ -518,6 +877,7 @@ enum BestNineComposer {
 struct ShowcasePreparationView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.openURL) private var openURL
     @ObservedObject var store: ShowcasePhotoStore
     let candidates: [PhotoPresentation]
     let profiles: [CatProfilePresentation]
@@ -545,6 +905,10 @@ struct ShowcasePreparationView: View {
         }
     }
 
+    private var images: [ShowcasePhotoStore.AvailableImage] {
+        store.availableImages(in: scopeID)
+    }
+
     private var entries: [ShowcasePhotoStore.Entry] {
         store.availableEntries(in: scopeID)
     }
@@ -560,14 +924,18 @@ struct ShowcasePreparationView: View {
 
     private var scopeTitle: String {
         profiles.first(where: { $0.identifier == scopeID })?.displayName
-            ?? (scopeID.isEmpty ? "すべての猫" : "前に選んだ猫")
+            ?? (scopeID.isEmpty ? "すべての猫" : "前に選んだ写真")
+    }
+
+    private var knownIdentifiers: Set<String> {
+        Set(profiles.first(where: { $0.identifier == scopeID })?
+            .confirmedPhotos.map(\.localIdentifier) ?? [])
     }
 
     /// Manual choices may use any detected-cat photo; prior profile sorting is
     /// optional. Prefer known photos without hiding unassigned ones.
     private var eligibleCandidates: [PhotoPresentation] {
-        let known = Set(profiles.first(where: { $0.identifier == scopeID })?
-            .confirmedPhotos.map(\.localIdentifier) ?? [])
+        let known = knownIdentifiers
         return candidates.filter { known.contains($0.localIdentifier) }
             + candidates.filter { !known.contains($0.localIdentifier) }
     }
@@ -575,12 +943,26 @@ struct ShowcasePreparationView: View {
     /// Automatic selection must not guess which cat an unassigned photo shows.
     private var recommendationCandidates: [PhotoPresentation] {
         guard !scopeID.isEmpty else { return candidates }
-        let known = Set(profiles.first(where: { $0.identifier == scopeID })?
-            .confirmedPhotos.map(\.localIdentifier) ?? [])
+        let known = knownIdentifiers
         return candidates.filter { known.contains($0.localIdentifier) }
     }
 
+    /// Where each candidate's cat is, so the kept square shows the cat (11/8).
+    private var catBoxes: [String: CGRect] {
+        Dictionary(candidates.compactMap { photo in photo.catBoundingBox.map { (photo.localIdentifier, $0) } },
+                   uniquingKeysWith: { first, _ in first })
+    }
+
+    /// 「おすすめで選び直す」 shows only when it can change something (11/8).
+    private var canReselect: Bool {
+        !recommendationCandidates.isEmpty
+            && allEntries.count <= ShowcasePhotoStore.maximumCount
+            && allEntries.filter(\.pinned).count < ShowcasePhotoStore.maximumCount
+    }
+
     var body: some View {
+        let shown = images
+        let tileCount = ShowcaseLayout.tileCount(for: shown.count)
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -588,26 +970,35 @@ struct ShowcasePreparationView: View {
                         Text(scopeTitle).font(.headline).frame(minHeight: 44)
                             .accessibilityIdentifier("showcase-preparation-cat")
                         Spacer()
-                        Text("\(allEntries.count) / \(ShowcasePhotoStore.maximumCount)")
-                            .font(.subheadline.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                        if allEntries.count < ShowcasePhotoStore.maximumCount {
+                            Text("あと\(ShowcasePhotoStore.maximumCount - allEntries.count)枚")
+                                .font(.subheadline.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .accessibilityIdentifier("showcase-preparation-remaining")
+                        }
                     }
                     if store.hasCorruptManifest {
                         ContentUnavailableView("見せる写真を読み込めませんでした", systemImage: "exclamationmark.triangle")
-                    } else if entries.isEmpty {
+                    } else if shown.isEmpty {
                         emptyState
                     } else {
                         LazyVGrid(columns: columns, spacing: 8) {
-                            ForEach(entries) { entry in
+                            ForEach(Array(shown.enumerated()), id: \.element.id) { index, image in
+                                let entry = image.entry
+                                // Past the 1／4／6／9 shape, a photo waits for the next one (11/8).
+                                let waiting = index >= tileCount
                                 Button { previewEntry = entry } label: {
-                                    thumbnail(entry)
+                                    thumbnail(entry, url: image.url)
+                                        .opacity(waiting ? 0.4 : 1)
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityElement(children: .ignore)
                                 .accessibilityAddTraits(.isButton)
                                 .accessibilityAction { previewEntry = entry }
-                                .accessibilityLabel(entry.id == entries.first?.id
-                                    ? "表紙、見せる写真" : "見せる写真")
+                                .accessibilityLabel("見せる写真")
+                                .accessibilityValue([entry.pinned ? "おすすめで入れ替えない" : nil,
+                                                     waiting ? "見せる画面には出ません" : nil]
+                                    .compactMap { $0 }.joined(separator: "、"))
                             }
                             if allEntries.count < ShowcasePhotoStore.maximumCount {
                                 Button { pickerMode = .add } label: {
@@ -626,9 +1017,23 @@ struct ShowcasePreparationView: View {
                             Text("追加やおすすめで選び直すには、9枚以下にしてください。")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
-                        if entries.count < allEntries.count {
+                        if shown.count < allEntries.count {
                             Text("表示できない写真は省いています")
                                 .font(.footnote).foregroundStyle(.secondary)
+                        }
+                        if canReselect {
+                            // 11/8: was the only item of a 「…」 menu.
+                            Button {
+                                running = "おすすめで選び直す"
+                                Task { await selectRecommendations() }
+                            } label: {
+                                WorkingLabel(title: "おすすめで選び直す", workingTitle: "選んでいます…",
+                                             working: running == "おすすめで選び直す")
+                                    .frame(maxWidth: .infinity, minHeight: 44)
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(isPreparing)
+                            .accessibilityIdentifier("showcase-preparation-reselect")
                         }
                     }
                     if store.canUndo {
@@ -646,29 +1051,6 @@ struct ShowcasePreparationView: View {
             .navigationTitle("見せる写真")
             .navigationBarTitleDisplayMode(.inline)
             .onChange(of: isPreparing) { _, preparing in if !preparing { running = nil } }
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button {
-                            running = "おすすめで選び直す"
-                            Task { await selectRecommendations() }
-                        } label: {
-                            WorkingLabel(title: "おすすめで選び直す", workingTitle: "選んでいます…",
-                                         working: running == "おすすめで選び直す")
-                        }
-                            .disabled(isPreparing || recommendationCandidates.isEmpty
-                                      || allEntries.count > ShowcasePhotoStore.maximumCount
-                                      || allEntries.filter(\.pinned).count >= ShowcasePhotoStore.maximumCount)
-                    } label: {
-                        // The menu closes on the tap, so its place shows the work (11/6).
-                        Group {
-                            if running == "おすすめで選び直す" { ProgressView() } else { Image(systemName: "ellipsis") }
-                        }
-                            .frame(width: 44, height: 44)
-                    }
-                    .accessibilityLabel(running == "おすすめで選び直す" ? "選んでいます" : "見せる写真の操作")
-                }
-            }
             .safeAreaInset(edge: .bottom) {
                 // 11/7: 「完了」 (was 「見せる」, which stacked a second show screen).
                 Button("完了") {
@@ -690,10 +1072,14 @@ struct ShowcasePreparationView: View {
                 preview(entry)
             }
             .sheet(item: $pickerMode) { mode in
+                let offered = eligibleCandidates.filter { candidate in
+                    !allEntries.contains { $0.photoIdentifier == candidate.localIdentifier }
+                }
+                let known = knownIdentifiers
                 ShowcaseCandidatePicker(
-                    candidates: eligibleCandidates.filter { candidate in
-                        !allEntries.contains { $0.photoIdentifier == candidate.localIdentifier }
-                    },
+                    candidates: offered,
+                    leadingCount: offered.prefix { known.contains($0.localIdentifier) }.count,
+                    leadingTitle: profiles.first(where: { $0.identifier == scopeID }).map { "\($0.displayName)の写真" },
                     maximumSelection: {
                         switch mode {
                         case .add: max(0, ShowcasePhotoStore.maximumCount - allEntries.count)
@@ -702,19 +1088,20 @@ struct ShowcasePreparationView: View {
                     }(),
                     onSelect: { identifiers in
                         let targetScope = scopeID
+                        let boxes = catBoxes
                         isPreparing = true
                         defer { isPreparing = false }
+                        // 11/8: a failure is told once, by the picker's alert.
                         do {
                             switch mode {
                             case .add:
-                                try await store.addPhotos(identifiers, to: targetScope)
+                                try await store.addPhotos(identifiers, boxes: boxes, to: targetScope)
                             case let .replace(old):
                                 guard let identifier = identifiers.first else { return false }
-                                try await store.replace(old, with: identifier)
+                                try await store.replace(old, with: identifier, catBoundingBox: boxes[identifier])
                             }
                             return true
                         } catch {
-                            errorMessage = "写真を用意できませんでした。写真へのアクセスを確かめてください"
                             return false
                         }
                     }
@@ -726,11 +1113,21 @@ struct ShowcasePreparationView: View {
     @ViewBuilder
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(eligibleCandidates.isEmpty
-                ? "見せられる猫の写真がありません"
-                : "まだ写真を選んでいません")
-                .font(.headline)
-            if allEntries.isEmpty {
+            if !allEntries.isEmpty {
+                // Chosen before, but not viewable now: say so, and the way out.
+                Text("写真を表示できません").font(.headline)
+                Text("写真へのアクセスを確かめてください。")
+                    .foregroundStyle(.secondary)
+                Button("設定を開く") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                }
+                .buttonStyle(.borderedProminent)
+            } else if eligibleCandidates.isEmpty {
+                Text("見せられる猫の写真がありません").font(.headline)
+                Text("「写真」タブで猫の写真が見つかると選べます。")
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("まだ写真を選んでいません").font(.headline)
                 if !recommendationCandidates.isEmpty {
                     Button {
                         running = "おすすめで選ぶ"
@@ -744,10 +1141,6 @@ struct ShowcasePreparationView: View {
                 }
                 Button("写真を選ぶ") { pickerMode = .add }
                     .accessibilityIdentifier("showcase-preparation-select")
-                    .disabled(eligibleCandidates.isEmpty)
-            } else {
-                Text("写真へのアクセスを確認してください")
-                    .foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -756,22 +1149,9 @@ struct ShowcasePreparationView: View {
                     in: RoundedRectangle(cornerRadius: 14))
     }
 
-    private func thumbnail(_ entry: ShowcasePhotoStore.Entry) -> some View {
+    private func thumbnail(_ entry: ShowcasePhotoStore.Entry, url: URL) -> some View {
         ShowcaseSquare {
-            if let url = store.imageURL(for: entry),
-               let image = UIImage(contentsOfFile: url.path) {
-                Image(uiImage: image).resizable().scaledToFill()
-            } else {
-                Color.secondary.opacity(0.15)
-            }
-        }
-        .overlay(alignment: .topLeading) {
-            if entry.id == entries.first?.id {
-                Text("表紙")
-                    .font(.caption2.bold()).foregroundStyle(.white)
-                    .padding(4).background(.black.opacity(0.65), in: Capsule())
-                    .padding(5)
-            }
+            ShowcaseItemImage(item: .prepared(entry, url), square: true)
         }
         .overlay(alignment: .bottomTrailing) {
             if entry.pinned {
@@ -787,9 +1167,8 @@ struct ShowcasePreparationView: View {
         NavigationStack {
             VStack(spacing: 16) {
                 Spacer()
-                if let url = store.imageURL(for: entry),
-                   let image = UIImage(contentsOfFile: url.path) {
-                    Image(uiImage: image).resizable().scaledToFit()
+                if let url = store.imageURL(for: entry) {
+                    ShowcaseItemImage(item: .prepared(entry, url), square: false)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 Spacer()
@@ -809,8 +1188,10 @@ struct ShowcasePreparationView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        Button("表紙にする") { change { try store.makeCover(entry) } }
-                        Button(entry.pinned ? "固定を外す" : "固定する") {
+                        if entry.id != entries.first?.id {
+                            Button("先頭にする") { change { try store.moveToFront(entry) } }
+                        }
+                        Button(entry.pinned ? "おすすめで入れ替える" : "おすすめで入れ替えない") {
                             change { try store.setPinned(!entry.pinned, for: entry) }
                         }
                         Button("外す", role: .destructive) { change { try store.remove(entry) } }
@@ -835,6 +1216,7 @@ struct ShowcasePreparationView: View {
     private func selectRecommendations() async {
         guard !isPreparing else { return }
         let targetScope = scopeID
+        let boxes = catBoxes
         isPreparing = true
         defer { isPreparing = false }
         var identifiers = await ShowcaseRecommender.identifiers(
@@ -846,14 +1228,17 @@ struct ShowcasePreparationView: View {
            let index = identifiers.firstIndex(of: face) {
             identifiers.insert(identifiers.remove(at: index), at: 0)
         }
-        do { try await store.applyRecommendations(identifiers, to: targetScope) }
-        catch { errorMessage = "写真を準備できませんでした。もう一度お試しください" }
+        do { try await store.applyRecommendations(identifiers, boxes: boxes, to: targetScope) }
+        catch { errorMessage = "おすすめで選べませんでした。もう一度お試しください" }
     }
 }
 
 private struct ShowcaseCandidatePicker: View {
     @Environment(\.dismiss) private var dismiss
     let candidates: [PhotoPresentation]
+    /// This cat's own photos come first, under their own heading (11/8).
+    var leadingCount = 0
+    var leadingTitle: String? = nil
     let maximumSelection: Int
     let onSelect: ([String]) async -> Bool
     @State private var selected = Set<String>()
@@ -861,6 +1246,23 @@ private struct ShowcaseCandidatePicker: View {
     @State private var saveFailed = false
     private let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8),
                            GridItem(.flexible(), spacing: 8)]
+
+    private var isReplacing: Bool { maximumSelection == 1 }
+
+    private struct CandidateGroup: Identifiable {
+        let id: Int
+        let title: String?
+        let start: Int
+        let photos: [PhotoPresentation]
+    }
+
+    private var groups: [CandidateGroup] {
+        guard let leadingTitle, leadingCount > 0, leadingCount < candidates.count else {
+            return [CandidateGroup(id: 0, title: nil, start: 0, photos: candidates)]
+        }
+        return [CandidateGroup(id: 0, title: leadingTitle, start: 0, photos: Array(candidates.prefix(leadingCount))),
+                CandidateGroup(id: 1, title: "ほかの写真", start: leadingCount, photos: Array(candidates.dropFirst(leadingCount)))]
+    }
 
     private func candidateLabel(_ photo: PhotoPresentation, index: Int) -> String {
         let date = photo.creationDate.map { $0.formatted(date: .long, time: .omitted) } ?? "撮影日不明"
@@ -870,6 +1272,8 @@ private struct ShowcaseCandidatePicker: View {
     private func toggleSelection(_ identifier: String) {
         guard !isSaving else { return }
         if selected.contains(identifier) { selected.remove(identifier) }
+        // Replacing takes one photo: another tap moves the choice (11/8).
+        else if isReplacing { selected = [identifier] }
         else if selected.count < maximumSelection { selected.insert(identifier) }
     }
 
@@ -880,46 +1284,46 @@ private struct ShowcaseCandidatePicker: View {
                     ContentUnavailableView("追加できる猫の写真はありません", systemImage: "photo")
                 } else {
                     LazyVGrid(columns: columns, spacing: 8) {
-                        ForEach(Array(candidates.enumerated()), id: \.element.localIdentifier) { index, photo in
-                            Button { toggleSelection(photo.localIdentifier) } label: {
-                                ShowcaseSquare {
-                                    PhotoAssetImageView(localIdentifier: photo.localIdentifier,
-                                                        catBoundingBox: photo.catBoundingBox,
-                                                        targetPixelSize: CGSize(width: 330, height: 330),
-                                                        targetAspectRatio: 1)
+                        ForEach(groups) { group in
+                            Section {
+                                ForEach(Array(group.photos.enumerated()), id: \.element.localIdentifier) { offset, photo in
+                                    candidateCell(photo, index: group.start + offset)
                                 }
-                                    .overlay(alignment: .topTrailing) {
-                                        if selected.contains(photo.localIdentifier) {
-                                            Image(systemName: "checkmark.circle.fill")
-                                                .font(.title3).padding(6)
-                                        }
-                                    }
+                            } header: {
+                                if let title = group.title {
+                                    Text(title)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.top, group.id == 0 ? 0 : 8)
+                                }
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityElement(children: .ignore)
-                            .accessibilityAddTraits(.isButton)
-                            .accessibilityAction { toggleSelection(photo.localIdentifier) }
-                            .accessibilityLabel(candidateLabel(photo, index: index))
-                            .disabled(isSaving)
-                            .accessibilityAddTraits(selected.contains(photo.localIdentifier) ? .isSelected : [])
-                            .accessibilityIdentifier("showcase-candidate-photo")
                         }
                     }
                 }
             }
             .padding(16)
             .interactiveDismissDisabled(isSaving)
-            .navigationTitle(maximumSelection == 1 ? "写真を入れ替える" : "写真を追加")
+            .navigationTitle(isReplacing ? "写真を入れ替える" : "写真を追加")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("キャンセル") { dismiss() }.disabled(isSaving)
                 }
+                if !isReplacing {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Text("あと\(max(0, maximumSelection - selected.count))枚")
+                            .font(.subheadline.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("showcase-candidate-remaining")
+                    }
+                }
             }
-            .alert("写真を準備できませんでした", isPresented: $saveFailed) {
+            .alert(isReplacing ? "写真を入れ替えられませんでした" : "写真を追加できませんでした",
+                   isPresented: $saveFailed) {
                 Button("閉じる", role: .cancel) {}
             } message: {
-                Text("写真へのアクセスと空き容量を確認してください")
+                Text("写真へのアクセスと空き容量を確かめてください")
             }
             .safeAreaInset(edge: .bottom) {
                 Button {
@@ -933,8 +1337,9 @@ private struct ShowcaseCandidatePicker: View {
                     }
                 } label: {
                     // Photos are copied from the library; say so instead of only graying out (11/6).
-                    WorkingLabel(title: "\(selected.count)枚を\(maximumSelection == 1 ? "選ぶ" : "追加")",
-                                 workingTitle: "追加しています…", working: isSaving)
+                    WorkingLabel(title: isReplacing ? "この写真にする" : "\(selected.count)枚を追加",
+                                 workingTitle: isReplacing ? "入れ替えています…" : "追加しています…",
+                                 working: isSaving)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isSaving || selected.isEmpty)
@@ -945,12 +1350,39 @@ private struct ShowcaseCandidatePicker: View {
         }
         .appRecordEditing(retainWhileHidden: !selected.isEmpty || isSaving)
     }
+
+    private func candidateCell(_ photo: PhotoPresentation, index: Int) -> some View {
+        Button { toggleSelection(photo.localIdentifier) } label: {
+            ShowcaseSquare {
+                PhotoAssetImageView(localIdentifier: photo.localIdentifier,
+                                    catBoundingBox: photo.catBoundingBox,
+                                    targetPixelSize: CGSize(width: 330, height: 330),
+                                    targetAspectRatio: 1)
+            }
+                .overlay(alignment: .topTrailing) {
+                    if selected.contains(photo.localIdentifier) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title3).padding(6)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { toggleSelection(photo.localIdentifier) }
+        .accessibilityLabel(candidateLabel(photo, index: index))
+        .disabled(isSaving)
+        .accessibilityAddTraits(selected.contains(photo.localIdentifier) ? .isSelected : [])
+        .accessibilityIdentifier("showcase-candidate-photo")
+    }
 }
 
 struct ShowcaseToolCatPicker: View {
     let profiles: [CatProfilePresentation]
     let storedScopes: [String]
     let select: (String) -> Void
+    /// Removes a former cat's set (「前の写真」), by swiping its row (11/8).
+    var remove: ((String) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
@@ -976,9 +1408,15 @@ struct ShowcaseToolCatPicker: View {
                 }
                 let former = storedScopes.filter { scope in !scope.isEmpty && !profiles.contains { $0.identifier == scope } }
                 if !former.isEmpty {
-                    Section("まだ登録していない猫") {
+                    Section("前の写真") {
                         ForEach(former, id: \.self) { scope in
-                            Button("以前選んだ写真・\(storeOrder(scope))") { select(scope); dismiss() }
+                            Button("前に選んだ写真（\(storeOrder(scope))）") { select(scope); dismiss() }
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    if let remove {
+                                        Button("削除", role: .destructive) { remove(scope) }
+                                    }
+                                }
+                                .accessibilityIdentifier("showcase-former-scope")
                         }
                     }
                 }

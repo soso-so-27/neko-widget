@@ -555,13 +555,14 @@ struct MainTabView: View {
     /// The theme row for the chosen cat, built when the cat or the photos change (11/7).
     @State private var photoThemeCatAlbums: (key: PhotoThemeCatKey, albums: [CuratedAlbumPresentation])?
     @StateObject private var showcaseStore = ShowcasePhotoStore.shared
-    @AppStorage("showcase.lastScopeID.v1") private var showcaseScopeID = ""
+    /// nil until a set is chosen: the first cat, not すべての猫 (11/8). "" is
+    /// すべての猫 chosen on purpose.
+    @AppStorage("showcase.lastScopeID.v1") private var storedShowcaseScopeID: String?
     @State private var showcaseSession: ShowcaseSession?
-    @State private var showsShowcasePreparation = false
-    /// 「完了」 was pressed in the edit screen opened on its own: show the set once it closes (11/7).
-    @State private var opensShowcaseAfterPreparation = false
+    /// Scopes whose first set is being chosen; the open screen says 「選んでいます…」 (11/8).
     @State private var preparingShowcaseScopes = Set<String>()
-    @State private var showcaseWaitingToOpen: String?
+    /// Scopes whose first choice failed; the open screen offers 「自分で選ぶ」.
+    @State private var failedShowcaseScopes = Set<String>()
     @State private var showcasePreparationError = false
     @State private var showsShowcaseNoPhotos = false
     /// 「＋」 in the cat row: adding a cat, then the page of the one added.
@@ -721,14 +722,17 @@ struct MainTabView: View {
             guard showcaseCandidates.contains(where: { $0.localIdentifier == identifier }) else {
                 throw ShowcasePhotoStore.Error.unavailable
             }
-            try await showcaseStore.add(photoIdentifier: identifier, to: scope)
+            try await showcaseStore.add(
+                photoIdentifier: identifier, to: scope,
+                catBoundingBox: showcaseCandidates.first { $0.localIdentifier == identifier }?.catBoundingBox
+            )
             showcaseScopeID = scope
         })
         .environment(\.showcaseAddTargets, showcaseAddScopes.map {
             ShowcaseAddTarget(id: $0, title: showcaseScopeTitle($0))
         })
-        .alert("見せる写真を用意できませんでした", isPresented: $showcasePreparationError) {
-            Button("自分で選ぶ") { showsShowcasePreparation = true }
+        // Only an unreadable list of kept photos stops the screen from opening (11/8).
+        .alert("見せる写真を読み込めませんでした", isPresented: $showcasePreparationError) {
             Button("閉じる", role: .cancel) {}
         }
         .fullScreenCover(item: $showcaseSession) { session in
@@ -742,27 +746,14 @@ struct MainTabView: View {
                 initialScopeID: session.currentPhotoIdentifier == nil ? session.scopeID : nil,
                 profiles: catProfilesPresentation.profiles,
                 candidates: showcaseCandidates,
+                preparingScopes: preparingShowcaseScopes,
+                failedScopes: failedShowcaseScopes,
                 onScopeSelected: { scopeID, preparesIfNeeded in
                     showcaseScopeID = scopeID
                     if preparesIfNeeded {
                         prepareShowcaseIfNeeded(openAfter: false, scopeID: scopeID)
                     }
                 }
-            )
-        }
-        .sheet(isPresented: $showsShowcasePreparation, onDismiss: {
-            // 11/7: opened from 「自分で選ぶ」 with no show screen under it, so
-            // 「完了」 opens it once, after this sheet is gone.
-            guard opensShowcaseAfterPreparation else { return }
-            opensShowcaseAfterPreparation = false
-            showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil, scopeID: showcaseScopeID)
-        }) {
-            ShowcasePreparationView(
-                store: showcaseStore,
-                candidates: showcaseCandidates,
-                profiles: catProfilesPresentation.profiles,
-                scopeID: showcaseScopeID,
-                onDone: { opensShowcaseAfterPreparation = true }
             )
         }
         .sheet(isPresented: $showsSettings, onDismiss: {
@@ -941,10 +932,6 @@ struct MainTabView: View {
             if tab != .windows { groupWindowOpenInbox.dismissCreatePrompt() }
             if oldTab == .windows && tab != .windows { rememberMadoVisit() }
             lastViewedTab = tab.rawValue
-            if tab != .tools { showcaseWaitingToOpen = nil }
-        }
-        .onChange(of: showcaseScopeID) { _, _ in
-            showcaseWaitingToOpen = nil
         }
         .onChange(of: hasPhotoAccess) { _, canShowPhotos in
             if canShowPhotos { consumeShowcaseLaunchRequest() }
@@ -1105,11 +1092,18 @@ struct MainTabView: View {
                 // The cats are the door, but small: a row of faces above the
                 // tools, each opening the cat's page. The tools stay tools.
                 catStrip
+                // 11/8: the vet memo is for check-ups and vaccines too, so it is everyday.
                 toolSection("ふだん") {
                     showcaseToolCard
-                }
-                if !preparingShowcaseScopes.isEmpty {
-                    ProgressView("見せる写真を用意しています…")
+                    NavigationLink {
+                        VeterinaryVisitsView(profiles: catProfilesPresentation.profiles,
+                            photos: memoryNotePhotos, noteStore: memoStore)
+                    } label: {
+                        ToolTile(title: "病院で見せる", systemImage: "cross.case.fill",
+                                 subtitle: "診察メモ", tint: ToolTint.everydayDeep)
+                    }
+                    .buttonStyle(ToolCardButtonStyle())
+                    .accessibilityIdentifier("tools-vet-open")
                 }
                 toolSection("もしものとき") {
                     NavigationLink {
@@ -1132,15 +1126,6 @@ struct MainTabView: View {
                     }
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-care-open")
-                    NavigationLink {
-                        VeterinaryVisitsView(profiles: catProfilesPresentation.profiles,
-                            photos: memoryNotePhotos, noteStore: memoStore)
-                    } label: {
-                        ToolTile(title: "病院で見せる", systemImage: "cross.case.fill",
-                                 subtitle: "診察メモ", tint: ToolTint.emergencyDeep)
-                    }
-                    .buttonStyle(ToolCardButtonStyle())
-                    .accessibilityIdentifier("tools-vet-open")
                     NavigationLink {
                         EvacuationPreparationView(profiles: catProfilesPresentation.profiles,
                                                   unregisteredPhotos: unregisteredCatPhotos)
@@ -1175,7 +1160,7 @@ struct MainTabView: View {
             } else { openPreparedShowcase(scopeID: scope) }
         } label: {
             ToolTile(title: "写真を見せる", systemImage: "square.grid.3x3.fill",
-                     subtitle: "自慢の9枚を選ぶ", tint: ToolTint.everydayLight)
+                     subtitle: "自慢の9枚", tint: ToolTint.everydayLight)
         }
         .buttonStyle(ToolCardButtonStyle())
         .accessibilityIdentifier("tools-showcase-open")
@@ -1359,44 +1344,34 @@ struct MainTabView: View {
 
     private func prepareShowcaseIfNeeded(openAfter: Bool, scopeID: String? = nil) {
         let scopeID = scopeID ?? effectiveShowcaseScopeID
-        // A saved set opens as-is; recommendation runs only before this scope's first set.
-        if !showcaseStore.availableEntries(in: scopeID).isEmpty {
-            if openAfter {
-                showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil, scopeID: scopeID)
-            }
-            return
-        }
-        if showcaseStore.hasCorruptManifest {
+        let hasSet = !showcaseStore.availableEntries(in: scopeID).isEmpty
+        if !hasSet && showcaseStore.hasCorruptManifest {
             if openAfter { showcasePreparationError = true }
             return
         }
-        if showcaseStore.hasInitialized(scopeID) {
-            if openAfter {
-                showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil, scopeID: scopeID)
-            }
-            return
+        // 11/8: the screen opens at once; a first set is chosen while it shows 「選んでいます…」.
+        if openAfter {
+            showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil, scopeID: scopeID)
         }
-        if openAfter { showcaseWaitingToOpen = scopeID }
+        // A saved set opens as-is; recommendation runs only before this scope's first set.
+        guard !hasSet, !showcaseStore.hasInitialized(scopeID) else { return }
         guard preparingShowcaseScopes.insert(scopeID).inserted else { return }
+        failedShowcaseScopes.remove(scopeID)
         let candidates = showcaseCandidatesForScope(scopeID)
+        let boxes = Dictionary(candidates.compactMap { photo in
+            photo.catBoundingBox.map { (photo.localIdentifier, $0) }
+        }, uniquingKeysWith: { first, _ in first })
         Task {
             let identifiers = await ShowcaseRecommender.identifiers(
                 from: candidates,
                 excluding: showcaseStore.excludedIdentifiers(in: scopeID)
             )
             do {
-                try await showcaseStore.applyRecommendations(identifiers, to: scopeID)
-                preparingShowcaseScopes.remove(scopeID)
-                guard showcaseWaitingToOpen == scopeID,
-                      selectedTab == .tools else { return }
-                showcaseWaitingToOpen = nil
-                showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil, scopeID: scopeID)
+                try await showcaseStore.applyRecommendations(identifiers, boxes: boxes, to: scopeID)
             } catch {
-                preparingShowcaseScopes.remove(scopeID)
-                guard showcaseWaitingToOpen == scopeID else { return }
-                showcaseWaitingToOpen = nil
-                showcasePreparationError = true
+                failedShowcaseScopes.insert(scopeID)
             }
+            preparingShowcaseScopes.remove(scopeID)
         }
     }
 
@@ -1409,19 +1384,35 @@ struct MainTabView: View {
         return showcaseCandidates.filter { confirmed.contains($0.localIdentifier) }
     }
 
+    /// The Control Center and Siri open the same set as the card.
     private var effectiveShowcaseScopeID: String {
-        showcaseScopeID
+        showcaseCardScopeID
+    }
+
+    /// The set chosen last time; before any choice, the first cat (11/8: it
+    /// was すべての猫).
+    private var showcaseScopeID: String {
+        get { storedShowcaseScopeID ?? catProfilesPresentation.profiles.first?.identifier ?? "" }
+        nonmutating set { storedShowcaseScopeID = newValue }
     }
 
     /// The card opens on the cat chosen last time (11/7: it was always すべての猫).
-    /// すべての猫 when that cat is gone, or has no set to show without Photos.
+    /// When that cat is gone, or has no set to show without Photos, the first
+    /// cat that can show one, then すべての猫.
     private var showcaseCardScopeID: String {
         let scope = showcaseScopeID
         guard !scope.isEmpty else { return "" }
+        if canOpenShowcase(scope) { return scope }
+        if let first = catProfilesPresentation.profiles.first?.identifier, canOpenShowcase(first) {
+            return first
+        }
+        return ""
+    }
+
+    private func canOpenShowcase(_ scope: String) -> Bool {
         let hasSet = !showcaseStore.availableEntries(in: scope).isEmpty
         let known = catProfilesPresentation.profiles.contains { $0.identifier == scope }
-        guard hasSet || (known && hasPhotoAccess) else { return "" }
-        return scope
+        return hasSet || (known && hasPhotoAccess)
     }
 
     private var showcaseAddScopes: [String] {
@@ -1433,7 +1424,7 @@ struct MainTabView: View {
 
     private func showcaseScopeTitle(_ scopeID: String) -> String {
         catProfilesPresentation.profiles.first(where: { $0.identifier == scopeID })?.displayName
-            ?? (scopeID.isEmpty ? "すべての猫" : "前に選んだ猫")
+            ?? (scopeID.isEmpty ? "すべての猫" : "前に選んだ写真")
     }
 
     private var unregisteredCatPhotos: [PhotoPresentation] {

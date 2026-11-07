@@ -3221,6 +3221,111 @@ class ShowcaseCatCareTests(unittest.TestCase):
         # The 「この子のこと」 face photo leads only if it is already a candidate.
         self.assertIn("identifiers.firstIndex(of: face)", view)
 
+    def test_showcase_tool_review_round_one(self) -> None:
+        """11/8 review of 「写真を見せる」 (source contracts; no Swift is run here)."""
+        store = source("NekoWidget/Services/ShowcasePhotoStore.swift")
+        view = source("NekoWidget/Views/ShowcasePhotoView.swift")
+        tab = source("NekoWidget/Views/MainTabView.swift")
+        # 1／2×2／3×2／3×3: only as many photos as fill the shape, on screen and in the picture.
+        layout = section(view, "enum ShowcaseLayout {", "enum ShowcaseBand {")
+        for part in ("case 9...: 9", "case 6...: 6", "case 4...: 4", "default: min(max(count, 0), 1)",
+                     "tileCount >= 6 ? 3 : tileCount == 4 ? 2 : 1"):
+            self.assertIn(part, layout)
+        main = section(view, "struct ShowcasePhotoView: View {", "enum BestNineComposer {")
+        self.assertIn("let tiles = Array(all.prefix(ShowcaseLayout.tileCount(for: all.count)))", main)
+        self.assertIn("count: ShowcaseLayout.columns(for: tiles.count)", main)
+        # Three columns at every text size (no 2-column large-text grid on the show screen).
+        self.assertNotIn("dynamicTypeSize.isAccessibilitySize ? 2 : 3", main)
+        composer = section(view, "enum BestNineComposer {", "private struct ShowcaseItemImage: View {")
+        self.assertIn("let count = ShowcaseLayout.tileCount(for: photos.count)", composer)
+        self.assertIn("let rows = count / columns", composer)
+        self.assertNotIn("cell * 3 + gap * 4", composer)
+        # The cat box is kept with the photo and every square is cut around it.
+        self.assertIn("var catBoundingBox: CGRect? = nil", store)
+        self.assertIn("catBoundingBox: catBoundingBox.flatMap(Self.validBox)", store)
+        for call in ("try await store.addPhotos(identifiers, boxes: boxes, to: targetScope)",
+                     "try await store.replace(old, with: identifier, catBoundingBox: boxes[identifier])",
+                     "try await store.applyRecommendations(identifiers, boxes: boxes, to: targetScope)"):
+            self.assertIn(call, view)
+        self.assertIn("try await showcaseStore.applyRecommendations(identifiers, boxes: boxes, to: scopeID)", tab)
+        self.assertIn("PhotoThumbnailCropPolicy.cropRect(", section(view, "enum ShowcaseImageLoader {",
+                                                                    "struct ShowcasePhotoView: View {"))
+        self.assertIn("ShowcaseImageLoader.load(url, box: entry.catBoundingBox, side: side, square: true)", main)
+        # Kept JPEGs are not decoded at full size on each redraw.
+        self.assertNotIn("UIImage(contentsOfFile:", view)
+        self.assertIn("kCGImageSourceThumbnailMaxPixelSize", view)
+        # The name band sits under the grid (not over it), is in the shared picture, and one switch drives both.
+        self.assertNotIn(".overlay(alignment: .bottom) {", main)
+        self.assertIn("if initialScopeID != nil, let band = shownCaption {", main)
+        self.assertIn("private var shownCaption: String? { showsCaption ? caption : nil }", main)
+        self.assertIn("BestNineComposer.image(photos, title: band)", main)
+        self.assertIn('Toggle("名前と年齢", isOn: $showsCaption)', main)
+        self.assertIn("if let band {", composer)
+        # The first cat, not すべての猫, before anything is chosen.
+        self.assertIn('@AppStorage("showcase.lastScopeID.v1") private var storedShowcaseScopeID: String?', tab)
+        self.assertIn("storedShowcaseScopeID ?? catProfilesPresentation.profiles.first?.identifier", tab)
+        # The screen opens at once and says 「選んでいます…」, never 「写真がありません」 while choosing.
+        prepare = section(tab, "private func prepareShowcaseIfNeeded(", "private func showcaseCandidatesForScope(")
+        self.assertLess(prepare.index("showcaseSession = ShowcaseSession("), prepare.index("ShowcaseRecommender.identifiers("))
+        self.assertNotIn("showcaseWaitingToOpen", tab)
+        self.assertNotIn('ProgressView("見せる写真を用意しています…")', tab)
+        empty = section(main, "private var emptyState: some View {", "private func selectScope(")
+        self.assertLess(empty.index('ProgressView("選んでいます…")'), empty.index('"まだ写真を選んでいません"'))
+        # Words.
+        self.assertIn('Label("画像を共有", systemImage: "square.and.arrow.up")', main)
+        self.assertNotIn("画像を書き出す", view)
+        self.assertIn('"\\(profile.displayName)の\\(count)枚"', main)
+        self.assertIn('"うちの猫の\\(count)枚"', main)
+        self.assertNotIn("鉛筆", view)
+        self.assertNotIn('Image(systemName: "pencil")', view)
+        self.assertIn('Text("編集")', main)
+        self.assertIn('entry.pinned ? "おすすめで入れ替える" : "おすすめで入れ替えない"', view)
+        self.assertIn('Button("先頭にする")', view)
+        for gone in ("固定する", "固定を外す", "表紙"):
+            self.assertNotIn(gone, view)
+        preparation = section(view, "struct ShowcasePreparationView: View {", "private struct ShowcaseCandidatePicker: View {")
+        self.assertNotIn('"見せる写真の操作"', preparation)
+        self.assertIn('"showcase-preparation-reselect"', preparation)
+        self.assertIn("if canReselect {", preparation)
+        self.assertIn('Text("あと\\(ShowcasePhotoStore.maximumCount - allEntries.count)枚")', preparation)
+        picker = section(view, "private struct ShowcaseCandidatePicker: View {", "struct ShowcaseToolCatPicker: View {")
+        self.assertIn('Text("あと\\(max(0, maximumSelection - selected.count))枚")', picker)
+        self.assertIn("else if isReplacing { selected = [identifier] }", picker)
+        # A failed add is told once (the picker's alert), not twice.
+        self.assertNotIn("写真を用意できませんでした", view)
+        self.assertNotIn("写真を準備できませんでした", view)
+        # 「前の写真」, and a former set can be swiped away.
+        cats = section(view, "struct ShowcaseToolCatPicker: View {", "private func storeOrder(")
+        self.assertIn('Section("前の写真")', cats)
+        self.assertIn('Button("前に選んだ写真（\\(storeOrder(scope))）")', cats)
+        self.assertIn('Button("削除", role: .destructive) { remove(scope) }', cats)
+        self.assertIn("try store.removeScope(removed)", main)
+        self.assertNotIn("まだ登録していない猫", view)
+        # The arrow shows only when there is something to switch to.
+        self.assertIn("if detailIndex == nil && initialScopeID != nil && canSwitchScope {", main)
+        # The enlarged photo pages, zooms and closes with a downward drag.
+        detail = section(view, "private struct ShowcaseDetailPhoto: View {", "struct ShowcasePreparationView: View {")
+        for part in ("MagnifyGesture()", ".onTapGesture(count: 2)", "moved.height > 110", "page(1)", "page(-1)"):
+            self.assertIn(part, detail)
+        # Names match the tool, the Control Center and Siri.
+        self.assertIn('subtitle: "自慢の9枚", tint: ToolTint.everydayLight)', tab)
+        control = source("NekoWidgetWidget/ShowcaseControl.swift")
+        shortcut = source("NekoWidget/App/ShowcaseAppShortcuts.swift")
+        self.assertIn('.displayName("写真を見せる")', control)
+        self.assertIn('shortTitle: "写真を見せる"', shortcut)
+        for text in (control, shortcut, source("NekoWidgetWidget/OpenShowcaseIntent.swift")):
+            self.assertNotIn("うちのこを見せる", text)
+
+    def test_vet_memo_is_an_everyday_tool(self) -> None:
+        tab = source("NekoWidget/Views/MainTabView.swift")
+        everyday = section(tab, 'toolSection("ふだん") {', 'toolSection("もしものとき") {')
+        emergency = section(tab, 'toolSection("もしものとき") {', "private var showcaseToolCard: some View {")
+        self.assertLess(everyday.index("showcaseToolCard"), everyday.index('.accessibilityIdentifier("tools-vet-open")'))
+        self.assertIn("ToolTint.everydayDeep", everyday)
+        self.assertNotIn("tools-vet-open", emergency)
+        for identifier in ("tools-lost-cat-open", "tools-care-open", "tools-evacuation-open"):
+            self.assertIn(identifier, emergency)
+
 
 class CatCareMemoWeightTests(unittest.TestCase):
     def test_memo_weights_join_by_id_and_memos_are_not_changed(self) -> None:
@@ -3430,7 +3535,7 @@ class WorkingFeedbackTests(unittest.TestCase):
                 'WorkingLabel(title: "購入を復元", workingTitle: "確認しています…"',
             ),
             "NekoWidget/Views/ShowcasePhotoView.swift": (
-                'workingTitle: "追加しています…", working: isSaving',
+                'workingTitle: isReplacing ? "入れ替えています…" : "追加しています…"',
                 'WorkingLabel(title: "おすすめで選ぶ", workingTitle: "選んでいます…"',
             ),
             "NekoWidget/Views/VeterinaryVisitView.swift": ('workingTitle: "作っています…"',),
