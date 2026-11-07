@@ -129,11 +129,10 @@ class UsageReportBoundaryTests(unittest.TestCase):
                 self.assertNotIn("UsageCounter", path.read_text(encoding="utf-8"), str(path))
 
     def test_settings_switch_and_lifecycle(self) -> None:
+        # 11/8: no switch in 設定; the policy tells it. An earlier 「オフ」 stays off.
         settings = source("NekoWidget/Views/SettingsView.swift")
-        self.assertIn("@AppStorage(UsageCounter.enabledKey) private var usageReportingEnabled = true", settings)
-        self.assertIn('Label("利用状況を送る", systemImage: "chart.bar")', settings)
-        self.assertIn('Text("利用状況は、使った機能の回数だけを送ります。写真や書いた内容は送りません。")', settings)
-        self.assertIn("UsageCounter.shared.setEnabled(isOn)", settings)
+        for gone in ("usageReportingEnabled", "利用状況を送る", '"settings-usage-reporting"'):
+            self.assertNotIn(gone, settings)
         counter = source(COUNTER)
         disable = block(counter, "    func setEnabled(_ value: Bool) {")
         self.assertIn("removeItem(at: url)", disable)

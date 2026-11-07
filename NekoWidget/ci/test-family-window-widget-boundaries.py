@@ -3610,7 +3610,8 @@ class RecommendAppTests(unittest.TestCase):
         self.assertIn("enum AppStoreListing {", settings)
         self.assertIn('https://apps.apple.com/jp/app/id', settings)
         self.assertIn("if let url = AppStoreListing.pageURL {", settings)
-        self.assertIn('Label("ねこのまどを紹介する", systemImage: "square.and.arrow.up")', settings)
+        self.assertIn('Text("ねこのまどを紹介する").foregroundStyle(Color.primary)', settings)
+        self.assertIn('Image(systemName: "square.and.arrow.up")', settings)
 
 
 class SharedWorkMarkTests(unittest.TestCase):
@@ -3845,13 +3846,21 @@ class SettingsLayoutTests(unittest.TestCase):
     def test_settings_put_plus_and_saving_first_and_test_tools_last(self) -> None:
         settings = source("NekoWidget/Views/SettingsView.swift")
         body = section(settings, "    var body: some View {\n        Form {", '.navigationTitle("設定")')
-        # 11/8: Plus and 保存 first; one-row sections grouped; the policy under プライバシー.
+        # 11/8: Plus and 保存 first; one-row sections grouped; the app's own pages together.
         order = ["PlusSettingsSection()", 'Text("保存")', 'Text("写真とウィジェット")',
-                 'Text("家族とまど")', '"settings-privacy-policy"', 'Text("プライバシー")',
-                 '"settings-support-page"', 'Text("サポート")', '"settings-app-version"',
+                 'Text("家族とまど")', '"settings-support-page"', '"settings-privacy-policy"',
+                 '"settings-recommend-app"', 'Text("ねこのまどについて")', '"settings-app-version"',
                  '"settings-account-deletion"', 'Text("テスト用")']
         positions = [body.index(item) for item in order]
         self.assertEqual(positions, sorted(positions))
+        for gone in ('Text("プライバシー")', 'Text("サポート")'):
+            self.assertNotIn(gone, body)
+        # Link and share words in the text color; only icons carry the tint (11/8).
+        link_row = section(settings, "struct ExternalLinkRow: View {", "struct SettingsActionRow: View {")
+        self.assertIn("Text(title).foregroundStyle(Color.primary)", link_row)
+        self.assertIn(".foregroundStyle(Color(uiColor: .tertiaryLabel))", link_row)
+        self.assertNotIn(".foregroundStyle(.tint)", link_row)
+        self.assertIn('Text("ねこのまどを紹介する").foregroundStyle(Color.primary)', body)
         # Previews and diagnostics sit together in the test-only section.
         cut = body.index("// Test builds only.")
         for identifier in ("settings-membership-preview",
