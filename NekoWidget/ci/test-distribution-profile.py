@@ -23,7 +23,7 @@ def app_info(extension=False):
     info = {profile.OFF_KEY: "YES", "SharingInternalEncryptedReportEnabled": False,
             "SharingInternalEncryptedReportScope": "", "SharingReleaseMode": "media-staging"}
     if not extension:
-        info.update(SharingAPIBaseURL=profile.ORIGIN, SharingModerationKeyID="moderation-v2",
+        info.update(UsageReportURL="https://neko-usage-staging.nakanishisoya.workers.dev/v1/usage", SharingAPIBaseURL=profile.ORIGIN, SharingModerationKeyID="moderation-v2",
                     SharingModerationPublicKey=profile.RECIPIENT, GroupReportingProductionEnabled="NO",
                     SharingReviewPreviewEnabled="NO", SharingShareExtensionSendEnabled="NO")
     return info

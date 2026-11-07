@@ -72,6 +72,8 @@ def verify_products(infos):
     for relative, info in infos.items():
         verify_info(info, extension=relative != "Info.plist", share_extension=relative == PLISTS[1])
     app, share = infos[PLISTS[0]], infos[PLISTS[1]]
+    from usage_report_config import verify as verify_usage
+    verify_usage(app, mode="media-staging")
     if "GroupShareExtensionEnabled" in share:
         for key in ("GroupShareExtensionEnabled", "GroupWindowsEnabled", "GroupShareKeychainGroup"):
             if app.get(key) != share.get(key):

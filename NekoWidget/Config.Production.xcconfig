@@ -40,3 +40,6 @@ APP_PRIVACY_MANIFEST_PATH = Production/PrivacyInfo.xcprivacy
 // Keep access to existing private CloudKit records. No new archive or upload.
 PERSONAL_ARCHIVE_ENABLED = YES
 PERSONAL_ARCHIVE_READ_ONLY = YES
+
+// Anonymous daily usage; empty means no transmission.
+USAGE_REPORT_URL = https:/$()/neko-usage-production.nakanishisoya.workers.dev/v1/usage
