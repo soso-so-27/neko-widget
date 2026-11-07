@@ -149,7 +149,26 @@ final class GroupWindowScreenModel: ObservableObject {
         self.formerName = formerName
         self.store = store
         self.moderation = moderation
+        // 11/7 ("サクサク"): the name and state this iPhone already has, from
+        // the first frame, instead of 「まど」 and a spinner until the relay answers.
+        listedWindow = GroupWindowListNavigation.shared.listedWindows[windowID]
+        if let cached = GroupWidgetCache.entry(windowID: windowID) {
+            knownName = cached.windowName
+            knowsPhotos = true
+        }
     }
+
+    /// The list's last read of this window, shown until the relay answers.
+    /// Only for drawing: sending still waits for `window` (11/7).
+    @Published private(set) var listedWindow: GroupWindow?
+    /// The name kept on this iPhone from an earlier visit (11/7).
+    @Published private(set) var knownName: String?
+    /// This window was read here before (or just now), so no kept photos
+    /// means none yet, not "still loading" (11/7).
+    @Published private(set) var knowsPhotos = false
+
+    var shownWindow: GroupWindow? { isGone ? nil : window ?? listedWindow }
+    var shownName: String? { window?.name ?? formerName ?? listedWindow?.name ?? knownName }
 
     var isFormer: Bool { formerName != nil }
     /// The relay no longer counts this iPhone in the window: its owner ended
@@ -201,11 +220,23 @@ final class GroupWindowScreenModel: ObservableObject {
         if entries.isEmpty { entries = await store.entries(windowID: windowID) }
         if hearts.isEmpty { hearts = await store.hearts(windowID: windowID) }
         if rememberedMe == nil { rememberedMe = await store.myParticipantID(windowID: windowID) }
+        // Read here before: its name, and an empty window shows as empty at once (11/7).
+        if let known = await store.knownWindows().first(where: { $0.id == windowID }) {
+            if knownName == nil { knownName = known.name }
+            knowsPhotos = true
+        }
+        showedStored = true
     }
+
+    /// Set once the first read above is done, after the report records.
+    private var showedStored = false
 
     /// Back from the members screen, where a hidden person may have been
     /// shown again (11/7, W10): the kept photos as they are now.
     func reloadStored() async {
+        // The first appearance waits for showStored, which runs after the
+        // report records load, so a reported photo is never drawn bare (11/7).
+        guard showedStored else { return }
         entries = await store.entries(windowID: windowID)
     }
 
@@ -218,6 +249,7 @@ final class GroupWindowScreenModel: ObservableObject {
         if isFormer {
             // A window this iPhone left: only what is kept here.
             entries = await store.entries(windowID: windowID)
+            knowsPhotos = true
             return
         }
         guard !isSyncing else { return }
@@ -278,6 +310,7 @@ final class GroupWindowScreenModel: ObservableObject {
         } catch {
             message = GroupWindowPresentation.message(for: error)
         }
+        knowsPhotos = true
         entries = await store.entries(windowID: windowID)
         await updateHomeScreenPhoto()
     }
@@ -799,12 +832,13 @@ struct GroupWindowScreen: View {
                         .padding(.horizontal, 16)
                         .accessibilityIdentifier("group-window-gone")
                 }
-                if let window = model.window, model.isPaused {
+                // The list's copy draws this before the relay answers (11/7).
+                if let window = model.shownWindow, GroupWindowPresentation.isPaused(window) {
                     pausedCard(window)
                 }
                 // Someone left and the key is being renewed on the creator's
                 // iPhone: say why sending waits, here and not only in メンバー.
-                if let window = model.window, window.state == .rotationRequired, !window.canManage {
+                if let window = model.shownWindow, window.state == .rotationRequired, !window.canManage {
                     Label(GroupWindowPresentation.message(for: GroupClientError.rotationPending), systemImage: "key")
                         .font(.footnote)
                         .foregroundStyle(.orange)
@@ -824,10 +858,13 @@ struct GroupWindowScreen: View {
                         .accessibilityIdentifier("group-window-receive-notice")
                 }
                 // Photos already here stay as they are while new ones are checked
-                // quietly; new photos simply appear. Only an empty window says it is loading.
-                if model.entries.isEmpty && model.isSyncing {
+                // quietly; new photos simply appear. Only a window never read on
+                // this iPhone shows a small spinner (11/7: a blank page for 3 s).
+                if model.entries.isEmpty && !model.knowsPhotos && !model.isFormer {
                     ProgressView()
-                        .frame(maxWidth: .infinity, minHeight: 160)
+                        .controlSize(.small)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 24)
                         .accessibilityLabel("写真を読み込んでいます")
                         .accessibilityIdentifier("group-window-syncing")
                 } else if model.entries.isEmpty {
@@ -852,7 +889,7 @@ struct GroupWindowScreen: View {
             .padding(.vertical, 12)
         }
         .background(Color(uiColor: .systemGroupedBackground))
-        .navigationTitle(model.window?.name ?? model.formerName ?? "まど")
+        .navigationTitle(model.shownName ?? "まど")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showsFormerReports) {
             NavigationStack {
@@ -1508,7 +1545,7 @@ private struct GroupPhotoDetail: View {
             }
             .padding(.bottom, 12)
             .background(.black)
-            .navigationTitle(model.window?.name ?? model.formerName ?? "まど")
+            .navigationTitle(model.shownName ?? "まど")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -1785,6 +1822,13 @@ final class GroupWindowOpenInbox: ObservableObject {
 final class GroupWindowListNavigation: ObservableObject {
     static let shared = GroupWindowListNavigation()
     @Published var openedWindow: GroupWindowRoute?
+    /// The windows the list last read, so an opened window draws its name
+    /// and state at once (11/7). Not published: nothing redraws for it.
+    private(set) var listedWindows: [String: GroupWindow] = [:]
+
+    func rememberListed(_ windows: [GroupWindow]) {
+        listedWindows = Dictionary(windows.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+    }
 
     /// After leaving or ending a window: the list, with its page gone.
     func returnToList() { openedWindow = nil }
@@ -1841,6 +1885,7 @@ final class GroupWindowListModel: ObservableObject {
 #endif
             message = nil
             hasLoaded = true
+            GroupWindowListNavigation.shared.rememberListed(windows)
             if GroupWidgetCache.keepOnly(windowIDs: Set(windows.map(\.id))) {
                 WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
             }
