@@ -259,6 +259,57 @@ actor GroupWindowLocalPhotoStore {
     }
 }
 
+/// 11/7 (W1): the newest photo time each group window showed while its page
+/// was open, so the まど tab and the list can mark windows with photos not
+/// seen yet. Read from what this iPhone keeps; nothing is asked of the relay.
+/// Written after a window's page reads and when it goes away, never while scrolling.
+enum GroupWindowSeen {
+    private static func key(_ windowID: String) -> String { "groupWindow.seen.v1." + windowID }
+    /// When marks began: photos kept before that count as seen.
+    private static let sinceKey = "groupWindow.seen.v1.since"
+
+    static func startIfNeeded() {
+        guard UserDefaults.standard.object(forKey: sinceKey) == nil else { return }
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: sinceKey)
+    }
+
+    private static func seenUntil(windowID: String) -> Double? {
+        if let seen = UserDefaults.standard.object(forKey: key(windowID)) as? Double { return seen }
+        return UserDefaults.standard.object(forKey: sinceKey) as? Double
+    }
+
+    /// Someone else's photo, shown here, newer than the last one seen.
+    static func hasNew(_ entries: [GroupWindowLocalPhotoStore.Entry], windowID: String) -> Bool {
+        guard let seen = seenUntil(windowID: windowID) else { return false }
+        return entries.contains { !$0.isOwn && !$0.isHidden && $0.createdAt.timeIntervalSince1970 > seen }
+    }
+
+    static func markSeen(_ entries: [GroupWindowLocalPhotoStore.Entry], windowID: String) {
+        guard let newest = entries.map(\.createdAt).max()?.timeIntervalSince1970 else { return }
+        let stored = UserDefaults.standard.object(forKey: key(windowID)) as? Double
+        if let stored, stored >= newest { return }
+        UserDefaults.standard.set(newest, forKey: key(windowID))
+        NotificationCenter.default.post(name: .groupWindowNewPhotosDidChange, object: nil)
+    }
+
+    /// Windows this iPhone is in (the home-screen copy keeps only those)
+    /// with a photo not seen yet.
+    static func windowsWithNewPhotos() async -> [String] {
+        let store = GroupWindowLocalPhotoStore.shared
+        var windows: [String] = []
+        for cached in GroupWidgetCache.entries() {
+            let entries = await store.entries(windowID: cached.windowID)
+            if hasNew(entries, windowID: cached.windowID) { windows.append(cached.windowID) }
+        }
+        return windows
+    }
+}
+
+extension Notification.Name {
+    /// New photos were kept, or a window's photos were seen (11/7).
+    static let groupWindowNewPhotosDidChange = Notification.Name("jp.nekowidget.group.new-photos-did-change")
+}
+
 /// Which invitation this iPhone made for a window, and until when. Never the
 /// link or its secret: those travel only through the share sheet.
 enum GroupInvitationMemory {

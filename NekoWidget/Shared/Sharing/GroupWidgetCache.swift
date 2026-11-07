@@ -43,24 +43,44 @@ enum GroupWidgetCache {
     /// Tapping a group window's home-screen photo opens that window. The URL
     /// carries only the window ID, never a photo, name, or key.
     static func openURL(windowID: String) -> URL? {
+        openURL(windowID: windowID, photoID: nil)
+    }
+
+    /// 11/7: the shown photo's ID too, so the tap opens that photo, not only
+    /// the window list. Still no name, image, or key.
+    static func openURL(windowID: String, photoID: String?) -> URL? {
         guard isValidID(windowID) else { return nil }
         var components = URLComponents()
         components.scheme = "nekowidget"
         components.host = "group-window"
-        components.queryItems = [URLQueryItem(name: "window", value: windowID)]
+        var items = [URLQueryItem(name: "window", value: windowID)]
+        if let photoID, isValidID(photoID) { items.append(URLQueryItem(name: "photo", value: photoID)) }
+        components.queryItems = items
         return components.url
     }
 
     static func windowID(fromOpenURL url: URL) -> String? {
+        openTarget(fromOpenURL: url)?.windowID
+    }
+
+    /// The photo the home screen showed, when the URL names one (11/7).
+    static func photoID(fromOpenURL url: URL) -> String? {
+        openTarget(fromOpenURL: url)?.photoID
+    }
+
+    /// A URL from an older Widget (the window only) still opens the window.
+    private static func openTarget(fromOpenURL url: URL) -> (windowID: String, photoID: String?)? {
         guard url.scheme?.lowercased() == "nekowidget",
               url.host?.lowercased() == "group-window",
               let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               components.path.isEmpty, components.fragment == nil,
-              let items = components.queryItems, items.count == 1,
+              let items = components.queryItems, items.count == 1 || items.count == 2,
               items[0].name == "window", let windowID = items[0].value,
               isValidID(windowID)
         else { return nil }
-        return windowID
+        guard items.count == 2 else { return (windowID, nil) }
+        guard items[1].name == "photo", let photoID = items[1].value, isValidID(photoID) else { return nil }
+        return (windowID, photoID)
     }
 
     // MARK: Reading (Widget and app)
