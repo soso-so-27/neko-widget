@@ -8,6 +8,41 @@ private struct DetectionSettingsSaveRequest: Equatable {
 }
 
 #endif
+/// 設定 → 「アカウントとデータを消す」: each thing that can be deleted, with
+/// one line and its own screen and confirmation (11/7).
+@MainActor
+struct AccountDeletionChoicesView: View {
+    static var isAvailable: Bool {
+        GroupWindowClientProvider.production != nil || ManagedPreservationConfiguration.current.isEnabled
+    }
+
+    var body: some View {
+        List {
+            if let client = GroupWindowClientProvider.production {
+                Section {
+                    NavigationLink { GroupIdentityDeletionView(client: client) } label: {
+                        Label("まどと家族の手帳のID", systemImage: "person.2.slash")
+                    }
+                    .accessibilityIdentifier("account-deletion-group-identity")
+                } footer: {
+                    Text("まどと家族の手帳から抜け、届けた写真とIDを消します。")
+                }
+            }
+            if ManagedPreservationConfiguration.current.isEnabled {
+                Section {
+                    NavigationLink { ManagedPreservationView(deletesAccount: true) } label: {
+                        Label("自動保存のアカウント", systemImage: "icloud.slash")
+                    }
+                    .accessibilityIdentifier("account-deletion-preservation")
+                } footer: {
+                    Text("自動保存で保存したものと、そのアカウントを消します。")
+                }
+            }
+        }
+        .navigationTitle("アカウントとデータを消す")
+    }
+}
+
 /// The production settings sheet's presentation shell, also used by isolated UI fixtures.
 struct SettingsSheetHost<Content: View>: View {
     let onClose: () -> Void
@@ -206,25 +241,11 @@ struct SettingsView: View {
                 Text("写真")
             }
 
-            Section {
-                NavigationLink {
-                    CatProfilesView(
-                        presentation: catProfilesPresentation,
-                        actions: catProfilesActions,
-                        opensProfileSettings: true
-                    )
-                } label: {
-                    LabeledContent {
-                        Text(catProfilesPresentation.profiles.isEmpty
-                            ? "未登録"
-                            : "\(catProfilesPresentation.profiles.count.formatted())匹")
-                    } label: {
-                        Label("猫のプロフィール", systemImage: "cat.fill")
-                    }
-                }
-                .accessibilityIdentifier("settings-cat-profiles")
-                // The notebook from 設定 too, where leaving it is looked for (11/7).
-                if Version1.familyNotebook || familyNotebook.hasFamily {
+            // Cats are added and opened from the ツール tab's row of faces only
+            // (11/7: 猫のプロフィール here was a second door). The notebook stays.
+            if Version1.familyNotebook || familyNotebook.hasFamily {
+                Section {
+                    // The notebook from 設定 too, where leaving it is looked for (11/7).
                     Button { showsFamilyNotebook = true } label: {
                         // Reads like the rows around it, not like a tinted action.
                         Label { Text("家族の手帳").foregroundStyle(.primary) } icon: {
@@ -232,9 +253,9 @@ struct SettingsView: View {
                         }
                     }
                     .accessibilityIdentifier("settings-family-notebook")
+                } header: {
+                    Text("猫")
                 }
-            } header: {
-                Text("猫")
             }
 
             Section {
@@ -258,37 +279,32 @@ struct SettingsView: View {
                         Label("表示しない・ブロックした人", systemImage: "eye.slash")
                     }
                     .accessibilityIdentifier("settings-group-hidden-members")
-                    if let client = GroupWindowClientProvider.production {
-                        NavigationLink { GroupIdentityDeletionView(client: client) } label: {
-                            Label("まどと家族の手帳のIDを消す", systemImage: "person.crop.circle.badge.xmark")
-                        }
-                        .accessibilityIdentifier("settings-group-identity-deletion")
-                    }
                 } header: {
                     Text("まど")
                 }
             }
 
-            // 保存 (10/31): 自動保存 first, then the cat profile file for another iPhone.
+            // 保存: one row for moving to a new iPhone (11/7). The profile file,
+            // the way without Plus, is inside 自動保存; a build without 自動保存
+            // keeps it here as the only way.
             Section {
                 if ManagedPreservationConfiguration.current.isEnabled {
-                    NavigationLink { AppRecordSettingsView() } label: { AutoSaveSettingsRow() }
+                    NavigationLink {
+                        AppRecordSettingsView(profileTransfer: (actions: catProfilesActions,
+                                                                hasProfiles: !catProfilesPresentation.profiles.isEmpty))
+                    } label: { AutoSaveSettingsRow() }
                         .accessibilityIdentifier("settings-managed-preservation")
+                } else {
+                    NavigationLink {
+                        CatProfileTransferView(actions: catProfilesActions,
+                            hasProfiles: !catProfilesPresentation.profiles.isEmpty)
+                    } label: {
+                        Label("プロフィールの引き継ぎ", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .accessibilityIdentifier("settings-cat-profile-transfer")
                 }
-                NavigationLink {
-                    CatProfileTransferView(actions: catProfilesActions,
-                        hasProfiles: !catProfilesPresentation.profiles.isEmpty)
-                } label: {
-                    Label("プロフィールの引き継ぎ", systemImage: "arrow.triangle.2.circlepath")
-                }
-                .accessibilityIdentifier("settings-cat-profile-transfer")
             } header: {
                 Text("保存")
-            } footer: {
-                // Two rows that both move cats to a new iPhone (11/7).
-                if ManagedPreservationConfiguration.current.isEnabled {
-                    Text("自動保存がオンなら、プロフィールの引き継ぎはいりません。")
-                }
             }
 
             // Anonymous usage counts (11/7): on by default, off deletes what is
@@ -341,6 +357,18 @@ struct SettingsView: View {
                 // Read-only facts live in the footer, not in a row that looks tappable.
                 Text("ねこのまど バージョン \(appVersion)・iOS 17.1以上")
                     .accessibilityIdentifier("settings-app-version")
+            }
+
+            // Deleting, in one row at the bottom (11/7: the まど ID and the
+            // auto-save account were two rows in two places). App Review looks
+            // for account deletion: one tap from 設定.
+            if AccountDeletionChoicesView.isAvailable {
+                Section {
+                    NavigationLink { AccountDeletionChoicesView() } label: {
+                        Label("アカウントとデータを消す", systemImage: "person.crop.circle.badge.xmark")
+                    }
+                    .accessibilityIdentifier("settings-account-deletion")
+                }
             }
 
 #if DEBUG || INTERNAL_PRESENTATION

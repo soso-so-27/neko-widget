@@ -712,6 +712,79 @@ private final class MembershipStoreKitClient {
     }
 }
 
+/// 「自動保存も始めますか？」 after buying Plus, from every entry (11/7: only
+/// Settings asked). Saving is what Plus pays for, so it is asked once, right
+/// after the purchase, unless saving is already on.
+@MainActor
+final class AutoSaveAfterPurchase: ObservableObject {
+    static let shared = AutoSaveAfterPurchase()
+    /// Bought on the first run's last page: asked once the guide has ended,
+    /// not over the guide's own 「あとで」 (11/7).
+    @Published var waitsForOnboardingEnd = false
+
+    /// Not from the auto-save screens themselves: their own button is right there.
+    static func applies(after context: PlusOfferContext) -> Bool {
+        context != .preservation && ManagedPreservationConfiguration.current.isEnabled
+            && !AppRecordPersistence.shared.enabled
+    }
+}
+
+private struct AutoSaveOfferAlert: ViewModifier {
+    @Binding var isPresented: Bool
+    let start: () -> Void
+    let later: () -> Void
+
+    func body(content: Content) -> some View {
+        content.alert("自動保存も始めますか？", isPresented: $isPresented) {
+            // This tap is the start: the screen opens already starting (11/7).
+            Button("保存を始める", action: start)
+            Button("あとで", role: .cancel, action: later)
+        } message: {
+            Text("猫のこと、メモ、ツールに書いたことを自動で保存して、新しいiPhoneでも戻せます。")
+        }
+    }
+}
+
+/// The first run's Plus page has no sheet over it: the question comes once
+/// the guide has ended and the app is showing (11/7).
+@MainActor
+private struct AutoSaveOfferAfterOnboarding: ViewModifier {
+    let onboardingEnded: Bool
+    @ObservedObject private var waiting = AutoSaveAfterPurchase.shared
+    @State private var asks = false
+    @State private var showsAutoSave = false
+
+    func body(content: Content) -> some View {
+        content
+            .modifier(AutoSaveOfferAlert(isPresented: $asks, start: { showsAutoSave = true }, later: {}))
+            .sheet(isPresented: $showsAutoSave) {
+                NavigationStack {
+                    AppRecordSettingsView(startsOnOpen: true)
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) { Button("閉じる") { showsAutoSave = false } }
+                        }
+                }
+            }
+            .onChange(of: onboardingEnded, initial: true) { _, _ in askIfWaiting() }
+            .onChange(of: waiting.waitsForOnboardingEnd) { _, _ in askIfWaiting() }
+    }
+
+    private func askIfWaiting() {
+        guard onboardingEnded, waiting.waitsForOnboardingEnd else { return }
+        waiting.waitsForOnboardingEnd = false
+        if AutoSaveAfterPurchase.applies(after: .onboarding) { asks = true }
+    }
+}
+
+extension View {
+    /// Put once at the app's root: asks 「自動保存も始めますか？」 after a
+    /// purchase made on the first run's last page.
+    @MainActor
+    func autoSaveOfferAfterOnboarding(ended: Bool) -> some View {
+        modifier(AutoSaveOfferAfterOnboarding(onboardingEnded: ended))
+    }
+}
+
 @MainActor
 /// The one Plus screen. Every entry passes its `PlusOfferContext`; the only
 /// difference between entries is the one-line reason above the heading.
@@ -720,6 +793,10 @@ private final class MembershipStoreKitClient {
 struct MembershipOfferSheet: View {
     @StateObject private var model: MembershipOfferModel
     @State private var showsSubscriptionManagement = false
+    /// Bought just now: 「自動保存も始めますか？」 is asked here, and the
+    /// caller hears about the purchase once it is answered (11/7).
+    @State private var asksAutoSave = false
+    @State private var showsAutoSave = false
 #if DEBUG || INTERNAL_PRESENTATION
     @State private var showsManagementPreview = false
 #endif
@@ -742,45 +819,67 @@ struct MembershipOfferSheet: View {
 
     var body: some View {
         NavigationStack {
-            MembershipOfferView(
-                context: context,
-                photo: photo, photoAsset: placePhoto, offer: model.offer, isWorking: model.isWorking,
-                canPurchase: model.canPurchase, canRestore: model.canRestore,
-                message: model.message,
-                isMember: model.isMember, purchaseTitle: model.purchaseTitle,
-                canRefresh: model.canRefresh,
-                onRefresh: { Task { await model.refresh() } },
-                onManageSubscription: {
-#if DEBUG || INTERNAL_PRESENTATION
-                    if model.isPreview {
-                        showsManagementPreview = true
-                    } else {
+            if showsAutoSave {
+                // In this sheet, not a second one over it; 「閉じる」 goes back
+                // to where Plus was bought.
+                AppRecordSettingsView(startsOnOpen: true)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) { Button("閉じる") { onFinish(.completed) } }
+                    }
+            } else {
+                MembershipOfferView(
+                    context: context,
+                    photo: photo, photoAsset: placePhoto, offer: model.offer, isWorking: model.isWorking,
+                    canPurchase: model.canPurchase, canRestore: model.canRestore,
+                    message: model.message,
+                    isMember: model.isMember, purchaseTitle: model.purchaseTitle,
+                    canRefresh: model.canRefresh,
+                    onRefresh: { Task { await model.refresh() } },
+                    onManageSubscription: {
+    #if DEBUG || INTERNAL_PRESENTATION
+                        if model.isPreview {
+                            showsManagementPreview = true
+                        } else {
+                            showsSubscriptionManagement = true
+                        }
+    #else
                         showsSubscriptionManagement = true
-                    }
-#else
-                    showsSubscriptionManagement = true
-#endif
-                },
-                onPurchase: {
-                    Task {
-                        let result = await model.purchase()
-                        if result == .completed, !model.isPreview { UsageCounter.shared.count(.plusPurchased(.init(context))) }  // Usage (11/7)
-                        // No completion page: a purchase closes the sheet and the
-                        // caller re-reads membership through its dismissal.
-                        if result == .completed || (model.isPreview && result == .cancelled) { onFinish(result) }
-                    }
-                },
-                onRestore: {
-                    Task {
-                        let result = await model.restore()
-                        if result == .completed { onFinish(result) }
-                    }
-                },
-                onClose: { onFinish(model.isMember ? .completed : .cancelled) },
-                showsClose: showsClose
-            )
+    #endif
+                    },
+                    onPurchase: {
+                        Task {
+                            let result = await model.purchase()
+                            if result == .completed, !model.isPreview { UsageCounter.shared.count(.plusPurchased(.init(context))) }  // Usage (11/7)
+                            // No completion page: a purchase closes the sheet and the
+                            // caller re-reads membership through its dismissal.
+                            if result == .completed, !model.isPreview, AutoSaveAfterPurchase.applies(after: context) {
+                                // The first run asks after its guide; every other entry asks here.
+                                if context == .onboarding {
+                                    AutoSaveAfterPurchase.shared.waitsForOnboardingEnd = true
+                                    onFinish(result)
+                                } else {
+                                    asksAutoSave = true
+                                }
+                                return
+                            }
+                            if result == .completed || (model.isPreview && result == .cancelled) { onFinish(result) }
+                        }
+                    },
+                    onRestore: {
+                        Task {
+                            let result = await model.restore()
+                            if result == .completed { onFinish(result) }
+                        }
+                    },
+                    onClose: { onFinish(model.isMember ? .completed : .cancelled) },
+                    showsClose: showsClose
+                )
+            }
         }
-        .interactiveDismissDisabled(model.isWorking)
+        .modifier(AutoSaveOfferAlert(isPresented: $asksAutoSave, start: { showsAutoSave = true },
+                                     later: { onFinish(.completed) }))
+        // While asking, a swipe must not drop the purchase the caller waits for.
+        .interactiveDismissDisabled(model.isWorking || asksAutoSave || showsAutoSave)
         // Usage (11/7): each time the one Plus screen is shown, by its entry place.
         .onAppear { if !model.isPreview { UsageCounter.shared.count(.plusOfferShown(.init(context))) } }
         .manageSubscriptionsSheet(isPresented: $showsSubscriptionManagement)
@@ -859,9 +958,6 @@ struct PlusSettingsSection: View {
     @ObservedObject private var purchases = PlusPurchaseStore.productionShared
     @State private var showsOffer = false
     @State private var showsManagement = false
-    @State private var purchasedJustNow = false
-    @State private var offersAutoSave = false
-    @State private var showsAutoSave = false
 
     private enum Status { case notMember, member, unknown, checking }
 
@@ -916,29 +1012,10 @@ struct PlusSettingsSection: View {
                                          : status == .unknown ? "settings-membership-unknown" : "settings-membership-header")
                 .sheet(isPresented: $showsOffer, onDismiss: {
                     refreshMembership()
-                    // Saving is what Plus pays for: ask once, right after buying.
-                    if purchasedJustNow, ManagedPreservationConfiguration.current.isEnabled,
-                       !AppRecordPersistence.shared.enabled { offersAutoSave = true }
-                    purchasedJustNow = false
                 }) {
-                    MembershipOfferSheet(model: .live(), context: .settings) { result in
-                        purchasedJustNow = result == .completed
+                    // 「自動保存も始めますか？」 is asked by the sheet itself, as from every entry (11/7).
+                    MembershipOfferSheet(model: .live(), context: .settings) { _ in
                         showsOffer = false
-                    }
-                }
-                .alert("自動保存も始めますか？", isPresented: $offersAutoSave) {
-                    // This tap is the start: the screen opens already starting (11/7).
-                    Button("保存を始める") { showsAutoSave = true }
-                    Button("あとで", role: .cancel) { }
-                } message: {
-                    Text("猫のこと、メモ、ツールに書いたことを自動で保存して、新しいiPhoneでも戻せます。")
-                }
-                .sheet(isPresented: $showsAutoSave) {
-                    NavigationStack {
-                        AppRecordSettingsView(startsOnOpen: true)
-                            .toolbar {
-                                ToolbarItem(placement: .confirmationAction) { Button("閉じる") { showsAutoSave = false } }
-                            }
                     }
                 }
                 .manageSubscriptionsSheet(isPresented: $showsManagement)

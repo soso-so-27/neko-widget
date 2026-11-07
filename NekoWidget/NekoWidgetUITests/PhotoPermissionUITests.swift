@@ -10,11 +10,15 @@ fileprivate func openSettings(in app: XCUIApplication) {
     gear.tap()
 }
 
-/// The 保存 rows sit directly in Settings since 10/31; bring them into view.
+/// The 保存 row sits directly in Settings since 10/31; bring it into view.
+/// 11/7: one row, 自動保存 (holding the profile file) or, without it, the file.
 @MainActor
 fileprivate func revealSaveSection(_ app: XCUIApplication) {
     let transfer = app.buttons["settings-cat-profile-transfer"]
-    for _ in 0..<4 where !(transfer.exists && transfer.isHittable) { app.swipeUp() }
+    let autoSave = app.buttons["settings-managed-preservation"]
+    for _ in 0..<4 where !((transfer.exists && transfer.isHittable) || (autoSave.exists && autoSave.isHittable)) {
+        app.swipeUp()
+    }
 }
 
 final class OfficialWindowUITests: XCTestCase {
@@ -414,8 +418,10 @@ final class OfficialWindowUITests: XCTestCase {
         let source = app.descendants(matching: .any)["official-window-widget-source"].firstMatch
         XCTAssertTrue(source.waitForExistence(timeout: 5))
         XCTAssertTrue(source.label.contains("キジ白のまど"))
+        // 11/7: the same guide as 設定, with the window named in its last line.
+        XCTAssertTrue(app.descendants(matching: .any)["widget-placement-steps"].firstMatch.exists)
         capture("cat-window-widget-guide", app)
-        app.navigationBars["ホーム画面に置く"].buttons["閉じる"].tap()
+        app.buttons["widget-placement-close"].tap()
         app.navigationBars["キジ白のまど"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(catWindow.waitForExistence(timeout: 5), "Back must return to the original photo")
         app.buttons["official-photo-close-official-cats"].tap()
@@ -493,14 +499,14 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertTrue(guide.waitForExistence(timeout: 5))
         for _ in 0..<5 { if guide.isHittable { break }; app.swipeUp() }
         guide.tap()
-        XCTAssertTrue(app.navigationBars["ホーム画面に置く"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["widget-placement-close"].waitForExistence(timeout: 5))
         let source = app.descendants(matching: .any)["official-window-widget-source"].firstMatch
         XCTAssertTrue(source.waitForExistence(timeout: 5))
         for _ in 0..<3 { if source.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(source.isHittable)
         XCTAssertTrue(source.label.contains("おひるね"), "The guide must name the window just received")
         capture("nap-window-widget-guide", app)
-        app.buttons["閉じる"].tap()
+        app.buttons["widget-placement-close"].tap()
         app.navigationBars["おひるね"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
         app.navigationBars["まどを探す"].buttons.element(boundBy: 0).tap()
@@ -568,11 +574,14 @@ final class OfficialWindowUITests: XCTestCase {
         let guide = app.buttons["official-window-widget-guide"]
         for _ in 0..<5 { if guide.isHittable { break }; app.swipeUp() }
         guide.tap()
-        XCTAssertTrue(app.navigationBars["ホーム画面に置く"].waitForExistence(timeout: 5))
-        app.buttons["すでに置いている"].tap()
+        XCTAssertTrue(app.buttons["widget-placement-close"].waitForExistence(timeout: 5))
+        // 11/7: one guide everywhere, no second 「初めて置く・すでに置いている」 guide.
+        XCTAssertFalse(app.buttons["すでに置いている"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["official-window-widget-source"].firstMatch.exists)
         capture("window-widget-guide-existing", app)
-        app.buttons["閉じる"].tap()
+        app.buttons["widget-placement-close"].tap()
+        // The guide was offered once, after 「受け取る」; later it is in 設定 → ホーム画面.
+        XCTAssertFalse(app.buttons["official-window-widget-guide"].exists)
         app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
         let discoveryEntry = app.buttons["official-window-entry"]
@@ -4019,13 +4028,12 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(filter.isSelected)
             XCTAssertEqual(photos.count, 1)
         }
-        openSettings(in: app)
-        let profiles = app.buttons["settings-cat-profiles"]
-        XCTAssertTrue(profiles.waitForExistence(timeout: 5))
-        for _ in 0..<5 where !profiles.isHittable { app.swipeUp() }
-        profiles.tap()
-        XCTAssertTrue(app.navigationBars["猫のプロフィール"].waitForExistence(timeout: 5))
-        let firstCat = app.buttons.matching(identifier: "cat-profile-open").firstMatch
+        // 11/7: a cat's page opens from the ツール tab's faces only; 設定 has
+        // no 猫のプロフィール row.
+        let toolsTab = app.buttons["main-tab-tools"]
+        if toolsTab.waitForExistence(timeout: 10) { toolsTab.tap() } else { app.tabBars.buttons["ツール"].tap() }
+        let firstCat = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND identifier != %@", "tools-cat-", "tools-cat-profiles")).firstMatch
         XCTAssertTrue(firstCat.waitForExistence(timeout: 5))
         let catName = firstCat.label.contains("ミケ") ? "ミケ" : "ソラ"
         firstCat.tap()
@@ -4034,11 +4042,12 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertFalse(app.buttons["cat-profile-page-photos"].exists, "The cat's page has no 写真 tab")
         app.buttons["cat-care-part-basics"].tap()
         XCTAssertTrue(app.buttons["名前を変更"].waitForExistence(timeout: 5),
-                      "Settings must open the profile, without a photo-grid intermediary")
+                      "The tools must open the profile, without a photo-grid intermediary")
         XCTAssertFalse(app.navigationBars["\(catName)の写真"].exists)
         capture("cat-settings-direct")
         app.navigationBars[catName].buttons.element(boundBy: 0).tap()
-        app.navigationBars["猫のプロフィール"].buttons.element(boundBy: 0).tap()
+        openSettings(in: app)
+        XCTAssertFalse(app.buttons["settings-cat-profiles"].exists)
 
         let photoSettings = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "写真の表示と整理")).firstMatch
         for _ in 0..<5 where !photoSettings.isHittable { app.swipeDown() }

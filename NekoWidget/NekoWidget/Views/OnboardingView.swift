@@ -27,14 +27,16 @@ struct OnboardingView: View {
     /// "あとで" on the optional Plus page. Defaults to `finish`.
     var skipPlusOffer: (() -> Void)? = nil
     let openPhoto: (PhotoPresentation) -> Void
-    var joinInvitation: (() -> Void)? = nil
+    /// Builds that join windows by link say how, in one line (11/7: a button
+    /// that opened only this sentence).
+    var showsInvitationHint = false
 
     var body: some View {
         Group {
             switch page {
             case .purpose:
                 OnboardingPurposePage(continueAction: { page = .photoPermission },
-                                      joinInvitation: joinInvitation)
+                                      showsInvitationHint: showsInvitationHint)
 
             case .photoPermission:
                 photoPermissionPage
@@ -200,7 +202,7 @@ private struct OnboardingScanErrorPage: View {
 /// so the windows hold the app's own cat.
 private struct OnboardingPurposePage: View {
     let continueAction: () -> Void
-    var joinInvitation: (() -> Void)? = nil
+    var showsInvitationHint = false
 
     var body: some View {
         ScrollView {
@@ -234,14 +236,13 @@ private struct OnboardingPurposePage: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("onboarding-purpose-start")
-                if let joinInvitation {
-                    Button(action: joinInvitation) {
-                        Text("招待リンクから参加する")
-                            .font(.headline).frame(maxWidth: .infinity)
-                            .padding(.vertical, 5)
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("onboarding-purpose-join")
+                // Invited people tap the link they got; nothing to press here (11/7).
+                if showsInvitationHint {
+                    Text("届いた招待リンクをタップしてください。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .accessibilityIdentifier("onboarding-purpose-join-hint")
                 }
                 if !OnboardingPresentationCopy.purposeFootnote.isEmpty {
                     Text(OnboardingPresentationCopy.purposeFootnote)
@@ -583,20 +584,3 @@ private struct OnboardingPlusOfferPage: View {
     }
 }
 
-/// 「招待を受け取った」 on the first screen. Invitations arrive as a link, so
-/// the help says only to tap it (11/7: it named /join, but a family's is
-/// /family-join). (Two-person codes are not offered with group windows on.)
-struct OnboardingInvitationHelpView: View {
-    var body: some View {
-        List {
-            Section {
-                Label("届いた招待リンクをタップしてください。", systemImage: "link")
-                    .font(.headline)
-                    .padding(.vertical, 6)
-            }
-        }
-        .navigationTitle("招待リンクから参加する")
-        .navigationBarTitleDisplayMode(.inline)
-        .accessibilityIdentifier("onboarding-invitation-help")
-    }
-}

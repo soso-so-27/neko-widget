@@ -357,73 +357,16 @@ extension Notification.Name {
     static let officialWindowPresentationDidChange = Notification.Name("officialWindowPresentationDidChange")
 }
 
-/// 「ホーム画面に置く」 for one official window. The same guide opens from the
-/// window and, right after 「受け取る」, from the まど list (11/7, W9).
+/// 「ウィジェットの置き方」 for one official window: the same guide as
+/// everywhere else, with the window's name in its last line (11/7: it was a
+/// second, different guide). Opens right after 「受け取る」 and from the まど list.
 struct OfficialWindowWidgetGuide: View {
     let displayName: String
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var widgetPlacement = WidgetPlacement.first
-
-    private enum WidgetPlacement: String, CaseIterable {
-        case first = "初めて置く"
-        case existing = "すでに置いている"
-    }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    Label("ホーム画面にも、このまどを。", systemImage: "pawprint.fill").font(.title2)
-                    widgetPlacementPicker
-                    VStack(alignment: .leading, spacing: 16) {
-                        if widgetPlacement == .first {
-                            Text("1. ホーム画面の何もないところを長押しします。")
-                            Text("2. 「編集」または「＋」からウィジェットを追加し、「ねこのまど」を選びます。")
-                            Text("3. 置いたウィジェットを長押しして、「ウィジェットを編集」を開きます。")
-                            Text("4. 「表示する写真」で、下のまどを選びます。")
-                        } else {
-                            Text("1. ホーム画面にある「ねこのまど」のウィジェットを長押しして、「ウィジェットを編集」を開きます。")
-                            Text("2. 「表示する写真」で、下のまどを選びます。")
-                        }
-                        Label("\(displayName) · 公式のまど", systemImage: "pawprint.fill")
-                            .font(.headline)
-                            .accessibilityIdentifier("official-window-widget-source")
-                    }
-                }.padding(24)
-            }
-            .navigationTitle("ホーム画面に置く")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("閉じる") { dismiss() } } }
-        }
-    }
-
-    @ViewBuilder
-    private var widgetPlacementPicker: some View {
-        if dynamicTypeSize >= .xxxLarge {
-            VStack(spacing: 8) {
-                ForEach(WidgetPlacement.allCases, id: \.self) { placement in
-                    Button { widgetPlacement = placement } label: {
-                        HStack {
-                            Text(placement.rawValue)
-                            Spacer(minLength: 8)
-                            if widgetPlacement == placement { Image(systemName: "checkmark") }
-                        }
-                        .frame(minHeight: 44)
-                    }
-                    .accessibilityAddTraits(widgetPlacement == placement ? .isSelected : [])
-                }
-            }
-            .accessibilityIdentifier("official-window-widget-placement")
-        } else {
-            Picker("ウィジェットを置いているか", selection: $widgetPlacement) {
-                ForEach(WidgetPlacement.allCases, id: \.self) { placement in
-                    Text(placement.rawValue).tag(placement)
-                }
-            }
-            .pickerStyle(.segmented)
-            .accessibilityIdentifier("official-window-widget-placement")
-        }
+        WidgetPlacementGuideView(onComplete: { dismiss() }, onSkip: { dismiss() },
+                                 closeTitle: "閉じる", windowName: displayName)
     }
 }
 
@@ -444,8 +387,6 @@ struct OfficialWindowView: View {
     @State private var confirmsStop = false
     @State private var stoppedHere = false
     @State private var offersWidgetSetup = false
-    /// A placed widget already shows this window: no placement guide (11/5).
-    @State private var widgetPlacedHere = false
     @State private var showsOverview = false
     @State private var hasCheckedFeed = false
     @State private var displayDate = Date()
@@ -518,8 +459,6 @@ struct OfficialWindowView: View {
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
-            widgetPlacedHere = await WidgetInstallationChecker.isShowing(
-                sourceID: PublicWindowDefinition.widgetSourceID(forWindowID: store.windowID)) == true
             await refresh()
         }
         .task(id: nextPhotoDeadline) {
@@ -723,14 +662,8 @@ struct OfficialWindowView: View {
                 Button("あとで") { offersWidgetSetup = false }
                     .frame(maxWidth: .infinity, minHeight: 44)
                     .accessibilityIdentifier("official-window-widget-later")
-            } else if !widgetPlacedHere {
-                Button { showsWidgetGuide = true } label: {
-                    Label("ウィジェットの置き方", systemImage: "plus.rectangle.on.rectangle")
-                        .font(.subheadline)
-                        .frame(minHeight: 44)
-                }
-                .accessibilityIdentifier("official-window-widget-guide")
             }
+            // No link here otherwise (11/7): the guide is in 設定 → ホーム画面.
         }
     }
 

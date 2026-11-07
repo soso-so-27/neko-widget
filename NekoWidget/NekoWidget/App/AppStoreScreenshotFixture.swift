@@ -761,7 +761,7 @@ private struct MainlineAcceptanceFixtureRootView: View {
                         finished = true
                         firstRunPhoto = photo
                     },
-                    joinInvitation: scenario == "invite-entry" ? { action = "invitation" } : nil
+                    showsInvitationHint: scenario == "invite-entry"
                 )
             }
         }

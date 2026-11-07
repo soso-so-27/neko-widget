@@ -12,6 +12,9 @@ struct WidgetPlacementGuideView: View {
     /// Opened again from 設定: one button with this title (it calls
     /// `onComplete`) in place of 「完了」 and 「あとで」 (11/7).
     var closeTitle: String? = nil
+    /// An official window just received: the last line says to choose it in
+    /// the Widget (11/7: one guide for every place, not a second one).
+    var windowName: String? = nil
     @State private var page = 0
 
     /// One picture per step: the iOS screens the person will see, in order.
@@ -78,12 +81,21 @@ struct WidgetPlacementGuideView: View {
             .indexViewStyle(.page(backgroundDisplayMode: .always))
             .accessibilityIdentifier("widget-placement-steps")
 
-            Text(hasCats
-                 ? "置いたら、そのままくもりのまどです。札を押すと、きょうの1枚が出ます。"
-                 : "置いたら、そのままくもりのまどです。札を押すと、きょうの1枚が出ます。猫を登録すると、猫ごとにも選べます。")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+            if let windowName {
+                Text("置いたウィジェットを長押しし、「ウィジェットを編集」の「表示する写真」で「\(windowName)」を選びます。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
+                    .accessibilityIdentifier("official-window-widget-source")
+            } else {
+                Text(hasCats
+                     ? "置いたら、そのままくもりのまどです。札を押すと、きょうの1枚が出ます。"
+                     : "置いたら、そのままくもりのまどです。札を押すと、きょうの1枚が出ます。猫を登録すると、猫ごとにも選べます。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemBackground))

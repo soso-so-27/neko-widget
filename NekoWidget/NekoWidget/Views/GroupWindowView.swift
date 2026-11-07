@@ -2157,6 +2157,10 @@ struct GroupWindowListSection: View {
     }
 
     var body: some View {
+        let known = GroupWidgetCache.entries()
+        // No window yet: 「まどを作る」 below is the one way in, so the header
+        // 「＋」 is hidden (11/7). A failed load keeps it, having no other.
+        let hidesHeaderCreate = model.windows.isEmpty && known.isEmpty && model.message == nil
         VStack(alignment: .leading, spacing: 10) {
             if compactHeader {
                 HStack {
@@ -2165,23 +2169,26 @@ struct GroupWindowListSection: View {
                         .foregroundStyle(.secondary)
                         .accessibilityAddTraits(.isHeader)
                     Spacer()
-                    NavigationLink {
-                        GroupWindowCreateScreen(client: model.client)
-                    } label: {
-                        if openInbox.showsCreatePrompt {
-                            Label("まどを作る", systemImage: "plus")
-                                .font(.body.weight(.semibold))
-                                .frame(minHeight: 44)
-                        } else {
-                            Image(systemName: "plus")
-                                .font(.body.weight(.semibold))
-                                .frame(width: 44, height: 44)
+                    if !hidesHeaderCreate {
+                        NavigationLink {
+                            GroupWindowCreateScreen(client: model.client)
+                        } label: {
+                            if openInbox.showsCreatePrompt {
+                                Label("まどを作る", systemImage: "plus")
+                                    .font(.body.weight(.semibold))
+                                    .frame(minHeight: 44)
+                            } else {
+                                Image(systemName: "plus")
+                                    .font(.body.weight(.semibold))
+                                    .frame(width: 44, height: 44)
+                            }
                         }
+                        .disabled(model.isWorking)
+                        .accessibilityLabel("まどを作る")
+                        .accessibilityIdentifier("group-window-create")
                     }
-                    .disabled(model.isWorking)
-                    .accessibilityLabel("まどを作る")
-                    .accessibilityIdentifier("group-window-create")
                 }
+                .frame(minHeight: 44)
             } else {
                 Text("みんなのまど")
                     .font(.subheadline.weight(.semibold))
@@ -2205,7 +2212,6 @@ struct GroupWindowListSection: View {
                 }
                 .buttonStyle(.plain)
             }
-            let known = GroupWidgetCache.entries()
             if model.windows.isEmpty, !model.hasLoaded || model.message != nil {
                 // Names kept on this iPhone from the last visit: shown while the
                 // list loads, and kept when the relay cannot be reached.

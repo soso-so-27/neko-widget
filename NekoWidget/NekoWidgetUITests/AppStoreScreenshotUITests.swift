@@ -183,11 +183,13 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
         app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "invite-entry"
         app.launch()
-        XCTAssertTrue(app.buttons["onboarding-purpose-join"].waitForExistence(timeout: 15))
+        // 11/7: one button and one line for invited people; the line is not a button.
+        let hint = app.staticTexts["onboarding-purpose-join-hint"]
+        XCTAssertTrue(hint.waitForExistence(timeout: 15))
+        XCTAssertEqual(hint.label, "届いた招待リンクをタップしてください。")
+        XCTAssertFalse(app.buttons["onboarding-purpose-join"].exists)
         XCTAssertEqual(app.buttons["onboarding-purpose-start"].label, "自分で始める")
         captureScreenshot(named: "onboarding-two-entries")
-        app.buttons["onboarding-purpose-join"].tap()
-        XCTAssertTrue(app.staticTexts["mainline-action-invitation"].waitForExistence(timeout: 5))
         app.terminate()
         app.launch()
         app.buttons["onboarding-purpose-start"].tap()
