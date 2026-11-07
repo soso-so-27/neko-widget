@@ -3731,6 +3731,11 @@ class GroupWindowSpeedTests(unittest.TestCase):
         loop = section(sync, "for photo in photos {", "message = nil")
         self.assertIn("entries = await store.entries(windowID: windowID)", loop)
         self.assertIn('"group-window-syncing"', screen)
+        # 11/7: a window read before opens with its name and kept photos (or
+        # its empty state) at once; only a first-ever open shows the spinner.
+        self.assertIn("if model.entries.isEmpty && !model.knowsPhotos && !model.isFormer {", screen)
+        self.assertIn('.navigationTitle(model.shownName ?? "まど")', screen)
+        self.assertIn("GroupWindowListNavigation.shared.rememberListed(windows)", screen)
         listing = section(screen, "struct GroupWindowListSection: View {", "private func row(")
         self.assertIn("GroupWidgetCache.entries()", listing)
         # Known windows show while loading, and stay when the relay cannot be reached.
