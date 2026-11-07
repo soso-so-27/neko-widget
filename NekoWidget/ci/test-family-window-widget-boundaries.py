@@ -4122,9 +4122,14 @@ class NavigationAfterActionTests(unittest.TestCase):
         notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
         run = section(notebook, "private func run(_ action: Action) {", "var body: some View {")
         self.assertLess(run.index("dismiss()"), run.index("sharing.perform"))
-        self.assertEqual(notebook.count("FamilyNotebookCatPage(toolID: cat.toolID, name: cat.name)"), 2)
-        self.assertIn("CatCareDetailView(toolCatID: toolID, name: name, insideFamilyNotebook: true)", notebook)
-        self.assertIn("initialPage: .care, insideFamilyNotebook: true)", notebook)
+        # 11/7: one place to write 「この子のこと」 — the notebook opens the
+        # cat's page in ツール and has no page of its own.
+        self.assertNotIn("CatCareDetailView(", notebook)
+        self.assertEqual(notebook.count("openCatPage(cat.toolID)"), 2)
+        self.assertIn("CatPageRequest.shared.open(toolID)", notebook)
+        tab = source("NekoWidget/Views/MainTabView.swift")
+        self.assertIn("ForEach(familyOnlyCats) { cat in", tab)
+        self.assertIn(".onReceive(CatPageRequest.shared.$toolCatID) { toolID in", tab)
         self.assertNotIn("CatCareDetailView(toolCatID: cat.toolID, name: cat.name)", notebook)
         self.assertIn("if joined == .joined { onJoined?(); dismiss() }", notebook)
         care = source("NekoWidget/Views/CatCareView.swift")

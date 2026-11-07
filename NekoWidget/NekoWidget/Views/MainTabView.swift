@@ -426,6 +426,11 @@ struct MainTabView: View {
     }
     @ObservedObject private var groupWindowOpenInbox = GroupWindowOpenInbox.shared
     @ObservedObject private var careStore = CatCareStore.shared
+    /// Shared cats with no profile on this iPhone (an invited family) sit in
+    /// the ツール row too, so 「この子のこと」 has one place for everyone (11/7).
+    @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
+    /// A cat's page asked for from the family notebook.
+    @State private var openedFamilyCat: UUID?
     @AppStorage(CatFarewell.key) private var farewellJSON = ""
     @State private var didApplyInitialTab = false
     @AppStorage("navigation.lastTab.v1") private var lastViewedTab = AppTab.memories.rawValue
@@ -920,6 +925,16 @@ struct MainTabView: View {
         .onReceive(NotificationCenter.default.publisher(for: .momentSharingContentNeedsReload)) { _ in
             Task { await refreshMadoArrivals() }
         }
+        .onReceive(CatPageRequest.shared.$toolCatID) { toolID in
+            // From the family notebook: the cat's page in ツール (11/7).
+            guard let toolID else { return }
+            CatPageRequest.shared.clear()
+            showsSettings = false
+            didApplyInitialTab = true
+            selectedTab = .tools
+            // After the notebook sheet has gone, so the page is not pushed under it.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { openedFamilyCat = toolID }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .groupWindowNewPhotosDidChange)) { _ in
             Task { await refreshGroupWindowNewPhotos() }
         }
@@ -1196,6 +1211,17 @@ struct MainTabView: View {
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-cat-\(profile.identifier)")
                 }
+                ForEach(familyOnlyCats) { cat in
+                    NavigationLink {
+                        familyCatCarePage(toolID: cat.toolID, name: cat.name)
+                    } label: {
+                        CatChip(profile: CatProfilePresentation(identifier: cat.toolID.uuidString, name: cat.name,
+                                                                coverPhoto: nil, confirmedPhotos: [], lifeReference: nil),
+                                progress: careProgress(toolCatID: cat.toolID), departed: false)
+                    }
+                    .buttonStyle(ToolCardButtonStyle())
+                    .accessibilityIdentifier("tools-family-cat-\(cat.toolID.uuidString)")
+                }
                 // 「＋」 adds a cat right away, then opens its page (11/7: it
                 // opened a list where 「＋」 had to be pressed again).
                 Button { addsCatFromTools = true } label: {
@@ -1218,6 +1244,10 @@ struct MainTabView: View {
         .accessibilityIdentifier("tools-cat-strip")
         .addingCatProfile(isStarted: $addsCatFromTools, presentation: catProfilesPresentation,
                           actions: catProfilesActions) { addedCatFromTools = $0 }
+        .navigationDestination(item: $openedFamilyCat) { toolID in
+            familyCatCarePage(toolID: toolID,
+                              name: familyNotebook.familyCats.first { $0.toolID == toolID }?.name ?? "")
+        }
         .navigationDestination(item: $addedCatFromTools) { identifier in
             if let profile = catProfilesPresentation.profiles.first(where: { $0.identifier == identifier }) {
                 CatProfileDetailView(
@@ -1230,6 +1260,44 @@ struct MainTabView: View {
                 )
             }
         }
+    }
+
+    /// Shared cats whose profile is not on this iPhone.
+    private var familyOnlyCats: [FamilyNotebookPrototype.FamilyCat] {
+        let profileIDs = Set(catProfilesPresentation.profiles.map(\.identifier))
+        return familyNotebook.familyCats.filter { cat in
+            guard let profileID = careStore.state?.cats
+                .first(where: { $0.catID == cat.toolID && $0.deletedAt == nil })?.profileID else { return true }
+            return !profileIDs.contains(profileID.uuidString)
+        }
+    }
+
+    /// The one page of a shared cat: its own page when its profile is here,
+    /// else its 「この子のこと」 under its name.
+    @ViewBuilder
+    private func familyCatCarePage(toolID: UUID, name: String) -> some View {
+        let profileID = careStore.state?.cats.first { $0.catID == toolID && $0.deletedAt == nil }?.profileID
+        if let profile = catProfilesPresentation.profiles.first(where: { $0.identifier == profileID?.uuidString }) {
+            CatProfileDetailView(
+                profile: profile,
+                allProfiles: catProfilesPresentation.profiles,
+                manualCandidatePhotos: profile.manualCandidatePhotos,
+                photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
+                actions: catProfilesActions,
+                initialPage: .care
+            )
+        } else {
+            CatCareDetailView(toolCatID: toolID, name: name)
+                .navigationTitle(name.isEmpty ? "この子のこと" : name)
+                .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    private func careProgress(toolCatID: UUID) -> CatCareProgress {
+        let record = careStore.state?.cats.first { $0.catID == toolCatID && $0.deletedAt == nil }
+        let draft = record.map { CatCareDraft(record: $0, household: careStore.state?.household ?? CatCareHousehold()) }
+            ?? CatCareDraft()
+        return CatCareProgress(draft: draft, record: record, hasLifeDates: nil)
     }
 
     /// How far this cat's この子のこと is, for the ring around the chip.
