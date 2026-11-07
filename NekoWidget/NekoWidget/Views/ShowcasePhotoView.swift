@@ -439,15 +439,17 @@ struct ShowcasePhotoView: View {
 }
 
 /// Draws up to nine photos as one square picture: three by three, square
-/// crops, a thin gap, and the cat's name on a dark band. Nothing but pixels
-/// from the kept photos goes into it, plus the app's name, small, at the
-/// band's right end, so a shared picture says where it was made (11/6).
+/// crops, a thin gap. No title band (11/7: the photos speak for themselves);
+/// the app's name sits faintly on the last photo's corner, like a watermark,
+/// so a shared picture still says where it was made. Nothing but pixels from
+/// the kept photos goes into it, plus that mark. `title` stays for callers
+/// and is not drawn.
 enum BestNineComposer {
     static func image(_ photos: [UIImage], title: String?) -> UIImage? {
         guard !photos.isEmpty else { return nil }
-        let cell: CGFloat = 400, gap: CGFloat = 6, band: CGFloat = title == nil ? 0 : 96
+        let cell: CGFloat = 400, gap: CGFloat = 6
         let side = cell * 3 + gap * 4
-        let size = CGSize(width: side, height: side + band)
+        let size = CGSize(width: side, height: side)
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         return UIGraphicsImageRenderer(size: size, format: format).image { context in
@@ -465,26 +467,20 @@ enum BestNineComposer {
                                       width: drawn.width, height: drawn.height))
                 context.cgContext.restoreGState()
             }
-            if let title {
-                let paragraph = NSMutableParagraphStyle()
-                paragraph.alignment = .center
-                let attributes: [NSAttributedString.Key: Any] = [
-                    .font: UIFont.systemFont(ofSize: 40, weight: .semibold),
-                    .foregroundColor: UIColor.white,
-                    .paragraphStyle: paragraph,
-                    .kern: 4
-                ]
-                (title as NSString).draw(in: CGRect(x: 0, y: side + (band - 48) / 2, width: side, height: 48),
-                                         withAttributes: attributes)
-                let mark = "ねこのまど" as NSString
-                let markAttributes: [NSAttributedString.Key: Any] = [
-                    .font: UIFont.systemFont(ofSize: 20, weight: .medium),
-                    .foregroundColor: UIColor.white.withAlphaComponent(0.5)
-                ]
-                let markSize = mark.size(withAttributes: markAttributes)
-                mark.draw(at: CGPoint(x: side - markSize.width - 20, y: side + band - markSize.height - 12),
-                          withAttributes: markAttributes)
-            }
+            let mark = "ねこのまど" as NSString
+            let shadow = NSShadow()
+            shadow.shadowColor = UIColor.black.withAlphaComponent(0.35)
+            shadow.shadowBlurRadius = 6
+            shadow.shadowOffset = .zero
+            let markAttributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 22, weight: .semibold),
+                .foregroundColor: UIColor.white.withAlphaComponent(0.6),
+                .shadow: shadow,
+                .kern: 1
+            ]
+            let markSize = mark.size(withAttributes: markAttributes)
+            mark.draw(at: CGPoint(x: side - gap - markSize.width - 16, y: side - gap - markSize.height - 12),
+                      withAttributes: markAttributes)
         }
     }
 }
