@@ -3106,6 +3106,107 @@ class VeterinaryCatCareTests(unittest.TestCase):
         self.assertIn("前回から", trend)
 
 
+class LostCatToolReview1108Tests(unittest.TestCase):
+    """迷子のとき, round 1 of the 11/8 tool review."""
+
+    def test_social_and_a4_are_judged_apart_and_keep_their_sizes(self) -> None:
+        store = source("NekoWidget/Services/CatPreparednessStore.swift")
+        renderer = section(store, "enum LostCatFlyerRenderer {", "private static func draw(")
+        # Each output has its own issues; the A4 never stops the SNS image.
+        self.assertIn("static func issues(_ draft: LostCatPublicDraft, paper: Bool)", renderer)
+        self.assertIn("guard fits(draft, paper: false)", renderer)
+        self.assertIn("guard fits(draft, paper: true)", renderer)
+        view = source("NekoWidget/Views/CatPreparednessView.swift")
+        preview = section(view, "private struct LostCatPreviewView", "private struct LostCatActivitySheet")
+        self.assertIn("LostCatFlyerRenderer.issues(draft, paper: format == 1)", preview)
+        self.assertNotIn("validationIssues", preview)
+        # Every A4 or SNS overflow names a field, so a red line is always beside it.
+        self.assertNotIn('issues["layout"]', renderer)
+        self.assertIn('"\\(paper ? "A4" : "SNSの画像")に入りきりません。\\(label)を短くしてください。"', renderer)
+        self.assertIn('"features": "特徴"', renderer)
+        # The SNS image stays 1080x1350: letters and photo shrink, the canvas never grows.
+        self.assertIn("private static let socialSize = CGSize(width: 1080, height: 1350)", renderer)
+        self.assertNotIn("canvas.height +=", renderer)
+        self.assertIn("let canvas = paper ? paperSize : socialSize", renderer)
+        self.assertIn("if !compact { return layout(draft, format: format, compact: true) }", renderer)
+        # A4 contact is 32pt or larger and above the name; the title is white on a red band.
+        self.assertIn("maxSize: paper ? (compact ? 32 : 36) : 48, minSize: paper ? 32 : 37", renderer)
+        self.assertIn('id: "name", maxSize: paper ? (compact ? 23 : 30) : 53', renderer)
+        self.assertIn("height: titleHeight, color: .white, centered: true", renderer)
+        self.assertIn("context.fill(plan.titleBand)", store)
+
+    def test_date_is_left_out_when_unknown_and_written_plainly(self) -> None:
+        store = source("NekoWidget/Services/CatPreparednessStore.swift")
+        public = section(store, "struct LostCatPublicDraft {", "enum LostCatFlyerRenderer {")
+        self.assertNotIn("不明", public)
+        self.assertIn("var lastSeenDescription: String? {", public)
+        self.assertIn('formatter.locale = Locale(identifier: "ja_JP")', public)
+        self.assertIn('formatter.dateFormat = "M月d日（E）H時ごろ"', public)
+        self.assertIn('parts.append("最後に見かけた日時：\\(lastSeenDescription)")', public)
+        self.assertIn('static let hashtags = "#迷子猫 #迷い猫"', public)
+        self.assertIn("parts.append(Self.hashtags)", public)
+        renderer = section(store, "enum LostCatFlyerRenderer {", "private static func draw(")
+        self.assertIn("if let lastSeen = draft.lastSeenDescription {", renderer)
+        self.assertIn('field("最後に見かけた日時  \\(lastSeen)"', renderer)
+        self.assertNotIn('"日時  ', renderer)
+
+    def test_share_sends_image_and_post_with_plain_names(self) -> None:
+        view = source("NekoWidget/Views/CatPreparednessView.swift")
+        preview = section(view, "private struct LostCatPreviewView", "private struct LostCatActivitySheet")
+        self.assertIn('.navigationTitle("できあがり")', preview)
+        self.assertIn('Button("保存・共有する", systemImage: "square.and.arrow.up")', preview)
+        self.assertIn("text: format == 0 ? draft.message : nil", preview)
+        self.assertIn("LostCatActivitySheet(items: item.items)", preview)
+        self.assertIn("if let text { return [url, text] }", view)
+        self.assertIn('Button("チラシを見る") { openPreview() }', view)
+        self.assertNotIn("できあがりを見る", view)
+        self.assertNotIn('"プレビュー"', view)
+
+    def test_reporting_lives_in_step_two_of_the_guide(self) -> None:
+        view = source("NekoWidget/Views/CatPreparednessView.swift")
+        form = section(view, "struct LostCatDraftView: View {", "private var catSection: some View {")
+        self.assertNotIn("            reportSection\n", form)
+        self.assertIn("LostCatGuideView { reportSection }", form)
+        guide = section(view, "private struct LostCatGuideView<Report: View>: View {", "#if DEBUG")
+        step2 = section(guide, 'Section("2  届け出て、保護されていないか確かめる")', 'Section("3  写真で周囲に知らせる")')
+        self.assertIn("警察には遺失届を出します。", step2)
+        self.assertIn("マイクロチップの登録の連絡先が今のものか確かめます。", step2)
+        self.assertIn("report()", step2)
+        # The poster notice is said once, in step 3.
+        self.assertEqual(view.count("チラシを貼るとき"), 1)
+        self.assertIn('ToolImportantInformation(text: "チラシを貼るときは、その場所の管理者に確かめてください。")', guide)
+        # まとめてコピー carries only written lines.
+        report = section(view, "@ViewBuilder private var reportSection", "private var catCareRecord")
+        self.assertIn("Self.reportCopy(name: profile.displayName, fields: fields)", report)
+        self.assertIn('fields.filter { !$0.1.hasPrefix("未記入") && !$0.1.hasPrefix("未確認") }', report)
+
+    def test_photos_start_with_this_cat_and_any_photo_is_a_visible_button(self) -> None:
+        view = source("NekoWidget/Views/CatPreparednessView.swift")
+        choice = section(view, "private struct LostCatPhotoChoiceView: View {", "private struct LostCatPhotoCropView")
+        self.assertNotIn("Menu {", choice)
+        self.assertNotIn("「…」", choice)
+        self.assertIn('Button("iPhoneの写真から選ぶ", systemImage: "photo.on.rectangle")', choice)
+        self.assertEqual(choice.count("systemPickerButton"), 3)
+        self.assertIn("showsAllCats || ownPhotos.isEmpty ? allPhotos : ownPhotos", choice)
+        self.assertLess(choice.index('Text("この子").tag(false)'), choice.index('Text("猫の写真").tag(true)'))
+        self.assertIn('Button("「この子のこと」の写真を使う", systemImage: "photo")', view)
+        self.assertNotIn("保存してある写真を使う", view)
+        self.assertIn('photoTile("顔・毛柄の写真", role: .face', view)
+        self.assertNotIn("・前の写真", view)
+
+    def test_input_examples_and_empty_state_sentences(self) -> None:
+        view = source("NekoWidget/Views/CatPreparednessView.swift")
+        self.assertIn('TextField("例：○○町2丁目・○○公園の近く", text: $draft.lastSeenNear)', view)
+        self.assertIn('example: "例：追いかけず、見かけた場所をお知らせください。お礼をいたします"', view)
+        profiles = source("NekoWidget/Views/CatProfilesView.swift")
+        picker = section(profiles, "struct ToolCatPicker<Legacy: View>: View {", ".alert(")
+        self.assertIn("var purpose: String? = nil", picker)
+        self.assertIn('if let purpose { Text(purpose).accessibilityIdentifier("tool-profile-purpose") }', picker)
+        self.assertIn('purpose: "探す猫を選んでください。まだいなければ追加します。"', view)
+        self.assertIn('purpose: "猫を追加すると、預ける人に渡すメモを作れます。"',
+                      source("NekoWidget/Views/CareHandoffView.swift"))
+
+
 class LostCatCatCareTests(unittest.TestCase):
     def test_lost_cat_reads_cat_care_without_publishing_private_details(self) -> None:
         view = source("NekoWidget/Views/CatPreparednessView.swift")

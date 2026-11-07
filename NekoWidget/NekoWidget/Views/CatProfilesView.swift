@@ -740,6 +740,8 @@ extension EnvironmentValues {
 struct ToolCatPicker<Legacy: View>: View {
     let profiles: [CatProfilePresentation]
     let select: (CatProfilePresentation) -> Void
+    /// One sentence on what the tool is for, shown under the cats (11/8).
+    var purpose: String? = nil
     @ViewBuilder var legacy: () -> Legacy
     @Environment(\.toolProfileActions) private var actions
     @Environment(\.toolProfilesPresentation) private var presentation
@@ -752,7 +754,7 @@ struct ToolCatPicker<Legacy: View>: View {
     var body: some View {
         Group {
             // 「猫」: the app shows no screen called 猫のプロフィール in ツール (11/7).
-            Section("猫") {
+            Section {
                 // A cat whose day was recorded is not offered for a new plan.
                 ForEach(profiles.filter { CatFarewell.days(farewellJSON)[$0.identifier] == nil }) { profile in
                     // A row that opens the cat's page: black text and a chevron, like a link.
@@ -773,6 +775,9 @@ struct ToolCatPicker<Legacy: View>: View {
                 }
                     .accessibilityIdentifier("tool-profile-add").disabled(busy)
                     .modifier(ToolAddCatFlow(isStarted: $addsCatWithPhoto, presentation: presentation, actions: actions))
+            } header: { Text("猫") }
+              footer: {
+                if let purpose { Text(purpose).accessibilityIdentifier("tool-profile-purpose") }
             }
             legacy()
         }
