@@ -411,10 +411,6 @@ struct AlbumView: View {
                     .font(.subheadline.weight(.semibold))
 
                 Spacer(minLength: 8)
-
-                if let selectedProfile {
-                    profileSettingsLink(selectedProfile)
-                }
             }
 
             CatProfileScopePicker(
@@ -422,24 +418,6 @@ struct AlbumView: View {
                 selection: $selectedScope
             )
         }
-    }
-
-    private func profileSettingsLink(_ profile: CatProfilePresentation) -> some View {
-        NavigationLink {
-            CatProfileDetailView(
-                profile: profile,
-                allProfiles: profiles,
-                manualCandidatePhotos: profile.manualCandidatePhotos,
-                photoAlbumOptions: photoAlbumOptions,
-                actions: profileActions
-            )
-        } label: {
-            Label("プロフィール", systemImage: "slider.horizontal.3")
-                .font(.caption.weight(.semibold))
-        }
-        .accessibilityLabel("\(profile.displayName)のプロフィール")
-        .accessibilityHint("\(profile.displayName)の設定を開きます")
-        .accessibilityIdentifier("album-profile-add-photos")
     }
 
     private var groupedAlbumPreparationBanner: some View {
@@ -1313,15 +1291,7 @@ struct LikedPhotosView: View {
                     Label("この猫の写真", systemImage: "photo.on.rectangle")
                 }.accessibilityIdentifier("albums-cat-photos")
             }
-            if let profile = albumProfiles.first(where: { $0.identifier == catIdentifier }) {
-                NavigationLink {
-                    CatProfileDetailView(profile: profile, allProfiles: albumProfiles,
-                        manualCandidatePhotos: profile.manualCandidatePhotos,
-                        photoAlbumOptions: albumOptions, actions: albumProfileActions)
-                } label: {
-                    Label("\(profile.displayName)の設定", systemImage: "slider.horizontal.3")
-                }.accessibilityIdentifier("album-profile-add-photos")
-            }
+            // 11/7: the cat's settings open from its page in ツール, not here.
         } label: {
             Image(systemName: "ellipsis")
         }

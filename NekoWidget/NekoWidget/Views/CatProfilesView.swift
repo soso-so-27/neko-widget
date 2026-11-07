@@ -188,7 +188,8 @@ struct CatProfilesView: View {
 
     private var organizationMenu: some View {
         Menu {
-            if !presentation.profiles.isEmpty && !presentation.unassignedPhotos.isEmpty {
+            // 11/7: from 設定, sorting photos is the 写真 tab's 「未分類」, not a second list here.
+            if !opensProfileSettings && !presentation.profiles.isEmpty && !presentation.unassignedPhotos.isEmpty {
                 Button {
                     organizationDestination = .unassigned
                 } label: {
