@@ -200,7 +200,9 @@ struct PhotoMemoryNotesListView: View {
                     ContentUnavailableView.search(text: search)
                 } else if visible.isEmpty && !library.failed {
                     ContentUnavailableView {
-                        Label(selectedProfileIdentifier == nil ? "メモを付けた写真が並びます" : "この条件のメモはありません", systemImage: "note.text")
+                        // 11/7: name the chosen cat, so a filtered list does not read as empty.
+                        Label(selectedProfileIdentifier.map { "\(currentProfileNames[$0] ?? "未分類")のメモはまだありません" }
+                              ?? "メモを付けた写真が並びます", systemImage: "note.text")
                     } description: {
                         Text("写真を開いて、鉛筆のボタンから書けます。")
                     } actions: {
