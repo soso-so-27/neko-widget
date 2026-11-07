@@ -42,7 +42,7 @@ struct MembershipOfferView: View {
     static let reassurances = [
         "いつでも解約できます",
         "解約しても、写真・まど・メモは消えません",
-        "招待した家族はずっと無料です",
+        "招待した家族は無料で入れます",
     ]
     /// Apple's own instructions; the app never cancels on the person's behalf.
     static let cancellationHelpURL = URL(string: "https://support.apple.com/ja-jp/118428")
