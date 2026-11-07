@@ -67,21 +67,12 @@ struct CatProfilesView: View {
     let actions: CatProfilesViewActions
     var opensProfileSettings = false
 
-    private struct CreationRequest: Identifiable {
-        let id = UUID()
-        let photoIdentifier: String?
-    }
-
     private enum OrganizationDestination: String, Identifiable {
         case unassigned
         var id: String { rawValue }
     }
 
-    @State private var creationRequest: CreationRequest?
-    @State private var showsCreationPhotoPicker = false
-    @State private var creationPhotoIdentifier: String?
-    @State private var continuesProfileCreation = false
-    @State private var createdProfileIdentifier: String?
+    @State private var addsCat = false
     @State private var openedProfileIdentifier: String?
     @State private var organizationDestination: OrganizationDestination?
     @State private var showsAbout = false
@@ -99,7 +90,7 @@ struct CatProfilesView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                Button(action: startAddingCat) {
+                Button { addsCat = true } label: {
                     Image(systemName: "plus")
                 }
                 .accessibilityLabel("猫を追加")
@@ -137,44 +128,8 @@ struct CatProfilesView: View {
                 }
             }
         }
-        .sheet(isPresented: $showsCreationPhotoPicker, onDismiss: {
-            if continuesProfileCreation {
-                continuesProfileCreation = false
-                creationRequest = CreationRequest(photoIdentifier: creationPhotoIdentifier)
-            }
-        }) {
-            NavigationStack {
-                CatProfilePhotoPicker(
-                    photos: presentation.profileCreationPhotos,
-                    selectedIdentifier: nil,
-                    choose: { identifier in
-                        creationPhotoIdentifier = identifier
-                        continuesProfileCreation = true
-                        return true
-                    }
-                )
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("写真はあとで") {
-                            continuesProfileCreation = true
-                            showsCreationPhotoPicker = false
-                        }
-                    }
-                }
-            }
-        }
-        .sheet(item: $creationRequest, onDismiss: {
-            openedProfileIdentifier = createdProfileIdentifier
-            createdProfileIdentifier = nil
-        }) { request in
-            AddCatProfileView(
-                referenceCandidates: presentation.profileCreationPhotos,
-                initialLifeReference: presentation.legacyLifeReference,
-                initialPhotoIdentifier: request.photoIdentifier,
-                createProfile: actions.createProfile,
-                onCreated: { createdProfileIdentifier = $0 }
-            )
-            .id(request.id)
+        .addingCatProfile(isStarted: $addsCat, presentation: presentation, actions: actions) {
+            openedProfileIdentifier = $0
         }
         .navigationDestination(item: $openedProfileIdentifier) { identifier in
             if let profile = presentation.profiles.first(where: { $0.identifier == identifier }) {
@@ -228,16 +183,6 @@ struct CatProfilesView: View {
                     : "この子の写真を開きます")
             }
 
-        }
-    }
-
-    private func startAddingCat() {
-        creationPhotoIdentifier = nil
-        continuesProfileCreation = false
-        if presentation.profileCreationPhotos.isEmpty {
-            creationRequest = CreationRequest(photoIdentifier: nil)
-        } else {
-            showsCreationPhotoPicker = true
         }
     }
 
@@ -558,6 +503,90 @@ struct CatProfileScopePicker: View {
             return
         }
         selection = .everyone
+    }
+}
+
+/// Adding a cat: a photo first when there are some, then the name. The new
+/// cat's identifier is handed back once the sheets have closed, to open it.
+/// Shared by the cat list and the 「＋」 on the ツール tab (11/7: that 「＋」
+/// opened the list, where 「＋」 had to be pressed again).
+private struct CatProfileCreationFlow: ViewModifier {
+    @Binding var isStarted: Bool
+    let presentation: CatProfilesPresentation
+    let actions: CatProfilesViewActions
+    let created: (String) -> Void
+
+    private struct CreationRequest: Identifiable {
+        let id = UUID()
+        let photoIdentifier: String?
+    }
+
+    @State private var creationRequest: CreationRequest?
+    @State private var showsCreationPhotoPicker = false
+    @State private var creationPhotoIdentifier: String?
+    @State private var continuesProfileCreation = false
+    @State private var createdProfileIdentifier: String?
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: isStarted) { _, started in
+                guard started else { return }
+                isStarted = false
+                creationPhotoIdentifier = nil
+                continuesProfileCreation = false
+                if presentation.profileCreationPhotos.isEmpty {
+                    creationRequest = CreationRequest(photoIdentifier: nil)
+                } else {
+                    showsCreationPhotoPicker = true
+                }
+            }
+            .sheet(isPresented: $showsCreationPhotoPicker, onDismiss: {
+                if continuesProfileCreation {
+                    continuesProfileCreation = false
+                    creationRequest = CreationRequest(photoIdentifier: creationPhotoIdentifier)
+                }
+            }) {
+                NavigationStack {
+                    CatProfilePhotoPicker(
+                        photos: presentation.profileCreationPhotos,
+                        selectedIdentifier: nil,
+                        choose: { identifier in
+                            creationPhotoIdentifier = identifier
+                            continuesProfileCreation = true
+                            return true
+                        }
+                    )
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("写真はあとで") {
+                                continuesProfileCreation = true
+                                showsCreationPhotoPicker = false
+                            }
+                        }
+                    }
+                }
+            }
+            .sheet(item: $creationRequest, onDismiss: {
+                if let createdProfileIdentifier { created(createdProfileIdentifier) }
+                createdProfileIdentifier = nil
+            }) { request in
+                AddCatProfileView(
+                    referenceCandidates: presentation.profileCreationPhotos,
+                    initialLifeReference: presentation.legacyLifeReference,
+                    initialPhotoIdentifier: request.photoIdentifier,
+                    createProfile: actions.createProfile,
+                    onCreated: { createdProfileIdentifier = $0 }
+                )
+                .id(request.id)
+            }
+    }
+}
+
+extension View {
+    func addingCatProfile(isStarted: Binding<Bool>, presentation: CatProfilesPresentation,
+                          actions: CatProfilesViewActions, created: @escaping (String) -> Void) -> some View {
+        modifier(CatProfileCreationFlow(isStarted: isStarted, presentation: presentation,
+                                        actions: actions, created: created))
     }
 }
 

@@ -758,7 +758,13 @@ struct FamilyNotebookView: View {
                     List {
                         Section {
                             ForEach(model.familyCats) { cat in
-                                NavigationLink(cat.name) { CatCareDetailView(toolCatID: cat.toolID, name: cat.name, insideFamilyNotebook: true) }
+                                NavigationLink(cat.name) {
+                                    // The cat's name on top, as on the cat's own page: the
+                                    // same page from another door, not a second form (11/7).
+                                    CatCareDetailView(toolCatID: cat.toolID, name: cat.name, insideFamilyNotebook: true)
+                                        .navigationTitle(cat.name)
+                                        .navigationBarTitleDisplayMode(.inline)
+                                }
 
                             }
                         } footer: { Text("このiPhoneに残っている記録です。家族との共有を確認しています。") }
@@ -899,7 +905,13 @@ struct FamilyNotebookView: View {
                         FamilyNotebookSharedCatRow(name: cat.name, remove: {
                             do { try model.unshareCat(cat.id); Task { await sharing.refresh() } }
                             catch { sharing.failure = error as? FamilySharingError ?? .serviceUnavailable }
-                        }) { CatCareDetailView(toolCatID: cat.toolID, name: cat.name, insideFamilyNotebook: true) }
+                        }) {
+                                    // The cat's name on top, as on the cat's own page: the
+                                    // same page from another door, not a second form (11/7).
+                                    CatCareDetailView(toolCatID: cat.toolID, name: cat.name, insideFamilyNotebook: true)
+                                        .navigationTitle(cat.name)
+                                        .navigationBarTitleDisplayMode(.inline)
+                                }
                     }
                     Button { showsCats = true } label: { Label("猫を追加", systemImage: "plus") }
                         .accessibilityIdentifier("family-notebook-add-cat")

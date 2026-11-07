@@ -534,6 +534,9 @@ struct MainTabView: View {
     @State private var showcaseWaitingToOpen: String?
     @State private var showcasePreparationError = false
     @State private var showsShowcaseNoPhotos = false
+    /// 「＋」 in the cat row: adding a cat, then the page of the one added.
+    @State private var addsCatFromTools = false
+    @State private var addedCatFromTools: String?
     @State private var photoLibraryRevision = 0
     @State private var photosPath = NavigationPath()
     @State private var memoriesPath = NavigationPath()
@@ -1118,10 +1121,9 @@ struct MainTabView: View {
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-cat-\(profile.identifier)")
                 }
-                NavigationLink {
-                    CatProfilesView(presentation: catProfilesPresentation, actions: catProfilesActions,
-                                    opensProfileSettings: true)
-                } label: {
+                // 「＋」 adds a cat right away, then opens its page (11/7: it
+                // opened a list where 「＋」 had to be pressed again).
+                Button { addsCatFromTools = true } label: {
                     // 「＋」 alone: adding a cat needs no caption.
                     Image(systemName: "plus")
                         .font(.title2.weight(.semibold))
@@ -1132,13 +1134,26 @@ struct MainTabView: View {
                         .frame(width: 72, alignment: .top)
                 }
                 .buttonStyle(ToolCardButtonStyle())
-                .accessibilityLabel(catProfilesPresentation.profiles.isEmpty ? "猫を追加" : "猫を追加・整理")
+                .accessibilityLabel("猫を追加")
                 .accessibilityIdentifier("tools-cat-profiles")
             }
             .padding(.horizontal, 2)
             .padding(.vertical, 4)
         }
         .accessibilityIdentifier("tools-cat-strip")
+        .addingCatProfile(isStarted: $addsCatFromTools, presentation: catProfilesPresentation,
+                          actions: catProfilesActions) { addedCatFromTools = $0 }
+        .navigationDestination(item: $addedCatFromTools) { identifier in
+            if let profile = catProfilesPresentation.profiles.first(where: { $0.identifier == identifier }) {
+                CatProfileDetailView(
+                    profile: profile,
+                    allProfiles: catProfilesPresentation.profiles,
+                    manualCandidatePhotos: profile.manualCandidatePhotos,
+                    photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
+                    actions: catProfilesActions
+                )
+            }
+        }
     }
 
     /// How far this cat's この子のこと is, for the ring around the chip.

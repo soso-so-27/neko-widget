@@ -33,8 +33,18 @@ struct CatProfileDetailView: View {
     @State private var page: CatPage = .photos
     @AppStorage(CatFarewell.key) private var farewellJSON = ""
     @State private var showsFarewellEditor = false
+    @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
+    @ObservedObject private var catCare = CatCareStore.shared
 
     enum CatPage: Hashable { case photos, care }
+
+    /// The family's names when this cat is in the family notebook, so 写真
+    /// shows the same faces as この子のこと: the whole page is the shared cat (11/7).
+    private var familyNames: [String]? {
+        guard let catID = CatCareSummary.record(profileIdentifier: profile.identifier)?.catID,
+              familyNotebook.familyCats.contains(where: { $0.toolID == catID }) else { return nil }
+        return familyNotebook.members.map(\.displayName)
+    }
 
     /// One page per cat. 写真: what the app found in Photos (name, face, which
     /// photos are this cat). この子のこと: the facts people write (dates,
@@ -75,7 +85,8 @@ struct CatProfileDetailView: View {
             // この子のこと brings its own; 写真 shows the same at the same place.
             if page == .photos, Version1.familyNotebook || FamilyNotebookPrototype.shared.hasFamily {
                 ToolbarItem(placement: .topBarTrailing) {
-                    FamilyNotebookButton(accessibilityIdentifier: "cat-profile-family-notebook")
+                    FamilyNotebookButton(accessibilityIdentifier: "cat-profile-family-notebook",
+                                         sharedNames: familyNames)
                 }
             }
         }
