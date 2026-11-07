@@ -3203,6 +3203,107 @@ class CareHandoffCatCareTests(unittest.TestCase):
         self.assertNotIn("CatCareStore.shared.update", view)
 
 
+class CareHandoffReviewTests(unittest.TestCase):
+    """11/8 review of 「預けるとき」: only what is written, fewer steps, clearer names."""
+
+    def setUp(self) -> None:
+        self.plan = source("NekoWidget/Services/CareHandoffPlan.swift")
+        self.store = source("NekoWidget/Services/CareHandoffStore.swift")
+        self.exporter = source("NekoWidget/Services/CareHandoffExporter.swift")
+        self.view = source("NekoWidget/Views/CareHandoffView.swift")
+        self.summary = source("NekoWidget/Views/CatCareView.swift")
+
+    def test_new_saved_fields_are_optional(self) -> None:
+        for field in ("var includesHealth: Bool? = nil", "var includesContacts: Bool? = nil",
+                      "var lastMadeAt: Date? = nil", "var photoRemoved: Bool? = nil"):
+            self.assertIn(field, self.plan)
+        self.assertIn("static let staleRequestAge: TimeInterval = 14 * 24 * 60 * 60", self.plan)
+        self.assertIn("guard [1,2].contains(schemaVersion)", self.plan)
+
+    def test_handed_memo_leaves_out_unwritten_rows(self) -> None:
+        disclosure = section(self.plan, "struct CareHandoffDisclosure {", "static func vetFields(")
+        self.assertNotIn("未記入（飼い主に聞いてください）", disclosure)
+        self.assertIn('value.isEmpty || value.hasPrefix("未記入") || value.hasPrefix("未確認")', disclosure)
+        self.assertEqual(disclosure.count("return Self.written(fields)"), 2)
+        self.assertIn("return written([", disclosure)
+        # The closed disclosure stays closed by default.
+        self.assertIn("    var health = false\n    var contacts = false", disclosure)
+        self.assertNotIn("写真はありません", self.exporter)
+        self.assertNotIn("最後に書いた日", self.exporter)
+        self.assertEqual(self.exporter.count("作った日："), 1)
+        display = section(self.view, "private struct CareDisplayView: View {", "private func fields(")
+        self.assertNotIn("写真はありません", display)
+        # The app says what is missing before the memo is made.
+        self.assertIn('"まだ書いていないこと\\(who)："', self.view)
+
+    def test_vet_is_per_cat_with_note(self) -> None:
+        vet = section(self.plan, "static func vetFields(", "\n}\n")
+        self.assertIn("record?.vetOverride?.value ?? household?.vet?.value", vet)
+        self.assertIn("vet.note", vet)
+        self.assertIn("vet: CareHandoffDisclosure.vetFields(plan: plan, household: household, record: care)",
+                      section(self.store, "func shareRecord(", "private static func normalizedJPEG("))
+        contacts = section(self.plan, "static func contactFields(", "static func vetFields(")
+        self.assertNotIn("かかりつけの動物病院", contacts)
+
+    def test_indoor_cat_is_always_said(self) -> None:
+        lines = section(self.summary, "static func careHandoffLines(", "static func careHandoffHealthLines(")
+        self.assertIn('if record?.indoorOnly?.value == .yes { lines.append(("暮らし", "外に出さない（室内飼い）")) }', lines)
+        self.assertLess(lines.index("外に出さない（室内飼い）"), lines.index("年齢・体重"))
+
+    def test_medicine_note_moved_to_medicine_input(self) -> None:
+        self.assertNotIn("薬は、獣医師に言われたとおりに書いてください。", self.view)
+        medicine = section(self.summary, 'case .medication:\n                    TextField("薬の名前"', "case .vaccination:")
+        self.assertIn("薬は、獣医師に言われたとおりに書いてください。", medicine)
+
+    def test_making_screen_order_defaults_and_steps(self) -> None:
+        making = section(self.view, "private struct CareDisclosureView: View {", "private struct CareDisplayView: View {")
+        # Period and request at the top; contacts shown once here.
+        self.assertLess(making.index('Text("期間とお願い")'), making.index('Section("今回お願いする猫")'))
+        self.assertIn('label: "ほかにお願いしたいこと"', making)
+        self.assertIn("CareHandoffDisclosure.contactFields(plan: store.plan", making)
+        self.assertIn("store.clearStaleRequest()", making)
+        # Every cat that has not passed away starts chosen.
+        self.assertIn("disclosure.catIDs = Set(cats.map(\\.id))", making)
+        self.assertIn("CatFarewell.days(farewellJSON)", making)
+        # Health and contacts start on when written, and remember the last memo.
+        self.assertIn("disclosure.health = healthWritten && (store.plan.includesHealth ?? true)", making)
+        self.assertIn("disclosure.contacts = contactsWritten && (store.plan.includesContacts ?? true)", making)
+        self.assertIn('Toggle("薬・持病・アレルギーを載せる"', making)
+        self.assertIn('Toggle("連絡先・動物病院を載せる"', making)
+        self.assertIn("store.recordMade(health:", making)
+        # No question before the share sheet.
+        self.assertNotIn("この内容で作りますか", self.view)
+        self.assertIn('.navigationTitle("できあがり")', self.view)
+        self.assertNotIn('.navigationTitle("プレビュー")', self.view)
+
+    def test_editor_order_and_quiet_cleanup(self) -> None:
+        editor = section(self.view, "private struct CareCatEditor: View {", "private struct CarePhoto: View {")
+        body = editor[editor.index("var body: some View {"):]
+        self.assertLess(body.index('identifier: "care-important"'), body.index("catCareSection(cat)"))
+        self.assertLess(body.index('identifier: "care-call-when"'), body.index("catCareSection(cat)"))
+        self.assertIn('"薬と連絡先は、次の画面で選ぶと載ります。"', editor)
+        self.assertNotIn("CareRequestEditor", self.view)
+        # Family-shared request is named apart from the household one.
+        self.assertIn('Section("この子の期間とお願い")', editor)
+        self.assertEqual(self.view.count('"今回のお願い"'), 0)
+        # Face photo from 「この子のこと」 first; never after the owner removed it.
+        self.assertIn("care?.facePhoto?.value", editor)
+        self.assertIn("cat.photoRemoved != true", editor)
+        self.assertIn("$0.photoName = nil; $0.photoRemoved = true", editor)
+        self.assertIn("next.cats[index].photoRemoved = nil", self.store)
+        # Leftover photo copies are removed in the background, not by a button.
+        self.assertNotIn("使わなくなった写真のコピーが残っています。", self.view)
+        self.assertNotIn("もう一度消す", self.view)
+        self.assertIn("store.retryPhotoCleanup()", self.view)
+        self.assertIn("func retryPhotoCleanup()", self.plan)
+
+    def test_pdf_with_several_cats_says_shared_things_once(self) -> None:
+        self.assertIn("let sharedFirstPage = record.cats.count > 1", self.exporter)
+        self.assertIn("(sharedFirstPage ? [] : record.commonFields) + cat.fields", self.exporter)
+        self.assertIn('page.catIndex.map { "\\(record.heading) · \\(record.cats[$0].name)" } ?? record.heading', self.exporter)
+        self.assertNotIn("append(cat.name", self.exporter)
+
+
 class ShowcaseCatCareTests(unittest.TestCase):
     def test_showcase_caption_ios17_score_and_cat_care_face(self) -> None:
         store = source("NekoWidget/Services/ShowcasePhotoStore.swift")
@@ -3269,8 +3370,9 @@ class ToolTemplateTests(unittest.TestCase):
             self.assertIn("ToolCatCareSection(", text, path)
             self.assertIn("ToolImportantInformation(", text, path)
         care = source("NekoWidget/Views/CareHandoffView.swift")
-        # ② comes before ③ in 預けるとき.
-        self.assertLess(care.index("catCareSection(cat)"), care.index('CareField(label: "まず伝えたいこと"'))
+        # 11/8: what is written this time comes before the read-only 「この子のこと」.
+        self.assertLess(care.index('CareField(label: "まず伝えたいこと"'), care.index("catCareSection(cat)"))
+        self.assertIn('ToolImportantInformation(text: "住所や鍵の番号は、別の方法で伝えてください。")', care)
         evacuation = source("NekoWidget/Views/EvacuationPreparationView.swift")
         # 11/7: the page has the link's name, 「猫の情報」.
         bottom = section(evacuation, '}.navigationTitle("猫の情報")', ".navigationDestination(item: $preview)")
@@ -3308,7 +3410,9 @@ class ToolFlowTests(unittest.TestCase):
         self.assertIn('"evacuation-share-pdf"', evacuation)
         self.assertIn('"vet-export-pdf"', vet)
         # The button says where it goes.
-        self.assertIn('Label("渡す内容を選ぶ", systemImage: "checklist")', care)
+        self.assertIn('Label("メモを作る", systemImage: "doc.text")', care)
+        self.assertNotIn('"渡す内容を選ぶ"', care)
+        self.assertNotIn("できあがりを見る", care)
         self.assertIn('.navigationTitle("病院で見せる")', vet)
         # Closing the vet memo saves; it asks only when it could not.
         close = section(vet, "private func close() {", "private func save(completing:")
