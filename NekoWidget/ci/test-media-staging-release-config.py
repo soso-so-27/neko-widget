@@ -317,7 +317,8 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertEqual(values[key], "")
         self.assertNotIn("https://", source)
-        self.assertNotIn("workers.dev", source)
+        self.assertEqual(values["USAGE_REPORT_URL"], "https:/$()/neko-usage-staging.nakanishisoya.workers.dev/v1/usage")
+        self.assertNotIn("workers.dev", "\n".join(line for line in source.splitlines() if not line.startswith("USAGE_REPORT_URL =")))
 
     def test_media_privacy_manifest_is_exact_and_nontracking(self) -> None:
         manifest = load_plist(MEDIA_PRIVACY)
@@ -336,7 +337,7 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
                 self.assertIs(item["NSPrivacyCollectedDataTypeTracking"], False)
                 self.assertEqual(
                     item["NSPrivacyCollectedDataTypePurposes"],
-                    [APP_FUNCTIONALITY],
+                    [APP_FUNCTIONALITY] + (["NSPrivacyCollectedDataTypePurposeAnalytics"] if data_type == PRODUCT_INTERACTION else []),
                 )
 
     def test_workflow_injects_only_protected_media_values_and_verifies_archive(self) -> None:

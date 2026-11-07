@@ -48,7 +48,7 @@ def verify(rows, owner_internal=False):
             raise ValueError("Source Keychain group binding changed: " + target)
         settings.setdefault("AppIdentifierPrefix", "UNSIGNED_CONFIGURATION_ONLY.")
         info = {key: expand(value, settings) for key, value in raw.items()
-                if key.startswith(("Sharing", "Group", "OwnerInternal"))}
+                if key.startswith(("Sharing", "Group", "OwnerInternal", "UsageReport"))}
         infos.append(info)
     failures = []
     release.validate_share_extension_boundary(infos[0], infos[1], failures)

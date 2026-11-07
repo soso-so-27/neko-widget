@@ -107,6 +107,7 @@ def settings(contract, *, synthetic=False):
         if match:
             result[match[1]] = match[2].strip()
     result.update(values)
+    result["USAGE_REPORT_URL"] = "" if synthetic else module("usage_report_config").PRODUCTION
     require(urlsplit(values["OFFICIAL_WINDOW_FEED_URL"]).path == "/catalog.json",
             "Official feed must use base /catalog.json; the app appends each channel path")
     result.update({"INTERNAL_PRESENTATION_CONDITION": "",
@@ -150,10 +151,12 @@ def verify_products(app, contract, *, synthetic=False):
         require(info.get("SharingInternalEncryptedReportEnabled") is False
                 and info.get("SharingInternalEncryptedReportScope") == "", "Internal reporting leaked into public product")
         if target != "NekoWidget":
-            require(not any(info.get(k) for k in ("SharingAPIBaseURL", "SharingModerationPublicKey", "SharingModerationKeyID")), "Extension received report credentials")
+            require(not any(info.get(k) for k in ("SharingAPIBaseURL", "SharingModerationPublicKey", "SharingModerationKeyID", "UsageReportURL")), "Extension received report credentials")
         actual_privacy = plistlib.loads((directory / "PrivacyInfo.xcprivacy").read_bytes())
         require(actual_privacy == plistlib.loads((ROOT / privacy_source).read_bytes()), "Bundled privacy manifest differs: " + target)
     host, share, widget = (infos[k] for k in TARGETS)
+    module("usage_report_config").verify(host, mode="production", synthetic=synthetic)
+    module("usage_report_config").verify_privacy(plistlib.loads((app / "PrivacyInfo.xcprivacy").read_bytes()))
     require(len({i.get("CFBundleVersion") for i in infos.values()}) == 1 and host.get("CFBundleVersion"), "Target build versions differ")
     require(len({i.get("CFBundleShortVersionString") for i in infos.values()}) == 1, "Target marketing versions differ")
     require(len({i.get("AppGroupIdentifier") for i in infos.values()}) == 1 and host.get("AppGroupIdentifier"), "Target App Groups differ")

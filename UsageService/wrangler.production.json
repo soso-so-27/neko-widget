@@ -1,0 +1,37 @@
+{
+  "name": "neko-usage-production",
+  "account_id": "829a34ef925a39d81b0e9e08800d7c7f",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-08-17",
+  "workers_dev": true,
+  "preview_urls": false,
+  "logpush": false,
+  "observability": {
+    "enabled": false
+  },
+  "limits": {
+    "cpu_ms": 50
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "neko-usage-production",
+      "database_id": "8637ffa1-0965-48f1-b234-9c362eac168c"
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "LIMIT",
+      "namespace_id": "11020732",
+      "simple": {
+        "limit": 120,
+        "period": 60
+      }
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "*/15 * * * *"
+    ]
+  }
+}

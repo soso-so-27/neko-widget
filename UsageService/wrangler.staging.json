@@ -1,0 +1,37 @@
+{
+  "name": "neko-usage-staging",
+  "account_id": "829a34ef925a39d81b0e9e08800d7c7f",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-08-17",
+  "workers_dev": true,
+  "preview_urls": false,
+  "logpush": false,
+  "observability": {
+    "enabled": false
+  },
+  "limits": {
+    "cpu_ms": 50
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "neko-usage-staging",
+      "database_id": "525014e1-9a08-462a-933e-c200034b8c31"
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "LIMIT",
+      "namespace_id": "11020731",
+      "simple": {
+        "limit": 120,
+        "period": 60
+      }
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "*/15 * * * *"
+    ]
+  }
+}

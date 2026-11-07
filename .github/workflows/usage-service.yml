@@ -1,0 +1,29 @@
+name: Usage ingestion check
+on:
+  pull_request:
+    paths:
+      - 'UsageService/**'
+      - 'NekoWidget/ci/*usage*'
+      - '.github/workflows/usage-service.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'UsageService/**'
+      - 'NekoWidget/ci/*usage*'
+      - '.github/workflows/usage-service.yml'
+permissions:
+  contents: read
+jobs:
+  usage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: NekoWidget/SharingService/package-lock.json
+      - run: npm ci --ignore-scripts --prefix NekoWidget/SharingService
+      - run: node --test UsageService/worker.test.mjs
+      - run: python3 NekoWidget/ci/test-usage-report-config.py

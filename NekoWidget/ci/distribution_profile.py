@@ -39,7 +39,7 @@ def verify_info(info, *, extension=False, share_extension=False):
     if extension:
         if info.get("SharingReleaseMode") != "media-staging":
             raise ValueError("Extension release mode changed.")
-        if any(info.get(k) for k in ("SharingAPIBaseURL", "SharingModerationKeyID", "SharingModerationPublicKey")):
+        if any(info.get(k) for k in ("SharingAPIBaseURL", "SharingModerationKeyID", "SharingModerationPublicKey", "UsageReportURL")):
             raise ValueError("Owner internal extensions cannot have a reporting recipient.")
         if info.get("SharingShareExtensionSendEnabled", "NO") not in (False, "NO"):
             raise ValueError("Direct extension send must stay OFF.")
@@ -72,6 +72,8 @@ def verify_products(infos):
     for relative, info in infos.items():
         verify_info(info, extension=relative != "Info.plist", share_extension=relative == PLISTS[1])
     app, share = infos[PLISTS[0]], infos[PLISTS[1]]
+    from usage_report_config import verify as verify_usage
+    verify_usage(app, mode="media-staging")
     if "GroupShareExtensionEnabled" in share:
         for key in ("GroupShareExtensionEnabled", "GroupWindowsEnabled", "GroupShareKeychainGroup"):
             if app.get(key) != share.get(key):
