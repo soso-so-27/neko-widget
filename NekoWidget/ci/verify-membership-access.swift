@@ -141,7 +141,7 @@ private struct MembershipAccessVerifier {
         require(commits == 5, "Beta commit blocked")
 
         // 招待されたまどでの送信は、個人・まどのどの状態でも許可（入る人は
-        // ずっと無料）。まどの支援（sponsorship）の状態は判定に使わない。
+        // 無料）。まどの支援（sponsorship）の状態は判定に使わない。
         let windowStates: [(String, MembershipWindowState)] = [
             ("unsupported", .inactive),
             ("checking", .checking),
