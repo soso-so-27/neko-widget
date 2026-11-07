@@ -3842,6 +3842,16 @@ class GroupJoinOpensWindowTests(unittest.TestCase):
         self.assertIn("if model.windows.contains(where: { $0.id == requested }) {", window)
 
 
+class AppOrientationTests(unittest.TestCase):
+    def test_app_stays_upright(self) -> None:
+        # 11/8: an iPhone-only app whose screens are made for upright use.
+        import plistlib
+        info = plistlib.loads((ROOT / "NekoWidget/Info.plist").read_bytes())
+        self.assertEqual(info.get("UISupportedInterfaceOrientations"), ["UIInterfaceOrientationPortrait"])
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+        self.assertNotIn("TARGETED_DEVICE_FAMILY = \"1,2\"", project)
+
+
 class SettingsLayoutTests(unittest.TestCase):
     def test_settings_put_plus_and_saving_first_and_test_tools_last(self) -> None:
         settings = source("NekoWidget/Views/SettingsView.swift")
