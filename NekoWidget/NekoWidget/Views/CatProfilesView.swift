@@ -719,10 +719,19 @@ private struct AddCatProfileView: View {
 private struct ToolProfileActionsKey: EnvironmentKey {
     static let defaultValue = CatProfilesViewActions.noOp
 }
+private struct ToolProfilesPresentationKey: EnvironmentKey {
+    static let defaultValue: CatProfilesPresentation? = nil
+}
 extension EnvironmentValues {
     var toolProfileActions: CatProfilesViewActions {
         get { self[ToolProfileActionsKey.self] }
         set { self[ToolProfileActionsKey.self] = newValue }
+    }
+    /// The cats, so 「猫を追加」 in a tool opens the same add screen as
+    /// ツールの「＋」 (11/7). Nil where it is not given: the name-only alert.
+    var toolProfilesPresentation: CatProfilesPresentation? {
+        get { self[ToolProfilesPresentationKey.self] }
+        set { self[ToolProfilesPresentationKey.self] = newValue }
     }
 }
 
@@ -732,14 +741,17 @@ struct ToolCatPicker<Legacy: View>: View {
     let select: (CatProfilePresentation) -> Void
     @ViewBuilder var legacy: () -> Legacy
     @Environment(\.toolProfileActions) private var actions
+    @Environment(\.toolProfilesPresentation) private var presentation
     @State private var addsCat = false
+    @State private var addsCatWithPhoto = false
     @State private var name = ""
     @State private var failed = false
     @State private var busy = false
     @AppStorage(CatFarewell.key) private var farewellJSON = ""
     var body: some View {
         Group {
-            Section("猫のプロフィール") {
+            // 「猫」: the app shows no screen called 猫のプロフィール in ツール (11/7).
+            Section("猫") {
                 // A cat whose day was recorded is not offered for a new plan.
                 ForEach(profiles.filter { CatFarewell.days(farewellJSON)[$0.identifier] == nil }) { profile in
                     // A row that opens the cat's page: black text and a chevron, like a link.
@@ -754,8 +766,12 @@ struct ToolCatPicker<Legacy: View>: View {
                     .foregroundStyle(.primary)
                     .accessibilityIdentifier("tool-profile-\(profile.identifier)")
                 }
-                Button("猫を追加", systemImage: "plus") { name = ""; addsCat = true }
+                Button("猫を追加", systemImage: "plus") {
+                    // The same add screen as ツールの「＋」 when the cats are known.
+                    if presentation != nil { addsCatWithPhoto = true } else { name = ""; addsCat = true }
+                }
                     .accessibilityIdentifier("tool-profile-add").disabled(busy)
+                    .modifier(ToolAddCatFlow(isStarted: $addsCatWithPhoto, presentation: presentation, actions: actions))
             }
             legacy()
         }
@@ -781,6 +797,21 @@ struct ToolCatPicker<Legacy: View>: View {
     }
 }
 
+/// ツールの「＋」's add screen inside a tool. The tool opens the new cat
+/// itself: its list of cats changes (11/7).
+private struct ToolAddCatFlow: ViewModifier {
+    @Binding var isStarted: Bool
+    let presentation: CatProfilesPresentation?
+    let actions: CatProfilesViewActions
+    @ViewBuilder func body(content: Content) -> some View {
+        if let presentation {
+            content.addingCatProfile(isStarted: $isStarted, presentation: presentation, actions: actions) { _ in }
+        } else {
+            content
+        }
+    }
+}
+
 /// A cat in the row at the top of a もしも tool.
 struct ToolStripCat: Identifiable, Equatable {
     let id: String
@@ -789,6 +820,12 @@ struct ToolStripCat: Identifiable, Equatable {
     let profile: CatProfilePresentation?
     /// Kept from the old lists, so the same identifier still finds the cat.
     let accessibilityIdentifier: String
+
+    /// A cat whose farewell day is recorded. A tool never opens it by itself,
+    /// since opening makes a new record; the row and lists leave it out too (11/7).
+    func isDeparted(_ farewellJSON: String) -> Bool {
+        profile.map { CatFarewell.days(farewellJSON)[$0.identifier] != nil } ?? false
+    }
 }
 
 /// The row of cats at the top of a もしも tool: round photo and name, the
@@ -857,27 +894,6 @@ struct ToolCatStrip: View {
         }
         .frame(width: 72)
         .contentShape(Rectangle())
-    }
-}
-
-struct ToolCatProfileInfo: View {
-    let profile: CatProfilePresentation
-    let profiles: [CatProfilePresentation]
-    @Environment(\.toolProfileActions) private var actions
-    var body: some View {
-        Section("猫のプロフィール") {
-            LabeledContent("名前", value: profile.displayName)
-            if let birthday = profile.lifeDates.birthday {
-                LabeledContent("誕生日", value: birthday.date.formatted(date: .abbreviated, time: .omitted))
-            }
-            if let adoption = profile.lifeDates.adoptionDay {
-                LabeledContent("迎えた日", value: adoption.date.formatted(date: .abbreviated, time: .omitted))
-            }
-            NavigationLink("猫のプロフィールで編集") {
-                CatProfileDetailView(profile: profile, allProfiles: profiles,
-                    manualCandidatePhotos: profile.manualCandidatePhotos, photoAlbumOptions: [], actions: actions)
-            }
-        }
     }
 }
 

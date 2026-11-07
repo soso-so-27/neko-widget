@@ -280,6 +280,11 @@ struct AlbumPrototypeView: View {
                     } else if let latest = letters.first {
                         latestCard(latest)
                     }
+                    // 11/7: a new season's movie is on the first screen until it
+                    // is watched (the same rule as the tab's mark), not only under 「2026 ›」.
+                    if let movie = movies.first, !movie.isFrozen {
+                        newMovieCard(movie)
+                    }
                     yearShelf
                     if letters.isEmpty {
                         ContentUnavailableView("まだ作品はありません", systemImage: "photo.stack",
@@ -385,11 +390,14 @@ struct AlbumPrototypeView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .top, endPoint: .bottom))
                     }
+                    .overlay(alignment: .topTrailing) {
+                        if workNeedsPlus { AlbumPlusMark(compact: true) }
+                    }
                     .clipShape(shape)
                     .zoomSource(source, in: zoom)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(book.accessibilityTitle)
+            .accessibilityLabel(book.accessibilityTitle + (workNeedsPlus ? "、Plusで見られます" : ""))
         } else if month == thisMonth, let next {
             // This month's book in the making: its photos so far, nine places.
             let photos = AlbumPrototype.pick(AlbumPrototype.photos(in: next.start, from: catPhotos), count: 9)
@@ -443,6 +451,40 @@ struct AlbumPrototypeView: View {
                            names: AlbumPrototype.names(for: photos, assignments: assignments, profileNames: profileNames),
                            accessibilityTitle: "\(String(year))年の作品") { yearStory = YearStory(year: year) }
             .accessibilityIdentifier("album-prototype-year")
+    }
+
+    /// A new season's movie: one row with its first scene, opened as from これまでの作品.
+    private func newMovieCard(_ record: SeasonalMovieArchiveRecord) -> some View {
+        let movie = record.effectivePresentation
+        return Button { openMovie(record.periodID) } label: {
+            HStack(spacing: 12) {
+                Color.clear.frame(width: 56, height: 56)
+                    .overlay {
+                        if let scene = movie.scenes.first {
+                            PhotoAssetImageView(localIdentifier: scene.localIdentifier, catBoundingBox: scene.catBoundingBox,
+                                                targetPixelSize: CGSize(width: 160, height: 160))
+                        }
+                    }
+                    .overlay {
+                        Image(systemName: "play.fill").font(.caption).foregroundStyle(.white)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("とどきました").font(.caption.weight(.bold)).foregroundStyle(.secondary)
+                    Text("\(movie.periodTitle)の季節のムービー")
+                        .font(.system(.subheadline, design: .serif).weight(.bold))
+                        .foregroundStyle(.primary)
+                }
+                Spacer(minLength: 8)
+                if workNeedsPlus { AlbumPlusMark(compact: true) }
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(10)
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(movie.periodTitle)の季節のムービー、とどきました" + (workNeedsPlus ? "、Plusで見られます" : ""))
+        .accessibilityIdentifier("album-prototype-new-movie")
     }
 
     private func open(_ letter: MonthlyWindowPresentation, from source: String? = nil) {
@@ -517,6 +559,20 @@ struct AlbumPrototypeView: View {
     }
 }
 
+/// 11/7: the lead card's small 「Plus」, also on the shelf, これまでの作品 and
+/// movies, so every cover that opens with Plus says so before a tap.
+struct AlbumPlusMark: View {
+    var compact = false
+
+    var body: some View {
+        Text("Plus").font(.caption2.bold())
+            .padding(.horizontal, compact ? 6 : 8).padding(.vertical, compact ? 2 : 4)
+            .background(.thinMaterial, in: Capsule())
+            .padding(compact ? 5 : 12)
+            .accessibilityHidden(true)
+    }
+}
+
 /// Opening a month's or the year's work is Plus; the shelf and the covers
 /// stay free (ADR-027: lists free, opening a summary or movie is Plus). In
 /// place of the work: the one Plus screen for that month, or the notice when
@@ -572,7 +628,15 @@ struct PastWorksView: View {
     @State private var story: MonthlyWindowPresentation?
     @State private var yearStory: AlbumPrototypeView.YearStory?
     @Namespace private var zoom
+    @Environment(\.membershipAccess) private var membershipAccess
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
+
+    /// Same condition as the album's lead card (11/7).
+    private var workNeedsPlus: Bool {
+        membershipAccess.decision(for: .openGrowingSummary) == .membershipRequired
+    }
+
+    private var plusSuffix: String { workNeedsPlus ? "、Plusで見られます" : "" }
 
     private var shelves: [Int] {
         Array(Set(letters.map(\.yearNumber)).union(years)).sorted(by: >)
@@ -594,7 +658,7 @@ struct PastWorksView: View {
                                 .zoomSource(YearStoryView.periodIdentifier(year), in: zoom)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(Text(verbatim: "\(year)年の作品"))
+                        .accessibilityLabel(Text(verbatim: "\(year)年の作品" + plusSuffix))
                     }
                     // Twelve places, January first: months still to come and the
                     // ones without a book stay as empty places on the shelf.
@@ -606,7 +670,7 @@ struct PastWorksView: View {
                                         .zoomSource(letter.periodIdentifier, in: zoom)
                                 }
                                 .buttonStyle(.plain)
-                                .accessibilityLabel(letter.accessibilityTitle)
+                                .accessibilityLabel(letter.accessibilityTitle + plusSuffix)
                             } else {
                                 emptyPlace(month, isAhead: isAhead(year: year, month: month))
                             }
@@ -626,6 +690,7 @@ struct PastWorksView: View {
                                 }, title: movie.periodTitle, isMovie: true)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("\(movie.periodTitle)の季節のムービー" + plusSuffix)
                         }
                     }
                 }
@@ -686,6 +751,7 @@ struct PastWorksView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             Text(verbatim: "\(year)年の作品").font(.system(.subheadline, design: .serif).weight(.bold))
             Spacer()
+            if workNeedsPlus { AlbumPlusMark(compact: true) }
             Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
         }
         .padding(10)
@@ -719,6 +785,9 @@ struct PastWorksView: View {
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .top, endPoint: .bottom))
+            }
+            .overlay(alignment: .topTrailing) {
+                if workNeedsPlus { AlbumPlusMark(compact: true) }
             }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
@@ -852,9 +921,10 @@ struct MonthlyStoryView: View {
                 Spacer()
                 if let cardImage = cardShare.image(for: cardShareInput), let card = shownCard {
                     let title = "\(card.names)の\(cardTitle(card.photos.count))"
+                    // 11/7: the same verb as a photo's 「写真を書き出す」 (was 「画像にして共有」).
                     ShareLink(item: Image(uiImage: cardImage),
                               preview: SharePreview(title, image: Image(uiImage: cardImage))) {
-                        Label("画像にして共有", systemImage: "square.and.arrow.up")
+                        Label("画像を書き出す", systemImage: "square.and.arrow.up")
                             .font(.headline)
                             .frame(maxWidth: .infinity, minHeight: 50)
                     }
@@ -1355,7 +1425,7 @@ private struct YearBookView: View {
                     if isNinePage, let image = cardShare.image(for: shareInput), let input = shareInput {
                         ShareLink(item: Image(uiImage: image),
                                   preview: SharePreview(input.title, image: Image(uiImage: image))) {
-                            Label("画像にして共有", systemImage: "square.and.arrow.up")
+                            Label("画像を書き出す", systemImage: "square.and.arrow.up")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(paper)
                                 .frame(maxWidth: .infinity, minHeight: 46)
@@ -1594,7 +1664,7 @@ private struct YearStoryContentView: View {
                 if let cardImage = cardShare.image(for: cardShareInput), index == pages.count - 1 {
                     ShareLink(item: Image(uiImage: cardImage),
                               preview: SharePreview("\(names)の\(cardTitle)", image: Image(uiImage: cardImage))) {
-                        Label("画像にして共有", systemImage: "square.and.arrow.up")
+                        Label("画像を書き出す", systemImage: "square.and.arrow.up")
                             .font(.headline)
                             .frame(maxWidth: .infinity, minHeight: 50)
                     }
@@ -1858,7 +1928,7 @@ struct MonthlyBookView: View {
                     if isNinePage, let image = cardShare.image(for: shareInput), let input = shareInput {
                         ShareLink(item: Image(uiImage: image),
                                   preview: SharePreview(input.title, image: Image(uiImage: image))) {
-                            Label("画像にして共有", systemImage: "square.and.arrow.up")
+                            Label("画像を書き出す", systemImage: "square.and.arrow.up")
                                 .font(.subheadline.weight(.semibold))
                                 // The page sets ink for everything; the button's own text is paper.
                                 .foregroundStyle(Self.paper)

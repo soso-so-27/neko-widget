@@ -2773,7 +2773,8 @@ final class SoloMemoriesUITests: XCTestCase {
         app.buttons["閉じる"].tap()
         app.buttons["tools-showcase-open"].tap()
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
-        XCTAssertTrue(scope.label.contains("みんな"))
+        // 11/7: the card opens on the cat chosen last time.
+        XCTAssertTrue(scope.label.contains("ミケ"))
     }
 
     @MainActor
