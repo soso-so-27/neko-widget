@@ -690,7 +690,8 @@ struct CatCareDetailView: View {
                     .keyboardType(.phonePad)
                     .familyNotebookNote(catID, .vetPhone)
             }
-            TextField("避難のときの家族の集合場所", text: $draft.meetingPlace)
+            // 11/7: the family's meeting place is written only in 避難に備える
+            // (one place); the stored value is kept and read there.
         } footer: {
             Text("ほかの猫とも共通です。")
         }
@@ -798,7 +799,7 @@ struct CatCareDetailView: View {
         take(\.microchipStatus); take(\.vaccinationStatus); take(\.vetStatus)
         let texts: [WritableKeyPath<CatCareDraft, String>] = [
             \.coat, \.marks, \.microchip, \.conditions, \.allergyText, \.specialDiet, \.water, \.litter,
-            \.temperament, \.ownerContact, \.backupContact, \.vetName, \.vetPhone, \.meetingPlace]
+            \.temperament, \.ownerContact, \.backupContact, \.vetName, \.vetPhone]
         for path in texts { take(path) }
         savedDraft = fresh
         storedDraft = fresh
@@ -819,7 +820,7 @@ struct CatCareDetailView: View {
 
 /// Which entries are in: the ones a tool reads and every household can
 /// answer (「なし」 counts). Optional rows (療法食, つながらないときの連絡先,
-/// かかりつけの電話, 集合場所, 薬) can be written but are not counted, so a
+/// かかりつけの電話, 薬) can be written but are not counted, so a
 /// full ring means ready, not 「every box typed in」. The ring on the ツール
 /// tab and the 「基本　3 / 7」 rows here use this one count.
 struct CatCareProgress {
@@ -907,7 +908,6 @@ struct CatCareDraft: Equatable {
     var vetStatus: CatCareVetStatus = .unknown
     var vetName = ""
     var vetPhone = ""
-    var meetingPlace = ""
 
     init() {}
 
@@ -952,7 +952,6 @@ struct CatCareDraft: Equatable {
         vetStatus = record.vetStatus(household: household)
         vetName = vetStatus == .recorded ? effectiveVet?.name ?? "" : ""
         vetPhone = vetStatus == .recorded ? effectiveVet?.phone ?? "" : ""
-        meetingPlace = household.meetingPlace?.value ?? ""
     }
 
     /// Writes only fields that changed, so each keeps its own who/when.
@@ -1003,7 +1002,8 @@ struct CatCareDraft: Equatable {
                 h.setVet(status: vetStatus, name: vet.0, phone: vet.1, note: effectiveVet?.note ?? "", editedAt: now, editedBy: by)
             }
         }
-        set(&h.meetingPlace, text(meetingPlace), empty: "")
+        // 11/7: the meeting place is not written from here (避難に備える is its one place),
+        // so a draft loaded earlier never overwrites what was written there.
         r.reviewedAt = now
     }
 }

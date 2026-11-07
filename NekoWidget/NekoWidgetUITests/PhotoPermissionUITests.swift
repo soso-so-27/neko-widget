@@ -2691,19 +2691,31 @@ final class SoloMemoriesUITests: XCTestCase {
         let showcase = app.buttons["tools-showcase-open"]
         XCTAssertTrue(showcase.waitForExistence(timeout: 10))
         showcase.tap()
+        // 11/7: the cat is chosen on the show screen only; the edit screen edits its set.
+        let scope = app.buttons["showcase-gallery-scope"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        scope.tap()
+        app.buttons["ミケ"].tap()
+        XCTAssertTrue(scope.label.contains("ミケ"))
+        // Choosing a cat may fill its set by recommendation; let that settle.
+        _ = app.buttons.matching(identifier: "showcase-gallery-photo").firstMatch.waitForExistence(timeout: 5)
         let edit = app.buttons["showcase-gallery-edit"]
         XCTAssertTrue(edit.waitForExistence(timeout: 5))
         edit.tap()
-        app.buttons["showcase-scope-picker"].tap()
-        app.buttons["ミケ"].tap()
+        XCTAssertTrue(app.staticTexts["showcase-preparation-cat"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["showcase-preparation-cat"].label.contains("ミケ"))
+        XCTAssertFalse(app.buttons["showcase-scope-picker"].exists)
+        let kept = app.buttons.matching(NSPredicate(format: "label IN %@", ["見せる写真", "表紙、見せる写真"])).count
         let select = app.buttons["showcase-preparation-select"]
-        XCTAssertTrue(select.waitForExistence(timeout: 5))
-        select.tap()
+        let add = app.buttons["showcase-preparation-add"]
+        XCTAssertTrue(select.waitForExistence(timeout: 5) || add.exists)
+        (select.exists ? select : add).tap()
         let candidate = app.buttons.matching(identifier: "showcase-candidate-photo").firstMatch
         let hasCandidate = candidate.waitForExistence(timeout: 5)
         capture("showcase-cat-candidates")
         XCTAssertTrue(hasCandidate)
-        XCTAssertEqual(app.buttons.matching(identifier: "showcase-candidate-photo").count, 8)
+        // All eight detected-cat photos, less the ones already in this cat's set.
+        XCTAssertEqual(app.buttons.matching(identifier: "showcase-candidate-photo").count, 8 - kept)
         let secondCandidate = app.buttons.matching(identifier: "showcase-candidate-photo").element(boundBy: 1)
         for (index, element) in [candidate, secondCandidate].enumerated() {
             XCTAssertTrue(element.label.contains("\(index + 1)枚目"))
@@ -2776,9 +2788,16 @@ final class SoloMemoriesUITests: XCTestCase {
         app.buttons["写真の一覧に戻る"].tap()
         XCTAssertTrue(scope.label.contains("ミケ"))
         app.buttons["showcase-gallery-edit"].tap()
-        XCTAssertTrue(app.buttons["showcase-scope-picker"].waitForExistence(timeout: 5))
-        app.buttons["showcase-preparation-close"].tap()
+        // 11/7: the edit screen edits the chosen cat's set and has no cat picker of its own.
+        let editingCat = app.staticTexts["showcase-preparation-cat"]
+        XCTAssertTrue(editingCat.waitForExistence(timeout: 5))
+        XCTAssertTrue(editingCat.label.contains("ミケ"))
+        XCTAssertFalse(app.buttons["showcase-scope-picker"].exists)
+        // 「完了」 returns to the same show screen; no second one is stacked on it.
+        app.buttons["showcase-preparation-done"].tap()
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
         XCTAssertTrue(scope.label.contains("ミケ"))
+        XCTAssertEqual(app.buttons.matching(identifier: "showcase-gallery-scope").count, 1)
         app.buttons["閉じる"].tap()
         app.buttons["tools-showcase-open"].tap()
         XCTAssertTrue(scope.waitForExistence(timeout: 5))

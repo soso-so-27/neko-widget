@@ -268,15 +268,23 @@ struct CareHandoffDisclosure {
         withoutContacts.contacts = false
         var fields = withoutContacts.commonFields(plan: plan)
         guard contacts else { return fields }
+        fields += Self.contactFields(plan: plan, household: household)
+        return fields
+    }
+
+    /// The contacts as handed over. 11/7: also shown read-only in the tool,
+    /// since they are written only in 「この子のこと」.
+    static func contactFields(plan: CareHandoffPlan, household: CatCareHousehold?) -> [(String, String)] {
         func pick(_ value: String?, _ legacy: String) -> String {
             let text = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             return Self.value(text.isEmpty ? legacy : text)
         }
         let vet = household?.vet?.value
         let vetText = [vet?.name ?? "", vet?.phone ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
-        fields.append(("飼い主の連絡先", pick(household?.ownerContact?.value, plan.contact)))
-        fields.append(("つながらないときの連絡先", pick(household?.backupContact?.value, plan.backupContact)))
-        fields.append(("かかりつけの動物病院", pick(vetText, plan.veterinarian)))
-        return fields
+        return [
+            ("飼い主の連絡先", pick(household?.ownerContact?.value, plan.contact)),
+            ("つながらないときの連絡先", pick(household?.backupContact?.value, plan.backupContact)),
+            ("かかりつけの動物病院", pick(vetText, plan.veterinarian)),
+        ]
     }
 }

@@ -556,6 +556,8 @@ struct MainTabView: View {
     @AppStorage("showcase.lastScopeID.v1") private var showcaseScopeID = ""
     @State private var showcaseSession: ShowcaseSession?
     @State private var showsShowcasePreparation = false
+    /// 「完了」 was pressed in the edit screen opened on its own: show the set once it closes (11/7).
+    @State private var opensShowcaseAfterPreparation = false
     @State private var preparingShowcaseScopes = Set<String>()
     @State private var showcaseWaitingToOpen: String?
     @State private var showcasePreparationError = false
@@ -746,12 +748,19 @@ struct MainTabView: View {
                 }
             )
         }
-        .sheet(isPresented: $showsShowcasePreparation) {
+        .sheet(isPresented: $showsShowcasePreparation, onDismiss: {
+            // 11/7: opened from 「自分で選ぶ」 with no show screen under it, so
+            // 「完了」 opens it once, after this sheet is gone.
+            guard opensShowcaseAfterPreparation else { return }
+            opensShowcaseAfterPreparation = false
+            showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil, scopeID: showcaseScopeID)
+        }) {
             ShowcasePreparationView(
                 store: showcaseStore,
                 candidates: showcaseCandidates,
                 profiles: catProfilesPresentation.profiles,
-                scopeID: $showcaseScopeID
+                scopeID: showcaseScopeID,
+                onDone: { opensShowcaseAfterPreparation = true }
             )
         }
         .sheet(isPresented: $showsSettings, onDismiss: {
