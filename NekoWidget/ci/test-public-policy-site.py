@@ -72,6 +72,12 @@ class PageParser(html.parser.HTMLParser):
 
 
 class PublicPolicySiteTests(unittest.TestCase):
+    def test_invitation_deploy_assets_follow_docs(self):
+        result = subprocess.run(
+            ["node", "--test", str(ROOT / "NekoWidget/SharingService/test/invitation-assets.node-tests.mjs")],
+            capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def parsed(self, path: pathlib.Path) -> PageParser:
         parser = PageParser()
         parser.feed(path.read_text(encoding="utf-8"))
