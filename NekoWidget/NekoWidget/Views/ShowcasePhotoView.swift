@@ -337,14 +337,12 @@ struct ShowcasePhotoView: View {
             ShowcaseToolCatPicker(profiles: profiles, storedScopes: storedScopeIDs) { selectScope($0) }
         }
         .sheet(isPresented: $showsPreparation) {
+            // 11/7: the cat is chosen only here; the edit screen edits this cat's set.
             ShowcasePreparationView(
                 store: store,
                 candidates: candidates,
                 profiles: profiles,
-                scopeID: Binding(
-                    get: { scopeID },
-                    set: { selectScope($0, preparesIfNeeded: false) }
-                )
+                scopeID: scopeID
             )
         }
     }
@@ -488,19 +486,21 @@ enum BestNineComposer {
 }
 
 /// The owner's compact, persistent set. Candidate browsing is a separate sheet.
+/// 11/7: edits one cat's set; that cat is chosen on the show screen only, and
+/// 「完了」 goes back to it (no second show screen on top).
 struct ShowcasePreparationView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ObservedObject var store: ShowcasePhotoStore
     let candidates: [PhotoPresentation]
     let profiles: [CatProfilePresentation]
-    @Binding var scopeID: String
+    let scopeID: String
+    /// Set when this opened without the show screen under it: 「完了」 opens it once.
+    var onDone: (() -> Void)? = nil
 
-    @State private var showsCatPicker = false
     @State private var previewEntry: ShowcasePhotoStore.Entry?
     @State private var pendingReplacement: ShowcasePhotoStore.Entry?
     @State private var pickerMode: PickerMode?
-    @State private var showsViewer = false
     @State private var isPreparing = false
     @State private var errorMessage: String?
     /// 「おすすめで選ぶ」 or 「おすすめで選び直す」 was pressed, so that place says so (11/6).
@@ -558,9 +558,8 @@ struct ShowcasePreparationView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack {
-                        Button { showsCatPicker = true } label: {
-                            Label(scopeTitle, systemImage: "chevron.down").frame(minHeight: 44)
-                        }.accessibilityIdentifier("showcase-scope-picker")
+                        Text(scopeTitle).font(.headline).frame(minHeight: 44)
+                            .accessibilityIdentifier("showcase-preparation-cat")
                         Spacer()
                         Text("\(allEntries.count) / \(ShowcasePhotoStore.maximumCount)")
                             .font(.subheadline.monospacedDigit())
@@ -593,6 +592,7 @@ struct ShowcasePreparationView: View {
                                                     in: RoundedRectangle(cornerRadius: 12))
                                 }
                                 .accessibilityLabel("写真を追加")
+                                .accessibilityIdentifier("showcase-preparation-add")
                             }
                         }
                         if allEntries.count > ShowcasePhotoStore.maximumCount {
@@ -620,10 +620,6 @@ struct ShowcasePreparationView: View {
             .navigationBarTitleDisplayMode(.inline)
             .onChange(of: isPreparing) { _, preparing in if !preparing { running = nil } }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("閉じる") { dismiss() }
-                        .accessibilityIdentifier("showcase-preparation-close")
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button {
@@ -647,16 +643,16 @@ struct ShowcasePreparationView: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                if !entries.isEmpty {
-                    Button("見せる") { showsViewer = true }
-                        .buttonStyle(.borderedProminent)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .padding(12)
-                        .background(.regularMaterial)
+                // 11/7: 「完了」 (was 「見せる」, which stacked a second show screen).
+                Button("完了") {
+                    onDone?()
+                    dismiss()
                 }
-            }
-            .sheet(isPresented: $showsCatPicker) {
-                ShowcaseToolCatPicker(profiles: profiles, storedScopes: Array(Set(store.entries.map(\.scopeID))).sorted()) { scopeID = $0 }
+                    .buttonStyle(.borderedProminent)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .padding(12)
+                    .background(.regularMaterial)
+                    .accessibilityIdentifier("showcase-preparation-done")
             }
             .sheet(item: $previewEntry, onDismiss: {
                 if let replacement = pendingReplacement {
@@ -695,16 +691,6 @@ struct ShowcasePreparationView: View {
                             return false
                         }
                     }
-                )
-            }
-            .fullScreenCover(isPresented: $showsViewer) {
-                ShowcasePhotoView(
-                    store: store,
-                    items: entries.compactMap { entry in
-                        store.imageURL(for: entry).map { .prepared(entry, $0) }
-                    },
-                    title: scopeTitle,
-                    onClose: { showsViewer = false }, onManage: nil
                 )
             }
         }
