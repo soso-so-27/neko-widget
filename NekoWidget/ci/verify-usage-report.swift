@@ -21,8 +21,8 @@ private struct UsageReportVerifier {
             "family_created", "family_invite_shared", "family_joined", "app_recommended",
             "plus_restored", "autosave_started",
         ]
-        let entries = ["onboarding", "widget_resume", "monthly_summary", "new_memo", "create_window",
-                       "continue_window", "create_family", "continue_family", "preservation", "settings"]
+        let entries = ["onboarding", "widget-resume", "monthly-summary", "new-memo", "create-window",
+                       "continue-window", "create-family", "continue-family", "preservation", "settings"]
         require(Set(UsagePlusEntry.allCases.map(\.rawValue)) == Set(entries), "Plus entry names")
         let expected = fixed.union(entries.map { "plus_offer_shown." + $0 }).union(entries.map { "plus_purchased." + $0 })
         require(UsageEvent.allNames == expected, "Event names must be exactly the spec's list")
