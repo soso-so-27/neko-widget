@@ -34,6 +34,26 @@ struct SettingsSheetHost<Content: View>: View {
     }
 }
 
+/// The 設定 gear, with a dot while auto-save is stopped or failing (11/7: it
+/// showed only inside 設定). Reads state already on this iPhone; no request.
+@MainActor
+struct SettingsGearIcon: View {
+    @ObservedObject private var persistence = AppRecordPersistence.shared
+    private var stopped: Bool {
+        ManagedPreservationConfiguration.current.isEnabled && persistence.enabled
+            && (persistence.planEnded || persistence.needsAttention)
+    }
+    var body: some View {
+        Image(systemName: "gearshape")
+            .overlay(alignment: .topTrailing) {
+                if stopped {
+                    Circle().fill(Color.orange).frame(width: 7, height: 7).offset(x: 3, y: -3)
+                }
+            }
+            .accessibilityValue(stopped ? "自動保存が止まっています" : "")
+    }
+}
+
 /// 「自動保存」 with whether this iPhone is saving, so the row answers
 /// the question before it is opened.
 @MainActor
@@ -97,6 +117,8 @@ struct SettingsView: View {
     @State private var pendingDetectionSettingsSave: DetectionSettingsSaveRequest?
 #endif
     @State private var isRescanning = false
+    @State private var showsFamilyNotebook = false
+    @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
 #if DEBUG || INTERNAL_PRESENTATION
     @State private var isExporting = false
     @State private var exportedFile: ExportedFile?
@@ -200,6 +222,16 @@ struct SettingsView: View {
                     }
                 }
                 .accessibilityIdentifier("settings-cat-profiles")
+                // The notebook from 設定 too, where leaving it is looked for (11/7).
+                if Version1.familyNotebook || familyNotebook.hasFamily {
+                    Button { showsFamilyNotebook = true } label: {
+                        // Reads like the rows around it, not like a tinted action.
+                        Label { Text("家族の手帳").foregroundStyle(.primary) } icon: {
+                            Image(systemName: "person.2.fill")
+                        }
+                    }
+                    .accessibilityIdentifier("settings-family-notebook")
+                }
             } header: {
                 Text("猫")
             }
@@ -227,7 +259,7 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings-group-hidden-members")
                     if let client = GroupWindowClientProvider.production {
                         NavigationLink { GroupIdentityDeletionView(client: client) } label: {
-                            Label("まどと家族の手帳から抜ける", systemImage: "person.crop.circle.badge.xmark")
+                            Label("まどと家族の手帳のIDを消す", systemImage: "person.crop.circle.badge.xmark")
                         }
                         .accessibilityIdentifier("settings-group-identity-deletion")
                     }
@@ -251,6 +283,11 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings-cat-profile-transfer")
             } header: {
                 Text("保存")
+            } footer: {
+                // Two rows that both move cats to a new iPhone (11/7).
+                if ManagedPreservationConfiguration.current.isEnabled {
+                    Text("自動保存がオンなら、プロフィールの引き継ぎはいりません。")
+                }
             }
 
             Section {
@@ -360,6 +397,7 @@ struct SettingsView: View {
 #endif
         }
         .navigationTitle("設定")
+        .sheet(isPresented: $showsFamilyNotebook) { FamilyNotebookView() }
 #if DEBUG || INTERNAL_PRESENTATION
         .sheet(isPresented: $showsMembershipPreview) {
             MembershipOfferSheet(model: .preview(), context: .settings) { _ in
@@ -1290,13 +1328,15 @@ struct SettingsActionRow: View {
     }
 }
 
-/// The widget guide as a page inside 設定; finishing or skipping goes back.
+/// The widget guide as a page inside 設定: one 「閉じる」 goes back (11/7:
+/// 「完了」 and 「あとで」 both only closed it).
 struct WidgetPlacementGuidePage: View {
     var hasCats = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        WidgetPlacementGuideView(onComplete: { dismiss() }, onSkip: { dismiss() }, hasCats: hasCats)
+        WidgetPlacementGuideView(onComplete: { dismiss() }, onSkip: { dismiss() }, hasCats: hasCats,
+                                 closeTitle: "閉じる")
             .navigationBarTitleDisplayMode(.inline)
     }
 }

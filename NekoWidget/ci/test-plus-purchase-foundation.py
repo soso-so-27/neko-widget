@@ -356,10 +356,16 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         # stays reachable while launch is still checking.
         settings = section(model, "struct PlusSettingsSection: View {", "private func refreshMembership()")
         unknown = section(settings, "case .unknown:", "case .checking:")
-        self.assertIn('SettingsActionRow("購入を復元"', unknown)
-        self.assertIn("showsRestore = true", unknown)
-        self.assertIn('.accessibilityIdentifier("settings-membership-restore")', unknown)
+        # 11/7: the row restores where it is tapped, with the same restore().
+        self.assertIn('MembershipRestoreButton(look: .settingsRow, identifier: "settings-membership-restore")', unknown)
         self.assertIn("if status == .notMember || status == .checking {", settings)
+        self.assertIn('MembershipRestoreButton(look: .footnote, identifier: "settings-membership-restore")',
+                      section(settings, "if status == .notMember || status == .checking {", "} header: {"))
+        in_place = section(source("NekoWidget/Services/MembershipAccessContext.swift"),
+                           "struct MembershipRestoreButton: View {", "#if DEBUG")
+        self.assertIn("MembershipOfferModel.live(presentsOffer: false)", in_place)
+        self.assertIn("await model.restore()", in_place)
+        self.assertIn('workingTitle: "確認しています…"', in_place)
         # The restore sheet and the Plus sheet carry the one restore button only.
         sheet = section(source("NekoWidget/Services/MembershipAccessContext.swift"),
                         "struct MembershipRestoreSheet: View {", "private struct MembershipFeatureGate")
@@ -388,8 +394,9 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertNotIn("restoreMembership", retry)
         self.assertIn("「もう一度確認」を押してから", coordinator)
         persistence = source("NekoWidget/Services/AppRecordPersistence.swift")
+        # 11/7: this iPhone already has Plus there, so the same check is named for it.
         self.assertIn('Button { authentication.restoreMembership() } label: {\n'
-                      '                    WorkingLabel(title: "購入を復元", workingTitle: "確認しています…", '
+                      '                    WorkingLabel(title: "Plusをもう一度確かめる", workingTitle: "確認しています…", '
                       'working: authentication.membershipRestoring)', persistence)
 
     def test_empty_purchase_history_opens_paid_entry_points_without_unlocking_access(self) -> None:

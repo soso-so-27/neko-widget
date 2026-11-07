@@ -2382,7 +2382,9 @@ struct GroupHiddenMembersView: View {
     }
 }
 
-/// 設定「まどと家族の手帳から抜ける」(A1): one state, one sentence, one button.
+/// 設定「まどと家族の手帳のIDを消す」(A1): one state, one sentence, one button.
+/// Named for its weight (11/7): it ends every window and the family notebook,
+/// so it is not taken for leaving only the notebook (that is in the notebook).
 struct GroupIdentityDeletionView: View {
     let client: ProductionGroupWindowClient
     @State private var record: GroupIdentityDeletion?
@@ -2395,10 +2397,10 @@ struct GroupIdentityDeletionView: View {
         List {
             Section {
                 if let record, record.completedAt != nil {
-                    Label("抜けました", systemImage: "checkmark.circle")
+                    Label("消しました", systemImage: "checkmark.circle")
                     Text("この iPhone に届いた写真は「前のまど」に残ります。").foregroundStyle(.secondary)
                 } else if let record, record.acceptedAt != nil {
-                    Label("抜けています", systemImage: "hourglass")
+                    Label("消しています", systemImage: "hourglass")
                     Text("終わるまで少しかかることがあります。").foregroundStyle(.secondary)
                     Button { Task { await refresh() } } label: {
                         WorkingLabel(title: "確かめる", workingTitle: "確かめています…", working: working)
@@ -2412,7 +2414,7 @@ struct GroupIdentityDeletionView: View {
                     Text("Plusの支払いは、ここでは止まりません。止めるときは、iPhoneの「設定」→ Apple アカウント →「サブスクリプション」から解約してください。")
                         .font(.footnote).foregroundStyle(.secondary)
                     Button(role: .destructive) { confirms = true } label: {
-                        WorkingLabel(title: "まどと家族の手帳から抜ける", workingTitle: "抜けています…", working: working)
+                        WorkingLabel(title: "まどと家族の手帳のIDを消す", workingTitle: "消しています…", working: working)
                     }
                         .frame(minHeight: 44)
                         .disabled(working || !loaded)
@@ -2428,13 +2430,13 @@ struct GroupIdentityDeletionView: View {
                 }
             }
         }
-        .confirmationDialog("まどと家族の手帳から抜けますか？", isPresented: $confirms, titleVisibility: .visible) {
-            Button("抜ける", role: .destructive) { Task { await delete() } }
+        .confirmationDialog("まどと家族の手帳のIDを消しますか？", isPresented: $confirms, titleVisibility: .visible) {
+            Button("消す", role: .destructive) { Task { await delete() } }
             Button("戻る", role: .cancel) {}
         } message: {
             Text("あなたが作ったまども終わりになります。メンバーの iPhone に届いた写真は残ります。")
         }
-        .navigationTitle("まどと家族の手帳から抜ける")
+        .navigationTitle("まどと家族の手帳のIDを消す")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             record = try? await client.identityDeletion()

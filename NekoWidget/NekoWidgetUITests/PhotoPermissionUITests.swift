@@ -1252,14 +1252,16 @@ final class PhotoPermissionUITests: XCTestCase {
         }
         settingsWidgetGuide.tap()
 
-        let widgetSkip = app.buttons["widget-placement-skip"]
-        guard widgetSkip.waitForExistence(timeout: 15) else {
+        // From Settings the guide has one 「閉じる」, not 「完了」 and 「あとで」 (11/7).
+        let widgetClose = app.buttons["widget-placement-close"]
+        guard widgetClose.waitForExistence(timeout: 15) else {
             fail(
                 "The Widget placement guide did not reopen from Settings.",
                 app: app
             )
             return
         }
+        XCTAssertFalse(app.buttons["widget-placement-skip"].exists)
 
         let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         screenshot.name = "Widget placement guide reopened from Settings"
@@ -3399,7 +3401,7 @@ final class SoloMemoriesUITests: XCTestCase {
             ("onboarding", nil), ("widget-resume", "ホーム画面の写真"),
             ("monthly-summary", "月の作品"), ("new-memo", "新しいメモ"),
             ("create-window", "まどを作る"), ("continue-window", "作った人のPlus"),
-            ("continue-family", "家族の誰か1人のPlus"), ("preservation", "保存"), ("settings", nil),
+            ("create-family", "家族の手帳を作る"), ("continue-family", "家族の誰か1人のPlus"), ("preservation", "保存"), ("settings", nil),
         ]
         XCTAssertTrue(app.buttons["membership-preview-open"].waitForExistence(timeout: 10))
         XCTAssertEqual(app.buttons["membership-preview-open-monthly-summary"].label, "10月の作品を見る")

@@ -1623,14 +1623,18 @@ struct AppRecordSettingsView: View {
     @State private var showsPlusOffer = false
     /// The record choice that was confirmed, so only that button says so (11/6).
     @State private var running: String?
+    /// Opened from 「自動保存も始めますか？」→「保存を始める」 right after buying
+    /// Plus: that tap was the start, so saving starts here without another (11/7).
+    private let startsOnOpen: Bool
 #if DEBUG || INTERNAL_PRESENTATION
     @AppStorage(ManagedPreservationView.QuotaTrial.key)
     private var quotaTrial: ManagedPreservationView.QuotaTrial = .real
 #endif
     init(configuration: ManagedPreservationConfiguration = .current, client: ManagedPreservationClient? = nil,
-         persistence: AppRecordPersistence = .shared) {
+         persistence: AppRecordPersistence = .shared, startsOnOpen: Bool = false) {
         _authentication = StateObject(wrappedValue: ManagedPreservationCoordinator(configuration: configuration, client: client, purpose: .account))
         self.persistence = persistence
+        self.startsOnOpen = startsOnOpen
     }
 
     private var displayedQuota: ManagedPreservationUsage.ProductQuota? {
@@ -1681,7 +1685,11 @@ struct AppRecordSettingsView: View {
             }
         }
         .onChange(of: hasPlusHere) { _, _ in linkAfterPurchaseIfReady() }
-        .task { authentication.start(observingOnly: true) }
+        .task {
+            authentication.start(observingOnly: true)
+            // The same start as the 「保存を始める」 button; signed out, it goes on after sign-in.
+            if startsOnOpen, !persistence.enabled { start() }
+        }
         .onDisappear {
             AppIdleTimer.setPreventSleep(false, for: "preservation-export")
             exporter.cancelPreparation(); authentication.stop()
@@ -1741,10 +1749,12 @@ struct AppRecordSettingsView: View {
             // Plus ending outranks any retry message: nothing new is saved until it comes back.
             if plusEnded && hasPlusHere {
                 // This iPhone has Plus; the saving side has not caught up yet (11/5).
+                // A member is not told to restore a purchase: the same check, named
+                // for what it does here (11/7).
                 Label("Plusを確認しています", systemImage: "arrow.clockwise.icloud")
                     .accessibilityIdentifier("app-record-save-status")
                 Button { authentication.restoreMembership() } label: {
-                    WorkingLabel(title: "購入を復元", workingTitle: "確認しています…", working: authentication.membershipRestoring)
+                    WorkingLabel(title: "Plusをもう一度確かめる", workingTitle: "確認しています…", working: authentication.membershipRestoring)
                 }
                     .disabled(authentication.membershipRestoring)
                     .accessibilityIdentifier("app-record-membership-restore")
@@ -1781,10 +1791,14 @@ struct AppRecordSettingsView: View {
             }
         } else if !persistence.enabled {
             Section {
-                if offersPlus && authentication.membership?.canSave != true { plusOfferButton }
-                Button("保存を始める") { start() }
-                    .disabled(persistence.busy || authentication.isBusy)
-                    .accessibilityIdentifier("app-record-enable")
+                // Without Plus, 「保存を始める」 could do nothing: only the way to Plus (11/7).
+                if offersPlus && authentication.membership?.canSave != true {
+                    plusOfferButton
+                } else {
+                    Button("保存を始める") { start() }
+                        .disabled(persistence.busy || authentication.isBusy)
+                        .accessibilityIdentifier("app-record-enable")
+                }
             } footer: {
                 if hasPlusHere, authentication.membership?.linked != true { plusLinkText }
             }

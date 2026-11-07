@@ -3377,7 +3377,7 @@ class WorkingFeedbackTests(unittest.TestCase):
                 'WorkingLabel(title: "メモを保存", workingTitle: "保存しています…"',
             ),
             "NekoWidget/Services/AppRecordPersistence.swift": (
-                'WorkingLabel(title: "購入を復元", workingTitle: "確認しています…", working: authentication.membershipRestoring)',
+                'WorkingLabel(title: "Plusをもう一度確かめる", workingTitle: "確認しています…", working: authentication.membershipRestoring)',
                 'workingTitle: "切り替えています…"',
             ),
             "NekoWidget/Views/MembershipOfferView.swift": (

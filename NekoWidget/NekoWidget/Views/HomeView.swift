@@ -474,7 +474,7 @@ struct HomeView: View {
             if !isEmbedded {
             ToolbarItem(placement: .topBarLeading) {
                 Button(action: showSettings) {
-                    Image(systemName: "gearshape")
+                    SettingsGearIcon()
                 }
                 .accessibilityLabel("設定")
                 .accessibilityIdentifier("window-settings-button")
