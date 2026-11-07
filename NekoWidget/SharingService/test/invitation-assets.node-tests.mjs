@@ -3,13 +3,19 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { prepareInvitationAssets, applicationIdentifier } from '../scripts/invitation-assets.mjs';
+import { prepareInvitationAssets, applicationIdentifier, policyPaths, policyFile } from '../scripts/invitation-assets.mjs';
 
 test('packs both exact invitation paths from docs with hash-scoped active content and unchanged AASA', async () => {
   const parent = await mkdtemp(join(tmpdir(), 'neko-invitation-'));
   const out=join(parent,'assets');
   await prepareInvitationAssets(out);
-  assert.deepEqual((await readdir(out)).sort(), ['.well-known','_headers','family-join','join']);
+  assert.deepEqual((await readdir(out)).sort(), ['.well-known','_headers','_redirects','assets','community','family-join','index.html','join','privacy','support']);
+  for (const path of policyPaths) {
+    const file = policyFile(path);
+    assert.equal(await readFile(join(out,file),'utf8'), (await readFile(new URL('../../../docs/'+file,import.meta.url),'utf8')).replace(/\r\n/g,'\n'));
+  }
+  const redirects = await readFile(join(out,'_redirects'),'utf8');
+  assert.equal(redirects, '/ /index.html 200\n/privacy/ /privacy/index.html 200\n/privacy /privacy/ 301\n/support/ /support/index.html 200\n/support /support/ 301\n/community/ /community/index.html 200\n/community /community/ 301\n');
   const aasa=JSON.parse(await readFile(join(out,'.well-known/apple-app-site-association'),'utf8'));
   assert.deepEqual(aasa.applinks.details,[{appIDs:[applicationIdentifier],components:[{'/':'/join'},{'/':'/family-join'}]}]);
   for (const path of ['join','family-join']) {
