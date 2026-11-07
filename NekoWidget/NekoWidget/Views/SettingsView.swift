@@ -153,7 +153,6 @@ struct SettingsView: View {
 #endif
     @State private var isRescanning = false
     @State private var showsFamilyNotebook = false
-    @AppStorage(UsageCounter.enabledKey) private var usageReportingEnabled = true
     @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
 #if DEBUG || INTERNAL_PRESENTATION
     @State private var isExporting = false
@@ -287,15 +286,17 @@ struct SettingsView: View {
                         // The notebook from 設定 too, where leaving it is looked for (11/7).
                         Button { showsFamilyNotebook = true } label: {
                             // Reads like the rows around it, not like a tinted action,
-                            // with the same 「›」 as its neighbours (11/7).
+                            // with the same 「›」 as its neighbours (11/7). Plain colors:
+                            // `.primary` / `.tertiary` inside a list button resolve
+                            // against the tint, and 346 showed both in blue (11/8).
                             HStack {
-                                Label { Text("家族の手帳").foregroundStyle(.primary) } icon: {
+                                Label { Text("家族の手帳").foregroundStyle(Color.primary) } icon: {
                                     Image(systemName: "person.2.fill")
                                 }
                                 Spacer(minLength: 8)
                                 Image(systemName: "chevron.right")
                                     .font(.footnote.weight(.semibold))
-                                    .foregroundStyle(.tertiary)
+                                    .foregroundStyle(Color(uiColor: .tertiaryLabel))
                                     .accessibilityHidden(true)
                             }
                             .contentShape(Rectangle())
@@ -313,39 +314,21 @@ struct SettingsView: View {
                 }
             }
 
-            // Anonymous usage counts (11/7): on by default, off deletes what is
-            // kept. A build with no destination sends nothing and shows no switch.
-            // The policy sits with it (11/8: it was under サポート).
-            if UsageCounter.endpoint() != nil || AppPublicLinksConfiguration.current.privacyURL != nil {
-                Section {
-                    if UsageCounter.endpoint() != nil {
-                        Toggle(isOn: $usageReportingEnabled) {
-                            Label("利用状況を送る", systemImage: "chart.bar")
-                        }
-                        .accessibilityIdentifier("settings-usage-reporting")
-                        .onChange(of: usageReportingEnabled) { _, isOn in UsageCounter.shared.setEnabled(isOn) }
-                    }
-                    if let url = AppPublicLinksConfiguration.current.privacyURL {
-                        Link(destination: url) {
-                            ExternalLinkRow("プライバシーポリシー", systemImage: "doc.text")
-                        }
-                        .accessibilityIdentifier("settings-privacy-policy")
-                    }
-                } header: {
-                    Text("プライバシー")
-                } footer: {
-                    if UsageCounter.endpoint() != nil {
-                        Text("利用状況は、使った機能の回数だけを送ります。写真や書いた内容は送りません。")
-                    }
-                }
-            }
-
+            // Anonymous usage counts have no switch here (11/8: told in the
+            // policy instead; a switch comes back only if people ask for one).
+            // The app's own pages and telling a friend, in one place.
             Section {
                 if let url = AppPublicLinksConfiguration.current.supportURL {
                     Link(destination: url) {
                         ExternalLinkRow("お問い合わせ", systemImage: "questionmark.circle")
                     }
                     .accessibilityIdentifier("settings-support-page")
+                }
+                if let url = AppPublicLinksConfiguration.current.privacyURL {
+                    Link(destination: url) {
+                        ExternalLinkRow("プライバシーポリシー", systemImage: "doc.text")
+                    }
+                    .accessibilityIdentifier("settings-privacy-policy")
                 }
                 if SharingAPIConfiguration.current.isReviewVisible,
                    let url = SharingAPIConfiguration.current.communityStandardsURL {
@@ -357,13 +340,15 @@ struct SettingsView: View {
                 // things (11/6). Hidden until the App Store page exists.
                 if let url = AppStoreListing.pageURL {
                     ShareLink(item: url, message: Text(AppStoreListing.recommendMessage)) {
-                        Label("ねこのまどを紹介する", systemImage: "square.and.arrow.up")
+                        Label { Text("ねこのまどを紹介する").foregroundStyle(Color.primary) } icon: {
+                            Image(systemName: "square.and.arrow.up")
+                        }
                     }
                     .accessibilityIdentifier("settings-recommend-app")
                     .simultaneousGesture(TapGesture().onEnded { UsageCounter.shared.count(.appRecommended) })  // Usage (11/7): ShareLink reports no completion
                 }
             } header: {
-                Text("サポート")
+                Text("ねこのまどについて")
             } footer: {
                 // Read-only facts live in the footer, not in a row that looks tappable.
                 Text("ねこのまど バージョン \(appVersion)・iOS 17.1以上")
@@ -1358,12 +1343,16 @@ struct ExternalLinkRow: View {
     }
 
     var body: some View {
+        // Words in the text color and 「↗」 in gray, like the 「›」 rows: only
+        // the icon carries the tint (11/8: the link words were the icons' blue).
         LabeledContent {
             Image(systemName: "arrow.up.right")
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(.tint)
+                .foregroundStyle(Color(uiColor: .tertiaryLabel))
         } label: {
-            Label(title, systemImage: systemImage)
+            Label { Text(title).foregroundStyle(Color.primary) } icon: {
+                Image(systemName: systemImage)
+            }
         }
     }
 }

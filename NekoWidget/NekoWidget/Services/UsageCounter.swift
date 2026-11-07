@@ -8,8 +8,9 @@ import WidgetKit
 /// backup) is written when the app goes to the background or when the day
 /// changes, never per tap or while scrolling. On becoming active, the earlier
 /// days (up to 7) are sent once each to Info.plist `UsageReportURL`; an empty
-/// or non-https value sends nothing. Turning 「利用状況を送る」 off stops
-/// counting and deletes what is kept.
+/// or non-https value sends nothing. `setEnabled(false)` stops counting and
+/// deletes what is kept; 設定 has no switch since 11/8 (the policy tells it),
+/// and an earlier 「オフ」 stays off.
 final class UsageCounter: @unchecked Sendable {
     static let shared = UsageCounter()
     /// Settings' toggle. Absent means on (the spec's default).
