@@ -799,6 +799,7 @@ struct OfficialWindowView: View {
             offersWidgetSetup = subscribed && state.isSubscribed
             WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
             if subscribed {
+                UsageCounter.shared.count(.officialWindowStarted)  // Usage (11/7)
                 if isRefreshing { refreshAgain = true }
                 else { Task { await refresh() } }
             }

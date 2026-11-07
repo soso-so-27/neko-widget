@@ -236,6 +236,7 @@ struct ShowcasePhotoView: View {
                             .buttonStyle(.borderedProminent)
                             .padding(.horizontal, 16)
                             .accessibilityIdentifier("showcase-share-best-nine")
+                            .simultaneousGesture(TapGesture().onEnded { UsageCounter.shared.count(.nineExported) })  // Usage (11/7): ShareLink reports no completion
                         }
                         Text("写真をタップすると大きく見られます。鉛筆のボタンで入れ替えられます。")
                             .font(.footnote)
@@ -328,6 +329,7 @@ struct ShowcasePhotoView: View {
         }
         .foregroundStyle(.white)
         .background(Color.black.ignoresSafeArea())
+        .onAppear { UsageCounter.shared.count(.showcaseOpened) }  // Usage (11/7)
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { accessRevision &+= 1 }
         }

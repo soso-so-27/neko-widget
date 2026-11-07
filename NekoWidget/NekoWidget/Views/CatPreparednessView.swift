@@ -321,7 +321,7 @@ struct LostCatDraftView: View {
         .task {
             catCareStore.importFromTools()
             catCareStore.importBirthdays(profiles)
-            if !loaded { load(initialKey, name: initialName) }
+            if !loaded { UsageCounter.shared.count(.toolLostCat); load(initialKey, name: initialName) }  // Usage (11/7): once per opening
         }
         .onChange(of: draft) { _, _ in
             guard loaded else { return }

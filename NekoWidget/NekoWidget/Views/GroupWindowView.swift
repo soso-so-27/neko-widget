@@ -304,6 +304,7 @@ final class GroupWindowScreenModel: ObservableObject {
                 await client.discardPendingDelivery(operationID: pending.photo.operationID)
                 failedDelivery = nil
                 sendCompleted = true
+                UsageCounter.shared.count(.madoPhotoSent)  // Usage (11/7): confirmed after "確かめています"
             }
         } catch GroupClientError.notMember {
             window = nil; failedDelivery = nil; message = nil; isGone = true
@@ -432,6 +433,7 @@ final class GroupWindowScreenModel: ObservableObject {
             await receive(sent, me: me, outgoingOperationID: operationID)
             await saveMemo(memo, for: prepared.photoIdentifier)
             sendCompleted = true
+            UsageCounter.shared.count(.madoPhotoSent)  // Usage (11/7)
             message = nil
             await sync()
         } catch let pending as GroupDeliveryConfirmationPending {
@@ -639,6 +641,7 @@ final class GroupWindowScreenModel: ObservableObject {
             guard pendingHearts[photoID]?.tap == tap else { return }
             pendingHearts[photoID] = nil
             hearts[photoID] = updated.hearts
+            if active { UsageCounter.shared.count(.madoHeart) }  // Usage (11/7)
             await store.saveHearts(hearts, windowID: windowID)
         } catch {
             guard pendingHearts[photoID]?.tap == tap else { return }
@@ -751,6 +754,7 @@ struct GroupWindowScreen: View {
     /// 11/7 (W4): the home-screen photo this page was opened for, shown once.
     private let startPhotoID: String?
     @State private var showedStartPhoto = false
+    @State private var countedOpen = false
     @Environment(\.dismiss) private var dismiss
 
     init(client: any GroupWindowMediaClient, windowID: String, formerName: String? = nil,
@@ -970,6 +974,8 @@ struct GroupWindowScreen: View {
             Task { await model.updateHomeScreenPhoto() }
         }
         .task {
+            // Usage (11/7): once per opening, not again after a pushed screen.
+            if !countedOpen, !model.isFormer { countedOpen = true; UsageCounter.shared.count(.madoOpened) }
             // Photos this person reported stay covered on this iPhone, from the first frame.
             await GroupSafety.shared.loadRecords(windowID: model.windowID)
             await model.showStored()
@@ -1925,6 +1931,7 @@ final class GroupWindowListModel: ObservableObject {
         do {
             let window = try await client.createWindow(name: trimmed, ownerDisplayName: owner, operationID: operationID)
             createOperation = nil
+            UsageCounter.shared.count(.madoCreated)  // Usage (11/7)
             GroupDisplayName.remember(owner)
             // Keep the created window on an invitation-network failure; retrying must not create another window.
             do { _ = try await client.createInvitation(windowID: window.id, operation: GroupOperation(expectedRevision: window.revision)) }
@@ -2107,7 +2114,10 @@ struct GroupInvitationShareSheet: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
         let controller = UIActivityViewController(activityItems: [message, item], applicationActivities: nil)
-        controller.completionWithItemsHandler = { _, _, _, _ in onFinish() }
+        controller.completionWithItemsHandler = { _, completed, _, _ in
+            if completed { UsageCounter.shared.count(.madoInviteShared) }  // Usage (11/7)
+            onFinish()
+        }
         return controller
     }
 

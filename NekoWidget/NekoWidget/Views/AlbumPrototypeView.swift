@@ -114,6 +114,7 @@ enum AlbumPrototype {
     }
 
     static func markOpened(_ period: String) {
+        UsageCounter.shared.count(.albumWorkOpened)  // Usage (11/7): every opening, not only the first.
         let defaults = UserDefaults.standard
         var opened = Set((defaults.string(forKey: openedKey) ?? "").split(separator: ",").map(String.init))
         guard opened.insert(period).inserted else { return }
@@ -1438,6 +1439,7 @@ private struct YearBookView: View {
                         .padding(.horizontal, 28)
                         .padding(.bottom, 10)
                         .accessibilityIdentifier("year-book-share")
+                        .simultaneousGesture(TapGesture().onEnded { UsageCounter.shared.count(.nineExported) })  // Usage (11/7): ShareLink reports no completion
                     }
                     Text(verbatim: "\(index + 1) / \(leaves.count)")
                         .font(.caption2.monospacedDigit())
@@ -1942,6 +1944,7 @@ struct MonthlyBookView: View {
                         .padding(.horizontal, 28)
                         .padding(.bottom, 10)
                         .accessibilityIdentifier("monthly-book-share")
+                        .simultaneousGesture(TapGesture().onEnded { UsageCounter.shared.count(.nineExported) })  // Usage (11/7): ShareLink reports no completion
                     }
                     Text(verbatim: "\(index + 1) / \(leaves.count)")
                         .font(.caption2.monospacedDigit())

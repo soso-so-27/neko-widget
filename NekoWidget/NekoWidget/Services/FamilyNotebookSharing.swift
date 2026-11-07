@@ -52,7 +52,13 @@ final class FamilyNotebookSharing: ObservableObject {
             let next = syncing ? state : loaded
             let nextPause = next.membership == nil ? nil : syncing ? pause : try await service.loadPause()
             // Unchanged values are not published again, so the list is not redrawn.
-            if next != state { state = next }
+            if next != state {
+                // Usage (11/7): this iPhone's request to join was let in.
+                if state == .pendingApproval, next == .waitingForKeys || next.membership != nil {
+                    UsageCounter.shared.count(.familyJoined)
+                }
+                state = next
+            }
             if nextPause != pause { pause = nextPause }
             if let real = service as? ProductionFamilyNotebookSharingService {
                 if ownJoinResults != real.lastJoinResults { ownJoinResults = real.lastJoinResults }

@@ -14,6 +14,7 @@ struct EvacuationPreparationView: View {
     @State private var bookError: String?
     /// True while the one PDF is being made (11/6).
     @State private var makingBook = false
+    @State private var countedOpen = false
 
     var body: some View {
         Group {
@@ -78,6 +79,8 @@ struct EvacuationPreparationView: View {
         .announcesWhenShown(bookError)
         .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
         .task {
+            // Usage (11/7): once per opening, not again after a pushed screen.
+            if !countedOpen { countedOpen = true; UsageCounter.shared.count(.toolEvacuation) }
             CatCareStore.shared.importFromTools()
             CatCareStore.shared.importBirthdays(profiles)
         }

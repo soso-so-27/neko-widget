@@ -11,6 +11,7 @@ struct CareHandoffView: View {
     @AppStorage(CatFarewell.key) private var farewellJSON = ""
     @State private var selectedCatID: UUID?
     @State private var couldNotOpen = false
+    @State private var countedOpen = false
     @Environment(\.membershipActions) private var actionAccess
 
     /// The cats in the row: profiles, this tool's cats without a profile, and
@@ -72,6 +73,8 @@ struct CareHandoffView: View {
         .navigationTitle("預けるとき").navigationBarTitleDisplayMode(.inline)
         .familyNotebookToolSync()
         .task {
+            // Usage (11/7): once per opening, not again after a pushed screen.
+            if !countedOpen { countedOpen = true; UsageCounter.shared.count(.toolCareHandoff) }
             guard selectedCatID == nil, store.loadError == nil else { return }
             openFirst()
         }

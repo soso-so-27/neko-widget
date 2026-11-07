@@ -118,6 +118,7 @@ struct SettingsView: View {
 #endif
     @State private var isRescanning = false
     @State private var showsFamilyNotebook = false
+    @AppStorage(UsageCounter.enabledKey) private var usageReportingEnabled = true
     @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
 #if DEBUG || INTERNAL_PRESENTATION
     @State private var isExporting = false
@@ -290,6 +291,22 @@ struct SettingsView: View {
                 }
             }
 
+            // Anonymous usage counts (11/7): on by default, off deletes what is
+            // kept. A build with no destination sends nothing and shows no switch.
+            if UsageCounter.endpoint() != nil {
+                Section {
+                    Toggle(isOn: $usageReportingEnabled) {
+                        Label("利用状況を送る", systemImage: "chart.bar")
+                    }
+                    .accessibilityIdentifier("settings-usage-reporting")
+                    .onChange(of: usageReportingEnabled) { _, isOn in UsageCounter.shared.setEnabled(isOn) }
+                } header: {
+                    Text("プライバシー")
+                } footer: {
+                    Text("使った機能の回数だけを送ります。写真や書いた内容は送りません。")
+                }
+            }
+
             Section {
                 // Telling a friend, from where people look for the app's own
                 // things (11/6). Hidden until the App Store page exists.
@@ -298,6 +315,7 @@ struct SettingsView: View {
                         Label("ねこのまどを紹介する", systemImage: "square.and.arrow.up")
                     }
                     .accessibilityIdentifier("settings-recommend-app")
+                    .simultaneousGesture(TapGesture().onEnded { UsageCounter.shared.count(.appRecommended) })  // Usage (11/7): ShareLink reports no completion
                 }
                 if let url = AppPublicLinksConfiguration.current.supportURL {
                     Link(destination: url) {

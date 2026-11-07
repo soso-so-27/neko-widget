@@ -1012,6 +1012,7 @@ final class AppRecordPersistence: ObservableObject {
             }
             cachedIndex = nil; cachedMembership = nil
             requested = true; conflict = false; nextAttempt = .distantPast; flushEdits()
+            UsageCounter.shared.count(.autosaveStarted)  // Usage (11/7): saving is bound and on
             busy = false
             await synchronize()
         } catch {

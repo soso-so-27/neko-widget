@@ -1337,6 +1337,11 @@ struct AppRootView: View {
     }
 
     private func persistOnboardingState(_ state: OnboardingPresentationState) {
+        // Usage (11/7): once, on the step that finishes the first run.
+        if OnboardingPresentationPersistence.requiresPresentation(completedVersion: onboardingCompletedVersion),
+           !OnboardingPresentationPersistence.requiresPresentation(completedVersion: state.completedVersion) {
+            UsageCounter.shared.count(.onboardingCompleted)
+        }
         onboardingResumePageIndex = state.resumePageIndex
         onboardingCompletedVersion = state.completedVersion
     }

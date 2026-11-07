@@ -100,6 +100,13 @@ bash ci/run-family-notebook-checks.sh
 xcrun swiftc -parse-as-library Shared/MembershipAccessPolicy.swift \
   ci/verify-membership-access.swift -o "$RUNNER_TEMP/verify-membership-access"
 "$RUNNER_TEMP/verify-membership-access"
+
+# Anonymous usage counts (11/7): the payload alone, synthetic days only; one
+# sender, one Info.plist key, and no identifier beyond the per-day batch.
+xcrun --sdk macosx swiftc -parse-as-library NekoWidget/Services/UsageReport.swift \
+  ci/verify-usage-report.swift -o "$RUNNER_TEMP/verify-usage-report"
+"$RUNNER_TEMP/verify-usage-report"
+python3 ci/test-usage-report-boundary.py
 xcrun swiftc -parse-as-library Shared/MembershipAccessPolicy.swift \
   Shared/PersonalWidgetMembershipStore.swift ci/verify-personal-widget-membership.swift \
   -o "$RUNNER_TEMP/verify-personal-widget-membership"

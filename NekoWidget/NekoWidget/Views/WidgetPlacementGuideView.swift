@@ -87,6 +87,7 @@ struct WidgetPlacementGuideView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemBackground))
+        .onAppear { UsageCounter.shared.count(.widgetGuideOpened) }  // Usage (11/7)
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 10) {
                 if let closeTitle {

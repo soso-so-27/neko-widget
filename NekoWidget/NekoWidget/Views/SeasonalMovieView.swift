@@ -421,6 +421,7 @@ struct SeasonalMovieView: View {
             await showMonthMarkerBriefly()
         }
         .onAppear {
+            UsageCounter.shared.count(.seasonalMovieOpened)  // Usage (11/7)
             // Wait for the first real visual frame. Starting music while
             // PhotoKit still shows a spinner makes every later cut feel late.
             soundtrack.prepare(enabled: false)

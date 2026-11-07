@@ -11,6 +11,8 @@
 		C02610140000000000000001 /* ToolPreservation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02610140000000000000002 /* ToolPreservation.swift */; };
 		C02610140000000000000003 /* RestoredToolsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02610140000000000000004 /* RestoredToolsView.swift */; };
         D02609300000000000000001 /* VeterinaryVisitStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02609300000000000000002 /* VeterinaryVisitStore.swift */; };
+		D02611070000000000000001 /* UsageReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02611070000000000000002 /* UsageReport.swift */; };
+		D02611070000000000000003 /* UsageCounter.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02611070000000000000004 /* UsageCounter.swift */; };
         D02609300000000000000003 /* VeterinaryVisitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02609300000000000000004 /* VeterinaryVisitView.swift */; };
 		C02609290000000000000011 /* CareHandoffPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02609290000000000000012 /* CareHandoffPlan.swift */; };
 		C02609290000000000000013 /* CareHandoffStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02609290000000000000014 /* CareHandoffStore.swift */; };
@@ -334,6 +336,8 @@
 		C02610140000000000000002 /* ToolPreservation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolPreservation.swift; sourceTree = "<group>"; };
 		C02610140000000000000004 /* RestoredToolsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestoredToolsView.swift; sourceTree = "<group>"; };
         D02609300000000000000002 /* VeterinaryVisitStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VeterinaryVisitStore.swift; sourceTree = "<group>"; };
+		D02611070000000000000002 /* UsageReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageReport.swift; sourceTree = "<group>"; };
+		D02611070000000000000004 /* UsageCounter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageCounter.swift; sourceTree = "<group>"; };
         D02609300000000000000004 /* VeterinaryVisitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VeterinaryVisitView.swift; sourceTree = "<group>"; };
 		C02609290000000000000012 /* CareHandoffPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareHandoffPlan.swift; sourceTree = "<group>"; };
 		C02609290000000000000014 /* CareHandoffStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareHandoffStore.swift; sourceTree = "<group>"; };
@@ -795,6 +799,8 @@
 				F00000000000000000000211 /* LibraryStore.swift */,
 				A18200000000000000000011 /* PhotoMemoryNoteStore.swift */,
                 D02609300000000000000002 /* VeterinaryVisitStore.swift */,
+				D02611070000000000000002 /* UsageReport.swift */,
+				D02611070000000000000004 /* UsageCounter.swift */,
 				A18300000000000000000011 /* PhotoMemoryNoteExporter.swift */,
 				A731D0000000000000000011 /* ReadablePreservationExport.swift */,
 				A20300000000000000000203 /* ManagedPreservationCoordinator.swift */,
@@ -1218,6 +1224,8 @@
 				100000000000000000000111 /* LibraryStore.swift in Sources */,
 				A18200000000000000000001 /* PhotoMemoryNoteStore.swift in Sources */,
                 D02609300000000000000001 /* VeterinaryVisitStore.swift in Sources */,
+				D02611070000000000000001 /* UsageReport.swift in Sources */,
+				D02611070000000000000003 /* UsageCounter.swift in Sources */,
                 D02609300000000000000003 /* VeterinaryVisitView.swift in Sources */,
 				A18300000000000000000001 /* PhotoMemoryNoteExporter.swift in Sources */,
 				A731D0000000000000000001 /* ReadablePreservationExport.swift in Sources */,

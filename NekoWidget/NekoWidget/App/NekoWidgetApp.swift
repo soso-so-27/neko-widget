@@ -147,7 +147,18 @@ struct ProductionAppRootView: View {
             .task {
                 await plusPurchases.start()
             }
+            // Usage counts (11/7): earlier days are sent on becoming active,
+            // and the file is written only on going to the background.
+            .task(id: scenePhase) {
+                guard scenePhase == .active else { return }
+                await UsageCounter.shared.appBecameActive(viewModel: viewModel,
+                    plus: plusPurchases.entitlementState.permitsPersonalPlus)
+            }
             .onChange(of: scenePhase) { _, newPhase in
+                if newPhase == .background {
+                    UsageCounter.shared.appEnteredBackground(viewModel: viewModel,
+                        plus: plusPurchases.entitlementState.permitsPersonalPlus)
+                }
                 guard newPhase == .active else { return }
                 Task {
                     await plusPurchases.refreshAfterForegroundEntry()

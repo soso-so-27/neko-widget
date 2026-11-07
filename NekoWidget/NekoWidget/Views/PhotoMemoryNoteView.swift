@@ -576,6 +576,7 @@ struct PhotoMemoryNoteEditor: View {
                 _ = try await store.save(text: value, for: photo.localIdentifier,
                     expectedRevision: original?.revision, context: context, weightChange: weightChange)
             } else { throw PhotoMemoryNoteStoreError.invalidIdentifier }
+            if !value.isEmpty || weightEnabled { UsageCounter.shared.count(.photoMemoWritten) }  // Usage (11/7); empty is a delete
             onSaved()
             dismiss()
         } catch PhotoMemoryNoteStoreError.conflict {
