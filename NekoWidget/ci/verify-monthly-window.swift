@@ -649,6 +649,7 @@ private struct MonthlyWindowVerifier {
         try verifyRapidNearIdenticalShotsCollapseDeterministically()
         try verifyTimingAndFramingKeepDistinctScenesSeparate()
         try verifyBrowserCoverAndRefreshedMembership()
+        try verifyCollectionSnapshotRestoresOnlyCurrentPhotos()
         try verifyStoryCacheTracksCurrentPhotosAndNames()
         try verifyStoryCacheRejectsOutdatedPreparation()
         try verifyStoryCacheKeepsMultipleMonthsWithinItsBound()
@@ -795,6 +796,33 @@ private func verifyStoryCacheKeepsMultipleMonthsWithinItsBound() throws {
     try require(cache.cached(for: september) == nil, "least recently opened month exceeded the cache bound")
     try require(cache.cached(for: august) == "August" && cache.cached(for: october) == "October",
                 "bounded eviction discarded a recent month or the latest prepared work")
+}
+
+// 11/7: the album's launch cache keeps identifiers only and never brings
+// back a photo that is gone.
+private func verifyCollectionSnapshotRestoresOnlyCurrentPhotos() throws {
+    let kept = photo("kept", date(2026, 8, 2))
+    let gone = photo("gone", date(2026, 8, 3))
+    let august = MonthlyWindowPresentation(
+        monthStart: date(2026, 8, 1), yearNumber: 2026, monthNumber: 8,
+        photos: [kept, gone], availableSceneCount: 5
+    )
+    let july = MonthlyWindowPresentation(
+        monthStart: date(2026, 7, 1), yearNumber: 2026, monthNumber: 7,
+        photos: [photo("july-gone", date(2026, 7, 4))], availableSceneCount: 5
+    )
+    let collection = MonthlyWindowCollectionPresentation(letters: [august, july], unavailable: nil)
+    let snapshot = MonthlyWindowCollectionSnapshot(collection, sourceAlbumIdentifier: nil)
+    let decoded = try JSONDecoder().decode(MonthlyWindowCollectionSnapshot.self,
+                                           from: JSONEncoder().encode(snapshot))
+    try require(decoded == snapshot, "the album cache did not round-trip")
+    try require(decoded.collection(from: [kept, gone]).letters.map(\.periodIdentifier) == ["2026-08"],
+                "a month with no current photos came back from the cache")
+    let restored = decoded.collection(from: [kept])
+    try require(restored.letters.first?.photos.map(\.localIdentifier) == ["kept"],
+                "a removed photo came back from the album cache")
+    try require(decoded.collection(from: []).letters.isEmpty,
+                "the album cache showed works without current photos")
 }
 
 private func verifyBrowserCoverAndRefreshedMembership() throws {

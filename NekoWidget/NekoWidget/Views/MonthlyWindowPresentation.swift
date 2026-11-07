@@ -316,6 +316,113 @@ struct MonthlyWindowCollectionPresentation: Hashable, Sendable {
     }
 }
 
+/// 11/7: the last built works as months and photo identifiers only, so the
+/// album draws them at launch instead of 「まだ作品はありません」 while this
+/// launch's build runs (about 2 s on a device). Restored works are resolved
+/// against the current photos; a photo that is gone never comes back.
+struct MonthlyWindowCollectionSnapshot: Codable, Equatable, Sendable {
+    struct Letter: Codable, Equatable, Sendable {
+        let monthStart: Date
+        let yearNumber: Int
+        let monthNumber: Int
+        let availableSceneCount: Int
+        let photoIdentifiers: [String]
+    }
+
+    static let schemaVersion = 1
+    let version: Int
+    let sourceAlbumIdentifier: String?
+    let letters: [Letter]
+
+    init(_ collection: MonthlyWindowCollectionPresentation, sourceAlbumIdentifier: String?) {
+        version = Self.schemaVersion
+        self.sourceAlbumIdentifier = sourceAlbumIdentifier
+        letters = collection.letters.map { letter in
+            Letter(monthStart: letter.monthStart, yearNumber: letter.yearNumber,
+                   monthNumber: letter.monthNumber, availableSceneCount: letter.availableSceneCount,
+                   photoIdentifiers: letter.photos.map(\.localIdentifier))
+        }
+    }
+
+    /// Only the photos still in `currentPhotos`; a month left with none drops out.
+    func collection(from currentPhotos: [PhotoPresentation]) -> MonthlyWindowCollectionPresentation {
+        let currentByID = Dictionary(currentPhotos.map { ($0.localIdentifier, $0) },
+                                     uniquingKeysWith: { first, _ in first })
+        let restored = letters.map { letter in
+            MonthlyWindowPresentation(monthStart: letter.monthStart, yearNumber: letter.yearNumber,
+                                      monthNumber: letter.monthNumber,
+                                      photos: letter.photoIdentifiers.compactMap { currentByID[$0] },
+                                      availableSceneCount: letter.availableSceneCount)
+        }.filter { !$0.photos.isEmpty }
+        return MonthlyWindowCollectionPresentation(letters: restored, unavailable: nil)
+    }
+}
+
+/// 11/7: one small file in Application Support. Read once per launch; written
+/// only after a build finished with different works (never while scrolling).
+final class MonthlyWindowCollectionCache: @unchecked Sendable {
+    static let shared = MonthlyWindowCollectionCache(fileURL: MonthlyWindowCollectionCache.defaultFileURL)
+
+    private let fileURL: URL?
+    private let lock = NSLock()
+    private let writer = DispatchQueue(label: "monthly-window-collection-cache", qos: .utility)
+    private var didLoad = false
+    private var value: MonthlyWindowCollectionSnapshot?
+
+    init(fileURL: URL?) {
+        self.fileURL = fileURL
+    }
+
+    private static var defaultFileURL: URL? {
+#if DEBUG
+        // UI fixtures build their own works; a real run's file stays out.
+        if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--") && $0.contains("fixture") }) {
+            return nil
+        }
+#endif
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("MonthlyWindows", isDirectory: true)
+            .appendingPathComponent("v1", isDirectory: true)
+            .appendingPathComponent("collection.json", isDirectory: false)
+    }
+
+    func snapshot() -> MonthlyWindowCollectionSnapshot? {
+        lock.lock()
+        defer { lock.unlock() }
+        if !didLoad {
+            didLoad = true
+            if let fileURL, let data = try? Data(contentsOf: fileURL),
+               let decoded = try? JSONDecoder().decode(MonthlyWindowCollectionSnapshot.self, from: data),
+               decoded.version == MonthlyWindowCollectionSnapshot.schemaVersion {
+                value = decoded
+            }
+        }
+        return value
+    }
+
+    func store(_ snapshot: MonthlyWindowCollectionSnapshot) {
+        lock.lock()
+        let changed = value != snapshot
+        value = snapshot
+        didLoad = true
+        lock.unlock()
+        guard changed, let fileURL else { return }
+        writer.async {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            var directory = fileURL.deletingLastPathComponent()
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try? directory.setResourceValues(values)
+#if os(iOS)
+            try? data.write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+#else
+            try? data.write(to: fileURL, options: [.atomic])
+#endif
+        }
+    }
+}
+
 /// Produces a deterministic 5...7-scene monthly letter from the same
 /// privacy-minimal `PhotoPresentation` values used by automatic albums. The
 /// draft is only a suggestion: the caller continues to use the existing

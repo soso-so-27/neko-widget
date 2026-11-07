@@ -202,6 +202,9 @@ struct AlbumPrototypeView: View {
     /// Without Photos access there are no works to make: say that, not 「まだ作品はありません」.
     var hasPhotoAccess = true
     var requestPhotoAccess: () -> Void = {}
+    /// 11/7: false while the works are still being built at launch; then the
+    /// shelf stands alone instead of 「まだ作品はありません」.
+    var lettersAreFinal = true
 
     @AppStorage(AlbumPrototype.enabledAtKey) private var enabledAt: Double = 0
     @AppStorage(AlbumPrototype.openedKey) private var openedJSON = ""
@@ -286,7 +289,7 @@ struct AlbumPrototypeView: View {
                         newMovieCard(movie)
                     }
                     yearShelf
-                    if letters.isEmpty {
+                    if letters.isEmpty && lettersAreFinal {
                         ContentUnavailableView("まだ作品はありません", systemImage: "photo.stack",
                                                description: Text("猫の写真がひと月に 5 枚ほどたまると、その月の作品がとどきます。"))
                     }

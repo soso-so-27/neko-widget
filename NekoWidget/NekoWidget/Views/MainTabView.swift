@@ -1006,15 +1006,42 @@ struct MainTabView: View {
 
     private var albumRoot: some View {
         AlbumPrototypeView(
-            letters: hasPhotoAccess ? currentMonthlyWindowCollection?.letters ?? [] : [],
+            letters: hasPhotoAccess ? albumMonthlyWindowLetters : [],
             movies: hasPhotoAccess ? currentSeasonalMovieRecords : [],
             catPhotos: hasPhotoAccess ? catPhotos : [],
             assignments: currentPhotoLibraryAssignments,
             profileNames: currentPhotoLibraryProfileNames,
             openMovie: { memoriesPath.append(MemoriesRoute.seasonalMovie($0)) },
             hasPhotoAccess: hasPhotoAccess,
-            requestPhotoAccess: requestPhotoAccess
+            requestPhotoAccess: requestPhotoAccess,
+            lettersAreFinal: albumMonthlyWindowLettersAreFinal
         )
+    }
+
+    /// 11/7: until this launch's build is done, the album draws the works
+    /// last built (MonthlyWindowCollectionCache), checked against the current
+    /// photos, instead of 「まだ作品はありません」 for about 2 s.
+    private var albumMonthlyWindowLetters: [MonthlyWindowPresentation] {
+        if monthlyWindowCollection != nil { return currentMonthlyWindowCollection?.letters ?? [] }
+        guard let cached = cachedMonthlyWindowSnapshot else { return [] }
+        let photos: [PhotoPresentation] = photoSourceStatus == .unavailable ? [] : albumEligibleCatPhotos
+        return cached.collection(from: photos).refreshed(
+            from: photos,
+            hasPhotoAccess: hasPhotoAccess && photoPresentationVersion.canPresent,
+            excludedIdentifiers: excludedCatCandidateIdentifiers
+        ).letters
+    }
+
+    /// 「まだ作品はありません」 only after a build, or when the cache says none.
+    private var albumMonthlyWindowLettersAreFinal: Bool {
+        monthlyWindowCollection != nil || photoSourceStatus == .unavailable
+            || cachedMonthlyWindowSnapshot?.letters.isEmpty == true
+    }
+
+    private var cachedMonthlyWindowSnapshot: MonthlyWindowCollectionSnapshot? {
+        guard let cached = MonthlyWindowCollectionCache.shared.snapshot(),
+              cached.sourceAlbumIdentifier == monthlyWindowCollectionKey.sourceAlbumIdentifier else { return nil }
+        return cached
     }
 
     private var showcaseCandidates: [PhotoPresentation] {
@@ -2611,6 +2638,9 @@ struct MainTabView: View {
         }
         monthlyWindowCollection = collection
         completedMonthlyWindowCollectionKey = key
+        // 11/7: once per finished build; the file changes only with the works.
+        MonthlyWindowCollectionCache.shared.store(
+            MonthlyWindowCollectionSnapshot(collection, sourceAlbumIdentifier: key.sourceAlbumIdentifier))
         synchronizeAlbumArrival()
         openAlbumArrivalIfReady()
     }
