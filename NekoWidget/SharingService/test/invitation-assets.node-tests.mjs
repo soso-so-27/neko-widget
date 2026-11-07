@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { prepareInvitationAssets, applicationIdentifier } from '../scripts/invitation-assets.mjs';
 
-test('packs both exact invitation paths without secrets, redirects or active content', async () => {
+test('packs both exact invitation paths from docs with hash-scoped active content and unchanged AASA', async () => {
   const parent = await mkdtemp(join(tmpdir(), 'neko-invitation-'));
   const out=join(parent,'assets');
   await prepareInvitationAssets(out);
@@ -15,11 +15,18 @@ test('packs both exact invitation paths without secrets, redirects or active con
   for (const path of ['join','family-join']) {
     const html=await readFile(join(out,path),'utf8');
     assert.match(html, /<meta name="referrer" content="no-referrer">/u);
-    assert.match(html, /届いた招待リンクをもう一度開いてください/u);
-    assert.doesNotMatch(html, /<script|<form|<iframe|location\.|fetch\(|https?:\/\//u);
+    assert.match(html, /App Store で入れる/u);
+    assert.match(html, /window.location.hash/u);
+    assert.match(html, /apple-itunes-app/u);
+    assert.doesNotMatch(html, /<form|<iframe|fetch\(|XMLHttpRequest|sendBeacon|<link/u);
+    const source = (await readFile(new URL('../../../docs/' + path + '.html', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+    const css = (await readFile(new URL('../../../docs/assets/site.css', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+    assert.equal(html, source.replace('<link rel="stylesheet" href="assets/site.css">', '<style>' + css + '</style>'));
   }
   const h=await readFile(join(out,'_headers'),'utf8');
   assert.match(h, /Content-Type: application\/json/u);
   assert.match(h, /default-src 'none'/u);
+  assert.match(h, /script-src 'sha256-/u);
+  assert.match(h, /style-src 'sha256-/u);
   await assert.rejects(prepareInvitationAssets(out), {code:'EEXIST'});
 });
