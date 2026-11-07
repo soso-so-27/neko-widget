@@ -14,280 +14,78 @@ extension EnvironmentValues {
     }
 }
 
+/// The cat's one page: この子のこと. The name, the key photo and deleting are
+/// in its 基本; the cat's photos are in the 写真 tab (11/7: one place each,
+/// so the page has no 写真 tab of its own).
 struct CatProfileDetailView: View {
     let profile: CatProfilePresentation
     let allProfiles: [CatProfilePresentation]
     let manualCandidatePhotos: [CatProfilePhotoPresentation]
     let photoAlbumOptions: [CatProfilePhotoAlbumOptionPresentation]
     let actions: CatProfilesViewActions
-    /// Which tab opens first. The tools open この子のこと, where the dates and
-    /// care are; the album and photos open 写真 (11/7).
-    var initialPage: CatPage = .photos
     /// Opened from the family notebook: the faces, not a second notebook (11/7).
     var insideFamilyNotebook = false
 
-    @Environment(\.dismiss) private var dismiss
-    @State private var showsKeyPhotoPicker = false
-    @State private var showsDeleteConfirmation = false
-    @State private var showsNameEditor = false
-    @State private var draftName = ""
-    @State private var isSavingName = false
-    @State private var isDeleting = false
-    @State private var nameSaveFailed = false
-    @State private var deleteFailed = false
-    /// The tab pressed on this page; nil until one is pressed.
-    @State private var chosenPage: CatPage?
-    private var page: CatPage { chosenPage ?? initialPage }
-    @AppStorage(CatFarewell.key) private var farewellJSON = ""
-    @State private var showsFarewellEditor = false
     @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
     @ObservedObject private var catCare = CatCareStore.shared
 
-    enum CatPage: Hashable { case photos, care }
-
-    /// The family's names when this cat is in the family notebook, so 写真
-    /// shows the same faces as この子のこと: the whole page is the shared cat (11/7).
+    /// The family's names when this cat is in the family notebook, so the
+    /// page shows whose cat it is: the whole page is the shared cat (11/7).
     private var familyNames: [String]? {
         guard let catID = CatCareSummary.record(profileIdentifier: profile.identifier)?.catID,
               familyNotebook.familyCats.contains(where: { $0.toolID == catID }) else { return nil }
         return familyNotebook.members.map(\.displayName)
     }
 
-    /// One page per cat. 写真: what the app found in Photos (name, face, which
-    /// photos are this cat). この子のこと: the facts people write (dates,
-    /// health, daily life, household), read by the tools and the album.
     var body: some View {
-        VStack(spacing: 0) {
-            // The same underline tabs as the 写真 tab, full width under the title.
-            HStack(spacing: 24) {
-                ForEach([CatPage.photos, CatPage.care], id: \.self) { candidate in
-                    Button { chosenPage = candidate } label: {
-                        Text(candidate == .photos ? "写真" : "この子のこと")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(page == candidate ? .primary : .secondary)
-                            .frame(minHeight: 44)
-                            .overlay(alignment: .bottom) {
-                                Rectangle().fill(page == candidate ? Color.primary : .clear).frame(height: 2)
-                            }
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(page == candidate ? .isSelected : [])
-                    .accessibilityIdentifier(candidate == .photos ? "cat-profile-page-photos" : "cat-profile-page-care")
+        CatCareDetailView(profile: profile, otherProfiles: [], selectedProfileID: .constant(profile.identifier))
+            .environment(\.catCareInsideCatPage, true)
+            // The page renames, changes the photo and deletes with these (11/7).
+            .environment(\.toolProfileActions, actions)
+            .navigationTitle(profile.displayName)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if let familyNames, insideFamilyNotebook {
+                    ToolbarItem(placement: .topBarTrailing) { FamilyFaces(names: familyNames) }
+                } else if !insideFamilyNotebook, familyNames != nil || Version1.familyNotebook || familyNotebook.hasFamily {
+                    ToolbarItem(placement: .topBarTrailing) { FamilyNotebookButton(sharedNames: familyNames) }
                 }
-                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 20)
-            .background(Color(.systemGroupedBackground))
-            .accessibilityIdentifier("cat-profile-page")
-            Divider()
-            // Both pages stay, side by side, and a swipe moves between them like
-            // the 写真 tab (11/7: switching rebuilt この子のこと and its top-right
-            // button each time).
-            TabView(selection: Binding(get: { page }, set: { chosenPage = $0 })) {
-                profileForm
-                    .tag(CatPage.photos)
-                CatCareDetailView(profile: profile, otherProfiles: [], selectedProfileID: .constant(profile.identifier))
-                    .environment(\.catCareInsideCatPage, true)
-                    .tag(CatPage.care)
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .animation(.easeInOut(duration: 0.2), value: page)
-        }
-        .navigationTitle(profile.displayName)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            // One button for the whole page, so it does not change with the tab.
-            if let familyNames, insideFamilyNotebook {
-                ToolbarItem(placement: .topBarTrailing) { FamilyFaces(names: familyNames) }
-            } else if !insideFamilyNotebook, familyNames != nil || Version1.familyNotebook || familyNotebook.hasFamily {
-                ToolbarItem(placement: .topBarTrailing) { FamilyNotebookButton(sharedNames: familyNames) }
-            }
-        }
-        // Memo weights show in この子のこと wherever the page opens (11/7).
-        .task { await catCare.importMemoWeights() }
+            // Memo weights show in この子のこと wherever the page opens (11/7).
+            .task { await catCare.importMemoWeights() }
     }
+}
 
-    private var profileForm: some View {
-        Form {
-            Section {
-                // One heading: the photo, the name with its pencil, the count.
-                // No badge on the photo and no second box under it.
-                VStack(spacing: 8) {
-                    Button {
-                        showsKeyPhotoPicker = true
-                    } label: {
-                        CatProfileThumbnail(photo: profile.coverPhoto)
-                            .frame(width: 96, height: 96)
-                            .clipShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(profile.confirmedPhotos.isEmpty)
-                    .accessibilityLabel("\(profile.displayName)の代表写真を変更")
-                    HStack(spacing: 8) {
-                        Text(profile.displayName)
-                            .font(.title2.bold())
-                        if !showsNameEditor {
-                            Button {
-                                draftName = profile.name ?? ""
-                                nameSaveFailed = false
-                                showsNameEditor = true
-                            } label: {
-                                Image(systemName: "pencil.circle.fill")
-                                    .font(.title3)
-                                    .foregroundStyle(.secondary)
-                                    .frame(minWidth: 44, minHeight: 44)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("名前を変更")
-                            .accessibilityIdentifier("cat-profile-rename")
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
-                .listRowBackground(Color.clear)
-                if Version1.isOn,
-                   let day = CatFarewell.days(farewellJSON)[profile.identifier] {
-                    Text(CatFarewell.text(day) + "に旅立ちました")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
-                        .listRowBackground(Color.clear)
-                        .accessibilityIdentifier("cat-profile-farewell")
-                }
+/// 写真 tab with one cat chosen: the one place to add photos to that cat
+/// (11/7: moved here from the cat's page). The same picker as before.
+struct CatProfileAddPhotosButton: View {
+    let profile: CatProfilePresentation
+    let allProfiles: [CatProfilePresentation]
+    let actions: CatProfilesViewActions
+    @State private var showsAddPhotos = false
 
-                if showsNameEditor {
-                    TextField("名前", text: $draftName)
-                        .disabled(isSavingName)
-                    if nameSaveFailed {
-                        Text("名前を保存できませんでした。もう一度お試しください。")
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                    }
-                    HStack {
-                        Button("キャンセル") { showsNameEditor = false }
-                        Spacer()
-                        Button(isSavingName ? "保存中…" : "保存") {
-                            isSavingName = true
-                            nameSaveFailed = false
-                            Task {
-                                let saved = await actions.updateName(profile.identifier, draftName)
-                                isSavingName = false
-                                if saved { showsNameEditor = false } else { nameSaveFailed = true }
-                            }
-                        }
-                        .disabled(draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(isSavingName)
-                }
-            }
-
-            // 迷子のとき is a tool; it lives on the ツール tab, not in the profile.
-            Section {
-                NavigationLink {
-                    UnassignedCatPhotosView(
-                        photos: manualCandidatePhotos,
-                        profiles: allProfiles,
-                        actions: actions,
-                        navigationTitle: "猫の写真から追加",
-                        preselectedProfileIdentifier: profile.identifier
-                    )
-                } label: {
-                    Label {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("この子の写真を追加")
-                                .foregroundStyle(.primary)
-                        }
-                    } icon: {
-                        Image(systemName: "photo.badge.plus")
-                    }
-                }
-                .disabled(manualCandidatePhotos.isEmpty)
-
-                NavigationLink {
-                    CatProfileConfirmedPhotosView(
-                        profile: profile,
-                        allProfiles: allProfiles,
-                        actions: actions
-                    )
-                } label: {
-                    Label {
-                        LabeledContent(
-                            "この子の写真を見る",
-                            value: "\(profile.confirmedPhotoCount.formatted())枚"
-                        )
-                    } icon: {
-                        Image(systemName: "photo.on.rectangle")
-                    }
-                }
-                .disabled(profile.confirmedPhotos.isEmpty)
-
-            } header: {
-                Text("写真")
-            }
-
-            Section {
-                Button("プロフィールを削除", role: .destructive) {
-                    deleteFailed = false
-                    showsDeleteConfirmation = true
-                }
-                if deleteFailed {
-                    Text("削除できませんでした。もう一度お試しください。")
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                }
-            }
+    var body: some View {
+        Button { showsAddPhotos = true } label: {
+            Label("この子の写真を追加", systemImage: "photo.badge.plus")
+                .font(.subheadline.weight(.medium))
+                .lineLimit(1)
+                .frame(minHeight: 44)
         }
-        .disabled(isDeleting || isSavingName)
-        .navigationBarBackButtonHidden(isDeleting || isSavingName)
-        .navigationTitle(profile.displayName)
-        .alert("\(profile.displayName)のプロフィールを削除しますか？", isPresented: $showsDeleteConfirmation) {
-            Button("プロフィールを削除", role: .destructive) {
-                isDeleting = true
-                deleteFailed = false
-                Task {
-                    let deleted = await actions.deleteProfile(profile.identifier)
-                    isDeleting = false
-                    if deleted {
-                        dismiss()
-                    } else { deleteFailed = true }
-                }
-            }
-            // When a cat has died, deleting is usually where people go. Offer
-            // to record the day instead; the button says what it opens.
-            if Version1.isOn, CatFarewell.days(farewellJSON)[profile.identifier] == nil {
-                Button("旅立った日を記録する") { showsFarewellEditor = true }
-            }
-            Button("キャンセル", role: .cancel) {}
-        } message: {
-            Text("写真やツールで入れた記録は残ります。")
-        }
-        .sheet(isPresented: $showsFarewellEditor) {
-            CatFarewellEditor(name: profile.displayName, recorded: CatFarewell.days(farewellJSON)[profile.identifier]) { day in
-                farewellJSON = CatFarewell.setting(day, for: profile.identifier, in: farewellJSON)
-            }
-        }
-        .sheet(isPresented: $showsKeyPhotoPicker) {
+        .disabled(profile.manualCandidatePhotos.isEmpty)
+        .accessibilityIdentifier("photos-cat-add-photos")
+        .sheet(isPresented: $showsAddPhotos) {
             NavigationStack {
-                CatProfilePhotoPicker(
-                    photos: profile.confirmedPhotos,
-                    selectedIdentifier: profile.keyPhotoIdentifier,
-                    choose: { await actions.setKeyPhoto(profile.identifier, $0) }
+                UnassignedCatPhotosView(
+                    photos: profile.manualCandidatePhotos,
+                    profiles: allProfiles,
+                    actions: actions,
+                    navigationTitle: "猫の写真から追加",
+                    preselectedProfileIdentifier: profile.identifier,
+                    dismissAfterSaving: true
                 )
             }
         }
-        .appRecordEditing(retainWhileHidden: showsNameEditor || isSavingName || showsKeyPhotoPicker)
     }
-
-    private var preparednessCandidates: [CatProfilePhotoPresentation] {
-        var seen = Set<String>()
-        return (profile.confirmedPhotos + manualCandidatePhotos
-                + allProfiles.flatMap { $0.confirmedPhotos + $0.manualCandidatePhotos })
-            .filter { seen.insert($0.localIdentifier).inserted }
-    }
-
 }
 
 extension CatProfilePresentation {
