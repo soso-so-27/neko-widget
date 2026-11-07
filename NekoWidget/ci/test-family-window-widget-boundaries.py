@@ -1470,9 +1470,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         settings = source("NekoWidget/Views/SettingsView.swift")
         app_root = source("NekoWidget/App/AppRootView.swift")
         for section_title in (
-            "写真",
-            "猫",
-            "ホーム画面",
+            "写真とウィジェット",
+            "家族とまど",
             "保存",
             "困ったとき",
             "テスト用",
@@ -3843,11 +3842,13 @@ class GroupJoinOpensWindowTests(unittest.TestCase):
 
 
 class SettingsLayoutTests(unittest.TestCase):
-    def test_settings_put_daily_things_first_and_test_tools_last(self) -> None:
+    def test_settings_put_plus_and_saving_first_and_test_tools_last(self) -> None:
         settings = source("NekoWidget/Views/SettingsView.swift")
         body = section(settings, "    var body: some View {\n        Form {", '.navigationTitle("設定")')
-        order = ['Text("写真")', 'Text("猫")', 'Text("ホーム画面")', "PlusSettingsSection()",
-                 'Text("保存")', 'Text("プライバシー")', 'Text("サポート")', '"settings-app-version"',
+        # 11/8: Plus and 保存 first; one-row sections grouped; the policy under プライバシー.
+        order = ["PlusSettingsSection()", 'Text("保存")', 'Text("写真とウィジェット")',
+                 'Text("家族とまど")', '"settings-privacy-policy"', 'Text("プライバシー")',
+                 '"settings-support-page"', 'Text("サポート")', '"settings-app-version"',
                  '"settings-account-deletion"', 'Text("テスト用")']
         positions = [body.index(item) for item in order]
         self.assertEqual(positions, sorted(positions))
