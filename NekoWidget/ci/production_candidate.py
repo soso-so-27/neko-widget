@@ -151,7 +151,7 @@ def verify_products(app, contract, *, synthetic=False):
         require(info.get("SharingInternalEncryptedReportEnabled") is False
                 and info.get("SharingInternalEncryptedReportScope") == "", "Internal reporting leaked into public product")
         if target != "NekoWidget":
-            require(not any(info.get(k) for k in ("SharingAPIBaseURL", "SharingModerationPublicKey", "SharingModerationKeyID")), "Extension received report credentials")
+            require(not any(info.get(k) for k in ("SharingAPIBaseURL", "SharingModerationPublicKey", "SharingModerationKeyID", "UsageReportURL")), "Extension received report credentials")
         actual_privacy = plistlib.loads((directory / "PrivacyInfo.xcprivacy").read_bytes())
         require(actual_privacy == plistlib.loads((ROOT / privacy_source).read_bytes()), "Bundled privacy manifest differs: " + target)
     host, share, widget = (infos[k] for k in TARGETS)

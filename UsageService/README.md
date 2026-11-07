@@ -4,7 +4,7 @@
 
 - `day + HMAC-SHA256(secret, day + daily UUID)` deduplicates retries across app versions. The raw UUID is never stored. Production/staging secrets are independent, managed as Worker secrets.
 - `usage_days`, `usage_events`, `usage_states` contain aggregate counts only. Devices means daily batches, not independently verified people/devices.
-- `usage_dedup` expires no later than 7 days 23 hours after receipt (earlier for old reports). A 15-minute cron and ingestion cleanup remove expired rows. Cron/platform outages can delay physical deletion; this is not a guarantee of provider backup erasure. D1 Time Travel is separate provider-managed recovery storage.
+- `usage_dedup` expires no later than 7 days 23 hours after receipt (earlier for old reports). A 15-minute cron and ingestion cleanup remove expired rows. Cron/platform outages can delay physical deletion; this is not a guarantee of provider backup erasure. D1 Time Travel is separate provider-managed recovery storage; the owner explicitly approved up to 30 days in recovery copies on 2026-11-07.
 - Daily reports up to 7 days old are accepted; the next UTC date is allowed for client timezones. Payload max 16KiB, max 100 input names, each known count integer 0…10,000; unknown state properties discarded.
 - Constant-key rate limiting: 120 requests/minute per Cloudflare location, no IP-derived key. An atomic database quota caps new batches at 5,000 per UTC receipt day. Duplicate accepted batches still return 204. This is abuse reduction, not verified unique-client enforcement.
 - `db.batch` makes dedup/quota/aggregate writes atomic. A transient per-request marker only gates the transaction; it is cleared before commit. Failure returns 503; retry is safe.

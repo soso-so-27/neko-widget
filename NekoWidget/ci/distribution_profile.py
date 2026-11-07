@@ -39,7 +39,7 @@ def verify_info(info, *, extension=False, share_extension=False):
     if extension:
         if info.get("SharingReleaseMode") != "media-staging":
             raise ValueError("Extension release mode changed.")
-        if any(info.get(k) for k in ("SharingAPIBaseURL", "SharingModerationKeyID", "SharingModerationPublicKey")):
+        if any(info.get(k) for k in ("SharingAPIBaseURL", "SharingModerationKeyID", "SharingModerationPublicKey", "UsageReportURL")):
             raise ValueError("Owner internal extensions cannot have a reporting recipient.")
         if info.get("SharingShareExtensionSendEnabled", "NO") not in (False, "NO"):
             raise ValueError("Direct extension send must stay OFF.")

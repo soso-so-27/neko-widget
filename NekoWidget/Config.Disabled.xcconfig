@@ -30,4 +30,4 @@ PHOTO_LIBRARY_USAGE_DESCRIPTION = 猫の写真を端末内で見つけて写真�
 SHARE_EXTENSION_INFOPLIST_FILE = NekoWidgetShareExtension/Info.Disabled.plist
 
 // Anonymous daily usage; empty means no transmission.
-USAGE_REPORT_URL = 
+USAGE_REPORT_URL =
