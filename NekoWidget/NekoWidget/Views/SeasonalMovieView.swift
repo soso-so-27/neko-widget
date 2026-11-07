@@ -600,17 +600,20 @@ struct SeasonalMovieView: View {
             if !hasFinished {
                 VStack(spacing: 10) {
                     if let removedScene {
-                        HStack(spacing: 10) {
+                        // 11/7: readable text and a 44pt 「元に戻す」 (was caption in a 36pt pill).
+                        HStack(spacing: 12) {
                             Text("このムービーから外しました")
-                                .font(.caption)
+                                .font(.subheadline)
                             Button("元に戻す") {
                                 restore(removedScene)
                             }
-                            .font(.caption.bold())
+                            .font(.subheadline.bold())
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
                             .disabled(isUpdatingScene)
                         }
-                        .padding(.horizontal, 12)
-                        .frame(minHeight: 36)
+                        .padding(.horizontal, 16)
+                        .frame(minHeight: 44)
                         .background(.black.opacity(0.54), in: Capsule())
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                     }

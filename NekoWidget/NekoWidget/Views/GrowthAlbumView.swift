@@ -248,10 +248,12 @@ struct GrowthAlbumDetailView: View {
                     pendingAssignmentIdentifier = item.photo.localIdentifier
                     showsAssignmentSheet = true
                 } label: {
-                    Label("写っている猫を選ぶ", systemImage: "person.crop.circle.badge.checkmark")
+                    // 11/7: one icon for this action everywhere.
+                    Label("写っている猫を選ぶ", systemImage: "cat")
                 }
             }
-            Button {
+            // 11/7: destructive everywhere, like the confirmation.
+            Button(role: .destructive) {
                 pendingExclusionIdentifier = item.photo.localIdentifier
                 showsExclusionConfirmation = true
             } label: {

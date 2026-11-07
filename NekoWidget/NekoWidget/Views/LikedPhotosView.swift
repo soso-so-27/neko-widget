@@ -757,7 +757,8 @@ struct CuratedAlbumDetailView: View {
                             pendingAssignmentIdentifiers = Array(selectedIdentifiers)
                             showsAssignmentSheet = true
                         } label: {
-                            Label("写っている猫を選ぶ", systemImage: "person.crop.circle.badge.checkmark")
+                            // 11/7: one icon for this action everywhere.
+                            Label("写っている猫を選ぶ", systemImage: "cat")
                         }
                         .disabled(selectedIdentifiers.isEmpty)
                     }
@@ -854,7 +855,8 @@ struct CuratedAlbumDetailView: View {
                         Label("写っている猫を選ぶ", systemImage: "cat")
                     }
                 }
-                Button {
+                // 11/7: destructive everywhere, like the selection bar.
+                Button(role: .destructive) {
                     requestExclusion([photo.localIdentifier])
                 } label: {
                     Label("猫の写真から外す", systemImage: "eye.slash")
@@ -2805,12 +2807,22 @@ struct PhotoBrowserView: View {
                     Button {
                         personalNotePhoto = selectedPhoto
                     } label: {
-                        Text(note.text)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                            .contentShape(Rectangle())
+                        // 11/7: an icon and a chevron so the excerpt reads as tappable.
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Image(systemName: "note.text")
+                                .accessibilityHidden(true)
+                            Text(note.text)
+                                .lineLimit(2)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Image(systemName: "chevron.right")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                                .accessibilityHidden(true)
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("メモ")
@@ -2892,10 +2904,11 @@ struct PhotoBrowserView: View {
                         Label("写真を書き出す", systemImage: "square.and.arrow.up")
                             .labelStyle(.iconOnly)
                             .font(.title3)
-                        Text("書き出す").font(.caption2)
+                        Text("書き出す").font(.footnote)
                     }
                     .frame(maxWidth: .infinity, minHeight: 50)
-                    .foregroundStyle(Color.secondary)
+                    // 11/7: full-contrast on the black viewer (was a small gray caption).
+                    .foregroundStyle(Color.primary)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -2913,10 +2926,11 @@ struct PhotoBrowserView: View {
         Button(action: action) {
             VStack(spacing: 3) {
                 Image(systemName: systemImage).font(.title3)
-                Text(title).font(.caption2)
+                Text(title).font(.footnote)
             }
             .frame(maxWidth: .infinity, minHeight: 50)
-            .foregroundStyle(tinted ? Color.accentColor : Color.secondary)
+            // 11/7: readable size and full contrast on black; the accent still marks "on".
+            .foregroundStyle(tinted ? Color.accentColor : Color.primary)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -3040,7 +3054,8 @@ struct PhotoBrowserView: View {
                             Label("猫の写真に戻す", systemImage: "arrow.uturn.backward.circle")
                         }
                     } else {
-                        Button {
+                        // 11/7: destructive, the same as in the album grid.
+                        Button(role: .destructive) {
                             pendingExclusionIdentifier = selectedPhotoIdentifier
                             showsExclusionConfirmation = true
                         } label: {

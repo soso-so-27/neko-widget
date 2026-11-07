@@ -339,19 +339,26 @@ struct AlbumPrototypeView: View {
         let books = letters.filter { $0.yearNumber == year }
         let next = nextDelivery
         return VStack(alignment: .leading, spacing: 10) {
-            NavigationLink {
-                PastWorksView(letters: letters, years: arrivedYears.filter { $0 != heroYear }, movies: movies,
-                              catPhotos: catPhotos, assignments: assignments, profileNames: profileNames,
-                              openMovie: openMovie)
-            } label: {
-                HStack(spacing: 4) {
-                    Text(verbatim: String(year)).font(.system(.title3, design: .serif).weight(.bold))
-                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            // 11/7: the year is a heading; the link says what it opens (was 「2026 ›」).
+            HStack(alignment: .firstTextBaseline) {
+                Text(verbatim: String(year)).font(.system(.title3, design: .serif).weight(.bold))
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 8)
+                NavigationLink {
+                    PastWorksView(letters: letters, years: arrivedYears.filter { $0 != heroYear }, movies: movies,
+                                  catPhotos: catPhotos, assignments: assignments, profileNames: profileNames,
+                                  openMovie: openMovie)
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("これまでの作品")
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
+                    }
+                    .font(.subheadline)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
                 }
-                .foregroundStyle(.primary)
+                .accessibilityIdentifier("album-prototype-past")
             }
-            .accessibilityLabel(Text(verbatim: "\(year)年の作品、すべて見る"))
-            .accessibilityIdentifier("album-prototype-past")
             ScrollViewReader { reader in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -925,10 +932,10 @@ struct MonthlyStoryView: View {
                 Spacer()
                 if let cardImage = cardShare.image(for: cardShareInput), let card = shownCard {
                     let title = "\(card.names)の\(cardTitle(card.photos.count))"
-                    // 11/7: the same verb as a photo's 「写真を書き出す」 (was 「画像にして共有」).
+                    // 11/7: 「共有」, the one word for every share button (was 「画像を書き出す」).
                     ShareLink(item: Image(uiImage: cardImage),
                               preview: SharePreview(title, image: Image(uiImage: cardImage))) {
-                        Label("画像を書き出す", systemImage: "square.and.arrow.up")
+                        Label("画像を共有", systemImage: "square.and.arrow.up")
                             .font(.headline)
                             .frame(maxWidth: .infinity, minHeight: 50)
                     }
@@ -1358,7 +1365,27 @@ private struct YearBookView: View {
                      photos: nine, title: "\(names)　\(cardTitle)")
     }
 
-    private var isNinePage: Bool { leaves.indices.contains(index) && leaves[index] == .nine }
+    /// 11/7: always top right, like the month's book; a spinner while the image is made.
+    @ViewBuilder private var shareButton: some View {
+        if let input = shareInput {
+            if let image = cardShare.image(for: input) {
+                ShareLink(item: Image(uiImage: image),
+                          preview: SharePreview(input.title, image: Image(uiImage: image))) {
+                    Image(systemName: "square.and.arrow.up").font(.headline).foregroundStyle(ink)
+                        .frame(width: 44, height: 44)
+                }
+                .accessibilityLabel("画像を共有")
+                .accessibilityIdentifier("year-book-share")
+                .simultaneousGesture(TapGesture().onEnded { UsageCounter.shared.count(.nineExported) })  // Usage (11/7): ShareLink reports no completion
+            } else {
+                ProgressView()
+                    .frame(width: 44, height: 44)
+                    .accessibilityLabel("画像を準備しています")
+            }
+        } else {
+            Color.clear.frame(width: 44, height: 44)
+        }
+    }
 
     /// Built once when the book opens.
     private func build() {
@@ -1410,13 +1437,15 @@ private struct YearBookView: View {
                 }
             }
             VStack(spacing: 0) {
-                HStack {
-                    Color.clear.frame(width: 44, height: 44)
+                HStack(spacing: 0) {
+                    // Balances the two buttons on the right so the title stays centered.
+                    Color.clear.frame(width: 88, height: 44)
                     Spacer()
                     Text(verbatim: "\(year)年の作品")
                         .font(.system(.footnote, design: .serif))
                         .foregroundStyle(ink.opacity(0.55))
                     Spacer()
+                    shareButton
                     Button { dismiss() } label: {
                         Image(systemName: "xmark").font(.headline).foregroundStyle(ink)
                             .frame(width: 44, height: 44)
@@ -1426,24 +1455,17 @@ private struct YearBookView: View {
                 .padding(.horizontal, 8)
                 Spacer()
                 if !leaves.isEmpty {
-                    if isNinePage, let image = cardShare.image(for: shareInput), let input = shareInput {
-                        ShareLink(item: Image(uiImage: image),
-                                  preview: SharePreview(input.title, image: Image(uiImage: image))) {
-                            Label("画像を書き出す", systemImage: "square.and.arrow.up")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(paper)
-                                .frame(maxWidth: .infinity, minHeight: 46)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(ink)
-                        .padding(.horizontal, 28)
-                        .padding(.bottom, 10)
-                        .accessibilityIdentifier("year-book-share")
-                        .simultaneousGesture(TapGesture().onEnded { UsageCounter.shared.count(.nineExported) })  // Usage (11/7): ShareLink reports no completion
+                    // 11/7: the same as the month's book: a turn hint first, a readable number.
+                    if index == 0, leaves.count > 1 {
+                        Text("めくる ›")
+                            .font(.footnote)
+                            .foregroundStyle(ink.opacity(0.6))
+                            .padding(.bottom, 4)
+                            .accessibilityHidden(true)
                     }
                     Text(verbatim: "\(index + 1) / \(leaves.count)")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(ink.opacity(0.45))
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(ink.opacity(0.6))
                         .padding(.bottom, 6)
                 }
             }
@@ -1669,7 +1691,7 @@ private struct YearStoryContentView: View {
                 if let cardImage = cardShare.image(for: cardShareInput), index == pages.count - 1 {
                     ShareLink(item: Image(uiImage: cardImage),
                               preview: SharePreview("\(names)の\(cardTitle)", image: Image(uiImage: cardImage))) {
-                        Label("画像を書き出す", systemImage: "square.and.arrow.up")
+                        Label("画像を共有", systemImage: "square.and.arrow.up")
                             .font(.headline)
                             .frame(maxWidth: .infinity, minHeight: 50)
                     }
@@ -1835,11 +1857,6 @@ struct MonthlyBookView: View {
 
     private var isShown: Bool { shownKey == key }
 
-    private var isNinePage: Bool {
-        guard leaves.indices.contains(index), case .nine = leaves[index] else { return false }
-        return true
-    }
-
     private var shareInput: StoryCardShareInput? {
         guard isShown, let nine = leaves.first(where: { if case .nine = $0 { return true } else { return false } }),
               case let .nine(photos, names) = nine else { return nil }
@@ -1914,13 +1931,15 @@ struct MonthlyBookView: View {
                 ProgressView()
             }
             VStack(spacing: 0) {
-                HStack {
-                    Color.clear.frame(width: 44, height: 44)
+                HStack(spacing: 0) {
+                    // Balances the two buttons on the right so the title stays centered.
+                    Color.clear.frame(width: 88, height: 44)
                     Spacer()
                     Text(verbatim: "\(letter.monthNumber)月の作品")
                         .font(.system(.footnote, design: .serif))
                         .foregroundStyle(Self.ink.opacity(0.55))
                     Spacer()
+                    shareButton
                     Button { dismiss() } label: {
                         Image(systemName: "xmark").font(.headline).foregroundStyle(Self.ink)
                             .frame(width: 44, height: 44)
@@ -1930,25 +1949,17 @@ struct MonthlyBookView: View {
                 .padding(.horizontal, 8)
                 Spacer()
                 if isShown, !leaves.isEmpty {
-                    if isNinePage, let image = cardShare.image(for: shareInput), let input = shareInput {
-                        ShareLink(item: Image(uiImage: image),
-                                  preview: SharePreview(input.title, image: Image(uiImage: image))) {
-                            Label("画像を書き出す", systemImage: "square.and.arrow.up")
-                                .font(.subheadline.weight(.semibold))
-                                // The page sets ink for everything; the button's own text is paper.
-                                .foregroundStyle(Self.paper)
-                                .frame(maxWidth: .infinity, minHeight: 46)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(Self.ink)
-                        .padding(.horizontal, 28)
-                        .padding(.bottom, 10)
-                        .accessibilityIdentifier("monthly-book-share")
-                        .simultaneousGesture(TapGesture().onEnded { UsageCounter.shared.count(.nineExported) })  // Usage (11/7): ShareLink reports no completion
+                    // 11/7: the first page says how to turn; the number is readable.
+                    if index == 0, leaves.count > 1 {
+                        Text("めくる ›")
+                            .font(.footnote)
+                            .foregroundStyle(Self.ink.opacity(0.6))
+                            .padding(.bottom, 4)
+                            .accessibilityHidden(true)
                     }
                     Text(verbatim: "\(index + 1) / \(leaves.count)")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(Self.ink.opacity(0.45))
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(Self.ink.opacity(0.6))
                         .padding(.bottom, 6)
                 }
             }
@@ -1973,6 +1984,29 @@ struct MonthlyBookView: View {
             guard !Task.isCancelled else { return }
             cardShare.complete(BestNineComposer.image(images, title: request.input.title),
                                for: request, isCancelled: Task.isCancelled)
+        }
+    }
+
+    /// 11/7: always top right, on every page (was only on the nine page,
+    /// only once ready). Disabled with a spinner while the image is made.
+    @ViewBuilder private var shareButton: some View {
+        if let input = shareInput {
+            if let image = cardShare.image(for: input) {
+                ShareLink(item: Image(uiImage: image),
+                          preview: SharePreview(input.title, image: Image(uiImage: image))) {
+                    Image(systemName: "square.and.arrow.up").font(.headline).foregroundStyle(Self.ink)
+                        .frame(width: 44, height: 44)
+                }
+                .accessibilityLabel("画像を共有")
+                .accessibilityIdentifier("monthly-book-share")
+                .simultaneousGesture(TapGesture().onEnded { UsageCounter.shared.count(.nineExported) })  // Usage (11/7): ShareLink reports no completion
+            } else {
+                ProgressView()
+                    .frame(width: 44, height: 44)
+                    .accessibilityLabel("画像を準備しています")
+            }
+        } else {
+            Color.clear.frame(width: 44, height: 44)
         }
     }
 

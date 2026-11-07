@@ -63,16 +63,26 @@ struct CatProfileAddPhotosButton: View {
     let allProfiles: [CatProfilePresentation]
     let actions: CatProfilesViewActions
     @State private var showsAddPhotos = false
+    @State private var showsNothingToAdd = false
 
     var body: some View {
-        Button { showsAddPhotos = true } label: {
+        // 11/7: always enabled; with nothing to add it says so (was gray with no reason).
+        Button {
+            if profile.manualCandidatePhotos.isEmpty {
+                showsNothingToAdd = true
+            } else {
+                showsAddPhotos = true
+            }
+        } label: {
             Label("この子の写真を追加", systemImage: "photo.badge.plus")
                 .font(.subheadline.weight(.medium))
                 .lineLimit(1)
                 .frame(minHeight: 44)
         }
-        .disabled(profile.manualCandidatePhotos.isEmpty)
         .accessibilityIdentifier("photos-cat-add-photos")
+        .alert("追加できる写真はありません", isPresented: $showsNothingToAdd) {
+            Button("閉じる", role: .cancel) {}
+        }
         .sheet(isPresented: $showsAddPhotos) {
             NavigationStack {
                 UnassignedCatPhotosView(

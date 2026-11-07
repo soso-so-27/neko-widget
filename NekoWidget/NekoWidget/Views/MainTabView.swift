@@ -1562,13 +1562,13 @@ struct MainTabView: View {
             }
             photoLibraryCatButton("未分類", identifier: "unassigned")
         } label: {
-            HStack(spacing: 6) {
+            // 11/7: looks like the favorites filter (tinted, medium), not a heading.
+            HStack(spacing: 4) {
                 Text(photoLibraryProfileIdentifier.map { currentPhotoLibraryProfileNames[$0] ?? "未分類" } ?? "すべての猫")
-                    .font(.headline)
-                Image(systemName: "chevron.down").font(.caption.weight(.bold)).foregroundStyle(.secondary)
+                Image(systemName: "chevron.down").font(.caption.weight(.bold))
             }
+            .font(.subheadline.weight(.medium))
             .lineLimit(1)
-            .foregroundStyle(.primary)
             .frame(minHeight: 44)
         }
         // A filter now, not the heading (11/7): read as the album's cat filter is.
@@ -1577,13 +1577,15 @@ struct MainTabView: View {
         .accessibilityIdentifier("photos-cat-picker")
     }
 
+    /// 11/7: a checkmark on the chosen cat, as in the favorites filter.
     private func photoLibraryCatButton(_ title: String, identifier: String?) -> some View {
         Button { photoLibraryProfileIdentifier = identifier } label: {
-            Text(title).font(.subheadline.weight(.medium))
-                .padding(.horizontal, 14).frame(minHeight: 44)
-                .background(photoLibraryProfileIdentifier == identifier ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.08), in: Capsule())
+            if photoLibraryProfileIdentifier == identifier {
+                Label(title, systemImage: "checkmark")
+            } else {
+                Text(title)
+            }
         }
-        .buttonStyle(.plain)
         .accessibilityAddTraits(photoLibraryProfileIdentifier == identifier ? .isSelected : [])
         .accessibilityIdentifier("photos-cat-\(identifier ?? "all")")
     }
@@ -1676,33 +1678,41 @@ struct MainTabView: View {
     }
 
     private func photoThemeRow(_ albums: [CuratedAlbumPresentation]) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                ForEach(albums) { album in
-                    NavigationLink(value: photoLibraryProfileIdentifier.map {
-                        AlbumRoute.catAlbum(profileIdentifier: $0, album: album.id)
-                    } ?? AlbumRoute.album(album.id)) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            PhotoAssetImageView(localIdentifier: album.coverPhoto.localIdentifier,
-                                                catBoundingBox: album.coverPhoto.catBoundingBox,
-                                                targetPixelSize: CGSize(width: 240, height: 240))
-                                .frame(width: 88, height: 88)
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            Text(album.cardTitle)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                                .frame(width: 88, alignment: .leading)
+        // 11/7: a small heading says what the row is.
+        VStack(alignment: .leading, spacing: 8) {
+            Text("テーマ")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityAddTraits(.isHeader)
+                .padding(.horizontal, 16)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(albums) { album in
+                        NavigationLink(value: photoLibraryProfileIdentifier.map {
+                            AlbumRoute.catAlbum(profileIdentifier: $0, album: album.id)
+                        } ?? AlbumRoute.album(album.id)) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                PhotoAssetImageView(localIdentifier: album.coverPhoto.localIdentifier,
+                                                    catBoundingBox: album.coverPhoto.catBoundingBox,
+                                                    targetPixelSize: CGSize(width: 240, height: 240))
+                                    .frame(width: 88, height: 88)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                Text(album.cardTitle)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                                    .frame(width: 88, alignment: .leading)
+                            }
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(album.cardTitle)
+                        .accessibilityIdentifier("photos-theme-\(album.id.title)")
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(album.cardTitle)
-                    .accessibilityIdentifier("photos-theme-\(album.id.title)")
                 }
+                .padding(.horizontal, 16)
             }
-            .padding(.horizontal, 16)
+            .accessibilityIdentifier("photos-theme-row")
         }
-        .accessibilityIdentifier("photos-theme-row")
     }
 
     private var settingsSheet: some View {
