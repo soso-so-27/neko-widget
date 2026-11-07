@@ -317,124 +317,12 @@ private struct VeterinaryConsultationView: View {
             if hasNextVisit { DatePicker("次に行く日", selection: $nextVisitDay, displayedComponents: .date) }
         } header: { Text("診察のあと") }
     }
+    // The body is split in parts so the type checker stays fast.
     var body: some View {
-        Form {
-            if let visit {
-                // The cat's name; its dates are in この子のこと below (11/7).
-                Section {
-                    Label(profiles.first(where: { $0.identifier == visit.catID.uuidString })?.displayName ?? visit.catName,
-                          systemImage: "cat").font(.headline)
-                    if visit.completedAt != nil { Text("診察済み").font(.caption).foregroundStyle(.secondary) }
-                    // The day the memo was started (11/8).
-                    if let started = visit.createdAt {
-                        Text("書き始めた日 \(DayText.japanese(VeterinaryVisit.day(started)))")
-                            .font(.caption).foregroundStyle(.secondary)
-                            .accessibilityIdentifier("vet-started-day")
-                    }
-                }
-                if looksFinished(visit) {
-                    Section {
-                        Text("前の診察は終わりましたか？")
-                        Button("診察済みにする", systemImage: "checkmark") { finishing = true }
-                            .disabled(changes).accessibilityIdentifier("vet-finish-previous")
-                    }
-                }
-                // What the owner came to write goes first; the cat's facts follow.
-                if visit.completedAt == nil {
-                    Section {
-                        VeterinaryLabeledField(title: "家で気付いたこと", example: "例：1日2回吐く・食欲が半分",
-                                               text: $observations, lines: 3...8, identifier: "vet-observations")
-                        Toggle("いつからかを記録", isOn: $hasStartedDay)
-                        if hasStartedDay { DatePicker("気付いた日", selection: $startedDay, displayedComponents: .date) }
-                        VeterinaryLabeledField(title: "先生に聞きたいこと", example: "例：ごはんを変えたほうがいいですか",
-                                               text: $questions, lines: 2...8, identifier: "vet-questions")
-                    } header: { Text("今回伝えること") }
-                } else {
-                    resultsSection
-                    Section("伝えたこと") {
-                        if !visit.observations.isEmpty { Text(visit.observations) }
-                        if let day = visit.startedOn { Text("気付いた日 \(DayText.japanese(day))") }
-                        if !visit.questions.isEmpty { Text(visit.questions) }
-                    }
-                }
-                ToolCatCareSection(
-                    title: "この子のこと",
-                    lines: CatCareSummary.veterinaryFields(
-                        CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString),
-                        household: catCareStore.state?.household),
-                    subject: profiles.first(where: { $0.identifier == visit.catID.uuidString }).map(CatCareSubject.profile)
-                        ?? .toolCat(id: visit.catID, name: visit.catName),
-                    identifier: "vet-cat-care-fields", editIdentifier: "vet-open-cat-care", profiles: profiles)
-                Section {
-                    ForEach(visit.orderedEntries) { entry in
-                        VStack(alignment: .leading, spacing: 8) {
-                            VeterinaryEntryPhoto(entry: entry, visitID: visit.id, store: store)
-                            if !entry.text.isEmpty { Text(entry.text) }
-                            if entry.familyRetained == true { Text("家族の手帳から外れた記録です").font(.caption).foregroundStyle(.secondary) }
-                            if let weight = entry.weight { PhotoMemoWeightLabel(weight: weight) }
-                            VeterinaryEntryDates(entry: entry)
-                            if visit.completedAt == nil {
-                                Button("診察メモから外す", role: .destructive) { removingEntry = entry }
-                                    .accessibilityIdentifier("vet-remove-\(entry.id.uuidString)")
-                            }
-                        }.padding(.vertical, 6)
-                    }
-                    if visit.completedAt == nil {
-                        Button("写真・メモを選ぶ", systemImage: "plus") { picking = true }
-                            .accessibilityIdentifier("vet-pick-records")
-                    }
-                } header: { Text("見せる記録 · \(visit.entries.count)件") }
-                if visit.completedAt == nil { resultsSection }
-                Section {
-                    ToolImportantInformation(text: "飼い主の記録をまとめたもので、医療の判断ではありません。様子がおかしいときは、迷わず動物病院に連絡してください。")
-                }
-                Section {
-                    // While the question above is shown, it is the one place to finish.
-                    if visit.completedAt == nil, !looksFinished(visit) {
-                        Button("診察済みにする", systemImage: "checkmark") { finishing = true }.disabled(changes)
-                    }
-                    Button("この診察メモを削除", role: .destructive) { deletesVisit = true }
-                }
-            }
-            // 11/7: a failure in red with a mark, not small gray text.
-            if let error {
-                Section {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
-                        .accessibilityIdentifier("vet-error")
-                }
-            }
-            if !pastVisits.isEmpty {
-                Section("これまでの診察メモ") {
-                    ForEach(pastVisits) { past in
-                        // 11/7: the memo's first words and a chevron, so the
-                        // rows can be told apart and read as ones that open.
-                        // 11/8: the day, then the start of what the vet said.
-                        Button { openPast?(past) } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(pastTitle(past))
-                                    if let summary = pastSummary(past) {
-                                        Text(summary)
-                                            .font(.subheadline)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                    }
-                                }
-                                Spacer(minLength: 8)
-                                Image(systemName: "chevron.right")
-                                    .font(.footnote.weight(.semibold))
-                                    .foregroundStyle(.tertiary)
-                                    .accessibilityHidden(true)
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .foregroundStyle(.primary)
-                        .accessibilityIdentifier("vet-past-\(past.id.uuidString)")
-                    }
-                }
-            }
-        }
+        dialogs(lifecycle(page))
+    }
+    private var page: some View {
+        Form { formContent }
         .navigationTitle(isPage ? "病院で見せる" : "診察メモ").navigationBarTitleDisplayMode(.inline)
         .announcesWhenShown(error)
         .toolbar {
@@ -442,32 +330,165 @@ private struct VeterinaryConsultationView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("閉じる") { close() }.disabled(busy) }
             }
         }
-        .safeAreaInset(edge: .bottom) {
-            VStack(spacing: 6) {
-                if error != nil, changes {
-                    Button("もう一度保存する") { Task { await save() } }.accessibilityIdentifier("vet-save")
-                }
-                // 11/7: a save that cannot go through is red with a mark, and
-                // says why 「先生に見せる」 cannot be pressed yet.
-                if tooLong {
-                    Label("500文字を超えている欄があります。短くすると保存され、先生に見せられます",
-                          systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption).foregroundStyle(.red)
-                } else if changes, error != nil {
-                    Label("保存できませんでした。保存できると、先生に見せられます",
-                          systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption).foregroundStyle(.red)
-                } else {
-                    Text(changes ? "保存中…" : "保存しました")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Button { showing = true } label: {
-                    Label("先生に見せる", systemImage: "stethoscope").frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("vet-show").disabled(changes || busy)
-            }.padding().frame(maxWidth: .infinity).background(.regularMaterial)
+        .safeAreaInset(edge: .bottom) { bottomBar }
+    }
+    private var bottomBar: some View {
+        VStack(spacing: 6) {
+            if error != nil, changes {
+                Button("もう一度保存する") { Task { await save() } }.accessibilityIdentifier("vet-save")
+            }
+            // 11/7: a save that cannot go through is red with a mark, and
+            // says why 「先生に見せる」 cannot be pressed yet.
+            if tooLong {
+                Label("500文字を超えている欄があります。短くすると保存され、先生に見せられます",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.red)
+            } else if changes, error != nil {
+                Label("保存できませんでした。保存できると、先生に見せられます",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.red)
+            } else {
+                Text(changes ? "保存中…" : "保存しました")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Button { showing = true } label: {
+                Label("先生に見せる", systemImage: "stethoscope").frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("vet-show").disabled(changes || busy)
+        }.padding().frame(maxWidth: .infinity).background(.regularMaterial)
+    }
+    @ViewBuilder private var formContent: some View {
+        if let visit {
+            headerSections(visit)
+            writingSections(visit)
+            recordSections(visit)
+            closingSections(visit)
         }
+        // 11/7: a failure in red with a mark, not small gray text.
+        if let error {
+            Section {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("vet-error")
+            }
+        }
+        if !pastVisits.isEmpty {
+            Section("これまでの診察メモ") {
+                ForEach(pastVisits) { past in
+                    // 11/7: the memo's first words and a chevron, so the
+                    // rows can be told apart and read as ones that open.
+                    // 11/8: the day, then the start of what the vet said.
+                    Button { openPast?(past) } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(pastTitle(past))
+                                if let summary = pastSummary(past) {
+                                    Text(summary)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.right")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                                .accessibilityHidden(true)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .foregroundStyle(.primary)
+                    .accessibilityIdentifier("vet-past-\(past.id.uuidString)")
+                }
+            }
+        }
+    }
+    @ViewBuilder private func headerSections(_ visit: VeterinaryVisit) -> some View {
+        // The cat's name; its dates are in この子のこと below (11/7).
+        Section {
+            Label(profiles.first(where: { $0.identifier == visit.catID.uuidString })?.displayName ?? visit.catName,
+                  systemImage: "cat").font(.headline)
+            if visit.completedAt != nil { Text("診察済み").font(.caption).foregroundStyle(.secondary) }
+            // The day the memo was started (11/8).
+            if let started = visit.createdAt {
+                Text("書き始めた日 \(DayText.japanese(VeterinaryVisit.day(started)))")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("vet-started-day")
+            }
+        }
+        if looksFinished(visit) {
+            Section {
+                Text("前の診察は終わりましたか？")
+                Button("診察済みにする", systemImage: "checkmark") { finishing = true }
+                    .disabled(changes).accessibilityIdentifier("vet-finish-previous")
+            }
+        }
+    }
+    @ViewBuilder private func writingSections(_ visit: VeterinaryVisit) -> some View {
+        // What the owner came to write goes first; the cat's facts follow.
+        if visit.completedAt == nil {
+            Section {
+                VeterinaryLabeledField(title: "家で気付いたこと", example: "例：1日2回吐く・食欲が半分",
+                                       text: $observations, lines: 3...8, identifier: "vet-observations")
+                Toggle("いつからかを記録", isOn: $hasStartedDay)
+                if hasStartedDay { DatePicker("気付いた日", selection: $startedDay, displayedComponents: .date) }
+                VeterinaryLabeledField(title: "先生に聞きたいこと", example: "例：ごはんを変えたほうがいいですか",
+                                       text: $questions, lines: 2...8, identifier: "vet-questions")
+            } header: { Text("今回伝えること") }
+        } else {
+            resultsSection
+            Section("伝えたこと") {
+                if !visit.observations.isEmpty { Text(visit.observations) }
+                if let day = visit.startedOn { Text("気付いた日 \(DayText.japanese(day))") }
+                if !visit.questions.isEmpty { Text(visit.questions) }
+            }
+        }
+    }
+    @ViewBuilder private func recordSections(_ visit: VeterinaryVisit) -> some View {
+        ToolCatCareSection(
+            title: "この子のこと",
+            lines: CatCareSummary.veterinaryFields(
+                CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString),
+                household: catCareStore.state?.household),
+            subject: profiles.first(where: { $0.identifier == visit.catID.uuidString }).map(CatCareSubject.profile)
+                ?? .toolCat(id: visit.catID, name: visit.catName),
+            identifier: "vet-cat-care-fields", editIdentifier: "vet-open-cat-care", profiles: profiles)
+        Section {
+            ForEach(visit.orderedEntries) { entry in
+                VStack(alignment: .leading, spacing: 8) {
+                    VeterinaryEntryPhoto(entry: entry, visitID: visit.id, store: store)
+                    if !entry.text.isEmpty { Text(entry.text) }
+                    if entry.familyRetained == true { Text("家族の手帳から外れた記録です").font(.caption).foregroundStyle(.secondary) }
+                    if let weight = entry.weight { PhotoMemoWeightLabel(weight: weight) }
+                    VeterinaryEntryDates(entry: entry)
+                    if visit.completedAt == nil {
+                        Button("診察メモから外す", role: .destructive) { removingEntry = entry }
+                            .accessibilityIdentifier("vet-remove-\(entry.id.uuidString)")
+                    }
+                }.padding(.vertical, 6)
+            }
+            if visit.completedAt == nil {
+                Button("写真・メモを選ぶ", systemImage: "plus") { picking = true }
+                    .accessibilityIdentifier("vet-pick-records")
+            }
+        } header: { Text("見せる記録 · \(visit.entries.count)件") }
+        if visit.completedAt == nil { resultsSection }
+    }
+    @ViewBuilder private func closingSections(_ visit: VeterinaryVisit) -> some View {
+        Section {
+            ToolImportantInformation(text: "飼い主の記録をまとめたもので、医療の判断ではありません。様子がおかしいときは、迷わず動物病院に連絡してください。")
+        }
+        Section {
+            // While the question above is shown, it is the one place to finish.
+            if visit.completedAt == nil, !looksFinished(visit) {
+                Button("診察済みにする", systemImage: "checkmark") { finishing = true }.disabled(changes)
+            }
+            Button("この診察メモを削除", role: .destructive) { deletesVisit = true }
+        }
+    }
+    private func lifecycle<Content: View>(_ content: Content) -> some View {
+        content
         .onChange(of: observations) { _, _ in scheduleSave() }
         .onChange(of: questions) { _, _ in scheduleSave() }
         .onChange(of: hasStartedDay) { _, _ in scheduleSave() }
@@ -497,6 +518,9 @@ private struct VeterinaryConsultationView: View {
             adopt(initialVisit)
             if initialVisit.completedAt == nil { chosen = initialRecord }
         }
+    }
+    private func dialogs<Content: View>(_ content: Content) -> some View {
+        content
         .sheet(isPresented: $picking, onDismiss: { chosen = pendingSource; pendingSource = nil }) {
             if let visit {
                 VeterinaryRecordPicker(visit: visit, photos: photos, profiles: profiles, noteStore: noteStore) { pendingSource = $0; picking = false }
