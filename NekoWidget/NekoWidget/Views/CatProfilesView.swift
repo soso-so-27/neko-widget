@@ -885,7 +885,6 @@ struct ToolCatStrip: View {
             }
             .frame(width: 48, height: 48)
             .clipShape(Circle())
-            .overlay(Circle().stroke(chosen ? Color.accentColor : Color.clear, lineWidth: 3))
             .padding(3)
             Text(cat.name)
                 .font(.caption.weight(chosen ? .bold : .regular))
@@ -893,7 +892,14 @@ struct ToolCatStrip: View {
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
         }
+        .padding(.vertical, 4)
         .frame(width: 72)
+        // 11/7: the chosen cat sits on a filled card, not a blue ring; the
+        // blue ring on the ツール tab means how much この子のこと is filled in.
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(chosen ? Color.primary.opacity(0.1) : Color.clear)
+        )
         .contentShape(Rectangle())
     }
 }

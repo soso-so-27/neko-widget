@@ -1737,7 +1737,13 @@ struct FamilyNotebookButton: View {
         Button { shows = true } label: {
             Group {
                 if let sharedNames {
-                    FamilyFaces(names: sharedNames)
+                    // 11/7: the words stay beside the faces, so it still says
+                    // what the button opens.
+                    HStack(spacing: 6) {
+                        FamilyFaces(names: sharedNames)
+                        Text("家族の手帳")
+                            .accessibilityHidden(true)  // the faces already say it
+                    }
                 } else {
                     // Words beside the icon: a bare person icon was not found (1031).
                     // One name for it everywhere: 家族の手帳 (11/7).
@@ -1746,32 +1752,51 @@ struct FamilyNotebookButton: View {
                 }
             }
                 .overlay(alignment: .topTrailing) {
+                    // 11/7: a mark with a symbol, not a 7pt dot of color alone.
                     if paused {
-                        Circle().fill(Color.orange).frame(width: 7, height: 7).offset(x: 3, y: -3)
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.caption.weight(.bold))
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(Color.white, Color.orange)
+                            .background(Circle().fill(Color(.systemBackground)).padding(-1))
+                            .offset(x: 6, y: -6)
                     } else if model.hasNewFromFamily {
-                        Circle().fill(Color.accentColor).frame(width: 7, height: 7).offset(x: 3, y: -3)
+                        Circle().fill(Color.accentColor)
+                            .frame(width: 10, height: 10)
+                            .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 1.5))
+                            .offset(x: 4, y: -4)
                     }
                 }
         }
-        .accessibilityValue(paused ? "共有が止まっています" : "")
+        .accessibilityValue(paused ? "共有が止まっています" : model.hasNewFromFamily ? "新しい記録があります" : "")
         .accessibilityIdentifier(accessibilityIdentifier)
         .sheet(isPresented: $shows) { FamilyNotebookView() }
     }
 }
 
-/// The family on a shared cat's page: the first letter of each name in a small
-/// circle, overlapped, at most three and then 「+N」. No sentence (11/6).
+/// The family on a shared cat's page: the first two letters of each name in a
+/// small circle, overlapped, at most three and then 「+N」. No sentence (11/6).
+/// 11/7: two letters (「お母」「お父」 were both 「お」) on dark fills that
+/// white text reads well on (it was white on orange).
 struct FamilyFaces: View {
     let names: [String]
-    private static let tints: [Color] = [.orange, .teal, .indigo, .pink]
+    private static let tints: [Color] = [
+        Color(red: 0.22, green: 0.29, blue: 0.53),  // navy
+        Color(red: 0.08, green: 0.40, blue: 0.38),  // deep teal
+        Color(red: 0.45, green: 0.22, blue: 0.43),  // plum
+        Color(red: 0.40, green: 0.31, blue: 0.20),  // brown
+    ]
 
     var body: some View {
         HStack(spacing: -8) {
             ForEach(Array(names.prefix(3).enumerated()), id: \.offset) { index, name in
-                Text(String(name.prefix(1)))
-                    .font(.caption.weight(.bold))
+                Text(String(name.prefix(2)))
+                    .font(.caption2.weight(.bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
                     .foregroundStyle(.white)
-                    .frame(width: 28, height: 28)
+                    .padding(.horizontal, 2)
+                    .frame(width: 30, height: 30)
                     .background(Circle().fill(Self.tints[index % Self.tints.count]))
                     .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
             }
