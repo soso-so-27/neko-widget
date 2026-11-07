@@ -172,14 +172,15 @@ struct CareHandoffView: View {
                                  openFirst()
                              })
     }
-    /// The one request for everyone being handed over: who, when, how to reach you.
+    /// The one request for everyone being handed over: who, when, what.
+    /// 11/7: contacts are written in 「この子のこと」 and shown in the cat's box.
     private var householdSection: some View {
         Section {
             NavigationLink { CareRequestEditor(store: store) } label: {
                 Label {
                     VStack(alignment: .leading, spacing: 5) {
                         Text("今回のお願い").font(.headline)
-                        Text("相手・期間・連絡先").font(.subheadline).foregroundStyle(.secondary)
+                        Text("相手・期間・お願い").font(.subheadline).foregroundStyle(.secondary)
                     }
                 } icon: { Image(systemName: "calendar") }
             }.accessibilityIdentifier("care-request-open")
@@ -272,10 +273,14 @@ private struct CareCatEditor: View {
     @ViewBuilder private func catCareSection(_ cat: CareCat) -> some View {
         let care = CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
         let health = CatCareSummary.careHandoffHealthLines(care, legacy: cat).map { ($0.0 + "（選んだときだけ載ります）", $0.1) }
+        // 11/7: contacts and the vet are written only in 「この子のこと」; shown here
+        // as they are handed over (the older entry here only until that is set).
+        let contacts = CareHandoffDisclosure.contactFields(plan: store.plan, household: catCare.state?.household)
+            .map { ($0.0 + "（選んだときだけ載ります）", $0.1) }
         let subject: CatCareSubject = profiles.first(where: { $0.identifier == cat.profileID }).map(CatCareSubject.profile)
             ?? .toolCat(id: cat.toolCatID ?? cat.id, name: cat.name)
         ToolCatCareSection(title: "この子のこと",
-                           lines: CatCareSummary.careHandoffLines(care, legacy: cat) + health, subject: subject,
+                           lines: CatCareSummary.careHandoffLines(care, legacy: cat) + health + contacts, subject: subject,
                            identifier: "care-cat-care-fields", editIdentifier: "care-open-cat-care", profiles: profiles)
     }
 
@@ -334,7 +339,6 @@ private struct CareCatEditor: View {
                         CareField(label: "期間", example: "例：金曜の夜まで", identifier: "care-family-period", text: contextText(\.period, fallback: context.period))
                         CareField(label: "今回のお願い", example: "例：終わったら写真を1枚", identifier: "care-family-request", text: contextText(\.request, fallback: context.request))
                     }
-                    Section { NavigationLink("連絡先") { CareRequestEditor(store: store, showsRequest: false) } }
                 } else if let householdSection { householdSection }
                 if cat.familyDetached == true { Text("家族の手帳から外れたメモです。").font(.footnote).foregroundStyle(.secondary) }
                 Section {
@@ -379,41 +383,21 @@ private struct CareCatEditor: View {
     }
 }
 
+/// This time's request only. 11/7: the contacts and the vet moved out: they are
+/// written in 「この子のこと」 (one place) and shown read-only in the cat's box.
 private struct CareRequestEditor: View {
     @ObservedObject var store: CareHandoffStore
-    var showsRequest = true
-    @ObservedObject private var catCare = CatCareStore.shared
-    /// 「この子のこと」's household value; the older entry here only until it is set.
-    private func household(_ key: WritableKeyPath<CatCareHousehold, CatCareStamped<String>?>,
-                           legacy: String) -> Binding<String> {
-        Binding(get: { catCare.state?.household[keyPath: key] == nil ? legacy : catCare.householdText(key) },
-                set: { catCare.setHouseholdText($0, key) })
-    }
     private func text(_ key: WritableKeyPath<CareHandoffPlan, String>) -> Binding<String> {
         Binding(get: { store.plan[keyPath: key] }, set: { new in store.update { $0[keyPath: key] = new } })
     }
     var body: some View {
         Form {
-            if showsRequest {
             Section {
                 CareField(label: "お願いする相手", example: "例：お母さん", identifier: "care-recipient", text: text(\.recipient))
                 CareField(label: "期間", example: "例：10月5日 夜〜10月7日 朝", identifier: "care-period", text: text(\.period))
                 CareField(label: "今回のお願い", example: "例：お世話が終わったら写真を1枚送ってください", identifier: "care-request", text: text(\.request))
             } footer: { Text("住所や鍵の番号は、別の方法で伝えてください。") }
-            }
-            Section {
-                CareField(label: "飼い主の連絡先", example: "名前と電話番号など", identifier: "care-contact",
-                          text: household(\.ownerContact, legacy: store.plan.contact))
-                CareField(label: "つながらないときの連絡先", example: "連絡できる人の名前と電話番号", identifier: "care-backup",
-                          text: household(\.backupContact, legacy: store.plan.backupContact))
-                CareField(label: "かかりつけの動物病院", example: "病院の名前", identifier: "care-vet",
-                          text: Binding(get: { catCare.vet.name.isEmpty && catCare.state?.household.vet == nil
-                                               ? store.plan.veterinarian : catCare.vet.name },
-                                        set: { catCare.setVet(name: $0) }))
-                CareField(label: "病院の電話", example: "例：03-0000-0000", identifier: "care-vet-phone",
-                          text: Binding(get: { catCare.vet.phone }, set: { catCare.setVet(phone: $0) }))
-            } header: { Text("連絡が必要なとき") }
-        }.navigationTitle(showsRequest ? "今回のお願い" : "連絡先").navigationBarTitleDisplayMode(.inline)
+        }.navigationTitle("今回のお願い").navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom) { CareSaveNotice(store: store) }
     }

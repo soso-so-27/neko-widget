@@ -845,7 +845,8 @@ private struct EvacuationDestinationsView: View {
                     CatCareStore.shared.state?.household.meetingPlace == nil
                         ? store.plan.familyMeetingMemo : CatCareStore.shared.householdText(\.meetingPlace)
                 }, set: { new in
-                    // One place: 「この子のこと」's household, read by every tool.
+                    // 11/7: written only here (「この子のこと」 no longer has it); kept in
+                    // the shared household so every tool reads the same value.
                     CatCareStore.shared.setHouseholdText(new, \.meetingPlace)
                     store.update { $0.familyMeetingMemo = new }
                 }), axis: .vertical)
