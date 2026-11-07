@@ -75,7 +75,8 @@ struct NekoWidgetEntry: TimelineEntry {
             return CloudyWindowAlbumRoute(selectionID: selection.id).url
         }
         if let groupWindowID = GroupWidgetCache.windowID(fromSourceID: photoSourceIdentifier) {
-            return GroupWidgetCache.openURL(windowID: groupWindowID)
+            // 11/7: with the shown photo, so the app opens that photo.
+            return GroupWidgetCache.openURL(windowID: groupWindowID, photoID: groupWindowPhoto?.photoID)
         }
         if let windowID = PublicWindowDefinition.windowID(from: photoSourceIdentifier) {
             return OfficialWindowRoute(windowID: windowID, photoID: officialPhoto?.id).url

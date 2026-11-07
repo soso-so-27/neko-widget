@@ -203,6 +203,12 @@ final class GroupWindowScreenModel: ObservableObject {
         if rememberedMe == nil { rememberedMe = await store.myParticipantID(windowID: windowID) }
     }
 
+    /// Back from the members screen, where a hidden person may have been
+    /// shown again (11/7, W10): the kept photos as they are now.
+    func reloadStored() async {
+        entries = await store.entries(windowID: windowID)
+    }
+
     /// Reads the window, keeps every new photo on this iPhone, then tells the
     /// relay it arrived. A failed step keeps what is already shown.
     func sync() async { await sync(background: false) }
@@ -234,9 +240,15 @@ final class GroupWindowScreenModel: ObservableObject {
             await store.saveHearts(hearts, windowID: windowID)
             var waiting: GroupPhotoModeration.Verdict?
             await GroupSafety.shared.loadRecords(windowID: windowID)
+            var triedNew = false
+            defer {
+                // The まど tab's badge and the list's new marks read again (11/7, W1).
+                if triedNew { NotificationCenter.default.post(name: .groupWindowNewPhotosDidChange, object: nil) }
+            }
             for photo in photos {
                 try Task.checkCancellation()
                 guard !(await store.contains(photoID: photo.id, windowID: windowID)) else { continue }
+                triedNew = true
                 if let deferred = await receive(photo, me: latest.myParticipantID), waiting != .checkOff {
                     waiting = deferred
                 }
@@ -699,11 +711,34 @@ struct GroupWindowScreen: View {
     /// readable from here, as the report sheet promises (11/7).
     @State private var showsFormerReports = false
     @State private var confirmsDiscardFailedDelivery = false
+    /// 11/7 (W2): the creator continues a paused window from its own card.
+    @State private var showsPlusOffer = false
+    @State private var showsRestore = false
+    @Environment(\.membershipAccess) private var membershipAccess
+    /// 11/7 (W4): the home-screen photo this page was opened for, shown once.
+    private let startPhotoID: String?
+    @State private var showedStartPhoto = false
     @Environment(\.dismiss) private var dismiss
 
-    init(client: any GroupWindowMediaClient, windowID: String, formerName: String? = nil) {
+    init(client: any GroupWindowMediaClient, windowID: String, formerName: String? = nil,
+         startPhotoID: String? = nil) {
         _model = StateObject(wrappedValue: GroupWindowScreenModel(
             client: client, windowID: windowID, formerName: formerName))
+        self.startPhotoID = startPhotoID
+    }
+
+    /// What this page showed counts as seen for the new marks (W1). Called
+    /// after a read and when the page goes away, never while scrolling (11/7).
+    private func markSeen() {
+        GroupWindowSeen.markSeen(model.entries, windowID: model.windowID)
+    }
+
+    /// The photo a home-screen tap asked for opens once it is kept here (W4, 11/7).
+    private func openStartPhoto(in entries: [GroupWindowLocalPhotoStore.Entry]) {
+        guard !showedStartPhoto, let startPhotoID,
+              let entry = entries.first(where: { $0.id == startPhotoID }) else { return }
+        showedStartPhoto = true
+        openedEntry = entry
     }
 
     /// After leaving from the members screen: back to the list. The members
@@ -745,8 +780,10 @@ struct GroupWindowScreen: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                // One name for a window this iPhone is no longer in: 「前のまど」,
+                // as in the list (11/7).
                 if model.isFormer {
-                    Label("このまどには、もう入っていません。",
+                    Label("前のまどです。届いた写真は見られます。",
                           systemImage: "person.2.slash")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -754,7 +791,7 @@ struct GroupWindowScreen: View {
                         .accessibilityIdentifier("group-window-former")
                 }
                 if model.isGone {
-                    Label("このまどは終わったか、メンバーから外れました。届いた写真は、このiPhoneに残っています。",
+                    Label("前のまどになりました。届いた写真は見られます。",
                           systemImage: "person.2.slash")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -831,7 +868,9 @@ struct GroupWindowScreen: View {
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                if model.isFormer {
+                // A window that ended or took this iPhone out while open gets
+                // the 「前のまど」 menu, not a 「メンバー」 that would fail (11/7).
+                if model.isFormer || model.isGone {
                     Menu {
                         if !(GroupSafety.shared.records[model.windowID] ?? []).isEmpty {
                             Button("通報への返答", systemImage: "exclamationmark.bubble") {
@@ -850,7 +889,7 @@ struct GroupWindowScreen: View {
                         Label("メンバー", systemImage: "person.2")
                             .labelStyle(.titleAndIcon)
                     }
-                    .accessibilityLabel("メンバーと招待")
+                    .accessibilityLabel("メンバー")
                     .accessibilityIdentifier("group-window-open-members")
                 }
             }
@@ -861,7 +900,10 @@ struct GroupWindowScreen: View {
             Button("消す", role: .destructive) {
                 Task {
                     await model.forgetFormerWindow()
-                    dismiss()
+                    NotificationCenter.default.post(name: .groupWindowListNeedsReload, object: nil)
+                    // Opened from a Widget, this page sits on the list's own route (11/7).
+                    let navigation = GroupWindowListNavigation.shared
+                    if navigation.openedWindow?.windowID == model.windowID { navigation.returnToList() } else { dismiss() }
                 }
             }
             Button("戻る", role: .cancel) {}
@@ -895,11 +937,18 @@ struct GroupWindowScreen: View {
             await GroupSafety.shared.loadRecords(windowID: model.windowID)
             await model.showStored()
             await model.sync()
+            markSeen()
 #if DEBUG
             if GroupWindowUIFixture.showsFailedDelivery { model.showFixtureFailedDelivery() }
 #endif
         }
-        .refreshable { await model.sync() }
+        .refreshable { await model.sync(); markSeen() }
+        .onChange(of: model.entries) { _, entries in openStartPhoto(in: entries) }
+        .onAppear { Task { await model.reloadStored() } }
+        .onDisappear { markSeen() }
+        .modifier(GroupWindowContinueSheets(showsPlusOffer: $showsPlusOffer, showsRestore: $showsRestore) {
+            Task { await model.sync() }
+        })
         .onChange(of: pickedItem) { _, item in
             guard let item else { return }
             pickedItem = nil
@@ -925,13 +974,25 @@ struct GroupWindowScreen: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            NavigationLink { membersScreen } label: {
-                Text(GroupWindowPresentation.isMyWindow(window)
-                     ? "このまどを続ける"
-                     : "\(GroupWindowPresentation.pausedOwnerPhrase(window))がPlusを続けると再開します")
-                    .frame(maxWidth: .infinity, minHeight: 44)
+            if GroupWindowPresentation.isMyWindow(window) {
+                // 11/7 (W2): Plus (or restore) opens from here; the members
+                // screen asked for the same press again.
+                let restores = membershipAccess.hasPersonalPlus()
+                Button {
+                    if restores { showsRestore = true } else { showsPlusOffer = true }
+                } label: {
+                    Text(restores ? "購入を復元" : "このまどを続ける")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier(restores ? "group-window-screen-restore-plus" : "group-window-screen-continue-plus")
+            } else {
+                // A member can do nothing here: one sentence, not a button.
+                Text("\(GroupWindowPresentation.pausedOwnerPhrase(window))がPlusを続けると、また届くようになります。")
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .buttonStyle(.bordered)
         }
         .padding(14)
         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
@@ -1023,6 +1084,32 @@ struct GroupWindowScreen: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(.bar)
+    }
+}
+
+/// 「このまどを続ける」 on a paused window's own card (11/7, W2): the one Plus
+/// screen with the continue-window context, or restore when this iPhone
+/// already has Plus. Kept apart so the window's body stays quick to compile.
+private struct GroupWindowContinueSheets: ViewModifier {
+    @Binding var showsPlusOffer: Bool
+    @Binding var showsRestore: Bool
+    let reload: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(isPresented: $showsPlusOffer, onDismiss: refresh) {
+                MembershipOfferSheet(model: .live(), context: .continueWindow) { _ in
+                    showsPlusOffer = false
+                }
+            }
+            .sheet(isPresented: $showsRestore, onDismiss: refresh) {
+                MembershipRestoreSheet()
+            }
+    }
+
+    private func refresh() {
+        NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
+        reload()
     }
 }
 
@@ -1168,8 +1255,24 @@ struct GroupLibraryDeliverySheet: View {
                     }
                     .accessibilityIdentifier("group-library-delivery-failed")
                 } else if windows.isEmpty {
-                    ContentUnavailableView("まだまどがありません", systemImage: "window.vertical.closed",
-                        description: Text("まどタブで作るか、招待リンクから参加できます。"))
+                    // 11/7 (W7): the way on, not only words. Back here, the
+                    // list reads again so a window just made can be chosen.
+                    ContentUnavailableView {
+                        Label("まだまどがありません", systemImage: "window.vertical.closed")
+                    } description: {
+                        Text("まどを作るか、招待リンクから参加すると届けられます。")
+                    } actions: {
+                        NavigationLink {
+                            GroupWindowCreateScreen(client: client)
+                        } label: {
+                            Label("まどを作る", systemImage: "plus")
+                                .font(.headline)
+                                .frame(minHeight: 44)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("group-library-delivery-create")
+                    }
+                    .onAppear { Task { await list.load() } }
                 } else {
                     List(windows) { window in
                         let paused = GroupWindowPresentation.isPaused(window)
@@ -1600,8 +1703,12 @@ private struct GroupPhotoPage: View {
     var body: some View {
         Group {
             if safety.hasReported(entry.id, in: model.windowID) {
+                // Where the answers really are: 「メンバー」, or 「…」 on a
+                // window this iPhone is no longer in (11/7).
                 ContentUnavailableView("通報した写真", systemImage: "eye.slash",
-                    description: Text("このiPhoneでは表示しません。結果は、まどの「メンバー」の「通報への返答」でお知らせします。"))
+                    description: Text(model.isFormer || model.isGone
+                        ? "このiPhoneでは表示しません。結果は、まどの右上の「…」→「通報への返答」でお知らせします。"
+                        : "このiPhoneでは表示しません。結果は、まどの「メンバー」→「通報への返答」でお知らせします。"))
             } else if entry.isHidden {
                 ContentUnavailableView("この写真は表示しません", systemImage: "eye.slash",
                     description: Text("センシティブな内容が含まれている可能性があります。右上の「…」から消せます。"))
@@ -1656,14 +1763,19 @@ final class GroupWindowOpenInbox: ObservableObject {
     }
     func dismissCreatePrompt() { showsCreatePrompt = false }
 
+    /// The home-screen photo to show once its window is open (11/7). Set
+    /// with `pendingWindowID`, read by the list before it consumes it.
+    private(set) var pendingPhotoID: String?
+
     /// The list first, then this one window on it, so Back goes to the list
     /// and not to what was open before (11/6).
-    func open(windowID: String) {
+    func open(windowID: String, photoID: String? = nil) {
         GroupWindowListNavigation.shared.openedWindow = nil
         listGeneration = UUID()
+        pendingPhotoID = photoID
         pendingWindowID = windowID
     }
-    func consume() { pendingWindowID = nil }
+    func consume() { pendingWindowID = nil; pendingPhotoID = nil }
 }
 
 /// The window page over the まど list. Pushed from the list's root, outside
@@ -1680,6 +1792,10 @@ final class GroupWindowListNavigation: ObservableObject {
 
 struct GroupWindowRoute: Hashable {
     let windowID: String
+    /// 11/7: a home-screen photo to show on top of the window, when kept here.
+    var photoID: String? = nil
+    /// 11/7: set for a window this iPhone is no longer in (「前のまど」).
+    var formerName: String? = nil
 }
 
 // MARK: - The list in the まど tab
@@ -1935,6 +2051,24 @@ extension GroupWidgetCache {
     }
 }
 
+/// The system share sheet for an invitation, opened by code so
+/// 「招待リンクを送る」 can renew an old link and share the new one in one
+/// press (11/7, W3).
+/// It only hands the items over; nothing is drawn or kept.
+struct GroupInvitationShareSheet: UIViewControllerRepresentable {
+    let item: String
+    let message: String
+    let onFinish: () -> Void
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: [message, item], applicationActivities: nil)
+        controller.completionWithItemsHandler = { _, _, _, _ in onFinish() }
+        return controller
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
 /// While a press is being done, the button says so instead of only graying out (11/6).
 struct WorkingLabel: View {
     let title: String
@@ -2119,22 +2253,34 @@ struct GroupWindowListSection: View {
             await loadFormerWindows()
         }
         .onReceive(NotificationCenter.default.publisher(for: .groupWindowListNeedsReload)) { _ in
-            Task { await model.load() }
+            // 「前のまど」 too, so a window just left or forgotten shows where it now is (11/7).
+            Task { await model.load(); await loadFormerWindows() }
         }
         .task(id: openInbox.pendingWindowID) {
             guard let requested = openInbox.pendingWindowID else { return }
+            // 11/7: the photo the home screen showed opens on top of its window.
+            let photoID = openInbox.pendingPhotoID
             openInbox.consume()
             if !model.windows.contains(where: { $0.id == requested }) { await model.load() }
             // Open only a window this iPhone is still a member of.
             if model.windows.contains(where: { $0.id == requested }) {
-                GroupWindowListNavigation.shared.openedWindow = GroupWindowRoute(windowID: requested)
+                GroupWindowListNavigation.shared.openedWindow = GroupWindowRoute(windowID: requested, photoID: photoID)
             } else if model.hasLoaded, model.message == nil {
-                // A Widget of a window left or ended: say so, once (E1).
-                showsLeftWindowNotice = true
+                // A Widget of a window left or ended: its 「前のまど」 page with
+                // the photos kept here (11/7). Nothing kept: say so, once (E1).
+                let store = GroupWindowLocalPhotoStore.shared
+                let former = await store.knownWindows().first { $0.id == requested }
+                let kept = await store.entries(windowID: requested)
+                if let former, !kept.isEmpty {
+                    GroupWindowListNavigation.shared.openedWindow = GroupWindowRoute(
+                        windowID: requested, photoID: photoID, formerName: former.name)
+                } else {
+                    showsLeftWindowNotice = true
+                }
             } else if model.message != nil, GroupWidgetCache.entry(windowID: requested) != nil {
                 // Offline: open what this iPhone kept; the window reads again
                 // when it can (11/7: the tap did nothing).
-                GroupWindowListNavigation.shared.openedWindow = GroupWindowRoute(windowID: requested)
+                GroupWindowListNavigation.shared.openedWindow = GroupWindowRoute(windowID: requested, photoID: photoID)
             }
         }
         .alert("このまどはもうありません", isPresented: $showsLeftWindowNotice) {
@@ -2194,6 +2340,8 @@ private struct GroupWindowCard: View {
     let window: GroupWindow
     @State private var cover: UIImage?
     @State private var senderName: String?
+    /// 11/7 (W1): photos kept here that came after this window was last open.
+    @State private var hasNew = false
 
     var body: some View {
         let paused = GroupWindowPresentation.isPaused(window)
@@ -2232,11 +2380,32 @@ private struct GroupWindowCard: View {
             }
             .padding(14)
         }
+        .overlay(alignment: .topTrailing) {
+            if hasNew {
+                Text("新着")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.red, in: Capsule())
+                    .padding(10)
+                    .accessibilityHidden(true)
+            }
+        }
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(window.name)、\(paused ? "止まっています" : GroupWindowPresentation.memberCountText(window))")
-        .task(id: window.id) { await loadCover() }
+        .accessibilityLabel("\(window.name)、\(paused ? "止まっています" : GroupWindowPresentation.memberCountText(window))\(hasNew ? "、新着あり" : "")")
+        .task(id: window.id) { await loadCover(); await loadNewMark() }
+        .onReceive(NotificationCenter.default.publisher(for: .groupWindowNewPhotosDidChange)) { _ in
+            Task { await loadNewMark() }
+        }
+    }
+
+    /// Only what this iPhone keeps; nothing is fetched (11/7).
+    private func loadNewMark() async {
+        let entries = await GroupWindowLocalPhotoStore.shared.entries(windowID: window.id)
+        hasNew = GroupWindowSeen.hasNew(entries, windowID: window.id)
     }
 
     private func loadCover() async {
@@ -2265,6 +2434,12 @@ private struct KnownWindowCard: View {
     let subtitle: String
     @State private var cover: UIImage?
 
+    /// A window known to be paused says so offline too, as a loaded card does (11/7).
+    private var detail: String {
+        [entry.isPaused ? "止まっています" : nil, subtitle.isEmpty ? nil : subtitle]
+            .compactMap { $0 }.joined(separator: "・")
+    }
+
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             Color(uiColor: .secondarySystemGroupedBackground)
@@ -2289,16 +2464,16 @@ private struct KnownWindowCard: View {
                 }
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.windowName).font(.title3.bold())
-                if !subtitle.isEmpty { Text(subtitle).font(.footnote) }
+                if !detail.isEmpty { Text(detail).font(.footnote) }
             }
-            .foregroundStyle(cover != nil ? Color.white : Color.primary)
+            .foregroundStyle(cover != nil ? Color.white : entry.isPaused ? Color.orange : Color.primary)
             .shadow(color: cover != nil ? .black.opacity(0.5) : .clear, radius: 4, y: 1)
             .padding(14)
         }
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(entry.windowName)
+        .accessibilityLabel(detail.isEmpty ? entry.windowName : "\(entry.windowName)、\(detail)")
         .task(id: entry.windowID) {
             guard let url = GroupWidgetCache.imageURL(for: entry) else { return }
             cover = await Task.detached(priority: .userInitiated) { GroupPhotoDecoder.image(at: url, maxPixel: 800) }.value
@@ -2368,17 +2543,27 @@ struct GroupHiddenMembersView: View {
     }
 
     private func restore(_ item: Row) async {
-        if item.member.blocked == true {
+        _ = await Self.restore(item.member, windowID: item.window.id)
+        windows = await GroupWindowLocalPhotoStore.shared.knownWindows()
+    }
+
+    /// Shows this person's photos again; a block is lifted on the relay
+    /// first. False when the block could not be lifted (its message is on
+    /// GroupSafety). Shared by 設定 and the members screen (11/7, W10).
+    @MainActor
+    static func restore(_ member: GroupWindowLocalPhotoStore.HiddenMember, windowID: String) async -> Bool {
+        let safety = GroupSafety.shared
+        if member.blocked == true {
             let service = safety.service
-            let lifted = await safety.run(windowID: item.window.id) {
-                try await service.setBlock(windowID: item.window.id, participantID: item.member.id,
+            let lifted = await safety.run(windowID: windowID) {
+                try await service.setBlock(windowID: windowID, participantID: member.id,
                                            active: false, operationID: UUID())
             }
-            guard lifted != nil else { return }
+            guard lifted != nil else { return false }
         }
-        await GroupWindowLocalPhotoStore.shared.unhide(memberID: item.member.id, windowID: item.window.id)
-        await GroupWidgetCache.refreshKept(windowID: item.window.id)
-        windows = await GroupWindowLocalPhotoStore.shared.knownWindows()
+        await GroupWindowLocalPhotoStore.shared.unhide(memberID: member.id, windowID: windowID)
+        await GroupWidgetCache.refreshKept(windowID: windowID)
+        return true
     }
 }
 
@@ -2623,7 +2808,8 @@ struct GroupReportSheet: View {
                         Label("通報しました", systemImage: "checkmark.circle.fill")
                             .font(.headline)
                     } footer: {
-                        Text("この写真は、このiPhoneではもう表示されません。運営が確かめて、結果をまどの「メンバー」→「通報への返答」でお知らせします。")
+                        // Neutral: a window left later has it under 「…」, not 「メンバー」 (11/7).
+                        Text("この写真は、このiPhoneではもう表示されません。運営が確かめて、結果をまどの画面の「通報への返答」でお知らせします。")
                     }
                     if let number = record.receiptNumber {
                         Section {

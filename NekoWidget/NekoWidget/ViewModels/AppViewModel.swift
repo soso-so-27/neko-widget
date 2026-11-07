@@ -1928,7 +1928,7 @@ final class AppViewModel: ObservableObject {
     func handleURL(_ url: URL) {
         // A group window's home-screen photo opens that window in the まど tab.
         if let groupWindowID = GroupWidgetCache.windowID(fromOpenURL: url) {
-            GroupWindowOpenInbox.shared.open(windowID: groupWindowID)
+            GroupWindowOpenInbox.shared.open(windowID: groupWindowID, photoID: GroupWidgetCache.photoID(fromOpenURL: url))
             SharedLog.app.info("deeplink", "Opened group window from Widget")
             return
         }

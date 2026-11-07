@@ -3584,7 +3584,11 @@ class ReviewCTests(unittest.TestCase):
         self.assertNotIn("このまどから抜けました", window)
         self.assertNotIn("抜けたまどです", window)
         self.assertIn("} else if model.message != nil, GroupWidgetCache.entry(windowID: requested) != nil {", window)
-        self.assertIn("await GroupWidgetCache.refreshKept(windowID: item.window.id)", window)
+        # 11/7: one restore for 設定 and the members screen; it still refreshes the Widget.
+        restore = section(window, "static func restore(_ member: GroupWindowLocalPhotoStore.HiddenMember, windowID: String)",
+                          "/// 設定「まどと家族の手帳から抜ける」")
+        self.assertIn("await GroupWidgetCache.refreshKept(windowID: windowID)", restore)
+        self.assertIn("_ = await Self.restore(item.member, windowID: item.window.id)", window)
         tab = source("NekoWidget/Views/MainTabView.swift")
         group_open = section(tab, ".onChange(of: groupWindowOpenInbox.pendingWindowID, initial: true)", ".onChange(of: photosTabInbox.pending")
         self.assertIn("relatedPhotoRoute = nil", group_open)
@@ -3736,12 +3740,16 @@ class GroupWidgetOpenTests(unittest.TestCase):
         parse = section(cache, "static func windowID(fromOpenURL url: URL)", "// MARK: Reading")
         self.assertIn("items.count == 1", parse)
         self.assertIn("isValidID(windowID)", parse)
+        # 11/7: the shown photo may ride along, under its own name and the same ID rule.
+        self.assertIn('if let photoID, isValidID(photoID) { items.append(URLQueryItem(name: "photo", value: photoID)) }', open_url)
+        self.assertIn('items[1].name == "photo", let photoID = items[1].value, isValidID(photoID)', parse)
         entry = source("NekoWidgetWidget/NekoWidgetEntry.swift")
         photo_url = section(entry, "var photoURL: URL? {", "var memoryActionURL: URL?")
         self.assertLess(photo_url.index("GroupWidgetCache.windowID(fromSourceID:"), photo_url.index("PublicWindowDefinition.windowID"))
+        self.assertIn("GroupWidgetCache.openURL(windowID: groupWindowID, photoID: groupWindowPhoto?.photoID)", photo_url)
         app = source("NekoWidget/ViewModels/AppViewModel.swift")
         hook = section(app, "func handleURL(_ url: URL) {", "guard let link = DeepLink(url: url) else {")
-        self.assertIn("GroupWindowOpenInbox.shared.open(windowID: groupWindowID)", hook)
+        self.assertIn("GroupWindowOpenInbox.shared.open(windowID: groupWindowID, photoID: GroupWidgetCache.photoID(fromOpenURL: url))", hook)
         screen = source("NekoWidget/Views/GroupWindowView.swift")
         self.assertIn("if model.windows.contains(where: { $0.id == requested }) {", screen)
         tab = source("NekoWidget/Views/MainTabView.swift")
@@ -4048,7 +4056,7 @@ class NavigationAfterActionTests(unittest.TestCase):
     def test_a_window_opened_from_anywhere_sits_on_the_list(self) -> None:
         window = source("NekoWidget/Views/GroupWindowView.swift")
         inbox = section(window, "final class GroupWindowOpenInbox", "// MARK: - The list in the まど tab")
-        opening = section(inbox, "func open(windowID: String) {", "func consume()")
+        opening = section(inbox, "func open(windowID: String, photoID: String? = nil) {", "func consume()")
         self.assertLess(opening.index("GroupWindowListNavigation.shared.openedWindow = nil"), opening.index("pendingWindowID = windowID"))
         self.assertLess(opening.index("listGeneration = UUID()"), opening.index("pendingWindowID = windowID"))
         self.assertIn("GroupWindowListNavigation.shared.openedWindow = nil", section(inbox, "func showCreateFromShare()", "func dismissCreatePrompt()"))
@@ -4060,7 +4068,9 @@ class NavigationAfterActionTests(unittest.TestCase):
         listing = section(window, "struct GroupWindowListSection: View {", "private func row(")
         self.assertNotIn("navigationDestination", listing)
         self.assertNotIn("GroupWindowScreen(client: model.client, windowID: window.id)", listing)
-        self.assertIn("GroupWindowListNavigation.shared.openedWindow = GroupWindowRoute(windowID: requested)", listing)
+        # 11/7: with the home-screen photo, and a window no longer listed opens as 「前のまど」.
+        self.assertIn("GroupWindowListNavigation.shared.openedWindow = GroupWindowRoute(windowID: requested, photoID: photoID)", listing)
+        self.assertIn("windowID: requested, photoID: photoID, formerName: former.name)", listing)
 
     def test_leaving_a_window_returns_to_the_list(self) -> None:
         window = source("NekoWidget/Views/GroupWindowView.swift")

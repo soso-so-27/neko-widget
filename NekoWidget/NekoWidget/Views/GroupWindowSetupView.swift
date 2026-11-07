@@ -427,11 +427,20 @@ struct GroupWindowMembersView: View {
     /// 「もう一度」 was pressed and its load is running. Kept here, not on the
     /// model, so the 8-second pass does not redraw this screen (11/6).
     @State private var reloading = false
+    /// 11/7 (W3): the invitation handed to the share sheet, and a renewal
+    /// (old link revoked, new one made) on its way there.
+    @State private var sharingInvitation: GroupInvitation?
+    @State private var renewingInvitation = false
+    /// 11/7 (W10): people this iPhone hides or blocks in this window, and
+    /// the one whose 「表示しない」/「ブロック中」 was pressed.
+    @State private var hiddenMembers: [GroupWindowLocalPhotoStore.HiddenMember] = []
+    @State private var restoreTarget: GroupWindowLocalPhotoStore.HiddenMember?
     /// Renaming, Plus or a confirmation is open: the list underneath is not
     /// redrawn by the 8-second pass (11/5: the screen moved under the person).
     private var presentsSheet: Bool {
         showsRename || showsPlusOffer || showsRemoval || showsRevokeConfirmation
             || showsLeaveConfirmation || showsCloseConfirmation || rejectionTarget != nil
+            || sharingInvitation != nil || restoreTarget != nil
     }
     /// Admissions already shown once, so 「〇〇さんが参加しました」 is said once
     /// and not every time the screen opens. Written only when leaving.
@@ -485,9 +494,8 @@ struct GroupWindowMembersView: View {
                 }
             }
         }
-        .navigationTitle(
-            capabilities.invitations && model.window?.canManage == true ? "メンバーと招待" : "メンバー"
-        )
+        // One title, the same word as the button that opens it (11/7).
+        .navigationTitle("メンバー")
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: model.isWorking) { _, working in if !working { running = nil } }
         .task { await model.load() }
@@ -585,6 +593,8 @@ struct GroupWindowMembersView: View {
         }
         .confirmationDialog(rejectionTitle, isPresented: rejectionPresented, titleVisibility: .visible,
                             presenting: rejectionTarget, actions: rejectionActions)
+        .sheet(item: $sharingInvitation) { invitation in invitationShareSheet(invitation) }
+        .modifier(GroupHiddenMemberDialogs(windowID: model.windowID, target: $restoreTarget, hidden: $hiddenMembers))
     }
 
     /// Replies to this person's reports only. The policy, the standards and
@@ -756,6 +766,7 @@ struct GroupWindowMembersView: View {
             && window.canManage
             && member.role != .owner
             && member.id != window.myParticipantID
+        let hidden = hiddenMembers.first { $0.id == member.id && member.id != window.myParticipantID }
         return VStack(spacing: 6) {
             GroupMemberAvatar(name: member.displayName, size: 52)
             Text(member.id == window.myParticipantID ? "あなた" : member.displayName)
@@ -783,15 +794,36 @@ struct GroupWindowMembersView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
+            if let hidden {
+                // 11/7 (W10): who is hidden or blocked here shows it, and is
+                // shown again from here, not only from 設定.
+                Button { restoreTarget = hidden } label: {
+                    Text(hidden.blocked == true ? "ブロック中" : "表示しない")
+                        .font(.caption2.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.orange)
+                .frame(minWidth: 44, minHeight: 44)
+                .accessibilityHidden(true)
+                .accessibilityIdentifier("group-window-member-hidden")
+            }
         }
         .frame(maxWidth: .infinity, minHeight: 44)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(member.displayName)、\(GroupWindowPresentation.memberDetail(member, in: window))")
+        .accessibilityLabel("\(member.displayName)、\(GroupWindowPresentation.memberDetail(member, in: window))"
+                            + (hidden.map { $0.blocked == true ? "、ブロック中" : "、表示しない" } ?? ""))
         .accessibilityAction(named: Text("外す")) {
             guard canRemove, !model.isWorking else { return }
             removalTarget = member
             showsRemoval = true
+        }
+        .accessibilityActions {
+            if let hidden {
+                Button(hidden.blocked == true ? "ブロックを解除" : "表示する") { restoreTarget = hidden }
+            }
         }
         .accessibilityIdentifier("group-window-member")
     }
@@ -847,10 +879,7 @@ struct GroupWindowMembersView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 // The link itself is never drawn; it travels only through
                 // the share sheet, so a screenshot cannot leak it.
-                ShareLink(
-                    item: invitation.shareText,
-                    message: Text(GroupWindowPresentation.inviteMessage(windowName: window.name))
-                ) {
+                Button { sharingInvitation = invitation } label: {
                     Label("招待リンクを送る", systemImage: "square.and.arrow.up")
                         .font(.headline)
                         .frame(maxWidth: .infinity, minHeight: 44)
@@ -868,10 +897,28 @@ struct GroupWindowMembersView: View {
                 }
                 .disabled(model.isWorking)
                 .accessibilityIdentifier("group-window-revoke-invitation")
-            } else if let earlier = model.earlierInvitation {
-                LabeledContent("前に作った招待", value: earlier.expiresAt.formatted(.dateTime.month().day().hour().minute()) + "まで有効")
-                Text("送り直すときは、取り消してから新しく作ってください。")
+            } else if model.earlierInvitation != nil, model.canInvite {
+                // 11/7 (W3): one press instead of revoke, confirm, make, send.
+                // The old link is revoked first, then a new one is made and shared.
+                Button { renewAndShareInvitation() } label: {
+                    Group {
+                        if renewingInvitation {
+                            WorkingLabel(title: "招待リンクを送る", workingTitle: "用意しています…", working: true)
+                        } else {
+                            Label("招待リンクを送る", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.isWorking || renewingInvitation)
+                .accessibilityIdentifier("group-window-renew-invitation")
+                Text("前に送ったリンクは使えなくなります。")
                     .font(.footnote).foregroundStyle(.secondary)
+            } else if let earlier = model.earlierInvitation {
+                // No new link now (paused or full): the old one can still be revoked.
+                LabeledContent("前に作った招待", value: earlier.expiresAt.formatted(.dateTime.month().day().hour().minute()) + "まで有効")
                 Button(role: .destructive) {
                     showsRevokeConfirmation = true
                 } label: {
@@ -912,8 +959,34 @@ struct GroupWindowMembersView: View {
         } header: {
             Text("招待")
         } footer: {
-            Text("リンクから「参加する」を押した人は、そのままメンバーになります。")
+            // The person joining waits a moment (「参加の手続き中です」), as the
+            // request row says 「まもなく参加します」 (11/7).
+            Text("リンクから「参加する」を押した人は、まもなくメンバーになります。")
         }
+    }
+
+    /// The existing two steps in their existing order: revoke the old link,
+    /// then make a new one; the share sheet opens only when both worked (11/7).
+    private func renewAndShareInvitation() {
+        renewingInvitation = true
+        Task {
+            defer { renewingInvitation = false }
+            await model.revokeInvitation()
+            guard model.actionErrorMessage == nil else { return }
+            await model.createInvitation()
+            guard model.actionErrorMessage == nil, let made = model.activeInvitation else { return }
+            sharingInvitation = made
+        }
+    }
+
+    /// The one place the link leaves this screen: the system share sheet.
+    private func invitationShareSheet(_ invitation: GroupInvitation) -> some View {
+        GroupInvitationShareSheet(
+            item: invitation.shareText,
+            message: GroupWindowPresentation.inviteMessage(windowName: model.window?.name ?? "")
+        ) { sharingInvitation = nil }
+        .presentationDetents([.medium, .large])
+        .ignoresSafeArea()
     }
 
     /// The creator's own changes to the window: its name, and closing it.
@@ -951,6 +1024,60 @@ struct GroupWindowMembersView: View {
                 .accessibilityIdentifier("group-window-leave")
             }
         }
+    }
+}
+
+/// 11/7 (W10): who this iPhone hides or blocks in the window, read from what
+/// it keeps, and the question before showing them again. The restore is the
+/// same one 設定「表示しない・ブロックした人」 uses.
+private struct GroupHiddenMemberDialogs: ViewModifier {
+    let windowID: String
+    @Binding var target: GroupWindowLocalPhotoStore.HiddenMember?
+    @Binding var hidden: [GroupWindowLocalPhotoStore.HiddenMember]
+    @ObservedObject private var safety = GroupSafety.shared
+
+    func body(content: Content) -> some View {
+        content
+            .confirmationDialog(question, isPresented: targetShown, titleVisibility: .visible,
+                                presenting: target) { member in
+                Button(member.blocked == true ? "ブロックを解除" : "表示する") { restore(member) }
+                Button("戻る", role: .cancel) {}
+            } message: { member in
+                Text(member.blocked == true
+                     ? "このまどで、お互いの写真がまた届くようになります。"
+                     : "この人の写真が、このまどにまた表示されます。")
+            }
+            .alert("まど", isPresented: failureShown) {
+                Button("閉じる", role: .cancel) {}
+            } message: { Text(safety.failure?.message ?? "") }
+            .task { await reload() }
+    }
+
+    private var question: String {
+        guard let target else { return "" }
+        return target.blocked == true
+            ? "\(GroupDisplayName.withSan(target.name))のブロックを解除しますか？"
+            : "\(GroupDisplayName.withSan(target.name))の写真を表示しますか？"
+    }
+
+    private var targetShown: Binding<Bool> {
+        Binding(get: { target != nil }, set: { if !$0 { target = nil } })
+    }
+
+    private var failureShown: Binding<Bool> {
+        Binding(get: { safety.failure != nil }, set: { if !$0 { safety.failure = nil } })
+    }
+
+    private func restore(_ member: GroupWindowLocalPhotoStore.HiddenMember) {
+        Task {
+            _ = await GroupHiddenMembersView.restore(member, windowID: windowID)
+            await reload()
+        }
+    }
+
+    private func reload() async {
+        hidden = await GroupWindowLocalPhotoStore.shared.knownWindows()
+            .first { $0.id == windowID }?.hiddenMembers ?? []
     }
 }
 

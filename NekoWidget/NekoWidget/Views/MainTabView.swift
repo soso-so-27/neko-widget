@@ -431,10 +431,20 @@ struct MainTabView: View {
     }
 
     private var newMadoPhotoCount: Int {
-        arrivalDates.reduce(0) { count, entry in
+        let photos: Int = arrivalDates.reduce(0) { count, entry in
             let seen = UserDefaults.standard.double(forKey: "navigation.madoVisited.v1.\(entry.key)")
             return count + entry.value.filter { $0.timeIntervalSince1970 > seen }.count
         }
+        return photos + groupWindowsWithNewPhotos
+    }
+
+    /// 11/7 (W1): みんなのまど with photos kept here and not seen on their page yet.
+    @State private var groupWindowsWithNewPhotos = 0
+
+    private func refreshGroupWindowNewPhotos() async {
+        guard GroupWindowClientProvider.ui != nil else { groupWindowsWithNewPhotos = 0; return }
+        GroupWindowSeen.startIfNeeded()
+        groupWindowsWithNewPhotos = await GroupWindowSeen.windowsWithNewPhotos().count
     }
 
     private func refreshReceivedPhotoSources() async {
@@ -478,6 +488,7 @@ struct MainTabView: View {
 
     private func refreshMadoArrivals() async {
         guard showsMadoTab else { return }
+        await refreshGroupWindowNewPhotos()
         arrivalRefreshSequence &+= 1
         let sequence = arrivalRefreshSequence
         let countsPrivateWindows = GroupWindowClientProvider.ui == nil
@@ -885,6 +896,9 @@ struct MainTabView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .momentSharingContentNeedsReload)) { _ in
             Task { await refreshMadoArrivals() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .groupWindowNewPhotosDidChange)) { _ in
+            Task { await refreshGroupWindowNewPhotos() }
         }
         .onChange(of: selectedTab) { oldTab, tab in
             if tab != .windows { groupWindowOpenInbox.dismissCreatePrompt() }
@@ -3154,6 +3168,10 @@ private struct WindowListView: View {
     @State private var addingPublicWindowID: String?
     @State private var addedPublicWindows = 0
     @State private var addPublicWindowError: String?
+    /// 11/7 (W9): started from the list, the same 「受け取りを始めました」 and
+    /// widget guide as from the window.
+    @State private var startedPublicWindow: PublicWindowPresentationSource?
+    @State private var guidedPublicWindow: PublicWindowPresentationSource?
     let publicWindows: [PublicWindowPresentationSource]
 
     init(officialStore: OfficialWindowStore = .shared,
@@ -3218,10 +3236,16 @@ private struct WindowListView: View {
         )) { invitation in
             GroupInvitationJoinSheet(invitation: invitation)
         }
+        .sheet(item: $guidedPublicWindow) { source in
+            OfficialWindowWidgetGuide(displayName: source.store.displayName)
+        }
         // Outside the lazy stacks: the window page sits right on the list.
         .navigationDestination(item: $listNavigation.openedWindow) { route in
             if let client = GroupWindowClientProvider.ui {
-                GroupWindowScreen(client: client, windowID: route.windowID)
+                // 11/7: a home-screen photo opens on its window; a window left
+                // or ended opens as 「前のまど」.
+                GroupWindowScreen(client: client, windowID: route.windowID,
+                                  formerName: route.formerName, startPhotoID: route.photoID)
             }
         }
         .task(id: scenePhase) {
@@ -3234,8 +3258,9 @@ private struct WindowListView: View {
     }
 
     private func addButton(_ source: PublicWindowPresentationSource) -> some View {
+        // One word for starting an official window, here and in the window (11/7).
         Button { add(source) } label: {
-            Text("追加")
+            Text("受け取る")
                 .font(.subheadline.weight(.semibold))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
@@ -3256,6 +3281,7 @@ private struct WindowListView: View {
             addPublicWindowError = nil
             withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) { reloadPublicStates() }
             addedPublicWindows &+= 1
+            startedPublicWindow = source
             Task {
                 try? await source.refresh()
                 reloadPublicStates()
@@ -3263,7 +3289,7 @@ private struct WindowListView: View {
             }
         } catch {
             reloadPublicStates()
-            addPublicWindowError = "追加できませんでした。もう一度お試しください。"
+            addPublicWindowError = "受け取りを始められませんでした。もう一度お試しください。"
             addingPublicWindowID = nil
         }
     }
@@ -3289,11 +3315,14 @@ private struct WindowListView: View {
                     .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
                                             removal: .opacity))
             }
+            if let started = startedPublicWindow {
+                startedConfirmation(started)
+            }
         }
         let discoverable = publicWindows.filter { publicStates[$0.id]?.isSubscribed != true }
         if !discoverable.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                Text("公式のまどを追加")
+                Text("公式のまど")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .accessibilityAddTraits(.isHeader)
@@ -3308,6 +3337,28 @@ private struct WindowListView: View {
         if let addPublicWindowError {
             Text(addPublicWindowError).font(.footnote).foregroundStyle(.secondary)
         }
+    }
+
+    /// The window's own confirmation, shown under the window just started.
+    private func startedConfirmation(_ source: PublicWindowPresentationSource) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("受け取りを始めました", systemImage: "checkmark.circle")
+                .font(.subheadline)
+            HStack(spacing: 12) {
+                Button {
+                    startedPublicWindow = nil
+                    guidedPublicWindow = source
+                } label: {
+                    Label("ウィジェットの置き方", systemImage: "plus.rectangle.on.rectangle")
+                        .frame(minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("window-list-widget-guide")
+                Button("あとで") { startedPublicWindow = nil }
+                    .frame(minHeight: 44)
+            }
+        }
+        .accessibilityIdentifier("window-list-subscription-confirmation")
     }
 
     private func reload() async {
