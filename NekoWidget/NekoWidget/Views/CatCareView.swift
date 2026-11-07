@@ -5,54 +5,19 @@ import UIKit
 // 「この子のこと」: each cat's information in one place, read by every tool.
 // Local records are shared only for cats explicitly added to the family notebook.
 
-/// Entry from the Tools tab: pick a cat (with several), then its page.
-struct CatCareEntryView: View {
-    let profiles: [CatProfilePresentation]
-    @ObservedObject private var store = CatCareStore.shared
-    @AppStorage("catCare.lastProfile.v1") private var lastProfileID = ""
-    @State private var selectedProfileID: String?
-
-    var body: some View {
-        Group {
-            if profiles.isEmpty {
-                ContentUnavailableView(
-                    "まだ猫のプロフィールがありません",
-                    systemImage: "cat",
-                    description: Text("「猫のプロフィール」で猫を登録してください。")
-                )
-            } else if let profile = selectedProfile {
-                CatCareDetailView(profile: profile, otherProfiles: profiles.count > 1 ? profiles : [],
-                                  selectedProfileID: $selectedProfileID)
+extension CatCareStore {
+    /// Weights written in photo memos join the weight list (read only; memos
+    /// are not changed). Moved here from the old この子のこと entry, so the
+    /// cat's page does it wherever it opens from (11/7).
+    func importMemoWeights() async {
+        guard let records = try? await PhotoMemoryNoteStore.shared.records() else { return }
+        importWeights(records.compactMap { record in
+            record.note.weight.map { weight in
+                CatCareMemoWeight(noteID: record.note.id.uuidString, catID: weight.catID,
+                                  grams: weight.value.grams, measuredOn: weight.value.measuredOn,
+                                  fallbackDate: record.note.context?.capturedAt ?? record.note.writtenAt)
             }
-        }
-        .navigationTitle("この子のこと")
-        .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            store.importFromTools()
-            store.importBirthdays(profiles)
-            if selectedProfileID == nil {
-                selectedProfileID = profiles.first { $0.identifier == lastProfileID }?.identifier
-                    ?? profiles.first?.identifier
-            }
-        }
-        .onChange(of: selectedProfileID) { _, value in
-            if let value { lastProfileID = value }
-        }
-        .task {
-            // Weights written in photo memos join the weight list (read only; memos are not changed).
-            guard let records = try? await PhotoMemoryNoteStore.shared.records() else { return }
-            store.importWeights(records.compactMap { record in
-                record.note.weight.map { weight in
-                    CatCareMemoWeight(noteID: record.note.id.uuidString, catID: weight.catID,
-                                      grams: weight.value.grams, measuredOn: weight.value.measuredOn,
-                                      fallbackDate: record.note.context?.capturedAt ?? record.note.writtenAt)
-                }
-            })
-        }
-    }
-
-    private var selectedProfile: CatProfilePresentation? {
-        profiles.first { $0.identifier == selectedProfileID } ?? profiles.first
+        })
     }
 }
 
@@ -142,18 +107,30 @@ struct CatFarewellEditor: View {
     }
 }
 
-/// 「この子のことを直す」 from a tool: the profile's page, or the guest cat's.
+/// 「この子のこと」 from a tool: the cat's own page on its この子のこと tab, the
+/// same page as the cat's face in ツール; a guest cat's page under its name.
+/// (11/7: it opened a title-only page that looked like another screen.)
 struct CatCareSubjectView: View {
     let subject: CatCareSubject
+    /// Every cat, for the 写真 tab's choices. Empty means only this cat.
+    var profiles: [CatProfilePresentation] = []
     @ObservedObject private var store = CatCareStore.shared
+    @Environment(\.toolProfileActions) private var profileActions
 
     var body: some View {
         switch subject {
         case let .profile(profile):
-            CatCareEntryView(profiles: [profile])
+            CatProfileDetailView(profile: profile, allProfiles: profiles.isEmpty ? [profile] : profiles,
+                manualCandidatePhotos: profile.manualCandidatePhotos, photoAlbumOptions: [],
+                actions: profileActions, initialPage: .care)
+                .onAppear {
+                    store.importFromTools()
+                    store.importBirthdays(profiles)
+                    if profiles.isEmpty { store.importBirthdays([profile]) }
+                }
         case let .toolCat(id, name):
             CatCareDetailView(toolCatID: id, name: name)
-                .navigationTitle("この子のこと")
+                .navigationTitle(subject.displayName)
                 .navigationBarTitleDisplayMode(.inline)
                 .onAppear { store.importFromTools() }
         }
@@ -1223,12 +1200,21 @@ struct ToolCatCareSection<Extra: View>: View {
     let footer: String?
     let identifier: String
     let editIdentifier: String
+    /// Every cat, passed on to the cat's page.
+    let profiles: [CatProfilePresentation]
     let extra: () -> Extra
 
     init(title: String, lines: [(String, String)], subject: CatCareSubject?, footer: String? = nil,
-         identifier: String, editIdentifier: String, @ViewBuilder extra: @escaping () -> Extra) {
+         identifier: String, editIdentifier: String, profiles: [CatProfilePresentation] = [],
+         @ViewBuilder extra: @escaping () -> Extra) {
         self.title = title; self.lines = lines; self.subject = subject; self.footer = footer
-        self.identifier = identifier; self.editIdentifier = editIdentifier; self.extra = extra
+        self.identifier = identifier; self.editIdentifier = editIdentifier; self.profiles = profiles
+        self.extra = extra
+    }
+
+    private var profile: CatProfilePresentation? {
+        if case let .profile(profile)? = subject { return profile }
+        return nil
     }
 
     /// A line whose value only says it is not written yet.
@@ -1239,7 +1225,17 @@ struct ToolCatCareSection<Extra: View>: View {
     var body: some View {
         let filled = lines.filter { !Self.isEmptyLine($0) }
         let missing = lines.filter(Self.isEmptyLine).map(\.0)
+        let birthday = profile?.lifeDates.birthday
+        let adoption = profile?.lifeDates.adoptionDay
         Section {
+            // The dates were a second 「猫のプロフィール」 box above; they are
+            // facts of この子のこと, so they sit here, in the one box (11/7).
+            if let birthday {
+                LabeledContent("誕生日", value: birthday.date.formatted(date: .abbreviated, time: .omitted))
+            }
+            if let adoption {
+                LabeledContent("迎えた日", value: adoption.date.formatted(date: .abbreviated, time: .omitted))
+            }
             ForEach(Array(filled.enumerated()), id: \.offset) { _, line in
                 VStack(alignment: .leading, spacing: 4) {
                     Text(line.0).font(.subheadline).foregroundStyle(.secondary)
@@ -1247,7 +1243,7 @@ struct ToolCatCareSection<Extra: View>: View {
                 }
             }
             .accessibilityIdentifier(identifier)
-            if filled.isEmpty {
+            if filled.isEmpty && birthday == nil && adoption == nil {
                 Text("まだ何も書いていません。")
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier(identifier + "-empty")
@@ -1259,7 +1255,7 @@ struct ToolCatCareSection<Extra: View>: View {
             }
             extra()
             if let subject {
-                NavigationLink("「この子のこと」を開く") { CatCareSubjectView(subject: subject) }
+                NavigationLink("「この子のこと」を開く") { CatCareSubjectView(subject: subject, profiles: profiles) }
                     .accessibilityIdentifier(editIdentifier)
             }
         } header: { Text(title) }
@@ -1269,9 +1265,9 @@ struct ToolCatCareSection<Extra: View>: View {
 
 extension ToolCatCareSection where Extra == EmptyView {
     init(title: String, lines: [(String, String)], subject: CatCareSubject?, footer: String? = nil,
-         identifier: String, editIdentifier: String) {
+         identifier: String, editIdentifier: String, profiles: [CatProfilePresentation] = []) {
         self.init(title: title, lines: lines, subject: subject, footer: footer,
-                  identifier: identifier, editIdentifier: editIdentifier) { EmptyView() }
+                  identifier: identifier, editIdentifier: editIdentifier, profiles: profiles) { EmptyView() }
     }
 }
 

@@ -672,6 +672,7 @@ struct MainTabView: View {
     private var presentedTabContent: some View {
         tabContent
         .environment(\.toolProfileActions, catProfilesActions)
+        .environment(\.toolProfilesPresentation, catProfilesPresentation)
         .environment(\.receivedPhotoIdentifiers, receivedPhotoIdentifiers)
         .environment(\.showcaseOpenOne, { identifier in
             showcaseSession = ShowcaseSession(currentPhotoIdentifier: identifier, scopeID: "")
@@ -1076,9 +1077,10 @@ struct MainTabView: View {
 
     private var showcaseToolCard: some View {
         Button {
-            if showcaseStore.availableEntries(in: "").isEmpty && (!hasPhotoAccess || showcaseCandidates.isEmpty) {
+            let scope = showcaseCardScopeID
+            if showcaseStore.availableEntries(in: scope).isEmpty && (!hasPhotoAccess || showcaseCandidates.isEmpty) {
                 showsShowcaseNoPhotos = true
-            } else { openPreparedShowcase(scopeID: "") }
+            } else { openPreparedShowcase(scopeID: scope) }
         } label: {
             ToolTile(title: "写真を見せる", systemImage: "square.grid.3x3.fill",
                      subtitle: "自慢の9枚を選ぶ", tint: ToolTint.everydayLight)
@@ -1112,7 +1114,9 @@ struct MainTabView: View {
                             allProfiles: catProfilesPresentation.profiles,
                             manualCandidatePhotos: profile.manualCandidatePhotos,
                             photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
-                            actions: catProfilesActions
+                            actions: catProfilesActions,
+                            // From ツール, the page opens on この子のこと (11/7).
+                            initialPage: .care
                         )
                     } label: {
                         CatChip(profile: profile, progress: careProgress(for: profile),
@@ -1150,7 +1154,8 @@ struct MainTabView: View {
                     allProfiles: catProfilesPresentation.profiles,
                     manualCandidatePhotos: profile.manualCandidatePhotos,
                     photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
-                    actions: catProfilesActions
+                    actions: catProfilesActions,
+                    initialPage: .care
                 )
             }
         }
@@ -1269,6 +1274,17 @@ struct MainTabView: View {
 
     private var effectiveShowcaseScopeID: String {
         showcaseScopeID
+    }
+
+    /// The card opens on the cat chosen last time (11/7: it was always すべての猫).
+    /// すべての猫 when that cat is gone, or has no set to show without Photos.
+    private var showcaseCardScopeID: String {
+        let scope = showcaseScopeID
+        guard !scope.isEmpty else { return "" }
+        let hasSet = !showcaseStore.availableEntries(in: scope).isEmpty
+        let known = catProfilesPresentation.profiles.contains { $0.identifier == scope }
+        guard hasSet || (known && hasPhotoAccess) else { return "" }
+        return scope
     }
 
     private var showcaseAddScopes: [String] {

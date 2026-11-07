@@ -1673,7 +1673,7 @@ struct FamilyNotebookCatSelectionView: View {
             Group {
                 if let shown, shown.isEmpty {
                     ContentUnavailableView("追加できる猫はいません", systemImage: "cat",
-                        description: Text("「猫のプロフィール」で猫を増やすと、ここから追加できます。"))
+                        description: Text("ツールの「＋」で猫を増やすと、ここから追加できます。"))
                         .accessibilityIdentifier("family-notebook-no-cats")
                 } else {
                     selection(shown ?? available)

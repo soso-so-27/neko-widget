@@ -944,16 +944,30 @@ struct ShowcaseToolCatPicker: View {
     var body: some View {
         NavigationStack {
             List {
-                ToolCatPicker(profiles: profiles, select: { select($0.identifier); dismiss() }) {
-                    Section {
-                        Button("すべての猫") { select(""); dismiss() }
-                    }
-                    let former = storedScopes.filter { scope in !scope.isEmpty && !profiles.contains { $0.identifier == scope } }
-                    if !former.isEmpty {
-                        Section("まだ登録していない猫") {
-                            ForEach(former, id: \.self) { scope in
-                                Button("以前選んだ写真・\(storeOrder(scope))") { select(scope); dismiss() }
+                // Every cat, those that have passed away too: their best photos
+                // stay to look at. Nothing is added here (11/7).
+                Section {
+                    ForEach(profiles) { profile in
+                        Button { select(profile.identifier); dismiss() } label: {
+                            HStack {
+                                Label(profile.displayName, systemImage: "cat")
+                                Spacer(minLength: 8)
+                                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
                             }
+                            .contentShape(Rectangle())
+                        }
+                        .foregroundStyle(.primary)
+                        .accessibilityIdentifier("tool-profile-\(profile.identifier)")
+                    }
+                }
+                Section {
+                    Button("すべての猫") { select(""); dismiss() }
+                }
+                let former = storedScopes.filter { scope in !scope.isEmpty && !profiles.contains { $0.identifier == scope } }
+                if !former.isEmpty {
+                    Section("まだ登録していない猫") {
+                        ForEach(former, id: \.self) { scope in
+                            Button("以前選んだ写真・\(storeOrder(scope))") { select(scope); dismiss() }
                         }
                     }
                 }
