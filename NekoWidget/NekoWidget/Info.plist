@@ -130,6 +130,10 @@
 	<string>$(SHARING_COMMUNITY_STANDARDS_URL)</string>
 	<key>UILaunchScreen</key>
 	<dict/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>
