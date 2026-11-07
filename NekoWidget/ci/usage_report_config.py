@@ -15,3 +15,10 @@ def verify_privacy(privacy):
         raise ValueError('Keep the existing single linked, nontracking ProductInteraction declaration')
     if entries[0]['NSPrivacyCollectedDataTypePurposes'] != ['NSPrivacyCollectedDataTypePurposeAppFunctionality', ANALYTICS]:
         raise ValueError('ProductInteraction requires functionality plus analytics')
+
+if __name__ == '__main__':
+    import sys
+    mode = sys.argv[1] if len(sys.argv) == 2 else None
+    if mode not in ('production', 'media-staging', 'disabled', 'pairing-only', 'review-preview'):
+        raise SystemExit('Explicit known release mode required')
+    print({'production': PRODUCTION, 'media-staging': STAGING}.get(mode, ''))

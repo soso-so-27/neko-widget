@@ -12,6 +12,16 @@ class UsageConfigTests(unittest.TestCase):
                 with self.assertRaises(ValueError): verify({'UsageReportURL':wrong},mode=mode)
         with self.assertRaises(ValueError): verify({'UsageReportURL':STAGING},mode='production')
         verify({'UsageReportURL':''},mode='production',synthetic=True)
+    def test_command_line_build_routes_include_endpoint(self):
+        import re
+        source=(ROOT/'ci/run-quick-ios-checks.sh').read_text(encoding='utf-8')
+        block=source.split('owner_build_settings=(',1)[1].split('\n)',1)[0]
+        values=dict(re.findall(r'^  ([A-Z_]+)=(\S+)$',block,re.M))
+        self.assertEqual(values['USAGE_REPORT_URL'],STAGING)
+        workflow=(ROOT.parent/'.github/workflows/testflight.yml').read_text(encoding='utf-8')
+        self.assertIn('usage_report_url="$(python3 ci/usage_report_config.py "$RELEASE_SHARING_RELEASE_MODE")"',workflow)
+        self.assertIn('USAGE_REPORT_URL="$usage_report_url"',workflow)
+
     def test_manifest_and_source_bindings(self):
         for name in ['Production/PrivacyInfo.xcprivacy','ci/PrivacyInfo.MediaStaging.xcprivacy']:
             verify_privacy(plistlib.loads((ROOT/name).read_bytes()))
