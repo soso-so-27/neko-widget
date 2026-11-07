@@ -725,6 +725,16 @@ struct CuratedAlbumDetailView: View {
     let replaceProfileAssignments: ([String: Set<String>]) async -> Bool
     var profileIdentifier: String? = nil
 
+    /// 11/7: one cat's whole list is 「ミケの写真」, as in the 写真 tab and ツール,
+    /// not 「すべての猫写真」.
+    private var navigationTitleText: String {
+        if album.id == .allCatPhotos, let profileIdentifier,
+           let name = profiles.first(where: { $0.identifier == profileIdentifier })?.displayName {
+            return "\(name)の写真"
+        }
+        return album.title
+    }
+
     @State private var didRecordOpen = false
     @State private var isSelecting = false
     @State private var selectedIdentifiers = Set<String>()
@@ -747,7 +757,7 @@ struct CuratedAlbumDetailView: View {
             }
             .padding(.bottom, 12)
         }
-        .navigationTitle(album.title)
+        .navigationTitle(navigationTitleText)
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -1762,6 +1772,8 @@ struct SavedMemoriesGalleryView: View {
     let receivedPhotoIdentifiers: Set<String>
     let ownCatPhotoIdentifiers: Set<String>
     let receivedPhotoSourceLabels: [String: String]
+    /// The cat chosen on the 写真 tab (nil: all cats), named in the empty state (11/7).
+    let catFilterName: String?
     @State private var originFilter: FavoritePhotoOrigin = .all
 
     private var visiblePhotos: [PhotoPresentation] {
@@ -1851,9 +1863,11 @@ struct SavedMemoriesGalleryView: View {
         receivedPhotoIdentifiers: Set<String> = [],
         ownCatPhotoIdentifiers: Set<String> = [],
         receivedPhotoSourceLabels: [String: String] = [:],
+        catFilterName: String? = nil,
         exportPhotoBook: @escaping ([String]) async throws -> URL
     ) {
         self.photos = photos
+        self.catFilterName = catFilterName
         self.receivedPhotoIdentifiers = receivedPhotoIdentifiers
         self.ownCatPhotoIdentifiers = ownCatPhotoIdentifiers
         self.receivedPhotoSourceLabels = receivedPhotoSourceLabels
@@ -1995,6 +2009,11 @@ struct SavedMemoriesGalleryView: View {
         } else if !photos.isEmpty {
             ContentUnavailableView("この範囲にはまだありません", systemImage: "bookmark",
                 description: Text("上の切り替えで、ほかのお気に入りを見られます。"))
+        } else if let catFilterName {
+            // 11/7: say it is one cat's favorites, not that there are none.
+            ContentUnavailableView("\(catFilterName)のお気に入りはまだありません", systemImage: "bookmark",
+                description: Text("上で「すべての猫」にすると、ほかのお気に入りを見られます。"))
+                .accessibilityIdentifier("saved-memories-empty")
         } else {
             ContentUnavailableView("まだありません", systemImage: "bookmark",
                 description: Text("写真で「お気に入り」を押すと、ここに並びます"))
@@ -2661,6 +2680,8 @@ struct PhotoBrowserView: View {
     @State private var memoryPhotoSharePayload: MemoryPhotoJPEGSharePayload?
     @State private var memoryPhotoExportErrorMessage: String?
     @State private var groupDelivery: GroupDeliveryRequest?
+    /// A まど kept on this iPhone; until checked, the deliver button stays as it was.
+    @State private var knowsAnyWindow = true
     @State private var showsWidgetInformation = false
     @StateObject private var personalNote: PhotoMemoryNotePresentation
     @State private var personalNotePhoto: PhotoPresentation?
@@ -2785,12 +2806,17 @@ struct PhotoBrowserView: View {
                         .font(.headline)
                         .frame(maxWidth: .infinity, minHeight: 50)
                 }
-                .buttonStyle(.borderedProminent)
+                // 11/7: with no まど on this iPhone yet, the button is not the
+                // big main action (the sheet then offers to make one).
+                .modifier(DeliverButtonEmphasis(prominent: knowsAnyWindow))
                 .disabled(isExportingMemoryPhoto)
-                .accessibilityHint("届け先のまどを選んでから、写真とメモを確認します")
+                .accessibilityHint("届け先のまどを選んでから、写真とひとことを確認します")
                 .accessibilityIdentifier("photo-browser-deliver-group")
                 .padding(.horizontal, 16).padding(.vertical, 10)
                 .background(.bar)
+                .task(id: groupDelivery == nil) {
+                    knowsAnyWindow = !(await GroupWindowLocalPhotoStore.shared.knownWindows().isEmpty)
+                }
             }
         }
     }
@@ -3013,7 +3039,9 @@ struct PhotoBrowserView: View {
                     Menu {
                         relatedAlbumsMenu
                     } label: {
-                        Label("この写真があるアルバム", systemImage: "rectangle.stack")
+                        // 11/7: these are photo groups (the 写真 tab's themes, the cat,
+                        // the year), not the アルバム tab's works; named as the list it opens.
+                        Label("関連する写真", systemImage: "rectangle.stack")
                     }
                     .disabled((relatedAlbums?(selectedPhotoIdentifier, rediscoveryScope) ?? []).isEmpty)
                     // 「見せる写真に追加」 is done from 写真を見せる's own picker, not here.
@@ -3828,4 +3856,17 @@ struct DayPhotosView: View {
 struct GroupDeliveryRequest: Identifiable {
     let id = UUID()
     let localIdentifier: String
+}
+
+/// 「まどに届ける」: the main action once there is a まど, a plain button before.
+private struct DeliverButtonEmphasis: ViewModifier {
+    let prominent: Bool
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if prominent {
+            content.buttonStyle(.borderedProminent)
+        } else {
+            content.buttonStyle(.bordered)
+        }
+    }
 }

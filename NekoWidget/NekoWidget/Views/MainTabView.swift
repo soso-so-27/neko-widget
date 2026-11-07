@@ -315,6 +315,12 @@ private struct SeasonalMoviePreparationKey: Hashable {
     let sourceAlbumIdentifier: String?
 }
 
+private struct PhotoThemeCatKey: Hashable {
+    let profileIdentifier: String
+    let photoPresentationVersion: LibraryPresentationVersion
+    let assignments: [String: Set<String>]
+}
+
 private struct MonthlyWindowCollectionKey: Hashable {
     let canBuild: Bool
     let currentMonthStart: Date?
@@ -526,6 +532,8 @@ struct MainTabView: View {
     /// The page the pager rests on or is heading to.
     @State private var photoPage: PhotoLibrarySection?
     @State private var photoLibraryProfileIdentifier: String?
+    /// The theme row for the chosen cat, built when the cat or the photos change (11/7).
+    @State private var photoThemeCatAlbums: (key: PhotoThemeCatKey, albums: [CuratedAlbumPresentation])?
     @StateObject private var showcaseStore = ShowcasePhotoStore.shared
     @AppStorage("showcase.lastScopeID.v1") private var showcaseScopeID = ""
     @State private var showcaseSession: ShowcaseSession?
@@ -618,10 +626,7 @@ struct MainTabView: View {
         }
         .environment(\.photoRelatedAlbums, relatedAlbums)
         .environment(\.openPhotoRelatedAlbum, { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 })
-        .environment(\.catProfilePhotoDestination, { profileID, photoID in
-            AnyView(albumPhotoDetail(for: .allCatPhotos,
-                localIdentifier: photoID, scope: .profile(profileID)))
-        })
+        .environment(\.catProfilePhotoDestination, catProfilePhotoDestination)
         .tabItem {
             Label("写真", systemImage: "photo.on.rectangle.angled")
                 .accessibilityIdentifier("main-tab-photos")
@@ -658,10 +663,23 @@ struct MainTabView: View {
         }
     }
 
+    /// One photo screen for a cat's photo, from the 写真 tab and ツール alike.
+    private var catProfilePhotoDestination: CatProfilePhotoDestination {
+        { profileID, photoID in
+            AnyView(albumPhotoDetail(for: .allCatPhotos,
+                localIdentifier: photoID, scope: .profile(profileID)))
+        }
+    }
+
     private var toolsTab: some View {
         NavigationStack {
             toolsView
         }
+        // 11/7: 「この子の写真を見る」 opens the same photo screen as the 写真 tab
+        // (お気に入り・メモ・まどに届ける), not the bare preview.
+        .environment(\.photoRelatedAlbums, relatedAlbums)
+        .environment(\.openPhotoRelatedAlbum, { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 })
+        .environment(\.catProfilePhotoDestination, catProfilePhotoDestination)
         .tabItem {
             Label("ツール", systemImage: "wrench.and.screwdriver")
                 .accessibilityIdentifier("main-tab-tools")
@@ -946,6 +964,13 @@ struct MainTabView: View {
             // One row, one kind of control: which photos (all / favorites / memos).
             PhotoLibrarySectionPicker(selection: photoLibrarySectionBinding, isCompact: true, pager: photoPager)
                 .padding(.horizontal, 16)
+            // 11/7: the cat switch is one row over all three pages, so a cat
+            // chosen in すべて is seen in お気に入り and メモ too.
+            if !catProfilesPresentation.profiles.isEmpty {
+                photoLibraryCatPicker
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+            }
             photoLibraryPager
         }
         .navigationTitle("写真")
@@ -954,6 +979,7 @@ struct MainTabView: View {
         .onChange(of: photoLibraryPositionKey, initial: true) { _, key in
             PhotoLibraryReadingPosition.activeSection = key
         }
+        .onChange(of: photoThemeCatKey, initial: true) { _, _ in preparePhotoThemeCatAlbums() }
         .onChange(of: photoLibraryRegisteredIdentifiers) { _, identifiers in
             if let selected = photoLibraryProfileIdentifier,
                selected != "unassigned", !identifiers.contains(selected) {
@@ -1428,15 +1454,17 @@ struct MainTabView: View {
             photoLibraryCatButton("未分類", identifier: "unassigned")
         } label: {
             HStack(spacing: 6) {
-                Text((photoLibraryProfileIdentifier.map { currentPhotoLibraryProfileNames[$0] ?? "未分類" } ?? "すべての猫") + "の写真")
-                    .font(.title3.bold())
+                Text(photoLibraryProfileIdentifier.map { currentPhotoLibraryProfileNames[$0] ?? "未分類" } ?? "すべての猫")
+                    .font(.headline)
                 Image(systemName: "chevron.down").font(.caption.weight(.bold)).foregroundStyle(.secondary)
             }
             .lineLimit(1)
             .foregroundStyle(.primary)
             .frame(minHeight: 44)
-            .accessibilityAddTraits(.isHeader)
         }
+        // A filter now, not the heading (11/7): read as the album's cat filter is.
+        .accessibilityLabel("表示する猫")
+        .accessibilityValue(photoLibraryProfileIdentifier.map { currentPhotoLibraryProfileNames[$0] ?? "未分類" } ?? "すべての猫")
         .accessibilityIdentifier("photos-cat-picker")
     }
 
@@ -1466,6 +1494,7 @@ struct MainTabView: View {
                                     receivedPhotoIdentifiers: receivedPhotoIdentifiers,
                                     ownCatPhotoIdentifiers: Set(currentPhotoLibraryAssignments.compactMap { $0.value.isEmpty ? nil : $0.key }),
                                     receivedPhotoSourceLabels: receivedPhotoSourceLabels,
+                                    catFilterName: photoLibraryProfileIdentifier.map { currentPhotoLibraryProfileNames[$0] ?? "未分類" },
                                     exportPhotoBook: exportPhotoBook)
         case .notes:
             PhotoMemoryNotesListView(photos: memoryNotePhotos, store: memoStore,
@@ -1482,7 +1511,8 @@ struct MainTabView: View {
     }
 
     private var allPhotosView: some View {
-        HomeView(
+        let themes = photoThemeAlbums
+        return HomeView(
             scan: scan, hasPhotoAccess: hasPhotoAccess, isLimitedAccess: isLimitedAccess,
             shouldOfferWidgetPlacementGuide: shouldOfferWidgetPlacementGuide,
             requestPhotoAccess: requestPhotoAccess, chooseMorePhotos: chooseMorePhotos,
@@ -1496,26 +1526,53 @@ struct MainTabView: View {
             isEmbedded: true,
             readingPositionKey: photoLibraryPositionKey(.all),
             showsCatProfileNavigation: false,
-            headerAccessory: catProfilesPresentation.profiles.isEmpty ? nil : AnyView(photoLibraryCatPicker),
-            themeRow: Version1.isOn && hasPhotoAccess && !photoThemeAlbums.isEmpty
-                ? AnyView(photoThemeRow) : nil
+            // The cat switch sits above the pages (11/7); only the count stays here.
+            headerAccessory: catProfilesPresentation.profiles.isEmpty ? nil : AnyView(EmptyView()),
+            themeRow: Version1.isOn && hasPhotoAccess && !themes.isEmpty
+                ? AnyView(photoThemeRow(themes)) : nil
         )
     }
 
     /// 新しいアルバム（試作）: the album keeps only works; themes, growth and
     /// time collections are browsed from the 写真 tab instead.
+    /// 11/7: a chosen cat narrows the themes as it narrows the grid, and
+    /// they open for that cat. 未分類 has no themes of its own.
     private var photoThemeAlbums: [CuratedAlbumPresentation] {
-        (currentHouseholdAlbumCatalog?.sections ?? [])
+        guard let identifier = photoLibraryProfileIdentifier else {
+            return Self.themeAlbums(in: currentHouseholdAlbumCatalog?.sections ?? [])
+        }
+        guard let cached = photoThemeCatAlbums, cached.key == photoThemeCatKey,
+              identifier != "unassigned" else { return [] }
+        return cached.albums
+    }
+
+    private var photoThemeCatKey: PhotoThemeCatKey? {
+        guard let identifier = photoLibraryProfileIdentifier, identifier != "unassigned", hasPhotoAccess else { return nil }
+        return PhotoThemeCatKey(profileIdentifier: identifier, photoPresentationVersion: photoPresentationVersion,
+                                assignments: currentPhotoLibraryAssignments)
+    }
+
+    /// Built once per cat and library change, not on every redraw of the tab.
+    private func preparePhotoThemeCatAlbums() {
+        guard let key = photoThemeCatKey else { photoThemeCatAlbums = nil; return }
+        guard photoThemeCatAlbums?.key != key else { return }
+        photoThemeCatAlbums = (key: key, albums: Self.themeAlbums(in: curatedAlbumSections(for: .profile(key.profileIdentifier))))
+    }
+
+    private static func themeAlbums(in sections: [CuratedAlbumSectionPresentation]) -> [CuratedAlbumPresentation] {
+        sections
             .filter { $0.id != .all }
             .flatMap(\.albums)
             .filter { !$0.photos.isEmpty }
     }
 
-    private var photoThemeRow: some View {
+    private func photoThemeRow(_ albums: [CuratedAlbumPresentation]) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
-                ForEach(photoThemeAlbums) { album in
-                    NavigationLink(value: AlbumRoute.album(album.id)) {
+                ForEach(albums) { album in
+                    NavigationLink(value: photoLibraryProfileIdentifier.map {
+                        AlbumRoute.catAlbum(profileIdentifier: $0, album: album.id)
+                    } ?? AlbumRoute.album(album.id)) {
                         VStack(alignment: .leading, spacing: 4) {
                             PhotoAssetImageView(localIdentifier: album.coverPhoto.localIdentifier,
                                                 catBoundingBox: album.coverPhoto.catBoundingBox,
@@ -2464,7 +2521,16 @@ struct MainTabView: View {
     }
 
     private var latestMonthlyWindowIsUnread: Bool {
-        MonthlyWindowReadReceipt.hasUnread(
+        // 11/7: the album records an opened work in AlbumPrototype.openedKey;
+        // the read receipt below is only written by the old summary screen,
+        // so the 「1」 never cleared. Same rule as the wrapped card: opened,
+        // or finished before the album was first shown, is not new.
+        guard let latest = currentMonthlyWindowCollection?.letters.first,
+              !Set(albumPrototypeOpened.split(separator: ",").map(String.init)).contains(latest.periodIdentifier),
+              albumPrototypeEnabledAt > 0,
+              let monthEnd = Calendar.current.date(byAdding: .month, value: 1, to: latest.monthStart),
+              monthEnd.timeIntervalSince1970 > albumPrototypeEnabledAt else { return false }
+        return MonthlyWindowReadReceipt.hasUnread(
             latestPeriodIdentifier: latestMonthlyWindowPeriodIdentifier,
             readPeriodIdentifier: readMonthlyWindowPeriodIdentifier
         )

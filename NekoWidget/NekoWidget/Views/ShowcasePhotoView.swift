@@ -229,7 +229,7 @@ struct ShowcasePhotoView: View {
                             ShareLink(item: Image(uiImage: bestNineImage),
                                       preview: SharePreview("\(visibleTitle)の自慢の 9 枚",
                                                             image: Image(uiImage: bestNineImage))) {
-                                Label("画像にして共有", systemImage: "square.and.arrow.up")
+                                Label("画像を書き出す", systemImage: "square.and.arrow.up")
                                     .font(.headline)
                                     .frame(maxWidth: .infinity, minHeight: 50)
                             }
