@@ -40,7 +40,7 @@ struct CareHandoffView: View {
                 } description: { Text(error) } actions: { Button("もう一度読み込む") { store.reload() } }
             } else if stripCats.isEmpty {
                 // No cat yet: add one here.
-                List { ToolCatPicker(profiles: profiles, select: { select(profileID: $0.identifier, name: $0.displayName) }) {} }
+                List { ToolCatPicker(profiles: profiles, select: { select(profileID: $0.identifier, name: $0.displayName) }, purpose: "猫を追加すると、預ける人に渡すメモを作れます。") {} }
                     .safeAreaInset(edge: .bottom) { CareSaveNotice(store: store) }
             } else if let id = selectedCatID, store.plan.cats.contains(where: { $0.id == id }) {
                 // The chosen cat's memo, with the row of cats above it to switch in place.
