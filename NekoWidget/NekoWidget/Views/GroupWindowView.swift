@@ -2087,6 +2087,7 @@ struct GroupWindowListSection: View {
     @State private var reloading = false
     @State private var formerWindows: [GroupWindowLocalPhotoStore.KnownWindow] = []
     @State private var showsLeftWindowNotice = false
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var openInbox = GroupWindowOpenInbox.shared
     @ObservedObject private var invitationInbox = GroupInvitationInbox.shared
     @Environment(\.membershipAccess) private var membershipAccess
@@ -2249,8 +2250,14 @@ struct GroupWindowListSection: View {
         }
         .task {
             GroupWidgetCache.markGroupWindowsOn()
+            // Once, then when the app comes back or on a pull: switching tabs
+            // shows what was read, without reading the whole list again (11/7).
+            guard !model.hasLoaded || model.message != nil else { return }
             await model.load()
             await loadFormerWindows()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active, model.hasLoaded { Task { await model.load(); await loadFormerWindows() } }
         }
         .onReceive(NotificationCenter.default.publisher(for: .groupWindowListNeedsReload)) { _ in
             // 「前のまど」 too, so a window just left or forgotten shows where it now is (11/7).

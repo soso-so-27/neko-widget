@@ -3254,6 +3254,8 @@ private struct WindowListView: View {
     /// widget guide as from the window.
     @State private var startedPublicWindow: PublicWindowPresentationSource?
     @State private var guidedPublicWindow: PublicWindowPresentationSource?
+    /// The official windows were read once since this list was made.
+    @State private var refreshedPublicWindows = false
     let publicWindows: [PublicWindowPresentationSource]
 
     init(officialStore: OfficialWindowStore = .shared,
@@ -3330,9 +3332,15 @@ private struct WindowListView: View {
                                   formerName: route.formerName, startPhotoID: route.photoID)
             }
         }
-        .task(id: scenePhase) {
-            guard scenePhase == .active else { return }
+        // Read when the app opens or comes back, and on a pull; not each time
+        // the tab is shown, which kept the tab loading (11/7: "サクサク").
+        .task {
+            guard !refreshedPublicWindows else { return }
+            refreshedPublicWindows = true
             await reload()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await reload() } }
         }
     }
     private var receivingPublicWindows: [PublicWindowPresentationSource] {
