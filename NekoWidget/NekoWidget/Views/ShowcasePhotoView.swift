@@ -94,6 +94,8 @@ struct ShowcasePhotoView: View {
     /// The nine photos as one picture, for the share sheet. Built off the main
     /// thread when the set changes; nil until then or when nothing can be drawn.
     @State private var bestNineImage: UIImage?
+    /// The 9-photo image is being made: its button shows, disabled (11/7).
+    @State private var isPreparingBestNine = false
     @AppStorage("showcase-shows-name-and-age") private var showsCaption = true
 
     private var scopeID: String { selectedScopeID ?? initialScopeID ?? "" }
@@ -177,12 +179,16 @@ struct ShowcasePhotoView: View {
                     }
                     .accessibilityLabel("見せる写真を編集")
                 } else if detailIndex != nil, caption != nil {
+                    // 11/7: a name tag (shown) or a struck-out tag (hidden), not
+                    // a speech bubble; read aloud as one on/off switch.
                     Button { showsCaption.toggle() } label: {
-                        Image(systemName: showsCaption ? "text.bubble.fill" : "text.bubble")
+                        Image(systemName: showsCaption ? "tag.fill" : "tag.slash")
                             .frame(width: 44, height: 44)
                             .background(.ultraThinMaterial, in: Circle())
                     }
-                    .accessibilityLabel(showsCaption ? "名前と年齢を隠す" : "名前と年齢を表示")
+                    .accessibilityLabel("名前と年齢を表示")
+                    .accessibilityValue(showsCaption ? "オン" : "オフ")
+                    .accessibilityAddTraits(.isToggle)
                     .accessibilityIdentifier("showcase-caption-toggle")
                 } else {
                     Color.clear.frame(width: 44, height: 44)
@@ -237,6 +243,22 @@ struct ShowcasePhotoView: View {
                             .padding(.horizontal, 16)
                             .accessibilityIdentifier("showcase-share-best-nine")
                             .simultaneousGesture(TapGesture().onEnded { UsageCounter.shared.count(.nineExported) })  // Usage (11/7): ShareLink reports no completion
+                        } else if isPreparingBestNine {
+                            // 11/7: the button is there while the image is made,
+                            // not missing until it is ready.
+                            Button {} label: {
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                    Text("画像を書き出す")
+                                }
+                                .font(.headline)
+                                .frame(maxWidth: .infinity, minHeight: 50)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(true)
+                            .padding(.horizontal, 16)
+                            .accessibilityLabel("画像を準備しています")
+                            .accessibilityIdentifier("showcase-share-best-nine-preparing")
                         }
                         Text("写真をタップすると大きく見られます。鉛筆のボタンで入れ替えられます。")
                             .font(.footnote)
@@ -247,14 +269,19 @@ struct ShowcasePhotoView: View {
                     .id(scopeID)
                     .task(id: displayedItems.map(\.id).joined(separator: ",") + (bandTitle ?? "")) {
                         bestNineImage = nil
+                        isPreparingBestNine = !displayedItems.isEmpty
                         var sources: [UIImage] = []
                         for item in displayedItems.prefix(9) {
                             if let image = await Self.image(of: item) { sources.append(image) }
                         }
                         let title = bandTitle
-                        bestNineImage = await Task.detached(priority: .userInitiated) {
+                        let composed = await Task.detached(priority: .userInitiated) {
                             BestNineComposer.image(sources, title: title)
                         }.value
+                        // A newer run (other photos) owns the result.
+                        guard !Task.isCancelled else { return }
+                        bestNineImage = composed
+                        isPreparingBestNine = false
                     }
                     .opacity(detailIndex == nil ? 1 : 0)
                     .allowsHitTesting(detailIndex == nil)
