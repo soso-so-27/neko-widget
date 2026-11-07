@@ -26,11 +26,12 @@
   <main>
     <h1>家族の手帳への招待</h1>
     <p>猫のお世話の記録を家族で一緒に書く「家族の手帳」に招待されています。参加は無料です。</p>
+    <p id="android-note" class="updated" hidden>ねこのまどは、いまはiPhoneだけで使えます。</p>
     <div class="actions">
       <a class="button primary" href="https://apps.apple.com/jp/app/id6801962436">App Store で入れる</a>
       <a class="button" id="open-app" href="nekowidget://family-join">アプリで開く</a>
     </div>
-    <p class="updated">ねこのまどを入れたら、このページに戻って「アプリで開く」を押してください。招待リンクの期限は24時間です。</p>
+    <p id="install-note" class="updated">ねこのまどを入れたら、このページに戻って「アプリで開く」を押してください。招待リンクの期限は24時間です。</p>
     <p class="updated">このページに名前や招待コードを入力する必要はありません。招待の鍵は、リンクの「#」から後ろにあり、このサイトには送られません。</p>
   </main>
   <script>
@@ -40,6 +41,12 @@
       var hash = window.location.hash;
       if (hash && hash.length > 1) {
         document.getElementById("open-app").href = "nekowidget://family-join" + hash;
+      }
+      // Android: no app yet, so say so instead of an App Store button (11/7).
+      if (/Android/i.test(navigator.userAgent)) {
+        document.getElementById("android-note").hidden = false;
+        document.querySelector(".actions").style.display = "none";
+        document.getElementById("install-note").style.display = "none";
       }
     })();
   </script>
