@@ -9,6 +9,9 @@ struct WidgetPlacementGuideView: View {
     let onSkip: () -> Void
     /// Cats are already registered: the line about registering is left out.
     var hasCats = false
+    /// Opened again from 設定: one button with this title (it calls
+    /// `onComplete`) in place of 「完了」 and 「あとで」 (11/7).
+    var closeTitle: String? = nil
     @State private var page = 0
 
     /// One picture per step: the iOS screens the person will see, in order.
@@ -86,20 +89,32 @@ struct WidgetPlacementGuideView: View {
         .background(Color(.systemBackground))
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 10) {
-                Button(action: onComplete) {
-                    Text(OnboardingPresentationCopy.widgetAction)
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 5)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .accessibilityIdentifier("widget-placement-complete")
-
-                Button(OnboardingPresentationCopy.widgetLaterAction, action: onSkip)
+                if let closeTitle {
+                    Button(action: onComplete) {
+                        Text(closeTitle)
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 5)
+                    }
                     .buttonStyle(.bordered)
                     .controlSize(.large)
-                    .accessibilityIdentifier("widget-placement-skip")
+                    .accessibilityIdentifier("widget-placement-close")
+                } else {
+                    Button(action: onComplete) {
+                        Text(OnboardingPresentationCopy.widgetAction)
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 5)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .accessibilityIdentifier("widget-placement-complete")
+
+                    Button(OnboardingPresentationCopy.widgetLaterAction, action: onSkip)
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
+                        .accessibilityIdentifier("widget-placement-skip")
+                }
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)

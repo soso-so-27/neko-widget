@@ -23,6 +23,9 @@ struct MembershipOfferView: View {
     let onPurchase: () -> Void
     let onRestore: () -> Void
     let onClose: () -> Void
+    /// The first run's last page is this screen itself, with its own
+    /// 「あとで」: no close button there (11/7).
+    let showsClose: Bool
     /// 「購入を復元」 was pressed, so its spinner sits on that link, not on the
     /// purchase button (11/6). Cleared when the work ends.
     @State private var running: String?
@@ -60,7 +63,8 @@ struct MembershipOfferView: View {
         onManageSubscription: (() -> Void)? = nil,
         onPurchase: @escaping () -> Void,
         onRestore: @escaping () -> Void,
-        onClose: @escaping () -> Void
+        onClose: @escaping () -> Void,
+        showsClose: Bool = true
     ) {
         self.context = context
         self.photo = photo
@@ -78,6 +82,7 @@ struct MembershipOfferView: View {
         self.onPurchase = onPurchase
         self.onRestore = onRestore
         self.onClose = onClose
+        self.showsClose = showsClose
     }
 
     var body: some View {
@@ -115,10 +120,12 @@ struct MembershipOfferView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("閉じる", systemImage: "xmark", action: onClose)
-                    .labelStyle(.iconOnly)
-                    .disabled(isWorking)
-                    .accessibilityIdentifier("membership-offer-close")
+                if showsClose {
+                    Button("閉じる", systemImage: "xmark", action: onClose)
+                        .labelStyle(.iconOnly)
+                        .disabled(isWorking)
+                        .accessibilityIdentifier("membership-offer-close")
+                }
             }
         }
         .accessibilityIdentifier("membership-offer")

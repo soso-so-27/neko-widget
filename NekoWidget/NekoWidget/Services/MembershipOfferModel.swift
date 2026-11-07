@@ -22,6 +22,8 @@ enum PlusOfferContext: Equatable, Sendable {
     case createWindow
     /// The person who made a window opened it after it stopped.
     case continueWindow
+    /// 「家族の手帳を作る」 without Plus: the one who makes the family pays (11/7).
+    case createFamily
     /// The family notebook stopped because the payer left (1029e). Whoever
     /// starts Plus first becomes the payer and sharing comes back.
     case continueFamily
@@ -38,6 +40,7 @@ enum PlusOfferContext: Equatable, Sendable {
         case .newMemo: "メモを書く"
         case .createWindow: "まどを作る"
         case .continueWindow: "このまどを続ける"
+        case .createFamily: "家族の手帳を作る"
         case .continueFamily: "家族の手帳を続ける"
         case .preservation: "保存を始める"
         case .settings: "Plusについて"
@@ -53,6 +56,7 @@ enum PlusOfferContext: Equatable, Sendable {
         case .newMemo: "新しいメモはPlusで書けます。書いたメモは、いつでも読めます。"
         case .createWindow: "まどを作るのは、Plusの機能です。"
         case .continueWindow: "このまどは、作った人のPlusで続きます。"
+        case .createFamily: "家族の手帳を作るのは、Plusの機能です。"
         case .continueFamily: "家族の手帳は、家族の誰か1人のPlusで続きます。"
         case .preservation: "写真やメモの保存は、Plusの機能です。"
         }
@@ -67,6 +71,7 @@ enum PlusOfferContext: Equatable, Sendable {
         case .newMemo: "new-memo"
         case .createWindow: "create-window"
         case .continueWindow: "continue-window"
+        case .createFamily: "create-family"
         case .continueFamily: "continue-family"
         case .preservation: "preservation"
         case .settings: "settings"
@@ -719,13 +724,17 @@ struct MembershipOfferSheet: View {
     @Environment(\.plusOfferPhoto) private var placePhoto
     let context: PlusOfferContext
     let photo: UIImage?
+    /// False only where the screen is a page with its own 「あとで」 (onboarding, 11/7).
+    let showsClose: Bool
     let onFinish: (MembershipOfferActionResult) -> Void
 
     init(model: MembershipOfferModel, context: PlusOfferContext, photo: UIImage? = nil,
+         showsClose: Bool = true,
          onFinish: @escaping (MembershipOfferActionResult) -> Void) {
         _model = StateObject(wrappedValue: model)
         self.context = context
         self.photo = photo
+        self.showsClose = showsClose
         self.onFinish = onFinish
     }
 
@@ -764,7 +773,8 @@ struct MembershipOfferSheet: View {
                         if result == .completed { onFinish(result) }
                     }
                 },
-                onClose: { onFinish(model.isMember ? .completed : .cancelled) }
+                onClose: { onFinish(model.isMember ? .completed : .cancelled) },
+                showsClose: showsClose
             )
         }
         .interactiveDismissDisabled(model.isWorking)
@@ -836,13 +846,13 @@ struct PlusOfferPrompt: View {
 /// The Plus row in Settings: "Plusについて" before joining, "Plus利用中" with
 /// Apple's subscription management after, and "購入を復元" (the re-check and
 /// the App Store restore in one) when the purchase state cannot be confirmed.
-/// "購入を復元" stays inside this section in every state but a member's.
+/// "購入を復元" stays inside this section in every state but a member's, and
+/// restores right on the row (11/7: it opened a screen with the same button).
 /// Hidden entirely (by the caller) while the product is not configured.
 @MainActor
 struct PlusSettingsSection: View {
     @ObservedObject private var purchases = PlusPurchaseStore.productionShared
     @State private var showsOffer = false
-    @State private var showsRestore = false
     @State private var showsManagement = false
     @State private var purchasedJustNow = false
     @State private var offersAutoSave = false
@@ -878,8 +888,7 @@ struct PlusSettingsSection: View {
                     .accessibilityIdentifier("settings-membership-manage")
             case .unknown:
                 // One button for the re-check and the App Store restore (11/5).
-                SettingsActionRow("購入を復元", systemImage: "arrow.clockwise") { showsRestore = true }
-                    .accessibilityIdentifier("settings-membership-restore")
+                MembershipRestoreButton(look: .settingsRow, identifier: "settings-membership-restore")
             case .checking:
                 HStack(spacing: 10) {
                     ProgressView()
@@ -892,11 +901,7 @@ struct PlusSettingsSection: View {
             // must not leave a member without a way back (App Review requires it).
             // The unknown state already shows it as its one row.
             if status == .notMember || status == .checking {
-                Button("購入を復元") { showsRestore = true }
-                    .font(.footnote)
-                    .frame(maxWidth: .infinity)
-                    .listRowBackground(Color.clear)
-                    .accessibilityIdentifier("settings-membership-restore")
+                MembershipRestoreButton(look: .footnote, identifier: "settings-membership-restore")
             }
         } header: {
             // Presenters live on the header, which stays while the rows switch
@@ -917,6 +922,7 @@ struct PlusSettingsSection: View {
                     }
                 }
                 .alert("自動保存も始めますか？", isPresented: $offersAutoSave) {
+                    // This tap is the start: the screen opens already starting (11/7).
                     Button("保存を始める") { showsAutoSave = true }
                     Button("あとで", role: .cancel) { }
                 } message: {
@@ -924,14 +930,11 @@ struct PlusSettingsSection: View {
                 }
                 .sheet(isPresented: $showsAutoSave) {
                     NavigationStack {
-                        AppRecordSettingsView()
+                        AppRecordSettingsView(startsOnOpen: true)
                             .toolbar {
                                 ToolbarItem(placement: .confirmationAction) { Button("閉じる") { showsAutoSave = false } }
                             }
                     }
-                }
-                .sheet(isPresented: $showsRestore, onDismiss: refreshMembership) {
-                    MembershipRestoreSheet()
                 }
                 .manageSubscriptionsSheet(isPresented: $showsManagement)
                 .onChange(of: showsManagement) { _, isPresented in
@@ -1010,7 +1013,7 @@ struct MembershipOfferPreviewView: View {
     /// Every case, so a fixture run shows each entry opens the same screen.
     static let entryContexts: [PlusOfferContext] = [
         .onboarding, .widgetResume, .monthlySummary(month: 10), .newMemo,
-        .createWindow, .continueWindow, .continueFamily, .preservation, .settings,
+        .createWindow, .continueWindow, .createFamily, .continueFamily, .preservation, .settings,
     ]
 
     private var previewModel: MembershipOfferModel {
