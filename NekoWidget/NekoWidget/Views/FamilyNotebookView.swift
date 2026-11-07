@@ -746,12 +746,6 @@ struct FamilyNotebookView: View {
         }
     }
 
-    /// The cat's page is in ツール: close the notebook and go there (11/7).
-    private func openCatPage(_ toolID: UUID) {
-        dismiss()
-        CatPageRequest.shared.open(toolID)
-    }
-
     var body: some View {
         NavigationStack {
             Group {
@@ -765,7 +759,7 @@ struct FamilyNotebookView: View {
                     List {
                         Section {
                             ForEach(model.familyCats) { cat in
-                                Button(cat.name) { openCatPage(cat.toolID) }
+                                Text(cat.name)
 
                             }
                         } footer: { Text("このiPhoneに残っている記録です。家族との共有を確認しています。") }
@@ -901,7 +895,7 @@ struct FamilyNotebookView: View {
                         FamilyNotebookSharedCatRow(name: cat.name, remove: {
                             do { try model.unshareCat(cat.id); Task { await sharing.refresh() } }
                             catch { sharing.failure = error as? FamilySharingError ?? .serviceUnavailable }
-                        }, open: { openCatPage(cat.toolID) })
+                        })
                     }
                     Button { showsCats = true } label: { Label("猫を追加", systemImage: "plus") }
                         .accessibilityIdentifier("family-notebook-add-cat")
@@ -1731,17 +1725,6 @@ struct FamilyNotebookCatSelectionView: View {
 
 /// The toolbar button on 「この子のこと」: the way into the family notebook,
 /// out of the way for anyone who keeps it to themselves (test builds only).
-/// 「この子のこと」 is written in one place, the cat's page in ツール (11/7:
-/// the notebook had a second place to write it). The notebook asks for the
-/// page here and closes; the main tabs open it.
-@MainActor
-final class CatPageRequest: ObservableObject {
-    static let shared = CatPageRequest()
-    @Published private(set) var toolCatID: UUID?
-    func open(_ toolCatID: UUID) { self.toolCatID = toolCatID }
-    func clear() { toolCatID = nil }
-}
-
 struct FamilyNotebookButton: View {
     var accessibilityIdentifier = "cat-care-family-notebook"
     /// On a cat that is in the notebook: the family's names, shown as faces.

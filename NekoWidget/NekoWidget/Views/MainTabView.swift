@@ -429,8 +429,6 @@ struct MainTabView: View {
     /// Shared cats with no profile on this iPhone (an invited family) sit in
     /// the ツール row too, so 「この子のこと」 has one place for everyone (11/7).
     @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
-    /// A cat's page asked for from the family notebook.
-    @State private var openedFamilyCat: UUID?
     @AppStorage(CatFarewell.key) private var farewellJSON = ""
     @State private var didApplyInitialTab = false
     @AppStorage("navigation.lastTab.v1") private var lastViewedTab = AppTab.memories.rawValue
@@ -925,16 +923,6 @@ struct MainTabView: View {
         .onReceive(NotificationCenter.default.publisher(for: .momentSharingContentNeedsReload)) { _ in
             Task { await refreshMadoArrivals() }
         }
-        .onReceive(CatPageRequest.shared.$toolCatID) { toolID in
-            // From the family notebook: the cat's page in ツール (11/7).
-            guard let toolID else { return }
-            CatPageRequest.shared.clear()
-            showsSettings = false
-            didApplyInitialTab = true
-            selectedTab = .tools
-            // After the notebook sheet has gone, so the page is not pushed under it.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { openedFamilyCat = toolID }
-        }
         .onReceive(NotificationCenter.default.publisher(for: .groupWindowNewPhotosDidChange)) { _ in
             Task { await refreshGroupWindowNewPhotos() }
         }
@@ -1244,10 +1232,6 @@ struct MainTabView: View {
         .accessibilityIdentifier("tools-cat-strip")
         .addingCatProfile(isStarted: $addsCatFromTools, presentation: catProfilesPresentation,
                           actions: catProfilesActions) { addedCatFromTools = $0 }
-        .navigationDestination(item: $openedFamilyCat) { toolID in
-            familyCatCarePage(toolID: toolID,
-                              name: familyNotebook.familyCats.first { $0.toolID == toolID }?.name ?? "")
-        }
         .navigationDestination(item: $addedCatFromTools) { identifier in
             if let profile = catProfilesPresentation.profiles.first(where: { $0.identifier == identifier }) {
                 CatProfileDetailView(

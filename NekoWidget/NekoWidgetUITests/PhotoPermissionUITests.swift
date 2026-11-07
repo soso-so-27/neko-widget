@@ -3485,7 +3485,8 @@ final class SoloMemoriesUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--family-unshare-ui-fixture"]
         app.launch()
-        let row = app.buttons["試験の猫"]
+        // 11/7: the row is a name, not a link (one place to write: ツール).
+        let row = app.staticTexts["試験の猫"]
         XCTAssertTrue(row.waitForExistence(timeout: 10))
         row.swipeLeft()
         app.buttons["手帳から外す"].tap()
