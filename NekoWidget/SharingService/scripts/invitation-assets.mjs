@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 const repository = fileURLToPath(new URL('../../../', import.meta.url));
 export const applicationIdentifier = 'FF96XYPPH2.jp.nekowidget.app';
 export const invitationPaths = ['/join', '/family-join'];
+export const policyPaths = ['/', '/privacy/', '/support/', '/community/'];
+export const policyFile = path => path === '/' ? 'index.html' : path.slice(1) + 'index.html';
 const baseHeaders = `/*
   Referrer-Policy: no-referrer
   Content-Security-Policy: default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
@@ -16,7 +18,7 @@ const baseHeaders = `/*
 `;
 
 // The Git-controlled docs are the only source. The deployment contains just
-// the two exact invitation paths and AASA, without business bindings.
+// invitation paths, approved policy pages and AASA, without business bindings.
 // Inline CSS keeps every other public path unchanged. Only exact script/style
 // hashes are allowed; fragments stay in the browser and connect-src stays none.
 export async function prepareInvitationAssets(output) {
@@ -43,11 +45,25 @@ export async function prepareInvitationAssets(output) {
   await mkdir(join(output, '.well-known'));
   await writeFile(join(output, '.well-known/apple-app-site-association'), aasa);
   for (let i=0;i<pages.length;i++) await writeFile(join(output, invitationPaths[i].slice(1)), pages[i]);
+  let redirects = '';
+  for (const path of policyPaths) {
+    const file = policyFile(path);
+    const html = (await readFile(join(repository, 'docs', file), 'utf8')).replace(/\r\n/g, '\n');
+    if (/<(?:script|form|input|iframe|img|style)\b|\bon\w+\s*=/iu.test(html)) throw Error('Unexpected active policy content');
+    if (path !== '/') await mkdir(join(output, path.slice(1)));
+    await writeFile(join(output, file), html);
+    redirects += path + ' /' + file + ' 200\n';
+    if (path !== '/') redirects += path.slice(0, -1) + ' ' + path + ' 301\n';
+    for (const target of [path, '/' + file]) headers += target + "\n  Content-Type: text/html; charset=utf-8\n  ! Content-Security-Policy\n  Content-Security-Policy: default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; style-src 'self'\n";
+  }
+  await mkdir(join(output, 'assets'));
+  await writeFile(join(output, 'assets/site.css'), css);
+  await writeFile(join(output, '_redirects'), redirects);
   await writeFile(join(output, '_headers'), headers);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.argv.length !== 3) throw Error('Usage: node scripts/invitation-assets.mjs NEW_OUTPUT_DIRECTORY');
   await prepareInvitationAssets(resolve(process.argv[2]));
-  console.log('Prepared only /join, /family-join and AASA; no deployment performed.');
+  console.log('Prepared invitations, approved policy pages, shared CSS and AASA; no deployment performed.');
 }

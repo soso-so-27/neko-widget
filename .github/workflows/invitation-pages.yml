@@ -3,6 +3,10 @@ on:
   push:
     branches: [main]
     paths:
+      - 'docs/index.html'
+      - 'docs/privacy/**'
+      - 'docs/support/**'
+      - 'docs/community/**'
       - 'docs/join.html'
       - 'docs/family-join.html'
       - 'docs/assets/site.css'

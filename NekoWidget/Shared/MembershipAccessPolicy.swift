@@ -25,7 +25,7 @@ enum MembershipOperation: String, CaseIterable, Sendable {
     case presentCatPhotos
     case createCareMemo
     case createVeterinaryVisit
-    /// 招待されたまどでの送信。入る人はずっと無料なので常に許可。
+    /// 招待されたまどでの送信。入る人は無料なので常に許可。
     case addSharedContent
     case continueAcceptedDelivery
 }
