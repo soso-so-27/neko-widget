@@ -224,6 +224,11 @@ struct CatCareDetailView: View {
 
     var body: some View {
         Form {
+            // 11/7: the photo and name lead the page, outside the folds, so
+            // whose page it is shows before anything is opened.
+            if case let .profile(profile) = subject {
+                profileHeading(profile)
+            }
             if otherProfiles.count > 1 {
                 Section {
                     Picker("猫", selection: $selectedProfileID) {
@@ -274,9 +279,6 @@ struct CatCareDetailView: View {
             folded("health", "健康", progress.health) { healthSection }
             folded("living", "暮らし", progress.living) { livingSection }
             folded("household", "家の情報", progress.household) { householdSection }
-            if case let .profile(profile) = subject {
-                deleteSection(profile)
-            }
         }
         .disabled(isDeleting)
         .navigationBarBackButtonHidden(isDeleting || isSavingName)
@@ -390,9 +392,6 @@ struct CatCareDetailView: View {
     }
 
     @ViewBuilder private var basicsSection: some View {
-        if case let .profile(profile) = subject {
-            profileHeading(profile)
-        }
         Section {
             // The dates are facts about the cat, so they live here with the
             // rest; the album reads them from here.
@@ -448,10 +447,10 @@ struct CatCareDetailView: View {
                 Text("外にも出る").tag(CatCareTriState.no)
             }
             .familyNotebookNote(catID, .indoorOnly)
-            TextField("毛色・柄（例：キジトラ）", text: $draft.coat)
+            CatCareTextField(label: "毛色・柄", example: "例：キジトラ", text: $draft.coat)
                 .familyNotebookNote(catID, .coat)
-            TextField("見分ける特徴（例：しっぽが短い、右耳に切れ込み）", text: $draft.marks, axis: .vertical)
-                .lineLimit(2...4)
+            CatCareTextField(label: "見分ける特徴", example: "例：しっぽが短い、右耳に切れ込み",
+                             text: $draft.marks, axis: .vertical, lines: 2...4)
                 .familyNotebookNote(catID, .marks)
             Picker("マイクロチップ", selection: $draft.microchipStatus) {
                 Text("未記入").tag(CatCareMicrochipStatus.unknown)
@@ -462,10 +461,10 @@ struct CatCareDetailView: View {
             .accessibilityIdentifier("cat-care-microchip-status")
             if draft.microchipStatus == .recorded {
                 VStack(alignment: .leading, spacing: 4) {
-                    TextField("マイクロチップ番号（15桁）", text: $draft.microchip)
+                    CatCareTextField(label: "マイクロチップ番号", example: "15桁の数字", text: $draft.microchip,
+                                     identifier: "cat-care-microchip")
                         .keyboardType(.numberPad)
                         .font(.body.monospacedDigit())
-                        .accessibilityIdentifier("cat-care-microchip")
                     if microchipInvalid {
                         Label("15桁の数字にすると保存されます。", systemImage: "exclamationmark.circle")
                             .font(.caption).foregroundStyle(.orange)
@@ -476,24 +475,48 @@ struct CatCareDetailView: View {
             Text(basicsFooter)
                 .accessibilityIdentifier("cat-care-basics")
         }
+        // 11/7: deleting is the last row of 基本, not the page's loudest line.
+        if case let .profile(profile) = subject {
+            deleteSection(profile)
+        }
     }
 
     /// The key photo (tap to change) and the name with its pencil, at the top
-    /// of 基本 (11/7: moved from the page's old 写真 tab).
+    /// of the page (11/7: moved from the page's old 写真 tab, then out of 基本).
     private func profileHeading(_ profile: CatProfilePresentation) -> some View {
         Section {
             VStack(spacing: 8) {
+                let hasPhotos = !profile.confirmedPhotos.isEmpty
                 Button {
                     showsKeyPhotoPicker = true
                 } label: {
                     CatProfileThumbnail(photo: profile.coverPhoto)
                         .frame(width: 96, height: 96)
                         .clipShape(Circle())
+                        // 11/7: a small badge says the photo can be changed.
+                        .overlay(alignment: .bottomTrailing) {
+                            if hasPhotos {
+                                Image(systemName: "pencil.circle.fill")
+                                    .font(.title2)
+                                    .symbolRenderingMode(.palette)
+                                    .foregroundStyle(Color.white, Color.accentColor)
+                                    .background(Circle().fill(Color(.systemGroupedBackground)).padding(-2))
+                                    .accessibilityHidden(true)
+                            }
+                        }
                 }
                 .buttonStyle(.plain)
-                .disabled(profile.confirmedPhotos.isEmpty)
+                .disabled(!hasPhotos)
                 .accessibilityLabel("\(profile.displayName)の代表写真を変更")
                 .accessibilityIdentifier("cat-care-key-photo")
+                if !hasPhotos {
+                    // 11/7: why the photo cannot be chosen yet, in one line.
+                    Text("写真タブでこの子の写真を追加すると選べます")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .accessibilityIdentifier("cat-care-key-photo-empty")
+                }
                 HStack(spacing: 8) {
                     Text(profile.displayName)
                         .font(.title2.bold())
@@ -547,7 +570,7 @@ struct CatCareDetailView: View {
         }
     }
 
-    /// Deleting the cat, at the bottom of its page. The confirmation also
+    /// Deleting the cat, the last row of 基本. The confirmation also
     /// offers to record the day instead, as before (11/7: moved from 写真).
     private func deleteSection(_ profile: CatProfilePresentation) -> some View {
         Section {
@@ -575,7 +598,9 @@ struct CatCareDetailView: View {
                 }
                 Button("キャンセル", role: .cancel) {}
             } message: {
-                Text("写真やツールで入れた記録は残ります。")
+                // 11/7: what goes (removeProfile drops the profile and which
+                // photos are this cat), what stays, and that it is final.
+                Text("名前・誕生日と、この子に分けた写真の記録が消えます。写真アプリの写真とツールの記録は残ります。元に戻せません。")
             }
             if deleteFailed {
                 Text("削除できませんでした。もう一度お試しください。")
@@ -630,9 +655,8 @@ struct CatCareDetailView: View {
             .familyNotebookNote(catID, .conditions)
             .accessibilityIdentifier("cat-care-conditions-status")
             if draft.conditionsStatus == .recorded {
-                TextField("持病の内容（例：腎臓の療法食中）", text: $draft.conditions, axis: .vertical)
-                    .lineLimit(1...4)
-                    .accessibilityIdentifier("cat-care-conditions-text")
+                CatCareTextField(label: "持病の内容", example: "例：腎臓の療法食中", text: $draft.conditions,
+                                 axis: .vertical, lines: 1...4, identifier: "cat-care-conditions-text")
             }
             Picker("アレルギー", selection: $draft.allergyStatus) {
                 Text("未確認").tag(CatCareAllergy.Status.unknown)
@@ -641,7 +665,7 @@ struct CatCareDetailView: View {
             }
             .familyNotebookNote(catID, .allergyStatus)
             if draft.allergyStatus == .recorded {
-                TextField("アレルギーの内容", text: $draft.allergyText)
+                CatCareTextField(label: "アレルギーの内容", example: "例：鶏肉", text: $draft.allergyText)
                     .familyNotebookNote(catID, .allergyText)
             }
             listRow(title: "体重", detail: weightSummary, kind: .weight)
@@ -660,23 +684,23 @@ struct CatCareDetailView: View {
     private var livingSection: some View {
         Section {
             listRow(title: "ごはん", detail: "\(currentRecord?.activeMeals.count ?? 0)回", kind: .meal)
-            TextField("療法食や、ほかの猫と分けてあげることなど", text: $draft.specialDiet, axis: .vertical)
-                .lineLimit(1...3)
+            CatCareTextField(label: "食事の注意", example: "例：療法食、ほかの猫と分けてあげる",
+                             text: $draft.specialDiet, axis: .vertical, lines: 1...3)
                 .familyNotebookNote(catID, .specialDiet)
-            TextField("水（例：1日2回とりかえる）", text: $draft.water)
+            CatCareTextField(label: "水", example: "例：1日2回とりかえる", text: $draft.water)
                 .familyNotebookNote(catID, .water)
-            TextField("トイレ（例：システムトイレ・1日2回そうじ）", text: $draft.litter)
+            CatCareTextField(label: "トイレ", example: "例：システムトイレ・1日2回そうじ", text: $draft.litter)
                 .familyNotebookNote(catID, .litter)
-            TextField("接し方・苦手なこと（例：抱っこが苦手）", text: $draft.temperament, axis: .vertical)
-                .lineLimit(1...4)
+            CatCareTextField(label: "接し方・苦手なこと", example: "例：抱っこが苦手",
+                             text: $draft.temperament, axis: .vertical, lines: 1...4)
                 .familyNotebookNote(catID, .temperament)
         }
     }
 
     private var householdSection: some View {
         Section {
-            TextField("飼い主の連絡先", text: $draft.ownerContact)
-            TextField("つながらないときの連絡先", text: $draft.backupContact)
+            CatCareTextField(label: "飼い主の連絡先", example: "例：090-1234-5678", text: $draft.ownerContact)
+            CatCareTextField(label: "つながらないときの連絡先", example: "例：家族の名前と電話番号", text: $draft.backupContact)
             Picker("かかりつけ", selection: $draft.vetStatus) {
                 Text("未記入").tag(CatCareVetStatus.unknown)
                 Text("決まっている").tag(CatCareVetStatus.recorded)
@@ -685,8 +709,8 @@ struct CatCareDetailView: View {
             .familyNotebookNote(catID, .vetName)
             .accessibilityIdentifier("cat-care-vet-status")
             if draft.vetStatus == .recorded {
-                TextField("かかりつけ病院の名前", text: $draft.vetName)
-                TextField("かかりつけ病院の電話", text: $draft.vetPhone)
+                CatCareTextField(label: "かかりつけ病院の名前", example: "例：みどり動物病院", text: $draft.vetName)
+                CatCareTextField(label: "かかりつけ病院の電話", example: "例：03-1234-5678", text: $draft.vetPhone)
                     .keyboardType(.phonePad)
                     .familyNotebookNote(catID, .vetPhone)
             }
@@ -813,6 +837,31 @@ struct CatCareDetailView: View {
             result.apply(to: &state.cats[index], by: state.deviceID, now: Date())
         }
         if !saved { saveFailed = true }
+    }
+}
+
+/// A field with its name always shown above it, like 預けるとき's fields
+/// (11/7: the name was only the placeholder, so once typed, the two
+/// contacts looked alike). The placeholder is an example.
+private struct CatCareTextField: View {
+    let label: String
+    let example: String
+    @Binding var text: String
+    var axis: Axis = .horizontal
+    var lines: ClosedRange<Int> = 1...1
+    var identifier = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.subheadline.weight(.medium))
+                .accessibilityHidden(true)
+            TextField(example, text: $text, axis: axis)
+                .lineLimit(lines)
+                .accessibilityLabel(label)
+                .accessibilityIdentifier(identifier)
+        }
+        .padding(.vertical, 2)
     }
 }
 
@@ -1092,7 +1141,16 @@ struct CatCareListView: View {
     /// swipe), always with a confirmation.
     private func row<Content: View>(_ id: UUID, @ViewBuilder _ content: () -> Content) -> some View {
         Button { editing = CatCareListEditor(kind: kind, entryID: id) } label: {
-            content().frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+            // 11/7: a chevron, so the row reads as one that opens.
+            HStack {
+                content().frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityHint("押すと直せます。削除もここからできます")

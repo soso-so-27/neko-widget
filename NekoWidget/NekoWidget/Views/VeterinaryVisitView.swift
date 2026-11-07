@@ -275,6 +275,14 @@ private struct VeterinaryConsultationView: View {
         return observations != visit.observations || questions != visit.questions
             || (hasStartedDay ? VeterinaryVisit.day(startedDay) : nil) != visit.startedOn
     }
+    /// A past memo's first words, on one line (11/7).
+    private func pastSummary(_ past: VeterinaryVisit) -> String? {
+        let texts = [past.observations, past.questions] + past.orderedEntries.map(\.text)
+        guard let first = texts.first(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+            return nil
+        }
+        return String(first.split(whereSeparator: \.isNewline).joined(separator: " ").prefix(40))
+    }
     var body: some View {
         Form {
             if let visit {
@@ -338,13 +346,37 @@ private struct VeterinaryConsultationView: View {
                     Button("この診察メモを削除", role: .destructive) { deletesVisit = true }
                 }
             }
-            if let error { Section { Text(error).foregroundStyle(.secondary).accessibilityIdentifier("vet-error") } }
+            // 11/7: a failure in red with a mark, not small gray text.
+            if let error {
+                Section {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("vet-error")
+                }
+            }
             if !pastVisits.isEmpty {
                 Section("これまでの診察メモ") {
                     ForEach(pastVisits) { past in
+                        // 11/7: the memo's first words and a chevron, so the
+                        // rows can be told apart and read as ones that open.
                         Button { openPast?(past) } label: {
-                            LabeledContent("診察の記録",
-                                           value: past.completedAt?.formatted(.dateTime.year().month().day()) ?? "")
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    LabeledContent("診察の記録",
+                                                   value: past.completedAt?.formatted(.dateTime.year().month().day()) ?? "")
+                                    if let summary = pastSummary(past) {
+                                        Text(summary)
+                                            .font(.subheadline)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                }
+                                Image(systemName: "chevron.right")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                                    .accessibilityHidden(true)
+                            }
+                            .contentShape(Rectangle())
                         }
                         .foregroundStyle(.primary)
                     }
@@ -363,9 +395,20 @@ private struct VeterinaryConsultationView: View {
                 if error != nil, changes {
                     Button("もう一度保存する") { Task { await save() } }.accessibilityIdentifier("vet-save")
                 }
-                Text(observations.count > 500 || questions.count > 500 ? "500文字を超えている欄があります"
-                     : changes ? (error != nil ? "保存できませんでした" : "保存中…") : "保存しました")
-                    .font(.caption).foregroundStyle(.secondary)
+                // 11/7: a save that cannot go through is red with a mark, and
+                // says why 「できあがりを見る」 cannot be pressed yet.
+                if observations.count > 500 || questions.count > 500 {
+                    Label("500文字を超えている欄があります。短くすると保存され、できあがりを見られます",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.red)
+                } else if changes, error != nil {
+                    Label("保存できませんでした。保存できると、できあがりを見られます",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.red)
+                } else {
+                    Text(changes ? "保存中…" : "保存しました")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Button { showing = true } label: {
                     Label("できあがりを見る", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
                 }

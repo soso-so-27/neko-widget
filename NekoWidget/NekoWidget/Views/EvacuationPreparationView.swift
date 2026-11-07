@@ -60,9 +60,10 @@ struct EvacuationPreparationView: View {
                                     Label("1冊のPDFにまとめる", systemImage: "book.closed")
                                 }
                             }
-                                .frame(maxWidth: .infinity, minHeight: 40)
+                                .frame(maxWidth: .infinity, minHeight: 44)
                         }
-                        .buttonStyle(.bordered)
+                        // 11/7: the tool's last step, filled like the other tools' last buttons.
+                        .buttonStyle(.borderedProminent)
                         .listRowBackground(Color.clear)
                         .listRowInsets(EdgeInsets())
                         .disabled(store.saveError != nil || makingBook)
