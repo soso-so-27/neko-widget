@@ -3593,7 +3593,7 @@ class ReviewCTests(unittest.TestCase):
         self.assertIn("} else if model.message != nil, GroupWidgetCache.entry(windowID: requested) != nil {", window)
         # 11/7: one restore for 設定 and the members screen; it still refreshes the Widget.
         restore = section(window, "static func restore(_ member: GroupWindowLocalPhotoStore.HiddenMember, windowID: String)",
-                          "/// 設定「まどと家族の手帳から抜ける」")
+                          "struct GroupIdentityDeletionView: View {")
         self.assertIn("await GroupWidgetCache.refreshKept(windowID: windowID)", restore)
         self.assertIn("_ = await Self.restore(item.member, windowID: item.window.id)", window)
         tab = source("NekoWidget/Views/MainTabView.swift")
