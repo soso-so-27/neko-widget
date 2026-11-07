@@ -1115,11 +1115,18 @@ final class AlbumHighlightRecommendationStore {
 }
 
 /// Device-local navigation preference; never a delivery/read receipt.
+/// The tab a cold launch opens when nothing routed it: まど with new photos,
+/// else the last tab the person picked. ツール is for a task, not a place to
+/// come back to, so it opens アルバム instead (11/8: the app kept opening in
+/// ツール after the showcase widget had taken it there).
 enum MainTabStartupPolicy {
     static func selection(lastTab: String?, hasNewPhotos: Bool, showsMado: Bool) -> AppTab {
         if showsMado && hasNewPhotos { return .windows }
-        let previous = lastTab.flatMap(AppTab.init(rawValue:)) ?? .memories
-        return previous == .windows && !showsMado ? .memories : previous
+        switch lastTab.flatMap(AppTab.init(rawValue:)) ?? .memories {
+        case .photos: return .photos
+        case .windows where showsMado: return .windows
+        default: return .memories
+        }
     }
 }
 

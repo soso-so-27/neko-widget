@@ -431,6 +431,7 @@ struct MainTabView: View {
     @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
     @AppStorage(CatFarewell.key) private var farewellJSON = ""
     @State private var didApplyInitialTab = false
+    /// Written only when a person taps a tab.
     @AppStorage("navigation.lastTab.v1") private var lastViewedTab = AppTab.memories.rawValue
     @State private var arrivalDates: [String: [Date]] = [:]
     @State private var arrivalReadFailed = false
@@ -940,7 +941,8 @@ struct MainTabView: View {
         .onChange(of: selectedTab) { oldTab, tab in
             if tab != .windows { groupWindowOpenInbox.dismissCreatePrompt() }
             if oldTab == .windows && tab != .windows { rememberMadoVisit() }
-            lastViewedTab = tab.rawValue
+            // The last tab is remembered only from a person's tap (the tab
+            // binding's setter), never from a widget, notification or showcase route.
             if tab != .tools { showcaseWaitingToOpen = nil }
         }
         .onChange(of: showcaseScopeID) { _, _ in
