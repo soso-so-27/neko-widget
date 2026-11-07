@@ -74,13 +74,13 @@ def fixture():
             "MANAGED_PRESERVATION_MEMBERSHIP_AUDIENCE": "neko-production-synthetic",
             "SHARING_MODERATION_PUBLIC_KEY": SYNTHETIC_KEY},
         "recipientSHA256": hashlib.sha256(bytes(range(1, 33))).hexdigest(),
-        "policyRevision": "2026-11-03", "distribution": PROFILE, "synthetic": True}
+        "policyRevision": "2026-11-07", "distribution": PROFILE, "synthetic": True}
 
 
 def settings(contract, *, synthetic=False):
     require(set(contract) == {"values", "recipientSHA256", "policyRevision", "distribution", "synthetic"}, "Unexpected candidate contract fields")
     require(contract["synthetic"] is synthetic, "Synthetic values are not a signed candidate")
-    require(contract["distribution"] == PROFILE and contract["policyRevision"] == "2026-11-03", "Unreviewed distribution or policy revision")
+    require(contract["distribution"] == PROFILE and contract["policyRevision"] == "2026-11-07", "Unreviewed distribution or policy revision")
     values = contract["values"]
     require(isinstance(values, dict) and set(values) == INPUT_KEYS, "Complete production deployment values required")
     for name in URL_KEYS:
