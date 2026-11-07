@@ -759,9 +759,7 @@ struct FamilyNotebookView: View {
                     List {
                         Section {
                             ForEach(model.familyCats) { cat in
-                                NavigationLink(cat.name) {
-                                    FamilyNotebookCatPage(toolID: cat.toolID, name: cat.name)
-                                }
+                                Text(cat.name)
 
                             }
                         } footer: { Text("このiPhoneに残っている記録です。家族との共有を確認しています。") }
@@ -897,9 +895,7 @@ struct FamilyNotebookView: View {
                         FamilyNotebookSharedCatRow(name: cat.name, remove: {
                             do { try model.unshareCat(cat.id); Task { await sharing.refresh() } }
                             catch { sharing.failure = error as? FamilySharingError ?? .serviceUnavailable }
-                        }) {
-                                    FamilyNotebookCatPage(toolID: cat.toolID, name: cat.name)
-                                }
+                        })
                     }
                     Button { showsCats = true } label: { Label("猫を追加", systemImage: "plus") }
                         .accessibilityIdentifier("family-notebook-add-cat")
@@ -1729,38 +1725,6 @@ struct FamilyNotebookCatSelectionView: View {
 
 /// The toolbar button on 「この子のこと」: the way into the family notebook,
 /// out of the way for anyone who keeps it to themselves (test builds only).
-/// A cat in the notebook. With its profile on this iPhone, the cat's own page
-/// (写真 and この子のこと), the same as from ツール (11/7: the two looked
-/// different and counted 基本 differently). Otherwise its 「この子のこと」
-/// under the cat's name.
-private struct FamilyNotebookCatPage: View {
-    let toolID: UUID
-    let name: String
-    @Environment(\.toolProfilesPresentation) private var presentation
-    @Environment(\.toolProfileActions) private var actions
-    @ObservedObject private var catCare = CatCareStore.shared
-
-    private var profile: CatProfilePresentation? {
-        guard let presentation,
-              let profileID = catCare.state?.cats.first(where: { $0.catID == toolID && $0.deletedAt == nil })?.profileID
-        else { return nil }
-        return presentation.profiles.first { $0.identifier == profileID.uuidString }
-    }
-
-    var body: some View {
-        if let profile, let presentation {
-            CatProfileDetailView(profile: profile, allProfiles: presentation.profiles,
-                                 manualCandidatePhotos: profile.manualCandidatePhotos,
-                                 photoAlbumOptions: presentation.photoAlbumOptions,
-                                 actions: actions, initialPage: .care, insideFamilyNotebook: true)
-        } else {
-            CatCareDetailView(toolCatID: toolID, name: name, insideFamilyNotebook: true)
-                .navigationTitle(name)
-                .navigationBarTitleDisplayMode(.inline)
-        }
-    }
-}
-
 struct FamilyNotebookButton: View {
     var accessibilityIdentifier = "cat-care-family-notebook"
     /// On a cat that is in the notebook: the family's names, shown as faces.

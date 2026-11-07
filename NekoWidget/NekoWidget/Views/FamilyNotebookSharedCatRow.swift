@@ -1,13 +1,14 @@
 import SwiftUI
 
 /// The same row and confirmation are exercised by the offline UI fixture.
-struct FamilyNotebookSharedCatRow<Destination: View>: View {
+/// 11/7: 「この子のこと」 is written in one place, the cat's page in ツール.
+/// The notebook only says which cats are shared; the row leads nowhere.
+struct FamilyNotebookSharedCatRow: View {
     let name: String
     let remove: () -> Void
-    @ViewBuilder let destination: () -> Destination
     @State private var confirming = false
     var body: some View {
-        NavigationLink(name, destination: destination)
+        Text(name)
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 Button("手帳から外す") { confirming = true }.tint(.red)
             }
@@ -24,7 +25,7 @@ struct FamilyNotebookUnshareFixture: View {
         NavigationStack {
             List {
                 if shared {
-                    FamilyNotebookSharedCatRow(name: "試験の猫", remove: { shared = false }) { Text("猫の記録") }
+                    FamilyNotebookSharedCatRow(name: "試験の猫", remove: { shared = false })
                 } else { Text("共有の猫は0匹").accessibilityIdentifier("unshare-completed") }
             }.navigationTitle("家族の手帳")
         }
