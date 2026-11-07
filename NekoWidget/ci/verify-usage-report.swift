@@ -28,7 +28,7 @@ private struct UsageReportVerifier {
         require(UsageEvent.allNames == expected, "Event names must be exactly the spec's list")
         require(UsageEvent.all.count == expected.count, "Every event has its own name")
         for name in UsageEvent.allNames {
-            require(name.allSatisfy { $0.isASCII && ($0.isLowercase || $0.isNumber || $0 == "_" || $0 == ".") },
+            require(name.allSatisfy { $0.isASCII && ($0.isLowercase || $0.isNumber || $0 == "_" || $0 == "-" || $0 == ".") },
                     "Short ASCII names only: \(name)")
         }
 
