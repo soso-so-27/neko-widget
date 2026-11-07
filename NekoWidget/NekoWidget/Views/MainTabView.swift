@@ -988,9 +988,16 @@ struct MainTabView: View {
             // 11/7: the cat switch is one row over all three pages, so a cat
             // chosen in すべて is seen in お気に入り and メモ too.
             if !catProfilesPresentation.profiles.isEmpty {
-                photoLibraryCatPicker
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
+                HStack(spacing: 8) {
+                    photoLibraryCatPicker
+                    Spacer(minLength: 0)
+                    // 11/7: one cat chosen: adding its photos is here, not on the cat's page.
+                    if let profile = catProfilesPresentation.profiles.first(where: { $0.identifier == photoLibraryProfileIdentifier }) {
+                        CatProfileAddPhotosButton(profile: profile, allProfiles: catProfilesPresentation.profiles,
+                                                  actions: catProfilesActions)
+                    }
+                }
+                .padding(.horizontal, 16)
             }
             photoLibraryPager
         }
@@ -1188,9 +1195,7 @@ struct MainTabView: View {
                             allProfiles: catProfilesPresentation.profiles,
                             manualCandidatePhotos: profile.manualCandidatePhotos,
                             photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
-                            actions: catProfilesActions,
-                            // From ツール, the page opens on この子のこと (11/7).
-                            initialPage: .care
+                            actions: catProfilesActions
                         )
                     } label: {
                         CatChip(profile: profile, progress: careProgress(for: profile),
@@ -1239,8 +1244,7 @@ struct MainTabView: View {
                     allProfiles: catProfilesPresentation.profiles,
                     manualCandidatePhotos: profile.manualCandidatePhotos,
                     photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
-                    actions: catProfilesActions,
-                    initialPage: .care
+                    actions: catProfilesActions
                 )
             }
         }
@@ -1267,8 +1271,7 @@ struct MainTabView: View {
                 allProfiles: catProfilesPresentation.profiles,
                 manualCandidatePhotos: profile.manualCandidatePhotos,
                 photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
-                actions: catProfilesActions,
-                initialPage: .care
+                actions: catProfilesActions
             )
         } else {
             CatCareDetailView(toolCatID: toolID, name: name)

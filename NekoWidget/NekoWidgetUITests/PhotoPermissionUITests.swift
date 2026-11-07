@@ -3988,6 +3988,8 @@ final class SoloMemoriesUITests: XCTestCase {
             filter.tap()
             XCTAssertTrue(filter.isSelected)
             XCTAssertTrue(app.navigationBars["写真"].exists)
+            // 11/7: with one cat chosen, its photos are added here (not on the cat's page).
+            XCTAssertTrue(app.buttons["photos-cat-add-photos"].exists, "The chosen cat's add entry is missing")
             let photos = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "photo-hub-photo-"))
             XCTAssertEqual(photos.count, 1, "The root filter must retain the selected cat")
             XCTAssertFalse(app.buttons["cat-profile-open-albums"].exists)
@@ -4017,7 +4019,9 @@ final class SoloMemoriesUITests: XCTestCase {
         let catName = firstCat.label.contains("ミケ") ? "ミケ" : "ソラ"
         firstCat.tap()
         XCTAssertTrue(app.navigationBars[catName].waitForExistence(timeout: 5))
-        app.buttons["cat-profile-page-photos"].tap()
+        // 11/7: the cat's one page; the name is changed in its 基本.
+        XCTAssertFalse(app.buttons["cat-profile-page-photos"].exists, "The cat's page has no 写真 tab")
+        app.buttons["cat-care-part-basics"].tap()
         XCTAssertTrue(app.buttons["名前を変更"].waitForExistence(timeout: 5),
                       "The tools must open the profile, without a photo-grid intermediary")
         XCTAssertFalse(app.navigationBars["\(catName)の写真"].exists)

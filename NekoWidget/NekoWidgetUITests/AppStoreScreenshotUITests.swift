@@ -260,13 +260,16 @@ final class AppStoreScreenshotUITests: XCTestCase {
         profile.tap()
         XCTAssertTrue(app.staticTexts["この子のこと"].waitForExistence(timeout: 10))
         captureScreenshot(named: "PR5-profile-in-tool")
-        // 11/7: 「この子のこと」 opens the cat's page on この子のこと; the profile is deleted on 写真.
+        // 11/7: 「この子のこと」 opens the cat's one page (no 写真 tab); the profile
+        // is deleted at the bottom of that same page.
         let edit = app.descendants(matching: .any)["care-open-cat-care"].firstMatch
         XCTAssertTrue(scrollUpUntilHittable(edit, application: app), app.debugDescription); edit.tap()
-        let photosPage = app.buttons.matching(NSPredicate(format: "label == %@ AND (identifier == %@ OR identifier == %@)",
-            "写真", "cat-profile-page-photos", "cat-profile-page")).firstMatch
-        XCTAssertTrue(photosPage.waitForExistence(timeout: 10), app.debugDescription); photosPage.tap()
-        let delete = app.buttons["プロフィールを削除"]
+        XCTAssertTrue(app.buttons["cat-care-part-basics"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(app.buttons["cat-profile-page-photos"].exists, "The cat's page has no 写真 tab")
+        // The name and the key photo are in 基本.
+        app.buttons["cat-care-part-basics"].tap()
+        XCTAssertTrue(app.buttons["cat-profile-rename"].waitForExistence(timeout: 5), app.debugDescription)
+        let delete = app.buttons["cat-profile-delete"]
         XCTAssertTrue(scrollUpUntilHittable(delete, application: app)); delete.tap()
         let confirmation = app.alerts.firstMatch
         XCTAssertTrue(confirmation.waitForExistence(timeout: 5))

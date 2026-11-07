@@ -2424,23 +2424,49 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "struct CatProfileDetailView: View",
             "private struct CatProfilePhotoAlbumSelectionView: View",
         )
-        self.assertEqual(detail.count('Text("この子の写真を追加")'), 1)
-        self.assertNotIn('Text("候補 ', detail)
-        self.assertIn("UnassignedCatPhotosView(", detail)
+        page = section(detail, "struct CatProfileDetailView: View", "struct CatProfileAddPhotosButton: View")
         self.assertNotIn("CatProfilePhotoSourcesView", profile)
-        self.assertIn('"この子の写真を見る"', detail)
-        # 10/23: 写真 holds what Photos knows (name, face, photos); the dates are
-        # facts about the cat, so they moved to この子のこと → 基本.
-        self.assertNotIn('"誕生日・迎えた日"', detail)
-        self.assertIn('Text(candidate == .photos ? "写真" : "この子のこと")', detail)
+        # 11/7: the cat's page is この子のこと only. No 写真 tab, and the cat's
+        # photos are not seen or added from it (the 写真 tab does that).
+        self.assertIn("CatCareDetailView(profile: profile, otherProfiles: [], selectedProfileID: .constant(profile.identifier))", page)
+        for removed in ('"cat-profile-page-photos"', '"cat-profile-page-care"', "TabView(", "enum CatPage",
+                        '"この子の写真を見る"', '"この子の写真を追加"', "UnassignedCatPhotosView(",
+                        "CatProfileConfirmedPhotosView("):
+            self.assertNotIn(removed, page)
+        # The page passes its own actions, so rename, photo and delete use them.
+        self.assertIn(".environment(\\.toolProfileActions, actions)", page)
+        # The 写真 tab's one entry reuses the same add picker for the chosen cat.
+        add = section(profile, "struct CatProfileAddPhotosButton: View", "extension CatProfilePresentation {")
+        self.assertIn('Label("この子の写真を追加"', add)
+        self.assertIn("UnassignedCatPhotosView(", add)
+        self.assertIn("preselectedProfileIdentifier: profile.identifier", add)
+        self.assertIn("dismissAfterSaving: true", add)
+        main = source("NekoWidget/Views/MainTabView.swift")
+        library = section(main, "private var photoLibrary: some View {", "private var albumRoot: some View {")
+        self.assertIn("$0.identifier == photoLibraryProfileIdentifier", library)
+        self.assertIn("CatProfileAddPhotosButton(", library)
+        # The name, key photo and deleting are in この子のこと: the photo and
+        # name at the top of 基本, deleting at the bottom of the page.
         care = source("NekoWidget/Views/CatCareView.swift")
+        basics = section(care, "@ViewBuilder private var basicsSection: some View {", "@State private var openParts")
+        self.assertIn("profileHeading(profile)", basics)
+        heading = section(care, "private func profileHeading(", "private func deleteSection(")
+        self.assertIn("showsKeyPhotoPicker = true", heading)
+        self.assertIn('"cat-profile-rename"', heading)
+        self.assertIn("await profileActions.updateName(profile.identifier, draftName)", heading)
+        self.assertIn("await profileActions.setKeyPhoto(profile.identifier, $0)", care)
+        delete = section(care, "private func deleteSection(", "@State private var openParts")
+        self.assertIn('Button("プロフィールを削除", role: .destructive)', delete)
+        self.assertIn("await profileActions.deleteProfile(profile.identifier)", delete)
+        self.assertIn('Button("旅立った日を記録する") { showsFarewellEditor = true }', delete)
+        form = section(care, 'folded("household", "家の情報", progress.household) { householdSection }', ".onChange(of: draft)")
+        self.assertIn("deleteSection(profile)", form)
         self.assertIn('LabeledContent("誕生日・迎えた日", value: profile.lifeDatesSummary)', care)
         self.assertIn('"cat-care-life-dates"', care)
-        self.assertNotIn('Text("この子の時間")', detail)
         # The album link is not offered on the profile; 「うちの子」 lives in 設定 → 写真.
         self.assertNotIn('"写真アプリのアルバムをつなぐ"', detail)
-        self.assertNotIn('Text("その他")', detail)
-        self.assertIn("await actions.setKeyPhoto", detail)
+        # 11/7: the album no longer opens the cat's page (one entry: ツール).
+        self.assertNotIn("CatProfileDetailView(", source("NekoWidget/Views/LikedPhotosView.swift"))
 
     def test_cat_pages_browse_before_editing_and_creation_can_start_from_a_photo(self) -> None:
         profiles = source("NekoWidget/Views/CatProfilesView.swift")
@@ -3037,8 +3063,10 @@ class CatCareTests(unittest.TestCase):
         # 11/1: a cat whose farewell day is recorded shows no ring.
         self.assertIn("departed: farewellDays[profile.identifier] != nil)", tab)
         detail = source("NekoWidget/Views/CatProfilePhotoCurationViews.swift")
-        self.assertIn('"cat-profile-page"', detail)
-        self.assertIn("CatCareDetailView(profile: profile, otherProfiles: [], selectedProfileID: .constant(profile.identifier))", detail)
+        # 11/7: the cat's page is この子のこと only, with no tabs.
+        page = section(detail, "struct CatProfileDetailView: View", "struct CatProfileAddPhotosButton: View")
+        self.assertNotIn('"cat-profile-page"', page)
+        self.assertIn("CatCareDetailView(profile: profile, otherProfiles: [], selectedProfileID: .constant(profile.identifier))", page)
         checks = source("ci/run-quick-ios-checks.sh")
         self.assertIn("ci/verify-cat-care.swift", checks)
         project = source("NekoWidget.xcodeproj/project.pbxproj")
@@ -3223,9 +3251,11 @@ class ToolTemplateTests(unittest.TestCase):
     def test_tools_share_the_cat_care_section_and_a_bottom_preview(self) -> None:
         shared = section(source("NekoWidget/Views/CatCareView.swift"), "struct ToolCatCareSection<Extra: View>", "/// The system camera.")
         self.assertIn('NavigationLink("「この子のこと」を開く") { CatCareSubjectView(subject: subject, profiles: profiles) }', shared)
-        # 11/7: the link opens the cat's own page on its この子のこと tab.
+        # 11/7: the link opens the cat's own page (この子のこと only).
         subject_view = section(source("NekoWidget/Views/CatCareView.swift"), "struct CatCareSubjectView: View {", "struct CatCareDetailView: View {")
-        self.assertIn("actions: profileActions, initialPage: .care)", subject_view)
+        self.assertIn("CatProfileDetailView(profile: profile,", subject_view)
+        self.assertIn("actions: profileActions)", subject_view)
+        self.assertNotIn("initialPage", subject_view)
         self.assertNotIn("CatCareStore.shared.update", shared)
         for path in ("NekoWidget/Views/VeterinaryVisitView.swift", "NekoWidget/Views/CareHandoffView.swift",
                      "NekoWidget/Views/CatPreparednessView.swift", "NekoWidget/Views/EvacuationPreparationView.swift"):
