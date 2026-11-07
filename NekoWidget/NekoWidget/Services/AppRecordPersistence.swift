@@ -1741,11 +1741,12 @@ struct AppRecordSettingsView: View {
             }
         } message: { Text("このiPhoneの記録で、これからの保存を続けます。ほかのiPhoneで保存した記録は、使わなくなります。") }
         .confirmationDialog("ほかのiPhoneで保存した記録に切り替えますか？", isPresented: $confirmsRemote, titleVisibility: .visible) {
-            Button("ほかのiPhoneの記録を使う") {
+            // 11/7: this iPhone's records are replaced; say so and mark it red.
+            Button("ほかのiPhoneの記録を使う", role: .destructive) {
                 running = "ほかのiPhoneの記録を使う"
                 Task { await persistence.resolveConflict(useRemote: true) }
             }
-        } message: { Text("このiPhoneのいまの記録は、ほかのiPhoneで保存した記録に置き換わります。") }
+        } message: { Text("このiPhoneのいまの記録は、ほかのiPhoneで保存した記録に置き換わります。このiPhoneの記録は元に戻せません。") }
         .onChange(of: persistence.busy) { _, busy in if !busy { running = nil } }
     }
 

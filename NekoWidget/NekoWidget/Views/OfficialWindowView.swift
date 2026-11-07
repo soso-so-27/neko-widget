@@ -200,13 +200,18 @@ struct OfficialWindowEntryCard: View {
     let previewFeed: () async throws -> OfficialWindowPreview
     let relatedWindows: [PublicWindowPresentationSource]
     let refreshFailed: Bool
+    /// 11/7: a row's own button (「受け取る」) sits beside the link, not over it.
+    let rowAccessory: AnyView?
+    /// 11/7: the same 「新着」 mark as a family window card.
+    let showsNewMark: Bool
     @StateObject private var preview: OfficialWindowPreviewModel
 
     init(state: OfficialWindowState? = nil,
          store: OfficialWindowStore = .shared,
          refreshFeed: (() async throws -> Void)? = nil, presentation: Presentation = .list,
          previewFeed: (() async throws -> OfficialWindowPreview)? = nil,
-         relatedWindows: [PublicWindowPresentationSource] = [], refreshFailed: Bool = false) {
+         relatedWindows: [PublicWindowPresentationSource] = [], refreshFailed: Bool = false,
+         rowAccessory: AnyView? = nil, showsNewMark: Bool = false) {
         let source = PublicWindowPresentationSource(store: store, refresh: refreshFeed, preview: previewFeed)
         self.state = state ?? store.snapshot()
         self.store = store
@@ -215,6 +220,8 @@ struct OfficialWindowEntryCard: View {
         self.presentation = presentation
         self.previewFeed = source.preview
         self.relatedWindows = relatedWindows
+        self.rowAccessory = rowAccessory
+        self.showsNewMark = showsNewMark
         _preview = StateObject(wrappedValue: OfficialWindowPreviewModel(windowID: store.windowID))
     }
 
@@ -231,7 +238,22 @@ struct OfficialWindowEntryCard: View {
         }
     }
 
+    @ViewBuilder
     private func entry(at now: Date) -> some View {
+        if presentation == .row {
+            // 11/7: the row's button sits at the trailing edge, beside the
+            // link (not over its chevron), and the row keeps one background.
+            HStack(spacing: 10) {
+                link(at: now)
+                if let rowAccessory { rowAccessory.padding(.trailing, 14) }
+            }
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        } else {
+            link(at: now)
+        }
+    }
+
+    private func link(at now: Date) -> some View {
         // The cover and its VoiceOver value use the same photo at this boundary.
         let photo = state.isSubscribed ? state.photos.first : preview.content?.availablePhoto(at: now)
         let status = OfficialWindowStatusPresentation(isConfigured: store.endpoint != nil,
@@ -264,6 +286,19 @@ struct OfficialWindowEntryCard: View {
                     .shadow(color: .black.opacity(0.5), radius: 4, y: 1)
                     .padding(14)
                 }
+                .overlay(alignment: .topTrailing) {
+                    // 11/7: the same mark as GroupWindowCard.
+                    if showsNewMark {
+                        Text("新着")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.red, in: Capsule())
+                            .padding(10)
+                            .accessibilityHidden(true)
+                    }
+                }
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             } else if presentation == .row {
@@ -277,11 +312,15 @@ struct OfficialWindowEntryCard: View {
                         Text(store.definition.subtitle).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
-                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    // 11/7: no chevron when the row has its own button; the row still opens the window.
+                    if rowAccessory == nil {
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
                 }
-                .padding(14)
+                .padding(.vertical, 14)
+                .padding(.leading, 14)
+                .padding(.trailing, rowAccessory == nil ? 14 : 0)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
                 .contentShape(RoundedRectangle(cornerRadius: 16))
             } else {
                 VStack(alignment: .leading, spacing: 0) {
@@ -310,7 +349,8 @@ struct OfficialWindowEntryCard: View {
         .accessibilityIdentifier(store.windowID == OfficialWindowCatalog.sourceID ? "official-window-entry" : "public-window-entry-\(store.windowID)")
         .accessibilityLabel("\(store.displayName)、写真を受け取るまど、公式")
         .accessibilityValue([state.isSubscribed ? "受け取り中" : "まだ受け取っていません",
-                             photo?.displayCredit(in: store.windowID) ?? status.title]
+                             photo?.displayCredit(in: store.windowID) ?? status.title,
+                             showsNewMark ? "新着あり" : nil]
             .compactMap { $0 }.joined(separator: "。"))
         .accessibilityHint(state.isSubscribed ? "受け取っている写真を開きます" : "どんな写真か見られます")
         .task {

@@ -18,7 +18,15 @@ struct WidgetPlacementGuideView: View {
     @State private var page = 0
 
     /// One picture per step: the iOS screens the person will see, in order.
+    /// 11/7: the clouded window and its tag are the last step (it was a small
+    /// grey note under the pages). An image name starting with "sf:" is a symbol.
     private var steps: [(image: String, text: String)] {
+        let cloudy: [(image: String, text: String)] = windowName == nil
+            ? [(image: "sf:cloud.fill", text: "置いたら、そのままくもりのまどです。札を押すと、きょうの1枚が出ます。")] : []
+        return placementSteps + cloudy
+    }
+
+    private var placementSteps: [(image: String, text: String)] {
         if #available(iOS 18.0, *) {
             Array(zip(["onboarding-widget-step-1", "onboarding-widget-step-2-ios18", "onboarding-widget-step-3"],
                       OnboardingPresentationCopy.widgetModernPlacementSteps))
@@ -47,6 +55,11 @@ struct WidgetPlacementGuideView: View {
                                 Image(systemName: "plus.square.fill")
                                     .font(.system(size: 96))
                                     .foregroundStyle(.tint)
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            } else if step.image.hasPrefix("sf:") {
+                                Image(systemName: String(step.image.dropFirst(3)))
+                                    .font(.system(size: 96))
+                                    .foregroundStyle(.secondary)
                                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                             } else {
                                 Image(step.image)
@@ -88,10 +101,8 @@ struct WidgetPlacementGuideView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 20)
                     .accessibilityIdentifier("official-window-widget-source")
-            } else {
-                Text(hasCats
-                     ? "置いたら、そのままくもりのまどです。札を押すと、きょうの1枚が出ます。"
-                     : "置いたら、そのままくもりのまどです。札を押すと、きょうの1枚が出ます。猫を登録すると、猫ごとにも選べます。")
+            } else if !hasCats {
+                Text("猫を登録すると、猫ごとにも選べます。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

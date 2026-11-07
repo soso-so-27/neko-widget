@@ -443,12 +443,14 @@ struct MainTabView: View {
             || OfficialWindowConfiguration.definitions.contains { $0.endpoint != nil }
     }
 
+    /// 11/7: the number of windows with something new (an official window
+    /// counts once), the same as the 「新着」 marks in the list.
     private var newMadoPhotoCount: Int {
-        let photos: Int = arrivalDates.reduce(0) { count, entry in
+        let windows: Int = arrivalDates.reduce(0) { count, entry in
             let seen = UserDefaults.standard.double(forKey: "navigation.madoVisited.v1.\(entry.key)")
-            return count + entry.value.filter { $0.timeIntervalSince1970 > seen }.count
+            return count + (entry.value.contains { $0.timeIntervalSince1970 > seen } ? 1 : 0)
         }
-        return photos + groupWindowsWithNewPhotos
+        return windows + groupWindowsWithNewPhotos
     }
 
     /// 11/7 (W1): みんなのまど with photos kept here and not seen on their page yet.
@@ -3458,16 +3460,13 @@ private struct WindowListView: View {
 
     private func addButton(_ source: PublicWindowPresentationSource) -> some View {
         // One word for starting an official window, here and in the window (11/7).
+        // 11/7: a real button beside the row (44pt), not a capsule over its chevron.
         Button { add(source) } label: {
             Text("受け取る")
                 .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
-                .background(Color.accentColor.opacity(0.15), in: Capsule())
+                .frame(minHeight: 44)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(Color.accentColor)
-        .padding(.trailing, 12)
+        .buttonStyle(.bordered)
         .disabled(addingPublicWindowID != nil)
         .accessibilityIdentifier("public-window-add-\(source.id)")
     }
@@ -3500,11 +3499,23 @@ private struct WindowListView: View {
                                 refreshFeed: source.refresh, presentation: presentation,
                                 previewFeed: source.preview, relatedWindows: publicWindows,
                                 refreshFailed: publicRefreshFailures[source.id] != nil
-                                    && publicRefreshFailures[source.id] == publicStates[source.id]?.subscriptionID)
+                                    && publicRefreshFailures[source.id] == publicStates[source.id]?.subscriptionID,
+                                rowAccessory: presentation == .row ? AnyView(addButton(source)) : nil,
+                                showsNewMark: presentation == .wide && publicNewWindowIDs.contains(source.id))
     }
 
+    /// 11/7: official windows with photos after the last まど tab visit (the
+    /// tab badge's rule; the visit is kept when leaving the tab).
+    @State private var publicNewWindowIDs: Set<String> = []
+
     private func reloadPublicStates() {
-        publicStates = Dictionary(uniqueKeysWithValues: publicWindows.map { ($0.id, $0.store.snapshot()) })
+        let states = Dictionary(uniqueKeysWithValues: publicWindows.map { ($0.id, $0.store.snapshot()) })
+        publicStates = states
+        publicNewWindowIDs = Set(publicWindows.filter { source in
+            guard let state = states[source.id], state.isSubscribed else { return false }
+            let seen = UserDefaults.standard.double(forKey: "navigation.madoVisited.v1.official:\(source.id)")
+            return state.photos.contains { $0.publishedAt.timeIntervalSince1970 > seen }
+        }.map(\.id))
     }
 
     @ViewBuilder private var arrivalLayout: some View {
@@ -3528,7 +3539,6 @@ private struct WindowListView: View {
                     .accessibilityAddTraits(.isHeader)
                 ForEach(discoverable) { source in
                     publicCard(source, presentation: .row)
-                        .overlay(alignment: .trailing) { addButton(source) }
                         .transition(.opacity)
                 }
             }

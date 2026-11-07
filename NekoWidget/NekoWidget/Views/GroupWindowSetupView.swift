@@ -416,7 +416,6 @@ struct GroupWindowMembersView: View {
     @State private var showsRevokeConfirmation = false
     @State private var showsLeaveConfirmation = false
     @State private var showsPlusOffer = false
-    @State private var showsRestore = false
     @Environment(\.membershipAccess) private var membershipAccess
     @State private var showsRename = false
     @State private var showsCloseConfirmation = false
@@ -527,12 +526,6 @@ struct GroupWindowMembersView: View {
                 }
             }
         }
-        .sheet(isPresented: $showsRestore, onDismiss: {
-            NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
-            Task { await model.load() }
-        }) {
-            MembershipRestoreSheet()
-        }
         .confirmationDialog(
             removalTarget.map { "\(GroupDisplayName.withSan($0.displayName))をこのまどから外しますか？" } ?? "外しますか？",
             isPresented: $showsRemoval,
@@ -638,16 +631,12 @@ struct GroupWindowMembersView: View {
             if GroupWindowPresentation.isMyWindow(window) {
                 if membershipAccess.hasPersonalPlus() {
                     // This iPhone has Plus but the server does not see it yet:
-                    // restore, never the offer (11/5).
-                    Button {
-                        showsRestore = true
-                    } label: {
-                        Text("購入を復元")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity, minHeight: 44)
+                    // check it again right here, never the offer (11/5), the
+                    // same button as elsewhere, not a restore sheet (11/7).
+                    MembershipRestoreButton(title: "Plusをもう一度確かめる", look: .wide,
+                                            identifier: "group-window-restore-plus") {
+                        Task { await model.load() }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("group-window-restore-plus")
                 } else if plusOfferModel != nil {
                     Button {
                         showsPlusOffer = true
@@ -797,14 +786,16 @@ struct GroupWindowMembersView: View {
             if let hidden {
                 // 11/7 (W10): who is hidden or blocked here shows it, and is
                 // shown again from here, not only from 設定.
+                // 11/7: the same button shape as 「外す」, so it reads as one to press.
                 Button { restoreTarget = hidden } label: {
                     Text(hidden.blocked == true ? "ブロック中" : "表示しない")
-                        .font(.caption2.weight(.semibold))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.orange)
+                .font(.caption.weight(.semibold))
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(.orange)
                 .frame(minWidth: 44, minHeight: 44)
                 .accessibilityHidden(true)
                 .accessibilityIdentifier("group-window-member-hidden")

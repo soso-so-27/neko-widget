@@ -3605,20 +3605,20 @@ final class SoloMemoriesUITests: XCTestCase {
             app.launch()
             XCTAssertTrue(app.buttons["membership-preview-open"].waitForExistence(timeout: 10))
             app.buttons["membership-preview-open"].tap()
-            let purchase = app.buttons["membership-offer-purchase"]
-            XCTAssertTrue(purchase.waitForExistence(timeout: 5))
-            XCTAssertEqual(purchase.label, "Plusを利用中です")
-            XCTAssertFalse(purchase.isEnabled)
+            // 11/7: 「Plusを利用中です」 is words, not a disabled purchase button.
+            let joined = app.descendants(matching: .any)["membership-offer-active"].firstMatch
+            XCTAssertTrue(joined.waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["membership-offer-purchase"].exists)
+            XCTAssertFalse(app.buttons["Plusを利用中です"].exists)
             XCTAssertFalse(app.staticTexts["membership-offer-price"].exists)
             XCTAssertFalse(app.staticTexts["membership-offer-trial"].exists)
-            let joined = app.descendants(matching: .any)["membership-offer-active"].firstMatch
             for _ in 0..<5 where !joined.isHittable { app.swipeUp() }
             XCTAssertTrue(joined.isHittable)
             let attachment = XCTAttachment(screenshot: app.screenshot())
             attachment.name = largeText ? "membership-joined-largest" : "membership-joined"
             attachment.lifetime = .keepAlways
             add(attachment)
-            checkMembershipManagementPreviewKeepsState(app, expectedPurchaseTitle: "Plusを利用中です",
+            checkMembershipManagementPreviewKeepsState(app, expectedPurchaseTitle: nil,
                                                        captureName: largeText ? "largest" : "standard")
             app.buttons["membership-offer-close"].tap()
             XCTAssertTrue(app.staticTexts["membership-preview-result"].waitForExistence(timeout: 5))
@@ -3718,7 +3718,7 @@ final class SoloMemoriesUITests: XCTestCase {
 
     @MainActor
     private func checkMembershipManagementPreviewKeepsState(_ app: XCUIApplication,
-                                                          expectedPurchaseTitle: String,
+                                                          expectedPurchaseTitle: String?,
                                                           captureName: String) {
         let manage = app.buttons["membership-offer-manage"]
         for _ in 0..<10 where !manage.isHittable { app.swipeUp() }
@@ -3736,9 +3736,15 @@ final class SoloMemoriesUITests: XCTestCase {
         preview.buttons["閉じる"].tap()
         XCTAssertFalse(preview.exists)
         let purchase = app.buttons["membership-offer-purchase"]
-        XCTAssertEqual(purchase.label, expectedPurchaseTitle,
-                       "Closing management must not invent a purchase, cancellation, or grant")
-        XCTAssertFalse(purchase.isEnabled)
+        if let expectedPurchaseTitle {
+            XCTAssertEqual(purchase.label, expectedPurchaseTitle,
+                           "Closing management must not invent a purchase, cancellation, or grant")
+            XCTAssertFalse(purchase.isEnabled)
+        } else {
+            // A member has no purchase button (11/7); closing management must not add one.
+            XCTAssertFalse(purchase.exists, "Closing management must not invent a purchase, cancellation, or grant")
+            XCTAssertTrue(app.descendants(matching: .any)["membership-offer-active"].firstMatch.exists)
+        }
         XCTAssertFalse(app.staticTexts["membership-preview-result"].exists)
     }
 
