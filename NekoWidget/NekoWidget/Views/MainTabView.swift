@@ -34,9 +34,13 @@ final class PhotoLibrarySelectionState: ObservableObject {
     }
 
     func select(_ section: PhotoLibrarySection) {
-        if selection != section { PhotoLibraryReadingPosition.activeSection = section.rawValue }
-        selection = section
-        defaults.set(section.rawValue, forKey: storageKey)
+        // 11/7: re-selecting the same page (every 写真 tab tap) publishes
+        // nothing, so the tab switch does not redraw the whole tab view.
+        if selection != section {
+            PhotoLibraryReadingPosition.activeSection = section.rawValue
+            selection = section
+            defaults.set(section.rawValue, forKey: storageKey)
+        }
     }
 }
 
@@ -591,7 +595,7 @@ struct MainTabView: View {
             // set selectedTab directly and keep their exact-photo destination.
             if tab == .photos {
                 photoLibrarySelection.select(.all)
-                photosPath = NavigationPath()
+                if !photosPath.isEmpty { photosPath = NavigationPath() }
             }
             if selectedTab == .windows && tab != .windows { rememberMadoVisit() }
             didApplyInitialTab = true
