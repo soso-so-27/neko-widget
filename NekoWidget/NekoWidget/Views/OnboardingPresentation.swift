@@ -300,10 +300,7 @@ struct OnboardingPresentationState: Equatable, Sendable {
     }
 }
 
-// Invitation receivers post this only after their own route validation and
-// staging. No invitation token, URL, or participant identity is carried here.
 extension Notification.Name {
-    static let onboardingInvitationReceived = Notification.Name("OnboardingInvitationReceived")
     /// The onboarding Plus sheet closed: an invitation held behind it is offered (11/7).
     static let onboardingPlusSheetClosed = Notification.Name("OnboardingPlusSheetClosed")
 }

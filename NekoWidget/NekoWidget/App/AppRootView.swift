@@ -34,7 +34,6 @@ struct AppRootView: View {
     @StateObject private var momentNotificationTapMailbox = MomentNotificationTapMailbox.shared
     @State private var presentedError: PresentedError?
     @State private var showsWidgetPlacementGuide = false
-    @State private var showsInvitationJoin = false
     @ObservedObject private var invitationInbox = GroupInvitationInbox.shared
     @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
     private struct FamilyLink: Identifiable { let id = UUID(); let url: URL }
@@ -43,9 +42,6 @@ struct AppRootView: View {
     @State private var joinedFamilyFromLink = false
     @State private var showsFamilyNotebook = false
     @State private var onboardingInvitation: GroupInvitationLink?
-    /// An invitation that arrived while the help sheet was open. It opens
-    /// after that sheet has closed, so two sheets never switch at once.
-    @State private var invitationAfterHelp: GroupInvitationLink?
     @State private var firstRunPhoto: PhotoPresentation?
     @State private var startsInPhotosAfterOnboarding = false
     @State private var officialWindowRoute: OfficialWindowRoute?
@@ -68,6 +64,9 @@ struct AppRootView: View {
         } photo: { opening, close in
             widgetPhotoDestination(opening, close: close)
         }
+        // Plus bought on the first run's last page: 「自動保存も始めますか？」 once the guide ends (11/7).
+        .autoSaveOfferAfterOnboarding(ended: !OnboardingPresentationPersistence.requiresPresentation(
+            completedVersion: onboardingCompletedVersion))
         .onReceive(NotificationCenter.default.publisher(for: .cloudyWindowConfigurationChanged)) { _ in
             Task { await viewModel.refreshCloudyWindow() }
         }
@@ -81,31 +80,13 @@ struct AppRootView: View {
             }
         }) { FamilyNotebookJoinView(link: $0.url, onJoined: { joinedFamilyFromLink = true }) }
         .sheet(isPresented: $showsFamilyNotebook) { FamilyNotebookView() }
-        .sheet(isPresented: $showsInvitationJoin, onDismiss: {
-            if let next = invitationAfterHelp {
-                invitationAfterHelp = nil
-                onboardingInvitation = next
-                return
-            }
-        }) {
-            NavigationStack {
-                OnboardingInvitationHelpView()
-                .toolbar { ToolbarItem(placement: .cancellationAction) {
-                    Button("閉じる") { showsInvitationJoin = false }
-                } }
-            }
-        }
         // An invitation link opened before the first-run guide ends: join at once,
         // then land in the まど tab. The guide can be finished later from 設定.
         .onChange(of: invitationInbox.pending?.id, initial: true) { _, _ in
             guard OnboardingPresentationPersistence.requiresPresentation(completedVersion: onboardingCompletedVersion),
                   let invitation = invitationInbox.pending else { return }
-            if showsInvitationJoin {
-                invitationAfterHelp = invitation
-                showsInvitationJoin = false
-            } else {
-                onboardingInvitation = invitation
-            }
+            // The first screen has no help sheet since 11/7, so nothing to wait for.
+            onboardingInvitation = invitation
         }
         .sheet(item: $onboardingInvitation, onDismiss: {
             // Joined, or the invitation was settled (the sheet then cleared it).
@@ -127,10 +108,6 @@ struct AppRootView: View {
                   let invitation = invitationInbox.pending else { return }
             onboardingInvitation = nil
             DispatchQueue.main.async { onboardingInvitation = invitation }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .onboardingInvitationReceived)) { _ in
-            guard SharingAPIConfiguration.current.isReviewVisible else { return }
-            showsInvitationJoin = true
         }
         .task {
             widgetInstallationChecker.refresh()
@@ -402,8 +379,7 @@ struct AppRootView: View {
                 completeOnboardingWithoutWidgetPhoto()
                 firstRunPhoto = photo
             },
-            joinInvitation: SharingAPIConfiguration.current.isReviewVisible
-                ? { showsInvitationJoin = true } : nil
+            showsInvitationHint: SharingAPIConfiguration.current.isReviewVisible
         )
     }
 

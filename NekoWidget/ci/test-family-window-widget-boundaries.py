@@ -2196,7 +2196,10 @@ try MomentSharingStateStore.verifyPrivateAlias()
         onboarding = source("NekoWidget/Views/OnboardingPresentation.swift")
         permission = source("NekoWidget/Views/PhotoPermissionView.swift")
         scan = source("NekoWidget/Views/ScanStatusView.swift")
-        self.assertIn('"猫のプロフィール"', settings)
+        # 11/7: cats are opened from the ツール tab's faces only, not from 設定.
+        self.assertNotIn('"settings-cat-profiles"', settings)
+        self.assertNotIn("CatProfilesView(", settings)
+        self.assertIn('.accessibilityIdentifier("tools-cat-\\(profile.identifier)")', source("NekoWidget/Views/MainTabView.swift"))
         self.assertIn('.navigationTitle(opensProfileSettings ? "猫のプロフィール" : "猫ごとの写真")', profiles)
         self.assertIn('"このiPhoneの中から、"', onboarding)
         self.assertIn('"猫の写真や動画を見つけよう"', permission)
@@ -3807,7 +3810,8 @@ class SettingsLayoutTests(unittest.TestCase):
         settings = source("NekoWidget/Views/SettingsView.swift")
         body = section(settings, "    var body: some View {\n        Form {", '.navigationTitle("設定")')
         order = ['Text("写真")', 'Text("猫")', 'Text("ホーム画面")', "PlusSettingsSection()",
-                 'Text("保存")', 'Text("プライバシー")', 'Text("サポート")', '"settings-app-version"', 'Text("テスト用")']
+                 'Text("保存")', 'Text("プライバシー")', 'Text("サポート")', '"settings-app-version"',
+                 '"settings-account-deletion"', 'Text("テスト用")']
         positions = [body.index(item) for item in order]
         self.assertEqual(positions, sorted(positions))
         # Previews and diagnostics sit together in the test-only section.
@@ -3850,9 +3854,15 @@ class FirstLaunchInvitationTests(unittest.TestCase):
         self.assertIn("state.finishForInvitation()", root_view)
         family = section(root_view, ".sheet(item: $familyLink, onDismiss: {", "FamilyNotebookJoinView(link:")
         self.assertIn("completeOnboardingForInvitation()", family)
-        self.assertIn("OnboardingInvitationHelpView()", root_view)
+        # 11/7: the first screen says how to join in one line; no help sheet.
+        self.assertIn("showsInvitationHint: SharingAPIConfiguration.current.isReviewVisible", root_view)
+        self.assertNotIn("OnboardingInvitationHelpView", root_view)
         onboarding = source("NekoWidget/Views/OnboardingView.swift")
-        self.assertIn("struct OnboardingInvitationHelpView: View", onboarding)
+        purpose = section(onboarding, "private struct OnboardingPurposePage: View", "struct OnboardingWindowMosaic: View")
+        self.assertIn('Text("届いた招待リンクをタップしてください。")', purpose)
+        self.assertIn('"onboarding-purpose-join-hint"', purpose)
+        self.assertNotIn('"onboarding-purpose-join"', purpose)
+        self.assertNotIn("struct OnboardingInvitationHelpView: View", onboarding)
         tab = source("NekoWidget/Views/MainTabView.swift")
         # Widget and showcase entries to the 写真 tab start on すべて, not the last segment.
         self.assertGreaterEqual(tab.count("selectedTab = .photos\n                photoLibrarySelection.select(.all)"), 2)
@@ -4000,10 +4010,12 @@ class GroupWindowAuditFixTests(unittest.TestCase):
 
 
 class OnboardingInvitationSequenceTests(unittest.TestCase):
-    def test_join_opens_after_the_help_sheet_and_used_invitations_go(self) -> None:
+    def test_join_opens_at_once_and_used_invitations_go(self) -> None:
         root_view = source("NekoWidget/App/AppRootView.swift")
-        self.assertIn("invitationAfterHelp = invitation\n                showsInvitationJoin = false", root_view)
-        self.assertIn("onboardingInvitation = next", root_view)
+        # 11/7: no help sheet on the first screen, so the join sheet is the only one.
+        changed = section(root_view, ".onChange(of: invitationInbox.pending?.id, initial: true)", ".sheet(item: $onboardingInvitation, onDismiss: {")
+        self.assertIn("onboardingInvitation = invitation", changed)
+        self.assertNotIn("showsInvitationJoin", root_view)
         self.assertIn("GroupWindowOpenInbox.shared.pendingWindowID != nil || invitationInbox.pending == nil", root_view)
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
         settle = section(setup, "private func settleInvitation()", "// MARK: - DEBUG fixture entry")
@@ -4140,9 +4152,106 @@ class NavigationAfterActionTests(unittest.TestCase):
 
     def test_account_page_returns_to_auto_save_after_sign_out(self) -> None:
         view = source("NekoWidget/Views/ManagedPreservationView.swift")
-        self.assertIn("returnsWhenDone = isAccountEntry\n                                coordinator.signOut()", view)
+        self.assertIn("returnsWhenDone = isAccountEntry\n                                    coordinator.signOut()", view)
         self.assertEqual(view.count("returnsWhenDone = isAccountEntry; coordinator.dismissCompletedDeletion()"), 2)
         self.assertIn("if coordinator.errorMessage == nil, !coordinator.isSignedIn, !coordinator.hasUnsecuredMemo { dismiss() }", view)
+
+
+class OnePlaceSettingsTests(unittest.TestCase):
+    """11/7: each thing a person does has one place."""
+
+    def test_settings_rows_are_one_place_each(self) -> None:
+        settings = source("NekoWidget/Views/SettingsView.swift")
+        body = section(settings, "    var body: some View {\n        Form {", '.navigationTitle("設定")')
+        # The family notebook row stays; the cat profile row is gone.
+        self.assertIn('"settings-family-notebook"', body)
+        self.assertNotIn('"settings-cat-profiles"', body)
+        # 保存 is one row: 自動保存 holds the profile file; without 自動保存 the file row stands alone.
+        save = section(body, "if ManagedPreservationConfiguration.current.isEnabled {", 'Text("保存")')
+        self.assertIn("AppRecordSettingsView(profileTransfer: (actions: catProfilesActions,", save)
+        self.assertLess(save.index('"settings-managed-preservation"'), save.index("} else {"))
+        self.assertGreater(save.index('"settings-cat-profile-transfer"'), save.index("} else {"))
+        self.assertNotIn("プロフィールの引き継ぎはいりません", settings)
+        saving = source("NekoWidget/Services/AppRecordPersistence.swift")
+        transfer = section(saving, "if let profileTransfer {", '"app-record-cat-profile-transfer"')
+        self.assertIn('Label("Plusなしで猫のプロフィールだけ移す"', transfer)
+        self.assertIn("CatProfileTransferView(actions: profileTransfer.actions, hasProfiles: profileTransfer.hasProfiles)", transfer)
+
+    def test_account_deletion_is_one_row_one_tap_from_settings(self) -> None:
+        settings = source("NekoWidget/Views/SettingsView.swift")
+        body = section(settings, "    var body: some View {\n        Form {", '.navigationTitle("設定")')
+        # App Review: one row in shipping builds (outside the test-only section), one tap from 設定.
+        public = body[:body.index("// Test builds only.")]
+        row = section(public, "if AccountDeletionChoicesView.isAvailable {", '"settings-account-deletion"')
+        self.assertIn('NavigationLink { AccountDeletionChoicesView() } label: {', row)
+        self.assertIn('Label("アカウントとデータを消す"', row)
+        # The old rows are gone from 設定 and from 自動保存.
+        self.assertNotIn('"settings-group-identity-deletion"', settings)
+        choices = section(settings, "struct AccountDeletionChoicesView: View {", "struct SettingsSheetHost")
+        self.assertIn("GroupIdentityDeletionView(client: client)", choices)
+        self.assertIn("ManagedPreservationView(deletesAccount: true)", choices)
+        self.assertEqual(choices.count("} footer: {"), 2, "each choice says what it deletes")
+        self.assertIn("GroupWindowClientProvider.production != nil || ManagedPreservationConfiguration.current.isEnabled", choices)
+        saving = source("NekoWidget/Services/AppRecordPersistence.swift")
+        self.assertNotIn("アカウント（削除・サインアウト）", saving)
+        self.assertIn('NavigationLink("アカウント") { ManagedPreservationView() }', saving)
+        # The delete button and its confirmation exist only on the deletion entry.
+        view = source("NekoWidget/Views/ManagedPreservationView.swift")
+        buttons = section(view, "if deletesAccount {", "} footer: {")
+        self.assertLess(buttons.index('"preservation-account-delete"'), buttons.index("} else {"))
+        self.assertGreater(buttons.index('Button("サインアウト", role: .destructive)'), buttons.index("} else {"))
+        self.assertEqual(view.count('"preservation-account-delete"'), 1)
+        self.assertIn('Button("アカウントと保存したコピーを削除", role: .destructive) { coordinator.deleteServiceAccount() }', view)
+
+    def test_family_notebook_cats_and_leaving_have_one_place(self) -> None:
+        notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
+        self.assertIn('Label("手帳に入れる猫を選ぶ"', notebook)
+        self.assertNotIn('Label("猫を追加", systemImage: "plus") }\n                        .accessibilityIdentifier("family-notebook-add-cat")', notebook)
+        # Leaving: the bottom of the notebook only.
+        self.assertEqual(notebook.count('"家族の手帳から抜ける"'), 1)
+        self.assertIn('"family-notebook-leave"', notebook)
+        member = section(notebook, "struct FamilyNotebookMemberView: View {", "struct FamilyNotebookIntroView: View {")
+        self.assertNotIn("leaveFamily", member)
+        self.assertIn("return membership.canDissolve ? [.dissolve] : []", member)
+
+    def test_one_widget_guide(self) -> None:
+        official = source("NekoWidget/Views/OfficialWindowView.swift")
+        guide = section(official, "struct OfficialWindowWidgetGuide: View {", "struct OfficialWindowView: View {")
+        self.assertIn('WidgetPlacementGuideView(onComplete: { dismiss() }, onSkip: { dismiss() },', guide)
+        self.assertIn("windowName: displayName", guide)
+        self.assertNotIn("すでに置いている", official)
+        # Offered once after 「受け取る」; no link that is always there.
+        self.assertEqual(official.count('"official-window-widget-guide"'), 1)
+        offer = section(official, "private var widgetSetupOffer: some View {", "private var introduction: some View {")
+        self.assertIn("if offersWidgetSetup {", offer)
+        placement = source("NekoWidget/Views/WidgetPlacementGuideView.swift")
+        self.assertIn('.accessibilityIdentifier("official-window-widget-source")', placement)
+        settings = source("NekoWidget/Views/SettingsView.swift")
+        self.assertIn('"settings-widget-placement-guide"', settings)
+
+    def test_empty_window_list_has_one_create_button(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        listing = section(window, "struct GroupWindowListSection: View {", "if let invitation = invitationInbox.pending")
+        self.assertIn("let hidesHeaderCreate = model.windows.isEmpty && known.isEmpty && model.message == nil", listing)
+        self.assertLess(listing.index("if !hidesHeaderCreate {"), listing.index('.accessibilityIdentifier("group-window-create")'))
+        self.assertIn('"group-window-empty-create"', window)
+
+    def test_auto_save_is_offered_after_buying_plus_anywhere(self) -> None:
+        offer = source("NekoWidget/Services/MembershipOfferModel.swift")
+        sheet = section(offer, "struct MembershipOfferSheet: View {", "struct PlusOfferPrompt: View {")
+        purchase = section(sheet, "onPurchase: {", "onRestore: {")
+        self.assertIn("AutoSaveAfterPurchase.applies(after: context)", purchase)
+        self.assertIn("AutoSaveAfterPurchase.shared.waitsForOnboardingEnd = true", purchase)
+        self.assertIn("asksAutoSave = true", purchase)
+        self.assertIn("AppRecordSettingsView(startsOnOpen: true)", sheet)
+        self.assertIn("later: { onFinish(.completed) }", sheet)
+        self.assertIn(".interactiveDismissDisabled(model.isWorking || asksAutoSave || showsAutoSave)", sheet)
+        prompt = section(offer, "final class AutoSaveAfterPurchase", "@MainActor\n/// The one Plus screen.")
+        self.assertIn("context != .preservation && ManagedPreservationConfiguration.current.isEnabled", prompt)
+        self.assertIn("!AppRecordPersistence.shared.enabled", prompt)
+        self.assertEqual(offer.count('"自動保存も始めますか？"'), 1, "one prompt for every entry")
+        root = source("NekoWidget/App/AppRootView.swift")
+        self.assertIn(".autoSaveOfferAfterOnboarding(ended: !OnboardingPresentationPersistence.requiresPresentation(", root)
 
 
 if __name__ == "__main__":

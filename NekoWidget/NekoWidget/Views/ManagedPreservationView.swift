@@ -30,6 +30,9 @@ struct ManagedPreservationView: View {
     private let onUnsecuredMemoChange: ((Bool) -> Void)?
     private let allowsRecordBrowsing: Bool
     private let allowsManualSaving: Bool
+    /// Opened from 設定 → 「アカウントとデータを消す」, the one place that
+    /// deletes the account (11/7: it was also under 自動保存 → アカウント).
+    private let deletesAccount: Bool
     /// Opened from 自動保存 → アカウント: the account itself, not one copy.
     private var isAccountEntry: Bool { allowsRecordBrowsing && coordinator.draft == nil && !allowsManualSaving }
 
@@ -37,8 +40,10 @@ struct ManagedPreservationView: View {
          draft: ManagedPreservationDraft? = nil, client: ManagedPreservationClient? = nil,
          toolBackupSource: UUID? = nil,
          allowsRecordBrowsing: Bool = true,
+         deletesAccount: Bool = false,
          onUnsecuredMemoChange: ((Bool) -> Void)? = nil) {
         self.allowsRecordBrowsing = allowsRecordBrowsing
+        self.deletesAccount = deletesAccount
         self.allowsManualSaving = client != nil || draft != nil || toolBackupSource != nil
         self.onUnsecuredMemoChange = onUnsecuredMemoChange
         let exporter = RecordExportController()
@@ -57,7 +62,7 @@ struct ManagedPreservationView: View {
                                        description: Text("このバージョンでは、まだ使えません。写真やメモが送られることはありません。"))
             }
         }
-        .navigationTitle(isAccountEntry ? "アカウント" : "保存した記録")
+        .navigationTitle(deletesAccount ? "自動保存のアカウントを消す" : isAccountEntry ? "アカウント" : "保存した記録")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(coordinator.hasUnsecuredMemo)
         .interactiveDismissDisabled(coordinator.hasUnsecuredMemo)
@@ -225,18 +230,22 @@ struct ManagedPreservationView: View {
             }
             if coordinator.isSignedIn && coordinator.accountDeletionState == nil {
                 Section {
-                    Button("サインアウト", role: .destructive) { confirmsSignOut = true }
-                        .disabled(coordinator.isBusy)
-                        .confirmationDialog("サインアウトしますか？", isPresented: $confirmsSignOut, titleVisibility: .visible) {
-                            Button("サインアウト", role: .destructive) {
-                                returnsWhenDone = isAccountEntry
-                                coordinator.signOut()
-                            }
-                        } message: { Text("記録は残ります。自動保存を止めるだけなら、サインアウトはいりません。") }
-                    if allowsRecordBrowsing && coordinator.draft == nil && coordinator.selected == nil {
-                        Button("アカウントを削除", role: .destructive) { confirmsAccountDeletion = true }
-                            .disabled(coordinator.hasUnsecuredMemo)
-                            .accessibilityIdentifier("preservation-account-delete")
+                    // Deleting has its own screen; signing out stays with the account.
+                    if deletesAccount {
+                        if allowsRecordBrowsing && coordinator.draft == nil && coordinator.selected == nil {
+                            Button("アカウントを削除", role: .destructive) { confirmsAccountDeletion = true }
+                                .disabled(coordinator.hasUnsecuredMemo)
+                                .accessibilityIdentifier("preservation-account-delete")
+                        }
+                    } else {
+                        Button("サインアウト", role: .destructive) { confirmsSignOut = true }
+                            .disabled(coordinator.isBusy)
+                            .confirmationDialog("サインアウトしますか？", isPresented: $confirmsSignOut, titleVisibility: .visible) {
+                                Button("サインアウト", role: .destructive) {
+                                    returnsWhenDone = isAccountEntry
+                                    coordinator.signOut()
+                                }
+                            } message: { Text("記録は残ります。自動保存を止めるだけなら、サインアウトはいりません。") }
                     }
                 } footer: {
                     Text("Plusの解約は、App Storeのサブスクリプションから行ってください。")
@@ -998,7 +1007,8 @@ struct ManagedPreservationMembershipFixture: View {
     var body: some View {
         NavigationStack {
             if let fixture {
-                ManagedPreservationView(configuration: fixture.configuration, draft: fixtureDraft, client: fixture.client)
+                ManagedPreservationView(configuration: fixture.configuration, draft: fixtureDraft, client: fixture.client,
+                                        deletesAccount: testsAccountDeletion)
             } else if let failure {
                 Text(failure).accessibilityIdentifier("preservation-fixture-failure")
             } else { ProgressView("準備中") }

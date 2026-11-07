@@ -897,7 +897,8 @@ struct FamilyNotebookView: View {
                             catch { sharing.failure = error as? FamilySharingError ?? .serviceUnavailable }
                         })
                     }
-                    Button { showsCats = true } label: { Label("猫を追加", systemImage: "plus") }
+                    // Choosing which cats the notebook holds, not adding a new cat (11/7).
+                    Button { showsCats = true } label: { Label("手帳に入れる猫を選ぶ", systemImage: "checklist") }
                         .accessibilityIdentifier("family-notebook-add-cat")
                 }
                 if !sharing.requests.isEmpty {
@@ -970,7 +971,7 @@ struct FamilyNotebookView: View {
             } }
         }
         .refreshable { if !sharing.isWorking { await sharing.refresh(reportsFailure: true) } }
-        // The same question and operation as on your own page.
+        // The only place to leave (11/7: your own page no longer offers it).
         .confirmationDialog("家族から抜けますか？", isPresented: $confirmsLeave, titleVisibility: .visible) {
             Button("抜ける", role: .destructive) {
                 Task { await sharing.perform { _ = try await sharing.service.leaveFamily(operationID: $0) } }
@@ -1276,8 +1277,8 @@ struct FamilyFarewellShareSheet: View {
 }
 
 /// One person's page, as in Apple's family settings: what can be done about
-/// this person, and what happens. The payer may also leave without choosing
-/// to dissolve the family. Three operations, never one.
+/// this person, and what happens. Leaving is only at the bottom of the
+/// notebook (11/7: one place), so your own page offers dissolving at most.
 struct FamilyNotebookMemberView: View {
     let member: FamilyNotebookAuthor
     let membership: FamilyMembership
@@ -1286,12 +1287,12 @@ struct FamilyNotebookMemberView: View {
     @State private var confirms = false
     @State private var selectedAction: Action?
 
-    private enum Action: Hashable { case dissolve, leave, remove }
+    private enum Action: Hashable { case dissolve, remove }
 
     private var isMe: Bool { FamilyNotebookPrototype.shared.isMe(member) }
     private var actions: [Action] {
         if isMe {
-            return (membership.canLeave ? [.leave] : []) + (membership.canDissolve ? [.dissolve] : [])
+            return membership.canDissolve ? [.dissolve] : []
         }
         return membership.canRemoveMember ? [.remove] : []
     }
@@ -1299,7 +1300,6 @@ struct FamilyNotebookMemberView: View {
     private func title(_ action: Action) -> String {
         switch action {
         case .dissolve: "家族の共有をやめる"
-        case .leave: "家族の手帳から抜ける"
         case .remove: "家族から外す"
         }
     }
@@ -1307,7 +1307,6 @@ struct FamilyNotebookMemberView: View {
     private func explanation(_ action: Action) -> String {
         switch action {
         case .dissolve: "家族全員の共有が止まります。"
-        case .leave: FamilyNotebookWords.leaveDetail(payer: membership.role == .payer)
         case .remove: "この人がこれから書くことは、家族に届かなくなります。"
         }
     }
@@ -1315,7 +1314,6 @@ struct FamilyNotebookMemberView: View {
     private func question(_ action: Action) -> String {
         switch action {
         case .dissolve: "家族の共有をやめますか？"
-        case .leave: "家族から抜けますか？"
         case .remove: "\(member.displayName)を家族から外しますか？"
         }
     }
@@ -1323,7 +1321,6 @@ struct FamilyNotebookMemberView: View {
     private func confirmation(_ action: Action) -> String {
         switch action {
         case .dissolve: "共有をやめる"
-        case .leave: "抜ける"
         case .remove: "外す"
         }
     }
@@ -1340,7 +1337,6 @@ struct FamilyNotebookMemberView: View {
             await sharing.perform { operationID in
                 switch action {
                 case .dissolve: _ = try await service.dissolveFamily(operationID: operationID)
-                case .leave: _ = try await service.leaveFamily(operationID: operationID)
                 case .remove: try await service.removeMember(personID: personID, operationID: operationID)
                 }
             }
@@ -1817,7 +1813,7 @@ extension View {
 
 /// How the notebook's items read on screen.
 enum FamilyNotebookWords {
-    /// Under 「家族の手帳から抜ける」, in the notebook and on your own page.
+    /// Under 「家族の手帳から抜ける」 at the bottom of the notebook.
     static func leaveDetail(payer: Bool) -> String {
         payer ? "抜けると、ほかの家族がPlusを始めるまで、家族みんなの共有が止まります。"
             : "これから書くことは家族に届かなくなります。"

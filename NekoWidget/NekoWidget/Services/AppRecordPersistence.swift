@@ -1627,15 +1627,20 @@ struct AppRecordSettingsView: View {
     /// Opened from 「自動保存も始めますか？」→「保存を始める」 right after buying
     /// Plus: that tap was the start, so saving starts here without another (11/7).
     private let startsOnOpen: Bool
+    /// 設定's one row for moving to a new iPhone also holds the profile file,
+    /// the way without Plus (11/7: it was a second row in 設定).
+    private let profileTransfer: (actions: CatProfilesViewActions, hasProfiles: Bool)?
 #if DEBUG || INTERNAL_PRESENTATION
     @AppStorage(ManagedPreservationView.QuotaTrial.key)
     private var quotaTrial: ManagedPreservationView.QuotaTrial = .real
 #endif
     init(configuration: ManagedPreservationConfiguration = .current, client: ManagedPreservationClient? = nil,
-         persistence: AppRecordPersistence = .shared, startsOnOpen: Bool = false) {
+         persistence: AppRecordPersistence = .shared, startsOnOpen: Bool = false,
+         profileTransfer: (actions: CatProfilesViewActions, hasProfiles: Bool)? = nil) {
         _authentication = StateObject(wrappedValue: ManagedPreservationCoordinator(configuration: configuration, client: client, purpose: .account))
         self.persistence = persistence
         self.startsOnOpen = startsOnOpen
+        self.profileTransfer = profileTransfer
     }
 
     private var displayedQuota: ManagedPreservationUsage.ProductQuota? {
@@ -1814,7 +1819,8 @@ struct AppRecordSettingsView: View {
                 if PreservationExportFailureText.isShown(exporter) { PreservationExportFailureText(exporter: exporter) }
             }
             if authentication.isSignedIn || authentication.accountDeletionState != nil {
-                NavigationLink("アカウント（削除・サインアウト）") { ManagedPreservationView() }
+                // Deleting is under 設定 → 「アカウントとデータを消す」 (11/7).
+                NavigationLink("アカウント") { ManagedPreservationView() }
                     .accessibilityIdentifier("app-record-account")
                 if persistence.enabled, authentication.accountDeletionState == nil {
                     Button("このiPhoneで自動保存をやめる") { confirmsPause = true }
@@ -1824,6 +1830,16 @@ struct AppRecordSettingsView: View {
                             Button("自動保存をやめる", role: .destructive) { persistence.pause() }
                         } message: { Text("保存した記録と、このiPhoneの記録は残ります。新しい変更は保存されなくなります。") }
                 }
+            }
+        }
+        if let profileTransfer {
+            Section {
+                NavigationLink {
+                    CatProfileTransferView(actions: profileTransfer.actions, hasProfiles: profileTransfer.hasProfiles)
+                } label: {
+                    Label("Plusなしで猫のプロフィールだけ移す", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .accessibilityIdentifier("app-record-cat-profile-transfer")
             }
         }
     }
