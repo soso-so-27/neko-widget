@@ -116,11 +116,33 @@ struct PhotoAssetImageView: View {
         self.onZoomChange = onZoomChange
     }
 
+    private var loadKey: LoadKey {
+        LoadKey(
+            localIdentifier: localIdentifier,
+            boundingBox: catBoundingBox,
+            targetSize: targetPixelSize,
+            targetAspectRatio: targetAspectRatio,
+            showsFullImage: showsFullImage,
+            networkAccessAllowed: networkAccessAllowed
+        )
+    }
+
+    /// 11/7: a thumbnail already in the shared cache is drawn on the first
+    /// frame. `.task` runs after the cell appears, so returning to the 写真
+    /// tab showed grey tiles for a couple of frames before the cache hit.
+    private var displayedState: PhotoAssetImageLoadState {
+        if !showsFullImage, case .loading = loader.state,
+           let cached = PhotoAssetDisplayCache.shared.thumbnail(for: loadKey) {
+            return .loaded(cached)
+        }
+        return loader.state
+    }
+
     var body: some View {
         ZStack {
             Color.secondary.opacity(0.12)
 
-            switch loader.state {
+            switch displayedState {
             case let .loaded(image):
                 if showsFullImage && allowsZoom {
                     PhotoAssetZoomView(image: image, localIdentifier: localIdentifier,
@@ -215,14 +237,7 @@ struct PhotoAssetImageView: View {
                     .allowsHitTesting(false)
             }
         }
-        .task(id: PhotoAssetLoadRequest(key: LoadKey(
-            localIdentifier: localIdentifier,
-            boundingBox: catBoundingBox,
-            targetSize: targetPixelSize,
-            targetAspectRatio: targetAspectRatio,
-            showsFullImage: showsFullImage,
-            networkAccessAllowed: networkAccessAllowed
-        ), retryRevision: retryRevision)) {
+        .task(id: PhotoAssetLoadRequest(key: loadKey, retryRevision: retryRevision)) {
             await loader.load(
                 localIdentifier: localIdentifier,
                 catBoundingBox: catBoundingBox,
@@ -340,8 +355,11 @@ private final class PhotoAssetDisplayCache: @unchecked Sendable {
     private let assets = NSCache<NSString, PHAsset>()
 
     private init() {
-        thumbnails.countLimit = 240
-        thumbnails.totalCostLimit = 32 * 1_024 * 1_024
+        // 11/7: room for the visible grid, the theme row and a little
+        // scrolling (360px tiles are ~0.5 MB). NSCache drops entries
+        // itself under memory pressure.
+        thumbnails.countLimit = 400
+        thumbnails.totalCostLimit = 64 * 1_024 * 1_024
         assets.countLimit = 1_024
     }
 

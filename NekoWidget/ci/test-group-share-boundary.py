@@ -25,7 +25,7 @@ class GroupShareBoundaryTests(unittest.TestCase):
                 if match:
                     base[match[1]] = match[2]
         load_config(ROOT / "Config.xcconfig")
-        base.update(GROUP_WINDOWS_ENABLED="YES", OWNER_INTERNAL_REPORTS_DISABLED="YES",
+        base.update(USAGE_REPORT_URL="https://neko-usage-staging.nakanishisoya.workers.dev/v1/usage", GROUP_WINDOWS_ENABLED="YES", OWNER_INTERNAL_REPORTS_DISABLED="YES",
                     GROUP_REPORTING_PRODUCTION_ENABLED="NO", SHARING_RELEASE_MODE="media-staging",
                     SHARING_FEATURE_ENABLED="YES", SHARING_MEDIA_ENABLED="YES",
                     SHARING_SHARE_EXTENSION_HANDOFF_ENABLED="YES", SHARING_SHARE_EXTENSION_SEND_ENABLED="NO",
@@ -93,7 +93,7 @@ class GroupShareBoundaryTests(unittest.TestCase):
 
     def test_owner_photo_route_is_share_only_and_matches_host(self):
         app, share = self.pair()
-        app.update(SharingAPIBaseURL=owner.ORIGIN, SharingModerationPublicKey=owner.RECIPIENT,
+        app.update(UsageReportURL="https://neko-usage-staging.nakanishisoya.workers.dev/v1/usage", SharingAPIBaseURL=owner.ORIGIN, SharingModerationPublicKey=owner.RECIPIENT,
                    OwnerInternalReportsDisabled="YES", SharingInternalEncryptedReportEnabled=False,
                    SharingInternalEncryptedReportScope="")
         share.update(GroupShareAPIBaseURL=owner.ORIGIN, OwnerInternalReportsDisabled="YES",

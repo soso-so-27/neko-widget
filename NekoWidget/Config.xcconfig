@@ -114,3 +114,6 @@ SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER =
 
 // Explicit owner-only distribution; never enabled by ordinary/public builds.
 OWNER_INTERNAL_REPORTS_DISABLED = NO
+
+// Anonymous daily usage; empty means no transmission.
+USAGE_REPORT_URL =

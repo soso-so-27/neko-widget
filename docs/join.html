@@ -4,14 +4,51 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
+  <meta name="apple-itunes-app" content="app-id=6801962436">
+  <meta name="description" content="うちの猫の写真を届け合う「みんなのまど」に招待されています。">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="ねこのまど">
+  <meta property="og:title" content="ねこのまど｜みんなのまどへの招待">
+  <meta property="og:description" content="うちの猫の写真を届け合う「みんなのまど」に招待されています。">
   <title>みんなのまどへの招待 — ねこのまど</title>
+  <link rel="stylesheet" href="assets/site.css">
+  <style>
+    .actions { display: grid; gap: 12px; margin: 24px 0 8px; }
+    .button { display: block; text-align: center; text-decoration: none; font-weight: 600;
+      border-radius: 14px; padding: 14px 18px; border: 1px solid var(--border); }
+    .button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  </style>
 </head>
 <body>
+  <header>
+    <p class="eyebrow">ねこのまど</p>
+  </header>
   <main>
     <h1>みんなのまどへの招待</h1>
-    <p>ねこのまどをインストールしたら、届いた招待リンクをもう一度開いてください。</p>
-    <p>TestFlightでお使いの方は、ねこのまどを最新版に更新してください。まだお持ちでない方は、公開後にApp Storeからインストールできます。</p>
-    <p>このページに招待コードや個人情報を入力する必要はありません。</p>
+    <p>うちの猫の写真を届け合う「みんなのまど」に招待されています。参加は無料です。</p>
+    <p id="android-note" class="updated" hidden>ねこのまどは、いまはiPhoneだけで使えます。</p>
+    <div class="actions">
+      <a class="button primary" href="https://apps.apple.com/jp/app/id6801962436">App Store で入れる</a>
+      <a class="button" id="open-app" href="nekowidget://join">アプリで開く</a>
+    </div>
+    <p id="install-note" class="updated">ねこのまどを入れたら、このページに戻って「アプリで開く」を押してください。招待リンクの期限は24時間です。</p>
+    <p class="updated">このページに名前や招待コードを入力する必要はありません。招待の鍵は、リンクの「#」から後ろにあり、このサイトには送られません。</p>
   </main>
+  <script>
+    // The invitation lives only in the fragment; it is handed to the app and
+    // never sent to this site (11/7).
+    (function () {
+      var hash = window.location.hash;
+      if (hash && hash.length > 1) {
+        document.getElementById("open-app").href = "nekowidget://join" + hash;
+      }
+      // Android: no app yet, so say so instead of an App Store button (11/7).
+      if (/Android/i.test(navigator.userAgent)) {
+        document.getElementById("android-note").hidden = false;
+        document.querySelector(".actions").style.display = "none";
+        document.getElementById("install-note").style.display = "none";
+      }
+    })();
+  </script>
 </body>
 </html>

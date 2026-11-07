@@ -179,6 +179,7 @@ def validate_privacy_manifest(
     expected_collections: set[str],
     required_api_reasons: dict[str, str],
     failures: list[str],
+    analytics_enabled: bool = False,
 ) -> None:
     if privacy.get("NSPrivacyTracking") is not False:
         failures.append("PrivacyInfo must declare NSPrivacyTracking=false.")
@@ -227,8 +228,11 @@ def validate_privacy_manifest(
         if item.get("NSPrivacyCollectedDataTypeTracking") is not False:
             failures.append(f"{data_type} must declare tracking=false.")
         purposes = item.get("NSPrivacyCollectedDataTypePurposes")
-        if purposes != [APP_FUNCTIONALITY]:
-            failures.append(f"{data_type} must use only the App Functionality purpose.")
+        expected_purposes = [APP_FUNCTIONALITY]
+        if analytics_enabled and data_type == "NSPrivacyCollectedDataTypeProductInteraction":
+            expected_purposes.append("NSPrivacyCollectedDataTypePurposeAnalytics")
+        if purposes != expected_purposes:
+            failures.append(f"{data_type} must match the enabled App Functionality / Analytics purposes.")
 
     unexpected = set(by_type) - expected_collections
     for data_type in sorted(unexpected):
@@ -393,6 +397,7 @@ def validate_enabled_release(
         required_collections,
         APP_REQUIRED_API_REASONS,
         failures,
+        analytics_enabled=bool(info.get("UsageReportURL")),
     )
 
     if not truthy(export_reviewed):
@@ -908,6 +913,12 @@ def main() -> int:
         return 1
 
     flag_failures: list[str] = []
+    if "UsageReportURL" in info:
+        from usage_report_config import verify as verify_usage
+        try:
+            verify_usage(info, mode=args.expected_mode)
+        except ValueError as error:
+            flag_failures.append(str(error))
     pairing_enabled = parsed_flag(info, "SharingFeatureEnabled", flag_failures)
     media_enabled = parsed_flag(info, "SharingMediaEnabled", flag_failures)
     review_preview_enabled = parsed_flag(

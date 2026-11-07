@@ -21,3 +21,6 @@ SHARING_MODERATION_PUBLIC_KEY =
 SHARING_PRIVACY_URL =
 SHARING_SUPPORT_URL =
 SHARING_COMMUNITY_STANDARDS_URL =
+
+// Anonymous daily usage; empty means no transmission.
+USAGE_REPORT_URL = https:/$()/neko-usage-staging.nakanishisoya.workers.dev/v1/usage
