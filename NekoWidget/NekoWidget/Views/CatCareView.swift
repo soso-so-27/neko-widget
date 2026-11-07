@@ -137,6 +137,17 @@ struct CatCareSubjectView: View {
     }
 }
 
+private struct CatCareInsideCatPageKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var catCareInsideCatPage: Bool {
+        get { self[CatCareInsideCatPageKey.self] }
+        set { self[CatCareInsideCatPageKey.self] = newValue }
+    }
+}
+
 struct CatCareDetailView: View {
     let subject: CatCareSubject
     let otherProfiles: [CatProfilePresentation]
@@ -176,6 +187,8 @@ struct CatCareDetailView: View {
     }
 
     @Environment(\.scenePhase) private var scenePhase
+    /// Inside the cat's page, which shows the family button for both tabs.
+    @Environment(\.catCareInsideCatPage) private var insideCatPage
     @State private var draft = CatCareDraft()
     @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
     @State private var savedDraft = CatCareDraft()
@@ -272,16 +285,19 @@ struct CatCareDetailView: View {
             // The same page opens from ツール and from the family notebook. A
             // cat in the notebook shows the family's faces here, so whose page
             // it is can be seen without words (11/6: "two places to write water?").
-            if sharedWithFamily {
-                ToolbarItem(placement: .topBarTrailing) {
-                    if insideFamilyNotebook {
-                        FamilyFaces(names: familyNotebook.members.map(\.displayName))
-                    } else {
-                        FamilyNotebookButton(sharedNames: familyNotebook.members.map(\.displayName))
+            // Inside the cat's page, that page shows it for both tabs (11/7).
+            if !insideCatPage {
+                if sharedWithFamily {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        if insideFamilyNotebook {
+                            FamilyFaces(names: familyNotebook.members.map(\.displayName))
+                        } else {
+                            FamilyNotebookButton(sharedNames: familyNotebook.members.map(\.displayName))
+                        }
                     }
+                } else if !insideFamilyNotebook, Version1.familyNotebook || familyNotebook.hasFamily {
+                    ToolbarItem(placement: .topBarTrailing) { FamilyNotebookButton() }
                 }
-            } else if !insideFamilyNotebook, Version1.familyNotebook || familyNotebook.hasFamily {
-                ToolbarItem(placement: .topBarTrailing) { FamilyNotebookButton() }
             }
         }
         .alert("保存できませんでした", isPresented: $saveFailed) {
