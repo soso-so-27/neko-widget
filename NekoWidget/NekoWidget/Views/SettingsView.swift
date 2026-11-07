@@ -164,6 +164,8 @@ struct SettingsView: View {
     @State private var cloudyWindowError: String?
 
 #endif
+    private var showsFamilyNotebookRow: Bool { Version1.familyNotebook || familyNotebook.hasFamily }
+
     private var canOpenMembershipOffer: Bool {
         PlusOfferAvailability.isConfigured
     }
@@ -227,70 +229,10 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section {
-                NavigationLink {
-                    photoSettingsView
-                } label: {
-                    LabeledContent {
-                        Text(photoSettingsSummary)
-                    } label: {
-                        Label("写真の表示と整理", systemImage: "photo.on.rectangle.angled")
-                    }
-                }
-            } header: {
-                Text("写真")
-            }
-
-            // Cats are added and opened from the ツール tab's row of faces only
-            // (11/7: 猫のプロフィール here was a second door). The notebook stays.
-            if Version1.familyNotebook || familyNotebook.hasFamily {
-                Section {
-                    // The notebook from 設定 too, where leaving it is looked for (11/7).
-                    Button { showsFamilyNotebook = true } label: {
-                        // Reads like the rows around it, not like a tinted action,
-                        // with the same 「›」 as its neighbours (11/7).
-                        HStack {
-                            Label { Text("家族の手帳").foregroundStyle(.primary) } icon: {
-                                Image(systemName: "person.2.fill")
-                            }
-                            Spacer(minLength: 8)
-                            Image(systemName: "chevron.right")
-                                .font(.footnote.weight(.semibold))
-                                .foregroundStyle(.tertiary)
-                                .accessibilityHidden(true)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .accessibilityIdentifier("settings-family-notebook")
-                } header: {
-                    Text("猫")
-                }
-            }
-
-            Section {
-                NavigationLink {
-                    WidgetPlacementGuidePage(hasCats: !catProfilesPresentation.profiles.isEmpty)
-                } label: {
-                    Label("ウィジェットの置き方", systemImage: "rectangle.on.rectangle.angled")
-                }
-                .accessibilityIdentifier("settings-widget-placement-guide")
-            } header: {
-                Text("ホーム画面")
-            }
-
+            // 11/8: Plus first, as an account sits at the top of iOS 設定, then
+            // saving (what keeps the records); one-row sections are grouped.
             if canOpenMembershipOffer {
                 PlusSettingsSection()
-            }
-
-            if GroupWindowClientProvider.ui != nil {
-                Section {
-                    NavigationLink { GroupHiddenMembersView() } label: {
-                        Label("表示しない・ブロックした人", systemImage: "eye.slash")
-                    }
-                    .accessibilityIdentifier("settings-group-hidden-members")
-                } header: {
-                    Text("まど")
-                }
             }
 
             // 保存: one row for moving to a new iPhone (11/7). The profile file,
@@ -316,23 +258,101 @@ struct SettingsView: View {
                 Text("保存")
             }
 
+            Section {
+                NavigationLink {
+                    photoSettingsView
+                } label: {
+                    LabeledContent {
+                        Text(photoSettingsSummary)
+                    } label: {
+                        Label("写真の表示と整理", systemImage: "photo.on.rectangle.angled")
+                    }
+                }
+                NavigationLink {
+                    WidgetPlacementGuidePage(hasCats: !catProfilesPresentation.profiles.isEmpty)
+                } label: {
+                    Label("ウィジェットの置き方", systemImage: "rectangle.on.rectangle.angled")
+                }
+                .accessibilityIdentifier("settings-widget-placement-guide")
+            } header: {
+                Text("写真とウィジェット")
+            }
+
+            // Cats are added and opened from the ツール tab's row of faces only
+            // (11/7: 猫のプロフィール here was a second door). The notebook and
+            // the people hidden in まど are the two things shared with others.
+            if showsFamilyNotebookRow || GroupWindowClientProvider.ui != nil {
+                Section {
+                    if showsFamilyNotebookRow {
+                        // The notebook from 設定 too, where leaving it is looked for (11/7).
+                        Button { showsFamilyNotebook = true } label: {
+                            // Reads like the rows around it, not like a tinted action,
+                            // with the same 「›」 as its neighbours (11/7).
+                            HStack {
+                                Label { Text("家族の手帳").foregroundStyle(.primary) } icon: {
+                                    Image(systemName: "person.2.fill")
+                                }
+                                Spacer(minLength: 8)
+                                Image(systemName: "chevron.right")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                                    .accessibilityHidden(true)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .accessibilityIdentifier("settings-family-notebook")
+                    }
+                    if GroupWindowClientProvider.ui != nil {
+                        NavigationLink { GroupHiddenMembersView() } label: {
+                            Label("表示しない・ブロックした人", systemImage: "eye.slash")
+                        }
+                        .accessibilityIdentifier("settings-group-hidden-members")
+                    }
+                } header: {
+                    Text("家族とまど")
+                }
+            }
+
             // Anonymous usage counts (11/7): on by default, off deletes what is
             // kept. A build with no destination sends nothing and shows no switch.
-            if UsageCounter.endpoint() != nil {
+            // The policy sits with it (11/8: it was under サポート).
+            if UsageCounter.endpoint() != nil || AppPublicLinksConfiguration.current.privacyURL != nil {
                 Section {
-                    Toggle(isOn: $usageReportingEnabled) {
-                        Label("利用状況を送る", systemImage: "chart.bar")
+                    if UsageCounter.endpoint() != nil {
+                        Toggle(isOn: $usageReportingEnabled) {
+                            Label("利用状況を送る", systemImage: "chart.bar")
+                        }
+                        .accessibilityIdentifier("settings-usage-reporting")
+                        .onChange(of: usageReportingEnabled) { _, isOn in UsageCounter.shared.setEnabled(isOn) }
                     }
-                    .accessibilityIdentifier("settings-usage-reporting")
-                    .onChange(of: usageReportingEnabled) { _, isOn in UsageCounter.shared.setEnabled(isOn) }
+                    if let url = AppPublicLinksConfiguration.current.privacyURL {
+                        Link(destination: url) {
+                            ExternalLinkRow("プライバシーポリシー", systemImage: "doc.text")
+                        }
+                        .accessibilityIdentifier("settings-privacy-policy")
+                    }
                 } header: {
                     Text("プライバシー")
                 } footer: {
-                    Text("使った機能の回数だけを送ります。写真や書いた内容は送りません。")
+                    if UsageCounter.endpoint() != nil {
+                        Text("利用状況は、使った機能の回数だけを送ります。写真や書いた内容は送りません。")
+                    }
                 }
             }
 
             Section {
+                if let url = AppPublicLinksConfiguration.current.supportURL {
+                    Link(destination: url) {
+                        ExternalLinkRow("お問い合わせ", systemImage: "questionmark.circle")
+                    }
+                    .accessibilityIdentifier("settings-support-page")
+                }
+                if SharingAPIConfiguration.current.isReviewVisible,
+                   let url = SharingAPIConfiguration.current.communityStandardsURL {
+                    Link(destination: url) {
+                        ExternalLinkRow("コミュニティ基準", systemImage: "checkmark.shield")
+                    }
+                }
                 // Telling a friend, from where people look for the app's own
                 // things (11/6). Hidden until the App Store page exists.
                 if let url = AppStoreListing.pageURL {
@@ -341,24 +361,6 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("settings-recommend-app")
                     .simultaneousGesture(TapGesture().onEnded { UsageCounter.shared.count(.appRecommended) })  // Usage (11/7): ShareLink reports no completion
-                }
-                if let url = AppPublicLinksConfiguration.current.supportURL {
-                    Link(destination: url) {
-                        ExternalLinkRow("お問い合わせ", systemImage: "questionmark.circle")
-                    }
-                    .accessibilityIdentifier("settings-support-page")
-                }
-                if let url = AppPublicLinksConfiguration.current.privacyURL {
-                    Link(destination: url) {
-                        ExternalLinkRow("プライバシーポリシー", systemImage: "doc.text")
-                    }
-                    .accessibilityIdentifier("settings-privacy-policy")
-                }
-                if SharingAPIConfiguration.current.isReviewVisible,
-                   let url = SharingAPIConfiguration.current.communityStandardsURL {
-                    Link(destination: url) {
-                        ExternalLinkRow("コミュニティ基準", systemImage: "checkmark.shield")
-                    }
                 }
             } header: {
                 Text("サポート")
@@ -543,7 +545,13 @@ struct SettingsView: View {
                     if isLimitedAccess {
                         SettingsActionRow("写真を追加・変更", systemImage: "photo.badge.plus", action: chooseMorePhotos)
                     } else {
-                        EmptyView()
+                        // 11/8: the section had a header and no row with full access.
+                        SettingsActionRow("iPhoneの設定で変える", systemImage: "gearshape") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) {
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                        .accessibilityIdentifier("settings-photo-access-change")
                     }
                 } else {
                     SettingsActionRow("写真へのアクセスを許可", systemImage: "photo", action: requestPhotoAccess)

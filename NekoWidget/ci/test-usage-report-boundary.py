@@ -132,7 +132,7 @@ class UsageReportBoundaryTests(unittest.TestCase):
         settings = source("NekoWidget/Views/SettingsView.swift")
         self.assertIn("@AppStorage(UsageCounter.enabledKey) private var usageReportingEnabled = true", settings)
         self.assertIn('Label("利用状況を送る", systemImage: "chart.bar")', settings)
-        self.assertIn('Text("使った機能の回数だけを送ります。写真や書いた内容は送りません。")', settings)
+        self.assertIn('Text("利用状況は、使った機能の回数だけを送ります。写真や書いた内容は送りません。")', settings)
         self.assertIn("UsageCounter.shared.setEnabled(isOn)", settings)
         counter = source(COUNTER)
         disable = block(counter, "    func setEnabled(_ value: Bool) {")
