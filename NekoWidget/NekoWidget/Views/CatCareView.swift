@@ -1281,6 +1281,9 @@ struct CatCareListEntrySheet: View {
                     TextField("薬の名前", text: $name)
                     TextField("量（例：1/2錠）", text: $dose)
                     TextField("時間（例：朝・夜）", text: $schedule)
+                    // 11/8: moved here from 「預けるとき」, beside where the medicine is written.
+                    Text("薬は、獣医師に言われたとおりに書いてください。")
+                        .font(.footnote).foregroundStyle(.secondary)
                 case .vaccination:
                     TextField("種類（例：3種混合）", text: $name)
                     DatePicker("接種した日", selection: $date, in: ...Date(), displayedComponents: .date)
@@ -1709,9 +1712,12 @@ enum CatCareSummary {
     }
 
     /// For 「預けるとき」: everyday care, all from 「この子のこと」.
+    /// 「未記入」 rows are shown in the app only; the handed memo leaves them out.
     static func careHandoffLines(_ record: CatCareRecord?, legacy cat: CareCat) -> [(String, String)] {
         let empty = "未記入（飼い主に聞いてください）"
         var lines: [(String, String)] = []
+        // 11/8: an indoor cat must not be let out; said right under the first notes.
+        if record?.indoorOnly?.value == .yes { lines.append(("暮らし", "外に出さない（室内飼い）")) }
         if let about = ageAndWeight(record) { lines.append(("年齢・体重", about)) }
         let neverHadMeals = record?.meals.isEmpty ?? true
         let food = mealsText(record) ?? (neverHadMeals ? nonEmpty(cat.reusableFood) : nil)

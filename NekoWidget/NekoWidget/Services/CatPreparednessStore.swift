@@ -408,19 +408,37 @@ struct LostCatPublicDraft {
     let faceImage: UIImage
     let bodyImage: UIImage?
 
-    var lastSeenDescription: String {
-        lastSeenAt?.formatted(date: .abbreviated, time: .shortened) ?? "不明"
+    /// 「11月8日（日）18時ごろ」. Nil when the day is not known: the row is left out.
+    var lastSeenDescription: String? {
+        lastSeenAt.map(Self.lastSeenText)
     }
 
+    /// Fixed Japanese wording, whatever the iPhone's region: no year, the hour only.
+    static func lastSeenText(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ja_JP")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.dateFormat = "M月d日（E）H時ごろ"
+        return formatter.string(from: date)
+    }
+
+    static let hashtags = "#迷子猫 #迷い猫"
+
+    /// The post shared with the image. A line that was not written is left out.
     var message: String {
+        func filled(_ value: String) -> String? {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
         var parts = ["猫を探しています。"]
-        if !name.isEmpty { parts.append(name) }
-        if !features.isEmpty { parts.append("特徴：\(features)") }
-        if !collar.isEmpty { parts.append("首輪：\(collar)") }
-        parts.append("最後に見かけた場所：\(lastSeenNear)")
-        parts.append("日時：\(lastSeenDescription)")
-        if !approachAdvice.isEmpty { parts.append(approachAdvice) }
-        parts.append("連絡先：\(contact)")
+        if let name = filled(name) { parts.append(name) }
+        if let features = filled(features) { parts.append("特徴：\(features)") }
+        if let collar = filled(collar) { parts.append("首輪：\(collar)") }
+        if let place = filled(lastSeenNear) { parts.append("最後に見かけた場所：\(place)") }
+        if let lastSeenDescription { parts.append("最後に見かけた日時：\(lastSeenDescription)") }
+        if let advice = filled(approachAdvice) { parts.append(advice) }
+        if let contact = filled(contact) { parts.append("連絡先：\(contact)") }
+        parts.append(Self.hashtags)
         return parts.joined(separator: "\n")
     }
 }
@@ -444,6 +462,8 @@ enum LostCatFlyerRenderer {
         let size: CGFloat
         let weight: UIFont.Weight
         let height: CGFloat
+        var color: UIColor = .black
+        var centered = false
     }
 
     private struct PositionedText {
@@ -453,14 +473,13 @@ enum LostCatFlyerRenderer {
 
     private struct Layout {
         let size: CGSize
+        let titleBand: CGRect
         let photoRect: CGRect
         let contactBackground: CGRect
         let texts: [PositionedText]
     }
 
-    /// Keys correspond to editable public fields: name, place, features,
-    /// advice, contact. Both outputs must fit at their readable minimum sizes.
-    static func validationIssues(_ draft: LostCatPublicDraft) -> [String: String] {
+    private static func lengthIssues(_ draft: LostCatPublicDraft) -> [String: String] {
         var lengths: [String: String] = [:]
         for (key, label, value, limit) in [
             ("features", "見分ける特徴", draft.features, featuresLimit),
@@ -469,28 +488,42 @@ enum LostCatFlyerRenderer {
         ] {
             lengths[key] = lengthIssue(value, label: label, limit: limit)
         }
+        return lengths
+    }
+
+    /// Keys correspond to editable public fields: name, place, features,
+    /// collar, advice, contact. The input screen shows both outputs' issues,
+    /// each beside the field to shorten.
+    static func validationIssues(_ draft: LostCatPublicDraft) -> [String: String] {
+        var merged = issues(draft, paper: false)
+        for (field, message) in issues(draft, paper: true) {
+            merged[field] = message
+        }
+        return merged
+    }
+
+    /// One output's own issues. An A4 flyer that does not fit never stops
+    /// the SNS image, and the reverse.
+    static func issues(_ draft: LostCatPublicDraft, paper: Bool) -> [String: String] {
+        let lengths = lengthIssues(draft)
         // Keep over-limit originals, never silently clip a publishable image.
         if !lengths.isEmpty { return lengths }
-        var issues = layout(draft, format: .social).1
-        for (field, message) in layout(draft, format: .paper).1 {
-            issues[field] = message
-        }
-        return issues
+        return layout(draft, format: paper ? .paper : .social).1
     }
 
     static func inputIssue(_ draft: LostCatPublicDraft, field: String) -> String? {
         validationIssues(draft)[field]
     }
 
-    static func fits(_ draft: LostCatPublicDraft) -> Bool {
-        validationIssues(draft).isEmpty
+    static func fits(_ draft: LostCatPublicDraft, paper: Bool) -> Bool {
+        issues(draft, paper: paper).isEmpty
     }
 
     /// The full-resolution PNG or a 2x A4 raster, drawn with the export layout.
     static func previewImage(_ draft: LostCatPublicDraft, pdf: Bool = false) -> UIImage {
         let format: Format = pdf ? .paper : .social
         let bounds = pdf ? CGSize(width: paperSize.width * 2, height: paperSize.height * 2)
-                         : layout(draft, format: .social).0.size
+                         : socialSize
         let rendererFormat = UIGraphicsImageRendererFormat()
         rendererFormat.scale = 1
         rendererFormat.opaque = true
@@ -508,11 +541,11 @@ enum LostCatFlyerRenderer {
     }
 
     private static func imageData(_ draft: LostCatPublicDraft) throws -> Data {
-        guard fits(draft) else { throw CocoaError(.fileWriteUnknown) }
+        guard fits(draft, paper: false) else { throw CocoaError(.fileWriteUnknown) }
         let rendererFormat = UIGraphicsImageRendererFormat()
         rendererFormat.scale = 1
         rendererFormat.opaque = true
-        let image = UIGraphicsImageRenderer(size: layout(draft, format: .social).0.size, format: rendererFormat)
+        let image = UIGraphicsImageRenderer(size: socialSize, format: rendererFormat)
             .image { draw(draft, format: .social, context: $0.cgContext) }
         guard let data = image.pngData() else { throw CocoaError(.fileWriteUnknown) }
         return data
@@ -524,7 +557,7 @@ enum LostCatFlyerRenderer {
     }
 
     private static func pdfData(_ draft: LostCatPublicDraft) throws -> Data {
-        guard fits(draft) else { throw CocoaError(.fileWriteUnknown) }
+        guard fits(draft, paper: true) else { throw CocoaError(.fileWriteUnknown) }
         let renderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: paperSize))
         let data = renderer.pdfData { context in
             context.beginPage()
@@ -642,13 +675,16 @@ enum LostCatFlyerRenderer {
     private static func layout(_ draft: LostCatPublicDraft,
                                format: Format, compact: Bool = false) -> (Layout, [String: String]) {
         let paper = format == .paper
-        var canvas = paper ? paperSize : socialSize
+        // Both sizes are fixed: the SNS image stays 4:5 and the flyer one A4 page.
+        let canvas = paper ? paperSize : socialSize
         let margin: CGFloat = paper ? 30 : 48
-        let gap: CGFloat = paper ? (compact ? 6 : 9) : 16
+        let gap: CGFloat = paper ? (compact ? 6 : 9) : (compact ? 10 : 16)
         let pad: CGFloat = paper ? 10 : 18
         let width = canvas.width - 2 * margin
         var issues: [String: String] = [:]
         var texts: [PositionedText] = []
+        // Height of each owner-written field, to name the one to shorten.
+        var heights: [String: CGFloat] = [:]
 
         func field(_ original: String, id: String, maxSize: CGFloat, minSize: CGFloat,
                    lines: CGFloat, weight: UIFont.Weight, measuredWidth: CGFloat) -> TextBlock? {
@@ -674,20 +710,24 @@ enum LostCatFlyerRenderer {
                     "contact": "連絡先を少し短くしてください。"
                 ][id]
             }
+            heights[id] = min(height, limit)
             return TextBlock(value: value, size: size, weight: weight,
                              height: min(height, limit))
         }
 
-        let title = TextBlock(value: "猫を探しています",
-                              size: paper ? 47 : 78, weight: .black,
-                              height: paper ? 62 : 100)
-        var top = margin
+        // The title is white on a red band, so it is seen from afar.
+        let titleBand = CGRect(x: margin, y: margin, width: width, height: paper ? 66 : 124)
+        let titleSize: CGFloat = paper ? 44 : 78
+        let titleHeight = measuredHeight("猫を探しています", width: width, size: titleSize, weight: .black)
+        let title = TextBlock(value: "猫を探しています", size: titleSize, weight: .black,
+                              height: titleHeight, color: .white, centered: true)
         texts.append(PositionedText(block: title,
-                                    rect: CGRect(x: margin, y: top, width: width,
-                                                 height: title.height)))
-        top += title.height + gap
+                                    rect: CGRect(x: margin, y: titleBand.midY - titleHeight / 2,
+                                                 width: width, height: titleHeight)))
+        var top = titleBand.maxY + gap
+        // On A4 the name stays below the contact: the number is read second.
         if let name = field(draft.name.trimmingCharacters(in: .whitespacesAndNewlines),
-                            id: "name", maxSize: paper ? (compact ? 23 : 31) : 53,
+                            id: "name", maxSize: paper ? (compact ? 23 : 30) : 53,
                             minSize: paper ? 23 : 40, lines: 2,
                             weight: .bold, measuredWidth: width) {
             texts.append(PositionedText(block: name,
@@ -697,15 +737,15 @@ enum LostCatFlyerRenderer {
         }
 
         var bottom = canvas.height - margin
-        let lowerTextStart = texts.count
         let contactValue = draft.contact.trimmingCharacters(in: .whitespacesAndNewlines)
         if contactValue.isEmpty { issues["contact"] = "画像とチラシに載せる連絡先を入れてください。" }
+        // A4: 32pt or larger, the second largest letters after the title.
         let contact = field("連絡先  \(contactValue)", id: "contact",
-                            maxSize: paper ? (compact ? 18 : 26) : 48, minSize: paper ? 18 : 37,
+                            maxSize: paper ? (compact ? 32 : 36) : 48, minSize: paper ? 32 : 37,
                             lines: 3, weight: .bold,
                             measuredWidth: width - 2 * pad)!
         bottom -= contact.height + 2 * pad
-        var contactBackground = CGRect(x: margin, y: bottom, width: width,
+        let contactBackground = CGRect(x: margin, y: bottom, width: width,
                                        height: contact.height + 2 * pad)
         texts.append(PositionedText(block: contact,
                                     rect: CGRect(x: margin + pad, y: bottom + pad,
@@ -736,36 +776,37 @@ enum LostCatFlyerRenderer {
                       id: "features", maxSize: paper ? (compact ? 14 : 21) : 36,
                       minSize: paper ? 14 : 29, lines: 8,
                       weight: .regular, measuredWidth: width))
-        prepend(field("日時  \(draft.lastSeenDescription)", id: "date",
-                      maxSize: paper ? 18 : 33, minSize: paper ? 18 : 33,
-                      lines: 1, weight: .regular, measuredWidth: width))
+        // An unknown day is left out, never printed as 「不明」.
+        if let lastSeen = draft.lastSeenDescription {
+            prepend(field("最後に見かけた日時  \(lastSeen)", id: "date",
+                          maxSize: paper ? 18 : 33, minSize: paper ? 18 : 33,
+                          lines: 1, weight: .regular, measuredWidth: width))
+        }
         let placeValue = draft.lastSeenNear.trimmingCharacters(in: .whitespacesAndNewlines)
         if placeValue.isEmpty { issues["place"] = "最後に見かけた場所を入力してください。" }
         prepend(field("最後に見かけた場所  \(placeValue)", id: "place",
                       maxSize: paper ? (compact ? 17 : 24) : 43, minSize: paper ? 17 : 34,
                       lines: 3, weight: .bold, measuredWidth: width))
 
-        var photoHeight = bottom - top
-        let minimumPhoto: CGFloat = paper ? (compact ? 250 : 315) : 455
-        if paper, photoHeight < minimumPhoto, !compact {
-            return layout(draft, format: format, compact: true)
-        }
-        if !paper, photoHeight < minimumPhoto {
-            // Extend the social image instead of shrinking away the cat.
-            let extra = minimumPhoto - photoHeight
-            canvas.height += extra
-            contactBackground.origin.y += extra
-            for index in lowerTextStart..<texts.count {
-                let text = texts[index]
-                texts[index] = PositionedText(block: text.block, rect: text.rect.offsetBy(dx: 0, dy: extra))
+        let photoHeight = bottom - top
+        let minimumPhoto: CGFloat = paper ? (compact ? 250 : 315) : (compact ? 300 : 455)
+        if photoHeight < minimumPhoto {
+            // First make the letters smaller to keep the size and the cat.
+            if !compact { return layout(draft, format: format, compact: true) }
+            // Still too long: name the field to shorten, beside that field.
+            let labels = ["features": "特徴", "advice": "「見かけた方へ」", "place": "場所",
+                          "collar": "首輪の説明", "contact": "連絡先"]
+            var tallest: String?
+            for id in ["features", "advice", "place", "collar", "contact"] {
+                if let height = heights[id], height > (tallest.flatMap { heights[$0] } ?? 0) { tallest = id }
             }
-            photoHeight = minimumPhoto
-        } else if photoHeight < minimumPhoto {
-            issues["layout"] = "A4の1枚に入りきりません。特徴・場所・連絡先を短くしてください。"
+            if let tallest, issues[tallest] == nil, let label = labels[tallest] {
+                issues[tallest] = "\(paper ? "A4" : "SNSの画像")に入りきりません。\(label)を短くしてください。"
+            }
         }
         let photoRect = CGRect(x: margin, y: top, width: width,
                                height: max(1, photoHeight))
-        return (Layout(size: canvas, photoRect: photoRect,
+        return (Layout(size: canvas, titleBand: titleBand, photoRect: photoRect,
                        contactBackground: contactBackground, texts: texts), issues)
     }
 
@@ -776,6 +817,8 @@ enum LostCatFlyerRenderer {
         defer { UIGraphicsPopContext() }
         UIColor.white.setFill()
         context.fill(CGRect(origin: .zero, size: plan.size))
+        UIColor(red: 0.80, green: 0.07, blue: 0.09, alpha: 1).setFill()
+        context.fill(plan.titleBand)
         UIColor(white: 0.93, alpha: 1).setFill()
         context.fill(plan.contactBackground)
         let photoGap: CGFloat = format == .paper ? 10 : 18
@@ -789,7 +832,8 @@ enum LostCatFlyerRenderer {
         }
         for item in plan.texts {
             text(item.block.value, item.rect, size: item.block.size,
-                 weight: item.block.weight)
+                 weight: item.block.weight, color: item.block.color,
+                 centered: item.block.centered)
         }
     }
 
@@ -866,12 +910,13 @@ enum LostCatFlyerRenderer {
     }
 
     private static func text(_ value: String, _ rect: CGRect, size: CGFloat,
-                             weight: UIFont.Weight) {
+                             weight: UIFont.Weight, color: UIColor, centered: Bool) {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byWordWrapping
+        if centered { paragraph.alignment = .center }
         (value as NSString).draw(in: rect, withAttributes: [
             .font: UIFont.systemFont(ofSize: size, weight: weight),
-            .foregroundColor: UIColor.black,
+            .foregroundColor: color,
             .paragraphStyle: paragraph
         ])
     }

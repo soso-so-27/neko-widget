@@ -35,7 +35,9 @@ enum CareHandoffExporter {
         let font: CGFloat = pdf ? 15 : 18
         let photoHeight: CGFloat = pdf ? 145 : 185
         struct Page {
-            let catIndex: Int
+            /// Nil for the first page of a memo for two or more cats: what is
+            /// common to every cat (contacts, the request, the date), once.
+            let catIndex: Int?
             let first: Bool
             let framesetter: CTFramesetter
             let range: CFRange
@@ -45,8 +47,10 @@ enum CareHandoffExporter {
             return CGRect(x: margin, y: top, width: size.width - margin * 2,
                           height: size.height - top - margin - 26)
         }
-        var pages: [Page] = []
-        for (catIndex, cat) in record.cats.enumerated() {
+        func catPhoto(_ catIndex: Int?) -> UIImage? { catIndex.flatMap { record.cats[$0].photo } }
+        // 11/8: only what is written is printed; the cat's name is said once on
+        // each page, in its heading, and there is one date, 「作った日」.
+        func body(_ fields: [(String, String)], closing: Bool) -> NSAttributedString {
             let body = NSMutableAttributedString(string: "")
             let paragraph = NSMutableParagraphStyle()
             paragraph.paragraphSpacing = 11; paragraph.lineSpacing = 3
@@ -56,48 +60,64 @@ enum CareHandoffExporter {
                     .foregroundColor: UIColor.black, .paragraphStyle: paragraph
                 ]))
             }
-            append(cat.name, size: font + 5, bold: true)
-            if cat.photo == nil { append("写真はありません", size: font - 2) }
-            for (title, text) in record.commonFields + cat.fields {
+            for (title, text) in fields {
                 append(title, size: font - 2, bold: true); append(text, size: font)
             }
+            guard closing else { return body }
             if record.isCareMemo {
-                if !record.includesHealth { append("薬・アレルギーは載せていません。飼い主に聞いてください。", size: font - 2) }
+                if !record.includesHealth { append("薬・持病・アレルギーは載せていません。飼い主に聞いてください。", size: font - 2) }
                 if !record.includesContacts { append("連絡先は、このメモには載せていません。", size: font - 2) }
-                append("最後に書いた日：" + cat.updatedAt.formatted(date: .numeric, time: .omitted), size: font - 2)
             }
             append("作った日：" + record.createdAt.formatted(date: .numeric, time: .shortened), size: font - 2)
             append("このメモは作った時点の内容です。変わったところは飼い主に確かめてください。", size: font - 2)
-            let framesetter = CTFramesetterCreateWithAttributedString(body)
+            return body
+        }
+        // Two or more cats: contacts and the request once, on page 1.
+        let sharedFirstPage = record.cats.count > 1
+        var sections: [(Int?, NSAttributedString)] = sharedFirstPage ? [(Int?.none, body(record.commonFields, closing: true))] : []
+        for (catIndex, cat) in record.cats.enumerated() {
+            sections.append((catIndex, body((sharedFirstPage ? [] : record.commonFields) + cat.fields,
+                                            closing: !sharedFirstPage)))
+        }
+        var pages: [Page] = []
+        for (catIndex, text) in sections {
+            let framesetter = CTFramesetterCreateWithAttributedString(text)
             var offset = 0
-            while offset < body.length {
+            repeat {
                 guard pages.count < 80 else { throw CareHandoffError.tooLarge }
+                // A cat with nothing written still gets its page, with its name and photo.
+                guard text.length > 0 else {
+                    pages.append(Page(catIndex: catIndex, first: true, framesetter: framesetter,
+                                      range: CFRange(location: 0, length: 0)))
+                    break
+                }
                 let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: offset, length: 0),
-                    CGPath(rect: CGRect(origin: .zero, size: rect(first: offset == 0, photo: cat.photo != nil).size), transform: nil), nil)
+                    CGPath(rect: CGRect(origin: .zero, size: rect(first: offset == 0, photo: catPhoto(catIndex) != nil).size), transform: nil), nil)
                 let visible = CTFrameGetVisibleStringRange(frame)
                 guard visible.length > 0 else { throw CareHandoffError.tooLarge }
                 pages.append(Page(catIndex: catIndex, first: offset == 0, framesetter: framesetter,
                                   range: CFRange(location: offset, length: visible.length)))
                 offset += visible.length
-            }
+            } while offset < text.length
         }
         func draw(_ context: CGContext, index: Int) {
-            let page = pages[index]; let cat = record.cats[page.catIndex]
+            let page = pages[index]
             UIColor.white.setFill(); context.fill(CGRect(origin: .zero, size: size))
             let headingStyle = NSMutableParagraphStyle(); headingStyle.lineBreakMode = .byTruncatingTail
-            ("\(record.heading) · \(cat.name)" as NSString).draw(in:
+            let heading = page.catIndex.map { "\(record.heading) · \(record.cats[$0].name)" } ?? record.heading
+            (heading as NSString).draw(in:
                 CGRect(x: margin, y: margin, width: size.width - margin * 2, height: 26), withAttributes: [
                     .font: UIFont.boldSystemFont(ofSize: 16), .foregroundColor: UIColor.black,
                     .paragraphStyle: headingStyle
                 ])
-            if page.first, let photo = cat.photo {
+            if page.first, let photo = catPhoto(page.catIndex) {
                 let width = size.width - margin * 2
                 let scale = min(width / photo.size.width, photoHeight / photo.size.height)
                 let fitted = CGSize(width: photo.size.width * scale, height: photo.size.height * scale)
                 photo.draw(in: CGRect(x: margin + (width - fitted.width) / 2, y: margin + 44,
                                       width: fitted.width, height: fitted.height))
             }
-            let bounds = rect(first: page.first, photo: cat.photo != nil)
+            let bounds = rect(first: page.first, photo: catPhoto(page.catIndex) != nil)
             context.saveGState(); context.textMatrix = .identity
             context.translateBy(x: 0, y: size.height); context.scaleBy(x: 1, y: -1)
             let path = CGPath(rect: CGRect(x: bounds.minX, y: size.height - bounds.maxY,

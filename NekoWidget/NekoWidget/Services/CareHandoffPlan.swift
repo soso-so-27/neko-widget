@@ -45,6 +45,9 @@ struct CareCat: Codable, Equatable, Identifiable {
     var healthStatus = HealthStatus.unknown
     var healthDetails = ""
     var updatedAt = Date()
+    /// 11/8: true after 「このメモの写真を外す」, so the face photo from
+    /// 「この子のこと」 is not put back. Optional so older memos still open.
+    var photoRemoved: Bool? = nil
     var displayName: String { name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "名前未設定の猫" : name }
     var reusableFood: String {
         var parts = [usualFood ?? ""].filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -81,7 +84,20 @@ struct CareHandoffPlan: Codable, Equatable {
     var contact = ""
     var backupContact = ""
     var veterinarian = ""
+    /// 11/8: what the last memo included, offered again next time. Nil until a
+    /// memo is made; optional so older plans still open.
+    var includesHealth: Bool? = nil
+    var includesContacts: Bool? = nil
+    /// 11/8: when the last memo was made. 14 days later the period and the
+    /// request start empty, so an old trip is not handed over again.
+    var lastMadeAt: Date? = nil
     var photoNames: Set<String> { Set(cats.compactMap(\.photoName)) }
+
+    static let staleRequestAge: TimeInterval = 14 * 24 * 60 * 60
+    func requestIsStale(now: Date = Date()) -> Bool {
+        guard let lastMadeAt else { return false }
+        return now.timeIntervalSince(lastMadeAt) > Self.staleRequestAge
+    }
 
     func validate() throws {
         guard [1,2].contains(schemaVersion), cats.count <= 20,
@@ -175,6 +191,16 @@ final class CareHandoffRepository {
         reconcileOwnedPhotos()
     }
 
+    /// 11/8: a photo copy that could not be removed is tried again quietly,
+    /// never shown as a task for the owner.
+    func retryPhotoCleanup() {
+        guard pendingPhotoCleanup > 0 else { return }
+#if os(iOS)
+        AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
+#endif
+        reconcileOwnedPhotos()
+    }
+
     private func reconcileOwnedPhotos() {
         pendingPhotoCleanup = 0
         guard FileManager.default.fileExists(atPath: directory.path) else { return }
@@ -203,62 +229,82 @@ final class CareHandoffRepository {
 }
 
 /// The only disclosure boundary; renderers receive neither the plan nor unselected cats.
+/// 11/8: rows the owner has not written are left out of the handed memo; the
+/// app says what is missing before it is made.
 struct CareHandoffDisclosure {
     var catIDs: Set<UUID> = []
     var health = false
     var contacts = false
 
+    private static func trimmed(_ text: String?) -> String {
+        (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    /// A row with nothing written, or one that only says so (「未記入…」「未確認」).
+    static func isUnwritten(_ text: String) -> Bool {
+        let value = trimmed(text)
+        return value.isEmpty || value.hasPrefix("未記入") || value.hasPrefix("未確認")
+    }
+    static func written(_ fields: [(String, String)]) -> [(String, String)] {
+        fields.filter { !isUnwritten($0.1) }
+    }
+
     func commonFields(plan: CareHandoffPlan) -> [(String, String)] {
         var fields: [(String, String)] = []
         func add(_ label: String, _ text: String) {
-            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { fields.append((label, text)) }
+            if !Self.trimmed(text).isEmpty { fields.append((label, text)) }
         }
         // Mixed requests belong beside their own cat, never in one common
         // heading that could disclose an unselected cat's recipient.
         if !plan.cats.contains(where: { catIDs.contains($0.id) && $0.familyContext != nil }) {
             add("お願いする相手", plan.recipient)
             add("お願いする期間", plan.period)
-            add("今回のお願い", plan.request)
+            add("ほかにお願いしたいこと", plan.request)
         }
         if contacts {
-            fields.append(("飼い主の連絡先", Self.value(plan.contact)))
-            fields.append(("つながらないときの連絡先", Self.value(plan.backupContact)))
-            fields.append(("かかりつけの動物病院", Self.value(plan.veterinarian)))
+            add("飼い主の連絡先", plan.contact)
+            add("つながらないときの連絡先", plan.backupContact)
+            add("かかりつけの動物病院", plan.veterinarian)
+        }
+        return fields
+    }
+
+    /// The first rows of a cat: this time's notes, written in the tool.
+    private func notes(cat: CareCat) -> [(String, String)] {
+        var fields: [(String, String)] = []
+        if !Self.trimmed(cat.important).isEmpty { fields.append(("まず伝えたいこと", cat.important)) }
+        if let callWhen = cat.callWhen, !callWhen.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            fields.append(("こんなときは連絡を", callWhen))
         }
         return fields
     }
 
     func fields(cat: CareCat) -> [(String, String)] {
-        var fields: [(String, String)] = [("まず伝えたいこと", Self.value(cat.important))]
-        if let callWhen = cat.callWhen, !callWhen.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            fields.append(("こんなときは連絡を", callWhen))
-        }
+        var fields = notes(cat: cat)
         if let food = cat.usualFood, !food.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             fields.append(("いつものごはん", food))
         }
         for (index, meal) in cat.meals.enumerated() {
-            // A copied free-form note is usable as-is. Do not output empty invented meals.
-            if cat.usualFood != nil && [meal.time, meal.food, meal.amount].allSatisfy({ $0.isEmpty }) { continue }
-            fields.append(("ごはん \(index + 1)", "時間：\(Self.value(meal.time))\nフード：\(Self.value(meal.food))\n量：\(Self.value(meal.amount))"))
+            // Only what was written; an empty meal is not printed.
+            let parts = [("時間", meal.time), ("フード", meal.food), ("量", meal.amount)]
+                .filter { !Self.trimmed($0.1).isEmpty }
+            if parts.isEmpty { continue }
+            fields.append(("ごはん \(index + 1)", parts.map { "\($0.0)：\($0.1)" }.joined(separator: "\n")))
         }
-        fields += [("水", Self.value(cat.water)), ("トイレ", Self.value(cat.toilet)), ("接し方・苦手なこと", Self.value(cat.handling))]
-        if health { fields.append(("薬・アレルギー（飼い主の記録）", cat.healthText)) }
-        return fields
-    }
-    static func value(_ text: String) -> String {
-        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未記入（飼い主に聞いてください）" : text
+        fields += [("水", cat.water), ("トイレ", cat.toilet), ("接し方・苦手なこと", cat.handling)]
+        if health && cat.healthStatus != .unknown { fields.append(("薬・アレルギー（飼い主の記録）", cat.healthText)) }
+        return Self.written(fields)
     }
 
     /// The handed-over copy for one cat: this time's notes from the tool, then
-    /// everyday care (and health, when chosen) from 「この子のこと」.
-    func fields(cat: CareCat, everyday: [(String, String)], health healthLines: [(String, String)]) -> [(String, String)] {
-        var fields: [(String, String)] = [("まず伝えたいこと", Self.value(cat.important))]
-        if let callWhen = cat.callWhen, !callWhen.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            fields.append(("こんなときは連絡を", callWhen))
-        }
+    /// everyday care (and health, when chosen) from 「この子のこと」, and the
+    /// cat's vet with the contacts.
+    func fields(cat: CareCat, everyday: [(String, String)], health healthLines: [(String, String)],
+                vet: [(String, String)] = []) -> [(String, String)] {
+        var fields = notes(cat: cat)
         fields += everyday
         if health { fields += healthLines }
-        return fields
+        if contacts { fields += vet }
+        return Self.written(fields)
     }
 
     /// Contacts from 「この子のこと」's household; the tool's older entry only
@@ -272,19 +318,35 @@ struct CareHandoffDisclosure {
         return fields
     }
 
-    /// The contacts as handed over. 11/7: also shown read-only in the tool,
-    /// since they are written only in 「この子のこと」.
+    /// The household contacts as handed over, once for every cat. 11/8: shown
+    /// read-only where the memo is made; written only in 「この子のこと」.
     static func contactFields(plan: CareHandoffPlan, household: CatCareHousehold?) -> [(String, String)] {
         func pick(_ value: String?, _ legacy: String) -> String {
-            let text = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            return Self.value(text.isEmpty ? legacy : text)
+            let text = trimmed(value)
+            return text.isEmpty ? trimmed(legacy) : text
         }
-        let vet = household?.vet?.value
-        let vetText = [vet?.name ?? "", vet?.phone ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
-        return [
+        return written([
             ("飼い主の連絡先", pick(household?.ownerContact?.value, plan.contact)),
             ("つながらないときの連絡先", pick(household?.backupContact?.value, plan.backupContact)),
-            ("かかりつけの動物病院", pick(vetText, plan.veterinarian)),
-        ]
+        ])
+    }
+
+    /// 11/8: the cat's own vet first, then the household's, as 「病院で見せる」
+    /// does; with the vet's note. The tool's older entry only when neither is set.
+    static func vetFields(plan: CareHandoffPlan, household: CatCareHousehold?,
+                          record: CatCareRecord?) -> [(String, String)] {
+        let vet = record?.vetOverride?.value ?? household?.vet?.value
+        var lines: [String] = []
+        if let vet {
+            if vet.vetStatus == CatCareVetStatus.none {
+                lines.append("まだない（飼い主の記入）")
+            } else {
+                let head = [vet.name, vet.phone].map { trimmed($0) }.filter { !$0.isEmpty }.joined(separator: " ")
+                if !head.isEmpty { lines.append(head) }
+            }
+            if !trimmed(vet.note).isEmpty { lines.append(trimmed(vet.note)) }
+        }
+        let text = lines.isEmpty ? trimmed(plan.veterinarian) : lines.joined(separator: "\n")
+        return text.isEmpty ? [] : [("かかりつけの動物病院", text)]
     }
 }

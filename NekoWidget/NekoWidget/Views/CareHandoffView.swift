@@ -40,7 +40,7 @@ struct CareHandoffView: View {
                 } description: { Text(error) } actions: { Button("もう一度読み込む") { store.reload() } }
             } else if stripCats.isEmpty {
                 // No cat yet: add one here.
-                List { ToolCatPicker(profiles: profiles, select: { select(profileID: $0.identifier, name: $0.displayName) }) {} }
+                List { ToolCatPicker(profiles: profiles, select: { select(profileID: $0.identifier, name: $0.displayName) }, purpose: "猫を追加すると、預ける人に渡すメモを作れます。") {} }
                     .safeAreaInset(edge: .bottom) { CareSaveNotice(store: store) }
             } else if let id = selectedCatID, store.plan.cats.contains(where: { $0.id == id }) {
                 // The chosen cat's memo, with the row of cats above it to switch in place.
@@ -75,6 +75,7 @@ struct CareHandoffView: View {
         .task {
             // Usage (11/7): once per opening, not again after a pushed screen.
             if !countedOpen { countedOpen = true; UsageCounter.shared.count(.toolCareHandoff) }
+            store.retryPhotoCleanup()
             guard selectedCatID == nil, store.loadError == nil else { return }
             openFirst()
         }
@@ -164,27 +165,13 @@ struct CareHandoffView: View {
                 creationDate: $0.creationDate, catBoundingBox: $0.catBoundingBox) })
             .filter { seen.insert($0.localIdentifier).inserted }
         return CareCatEditor(id: id, ownPhotos: own, otherPhotos: other, store: store, reuseStore: reuseStore,
-                             profiles: profiles, householdSection: AnyView(householdSection),
+                             profiles: profiles,
                              onDeleted: {
                                  // Stay here: the next memo, or none (11/7: it left the tool).
                                  lastCatID = Self.afterDelete
                                  selectedCatID = nil
                                  openFirst()
                              })
-    }
-    /// The one request for everyone being handed over: who, when, what.
-    /// 11/7: contacts are written in 「この子のこと」 and shown in the cat's box.
-    private var householdSection: some View {
-        Section {
-            NavigationLink { CareRequestEditor(store: store) } label: {
-                Label {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("今回のお願い").font(.headline)
-                        Text("相手・期間・お願い").font(.subheadline).foregroundStyle(.secondary)
-                    }
-                } icon: { Image(systemName: "calendar") }
-            }.accessibilityIdentifier("care-request-open")
-        }
     }
 }
 
@@ -197,12 +184,9 @@ private struct CareSaveNotice: View {
                 Button("もう一度保存する") { store.retrySave() }
             }.padding().frame(maxWidth: .infinity).background(.regularMaterial)
                 .accessibilityIdentifier("care-save-error")
-        } else if store.pendingPhotoCleanup {
-            VStack(spacing: 8) {
-                Text("使わなくなった写真のコピーが残っています。").font(.footnote)
-                Button("もう一度消す") { store.retrySave() }
-            }.padding().frame(maxWidth: .infinity).background(.regularMaterial)
         }
+        // 11/8: a photo copy left behind is removed again in the background
+        // (CareHandoffStore.retryPhotoCleanup), not shown as a task here.
     }
 }
 
@@ -234,8 +218,6 @@ private struct CareCatEditor: View {
     @ObservedObject var store: CareHandoffStore
     @ObservedObject var reuseStore: EvacuationStore
     var profiles: [CatProfilePresentation] = []
-    /// 今回のお願い, shared by every cat, shown under this cat's memo.
-    var householdSection: AnyView? = nil
     /// Set when the memo is the tool's page: it stays after a delete.
     var onDeleted: (() -> Void)? = nil
     /// Redraws when 「この子のこと」 changes, for example after 「この子のことを直す」.
@@ -273,15 +255,16 @@ private struct CareCatEditor: View {
     @ViewBuilder private func catCareSection(_ cat: CareCat) -> some View {
         let care = CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
         let health = CatCareSummary.careHandoffHealthLines(care, legacy: cat)
-        // 11/7: contacts and the vet are written only in 「この子のこと」; shown here
-        // as they are handed over (the older entry here only until that is set).
-        let contacts = CareHandoffDisclosure.contactFields(plan: store.plan, household: catCare.state?.household)
+        // 11/8: the cat's own vet is shown here; the household contacts are
+        // shown once, where the memo is made.
+        let vet = CareHandoffDisclosure.vetFields(plan: store.plan, household: catCare.state?.household, record: care)
         let subject: CatCareSubject = profiles.first(where: { $0.identifier == cat.profileID }).map(CatCareSubject.profile)
             ?? .toolCat(id: cat.toolCatID ?? cat.id, name: cat.name)
         // 11/7: said once below, not after every heading.
         ToolCatCareSection(title: "この子のこと",
-                           lines: CatCareSummary.careHandoffLines(care, legacy: cat) + health + contacts, subject: subject,
-                           footer: health.isEmpty && contacts.isEmpty ? nil : "健康のことと連絡先は、選んだときだけ載ります。",
+                           lines: CatCareSummary.careHandoffLines(care, legacy: cat) + health + vet, subject: subject,
+                           footer: CareHandoffDisclosure.written(health).isEmpty && vet.isEmpty
+                               ? nil : "薬と連絡先は、次の画面で選ぶと載ります。",
                            identifier: "care-cat-care-fields", editIdentifier: "care-open-cat-care", profiles: profiles)
     }
 
@@ -305,14 +288,17 @@ private struct CareCatEditor: View {
                         .contentShape(Rectangle())
                     }.buttonStyle(.plain).accessibilityIdentifier("care-photo-open")
                     if cat.photoName != nil {
-                        Button("このメモの写真を外す", role: .destructive) { store.editCat(id) { $0.photoName = nil } }
+                        Button("このメモの写真を外す", role: .destructive) {
+                            store.editCat(id) { $0.photoName = nil; $0.photoRemoved = true }
+                        }
                     }
                 }
                 if candidateRefreshError {
                     Text("前に入れた内容を読み込めませんでした。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
-                catCareSection(cat)
+                // 11/8: what is written this time comes first, above what is read
+                // from 「この子のこと」.
                 Section {
                     CareField(label: "まず伝えたいこと", example: "例：玄関を開ける前に、猫が別の部屋にいるか確認", identifier: "care-important", text: text(\.important))
                     CareField(label: "こんなときは連絡を", example: "例：丸1日ごはんを食べない、何度も吐く、トイレに行ってもおしっこが出ない",
@@ -334,17 +320,16 @@ private struct CareCatEditor: View {
                     }
                     .accessibilityIdentifier("care-call-when-choices")
                 }
+                catCareSection(cat)
+                // Shared in the family notebook: this cat's own period and request.
                 if let context = cat.familyContext {
-                    Section("この子への今回のお願い") {
+                    Section("この子の期間とお願い") {
                         CareField(label: "お願いする相手", example: "例：お母さん", identifier: "care-family-recipient", text: contextText(\.recipient, fallback: context.recipient))
                         CareField(label: "期間", example: "例：金曜の夜まで", identifier: "care-family-period", text: contextText(\.period, fallback: context.period))
-                        CareField(label: "今回のお願い", example: "例：終わったら写真を1枚", identifier: "care-family-request", text: contextText(\.request, fallback: context.request))
+                        CareField(label: "ほかにお願いしたいこと", example: "例：終わったら写真を1枚", identifier: "care-family-request", text: contextText(\.request, fallback: context.request))
                     }
-                } else if let householdSection { householdSection }
-                if cat.familyDetached == true { Text("家族の手帳から外れたメモです。").font(.footnote).foregroundStyle(.secondary) }
-                Section {
-                    ToolImportantInformation(text: "薬は、獣医師に言われたとおりに書いてください。")
                 }
+                if cat.familyDetached == true { Text("このメモは、家族の手帳には入っていません。").font(.footnote).foregroundStyle(.secondary) }
                 Section {
                     Button("このお世話メモを削除", role: .destructive) { deleteRequested = true }
                 }
@@ -358,6 +343,7 @@ private struct CareCatEditor: View {
             refreshedCandidates = true
             do { try store.refreshCandidates(id, using: reuseStore) }
             catch { candidateRefreshError = true }
+            await useCatCarePhoto()
         }
         .scrollDismissesKeyboard(.interactively)
         .toolbar { ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("キーボードを閉じる") {
@@ -377,30 +363,28 @@ private struct CareCatEditor: View {
             VStack(spacing: 6) {
                 CareSaveNotice(store: store)
                 NavigationLink { CareDisclosureView(store: store, currentCatID: id) } label: {
-                    Label("渡す内容を選ぶ", systemImage: "checklist").frame(maxWidth: .infinity, minHeight: 44)
+                    Label("メモを作る", systemImage: "doc.text").frame(maxWidth: .infinity, minHeight: 44)
                 }.buttonStyle(.borderedProminent).disabled(store.saveError != nil)
+                    .accessibilityIdentifier("care-disclosure-open")
             }.padding().background(.regularMaterial)
         }
     }
-}
 
-/// This time's request only. 11/7: the contacts and the vet moved out: they are
-/// written in 「この子のこと」 (one place) and shown read-only in the cat's box.
-private struct CareRequestEditor: View {
-    @ObservedObject var store: CareHandoffStore
-    private func text(_ key: WritableKeyPath<CareHandoffPlan, String>) -> Binding<String> {
-        Binding(get: { store.plan[keyPath: key] }, set: { new in store.update { $0[keyPath: key] = new } })
-    }
-    var body: some View {
-        Form {
-            Section {
-                CareField(label: "お願いする相手", example: "例：お母さん", identifier: "care-recipient", text: text(\.recipient))
-                CareField(label: "期間", example: "例：10月5日 夜〜10月7日 朝", identifier: "care-period", text: text(\.period))
-                CareField(label: "今回のお願い", example: "例：お世話が終わったら写真を1枚送ってください", identifier: "care-request", text: text(\.request))
-            } footer: { Text("住所や鍵の番号は、別の方法で伝えてください。") }
-        }.navigationTitle("今回のお願い").navigationBarTitleDisplayMode(.inline)
-            .scrollDismissesKeyboard(.interactively)
-            .safeAreaInset(edge: .bottom) { CareSaveNotice(store: store) }
+    /// 11/8: a memo without a photo starts with the face photo of 「この子のこと」,
+    /// else the cat's photo. Not after 「このメモの写真を外す」; 「写真を変える」 stays.
+    private func useCatCarePhoto() async {
+        guard let cat, cat.photoName == nil, cat.photoRemoved != true else { return }
+        let care = CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
+        var data: Data?
+        if let ref = care?.facePhoto?.value ?? nil, let url = CatCareStore.shared.photoURL(ref) {
+            data = try? Data(contentsOf: url)
+        }
+        if data == nil, let profile = profiles.first(where: { $0.identifier == cat.profileID }),
+           let identifier = profile.keyPhotoIdentifier ?? profile.coverPhoto?.localIdentifier {
+            data = try? await PhotoLibraryJPEGExporter().export(localIdentifier: identifier).jpeg
+        }
+        guard let data, self.cat?.photoName == nil, self.cat?.photoRemoved != true else { return }
+        try? store.replacePhoto(data, catID: id)
     }
 }
 
@@ -483,16 +467,63 @@ private struct CarePreview: Identifiable, Hashable {
 
 private struct CareDisclosureView: View {
     @ObservedObject var store: CareHandoffStore
-    /// The cat whose memo this was opened from: chosen to begin with (11/7).
+    /// The cat whose memo this was opened from.
     var currentCatID: UUID? = nil
+    @AppStorage(CatFarewell.key) private var farewellJSON = ""
+    @ObservedObject private var catCare = CatCareStore.shared
     @State private var disclosure = CareHandoffDisclosure()
     @State private var initialized = false
     @State private var preview: CarePreview?
     @State private var error: String?
+
+    /// 11/8: a cat whose farewell day is recorded is not offered.
+    private var cats: [CareCat] {
+        let days = CatFarewell.days(farewellJSON)
+        return store.plan.cats.filter { cat in
+            !(cat.profileID.map { days[$0] != nil } ?? false) && days["tool-" + (cat.toolCatID ?? cat.id).uuidString] == nil
+        }
+    }
+    private func record(_ cat: CareCat) -> CatCareRecord? {
+        CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
+    }
+    private func vet(_ cat: CareCat) -> [(String, String)] {
+        CareHandoffDisclosure.vetFields(plan: store.plan, household: catCare.state?.household, record: record(cat))
+    }
+    private var contacts: [(String, String)] {
+        CareHandoffDisclosure.contactFields(plan: store.plan, household: catCare.state?.household)
+    }
+    private func text(_ key: WritableKeyPath<CareHandoffPlan, String>) -> Binding<String> {
+        Binding(get: { store.plan[keyPath: key] }, set: { new in store.update { $0[keyPath: key] = new } })
+    }
+    /// 11/8: shown here before the memo is made, never printed.
+    private var unwritten: [String] {
+        let chosen = cats.filter { disclosure.catIDs.contains($0.id) }
+        var result: [String] = chosen.compactMap { cat -> String? in
+            let care = record(cat)
+            var lines = [("まず伝えたいこと", cat.important)] + CatCareSummary.careHandoffLines(care, legacy: cat)
+            if disclosure.health { lines += CatCareSummary.careHandoffHealthLines(care, legacy: cat) }
+            let missing = lines.filter { CareHandoffDisclosure.isUnwritten($0.1) }.map(\.0)
+            guard !missing.isEmpty else { return nil }
+            let who = chosen.count > 1 ? "（\(cat.displayName)）" : ""
+            return "まだ書いていないこと\(who)：" + missing.joined(separator: "、")
+        }
+        if disclosure.contacts && !contacts.contains(where: { $0.0 == "飼い主の連絡先" }) {
+            result.append("まだ書いていないこと：飼い主の連絡先")
+        }
+        return result
+    }
+
     var body: some View {
         List {
+            // 11/8: this time's period and request first, where the memo is made.
+            Section {
+                CareField(label: "お願いする相手", example: "例：お母さん", identifier: "care-recipient", text: text(\.recipient))
+                CareField(label: "期間", example: "例：10月5日 夜〜10月7日 朝", identifier: "care-period", text: text(\.period))
+                CareField(label: "ほかにお願いしたいこと", example: "例：お世話が終わったら写真を1枚送ってください", identifier: "care-request", text: text(\.request))
+            } header: { Text("期間とお願い")
+            } footer: { ToolImportantInformation(text: "住所や鍵の番号は、別の方法で伝えてください。") }
             Section("今回お願いする猫") {
-                ForEach(store.plan.cats) { cat in
+                ForEach(cats) { cat in
                     let selected = disclosure.catIDs.contains(cat.id)
                     Button {
                         if selected { disclosure.catIDs.remove(cat.id) } else { disclosure.catIDs.insert(cat.id) }
@@ -509,23 +540,51 @@ private struct CareDisclosureView: View {
                 }
             }
             Section {
-                Toggle("薬・アレルギーも載せる", isOn: $disclosure.health).accessibilityIdentifier("care-disclose-health")
-                Toggle("連絡先・動物病院も載せる", isOn: $disclosure.contacts).accessibilityIdentifier("care-disclose-contacts")
-            } header: { Text("渡す相手に合わせて選ぶ")
-            } footer: { Text("写真・名前・お世話・今回のお願いは、いつも載ります。") }
+                Toggle("薬・持病・アレルギーを載せる", isOn: $disclosure.health).accessibilityIdentifier("care-disclose-health")
+                Toggle("連絡先・動物病院を載せる", isOn: $disclosure.contacts).accessibilityIdentifier("care-disclose-contacts")
+                // The household contacts, once for every cat; written in 「この子のこと」.
+                if disclosure.contacts {
+                    ForEach(Array(contacts.enumerated()), id: \.offset) { _, line in
+                        LabeledContent(line.0, value: line.1)
+                    }
+                    .accessibilityIdentifier("care-contacts")
+                }
+            } footer: { Text("写真・名前・お世話・お願いは、いつも載ります。") }
+            if !unwritten.isEmpty {
+                Section {
+                    ForEach(unwritten, id: \.self) { line in
+                        Text(line).font(.footnote).foregroundStyle(.secondary)
+                    }
+                }.accessibilityIdentifier("care-unwritten")
+            }
             if let error { Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) } }
-        }.navigationTitle("渡す内容を選ぶ").navigationBarTitleDisplayMode(.inline)
+        }.navigationTitle("メモを作る").navigationBarTitleDisplayMode(.inline)
+            .scrollDismissesKeyboard(.interactively)
             .announcesWhenShown(error)
             .onAppear {
-                if !initialized {
-                    if store.plan.cats.count == 1, let cat = store.plan.cats.first { disclosure.catIDs = [cat.id] }
-                    else if let currentCatID, store.plan.cats.contains(where: { $0.id == currentCatID }) {
-                        disclosure.catIDs = [currentCatID]
-                    }
-                    initialized = true
+                guard !initialized else { return }
+                initialized = true
+                // 11/8: an old trip's period and request start empty.
+                store.clearStaleRequest()
+                // Every cat to begin with; the owner takes out the ones not going.
+                disclosure.catIDs = Set(cats.map(\.id))
+                if disclosure.catIDs.isEmpty, let currentCatID, store.plan.cats.contains(where: { $0.id == currentCatID }) {
+                    disclosure.catIDs = [currentCatID]
+                }
+                // On when something is written, unless the last memo left it out.
+                let chosen = cats.filter { disclosure.catIDs.contains($0.id) }
+                let healthWritten = chosen.contains { cat in
+                    !CareHandoffDisclosure.written(CatCareSummary.careHandoffHealthLines(record(cat), legacy: cat)).isEmpty
+                }
+                let contactsWritten = !contacts.isEmpty || chosen.contains { !vet($0).isEmpty }
+                disclosure.health = healthWritten && (store.plan.includesHealth ?? true)
+                disclosure.contacts = contactsWritten && (store.plan.includesContacts ?? true)
+            }
+            .navigationDestination(item: $preview) { item in
+                CareDisplayView(record: item.record) {
+                    store.recordMade(health: item.record.includesHealth, contacts: item.record.includesContacts)
                 }
             }
-            .navigationDestination(item: $preview) { CareDisplayView(record: $0.record) }
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 6) {
                     CareSaveNotice(store: store)
@@ -533,7 +592,7 @@ private struct CareDisclosureView: View {
                         do { preview = CarePreview(record: try store.shareRecord(disclosure)); error = nil }
                         catch { self.error = (error as? CareHandoffError)?.errorDescription ?? "表示できませんでした。もう一度お試しください。" }
                     } label: {
-                        Label("できあがりを見る", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
+                        Label("この内容で作る", systemImage: "doc.text").frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(disclosure.catIDs.isEmpty || store.saveError != nil)
@@ -545,10 +604,11 @@ private struct CareDisclosureView: View {
 
 private struct CareDisplayView: View {
     let record: CareHandoffShareRecord
+    /// Called once a file is made, so the choices are remembered for next time.
+    var onMade: () -> Void = {}
     @State private var export: CareHandoffExporter.Export?
     @State private var retainedDirectory: URL?
     @State private var pdf = false
-    @State private var confirmShare = false
     @State private var error: String?
     /// True while the memo is being made (11/6).
     @State private var exporting = false
@@ -556,14 +616,13 @@ private struct CareDisplayView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 Text("お世話メモ").font(.largeTitle.bold())
-                if !record.includesHealth { Label("薬・アレルギーは載せていません", systemImage: "info.circle").font(.subheadline) }
+                if !record.includesHealth { Label("薬・持病・アレルギーは載せていません", systemImage: "info.circle").font(.subheadline) }
                 if !record.includesContacts { Label("連絡先・動物病院は載せていません", systemImage: "info.circle").font(.subheadline) }
                 fields(record.commonFields)
                 ForEach(Array(record.cats.enumerated()), id: \.offset) { _, cat in
                     VStack(alignment: .leading, spacing: 18) {
                         Text(cat.name).font(.title.bold())
                         if let photo = cat.photo { Image(uiImage: photo).resizable().scaledToFit().frame(maxHeight: 260).accessibilityLabel("渡す猫の写真") }
-                        else { Text("写真はありません").foregroundStyle(.secondary) }
                         fields(cat.fields)
                     }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
@@ -571,18 +630,13 @@ private struct CareDisplayView: View {
                 if let error { Text(error).foregroundStyle(.red) }
             }.padding(16)
         }.background(Color(.systemGroupedBackground))
-            .navigationTitle("プレビュー").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("できあがり").navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) {
                 ViewThatFits {
                     HStack(spacing: 12) { shareButton("PDFで渡す", pdf: true); shareButton("画像で渡す", pdf: false) }
                     VStack(spacing: 8) { shareButton("PDFで渡す", pdf: true); shareButton("画像で渡す", pdf: false) }
                 }
                 .padding().background(.regularMaterial)
-            }
-            .confirmationDialog("この内容で作りますか？", isPresented: $confirmShare, titleVisibility: .visible) {
-                Button(pdf ? "PDFを作って渡す" : "画像を作って渡す") { Task { await createExport() } }
-            } message: {
-                Text("次の画面で、渡す相手をよく確かめて選んでください。")
             }
             .sheet(item: $export, onDismiss: {
                 if let retainedDirectory { CareHandoffExporter.remove(retainedDirectory) }
@@ -599,7 +653,8 @@ private struct CareDisplayView: View {
     }
     /// PDF is the main way out; the image is the second.
     @ViewBuilder private func shareButton(_ title: String, pdf: Bool) -> some View {
-        let button = Button { self.pdf = pdf; confirmShare = true } label: {
+        // 11/8: straight to the share sheet, where the person is chosen.
+        let button = Button { self.pdf = pdf; Task { await createExport() } } label: {
             Group {
                 if exporting && self.pdf == pdf {
                     WorkingLabel(title: title, workingTitle: "作っています…", working: true)
@@ -625,6 +680,7 @@ private struct CareDisplayView: View {
         do {
             let made = try CareHandoffExporter.create(record, pdf: pdf)
             retainedDirectory = made.directory; export = made; error = nil
+            onMade()
         } catch { self.error = "作れませんでした。空き容量やメモの長さを確かめてください。" }
     }
 }

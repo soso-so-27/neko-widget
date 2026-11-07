@@ -1512,7 +1512,10 @@ private struct AlbumGroupingVerifier {
         precondition(!FavoritePhotoOrigin.ownCats.includes(isReceived: true))
         precondition(FavoritePhotoOrigin.ownCats.includes(isReceived: true, hasOwnCat: true))
 
-        precondition(MainTabStartupPolicy.selection(lastTab: "tools", hasNewPhotos: false, showsMado: true) == .tools)
+        precondition(MainTabStartupPolicy.selection(lastTab: "tools", hasNewPhotos: false, showsMado: true) == .memories)
+        precondition(MainTabStartupPolicy.selection(lastTab: "photos", hasNewPhotos: false, showsMado: true) == .photos)
+        precondition(MainTabStartupPolicy.selection(lastTab: "windows", hasNewPhotos: false, showsMado: true) == .windows)
+        precondition(MainTabStartupPolicy.selection(lastTab: "memories", hasNewPhotos: false, showsMado: false) == .memories)
         precondition(MainTabStartupPolicy.selection(lastTab: "photos", hasNewPhotos: true, showsMado: true) == .windows)
         precondition(MainTabStartupPolicy.selection(lastTab: "windows", hasNewPhotos: false, showsMado: false) == .memories)
         precondition(MainTabStartupPolicy.selection(lastTab: "unknown", hasNewPhotos: false, showsMado: true) == .memories)
