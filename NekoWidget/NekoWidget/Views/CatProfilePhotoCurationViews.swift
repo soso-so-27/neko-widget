@@ -23,6 +23,8 @@ struct CatProfileDetailView: View {
     /// Which tab opens first. The tools open この子のこと, where the dates and
     /// care are; the album and photos open 写真 (11/7).
     var initialPage: CatPage = .photos
+    /// Opened from the family notebook: the faces, not a second notebook (11/7).
+    var insideFamilyNotebook = false
 
     @Environment(\.dismiss) private var dismiss
     @State private var showsKeyPhotoPicker = false
@@ -79,21 +81,27 @@ struct CatProfileDetailView: View {
             .background(Color(.systemGroupedBackground))
             .accessibilityIdentifier("cat-profile-page")
             Divider()
-            if page == .care {
-                CatCareDetailView(profile: profile, otherProfiles: [], selectedProfileID: .constant(profile.identifier))
-            } else {
+            // Both pages stay, side by side, and a swipe moves between them like
+            // the 写真 tab (11/7: switching rebuilt この子のこと and its top-right
+            // button each time).
+            TabView(selection: Binding(get: { page }, set: { chosenPage = $0 })) {
                 profileForm
+                    .tag(CatPage.photos)
+                CatCareDetailView(profile: profile, otherProfiles: [], selectedProfileID: .constant(profile.identifier))
+                    .environment(\.catCareInsideCatPage, true)
+                    .tag(CatPage.care)
             }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .animation(.easeInOut(duration: 0.2), value: page)
         }
         .navigationTitle(profile.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            // この子のこと brings its own; 写真 shows the same at the same place.
-            if page == .photos, Version1.familyNotebook || FamilyNotebookPrototype.shared.hasFamily {
-                ToolbarItem(placement: .topBarTrailing) {
-                    FamilyNotebookButton(accessibilityIdentifier: "cat-profile-family-notebook",
-                                         sharedNames: familyNames)
-                }
+            // One button for the whole page, so it does not change with the tab.
+            if let familyNames, insideFamilyNotebook {
+                ToolbarItem(placement: .topBarTrailing) { FamilyFaces(names: familyNames) }
+            } else if !insideFamilyNotebook, familyNames != nil || Version1.familyNotebook || familyNotebook.hasFamily {
+                ToolbarItem(placement: .topBarTrailing) { FamilyNotebookButton(sharedNames: familyNames) }
             }
         }
         // Memo weights show in この子のこと wherever the page opens (11/7).
