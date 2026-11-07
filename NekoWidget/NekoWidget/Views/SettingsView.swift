@@ -287,15 +287,17 @@ struct SettingsView: View {
                         // The notebook from 設定 too, where leaving it is looked for (11/7).
                         Button { showsFamilyNotebook = true } label: {
                             // Reads like the rows around it, not like a tinted action,
-                            // with the same 「›」 as its neighbours (11/7).
+                            // with the same 「›」 as its neighbours (11/7). Plain colors:
+                            // `.primary` / `.tertiary` inside a list button resolve
+                            // against the tint, and 346 showed both in blue (11/8).
                             HStack {
-                                Label { Text("家族の手帳").foregroundStyle(.primary) } icon: {
+                                Label { Text("家族の手帳").foregroundStyle(Color.primary) } icon: {
                                     Image(systemName: "person.2.fill")
                                 }
                                 Spacer(minLength: 8)
                                 Image(systemName: "chevron.right")
                                     .font(.footnote.weight(.semibold))
-                                    .foregroundStyle(.tertiary)
+                                    .foregroundStyle(Color(uiColor: .tertiaryLabel))
                                     .accessibilityHidden(true)
                             }
                             .contentShape(Rectangle())

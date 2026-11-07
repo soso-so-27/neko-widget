@@ -4203,6 +4203,10 @@ class OnePlaceSettingsTests(unittest.TestCase):
         body = section(settings, "    var body: some View {\n        Form {", '.navigationTitle("設定")')
         # The family notebook row stays; the cat profile row is gone.
         self.assertIn('"settings-family-notebook"', body)
+        # Not tinted: hierarchical styles inside a list button turn blue (346, 11/8).
+        family = section(body, "if showsFamilyNotebookRow {", '"settings-family-notebook"')
+        self.assertIn('Text("家族の手帳").foregroundStyle(Color.primary)', family)
+        self.assertIn(".foregroundStyle(Color(uiColor: .tertiaryLabel))", family)
         self.assertNotIn('"settings-cat-profiles"', body)
         # 保存 is one row: 自動保存 holds the profile file; without 自動保存 the file row stands alone.
         save = section(body, "if ManagedPreservationConfiguration.current.isEnabled {", 'Text("保存")')
