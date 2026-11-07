@@ -3271,6 +3271,7 @@ private struct PhotoRelatedAlbumsSheet: View {
         .environment(\.photoRelatedAlbums, relatedAlbums)
         .environment(\.openPhotoRelatedAlbum, { path.append($0) })
         .environment(\.closePhotoRelatedAlbums, { dismiss() })
+        .onAppear { UsageCounter.shared.count(.relatedPhotosOpened) }  // Usage (11/7)
     }
 }
 
@@ -3405,6 +3406,7 @@ private struct WindowListView: View {
             addPublicWindowError = nil
             withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) { reloadPublicStates() }
             addedPublicWindows &+= 1
+            UsageCounter.shared.count(.officialWindowStarted)  // Usage (11/7)
             startedPublicWindow = source
             Task {
                 try? await source.refresh()

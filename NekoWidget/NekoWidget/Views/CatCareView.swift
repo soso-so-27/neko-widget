@@ -637,6 +637,7 @@ struct CatCareDetailView: View {
         }
         // What was actually stored: an unfinished chip number stays out of it.
         if saved { savedDraft = value }
+        if saved { UsageCounter.shared.count(.catCareEdited) }  // Usage (11/7): each autosave that stored a change
         if saved, let state = store.state, let record = state.record(catID: catID) {
             storedDraft = CatCareDraft(record: record, household: state.household)
         }

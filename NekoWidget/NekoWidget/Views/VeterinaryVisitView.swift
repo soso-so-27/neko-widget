@@ -70,6 +70,7 @@ struct VeterinaryVisitsView: View {
     @State private var error: String?
     @State private var ready = false
     @State private var cleanupPending = false
+    @State private var countedOpen = false
     @Environment(\.membershipActions) private var actionAccess
 
     /// The cats in the row: profiles, then cats known only from memos and tools.
@@ -132,6 +133,8 @@ struct VeterinaryVisitsView: View {
             Task { await reload() }
         }
         .task {
+            // Usage (11/7): once per opening, not again after a pushed screen.
+            if !countedOpen { countedOpen = true; UsageCounter.shared.count(.toolVetVisit) }
             await reload()
             // A cat whose farewell day is recorded is not opened by itself:
             // opening makes a new memo (11/7).

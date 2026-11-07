@@ -671,6 +671,7 @@ final class AppViewModel: ObservableObject {
             await clearWidgetOutput(reportErrors: false)
             return
         }
+        UsageCounter.shared.count(.photoAccessGranted)  // Usage (11/7): the prompt was answered with access.
         await refreshPhotoSourceAlbums()
         guard photoSourceStatus != .unavailable else { return }
         libraryObserver.start()
@@ -833,6 +834,7 @@ final class AppViewModel: ObservableObject {
         Self.applySharedLikeRecord(mutation.record, at: index, to: &updatedSnapshot)
         updatedSnapshot.updatedAt = .now
         snapshot = updatedSnapshot
+        if mutation.record.isLiked, !mutation.previousIsLiked { UsageCounter.shared.count(.photoFavorited) }  // Usage (11/7)
         NotificationCenter.default.post(
             name: .confirmedMemorySavedStateChanged,
             object: ConfirmedMemorySavedState(localIdentifier: localIdentifier, isSaved: mutation.record.isLiked)
@@ -2449,6 +2451,8 @@ final class AppViewModel: ObservableObject {
             lastScanProgressPublicationUptime = ProcessInfo.processInfo.systemUptime
             chooseCurrentAssetIfNeeded()
             await saveSnapshot(reportErrors: true)
+            // Usage (11/7): the first scan that finds cats on this iPhone.
+            if !catAssets.isEmpty { UsageCounter.shared.countFirstTime(.catsFound) }
             logBoundingBoxAspectDistribution(trigger: "scan-final")
             SharedLog.app.info(
                 "scan",

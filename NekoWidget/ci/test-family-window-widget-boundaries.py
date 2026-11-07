@@ -3807,7 +3807,7 @@ class SettingsLayoutTests(unittest.TestCase):
         settings = source("NekoWidget/Views/SettingsView.swift")
         body = section(settings, "    var body: some View {\n        Form {", '.navigationTitle("設定")')
         order = ['Text("写真")', 'Text("猫")', 'Text("ホーム画面")', "PlusSettingsSection()",
-                 'Text("保存")', 'Text("サポート")', '"settings-app-version"', 'Text("テスト用")']
+                 'Text("保存")', 'Text("プライバシー")', 'Text("サポート")', '"settings-app-version"', 'Text("テスト用")']
         positions = [body.index(item) for item in order]
         self.assertEqual(positions, sorted(positions))
         # Previews and diagnostics sit together in the test-only section.

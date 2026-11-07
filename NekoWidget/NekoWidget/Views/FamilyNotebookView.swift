@@ -792,7 +792,7 @@ struct FamilyNotebookView: View {
                         if model.isReal, access.decision(for: .createOwnWindow) == .membershipRequired {
                             createsAfterPlus = true; showsPlusOffer = true
                         } else if model.isReal { showsName = true }
-                        else { Task { await sharing.perform { try await sharing.service.createFamily(operationID: $0) } } }
+                        else { Task { if await sharing.perform({ try await sharing.service.createFamily(operationID: $0) }) { UsageCounter.shared.count(.familyCreated) } } }
                     }, tryInvitation: prototypeInvitationAction)
                 case .pendingApproval:
                     ContentUnavailableView("参加を待っています", systemImage: "hourglass",
@@ -813,7 +813,7 @@ struct FamilyNotebookView: View {
             .sheet(isPresented: $showsName) {
                 FamilyNotebookNameView {
                     showsName = false
-                    Task { await sharing.perform { try await sharing.service.createFamily(operationID: $0) } }
+                    Task { if await sharing.perform({ try await sharing.service.createFamily(operationID: $0) }) { UsageCounter.shared.count(.familyCreated) } }  // Usage (11/7)
                 }
             }
             .sheet(isPresented: $showsCats) { FamilyNotebookCatSelectionView() }
@@ -1504,6 +1504,7 @@ struct FamilyNotebookInviteView: View {
                             .font(.headline).frame(maxWidth: .infinity, minHeight: 50)
                     }
                     .buttonStyle(.borderedProminent)
+                    .simultaneousGesture(TapGesture().onEnded { UsageCounter.shared.count(.familyInviteShared) })  // Usage (11/7): ShareLink reports no completion
                 } else {
                     Button {
                         Task {

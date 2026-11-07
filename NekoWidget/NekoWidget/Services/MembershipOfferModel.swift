@@ -284,6 +284,7 @@ final class MembershipOfferModel: ObservableObject {
         if await recheckConfirmsMembership() {
             apply(.completed, restoring: true)
             updateMembershipState()
+            if !isPreview { UsageCounter.shared.count(.plusRestored) }  // Usage (11/7)
             return .completed
         }
         let result = await restoreAction()
@@ -292,6 +293,7 @@ final class MembershipOfferModel: ObservableObject {
 #endif
         apply(result, restoring: true)
         updateMembershipState()
+        if result == .completed, !isPreview { UsageCounter.shared.count(.plusRestored) }  // Usage (11/7)
         return result
     }
 
@@ -762,6 +764,7 @@ struct MembershipOfferSheet: View {
                 onPurchase: {
                     Task {
                         let result = await model.purchase()
+                        if result == .completed, !model.isPreview { UsageCounter.shared.count(.plusPurchased(.init(context))) }  // Usage (11/7)
                         // No completion page: a purchase closes the sheet and the
                         // caller re-reads membership through its dismissal.
                         if result == .completed || (model.isPreview && result == .cancelled) { onFinish(result) }
@@ -778,6 +781,8 @@ struct MembershipOfferSheet: View {
             )
         }
         .interactiveDismissDisabled(model.isWorking)
+        // Usage (11/7): each time the one Plus screen is shown, by its entry place.
+        .onAppear { if !model.isPreview { UsageCounter.shared.count(.plusOfferShown(.init(context))) } }
         .manageSubscriptionsSheet(isPresented: $showsSubscriptionManagement)
         .onChange(of: showsSubscriptionManagement) { _, isPresented in
             if !isPresented {

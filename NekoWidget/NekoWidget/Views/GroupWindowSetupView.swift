@@ -1284,7 +1284,10 @@ final class GroupJoinModel: ObservableObject {
     private func update(with request: GroupJoinRequest) {
         switch request.state {
         case .pending: phase = .pending(request)
-        case .approved: phase = .approved
+        case .approved:
+            // Usage (11/7): only when this applying or waiting turns into a join, not on reopening.
+            if isPending || isWorking { UsageCounter.shared.count(.madoJoined) }
+            phase = .approved
         case .rejected: phase = .rejected
         case .expired: phase = .expired
         case .cancelled: phase = .cancelled
