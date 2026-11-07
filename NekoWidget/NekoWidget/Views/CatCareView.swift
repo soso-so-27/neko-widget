@@ -107,12 +107,12 @@ struct CatFarewellEditor: View {
     }
 }
 
-/// 「この子のこと」 from a tool: the cat's own page on its この子のこと tab, the
-/// same page as the cat's face in ツール; a guest cat's page under its name.
+/// 「この子のこと」 from a tool: the cat's own page, the same page as the
+/// cat's face in ツール; a guest cat's page under its name.
 /// (11/7: it opened a title-only page that looked like another screen.)
 struct CatCareSubjectView: View {
     let subject: CatCareSubject
-    /// Every cat, for the 写真 tab's choices. Empty means only this cat.
+    /// Every cat. Empty means only this cat.
     var profiles: [CatProfilePresentation] = []
     @ObservedObject private var store = CatCareStore.shared
     @Environment(\.toolProfileActions) private var profileActions
@@ -122,7 +122,7 @@ struct CatCareSubjectView: View {
         case let .profile(profile):
             CatProfileDetailView(profile: profile, allProfiles: profiles.isEmpty ? [profile] : profiles,
                 manualCandidatePhotos: profile.manualCandidatePhotos, photoAlbumOptions: [],
-                actions: profileActions, initialPage: .care)
+                actions: profileActions)
                 .onAppear {
                     store.importFromTools()
                     store.importBirthdays(profiles)
@@ -164,6 +164,17 @@ struct CatCareDetailView: View {
     /// Nil outside a family, or when it could not be read.
     @State private var farewellSharing: FamilyFarewellSharingState?
     @State private var showsFarewellSharing = false
+    /// The cat's own name, photo and deleting, in 基本 (11/7: the page's
+    /// old 写真 tab is gone, so these live here).
+    @Environment(\.dismiss) private var dismiss
+    @State private var showsKeyPhotoPicker = false
+    @State private var showsNameEditor = false
+    @State private var draftName = ""
+    @State private var isSavingName = false
+    @State private var nameSaveFailed = false
+    @State private var showsDeleteConfirmation = false
+    @State private var isDeleting = false
+    @State private var deleteFailed = false
     /// Opened from inside the family notebook: no second notebook on top of it.
     private var insideFamilyNotebook = false
 
@@ -263,7 +274,12 @@ struct CatCareDetailView: View {
             folded("health", "健康", progress.health) { healthSection }
             folded("living", "暮らし", progress.living) { livingSection }
             folded("household", "家の情報", progress.household) { householdSection }
+            if case let .profile(profile) = subject {
+                deleteSection(profile)
+            }
         }
+        .disabled(isDeleting)
+        .navigationBarBackButtonHidden(isDeleting || isSavingName)
         .onChange(of: draft) { _, _ in
             autosave?.cancel()
             autosave = Task {
@@ -276,7 +292,8 @@ struct CatCareDetailView: View {
             if phase != .active { autosave?.cancel(); save() }
         }
         .onDisappear { autosave?.cancel(); save() }
-        .appRecordEditing(retainWhileHidden: draft != savedDraft || editing != nil || saveFailed || autosaveFailed)
+        .appRecordEditing(retainWhileHidden: draft != savedDraft || editing != nil || saveFailed || autosaveFailed
+                          || showsNameEditor || isSavingName || showsKeyPhotoPicker)
         .familyNotebookToolSync(enabled: sharedWithFamily)
         .onChange(of: familyNotebook.familyWritesToCatCare) { _, _ in takeFamilyWrites() }
         .toolbar {
@@ -328,6 +345,17 @@ struct CatCareDetailView: View {
                 CatProfileLifeReferenceEditor(profile: profile, save: profileActions.updateLifeDates)
             }
         }
+        .sheet(isPresented: $showsKeyPhotoPicker) {
+            if case let .profile(profile) = subject {
+                NavigationStack {
+                    CatProfilePhotoPicker(
+                        photos: profile.confirmedPhotos,
+                        selectedIdentifier: profile.keyPhotoIdentifier,
+                        choose: { await profileActions.setKeyPhoto(profile.identifier, $0) }
+                    )
+                }
+            }
+        }
         .task(id: subject.key) {
             // Only when the cat changes: save the one shown before (the draft
             // still belongs to it), then load the new one.
@@ -361,10 +389,13 @@ struct CatCareDetailView: View {
         return line
     }
 
-    private var basicsSection: some View {
+    @ViewBuilder private var basicsSection: some View {
+        if case let .profile(profile) = subject {
+            profileHeading(profile)
+        }
         Section {
-            // The name is the page title. The dates are facts about the cat,
-            // so they live here with the rest; the album reads them from here.
+            // The dates are facts about the cat, so they live here with the
+            // rest; the album reads them from here.
             if case let .profile(profile) = subject {
                 Button { showsLifeDatesEditor = true } label: {
                     HStack {
@@ -444,6 +475,113 @@ struct CatCareDetailView: View {
         } footer: {
             Text(basicsFooter)
                 .accessibilityIdentifier("cat-care-basics")
+        }
+    }
+
+    /// The key photo (tap to change) and the name with its pencil, at the top
+    /// of 基本 (11/7: moved from the page's old 写真 tab).
+    private func profileHeading(_ profile: CatProfilePresentation) -> some View {
+        Section {
+            VStack(spacing: 8) {
+                Button {
+                    showsKeyPhotoPicker = true
+                } label: {
+                    CatProfileThumbnail(photo: profile.coverPhoto)
+                        .frame(width: 96, height: 96)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(profile.confirmedPhotos.isEmpty)
+                .accessibilityLabel("\(profile.displayName)の代表写真を変更")
+                .accessibilityIdentifier("cat-care-key-photo")
+                HStack(spacing: 8) {
+                    Text(profile.displayName)
+                        .font(.title2.bold())
+                    if !showsNameEditor {
+                        Button {
+                            draftName = profile.name ?? ""
+                            nameSaveFailed = false
+                            showsNameEditor = true
+                        } label: {
+                            Image(systemName: "pencil.circle.fill")
+                                .font(.title3)
+                                .foregroundStyle(.secondary)
+                                .frame(minWidth: 44, minHeight: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("名前を変更")
+                        .accessibilityIdentifier("cat-profile-rename")
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .listRowBackground(Color.clear)
+
+            if showsNameEditor {
+                TextField("名前", text: $draftName)
+                    .disabled(isSavingName)
+                    .accessibilityIdentifier("cat-profile-name-field")
+                if nameSaveFailed {
+                    Text("名前を保存できませんでした。もう一度お試しください。")
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+                HStack {
+                    Button("キャンセル") { showsNameEditor = false }
+                    Spacer()
+                    Button(isSavingName ? "保存中…" : "保存") {
+                        isSavingName = true
+                        nameSaveFailed = false
+                        Task {
+                            let saved = await profileActions.updateName(profile.identifier, draftName)
+                            isSavingName = false
+                            if saved { showsNameEditor = false } else { nameSaveFailed = true }
+                        }
+                    }
+                    .disabled(draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .buttonStyle(.borderless)
+                .disabled(isSavingName)
+            }
+        }
+    }
+
+    /// Deleting the cat, at the bottom of its page. The confirmation also
+    /// offers to record the day instead, as before (11/7: moved from 写真).
+    private func deleteSection(_ profile: CatProfilePresentation) -> some View {
+        Section {
+            Button("プロフィールを削除", role: .destructive) {
+                deleteFailed = false
+                showsDeleteConfirmation = true
+            }
+            .accessibilityIdentifier("cat-profile-delete")
+            .alert("\(profile.displayName)のプロフィールを削除しますか？", isPresented: $showsDeleteConfirmation) {
+                Button("プロフィールを削除", role: .destructive) {
+                    isDeleting = true
+                    deleteFailed = false
+                    Task {
+                        let deleted = await profileActions.deleteProfile(profile.identifier)
+                        isDeleting = false
+                        if deleted {
+                            dismiss()
+                        } else { deleteFailed = true }
+                    }
+                }
+                // When a cat has died, deleting is usually where people go. Offer
+                // to record the day instead; the button says what it opens.
+                if farewell == nil, Version1.isOn {
+                    Button("旅立った日を記録する") { showsFarewellEditor = true }
+                }
+                Button("キャンセル", role: .cancel) {}
+            } message: {
+                Text("写真やツールで入れた記録は残ります。")
+            }
+            if deleteFailed {
+                Text("削除できませんでした。もう一度お試しください。")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
         }
     }
 
