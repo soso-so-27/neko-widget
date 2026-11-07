@@ -113,7 +113,6 @@ extension EnvironmentValues {
 struct MembershipAccessNotice: View {
     let decision: MembershipAccessDecision
     @Environment(\.membershipAccess) private var access
-    @State private var showsRestore = false
 
     var body: some View {
         if decision == .verificationRequired, access.personal == .checking {
@@ -140,9 +139,8 @@ struct MembershipAccessNotice: View {
             case .verificationRequired:
                 Text("写真やメモはそのままです。インターネットにつながってから、「購入を復元」を押してください。")
                     .font(.subheadline).foregroundStyle(.secondary)
-                Button("購入を復元") { showsRestore = true }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("membership-access-restore")
+                // Restores right here (11/7), no second screen.
+                MembershipRestoreButton(look: .prominent, identifier: "membership-access-restore")
             case .windowSupportRequired:
                 Text("まどを作った人のPlusが切れています。届いた写真はこれまでどおり見られます。")
                     .font(.subheadline).foregroundStyle(.secondary)
@@ -154,11 +152,6 @@ struct MembershipAccessNotice: View {
         .multilineTextAlignment(.center).padding(24)
         .frame(maxWidth: .infinity)
         .accessibilityIdentifier("membership-access-notice")
-        .sheet(isPresented: $showsRestore, onDismiss: {
-            NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
-        }) {
-            MembershipRestoreSheet()
-        }
     }
 
     private var title: String {
@@ -220,6 +213,99 @@ private struct MembershipFeatureGate: ViewModifier {
 extension View {
     func membershipFeature(_ operation: MembershipOperation, hasContent: Bool = true) -> some View {
         modifier(MembershipFeatureGate(operation: operation, hasContent: hasContent))
+    }
+}
+
+/// 「購入を復元」 that restores where it is tapped (11/7: it opened a screen
+/// titled 購入を復元 with one sentence and the same button). The same
+/// `restore()` as `MembershipRestoreSheet`: progress on the button, the result
+/// under it. Where this iPhone already shows Plus, the title is
+/// 「Plusをもう一度確かめる」 (11/7); the re-check runs first either way.
+@MainActor
+struct MembershipRestoreButton: View {
+    enum Look { case settingsRow, footnote, prominent, wide }
+
+    let title: String
+    let look: Look
+    let identifier: String
+    /// After a restore that found Plus. Plus checks are refreshed either way.
+    let restored: () -> Void
+    @StateObject private var model: MembershipOfferModel
+    @State private var running = false
+    @State private var found = false
+
+    init(title: String = "購入を復元", look: Look = .prominent,
+         identifier: String = "membership-restore-submit", restored: @escaping () -> Void = {}) {
+        self.title = title
+        self.look = look
+        self.identifier = identifier
+        self.restored = restored
+        _model = StateObject(wrappedValue: MembershipOfferModel.live(presentsOffer: false))
+    }
+
+    var body: some View {
+        button
+            .disabled(running || !model.canRestore)
+            .accessibilityIdentifier(identifier)
+            .task { await model.load() }
+        if found {
+            Text("Plusを確認できました。")
+                .font(.footnote).foregroundStyle(.secondary)
+                .listRowBackground(Color.clear)
+                .accessibilityIdentifier("membership-restore-found")
+        } else if !running, let message = model.message, !message.isEmpty {
+            Text(message)
+                .font(.footnote)
+                .fixedSize(horizontal: false, vertical: true)
+                .listRowBackground(Color.clear)
+                .accessibilityIdentifier("membership-restore-message")
+        }
+    }
+
+    private var workingLabel: some View {
+        WorkingLabel(title: title, workingTitle: "確認しています…", working: running)
+    }
+
+    @ViewBuilder private var button: some View {
+        switch look {
+        case .settingsRow:
+            Button { restore() } label: {
+                Label { workingLabel } icon: { Image(systemName: "arrow.clockwise") }
+                    .frame(maxWidth: .infinity, minHeight: 36)
+            }
+            .buttonStyle(.bordered)
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets())
+        case .footnote:
+            Button { restore() } label: { workingLabel }
+                .font(.footnote)
+                .frame(maxWidth: .infinity)
+                .listRowBackground(Color.clear)
+        case .prominent:
+            Button { restore() } label: { workingLabel }
+                .buttonStyle(.borderedProminent)
+        case .wide:
+            Button { restore() } label: {
+                workingLabel.font(.headline).frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+    }
+
+    private func restore() {
+        running = true
+        found = false
+        Task {
+            let result = await model.restore()
+            running = false
+            NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
+            if result == .completed {
+                found = true
+                restored()
+            } else if let message = model.message {
+                AccessibilityNotification.Announcement(message).post()
+            }
+        }
     }
 }
 

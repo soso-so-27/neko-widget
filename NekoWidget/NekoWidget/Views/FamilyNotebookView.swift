@@ -700,12 +700,13 @@ struct FamilyNotebookView: View {
     @State private var invites = false
     @State private var triesInvitation = false
     @State private var showsPlusOffer = false
-    /// 「家族を作る」 led to Plus: once bought, go on to the name (11/6:
+    /// 「家族の手帳を作る」 led to Plus: once bought, go on to the name (11/6:
     /// without Plus, 作る ended in an alert with only 「閉じる」).
     @State private var createsAfterPlus = false
     @State private var boughtPlus = false
-    @State private var showsRestore = false
     @State private var showsName = false
+    /// 「家族の手帳から抜ける」 at the bottom of the notebook (11/7).
+    @State private var confirmsLeave = false
     @State private var showsCats = false
     /// The server's answer, or before it comes, the family as last shown here.
     private var shownMembership: FamilyMembership? {
@@ -724,7 +725,7 @@ struct FamilyNotebookView: View {
         }
     }
 
-    private var presentsSheet: Bool { invites || triesInvitation || showsPlusOffer || showsName || showsCats || showsRestore }
+    private var presentsSheet: Bool { invites || triesInvitation || showsPlusOffer || showsName || showsCats }
     @State private var decliningRequest: FamilyNotebookJoinRequest?
     @Environment(\.scenePhase) private var scenePhase
     /// The pressed 受け入れる/受け入れない, so only it says it is working (11/6).
@@ -822,17 +823,12 @@ struct FamilyNotebookView: View {
                 if createsAfterPlus { createsAfterPlus = false; showsName = boughtPlus }
                 boughtPlus = false
             }) {
-                // ADR-027 5章 "家族の手帳を続ける": the same single subscription.
-                MembershipOfferSheet(model: .live(), context: .continueFamily) { result in
+                // ADR-027 5章: the same single subscription. Making a family says
+                // so (11/7: the reason read like resuming); a paused one continues.
+                MembershipOfferSheet(model: .live(), context: createsAfterPlus ? .createFamily : .continueFamily) { result in
                     boughtPlus = result == .completed
                     showsPlusOffer = false
                 }
-            }
-            .sheet(isPresented: $showsRestore, onDismiss: {
-                NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
-                Task { await sharing.refresh() }
-            }) {
-                MembershipRestoreSheet()
             }
             .alert("家族の手帳", isPresented: Binding(get: { model.message != nil }, set: { if !$0 { model.message = nil } })) {
                 Button("閉じる", role: .cancel) {}
@@ -953,6 +949,17 @@ struct FamilyNotebookView: View {
                     }
                 }
             }
+            // Leaving only the notebook, where the notebook is (11/7): it was
+            // behind your own name, and Settings' row ends every window too.
+            if membership.canLeave {
+                Section {
+                    Button("家族の手帳から抜ける", role: .destructive) { confirmsLeave = true }
+                        .disabled(sharing.isWorking)
+                        .accessibilityIdentifier("family-notebook-leave")
+                } footer: {
+                    Text(FamilyNotebookWords.leaveDetail(payer: membership.role == .payer))
+                }
+            }
             if !model.isReal { Section {
                 DisclosureGroup("テスト用") {
                     Button("家族が書いたときを試す") { model.tryFamilyWrite() }
@@ -967,6 +974,12 @@ struct FamilyNotebookView: View {
             } }
         }
         .refreshable { if !sharing.isWorking { await sharing.refresh(reportsFailure: true) } }
+        // The same question and operation as on your own page.
+        .confirmationDialog("家族から抜けますか？", isPresented: $confirmsLeave, titleVisibility: .visible) {
+            Button("抜ける", role: .destructive) {
+                Task { await sharing.perform { _ = try await sharing.service.leaveFamily(operationID: $0) } }
+            }
+        }
     }
 
     private var prototype: FamilyNotebookPrototypeSharing? { sharing.service as? FamilyNotebookPrototypeSharing }
@@ -1019,13 +1032,13 @@ extension FamilyNotebookView {
             .accessibilityIdentifier("family-notebook-paused")
             if case .payerPlusUnverified(isPayer: true) = pause {
                 // The payer's own Plus lapsed: renewing it brings everyone back
-                // (11/6: the notebook said it would come back by itself).
+                // (11/6: the notebook said it would come back by itself). This
+                // iPhone shows Plus: check it again right here (11/7).
                 if access.hasPersonalPlus() {
-                    Button { showsRestore = true } label: {
-                        Text("購入を復元").font(.headline).frame(maxWidth: .infinity, minHeight: 44)
+                    MembershipRestoreButton(title: "Plusをもう一度確かめる", look: .wide,
+                                            identifier: "family-notebook-payer-restore") {
+                        Task { await sharing.refresh() }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("family-notebook-payer-restore")
                 } else {
                     Button { showsPlusOffer = true } label: {
                         Text("Plus を続けて再開する").font(.headline).frame(maxWidth: .infinity, minHeight: 44)
@@ -1049,13 +1062,11 @@ extension FamilyNotebookView {
                     .accessibilityIdentifier("family-notebook-claim-payer")
                 } else if access.hasPersonalPlus() {
                     // This iPhone has Plus but the family side does not see it yet:
-                    // restore, never the offer (11/5).
-                    Button { showsRestore = true } label: {
-                        Text("購入を復元").font(.headline)
-                            .frame(maxWidth: .infinity, minHeight: 44)
+                    // check it again right here, never the offer (11/5, 11/7).
+                    MembershipRestoreButton(title: "Plusをもう一度確かめる", look: .wide,
+                                            identifier: "family-notebook-restore-plus") {
+                        Task { await sharing.refresh() }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("family-notebook-restore-plus")
                 } else {
                     Button { showsPlusOffer = true } label: {
                         HStack(spacing: 8) {
@@ -1300,9 +1311,7 @@ struct FamilyNotebookMemberView: View {
     private func explanation(_ action: Action) -> String {
         switch action {
         case .dissolve: "家族全員の共有が止まります。"
-        case .leave where membership.role == .payer:
-            "抜けると、ほかの家族がPlusを始めるまで、家族みんなの共有が止まります。"
-        case .leave: "これから書くことは家族に届かなくなります。"
+        case .leave: FamilyNotebookWords.leaveDetail(payer: membership.role == .payer)
         case .remove: "この人がこれから書くことは、家族に届かなくなります。"
         }
     }
@@ -1387,7 +1396,7 @@ struct FamilyNotebookIntroView: View {
             Image(systemName: "person.2.fill")
                 .font(.system(size: 44))
                 .foregroundStyle(.secondary)
-            Text("家族と一緒に書く").font(.title2.bold())
+            Text("家族の手帳").font(.title2.bold())
             Text("この子のこと・病院・預けるときを、\n一緒にお世話する人と共有できます。")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
@@ -1398,7 +1407,7 @@ struct FamilyNotebookIntroView: View {
                         ProgressView()
                     } else {
                         HStack(spacing: 8) {
-                            Text("家族を作る").font(.headline)
+                            Text("家族の手帳を作る").font(.headline)
                             FamilyNotebookPlusMark()
                         }
                     }
@@ -1407,7 +1416,7 @@ struct FamilyNotebookIntroView: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(create == nil || creating)
-            .accessibilityLabel(FamilyNotebookPlusMark.isShown(for: access) ? "家族を作る、Plus" : "家族を作る")
+            .accessibilityLabel(FamilyNotebookPlusMark.isShown(for: access) ? "家族の手帳を作る、Plus" : "家族の手帳を作る")
             Text("招待された人は無料です。")
                 .font(.footnote).foregroundStyle(.secondary)
             if let tryInvitation {
@@ -1756,7 +1765,12 @@ struct FamilyNotebookButton: View {
     /// On a cat that is in the notebook: the family's names, shown as faces.
     var sharedNames: [String]? = nil
     @ObservedObject private var model = FamilyNotebookPrototype.shared
+    /// Read only: the pause this session already knows, no request of its own.
+    @ObservedObject private var sharing = FamilyNotebookSharing.shared
     @State private var shows = false
+
+    /// Sharing stopped shows before the notebook is opened (11/7).
+    private var paused: Bool { model.hasFamily && sharing.pause != nil }
 
     var body: some View {
         Button { shows = true } label: {
@@ -1765,17 +1779,20 @@ struct FamilyNotebookButton: View {
                     FamilyFaces(names: sharedNames)
                 } else {
                     // Words beside the icon: a bare person icon was not found (1031).
-                    Label(model.hasFamily ? "家族の手帳" : "家族と書く",
-                          systemImage: model.hasFamily ? "person.2.fill" : "person.badge.plus")
+                    // One name for it everywhere: 家族の手帳 (11/7).
+                    Label("家族の手帳", systemImage: model.hasFamily ? "person.2.fill" : "person.badge.plus")
                         .labelStyle(.titleAndIcon)
                 }
             }
                 .overlay(alignment: .topTrailing) {
-                    if model.hasNewFromFamily {
+                    if paused {
+                        Circle().fill(Color.orange).frame(width: 7, height: 7).offset(x: 3, y: -3)
+                    } else if model.hasNewFromFamily {
                         Circle().fill(Color.accentColor).frame(width: 7, height: 7).offset(x: 3, y: -3)
                     }
                 }
         }
+        .accessibilityValue(paused ? "共有が止まっています" : "")
         .accessibilityIdentifier(accessibilityIdentifier)
         .sheet(isPresented: $shows) { FamilyNotebookView() }
     }
@@ -1835,6 +1852,12 @@ extension View {
 
 /// How the notebook's items read on screen.
 enum FamilyNotebookWords {
+    /// Under 「家族の手帳から抜ける」, in the notebook and on your own page.
+    static func leaveDetail(payer: Bool) -> String {
+        payer ? "抜けると、ほかの家族がPlusを始めるまで、家族みんなの共有が止まります。"
+            : "これから書くことは家族に届かなくなります。"
+    }
+
     /// What stopped (1029e). That nothing written is lost is left to the help page (1031).
     static func pausedDetail(_ pause: FamilySharingPause) -> String {
         switch pause {
