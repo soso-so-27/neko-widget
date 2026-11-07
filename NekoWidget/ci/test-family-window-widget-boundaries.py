@@ -2446,10 +2446,16 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("$0.identifier == photoLibraryProfileIdentifier", library)
         self.assertIn("CatProfileAddPhotosButton(", library)
         # The name, key photo and deleting are in この子のこと: the photo and
-        # name at the top of 基本, deleting at the bottom of the page.
+        # name at the top of the page, outside the folds; deleting is the
+        # last row of 基本 (11/7).
         care = source("NekoWidget/Views/CatCareView.swift")
-        basics = section(care, "@ViewBuilder private var basicsSection: some View {", "@State private var openParts")
-        self.assertIn("profileHeading(profile)", basics)
+        page = section(care, "struct CatCareDetailView: View {", ".onChange(of: draft)")
+        self.assertIn("profileHeading(profile)", page)
+        self.assertLess(page.index("profileHeading(profile)"), page.index('folded("basics", "基本"'))
+        basics = section(care, "@ViewBuilder private var basicsSection: some View {", "private func profileHeading(")
+        self.assertNotIn("profileHeading(profile)", basics)
+        self.assertIn("deleteSection(profile)", basics)
+        self.assertIn('Text("写真タブでこの子の写真を追加すると選べます")', care)
         heading = section(care, "private func profileHeading(", "private func deleteSection(")
         self.assertIn("showsKeyPhotoPicker = true", heading)
         self.assertIn('"cat-profile-rename"', heading)
@@ -2459,8 +2465,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('Button("プロフィールを削除", role: .destructive)', delete)
         self.assertIn("await profileActions.deleteProfile(profile.identifier)", delete)
         self.assertIn('Button("旅立った日を記録する") { showsFarewellEditor = true }', delete)
+        self.assertIn("元に戻せません。", delete)
         form = section(care, 'folded("household", "家の情報", progress.household) { householdSection }', ".onChange(of: draft)")
-        self.assertIn("deleteSection(profile)", form)
+        self.assertNotIn("deleteSection(profile)", form)
         self.assertIn('LabeledContent("誕生日・迎えた日", value: profile.lifeDatesSummary)', care)
         self.assertIn('"cat-care-life-dates"', care)
         # The album link is not offered on the profile; 「うちの子」 lives in 設定 → 写真.
@@ -3050,7 +3057,7 @@ class CatCareTests(unittest.TestCase):
         # Microchip shown in full (owner decision 10/20).
         self.assertIn("Shown in full on screen and on paper", core)
         self.assertNotIn("suffix(4)", view)
-        self.assertIn('TextField("マイクロチップ番号（15桁）"', view)
+        self.assertIn('CatCareTextField(label: "マイクロチップ番号", example: "15桁の数字", text: $draft.microchip', view)
         # Vaccination proof can come from Photos.
         self.assertIn("証明の写真を選ぶ", view)
         # Deleting marks, never removes.

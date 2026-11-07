@@ -272,15 +272,16 @@ private struct CareCatEditor: View {
     /// cat, so a second copy here can never disagree with it.
     @ViewBuilder private func catCareSection(_ cat: CareCat) -> some View {
         let care = CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
-        let health = CatCareSummary.careHandoffHealthLines(care, legacy: cat).map { ($0.0 + "（選んだときだけ載ります）", $0.1) }
+        let health = CatCareSummary.careHandoffHealthLines(care, legacy: cat)
         // 11/7: contacts and the vet are written only in 「この子のこと」; shown here
         // as they are handed over (the older entry here only until that is set).
         let contacts = CareHandoffDisclosure.contactFields(plan: store.plan, household: catCare.state?.household)
-            .map { ($0.0 + "（選んだときだけ載ります）", $0.1) }
         let subject: CatCareSubject = profiles.first(where: { $0.identifier == cat.profileID }).map(CatCareSubject.profile)
             ?? .toolCat(id: cat.toolCatID ?? cat.id, name: cat.name)
+        // 11/7: said once below, not after every heading.
         ToolCatCareSection(title: "この子のこと",
                            lines: CatCareSummary.careHandoffLines(care, legacy: cat) + health + contacts, subject: subject,
+                           footer: health.isEmpty && contacts.isEmpty ? nil : "健康のことと連絡先は、選んだときだけ載ります。",
                            identifier: "care-cat-care-fields", editIdentifier: "care-open-cat-care", profiles: profiles)
     }
 
@@ -636,12 +637,11 @@ private struct CareActivitySheet: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
-/// Ordinary guidance is collapsed; destructive and recipient confirmations stay explicit.
+/// The tool's one safety sentence, shown as it is (11/7: it was folded under
+/// 「大事なこと」 and went unread).
 struct ToolImportantInformation: View {
     let text: String
     var body: some View {
-        DisclosureGroup("大事なこと") {
-            Text(text).font(.footnote).foregroundStyle(.secondary)
-        }
+        Text(text).font(.footnote).foregroundStyle(.secondary)
     }
 }
