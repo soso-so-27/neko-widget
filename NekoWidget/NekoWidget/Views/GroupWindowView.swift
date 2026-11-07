@@ -749,7 +749,6 @@ struct GroupWindowScreen: View {
     @State private var confirmsDiscardFailedDelivery = false
     /// 11/7 (W2): the creator continues a paused window from its own card.
     @State private var showsPlusOffer = false
-    @State private var showsRestore = false
     @Environment(\.membershipAccess) private var membershipAccess
     /// 11/7 (W4): the home-screen photo this page was opened for, shown once.
     private let startPhotoID: String?
@@ -989,7 +988,7 @@ struct GroupWindowScreen: View {
         .onChange(of: model.entries) { _, entries in openStartPhoto(in: entries) }
         .onAppear { Task { await model.reloadStored() } }
         .onDisappear { markSeen() }
-        .modifier(GroupWindowContinueSheets(showsPlusOffer: $showsPlusOffer, showsRestore: $showsRestore) {
+        .modifier(GroupWindowContinueSheets(showsPlusOffer: $showsPlusOffer) {
             Task { await model.sync() }
         })
         .onChange(of: pickedItem) { _, item in
@@ -1018,18 +1017,25 @@ struct GroupWindowScreen: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if GroupWindowPresentation.isMyWindow(window) {
-                // 11/7 (W2): Plus (or restore) opens from here; the members
-                // screen asked for the same press again.
-                let restores = membershipAccess.hasPersonalPlus()
-                Button {
-                    if restores { showsRestore = true } else { showsPlusOffer = true }
-                } label: {
-                    Text(restores ? "購入を復元" : "このまどを続ける")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity, minHeight: 44)
+                // 11/7 (W2): Plus opens from here; the members screen asked
+                // for the same press again. This iPhone has Plus: check it
+                // again right here, as elsewhere (11/7), not a restore sheet.
+                if membershipAccess.hasPersonalPlus() {
+                    MembershipRestoreButton(title: "Plusをもう一度確かめる", look: .wide,
+                                            identifier: "group-window-screen-restore-plus") {
+                        Task { await model.sync() }
+                    }
+                } else {
+                    Button {
+                        showsPlusOffer = true
+                    } label: {
+                        Text("このまどを続ける")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("group-window-screen-continue-plus")
                 }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier(restores ? "group-window-screen-restore-plus" : "group-window-screen-continue-plus")
             } else {
                 // A member can do nothing here: one sentence, not a button.
                 Text("\(GroupWindowPresentation.pausedOwnerPhrase(window))がPlusを続けると、また届くようになります。")
@@ -1104,9 +1110,9 @@ struct GroupWindowScreen: View {
                         .font(.headline)
                         .frame(maxWidth: .infinity, minHeight: 50)
                 }
-                // While a photo waits to be sent again, the retry is the main button.
-                .buttonStyle(.borderedProminent)
-                .opacity(model.failedDelivery == nil ? 1 : 0.45)
+                // While a photo waits to be sent again, the retry is the main button:
+                // this one turns plain, not faded (11/7: it looked off but worked).
+                .modifier(SendButtonEmphasis(prominent: model.failedDelivery == nil))
                 .disabled(!model.canSend)
                 .accessibilityIdentifier("group-window-send-photo")
             } else {
@@ -1118,8 +1124,7 @@ struct GroupWindowScreen: View {
                         .font(.headline)
                         .frame(maxWidth: .infinity, minHeight: 50)
                 }
-                .buttonStyle(.borderedProminent)
-                .opacity(model.failedDelivery == nil ? 1 : 0.45)
+                .modifier(SendButtonEmphasis(prominent: model.failedDelivery == nil))
                 .disabled(!model.canSend)
                 .accessibilityIdentifier("group-window-send-photo")
             }
@@ -1131,11 +1136,10 @@ struct GroupWindowScreen: View {
 }
 
 /// 「このまどを続ける」 on a paused window's own card (11/7, W2): the one Plus
-/// screen with the continue-window context, or restore when this iPhone
-/// already has Plus. Kept apart so the window's body stays quick to compile.
+/// screen with the continue-window context. Kept apart so the window's body
+/// stays quick to compile.
 private struct GroupWindowContinueSheets: ViewModifier {
     @Binding var showsPlusOffer: Bool
-    @Binding var showsRestore: Bool
     let reload: () -> Void
 
     func body(content: Content) -> some View {
@@ -1145,14 +1149,24 @@ private struct GroupWindowContinueSheets: ViewModifier {
                     showsPlusOffer = false
                 }
             }
-            .sheet(isPresented: $showsRestore, onDismiss: refresh) {
-                MembershipRestoreSheet()
-            }
     }
 
     private func refresh() {
         NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
         reload()
+    }
+}
+
+/// 「写真を届ける」: the main button, or a plain one while 「もう一度届ける」 is (11/7).
+private struct SendButtonEmphasis: ViewModifier {
+    let prominent: Bool
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if prominent {
+            content.buttonStyle(.borderedProminent)
+        } else {
+            content.buttonStyle(.bordered)
+        }
     }
 }
 
@@ -1317,19 +1331,24 @@ struct GroupLibraryDeliverySheet: View {
                     }
                     .onAppear { Task { await list.load() } }
                 } else {
+                    // 11/7: rows that look like rows to press (›), and the
+                    // chosen window opens on top, so 「戻る」 comes back here.
                     List(windows) { window in
                         let paused = GroupWindowPresentation.isPaused(window)
-                        Button { screen = GroupWindowScreenModel(client: client, windowID: window.id) } label: {
+                        NavigationLink(value: window.id) {
                             LabeledContent(window.name,
                                            value: paused ? "止まっています" : GroupWindowPresentation.memberCountText(window))
                                 .frame(minHeight: 44)
                         }
-                        .foregroundStyle(.primary)
                         .disabled(paused)
                         .opacity(paused ? 0.45 : 1)
                     }
                     .accessibilityIdentifier("group-library-delivery-windows")
                 }
+            }
+            .navigationDestination(for: String.self) { windowID in
+                GroupLibraryDeliveryChosenWindow(client: client, windowID: windowID,
+                                                 localIdentifier: localIdentifier) { dismiss() }
             }
             .navigationTitle("まどに届ける")
             .navigationBarTitleDisplayMode(.inline)
@@ -1353,6 +1372,8 @@ struct GroupLibraryDeliverySheet: View {
 private struct GroupLibraryDeliveryStep: View {
     @ObservedObject var model: GroupWindowScreenModel
     let localIdentifier: String
+    /// Opened from the list: the system 「戻る」 stays on the left (11/7).
+    var pushed = false
     let close: () -> Void
     @State private var prepared: GroupWindowScreenModel.PreparedPhoto?
     @State private var checked = false
@@ -1422,7 +1443,7 @@ private struct GroupLibraryDeliveryStep: View {
         }
         .navigationTitle(model.window.map { "「\($0.name)」に届ける" } ?? "まどに届ける")
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
+            ToolbarItem(placement: pushed ? .topBarTrailing : .cancellationAction) {
                 Button(model.sendCompleted ? "閉じる" : "キャンセル", action: close)
             }
         }
@@ -1432,6 +1453,25 @@ private struct GroupLibraryDeliveryStep: View {
             prepared = await model.prepare(localIdentifier: localIdentifier)
             checked = true
         }
+    }
+}
+
+/// A window chosen from the list (11/7): owns its model, so going back and
+/// choosing again starts fresh.
+private struct GroupLibraryDeliveryChosenWindow: View {
+    let localIdentifier: String
+    let close: () -> Void
+    @StateObject private var model: GroupWindowScreenModel
+
+    init(client: any GroupWindowMediaClient, windowID: String, localIdentifier: String,
+         close: @escaping () -> Void) {
+        self.localIdentifier = localIdentifier
+        self.close = close
+        _model = StateObject(wrappedValue: GroupWindowScreenModel(client: client, windowID: windowID))
+    }
+
+    var body: some View {
+        GroupLibraryDeliveryStep(model: model, localIdentifier: localIdentifier, pushed: true, close: close)
     }
 }
 
@@ -2687,7 +2727,8 @@ struct GroupIdentityDeletionView: View {
             Button("消す", role: .destructive) { Task { await delete() } }
             Button("戻る", role: .cancel) {}
         } message: {
-            Text("あなたが作ったまども終わりになります。メンバーの iPhone に届いた写真は残ります。")
+            // 11/7: say that this cannot be undone, as the auto-save deletion does.
+            Text("元に戻せません。あなたが作ったまども終わりになります。メンバーの iPhone に届いた写真は残ります。")
         }
         .navigationTitle("まどと家族の手帳のIDを消す")
         .navigationBarTitleDisplayMode(.inline)

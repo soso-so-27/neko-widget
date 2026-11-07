@@ -226,22 +226,26 @@ struct MembershipOfferView: View {
 
     private var actions: some View {
         VStack(spacing: 8) {
-            Button {
-                running = "購入"
-                onPurchase()
-            } label: {
-                HStack(spacing: 8) {
-                    if isWorking && running != "購入を復元" { ProgressView().tint(.white) }
-                    Text(purchaseTitle ?? offer?.purchaseTitle ?? (isWorking ? "料金を確認中…" : "料金を確認できません"))
-                        .font(.headline)
-                        .fixedSize(horizontal: false, vertical: true)
+            // 11/7: a member sees 「Plusを利用中です」 as words above, not as a
+            // big blue button that cannot be pressed.
+            if !isMember {
+                Button {
+                    running = "購入"
+                    onPurchase()
+                } label: {
+                    HStack(spacing: 8) {
+                        if isWorking && running != "購入を復元" { ProgressView().tint(.white) }
+                        Text(purchaseTitle ?? offer?.purchaseTitle ?? (isWorking ? "料金を確認中…" : "料金を確認できません"))
+                            .font(.headline)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 34)
                 }
-                .frame(maxWidth: .infinity, minHeight: 34)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(isWorking || !canPurchase || offer == nil)
+                .accessibilityIdentifier("membership-offer-purchase")
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(isWorking || !canPurchase || offer == nil)
-            .accessibilityIdentifier("membership-offer-purchase")
 
             // The billed amount stays as prominent as the trial: it is the
             // headline directly under the button, never a footnote.

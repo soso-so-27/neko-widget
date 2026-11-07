@@ -247,10 +247,19 @@ struct SettingsView: View {
                 Section {
                     // The notebook from 設定 too, where leaving it is looked for (11/7).
                     Button { showsFamilyNotebook = true } label: {
-                        // Reads like the rows around it, not like a tinted action.
-                        Label { Text("家族の手帳").foregroundStyle(.primary) } icon: {
-                            Image(systemName: "person.2.fill")
+                        // Reads like the rows around it, not like a tinted action,
+                        // with the same 「›」 as its neighbours (11/7).
+                        HStack {
+                            Label { Text("家族の手帳").foregroundStyle(.primary) } icon: {
+                                Image(systemName: "person.2.fill")
+                            }
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.right")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                                .accessibilityHidden(true)
                         }
+                        .contentShape(Rectangle())
                     }
                     .accessibilityIdentifier("settings-family-notebook")
                 } header: {
