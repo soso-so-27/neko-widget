@@ -235,6 +235,12 @@ xcrun --sdk macosx swiftc -parse-as-library \
 "$RUNNER_TEMP/cat-care-tests"
 
 xcrun --sdk macosx swiftc -parse-as-library \
+  -target "$(uname -m)-apple-macos14.0" \
+  NekoWidget/Services/EvacuationPlan.swift ci/verify-evacuation-plan.swift \
+  -o "$RUNNER_TEMP/evacuation-plan-tests"
+"$RUNNER_TEMP/evacuation-plan-tests"
+
+xcrun --sdk macosx swiftc -parse-as-library \
   NekoWidget/Services/PlusAuthorityCache.swift ci/verify-plus-authority-cache.swift \
   -o "$RUNNER_TEMP/plus-cache-tests"
 "$RUNNER_TEMP/plus-cache-tests"

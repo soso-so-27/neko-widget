@@ -47,12 +47,49 @@ struct EvacuationSupply: Codable, Equatable, Identifiable {
 }
 
 struct EvacuationDestination: Codable, Equatable, Identifiable {
+    enum Kind: String, CaseIterable, Identifiable {
+        case shelter, family, hotel
+        var id: String { rawValue }
+        var title: String {
+            switch self { case .shelter: "避難所"; case .family: "親戚・知人"; case .hotel: "ペットホテル・病院" }
+        }
+    }
     var id = UUID()
     var name = ""
     var conditions = ""
     var source = ""
     var telephone = ""
     var checkedAt: Date?
+    /// Added 11/8. Optional so places saved before still decode.
+    var address: String?
+    /// Kind.rawValue; a value this version does not know reads as not chosen.
+    var kindValue: String?
+
+    var kind: Kind? {
+        get { kindValue.flatMap(Kind.init(rawValue:)) }
+        set { kindValue = newValue?.rawValue }
+    }
+    /// Name and conditions are enough; where it was checked is optional (11/8).
+    var canConfirm: Bool {
+        ![name, conditions].contains { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+    /// Digits for a 「tel:」 link, or nil when there is no number to call.
+    var telephoneURL: URL? {
+        let digits = telephone.filter { "0123456789+".contains($0) }
+        return digits.count >= 3 ? URL(string: "tel:" + digits) : nil
+    }
+    /// Opens Maps at the written address.
+    var mapURL: URL? {
+        let text = (address ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let query = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return nil }
+        return URL(string: "https://maps.apple.com/?q=" + query)
+    }
+    /// Only a change to the conditions undoes 「確かめた」; a new phone number does not.
+    mutating func setText(_ key: WritableKeyPath<EvacuationDestination, String>, _ value: String) {
+        guard self[keyPath: key] != value else { return }
+        self[keyPath: key] = value
+        if key == \EvacuationDestination.conditions { checkedAt = nil }
+    }
 }
 
 struct EvacuationPlan: Codable, Equatable {
@@ -66,6 +103,11 @@ struct EvacuationPlan: Codable, Equatable {
     var familyMeetingMemo = ""
     var carriedIDs: Set<UUID> = []
     var checkStartedAt: Date?
+    /// Added 11/8, optional so older plans still decode. The half-year review
+    /// counts from here; older plans use the earliest date they have.
+    var createdAt: Date?
+    /// The last time an item was checked: 「最後にそろえた日」.
+    var lastCheckedAt: Date?
 
     var photoNames: Set<String> { Set(cats.flatMap { $0.photos.values }) }
 
@@ -104,6 +146,80 @@ struct EvacuationPlan: Codable, Equatable {
         let removed = Set(supplies.filter { $0.catID == id }.map(\.id))
         supplies.removeAll { $0.catID == id }
         carriedIDs.subtract(removed)
+        followCatCount()
+    }
+
+    /// Amounts this app wrote follow the number of cats (one carrier each, food
+    /// for each). An amount the owner wrote is never changed. A changed amount
+    /// is checked again, like an edited item.
+    mutating func followCatCount() {
+        let count = max(cats.count, 1)
+        for index in supplies.indices where supplies[index].catID == nil {
+            let title = supplies[index].title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let current = Self.recommendedQuantity(title, cats: count)
+            let quantity = supplies[index].quantity
+            guard !current.isEmpty, quantity != current,
+                  (1...30).contains(where: { Self.recommendedQuantity(title, cats: $0) == quantity }) else { continue }
+            supplies[index].quantity = current
+            carriedIDs.remove(supplies[index].id)
+        }
+    }
+
+    /// Each cat's medicines from 「この子のこと」 have one item. An item this app
+    /// made (「薬：」) follows the current names; one the owner renamed stays.
+    mutating func followMedicines(_ medicines: [UUID: [String]]) {
+        for cat in cats {
+            let names = (medicines[cat.id] ?? []).filter { !$0.isEmpty }
+            guard !names.isEmpty else { continue }
+            let title = "薬：" + names.joined(separator: "・")
+            if let index = supplies.firstIndex(where: { $0.catID == cat.id && $0.title.hasPrefix("薬") }) {
+                if supplies[index].title.hasPrefix("薬："), supplies[index].title != title {
+                    supplies[index].title = title
+                    carriedIDs.remove(supplies[index].id)
+                }
+            } else if supplies.count < 200 {
+                supplies.append(EvacuationSupply(title: title, quantity: "5日分以上", catID: cat.id))
+            }
+        }
+    }
+
+    /// Records the item as ready, or not, and the day it was last made ready.
+    mutating func toggleCarried(_ id: UUID, now: Date = Date()) {
+        if carriedIDs.contains(id) { carriedIDs.remove(id); return }
+        carriedIDs.insert(id)
+        if checkStartedAt == nil { checkStartedAt = now }
+        lastCheckedAt = now
+    }
+
+    /// 「見直しを始める」 and 「チェックをやり直す」: every item is checked again.
+    mutating func clearChecks() {
+        carriedIDs = []
+        checkStartedAt = nil
+        lastCheckedAt = nil
+    }
+
+    /// 「最後にそろえた日」; plans saved before 11/8 only have the day checking began.
+    var lastReadyDate: Date? { lastCheckedAt ?? checkStartedAt }
+
+    /// The earliest day this plan knows about, for plans saved before createdAt.
+    var earliestKnownDate: Date? {
+        var dates: [Date] = cats.map(\.updatedAt)
+        dates += cats.compactMap(\.reviewedAt)
+        dates += destinations.compactMap(\.checkedAt)
+        dates += [checkStartedAt, lastCheckedAt].compactMap { $0 }
+        return dates.min()
+    }
+
+    /// Sets createdAt once, at the first save. Never moves it later.
+    mutating func stampCreation(now: Date = Date()) {
+        if createdAt == nil { createdAt = earliestKnownDate ?? now }
+    }
+
+    /// The half-year review counts from when the plan was first made.
+    func reviewIsDue(now: Date = Date(), dismissedAt: Date) -> Bool {
+        let halfYear: TimeInterval = 182 * 24 * 60 * 60
+        let start = createdAt ?? earliestKnownDate ?? now
+        return now.timeIntervalSince(start) > halfYear && now.timeIntervalSince(dismissedAt) > halfYear
     }
 
     func validate() throws {

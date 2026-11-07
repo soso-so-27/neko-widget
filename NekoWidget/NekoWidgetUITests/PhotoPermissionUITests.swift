@@ -2246,14 +2246,15 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(supply.waitForExistence(timeout: 5))
         let supplyID = supply.identifier
         supply.tap()
-        XCTAssertEqual(supply.value as? String, "持った")
+        XCTAssertEqual(supply.value as? String, "そろっている")
+        XCTAssertTrue(app.staticTexts["evacuation-packing-count"].label.hasPrefix("そろっているもの"))
         capture("evacuation-packing")
         app.terminate()
         app.launch()
         app.buttons["evacuation-packing-open"].tap()
         let restored = app.buttons[supplyID]
         XCTAssertTrue(restored.waitForExistence(timeout: 5))
-        XCTAssertEqual(restored.value as? String, "持った")
+        XCTAssertEqual(restored.value as? String, "そろっている")
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.buttons["evacuation-cats-open"].tap()
         let mugi = app.buttons["evacuation-cat-E0260929-0000-0000-0000-000000000001"]
