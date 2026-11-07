@@ -21,10 +21,11 @@ struct RestoredToolsView: View {
                     }
                 }
             }
-            if failed { Text("戻した記録を読み込めませんでした。") }
-            else if backups.isEmpty { Text("戻した記録はありません。") }
+            // One name with the 「復元したツールを開く」 that opens this (11/7).
+            if failed { Text("復元したツールを読み込めませんでした。") }
+            else if backups.isEmpty { Text("復元したツールはありません。") }
         }
-        .navigationTitle("戻した記録")
+        .navigationTitle("復元したツール")
         .task {
             do { backups = try ToolBackupFiles.saved(); failed = false }
             catch { failed = true }

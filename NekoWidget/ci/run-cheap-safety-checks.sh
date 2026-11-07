@@ -141,7 +141,8 @@ xcrun --sdk macosx swiftc -parse-as-library \
 # GroupWindowView opens it only for "まどを作る" (createWindow), in GroupWindowCreateScreen,
 # and for "このまどを続ける" (continueWindow) on a paused window's own card (11/7).
 # AlbumPrototypeView opens it only for 月のまとめ (monthlySummary), in AlbumWorkGate.
-# FamilyNotebookView opens it only for "家族の手帳を続ける" (continueFamily), after the payer left.
+# FamilyNotebookView opens it only for "家族の手帳を作る" (createFamily) and
+# "家族の手帳を続ける" (continueFamily), after the payer left.
 plus_offer_allowed="NekoWidget/App/AppRootView.swift
 NekoWidget/Services/AppRecordPersistence.swift
 NekoWidget/Services/MembershipOfferModel.swift

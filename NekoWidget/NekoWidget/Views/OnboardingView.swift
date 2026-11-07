@@ -546,99 +546,53 @@ private struct OnboardingScanPage: View {
 
 /// The last, optional page of the first run (ADR-027 1章). It comes after
 /// Photos access, the scan, and the Widget guide, so it never stands between
-/// a person and their photos. "あとで" is one tap; the button opens the one
-/// Plus screen, whose price and trial come from StoreKit.
+/// a person and their photos. The page is the one Plus screen itself, price
+/// and trial from StoreKit (11/7: a page with the same heading and values
+/// opened a second, identical screen); "あとで" is one tap.
 private struct OnboardingPlusOfferPage: View {
     let finishAfterPurchase: () -> Void
     let skip: () -> Void
-    @State private var showsOffer = false
-    @State private var purchased = false
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 26) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 48, weight: .light))
-                    .foregroundStyle(.tint)
-                    .accessibilityHidden(true)
-                    .padding(.top, 54)
-
-                Text(MembershipOfferView.heading)
-                    .font(.title2.bold())
-                    .multilineTextAlignment(.center)
-                    .accessibilityAddTraits(.isHeader)
-
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(MembershipOfferView.values, id: \.0) { value in
-                        Label(value.0, systemImage: value.1)
-                    }
-                }
-                .font(.body)
-                .frame(maxWidth: 440, alignment: .leading)
-
+        MembershipOfferSheet(model: .live(), context: .onboarding, showsClose: false) { result in
+            NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
+            // A purchase (or a restore that found Plus) enters the app; nothing
+            // else leaves this page, so "あとで" stays the person's choice.
+            if result == .completed { finishAfterPurchase() }
+            // The Plus screen is done: an invitation held behind it is offered.
+            NotificationCenter.default.post(name: .onboardingPlusSheetClosed, object: nil)
+        }
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 8) {
+                Button("あとで", action: skip)
+                    .font(.headline)
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .accessibilityIdentifier("onboarding-plus-offer-skip")
                 Text("Plusにしなくても、このまま無料で使えます。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                    .frame(maxWidth: 440)
             }
             .frame(maxWidth: .infinity)
-            .padding(.horizontal, 28)
-            .padding(.bottom, 30)
-        }
-        .safeAreaInset(edge: .bottom) {
-            VStack(spacing: 14) {
-                Button {
-                    showsOffer = true
-                } label: {
-                    Text(PlusOfferContext.onboarding.entryTitle)
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 5)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .accessibilityIdentifier("onboarding-plus-offer-open")
-
-                Button("あとで", action: skip)
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
-                    .accessibilityIdentifier("onboarding-plus-offer-skip")
-            }
             .padding(.horizontal, 28)
             .padding(.vertical, 12)
             .background(.bar)
         }
         .accessibilityIdentifier("onboarding-plus-offer")
-        .sheet(isPresented: $showsOffer, onDismiss: {
-            NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
-            // A purchase closes the sheet and enters the app; closing without
-            // buying leaves this page so "あとで" stays the person's choice.
-            if purchased { finishAfterPurchase() }
-            NotificationCenter.default.post(name: .onboardingPlusSheetClosed, object: nil)
-        }) {
-            MembershipOfferSheet(model: .live(), context: .onboarding) { result in
-                purchased = result == .completed
-                showsOffer = false
-            }
-        }
     }
 }
 
-/// 「招待を受け取った」 on the first screen. Group invitations arrive as a link,
-/// so the help says to open it. (Two-person codes are not offered with group windows on.)
+/// 「招待を受け取った」 on the first screen. Invitations arrive as a link, so
+/// the help says only to tap it (11/7: it named /join, but a family's is
+/// /family-join). (Two-person codes are not offered with group windows on.)
 struct OnboardingInvitationHelpView: View {
     var body: some View {
         List {
             Section {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("届いた招待リンクを開いてください", systemImage: "link")
-                        .font(.headline)
-                    Text("「nekonomado.com/join」で始まるリンクを開くと、参加できます。")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 6)
+                Label("届いた招待リンクをタップしてください。", systemImage: "link")
+                    .font(.headline)
+                    .padding(.vertical, 6)
             }
         }
         .navigationTitle("招待リンクから参加する")

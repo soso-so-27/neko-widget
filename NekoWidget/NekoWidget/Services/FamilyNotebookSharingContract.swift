@@ -115,7 +115,7 @@ enum FamilySharingError: Error, Equatable, Sendable {
         case .memberLimit: "この家族は、もう人数がいっぱいです。"
         case .signInExpired: "もう一度サインインしてください。"
         case .notAllowed: "この操作はできません。"
-        case .plusRequired: "家族を作るには Plus が必要です。"
+        case .plusRequired: "家族の手帳を作るには Plus が必要です。"
         case .handoverPlusRequired: "引き継ぐには Plus が必要です。"
         case .membershipChecking: "Plusを確認しています。少し待ってから、もう一度お試しください。"
         case .staleRoster: "家族のメンバーが変わりました。もう一度お試しください。"

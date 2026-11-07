@@ -1108,7 +1108,7 @@ struct MainTabView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { showsSettings = true } label: { Image(systemName: "gearshape") }
+                Button { showsSettings = true } label: { SettingsGearIcon() }
                     .accessibilityLabel("設定")
                     .accessibilityIdentifier("tools-settings-button")
             }
