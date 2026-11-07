@@ -32,6 +32,23 @@ final class CareHandoffStore: ObservableObject {
             pendingPhotoCleanup = loaded.pendingPhotoCleanup > 0
         } catch { repository = nil; loadError = CareHandoffError.unreadable.errorDescription }
     }
+    /// 11/8: copies of photos no longer used are removed again in the
+    /// background (each time the tool opens), not by a button on the screen.
+    func retryPhotoCleanup() {
+        guard pendingPhotoCleanup, let repository else { return }
+        repository.retryPhotoCleanup()
+        pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
+    }
+    /// 11/8: remembers what this memo included and when it was made.
+    func recordMade(health: Bool, contacts: Bool, at date: Date = Date()) {
+        update { $0.includesHealth = health; $0.includesContacts = contacts; $0.lastMadeAt = date }
+    }
+    /// 11/8: 14 days after the last memo, the period and the request start
+    /// empty. A cat shared in the family notebook keeps its own.
+    func clearStaleRequest(now: Date = Date()) {
+        guard plan.requestIsStale(now: now) else { return }
+        update { $0.period = ""; $0.request = ""; $0.lastMadeAt = nil }
+    }
     func receiveFamilyChanges() throws {
         // A failed local save is still an editor's draft; do not replace it.
         guard saveError == nil, loadError == nil, let repository,
@@ -195,6 +212,7 @@ final class CareHandoffStore: ObservableObject {
         var next = plan
         next.cats[index].photoName = name; next.cats[index].updatedAt = Date()
         next.cats[index].prefilledFields?.remove("photo")
+        next.cats[index].photoRemoved = nil
         try repository.commit(next, newPhotos: [name: jpeg])
         plan = next; saveError = nil; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
     }
@@ -202,6 +220,7 @@ final class CareHandoffStore: ObservableObject {
         guard loadError == nil, saveError == nil else { throw CareHandoffError.unreadable }
         guard !disclosure.catIDs.isEmpty, disclosure.catIDs.isSubset(of: Set(plan.cats.map(\.id)))
         else { throw CareHandoffError.noSelection }
+        let household = CatCareStore.shared.state?.household
         let cats = try plan.cats.filter { disclosure.catIDs.contains($0.id) }.map { cat in
             var photo: UIImage?
             if let name = cat.photoName {
@@ -212,11 +231,12 @@ final class CareHandoffStore: ObservableObject {
             let care = CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
             var fields = disclosure.fields(cat: cat,
                 everyday: CatCareSummary.careHandoffLines(care, legacy: cat),
-                health: CatCareSummary.careHandoffHealthLines(care, legacy: cat))
+                health: CatCareSummary.careHandoffHealthLines(care, legacy: cat),
+                vet: CareHandoffDisclosure.vetFields(plan: plan, household: household, record: care))
             if plan.cats.contains(where: { disclosure.catIDs.contains($0.id) && $0.familyContext != nil }) {
                 let context = cat.familyContext ?? .init(recipient: plan.recipient, period: plan.period, request: plan.request)
-                fields = [("お願いする相手", context.recipient), ("お願いする期間", context.period), ("今回のお願い", context.request)]
-                    .filter { !$0.1.isEmpty } + fields
+                fields = CareHandoffDisclosure.written([("お願いする相手", context.recipient), ("お願いする期間", context.period),
+                                                        ("ほかにお願いしたいこと", context.request)]) + fields
             }
             return CareHandoffShareRecord.Cat(name: cat.displayName, photo: photo,
                 fields: fields, updatedAt: cat.updatedAt)

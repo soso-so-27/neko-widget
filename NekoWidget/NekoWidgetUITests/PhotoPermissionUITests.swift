@@ -2063,7 +2063,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertEqual(selected.value as? String, "選択済み")
         let preview = app.buttons["care-preview-open"]
         XCTAssertTrue(preview.isEnabled); preview.tap()
-        XCTAssertTrue(app.navigationBars["プレビュー"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["できあがり"].waitForExistence(timeout: 5))
         let previewFood = app.staticTexts["いつものフード 20g"]
         for _ in 0..<5 where !previewFood.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(previewFood.isHittable)
@@ -2209,23 +2209,40 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(configure.waitForExistence(timeout: 10))
         for _ in 0..<5 where !configure.isHittable { app.swipeUp() }
         configure.tap()
+        XCTAssertTrue(app.navigationBars["メモを作る"].waitForExistence(timeout: 5))
+        // 11/8: the period and the request are written here, at the top.
+        XCTAssertTrue(app.descendants(matching: .any)["care-period"].firstMatch.exists)
         let preview = app.buttons["care-preview-open"]
-        XCTAssertFalse(preview.isEnabled)
+        // 11/8: every cat starts chosen; the one not going is taken out.
         let chosenCat = app.buttons["care-select-C0260929-0000-0000-0000-000000000001"]
-        chosenCat.tap()
+        let otherCat = app.buttons["care-select-C0260929-0000-0000-0000-000000000002"]
+        XCTAssertTrue(chosenCat.waitForExistence(timeout: 5))
+        XCTAssertEqual(chosenCat.value as? String, "選択済み")
+        XCTAssertEqual(otherCat.value as? String, "選択済み")
+        XCTAssertTrue(preview.isEnabled)
+        otherCat.tap()
+        XCTAssertEqual(otherCat.value as? String, "未選択")
         XCTAssertEqual(chosenCat.value as? String, "選択済み")
         XCTAssertTrue(preview.isEnabled)
-        XCTAssertEqual(app.switches["care-disclose-health"].value as? String, "0")
-        XCTAssertEqual(app.switches["care-disclose-contacts"].value as? String, "0")
+        // 11/8: written health and contacts start on; turned off, they stay out.
+        let health = app.switches["care-disclose-health"]
+        let contacts = app.switches["care-disclose-contacts"]
+        XCTAssertEqual(health.value as? String, "1")
+        XCTAssertEqual(contacts.value as? String, "1")
+        health.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        contacts.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        XCTAssertEqual(health.value as? String, "0")
+        XCTAssertEqual(contacts.value as? String, "0")
         capture("care-handoff-disclosure")
         preview.tap()
-        XCTAssertTrue(app.navigationBars["プレビュー"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["できあがり"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["むぎ"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["そら"].exists)
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "private-")).firstMatch.exists)
         capture("care-handoff-selected-preview")
+        // 11/8: no question first; the share sheet opens at once.
         app.buttons["care-share-pdf"].tap()
-        app.buttons["PDFを作って渡す"].tap()
+        XCTAssertFalse(app.buttons["PDFを作って渡す"].exists)
         XCTAssertTrue(app.otherElements["ShareSheet.RemoteContainerView"].firstMatch.waitForExistence(timeout: 10))
         capture("care-handoff-pdf-share")
         app.terminate()
