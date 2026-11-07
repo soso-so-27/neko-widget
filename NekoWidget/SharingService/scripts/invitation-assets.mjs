@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const repository = fileURLToPath(new URL('../../../', import.meta.url));
 export const applicationIdentifier = 'FF96XYPPH2.jp.nekowidget.app';
 export const invitationPaths = ['/join', '/family-join'];
-export const policyPaths = ['/', '/privacy/', '/support/', '/community/'];
+export const policyPaths = ['/', '/privacy/', '/support/', '/community/', '/guide/'];
 export const policyFile = path => path === '/' ? 'index.html' : path.slice(1) + 'index.html';
 const baseHeaders = `/*
   Referrer-Policy: no-referrer
