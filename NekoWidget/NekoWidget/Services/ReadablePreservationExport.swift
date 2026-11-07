@@ -274,7 +274,7 @@ enum ReadablePreservationExport {
 
 enum ReadablePreservationText {
     static let titles = ["CatIdentity": "猫のこと", "PhotoMemoryNotes": "メモ", "FamilyNotebook": "家族の手帳",
-        "CareHandoff": "お世話の引き継ぎ", "EvacuationPreparation": "避難の準備", "VeterinaryVisits": "通院の記録",
+        "CareHandoff": "お世話の引き継ぎ", "EvacuationPreparation": "避難の準備", "VeterinaryVisits": "診察メモ",
         "ShowcasePhotos": "お気に入りの写真", "LostCatDrafts": "迷子のチラシ", "CatPreparedness": "猫の備え", "CatCare": "お世話の記録"]
     static func title(_ tool: String) -> String { titles[tool] ?? tool }
     static func folder(_ tool: String) -> String {
@@ -292,7 +292,7 @@ enum ReadablePreservationText {
         "phone": "電話番号", "address": "住所", "contact": "連絡先", "contacts": "連絡先", "instructions": "お願い", "checked": "確認済み",
         "completed": "完了", "enabled": "使う", "isNeutered": "避妊・去勢済み", "microchipNumber": "マイクロチップ番号", "features": "特徴",
         "location": "場所", "lastSeenAt": "最後に見た日時", "lastSeenLocation": "最後に見た場所", "household": "家族", "members": "家族",
-        "visits": "通院", "plans": "予定", "tasks": "やること", "checklist": "持ち物", "supplies": "持ち物", "quantity": "数",
+        "visits": "診察メモ", "plans": "予定", "tasks": "やること", "checklist": "持ち物", "supplies": "持ち物", "quantity": "数",
         "profiles": "猫", "lifeDates": "猫の誕生日・迎えた日", "lifeReference": "猫の日付", "adoptionDay": "迎えた日",
         "birthdayIsApproximate": "誕生日はおおよそ", "adoptionDayIsApproximate": "迎えた日はおおよそ", "lifeReferenceIsApproximate": "日付はおおよそ",
         "year": "年", "month": "月", "value": "内容", "recipient": "お願いする人", "period": "期間", "request": "お願い",
@@ -302,7 +302,7 @@ enum ReadablePreservationText {
         "reference": "いつもの写真", "face": "顔", "bodyPhoto": "全身の写真", "facePhoto": "顔の写真", "withOwner": "飼い主と一緒",
         "reviewedAt": "見直した日", "checkedAt": "確かめた日", "confirmedAt": "確かめた日", "isNeeded": "必要なもの",
         "destinations": "避難先", "conditions": "気をつけること", "telephone": "電話番号", "carriedIDs": "持ち出したものの番号",
-        "startedOn": "始めた日", "endedOn": "終わった日", "observations": "気づいたこと", "questions": "聞きたいこと", "completedAt": "終わった日",
+        "startedOn": "始めた日", "endedOn": "終わった日", "observations": "家で気付いたこと", "questions": "先生に聞きたいこと", "completedAt": "終わった日",
         "imageFileName": "写真のファイル", "microchipped": "マイクロチップあり", "faceFileName": "顔の写真", "bodyFileName": "全身の写真",
         "collar": "首輪", "approachAdvice": "近づくときのお願い", "lastSeenNear": "最後に見た場所", "lastSeenDescription": "最後に見たときの様子", "message": "メッセージ",
         "dose": "薬の量", "schedule": "飲むタイミング", "givenOn": "受けた日", "nextDueOn": "次の予定日", "proof": "証明書",
@@ -310,6 +310,7 @@ enum ReadablePreservationText {
         "neutered": "避妊・去勢", "coat": "毛色", "marks": "目印", "microchip": "マイクロチップ", "indoorOnly": "室内だけで暮らしている",
         "allergy": "アレルギー", "weights": "体重", "medications": "薬", "vaccinations": "ワクチン", "specialDiet": "食事の注意",
         "litter": "トイレ", "temperament": "性格", "vetOverride": "この猫の病院", "allergyStatus": "アレルギー", "allergyText": "アレルギーの内容",
+        "doctorNote": "先生の話", "prescription": "出た薬", "nextVisitOn": "次に行く日",
         "vetName": "病院名", "vetPhone": "病院の電話番号", "vetNote": "病院のメモ", "medicationName": "薬の名前", "farewellDay": "家族の手帳をやめた日"]
     private static let bookkeeping: Set<String> = ["schemaVersion", "version", "revision", "id", "catID", "familyID", "deviceID", "ownerID", "generation", "deletedAt",
         "profileID", "toolCatID", "sourceNoteID", "sourceRevision", "familyRecordID", "familyDetached", "prefilledFields", "prefilledUsualFood",
@@ -368,7 +369,7 @@ enum ReadablePreservationText {
 enum FamilyNotebookReadableText {
     static func render(_ copies: [FamilyNotebookSnapshot]) throws -> (text: String, count: Int) {
         let collections: [FamilyNotebookCollection: String] = [.cat: "猫のこと", .weight: "体重", .medication: "薬",
-            .vaccination: "ワクチン", .meal: "ごはん", .visit: "通院", .visitEntry: "通院のメモ",
+            .vaccination: "ワクチン", .meal: "ごはん", .visit: "診察メモ", .visitEntry: "診察メモの記録",
             .handoff: "お世話の引き継ぎ", .handoffMeal: "ごはんのお願い"]
         var lines = ["家族の手帳", "", "今の記録です。以前の内容も元の記録.jsonに残っています。"], count = 0
         let dates = ISO8601DateFormatter()

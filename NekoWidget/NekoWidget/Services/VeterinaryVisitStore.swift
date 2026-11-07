@@ -30,6 +30,22 @@ struct VeterinaryVisit: Codable, Identifiable, Equatable, Sendable {
     var completedAt: Date?
     var familyRecordID: UUID? = nil
     var familyDetached: Bool? = nil
+    /// After the consultation (11/8): what the vet said, the medicine given and
+    /// the next visit day. Optional, so memos saved before them still read;
+    /// the only fields that stay editable once the memo is 「診察済み」.
+    var doctorNote: String? = nil
+    var prescription: String? = nil
+    var nextVisitOn: String? = nil
+    /// When the memo was started and last edited. Absent on older memos.
+    var createdAt: Date? = nil
+    var updatedAt: Date? = nil
+
+    /// The day the memo was last edited, or started when never edited.
+    var lastEditedAt: Date? { updatedAt ?? createdAt }
+
+    var hasResults: Bool {
+        !(doctorNote ?? "").isEmpty || !(prescription ?? "").isEmpty || nextVisitOn != nil
+    }
 
     var orderedEntries: [VeterinaryVisitEntry] {
         entries.sorted {
@@ -39,6 +55,8 @@ struct VeterinaryVisit: Codable, Identifiable, Equatable, Sendable {
             return $0.id.uuidString < $1.id.uuidString
         }
     }
+    /// Whole seconds, so a saved time reads back exactly the same.
+    static func now() -> Date { Date(timeIntervalSinceReferenceDate: Date().timeIntervalSinceReferenceDate.rounded(.down)) }
     static func day(_ date: Date) -> String {
         let formatter = DateFormatter(); formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd"
@@ -96,12 +114,26 @@ actor VeterinaryVisitStore {
         AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
         guard directory.standardizedFileURL == AppRecordDataset.directory("VeterinaryVisits").standardizedFileURL else { return }
         var state = try load()
-        let next = try FamilyNotebookToolSharing.visitsReceived(state.visits)
+        let next = Self.keepingLocalResults(try FamilyNotebookToolSharing.visitsReceived(state.visits), from: state.visits)
         guard next != state.visits else { return }
         for visit in next { try validate(visit) }
         state.visits = next; try commit(state, familyProjection: true)
     }
     #endif
+
+    /// What came after the consultation and the memo's own dates stay on this
+    /// iPhone for now: a received family change keeps them as they were, and
+    /// does not count as a change by itself.
+    static func keepingLocalResults(_ received: [VeterinaryVisit], from local: [VeterinaryVisit]) -> [VeterinaryVisit] {
+        received.map { visit in
+            guard let old = local.first(where: { $0.id == visit.id }) else { return visit }
+            var kept = visit
+            kept.doctorNote = old.doctorNote; kept.prescription = old.prescription; kept.nextVisitOn = old.nextVisitOn
+            kept.createdAt = old.createdAt; kept.updatedAt = old.updatedAt
+            var unchanged = kept; unchanged.revision = old.revision
+            return unchanged == old ? old : kept
+        }
+    }
 
     /// The UI supplies a live membership boundary around a new commit. This
     /// Foundation-only store does not depend on SwiftUI or grant membership.
@@ -114,7 +146,7 @@ actor VeterinaryVisitStore {
         guard Self.isValidCatName(catName) else { throw VeterinaryVisitError.invalidName }
         guard state.visits.count < 36_500 else { throw VeterinaryVisitError.visitLimit }
         let visit = VeterinaryVisit(id: UUID(), catID: catID, catName: catName, revision: UUID(),
-            startedOn: nil, observations: "", questions: "", entries: [], completedAt: nil)
+            startedOn: nil, observations: "", questions: "", entries: [], completedAt: nil, createdAt: VeterinaryVisit.now())
         try create {
             state.visits.append(visit); try commit(state)
         }
@@ -138,10 +170,37 @@ actor VeterinaryVisitStore {
             if draft.questions != base.questions { next.questions = draft.questions }
             if draft.startedOn != base.startedOn { next.startedOn = draft.startedOn }
             if draft.completedAt != base.completedAt { next.completedAt = draft.completedAt }
+            if draft.doctorNote != base.doctorNote { next.doctorNote = draft.doctorNote }
+            if draft.prescription != base.prescription { next.prescription = draft.prescription }
+            if draft.nextVisitOn != base.nextVisitOn { next.nextVisitOn = draft.nextVisitOn }
         } else {
             guard current.entries == draft.entries, current.catName == draft.catName else { throw VeterinaryVisitError.changed }
         }
-        next.revision = UUID()
+        next.createdAt = current.createdAt
+        next.revision = UUID(); next.updatedAt = VeterinaryVisit.now()
+        try validate(next); state.visits[index] = next; try commit(state)
+        return next
+    }
+
+    /// A memo marked 「診察済み」 keeps everything it showed. Only what came
+    /// after the consultation (先生の話・出た薬・次に行く日) can still change.
+    func saveResults(_ draft: VeterinaryVisit, expectedRevision: UUID, base: VeterinaryVisit? = nil) throws -> VeterinaryVisit {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        var state = try load()
+        guard let index = state.visits.firstIndex(where: { $0.id == draft.id }),
+              state.visits[index].catID == draft.catID, state.visits[index].completedAt != nil else { throw VeterinaryVisitError.changed }
+        let current = state.visits[index]
+        var next = current
+        if current.revision == expectedRevision {
+            next.doctorNote = draft.doctorNote; next.prescription = draft.prescription; next.nextVisitOn = draft.nextVisitOn
+        } else {
+            guard let base, base.id == draft.id, base.revision == expectedRevision else { throw VeterinaryVisitError.changed }
+            if draft.doctorNote != base.doctorNote { next.doctorNote = draft.doctorNote }
+            if draft.prescription != base.prescription { next.prescription = draft.prescription }
+            if draft.nextVisitOn != base.nextVisitOn { next.nextVisitOn = draft.nextVisitOn }
+        }
+        guard next != current else { return current }
+        next.revision = UUID(); next.updatedAt = VeterinaryVisit.now()
         try validate(next); state.visits[index] = next; try commit(state)
         return next
     }
@@ -171,6 +230,7 @@ actor VeterinaryVisitStore {
             capturedAt: source.note.context?.capturedAt, writtenAt: source.note.writtenAt,
             weight: weight, photoFile: file, sourcePhotoIdentifier: source.photoIdentifier)
         visit.entries.removeAll { $0.sourceNoteID == source.id }; visit.entries.append(entry); visit.revision = UUID()
+        visit.updatedAt = VeterinaryVisit.now()
         try validate(visit)
         var intent = state
         if let file {
@@ -200,6 +260,7 @@ actor VeterinaryVisitStore {
               state.visits[index].revision == expectedRevision, state.visits[index].completedAt == nil,
               let entry = state.visits[index].entries.first(where: { $0.id == entryID }) else { throw VeterinaryVisitError.changed }
         state.visits[index].entries.removeAll { $0.id == entryID }; state.visits[index].revision = UUID()
+        state.visits[index].updatedAt = VeterinaryVisit.now()
         if let file = entry.photoFile { state.retiredPhotoFiles = (state.retiredPhotoFiles ?? []) + [file] }
         try commit(state)
         try? cleanup(&state)
@@ -302,6 +363,10 @@ actor VeterinaryVisitStore {
         guard Self.validName(visit.catName), visit.observations.count <= 500, visit.questions.count <= 500,
               visit.startedOn.map(PhotoMemoWeightValue.validDay) ?? true,
               visit.completedAt?.timeIntervalSince1970.isFinite ?? true,
+              (visit.doctorNote?.count ?? 0) <= 500, (visit.prescription?.count ?? 0) <= 500,
+              visit.nextVisitOn.map(PhotoMemoWeightValue.validDay) ?? true,
+              visit.createdAt?.timeIntervalSince1970.isFinite ?? true,
+              visit.updatedAt?.timeIntervalSince1970.isFinite ?? true,
               visit.entries.count <= 20, Set(visit.entries.map(\.id)).count == visit.entries.count,
               Set(visit.entries.map(\.sourceNoteID)).count == visit.entries.count else { throw VeterinaryVisitError.corrupted }
         for entry in visit.entries {

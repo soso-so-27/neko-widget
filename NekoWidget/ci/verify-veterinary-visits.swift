@@ -169,7 +169,87 @@ import CoreGraphics
         try await store.delete(visitID: saved.id, expectedRevision: saved.revision)
         try require(try await store.visits().contains { $0.id == other.id }, "deleting consultation deleted other cat")
         try await verifiesOwnedPhotoCleanup(root.appendingPathComponent("photos"))
-        print("Veterinary visit boundaries passed: selection, identity, persistence, snapshots, replacement, removal, completion, corruption")
+        try await verifiesResultsAfterConsultation(suiteRoot.appendingPathComponent("results"))
+        print("Veterinary visit boundaries passed: selection, identity, persistence, snapshots, replacement, removal, completion, results, corruption")
+    }
+
+    /// 11/8: 「先生の話」「出た薬」「次に行く日」 and the memo's own dates are
+    /// optional. A memo saved before them still reads, and once 「診察済み」
+    /// only those three can change.
+    private static func verifiesResultsAfterConsultation(_ root: URL) async throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let oldID = UUID(), oldCat = UUID(), oldRevision = UUID()
+        // The exact shape written before 11/8: none of the new keys.
+        let oldJSON = "{\"schema\":1,\"visits\":[{\"id\":\"\(oldID.uuidString)\",\"catID\":\"\(oldCat.uuidString)\","
+            + "\"catName\":\"むぎ\",\"revision\":\"\(oldRevision.uuidString)\",\"startedOn\":\"2026-10-01\","
+            + "\"observations\":\"吐いた\",\"questions\":\"ごはんは？\",\"entries\":[],\"completedAt\":784000000}]}"
+        try Data(oldJSON.utf8).write(to: root.appendingPathComponent("state.json"))
+        let store = VeterinaryVisitStore(directory: root)
+        guard let old = try await store.visits().first, old.id == oldID, old.revision == oldRevision else {
+            throw Failure(message: "A memo saved before the results fields became unreadable")
+        }
+        try require(old.doctorNote == nil && old.prescription == nil && old.nextVisitOn == nil
+            && old.createdAt == nil && old.updatedAt == nil && old.lastEditedAt == nil && !old.hasResults,
+            "An old memo gained results or dates it never had")
+        try require(old.observations == "吐いた" && old.questions == "ごはんは？" && old.startedOn == "2026-10-01"
+            && old.completedAt == Date(timeIntervalSinceReferenceDate: 784_000_000), "An old memo changed while reading")
+
+        // Finished: what was shown stays as it was.
+        var rewritten = old; rewritten.observations = "書き換え"
+        do { _ = try await store.save(rewritten, expectedRevision: old.revision); throw Failure(message: "A finished memo was rewritten") }
+        catch VeterinaryVisitError.changed {}
+        var results = old
+        results.doctorNote = "胃腸炎。2日ほどで治る見込み"; results.prescription = "吐き気止め 1日1回・3日分"
+        results.nextVisitOn = "2026-11-15"; results.observations = "書き換え"; results.questions = "書き換え"
+        let saved = try await store.saveResults(results, expectedRevision: old.revision)
+        try require(saved.doctorNote == results.doctorNote && saved.prescription == results.prescription
+            && saved.nextVisitOn == "2026-11-15" && saved.hasResults, "Results after the consultation were not saved")
+        try require(saved.observations == old.observations && saved.questions == old.questions && saved.startedOn == old.startedOn
+            && saved.entries == old.entries && saved.completedAt == old.completedAt, "Saving results changed what was shown")
+        try require(saved.revision != old.revision && saved.updatedAt != nil && saved.createdAt == nil, "Saving results kept the revision or invented a start day")
+        try require(try await VeterinaryVisitStore(directory: root).visits() == [saved], "Results were not durable")
+        do { _ = try await store.saveResults(results, expectedRevision: old.revision); throw Failure(message: "A stale results edit overwrote newer results") }
+        catch VeterinaryVisitError.changed {}
+        // An editor opened before another change keeps that change.
+        var other = saved; other.prescription = "別の端末で書いた薬"
+        let elsewhere = try await store.saveResults(other, expectedRevision: saved.revision)
+        var typed = saved; typed.doctorNote = "入力中だった先生の話"
+        let combined = try await store.saveResults(typed, expectedRevision: saved.revision, base: saved)
+        try require(combined.doctorNote == typed.doctorNote && combined.prescription == elsewhere.prescription,
+            "An open results editor erased a newer field")
+        var tooLong = combined; tooLong.doctorNote = String(repeating: "猫", count: 501)
+        do { _ = try await store.saveResults(tooLong, expectedRevision: combined.revision); throw Failure(message: "Over-long 先生の話 accepted") }
+        catch VeterinaryVisitError.corrupted {}
+        var badDay = combined; badDay.nextVisitOn = "2026-13-40"
+        do { _ = try await store.saveResults(badDay, expectedRevision: combined.revision); throw Failure(message: "Invalid 次に行く日 accepted") }
+        catch VeterinaryVisitError.corrupted {}
+        try require(try await store.visits() == [combined], "A refused results edit changed the memo")
+
+        // A new memo knows the day it was started; results can be written
+        // before 「診察済み」 too, and never through the finished-memo path.
+        let open = try await store.current(catID: oldCat, catName: "むぎ") { try $0() }
+        try require(open.id != combined.id && open.createdAt != nil && open.updatedAt == nil && !open.hasResults,
+            "A new memo has no start day or copied the last results")
+        do { _ = try await store.saveResults(open, expectedRevision: open.revision); throw Failure(message: "An open memo went through the finished-memo path") }
+        catch VeterinaryVisitError.changed {}
+        var before = open; before.doctorNote = "診察の前に書いた先生の話"; before.nextVisitOn = "2026-11-20"
+        let written = try await store.save(before, expectedRevision: open.revision)
+        try require(written.doctorNote == before.doctorNote && written.nextVisitOn == "2026-11-20"
+            && written.createdAt == open.createdAt && written.updatedAt != nil, "Results on an open memo were not saved")
+        try require(try await VeterinaryVisitStore(directory: root).visits().contains(written), "Start and edit days were not durable")
+
+        // A received family change keeps what stays on this iPhone and, when
+        // nothing else changed, is no change at all.
+        var received = written
+        received.doctorNote = nil; received.prescription = nil; received.nextVisitOn = nil
+        received.createdAt = nil; received.updatedAt = nil; received.revision = UUID()
+        try require(VeterinaryVisitStore.keepingLocalResults([received], from: [written]) == [written],
+            "A received family change erased or churned local results")
+        var changedRemotely = received; changedRemotely.questions = "家族が書いた質問"
+        let merged = VeterinaryVisitStore.keepingLocalResults([changedRemotely], from: [written])
+        try require(merged.count == 1 && merged[0].questions == "家族が書いた質問" && merged[0].doctorNote == written.doctorNote
+            && merged[0].createdAt == written.createdAt && merged[0].revision == changedRemotely.revision,
+            "A received family change lost local results or its own change")
     }
 
     private static func verifiesOwnedPhotoCleanup(_ root: URL) async throws {

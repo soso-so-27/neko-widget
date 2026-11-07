@@ -1625,7 +1625,8 @@ final class SoloMemoriesUITests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.buttons["病院で見せる"].tap()
-        let previousVisit = app.buttons.matching(NSPredicate(format: "label CONTAINS %@ AND NOT identifier BEGINSWITH %@", "診察の記録", "vet-cat-")).firstMatch
+        // 11/8: a past memo row is named by its day; find it by its identifier.
+        let previousVisit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-past-")).firstMatch
         XCTAssertTrue(previousVisit.waitForExistence(timeout: 5))
         for _ in 0..<5 where !previousVisit.isHittable { app.swipeUp(velocity: .slow) }
         previousVisit.tap()
@@ -1897,7 +1898,9 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(confirm.waitForExistence(timeout: 5)); revealVetElement(confirm, app: app)
         dismissVetPhotosPromptIfPresent()
         let add = app.buttons["vet-add-confirmed"]
-        XCTAssertFalse(add.isEnabled)
+        // 11/8: the memo names only むぎ (by saved identity), so it is not asked again.
+        XCTAssertEqual(confirm.value as? String, "1")
+        XCTAssertTrue(add.isEnabled)
         XCTAssertFalse(app.staticTexts["選んでいない別の猫の記録"].exists)
         capture("vet-selected-source-confirmation")
         setVetToggle(confirm, to: "1", app: app)
@@ -1958,7 +1961,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["診察メモ"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).count, 0)
         let observations = app.descendants(matching: .any).matching(identifier: "vet-observations").firstMatch
-        XCTAssertTrue(["", "家で気付いたこと"].contains(observations.value as? String ?? ""))
+        XCTAssertTrue(["", "例：1日2回吐く・食欲が半分"].contains(observations.value as? String ?? ""))
         revealVetElement(app.buttons["vet-pick-records"], app: app)
         XCTAssertTrue(app.staticTexts["見せる記録 · 0件"].exists)
         app.buttons["vet-pick-records"].tap()
@@ -1968,8 +1971,9 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
             "vet-source-", "選んでいない別の猫の記録")).firstMatch.exists)
         measuredSource.tap()
-        XCTAssertTrue(confirm.waitForExistence(timeout: 5)); XCTAssertFalse(add.isEnabled)
-        setVetToggle(confirm, to: "1", app: app); revealVetElement(add, app: app); add.tap()
+        // The weight was just given to this cat explicitly: already confirmed.
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5)); XCTAssertEqual(confirm.value as? String, "1")
+        setVetToggle(confirm, to: "1", app: app); revealVetElement(add, app: app); XCTAssertTrue(add.isEnabled); add.tap()
         XCTAssertTrue(confirm.waitForNonExistence(timeout: 10))
         revealVetElement(show, app: app); show.tap()
         let reading = app.scrollViews["vet-reading"]

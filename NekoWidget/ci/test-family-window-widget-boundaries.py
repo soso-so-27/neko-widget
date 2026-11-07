@@ -3092,11 +3092,16 @@ class VeterinaryCatCareTests(unittest.TestCase):
         record = section(summary, "static func record(profileIdentifier: String)", "static func veterinaryFields(")
         self.assertIn("$0.profileID == profileID", record)
         self.assertNotIn("name", record)
-        # Export: PDF or images through the existing exporter, with a caution line.
+        # Export: PDF or images in the screen's order (11/8), with a caution line,
+        # in the same temporary folder the 預けるとき cleanup removes.
         export = section(view, "private func makeExport(pdf: Bool) async {", "private struct VeterinaryCatCareFields")
-        self.assertIn("CareHandoffExporter.create(record, pdf: pdf)", export)
+        self.assertIn("VeterinaryMemoExporter.create(name: displayName ?? visit.catName, blocks: blocks, pdf: pdf)", export)
         self.assertIn("医療の判断ではありません", export)
         self.assertIn("CareHandoffExporter.remove(retainedDirectory)", view)
+        exporter = section(view, "private enum VeterinaryMemoExporter {", "\n}\n")
+        self.assertIn('private static let prefix = "neko-care-handoff-"', exporter)
+        self.assertIn("[.atomic, .completeFileProtection]", exporter)
+        self.assertIn("catch { CareHandoffExporter.remove(directory); throw error }", exporter)
         # Empty items say so instead of inventing anything.
         fields = section(summary, "static func veterinaryFields(", "static func weightTrend(")
         self.assertIn('"未記入（飼い主に聞いてください）"', fields)
@@ -4114,13 +4119,124 @@ class CatCareOnePlaceTests(unittest.TestCase):
 
     def test_vet_sheet_has_its_own_heading_and_asks_first(self) -> None:
         vet = source("NekoWidget/Views/VeterinaryVisitView.swift")
-        self.assertIn('heading: "病院で見せるメモ", isCareMemo: false', vet)
-        self.assertIn('confirmationDialog("病院に渡すメモを作りますか？"', vet)
-        self.assertIn('.navigationTitle("病院で見せるメモ")', vet)
+        # 11/8: one name, 「診察メモ」, on the screen, the question and every page.
+        exporter = section(vet, "private enum VeterinaryMemoExporter {", "\n}\n")
+        self.assertIn('("診察メモ · \\(name)" as NSString).draw(in:', exporter)
+        self.assertIn('confirmationDialog("診察メモを渡しますか？"', vet)
+        self.assertIn('.navigationTitle("診察メモ")', vet)
+        for old in ("病院で見せるメモ", "病院に渡すメモ", "診察の記録", "通院"):
+            self.assertNotIn(old, vet)
         exporter = source("NekoWidget/Services/CareHandoffExporter.swift")
         self.assertIn("record.heading", exporter)
         summary = source("NekoWidget/Views/CatCareView.swift")
         self.assertIn('fields.append(("年齢", CatCareLostCat.age(', summary)
+
+
+class VeterinaryRoundOneTests(unittest.TestCase):
+    """病院で見せる, round 1 (11/8): results after the consultation, the screen
+    and PDF order, all chosen photos, one name and plain fields."""
+
+    def setUp(self) -> None:
+        self.view = source("NekoWidget/Views/VeterinaryVisitView.swift")
+        self.store = source("NekoWidget/Services/VeterinaryVisitStore.swift")
+
+    def test_results_are_optional_and_the_only_edit_after_finishing(self) -> None:
+        model = section(self.store, "struct VeterinaryVisit: Codable", "var orderedEntries")
+        # Saved memos from before 11/8 have none of these keys: optional with defaults.
+        for field in ("var doctorNote: String? = nil", "var prescription: String? = nil",
+                      "var nextVisitOn: String? = nil", "var createdAt: Date? = nil", "var updatedAt: Date? = nil"):
+            self.assertIn(field, model)
+        self.assertNotIn("init(from decoder", self.store)
+        save = section(self.store, "func save(_ draft: VeterinaryVisit", "func saveResults(")
+        self.assertIn("state.visits[index].completedAt == nil else { throw VeterinaryVisitError.changed }", save)
+        results = section(self.store, "func saveResults(", "/// Caller freezes")
+        self.assertIn("state.visits[index].completedAt != nil else { throw VeterinaryVisitError.changed }", results)
+        self.assertIn("var next = current", results)
+        for kept in ("observations", "questions", "entries", "completedAt", "startedOn"):
+            self.assertNotIn("next." + kept + " =", results)
+        validate = section(self.store, "private func validate(_ visit: VeterinaryVisit)", "for entry in visit.entries")
+        self.assertIn("(visit.doctorNote?.count ?? 0) <= 500, (visit.prescription?.count ?? 0) <= 500", validate)
+        self.assertIn("visit.nextVisitOn.map(PhotoMemoWeightValue.validDay) ?? true", validate)
+        self.assertIn("Self.keepingLocalResults(try FamilyNotebookToolSharing.visitsReceived(state.visits), from: state.visits)", self.store)
+        verifier = (ROOT / "ci/verify-veterinary-visits.swift").read_text(encoding="utf-8")
+        for case in ("A memo saved before the results fields became unreadable", "A finished memo was rewritten",
+                     "Saving results changed what was shown", "A received family change erased or churned local results"):
+            self.assertIn(case, verifier)
+        # The screen: three fields, written before or after 「診察済み」.
+        for text in ('title: "先生の話"', 'title: "出た薬"', 'Toggle("次に行く日を記録"', 'Text("診察のあと")',
+                     "adopt(try await store.saveResults(draft,", '"診察済みにすると、書けるのは「診察のあと」だけになります。"'):
+            self.assertIn(text, self.view)
+        self.assertNotIn("このメモは書き直せなくなります", self.view)
+
+    def test_show_screen_and_pdf_follow_the_consultation_order(self) -> None:
+        read = section(self.view, "private struct VeterinaryReadView: View {", "@ViewBuilder private var exportButtons")
+        order = [read.index('Text("家で気付いたこと")'), read.index("ForEach(Array(results.enumerated())"),
+                 read.index("VeterinaryEntryPhoto(entry: entry"), read.index('Text("先生に聞きたいこと")'),
+                 read.index("VeterinaryCatCareFields(fields: care.medical)"), read.index('Text("そのほか")')]
+        self.assertEqual(order, sorted(order))
+        export = section(self.view, "private func makeExport(pdf: Bool) async {", "private enum VeterinaryCareOrder")
+        order = [export.index('("家で気付いたこと"'), export.index("blocks.append(.fields(noticed + results))"),
+                 export.index("blocks.append(.photos(images))"), export.index('("先生に聞きたいこと"'),
+                 export.index("blocks.append(.fields(care.medical))"), export.index('blocks.append(.heading("そのほか"))')]
+        self.assertEqual(order, sorted(order))
+        # Unwritten rows are left out on both, as on the edit side.
+        care = section(self.view, "private enum VeterinaryCareOrder {", "\n}\n")
+        self.assertIn('field.1.hasPrefix("未記入") || field.1.hasPrefix("未確認")', care)
+        self.assertIn('["飲んでいる薬", "アレルギー", "持病", "体重の推移"]', care)
+        self.assertNotIn("VeterinaryCatCareFields(fields: catCareFields)", read)
+        # Every chosen photo, not the first one.
+        self.assertIn("for (offset, entry) in visit.orderedEntries.enumerated()", export)
+        self.assertNotIn(".first(where: { $0.photoFile != nil })", export)
+        self.assertIn("visit.entries.count <= 20", self.store)
+
+    def test_names_buttons_and_fields_are_plain(self) -> None:
+        self.assertIn('Label("先生に見せる", systemImage: "stethoscope")', self.view)
+        self.assertIn("短くすると保存され、先生に見せられます", self.view)
+        self.assertIn("保存できると、先生に見せられます", self.view)
+        self.assertNotIn("できあがり", self.view)
+        self.assertIn('title: "家で気付いたこと", example: "例：1日2回吐く・食欲が半分"', self.view)
+        self.assertIn('title: "先生に聞きたいこと", example: "例：ごはんを変えたほうがいいですか"', self.view)
+        field = section(self.view, "private struct VeterinaryLabeledField: View {", "\n}\n")
+        self.assertLess(field.index("Text(title)"), field.index("TextField(example"))
+        self.assertIn(".accessibilityLabel(title)", field)
+        # The mechanism stays off the screen; cleanup is retried silently.
+        for old in ("使わなくなった写真のコピーが残っています", "もう一度消す", "cleanupPending ="):
+            self.assertNotIn(old, self.view)
+        self.assertIn("_ = try? await store.cleanupPending()", self.view)
+        readable = source("NekoWidget/Services/ReadablePreservationExport.swift")
+        self.assertIn('"VeterinaryVisits": "診察メモ"', readable)
+        self.assertNotIn("通院", readable)
+
+    def test_started_day_previous_visit_and_past_rows(self) -> None:
+        self.assertIn('Text("書き始めた日 \\(DayText.japanese(VeterinaryVisit.day(started)))")', self.view)
+        finished = section(self.view, "private func looksFinished(", "/// A past memo is named")
+        self.assertIn("7 * 24 * 60 * 60", finished)
+        self.assertIn('Text("前の診察は終わりましたか？")', self.view)
+        self.assertIn("createdAt: VeterinaryVisit.now()", self.store)
+        self.assertIn("visit.updatedAt = VeterinaryVisit.now()", self.store)
+        past = section(self.view, 'Section("これまでの診察メモ")', ".navigationTitle(")
+        self.assertIn("Text(pastTitle(past))", past)
+        self.assertIn('"vet-past-\\(past.id.uuidString)"', past)
+        self.assertIn('[past.doctorNote ?? "", past.observations', self.view)
+        dates = section(self.view, "private struct VeterinaryEntryDates: View {", "\n}\n")
+        self.assertIn("entry.weight?.measuredOn ?? entry.capturedAt.map(VeterinaryVisit.day) ?? entry.writtenAt.map(VeterinaryVisit.day)", dates)
+        self.assertNotIn("不明", dates)
+
+    def test_confirmation_asks_only_when_ownership_is_unclear(self) -> None:
+        confirm = section(self.view, "private struct VeterinaryRecordConfirmation: View {", "var body: some View {")
+        self.assertIn("_confirmed = State(initialValue: Self.belongsOnly(to: visit.catID, source))", confirm)
+        rule = section(confirm, "static func belongsOnly(", "private var wrongCat")
+        self.assertIn("if let owner = source.note.weight?.catID { return owner == cat && cats.isSubset(of: [cat]) }", rule)
+        self.assertIn("return cats == [cat]", rule)
+        self.assertNotIn("name", rule)
+        # The store still refuses an unconfirmed record and another cat's weight.
+        self.assertIn("guard confirmedTarget else { throw VeterinaryVisitError.confirmationRequired }", self.store)
+        self.assertIn("if let owner = source.note.weight?.catID, owner != visit.catID { throw VeterinaryVisitError.wrongCat }", self.store)
+        picker = section(self.view, "private struct VeterinaryRecordPicker: View {", "private struct VeterinaryRecordConfirmation")
+        self.assertIn("GridItem(.flexible(), spacing: 4), count: 3", picker)
+        self.assertIn(".sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }", picker)
+        self.assertIn("profile?.confirmedPhotos", picker)
+        self.assertIn(".assignedProfileIdentifiers == [profile.identifier]", picker)
 
 
 class NavigationAfterActionTests(unittest.TestCase):
