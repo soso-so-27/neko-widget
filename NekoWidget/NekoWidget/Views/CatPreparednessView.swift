@@ -101,6 +101,7 @@ struct LostCatEmergencyEntryView: View {
     }
 
     @AppStorage("lostCat.lastKey.v1") private var lastKey = ""
+    @AppStorage(CatFarewell.key) private var farewellJSON = ""
 
     /// Every cat this tool can make an image for: profiles, then cats from
     /// the other tools, then drafts without a profile.
@@ -114,7 +115,9 @@ struct LostCatEmergencyEntryView: View {
     }
 
     var body: some View {
-        if let current = stripCats.first(where: { $0.id == lastKey }) ?? stripCats.first {
+        // A cat whose farewell day is recorded is not opened by itself (11/7).
+        let openable = stripCats.filter { !$0.isDeparted(farewellJSON) }
+        if let current = openable.first(where: { $0.id == lastKey }) ?? openable.first {
             // The cat's page at once; the row of cats above it switches in place.
             editor(current.id, current.profile?.displayName ?? "")
         } else {
@@ -338,11 +341,11 @@ struct LostCatDraftView: View {
 
     private var catSection: some View {
         Group {
-        if let profile = profiles.first(where: { $0.identifier == key }) {
-            ToolCatProfileInfo(profile: profile, profiles: profiles)
-        }
         Section {
-            if !profiles.contains(where: { $0.identifier == key }) {
+            if let profile = profiles.first(where: { $0.identifier == key }) {
+                // The dates are with 「この子のこと」 in 届け出の情報 (11/7).
+                LabeledContent("名前", value: profile.displayName)
+            } else {
             LabeledContent("名前") {
                 TextField("猫の名前（任意）", text: textBinding(\.name, field: "name"), prompt: Text("任意"))
                     .foregroundStyle(Color.primary)
@@ -366,7 +369,7 @@ struct LostCatDraftView: View {
                 }
             }
             if faceImage == nil, catCarePhoto(.face) != nil {
-                Button("「この子のこと」の写真を使う", systemImage: "photo") { useCatCarePhotos() }
+                Button("保存してある写真を使う", systemImage: "photo") { useCatCarePhotos() }
                     .disabled(photoBusy)
                     .accessibilityIdentifier("lost-cat-use-cat-care-photos")
             }
@@ -459,7 +462,8 @@ struct LostCatDraftView: View {
             let fields = CatCareSummary.lostCatReportFields(catCareRecord)
             ToolCatCareSection(title: "届け出の情報", lines: fields, subject: .profile(profile),
                                footer: "チラシ・画像には載りません。",
-                               identifier: "lost-cat-report", editIdentifier: "lost-cat-open-cat-care") {
+                               identifier: "lost-cat-report", editIdentifier: "lost-cat-open-cat-care",
+                               profiles: profiles) {
                 Button("まとめてコピー", systemImage: "doc.on.doc") {
                     UIPasteboard.general.string = ([profile.displayName] + fields.map { "\($0.0)：\($0.1)" })
                         .joined(separator: "\n")

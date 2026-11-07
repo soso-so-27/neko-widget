@@ -314,6 +314,7 @@ private struct EvacuationCatsView: View {
     @ObservedObject var store: EvacuationStore
     @ObservedObject var reuseStore: CareHandoffStore
     @AppStorage("evacuation.lastCat.v1") private var lastCatID = ""
+    @AppStorage(CatFarewell.key) private var farewellJSON = ""
     @State private var openedID: UUID?
     @State private var couldNotOpen = false
 
@@ -353,6 +354,15 @@ private struct EvacuationCatsView: View {
                     if couldNotOpen {
                         Text("猫の情報を作れませんでした。上の猫をもう一度押してください。")
                             .font(.footnote).foregroundStyle(.secondary)
+                    } else {
+                        // No cat open, e.g. right after its record was deleted (11/7).
+                        Section {
+                            Text("避難用の記録はありません。").foregroundStyle(.secondary)
+                            ForEach(openableCats.count == 1 ? openableCats : []) { cat in
+                                Button("\(cat.name)の記録を作る") { select(cat) }
+                                    .accessibilityIdentifier("evacuation-create-\(cat.id)")
+                            }
+                        }
                     }
                 }
                 .navigationTitle("猫の情報").navigationBarTitleDisplayMode(.inline)
@@ -363,10 +373,40 @@ private struct EvacuationCatsView: View {
             }
         }
         .task {
-            guard openedID == nil,
-                  let first = stripCats.first(where: { $0.id == lastCatID }) ?? stripCats.first else { return }
-            select(first)
+            guard openedID == nil else { return }
+            openFirst()
         }
+        // The first cat, added from 「猫を追加」, opens at once (11/7).
+        .onChange(of: profiles.map(\.identifier)) { old, _ in
+            guard old.isEmpty, openedID == nil,
+                  let added = openableCats.first(where: { $0.profile != nil }) else { return }
+            select(added)
+        }
+    }
+
+    /// Value of lastCatID after a record is deleted: reopening then opens only a
+    /// record that is still there, never makes the deleted one again (11/7).
+    private static let afterDelete = "deleted"
+
+    /// The cats this page may open by itself: not one whose farewell day is recorded.
+    private var openableCats: [ToolStripCat] {
+        stripCats.filter { !$0.isDeparted(farewellJSON) }
+    }
+
+    /// Opens the last cat, or the first. Right after a delete, only a cat
+    /// whose record already exists, so nothing is made without a tap.
+    private func openFirst() {
+        let cats = openableCats
+        if lastCatID == Self.afterDelete {
+            let existing = cats.first { cat in
+                if let profile = cat.profile { return store.plan.cats.contains { $0.profileID == profile.identifier } }
+                return !cat.id.hasPrefix("saved-")
+            }
+            if let existing { select(existing) }
+            return
+        }
+        guard let first = cats.first(where: { $0.id == lastCatID }) ?? cats.first else { return }
+        select(first)
     }
 
     /// Opens the cat in place: its page, made now if this is the first time.
@@ -406,7 +446,13 @@ private struct EvacuationCatsView: View {
         }
     }
     private func destination(_ id: UUID) -> some View {
-        EvacuationCatView(id: id, profiles: profiles, otherPhotos: otherPhotos, store: store, reuseStore: reuseStore)
+        EvacuationCatView(id: id, profiles: profiles, otherPhotos: otherPhotos, store: store, reuseStore: reuseStore,
+                          onDeleted: {
+                              // Stay here: the next cat, or none (11/7: it left the page).
+                              lastCatID = Self.afterDelete
+                              openedID = nil
+                              openFirst()
+                          })
     }
 }
 
@@ -416,6 +462,8 @@ private struct EvacuationCatView: View {
     let otherPhotos: [CatProfilePhotoPresentation]
     @ObservedObject var store: EvacuationStore
     @ObservedObject var reuseStore: CareHandoffStore
+    /// Set when the page is shown in place: it stays after a delete.
+    var onDeleted: (() -> Void)? = nil
     /// Redraws when 「この子のこと」 changes, for example after 「この子のことを直す」.
     @ObservedObject private var catCare = CatCareStore.shared
     @State private var disclosure = EvacuationDisclosure()
@@ -457,7 +505,8 @@ private struct EvacuationCatView: View {
                                                          withOwnerPhoto: false, catCare: true)),
                     subject: profiles.first(where: { $0.identifier == cat.profileID }).map(CatCareSubject.profile)
                         ?? .toolCat(id: cat.toolCatID ?? cat.id, name: cat.name),
-                    identifier: "evacuation-cat-care-fields", editIdentifier: "evacuation-open-cat-care")
+                    identifier: "evacuation-cat-care-fields", editIdentifier: "evacuation-open-cat-care",
+                    profiles: profiles)
                 Section {
                     Toggle("いつものごはん", isOn: $disclosure.food)
                     Toggle("接し方・苦手なこと", isOn: $disclosure.handling)
@@ -487,7 +536,7 @@ private struct EvacuationCatView: View {
                     Button("この子の避難用の記録を削除", role: .destructive) { deleteRequested = true }
                 }
             }
-        }.navigationTitle("猫の情報を見せる").navigationBarTitleDisplayMode(.inline)
+        }.navigationTitle("猫の情報").navigationBarTitleDisplayMode(.inline)
             .announcesWhenShown(error)
             .safeAreaInset(edge: .bottom) {
                 Button {
@@ -507,7 +556,9 @@ private struct EvacuationCatView: View {
             .navigationDestination(item: $preview) { EvacuationDisplayView(record: $0.record) }
             .confirmationDialog("この子の避難用の記録を削除しますか？", isPresented: $deleteRequested, titleVisibility: .visible) {
                 Button("避難用の記録を削除", role: .destructive) {
-                    if store.update({ $0.removeCat(id) }) { dismiss() }
+                    if store.update({ $0.removeCat(id) }) {
+                        if let onDeleted { onDeleted() } else { dismiss() }
+                    }
                 }
             } message: { Text("この子用の持ち物も一緒に削除します。") }
             .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
@@ -535,11 +586,11 @@ private struct EvacuationCatEditor: View {
                     Text("前に入れた内容を読み込めませんでした。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
-                if let profile = profiles.first(where: { $0.identifier == cat.profileID }) {
-                    ToolCatProfileInfo(profile: profile, profiles: profiles)
-                }
                 Section("写真と名前") {
-                    if !profiles.contains(where: { $0.identifier == cat.profileID }) {
+                    if let profile = profiles.first(where: { $0.identifier == cat.profileID }) {
+                        // The dates are in この子のこと on the cat's page (11/7).
+                        LabeledContent("名前", value: profile.displayName)
+                    } else {
                         TextField("名前（任意）", text: text(\.name)).accessibilityIdentifier("evacuation-cat-name")
                             .foregroundStyle(Color.primary)
                     }
