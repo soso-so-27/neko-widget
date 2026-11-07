@@ -59,6 +59,7 @@ struct VeterinaryVisitsView: View {
     @ObservedObject var evacuationStore: EvacuationStore = .shared
     @Environment(\.dynamicTypeSize) private var typeSize
     @AppStorage("vet.lastCat.v1") private var lastCatID = ""
+    @AppStorage(CatFarewell.key) private var farewellJSON = ""
     @State private var visits: [VeterinaryVisit] = []
     @State private var cats: [PhotoMemoryNoteCat] = []
     @State private var toolSources: [UUID: String] = [:]
@@ -109,6 +110,12 @@ struct VeterinaryVisitsView: View {
                         onDeleted: {
                             let cat = PhotoMemoryNoteCat(id: current.catID, name: current.catName)
                             Task { await reload(); await open(cat) }
+                        },
+                        // A finished memo moves to これまでの診察メモ; a new empty
+                        // one opens for next time (11/7: the page was stuck read-only).
+                        onFinished: {
+                            let cat = PhotoMemoryNoteCat(id: current.catID, name: current.catName)
+                            Task { await reload(); await open(cat) }
                         })
                         .id(current.id)
                 }
@@ -126,9 +133,18 @@ struct VeterinaryVisitsView: View {
         }
         .task {
             await reload()
+            // A cat whose farewell day is recorded is not opened by itself:
+            // opening makes a new memo (11/7).
+            let openable = stripCats.filter { !$0.isDeparted(farewellJSON) }
             guard current == nil,
-                  let first = stripCats.first(where: { $0.id == lastCatID }) ?? stripCats.first else { return }
+                  let first = openable.first(where: { $0.id == lastCatID }) ?? openable.first else { return }
             await open(first)
+        }
+        // The first cat, added from 「猫を追加」, opens at once (11/7).
+        .onChange(of: profiles.map(\.identifier)) { old, _ in
+            guard old.isEmpty, current == nil, ready,
+                  let added = stripCats.first(where: { $0.profile != nil && !$0.isDeparted(farewellJSON) }) else { return }
+            Task { await open(added) }
         }
         .sheet(item: $selected, onDismiss: { Task { await reload() } }) { visit in
             NavigationStack {
@@ -228,6 +244,8 @@ private struct VeterinaryConsultationView: View {
     var pastVisits: [VeterinaryVisit] = []
     var openPast: ((VeterinaryVisit) -> Void)? = nil
     var onDeleted: (() -> Void)? = nil
+    /// After 「診察済みにする」 on the tool's page: open the next memo.
+    var onFinished: (() -> Void)? = nil
     private var isPage: Bool { openPast != nil }
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -257,16 +275,11 @@ private struct VeterinaryConsultationView: View {
     var body: some View {
         Form {
             if let visit {
-                if let profile = profiles.first(where: { $0.identifier == visit.catID.uuidString }) {
-                    ToolCatProfileInfo(profile: profile, profiles: profiles)
-                }
-                // The name already shows above for a registered cat; say it here only otherwise.
-                let registered = profiles.contains { $0.identifier == visit.catID.uuidString }
-                if !registered || visit.completedAt != nil {
-                    Section {
-                        if !registered { Label(visit.catName, systemImage: "cat").font(.headline) }
-                        if visit.completedAt != nil { Text("診察済み").font(.caption).foregroundStyle(.secondary) }
-                    }
+                // The cat's name; its dates are in この子のこと below (11/7).
+                Section {
+                    Label(profiles.first(where: { $0.identifier == visit.catID.uuidString })?.displayName ?? visit.catName,
+                          systemImage: "cat").font(.headline)
+                    if visit.completedAt != nil { Text("診察済み").font(.caption).foregroundStyle(.secondary) }
                 }
                 // What the owner came to write goes first; the cat's facts follow.
                 if visit.completedAt == nil {
@@ -292,7 +305,7 @@ private struct VeterinaryConsultationView: View {
                         household: catCareStore.state?.household),
                     subject: profiles.first(where: { $0.identifier == visit.catID.uuidString }).map(CatCareSubject.profile)
                         ?? .toolCat(id: visit.catID, name: visit.catName),
-                    identifier: "vet-cat-care-fields", editIdentifier: "vet-open-cat-care")
+                    identifier: "vet-cat-care-fields", editIdentifier: "vet-open-cat-care", profiles: profiles)
                 Section {
                     ForEach(visit.orderedEntries) { entry in
                         VStack(alignment: .leading, spacing: 8) {
@@ -452,7 +465,10 @@ private struct VeterinaryConsultationView: View {
         draft.observations = observations; draft.questions = questions
         draft.startedOn = hasStartedDay ? VeterinaryVisit.day(startedDay) : nil
         if completing { draft.completedAt = Date() }
-        do { adopt(try await store.save(draft, expectedRevision: draft.revision, base: base)); error = nil }
+        do {
+            adopt(try await store.save(draft, expectedRevision: draft.revision, base: base)); error = nil
+            if completing { onFinished?() }
+        }
         catch { self.error = veterinaryErrorMessage(error) }
     }
     private func adopt(_ value: VeterinaryVisit) {

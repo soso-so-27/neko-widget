@@ -8,6 +8,7 @@ struct CareHandoffView: View {
     @ObservedObject var store: CareHandoffStore = .shared
     @ObservedObject var reuseStore: EvacuationStore = .shared
     @AppStorage("careHandoff.lastCat.v1") private var lastCatID = ""
+    @AppStorage(CatFarewell.key) private var farewellJSON = ""
     @State private var selectedCatID: UUID?
     @State private var couldNotOpen = false
     @Environment(\.membershipActions) private var actionAccess
@@ -51,6 +52,15 @@ struct CareHandoffView: View {
                     if couldNotOpen {
                         Text("お世話メモを作れませんでした。上の猫をもう一度押してください。")
                             .font(.footnote).foregroundStyle(.secondary)
+                    } else {
+                        // No memo open, e.g. right after one was deleted (11/7).
+                        Section {
+                            Text("お世話メモはありません。").foregroundStyle(.secondary)
+                            ForEach(openableCats.count == 1 ? openableCats : []) { cat in
+                                Button("\(cat.name)のお世話メモを作る") { select(cat) }
+                                    .accessibilityIdentifier("care-create-\(cat.id)")
+                            }
+                        }
                     }
                 }
                 .safeAreaInset(edge: .top, spacing: 0) {
@@ -62,10 +72,40 @@ struct CareHandoffView: View {
         .navigationTitle("預けるとき").navigationBarTitleDisplayMode(.inline)
         .familyNotebookToolSync()
         .task {
-            guard selectedCatID == nil, store.loadError == nil,
-                  let first = stripCats.first(where: { $0.id == lastCatID }) ?? stripCats.first else { return }
-            select(first)
+            guard selectedCatID == nil, store.loadError == nil else { return }
+            openFirst()
         }
+        // The first cat, added from 「猫を追加」, opens at once (11/7).
+        .onChange(of: profiles.map(\.identifier)) { old, _ in
+            guard old.isEmpty, selectedCatID == nil, store.loadError == nil,
+                  let added = openableCats.first(where: { $0.profile != nil }) else { return }
+            select(added)
+        }
+    }
+
+    /// Value of lastCatID after a memo is deleted: reopening then opens only a
+    /// memo that is still there, never makes the deleted one again (11/7).
+    private static let afterDelete = "deleted"
+
+    /// The cats a tool may open by itself: not one whose farewell day is recorded.
+    private var openableCats: [ToolStripCat] {
+        stripCats.filter { !$0.isDeparted(farewellJSON) }
+    }
+
+    /// Opens the last cat, or the first. Right after a delete, only a cat
+    /// whose memo already exists, so nothing is made without a tap.
+    private func openFirst() {
+        let cats = openableCats
+        if lastCatID == Self.afterDelete {
+            let existing = cats.first { cat in
+                if let profile = cat.profile { return store.plan.cats.contains { $0.profileID == profile.identifier } }
+                return !cat.id.hasPrefix("saved-")
+            }
+            if let existing { select(existing) }
+            return
+        }
+        guard let first = cats.first(where: { $0.id == lastCatID }) ?? cats.first else { return }
+        select(first)
     }
 
     /// Opens the cat in place: its memo, made now if this is the first time.
@@ -121,7 +161,13 @@ struct CareHandoffView: View {
                 creationDate: $0.creationDate, catBoundingBox: $0.catBoundingBox) })
             .filter { seen.insert($0.localIdentifier).inserted }
         return CareCatEditor(id: id, ownPhotos: own, otherPhotos: other, store: store, reuseStore: reuseStore,
-                             profiles: profiles, householdSection: AnyView(householdSection))
+                             profiles: profiles, householdSection: AnyView(householdSection),
+                             onDeleted: {
+                                 // Stay here: the next memo, or none (11/7: it left the tool).
+                                 lastCatID = Self.afterDelete
+                                 selectedCatID = nil
+                                 openFirst()
+                             })
     }
     /// The one request for everyone being handed over: who, when, how to reach you.
     private var householdSection: some View {
@@ -186,6 +232,8 @@ private struct CareCatEditor: View {
     var profiles: [CatProfilePresentation] = []
     /// 今回のお願い, shared by every cat, shown under this cat's memo.
     var householdSection: AnyView? = nil
+    /// Set when the memo is the tool's page: it stays after a delete.
+    var onDeleted: (() -> Void)? = nil
     /// Redraws when 「この子のこと」 changes, for example after 「この子のことを直す」.
     @ObservedObject private var catCare = CatCareStore.shared
     @State private var showsPhotoPicker = false
@@ -225,17 +273,17 @@ private struct CareCatEditor: View {
             ?? .toolCat(id: cat.toolCatID ?? cat.id, name: cat.name)
         ToolCatCareSection(title: "この子のこと",
                            lines: CatCareSummary.careHandoffLines(care, legacy: cat) + health, subject: subject,
-                           identifier: "care-cat-care-fields", editIdentifier: "care-open-cat-care")
+                           identifier: "care-cat-care-fields", editIdentifier: "care-open-cat-care", profiles: profiles)
     }
 
     var body: some View {
         Form {
             if let cat {
-                if let profile = profiles.first(where: { $0.identifier == cat.profileID }) {
-                    ToolCatProfileInfo(profile: profile, profiles: profiles)
-                }
                 Section {
-                    if !profiles.contains(where: { $0.identifier == cat.profileID }) {
+                    if let profile = profiles.first(where: { $0.identifier == cat.profileID }) {
+                        // The cat's dates are in この子のこと below; the name stays here (11/7).
+                        LabeledContent("猫の名前", value: profile.displayName)
+                    } else {
                         CareField(label: "猫の名前", example: "例：むぎ", identifier: "care-cat-name", text: text(\.name), limit: 80,
                                   isPrefilled: cat.prefilledFields?.contains("name") == true)
                     }
@@ -312,13 +360,15 @@ private struct CareCatEditor: View {
         }
         .confirmationDialog("この子のお世話メモを削除しますか？", isPresented: $deleteRequested, titleVisibility: .visible) {
             Button("お世話メモを削除", role: .destructive) {
-                if store.update({ $0.cats.removeAll { $0.id == id } }) { dismiss() }
+                if store.update({ $0.cats.removeAll { $0.id == id } }) {
+                    if let onDeleted { onDeleted() } else { dismiss() }
+                }
             }
         } message: { Text("この子のお世話メモだけを削除します。") }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 6) {
                 CareSaveNotice(store: store)
-                NavigationLink { CareDisclosureView(store: store) } label: {
+                NavigationLink { CareDisclosureView(store: store, currentCatID: id) } label: {
                     Label("渡す内容を選ぶ", systemImage: "checklist").frame(maxWidth: .infinity, minHeight: 44)
                 }.buttonStyle(.borderedProminent).disabled(store.saveError != nil)
             }.padding().background(.regularMaterial)
@@ -360,7 +410,7 @@ private struct CareRequestEditor: View {
                 CareField(label: "病院の電話", example: "例：03-0000-0000", identifier: "care-vet-phone",
                           text: Binding(get: { catCare.vet.phone }, set: { catCare.setVet(phone: $0) }))
             } header: { Text("連絡が必要なとき") }
-        }.navigationTitle("今回のお願い").navigationBarTitleDisplayMode(.inline)
+        }.navigationTitle(showsRequest ? "今回のお願い" : "連絡先").navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom) { CareSaveNotice(store: store) }
     }
@@ -445,6 +495,8 @@ private struct CarePreview: Identifiable, Hashable {
 
 private struct CareDisclosureView: View {
     @ObservedObject var store: CareHandoffStore
+    /// The cat whose memo this was opened from: chosen to begin with (11/7).
+    var currentCatID: UUID? = nil
     @State private var disclosure = CareHandoffDisclosure()
     @State private var initialized = false
     @State private var preview: CarePreview?
@@ -479,6 +531,9 @@ private struct CareDisclosureView: View {
             .onAppear {
                 if !initialized {
                     if store.plan.cats.count == 1, let cat = store.plan.cats.first { disclosure.catIDs = [cat.id] }
+                    else if let currentCatID, store.plan.cats.contains(where: { $0.id == currentCatID }) {
+                        disclosure.catIDs = [currentCatID]
+                    }
                     initialized = true
                 }
             }

@@ -3192,8 +3192,11 @@ class CatCareMemoWeightTests(unittest.TestCase):
         rule = section(core, "enum CatCareMemoWeights {", "// MARK: - 迷子のとき")
         self.assertIn("guard let id = weight.catID, id == cat.catID || id == cat.profileID", rule)
         self.assertNotIn("catName", rule)
-        entry = section(view, "try? await PhotoMemoryNoteStore.shared.records()", "private var selectedProfile")
-        self.assertIn("store.importWeights(", entry)
+        # 11/7: the cat's page reads them wherever it opens (CatProfileDetailView).
+        entry = section(view, "try? await PhotoMemoryNoteStore.shared.records()", "/// Whose 「この子のこと」 a page shows")
+        self.assertIn("importWeights(records.compactMap", entry)
+        self.assertIn(".task { await catCare.importMemoWeights() }",
+                      source("NekoWidget/Views/CatProfilePhotoCurationViews.swift"))
         for forbidden in ("noteStore.save", ".save(text:", "delete(id:"):
             self.assertNotIn(forbidden, view)
         self.assertIn("try memoWeights()", source("ci/verify-cat-care.swift"))
@@ -3216,7 +3219,10 @@ class CatCareProofCameraTests(unittest.TestCase):
 class ToolTemplateTests(unittest.TestCase):
     def test_tools_share_the_cat_care_section_and_a_bottom_preview(self) -> None:
         shared = section(source("NekoWidget/Views/CatCareView.swift"), "struct ToolCatCareSection<Extra: View>", "/// The system camera.")
-        self.assertIn('NavigationLink("「この子のこと」を開く") { CatCareSubjectView(subject: subject) }', shared)
+        self.assertIn('NavigationLink("「この子のこと」を開く") { CatCareSubjectView(subject: subject, profiles: profiles) }', shared)
+        # 11/7: the link opens the cat's own page on its この子のこと tab.
+        subject_view = section(source("NekoWidget/Views/CatCareView.swift"), "struct CatCareSubjectView: View {", "struct CatCareDetailView: View {")
+        self.assertIn("actions: profileActions, initialPage: .care)", subject_view)
         self.assertNotIn("CatCareStore.shared.update", shared)
         for path in ("NekoWidget/Views/VeterinaryVisitView.swift", "NekoWidget/Views/CareHandoffView.swift",
                      "NekoWidget/Views/CatPreparednessView.swift", "NekoWidget/Views/EvacuationPreparationView.swift"):
@@ -3227,7 +3233,8 @@ class ToolTemplateTests(unittest.TestCase):
         # ② comes before ③ in 預けるとき.
         self.assertLess(care.index("catCareSection(cat)"), care.index('CareField(label: "まず伝えたいこと"'))
         evacuation = source("NekoWidget/Views/EvacuationPreparationView.swift")
-        bottom = section(evacuation, '.navigationTitle("猫の情報を見せる")', ".navigationDestination(item: $preview)")
+        # 11/7: the page has the link's name, 「猫の情報」.
+        bottom = section(evacuation, '}.navigationTitle("猫の情報")', ".navigationDestination(item: $preview)")
         self.assertIn('"evacuation-preview-open"', bottom)
         self.assertIn(".safeAreaInset(edge: .bottom)", bottom)
 
@@ -3850,8 +3857,11 @@ class FirstLaunchInvitationTests(unittest.TestCase):
 class Build269FeedbackTests(unittest.TestCase):
     def test_one_cat_care_title_profile_birthday_and_own_photo_heart(self) -> None:
         profiles = source("NekoWidget/Views/CatProfilesView.swift")
-        info = section(profiles, "struct ToolCatProfileInfo: View {", "struct ToolPromoteCatButton")
-        self.assertIn('Section("猫のプロフィール")', info)
+        # 11/7: the birthday and adoption day sit in the one この子のこと box of each tool.
+        self.assertNotIn("struct ToolCatProfileInfo", profiles)
+        shared = section(source("NekoWidget/Views/CatCareView.swift"), "struct ToolCatCareSection<Extra: View>", "/// The system camera.")
+        self.assertIn('LabeledContent("誕生日", value: birthday.date.formatted(date: .abbreviated, time: .omitted))', shared)
+        self.assertIn('LabeledContent("迎えた日", value: adoption.date.formatted(date: .abbreviated, time: .omitted))', shared)
         store = source("NekoWidget/Services/CatCareStore.swift")
         birthdays = section(store, "func importBirthdays(", "func ensureRecord(")
         self.assertIn('editedBy: "import:Profile"', birthdays)

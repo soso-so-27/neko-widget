@@ -20,6 +20,9 @@ struct CatProfileDetailView: View {
     let manualCandidatePhotos: [CatProfilePhotoPresentation]
     let photoAlbumOptions: [CatProfilePhotoAlbumOptionPresentation]
     let actions: CatProfilesViewActions
+    /// Which tab opens first. The tools open この子のこと, where the dates and
+    /// care are; the album and photos open 写真 (11/7).
+    var initialPage: CatPage = .photos
 
     @Environment(\.dismiss) private var dismiss
     @State private var showsKeyPhotoPicker = false
@@ -30,7 +33,9 @@ struct CatProfileDetailView: View {
     @State private var isDeleting = false
     @State private var nameSaveFailed = false
     @State private var deleteFailed = false
-    @State private var page: CatPage = .photos
+    /// The tab pressed on this page; nil until one is pressed.
+    @State private var chosenPage: CatPage?
+    private var page: CatPage { chosenPage ?? initialPage }
     @AppStorage(CatFarewell.key) private var farewellJSON = ""
     @State private var showsFarewellEditor = false
     @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
@@ -54,7 +59,7 @@ struct CatProfileDetailView: View {
             // The same underline tabs as the 写真 tab, full width under the title.
             HStack(spacing: 24) {
                 ForEach([CatPage.photos, CatPage.care], id: \.self) { candidate in
-                    Button { page = candidate } label: {
+                    Button { chosenPage = candidate } label: {
                         Text(candidate == .photos ? "写真" : "この子のこと")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(page == candidate ? .primary : .secondary)
@@ -66,6 +71,7 @@ struct CatProfileDetailView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(page == candidate ? .isSelected : [])
+                    .accessibilityIdentifier(candidate == .photos ? "cat-profile-page-photos" : "cat-profile-page-care")
                 }
                 Spacer(minLength: 0)
             }
@@ -90,6 +96,8 @@ struct CatProfileDetailView: View {
                 }
             }
         }
+        // Memo weights show in この子のこと wherever the page opens (11/7).
+        .task { await catCare.importMemoWeights() }
     }
 
     private var profileForm: some View {
