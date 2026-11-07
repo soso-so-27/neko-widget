@@ -3173,10 +3173,95 @@ class EvacuationCatCareTests(unittest.TestCase):
         self.assertIn("record.attachments", exporter)
         self.assertIn("EvacuationExporter.createBook(store.bookRecords())", view)
         self.assertIn("EvacuationExporter.remove(retainedBookDirectory)", view)
-        self.assertIn('confirmationDialog("1冊のPDFを作ります"', view)
+        self.assertIn('confirmationDialog("印刷用のPDFを作ります"', view)
         # The half-year review is a quiet in-app note, not a notification.
-        self.assertIn("halfYear", view)
+        self.assertIn("halfYear", plan)
+        self.assertIn("store.plan.reviewIsDue(", view)
         self.assertNotIn("UNUserNotificationCenter", view)
+        self.assertNotIn("UNUserNotificationCenter", plan)
+
+    def test_evacuation_round_one_fixes_1108(self) -> None:
+        plan = source("NekoWidget/Services/EvacuationPlan.swift")
+        store = source("NekoWidget/Services/EvacuationStore.swift")
+        view = source("NekoWidget/Views/EvacuationPreparationView.swift")
+        # Fields added 11/8 are optional, so plans saved before still decode;
+        # ci/verify-evacuation-plan.swift decodes an old plan and runs the rules.
+        for field in ("var createdAt: Date?", "var lastCheckedAt: Date?", "var address: String?", "var kindValue: String?"):
+            self.assertIn(field, plan)
+        self.assertIn("var schemaVersion = 1", plan)
+        self.assertIn("guard schemaVersion == 1,", plan)
+        checks = source("ci/run-quick-ios-checks.sh")
+        self.assertIn("NekoWidget/Services/EvacuationPlan.swift ci/verify-evacuation-plan.swift", checks)
+        self.assertIn('"$RUNNER_TEMP/evacuation-plan-tests"\n', checks)
+        verify = source("ci/verify-evacuation-plan.swift")
+        for name in ("try oldDataDecodes()", "try amountsFollowCatCount()", "try medicinesFollowCatCare()",
+                     "try reviewCountsFromCreation()", "try destinations()"):
+            self.assertIn(name, verify)
+        # The review counts from when the plan was made, and leads to the checklist.
+        self.assertIn("let start = createdAt ?? earliestKnownDate ?? now", plan)
+        self.assertIn("if createdAt == nil { createdAt = earliestKnownDate ?? now }", plan)
+        update = section(store, "func update(_ change:", "func retrySave()")
+        self.assertIn("next.stampCreation()", update)
+        self.assertIn('Button("見直しを始める") { startReview() }', view)
+        review = section(view, "private func startReview() {", "private func show(")
+        self.assertIn("$0.clearChecks()", review)
+        self.assertIn("openPacking = true", review)
+        self.assertIn('Button("閉じる")', view)
+        # Amounts the app wrote follow the cats; the owner's amounts never change.
+        follow = section(plan, "mutating func followCatCount()", "mutating func followMedicines(")
+        self.assertIn("(1...30).contains(where: { Self.recommendedQuantity(title, cats: $0) == quantity })", follow)
+        self.assertIn("carriedIDs.remove(supplies[index].id)", follow)
+        self.assertIn("followCatCount()", section(plan, "mutating func removeCat(", "mutating func followCatCount()"))
+        self.assertIn("next.followCatCount()", section(store, "func addCat(", "func refreshCandidates("))
+        medicines = section(plan, "mutating func followMedicines(", "mutating func toggleCarried(")
+        self.assertIn('if supplies[index].title.hasPrefix("薬："), supplies[index].title != title {', medicines)
+        # The checklist follows 「この子のこと」 each time it opens.
+        packing = section(view, "private struct EvacuationPackingView", "private struct EvacuationGuidelineLink")
+        self.assertIn(".task { store.followCatsAndMedicines() }", packing)
+        self.assertIn('Text("そろっているもの  \\(confirmedCount) / \\(needed.count)")', packing)
+        self.assertIn('Text("最後にそろえた日：', packing)
+        for old in ("今回、持ったもの", "チェックを始めた日"):
+            self.assertNotIn(old, view)
+        # The show screen is named for what opens, one tap from the entry.
+        self.assertIn('Label("見せる画面を開く"', view)
+        self.assertIn('.navigationTitle("\\(record.name)の避難メモ")', view)
+        for old in ("できあがりを見る", '"プレビュー"', "1冊のPDFにまとめる", "新しい持ち物"):
+            self.assertNotIn(old, view)
+        self.assertIn('"evacuation-show-\\(cat.id.uuidString)"', view)
+        self.assertIn("EvacuationPreviewItem(record: try store.shareRecord(catID: cat.id, disclosure: EvacuationDisclosure()))", view)
+        # The owner's paper copy has the photo with the owner; the button says it prints.
+        self.assertIn("disclosure.withOwnerPhoto = true", section(store, "func bookRecords()", "private static func normalizedJPEG("))
+        book = section(view, "@ViewBuilder private var bookButton", "private struct EvacuationSaveNotice")
+        self.assertIn('Label("印刷用のPDFを作る"', book)
+        self.assertIn("if hasContent { button.buttonStyle(.borderedProminent) } else { button.buttonStyle(.bordered) }", book)
+        # Each entry row shows one state.
+        for state in ('個は置き場所が未記入"', '"写真なし："', '"行き先 \\(store.plan.destinations.count)件"'):
+            self.assertIn(state, view)
+        # Places: why it cannot be pressed, optional source, the day kept unless the conditions change.
+        self.assertIn('Text("施設名と条件を書くと押せます")', view)
+        self.assertIn(".disabled(!place.canConfirm)", view)
+        self.assertIn("![name, conditions].contains", plan)
+        self.assertIn("if key == \\EvacuationDestination.conditions { checkedAt = nil }", plan)
+        self.assertIn('TextField("どこで確かめたか（任意）"', view)
+        self.assertIn('TextField("住所（任意）"', view)
+        self.assertIn('"https://maps.apple.com/?q="', plan)
+        self.assertIn('URL(string: "tel:" + digits)', plan)
+        self.assertIn(".keyboardType(.phonePad)", view)
+        self.assertIn("if let url = place.telephoneURL {", view)
+        for kind in ('"避難所"', '"親戚・知人"', '"ペットホテル・病院"'):
+            self.assertIn(kind, plan)
+        # Contacts and the vet are read here; written only in 「この子のこと」.
+        self.assertIn('ToolCatCareSection(title: "連絡先と病院", lines: store.contactLines(includeEmpty: true),', view)
+        self.assertIn("places += contactLines()", store)
+        self.assertNotIn("setHouseholdText(new, \\.ownerContact", view)
+        # New items start empty with the name ready; multi-cat empty page says how.
+        self.assertIn('EvacuationSupply(title: "")', view)
+        self.assertIn("nameFocused = true", view)
+        self.assertIn('Text("上の猫を選ぶと作れます。")', view)
+        # One outside link: 環境省, marked as needing a connection.
+        self.assertEqual(view.count("Link(destination: URL(string: \"https://"), 1)
+        self.assertIn('ExternalLinkRow("環境省「人とペットの災害対策ガイドライン」（通信が必要）"', view)
+        self.assertNotIn("metro.tokyo", view)
 
 
 class CareHandoffCatCareTests(unittest.TestCase):

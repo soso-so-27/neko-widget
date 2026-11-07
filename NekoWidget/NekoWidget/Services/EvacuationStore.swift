@@ -45,6 +45,7 @@ final class EvacuationStore: ObservableObject {
         guard repository != nil, loadError == nil else { return false }
         var next = plan
         change(&next)
+        next.stampCreation()
         // Retain the edit in memory even if storage is full. Never claim saved.
         plan = next
         return retrySave()
@@ -84,6 +85,7 @@ final class EvacuationStore: ObservableObject {
               let index = plan.cats.firstIndex(where: { $0.id == id }) else { return false }
         var next = plan
         next.cats[index].profileID = profileID
+        next.stampCreation()
         do {
             try repository.commit(next)
             plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
@@ -133,6 +135,8 @@ final class EvacuationStore: ObservableObject {
                 }
             }
             var next = plan; next.cats.append(cat)
+            next.followCatCount()
+            next.stampCreation()
             try repository.commit(next, newPhotos: photos)
             plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
             return cat.id
@@ -169,10 +173,47 @@ final class EvacuationStore: ObservableObject {
         guard cat != before else { return false }
         cat.updatedAt = Date()
         var next = plan; next.cats[index] = cat
+        next.stampCreation()
         try repository.commit(next)
         plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
         return true
     }
+    /// Each cat's current medicines in 「この子のこと」.
+    func medicineNames() -> [UUID: [String]] {
+        var result: [UUID: [String]] = [:]
+        for cat in plan.cats {
+            result[cat.id] = (CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)?
+                .activeMedications ?? []).map(\.name).filter { !$0.isEmpty }
+        }
+        return result
+    }
+
+    /// When the checklist opens: medicine items follow 「この子のこと」 and the
+    /// amounts this app wrote follow the number of cats. Saves only a change.
+    func followCatsAndMedicines() {
+        guard loadError == nil, saveError == nil else { return }
+        var next = plan
+        next.followCatCount()
+        next.followMedicines(medicineNames())
+        guard next != plan else { return }
+        update { $0 = next }
+    }
+
+    /// The owner's contacts and vet from 「この子のこと」, shared by every cat.
+    /// Read here and on paper; they are written only in 「この子のこと」.
+    func contactLines(includeEmpty: Bool = false) -> [(String, String)] {
+        func trimmed(_ value: String?) -> String { (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        let household = CatCareStore.shared.state?.household
+        let contact = trimmed(plan.contact).isEmpty ? trimmed(household?.ownerContact?.value) : trimmed(plan.contact)
+        let backup = trimmed(household?.backupContact?.value)
+        let vet = (household?.vet?.value).map { [trimmed($0.name), trimmed($0.phone)].filter { !$0.isEmpty }.joined(separator: " ") } ?? ""
+        return [("飼い主の連絡先", contact), ("つながらないときの連絡先", backup), ("かかりつけ病院", vet)]
+            .compactMap { line -> (String, String)? in
+                if !line.1.isEmpty { return line }
+                return includeEmpty ? (line.0, "未記入") : nil
+            }
+    }
+
     func photoData(_ name: String) throws -> Data {
         guard loadError == nil, saveError == nil, let repository else { throw EvacuationStorageError.unreadable }
         return try Data(contentsOf: repository.photoURL(name))
@@ -195,6 +236,7 @@ final class EvacuationStore: ObservableObject {
         next.cats[index].prefilledFields?.remove("photo")
         next.cats[index].updatedAt = Date()
         next.cats[index].reviewedAt = nil
+        next.stampCreation()
         // Commit against current edits, not the record captured before PhotoKit awaited.
         try repository.commit(next, newPhotos: [name: jpeg])
         plan = next
@@ -248,6 +290,8 @@ final class EvacuationStore: ObservableObject {
         }
         var places: [(String, String)] = plan.destinations.map { place in
             let lines = [
+                place.kind.map { "種類：" + $0.title },
+                trimmed(place.address).isEmpty ? nil : "住所：" + trimmed(place.address),
                 trimmed(place.conditions).isEmpty ? nil : "受け入れの条件：" + place.conditions,
                 trimmed(place.telephone).isEmpty ? nil : "電話：" + place.telephone,
                 "確かめた日：" + (place.checkedAt?.formatted(date: .numeric, time: .omitted) ?? "未確認")
@@ -257,12 +301,7 @@ final class EvacuationStore: ObservableObject {
         let household = CatCareStore.shared.state?.household
         let meeting = household?.meetingPlace == nil ? trimmed(plan.familyMeetingMemo) : trimmed(household?.meetingPlace?.value)
         if !meeting.isEmpty { places.append(("家族の集合場所と連絡方法", meeting)) }
-        let contact = trimmed(plan.contact).isEmpty ? trimmed(household?.ownerContact?.value) : plan.contact
-        if !contact.isEmpty { places.append(("飼い主の連絡先", contact)) }
-        if !trimmed(household?.backupContact?.value).isEmpty { places.append(("つながらないときの連絡先", trimmed(household?.backupContact?.value))) }
-        if let vet = household?.vet?.value, !vet.isEmpty {
-            places.append(("かかりつけ病院", [vet.name, vet.phone].filter { !$0.isEmpty }.joined(separator: " ")))
-        }
+        places += contactLines()
         var records = [
             EvacuationShareRecord(name: "持ち出すもの（\(needed.count)）", photos: [],
                 fields: supplies.isEmpty ? [("持ち物", "まだありません")] : supplies, reviewedAt: nil,
@@ -271,10 +310,11 @@ final class EvacuationStore: ObservableObject {
                 fields: places.isEmpty ? [("行き先", "まだありません")] : places, reviewedAt: nil,
                 includesPrivateInformation: true, heading: "避難の備え", showsReviewDate: false)
         ]
-        // The owner's own copy: everything, chip and proofs included.
+        // The owner's own copy: everything, chip, proofs and the photo with the owner included.
         var disclosure = EvacuationDisclosure()
         disclosure.medical = true
         disclosure.catCare = true
+        disclosure.withOwnerPhoto = true
         for cat in plan.cats { records.append(try shareRecord(catID: cat.id, disclosure: disclosure)) }
         return records
     }
