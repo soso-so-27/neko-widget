@@ -305,17 +305,21 @@ final class EvacuationStore: ObservableObject {
     func shareRecord(catID: UUID, disclosure: EvacuationDisclosure) throws -> EvacuationShareRecord {
         guard loadError == nil, saveError == nil,
               let cat = plan.cats.first(where: { $0.id == catID }) else { throw EvacuationStorageError.unreadable }
-        // Prefer purpose-selected identification photos; a general saved photo is a fallback.
-        var roles: [EvacuationCat.PhotoRole] = cat.photos["face"] != nil || cat.photos["body"] != nil
-            ? [.face, .body] : [.reference]
-        if disclosure.withOwnerPhoto { roles.append(.withOwner) }
-        let photos = try roles.compactMap { role -> UIImage? in
-            guard let name = cat.photos[role.rawValue] else { return nil }
-            guard let image = image(name) else { throw EvacuationStorageError.photoUnavailable }
-            return image
-        }
         // Everything per cat comes from 「この子のこと」; the toggles choose what shows.
         let care = CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
+        // 11/9: the face and body photos of 「この子のこと」 (this tool's older
+        // ones until they are set there); the photo with the owner is this tool's.
+        var photos: [UIImage] = []
+        for role in CatCarePhotoRole.allCases {
+            guard let url = CatCareSummary.identifyingPhotoURL(care, role, legacy: imageURL(cat.legacyIdentifyingPhoto(role)))
+            else { continue }
+            guard let image = UIImage(contentsOfFile: url.path) else { throw EvacuationStorageError.photoUnavailable }
+            photos.append(image)
+        }
+        if disclosure.withOwnerPhoto, let name = cat.photos[EvacuationCat.PhotoRole.withOwner.rawValue] {
+            guard let image = image(name) else { throw EvacuationStorageError.photoUnavailable }
+            photos.append(image)
+        }
         // Shown to others: rows not written are left out, never 「未記入」 (347).
         let fields = CatCareSummary.shown(CatCareSummary.evacuationShareFields(care, legacy: cat,
             household: CatCareStore.shared.state?.household, planContact: plan.contact, disclosure: disclosure))

@@ -292,3 +292,51 @@ enum CatCareSummary {
         }
     }
 }
+
+// MARK: - 見分ける写真 kept by the tools before 11/9
+
+/// 迷子のとき's draft key: a profile ID, or 「guest-tool-」 and the shared tool
+/// cat ID. Other guest keys (an unregistered cat) have no 「この子のこと」.
+enum LostCatCatCareKey {
+    static func parse(_ key: String) -> (catID: UUID?, profileID: UUID?)? {
+        if let profileID = UUID(uuidString: key) { return (nil, profileID) }
+        let prefix = "guest-tool-"
+        if key.hasPrefix(prefix), let catID = UUID(uuidString: String(key.dropFirst(prefix.count))) {
+            return (catID, nil)
+        }
+        return nil
+    }
+}
+
+extension EvacuationCat {
+    /// The tool's own older photo for a role. The usual photo stands in for
+    /// the face; the photo with the owner never does.
+    func legacyIdentifyingPhoto(_ role: CatCarePhotoRole) -> String? {
+        role == .face ? photos["face"] ?? photos["reference"] : photos["body"]
+    }
+}
+
+extension CatCareToolPhotos {
+    static func lostCat(key: String, draft: LostCatDraft) -> Self? {
+        guard let ids = LostCatCatCareKey.parse(key) else { return nil }
+        return Self(tool: "LostCat", catID: ids.catID, profileID: ids.profileID,
+                    face: draft.faceFileName, body: draft.bodyFileName)
+    }
+
+    static func evacuation(_ cat: EvacuationCat) -> Self {
+        Self(tool: "Evacuation", catID: cat.toolCatID ?? cat.id, profileID: cat.profileID.flatMap(UUID.init(uuidString:)),
+             face: cat.legacyIdentifyingPhoto(.face), body: cat.legacyIdentifyingPhoto(.body))
+    }
+
+    /// 預けるとき kept one photo, 「渡す写真」: it was the face photo.
+    static func care(_ cat: CareCat) -> Self {
+        Self(tool: "CareHandoff", catID: cat.toolCatID ?? cat.id, profileID: cat.profileID.flatMap(UUID.init(uuidString:)),
+             face: cat.photoName, body: nil)
+    }
+
+    /// Every tool's older photos, in no particular order (the rule orders them).
+    static func all(lost: [String: LostCatDraft], evacuation: EvacuationPlan, care: CareHandoffPlan) -> [Self] {
+        lost.keys.sorted().compactMap { key in lost[key].flatMap { Self.lostCat(key: key, draft: $0) } }
+            + evacuation.cats.map { Self.evacuation($0) } + care.cats.map { Self.care($0) }
+    }
+}

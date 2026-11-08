@@ -368,6 +368,7 @@ struct LostCatDraftView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { saveNow() }
         }
+        .onChange(of: catCarePhotoKey) { _, _ in readCatCarePhotos() }
         // The 「見つかりました」 screen still edits this draft.
         .appRecordEditing(retainWhileHidden: saveError || photoBusy || cropRequest != nil || showsDatePicker || showsFound)
     }
@@ -389,6 +390,12 @@ struct LostCatDraftView: View {
             }
             fieldIssue("name", issues)
             }
+            if let catCareSubject, let files = catCarePhotoFiles {
+                // 11/9: chosen in 「この子のこと」 only; the flyer uses them.
+                ToolIdentifyingPhotos(faceFile: files.face, bodyFile: files.body, subject: catCareSubject,
+                                      profiles: profiles, identifier: "lost-cat-identifying-photos")
+            } else {
+            // A cat with no 「この子のこと」 (an unregistered cat) keeps its own photos here.
             let tiles = dynamicTypeSize.isAccessibilitySize
                 ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
             tiles {
@@ -398,13 +405,14 @@ struct LostCatDraftView: View {
                           file: bodyImage == nil || draft.faceFileName == nil ? nil : tileFile(draft.bodyFileName))
             }
             .padding(.vertical, 4)
+            }
             if let photoError {
                 Text(photoError).font(.footnote).foregroundStyle(.red)
                 if faceImage != nil {
                     Button("いまの写真のままにする") { self.photoError = nil }
                 }
             }
-            if faceImage == nil, catCarePhotoURL(.face) != nil {
+            if catCareSubject == nil, faceImage == nil, catCarePhotoURL(.face) != nil {
                 Button("「この子のこと」の写真を使う") { useCatCarePhotos() }
                     .disabled(photoBusy)
                     .accessibilityIdentifier("lost-cat-use-cat-care-photos")
@@ -522,7 +530,43 @@ struct LostCatDraftView: View {
 
     private var catCareRecord: CatCareRecord? {
         _ = catCareStore.state
+        if let catID = LostCatCatCareKey.parse(key)?.catID {
+            return CatCareSummary.record(toolCatID: catID, profileIdentifier: nil)
+        }
         return CatCareSummary.record(profileIdentifier: key)
+    }
+
+    /// The cat's 「この子のこと」, where its 見分ける写真 are chosen (11/9). Nil
+    /// for an unregistered cat, which keeps choosing its own photos here.
+    private var catCareSubject: CatCareSubject? {
+        if let profile = profiles.first(where: { $0.identifier == key }) { return .profile(profile) }
+        if let catID = LostCatCatCareKey.parse(key)?.catID { return .toolCat(id: catID, name: publicName) }
+        return nil
+    }
+
+    /// 「この子のこと」's face and body photos, or this draft's older ones until
+    /// they are set there. Only whether the files are there, not the photos.
+    private var catCarePhotoFiles: (face: URL?, body: URL?)? {
+        guard catCareSubject != nil else { return nil }
+        let record = catCareRecord
+        return (CatCareSummary.identifyingPhotoURL(record, .face, legacy: store.imageURL(draft.faceFileName)),
+                CatCareSummary.identifyingPhotoURL(record, .body, legacy: store.imageURL(draft.bodyFileName)))
+    }
+
+    /// Changes when a photo is chosen in 「この子のこと」, so the flyer follows it.
+    private var catCarePhotoKey: String {
+        guard let files = catCarePhotoFiles else { return "" }
+        return "\(key)|\(files.face?.path ?? "")|\(files.body?.path ?? "")"
+    }
+
+    /// The full photos the flyer uses, read again only when the files change.
+    /// Without a face photo the body photo stands in, as before.
+    private func readCatCarePhotos() {
+        guard loaded, let files = catCarePhotoFiles else { return }
+        let face = files.face.flatMap { UIImage(contentsOfFile: $0.path) }
+        let whole = files.body.flatMap { UIImage(contentsOfFile: $0.path) }
+        faceImage = face ?? whole
+        bodyImage = face == nil ? nil : whole
     }
 
     /// Only whether the photo is there: the page never reads the photo itself
@@ -558,6 +602,8 @@ struct LostCatDraftView: View {
                 do { try store.save(next, for: identity) } catch { return draft }
             }
         }
+        // 11/9: a cat with 「この子のこと」 reads its photos from there; no copy.
+        guard catCareTarget(for: identity) == nil else { return next }
         for role in [CatPreparednessStore.PhotoRole.face, .body] {
             guard (role == .face ? next.faceFileName : next.bodyFileName) == nil,
                   let ref = (role == .face ? record.facePhoto?.value : record.bodyPhoto?.value) ?? nil,
@@ -566,6 +612,12 @@ struct LostCatDraftView: View {
             next = updated
         }
         return next
+    }
+
+    private func catCareTarget(for identity: String) -> CatCareSubject? {
+        if let profile = profiles.first(where: { $0.identifier == identity }) { return .profile(profile) }
+        if let catID = LostCatCatCareKey.parse(identity)?.catID { return .toolCat(id: catID, name: "") }
+        return nil
     }
 
     @ViewBuilder private func fieldIssue(_ field: String, _ issues: [String: String]) -> some View {
@@ -761,6 +813,7 @@ struct LostCatDraftView: View {
             bodyImage = saved.faceFileName == nil ? nil : store.image(saved.bodyFileName)
             saveError = false
             loaded = true
+            readCatCarePhotos()
         } catch { saveError = true }
     }
     private func switchTo(_ next: String, name: String) {
@@ -928,7 +981,7 @@ private struct LostCatPhotoChoiceView: View {
     }
 }
 
-private struct LostCatPhotoCropView: View {
+struct LostCatPhotoCropView: View {
     let image: UIImage
     let save: (Data) -> Bool
     @Environment(\.dismiss) private var dismiss

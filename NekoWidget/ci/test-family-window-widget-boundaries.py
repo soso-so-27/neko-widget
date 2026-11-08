@@ -3357,7 +3357,7 @@ class LostCatToolReview1108Tests(unittest.TestCase):
 
     def test_photos_start_with_this_cat_and_any_photo_is_a_visible_button(self) -> None:
         view = source("NekoWidget/Views/CatPreparednessView.swift")
-        choice = section(view, "private struct LostCatPhotoChoiceView: View {", "private struct LostCatPhotoCropView")
+        choice = section(view, "private struct LostCatPhotoChoiceView: View {", "struct LostCatPhotoCropView: View {")
         self.assertNotIn("Menu {", choice)
         self.assertNotIn("「…」", choice)
         self.assertIn('Button("写真アプリから選ぶ", systemImage: "photo.on.rectangle")', choice)
@@ -3620,10 +3620,15 @@ class EvacuationCatCareTests(unittest.TestCase):
         # Done rules: every item has a place, every cat a photo to tell it apart, one place.
         done = section(view, "private var stepsDone: [Bool] {", "/// Something to put on paper")
         self.assertIn("!needed.isEmpty && needed.allSatisfy { !$0.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }", done)
-        self.assertIn("!cats.isEmpty && cats.allSatisfy { $0.identificationPhoto != nil }", done)
+        self.assertIn("!cats.isEmpty && cats.allSatisfy { $0.identificationPhoto(store: store) != nil }", done)
         self.assertIn("!store.plan.destinations.isEmpty", done)
-        self.assertIn('var identificationPhoto: String? { photos["face"] ?? photos["body"] ?? photos["reference"] }', view)
-        self.assertIn('cats.filter { $0.identificationPhoto == nil }.map { name(of: $0) }', view)
+        # 11/9: the photo is 「この子のこと」's face or body (this tool's older one
+        # until set there); the photo with the owner never counts.
+        self.assertIn("return CatCareSummary.identifyingPhotoURL(care, role, legacy: store.imageURL(legacyIdentifyingPhoto(role)))", view)
+        self.assertIn("identifyingPhoto(.face, store: store) ?? identifyingPhoto(.body, store: store)", view)
+        self.assertIn('role == .face ? photos["face"] ?? photos["reference"] : photos["body"]',
+                      source("NekoWidget/Services/CatCareOutputLines.swift"))
+        self.assertIn('cats.filter { $0.identificationPhoto(store: store) == nil }.map { name(of: $0) }', view)
         # 「印刷用のPDFを作る」 is in the bottom bar, not in the list.
         bar = section(hub, ".toolBottomBar {", '.navigationTitle("避難に備える")')
         # 349: 「あと：」 names only what must be done before the button works;
@@ -3642,7 +3647,8 @@ class EvacuationCatCareTests(unittest.TestCase):
         # 猫の情報: one sentence, 1 見分ける写真, 2 見せる内容, この子のこと folded, then the rest small.
         cat_page = section(view, "private struct EvacuationCatView: View {", "private struct EvacuationCatEditor: View {")
         order = ['ToolPurpose(text: "避難所で見せる、この子の避難メモを作ります。")',
-                 "let states = ToolStepState.states([cat.identificationPhoto != nil, true])",
+                 "let states = ToolStepState.states([cat.identificationPhoto(store: store) != nil, true])",
+                 'identifier: "evacuation-identifying-photos")',
                  '"evacuation-cat-edit"',
                  'ToolStepHeader(number: 1, title: "見分ける写真", state: states[0])',
                  '"evacuation-disclose-cat-care"',
@@ -3956,7 +3962,7 @@ class CareHandoffReviewTests(unittest.TestCase):
         self.assertNotIn('.navigationTitle("プレビュー")', self.view)
 
     def test_editor_order_and_quiet_cleanup(self) -> None:
-        editor = section(self.view, "private struct CareCatEditor: View {", "private struct CarePhotoPicker: View {")
+        editor = section(self.view, "private struct CareCatEditor: View {", "private struct CarePreview: Identifiable, Hashable {")
         body = editor[editor.index("var body: some View {"):]
         self.assertLess(body.index('identifier: "care-important"'), body.index("catCareSection(cat)"))
         self.assertLess(body.index('identifier: "care-call-when"'), body.index("catCareSection(cat)"))
@@ -3973,10 +3979,13 @@ class CareHandoffReviewTests(unittest.TestCase):
         self.assertIn("store.plan.requestText(key, planKey, chosen: disclosure.catIDs)", self.view)
         self.assertIn("ci/verify-tool-outputs.swift", source("ci/run-quick-ios-checks.sh"))
         self.assertEqual(self.view.count('"今回のお願い"'), 0)
-        # Face photo from 「この子のこと」 first; never after the owner removed it.
-        self.assertIn("care?.facePhoto?.value", editor)
-        self.assertIn("cat.photoRemoved != true", editor)
-        self.assertIn("$0.photoName = nil; $0.photoRemoved = true", editor)
+        # Face photo from 「この子のこと」 (11/9: chosen there only); never after the
+        # owner left it off this memo. The memo's older photo is kept, not cleared.
+        self.assertIn("CatCareSummary.identifyingPhotoURL(care, .face, legacy: store.imageURL(cat.photoName))", editor)
+        self.assertIn("guard cat.photoRemoved != true else { return nil }", editor)
+        self.assertIn('Button("このメモには載せない") { store.editCat(id) { $0.photoRemoved = true } }', editor)
+        self.assertIn('Button("このメモにも写真を載せる") { store.editCat(id) { $0.photoRemoved = nil } }', editor)
+        self.assertNotIn("$0.photoName = nil", editor)
         self.assertIn("next.cats[index].photoRemoved = nil", self.store)
         # Leftover photo copies are removed in the background, not by a button.
         self.assertNotIn("使わなくなった写真のコピーが残っています。", self.view)
@@ -3987,7 +3996,7 @@ class CareHandoffReviewTests(unittest.TestCase):
     def test_both_pages_follow_the_input_page_shape(self) -> None:
         """ねこのまど_ツール入力ページの型_1108: purpose, numbered steps, folded
         「この子のこと」, notes last, one button at the bottom."""
-        editor = section(self.view, "private struct CareCatEditor: View {", "private struct CarePhotoPicker: View {")
+        editor = section(self.view, "private struct CareCatEditor: View {", "private struct CarePreview: Identifiable, Hashable {")
         body = editor[editor.index("var body: some View {"):]
         self.assertIn('ToolPurpose(text: "預ける人に渡すお世話メモを作ります。")', body)
         order = [body.index('ToolPurpose(text:'),
@@ -4001,9 +4010,10 @@ class CareHandoffReviewTests(unittest.TestCase):
         self.assertEqual(order, sorted(order))
         # The photo heading sits over the name, photo and its two buttons.
         photo = body[body.index('Section {\n                    if let profile'):body.index('title: "名前と写真"')]
-        for part in ('identifier: "care-cat-name"', '"care-photo-open"', '"このメモの写真を外す"'):
+        for part in ('identifier: "care-cat-name"', '"care-photo-open"', '"このメモには載せない"', '"このメモにも写真を載せる"'):
             self.assertIn(part, photo)
-        self.assertIn("ToolStepState.states([cat.photoName != nil, Self.isFilled(cat.important), Self.isFilled(cat.callWhen)])", editor)
+        self.assertIn("ToolStepState.states([memoPhoto(cat) != nil || cat.photoRemoved == true,\n"
+                      "                              Self.isFilled(cat.important), Self.isFilled(cat.callWhen)])", editor)
         self.assertIn(".trimmingCharacters(in: .whitespacesAndNewlines).isEmpty", editor)
         # The field under a heading of the same words does not repeat it, but
         # VoiceOver still reads its name.
@@ -4088,11 +4098,11 @@ class CareHandoffRoundTwoTests(unittest.TestCase):
         self.assertIn("using: reuseStore, access: actionAccess)", choose)
         self.assertIn("disclosure.catIDs.insert(id)", choose)
         self.assertIn("await CareCatEditor.fillFromCatCare(id, store: store, reuseStore: reuseStore, profiles: profiles)", choose)
-        editor = section(self.view, "private struct CareCatEditor: View {", "private struct CarePhotoPicker: View {")
+        editor = section(self.view, "private struct CareCatEditor: View {", "private struct CarePreview: Identifiable, Hashable {")
         self.assertIn("await Self.fillFromCatCare(id, store: store, reuseStore: reuseStore, profiles: profiles)", editor)
-        fill = section(editor, "static func fillFromCatCare(", "private static func useCatCarePhoto(")
+        fill = section(editor, "static func fillFromCatCare(", "private static func useKeyPhotoForCatCare(")
         self.assertIn("try? store.refreshCandidates(id, using: reuseStore)", fill)
-        self.assertIn("await useCatCarePhoto(id, store: store, profiles: profiles)", fill)
+        self.assertIn("await useKeyPhotoForCatCare(id, store: store, profiles: profiles)", fill)
         # The tool opens a cat through the same store call.
         self.assertIn("if let id = store.addCat(profileID: profileID, name: name, using: reuseStore,", self.view)
         cats = section(self.making, 'ForEach(profilesWithoutMemo, id: \\.identifier) { profile in', 'title: "お願いする猫"')
@@ -4501,7 +4511,7 @@ class ToolAccessibilityTests(unittest.TestCase):
         lost = source("NekoWidget/Views/CatPreparednessView.swift")
         showcase = source("NekoWidget/Views/ShowcasePhotoView.swift")
         # Cropping works with buttons and VoiceOver, not only dragging.
-        crop = section(lost, "private struct LostCatPhotoCropView", "private func clamped(")
+        crop = section(lost, "struct LostCatPhotoCropView: View {", "private func clamped(")
         for name in ("上へ動かす", "下へ動かす", "左へ動かす", "右へ動かす"):
             self.assertIn(name, crop)
         self.assertIn('nudgeButton("左へ"', crop)
@@ -4511,7 +4521,7 @@ class ToolAccessibilityTests(unittest.TestCase):
         # Photos in a grid are told apart by their day.
         for path in ("NekoWidget/Views/CatPreparednessView.swift", "NekoWidget/Views/ToolRecentPhotos.swift"):
             self.assertIn("ToolPhotoLabel.text(", source(path), path)
-        for path in ("NekoWidget/Views/CareHandoffView.swift", "NekoWidget/Views/EvacuationPreparationView.swift"):
+        for path in ("NekoWidget/Views/CatCareView.swift", "NekoWidget/Views/EvacuationPreparationView.swift"):
             self.assertIn("ToolRecentPhotoSection(", source(path), path)
         # Errors are read aloud.
         for path in ("NekoWidget/Views/CatPreparednessView.swift", "NekoWidget/Views/CareHandoffView.swift",
@@ -5103,11 +5113,24 @@ class ToolPageReview349Tests(unittest.TestCase):
         care = source("NekoWidget/Views/CareHandoffView.swift")
         lost = source("NekoWidget/Views/CatPreparednessView.swift")
         evac = source("NekoWidget/Views/EvacuationPreparationView.swift")
-        for text in (care, lost, evac):
+        for text in (lost, evac):
             self.assertIn("ToolPhotoSlot(", text)
-        # Taking a photo off is a menu item, not red text on the page (349).
-        self.assertIn('Button("このメモの写真を外す", systemImage: "minus.circle", role: .destructive)', care)
-        self.assertNotIn('Button("このメモの写真を外す", role: .destructive)', care)
+        # 11/9: 預ける, 迷子 and 避難 show 「この子のこと」's photos through the same slot.
+        for text in (care, lost, evac):
+            self.assertIn("ToolIdentifyingPhotos(", text)
+        identifying = section(shared, "struct ToolIdentifyingPhotos: View {", "extension ToolMakeBar where Top == EmptyView {")
+        self.assertIn("ToolPhotoSlot(readOnly:", identifying)
+        # Taking a photo off is a menu item, not red text on the page (349). 11/9:
+        # the memo shows 「この子のこと」's photo; leaving it off this memo is a
+        # quiet gray choice that deletes nothing, and never red.
+        self.assertIn('Button("このメモには載せない") { store.editCat(id) { $0.photoRemoved = true } }\n'
+                      '                            .font(.footnote).foregroundStyle(.secondary)', care)
+        self.assertNotIn("このメモの写真を外す", care)
+        for line in care.splitlines():
+            if "このメモには載せない" in line or "このメモにも写真を載せる" in line:
+                self.assertNotIn(".destructive", line)
+        self.assertIn('Button("\\(title)を外す", systemImage: "minus.circle", role: .destructive)',
+                      source("NekoWidget/Views/CatCareView.swift"))
         self.assertIn('Button("\(role.title)を外す", systemImage: "minus.circle", role: .destructive)', evac)
         self.assertNotIn('Button("\(role.title)を外す", role: .destructive)', evac)
 
@@ -6029,23 +6052,26 @@ class ToolOpenWasteTests(unittest.TestCase):
         self.assertIn("private var shown: UIImage? { file == nil ? image : thumbnail }", slot)
         self.assertIn("if let shown { Image(uiImage: shown).resizable().scaledToFit() }", slot)
         self.assertNotIn("Image(uiImage: image)", slot)
-        self.assertIn("if hasPhoto {\n                    Menu { actions } label:", slot)
+        self.assertIn("if hasPhoto && !readOnly {\n                    Menu { actions } label:", slot)
         self.assertIn(".task(id: file) { thumbnail = await ToolPhotoThumbnail.load(file) }", slot)
 
         evacuation = source("NekoWidget/Views/EvacuationPreparationView.swift")
         care = source("NekoWidget/Views/CareHandoffView.swift")
         for view in (evacuation, care):
             self.assertNotIn("store.image(", view)
-        self.assertIn('ToolPhotoSlot("渡す写真", image: nil, file: store.imageURL(cat.photoName),', care)
-        self.assertIn('identifier: "care-photo-open", actionsIdentifier: "care-photo-actions"', care)
+        # 11/9: 「この子のこと」's photos are shown through the same slot, by file.
+        self.assertIn("ToolIdentifyingPhotos(faceFile: photo, bodyFile: nil, subject: subject(cat), profiles: profiles,", care)
+        self.assertIn('showsBody: false, identifier: "care-photo-open")', care)
         self.assertIn("ToolPhotoSlot(role.title, image: nil, file: store.imageURL(cat.photos[role.rawValue]),", evacuation)
         self.assertIn('identifier: "evacuation-photo-\\(role.rawValue)"', evacuation)
-        # The summary on 猫の情報 keeps its own small picture.
-        summary = evacuation[evacuation.index("private struct EvacuationPhoto: View {"):]
-        summary = summary[:summary.index("\n}\n") + 3]
-        self.assertIn("@State private var image: UIImage?", summary)
-        self.assertIn(".task(id: name) { image = await ToolPhotoThumbnail.load(store.imageURL(name)) }", summary)
-        self.assertIn('EvacuationPhoto(name: cat.identificationPhoto, store: store, label: "この子の写真")', evacuation)
+        # 猫の情報 shows both photos small, from their files.
+        self.assertIn("ToolIdentifyingPhotos(faceFile: cat.identifyingPhoto(.face, store: store),", evacuation)
+        self.assertIn("bodyFile: cat.identifyingPhoto(.body, store: store),", evacuation)
+        self.assertNotIn("private struct EvacuationPhoto: View {", evacuation)
+        identifying = section(shared, "struct ToolIdentifyingPhotos: View {", "extension ToolMakeBar where Top == EmptyView {")
+        self.assertIn('ToolPhotoSlot(readOnly: "顔の写真", file: faceFile, identifier: identifier + "-face")', identifying)
+        self.assertIn('ToolPhotoSlot(readOnly: "全身の写真", file: bodyFile, identifier: identifier + "-body")', identifying)
+        self.assertNotIn("UIImage(contentsOfFile", identifying)
 
         lost = source("NekoWidget/Views/CatPreparednessView.swift")
         editor = section(lost, "struct LostCatDraftView: View {", "private struct LostCatPhotoChoiceView")
@@ -6066,7 +6092,7 @@ class ToolOpenWasteTests(unittest.TestCase):
             self.assertNotIn("store.image(", body)
         # 「この子のこと」's photo is only looked for while drawing, never read.
         cat_section = section(editor, "private func catSection(", "private func incidentSection(")
-        self.assertIn("if faceImage == nil, catCarePhotoURL(.face) != nil {", cat_section)
+        self.assertIn("if catCareSubject == nil, faceImage == nil, catCarePhotoURL(.face) != nil {", cat_section)
         self.assertNotIn("catCarePhoto(", cat_section)
         self.assertNotIn("Data(contentsOf", section(editor, "private func catCarePhotoURL(", "private func catCarePhoto("))
         for path in ("NekoWidget/Services/EvacuationStore.swift", "NekoWidget/Services/CareHandoffStore.swift",
@@ -6114,25 +6140,34 @@ class ToolConsistency1108Tests(unittest.TestCase):
         self.assertIn("targetPixelSize: CGSize(width: 300, height: 300)", cell)
         for full in ("Data(contentsOf", "UIImage(contentsOfFile", "UIImage(data"):
             self.assertNotIn(full, self.recent)
-        # 預ける and 避難 use it; nothing is sorted away under another cat's heading.
-        care_picker = section(self.care, "private struct CarePhotoPicker: View {", "private struct CarePreview")
+        # 避難 (the photo with the owner) and 「この子のこと」 (11/9: 見分ける写真,
+        # chosen there only) use it; nothing is sorted away under another cat's heading.
+        # 預ける has no picker of its own any more.
+        self.assertNotIn("struct CarePhotoPicker", self.care)
+        self.assertNotIn("PhotosPicker(", self.care)
         evacuation_picker = section(self.evacuation, "private struct EvacuationPhotoPicker: View {",
                                     "private struct EvacuationPreviewItem")
-        self.assertIn('identifierPrefix: "care-candidate-") { use($0) }', care_picker)
+        cat_care_picker = section(source("NekoWidget/Views/CatCareView.swift"),
+                                  "private struct CatCareIdentifyingPhotoPicker: View {",
+                                  "/// ② of every tool:")
         self.assertIn('identifierPrefix: "evacuation-candidate-") { use($0) }', evacuation_picker)
-        for picker in (care_picker, evacuation_picker):
-            self.assertIn("ToolRecentPhotoSection(photos: ownPhotos + otherPhotos, own: Set(ownPhotos.map(\\.localIdentifier)),",
-                          picker)
+        self.assertIn("ToolRecentPhotoSection(photos: ownPhotos + otherPhotos, own: Set(ownPhotos.map(\\.localIdentifier)),",
+                      evacuation_picker)
+        self.assertIn('identifierPrefix: "cat-care-photo-candidate-") { use($0) }', cat_care_picker)
+        self.assertIn("ToolRecentPhotoSection(photos: photos, own: Set(photos.map(\\.localIdentifier)), disabled: busy,",
+                      cat_care_picker)
+        self.assertIn('Label("写真アプリから選ぶ", systemImage: "photo.on.rectangle")', cat_care_picker)
+        for picker in (evacuation_picker, cat_care_picker):
             self.assertNotIn('"ほかの猫の写真"', picker)
             self.assertNotIn('"この子の写真"', picker)
             self.assertNotIn("GridItem(.adaptive", picker)
         # 迷子 keeps this cat first; every recent photo is one tap away and named so.
-        choice = section(self.lost, "private struct LostCatPhotoChoiceView: View {", "private struct LostCatPhotoCropView")
+        choice = section(self.lost, "private struct LostCatPhotoChoiceView: View {", "struct LostCatPhotoCropView: View {")
         self.assertIn("@State private var showsAllCats = false", choice)
         self.assertIn('Text("最近の写真").tag(true)', choice)
         self.assertIn("allPhotos.sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }", self.lost)
-        # One name for the system picker in every tool.
-        for view in (self.care, self.lost, self.evacuation):
+        # One name for the system picker in every place a photo is chosen.
+        for view in (source("NekoWidget/Views/CatCareView.swift"), self.lost, self.evacuation):
             self.assertIn('"写真アプリから選ぶ"', view)
         # 写真を見せる: the same 「最近の写真」 and switch, off at first.
         picker = section(self.showcase, "private struct ShowcaseCandidatePicker: View {", "struct ShowcaseToolCatPicker: View {")
@@ -6164,7 +6199,7 @@ class ToolConsistency1108Tests(unittest.TestCase):
         self.assertNotIn("内容を確かめた日", exporter)
 
     def test_delete_sits_alone_at_the_bottom_in_plain_red(self) -> None:
-        editor = section(self.care, "private struct CareCatEditor: View {", "private struct CarePhotoPicker: View {")
+        editor = section(self.care, "private struct CareCatEditor: View {", "private struct CarePreview: Identifiable, Hashable {")
         body = editor[editor.index("var body: some View {"):editor.index(".toolPageSpacing()")]
         delete = body.index('Button("このお世話メモを削除", role: .destructive)')
         last = body[body.rindex("Section {"):]
@@ -6184,7 +6219,7 @@ class ToolConsistency1108Tests(unittest.TestCase):
         self.assertIn('message: { _ in Text("写真アプリの写真は消えません。") }', cats)
         self.assertNotIn("{ remove(scope) }", cats)
         # The note in the photo editor sits after the photos, not above them.
-        photos = section(self.evacuation, "private struct EvacuationCatEditor: View {", "private struct EvacuationPhoto: View {")
+        photos = section(self.evacuation, "private struct EvacuationCatEditor: View {", "private struct EvacuationPhotoPicker: View {")
         self.assertLess(photos.index('Section("写真と名前")'), photos.index("前に入れた内容を読み込めませんでした。"))
 
     def test_plain_actions_carry_no_decorative_icons(self) -> None:
@@ -6198,7 +6233,8 @@ class ToolConsistency1108Tests(unittest.TestCase):
         hub = section(self.evacuation, "struct EvacuationPreparationView: View {", "private func makeBook()")
         self.assertIn('Button("\\(name(of: cat))を見せる") { show(cat) }', hub)
         self.assertNotIn('"rectangle.portrait.on.rectangle.portrait")\n', hub)
-        self.assertIn('} label: { Text("避難用の写真を選ぶ") }', self.evacuation)
+        self.assertIn('LabeledContent(isGuest ? "名前と飼い主と一緒の写真" : "飼い主と一緒の写真",', self.evacuation)
+        self.assertNotIn("避難用の写真を選ぶ", self.evacuation)
         self.assertNotIn('Label(profile.displayName, systemImage: "cat")', self.showcase)
         # The make button looks the same in every tool.
         self.assertIn('Label("チラシを作る", systemImage: "doc.richtext")', self.lost)
@@ -6463,6 +6499,145 @@ class LostCatRoundTwoTests(unittest.TestCase):
         valid = section(self.renderer, "static func validationIssues(", "/// One output's own issues.")
         self.assertNotIn("story", valid)
         self.assertNotIn("smallPaper", valid)
+
+
+class IdentifyingPhotosOnePlace1109Tests(unittest.TestCase):
+    """11/9 (ツール見直し 6, 2 回目「共通」): 見分ける写真 are chosen once, in
+    「この子のこと」; 迷子・避難・預ける show them and open 「この子のこと」 to change
+    them. The rules run in ci/verify-cat-care.swift and ci/verify-tool-outputs.swift;
+    these check that the screens, outputs and stores use them."""
+
+    def setUp(self) -> None:
+        self.cat_care = source("NekoWidget/Views/CatCareView.swift")
+        self.store = source("NekoWidget/Services/CatCareStore.swift")
+        self.core = source("NekoWidget/Services/CatCareCore.swift")
+        self.lines = source("NekoWidget/Services/CatCareOutputLines.swift")
+        self.lost = source("NekoWidget/Views/CatPreparednessView.swift")
+        self.evacuation = source("NekoWidget/Views/EvacuationPreparationView.swift")
+        self.care = source("NekoWidget/Views/CareHandoffView.swift")
+        self.evacuation_store = source("NekoWidget/Services/EvacuationStore.swift")
+        self.care_store = source("NekoWidget/Services/CareHandoffStore.swift")
+
+    def test_the_rules_run_in_ci(self) -> None:
+        self.assertIn("try identifyingPhotos()", source("ci/verify-cat-care.swift"))
+        self.assertIn("try identifyingPhotosMoveToCatCare()", source("ci/verify-tool-outputs.swift"))
+        checks = source("ci/run-quick-ios-checks.sh")
+        self.assertIn("NekoWidget/Services/CatCareCore.swift ci/verify-cat-care.swift", checks)
+        self.assertIn("NekoWidget/Services/LostCatIncident.swift \\\n  ci/verify-tool-outputs.swift", checks)
+        self.assertIn('static let adoptionOrder = ["LostCat", "Evacuation", "CareHandoff"]', self.core)
+
+    def test_chosen_in_cat_care_open_on_the_page(self) -> None:
+        detail = section(self.cat_care, "struct CatCareDetailView: View {", "/// A field with its name always shown above it")
+        body = detail[detail.index("    var body: some View {"):]
+        # Open, not folded, before the four folds, so a tool's link lands on them.
+        self.assertLess(body.index("identifyingPhotosSection"), body.index('folded("basics", "基本"'))
+        photos = section(detail, "private var identifyingPhotosSection: some View {", "private func crop(")
+        self.assertIn("ForEach(CatCarePhotoRole.allCases) { role in", photos)
+        self.assertIn("ToolPhotoSlot(title, image: nil, file: file,", photos)
+        self.assertIn('Button("写真を選び直す", systemImage: "photo")', photos)
+        self.assertIn('Button("切り取る", systemImage: "crop")', photos)
+        # Taking one off sits in the slot's menu (349), and is saved as an answer.
+        self.assertIn('Button("\\(title)を外す", systemImage: "minus.circle", role: .destructive) {\n'
+                      '                            setPhoto(nil, role)', photos)
+        self.assertIn('header: {\n            Text("見分ける写真")', photos)
+        self.assertIn('static func photoTitle(_ role: CatCarePhotoRole) -> String { role == .face ? "顔の写真" : "全身の写真" }',
+                      detail)
+        save = section(detail, "private func setPhoto(", "/// The same count as the ring")
+        self.assertIn("state.cats[index].setIdentifyingPhoto(role, ref, editedAt: Date(), editedBy: state.deviceID)", save)
+        # A chosen or cropped photo is a clean copy kept by 「この子のこと」.
+        self.assertIn("guard let ref = store.savePhoto(jpeg, sourceAssetID: assetID, origin: .photos) else { return false }",
+                      detail)
+        self.assertIn("LostCatPhotoCropView(image: request.image) { data in", detail)
+        self.assertIn("guard let jpeg = CatCareFormat.cleanJPEG(data),", detail)
+        picker = section(self.cat_care, "private struct CatCareIdentifyingPhotoPicker: View {", "/// ② of every tool:")
+        self.assertIn("PhotosPicker(selection: $item, matching: .images)", picker)
+        self.assertIn("finish(data.flatMap { CatCareFormat.cleanJPEG($0) }, assetID: value.itemIdentifier)", picker)
+        self.assertIn(".announcesWhenShown(error)", picker)
+        self.assertIn("|| photoRole != nil || cropRequest != nil)", detail)
+
+    def test_tools_show_them_and_open_cat_care(self) -> None:
+        shared = section(self.cat_care, "struct ToolIdentifyingPhotos: View {", "extension ToolMakeBar where Top == EmptyView {")
+        self.assertIn("NavigationLink { CatCareSubjectView(subject: subject, profiles: profiles) } label: { content }", shared)
+        self.assertIn('.accessibilityHint("「この子のこと」で変えます")', shared)
+        self.assertIn('Text("「この子のこと」で変える").font(.footnote).foregroundStyle(.secondary)', shared)
+        self.assertNotIn("PhotosPicker", shared)
+        self.assertNotIn("choose:", shared)
+        slot = section(self.cat_care, "struct ToolPhotoSlot<Actions: View>: View {", "struct ToolPhotoGrid<Content: View>: View {")
+        # Shown only: no button to choose and no menu.
+        self.assertIn("if readOnly {\n                tile\n", slot)
+        self.assertIn("if hasPhoto && !readOnly {", slot)
+        readonly = section(self.cat_care, "extension ToolPhotoSlot where Actions == EmptyView {", "/// 見分ける写真 in a tool (11/9)")
+        self.assertIn("readOnly = true", readonly)
+        # Each tool: 「この子のこと」's photo once set there, else its own older one.
+        url = section(self.cat_care, "static func identifyingPhotoURL(", "/// The record for a tool's cat")
+        self.assertIn("CatCareIdentifyingPhotos.choice(record?.identifyingPhoto(role), legacy: legacy)", url)
+        self.assertIn('ToolIdentifyingPhotos(faceFile: files.face, bodyFile: files.body, subject: catCareSubject,', self.lost)
+        self.assertIn("CatCareSummary.identifyingPhotoURL(record, .face, legacy: store.imageURL(draft.faceFileName))", self.lost)
+        self.assertIn("CatCareSummary.identifyingPhotoURL(record, .body, legacy: store.imageURL(draft.bodyFileName))", self.lost)
+        self.assertIn('identifier: "evacuation-identifying-photos")', self.evacuation)
+        self.assertIn('showsBody: false, identifier: "care-photo-open")', self.care)
+        # 預ける and 避難 no longer choose a face or body photo themselves.
+        self.assertNotIn("CarePhotoPicker", self.care)
+        self.assertNotIn("store.replacePhoto(", self.care)
+        self.assertIn("ForEach([EvacuationCat.PhotoRole.withOwner]) { role in", self.evacuation)
+        self.assertNotIn("EvacuationCat.PhotoRole.allCases", self.evacuation)
+        # 迷子: only a cat with no 「この子のこと」 (an unregistered one) chooses here.
+        cat_section = section(self.lost, "private func catSection(", "private func incidentSection(")
+        self.assertLess(cat_section.index("if let catCareSubject, let files = catCarePhotoFiles {"),
+                        cat_section.index('photoTile("顔・毛柄の写真", role: .face'))
+        subject = section(self.lost, "private var catCareSubject: CatCareSubject? {", "/// 「この子のこと」's face and body photos")
+        self.assertIn("if let profile = profiles.first(where: { $0.identifier == key }) { return .profile(profile) }", subject)
+        self.assertIn("if let catID = LostCatCatCareKey.parse(key)?.catID { return .toolCat(id: catID, name: publicName) }", subject)
+        # The flyer follows a photo chosen there; the full photo is read off the drawing.
+        self.assertIn(".onChange(of: catCarePhotoKey) { _, _ in readCatCarePhotos() }", self.lost)
+        read = section(self.lost, "private func readCatCarePhotos() {", "    private func catCareTarget(for identity: String)")
+        self.assertIn("faceImage = face ?? whole", read)
+        self.assertIn("bodyImage = face == nil ? nil : whole", read)
+        self.assertIn("guard catCareTarget(for: identity) == nil else { return next }", self.lost)
+
+    def test_outputs_read_cat_care(self) -> None:
+        care = section(self.care_store, "func shareRecord(_ disclosure: CareHandoffDisclosure)", "private static func normalizedJPEG(")
+        self.assertIn("if cat.photoRemoved != true,", care)
+        self.assertIn("let url = CatCareSummary.identifyingPhotoURL(care, .face, legacy: imageURL(cat.photoName)) {", care)
+        self.assertNotIn("image(name)", care)
+        evacuation = section(self.evacuation_store, "func shareRecord(catID: UUID, disclosure: EvacuationDisclosure)",
+                             "func bookRecords()")
+        self.assertIn("for role in CatCarePhotoRole.allCases {", evacuation)
+        self.assertIn("CatCareSummary.identifyingPhotoURL(care, role, legacy: imageURL(cat.legacyIdentifyingPhoto(role)))",
+                      evacuation)
+        self.assertIn("if disclosure.withOwnerPhoto, let name = cat.photos[EvacuationCat.PhotoRole.withOwner.rawValue] {",
+                      evacuation)
+        self.assertLess(evacuation.index("for role in CatCarePhotoRole.allCases {"),
+                        evacuation.index("if disclosure.withOwnerPhoto"))
+
+    def test_older_photos_are_taken_in_once_and_kept(self) -> None:
+        importing = section(self.store, "    func importFromTools() {", "    func importFromTools(\n")
+        self.assertIn("adoptToolPhotos()", importing)
+        adopt = section(self.store, "    func adoptToolPhotos() {", "    nonisolated static func sources(")
+        self.assertIn("CatCareToolPhotos.all(", adopt)
+        self.assertIn("lost: lost.drafts,", adopt)
+        self.assertIn("guard canSave, let current = state else { return }", adopt)
+        self.assertIn("savePhoto(bytes, sourceAssetID: nil, origin: .importedFromTool)", adopt)
+        self.assertIn("CatCareIdentifyingPhotos.apply(adoption, ref: ref, to: &state, now: now)", adopt)
+        # Nothing of the tools is removed or rewritten by taking a photo in.
+        for gone in ("removeValue", "photoName = nil", "faceFileName = nil", "bodyFileName = nil", ".commit(", ".save("):
+            self.assertNotIn(gone, adopt)
+        # The older fields stay in the saved formats, optional as before.
+        self.assertIn("var faceFileName: String?", source("NekoWidget/Services/LostCatIncident.swift"))
+        self.assertIn("var bodyFileName: String?", source("NekoWidget/Services/LostCatIncident.swift"))
+        self.assertIn("var photos: [String: String] = [:]", source("NekoWidget/Services/EvacuationPlan.swift"))
+        self.assertIn("var photoName: String?", source("NekoWidget/Services/CareHandoffPlan.swift"))
+        self.assertIn("static let currentSchemaVersion = 1", self.core)
+        # The family notebook formats are not touched by this.
+        for name in ("CatCareToolPhotos", "identifyingPhoto", "CatCarePhotoRole"):
+            for path in ("NekoWidget/Services/FamilyNotebookCatCareBridge.swift",
+                         "NekoWidget/Services/FamilyNotebookToolBridge.swift"):
+                self.assertNotIn(name, source(path), path)
+        # 預ける starts 「この子のこと」 with the cat's key photo only when nothing was set there.
+        key_photo = section(self.care, "private static func useKeyPhotoForCatCare(", "\n}\n")
+        self.assertIn("return record == nil || record?.facePhoto == nil", key_photo)
+        self.assertIn("state.cats[index].facePhoto == nil else { return }", key_photo)
+        self.assertIn('editedBy: "import:Profile")', key_photo)
 
 
 if __name__ == "__main__":

@@ -7,6 +7,8 @@ struct EvacuationPreparationView: View {
     var unregisteredPhotos: [PhotoPresentation]
     @ObservedObject var store: EvacuationStore = .shared
     @ObservedObject var reuseStore: CareHandoffStore = .shared
+    /// 見分ける写真 are chosen in 「この子のこと」 (11/9): 「写真なし」 follows it.
+    @ObservedObject private var catCare = CatCareStore.shared
     @AppStorage("evacuation-review-reminder-dismissed") private var reminderDismissedAt: Double = 0
     @State private var confirmBook = false
     @State private var book: EvacuationExporter.Export?
@@ -202,7 +204,7 @@ struct EvacuationPreparationView: View {
     private var catsState: String {
         let cats = store.plan.cats
         if cats.isEmpty { return "まだありません" }
-        let noPhoto = cats.filter { $0.identificationPhoto == nil }.map { name(of: $0) }
+        let noPhoto = cats.filter { $0.identificationPhoto(store: store) == nil }.map { name(of: $0) }
         if !noPhoto.isEmpty { return "写真なし：" + noPhoto.joined(separator: "、") }
         return cats.map { name(of: $0) }.joined(separator: "、")
     }
@@ -214,7 +216,7 @@ struct EvacuationPreparationView: View {
         let cats = store.plan.cats
         return [
             !needed.isEmpty && needed.allSatisfy { !$0.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty },
-            !cats.isEmpty && cats.allSatisfy { $0.identificationPhoto != nil },
+            !cats.isEmpty && cats.allSatisfy { $0.identificationPhoto(store: store) != nil },
             !store.plan.destinations.isEmpty,
         ]
     }
@@ -262,9 +264,17 @@ struct EvacuationPreparationView: View {
 }
 
 private extension EvacuationCat {
-    /// A photo that tells this cat apart: its face, its body, or the usual one.
-    /// The photo with the owner does not count.
-    var identificationPhoto: String? { photos["face"] ?? photos["body"] ?? photos["reference"] }
+    /// A photo that tells this cat apart (11/9): the face or body photo of
+    /// 「この子のこと」, else this tool's older one (its face, the usual one,
+    /// its body). The photo with the owner does not count.
+    @MainActor func identifyingPhoto(_ role: CatCarePhotoRole, store: EvacuationStore) -> URL? {
+        let care = CatCareSummary.record(toolCatID: toolCatID ?? id, profileIdentifier: profileID)
+        return CatCareSummary.identifyingPhotoURL(care, role, legacy: store.imageURL(legacyIdentifyingPhoto(role)))
+    }
+
+    @MainActor func identificationPhoto(store: EvacuationStore) -> URL? {
+        identifyingPhoto(.face, store: store) ?? identifyingPhoto(.body, store: store)
+    }
 }
 
 private struct EvacuationSaveNotice: View {
@@ -784,22 +794,30 @@ private struct EvacuationCatView: View {
             if let cat {
                 ToolPurpose(text: "避難所で見せる、この子の避難メモを作ります。")
                 // The two steps, numbered, with a check once done (11/8 型).
-                let states = ToolStepState.states([cat.identificationPhoto != nil, true])
+                let states = ToolStepState.states([cat.identificationPhoto(store: store) != nil, true])
+                let subject: CatCareSubject = profiles.first(where: { $0.identifier == cat.profileID }).map(CatCareSubject.profile)
+                    ?? .toolCat(id: cat.toolCatID ?? cat.id, name: cat.name)
+                let isGuest = !profiles.contains { $0.identifier == cat.profileID }
                 Section {
-                    ToolAdaptiveStack {
-                        EvacuationPhoto(name: cat.identificationPhoto, store: store, label: "この子の写真")
-                            .frame(width: 80, height: 90)
-                        VStack(alignment: .leading, spacing: 7) {
-                            Text(profiles.first(where: { $0.identifier == cat.profileID })?.displayName ?? cat.displayName).font(.title2.bold())
-                            Text(CatCareSummary.features(catCareRecord(cat), legacy: cat.features) ?? "特徴は未記入")
-                                .font(.subheadline).foregroundStyle(.secondary)
-                        }
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text(profiles.first(where: { $0.identifier == cat.profileID })?.displayName ?? cat.displayName).font(.title2.bold())
+                        Text(CatCareSummary.features(catCareRecord(cat), legacy: cat.features) ?? "特徴は未記入")
+                            .font(.subheadline).foregroundStyle(.secondary)
                     }
+                    // 11/9: chosen in 「この子のこと」 only; shown here.
+                    ToolIdentifyingPhotos(faceFile: cat.identifyingPhoto(.face, store: store),
+                                          bodyFile: cat.identifyingPhoto(.body, store: store),
+                                          subject: subject, profiles: profiles,
+                                          identifier: "evacuation-identifying-photos")
+                    // The photo with the owner is for 避難 only, so it is chosen here.
                     NavigationLink {
                         EvacuationCatEditor(id: id,
                             ownPhotos: profiles.first(where: { $0.identifier == cat.profileID })?.confirmedPhotos ?? [],
                             otherPhotos: otherPhotos, store: store, reuseStore: reuseStore, profiles: profiles)
-                    } label: { Text("避難用の写真を選ぶ") }
+                    } label: {
+                        LabeledContent(isGuest ? "名前と飼い主と一緒の写真" : "飼い主と一緒の写真",
+                                       value: cat.photos["withOwner"] == nil ? "なし" : "あり")
+                    }
                         .accessibilityIdentifier("evacuation-cat-edit")
                 } header: { ToolStepHeader(number: 1, title: "見分ける写真", state: states[0]) }
                 Section {
@@ -889,8 +907,11 @@ private struct EvacuationCatEditor: View {
                         TextField("名前（任意）", text: text(\.name)).accessibilityIdentifier("evacuation-cat-name")
                             .foregroundStyle(Color.primary)
                     }
+                    // 11/9: the face and body photos are chosen in 「この子のこと」;
+                    // only the photo with the owner, for 避難 alone, is chosen here.
+                    // The older ones stay in the record, unread once taken in there.
                     ToolPhotoGrid {
-                        ForEach(EvacuationCat.PhotoRole.allCases.filter { $0 != .reference || cat.photos["reference"] != nil }) { role in
+                        ForEach([EvacuationCat.PhotoRole.withOwner]) { role in
                             ToolPhotoSlot(role.title, image: nil, file: store.imageURL(cat.photos[role.rawValue]),
                                           identifier: "evacuation-photo-\(role.rawValue)",
                                           actionsIdentifier: "evacuation-photo-actions-\(role.rawValue)",
@@ -910,7 +931,7 @@ private struct EvacuationCatEditor: View {
                     }
                 }
             }
-        }.navigationTitle("避難用の写真").navigationBarTitleDisplayMode(.inline)
+        }.navigationTitle("飼い主と一緒の写真").navigationBarTitleDisplayMode(.inline)
             .task {
                 guard !refreshedCandidates else { return }
                 refreshedCandidates = true
@@ -923,23 +944,6 @@ private struct EvacuationCatEditor: View {
                 }
             }
             .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
-    }
-}
-
-/// A small copy of the kept photo, made off the main thread (11/8); the
-/// memo itself still reads the full photo.
-private struct EvacuationPhoto: View {
-    let name: String?
-    let store: EvacuationStore
-    let label: String
-    @State private var image: UIImage?
-    var body: some View {
-        Group {
-            if let image { Image(uiImage: image).resizable().scaledToFit() }
-            else { Image(systemName: "photo.badge.plus").font(.title2).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(.secondarySystemGroupedBackground)) }
-        }.clipShape(RoundedRectangle(cornerRadius: 10)).accessibilityLabel(label)
-        .task(id: name) { image = await ToolPhotoThumbnail.load(store.imageURL(name)) }
     }
 }
 
@@ -958,7 +962,7 @@ private struct EvacuationPhotoPicker: View {
             Section {
                 PhotosPicker(selection: $item, matching: .images) { Label("写真アプリから選ぶ", systemImage: "photo.badge.plus") }
                     .disabled(busy)
-            } footer: { Text("顔や柄が分かる写真を選んでください。") }
+            } footer: { Text("飼い主と猫が一緒に写っている写真を選んでください。") }
             // 11/8: every offered photo, newest first; a photo whose cat is not
             // assigned yet is not hidden under 「ほかの猫の写真」.
             ToolRecentPhotoSection(photos: ownPhotos + otherPhotos, own: Set(ownPhotos.map(\.localIdentifier)),

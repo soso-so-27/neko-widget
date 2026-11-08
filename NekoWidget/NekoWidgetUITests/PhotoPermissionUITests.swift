@@ -2318,11 +2318,13 @@ final class SoloMemoriesUITests: XCTestCase {
         let edit = app.buttons["evacuation-cat-edit"]
         XCTAssertTrue(edit.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertFalse(app.buttons["evacuation-saved-E0260929-0000-0000-0000-000000000001"].exists)
-        for _ in 0..<5 where !edit.isHittable { app.swipeUp(velocity: .slow) }
-        edit.tap()
-        XCTAssertTrue(app.buttons["evacuation-photo-reference"].waitForExistence(timeout: 5))
+        // 11/9: the usual photo is taken into 「この子のこと」 as the face photo,
+        // and the cat's page shows it; it is changed there, not here.
+        let photos = app.buttons["evacuation-identifying-photos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 5), app.debugDescription)
+        for _ in 0..<5 where !photos.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertFalse(photos.label.contains("顔の写真、まだありません"), photos.label)
         capture("evacuation-autofill-general-photo-large-text")
-        app.navigationBars.buttons.element(boundBy: 0).tap()
         // The meal comes from 「この子のこと」, folded to one row under the steps
         // that opens the cat (349); every line is read on the made memo.
         let folded = app.descendants(matching: .any).matching(identifier: "evacuation-cat-care-fields-folded").firstMatch
@@ -2348,10 +2350,9 @@ final class SoloMemoriesUITests: XCTestCase {
         // The saved cat's page opens in place again (its own record now).
         let restoredEdit = app.buttons["evacuation-cat-edit"]
         XCTAssertTrue(restoredEdit.waitForExistence(timeout: 10), app.debugDescription)
-        for _ in 0..<5 where !restoredEdit.isHittable { app.swipeUp(velocity: .slow) }
-        restoredEdit.tap()
-        XCTAssertTrue(app.buttons["evacuation-photo-reference"].waitForExistence(timeout: 5))
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let restoredPhotos = app.buttons["evacuation-identifying-photos"]
+        XCTAssertTrue(restoredPhotos.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(restoredPhotos.label.contains("顔の写真、まだありません"), restoredPhotos.label)
         // After a restart the meal is still there. Later edits happen in
         // 「この子のこと」, which every tool reads, so nothing is copied again.
         let restoredFolded = app.descendants(matching: .any).matching(identifier: "evacuation-cat-care-fields-folded").firstMatch
