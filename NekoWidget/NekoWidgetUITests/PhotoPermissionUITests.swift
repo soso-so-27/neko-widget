@@ -3616,7 +3616,9 @@ final class SoloMemoriesUITests: XCTestCase {
         purchase.tap()
         let message = app.staticTexts["membership-offer-message"]
         XCTAssertTrue(message.waitForExistence(timeout: 5))
-        XCTAssertTrue(message.label.contains("確認を待っています"))
+        // 10/30 wording: wait for Apple's purchase, and do not buy again.
+        XCTAssertTrue(message.label.contains("購入手続きが終わるのを待っています"), message.label)
+        XCTAssertTrue(message.label.contains("もう一度購入せず"), message.label)
         XCTAssertFalse(purchase.isEnabled)
         XCTAssertFalse(app.staticTexts["membership-preview-result"].exists)
         let restore = app.buttons["membership-offer-restore"]
