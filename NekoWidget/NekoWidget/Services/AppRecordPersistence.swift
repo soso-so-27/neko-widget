@@ -1609,6 +1609,21 @@ final class AppRecordPersistence: ObservableObject {
               !(value.retiring ?? []).isEmpty, !busy, title == "保存済み", !failing else { throw ToolBackupError.storage }
     }
 
+    func verifyCommittedEditIsPending() async throws {
+        let fingerprint = try await AppRecordBackground.fingerprint()
+        guard requested, let value = try binding(), value.fingerprint != fingerprint else {
+            throw ToolBackupError.storage
+        }
+    }
+
+    func verifyCommittedEditWasSaved() async throws {
+        let fingerprint = try await AppRecordBackground.fingerprint()
+        guard let value = try binding(), value.pending == nil,
+              value.fingerprint == fingerprint, title == "保存済み" else {
+            throw ToolBackupError.storage
+        }
+    }
+
     func verifyEditingPublicationFences() async throws {
         guard let value = try binding(), let remote = try await remoteHead(AppRecordHead.id(origin: value.origin, owner: value.owner)) else { throw ToolBackupError.invalid }
         let record = try await index(remote.1)
@@ -3133,9 +3148,14 @@ private final class AppRecordFixture {
         await persistence.retry()
         await persistence.finishCleanupForFixture()
         await Task.yield()
-        guard persistence.title == "保存待ちの変更があります" else { throw ToolBackupError.storage }
+        // Commit notifications only schedule work; comparison and presentation
+        // happen on the next sync, not synchronously in the notification.
+        try await persistence.verifyCommittedEditIsPending()
+        guard try Data(contentsOf: url) == editedBytes else { throw ToolBackupError.storage }
+        Self.preparationPhase = "整理中の編集を次の同期で保存"
         await persistence.retry()
-        guard persistence.title == "保存済み" else { throw ToolBackupError.storage }
+        try await persistence.verifyCommittedEditWasSaved()
+        guard try Data(contentsOf: url) == editedBytes else { throw ToolBackupError.storage }
     }
     static func verifyDeletionJournalRoundTrip() throws {
         let bytes = Data("{}".utf8)
