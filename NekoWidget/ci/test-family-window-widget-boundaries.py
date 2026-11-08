@@ -4471,6 +4471,8 @@ class AutoSaveScreenLayoutTests(unittest.TestCase):
         stop = body[body.index("// Stopping on this iPhone"):]
         self.assertIn("if persistence.enabled, authentication.isSignedIn", stop)
         self.assertNotIn("savingSections", saving)
+        # Off: the kept-records box keeps 書き出す; space and records only while saving.
+        self.assertIn("if persistence.enabled, let quota = displayedQuota { ProductQuotaSummary(quota: quota) }", body)
 
 class ToolPageReview349Tests(unittest.TestCase):
     def test_tool_pages_share_spacing_and_the_folded_box_says_what_it_uses(self) -> None:

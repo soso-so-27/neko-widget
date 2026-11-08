@@ -90,5 +90,5 @@ SIGNIN_METHOD
 r=source.index("enum AppRecordRebinding {")
 re=source.index("\n}\n",r)+2
 program=program.replace("REBINDING",source[r:re])
-program=program.replace("SERVER_ENUM",client[step_start:step_end]).replace("SERVER_METHOD",method("NekoWidget/Services/ManagedPreservationClient.swift","    static func signInServerStep(_ code: String?) -> AuthenticationStep? {")).replace("ERROR_ENUM",source[a:b]).replace("BINDING_METHOD",method("NekoWidget/Services/AppRecordPersistence.swift","    private func binding() throws -> Binding? {")).replace("SIGNIN_METHOD",method("NekoWidget/Services/ManagedPreservationCoordinator.swift","    func prepareSignIn() {"))
+program=program.replace("SERVER_ENUM",client[step_start:step_end]).replace("SERVER_METHOD",method("NekoWidget/Services/ManagedPreservationClient.swift","    static func signInServerStep(_ code: String?) -> AuthenticationStep? {")).replace("ERROR_ENUM",source[a:b]).replace("BINDING_METHOD",method("NekoWidget/Services/AppRecordPersistence.swift","    nonisolated private func binding() throws -> Binding? {")).replace("SIGNIN_METHOD",method("NekoWidget/Services/ManagedPreservationCoordinator.swift","    func prepareSignIn() {"))
 Path(sys.argv[1]).write_text(program,encoding="utf-8")

@@ -1442,12 +1442,17 @@ enum ToolBackupTransfer {
     }
 }
 
-@MainActor
 enum ToolBackupValidation {
     private struct Showcase: Decodable {
         let entries: [ShowcasePhotoStore.Entry]
     }
     static func validate(_ index: ToolBackupIndex, at root: URL, authenticatedPhotos: [ToolBackupIndex.File] = []) async throws {
+        try await AppRecordBackground.run {
+            try await validateInBackground(index, at: root, authenticatedPhotos: authenticatedPhotos)
+        }
+    }
+    private static func validateInBackground(_ index: ToolBackupIndex, at root: URL, authenticatedPhotos: [ToolBackupIndex.File]) async throws {
+        precondition(!Thread.isMainThread)
         try index.validate()
         let decoder = JSONDecoder()
         var referenced = Set<String>()

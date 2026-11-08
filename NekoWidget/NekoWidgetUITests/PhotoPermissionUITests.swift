@@ -1523,7 +1523,22 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launchArguments = ["--app-records-ui-fixture", "--app-records-efficiency-probe",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
-        XCTAssertTrue(app.staticTexts["保存の回数・片づけの分離・編集の集約を確認しました"].waitForExistence(timeout: 120), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["保存中の停止を確認できます"].waitForExistence(timeout: 120), app.debugDescription)
+        app.buttons["保存・復元"].tap()
+        let pause = app.buttons["app-record-pause"]
+        for _ in 0..<4 where !pause.isHittable { app.swipeUp() }
+        XCTAssertTrue(pause.waitForExistence(timeout: 10), app.debugDescription)
+        pause.tap()
+        app.buttons["自動保存をやめる"].tap()
+        // Keep this screen open: reopening used to hide the stale-state bug.
+        for _ in 0..<4 where !app.buttons["app-record-enable"].isHittable { app.swipeDown() }
+        XCTAssertTrue(app.buttons["app-record-enable"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["自動保存はオフです"].exists, app.debugDescription)
+        XCTAssertFalse(app.buttons["app-record-pause"].exists, app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["app-record-quota-records"].exists, app.debugDescription)
+        capture("automatic-save-paused-without-reopening")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.staticTexts["保存の回数・片づけの分離・編集の集約を確認しました"].waitForExistence(timeout: 20), app.debugDescription)
         print(app.staticTexts["autosave-measurements"].label)
         capture("automatic-save-efficiency-and-cleanup-priority")
         app.terminate()
