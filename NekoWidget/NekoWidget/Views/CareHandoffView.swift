@@ -301,7 +301,7 @@ private struct CareCatEditor: View {
                             store.editCat(id) { $0.photoName = nil; $0.photoRemoved = true }
                         }
                     }
-                } header: { ToolStepHeader(number: 1, title: "写真", state: states[0]) }
+                } header: { ToolStepHeader(number: 1, title: "名前と写真", state: states[0]) }
                 Section {
                     CareField(label: "まず伝えたいこと", example: "例：玄関を開ける前に、猫が別の部屋にいるか確認", identifier: "care-important", text: text(\.important),
                               showsLabel: false)
@@ -344,6 +344,7 @@ private struct CareCatEditor: View {
                 }
             }
         }
+        .toolPageSpacing()
         .navigationTitle("預けるとき").navigationBarTitleDisplayMode(.inline)
         .task {
             CatCareStore.shared.importFromTools()
@@ -583,6 +584,7 @@ private struct CareDisclosureView: View {
             }
             if let error { Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) } }
         }.navigationTitle("メモを作る").navigationBarTitleDisplayMode(.inline)
+        .toolPageSpacing()
             .scrollDismissesKeyboard(.interactively)
             .announcesWhenShown(error)
             .onAppear {

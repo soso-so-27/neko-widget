@@ -251,6 +251,7 @@ struct LostCatDraftView: View {
                 }
             }
         }
+        .toolPageSpacing()
         .navigationTitle("迷子のとき")
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -267,7 +268,7 @@ struct LostCatDraftView: View {
                         .multilineTextAlignment(.center)
                 }
             } action: {
-                Button("チラシを作る") { openPreview() }
+                Button { openPreview() } label: { Text("チラシを作る").frame(maxWidth: .infinity) }
                     .disabled(!canPreview)
             }
         }

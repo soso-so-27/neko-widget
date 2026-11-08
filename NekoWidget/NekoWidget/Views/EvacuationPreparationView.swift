@@ -79,9 +79,10 @@ struct EvacuationPreparationView: View {
                         ToolImportantInformation(text: "災害のときは、まず自分と家族の安全を守ってください。")
                     }
                 }
+                .toolPageSpacing()
                 // The tool's one button sits in the bottom bar, as on the other tools.
                 .toolBottomBar {
-                    ToolMakeBar(missing: missingSteps, top: {
+                    ToolMakeBar(top: {
                         EvacuationSaveNotice(store: store, inBar: true)
                         if let bookError { Text(bookError).font(.footnote).foregroundStyle(.red) }
                     }) {
@@ -183,11 +184,6 @@ struct EvacuationPreparationView: View {
             !cats.isEmpty && cats.allSatisfy { $0.identificationPhoto != nil },
             !store.plan.destinations.isEmpty,
         ]
-    }
-
-    /// 「あと：…」 in the bottom bar: the steps not done yet.
-    private var missingSteps: [String] {
-        zip(["持ち出すもの", "猫の情報", "行き先と連絡先"], stepsDone).filter { !$0.1 }.map(\.0)
     }
 
     /// Something to put on paper: a cat, a place, or where an item is.
@@ -668,10 +664,11 @@ private struct EvacuationCatView: View {
                 }
             }
         }.navigationTitle("猫の情報").navigationBarTitleDisplayMode(.inline)
+        .toolPageSpacing()
             .announcesWhenShown(error)
             .toolBottomBar {
                 // The error sits by the button that caused it.
-                ToolMakeBar(missing: cat?.identificationPhoto == nil ? ["見分ける写真"] : [], top: {
+                ToolMakeBar(top: {
                     EvacuationSaveNotice(store: store, inBar: true)
                     if let error { Text(error).font(.footnote).foregroundStyle(.red) }
                 }) {

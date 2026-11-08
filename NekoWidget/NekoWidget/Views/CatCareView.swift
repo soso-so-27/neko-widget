@@ -1459,7 +1459,7 @@ struct ToolCatCareSection<Extra: View>: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("「この子のこと」から入ります").foregroundStyle(Color.primary)
-                        let summary = filled.prefix(3).map(\.1).joined(separator: "・")
+                        let summary = filled.prefix(4).map(\.0).joined(separator: "・") + (filled.count > 4 ? " など" : "")
                         if !summary.isEmpty {
                             Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }
@@ -1484,7 +1484,7 @@ struct ToolCatCareSection<Extra: View>: View {
                 NavigationLink("「この子のこと」を開く") { CatCareSubjectView(subject: subject, profiles: profiles) }
                     .accessibilityIdentifier(editIdentifier)
             }
-        } header: { Text(title) }
+        } header: { if !folded { Text(title) } }
           footer: { if let footer { Text(footer) } }
     }
 
@@ -1616,6 +1616,15 @@ struct ToolMakeBar<Top: View, Action: View>: View {
         .padding(.horizontal)
         .padding(.vertical, 10)
         .background(.regularMaterial)
+    }
+}
+
+extension View {
+    /// The same spacing on every tool page: the purpose line right under the
+    /// cat row, the steps close together (349: a tall gap above the purpose).
+    func toolPageSpacing() -> some View {
+        listSectionSpacing(.compact)
+            .contentMargins(.top, 4, for: .scrollContent)
     }
 }
 
