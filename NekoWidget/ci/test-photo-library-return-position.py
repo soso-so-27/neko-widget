@@ -7,6 +7,8 @@ Back from 「スクロール確認 8」 the memo list showed 13-16, because
    saved top row, and
 2. that top row was the first row the lazy stack had made, rows above the
    screen, instead of the first row still on screen.
+Coming back to the memo page from another page then showed the top, because
+the restore ran before the memos had loaded.
 """
 import re
 import unittest
@@ -81,8 +83,8 @@ def validate(home=HOME, notes=NOTES):
 
     # The memo page is one of these lists.
     reading = code(block(notes, "@ViewBuilder private var readingList: some View"))
-    if ".restoringPhotoLibraryPosition(section: positionSection," not in reading:
-        raise AssertionError("The memo list restores its place")
+    if ".restoringPhotoLibraryPosition(section: library.isLoaded ? positionSection : nil," not in reading:
+        raise AssertionError("The memo list restores its place once its memos are loaded")
     if ".photoLibraryReadingRow(item.id, index: index)" not in code(notes):
         raise AssertionError("Memo rows report their place")
 
@@ -111,6 +113,8 @@ class ReturnPositionContracts(unittest.TestCase):
         ):
             with self.subTest(), self.assertRaises(AssertionError):
                 validate(source, NOTES)
+        with self.assertRaises(AssertionError):
+            validate(HOME, NOTES.replace("section: library.isLoaded ? positionSection : nil,", "section: positionSection,", 1))
 
     def test_made_rows_above_the_screen_are_not_the_top(self):
         rows = [f"note-{label}" for label in range(24, 0, -1)]
