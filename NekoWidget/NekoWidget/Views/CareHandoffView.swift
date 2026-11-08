@@ -197,11 +197,15 @@ private struct CareField: View {
     @Binding var text: String
     var limit = 4000
     var isPrefilled = false
+    /// Off when the step's heading already says the same words (11/8 型).
+    var showsLabel = true
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(label).font(.subheadline.weight(.medium))
-                if isPrefilled { Text("前に入れた内容").font(.caption).foregroundStyle(.secondary) }
+            if showsLabel || isPrefilled {
+                HStack {
+                    if showsLabel { Text(label).font(.subheadline.weight(.medium)) }
+                    if isPrefilled { Text("前に入れた内容").font(.caption).foregroundStyle(.secondary) }
+                }
             }
             TextField(example, text: Binding(get: { text }, set: { text = String($0.prefix(limit)) }), axis: .vertical)
                 .lineLimit(1...8).frame(minHeight: 36)
@@ -257,12 +261,25 @@ private struct CareCatEditor: View {
                            lines: CatCareSummary.careHandoffLines(care, legacy: cat) + health + vet, subject: subject,
                            footer: CareHandoffDisclosure.written(health).isEmpty && vet.isEmpty
                                ? nil : "薬と連絡先は、次の画面で選ぶと載ります。",
-                           identifier: "care-cat-care-fields", editIdentifier: "care-open-cat-care", profiles: profiles)
+                           identifier: "care-cat-care-fields", editIdentifier: "care-open-cat-care", profiles: profiles,
+                           folded: true)
+    }
+
+    /// Where the three steps stand (11/8 型): photo, what to say first, when to call.
+    private func stepStates(_ cat: CareCat) -> [ToolStepState] {
+        ToolStepState.states([cat.photoName != nil, Self.isFilled(cat.important), Self.isFilled(cat.callWhen)])
+    }
+    static func isFilled(_ text: String?) -> Bool {
+        !(text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
         Form {
             if let cat {
+                let states = stepStates(cat)
+                Section { ToolPurpose(text: "預ける人に渡すお世話メモを作ります。") }
+                // 11/8 型: numbered steps first, what is written this time above
+                // what is read from 「この子のこと」.
                 Section {
                     if let profile = profiles.first(where: { $0.identifier == cat.profileID }) {
                         // The cat's dates are in この子のこと below; the name stays here (11/7).
@@ -284,20 +301,17 @@ private struct CareCatEditor: View {
                             store.editCat(id) { $0.photoName = nil; $0.photoRemoved = true }
                         }
                     }
-                }
-                if candidateRefreshError {
-                    Text("前に入れた内容を読み込めませんでした。")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                // 11/8: what is written this time comes first, above what is read
-                // from 「この子のこと」.
+                } header: { ToolStepHeader(number: 1, title: "写真", state: states[0]) }
                 Section {
-                    CareField(label: "まず伝えたいこと", example: "例：玄関を開ける前に、猫が別の部屋にいるか確認", identifier: "care-important", text: text(\.important))
+                    CareField(label: "まず伝えたいこと", example: "例：玄関を開ける前に、猫が別の部屋にいるか確認", identifier: "care-important", text: text(\.important),
+                              showsLabel: false)
+                } header: { ToolStepHeader(number: 2, title: "まず伝えたいこと", state: states[1]) }
+                Section {
                     CareField(label: "こんなときは連絡を", example: "例：丸1日ごはんを食べない、何度も吐く、トイレに行ってもおしっこが出ない",
                               identifier: "care-call-when",
                               text: Binding(get: { self.cat?.callWhen ?? "" }, set: { new in
                                   store.editCat(id) { $0.callWhen = new.isEmpty ? nil : new }
-                              }))
+                              }), showsLabel: false)
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
                             ForEach(Self.callWhenChoices, id: \.self) { choice in
@@ -311,14 +325,22 @@ private struct CareCatEditor: View {
                         }
                     }
                     .accessibilityIdentifier("care-call-when-choices")
-                }
+                } header: { ToolStepHeader(number: 3, title: "こんなときは連絡を", state: states[2]) }
                 catCareSection(cat)
                 // Period and request are written once, where the memo is made
                 // (347: a family cat had a second form here, and what was typed
                 // there replaced the memo's own). Family cats get the same values.
-                if cat.familyDetached == true { Text("このメモは、家族の手帳には入っていません。").font(.footnote).foregroundStyle(.secondary) }
+                // 11/8 型: notes and delete, last and small.
                 Section {
+                    if cat.familyDetached == true {
+                        Text("このメモは、家族の手帳には入っていません。").font(.footnote).foregroundStyle(.secondary)
+                    }
+                    if candidateRefreshError {
+                        Text("前に入れた内容を読み込めませんでした。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
                     Button("このお世話メモを削除", role: .destructive) { deleteRequested = true }
+                        .font(.footnote)
                 }
             }
         }
@@ -343,13 +365,14 @@ private struct CareCatEditor: View {
             }
         } message: { Text("この子のお世話メモだけを削除します。") }
         .toolBottomBar {
-            VStack(spacing: 6) {
-                CareSaveNotice(store: store)
+            // NN/g: the button names the next step.
+            ToolMakeBar(top: { CareSaveNotice(store: store) }) {
                 NavigationLink { CareDisclosureView(store: store, currentCatID: id) } label: {
-                    Label("メモを作る", systemImage: "doc.text").frame(maxWidth: .infinity, minHeight: 44)
-                }.buttonStyle(.borderedProminent).disabled(store.saveError != nil)
-                    .accessibilityIdentifier("care-disclosure-open")
-            }.padding().background(.regularMaterial)
+                    Text("次へ：期間とお願い").frame(maxWidth: .infinity)
+                }
+                .disabled(store.saveError != nil)
+                .accessibilityIdentifier("care-disclosure-open")
+            }
         }
     }
 
@@ -502,16 +525,27 @@ private struct CareDisclosureView: View {
         return result
     }
 
+    /// Where the three steps stand (11/8 型): the period, a chosen cat, and
+    /// what to include (done once the page is seen: the choices start set).
+    private var stepStates: [ToolStepState] {
+        ToolStepState.states([
+            CareCatEditor.isFilled(store.plan.requestText(\.period, \.period, chosen: disclosure.catIDs)),
+            !disclosure.catIDs.isEmpty,
+            true,
+        ])
+    }
+
     var body: some View {
+        let states = stepStates
         List {
             // 11/8: this time's period and request first, where the memo is made.
             Section {
                 CareField(label: "お願いする相手", example: "例：お母さん", identifier: "care-recipient", text: request(\.recipient, \.recipient))
                 CareField(label: "期間", example: "例：10月5日 夜〜10月7日 朝", identifier: "care-period", text: request(\.period, \.period))
                 CareField(label: "ほかにお願いしたいこと", example: "例：お世話が終わったら写真を1枚送ってください", identifier: "care-request", text: request(\.request, \.request))
-            } header: { Text("期間とお願い")
+            } header: { ToolStepHeader(number: 1, title: "期間とお願い", state: states[0])
             } footer: { ToolImportantInformation(text: "住所や鍵の番号は、別の方法で伝えてください。") }
-            Section("今回お願いする猫") {
+            Section {
                 ForEach(cats) { cat in
                     let selected = disclosure.catIDs.contains(cat.id)
                     Button {
@@ -527,7 +561,7 @@ private struct CareDisclosureView: View {
                         .accessibilityValue(selected ? "選択済み" : "未選択")
                         .accessibilityIdentifier("care-select-\(cat.id.uuidString)")
                 }
-            }
+            } header: { ToolStepHeader(number: 2, title: "お願いする猫", state: states[1]) }
             Section {
                 Toggle("薬・持病・アレルギーを載せる", isOn: $disclosure.health).accessibilityIdentifier("care-disclose-health")
                 Toggle("連絡先・動物病院を載せる", isOn: $disclosure.contacts).accessibilityIdentifier("care-disclose-contacts")
@@ -538,6 +572,7 @@ private struct CareDisclosureView: View {
                     }
                     .accessibilityIdentifier("care-contacts")
                 }
+            } header: { ToolStepHeader(number: 3, title: "載せるもの", state: states[2])
             } footer: { Text("写真・名前・お世話・お願いは、いつも載ります。") }
             if !unwritten.isEmpty {
                 Section {
@@ -575,18 +610,18 @@ private struct CareDisclosureView: View {
                 }
             }
             .toolBottomBar {
-                VStack(spacing: 6) {
-                    CareSaveNotice(store: store)
+                // The button has the name of what it makes (11/8 型).
+                ToolMakeBar(missing: disclosure.catIDs.isEmpty ? ["お願いする猫"] : [],
+                            top: { CareSaveNotice(store: store) }) {
                     Button {
                         do { preview = CarePreview(record: try store.shareRecord(disclosure)); error = nil }
                         catch { self.error = (error as? CareHandoffError)?.errorDescription ?? "表示できませんでした。もう一度お試しください。" }
                     } label: {
-                        Label("この内容で作る", systemImage: "doc.text").frame(maxWidth: .infinity, minHeight: 44)
+                        Label("お世話メモを作る", systemImage: "doc.text").frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
                     .disabled(disclosure.catIDs.isEmpty || store.saveError != nil)
                     .accessibilityIdentifier("care-preview-open")
-                }.padding().background(.regularMaterial)
+                }
             }
     }
 }

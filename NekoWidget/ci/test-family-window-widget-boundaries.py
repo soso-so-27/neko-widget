@@ -3564,7 +3564,7 @@ class CareHandoffReviewTests(unittest.TestCase):
     def test_making_screen_order_defaults_and_steps(self) -> None:
         making = section(self.view, "private struct CareDisclosureView: View {", "private struct CareDisplayView: View {")
         # Period and request at the top; contacts shown once here.
-        self.assertLess(making.index('Text("期間とお願い")'), making.index('Section("今回お願いする猫")'))
+        self.assertLess(making.index('title: "期間とお願い"'), making.index('title: "お願いする猫"'))
         self.assertIn('label: "ほかにお願いしたいこと"', making)
         self.assertIn("CareHandoffDisclosure.contactFields(plan: store.plan", making)
         self.assertIn("store.clearStaleRequest()", making)
@@ -3607,6 +3607,71 @@ class CareHandoffReviewTests(unittest.TestCase):
         self.assertNotIn("もう一度消す", self.view)
         self.assertIn("store.retryPhotoCleanup()", self.view)
         self.assertIn("func retryPhotoCleanup()", self.plan)
+
+    def test_both_pages_follow_the_input_page_shape(self) -> None:
+        """ねこのまど_ツール入力ページの型_1108: purpose, numbered steps, folded
+        「この子のこと」, notes last, one button at the bottom."""
+        editor = section(self.view, "private struct CareCatEditor: View {", "private struct CarePhoto: View {")
+        body = editor[editor.index("var body: some View {"):]
+        self.assertIn('ToolPurpose(text: "預ける人に渡すお世話メモを作ります。")', body)
+        order = [body.index('ToolPurpose(text:'),
+                 body.index('ToolStepHeader(number: 1, title: "写真", state: states[0])'),
+                 body.index('ToolStepHeader(number: 2, title: "まず伝えたいこと", state: states[1])'),
+                 body.index('ToolStepHeader(number: 3, title: "こんなときは連絡を", state: states[2])'),
+                 body.index("catCareSection(cat)"),
+                 body.index("このメモは、家族の手帳には入っていません。"),
+                 body.index("前に入れた内容を読み込めませんでした。"),
+                 body.index('Button("このお世話メモを削除", role: .destructive)'),
+                 body.index(".toolBottomBar {")]
+        self.assertEqual(order, sorted(order))
+        # The photo heading sits over the name, photo and its two buttons.
+        photo = body[body.index('Section {\n                    if let profile'):body.index('title: "写真"')]
+        for part in ('identifier: "care-cat-name"', '"care-photo-open"', '"このメモの写真を外す"'):
+            self.assertIn(part, photo)
+        self.assertIn("ToolStepState.states([cat.photoName != nil, Self.isFilled(cat.important), Self.isFilled(cat.callWhen)])", editor)
+        self.assertIn(".trimmingCharacters(in: .whitespacesAndNewlines).isEmpty", editor)
+        # The field under a heading of the same words does not repeat it, but
+        # VoiceOver still reads its name.
+        self.assertIn('identifier: "care-important", text: text(' + chr(92) + '.important),\n                              showsLabel: false)', body)
+        self.assertIn("}), showsLabel: false)", body)
+        self.assertIn(".accessibilityLabel(label).accessibilityIdentifier(identifier)", self.view)
+        self.assertIn("if showsLabel { Text(label)", self.view)
+        # 「この子のこと」 is folded to one row; its footer stays.
+        cat_care = section(editor, "@ViewBuilder private func catCareSection(", "/// Where the three steps stand")
+        self.assertIn("folded: true)", cat_care)
+        self.assertIn('"薬と連絡先は、次の画面で選ぶと載ります。"', cat_care)
+        bar = body[body.index(".toolBottomBar {"):]
+        self.assertIn("ToolMakeBar(top: { CareSaveNotice(store: store) }) {", bar)
+        self.assertIn("NavigationLink { CareDisclosureView(store: store, currentCatID: id) }", bar)
+        self.assertIn(".disabled(store.saveError != nil)", bar)
+        self.assertIn('.accessibilityIdentifier("care-disclosure-open")', bar)
+
+        making = section(self.view, "private struct CareDisclosureView: View {", "private struct CareDisplayView: View {")
+        page = making[making.index("    var body: some View {"):]
+        order = [page.index('ToolStepHeader(number: 1, title: "期間とお願い", state: states[0])'),
+                 page.index('ToolStepHeader(number: 2, title: "お願いする猫", state: states[1])'),
+                 page.index('ToolStepHeader(number: 3, title: "載せるもの", state: states[2])'),
+                 page.index('"care-unwritten"'),
+                 page.index("if let error { Section"),
+                 page.index(".toolBottomBar {")]
+        self.assertEqual(order, sorted(order))
+        self.assertNotIn('Section("今回お願いする猫")', making)
+        # Period done, at least one cat, and 載せるもの done once seen.
+        states = section(making, "private var stepStates: [ToolStepState] {", "var body: some View {")
+        self.assertIn(r"CareCatEditor.isFilled(store.plan.requestText(\.period, \.period, chosen: disclosure.catIDs))", states)
+        self.assertIn("!disclosure.catIDs.isEmpty,", states)
+        self.assertIn("true,", states)
+        # The period and request stay written in one place.
+        self.assertIn("store.update { $0.setRequestText(new, key, planKey, chosen: disclosure.catIDs) }", making)
+        bar = page[page.index(".toolBottomBar {"):]
+        self.assertIn('ToolMakeBar(missing: disclosure.catIDs.isEmpty ? ["お願いする猫"] : [],', bar)
+        self.assertIn("top: { CareSaveNotice(store: store) }", bar)
+        self.assertIn("preview = CarePreview(record: try store.shareRecord(disclosure))", bar)
+        self.assertIn(".disabled(disclosure.catIDs.isEmpty || store.saveError != nil)", bar)
+        self.assertIn('.accessibilityIdentifier("care-preview-open")', bar)
+        # The shared parts are used, not copied.
+        for name in ("struct ToolStepHeader", "struct ToolMakeBar", "struct ToolPurpose", "enum ToolStepState"):
+            self.assertNotIn(name, self.view)
 
     def test_pdf_with_several_cats_says_shared_things_once(self) -> None:
         self.assertIn("let sharedFirstPage = record.cats.count > 1", self.exporter)
@@ -3836,8 +3901,11 @@ class ToolFlowTests(unittest.TestCase):
         self.assertIn('shareButton("PDFで渡す", pdf: true)', care)
         self.assertIn('"evacuation-share-pdf"', evacuation)
         self.assertIn('"vet-export-pdf"', vet)
-        # The button says where it goes.
-        self.assertIn('Label("メモを作る", systemImage: "doc.text")', care)
+        # The button says where it goes: the next step's name (11/8 型).
+        self.assertIn('Text("次へ：期間とお願い")', care)
+        self.assertIn('.navigationTitle("メモを作る")', care)
+        self.assertIn('Label("お世話メモを作る", systemImage: "doc.text")', care)
+        self.assertNotIn('"この内容で作る"', care)
         self.assertNotIn('"渡す内容を選ぶ"', care)
         self.assertNotIn("できあがりを見る", care)
         self.assertIn('.navigationTitle("病院で見せる")', vet)
