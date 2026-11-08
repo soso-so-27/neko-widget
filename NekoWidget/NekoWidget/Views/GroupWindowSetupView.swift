@@ -96,7 +96,7 @@ enum GroupWindowPresentation {
 
     /// The window keeps everything; only new photos stop. Never says
     /// "deleted", never blames the members.
-    static let pausedDetail = "新しい写真は届きません。これまでの写真・メンバー・ハートはそのままです。"
+    static let pausedDetail = "これまでの写真はそのままで、新しい写真だけ届きません。"
 
     static func pausedOwnerName(_ window: GroupWindow) -> String {
         window.members.first { $0.id == window.ownerParticipantID }?.displayName
@@ -405,9 +405,6 @@ struct GroupWindowScreenCapabilities: Equatable, Sendable {
 struct GroupWindowMembersView: View {
     @ObservedObject var model: GroupWindowMembersModel
     var capabilities: GroupWindowScreenCapabilities = .full
-    /// Builds the model for the one Plus screen ("このまどを続ける"). Nil hides
-    /// the button and points to Settings instead.
-    var plusOfferModel: (@MainActor () -> MembershipOfferModel)? = { .live() }
     /// After leaving: closes the window the members screen was opened from.
     var onLeft: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
@@ -415,8 +412,6 @@ struct GroupWindowMembersView: View {
     @State private var showsRemoval = false
     @State private var showsRevokeConfirmation = false
     @State private var showsLeaveConfirmation = false
-    @State private var showsPlusOffer = false
-    @Environment(\.membershipAccess) private var membershipAccess
     @State private var showsRename = false
     @State private var showsCloseConfirmation = false
     @State private var rejectionTarget: GroupJoinRequest?
@@ -437,7 +432,7 @@ struct GroupWindowMembersView: View {
     /// Renaming, Plus or a confirmation is open: the list underneath is not
     /// redrawn by the 8-second pass (11/5: the screen moved under the person).
     private var presentsSheet: Bool {
-        showsRename || showsPlusOffer || showsRemoval || showsRevokeConfirmation
+        showsRename || showsRemoval || showsRevokeConfirmation
             || showsLeaveConfirmation || showsCloseConfirmation || rejectionTarget != nil
             || sharingInvitation != nil || restoreTarget != nil
     }
@@ -515,17 +510,6 @@ struct GroupWindowMembersView: View {
             let kept = seenAdmissions.split(separator: ",").map(String.init) + shown
             seenAdmissions = kept.suffix(200).joined(separator: ",")
         }
-        .sheet(isPresented: $showsPlusOffer, onDismiss: {
-            NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
-            Task { await model.load() }
-        }) {
-            if let plusOfferModel {
-                // ADR-027 5章 "このまどを続ける": the same single subscription.
-                MembershipOfferSheet(model: plusOfferModel(), context: .continueWindow) { _ in
-                    showsPlusOffer = false
-                }
-            }
-        }
         .confirmationDialog(
             removalTarget.map { "\(GroupDisplayName.withSan($0.displayName))をこのまどから外しますか？" } ?? "外しますか？",
             isPresented: $showsRemoval,
@@ -600,59 +584,34 @@ struct GroupWindowMembersView: View {
                     .accessibilityIdentifier("group-window-reports")
             }
         } footer: {
-            Text(reports
-                 ? "困る写真が届いたら、写真の「…」から通報やブロックができます。"
-                 : "困る写真が届いたときは、写真の「…」から、その人の写真を表示しないようにできます。")
+            // 11/8: the photo's 「…」 offers ブロック and 通報 only.
+            Text("困る写真は、写真の「…」から通報・ブロックできます。")
         }
     }
 
     /// Shown while the creator's Plus is not active. Everything stays; only
-    /// new photos stop. Members are told who can resume it, and how to start
-    /// their own window instead.
+    /// new photos stop. 11/8 (30): 「このまどを続ける」 is on the window's own
+    /// card only; here the state and one sentence.
     private func pausedSection(_ window: GroupWindow) -> some View {
         Section {
             VStack(alignment: .leading, spacing: 8) {
                 Label("このまどは止まっています", systemImage: "pause.circle")
                     .font(.headline)
-                Text(GroupWindowPresentation.pausedDetail)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
                 if !GroupWindowPresentation.isMyWindow(window) {
                     Text("\(GroupWindowPresentation.pausedOwnerPhrase(window))がPlusを続けると、また届くようになります。")
                         .font(.subheadline)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("group-window-paused-member")
+                } else {
+                    Text(GroupWindowPresentation.pausedDetail)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(.vertical, 4)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("group-window-paused")
-            if GroupWindowPresentation.isMyWindow(window) {
-                if membershipAccess.hasPersonalPlus() {
-                    // This iPhone has Plus but the server does not see it yet:
-                    // check it again right here, never the offer (11/5), the
-                    // same button as elsewhere, not a restore sheet (11/7).
-                    MembershipRestoreButton(title: "Plusをもう一度確かめる", look: .wide,
-                                            identifier: "group-window-restore-plus") {
-                        Task { await model.load() }
-                    }
-                } else if plusOfferModel != nil {
-                    Button {
-                        showsPlusOffer = true
-                    } label: {
-                        Text("このまどを続ける")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("group-window-continue-plus")
-                } else {
-                    Text("設定のPlusから続けられます。")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            }
             // A member of a paused window is told who can resume it, and
             // nothing more: this screen does not sell a window of their own.
         }
@@ -733,8 +692,6 @@ struct GroupWindowMembersView: View {
                 }
             } header: {
                 Text("これから参加する人")
-            } footer: {
-                Text("参加したあとでも外せます。")
             }
         }
         Section {
@@ -844,8 +801,7 @@ struct GroupWindowMembersView: View {
             }
             if window.canManage {
                 HStack(spacing: 12) {
-                    Text("知らない人なら断れます。")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
                     Button {
                         rejectionTarget = request
                     } label: {
@@ -865,11 +821,9 @@ struct GroupWindowMembersView: View {
     private func invitationSection(_ window: GroupWindow) -> some View {
         Section {
             if let invitation = model.activeInvitation {
-                Text(GroupWindowPresentation.inviteMessage(windowName: window.name))
-                    .font(.subheadline)
-                    .fixedSize(horizontal: false, vertical: true)
                 // The link itself is never drawn; it travels only through
-                // the share sheet, so a screenshot cannot leak it.
+                // the share sheet, so a screenshot cannot leak it. 11/8 (17):
+                // the message it carries and its expiry are not shown here.
                 Button { sharingInvitation = invitation } label: {
                     Label("招待リンクを送る", systemImage: "square.and.arrow.up")
                         .font(.headline)
@@ -877,10 +831,6 @@ struct GroupWindowMembersView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("group-window-share-invitation")
-                LabeledContent(
-                    "有効期限",
-                    value: invitation.expiresAt.formatted(.dateTime.month().day().hour().minute())
-                )
                 Button(role: .destructive) {
                     showsRevokeConfirmation = true
                 } label: {
@@ -949,10 +899,6 @@ struct GroupWindowMembersView: View {
             }
         } header: {
             Text("招待")
-        } footer: {
-            // The person joining waits a moment (「参加の手続き中です」), as the
-            // request row says 「まもなく参加します」 (11/7).
-            Text("リンクから「参加する」を押した人は、まもなくメンバーになります。")
         }
     }
 
@@ -1020,7 +966,7 @@ struct GroupWindowMembersView: View {
 
 /// 11/7 (W10): who this iPhone hides or blocks in the window, read from what
 /// it keeps, and the question before showing them again. The restore is the
-/// same one 設定「表示しない・ブロックした人」 uses.
+/// same one 設定「ブロックした人」 uses (people hidden before 11/8 included).
 private struct GroupHiddenMemberDialogs: ViewModifier {
     let windowID: String
     @Binding var target: GroupWindowLocalPhotoStore.HiddenMember?
@@ -1865,10 +1811,7 @@ struct GroupWindowUIFixtureRoot: View {
         if GroupWindowUIFixture.showsJoin {
             GroupJoinView(model: joinModel, onOpenWindow: {})
         } else {
-            GroupWindowMembersView(
-                model: membersModel,
-                plusOfferModel: { .preview() }
-            )
+            GroupWindowMembersView(model: membersModel)
         }
     }
 }

@@ -82,6 +82,35 @@ class InternalPresentationBoundaryTests(unittest.TestCase):
                 with self.subTest(defines=defines, token=token):
                     self.assertIn(token, combined)
 
+    def test_owner_decisions_1108_keep_internal_only_screens_and_words_out_of_public(self):
+        # B: 「保存したコピー」, its copies and saving/restoring by hand; A: 「復元したツール」.
+        # 37/38: the internal pilot's storage words and the internal report notice.
+        internal_only = ('recordsSection', 'detailSection', 'toolBackupSection', 'pendingMemoSection',
+                         'RestoredToolsView', 'RestoredToolWorkspace', '"preservation-restore-tools"',
+                         '"preservation-export-all"', '"内部テスト', '"保管枠を確認"',
+                         '"この内部版では通報の受付を停止しています。"', '"利用期間内は購入なしで保管できます。')
+        public = self.sources()
+        for path, source in public.items():
+            for token in internal_only:
+                with self.subTest(path=path, token=token):
+                    self.assertNotIn(token, source)
+        for defines in ({'INTERNAL_PRESENTATION'}, {'DEBUG'}):
+            combined = chr(10).join(self.sources(defines).values())
+            for token in internal_only:
+                with self.subTest(defines=defines, token=token):
+                    self.assertIn(token, combined)
+        # The code stays, and App Store builds still restore through 自動保存.
+        view = public[str(Path('NekoWidget/Views/ManagedPreservationView.swift'))]
+        self.assertIn('if allowsRecordBrowsing { savedCopiesSections }', view)
+        self.assertIn('else if coordinator.selected != nil { selectedCopySection }', view)
+        saving = public[str(Path('NekoWidget/Services/AppRecordPersistence.swift'))]
+        self.assertIn('Text("前のiPhoneから戻す")', saving)
+        self.assertIn('NavigationLink("自動保存のアカウント") { ManagedPreservationView() }', saving)
+        report = public[str(Path('NekoWidget/Views/GroupWindowView.swift'))]
+        self.assertIn('Text(GroupReportUnavailableText.message)', report)
+        client = public[str(Path('NekoWidget/Services/ManagedPreservationClient.swift'))]
+        self.assertIn('case .pilotRegistrationPending(let reference): Self.pilotRegistrationText(reference)', client)
+
     def test_public_availability_cannot_read_runtime_internal_mode(self):
         source = selected_source((ROOT / 'Shared/Models/OfficialWindowCatalog.swift').read_text(encoding='utf-8'))
         availability = source.split('enum InternalBuildPresentationAvailability {', 1)[1].split('enum Version1', 1)[0]

@@ -1,6 +1,12 @@
 import SwiftUI
 import UIKit
 
+// 11/8 (A): App Store builds do not offer 「復元したツール」. It opens only from
+// 「保存したコピー」, which is internal and DEBUG only (ManagedPreservationView),
+// so testers' restored copies stay reachable there. Bringing a restored copy
+// into the everyday tools needs a merge that does not exist yet; until then
+// nothing is merged, moved or deleted.
+#if DEBUG || INTERNAL_PRESENTATION
 struct RestoredToolsView: View {
     @State private var backups: [ToolBackupFiles.Saved] = []
     @State private var failed = false
@@ -149,6 +155,7 @@ private struct RestoredToolWorkspace: View {
 private extension String {
     var nonEmpty: String? { isEmpty ? nil : self }
 }
+#endif
 
 #if DEBUG
 /// Synthetic owner and files only. Exercises the shipping client/transfer/stores.

@@ -25,6 +25,9 @@ struct EvacuationCat: Codable, Equatable, Identifiable {
     var medicalDetails = ""
     var photos: [String: String] = [:]
     var updatedAt = Date()
+    /// Before 11/8 each cat had its own 「内容を確かめた日」. Kept so older plans
+    /// still decode (and an owner-checked record stays out of candidate
+    /// refresh); no longer set or shown: the plan has one 「最後に見直した日」.
     var reviewedAt: Date?
     var displayName: String { name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "名前未設定の猫" : name }
     var medicalText: String {
@@ -59,6 +62,8 @@ struct EvacuationDestination: Codable, Equatable, Identifiable {
     var conditions = ""
     var source = ""
     var telephone = ""
+    /// Before 11/8 each place had its own 「確かめた日」. Kept so older plans
+    /// still decode; no longer set or shown (one 「最後に見直した日」, 11/8).
     var checkedAt: Date?
     /// Added 11/8. Optional so places saved before still decode.
     var address: String?
@@ -106,7 +111,7 @@ struct EvacuationPlan: Codable, Equatable {
     /// Added 11/8, optional so older plans still decode. The half-year review
     /// counts from here; older plans use the earliest date they have.
     var createdAt: Date?
-    /// The last time an item was checked: 「最後にそろえた日」.
+    /// The last time an item was checked: 「最後に見直した日」 (lastReadyDate).
     var lastCheckedAt: Date?
 
     var photoNames: Set<String> { Set(cats.flatMap { $0.photos.values }) }
@@ -198,7 +203,9 @@ struct EvacuationPlan: Codable, Equatable {
         lastCheckedAt = nil
     }
 
-    /// 「最後にそろえた日」; plans saved before 11/8 only have the day checking began.
+    /// 「最後に見直した日」 (11/8): the one date shown, on the list, the memo and
+    /// the PDF, and the half-year review counts from it. Plans saved before
+    /// 11/8 only have the day checking began.
     var lastReadyDate: Date? { lastCheckedAt ?? checkStartedAt }
 
     /// The earliest day this plan knows about, for plans saved before createdAt.
@@ -215,10 +222,12 @@ struct EvacuationPlan: Codable, Equatable {
         if createdAt == nil { createdAt = earliestKnownDate ?? now }
     }
 
-    /// The half-year review counts from when the plan was first made.
+    /// The half-year review counts from when the plan was first made, or from
+    /// 「最後に見直した日」 when that is later (11/8: one date).
     func reviewIsDue(now: Date = Date(), dismissedAt: Date) -> Bool {
         let halfYear: TimeInterval = 182 * 24 * 60 * 60
-        let start = createdAt ?? earliestKnownDate ?? now
+        let made = createdAt ?? earliestKnownDate ?? now
+        let start = max(made, lastReadyDate ?? made)
         return now.timeIntervalSince(start) > halfYear && now.timeIntervalSince(dismissedAt) > halfYear
     }
 
