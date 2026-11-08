@@ -445,14 +445,14 @@ class PublicPolicySiteTests(unittest.TestCase):
         self.assertIn('node-version: "22"', setup)
 
         gate = workflow.split(gate_name, 1)[1].split("\n      - name:", 1)[0]
-        self.assertEqual(gate.count('policy_revision="2026-11-07"'), 2)
+        self.assertEqual(gate.count('policy_revision="2026-11-08"'), 2)
         self.assertNotIn("2026-08-", gate)
         disabled = gate.split("disabled)", 1)[1].split(";;", 1)[0]
         self.assertIn("Local-only public policy retired; disabled release is unavailable.", disabled)
         self.assertIn("exit 1", disabled)
         self.assertNotIn("policy_site_base=", disabled)
         media = gate.split("media-staging)", 1)[1].split(";;", 1)[0]
-        self.assertIn('policy_revision="2026-11-07"', media)
+        self.assertIn('policy_revision="2026-11-08"', media)
         self.assertIn('policy_profile="public-1.0"', media)
         self.assertIn(
             'policy_site_base="https://soso-so-27.github.io/neko-widget/"',
