@@ -2052,7 +2052,12 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(saved.waitForExistence(timeout: 5))
         saved.tap()
         // Everyday care is shown from 「この子のこと」; the older tool entry fills
-        // it until 「この子のこと」 has meals of its own.
+        // it until 「この子のこと」 has meals of its own. 11/8: folded to one row
+        // below the steps until opened.
+        let folded = app.descendants(matching: .any)["care-cat-care-fields-folded"].firstMatch
+        for _ in 0..<5 where !folded.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(folded.isHittable)
+        folded.tap()
         let food = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "いつものフード 20g")).firstMatch
         for _ in 0..<5 where !food.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(food.isHittable)
@@ -2082,6 +2087,8 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(cat.waitForExistence(timeout: 10))
         for _ in 0..<5 where !cat.isHittable { app.swipeDown(velocity: .slow) }
         cat.tap()
+        for _ in 0..<5 where !folded.isHittable { app.swipeUp(velocity: .slow) }
+        folded.tap()
         for _ in 0..<5 where !food.isHittable { app.swipeUp(velocity: .slow) }
         let refreshed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "更新したフード 25g"), object: food)
         XCTAssertEqual(XCTWaiter.wait(for: [refreshed], timeout: 5), .completed)
@@ -2102,6 +2109,8 @@ final class SoloMemoriesUITests: XCTestCase {
         app.terminate(); app.launch()
         let reopened = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-cat-")).firstMatch
         XCTAssertTrue(reopened.waitForExistence(timeout: 10)); reopened.tap()
+        for _ in 0..<5 where !folded.isHittable { app.swipeUp(velocity: .slow) }
+        folded.tap()
         for _ in 0..<5 where !food.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertEqual(food.value as? String, editedValue)
         capture("care-autofill-edited-value-restored")

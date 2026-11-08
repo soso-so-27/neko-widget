@@ -558,7 +558,11 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(profile.waitForExistence(timeout: 10), app.debugDescription)
         profile.tap()
         // 「預けるとき」 opens first; its link to 「この子のこと」 is further down
-        // the list, which makes the row only once it scrolls near.
+        // the list, which makes the row only once it scrolls near. 11/8: it is
+        // folded to one row below the steps; opened, it shows what it reads.
+        let folded = app.descendants(matching: .any)["care-cat-care-fields-folded"].firstMatch
+        XCTAssertTrue(scrollUpUntilHittable(folded, application: app), app.debugDescription)
+        folded.tap()
         XCTAssertTrue(app.descendants(matching: .any)["care-cat-care-fields"].firstMatch.waitForExistence(timeout: 10),
                       app.debugDescription)
         let catCare = app.descendants(matching: .any)["care-open-cat-care"].firstMatch
