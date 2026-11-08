@@ -360,7 +360,9 @@ struct MembershipAccessFixture: View {
                 Button("新しいメモ") { editingNew = true }
                     .accessibilityIdentifier("membership-new")
                 Button("確認不能") {
-                    state = .checking
+                    // Cannot be confirmed (not the launch-time 「確認しています…」,
+                    // which offers nothing yet by design): the restore-only notice.
+                    state = .indeterminate(lastVerifiedUntil: nil)
                     actions.update(enforcementEnabled: !beta, personal: state)
                 }
                     .accessibilityIdentifier("membership-unknown")

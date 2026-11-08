@@ -7531,8 +7531,9 @@ actor SharingRuntimeSelfTestRunner {
                 try await Task.sleep(for: .milliseconds(5))
             }
         }
+        // 11/6 (#808): the account screen also reads usage, beside membership.
         func settle(_ coordinator: ManagedPreservationCoordinator) async throws {
-            try await wait { !coordinator.isBusy && !coordinator.membershipLoading }
+            try await wait { !coordinator.isBusy && !coordinator.membershipLoading && !coordinator.usageLoading }
         }
 
         // A real list 409 is the positive control, not a fabricated presentation
@@ -7552,15 +7553,15 @@ actor SharingRuntimeSelfTestRunner {
         let accountUI = ManagedPreservationCoordinator(configuration: account.configuration, client: account.client, purpose: .account)
         accountUI.start(); try await settle(accountUI)
         guard accountUI.isSignedIn, accountUI.membership?.canSave == true, accountUI.errorMessage == nil,
-              accountUI.records.isEmpty, accountUI.usage == nil,
-              await account.server.endpointCounts() == ["GET /v1/membership": 1] else {
+              accountUI.records.isEmpty, accountUI.usage != nil, accountUI.usageMessage == nil,
+              await account.server.endpointCounts() == ["GET /v1/membership": 1, "GET /v1/usage": 1] else {
             throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-ACCOUNT-003", ManagedPreservationError.invalidResponse)
         }
         accountUI.refresh(); try await settle(accountUI)
         guard accountUI.isSignedIn, accountUI.membership?.canSave == true, accountUI.errorMessage == nil,
-              accountUI.records.isEmpty, accountUI.selected == nil, accountUI.usage == nil,
+              accountUI.records.isEmpty, accountUI.selected == nil, accountUI.usage != nil,
               accountUI.pendingMemoDrafts.isEmpty, accountUI.pendingToolDeletions.isEmpty,
-              await account.server.endpointCounts() == ["GET /v1/membership": 2] else {
+              await account.server.endpointCounts() == ["GET /v1/membership": 2, "GET /v1/usage": 2] else {
             throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-ACCOUNT-004", ManagedPreservationError.invalidResponse)
         }
         accountUI.stop()
@@ -7578,6 +7579,8 @@ actor SharingRuntimeSelfTestRunner {
             }
             coordinator.start()
             try await wait { await fixture.server.membershipResponseIsHeld() }
+            // Usage is not held: let it finish for the old credential first.
+            try await wait { !coordinator.usageLoading }
             let replacement = ManagedPreservationSessionStore.Credential(token: String(repeating: "z", count: 43),
                 ownerId: changeOwner ? UUID().uuidString.lowercased() : fixture.session.ownerId,
                 expiresAt: fixture.session.expiresAt)
@@ -7589,7 +7592,7 @@ actor SharingRuntimeSelfTestRunner {
             guard !coordinator.isSignedIn, coordinator.membership == nil, coordinator.records.isEmpty,
                   coordinator.selected == nil, coordinator.usage == nil,
                   try fixture.store.load() == replacement,
-                  await fixture.server.endpointCounts() == ["GET /v1/membership": 1] else {
+                  await fixture.server.endpointCounts() == ["GET /v1/membership": 1, "GET /v1/usage": 1] else {
                 throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-ACCOUNT-006", ManagedPreservationError.staleSession)
             }
             coordinator.stop()
@@ -7606,6 +7609,7 @@ actor SharingRuntimeSelfTestRunner {
             Task { await stopped.server.releaseMembershipResponse() }
         }
         stoppedUI.start(); try await wait { await stopped.server.membershipResponseIsHeld() }
+        try await wait { !stoppedUI.usageLoading }
         stoppedUI.stop()
         guard stoppedUI.membership == nil, stoppedUI.records.isEmpty, stoppedUI.usage == nil,
               !stoppedUI.isBusy, !stoppedUI.membershipLoading else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-ACCOUNT-007", ManagedPreservationError.invalidResponse) }
@@ -7620,8 +7624,8 @@ actor SharingRuntimeSelfTestRunner {
         // success nor cancellation may erase the newer view's membership.
         try await Task.sleep(for: .milliseconds(20))
         guard stoppedUI.isSignedIn, stoppedUI.membership?.canSave == true, stoppedUI.errorMessage == nil,
-              stoppedUI.records.isEmpty, stoppedUI.usage == nil,
-              await stopped.server.endpointCounts() == ["GET /v1/membership": 2] else {
+              stoppedUI.records.isEmpty, stoppedUI.usage != nil,
+              await stopped.server.endpointCounts() == ["GET /v1/membership": 2, "GET /v1/usage": 2] else {
             throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-ACCOUNT-009", ManagedPreservationError.staleSession)
         }
         stoppedUI.stop()
@@ -7636,8 +7640,8 @@ actor SharingRuntimeSelfTestRunner {
               unauthorizedUI.membershipMessage == ManagedPreservationError.unavailable.errorDescription,
               unauthorizedUI.errorMessage == nil,
               try unauthorized.store.load() == unauthorized.session,
-              unauthorizedUI.records.isEmpty, unauthorizedUI.usage == nil,
-              await unauthorized.server.endpointCounts() == ["GET /v1/membership": 1] else {
+              unauthorizedUI.records.isEmpty, unauthorizedUI.usage != nil,
+              await unauthorized.server.endpointCounts() == ["GET /v1/membership": 1, "GET /v1/usage": 1] else {
             throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-ACCOUNT-010", ManagedPreservationError.authenticationRequired)
         }
         unauthorizedUI.stop()

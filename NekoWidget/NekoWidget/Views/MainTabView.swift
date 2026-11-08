@@ -3538,6 +3538,9 @@ private struct WindowListView: View {
                         .transition(.opacity)
                 }
             }
+            // A container keeps the rows' own identifiers; on a plain stack the
+            // section's identifier replaced every row's and button's (11/8).
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("window-list-discover-section")
         }
         if let addPublicWindowError {
@@ -3564,6 +3567,7 @@ private struct WindowListView: View {
                     .frame(minHeight: 44)
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("window-list-subscription-confirmation")
     }
 
@@ -3596,9 +3600,12 @@ private struct WindowListView: View {
 /// account bootstrap and the real public network are not used by this fixture.
 struct WindowListNavigationFixture: View {
     @StateObject private var model = OfficialWindowFixtureModel()
+    /// `--window-list-nap-discoverable`: the second window is listed but not
+    /// received, so a received window and 「公式のまど」 are on one screen.
     @StateObject private var secondModel = OfficialWindowFixtureModel(definition: PublicWindowDefinition(
         id: "nap-cats", displayName: "おひるね", subtitle: "お昼寝中の猫の写真",
-        endpoint: URL(string: "https://official.invalid/windows/nap-cats/catalog.json")))
+        endpoint: URL(string: "https://official.invalid/windows/nap-cats/catalog.json")),
+        initiallySubscribed: CommandLine.arguments.contains("--window-list-nap-discoverable") ? false : nil)
     @StateObject private var catModel = OfficialWindowFixtureModel(definition: PublicWindowDefinition(
         id: "cat-tabby-nap", displayName: "キジ白のまど", subtitle: "この猫の写真",
         endpoint: URL(string: "https://official.invalid/windows/cat-tabby-nap/catalog.json"),
@@ -3608,7 +3615,8 @@ struct WindowListNavigationFixture: View {
     private var sources: [PublicWindowPresentationSource] {
         var result = [PublicWindowPresentationSource(store: model.store,
                         refresh: { try await model.refresh() }, preview: { try await model.preview() })]
-        if CommandLine.arguments.contains("--window-list-two-public") {
+        if CommandLine.arguments.contains("--window-list-two-public")
+            || CommandLine.arguments.contains("--window-list-nap-discoverable") {
             result.append(PublicWindowPresentationSource(store: secondModel.store,
                             refresh: { try await secondModel.refresh() }, preview: { try await secondModel.preview() }))
         }
