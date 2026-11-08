@@ -2639,13 +2639,19 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(showcase.isHittable)
             XCTAssertTrue(showcase.label.contains("写真を見せる"))
             XCTAssertFalse(app.buttons["tools-showcase-edit"].exists)
+            XCTAssertTrue(showcase.label.contains("自慢の9枚"))
             let care = app.buttons["tools-care-open"]
+            // 11/8: 「病院で見せる」 is an everyday tool, beside 「写真を見せる」 in 「ふだん」.
+            let vet = app.buttons["tools-vet-open"]
             XCTAssertEqual(showcase.frame.width, care.frame.width, accuracy: 1)
+            XCTAssertEqual(showcase.frame.width, vet.frame.width, accuracy: 1)
             if largeText {
-                XCTAssertGreaterThan(care.frame.minY, showcase.frame.minY)
+                XCTAssertGreaterThan(vet.frame.minY, showcase.frame.minY)
+                XCTAssertGreaterThan(care.frame.minY, vet.frame.minY)
             } else {
-                XCTAssertEqual(showcase.frame.minY, care.frame.minY, accuracy: 1)
-                XCTAssertGreaterThan(care.frame.minX, showcase.frame.minX)
+                XCTAssertEqual(showcase.frame.minY, vet.frame.minY, accuracy: 1)
+                XCTAssertGreaterThan(vet.frame.minX, showcase.frame.minX)
+                XCTAssertGreaterThan(care.frame.minY, vet.frame.minY)
             }
             if !largeText {
                 let visibleTop = app.navigationBars["ツール"].frame.maxY
@@ -2730,7 +2736,9 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["showcase-preparation-cat"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["showcase-preparation-cat"].label.contains("ミケ"))
         XCTAssertFalse(app.buttons["showcase-scope-picker"].exists)
-        let kept = app.buttons.matching(NSPredicate(format: "label IN %@", ["見せる写真", "表紙、見せる写真"])).count
+        // 11/8: no 「表紙」 label; every kept photo reads 「見せる写真」.
+        let kept = app.buttons.matching(NSPredicate(format: "label == %@", "見せる写真")).count
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "表紙")).count, 0)
         let select = app.buttons["showcase-preparation-select"]
         let add = app.buttons["showcase-preparation-add"]
         XCTAssertTrue(select.waitForExistence(timeout: 5) || add.exists)
@@ -2767,7 +2775,10 @@ final class SoloMemoriesUITests: XCTestCase {
             let hasPhotos = cells.firstMatch.waitForExistence(timeout: 5)
             capture("showcase-gallery-\(largeText ? "large" : "standard")")
             XCTAssertTrue(hasPhotos)
-            if !largeText { XCTAssertEqual(cells.count, 9) }
+            // 11/8: three columns at every text size, so the nine stay one 3×3 picture.
+            XCTAssertEqual(cells.count, 9)
+            XCTAssertEqual(cells.element(boundBy: 2).frame.minY, cells.element(boundBy: 0).frame.minY, accuracy: 1)
+            XCTAssertGreaterThan(cells.element(boundBy: 3).frame.minY, cells.element(boundBy: 0).frame.minY)
             let first = cells.element(boundBy: 0).frame
             let second = cells.element(boundBy: 1).frame
             XCTAssertEqual(first.width, first.height, accuracy: 1)
@@ -2805,29 +2816,32 @@ final class SoloMemoriesUITests: XCTestCase {
         showcase.tap()
         let scope = app.buttons["showcase-gallery-scope"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
-        XCTAssertTrue(scope.label.contains("みんな"))
+        // 11/8: a cat, never すべての猫, before anything is chosen.
+        XCTAssertFalse(scope.label.contains("すべての猫"))
         scope.tap()
-        app.buttons["ミケ"].tap()
-        XCTAssertTrue(scope.label.contains("ミケ"))
+        app.buttons["ソラ"].tap()
+        XCTAssertTrue(scope.label.contains("ソラ"))
         app.buttons.matching(identifier: "showcase-gallery-photo").firstMatch.tap()
         app.buttons["写真の一覧に戻る"].tap()
-        XCTAssertTrue(scope.label.contains("ミケ"))
-        app.buttons["showcase-gallery-edit"].tap()
+        XCTAssertTrue(scope.label.contains("ソラ"))
+        let edit = app.buttons["showcase-gallery-edit"]
+        XCTAssertTrue(edit.label.contains("編集"))
+        edit.tap()
         // 11/7: the edit screen edits the chosen cat's set and has no cat picker of its own.
         let editingCat = app.staticTexts["showcase-preparation-cat"]
         XCTAssertTrue(editingCat.waitForExistence(timeout: 5))
-        XCTAssertTrue(editingCat.label.contains("ミケ"))
+        XCTAssertTrue(editingCat.label.contains("ソラ"))
         XCTAssertFalse(app.buttons["showcase-scope-picker"].exists)
         // 「完了」 returns to the same show screen; no second one is stacked on it.
         app.buttons["showcase-preparation-done"].tap()
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
-        XCTAssertTrue(scope.label.contains("ミケ"))
+        XCTAssertTrue(scope.label.contains("ソラ"))
         XCTAssertEqual(app.buttons.matching(identifier: "showcase-gallery-scope").count, 1)
         app.buttons["閉じる"].tap()
         app.buttons["tools-showcase-open"].tap()
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
         // 11/7: the card opens on the cat chosen last time.
-        XCTAssertTrue(scope.label.contains("ミケ"))
+        XCTAssertTrue(scope.label.contains("ソラ"))
     }
 
     @MainActor

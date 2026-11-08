@@ -23,6 +23,10 @@ final class ShowcasePhotoStore: ObservableObject {
         /// The old manifest has no value. Its hand-picked photos stay fixed.
         var isPinned: Bool? = nil
         var isRestoredCopy: Bool? = nil
+        /// Vision's normalized cat box (bottom-left origin) when the photo was
+        /// kept, so every square shows the cat, not the photo's centre (11/8).
+        /// Older manifests have none and fall back to a centre crop.
+        var catBoundingBox: CGRect? = nil
 
         var id: String { scopeID + ":" + photoIdentifier }
         var pinned: Bool { isPinned ?? true }
@@ -103,6 +107,21 @@ final class ShowcasePhotoStore: ObservableObject {
         availableEntries.filter { $0.scopeID == scopeID }
     }
 
+    struct AvailableImage: Identifiable {
+        let entry: Entry
+        let url: URL
+        var id: String { entry.id }
+    }
+
+    /// One Photos check for the whole scope, not one per photo (11/8).
+    func availableImages(in scopeID: String) -> [AvailableImage] {
+        availableEntries(in: scopeID).compactMap { entry in
+            guard Self.isValid(entry) else { return nil }
+            let url = directory.appendingPathComponent(entry.imageFileName)
+            return FileManager.default.fileExists(atPath: url.path) ? AvailableImage(entry: entry, url: url) : nil
+        }
+    }
+
     func allEntries(in scopeID: String) -> [Entry] {
         entries.filter { $0.scopeID == scopeID }
     }
@@ -123,7 +142,8 @@ final class ShowcasePhotoStore: ObservableObject {
     }
 
     /// All new JPEGs are written before the new manifest becomes visible.
-    func applyRecommendations(_ identifiers: [String], to scopeID: String) async throws {
+    func applyRecommendations(_ identifiers: [String], boxes: [String: CGRect] = [:],
+                              to scopeID: String) async throws {
         guard !hasCorruptManifest else { throw Error.corruptManifest }
         guard busyScopes.insert(scopeID).inserted else { throw Error.changedDuringPreparation }
         defer { busyScopes.remove(scopeID) }
@@ -152,7 +172,8 @@ final class ShowcasePhotoStore: ObservableObject {
                 ordered.append(old)
             } else {
                 do {
-                    let entry = try await exportedEntry(identifier, scopeID: scopeID, pinned: false)
+                    let entry = try await exportedEntry(identifier, scopeID: scopeID, pinned: false,
+                                                        catBoundingBox: boxes[identifier])
                     created.append(entry.imageFileName)
                     ordered.append(entry)
                 } catch is MemoryPhotoJPEGExportError {
@@ -178,11 +199,12 @@ final class ShowcasePhotoStore: ObservableObject {
         committed = true
     }
 
-    func add(photoIdentifier: String, to scopeID: String) async throws {
-        try await addPhotos([photoIdentifier], to: scopeID)
+    func add(photoIdentifier: String, to scopeID: String, catBoundingBox: CGRect? = nil) async throws {
+        try await addPhotos([photoIdentifier],
+                            boxes: catBoundingBox.map { [photoIdentifier: $0] } ?? [:], to: scopeID)
     }
 
-    func addPhotos(_ identifiers: [String], to scopeID: String) async throws {
+    func addPhotos(_ identifiers: [String], boxes: [String: CGRect] = [:], to scopeID: String) async throws {
         guard !hasCorruptManifest else { throw Error.corruptManifest }
         guard busyScopes.insert(scopeID).inserted else { throw Error.changedDuringPreparation }
         defer { busyScopes.remove(scopeID) }
@@ -206,7 +228,8 @@ final class ShowcasePhotoStore: ObservableObject {
             }
         }
         for identifier in newIDs {
-            staged.append(try await exportedEntry(identifier, scopeID: scopeID, pinned: true))
+            staged.append(try await exportedEntry(identifier, scopeID: scopeID, pinned: true,
+                                                  catBoundingBox: boxes[identifier]))
         }
         guard startRevision == revision else { throw Error.changedDuringPreparation }
         var next = state
@@ -219,7 +242,7 @@ final class ShowcasePhotoStore: ObservableObject {
         committed = true
     }
 
-    func replace(_ old: Entry, with photoIdentifier: String) async throws {
+    func replace(_ old: Entry, with photoIdentifier: String, catBoundingBox: CGRect? = nil) async throws {
         guard !hasCorruptManifest else { throw Error.corruptManifest }
         guard busyScopes.insert(old.scopeID).inserted else { throw Error.changedDuringPreparation }
         defer { busyScopes.remove(old.scopeID) }
@@ -228,7 +251,8 @@ final class ShowcasePhotoStore: ObservableObject {
                   $0.scopeID == old.scopeID && $0.photoIdentifier == photoIdentifier
               }) else { throw Error.unavailable }
         let startRevision = revision
-        let replacement = try await exportedEntry(photoIdentifier, scopeID: old.scopeID, pinned: true)
+        let replacement = try await exportedEntry(photoIdentifier, scopeID: old.scopeID, pinned: true,
+                                                  catBoundingBox: catBoundingBox)
         var committed = false
         defer {
             if !committed {
@@ -267,7 +291,8 @@ final class ShowcasePhotoStore: ObservableObject {
         try commit(next, undoable: true)
     }
 
-    func makeCover(_ entry: Entry) throws {
+    /// 「先頭にする」 (11/8: was 「表紙にする」).
+    func moveToFront(_ entry: Entry) throws {
         guard entries.contains(entry) else { return }
         var next = state
         next.entries.removeAll { $0 == entry }
@@ -276,6 +301,7 @@ final class ShowcasePhotoStore: ObservableObject {
         try commit(next, undoable: true)
     }
 
+    /// A former cat's set, removed from 「前の写真」 by swiping (11/8).
     func removeScope(_ scopeID: String) throws {
         guard entries.contains(where: { $0.scopeID == scopeID }) else { return }
         var next = state
@@ -289,7 +315,8 @@ final class ShowcasePhotoStore: ObservableObject {
         try commit(previous, undoable: false)
     }
 
-    private func exportedEntry(_ identifier: String, scopeID: String, pinned: Bool) async throws -> Entry {
+    private func exportedEntry(_ identifier: String, scopeID: String, pinned: Bool,
+                               catBoundingBox: CGRect?) async throws -> Entry {
         let result = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil)
         guard result.count == 1, !result.object(at: 0).isHidden else { throw Error.unavailable }
         let image = try await PhotoLibraryJPEGExporter().export(localIdentifier: identifier)
@@ -297,7 +324,8 @@ final class ShowcasePhotoStore: ObservableObject {
         let fileName = UUID().uuidString + ".jpg"
         try image.jpeg.write(to: directory.appendingPathComponent(fileName), options: .atomic)
         return Entry(scopeID: scopeID, photoIdentifier: identifier,
-                     imageFileName: fileName, isPinned: pinned)
+                     imageFileName: fileName, isPinned: pinned,
+                     catBoundingBox: catBoundingBox.flatMap(Self.validBox))
     }
 
     private func commit(_ next: FileState, undoable: Bool) throws {
@@ -339,6 +367,15 @@ final class ShowcasePhotoStore: ObservableObject {
                 && !keep.contains(file.lastPathComponent) {
             try? FileManager.default.removeItem(at: file)
         }
+    }
+
+    /// A box inside the photo, or none (then the square is the centre).
+    private static func validBox(_ box: CGRect) -> CGRect? {
+        let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
+        guard box.minX.isFinite, box.minY.isFinite, box.width.isFinite, box.height.isFinite,
+              box.width > 0, box.height > 0,
+              unit.insetBy(dx: -0.01, dy: -0.01).contains(box) else { return nil }
+        return box.intersection(unit)
     }
 
     private static func isValid(_ entry: Entry) -> Bool {

@@ -6,10 +6,10 @@ struct ShowcaseControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: "jp.nekowidget.showcase") {
             ControlWidgetButton(action: OpenShowcaseIntent(target: .prepared)) {
-                Label("うちのこを見せる", systemImage: "pawprint")
+                Label("写真を見せる", systemImage: "square.grid.3x3.fill")
             }
         }
-        .displayName("うちのこを見せる")
-        .description("選んでおいた猫の写真だけを開きます。")
+        .displayName("写真を見せる")
+        .description("自慢の9枚を開きます。")
     }
 }
