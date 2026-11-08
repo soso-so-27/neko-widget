@@ -128,6 +128,46 @@ final class CatCareStore: ObservableObject {
         // Read on the main actor; default arguments would be evaluated outside it.
         importFromTools(care: CareHandoffStore.shared.plan, evacuation: EvacuationStore.shared.plan,
                         preparedness: CatPreparednessStore.shared.records)
+        adoptToolPhotos()
+    }
+
+    /// 11/9: 見分ける写真 are chosen here only. A photo a tool kept before
+    /// (迷子 → 避難 → 預ける, the first that has one) is copied in once, for a
+    /// face or body never set here. The tool's file and record stay as they are.
+    func adoptToolPhotos() {
+        let lost = LostCatDraftStore.shared, evacuation = EvacuationStore.shared, care = CareHandoffStore.shared
+        let sources = CatCareToolPhotos.all(
+            lost: lost.drafts,
+            evacuation: evacuation.loadError == nil ? evacuation.plan : EvacuationPlan(),
+            care: care.loadError == nil ? care.plan : CareHandoffPlan())
+        adoptToolPhotos(sources) { source, file in
+            let url: URL? = switch source.tool {
+            case "LostCat": lost.imageURL(file)
+            case "Evacuation": evacuation.imageURL(file)
+            case "CareHandoff": care.imageURL(file)
+            default: nil
+            }
+            return url.flatMap { try? Data(contentsOf: $0) }
+        }
+    }
+
+    func adoptToolPhotos(_ sources: [CatCareToolPhotos], data: (CatCareToolPhotos, String) -> Data?) {
+        guard canSave, let current = state else { return }
+        let adoptions = CatCareIdentifyingPhotos.adoptions(sources, state: current)
+        guard !adoptions.isEmpty else { return }
+        var copies: [(CatCareIdentifyingPhotos.Adoption, CatCarePhotoRef)] = []
+        for adoption in adoptions {
+            guard let source = sources.first(where: { $0.tool == adoption.tool
+                    && (adoption.role == .face ? $0.face : $0.body) == adoption.file }),
+                  let bytes = data(source, adoption.file), !bytes.isEmpty,
+                  let ref = savePhoto(bytes, sourceAssetID: nil, origin: .importedFromTool) else { continue }
+            copies.append((adoption, ref))
+        }
+        guard !copies.isEmpty else { return }
+        update { state in
+            let now = Date()
+            for (adoption, ref) in copies { CatCareIdentifyingPhotos.apply(adoption, ref: ref, to: &state, now: now) }
+        }
     }
 
     func importFromTools(

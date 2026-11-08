@@ -21,7 +21,95 @@ struct VerifyCatCare {
         try portableBackup()
         try conditionsStatus()
         try absenceAnswers()
+        try identifyingPhotos()
         print("Cat care (この子のこと) model, merge, import and decoding checks passed")
+    }
+
+    /// 11/9: 見分ける写真 are chosen in 「この子のこと」 only. A tool's older photo
+    /// is taken in once, 迷子 → 避難 → 預ける, and never over a choice made here.
+    static func identifyingPhotos() throws {
+        let profile = UUID(), tool = UUID()
+        var state = CatCareState(deviceID: "phone", now: t0)
+        state.cats = [CatCareRecord(catID: tool, profileID: profile)]
+        let care = CatCareToolPhotos(tool: "CareHandoff", catID: tool, profileID: profile, face: "care.jpg", body: nil)
+        let evacuation = CatCareToolPhotos(tool: "Evacuation", catID: tool, profileID: profile,
+                                           face: "evac-face.jpg", body: "evac-body.jpg")
+        let lost = CatCareToolPhotos(tool: "LostCat", catID: nil, profileID: profile, face: "lost-face.jpg", body: nil)
+
+        // Given in any order, the first tool in 迷子 → 避難 → 預ける wins, role by role.
+        try check(CatCareIdentifyingPhotos.adoptionOrder == ["LostCat", "Evacuation", "CareHandoff"], "adoption order")
+        let plan = CatCareIdentifyingPhotos.adoptions([care, evacuation, lost], state: state)
+        try check(plan.map(\.file) == ["lost-face.jpg", "evac-body.jpg"], "face from 迷子, body from 避難")
+        try check(plan.map(\.role) == [.face, .body], "one adoption per role")
+        try check(plan.allSatisfy { $0.catID == tool && $0.profileID == profile }, "both go to the cat's one record")
+        try check(CatCareIdentifyingPhotos.adoptions([lost, care, evacuation], state: state) == plan, "input order does not matter")
+        try check(CatCareIdentifyingPhotos.adoptions([care, evacuation], state: state).map(\.file)
+                  == ["evac-face.jpg", "evac-body.jpg"], "避難 comes before 預ける")
+        try check(CatCareIdentifyingPhotos.adoptions([care], state: state).map(\.file) == ["care.jpg"],
+                  "預ける's one photo is the face")
+        let anonymous = CatCareToolPhotos(tool: "LostCat", catID: nil, profileID: nil, face: "guest.jpg", body: nil)
+        try check(CatCareIdentifyingPhotos.adoptions([anonymous], state: state).isEmpty,
+                  "a photo of a cat with no 「この子のこと」 is not taken in")
+
+        // Taken in once: the copy is marked as from a tool, and a second run adds nothing.
+        for adoption in plan {
+            CatCareIdentifyingPhotos.apply(adoption, ref: .init(fileName: adoption.file), to: &state, now: t1)
+        }
+        try check(state.cats.count == 1, "no second record")
+        try check(state.cats[0].facePhoto?.value?.fileName == "lost-face.jpg"
+                  && state.cats[0].facePhoto?.value?.origin == .importedFromTool
+                  && state.cats[0].facePhoto?.editedBy == "import:LostCat", "the face is taken in with its source")
+        try check(state.cats[0].bodyPhoto?.value?.fileName == "evac-body.jpg"
+                  && state.cats[0].bodyPhoto?.editedBy == "import:Evacuation", "the body is taken in with its source")
+        try check(CatCareIdentifyingPhotos.adoptions([care, evacuation, lost], state: state).isEmpty,
+                  "a role set here is never filled again")
+
+        // A photo taken off here stays off; a late copy never replaces a choice.
+        state.cats[0].setIdentifyingPhoto(.face, nil, editedAt: t1, editedBy: "phone")
+        try check(state.cats[0].facePhoto != nil && state.cats[0].facePhoto?.value == nil, "taking off is a recorded answer")
+        try check(CatCareIdentifyingPhotos.adoptions([lost], state: state).isEmpty, "a photo taken off is not brought back")
+        let before = state
+        CatCareIdentifyingPhotos.apply(.init(catID: tool, profileID: profile, role: .face, tool: "LostCat", file: "late.jpg"),
+                                       ref: .init(fileName: "late.jpg"), to: &state, now: t1)
+        try check(state == before, "a late copy changes nothing")
+
+        // What a tool shows: 「この子のこと」 once set there, else its own older photo.
+        typealias Choice = CatCareIdentifyingPhotos.Choice<String>
+        try check(CatCareIdentifyingPhotos.choice(nil, legacy: "old.jpg") == Choice.legacy("old.jpg"),
+                  "until set here, the tool's older photo is still read")
+        try check(CatCareIdentifyingPhotos.choice(nil, legacy: nil as String?) == Choice.missing, "nothing anywhere")
+        try check(CatCareIdentifyingPhotos.choice(state.cats[0].facePhoto, legacy: "old.jpg") == Choice.missing,
+                  "taken off here hides the older one")
+        try check(CatCareIdentifyingPhotos.choice(state.cats[0].bodyPhoto, legacy: "old.jpg")
+                  == Choice.catCare(.init(fileName: "evac-body.jpg", origin: .importedFromTool)), "set here wins")
+
+        // A guest cat known only by its tool ID gets its record; a deleted one is not made again.
+        var empty = CatCareState(deviceID: "phone", now: t0)
+        let guest = CatCareToolPhotos(tool: "Evacuation", catID: UUID(), profileID: nil, face: "g.jpg", body: nil)
+        let guestPlan = CatCareIdentifyingPhotos.adoptions([guest], state: empty)
+        try check(guestPlan.count == 1, "a guest cat's photo is taken in")
+        CatCareIdentifyingPhotos.apply(guestPlan[0], ref: .init(fileName: "g.jpg"), to: &empty, now: t1)
+        try check(empty.cats.count == 1 && empty.cats[0].catID == guest.catID && empty.cats[0].profileID == nil
+                  && empty.cats[0].facePhoto?.value?.fileName == "g.jpg", "the guest record is made by its tool ID")
+        var deleted = CatCareState(deviceID: "phone", now: t0)
+        var gone = CatCareRecord(catID: tool, profileID: profile)
+        gone.deletedAt = t0
+        deleted.cats = [gone]
+        try check(CatCareIdentifyingPhotos.adoptions([care, evacuation, lost], state: deleted).isEmpty,
+                  "a deleted cat is not filled")
+        let deletedBefore = deleted
+        CatCareIdentifyingPhotos.apply(plan[0], ref: .init(fileName: "x.jpg"), to: &deleted, now: t1)
+        try check(deleted == deletedBefore, "nor made again")
+
+        // The photos read back, and an older file without them still opens.
+        let decoded = try CatCareDecoding.decode(CatCareDecoding.encode(state)).state
+        try check(decoded.cats == state.cats, "photos read back")
+        var backup = state
+        let copy = UUID().uuidString.lowercased() + ".jpg"
+        backup.cats[0].bodyPhoto?.value?.fileName = copy
+        try check(try CatCareDecoding.backupPhotoNames(CatCareDecoding.encode(backup)) == [copy],
+                  "the copies taken in are part of the backup")
+        print("Cat care identifying photos: one place, adoption order and older photos passed")
     }
 
     static func conditionsStatus() throws {

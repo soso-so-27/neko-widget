@@ -33,7 +33,70 @@ struct ToolOutputVerifier {
         try lostCatFoundPost()
         try lostCatEndingKeepsTheCat()
         try lostCatOutputSizes()
+        try identifyingPhotosMoveToCatCare()
         print("Tool outputs: care memo, evacuation sheet, lost-cat outputs and shared lines checked")
+    }
+
+    /// 11/9: 見分ける写真 are chosen in 「この子のこと」 only. Each tool's older
+    /// photo stays in its record (saved and read back as before, no version
+    /// raised) and is taken in once, 迷子 → 避難 → 預ける.
+    static func identifyingPhotosMoveToCatCare() throws {
+        let profile = UUID(), toolID = UUID()
+        var lost = LostCatDraft(); lost.faceFileName = "lost-face.jpg"; lost.bodyFileName = "lost-body.jpg"
+        var evacuation = EvacuationCat(); evacuation.profileID = profile.uuidString; evacuation.toolCatID = toolID
+        evacuation.photos = ["reference": "evac-usual.jpg", "body": "evac-body.jpg", "withOwner": "evac-owner.jpg"]
+        var care = CareCat(); care.profileID = profile.uuidString; care.toolCatID = toolID; care.photoName = "care.jpg"
+        var evacuationPlan = EvacuationPlan(); evacuationPlan.cats = [evacuation]
+        var carePlan = CareHandoffPlan(); carePlan.cats = [care]
+
+        // The older fields are still saved and read back: nothing is dropped.
+        let lostAgain = try JSONDecoder().decode(LostCatDraft.self, from: JSONEncoder().encode(lost))
+        try check(lostAgain.faceFileName == "lost-face.jpg" && lostAgain.bodyFileName == "lost-body.jpg",
+                  "迷子's older photos stay in the draft")
+        let evacuationAgain = try JSONDecoder().decode(EvacuationPlan.self, from: JSONEncoder().encode(evacuationPlan))
+        try check(evacuationAgain.cats[0].photos == evacuation.photos, "避難's older photos stay, the owner photo too")
+        let careAgain = try JSONDecoder().decode(CareHandoffPlan.self, from: JSONEncoder().encode(carePlan))
+        try check(careAgain.cats[0].photoName == "care.jpg", "預ける's older photo stays")
+        try check(LostCatDraft.schemaVersion == 1 && evacuationAgain.schemaVersion == 1 && careAgain.schemaVersion == 1,
+                  "no saved version was raised, so older versions still read them")
+
+        // What each tool kept: 避難's usual photo stands in for a face; the owner photo never counts.
+        try check(evacuation.legacyIdentifyingPhoto(.face) == "evac-usual.jpg"
+                  && evacuation.legacyIdentifyingPhoto(.body) == "evac-body.jpg", "避難's face and body")
+        var withFace = evacuation; withFace.photos["face"] = "evac-face.jpg"
+        try check(withFace.legacyIdentifyingPhoto(.face) == "evac-face.jpg", "a face photo comes before the usual one")
+        let sources = CatCareToolPhotos.all(lost: [profile.uuidString: lost, "guest-legacy": lost],
+                                            evacuation: evacuationPlan, care: carePlan)
+        try check(sources.map(\.tool) == ["LostCat", "Evacuation", "CareHandoff"],
+                  "an unregistered cat's draft has no 「この子のこと」 to go to")
+        try check(!sources.contains { $0.face == "evac-owner.jpg" || $0.body == "evac-owner.jpg" },
+                  "the photo with the owner is never taken in")
+        try check(sources[2].face == "care.jpg" && sources[2].body == nil, "預ける's photo was the face")
+        try check(LostCatCatCareKey.parse(profile.uuidString)?.profileID == profile
+                  && CatCareToolPhotos.lostCat(key: "guest-tool-\(toolID.uuidString)", draft: lost)?.catID == toolID
+                  && LostCatCatCareKey.parse("guest-legacy") == nil && LostCatCatCareKey.parse("guest-fixture-1") == nil,
+                  "迷子's keys: a profile, a tool cat, or no 「この子のこと」")
+
+        // 迷子 first, whatever order the tools are read in; one record for the cat.
+        var state = CatCareState(deviceID: "phone", now: t0)
+        let plan = CatCareIdentifyingPhotos.adoptions(Array(sources.reversed()), state: state)
+        try check(plan.map(\.file) == ["lost-face.jpg", "lost-body.jpg"], "迷子's photos are taken first")
+        for adoption in plan {
+            CatCareIdentifyingPhotos.apply(adoption, ref: .init(fileName: adoption.file), to: &state, now: t0)
+        }
+        try check(state.cats.count == 1 && state.cats[0].profileID == profile
+                  && state.cats[0].facePhoto?.editedBy == "import:LostCat", "one record holds both")
+        try check(CatCareIdentifyingPhotos.adoptions(sources, state: state).isEmpty, "taken in once")
+
+        // Without 迷子: 避難, then 預ける.
+        let fresh = CatCareState(deviceID: "phone", now: t0)
+        let noLost = CatCareToolPhotos.all(lost: [:], evacuation: evacuationPlan, care: carePlan)
+        try check(CatCareIdentifyingPhotos.adoptions(noLost, state: fresh).map(\.file) == ["evac-usual.jpg", "evac-body.jpg"],
+                  "避難 before 預ける")
+        var bare = evacuationPlan; bare.cats[0].photos = ["withOwner": "evac-owner.jpg"]
+        let careOnly = CatCareToolPhotos.all(lost: [:], evacuation: bare, care: carePlan)
+        try check(CatCareIdentifyingPhotos.adoptions(careOnly, state: fresh).map(\.file) == ["care.jpg"],
+                  "預ける's photo when no other tool has one")
     }
 
     /// 347: 「去勢・避妊 済み」 read oddly for a male cat.
