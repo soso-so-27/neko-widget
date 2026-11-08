@@ -256,8 +256,11 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                 .containing(.pageIndicator, identifier: nil)
                 .firstMatch
             let pages = gallery.pageIndicators.firstMatch
+            // Four Gallery pages since 11/8 (#897): this Widget's small,
+            // medium and large, then the 「写真を見せる」 ShowcaseWidget small.
+            // The Lock Screen and Control Center kinds add no pages here.
             guard pages.waitForExistence(timeout: 10),
-                  galleryPage(pages) == [1, 3],
+                  galleryPage(pages) == [1, 4],
                   let fixtureScreenshot = waitForFixturePhoto(
                       in: gallery, springboard: springboard, timeout: 15,
                       expectWhiteFixture: expectWhiteFixture
@@ -305,7 +308,7 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                           in: gallery, springboard: springboard, timeout: 10,
                           expectWhiteFixture: expectWhiteFixture
                       ),
-                      galleryPage(pages) == [index + 2, 3] else {
+                      galleryPage(pages) == [index + 2, 4] else {
                     fail("The Widget size did not advance to a rendered photo.", application: springboard)
                     return
                 }
@@ -360,7 +363,7 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                 predicate: NSPredicate(format: "value != %@", previousPage), object: pages
             )
             guard XCTWaiter.wait(for: [changedPage], timeout: 8) == .completed,
-                  galleryPage(pages) == [2 - index, 3],
+                  galleryPage(pages) == [2 - index, 4],
                   waitForFixturePhoto(in: gallery, springboard: springboard, timeout: 10) != nil else {
                 fail("Could not return to the small official Widget.", application: springboard)
                 return
