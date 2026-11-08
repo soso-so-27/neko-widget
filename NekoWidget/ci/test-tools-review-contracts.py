@@ -61,7 +61,18 @@ class ToolsReviewContracts(unittest.TestCase):
         self.assertIn('value.deletingLastPathComponent() == root', renderer)
         self.assertIn('.isSymbolicLinkKey', renderer)
         self.assertIn('[.atomic, .completeFileProtection]', renderer)
-        self.assertEqual(renderer.count('return try writeExport(data, fileName:'), 2)
+        self.assertEqual(renderer.count('return try writeExport(data, fileName:'), 3)
+        # Every file written for sharing is one the cleanup owns (round 2: the
+        # story, the small flyer and 「見つかりました」 too).
+        self.assertIn('return try writeExport(data, fileName: "迷子の猫.png")', renderer)
+        self.assertIn('return try writeExport(data, fileName: "迷子の猫.pdf")', renderer)
+        self.assertIn('return try writeExport(data, fileName: LostCatOutput.foundFileName)', renderer)
+        self.assertEqual(renderer.count('fileName: output.fileName'), 2)
+        self.assertIn('guard LostCatOutput.exportFileNames.contains(file.lastPathComponent) else { return }', renderer)
+        model = source('LostCatIncident.swift')
+        for name in ('"迷子の猫.png"', '"迷子の猫.pdf"', '"迷子の猫_ストーリー.png"', '"迷子の猫_小さいチラシ.pdf"', '"見つかりました.png"'):
+            self.assertIn(name, model)
+        self.assertIn('Set(allCases.map(\\.fileName)).union([foundFileName])', model)
         self.assertIn('LostCatFlyerRenderer.cleanupOnLaunch()', source('NekoWidgetApp.swift'))
         view = source('CatPreparednessView.swift')
         self.assertIn('LostCatFlyerRenderer.removeExport(item.url)', view)
