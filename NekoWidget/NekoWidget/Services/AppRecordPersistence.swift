@@ -3598,6 +3598,10 @@ private struct AppRecordFixtureContent: View {
         NavigationStack(path: $path) {
             List {
                 Text(persistence.title).accessibilityIdentifier("app-record-fixture-status")
+                // Why a save is waiting, so a failed UI check can say it.
+                if let detail = persistence.detail {
+                    Text(detail).accessibilityIdentifier("app-record-fixture-detail")
+                }
                 Text(counts).accessibilityIdentifier("app-record-fixture-photo-count")
                 if !result.isEmpty { Text(result).accessibilityIdentifier("app-record-fixture-result") }
                 if !AppRecordFixture.measurementSummary.isEmpty {

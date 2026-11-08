@@ -1049,6 +1049,9 @@ private struct EvacuationDisplayView: View {
             }
             .padding().background(.regularMaterial)
         }
+        // A container keeps the buttons' own identifiers; on a plain view the
+        // screen's identifier replaced 「印刷用のPDF」 and 「画像で渡す」 (as c8880b79).
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("evacuation-share-preview")
         .disabled(busy)
         .confirmationDialog("この内容で作りますか？", isPresented: $confirmShare, titleVisibility: .visible) {

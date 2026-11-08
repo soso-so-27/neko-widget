@@ -728,7 +728,13 @@ struct LostCatDraftView: View {
     /// Measures the flyer text 2–4 times: read it once in `body` and pass it down.
     private var flyerIssues: [String: String] {
         guard let publicDraft else { return [:] }
-        return LostCatFlyerRenderer.validationIssues(publicDraft)
+        // An empty place or contact is not a text that does not fit: the bar
+        // already names it (「あと：場所・連絡先」), with no red line before
+        // anything is written (11/8 型). The flyer itself still refuses it.
+        return LostCatFlyerRenderer.validationIssues(publicDraft).filter { field, _ in
+            !(field == "place" && publicDraft.lastSeenNear.isEmpty)
+                && !(field == "contact" && publicDraft.contact.isEmpty)
+        }
     }
     private var requiredFields: [String] {
         var values: [String] = []

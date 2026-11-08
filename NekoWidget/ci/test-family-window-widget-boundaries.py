@@ -3846,6 +3846,12 @@ class OwnerDecisions1108Tests(unittest.TestCase):
         self.assertIn("? EvacuationExporter.createBook([record])", display)
         self.assertIn(": EvacuationExporter.create(record, printCopy: false))", display)
         self.assertIn('Label("画像で渡す", systemImage: "photo")', display)
+        # The export buttons sit in the bottom inset, outside the scroll view:
+        # the screen's identifier must be on a container, or it replaces
+        # 「印刷用のPDF」's and 「画像で渡す」's own (as c8880b79).
+        before = display[:display.index('.accessibilityIdentifier("evacuation-share-preview")')].rstrip()
+        self.assertTrue(before.endswith(".accessibilityElement(children: .contain)"))
+        self.assertIn('.accessibilityIdentifier("evacuation-share-images")', display)
         for gone in ("PDFで渡す", "PDFを作って渡す"):
             self.assertNotIn(gone, view)
         # 31: the hub's 「〇〇を見せる」 and the cat's 「避難メモを見せる」 open the same memo.
@@ -6164,8 +6170,13 @@ class ToolOpenWasteTests(unittest.TestCase):
         body = section(editor, "    var body: some View {", "        Form {")
         self.assertIn("let issues = flyerIssues", body)
         self.assertNotIn("private var issues:", editor)
-        self.assertIn("LostCatFlyerRenderer.validationIssues(publicDraft)",
-                      section(editor, "private var flyerIssues: [String: String] {", "private var requiredFields"))
+        flyer = section(editor, "private var flyerIssues: [String: String] {", "private var requiredFields")
+        self.assertIn("LostCatFlyerRenderer.validationIssues(publicDraft)", flyer)
+        # An empty place or contact is named by 「あと：…」, not shown as a red
+        # issue before anything is written (11/8 型; the UI check expects
+        # 「あと：場所・連絡先」 on a fresh draft). Text that does not fit stays.
+        self.assertIn('!(field == "place" && publicDraft.lastSeenNear.isEmpty)', flyer)
+        self.assertIn('!(field == "contact" && publicDraft.contact.isEmpty)', flyer)
         self.assertIn("@ViewBuilder private func fieldIssue(_ field: String, _ issues: [String: String]) -> some View {", editor)
         for field in ('"name"', '"place"', '"contact"', "String(describing: field)"):
             self.assertIn(f"fieldIssue({field}, issues)", editor)

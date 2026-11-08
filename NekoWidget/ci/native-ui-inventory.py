@@ -27,6 +27,11 @@ def route(test):
     # runs in the Debug preparation. The public Release build is covered by
     # testReviewPublicIPadCompatibility in the ipad preparation.
     if test.endswith('/testGrantFullPhotoLibraryAccess'): return 'empty'
+    # The movie case needs the real Photos permission granted just before by
+    # testGrantFullPhotoLibraryAccess (as in run-simulator-smoke.sh). Alone in
+    # the standard preparation Photos stays undetermined and the export stops
+    # at once. XCTest runs the class's methods by name, so Grant comes first.
+    if test.endswith('/testMainlineAcceptanceScreensWithAuthorizedLibrary'): return 'empty'
     return 'standard'
 
 if sys.argv[1] == 'select':
