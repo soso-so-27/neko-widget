@@ -380,10 +380,13 @@ enum FamilyNotebookMigration {
             let id = try cat(toolID: visit.catID, profileID: visit.catID)
             let source = "migration:v1:visit:" + visit.id.uuidString.lowercased()
             let recordID = try record(source, catID: id, makeRecordID: makeRecordID)
-            for (field, value) in [(FamilyNotebookField.catName, visit.catName), (.observations, visit.observations), (.questions, visit.questions)] {
+            for (field, value) in [(FamilyNotebookField.catName, visit.catName), (.observations, visit.observations), (.questions, visit.questions),
+                                   (.doctorNote, visit.doctorNote ?? ""), (.prescription, visit.prescription ?? "")] {
                 try text(field, value, catID: id, collection: .visit, recordID: recordID, source: source, at: now)
             }
             try put(.startedOn, visit.startedOn.map(FamilyNotebookValue.day) ?? .clear,
+                    catID: id, collection: .visit, recordID: recordID, source: source, at: now)
+            try put(.nextVisitOn, visit.nextVisitOn.map(FamilyNotebookValue.day) ?? .clear,
                     catID: id, collection: .visit, recordID: recordID, source: source, at: now)
             try put(.completedAt, visit.completedAt.map(FamilyNotebookValue.date) ?? .clear,
                     catID: id, collection: .visit, recordID: recordID, source: source, at: now)

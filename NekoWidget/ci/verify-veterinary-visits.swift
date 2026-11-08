@@ -238,18 +238,21 @@ import CoreGraphics
             && written.createdAt == open.createdAt && written.updatedAt != nil, "Results on an open memo were not saved")
         try require(try await VeterinaryVisitStore(directory: root).visits().contains(written), "Start and edit days were not durable")
 
-        // A received family change keeps what stays on this iPhone and, when
-        // nothing else changed, is no change at all.
+        // Shared results (including clears) apply, while local memo dates stay.
         var received = written
         received.doctorNote = nil; received.prescription = nil; received.nextVisitOn = nil
         received.createdAt = nil; received.updatedAt = nil; received.revision = UUID()
-        try require(VeterinaryVisitStore.keepingLocalResults([received], from: [written]) == [written],
-            "A received family change erased or churned local results")
+        let cleared = VeterinaryVisitStore.keepingLocalResults([received], from: [written])[0]
+        try require(cleared.doctorNote == nil && cleared.nextVisitOn == nil
+            && cleared.createdAt == written.createdAt && cleared.updatedAt == written.updatedAt,
+            "A received result clear was overwritten or changed local dates")
         var changedRemotely = received; changedRemotely.questions = "家族が書いた質問"
+        changedRemotely.doctorNote = "家族が書いた先生の話"
         let merged = VeterinaryVisitStore.keepingLocalResults([changedRemotely], from: [written])
-        try require(merged.count == 1 && merged[0].questions == "家族が書いた質問" && merged[0].doctorNote == written.doctorNote
+        try require(merged.count == 1 && merged[0].questions == changedRemotely.questions
+            && merged[0].doctorNote == changedRemotely.doctorNote
             && merged[0].createdAt == written.createdAt && merged[0].revision == changedRemotely.revision,
-            "A received family change lost local results or its own change")
+            "A received family result or local date was lost")
     }
 
     private static func verifiesOwnedPhotoCleanup(_ root: URL) async throws {

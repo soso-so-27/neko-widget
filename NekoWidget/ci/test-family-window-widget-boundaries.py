@@ -5146,7 +5146,7 @@ class VeterinaryRoundOneTests(unittest.TestCase):
         self.assertIn("Self.keepingLocalResults(try FamilyNotebookToolSharing.visitsReceived(state.visits), from: state.visits)", self.store)
         verifier = (ROOT / "ci/verify-veterinary-visits.swift").read_text(encoding="utf-8")
         for case in ("A memo saved before the results fields became unreadable", "A finished memo was rewritten",
-                     "Saving results changed what was shown", "A received family change erased or churned local results"):
+                     "Saving results changed what was shown", "A received result clear was overwritten or changed local dates"):
             self.assertIn(case, verifier)
         # The screen: three fields, written before or after the memo is finished.
         for text in ('title: "先生の話"', 'title: "出た薬"', 'Toggle("次に行く日を記録"', 'ToolStepHeader(number: 4, title: "診察のあと"',

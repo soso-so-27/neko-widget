@@ -110,6 +110,7 @@ enum FamilyNotebookField: String, Codable, CaseIterable, Hashable, Sendable {
     case vetName, vetPhone, vetNote, measuredOn, grams, medicationName, dose, schedule
     case startedOn, endedOn, note, kind, givenOn, nextDueOn, time, food, amount, order
     case catName, observations, questions, completedAt, text, capturedAt, writtenAt
+    case doctorNote, prescription, nextVisitOn
     case recipient, period, request, usualFood, meals, toilet, handling, important
     case callWhen, healthStatus, healthDetails
 }
@@ -260,6 +261,8 @@ struct FamilyNotebookSnapshot: Equatable, Sendable {
     /// Local transmission boundary, not proof of a server-confirmed exit.
     let sharingEnded: Bool
     var farewellDecisions: [FamilyNotebookFarewellDecision] = []
+    var opaqueOperations: [FamilyNotebookOpaqueOperation] = []
+    var retainedOperationCount: Int { operations.count + opaqueOperations.count }
 
     var unsharedCatIDs: Set<UUID> {
         Set(operations.filter { $0.target.collection == .cat && $0.target.field == .sharingEnded }.map { $0.target.familyCatID })
@@ -300,17 +303,20 @@ enum FamilyNotebookCore {
         case .medication: allowed = [.medicationName, .dose, .schedule, .startedOn, .endedOn, .note]
         case .vaccination: allowed = [.kind, .givenOn, .nextDueOn]
         case .meal, .handoffMeal: allowed = [.time, .food, .amount, .order]
-        case .visit: allowed = [.catName, .startedOn, .observations, .questions, .completedAt]
+        case .visit: allowed = [.catName, .startedOn, .observations, .questions, .completedAt, .doctorNote, .prescription, .nextVisitOn]
         case .visitEntry: allowed = [.text, .capturedAt, .writtenAt, .grams, .measuredOn, .catName]
         case .handoff: allowed = [.recipient, .period, .request, .name, .catName, .usualFood, .water,
                                   .toilet, .handling, .important, .callWhen, .healthStatus, .healthDetails]
         }
         guard allowed.contains(field), let value else { throw FamilyNotebookError.invalidTarget }
         if value == .clear { return }
-        let days: Set<FamilyNotebookField> = [.birthday, .measuredOn, .startedOn, .endedOn, .givenOn, .nextDueOn, .farewellDay]
+        let days: Set<FamilyNotebookField> = [.birthday, .measuredOn, .startedOn, .endedOn, .givenOn, .nextDueOn, .farewellDay, .nextVisitOn]
         let dates: Set<FamilyNotebookField> = [.completedAt, .capturedAt, .writtenAt]
         switch value {
         case .text(let text):
+            if field == .doctorNote || field == .prescription {
+                guard text.count <= 500 else { throw FamilyNotebookError.invalidValue }
+            }
             guard !days.contains(field), !dates.contains(field), field != .grams, field != .order,
                   text.utf8.count <= 65_536, !text.contains("\u{0000}") else { throw FamilyNotebookError.invalidValue }
         case .integer(let number):
@@ -422,5 +428,131 @@ enum FamilyNotebookCore {
         guard let date = calendar.date(from: DateComponents(year: year, month: month, day: value)) else { return false }
         let result = calendar.dateComponents([.year, .month, .day], from: date)
         return result.year == year && result.month == month && result.day == value
+    }
+}
+
+/// A future operation is authenticated by Crypto before it reaches Store.
+/// Keep the exact plaintext bytes, never project or put it in this client's outbox.
+/// The identity header is the stable protocol boundary for future payloads.
+struct FamilyNotebookOpaqueOperation: Codable, Equatable, Sendable {
+    let plaintext: Data
+    struct Header: Decodable {
+        struct Target: Decodable {
+            let familyCatID: UUID
+            let collection: String
+            let recordID: UUID?
+            let parentRecordID: UUID?
+            let field: String?
+        }
+        let familyID: UUID
+        let target: Target
+        let version: FamilyNotebookVersion
+        let author: FamilyNotebookAuthor
+        let editedAt: Date
+        let observedOperationIDs: [UUID]
+        let importedSourceEditedAt: Date?
+    }
+    private struct Key: CodingKey {
+        let stringValue: String
+        var intValue: Int? { nil }
+        init(_ value: String) { stringValue = value }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { return nil }
+    }
+    static func decoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .custom { path in
+            let key = path.last!.stringValue
+            return Key(key.hasSuffix("Id") ? String(key.dropLast(2)) + "ID" : key)
+        }
+        return decoder
+    }
+    func header() throws -> Header {
+        guard !plaintext.isEmpty, plaintext.count <= 1_048_548 else { throw FamilyNotebookError.invalidOperation }
+        let h = try Self.decoder().decode(Header.self, from: plaintext)
+        let t = h.target
+        guard FamilyNotebookCore.validIdentifier(t.collection),
+              t.field.map(FamilyNotebookCore.validIdentifier) ?? true,
+              t.familyCatID != t.recordID, t.familyCatID != t.parentRecordID,
+              t.recordID == nil || t.recordID != t.parentRecordID,
+              h.familyID != t.recordID, h.familyID != t.parentRecordID else { throw FamilyNotebookError.invalidTarget }
+        // Only validate common identity/causality here. Unknown semantics are
+        // NOT authorized for application, deletion, projection or transmission.
+        let common = FamilyNotebookOperation(familyID: h.familyID,
+            target: .init(familyCatID: t.familyCatID, field: .name), value: .text(""),
+            version: h.version, author: h.author, editedAt: h.editedAt,
+            observedOperationIDs: h.observedOperationIDs, importedSourceEditedAt: h.importedSourceEditedAt)
+        try FamilyNotebookCore.validate(common)
+        return h
+    }
+}
+
+enum FamilyNotebookReceivedOperation: Sendable {
+    case known(FamilyNotebookOperation)
+    case opaque(FamilyNotebookOpaqueOperation)
+
+    static func decode(_ plaintext: Data) throws -> Self {
+        let retained = FamilyNotebookOpaqueOperation(plaintext: plaintext)
+        let header = try retained.header()
+        guard let root = try JSONSerialization.jsonObject(with: plaintext) as? [String: Any],
+              let target = root["target"] as? [String: Any],
+              let version = root["version"] as? [String: Any],
+              let author = root["author"] as? [String: Any] else { throw FamilyNotebookError.invalidOperation }
+        func extra(_ object: [String: Any], _ allowed: Set<String>) -> Bool {
+            !Set(object.keys).isSubset(of: allowed)
+        }
+        let futureTarget = FamilyNotebookCollection(rawValue: header.target.collection) == nil
+            || header.target.field.map { FamilyNotebookField(rawValue: $0) == nil } == true
+        if let collection = FamilyNotebookCollection(rawValue: header.target.collection) {
+            let fallback: FamilyNotebookField
+            switch collection {
+            case .cat: fallback = .name
+            case .weight: fallback = .grams
+            case .medication: fallback = .medicationName
+            case .vaccination: fallback = .kind
+            case .meal, .handoffMeal: fallback = .time
+            case .visit: fallback = .observations
+            case .visitEntry: fallback = .text
+            case .handoff: fallback = .recipient
+            }
+            let field = header.target.field.map { FamilyNotebookField(rawValue: $0) ?? fallback }
+            try FamilyNotebookCore.validate(target: .init(familyCatID: header.target.familyCatID, collection: collection,
+                recordID: header.target.recordID, parentRecordID: header.target.parentRecordID, field: field),
+                value: field == nil || field == .sharingEnded ? nil : .clear)
+        }
+        var futureValue = false
+        var extendedValue = false
+        if let value = root["value"], !(value is NSNull) {
+            guard let object = value as? [String: Any], object.count == 1, let kind = object.keys.first,
+                  FamilyNotebookCore.validIdentifier(kind), let body = object[kind] as? [String: Any]
+            else { throw FamilyNotebookError.invalidValue }
+            futureValue = !["text", "integer", "decimal", "date", "day", "clear"].contains(kind)
+            if !futureValue {
+                extendedValue = extra(body, kind == "clear" ? [] : ["_0"])
+                let decoded = try FamilyNotebookOpaqueOperation.decoder().decode(FamilyNotebookValue.self,
+                    from: JSONSerialization.data(withJSONObject: object))
+                switch decoded {
+                case .text(let text):
+                    guard text.utf8.count <= 65_536, !text.contains("\u{0000}") else { throw FamilyNotebookError.invalidValue }
+                case .date(let date):
+                    guard date.timeIntervalSince1970.isFinite else { throw FamilyNotebookError.invalidValue }
+                case .decimal(let number):
+                    guard number.isFinite else { throw FamilyNotebookError.invalidValue }
+                case .day(let day):
+                    guard FamilyNotebookCore.validDay(day) else { throw FamilyNotebookError.invalidValue }
+                default: break
+                }
+            }
+        }
+        if futureTarget || futureValue { return .opaque(retained) }
+        // Never downgrade a malformed KNOWN operation to opaque on decode or
+        // validation failure, even if an attacker adds an extension key.
+        let operation = try FamilyNotebookOpaqueOperation.decoder().decode(FamilyNotebookOperation.self, from: plaintext)
+        try FamilyNotebookCore.validate(operation)
+        if extendedValue || extra(root, ["familyId", "target", "value", "version", "author", "editedAt", "observedOperationIDs", "importedSourceEditedAt"])
+            || extra(target, ["familyCatId", "collection", "recordId", "parentRecordId", "field"])
+            || extra(version, ["clock", "deviceId", "operationId"])
+            || extra(author, ["personId", "displayName"]) { return .opaque(retained) }
+        return .known(operation)
     }
 }

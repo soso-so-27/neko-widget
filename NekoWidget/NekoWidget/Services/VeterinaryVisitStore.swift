@@ -121,14 +121,12 @@ actor VeterinaryVisitStore {
     }
     #endif
 
-    /// What came after the consultation and the memo's own dates stay on this
-    /// iPhone for now: a received family change keeps them as they were, and
-    /// does not count as a change by itself.
+    /// Keep device-local memo dates. Consultation results now come from the
+    /// field-scoped family projection (including explicit clears).
     static func keepingLocalResults(_ received: [VeterinaryVisit], from local: [VeterinaryVisit]) -> [VeterinaryVisit] {
         received.map { visit in
             guard let old = local.first(where: { $0.id == visit.id }) else { return visit }
             var kept = visit
-            kept.doctorNote = old.doctorNote; kept.prescription = old.prescription; kept.nextVisitOn = old.nextVisitOn
             kept.createdAt = old.createdAt; kept.updatedAt = old.updatedAt
             var unchanged = kept; unchanged.revision = old.revision
             return unchanged == old ? old : kept
