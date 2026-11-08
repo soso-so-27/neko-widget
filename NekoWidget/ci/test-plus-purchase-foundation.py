@@ -334,6 +334,38 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertLess(view.index("if isMember {"), view.index("Text(offer.afterTrialText ?? offer.priceText)"))
         self.assertIn(".disabled(isWorking || !canPurchase || offer == nil)", view)
 
+    def test_purchase_screen_keeps_terms_and_privacy_links(self) -> None:
+        # App Review: the one Plus screen links the terms of use and the privacy
+        # policy. A selling build always has the privacy page; Debug's preview
+        # fixture stands in for one (11/8: the UI test found the link missing).
+        view = source("NekoWidget/Views/MembershipOfferView.swift")
+        footer = section(view, "@ViewBuilder private var footerLinkContent: some View {", "\n    }\n")
+        for identifier in ("membership-offer-restore", "membership-offer-terms", "membership-offer-privacy"):
+            self.assertIn(f'.accessibilityIdentifier("{identifier}")', footer)
+        self.assertIn('Link("利用規約", destination: termsURL)', footer)
+        self.assertIn("if let privacyURL = Self.privacyURL {", footer)
+        privacy = section(view, "static var privacyURL: URL? {", "\n    }\n")
+        debug, release = privacy.split("#endif", 1)
+        self.assertIn("#if DEBUG", debug)
+        self.assertIn('CommandLine.arguments.contains("--membership-offer-ui-fixture")', debug)
+        self.assertEqual(release.strip(), "return AppPublicLinksConfiguration.current.privacyURL")
+        # The live storefront never loads an offer without the privacy page,
+        # and the release overlay that sells sets it.
+        model = source("NekoWidget/Services/MembershipOfferModel.swift")
+        load = section(model, "func load() async -> MembershipOfferPresentation? {", "await purchases.start()")
+        self.assertIn("AppPublicLinksConfiguration.current.privacyURL != nil", load)
+        production = source("Config.Production.xcconfig")
+        self.assertRegex(production, r"(?m)^APP_PRIVACY_URL = https:/\$\(\)/\S+/privacy/$")
+
+    def test_plus_prompt_keeps_its_entry_button_identifier(self) -> None:
+        # 11/8: the prompt's identifier on a plain stack replaced its button's
+        # (plus-offer-entry-*), so closing the Plus screen showed no button to UI tests.
+        model = source("NekoWidget/Services/MembershipOfferModel.swift")
+        prompt = section(model, "struct PlusOfferPrompt: View {", "struct PlusSettingsSection: View {")
+        self.assertIn(r'.accessibilityIdentifier("plus-offer-entry-\(context.identifier)")', prompt)
+        before = prompt[:prompt.index('.accessibilityIdentifier("plus-offer-prompt")')].rstrip()
+        self.assertTrue(before.endswith(".accessibilityElement(children: .contain)"))
+
     def test_restore_is_one_button_that_also_rechecks(self) -> None:
         # 11/5: 「購入状況を再確認」 and 「購入を復元」 are one button, 「購入を復元」.
         for path in sorted((ROOT / "NekoWidget").rglob("*.swift")):

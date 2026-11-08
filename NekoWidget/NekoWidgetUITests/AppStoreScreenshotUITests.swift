@@ -188,7 +188,9 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(hint.waitForExistence(timeout: 15))
         XCTAssertEqual(hint.label, "届いた招待リンクをタップしてください。")
         XCTAssertFalse(app.buttons["onboarding-purpose-join"].exists)
-        XCTAssertEqual(app.buttons["onboarding-purpose-start"].label, "自分で始める")
+        // The one main button starts on one's own: 「猫を探す」 (OnboardingPresentationCopy.purposeAction,
+        // pinned by ci/verify-onboarding-presentation.swift and the public guide page).
+        XCTAssertEqual(app.buttons["onboarding-purpose-start"].label, "猫を探す")
         captureScreenshot(named: "onboarding-two-entries")
         app.terminate()
         app.launch()

@@ -391,11 +391,11 @@ final class OfficialWindowUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--window-list-ui-fixture", "--window-list-cat-window", "-AppleLanguages", "(ja)"]
         app.launch()
-        let discover = app.buttons["window-list-discover"]
-        XCTAssertTrue(discover.waitForExistence(timeout: 10))
-        discover.tap()
-        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
-        app.buttons["official-window-entry"].tap()
+        // 1.0: windows not yet received are listed under 「公式のまど」 on the まど tab itself.
+        let original = app.buttons["official-window-entry"]
+        XCTAssertTrue(original.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["public-window-add-official-cats"].exists)
+        original.tap()
         XCTAssertTrue(app.navigationBars["どこかの猫"].waitForExistence(timeout: 5),
                       "The chosen discovery card must open its own window")
         let photo = app.buttons["official-window-photo-fixture-photo"]
@@ -429,11 +429,15 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertTrue(app.scrollViews["public-window-overview-official-cats"].buttons["official-window-subscribe"].exists,
                       "Opening a cat must not subscribe to its discovery source")
         app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
-        app.navigationBars["まどを探す"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["public-window-entry-cat-tabby-nap"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["official-window-entry"].exists)
+        let catEntry = app.buttons["public-window-entry-cat-tabby-nap"]
+        XCTAssertTrue(catEntry.waitForExistence(timeout: 5))
+        waitForWindowEntry("public-window-entry-cat-tabby-nap", value: "受け取り中", in: app)
+        XCTAssertFalse(app.buttons["public-window-add-cat-tabby-nap"].exists,
+                       "The received cat window moves out of discovery")
+        // The original window stays in discovery, still offered with 「受け取る」.
+        waitForWindowEntry("official-window-entry", value: "まだ受け取っていません", in: app)
+        XCTAssertTrue(app.buttons["public-window-add-official-cats"].exists)
         capture("cat-window-receiving-list", app)
     }
 
@@ -482,12 +486,11 @@ final class OfficialWindowUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--window-list-ui-fixture", "--window-list-two-public", "-AppleLanguages", "(ja)"]
         app.launch()
-        let discover = app.buttons["window-list-discover"]
-        XCTAssertTrue(discover.waitForExistence(timeout: 10))
-        discover.tap()
-        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
+        // 1.0: both windows wait under 「公式のまど」 on the まど tab itself.
         let nap = app.buttons["public-window-entry-nap-cats"]
-        XCTAssertTrue(nap.waitForExistence(timeout: 5))
+        XCTAssertTrue(nap.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["public-window-add-nap-cats"].exists)
+        XCTAssertTrue(app.buttons["public-window-add-official-cats"].exists)
         for _ in 0..<3 { if nap.isHittable { break }; app.swipeUp() }
         capture("public-windows-discovery", app)
         nap.tap()
@@ -508,11 +511,13 @@ final class OfficialWindowUITests: XCTestCase {
         capture("nap-window-widget-guide", app)
         app.buttons["widget-placement-close"].tap()
         app.navigationBars["おひるね"].buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
-        app.navigationBars["まどを探す"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5))
         XCTAssertTrue(nap.waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["official-window-entry"].exists, "Receiving a theme must not subscribe to the other window")
+        waitForWindowEntry("public-window-entry-nap-cats", value: "受け取り中", in: app)
+        XCTAssertFalse(app.buttons["public-window-add-nap-cats"].exists)
+        waitForWindowEntry("official-window-entry", value: "まだ受け取っていません", in: app)
+        XCTAssertTrue(app.buttons["public-window-add-official-cats"].exists,
+                      "Receiving a theme must not subscribe to the other window")
         capture("nap-window-receiving-list", app)
     }
 
@@ -551,17 +556,20 @@ final class OfficialWindowUITests: XCTestCase {
         app.resetAuthorizationStatus(for: .photos)
         app.launchArguments = ["--window-list-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
-        let discover = app.buttons["window-list-discover"]
-        XCTAssertTrue(discover.waitForExistence(timeout: 10))
+        // 1.0: a window not yet received waits under 「公式のまど」 on the まど tab,
+        // with its own 「受け取る」; there is no separate discovery screen.
+        let entry = app.buttons["official-window-entry"]
+        let add = app.buttons["public-window-add-official-cats"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 10))
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        XCTAssertTrue(add.isHittable, "The list itself must offer receiving")
         XCTAssertFalse(app.buttons["window-list-connect"].exists,
                        "A public-only configuration must not offer private connections")
-        XCTAssertFalse(app.buttons["official-window-entry"].exists, "Unsubscribed windows belong in discovery")
-        let start = app.buttons["window-list-start"]
-        XCTAssertTrue(start.waitForExistence(timeout: 5))
-        start.tap()
-        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5),
-                      "The empty-list action must open discovery directly")
-        app.buttons["official-window-entry"].tap()
+        waitForWindowEntry("official-window-entry", value: "まだ受け取っていません", in: app)
+        XCTAssertTrue(entry.isHittable)
+        entry.tap()
+        XCTAssertTrue(app.navigationBars["どこかの猫"].waitForExistence(timeout: 5),
+                      "The discovery row must open its window to look before receiving")
         XCTAssertTrue(app.tabBars.buttons["写真"].exists)
         XCTAssertTrue(app.tabBars.buttons["アルバム"].exists)
         for _ in 0..<5 { if app.buttons["official-window-subscribe"].isHittable { break }; app.swipeUp() }
@@ -583,37 +591,41 @@ final class OfficialWindowUITests: XCTestCase {
         // The guide was offered once, after 「受け取る」; later it is in 設定 → ホーム画面.
         XCTAssertFalse(app.buttons["official-window-widget-guide"].exists)
         app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
-        let discoveryEntry = app.buttons["official-window-entry"]
-        XCTAssertTrue((discoveryEntry.value as? String ?? "").contains("受け取り中"))
-        discoveryEntry.tap()
+        XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5))
+        waitForWindowEntry("official-window-entry", value: "受け取り中", in: app)
+        XCTAssertFalse(add.exists, "A received window leaves 「公式のまど」")
+        capture("window-list-after-receiving", app)
+        entry.tap()
         stopReceiving(app)
         app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
-        expectation(for: NSPredicate { _, _ in
-            (discoveryEntry.value as? String ?? "").contains("まだ受け取っていません")
-        }, evaluatedWith: discoveryEntry)
-        waitForExpectations(timeout: 5)
-        capture("window-discovery-after-stop", app)
-        discoveryEntry.tap()
-        let receiveAgain = app.buttons["official-window-subscribe"]
-        for _ in 0..<5 where !receiveAgain.isHittable { app.swipeUp(velocity: .slow) }
-        receiveAgain.tap()
-        app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
-        expectation(for: NSPredicate { _, _ in
-            (discoveryEntry.value as? String ?? "").contains("受け取り中")
-        }, evaluatedWith: discoveryEntry)
-        waitForExpectations(timeout: 5)
-        app.navigationBars["まどを探す"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["official-window-entry"].waitForExistence(timeout: 5))
-        capture("window-list-after-receiving", app)
-        app.buttons["official-window-entry"].tap()
+        waitForWindowEntry("official-window-entry", value: "まだ受け取っていません", in: app)
+        XCTAssertTrue(add.waitForExistence(timeout: 5), "A stopped window returns to 「公式のまど」")
+        capture("window-discovery-after-stop", app)
+        // Receiving again from the list: the same confirmation and guide as in the window.
+        for _ in 0..<3 where !add.isHittable { app.swipeUp(velocity: .slow) }
+        add.tap()
+        waitForWindowEntry("official-window-entry", value: "受け取り中", in: app)
+        let listGuide = app.buttons["window-list-widget-guide"]
+        XCTAssertTrue(listGuide.waitForExistence(timeout: 5), "「受け取る」 on the list must confirm the start")
+        XCTAssertFalse(add.exists)
+        listGuide.tap()
+        XCTAssertTrue(app.buttons["widget-placement-close"].waitForExistence(timeout: 5))
+        let listSource = app.descendants(matching: .any)["official-window-widget-source"].firstMatch
+        XCTAssertTrue(listSource.waitForExistence(timeout: 5))
+        XCTAssertTrue(listSource.label.contains("どこかの猫"), "The guide must name the window just received")
+        capture("window-list-widget-guide", app)
+        app.buttons["widget-placement-close"].tap()
+        XCTAssertFalse(listGuide.exists, "The list's guide is offered once")
+        for _ in 0..<3 where !entry.isHittable { app.swipeDown(velocity: .slow) }
+        entry.tap()
         stopReceiving(app)
         XCTAssertTrue(app.buttons["official-window-subscribe"].waitForExistence(timeout: 5))
         app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(discover.waitForExistence(timeout: 5))
-        XCTAssertTrue(start.isHittable)
-        XCTAssertFalse(app.buttons["official-window-entry"].exists)
+        XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5))
+        waitForWindowEntry("official-window-entry", value: "まだ受け取っていません", in: app)
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        XCTAssertTrue(add.isHittable)
         XCTAssertFalse(XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch.exists)
     }
 
@@ -621,20 +633,33 @@ final class OfficialWindowUITests: XCTestCase {
     func testWindowListLargeTextKeepsDiscoveryAndPhotoReachable() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--window-list-ui-fixture", "--window-list-subscribed",
+        // 1.0: the received window is a card at the top and 「公式のまど」 (here
+        // おひるね, not received) is listed below it on the same tab.
+        app.launchArguments = ["--window-list-ui-fixture", "--window-list-subscribed", "--window-list-nap-discoverable",
                                "--window-list-large-text", "-AppleLanguages", "(ja)"]
         app.launch()
         let card = app.buttons["official-window-entry"]
         XCTAssertTrue(card.waitForExistence(timeout: 10))
         XCTAssertTrue(card.isHittable)
-        let discover = app.buttons["window-list-discover"]
-        XCTAssertTrue(discover.isHittable)
+        XCTAssertTrue((card.value as? String ?? "").contains("受け取り中"))
         XCTAssertTrue(app.tabBars.buttons["写真"].isHittable)
         capture("window-list-large-text", app)
+        let discover = app.buttons["public-window-entry-nap-cats"]
+        let receive = app.buttons["public-window-add-nap-cats"]
+        XCTAssertTrue(discover.waitForExistence(timeout: 5))
+        for _ in 0..<5 where !(discover.isHittable && receive.isHittable) { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(discover.isHittable, "Discovery must stay reachable at large text")
+        XCTAssertTrue(receive.isHittable, "「受け取る」 must stay reachable at large text")
+        XCTAssertGreaterThanOrEqual(receive.frame.height, 44)
+        XCTAssertTrue(app.tabBars.buttons["写真"].isHittable)
+        capture("window-list-large-text-discovery", app)
         discover.tap()
-        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
-        app.navigationBars["まどを探す"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["おひるね"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["official-window-subscribe"].exists, "Looking must not receive")
+        app.navigationBars["おひるね"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5))
+        XCTAssertTrue(receive.waitForExistence(timeout: 5))
+        for _ in 0..<5 where !card.isHittable { app.swipeDown(velocity: .slow) }
         XCTAssertTrue(card.isHittable, "Discovery must return to the receiving photo")
         card.tap()
         let manage = app.buttons["official-window-manage"]
@@ -780,6 +805,19 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertEqual(result.label, "passed", "Export lifecycle fixture reported a bounded failure code")
     }
 
+    /// 1.0: one window is a row under 「公式のまど」 or a card above it. While it
+    /// moves, both can exist for a moment; wait until exactly one entry remains
+    /// and it reads the expected receiving state.
+    @MainActor
+    private func waitForWindowEntry(_ identifier: String, value expected: String, in app: XCUIApplication) {
+        let entries = app.buttons.matching(identifier: identifier)
+        let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            entries.count == 1 && (entries.firstMatch.value as? String ?? "").contains(expected)
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed,
+                       "\(identifier) must settle as 「\(expected)」")
+    }
+
     @MainActor
     private func stopReceiving(_ app: XCUIApplication, windowName: String = "どこかの猫") {
         let manage = app.navigationBars[windowName].buttons["official-window-manage"]
@@ -855,8 +893,13 @@ final class OfficialWindowUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--official-window-ui-fixture", "--official-window-unconfigured", "-AppleLanguages", "(ja)"]
         app.launch()
-        XCTAssertTrue(app.staticTexts["公式まどを準備しています"].waitForExistence(timeout: 10))
+        // The copy says 「公式のまど」 since the 10/30 wording pass.
+        let state = app.descendants(matching: .any)["official-window-state-title"].firstMatch
+        XCTAssertTrue(state.waitForExistence(timeout: 10))
+        XCTAssertTrue(state.label.contains("公式のまどを準備しています"), state.label)
         XCTAssertFalse(app.buttons["official-window-subscribe"].exists)
+        XCTAssertFalse(app.buttons["official-window-refresh-retry"].exists,
+                       "An unconfigured window has nothing to check again")
         capture("official-window-preparing", app)
     }
 
@@ -3180,7 +3223,9 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(probe.waitForExistence(timeout: 15))
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value == %@", "ready"), object: probe)], timeout: 5), .completed)
-        XCTAssertTrue(app.buttons["main-tab-tools"].waitForExistence(timeout: 5))
+        // iOS 26 may drop the tab label's identifier; the tab itself must be there.
+        XCTAssertTrue(app.buttons["main-tab-tools"].waitForExistence(timeout: 5)
+                      || app.tabBars.buttons["ツール"].waitForExistence(timeout: 5))
         return app
     }
 
@@ -3192,7 +3237,9 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(sheet.waitForExistence(timeout: 10))
         capture(screenshot)
         let close = sheet.buttons["header.closeButton"].firstMatch
-        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        // The remote sheet can still be sliding in on a busy CI Simulator: its
+        // container exists before its header (11/8 diagnostic).
+        XCTAssertTrue(close.waitForExistence(timeout: 15))
         let beforeScreen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         beforeScreen.name = screenshot + "-before-close-screen"
         beforeScreen.lifetime = .keepAlways
@@ -3573,7 +3620,9 @@ final class SoloMemoriesUITests: XCTestCase {
         purchase.tap()
         let message = app.staticTexts["membership-offer-message"]
         XCTAssertTrue(message.waitForExistence(timeout: 5))
-        XCTAssertTrue(message.label.contains("確認を待っています"))
+        // 10/30 wording: wait for Apple's purchase, and do not buy again.
+        XCTAssertTrue(message.label.contains("購入手続きが終わるのを待っています"), message.label)
+        XCTAssertTrue(message.label.contains("もう一度購入せず"), message.label)
         XCTAssertFalse(purchase.isEnabled)
         XCTAssertFalse(app.staticTexts["membership-preview-result"].exists)
         let restore = app.buttons["membership-offer-restore"]

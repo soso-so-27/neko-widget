@@ -19,7 +19,10 @@ struct LibraryRootUIFixture: View {
     var body: some View {
         AppRootView(viewModel: driver.viewModel)
             .environment(\.photoMemoStore, Self.noteStore)
-            .safeAreaInset(edge: .bottom, spacing: 0) {
+            // Above the tab bar, not in a bottom inset: the iOS 26 tab bar keeps
+            // the bottom edge, and the inset's buttons sat over its tabs, so a
+            // tap on ツール pressed 「権限を外す」 (11/8).
+            .overlay(alignment: .bottom) {
                 HStack(spacing: 12) {
                     if portabilityFixture {
                         Button("持出し後の確認") { Task { await checkPortabilitySources() } }
@@ -43,6 +46,7 @@ struct LibraryRootUIFixture: View {
                 .buttonStyle(.bordered)
                 .padding(4)
                 .background(.regularMaterial)
+                .padding(.bottom, 100)
             }
             .task(id: scenePhase) {
                 guard scenePhase == .active else { return }
