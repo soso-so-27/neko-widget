@@ -66,9 +66,7 @@ struct EvacuationPreparationView: View {
                         // 11/8: the show screen in one tap, for each cat.
                         Section {
                             ForEach(store.plan.cats) { cat in
-                                Button { show(cat) } label: {
-                                    Label("\(name(of: cat))を見せる", systemImage: "rectangle.portrait.on.rectangle.portrait")
-                                }
+                                Button("\(name(of: cat))を見せる") { show(cat) }
                                 .disabled(store.saveError != nil)
                                 .accessibilityIdentifier("evacuation-show-\(cat.id.uuidString)")
                             }
@@ -102,6 +100,7 @@ struct EvacuationPreparationView: View {
             if !countedOpen { countedOpen = true; UsageCounter.shared.count(.toolEvacuation) }
             CatCareStore.shared.importFromTools()
             CatCareStore.shared.importBirthdays(profiles)
+            store.retryPhotoCleanup()
         }
         .confirmationDialog("印刷用のPDFを作ります", isPresented: $confirmBook, titleVisibility: .visible) {
             Button("PDFを作る") { Task { await makeBook() } }
@@ -245,12 +244,9 @@ private struct EvacuationSaveNotice: View {
                 Button("もう一度保存する") { store.retrySave() }
             })
                 .accessibilityIdentifier("evacuation-save-error")
-        } else if store.pendingPhotoCleanup {
-            framed(VStack(spacing: 8) {
-                Text("使わなくなった写真のコピーが残っています。").font(.footnote)
-                Button("もう一度消す") { store.retrySave() }
-            })
         }
+        // 11/8: a photo copy left behind is removed again in the background
+        // (EvacuationStore.retryPhotoCleanup), not shown as a task here.
     }
 
     @ViewBuilder private func framed<Content: View>(_ content: Content) -> some View {
@@ -347,7 +343,7 @@ private struct EvacuationSuppliesEditor: View {
                     if store.update({ $0.supplies.append(item) }) { newItemID = item.id }
                 }.disabled(store.plan.supplies.count >= 200)
                     .accessibilityIdentifier("evacuation-add-supply")
-                Button("おすすめの持ち物を足す", systemImage: "checklist") { addRecommended() }
+                Button("おすすめの持ち物を足す", systemImage: "plus") { addRecommended() }
                     .disabled(store.plan.supplies.count >= 200)
                     .accessibilityIdentifier("evacuation-add-recommended")
             }
@@ -622,7 +618,7 @@ private struct EvacuationCatView: View {
                         EvacuationCatEditor(id: id,
                             ownPhotos: profiles.first(where: { $0.identifier == cat.profileID })?.confirmedPhotos ?? [],
                             otherPhotos: otherPhotos, store: store, reuseStore: reuseStore, profiles: profiles)
-                    } label: { Label("避難用の写真を選ぶ", systemImage: "photo") }
+                    } label: { Text("避難用の写真を選ぶ") }
                         .accessibilityIdentifier("evacuation-cat-edit")
                 } header: { ToolStepHeader(number: 1, title: "見分ける写真", state: states[0]) }
                 Section {
@@ -645,11 +641,14 @@ private struct EvacuationCatView: View {
                         ?? .toolCat(id: cat.toolCatID ?? cat.id, name: cat.name),
                     identifier: "evacuation-cat-care-fields", editIdentifier: "evacuation-open-cat-care",
                     profiles: profiles, folded: true)
-                // Not steps: the note, the check and delete, last and small.
+                // Not steps (11/8 型): the note, then the review mark on its own
+                // with one line on what it does, then delete alone, last.
                 Section {
                     ToolImportantInformation(text: "病歴・連絡先・ワクチンの証明・マイクロチップ番号は、必要な相手にだけ見せてください。")
-                    Text("内容を確かめた日：" + (cat.reviewedAt?.formatted(date: .numeric, time: .omitted) ?? "未確認"))
-                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section {
+                    LabeledContent("内容を確かめた日", value: cat.reviewedAt?.formatted(date: .numeric, time: .omitted) ?? "まだ")
+                        .accessibilityIdentifier("evacuation-reviewed-at")
                     Button("内容を確かめた") {
                         store.update { plan in
                             if let index = plan.cats.firstIndex(where: { $0.id == id }) {
@@ -658,9 +657,10 @@ private struct EvacuationCatView: View {
                             }
                         }
                     }
-                    .font(.footnote)
+                    .accessibilityIdentifier("evacuation-mark-reviewed")
+                } footer: { Text("押した日が、避難メモに載ります。") }
+                Section {
                     Button("この子の避難用の記録を削除", role: .destructive) { deleteRequested = true }
-                        .font(.footnote)
                 }
             }
         }.navigationTitle("猫の情報").navigationBarTitleDisplayMode(.inline)
@@ -713,10 +713,6 @@ private struct EvacuationCatEditor: View {
     var body: some View {
         Form {
             if let cat {
-                if candidateRefreshError {
-                    Text("前に入れた内容を読み込めませんでした。")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
                 Section("写真と名前") {
                     if let profile = profiles.first(where: { $0.identifier == cat.profileID }) {
                         // The dates are in この子のこと on the cat's page (11/7).
@@ -737,6 +733,12 @@ private struct EvacuationCatEditor: View {
                                 }
                             }
                         }
+                    }
+                }
+                if candidateRefreshError {
+                    Section {
+                        Text("前に入れた内容を読み込めませんでした。")
+                            .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -783,18 +785,16 @@ private struct EvacuationPhotoPicker: View {
     @State private var busy = false
     @State private var error: String?
     @Environment(\.dismiss) private var dismiss
-    private var remaining: [CatProfilePhotoPresentation] {
-        let own = Set(ownPhotos.map(\.localIdentifier))
-        return otherPhotos.filter { !own.contains($0.localIdentifier) }
-    }
     var body: some View {
         List {
             Section {
                 PhotosPicker(selection: $item, matching: .images) { Label("写真アプリから選ぶ", systemImage: "photo.badge.plus") }
                     .disabled(busy)
             } footer: { Text("顔や柄が分かる写真を選んでください。") }
-            if !ownPhotos.isEmpty { grid("この子の写真", ownPhotos) }
-            if !remaining.isEmpty { grid("ほかの猫の写真", remaining) }
+            // 11/8: every offered photo, newest first; a photo whose cat is not
+            // assigned yet is not hidden under 「ほかの猫の写真」.
+            ToolRecentPhotoSection(photos: ownPhotos + otherPhotos, own: Set(ownPhotos.map(\.localIdentifier)),
+                                   disabled: busy, identifierPrefix: "evacuation-candidate-") { use($0) }
             if let error { Section { Text(error).foregroundStyle(.red) } }
         }
         .navigationTitle(role.title).navigationBarTitleDisplayMode(.inline)
@@ -813,28 +813,14 @@ private struct EvacuationPhotoPicker: View {
             }
         }
     }
-    private func grid(_ title: String, _ photos: [CatProfilePhotoPresentation]) -> some View {
-        Section(title) {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 95))], spacing: 10) {
-                ForEach(photos) { photo in
-                    Button {
-                        busy = true; error = nil
-                        Task {
-                            do {
-                                let data = try await PhotoLibraryJPEGExporter().export(localIdentifier: photo.localIdentifier)
-                                try store.replacePhoto(data.jpeg, catID: catID, role: role)
-                                busy = false; dismiss()
-                            } catch { self.error = "この写真は使えませんでした。「写真アプリから選ぶ」から選び直せます。"; busy = false }
-                        }
-                    } label: {
-                        PhotoAssetImageView(localIdentifier: photo.localIdentifier,
-                            targetPixelSize: CGSize(width: 300, height: 300), targetAspectRatio: 1, showsFullImage: true)
-                            .aspectRatio(1, contentMode: .fit)
-                    }.buttonStyle(.plain).disabled(busy)
-                        .accessibilityLabel(ToolPhotoLabel.text("この写真を使う", date: photo.creationDate))
-                        .accessibilityIdentifier("evacuation-candidate-\(photo.localIdentifier)")
-                }
-            }
+    private func use(_ photo: CatProfilePhotoPresentation) {
+        busy = true; error = nil
+        Task {
+            do {
+                let data = try await PhotoLibraryJPEGExporter().export(localIdentifier: photo.localIdentifier)
+                try store.replacePhoto(data.jpeg, catID: catID, role: role)
+                busy = false; dismiss()
+            } catch { self.error = "この写真は使えませんでした。「写真アプリから選ぶ」から選び直せます。"; busy = false }
         }
     }
 }

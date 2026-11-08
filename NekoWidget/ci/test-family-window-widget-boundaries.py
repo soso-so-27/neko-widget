@@ -3167,7 +3167,7 @@ class LostCatToolReview1108Tests(unittest.TestCase):
         self.assertIn("LostCatActivitySheet(items: item.items)", preview)
         self.assertIn("if let text { return [url, text] }", view)
         # 11/8 tool shape: the button names what it makes.
-        self.assertIn('Button { openPreview() } label: { Text("チラシを作る").frame(maxWidth: .infinity) }', view)
+        self.assertIn('Button { openPreview() } label: { Label("チラシを作る", systemImage: "doc.richtext").frame(maxWidth: .infinity) }', view)
         self.assertNotIn("チラシを見る", view)
         self.assertNotIn("できあがりを見る", view)
         self.assertNotIn('"プレビュー"', view)
@@ -3195,11 +3195,14 @@ class LostCatToolReview1108Tests(unittest.TestCase):
         choice = section(view, "private struct LostCatPhotoChoiceView: View {", "private struct LostCatPhotoCropView")
         self.assertNotIn("Menu {", choice)
         self.assertNotIn("「…」", choice)
-        self.assertIn('Button("iPhoneの写真から選ぶ", systemImage: "photo.on.rectangle")', choice)
+        self.assertIn('Button("写真アプリから選ぶ", systemImage: "photo.on.rectangle")', choice)
+        self.assertNotIn("iPhoneの写真から選ぶ", view)
         self.assertEqual(choice.count("systemPickerButton"), 3)
         self.assertIn("showsAllCats || ownPhotos.isEmpty ? allPhotos : ownPhotos", choice)
-        self.assertLess(choice.index('Text("この子").tag(false)'), choice.index('Text("猫の写真").tag(true)'))
-        self.assertIn('Button("「この子のこと」の写真を使う", systemImage: "photo")', view)
+        # 11/8: this cat first (kept), every recent photo one tap away and named so.
+        self.assertLess(choice.index('Text("この子の写真").tag(false)'), choice.index('Text("最近の写真").tag(true)'))
+        self.assertNotIn('Text("猫の写真")', choice)
+        self.assertIn('Button("「この子のこと」の写真を使う") { useCatCarePhotos() }', view)
         self.assertNotIn("保存してある写真を使う", view)
         self.assertIn('photoTile("顔・毛柄の写真", role: .face', view)
         self.assertNotIn("・前の写真", view)
@@ -3238,7 +3241,7 @@ class LostCatToolReview1108Tests(unittest.TestCase):
         self.assertNotIn("ToolCatCareSection(", form)
         # One bar: 「あと：…」 or the issue sentence, and 「チラシを作る」.
         bar = section(form, ".toolBottomBar {", ".navigationDestination(isPresented: $showsPreview)")
-        self.assertIn('Button { openPreview() } label: { Text("チラシを作る").frame(maxWidth: .infinity) }', bar)
+        self.assertIn('Button { openPreview() } label: { Label("チラシを作る", systemImage: "doc.richtext").frame(maxWidth: .infinity) }', bar)
         self.assertIn("ToolMakeBar(missing: issues.isEmpty ? requiredFields : []) {", form)
         self.assertIn('Text("直すところがあります。赤い文字の欄を見てください")', form)
         self.assertIn(".disabled(!canPreview)", form)
@@ -3470,8 +3473,9 @@ class EvacuationCatCareTests(unittest.TestCase):
                  "ToolCatCareSection(",
                  "profiles: profiles, folded: true)",
                  'ToolImportantInformation(text: "病歴・連絡先・ワクチンの証明・マイクロチップ番号は、必要な相手にだけ見せてください。")',
-                 'Text("内容を確かめた日："',
+                 'LabeledContent("内容を確かめた日"',
                  'Button("内容を確かめた")',
+                 'footer: { Text("押した日が、避難メモに載ります。") }',
                  'Button("この子の避難用の記録を削除", role: .destructive)',
                  ".toolBottomBar {"]
         positions = [cat_page.index(needle) for needle in order]
@@ -3779,7 +3783,8 @@ class ShowcaseCatCareTests(unittest.TestCase):
         cats = section(view, "struct ShowcaseToolCatPicker: View {", "private func storeOrder(")
         self.assertIn('Section("前の写真")', cats)
         self.assertIn('Button("前に選んだ写真（\\(storeOrder(scope))）")', cats)
-        self.assertIn('Button("削除", role: .destructive) { remove(scope) }', cats)
+        self.assertIn('Button("削除", role: .destructive) { removing = scope }', cats)
+        self.assertIn('Button("削除", role: .destructive) { remove?(scope); removing = nil }', cats)
         self.assertIn("try store.removeScope(removed)", main)
         self.assertNotIn("まだ登録していない猫", view)
         # The arrow shows only when there is something to switch to.
@@ -3933,9 +3938,10 @@ class ToolAccessibilityTests(unittest.TestCase):
         self.assertIn("AnyLayout(VStackLayout(spacing: 12))", lost)
         self.assertNotIn("frame(minWidth: 36, minHeight: 36)", lost)
         # Photos in a grid are told apart by their day.
-        for path in ("NekoWidget/Views/CatPreparednessView.swift", "NekoWidget/Views/CareHandoffView.swift",
-                     "NekoWidget/Views/EvacuationPreparationView.swift"):
+        for path in ("NekoWidget/Views/CatPreparednessView.swift", "NekoWidget/Views/ToolRecentPhotos.swift"):
             self.assertIn("ToolPhotoLabel.text(", source(path), path)
+        for path in ("NekoWidget/Views/CareHandoffView.swift", "NekoWidget/Views/EvacuationPreparationView.swift"):
+            self.assertIn("ToolRecentPhotoSection(", source(path), path)
         # Errors are read aloud.
         for path in ("NekoWidget/Views/CatPreparednessView.swift", "NekoWidget/Views/CareHandoffView.swift",
                      "NekoWidget/Views/EvacuationPreparationView.swift", "NekoWidget/Views/VeterinaryVisitView.swift",
@@ -5474,6 +5480,144 @@ class ToolOpenWasteTests(unittest.TestCase):
         sync = section(view, "private struct FamilyNotebookToolSyncModifier: ViewModifier {", "extension View {")
         self.assertIn("try await Task.sleep(for: .seconds(5))", sync)
 
+
+
+class ToolConsistency1108Tests(unittest.TestCase):
+    """The same rules as 病院で見せる (11/8) in 預ける・迷子・避難・写真を見せる."""
+
+    def setUp(self) -> None:
+        self.care = source("NekoWidget/Views/CareHandoffView.swift")
+        self.lost = source("NekoWidget/Views/CatPreparednessView.swift")
+        self.evacuation = source("NekoWidget/Views/EvacuationPreparationView.swift")
+        self.showcase = source("NekoWidget/Views/ShowcasePhotoView.swift")
+        self.recent = source("NekoWidget/Views/ToolRecentPhotos.swift")
+
+    def test_pickers_show_recent_photos_first_and_never_hide_unassigned_ones(self) -> None:
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+        self.assertEqual(project.count("/* ToolRecentPhotos.swift in Sources */"), 2)
+        self.assertEqual(project.count("path = ToolRecentPhotos.swift;"), 1)
+        # Every offered photo once, newest first.
+        self.assertIn("photos.filter { seen.insert($0.localIdentifier).inserted }", self.recent)
+        self.assertIn(".sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }", self.recent)
+        section_view = section(self.recent, "struct ToolRecentPhotoSection: View {", "    private func cell(")
+        self.assertIn('header: { Text("最近の写真") }', section_view)
+        self.assertIn('Toggle("この子の写真だけ", isOn: $onlyThisCat)', section_view)
+        self.assertIn("@State private var onlyThisCat = false", section_view)
+        self.assertIn("let shown = onlyThisCat && canNarrow ? recent.filter { own.contains($0.localIdentifier) } : recent",
+                      section_view)
+        self.assertIn("LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 3), spacing: 4)",
+                      section_view)
+        # Tiles are small copies from Photos, never a full decode.
+        cell = self.recent[self.recent.index("    private func cell("):]
+        self.assertIn("targetPixelSize: CGSize(width: 300, height: 300)", cell)
+        for full in ("Data(contentsOf", "UIImage(contentsOfFile", "UIImage(data"):
+            self.assertNotIn(full, self.recent)
+        # 預ける and 避難 use it; nothing is sorted away under another cat's heading.
+        care_picker = section(self.care, "private struct CarePhotoPicker: View {", "private struct CarePreview")
+        evacuation_picker = section(self.evacuation, "private struct EvacuationPhotoPicker: View {",
+                                    "private struct EvacuationPreviewItem")
+        self.assertIn('identifierPrefix: "care-candidate-") { use($0) }', care_picker)
+        self.assertIn('identifierPrefix: "evacuation-candidate-") { use($0) }', evacuation_picker)
+        for picker in (care_picker, evacuation_picker):
+            self.assertIn("ToolRecentPhotoSection(photos: ownPhotos + otherPhotos, own: Set(ownPhotos.map(\\.localIdentifier)),",
+                          picker)
+            self.assertNotIn('"ほかの猫の写真"', picker)
+            self.assertNotIn('"この子の写真"', picker)
+            self.assertNotIn("GridItem(.adaptive", picker)
+        # 迷子 keeps this cat first; every recent photo is one tap away and named so.
+        choice = section(self.lost, "private struct LostCatPhotoChoiceView: View {", "private struct LostCatPhotoCropView")
+        self.assertIn("@State private var showsAllCats = false", choice)
+        self.assertIn('Text("最近の写真").tag(true)', choice)
+        self.assertIn("allPhotos.sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }", self.lost)
+        # One name for the system picker in every tool.
+        for view in (self.care, self.lost, self.evacuation):
+            self.assertIn('"写真アプリから選ぶ"', view)
+        # 写真を見せる: the same 「最近の写真」 and switch, off at first.
+        picker = section(self.showcase, "private struct ShowcaseCandidatePicker: View {", "struct ShowcaseToolCatPicker: View {")
+        self.assertIn('Text("最近の写真")', picker)
+        self.assertIn('Toggle("この子の写真だけ", isOn: $onlyThisCat)', picker)
+        self.assertIn("@State private var onlyThisCat = false", picker)
+        self.assertIn("candidates.sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }", picker)
+        self.assertIn("let ordered = recent.map(\\.localIdentifier).filter { selected.contains($0) }", picker)
+        self.assertNotIn('"ほかの写真"', picker)
+        self.assertNotIn("leadingTitle", self.showcase)
+        self.assertIn("own: knownIdentifiers,", self.showcase)
+
+    def test_review_mark_says_what_it_does_and_is_not_mixed_with_delete(self) -> None:
+        page = section(self.evacuation, "private struct EvacuationCatView: View {", "private struct EvacuationCatEditor: View {")
+        note = page.index('ToolImportantInformation(text: "病歴・連絡先')
+        mark = page.index('Button("内容を確かめた")')
+        footer = page.index('footer: { Text("押した日が、避難メモに載ります。") }')
+        delete = page.index('Button("この子の避難用の記録を削除", role: .destructive)')
+        self.assertLess(note, mark)
+        self.assertLess(mark, footer)
+        self.assertLess(footer, delete)
+        # Each in its own section: a section closes between them.
+        self.assertIn("}\n                Section {", page[note:mark])
+        self.assertIn("}\n                Section {", page[footer:delete])
+        self.assertIn('.accessibilityIdentifier("evacuation-mark-reviewed")', page)
+        # The date it puts on the memo is really on the memo.
+        self.assertIn("reviewedAt: cat.reviewedAt,", source("NekoWidget/Services/EvacuationStore.swift"))
+        self.assertIn('"内容を確かめた日："', source("NekoWidget/Services/EvacuationExporter.swift"))
+
+    def test_delete_sits_alone_at_the_bottom_in_plain_red(self) -> None:
+        editor = section(self.care, "private struct CareCatEditor: View {", "private struct CarePhotoPicker: View {")
+        body = editor[editor.index("var body: some View {"):editor.index(".toolPageSpacing()")]
+        delete = body.index('Button("このお世話メモを削除", role: .destructive)')
+        last = body[body.rindex("Section {"):]
+        self.assertIn('Button("このお世話メモを削除", role: .destructive) { deleteRequested = true }\n                }', last)
+        self.assertNotIn("前に入れた内容", last)
+        self.assertLess(body.index("前に入れた内容を読み込めませんでした。"), delete)
+        page = section(self.evacuation, "private struct EvacuationCatView: View {", '}.navigationTitle("猫の情報")')
+        self.assertIn('Button("この子の避難用の記録を削除", role: .destructive) { deleteRequested = true }\n                }', page)
+        for view in (self.care, self.evacuation):
+            for line in view.splitlines():
+                if "role: .destructive) { deleteRequested = true }" in line:
+                    self.assertNotIn("systemImage", line)
+            self.assertNotIn('role: .destructive) { deleteRequested = true }\n                        .font(.footnote)', view)
+        # Every delete asks first, 写真を見せる's former sets too.
+        cats = section(self.showcase, "struct ShowcaseToolCatPicker: View {", "private func storeOrder(")
+        self.assertIn('.confirmationDialog("前に選んだ写真を削除しますか？"', cats)
+        self.assertIn('message: { _ in Text("写真アプリの写真は消えません。") }', cats)
+        self.assertNotIn("{ remove(scope) }", cats)
+        # The note in the photo editor sits after the photos, not above them.
+        photos = section(self.evacuation, "private struct EvacuationCatEditor: View {", "private struct EvacuationPhoto: View {")
+        self.assertLess(photos.index('Section("写真と名前")'), photos.index("前に入れた内容を読み込めませんでした。"))
+
+    def test_plain_actions_carry_no_decorative_icons(self) -> None:
+        for gone in ('Button("「この子のこと」の写真を使う", systemImage:', 'Button("「この子のこと」の連絡先を使う", systemImage:',
+                     'systemImage: "arrow.clockwise"', 'Button("まとめてコピー", systemImage:', 'systemImage: "plus.circle"'):
+            self.assertNotIn(gone, self.lost)
+        # Adds keep 「+」.
+        self.assertIn('Button("「\\(line)」を特徴に足す", systemImage: "plus")', self.lost)
+        self.assertIn('Button("おすすめの持ち物を足す", systemImage: "plus")', self.evacuation)
+        self.assertIn('Button("持ち物を追加", systemImage: "plus")', self.evacuation)
+        hub = section(self.evacuation, "struct EvacuationPreparationView: View {", "private func makeBook()")
+        self.assertIn('Button("\\(name(of: cat))を見せる") { show(cat) }', hub)
+        self.assertNotIn('"rectangle.portrait.on.rectangle.portrait")\n', hub)
+        self.assertIn('} label: { Text("避難用の写真を選ぶ") }', self.evacuation)
+        self.assertNotIn('Label(profile.displayName, systemImage: "cat")', self.showcase)
+        # The make button looks the same in every tool.
+        self.assertIn('Label("チラシを作る", systemImage: "doc.richtext")', self.lost)
+        self.assertIn('Label("お世話メモを作る", systemImage: "doc.text")', self.care)
+        self.assertIn('Label("避難メモを見せる", systemImage:', self.evacuation)
+
+    def test_buttons_say_what_happened_and_no_mechanism_is_a_task(self) -> None:
+        # まとめてコピー says it copied, as 「投稿する文章をコピー」 does.
+        self.assertIn('Button(reportCopied ? "コピーしました" : "まとめてコピー") {', self.lost)
+        self.assertIn("reportCopied = true", self.lost)
+        self.assertIn(".sheet(isPresented: $showsGuide, onDismiss: { reportCopied = false })", self.lost)
+        self.assertIn('.accessibilityIdentifier("lost-cat-copy-report")', self.lost)
+        # A leftover photo copy is removed in the background in 避難 too.
+        self.assertNotIn("使わなくなった写真のコピーが残っています", self.evacuation)
+        self.assertNotIn("もう一度消す", self.evacuation)
+        self.assertIn("store.retryPhotoCleanup()", self.evacuation)
+        store = source("NekoWidget/Services/EvacuationStore.swift")
+        self.assertIn("func retryPhotoCleanup() {\n        guard pendingPhotoCleanup, let repository else { return }", store)
+        plan = source("NekoWidget/Services/EvacuationPlan.swift")
+        retry = section(plan, "    func retryPhotoCleanup() {", "    private func reconcileOwnedPhotos()")
+        self.assertIn("AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }", retry)
+        self.assertIn("reconcileOwnedPhotos()", retry)
 
 if __name__ == "__main__":
     unittest.main()

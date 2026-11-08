@@ -40,6 +40,13 @@ final class EvacuationStore: ObservableObject {
         }
     }
 
+    /// 11/8: tried again in the background when the tool opens, as 預けるとき does.
+    func retryPhotoCleanup() {
+        guard pendingPhotoCleanup, let repository else { return }
+        repository.retryPhotoCleanup()
+        pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
+    }
+
     @discardableResult
     func update(_ change: (inout EvacuationPlan) -> Void) -> Bool {
         guard repository != nil, loadError == nil else { return false }
