@@ -5663,7 +5663,8 @@ class VeterinaryRoundOneTests(unittest.TestCase):
         # Every photo by default; this cat's page photos only when asked.
         self.assertIn("@State private var onlyMine = false", picker)
         self.assertIn("if !mine.isEmpty {", body)
-        self.assertIn("return (photos + mine).filter { seen.insert($0.localIdentifier).inserted }", picker)
+        # 11/9: recent videos are offered too, in the same grid.
+        self.assertIn("return (photos + mine + videos).filter { seen.insert($0.localIdentifier).inserted }", picker)
         self.assertIn("(onlyMine ? mine : everyPhoto).filter { access.photo(for: $0.localIdentifier) != nil }", picker)
         self.assertIn(".sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }", picker)
         self.assertNotIn("guard let mine = profile?.confirmedPhotos, !mine.isEmpty else { return photos }", picker)
@@ -5720,6 +5721,151 @@ class VeterinaryRoundOneTests(unittest.TestCase):
         self.assertIn("let data = try? await store.image(for: entry, visitID: visit.id)", export)
         self.assertIn("VeterinaryMemoExporter.image(data)", export)
         self.assertNotIn("ToolPhotoThumbnail", export)
+
+
+class VeterinaryRoundTwoTests(unittest.TestCase):
+    """病院で見せる, round 2 (11/9): 「撮る」 inside the tool, videos, and the
+    day's weight read from and written into 「この子のこと」."""
+
+    def setUp(self) -> None:
+        self.view = source("NekoWidget/Views/VeterinaryVisitView.swift")
+        self.capture = source("NekoWidget/Views/VeterinaryCapture.swift")
+        self.store = source("NekoWidget/Services/VeterinaryVisitStore.swift")
+
+    def test_taking_a_photo_or_video_saves_it_to_photos_then_adds_it(self) -> None:
+        picker = section(self.view, "private struct VeterinaryRecordPicker: View {", "private struct VeterinaryRecordConfirmation")
+        rows = section(picker, "@ViewBuilder private var captureRows: some View {", "var body: some View {")
+        # No camera (the simulator): no button. Turned off: one sentence and Settings.
+        self.assertIn("if VeterinaryCapture.cameraAvailable {", rows)
+        self.assertIn('Button("撮る", systemImage: "camera") { Task { await openCamera() } }', rows)
+        self.assertIn('Button("設定を開く")', rows)
+        self.assertIn("UIApplication.openSettingsURLString", rows)
+        opening = section(picker, "private func openCamera() async {", "/// The shot goes to the photo library")
+        self.assertLess(opening.index("await VeterinaryCapture.blockedReason()"), opening.index("capturing = true"))
+        self.assertIn("if captureBlocked == nil { capturing = true }", opening)
+        body = section(picker, "var body: some View {", "private func recordRow(")
+        self.assertLess(body.index('Section("最近の写真")'), body.index("captureRows"))
+        self.assertLess(body.index("captureRows"), body.index('Toggle("この子の写真だけ", isOn: $onlyMine)'))
+        self.assertIn(".fullScreenCover(isPresented: $capturing) {", body)
+        self.assertIn("VeterinaryCameraView { shot in", body)
+        # Saved to the photo library first, then added to this cat's memo only,
+        # by the same ownership rule as a chosen photo.
+        shot = section(picker, "private func addShot(_ shot: VeterinaryCapture.Shot) async {", "@ViewBuilder private var captureRows")
+        self.assertLess(shot.index("try await VeterinaryCapture.save(shot)"), shot.index("try await store.add("))
+        self.assertIn("cats: [PhotoMemoryNoteCat(id: visit.catID, name: visit.catName)]", shot)
+        self.assertIn("confirmedTarget: VeterinaryRecordConfirmation.belongsOnly(to: visit.catID, source)", shot)
+        self.assertIn("videoSeconds: saved.seconds", shot)
+        self.assertNotIn("confirmedTarget: true", self.view)
+        camera = section(self.capture, "struct VeterinaryCameraView: UIViewControllerRepresentable {", "/// A video in the memo")
+        self.assertIn("picker.sourceType = .camera", camera)
+        self.assertIn("picker.mediaTypes = [UTType.image.identifier, UTType.movie.identifier]", camera)
+        self.assertIn("picker.videoMaximumDuration = VeterinaryCapture.maximumVideoSeconds", camera)
+        self.assertIn("FileManager.default.copyItem(at: movie, to: copy)", camera)
+        save = section(self.capture, "static func save(_ shot: Shot) async throws -> Saved {", "/// The memo's copy")
+        self.assertIn("request.addResource(with: .photo, data: original, options: nil)", save)
+        self.assertIn("request.addResource(with: .video, fileURL: url, options: options)", save)
+        self.assertIn("defer { try? FileManager.default.removeItem(at: url) }", save)
+        self.assertIn("PHAssetCreationRequest.forAsset()", self.capture)
+        self.assertIn("kCGImageSourceCreateThumbnailWithTransform: true", self.capture)
+        blocked = section(self.capture, "static func blockedReason() async -> String? {", "/// Saves the shot")
+        self.assertIn("AVCaptureDevice.requestAccess(for: .video)", blocked)
+        self.assertIn("PHPhotoLibrary.requestAuthorization(for: .addOnly)", blocked)
+        # 「この子のこと」's document camera still keeps its shots in the app.
+        care = source("NekoWidget/Views/CatCareView.swift")
+        self.assertNotIn("PHPhotoLibrary", care)
+        plist = source("NekoWidget/Info.plist")
+        camera_text = section(plist, "<key>NSCameraUsageDescription</key>", "<key>NSPhotoLibraryAddUsageDescription</key>")
+        self.assertIn("写真アプリには追加しません", camera_text)
+        self.assertIn("病院で見せる写真と動画は、写真アプリに保存します。", camera_text)
+        add_text = section(plist, "<key>NSPhotoLibraryAddUsageDescription</key>", "<key>NSMicrophoneUsageDescription</key>")
+        self.assertIn("「病院で見せる」で撮った写真と動画", add_text)
+        self.assertIn("写真を自動で追加することはありません", add_text)
+        self.assertIn("<key>NSMicrophoneUsageDescription</key>\n\t<string>「病院で見せる」で猫の様子を動画に撮るとき", plist)
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+        self.assertEqual(project.count("VeterinaryCapture.swift in Sources */,"), 1)
+        self.assertEqual(project.count("path = VeterinaryCapture.swift;"), 1)
+
+    def test_videos_are_chosen_marked_and_played_only_after_a_tap(self) -> None:
+        picker = section(self.view, "private struct VeterinaryRecordPicker: View {", "private struct VeterinaryRecordConfirmation")
+        self.assertIn("let recent = VeterinaryCapture.recentVideos()", picker)
+        self.assertIn("return (photos + mine + videos).filter { seen.insert($0.localIdentifier).inserted }", picker)
+        self.assertIn("videoSeconds: videoSeconds[source.photoIdentifier]) { updated in", picker)
+        cell = section(picker, "private func photoCell(", "\n    }\n")
+        self.assertIn("if let seconds { VeterinaryVideoBadge(seconds: seconds) }", cell)
+        self.assertIn("let seconds = videoSeconds[photo.localIdentifier]", cell)
+        confirm = section(self.view, "private struct VeterinaryRecordConfirmation: View {", "/// One day per record")
+        self.assertIn("videoSeconds: bytes == nil ? nil : videoSeconds)", confirm)
+        recent = section(self.capture, "static func recentVideos(", "/// The video to play")
+        self.assertIn("PHAsset.fetchAssets(with: .video, options: options)", recent)
+        self.assertIn("guard status == .authorized || status == .limited else { return [] }", recent)
+        # The memo row and the show screen: the first frame with a mark; a tap plays it there.
+        photo = section(self.view, "private struct VeterinaryEntryPhoto: View {", "private struct VeterinaryEntryFullPhoto: View {")
+        self.assertIn("if playing, let identifier = entry.sourcePhotoIdentifier {", photo)
+        self.assertIn("Button { if videoSeconds != nil { playing = true } else { expanded = true } } label: {", photo)
+        self.assertEqual(photo.count("playing = true"), 1)
+        self.assertIn("VeterinaryEntryVideo(identifier: identifier)", photo)
+        self.assertIn('Image(systemName: "play.circle.fill")', photo)
+        video = section(self.capture, "struct VeterinaryEntryVideo: View {", "/// The mark on a video's first frame")
+        self.assertIn("VideoPlayer(player: player)", video)
+        self.assertIn(".onDisappear { player?.pause() }", video)
+        self.assertNotIn("isMuted", video)
+        self.assertEqual(self.capture.count("player.play()"), 1)
+        self.assertIn("VeterinaryEntryPhoto(entry: entry, visitID: visit.id, store: store, videoSeconds: videos[entry.id])", self.view)
+        self.assertEqual(self.view.count("videoSeconds: videos[entry.id]"), 2)
+        self.assertIn("videos: videos).environment(", self.view)
+        export = section(self.view, "private func makeExport(pdf: Bool) async {", "private enum VeterinaryCareOrder")
+        self.assertIn('lines.append("動画 " + VeterinaryVisitEntry.durationText(seconds))', export)
+
+    def test_video_lengths_stay_beside_the_memos_for_older_versions_and_the_family(self) -> None:
+        # Not in the visit or entry: older versions read the memo as before, and
+        # the family notebook's receive path (being changed elsewhere) is untouched.
+        model = section(self.store, "struct VeterinaryVisitEntry: Codable", "extension VeterinaryVisitEntry {")
+        self.assertNotIn("video", model.lower())
+        state = section(self.store, "private struct State: Codable {", "private let directory: URL")
+        self.assertIn("var videoSeconds: [String: Double]? = nil", state)
+        self.assertIn("Self.keepingLocalResults(try FamilyNotebookToolSharing.visitsReceived(state.visits), from: state.visits)", self.store)
+        keeping = section(self.store, "static func keepingLocalResults(", "/// The UI supplies a live membership boundary")
+        self.assertNotIn("video", keeping)
+        add = section(self.store, "func add(source: PhotoMemoryNoteRecord", "func remove(entryID:")
+        self.assertIn("guard VeterinaryVisitEntry.validVideoSeconds(videoSeconds), jpeg != nil,", add)
+        self.assertIn("videos[entry.id.uuidString] = videoSeconds", add)
+        load = section(self.store, "private func load() throws -> State {", "private static func canInitializeMissingManifest(")
+        self.assertIn("UUID(uuidString: $0.key) != nil && VeterinaryVisitEntry.validVideoSeconds($0.value)", load)
+        commit = section(self.store, "private func commit(_ state: State, familyProjection: Bool = false) throws {", "private func write(")
+        self.assertIn("let kept = videos.filter { live.contains($0.key) }", commit)
+        verifier = (ROOT / "ci/verify-veterinary-visits.swift").read_text(encoding="utf-8")
+        for case in ("An incomplete video was accepted", "An older version could not read a memo with a video",
+                     "A removed video kept its length", "An impossible video length was read",
+                     "A memo without video lengths did not read as before", "A past memo showed a weight measured later"):
+            self.assertIn(case, verifier)
+        self.assertIn("try await verifiesVideosAndDayWeight(", verifier)
+
+    def test_the_days_weight_has_one_place_in_cat_care(self) -> None:
+        # No second weight form: the row shows 「この子のこと」's newest weight
+        # and opens 「この子のこと」's own weight form, which writes there.
+        self.assertNotIn(".decimalPad", self.view)
+        self.assertNotIn("体重（kg）", self.view)
+        model = section(self.store, "struct VeterinaryVisit: Codable", "var orderedEntries")
+        self.assertNotIn("weight", model.lower())
+        noticed = section(self.view, "private func noticedStep(", "private func recordsStep(")
+        self.assertIn("weightRow(visit)", noticed)
+        self.assertLess(noticed.index('Toggle("いつからかを記録"'), noticed.index("weightRow(visit)"))
+        self.assertLess(noticed.index("weightRow(visit)"), noticed.index("} else {"))
+        self.assertIn('"vet-weight"', noticed)
+        self.assertIn("CatCareListEntrySheet(editor: CatCareListEditor(kind: .weight), catID: nil) { result in", self.view)
+        record = section(self.view, "private func recordWeight(", "private func recordsStep(")
+        self.assertIn("CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString)", record)
+        self.assertIn("catCareStore.ensureRecord(profileID: visit.catID, name: profile?.displayName)", record)
+        self.assertIn("result.apply(to: &state.cats[index], by: state.deviceID, now: Date())", record)
+        weight = section(self.view, "private enum VeterinaryDayWeight {", "\n}\n")
+        self.assertIn("record.activeWeights", weight)
+        self.assertIn("VeterinaryVisitWeight.latest(weights, onOrBefore: VeterinaryVisit.day(visit.completedAt ?? Date()))", weight)
+        # Near the top of the show screen and the paper, before what was noticed.
+        read = section(self.view, "private struct VeterinaryReadView: View {", "@ViewBuilder private var exportButtons")
+        self.assertLess(read.index("Text(displayName ?? visit.catName)"), read.index('Text("体重").font(.headline)'))
+        self.assertLess(read.index('Text("体重").font(.headline)'), read.index('Text("家で気付いたこと")'))
+        export = section(self.view, "private func makeExport(pdf: Bool) async {", "private enum VeterinaryCareOrder")
+        self.assertLess(export.index('noticed.append(("体重"'), export.index('("家で気付いたこと"'))
 
 
 class NavigationAfterActionTests(unittest.TestCase):
