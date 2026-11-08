@@ -1,0 +1,81 @@
+name: Native output and UI tests
+on:
+  push:
+    branches-ignore: ['diagnostic/**']
+    paths: ['NekoWidget/**', '.github/workflows/native-tests.yml']
+  pull_request:
+    paths: ['NekoWidget/**', '.github/workflows/native-tests.yml']
+  schedule:
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-tests-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+jobs:
+  scope:
+    runs-on: ubuntu-24.04
+    outputs:
+      ui: ${{ steps.scope.outputs.ui }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.before || github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess
+          base = os.environ.get('BASE', '')
+          always = os.environ['EVENT'] in ('schedule', 'workflow_dispatch') or not base.strip('0')
+          paths = [] if always else subprocess.check_output(['git','diff','--name-only',base,'HEAD'],text=True).splitlines()
+          ui = always or any(re.search(r'(CareHandoff|Evacuation|Veterinary|LostCat|Showcase|Tool|CatCare|CatHousehold|PhotoNote|NekoWidgetTests|NekoWidgetUITests|run-native|native-ui|native-tests|project\.pbxproj|\.xcscheme)', p) for p in paths)
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f: f.write('ui=' + str(ui).lower() + '\n')
+          PY
+  output:
+    name: App-hosted output XCTest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - run: bash NekoWidget/ci/run-native-test-layer.sh unit
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: output-xctest
+          path: ${{ runner.temp }}/native-unit-0/
+          retention-days: 7
+  ui:
+    name: All UI tests (${{ matrix.shard }})
+    needs: [output, scope]
+    if: needs.scope.outputs.ui == 'true'
+    runs-on: macos-15
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - run: bash NekoWidget/ci/run-native-test-layer.sh ui ${{ matrix.shard }}
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: ui-tests-${{ matrix.shard }}
+          path: ${{ runner.temp }}/native-ui-${{ matrix.shard }}/
+          retention-days: 7
