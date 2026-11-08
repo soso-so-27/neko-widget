@@ -3106,7 +3106,7 @@ class VeterinaryCatCareTests(unittest.TestCase):
         fields = section(summary, "static func veterinaryFields(", "static func weightTrend(")
         self.assertIn('"未記入（飼い主に聞いてください）"', fields)
         self.assertIn('("マイクロチップ", record?.microchipStatus == CatCareMicrochipStatus.none', fields)
-        self.assertIn('? "入っていない（飼い主の記入）" : text(record?.microchip?.value)))', fields)
+        self.assertIn('? "入っていない" : text(record?.microchip?.value)))', fields)
         trend = summary[summary.index("static func weightTrend("):]
         self.assertIn("前回から", trend)
 
@@ -3276,7 +3276,7 @@ class LostCatCatCareTests(unittest.TestCase):
         self.assertIn('editIdentifier: "lost-cat-open-cat-care"', report)
         fields = section(summary, "static func lostCatReportFields(", "/// Newest first")
         self.assertIn('("マイクロチップ番号", record?.microchipStatus == CatCareMicrochipStatus.none', fields)
-        self.assertIn('? "入っていない（飼い主の記入）" : text(record?.microchip?.value)))', fields)
+        self.assertIn('? "入っていない" : text(record?.microchip?.value)))', fields)
         # The flyer line says only that there is a chip.
         core = source("NekoWidget/Services/CatCareCore.swift")
         line = section(core, "static func publicLine(", "static func age(")
@@ -3317,7 +3317,7 @@ class EvacuationCatCareTests(unittest.TestCase):
         matching = section(source("NekoWidget/Views/CatCareView.swift"), "static func record(toolCatID:", "\n}\n")
         self.assertLess(matching.index("$0.catID == toolCatID"), matching.index("record(profileIdentifier:"))
         self.assertIn('("マイクロチップ番号", chip.isEmpty', summary)
-        self.assertIn('? (record?.microchipStatus == CatCareMicrochipStatus.none ? "入っていない（飼い主の記入）" : empty) : chip))', summary)
+        self.assertIn('? (record?.microchipStatus == CatCareMicrochipStatus.none ? "入っていない" : empty) : chip))', summary)
         # One PDF: supplies, destinations and every cat, after a confirmation.
         book = section(store, "func bookRecords()", "private static func normalizedJPEG(")
         self.assertIn("for cat in plan.cats { records.append(try shareRecord(", book)
@@ -4503,6 +4503,17 @@ class ToolPageReview349Tests(unittest.TestCase):
         self.assertIn('Button("\(role.title)を外す", systemImage: "minus.circle", role: .destructive)', evac)
         self.assertNotIn('Button("\(role.title)を外す", role: .destructive)', evac)
 
+
+class OwnerEntryWordingTests(unittest.TestCase):
+    def test_outputs_do_not_tag_every_answer_as_the_owners(self) -> None:
+        # 349: 「なし（飼い主の記入）」 on every line was noise; everything in these
+        # memos is the owner's own record (the vet memo says so once).
+        for path in ("NekoWidget/Services/CatCareOutputLines.swift", "NekoWidget/Services/CareHandoffPlan.swift",
+                     "NekoWidget/Services/EvacuationPlan.swift"):
+            text = source(path)
+            self.assertNotIn("（飼い主の記入）", text, path)
+            self.assertNotIn("（飼い主の記録）", text, path)
+        self.assertIn("飼い主の記録をまとめたもの", source("NekoWidget/Views/VeterinaryVisitView.swift"))
 
 class PhotoScanStatusTests(unittest.TestCase):
     def test_searching_says_so_and_a_retry_only_appears_when_it_can_work(self) -> None:

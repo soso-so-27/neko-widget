@@ -68,7 +68,7 @@ struct CareCat: Codable, Equatable, Identifiable {
     var healthText: String {
         switch healthStatus {
         case .unknown: "薬・アレルギーは書いていません。飼い主に聞いてください。"
-        case .none: "薬・アレルギーはなし（飼い主の記入）"
+        case .none: "薬・アレルギーはなし"
         case .recorded: healthDetails.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "薬・アレルギーがあります。くわしくは飼い主に聞いてください。" : healthDetails
         }
@@ -314,7 +314,7 @@ struct CareHandoffDisclosure {
             fields.append(("ごはん \(index + 1)", parts.map { "\($0.0)：\($0.1)" }.joined(separator: "\n")))
         }
         fields += [("水", cat.water), ("トイレ", cat.toilet), ("接し方・苦手なこと", cat.handling)]
-        if health && cat.healthStatus != .unknown { fields.append(("薬・アレルギー（飼い主の記録）", cat.healthText)) }
+        if health && cat.healthStatus != .unknown { fields.append(("薬・アレルギー", cat.healthText)) }
         return Self.written(fields)
     }
 
@@ -362,7 +362,7 @@ struct CareHandoffDisclosure {
         var lines: [String] = []
         if let vet {
             if vet.vetStatus == CatCareVetStatus.none {
-                lines.append("まだない（飼い主の記入）")
+                lines.append("まだない")
             } else {
                 let head = [vet.name, vet.phone].map { trimmed($0) }.filter { !$0.isEmpty }.joined(separator: " ")
                 if !head.isEmpty { lines.append(head) }
