@@ -4169,6 +4169,96 @@ class ShowcaseCatCareTests(unittest.TestCase):
         for text in (control, shortcut, source("NekoWidgetWidget/OpenShowcaseIntent.swift")):
             self.assertNotIn("うちのこを見せる", text)
 
+    def test_showcase_tool_review_round_two(self) -> None:
+        """Round 2 of 「写真を見せる」: drag order, slideshow, iOS 17 widget."""
+        store = source("NekoWidget/Services/ShowcasePhotoStore.swift")
+        view = source("NekoWidget/Views/ShowcasePhotoView.swift")
+        # 1. Drag to reorder in 「編集」; the order is the store's own order.
+        move = section(store, "func move(_ entry: Entry, to target: Entry) throws {", "/// 「先頭にする」")
+        self.assertIn("moved.isPinned = true", move)
+        self.assertIn("scope.insert(moved, at: destination)", move)
+        self.assertIn("where next.entries[index].scopeID == entry.scopeID", move)
+        self.assertIn("try commit(next, undoable: true)", move)
+        self.assertIn("func moveToFront(_ entry: Entry) throws {", store)
+        self.assertIn('Button("先頭にする") { change { try store.moveToFront(entry) } }', view)
+        preparation = section(view, "struct ShowcasePreparationView: View {", "private struct ShowcaseReorderDrop: DropDelegate {")
+        cell = section(preparation, "private func photoCell(", "private func thumbnail(")
+        self.assertIn(".onDrag {", cell)
+        self.assertIn('NSItemProvider(object: "" as NSString)', cell)
+        self.assertIn(".onDrop(of: [.text], delegate: ShowcaseReorderDrop(", cell)
+        self.assertIn("try store.move(moved, to: entry)", cell)
+        self.assertIn('accessibilityAction(named: Text("前へ"))', cell)
+        self.assertIn('accessibilityAction(named: Text("後ろへ"))', cell)
+        drop = section(view, "private struct ShowcaseReorderDrop: DropDelegate {", "private struct ShowcaseCandidatePicker: View {")
+        self.assertIn("func validateDrop(info: DropInfo) -> Bool { dragging != nil }", drop)
+        self.assertIn("move(dragging)", drop)
+        # Pinned photos keep their places when 「おすすめで選び直す」 runs.
+        apply = section(store, "func applyRecommendations(", "func add(photoIdentifier:")
+        self.assertIn("let ordered = Self.keepingPinnedPlaces(current, fills: fills)", apply)
+        self.assertNotIn("var ordered = pinned", apply)
+        self.assertIn("guard startRevision == revision else { throw Error.changedDuringPreparation }", apply)
+        places = section(store, "static func keepingPinnedPlaces(", "func move(_ entry: Entry, to target: Entry)")
+        self.assertIn("for (place, entry) in current.enumerated() where entry.pinned { kept[place] = entry }", places)
+        self.assertIn("if let entry = kept[place] {", places)
+        # The saved file keeps its shape: no new field for the order.
+        entry = section(store, "struct Entry: Codable, Equatable, Identifiable {", "private struct ScopeState")
+        self.assertNotIn("order", entry.lower())
+
+        # 2. Slideshow: a quiet button, a full screen with no controls.
+        main = section(view, "struct ShowcasePhotoView: View {", "enum BestNineComposer {")
+        self.assertIn('Label("スライドショー", systemImage: "play")', main)
+        self.assertIn("if slides.count > 1 {", main)
+        self.assertIn(".fullScreenCover(isPresented: $showsSlideshow) {", main)
+        slides = section(view, "struct ShowcaseSlideshowView: View {", "private struct ShowcaseDetailPhoto: View {")
+        self.assertIn("static let seconds: UInt64 = 3", slides)
+        self.assertIn('static let idleOwner = "showcase-slideshow"', slides)
+        self.assertIn("index = next", slides)
+        self.assertIn("let next = (index + 1) % items.count", slides)
+        self.assertIn(".onTapGesture { paused.toggle() }", slides)
+        self.assertIn("value.translation.height > 110 { leave() }", slides)
+        self.assertIn('Button("閉じる") { leave() }', slides)
+        self.assertIn(".transition(reduceMotion ? .identity : .opacity)", slides)
+        self.assertIn(".animation(reduceMotion ? nil : .easeInOut(duration: 0.8), value: index)", slides)
+        # The screen stays on only while it shows, and is always let go.
+        self.assertIn("AppIdleTimer.setPreventSleep(on, for: Self.idleOwner)", slides)
+        self.assertIn(".onAppear { keepAwake(scenePhase == .active) }", slides)
+        self.assertIn(".onChange(of: scenePhase) { _, phase in keepAwake(phase == .active) }", slides)
+        self.assertIn(".onDisappear { keepAwake(false) }", slides)
+        leave = section(slides, "private func leave() {", "private static func preload(")
+        self.assertLess(leave.index("keepAwake(false)"), leave.index("close()"))
+        for gone in ("Slider(", "ProgressView(", "chevron.left", "chevron.right"):
+            self.assertNotIn(gone, slides)
+
+        # 3. iOS 17 widget: icon + 「見せる」, no photo, same launch request.
+        widget = source("NekoWidgetWidget/ShowcaseWidget.swift")
+        bundle = source("NekoWidgetWidget/NekoWidgetBundle.swift")
+        intent = source("NekoWidgetWidget/OpenShowcaseIntent.swift")
+        root = source("NekoWidget/App/AppRootView.swift")
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+        self.assertIn(".supportedFamilies([.accessoryCircular, .systemSmall])", widget)
+        self.assertIn('.configurationDisplayName("写真を見せる")', widget)
+        self.assertIn('Text("見せる")', widget)
+        self.assertIn(".widgetURL(ShowcaseWidgetRoute.url)", widget)
+        for gone in ("WidgetCacheImageLoader", "WidgetManifestReader", "UIImage", "PHAsset", "AppGroup",
+                     "UserDefaults", "displayName"):
+            self.assertNotIn(gone, widget)
+        bundle_body = section(bundle, "var body: some Widget {", "if #available(iOS 18.0, *) {")
+        self.assertIn("ShowcaseWidget()", bundle_body)
+        self.assertIn('static let url = URL(string: "nekowidget://showcase")!', intent)
+        route = section(intent, "enum ShowcaseWidgetRoute {", "enum ShowcaseOpenTarget")
+        for part in ("components.queryItems == nil", "components.path.isEmpty", "components.fragment == nil"):
+            self.assertIn(part, route)
+        handler = section(root, "private func handleNonPhotoURL(", "private func widgetPhotoDestination(")
+        widget_branch = section(handler, "if ShowcaseWidgetRoute.matches(url) {", "Task { @MainActor in")
+        self.assertIn("ShowcaseLaunchRequest.request()", widget_branch)
+        self.assertLess(widget_branch.index("ShowcaseLaunchRequest.request()"), widget_branch.index("return"))
+        # Registered for the widget extension only.
+        self.assertEqual(project.count("E02611090000000000000001 /* ShowcaseWidget.swift in Sources */"), 2)
+        self.assertEqual(project.count("E02611090000000000000002 /* ShowcaseWidget.swift */"), 3)
+        widget_sources = section(project, "E0260923000000000000000B /* OpenShowcaseIntent.swift in Sources */,",
+                                 "runOnlyForDeploymentPostprocessing")
+        self.assertIn("E02611090000000000000001 /* ShowcaseWidget.swift in Sources */,", widget_sources)
+
     def test_vet_memo_is_an_everyday_tool(self) -> None:
         tab = source("NekoWidget/Views/MainTabView.swift")
         everyday = section(tab, 'toolSection("ふだん") {', 'toolSection("もしものとき") {')

@@ -25,6 +25,22 @@ enum ShowcaseLaunchRequest {
     }
 }
 
+/// The iOS 17 widget's link (round 2): Control Center and Siri need iOS 18.
+/// It carries nothing but the screen, and only leaves the same one-shot request.
+enum ShowcaseWidgetRoute {
+    static let url = URL(string: "nekowidget://showcase")!
+
+    static func matches(_ url: URL) -> Bool {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
+        return components.scheme?.lowercased() == "nekowidget"
+            && components.host?.lowercased() == "showcase"
+            && components.path.isEmpty
+            && components.queryItems == nil
+            && components.fragment == nil
+            && components.user == nil
+    }
+}
+
 enum ShowcaseOpenTarget: String, AppEnum {
     case prepared
 
