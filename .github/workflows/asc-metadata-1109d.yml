@@ -1,0 +1,58 @@
+name: Apply approved App Store metadata 1109d
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Owner-approved 1109d fields only; dry-run before apply
+        default: dry-run
+        required: true
+        type: choice
+        options: [dry-run, apply]
+permissions:
+  contents: read
+jobs:
+  read:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    environment: testflight
+    timeout-minutes: 12
+    env:
+      ASC_TELEMETRY_DISABLED: '1'
+      DO_NOT_TRACK: '1'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Install pinned asc and verify telemetry is disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            arm64) arch=arm64; expected=1c490d5df9b8263c043f43e6dfc10d7d5f3ec7821137e39a603b9348221f248d ;;
+            x86_64) arch=amd64; expected=128d379d962755bf76ab81017b4ffe0df0b346055d272d7233f51f09eec880b8 ;;
+            *) exit 1 ;;
+          esac
+          mkdir -p "$RUNNER_TEMP/asc-bin"
+          curl --fail --silent --show-error --location "https://github.com/rorkai/App-Store-Connect-CLI/releases/download/6.5.3/asc_6.5.3_macOS_$arch" -o "$RUNNER_TEMP/asc-bin/asc"
+          echo "$expected  $RUNNER_TEMP/asc-bin/asc" | shasum -a 256 -c -
+          chmod 700 "$RUNNER_TEMP/asc-bin/asc"
+          echo "$RUNNER_TEMP/asc-bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/asc-bin/asc" version
+          "$RUNNER_TEMP/asc-bin/asc" telemetry status
+      - name: Plan or apply only the approved fields
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY_BASE64 }}
+          OWNER_INTERNAL_GROUP_ID: ${{ secrets.OWNER_INTERNAL_GROUP_ID }}
+          ASC_MODE: ${{ inputs.mode }}
+        run: node NekoWidget/ci/asc-metadata-apply.mjs "--$ASC_MODE"
+      - name: Read remaining readiness findings
+        if: always()
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY_BASE64 }}
+          OWNER_INTERNAL_GROUP_ID: ${{ secrets.OWNER_INTERNAL_GROUP_ID }}
+          ASC_READ_BUILD: '352'
+        run: node NekoWidget/ci/asc-readonly.mjs
