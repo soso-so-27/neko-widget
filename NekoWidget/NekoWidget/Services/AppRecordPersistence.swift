@@ -1912,7 +1912,8 @@ struct AppRecordSettingsView: View {
         // also after stopping here (the saved records stay).
         if authentication.isSignedIn && authentication.accountDeletionState == nil {
             Section {
-                if let quota = displayedQuota { ProductQuotaSummary(quota: quota) }
+                // Space and records only while saving here (off: not read, by design).
+                if persistence.enabled, let quota = displayedQuota { ProductQuotaSummary(quota: quota) }
                 Button("保存したものを書き出す") { authentication.exportAllCopies(using: exporter) }
                     .disabled(!authentication.canExportAllCopies || exporter.payload != nil)
                     .accessibilityIdentifier("app-record-export")
