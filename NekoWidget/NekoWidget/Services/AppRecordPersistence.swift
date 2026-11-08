@@ -821,8 +821,7 @@ final class AppRecordPersistence: ObservableObject {
         requested = true
         if cleanup, saved {
             title = "保存済み"
-            detail = "変更は保存されています。前に保存したデータの片づけは、アプリを開いている間に自動でやり直します。" +
-                ((error as? ToolBackupJournalError).map { "（確認コード: \($0.rawValue)）" } ?? "")
+            detail = "変更は保存されています。"
             nextAttempt = Task.isCancelled ? .distantPast : Date().addingTimeInterval(60)
         } else if error is CancellationError || Task.isCancelled {
             // Leaving the app stops a save; it is not a failure, and the next open goes on with it.
@@ -834,8 +833,7 @@ final class AppRecordPersistence: ObservableObject {
         } else {
             report(error)
             if cleanup, error is ToolBackupError || error is ToolBackupJournalError {
-                detail = "前に保存したデータを片づけられたか確かめられないため、保存を待っています。このiPhoneの記録は残っています。" +
-                    ((error as? ToolBackupJournalError).map { "（確認コード: \($0.rawValue)）" } ?? "")
+                detail = "前のデータの片づけを確かめられないため、保存を待っています。"
             }
         }
     }

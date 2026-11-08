@@ -507,9 +507,7 @@ struct HomeView: View {
             Label("猫の写真を見つけるには、写真へのアクセスを許可してください", systemImage: "photo.on.rectangle.angled")
                 .font(.headline)
 
-            Text(OnboardingPresentationCopy.homePermissionBody(
-                isMediaAvailable: SharingAPIConfiguration.current.isMediaAvailable
-            ))
+            Text(OnboardingPresentationCopy.purposeBody)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -783,14 +781,9 @@ struct HomeView: View {
             } description: {
                 Text("写真へのアクセスを確認して、もう一度探してください。")
             } actions: {
-                VStack(spacing: 10) {
-                    if isLimitedAccess {
-                        Button("写真を追加で選ぶ", systemImage: "photo.badge.plus", action: chooseMorePhotos)
-                            .buttonStyle(.borderedProminent)
-                    }
-                    Button("もう一度探す", systemImage: "arrow.clockwise", action: rescan)
-                        .buttonStyle(.bordered)
-                }
+                // 「写真を追加で選ぶ」 is the banner above (11/8: one door).
+                Button("もう一度探す", systemImage: "arrow.clockwise", action: rescan)
+                    .buttonStyle(.bordered)
             }
             .frame(maxWidth: .infinity, minHeight: 320)
             .accessibilityIdentifier("photo-hub-scan-failed")
@@ -805,14 +798,9 @@ struct HomeView: View {
             } description: {
                 Text("写真へのアクセスを確かめてください。")
             } actions: {
-                VStack(spacing: 10) {
-                    if isLimitedAccess {
-                        Button("写真を追加で選ぶ", systemImage: "photo.badge.plus", action: chooseMorePhotos)
-                            .buttonStyle(.borderedProminent)
-                    }
-                    Button("もう一度探す", systemImage: "arrow.clockwise", action: rescan)
-                        .buttonStyle(.bordered)
-                }
+                // 「写真を追加で選ぶ」 is the banner above (11/8: one door).
+                Button("もう一度探す", systemImage: "arrow.clockwise", action: rescan)
+                    .buttonStyle(.bordered)
             }
             .frame(maxWidth: .infinity, minHeight: 320)
             .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 24))

@@ -23,7 +23,6 @@ struct GrowthAlbumDetailView: View {
     @State private var pendingAssignmentIdentifier: String?
     @State private var showsAssignmentSheet = false
     @State private var replacementPeriod: GrowthAlbumPeriod?
-    @State private var showsAboutSelection = false
 
     private var candidateGroups: [GrowthAlbumCandidateGroup] {
         GrowthAlbumSelector().candidateGroups(
@@ -64,11 +63,6 @@ struct GrowthAlbumDetailView: View {
         .navigationTitle(album.title)
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
-        .alert("写真の選び方について", isPresented: $showsAboutSelection) {
-            Button("閉じる", role: .cancel) {}
-        } message: {
-            Text(aboutSelectionMessage)
-        }
         .confirmationDialog(
             "猫の写真から外しますか？",
             isPresented: $showsExclusionConfirmation,
@@ -125,35 +119,11 @@ struct GrowthAlbumDetailView: View {
 
     @ViewBuilder
     private func timelineIntroduction(replaceableItems: [GrowthAlbumItem]) -> some View {
-        if replaceableItems.isEmpty {
-            automaticSelectionNote()
-        } else {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    automaticSelectionNote()
-                        .fixedSize(horizontal: true, vertical: false)
-                    Spacer(minLength: 0)
-                    replacementMenu(items: replaceableItems)
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    automaticSelectionNote()
-                    replacementMenu(items: replaceableItems)
-                }
-            }
+        // 11/8: no 「i」 button explaining how photos are picked; that belongs
+        // in the policy, and 「写真を変える」 is the one thing to do here.
+        if !replaceableItems.isEmpty {
+            replacementMenu(items: replaceableItems)
         }
-    }
-
-    private func automaticSelectionNote() -> some View {
-        Button {
-            showsAboutSelection = true
-        } label: {
-            Image(systemName: "info.circle")
-                .frame(width: 44, height: 44)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .accessibilityLabel("写真の選び方について")
     }
 
     @ViewBuilder
@@ -327,13 +297,6 @@ struct GrowthAlbumDetailView: View {
         "\(firstPeriod.label) → \(lastPeriod.label)"
     }
 
-    private var aboutSelectionMessage: String {
-        let source = "撮った時期ごとに1枚ずつ自動で選んでいます。"
-        if album.id == .householdGrowth {
-            return "\(source)同じ猫かどうかは見分けていません。"
-        }
-        return source
-    }
 }
 
 private struct GrowthPhotoReplacementSheet: View {

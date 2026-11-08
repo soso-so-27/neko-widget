@@ -12,8 +12,8 @@ enum SeasonalMovieArchiveError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case let .unsupportedCatalogVersion(version):
-            return "これまでのムービーは新しい形式（\(version)）で保存されています。アプリをアップデートしてください。"
+        case .unsupportedCatalogVersion:
+            return "これまでのムービーは新しい形式で保存されています。アプリをアップデートしてください。"
         case .invalidRecord:
             return "これまでのムービーを読み込めませんでした。"
         case .periodNotFound:

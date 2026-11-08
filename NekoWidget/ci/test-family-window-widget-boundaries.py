@@ -1314,14 +1314,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
 
         self.assertNotIn('Text("できました")', view)
         self.assertNotIn("ができました", view)
-        self.assertIn('Text("季節のムービー")', view)
-        self.assertIn('の季節のムービー、\\(presentation.scenes.count)場面', view)
-        self.assertIn("nextWorkDescription", view)
-        self.assertIn('return "次は\\(releaseMonth)月ごろ', view)
-        self.assertIn("SeasonalMovieAboutSheet", view)
-        self.assertIn("似た写真をまとめます", view)
-        self.assertIn("お気に入りと動く場面を優先します", view)
-        self.assertIn("写真が少ない季節は作りません", view)
+        # 11/8: the old cards and their explanation sheet were never shown
+        # (the アルバム tab shows the movies); they are gone.
+        for gone in ("struct SeasonalMovieCard", "SeasonalMovieAboutSheet", "struct SeasonalMovieArchiveCard",
+                     "nextWorkDescription", "似た写真をまとめます", "写真が少ない季節は作りません"):
+            self.assertNotIn(gone, view)
         self.assertIn("monthMarkerIsVisible", view)
         self.assertIn("try await Task.sleep(nanoseconds: 800_000_000)", view)
         self.assertIn(".dateTime.month(.wide)", view)
@@ -1335,9 +1332,6 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("LocalSeasonalVideoView", view)
         self.assertIn("SeasonalMovieSoundtrackPlayer", view)
         self.assertIn('Text("このムービーから外しました")', view)
-        self.assertIn("SeasonalMovieArchiveCard", view)
-        self.assertIn('Text("新着")', view)
-        self.assertIn('+ (isNew ? "、新着" : "")', view)
         self.assertIn("currentSceneIsReady", view)
         self.assertIn("markSceneReady", view)
         self.assertIn("skipUnavailableScene", view)
@@ -1357,6 +1351,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("try? await freezeRecipe(.meaningfulPlayback)", view)
         self.assertIn("try await freezeRecipe(.export)", view)
         self.assertIn("Live Photoは、保存した動画では静止画になります。", view)
+        # 11/8: said once (before saving), not again while it is prepared.
+        self.assertEqual(view.count("Live Photoは、保存した動画では静止画になります。"), 1)
+        self.assertNotIn("動画はこのiPhoneの中だけで作っています。", view)
         self.assertNotIn("setMemorySaved", view)
 
         self.assertIn('appendingPathComponent("SeasonalMovies"', archive)
@@ -1383,10 +1380,12 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("SeasonalMovieExportService.swift in Sources", project)
         self.assertEqual(project.count("SeasonalMovieArchiveStore.swift in Sources"), 2)
         self.assertEqual(project.count("SeasonalMovieExportService.swift in Sources"), 2)
-        self.assertIn("猫の写真を端末内で見つけて", config)
-        self.assertIn("アルバムとウィジェットへ反映し", config)
-        self.assertIn("猫が写る写真や動画から季節のムービー", config)
-        self.assertIn("元の写真や動画を変更・削除しません", config)
+        # 11/8: one sentence that keeps what is accessed, why, and the promise.
+        self.assertIn("猫の写真や動画を端末内で見つけ", config)
+        self.assertIn("「うちの子」アルバム・ウィジェット・季節のムービーに使うため", config)
+        self.assertIn("元の写真や動画は変えずに", config)
+        self.assertIn("写真ライブラリへのアクセスを許可してください。\n", config)
+        self.assertNotIn("元の写真や動画を変更・削除しません", config)
 
     def test_received_family_widget_uses_cat_focused_full_bleed_canvases(self) -> None:
         plans = source("Shared/Models/WidgetRenderPlan.swift")
@@ -2138,7 +2137,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("Text(entry.windowDisplayName)", widget)
         self.assertIn('detail: "このまどに届いた最新の一枚"', widget_configuration)
         self.assertIn('name: "このiPhoneの猫写真"', widget_configuration)
-        self.assertIn('detail: "くもりのまど。毎日1枚、猫を順番に"', widget_configuration)
+        # 11/8: names only in the Widget's source list.
+        self.assertIn('detail: "くもりのまど"', widget_configuration)
+        self.assertNotIn("毎日1枚、猫を順番に", widget_configuration)
+        self.assertNotIn("· 公式のまど", widget_configuration)
+        self.assertIn("name: definition.displayName, detail: definition.subtitle", widget_configuration)
         self.assertNotIn('name: "このiPhoneの写真"', widget_configuration)
         self.assertIn(
             'Label("写真", systemImage: "photo.on.rectangle.angled")',
@@ -2243,13 +2246,14 @@ try MomentSharingStateStore.verifyPrivateAlias()
     def test_growth_album_opens_as_a_photo_story_before_editing(self) -> None:
         growth = source("NekoWidget/Views/GrowthAlbumView.swift")
 
-        self.assertIn('.accessibilityLabel("写真の選び方について")', growth)
-        self.assertIn('Text(aboutSelectionMessage)', growth)
+        # 11/8: no 「i」 button or alert explaining how photos are picked.
+        self.assertNotIn('写真の選び方について', growth)
+        self.assertNotIn('aboutSelectionMessage', growth)
+        self.assertNotIn('info.circle', growth)
         self.assertIn('scrapbookTimeline(items: resolvedItems)', growth)
         self.assertIn('Label("写真を変える"', growth)
         # The screen title names the album; no second big range heading above the story.
         self.assertNotIn('.font(.title.bold())', growth)
-        self.assertIn('.alert("写真の選び方について"', growth)
         self.assertIn('"\\(firstPeriod.label) → \\(lastPeriod.label)"', growth)
         self.assertNotIn('roleLabel:', growth)
         self.assertNotIn('Text("その間")', growth)
@@ -2421,8 +2425,10 @@ try MomentSharingStateStore.verifyPrivateAlias()
         detail = section(
             profile,
             "struct CatProfileDetailView: View",
-            "private struct CatProfilePhotoAlbumSelectionView: View",
+            "struct CatProfileLifeReferenceEditor: View",
         )
+        # 11/8: the never-opened 「アルバムをつなぐ」 screen is gone.
+        self.assertNotIn("CatProfilePhotoAlbumSelectionView", profile)
         page = section(detail, "struct CatProfileDetailView: View", "struct CatProfileAddPhotosButton: View")
         self.assertNotIn("CatProfilePhotoSourcesView", profile)
         # 11/7: the cat's page is この子のこと only. No 写真 tab, and the cat's
@@ -2461,7 +2467,10 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("await profileActions.updateName(profile.identifier, draftName)", heading)
         self.assertIn("await profileActions.setKeyPhoto(profile.identifier, $0)", care)
         delete = section(care, "private func deleteSection(", "@State private var openParts")
-        self.assertIn('Button("プロフィールを削除", role: .destructive)', delete)
+        # 11/8: 「この子」, not 「プロフィール」.
+        self.assertIn('Button("この子を削除", role: .destructive)', delete)
+        self.assertNotIn("プロフィール", delete)
+        self.assertIn('.alert("この子を追加できませんでした"', source("NekoWidget/Views/CatProfilesView.swift"))
         self.assertIn("await profileActions.deleteProfile(profile.identifier)", delete)
         self.assertIn('Button("旅立った日を記録する") { showsFarewellEditor = true }', delete)
         self.assertIn("元に戻せません。", delete)
@@ -2522,7 +2531,10 @@ try MomentSharingStateStore.verifyPrivateAlias()
 
     def test_cat_assignments_wait_for_persistence_before_dismissing(self) -> None:
         profile = source("NekoWidget/Views/CatProfilePhotoCurationViews.swift")
-        sheet = section(profile, "struct CatPhotoAssignmentSheet: View", "struct LegacyCatExclusionReviewView: View")
+        sheet = section(profile, "struct CatPhotoAssignmentSheet: View", "struct CatProfilePhotoPicker: View")
+        # 11/8: the never-opened 「前に外した写真」 screen is gone.
+        self.assertNotIn("LegacyCatExclusionReviewView", profile)
+        self.assertNotIn("LegacySelectablePhotoGrid", profile)
         self.assertIn("let save: ([String: Set<String>]) async -> Bool", sheet)
         self.assertIn("let saved = await save(assignmentBatch.assignmentsByPhotoIdentifier)", sheet)
         self.assertIn("if saved { dismiss() } else { saveFailed = true }", sheet)
@@ -3355,8 +3367,10 @@ class LostCatToolReview1108Tests(unittest.TestCase):
         order = ['ToolPurpose(text: "探すためのチラシを作ります。")',
                  'Label("先にすること：探す・届け出る", systemImage: "info.circle")',
                  "catSection(issues).disabled(!loaded)", "incidentSection(issues).disabled(!loaded)",
-                 "contactSection(issues).disabled(!loaded)", 'Text("前に入れた内容を読み込めませんでした。")',
+                 "contactSection(issues).disabled(!loaded)",
                  'Label("保存できませんでした"']
+        # 11/8: a failed refresh of earlier text is not announced.
+        self.assertNotIn("前に入れた内容を読み込めませんでした。", view)
         positions = [form.index(text) for text in order]
         self.assertEqual(positions, sorted(positions))
         self.assertNotIn("まず探す・届け出る", view)
@@ -3688,8 +3702,11 @@ class CareHandoffReviewTests(unittest.TestCase):
         self.assertEqual(self.exporter.count("作った日："), 1)
         display = section(self.view, "private struct CareDisplayView: View {", "private func fields(")
         self.assertNotIn("写真はありません", display)
-        # The app says what is missing before the memo is made.
-        self.assertIn('"まだ書いていないこと\\(who)："', self.view)
+        # The app says what is missing before the memo is made: once, on the
+        # cat's folded 「この子のこと」 row (11/8), not again on the make page.
+        self.assertIn("folded: true)", section(self.view, "@ViewBuilder private func catCareSection(", "/// Where the three steps stand"))
+        self.assertIn('Text("まだ：" + missing.prefix(4)', source("NekoWidget/Views/CatCareView.swift"))
+        self.assertNotIn("まだ書いていないこと", self.view)
 
     def test_vet_is_per_cat_with_note(self) -> None:
         vet = section(self.plan, "static func vetFields(", "\n}\n")
@@ -3736,7 +3753,10 @@ class CareHandoffReviewTests(unittest.TestCase):
         body = editor[editor.index("var body: some View {"):]
         self.assertLess(body.index('identifier: "care-important"'), body.index("catCareSection(cat)"))
         self.assertLess(body.index('identifier: "care-call-when"'), body.index("catCareSection(cat)"))
-        self.assertIn('"薬と連絡先は、次の画面で選ぶと載ります。"', editor)
+        # 11/8: no notes on what goes on the memo; that is chosen on the next page.
+        self.assertNotIn("次の画面で選ぶと載ります", self.view)
+        self.assertNotIn("いつも載ります", self.view)
+        self.assertNotIn("前に入れた内容を読み込めませんでした。", self.view)
         self.assertNotIn("CareRequestEditor", self.view)
         # 347: period and request are written in one place, the make screen.
         # A chosen family cat keeps its own shared request (never this iPhone's
@@ -3769,7 +3789,6 @@ class CareHandoffReviewTests(unittest.TestCase):
                  body.index('ToolStepHeader(number: 3, title: "こんなときは連絡を", state: states[2])'),
                  body.index("catCareSection(cat)"),
                  body.index("このメモは、家族の手帳には入っていません。"),
-                 body.index("前に入れた内容を読み込めませんでした。"),
                  body.index('Button("このお世話メモを削除", role: .destructive)'),
                  body.index(".toolBottomBar {")]
         self.assertEqual(order, sorted(order))
@@ -3785,10 +3804,10 @@ class CareHandoffReviewTests(unittest.TestCase):
         self.assertIn("}), showsLabel: false)", body)
         self.assertIn(".accessibilityLabel(label).accessibilityIdentifier(identifier)", self.view)
         self.assertIn("if showsLabel { Text(label)", self.view)
-        # 「この子のこと」 is folded to one row; its footer stays.
+        # 「この子のこと」 is folded to one row, with no footer (11/8).
         cat_care = section(editor, "@ViewBuilder private func catCareSection(", "/// Where the three steps stand")
         self.assertIn("folded: true)", cat_care)
-        self.assertIn('"薬と連絡先は、次の画面で選ぶと載ります。"', cat_care)
+        self.assertNotIn("footer:", cat_care)
         bar = body[body.index(".toolBottomBar {"):]
         self.assertIn("ToolMakeBar(top: { CareSaveNotice(store: store) }) {", bar)
         self.assertIn("NavigationLink { CareDisclosureView(store: store, currentCatID: id) }", bar)
@@ -3800,11 +3819,13 @@ class CareHandoffReviewTests(unittest.TestCase):
         order = [page.index('ToolStepHeader(number: 1, title: "期間とお願い", state: states[0])'),
                  page.index('ToolStepHeader(number: 2, title: "お願いする猫", state: states[1])'),
                  page.index('ToolStepHeader(number: 3, title: "載せるもの", state: states[2])'),
-                 page.index('"care-unwritten"'),
                  page.index("if let error { Section"),
                  page.index(".toolBottomBar {")]
         self.assertEqual(order, sorted(order))
         self.assertNotIn('Section("今回お願いする猫")', making)
+        # 11/8: what is not written yet is listed once, on the cat's row only.
+        self.assertNotIn('"care-unwritten"', making)
+        self.assertNotIn("まだ書いていないこと", self.view)
         # Period done, at least one cat, and 載せるもの done once seen.
         states = section(making, "private var stepStates: [ToolStepState] {", "var body: some View {")
         self.assertIn(r"CareCatEditor.isFilled(store.plan.requestText(\.period, \.period, chosen: disclosure.catIDs))", states)
@@ -3843,7 +3864,10 @@ class ShowcaseCatCareTests(unittest.TestCase):
         caption = section(view, "private var caption: String?", "private var storedScopeIDs")
         self.assertIn("!scopeID.isEmpty", caption)
         self.assertIn('@AppStorage("showcase-shows-name-and-age")', view)
-        self.assertIn('"showcase-caption-toggle"', view)
+        # 11/8: one switch, under the grid; not a second one over the photo.
+        self.assertIn('"showcase-band-toggle"', view)
+        self.assertNotIn('"showcase-caption-toggle"', view)
+        self.assertEqual(view.count("showsCaption.toggle()"), 0)
         # The 「この子のこと」 face photo leads only if it is already a candidate.
         self.assertIn("identifiers.firstIndex(of: face)", view)
 
@@ -3921,9 +3945,11 @@ class ShowcaseCatCareTests(unittest.TestCase):
         self.assertNotIn("写真を用意できませんでした", view)
         self.assertNotIn("写真を準備できませんでした", view)
         # 「前の写真」, and a former set can be swiped away.
-        cats = section(view, "struct ShowcaseToolCatPicker: View {", "private func storeOrder(")
+        cats = view[view.index("struct ShowcaseToolCatPicker: View {"):]
         self.assertIn('Section("前の写真")', cats)
-        self.assertIn('Button("前に選んだ写真（\\(storeOrder(scope))）")', cats)
+        # 11/8: no order number after the name.
+        self.assertIn('Button("前に選んだ写真") { select(scope); dismiss() }', cats)
+        self.assertNotIn("storeOrder", cats)
         self.assertIn('Button("削除", role: .destructive) { removing = scope }', cats)
         self.assertIn('Button("削除", role: .destructive) { remove?(scope); removing = nil }', cats)
         self.assertIn("try store.removeScope(removed)", main)
@@ -4721,6 +4747,11 @@ class SettingsLayoutTests(unittest.TestCase):
                  '"settings-account-deletion"', 'Text("テスト用")']
         positions = [body.index(item) for item in order]
         self.assertEqual(positions, sorted(positions))
+        # 11/8: the version only; no build number, OS requirement or full-access note.
+        self.assertIn('Text("ねこのまど バージョン \\(appVersion)")', settings)
+        self.assertNotIn("iOS 17.1以上", settings)
+        self.assertNotIn('"CFBundleVersion"', settings)
+        self.assertNotIn("すべての写真を使えます。", settings)
         for gone in ('Text("プライバシー")', 'Text("サポート")'):
             self.assertNotIn(gone, body)
         # Link and share words in the text color; only icons carry the tint (11/8).
@@ -5707,8 +5738,8 @@ class ToolConsistency1108Tests(unittest.TestCase):
         delete = body.index('Button("このお世話メモを削除", role: .destructive)')
         last = body[body.rindex("Section {"):]
         self.assertIn('Button("このお世話メモを削除", role: .destructive) { deleteRequested = true }\n                }', last)
-        self.assertNotIn("前に入れた内容", last)
-        self.assertLess(body.index("前に入れた内容を読み込めませんでした。"), delete)
+        self.assertNotIn("前に入れた内容", body)
+        self.assertLess(body.index("このメモは、家族の手帳には入っていません。"), delete)
         page = section(self.evacuation, "private struct EvacuationCatView: View {", '}.navigationTitle("猫の情報")')
         self.assertIn('Button("この子の避難用の記録を削除", role: .destructive) { deleteRequested = true }\n                }', page)
         for view in (self.care, self.evacuation):
@@ -5717,7 +5748,7 @@ class ToolConsistency1108Tests(unittest.TestCase):
                     self.assertNotIn("systemImage", line)
             self.assertNotIn('role: .destructive) { deleteRequested = true }\n                        .font(.footnote)', view)
         # Every delete asks first, 写真を見せる's former sets too.
-        cats = section(self.showcase, "struct ShowcaseToolCatPicker: View {", "private func storeOrder(")
+        cats = self.showcase[self.showcase.index("struct ShowcaseToolCatPicker: View {"):]
         self.assertIn('.confirmationDialog("前に選んだ写真を削除しますか？"', cats)
         self.assertIn('message: { _ in Text("写真アプリの写真は消えません。") }', cats)
         self.assertNotIn("{ remove(scope) }", cats)
@@ -5740,6 +5771,10 @@ class ToolConsistency1108Tests(unittest.TestCase):
         self.assertNotIn('Label(profile.displayName, systemImage: "cat")', self.showcase)
         # The make button looks the same in every tool.
         self.assertIn('Label("チラシを作る", systemImage: "doc.richtext")', self.lost)
+        # 11/8: the tile says the same word as the screen.
+        main_tab = source("NekoWidget/Views/MainTabView.swift")
+        self.assertIn('subtitle: "チラシを作る", tint: ToolTint.emergency)', main_tab)
+        self.assertNotIn("探すための画像を作る", main_tab)
         self.assertIn('Label("お世話メモを作る", systemImage: "doc.text")', self.care)
         self.assertIn('Label("避難メモを見せる", systemImage:', self.evacuation)
 
@@ -5759,6 +5794,60 @@ class ToolConsistency1108Tests(unittest.TestCase):
         retry = section(plan, "    func retryPhotoCleanup() {", "    private func reconcileOwnedPhotos()")
         self.assertIn("AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }", retry)
         self.assertIn("reconcileOwnedPhotos()", retry)
+
+
+class ScreenTextTrimTests(unittest.TestCase):
+    """11/8 audit: text the screens do not need, one door per action."""
+
+    def test_messages_carry_no_codes_or_mechanisms(self) -> None:
+        lines = source("NekoWidget/Services/CatCareOutputLines.swift")
+        self.assertNotIn("（前にここに書いた内容）", lines)
+        offer = source("NekoWidget/Services/MembershipOfferModel.swift")
+        self.assertIn('reason = "購入を確かめられませんでした。"', offer)
+        for gone in ("同期できませんでした", "読み書き", "サービスに通信"):
+            self.assertNotIn(gone, offer)
+        for path in ("NekoWidget/Services/ToolPreservation.swift",
+                     "NekoWidget/Services/AppRecordPersistence.swift",
+                     "NekoWidget/Services/ManagedPreservationCoordinator.swift"):
+            self.assertNotIn("確認コード", source(path), path)
+        self.assertIn('"途中の片づけを確かめられませんでしたが、記録は残っています。"',
+                      source("NekoWidget/Services/ToolPreservation.swift"))
+        archive = source("NekoWidget/Services/SeasonalMovieArchiveStore.swift")
+        self.assertIn('"これまでのムービーは新しい形式で保存されています。アプリをアップデートしてください。"', archive)
+
+    def test_photo_screens_say_less(self) -> None:
+        for path in ("NekoWidget/Views/OnboardingView.swift", "NekoWidget/Views/ScanStatusView.swift"):
+            view = source(path)
+            self.assertNotIn("「ツール」右上の設定", view, path)
+            self.assertIn("枚あります。", view, path)
+        self.assertNotIn("あとからいつでも写真を追加できます。", source("NekoWidget/Views/PhotoPermissionView.swift"))
+        self.assertNotIn("お気に入りの写真を表示するには", source("NekoWidget/Views/LikedPhotosView.swift"))
+        self.assertNotIn("長押しして「ウィジェットを編集」", source("NekoWidget/Views/CatCareView.swift"))
+        onboarding = source("NekoWidget/Views/OnboardingPresentation.swift")
+        for gone in ("permissionPrivacyLines", "homePermissionBody", "permissionLimitedAccessNote"):
+            self.assertNotIn(gone, onboarding)
+        self.assertIn("Text(OnboardingPresentationCopy.purposeBody)", source("NekoWidget/Views/HomeView.swift"))
+
+    def test_album_words(self) -> None:
+        album = source("NekoWidget/Views/AlbumPrototypeView.swift")
+        self.assertNotIn("作品がとどきました。", album)
+        self.assertEqual(album.count("作品が届きました。"), 3)
+        self.assertNotIn('"1 年の作品"', album)
+        # The test-only reset is compiled out of the product; the keys keep their names.
+        guarded = album.split("#if DEBUG || INTERNAL_PRESENTATION\n    /// Test only: the newest finished month", 1)
+        self.assertEqual(len(guarded), 2)
+        self.assertIn("static func cloudLatestAgain(", guarded[1].split("#endif", 1)[0])
+        self.assertIn('static let openedKey = "debug.albumPrototype.opened.v1"', album)
+
+    def test_one_door_each(self) -> None:
+        home = source("NekoWidget/Views/HomeView.swift")
+        empty = home.split("private var emptyPhotoState: some View {", 1)[1]
+        self.assertNotIn('Button("写真を追加で選ぶ"', empty)
+        self.assertIn("LimitedAccessBanner(chooseMorePhotos: chooseMorePhotos)", home)
+        liked = source("NekoWidget/Views/LikedPhotosView.swift")
+        self.assertIn('if rediscoveryEnabled, navigationTitleText != "この1枚",', liked)
+        self.assertEqual(liked.count('.accessibilityIdentifier("photo-browser-same-day")'), 1)
+        self.assertEqual(liked.count('.accessibilityIdentifier("cloudy-photo-same-day")'), 1)
 
 if __name__ == "__main__":
     unittest.main()

@@ -300,7 +300,7 @@ struct OnboardingWindowMosaic: View {
 
 /// Page two: the same windows, dimmed, and the Photos dialog. The dialog is
 /// requested as soon as the app can ask, so there is nothing to read first;
-/// the promise stays on the page under it, and the buttons remain for anyone
+/// the promise was said on page one, and the buttons remain for anyone
 /// the dialog did not reach (a slow start, or a test).
 private struct OnboardingPhotoPermissionPage: View {
     let isRequestReady: Bool
@@ -318,19 +318,6 @@ private struct OnboardingPhotoPermissionPage: View {
                     Text(OnboardingPresentationCopy.permissionTitleLines.joined(separator: ""))
                         .font(.headline)
                         .accessibilityAddTraits(.isHeader)
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(
-                            Array(OnboardingPresentationCopy.permissionPrivacyLines(
-                                isMediaAvailable: SharingAPIConfiguration.current.isMediaAvailable
-                            ).enumerated()),
-                            id: \.offset
-                        ) { _, line in
-                            Text(line)
-                        }
-                        Text(OnboardingPresentationCopy.permissionLimitedAccessNote)
-                    }
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -468,7 +455,7 @@ private struct OnboardingScanPage: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityIdentifier("onboarding-partial-scan-error")
                     } else if scan.hasDeferredAssets, scan.hasFinalResult {
-                        Text("読み込めなかった\(scan.deferredAssets.formatted())枚は、「ツール」右上の設定→「写真の表示と整理」からもう一度探せます。")
+                        Text("読み込めなかった写真が\(scan.deferredAssets.formatted())枚あります。")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }

@@ -1961,8 +1961,6 @@ struct SavedMemoriesGalleryView: View {
         if !hasPhotoAccess {
             ContentUnavailableView {
                 Label("写真へのアクセスを許可してください", systemImage: "photo")
-            } description: {
-                Text("お気に入りの写真を表示するには、写真へのアクセスが必要です。")
             } actions: {
                 if let requestPhotoAccess {
                     Button("写真へのアクセスを許可", action: requestPhotoAccess)
@@ -3015,7 +3013,9 @@ struct PhotoBrowserView: View {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 // お気に入り・メモ・共有 are under the photo. 「…」 holds the rest.
                 Menu {
-                    if rediscoveryEnabled, let photo = selectedPhoto, let date = photo.creationDate,
+                    // 「この1枚」 has the same link under the photo; one door (11/8).
+                    if rediscoveryEnabled, navigationTitleText != "この1枚",
+                       let photo = selectedPhoto, let date = photo.creationDate,
                        dayCollectionDate.map({ Calendar.current.isDate($0, inSameDayAs: date) }) != true {
                         sameDayLink(for: photo, date: date, dateText: "同じ日の写真")
                             .accessibilityIdentifier("photo-browser-same-day")

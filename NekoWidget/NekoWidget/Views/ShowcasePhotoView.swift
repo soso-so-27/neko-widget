@@ -332,19 +332,9 @@ struct ShowcasePhotoView: View {
                     .accessibilityIdentifier("showcase-gallery-edit")
             } else if detailIndex == nil, let onManage {
                 editButton(onManage)
-            } else if detailIndex != nil, caption != nil {
-                // 11/7: a name tag (shown) or a struck-out tag (hidden), not
-                // a speech bubble; read aloud as one on/off switch.
-                Button { showsCaption.toggle() } label: {
-                    Image(systemName: showsCaption ? "tag.fill" : "tag.slash")
-                        .frame(width: 44, height: 44)
-                        .background(.ultraThinMaterial, in: Circle())
-                }
-                .accessibilityLabel("名前と年齢を表示")
-                .accessibilityValue(showsCaption ? "オン" : "オフ")
-                .accessibilityAddTraits(.isToggle)
-                .accessibilityIdentifier("showcase-caption-toggle")
             } else {
+                // 11/8: 「名前と年齢」 is switched in one place, under the grid
+                // (showcase-band-toggle); the photo view has no second switch.
                 Color.clear.frame(width: 44, height: 44)
             }
         }
@@ -1400,7 +1390,7 @@ struct ShowcaseToolCatPicker: View {
                 if !former.isEmpty {
                     Section("前の写真") {
                         ForEach(former, id: \.self) { scope in
-                            Button("前に選んだ写真（\(storeOrder(scope))）") { select(scope); dismiss() }
+                            Button("前に選んだ写真") { select(scope); dismiss() }
                                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                     if let remove {
                                         Button("削除", role: .destructive) { removing = scope }
@@ -1419,5 +1409,4 @@ struct ShowcaseToolCatPicker: View {
                 } message: { _ in Text("写真アプリの写真は消えません。") }
         }
     }
-    private func storeOrder(_ scope: String) -> Int { (storedScopes.firstIndex(of: scope) ?? 0) + 1 }
 }

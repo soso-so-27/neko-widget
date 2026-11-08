@@ -229,7 +229,6 @@ private struct CareCatEditor: View {
     @State private var showsPhotoPicker = false
     @State private var deleteRequested = false
     @State private var refreshedCandidates = false
-    @State private var candidateRefreshError = false
     @Environment(\.dismiss) private var dismiss
     private var cat: CareCat? { store.plan.cats.first { $0.id == id } }
     private func text(_ key: WritableKeyPath<CareCat, String>) -> Binding<String> {
@@ -256,11 +255,9 @@ private struct CareCatEditor: View {
         let vet = CareHandoffDisclosure.vetFields(plan: store.plan, household: catCare.state?.household, record: care)
         let subject: CatCareSubject = profiles.first(where: { $0.identifier == cat.profileID }).map(CatCareSubject.profile)
             ?? .toolCat(id: cat.toolCatID ?? cat.id, name: cat.name)
-        // 11/7: said once below, not after every heading.
+        // 11/8: no footer; what goes on the memo is chosen on the next page.
         ToolCatCareSection(title: "この子のこと",
                            lines: CatCareSummary.careHandoffLines(care, legacy: cat) + health + vet, subject: subject,
-                           footer: CareHandoffDisclosure.written(health).isEmpty && vet.isEmpty
-                               ? nil : "薬と連絡先は、次の画面で選ぶと載ります。",
                            identifier: "care-cat-care-fields", editIdentifier: "care-open-cat-care", profiles: profiles,
                            folded: true)
     }
@@ -328,15 +325,9 @@ private struct CareCatEditor: View {
                 // (347: a family cat had a second form here, and what was typed
                 // there replaced the memo's own). Family cats get the same values.
                 // 11/8 型: notes last and small; delete alone in the last section.
-                if cat.familyDetached == true || candidateRefreshError {
+                if cat.familyDetached == true {
                     Section {
-                        if cat.familyDetached == true {
-                            Text("このメモは、家族の手帳には入っていません。").font(.footnote).foregroundStyle(.secondary)
-                        }
-                        if candidateRefreshError {
-                            Text("前に入れた内容を読み込めませんでした。")
-                                .font(.footnote).foregroundStyle(.secondary)
-                        }
+                        Text("このメモは、家族の手帳には入っていません。").font(.footnote).foregroundStyle(.secondary)
                     }
                 }
                 Section {
@@ -351,8 +342,8 @@ private struct CareCatEditor: View {
             CatCareStore.shared.importBirthdays(profiles)
             guard !refreshedCandidates else { return }
             refreshedCandidates = true
-            do { try store.refreshCandidates(id, using: reuseStore) }
-            catch { candidateRefreshError = true }
+            // A failed refresh keeps what is here; nothing to say about it (11/8).
+            try? store.refreshCandidates(id, using: reuseStore)
             await useCatCarePhoto()
         }
         .sheet(isPresented: $showsPhotoPicker) {
@@ -484,24 +475,6 @@ private struct CareDisclosureView: View {
         Binding(get: { store.plan.requestText(key, planKey, chosen: disclosure.catIDs) },
                 set: { new in store.update { $0.setRequestText(new, key, planKey, chosen: disclosure.catIDs) } })
     }
-    /// 11/8: shown here before the memo is made, never printed.
-    private var unwritten: [String] {
-        let chosen = cats.filter { disclosure.catIDs.contains($0.id) }
-        var result: [String] = chosen.compactMap { cat -> String? in
-            let care = record(cat)
-            var lines = [("まず伝えたいこと", cat.important)] + CatCareSummary.careHandoffLines(care, legacy: cat)
-            if disclosure.health { lines += CatCareSummary.careHandoffHealthLines(care, legacy: cat) }
-            let missing = lines.filter { CareHandoffDisclosure.isUnwritten($0.1) }.map(\.0)
-            guard !missing.isEmpty else { return nil }
-            let who = chosen.count > 1 ? "（\(cat.displayName)）" : ""
-            return "まだ書いていないこと\(who)：" + missing.joined(separator: "、")
-        }
-        if disclosure.contacts && !contacts.contains(where: { $0.0 == "飼い主の連絡先" }) {
-            result.append("まだ書いていないこと：飼い主の連絡先")
-        }
-        return result
-    }
-
     /// Where the three steps stand (11/8 型): the period, a chosen cat, and
     /// what to include (done once the page is seen: the choices start set).
     private var stepStates: [ToolStepState] {
@@ -549,15 +522,9 @@ private struct CareDisclosureView: View {
                     }
                     .accessibilityIdentifier("care-contacts")
                 }
-            } header: { ToolStepHeader(number: 3, title: "載せるもの", state: states[2])
-            } footer: { Text("写真・名前・お世話・お願いは、いつも載ります。") }
-            if !unwritten.isEmpty {
-                Section {
-                    ForEach(unwritten, id: \.self) { line in
-                        Text(line).font(.footnote).foregroundStyle(.secondary)
-                    }
-                }.accessibilityIdentifier("care-unwritten")
-            }
+            } header: { ToolStepHeader(number: 3, title: "載せるもの", state: states[2]) }
+            // What is not written yet is shown once, on each cat's
+            // 「この子のこと」 row; not listed again here (11/8).
             if let error { Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) } }
         }.navigationTitle("メモを作る").navigationBarTitleDisplayMode(.inline)
         .toolPageSpacing()

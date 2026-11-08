@@ -1205,7 +1205,7 @@ struct MainTabView: View {
                         }
                     } label: {
                         ToolTile(title: "迷子のとき", systemImage: "magnifyingglass",
-                                 subtitle: "探すための画像を作る", tint: ToolTint.emergency)
+                                 subtitle: "チラシを作る", tint: ToolTint.emergency)
                     }
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-lost-cat-open")

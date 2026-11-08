@@ -351,7 +351,7 @@ struct SettingsView: View {
                 Text("ねこのまどについて")
             } footer: {
                 // Read-only facts live in the footer, not in a row that looks tappable.
-                Text("ねこのまど バージョン \(appVersion)・iOS 17.1以上")
+                Text("ねこのまど バージョン \(appVersion)")
                     .accessibilityIdentifier("settings-app-version")
             }
 
@@ -511,10 +511,9 @@ struct SettingsView: View {
 #endif
     }
 
+    /// 「1.0」 only: no build number or OS requirement on the screen (11/8).
     private var appVersion: String {
-        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
-        return build.isEmpty ? short : "\(short)（\(build)）"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
     }
 
     private var photoSettingsSummary: String {
@@ -545,9 +544,12 @@ struct SettingsView: View {
             } header: {
                 Text("写真へのアクセス")
             } footer: {
-                Text(hasPhotoAccess
-                     ? (isLimitedAccess ? "選んだ写真だけを使っています。" : "すべての写真を使えます。")
-                     : "まだ写真へのアクセスを許可していません。")
+                // Nothing to add when every photo can be used (11/8).
+                if !hasPhotoAccess {
+                    Text("まだ写真へのアクセスを許可していません。")
+                } else if isLimitedAccess {
+                    Text("選んだ写真だけを使っています。")
+                }
             }
 
             Section {

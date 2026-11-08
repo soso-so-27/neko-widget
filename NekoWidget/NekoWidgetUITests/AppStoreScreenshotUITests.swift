@@ -300,7 +300,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(scrollUpUntilHittable(delete, application: app)); delete.tap()
         let confirmation = app.alerts.firstMatch
         XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
-        confirmation.buttons["プロフィールを削除"].tap()
+        confirmation.buttons["この子を削除"].tap()
         // The profile disappears but the tool's original record remains editable.
         let retainedName = app.descendants(matching: .any)["care-cat-name"].firstMatch
         XCTAssertTrue(retainedName.waitForExistence(timeout: 10), app.debugDescription)
@@ -440,10 +440,12 @@ final class AppStoreScreenshotUITests: XCTestCase {
             fail("The local-only Photos privacy page did not finish preparing.", application: app)
             return
         }
-        guard app.staticTexts["・写真や動画を、勝手にiPhoneの外へ送りません"].exists else {
-            fail("The disabled-build privacy statement was not visible.", application: app)
+        guard app.staticTexts["このiPhoneの中から、猫の写真と動画を見つけます。"].exists else {
+            fail("The Photos permission title was not visible.", application: app)
             return
         }
+        // The privacy promise is said once, on page one (11/8).
+        XCTAssertFalse(app.staticTexts["・写真や動画を、勝手にiPhoneの外へ送りません"].exists)
 
         captureScreenshot(named: "05-on-device-photo-privacy")
         app.terminate()

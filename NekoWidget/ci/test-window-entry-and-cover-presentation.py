@@ -28,6 +28,18 @@ class WindowPresentation(unittest.TestCase):
         official=(ROOT/"NekoWidget/Views/OfficialWindowView.swift").read_text(encoding="utf-8")
         self.assert_official_introduction_accessibility(official)
 
+    def test_official_window_checks_again_one_way(self):
+        # 11/8: pull to refresh, and 「もう一度確認」 only on a problem; no ↻ button.
+        official=(ROOT/"NekoWidget/Views/OfficialWindowView.swift").read_text(encoding="utf-8")
+        self.assertIn('.refreshable { await refresh(interactive: true) }',official)
+        self.assertNotIn('"official-window-refresh"',official)
+        self.assertNotIn('"arrow.clockwise"',official)
+        self.assertNotIn('"新着を確認"',official)
+        about=official.split('private var about: some View {',1)[1].split('private var widgetSetupOffer',1)[0]
+        self.assertNotIn('運営が選んだ猫の写真が届きます。',about)
+        self.assertNotIn('街のどこかにいるのわ',about)
+        self.assertEqual(about.count('Text('),2)
+
     def test_official_parent_identifier_regression_is_rejected(self):
         official=(ROOT/"NekoWidget/Views/OfficialWindowView.swift").read_text(encoding="utf-8")
         anchor='        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))'

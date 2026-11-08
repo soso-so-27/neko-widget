@@ -84,6 +84,10 @@ class DisabledReleaseConfigTests(unittest.TestCase):
         description = values["PHOTO_LIBRARY_USAGE_DESCRIPTION"]
         for term in LOCAL_PHOTO_DESCRIPTION_TERMS:
             self.assertIn(term, description)
+        # 11/8: one sentence that says what is accessed and why.
+        self.assertEqual(description.count("。"), 1)
+        self.assertTrue(description.endswith("。"))
+        self.assertIn("写真ライブラリ", description)
         for term in LOCAL_PHOTO_DESCRIPTION_FORBIDDEN_TERMS:
             self.assertNotIn(term, description)
         self.assertEqual(

@@ -1067,8 +1067,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         pendingToolBackupDate = (try? ToolBackupFiles.pending(owner: owner, sourceSnapshotID: toolBackupSource))?.index.createdAt
         do { pendingToolDeletions = try ToolBackupFiles.pendingDeletions(owner: owner) }
         catch {
-            errorMessage = "途中で止まった削除の情報を読み込めませんでした。ほかのコピーはこれまでどおり見られます。" +
-                ((error as? ToolBackupJournalError).map { "（確認コード: \($0.rawValue)）" } ?? "")
+            errorMessage = "途中で止まった削除を確かめられませんでしたが、ほかのコピーは見られます。"
         }
         copyState = copyStates[owner] ?? .deviceOnly
         var ownDrafts: [UUID: ManagedPreservationSessionStore.PendingMemo] = [:]
