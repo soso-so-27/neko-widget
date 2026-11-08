@@ -2364,8 +2364,16 @@ final class SoloMemoriesUITests: XCTestCase {
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launchEnvironment["NEKO_LOST_CAT_DRAFT_FIXTURE_KEY"] = "guest-fixture-\(UUID().uuidString)"
         app.launch()
-        XCTAssertTrue(app.buttons["まず探す・届け出る"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["チラシを見る"].isEnabled)
+        XCTAssertTrue(app.buttons["先にすること：探す・届け出る"].waitForExistence(timeout: 5))
+        // 11/8 tool shape: the face photo is in, so step 1 is done and the bar
+        // names only what is still missing.
+        XCTAssertTrue(app.staticTexts["探すためのチラシを作ります。"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "1、写真と特徴、済み")).firstMatch.exists)
+        let missing = app.staticTexts["tool-make-missing"]
+        XCTAssertTrue(missing.waitForExistence(timeout: 5))
+        XCTAssertEqual(missing.label, "あと：場所・連絡先")
+        XCTAssertFalse(app.buttons["チラシを作る"].isEnabled)
         XCTAssertFalse(app.buttons["日時と場所を消す"].exists)
         let fieldOrder = ["lost-cat-name", "lost-cat-features", "lost-cat-collar", "lost-cat-place", "lost-cat-contact"]
         var lastFieldIndex = 0
@@ -2373,12 +2381,17 @@ final class SoloMemoriesUITests: XCTestCase {
             let element = app.descendants(matching: .any).matching(identifier: name).firstMatch
             let index = fieldOrder.firstIndex(of: name) ?? lastFieldIndex
             let guidance = app.staticTexts.matching(NSPredicate(
-                format: "label ENDSWITH %@ OR label == %@",
-                "を入れると作れます", "直すところがあります。赤い文字の欄を見てください"
+                format: "identifier == %@ OR label == %@",
+                "tool-make-missing", "直すところがあります。赤い文字の欄を見てください"
             )).firstMatch
             for _ in 0..<10 {
                 let top = app.navigationBars.firstMatch.frame.maxY + 16
-                let buttonTop = app.buttons["チラシを見る"].frame.minY
+                // The bar steps aside while the keyboard is up; then the
+                // keyboard is the bottom of the visible form.
+                let make = app.buttons["チラシを作る"]
+                let keyboard = app.keyboards.firstMatch
+                let buttonTop = make.exists ? make.frame.minY
+                    : (keyboard.exists ? keyboard.frame.minY + 28 : app.frame.maxY)
                 // The floating action also includes guidance above its button.
                 // At largest text it wraps; starting a drag there never scrolls
                 // the form. Bound both tapping and dragging above the full inset.
@@ -2421,8 +2434,8 @@ final class SoloMemoriesUITests: XCTestCase {
                               ("lost-cat-contact", "08000000000")] {
             let input = field(name); input.tap(); input.typeText(value)
         }
-        XCTAssertTrue(app.buttons["チラシを見る"].isEnabled)
-        app.buttons["チラシを見る"].tap()
+        XCTAssertTrue(app.buttons["チラシを作る"].isEnabled)
+        app.buttons["チラシを作る"].tap()
         let preview = app.buttons["共有する迷子の猫の画像"]
         XCTAssertTrue(preview.waitForExistence(timeout: 5))
         // An unknown day is left out; the post ends with the hashtags.
@@ -2456,8 +2469,8 @@ final class SoloMemoriesUITests: XCTestCase {
         let features = field("lost-cat-features")
         features.tap(); features.typeText(overLimit)
         XCTAssertEqual(features.value as? String, overLimit)
-        XCTAssertTrue(app.buttons["チラシを見る"].isEnabled)
-        app.buttons["チラシを見る"].tap()
+        XCTAssertTrue(app.buttons["チラシを作る"].isEnabled)
+        app.buttons["チラシを作る"].tap()
         XCTAssertTrue(app.buttons["lost-cat-edit-text"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["lost-cat-share-image"].isEnabled)
         XCTAssertTrue(app.staticTexts["見分ける特徴は200文字までです。あと1文字減らしてください。"].exists)
@@ -2477,7 +2490,7 @@ final class SoloMemoriesUITests: XCTestCase {
         selectAll.tap()
         restoredFeatures.typeText(String(repeating: "茶", count: 200))
         XCTAssertEqual((restoredFeatures.value as? String)?.count, 200)
-        app.buttons["チラシを見る"].tap()
+        app.buttons["チラシを作る"].tap()
         XCTAssertTrue(app.buttons["共有する迷子の猫の画像"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["lost-cat-share-image"].isEnabled)
         app.buttons["A4チラシ"].tap()
@@ -2519,7 +2532,7 @@ final class SoloMemoriesUITests: XCTestCase {
         let place = field("lost-cat-place")
         XCTAssertFalse((place.value as? String ?? "").contains("非公開"))
         place.tap(); place.typeText("公園の近く")
-        app.buttons["チラシを見る"].tap()
+        app.buttons["チラシを作る"].tap()
         XCTAssertTrue(preview.waitForExistence(timeout: 5))
         let publicText = preview.value as? String ?? ""
         XCTAssertTrue(publicText.contains("茶白・右耳に小さな傷"))
@@ -2575,7 +2588,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertEqual((features.value as? String)?.count, 200)
         XCTAssertGreaterThan(features.frame.width, app.frame.width * 0.65)
         capture("lost-cat-long-text-editor")
-        app.buttons["チラシを見る"].tap()
+        app.buttons["チラシを作る"].tap()
         XCTAssertTrue(app.buttons["共有する迷子の猫の画像"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["lost-cat-share-image"].isEnabled)
         capture("lost-cat-two-aspect-social")
