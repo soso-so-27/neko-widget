@@ -610,7 +610,7 @@ private struct EvacuationCatView: View {
                 let states = ToolStepState.states([cat.identificationPhoto != nil, true])
                 Section {
                     ToolAdaptiveStack {
-                        EvacuationPhoto(image: store.image(cat.identificationPhoto), label: "この子の写真")
+                        EvacuationPhoto(name: cat.identificationPhoto, store: store, label: "この子の写真")
                             .frame(width: 80, height: 90)
                         VStack(alignment: .leading, spacing: 7) {
                             Text(profiles.first(where: { $0.identifier == cat.profileID })?.displayName ?? cat.displayName).font(.title2.bold())
@@ -727,7 +727,7 @@ private struct EvacuationCatEditor: View {
                     }
                     ToolPhotoGrid {
                         ForEach(EvacuationCat.PhotoRole.allCases.filter { $0 != .reference || cat.photos["reference"] != nil }) { role in
-                            ToolPhotoSlot(role.title, image: store.image(cat.photos[role.rawValue]),
+                            ToolPhotoSlot(role.title, image: nil, file: store.imageURL(cat.photos[role.rawValue]),
                                           identifier: "evacuation-photo-\(role.rawValue)",
                                           actionsIdentifier: "evacuation-photo-actions-\(role.rawValue)",
                                           choose: { photoRole = role }) {
@@ -756,15 +756,20 @@ private struct EvacuationCatEditor: View {
     }
 }
 
+/// A small copy of the kept photo, made off the main thread (11/8); the
+/// memo itself still reads the full photo.
 private struct EvacuationPhoto: View {
-    let image: UIImage?
+    let name: String?
+    let store: EvacuationStore
     let label: String
+    @State private var image: UIImage?
     var body: some View {
         Group {
             if let image { Image(uiImage: image).resizable().scaledToFit() }
             else { Image(systemName: "photo.badge.plus").font(.title2).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(.secondarySystemGroupedBackground)) }
         }.clipShape(RoundedRectangle(cornerRadius: 10)).accessibilityLabel(label)
+        .task(id: name) { image = await ToolPhotoThumbnail.load(store.imageURL(name)) }
     }
 }
 

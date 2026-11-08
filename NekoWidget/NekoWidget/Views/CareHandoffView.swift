@@ -289,7 +289,7 @@ private struct CareCatEditor: View {
                                   isPrefilled: cat.prefilledFields?.contains("name") == true)
                     }
                     ToolPhotoGrid {
-                        ToolPhotoSlot("渡す写真", image: store.image(cat.photoName),
+                        ToolPhotoSlot("渡す写真", image: nil, file: store.imageURL(cat.photoName),
                                       identifier: "care-photo-open", actionsIdentifier: "care-photo-actions",
                                       choose: { showsPhotoPicker = true }) {
                             Button("写真を選び直す", systemImage: "photo") { showsPhotoPicker = true }

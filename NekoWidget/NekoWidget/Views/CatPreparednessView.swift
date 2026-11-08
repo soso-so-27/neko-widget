@@ -188,12 +188,16 @@ struct LostCatDraftView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var key = ""
     @State private var draft = LostCatDraft()
+    /// The draft as last read or written: opening a cat saves nothing (11/8).
+    @State private var savedDraft: LostCatDraft?
     @State private var loaded = false
     @State private var saveTask: Task<Void, Never>?
     @State private var photoTask: Task<Void, Never>?
     @State private var photoRequest = UUID()
     @State private var selectedRole: CatPreparednessStore.PhotoRole?
     @State private var pendingPhotoItem: PhotosPickerItem?
+    /// The full photos: the flyer and 切り取る use these. The tiles show the
+    /// kept files from small copies (`tileFile`, 11/8).
     @State private var faceImage: UIImage?
     @State private var bodyImage: UIImage?
     @State private var photoBusy = false
@@ -210,6 +214,8 @@ struct LostCatDraftView: View {
     @FocusState private var focus: Field?
 
     var body: some View {
+        // The flyer layout is measured once per drawing, not once per field.
+        let issues = flyerIssues
         Form {
             // The tool's one shape (11/8): purpose, guide, numbered steps, then
             // errors last; the one way forward is the bar below.
@@ -225,9 +231,9 @@ struct LostCatDraftView: View {
                 }
                 .foregroundStyle(.primary)
             }
-            catSection.disabled(!loaded)
-            incidentSection.disabled(!loaded)
-            contactSection.disabled(!loaded)
+            catSection(issues).disabled(!loaded)
+            incidentSection(issues).disabled(!loaded)
+            contactSection(issues).disabled(!loaded)
             if candidateRefreshError {
                 Section {
                     Text("前に入れた内容を読み込めませんでした。")
@@ -328,7 +334,7 @@ struct LostCatDraftView: View {
             if !loaded { UsageCounter.shared.count(.toolLostCat); load(initialKey, name: initialName) }  // Usage (11/7): once per opening
         }
         .onChange(of: draft) { _, _ in
-            guard loaded else { return }
+            guard loaded, draft != savedDraft else { return }
             saveTask?.cancel()
             saveTask = Task {
                 try? await Task.sleep(for: .milliseconds(350))
@@ -343,7 +349,7 @@ struct LostCatDraftView: View {
         .appRecordEditing(retainWhileHidden: saveError || photoBusy || cropRequest != nil || showsDatePicker)
     }
 
-    private var catSection: some View {
+    private func catSection(_ issues: [String: String]) -> some View {
         Group {
         Section {
             if let profile = profiles.first(where: { $0.identifier == key }) {
@@ -358,13 +364,15 @@ struct LostCatDraftView: View {
                     .accessibilityLabel("猫の名前（任意）")
                     .focused($focus, equals: .name)
             }
-            fieldIssue("name")
+            fieldIssue("name", issues)
             }
             let tiles = dynamicTypeSize.isAccessibilitySize
                 ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
             tiles {
-                photoTile("顔・毛柄の写真", role: .face, image: faceImage)
-                photoTile("全身の写真（任意）", role: .body, image: bodyImage)
+                photoTile("顔・毛柄の写真", role: .face, image: faceImage,
+                          file: faceImage == nil ? nil : tileFile(draft.faceFileName, draft.bodyFileName))
+                photoTile("全身の写真（任意）", role: .body, image: bodyImage,
+                          file: bodyImage == nil || draft.faceFileName == nil ? nil : tileFile(draft.bodyFileName))
             }
             .padding(.vertical, 4)
             if let photoError {
@@ -373,14 +381,14 @@ struct LostCatDraftView: View {
                     Button("いまの写真のままにする") { self.photoError = nil }
                 }
             }
-            if faceImage == nil, catCarePhoto(.face) != nil {
+            if faceImage == nil, catCarePhotoURL(.face) != nil {
                 Button("「この子のこと」の写真を使う", systemImage: "photo") { useCatCarePhotos() }
                     .disabled(photoBusy)
                     .accessibilityIdentifier("lost-cat-use-cat-care-photos")
             }
             textEntry("見分ける特徴（任意）", text: textBinding(\.features, field: "features"), field: .features,
                       limit: LostCatFlyerRenderer.featuresLimit,
-                      example: "例：茶白。胸と足先が白く、しっぽは長い。左耳の先に切れ込み。")
+                      example: "例：茶白。胸と足先が白く、しっぽは長い。左耳の先に切れ込み。", issues: issues)
             if let line = CatCareLostCat.publicLine(catCareRecord), !draft.features.contains(line) {
                 Button("「\(line)」を特徴に足す", systemImage: "plus.circle") {
                     let current = draft.features.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -395,7 +403,7 @@ struct LostCatDraftView: View {
             if collarChoice.wrappedValue == .present {
                 textEntry("首輪の色・模様", text: collarDetail, field: .collar,
                           limit: LostCatFlyerRenderer.collarLimit,
-                          example: "例：赤い布製、鈴付き", minimumLines: 1)
+                          example: "例：赤い布製、鈴付き", minimumLines: 1, issues: issues)
             }
         } header: {
             ToolStepHeader(number: 1, title: "写真と特徴", state: stepStates[0])
@@ -408,7 +416,7 @@ struct LostCatDraftView: View {
         }
     }
 
-    private var incidentSection: some View {
+    private func incidentSection(_ issues: [String: String]) -> some View {
         Section {
             VStack(alignment: .leading, spacing: 4) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -418,7 +426,7 @@ struct LostCatDraftView: View {
                         .accessibilityLabel("最後に見かけた場所")
                         .focused($focus, equals: .place)
                 }
-                fieldIssue("place")
+                fieldIssue("place", issues)
             }
             Button { pendingDate = draft.lastSeenAt ?? Date(); showsDatePicker = true } label: {
                 HStack {
@@ -434,7 +442,7 @@ struct LostCatDraftView: View {
         } header: { ToolStepHeader(number: 2, title: "いなくなった場所と日時", state: stepStates[1]) }
     }
 
-    private var contactSection: some View {
+    private func contactSection(_ issues: [String: String]) -> some View {
         Section {
             VStack(alignment: .leading, spacing: 4) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -446,7 +454,7 @@ struct LostCatDraftView: View {
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                         .focused($focus, equals: .contact)
                 }
-                fieldIssue("contact")
+                fieldIssue("contact", issues)
                 if draft.contact.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                    let owner = catCareStore.state?.household.ownerContact?.value
                     .trimmingCharacters(in: .whitespacesAndNewlines), !owner.isEmpty {
@@ -457,7 +465,8 @@ struct LostCatDraftView: View {
             }
             textEntry("見かけた方へ（任意）", text: $draft.approachAdvice, field: .advice,
                       limit: LostCatFlyerRenderer.adviceLimit,
-                      example: "例：追いかけず、見かけた場所をお知らせください。お礼をいたします", minimumLines: 2)
+                      example: "例：追いかけず、見かけた場所をお知らせください。お礼をいたします", minimumLines: 2,
+                      issues: issues)
         } header: { ToolStepHeader(number: 3, title: "見かけた人からの連絡先", state: stepStates[2]) }
           footer: {
             Text("この連絡先は画像とチラシに載り、だれでも見られます。")
@@ -492,10 +501,16 @@ struct LostCatDraftView: View {
         return CatCareSummary.record(profileIdentifier: key)
     }
 
-    private func catCarePhoto(_ role: CatPreparednessStore.PhotoRole) -> Data? {
+    /// Only whether the photo is there: the page never reads the photo itself
+    /// while it is drawn (11/8).
+    private func catCarePhotoURL(_ role: CatPreparednessStore.PhotoRole) -> URL? {
         guard let ref = (role == .face ? catCareRecord?.facePhoto?.value : catCareRecord?.bodyPhoto?.value) ?? nil,
-              let url = catCareStore.photoURL(ref) else { return nil }
-        return try? Data(contentsOf: url)
+              let url = catCareStore.photoURL(ref), FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
+    }
+
+    private func catCarePhoto(_ role: CatPreparednessStore.PhotoRole) -> Data? {
+        catCarePhotoURL(role).flatMap { try? Data(contentsOf: $0) }
     }
 
     private func useCatCarePhotos() {
@@ -529,12 +544,13 @@ struct LostCatDraftView: View {
         return next
     }
 
-    @ViewBuilder private func fieldIssue(_ field: String) -> some View {
+    @ViewBuilder private func fieldIssue(_ field: String, _ issues: [String: String]) -> some View {
         if let issue = issues[field] { Text(issue).font(.footnote).foregroundStyle(.red) }
     }
 
     private func textEntry(_ title: String, text: Binding<String>, field: Field,
-                           limit: Int, example: String, minimumLines: Int = 3) -> some View {
+                           limit: Int, example: String, minimumLines: Int = 3,
+                           issues: [String: String]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.subheadline).foregroundStyle(.secondary)
             TextField(example, text: text, axis: .vertical)
@@ -549,7 +565,7 @@ struct LostCatDraftView: View {
                 .font(.caption).monospacedDigit()
                 .foregroundStyle(text.wrappedValue.count > limit ? Color.red : Color.secondary)
                 .frame(maxWidth: .infinity, alignment: .trailing)
-            fieldIssue(String(describing: field))
+            fieldIssue(String(describing: field), issues)
         }
     }
 
@@ -629,7 +645,8 @@ struct LostCatDraftView: View {
             contact: draft.contact.trimmingCharacters(in: .whitespacesAndNewlines),
             faceImage: faceImage, bodyImage: bodyImage)
     }
-    private var issues: [String: String] {
+    /// Measures the flyer text 2–4 times: read it once in `body` and pass it down.
+    private var flyerIssues: [String: String] {
         guard let publicDraft else { return [:] }
         return LostCatFlyerRenderer.validationIssues(publicDraft)
     }
@@ -653,9 +670,17 @@ struct LostCatDraftView: View {
         loaded && !saveError && !photoBusy && photoError == nil && requiredFields.isEmpty
     }
 
-    private func photoTile(_ title: String, role: CatPreparednessStore.PhotoRole, image: UIImage?) -> some View {
+    /// The first kept file that is there, the same choice as `faceImage` and
+    /// `bodyImage` make. Nil (a photo handed in on opening) shows the image itself.
+    private func tileFile(_ names: String?...) -> URL? {
+        names.lazy.compactMap { store.imageURL($0) }.first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    /// `image` is the full photo (切り取る, the flyer); `file` is shown from a small copy.
+    private func photoTile(_ title: String, role: CatPreparednessStore.PhotoRole, image: UIImage?,
+                           file: URL?) -> some View {
         VStack(spacing: 4) {
-            ToolPhotoSlot(title, image: image, dimmedTitle: isPrefilled(role == .face ? "face" : "body"),
+            ToolPhotoSlot(title, image: image, file: file, dimmedTitle: isPrefilled(role == .face ? "face" : "body"),
                           disabled: photoBusy || (role == .body && faceImage == nil),
                           identifier: role == .face ? "lost-cat-face-photo" : "lost-cat-body-photo",
                           actionsIdentifier: role == .face ? "lost-cat-face-actions" : "lost-cat-body-actions",
@@ -677,7 +702,10 @@ struct LostCatDraftView: View {
 
     private func saveNow() {
         guard loaded else { return }
-        do { try store.save(draft, for: key); saveError = false }
+        // Nothing new since the last read or write: no file, no notice. A
+        // failed save is always tried again.
+        if !saveError, draft == savedDraft { return }
+        do { try store.save(draft, for: key); savedDraft = draft; saveError = false }
         catch { saveError = true }
     }
     private func load(_ identity: String, name: String) {
@@ -698,6 +726,7 @@ struct LostCatDraftView: View {
             }
             key = identity
             lastKey = identity
+            savedDraft = saved
             draft = saved
             faceImage = store.image(saved.faceFileName) ?? store.image(saved.bodyFileName)
                 ?? (identity == initialKey ? initialPhotoImage : nil)
@@ -716,6 +745,7 @@ struct LostCatDraftView: View {
     }
     private func commitPhoto(_ data: Data, role: CatPreparednessStore.PhotoRole) throws {
         draft = try store.replacePhoto(data, role: role, draft: draft, for: key)
+        savedDraft = draft
         faceImage = store.image(draft.faceFileName) ?? store.image(draft.bodyFileName)
         bodyImage = draft.faceFileName == nil ? nil : store.image(draft.bodyFileName)
         photoError = nil
@@ -724,6 +754,7 @@ struct LostCatDraftView: View {
     private func removeSecondPhoto() {
         do {
             draft = try store.removePhoto(role: .body, draft: draft, for: key)
+            savedDraft = draft
             bodyImage = nil
             photoError = nil
         } catch { photoError = "写真を外せませんでした。もう一度お試しください。" }

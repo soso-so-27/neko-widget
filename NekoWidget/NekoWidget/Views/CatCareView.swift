@@ -1631,23 +1631,32 @@ extension View {
 /// One photo on a tool page, the same in every tool (349): the photo (tap to
 /// choose), its name under it, and 「⋯」 for the rest. Taking a photo off sits
 /// in that menu, never as red text on the page.
+/// A kept photo is given as `file` and shown from a small copy made off the
+/// main thread (`ToolPhotoThumbnail`, 11/8); `image` is for a photo already
+/// in memory.
 struct ToolPhotoSlot<Actions: View>: View {
     let title: String
     let image: UIImage?
+    var file: URL?
     var dimmedTitle = false
     var disabled = false
     let identifier: String
     let actionsIdentifier: String
     let choose: () -> Void
     let actions: Actions
+    @State private var thumbnail: UIImage?
 
-    init(_ title: String, image: UIImage?, dimmedTitle: Bool = false, disabled: Bool = false,
+    init(_ title: String, image: UIImage?, file: URL? = nil, dimmedTitle: Bool = false, disabled: Bool = false,
          identifier: String, actionsIdentifier: String, choose: @escaping () -> Void,
          @ViewBuilder actions: () -> Actions) {
-        self.title = title; self.image = image; self.dimmedTitle = dimmedTitle; self.disabled = disabled
+        self.title = title; self.image = image; self.file = file
+        self.dimmedTitle = dimmedTitle; self.disabled = disabled
         self.identifier = identifier; self.actionsIdentifier = actionsIdentifier
         self.choose = choose; self.actions = actions()
     }
+
+    private var hasPhoto: Bool { image != nil || file != nil }
+    private var shown: UIImage? { file == nil ? image : thumbnail }
 
     var body: some View {
         VStack(spacing: 4) {
@@ -1655,8 +1664,8 @@ struct ToolPhotoSlot<Actions: View>: View {
                 Color(.tertiarySystemGroupedBackground)
                     .aspectRatio(4.0 / 3.0, contentMode: .fit)
                     .overlay {
-                        if let image { Image(uiImage: image).resizable().scaledToFit() }
-                        else { Image(systemName: "photo.badge.plus").font(.title2).foregroundStyle(.secondary) }
+                        if let shown { Image(uiImage: shown).resizable().scaledToFit() }
+                        else if !hasPhoto { Image(systemName: "photo.badge.plus").font(.title2).foregroundStyle(.secondary) }
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 10))
             }
@@ -1668,7 +1677,7 @@ struct ToolPhotoSlot<Actions: View>: View {
                 Text(title).font(.caption)
                     .foregroundStyle(dimmedTitle ? Color.secondary : Color.primary)
                 Spacer(minLength: 0)
-                if image != nil {
+                if hasPhoto {
                     Menu { actions } label: {
                         Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
                     }
@@ -1678,6 +1687,7 @@ struct ToolPhotoSlot<Actions: View>: View {
             }
         }
         .frame(maxWidth: .infinity)
+        .task(id: file) { thumbnail = await ToolPhotoThumbnail.load(file) }
     }
 }
 
