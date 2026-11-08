@@ -2666,7 +2666,7 @@ private final class AppRecordFixture {
         Self.measurementSummary += "; retirementLimit=6 PASS"
         try persistence.verifySchedulingForFixture()
     }
-    func verifyResponsiveSaveAndPause() async throws {
+    func verifyResponsiveSaveAndPause(onReady: @MainActor () -> Void) async throws {
         Self.preparationPhase = "編集 lease とバックグラウンド比較"
         guard try await AppRecordBackground.run({ !Thread.isMainThread }) else { throw ToolBackupError.storage }
         let lease = AppRecordEditingLease()
@@ -2705,7 +2705,12 @@ private final class AppRecordFixture {
             try await Task.sleep(for: .milliseconds(10))
         }
         guard await server.headIsWaiting() else { saving.cancel(); throw ToolBackupError.storage }
-        persistence.pause()
+        onReady()
+        // XCTest stops saving through the real, already-open settings screen.
+        for _ in 0..<3000 {
+            if !persistence.enabled { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
         let offImmediately = !persistence.enabled && persistence.title == "自動保存はオフです" && !persistence.needsAttention
         await server.releaseHead()
         await saving.value
@@ -3370,7 +3375,8 @@ struct AppRecordPersistenceFixtureView: View {
                 do {
                     let probe = try await AppRecordFixture.make()
                     try await probe.verifyEfficientAutomaticSave()
-                    try await probe.verifyResponsiveSaveAndPause()
+                    fixture = probe
+                    try await probe.verifyResponsiveSaveAndPause { result = "保存中の停止を確認できます" }
                     result = "保存の回数・片づけの分離・編集の集約を確認しました"
                 } catch { result = "効率の検査失敗: " + AppRecordFixture.preparationPhase }
                 return
@@ -3542,6 +3548,9 @@ private struct AppRecordFixtureContent: View {
                 Text(persistence.title).accessibilityIdentifier("app-record-fixture-status")
                 Text(counts).accessibilityIdentifier("app-record-fixture-photo-count")
                 if !result.isEmpty { Text(result).accessibilityIdentifier("app-record-fixture-result") }
+                if !AppRecordFixture.measurementSummary.isEmpty {
+                    Text(AppRecordFixture.measurementSummary).lineLimit(1).accessibilityIdentifier("autosave-measurements")
+                }
                 NavigationLink("保存・復元", value: AppRecordFixtureRoute.settings)
                 NavigationLink("預けるとき", value: AppRecordFixtureRoute.care)
                 NavigationLink("写真メモ", value: MemoriesRoute.memoryNotes)
