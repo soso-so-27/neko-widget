@@ -3282,16 +3282,20 @@ class LostCatToolReview1108Tests(unittest.TestCase):
         self.assertIn("guard fits(draft, paper: true)", renderer)
         view = source("NekoWidget/Views/CatPreparednessView.swift")
         preview = section(view, "private struct LostCatPreviewView", "private struct LostCatActivitySheet")
-        self.assertIn("LostCatFlyerRenderer.issues(draft, paper: format == 1)", preview)
+        # Round 2: the story and the small flyer are judged on their own too.
+        self.assertIn("LostCatFlyerRenderer.issues(draft, output: format)", preview)
+        self.assertIn("static func issues(_ draft: LostCatPublicDraft, output: LostCatOutput)", renderer)
+        self.assertIn("issues(draft, output: paper ? .paper : .social)", renderer)
         self.assertNotIn("validationIssues", preview)
         # Every A4 or SNS overflow names a field, so a red line is always beside it.
         self.assertNotIn('issues["layout"]', renderer)
-        self.assertIn('"\\(paper ? "A4" : "SNSの画像")に入りきりません。\\(label)を短くしてください。"', renderer)
+        self.assertIn('"\\(format.issueName)に入りきりません。\\(label)を短くしてください。"', renderer)
         self.assertIn('"features": "特徴"', renderer)
         # The SNS image stays 1080x1350: letters and photo shrink, the canvas never grows.
         self.assertIn("private static let socialSize = CGSize(width: 1080, height: 1350)", renderer)
         self.assertNotIn("canvas.height +=", renderer)
-        self.assertIn("let canvas = paper ? paperSize : socialSize", renderer)
+        self.assertIn("let canvas = paper ? paperSize : (format == .story ? storySize : socialSize)", renderer)
+        self.assertIn("private static let storySize = LostCatOutput.story.canvas", renderer)
         self.assertIn("if !compact { return layout(draft, format: format, compact: true) }", renderer)
         # A4 contact is 32pt or larger and above the name; the title is white on a red band.
         self.assertIn("maxSize: paper ? (compact ? 32 : 36) : 48, minSize: paper ? 32 : 37", renderer)
@@ -3307,7 +3311,8 @@ class LostCatToolReview1108Tests(unittest.TestCase):
         self.assertIn('formatter.locale = Locale(identifier: "ja_JP")', public)
         self.assertIn('formatter.dateFormat = "M月d日（E）H時ごろ"', public)
         self.assertIn('parts.append("最後に見かけた日時：\\(lastSeenDescription)")', public)
-        self.assertIn('static let hashtags = "#迷子猫 #迷い猫"', public)
+        self.assertIn('static let hashtags = LostCatText.hashtags', public)
+        self.assertIn('static let hashtags = "#迷子猫 #迷い猫"', source("NekoWidget/Services/LostCatIncident.swift"))
         self.assertIn("parts.append(Self.hashtags)", public)
         renderer = section(store, "enum LostCatFlyerRenderer {", "private static func draw(")
         self.assertIn("if let lastSeen = draft.lastSeenDescription {", renderer)
@@ -3322,7 +3327,8 @@ class LostCatToolReview1108Tests(unittest.TestCase):
         preview = section(view, "private struct LostCatPreviewView", "private struct LostCatActivitySheet")
         self.assertIn('.navigationTitle("できあがり")', preview)
         self.assertIn('Button("保存・共有する", systemImage: "square.and.arrow.up")', preview)
-        self.assertIn("text: format == 0 ? draft.message : nil", preview)
+        self.assertIn("text: format.sharesPost ? draft.message : nil", preview)
+        self.assertIn("var sharesPost: Bool { self == .social }", source("NekoWidget/Services/LostCatIncident.swift"))
         self.assertIn("LostCatActivitySheet(items: item.items)", preview)
         self.assertIn("if let text { return [url, text] }", view)
         # 11/8 tool shape: the button names what it makes.
@@ -3335,7 +3341,7 @@ class LostCatToolReview1108Tests(unittest.TestCase):
         view = source("NekoWidget/Views/CatPreparednessView.swift")
         form = section(view, "struct LostCatDraftView: View {", "private func catSection(_ issues: [String: String]) -> some View {")
         self.assertNotIn("            reportSection\n", form)
-        self.assertIn("LostCatGuideView { reportSection }", form)
+        self.assertIn("LostCatGuideView(log: $draft.incidentLog, editable: loaded) { reportSection }", form)
         guide = section(view, "private struct LostCatGuideView<Report: View>: View {", "#if DEBUG")
         step2 = section(guide, 'Section("2  届け出て、保護されていないか確かめる")', 'Section("3  写真で周囲に知らせる")')
         self.assertIn("警察には遺失届を出します。", step2)
@@ -3371,10 +3377,14 @@ class LostCatToolReview1108Tests(unittest.TestCase):
         form = section(view, "struct LostCatDraftView: View {", "private func catSection(_ issues: [String: String]) -> some View {")
         # Top to bottom: purpose, the guide, steps 1-3, then errors last.
         order = ['ToolPurpose(text: "探すためのチラシを作ります。")',
-                 'Label("先にすること：探す・届け出る", systemImage: "info.circle")',
+                 'Text("先にすること：探す・届け出る")',
                  "catSection(issues).disabled(!loaded)", "incidentSection(issues).disabled(!loaded)",
                  "contactSection(issues).disabled(!loaded)",
+                 "if loaded, draft.hasIncident {",
                  'Label("保存できませんでした"']
+        # The guide row keeps its name for VoiceOver and the UI tests; the state is its value.
+        self.assertIn('.accessibilityLabel("先にすること：探す・届け出る")', form)
+        self.assertIn('} icon: { Image(systemName: "info.circle") }', form)
         # 11/8: a failed refresh of earlier text is not announced.
         self.assertNotIn("前に入れた内容を読み込めませんでした。", view)
         positions = [form.index(text) for text in order]
@@ -6064,6 +6074,191 @@ class ScreenTextTrimTests(unittest.TestCase):
         self.assertIn('if rediscoveryEnabled, navigationTitleText != "この1枚",', liked)
         self.assertEqual(liked.count('.accessibilityIdentifier("photo-browser-same-day")'), 1)
         self.assertEqual(liked.count('.accessibilityIdentifier("cloudy-photo-same-day")'), 1)
+
+
+class LostCatRoundTwoTests(unittest.TestCase):
+    """迷子のとき, round 2 (11/8): offices contacted, 「見つかりました」, the small
+    flyer and the story. The rules run in ci/verify-tool-outputs.swift; these
+    check that the screens and the renderer use them."""
+
+    def setUp(self) -> None:
+        self.model = source("NekoWidget/Services/LostCatIncident.swift")
+        self.store = source("NekoWidget/Services/CatPreparednessStore.swift")
+        self.renderer = section(self.store, "enum LostCatFlyerRenderer {", "/// Evaluate both arrangements")
+        self.view = source("NekoWidget/Views/CatPreparednessView.swift")
+        self.form = section(self.view, "struct LostCatDraftView: View {", "private func catSection(_ issues: [String: String]) -> some View {")
+        self.editor = section(self.view, "struct LostCatDraftView: View {", "private struct LostCatPhotoChoiceView")
+        self.guide = section(self.view, "private struct LostCatGuideView<Report: View>: View {", "#if DEBUG")
+        self.found = section(self.view, "private struct LostCatFoundView: View {", "#if DEBUG")
+        self.verify = source("ci/verify-tool-outputs.swift")
+
+    def test_logic_is_run_in_ci_and_built_into_the_app(self) -> None:
+        for name in ("lostCatOldDraftDecodes", "lostCatContactedOffices", "lostCatFoundPost",
+                     "lostCatEndingKeepsTheCat", "lostCatOutputSizes"):
+            self.assertIn("try %s()" % name, self.verify)
+            self.assertIn("static func %s() throws" % name, self.verify)
+        checks = source("ci/run-quick-ios-checks.sh")
+        tool_outputs = section(checks, "NekoWidget/Services/CatCareCore.swift NekoWidget/Services/CareHandoffPlan.swift", '"$RUNNER_TEMP/tool-output-tests"\n')
+        self.assertIn("NekoWidget/Services/LostCatIncident.swift", tool_outputs)
+        # Foundation only, so it compiles on macOS without UIKit.
+        self.assertNotIn("import UIKit", self.model)
+        self.assertNotIn("import SwiftUI", self.model)
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+        self.assertIn("C10811090000000000000001 /* LostCatIncident.swift in Sources */,", project)
+        self.assertIn("path = LostCatIncident.swift;", project)
+        # The draft moved here; it is defined once.
+        self.assertIn("struct LostCatDraft: Codable, Equatable {", self.model)
+        self.assertNotIn("struct LostCatDraft:", self.store)
+
+    def test_saved_drafts_stay_readable(self) -> None:
+        draft = section(self.model, "struct LostCatDraft: Codable, Equatable {", "/// The offices step 2")
+        self.assertIn("static let schemaVersion = 1", draft)
+        self.assertIn("var incident: LostCatIncidentLog? = nil", draft)
+        log = section(self.model, "struct LostCatIncidentLog: Codable, Equatable, Sendable {", "enum LostCatText {")
+        for field in ("var contactedOffices: [LostCatContactedOffice]? = nil", "var nextCheckAt: Date? = nil",
+                      "var foundMessage: String? = nil"):
+            self.assertIn(field, log)
+        self.assertNotIn("init(from decoder", self.model)
+        # The readable backup names every new field in Japanese, and the offices as words.
+        readable = source("NekoWidget/Services/ReadablePreservationExport.swift")
+        for key in ("incident", "contactedOffices", "office", "contactedAt", "nextCheckAt", "foundMessage"):
+            self.assertIn(f'"{key}": "', readable)
+        self.assertIn('"lastCheckedAt", "contactedAt", "nextCheckAt"].contains(key)', readable)
+        for code, word in (("animalCenter", "動物愛護センター"), ("healthCenter", "保健所"), ("police", "警察"), ("nearbyVet", "近くの動物病院")):
+            self.assertIn(f'"{code}": "{word}"', readable)
+            self.assertIn(f'return "{word}"', self.model)
+
+    def test_offices_are_marked_in_step_two_of_the_guide(self) -> None:
+        step2 = section(self.guide, 'Section("2  届け出て、保護されていないか確かめる")', 'Section("3  写真で周囲に知らせる")')
+        self.assertIn('Section("連絡したところ") {', step2)
+        self.assertIn("ForEach(LostCatOffice.allCases) { office in officeRow(office) }", step2)
+        self.assertIn("nextCheckRow", step2)
+        self.assertIn(".disabled(!editable)", step2)
+        self.assertLess(step2.index('Section("連絡したところ")'), step2.index("report()"))
+        row = section(self.guide, "private func officeRow(", "@ViewBuilder private var nextCheckRow")
+        self.assertIn("log.setContacted(office, on: day == nil ? Date() : nil, now: Date())", row)
+        self.assertIn('DatePicker("連絡した日"', row)
+        self.assertIn("in: ...Date(), displayedComponents: .date", row)
+        nxt = section(self.guide, "@ViewBuilder private var nextCheckRow", "\n}\n")
+        self.assertIn('DatePicker("次に確かめる日"', nxt)
+        self.assertIn("log.nextCheckAt = nil", nxt)
+        self.assertIn('Button("次に確かめる日を決める（任意）") { log.nextCheckAt = LostCatIncidentLog.nextDay(after: Date()) }', nxt)
+        # Saved with the draft through the page's own autosave.
+        self.assertIn("@Binding var log: LostCatIncidentLog", self.guide)
+        self.assertIn("LostCatGuideView(log: $draft.incidentLog, editable: loaded) { reportSection }", self.editor)
+        # One line on the guide row.
+        self.assertIn("let state = loaded ? draft.incident?.stateLine(now: Date()) : nil", self.form)
+        self.assertIn("if let state {", self.form)
+        self.assertIn('.accessibilityValue(state ?? "")', self.form)
+        self.assertIn('parts.append("連絡済み \\(contactedCount)/\\(LostCatOffice.allCases.count)")', self.model)
+        self.assertIn('parts.append("次に確かめる日 \\(day)")', self.model)
+
+    def test_found_is_quiet_and_never_deletes_by_itself(self) -> None:
+        entry = section(self.form, "if loaded, draft.hasIncident {", "if saveError {")
+        self.assertIn("Button { openFound() } label: {", entry)
+        self.assertIn('.accessibilityIdentifier("lost-cat-found")', entry)
+        for loud in ("role: .destructive", ".red", ".borderedProminent"):
+            self.assertNotIn(loud, entry)
+        self.assertIn("LostCatFoundView(name: publicName, faceImage: faceImage,", self.editor)
+        self.assertIn("message: $draft.foundMessage, end: endIncident)", self.editor)
+        end = section(self.editor, "private func endIncident() {", "private func openPreview() {")
+        self.assertIn("draft = draft.endingIncident()", end)
+        self.assertIn("saveNow()", end)
+        for gone in ("store.delete", "removePhoto", "faceFileName", "bodyFileName"):
+            self.assertNotIn(gone, end)
+        ending = section(self.model, "func endingIncident() -> LostCatDraft {", "\n    }\n")
+        self.assertIn('next.lastSeenNear = ""', ending)
+        self.assertIn("next.lastSeenAt = nil", ending)
+        self.assertIn("next.incident = nil", ending)
+        for kept in ("faceFileName", "bodyFileName", "features", "name", "contact"):
+            self.assertNotIn("next.%s" % kept, ending)
+        # Ending is offered in the flow and asks first.
+        self.assertIn('Button("この迷子の記録を終える") { confirmsEnd = true }', self.found)
+        self.assertEqual(self.found.count("end()"), 1)
+        dialog = section(self.found, '.confirmationDialog("この迷子の記録を終えますか？"', "\n    }\n}")
+        self.assertIn('Button("記録を終える", role: .destructive) { end() }', dialog)
+        self.assertIn('Text("場所・日時・連絡したところを消します。写真と特徴は残ります。")', dialog)
+
+    def test_found_image_post_and_take_down_line(self) -> None:
+        self.assertIn('.navigationTitle(LostCatText.foundTitle)', self.found)
+        self.assertIn('Button("保存・共有する", systemImage: "square.and.arrow.up")', self.found)
+        self.assertIn("share = LostCatFoundShare(url: url, text: found.post)", self.found)
+        self.assertIn(".disabled(issue != nil)", self.found)
+        # The reminder only after a share or save finished.
+        self.assertIn("LostCatActivitySheet(items: item.items) { completed in if completed { shared = true } }", self.found)
+        self.assertIn("if shared {", self.found)
+        self.assertIn("Label(LostCatText.takeDownFlyers", self.found)
+        self.assertIn("controller.completionWithItemsHandler = { _, completed, _, _ in finished(completed) }", self.view)
+        self.assertIn("LostCatFlyerRenderer.removeExport(url)", self.found)
+        self.assertIn('static let takeDownFlyers = "貼ったチラシをはがしに行きましょう"', self.model)
+        self.assertIn('Text("ひとこと（任意）")', self.found)
+        # The frame of the SNS image: green band, face, name, thanks, message. No contact, place or day.
+        layout = section(self.renderer, "private static func foundLayout(", "private static func drawFound(")
+        self.assertIn("let canvas = socialSize", layout)
+        self.assertIn("LostCatText.foundTitle, size: 78, weight: .black", layout)
+        self.assertIn("LostCatText.foundThanks", layout)
+        # The found frame only reads its own draft, which has no contact, place or day.
+        self.assertIn("contactBackground: .zero", layout)
+        self.assertNotIn("draft.", layout)
+        for private in ("contactValue", "lastSeen", "features", "collar"):
+            self.assertNotIn(private, layout)
+        found_draft = section(self.store, "struct LostCatFoundDraft {", "enum LostCatFlyerRenderer {")
+        for private in ("contact", "lastSeen", "features"):
+            self.assertNotIn(private, found_draft)
+        draw = section(self.renderer, "private static func drawFound(", "\n    }\n")
+        self.assertIn("UIColor(red: 0.10, green: 0.52, blue: 0.27, alpha: 1).setFill()", draw)
+        self.assertIn("context.fill(plan.titleBand)", draw)
+        self.assertIn('static let foundTitle = "見つかりました"', self.model)
+        self.assertIn('static let foundThanks = "ご協力ありがとうございました"', self.model)
+        self.assertIn("parts.append(hashtags)", section(self.model, "static func foundPost(", "\n    }\n"))
+        create = section(self.renderer, "static func createFoundImage(", "private enum ProtectionVerification")
+        self.assertIn("guard found.faceImage != nil, foundIssue(found) == nil,", create)
+        self.assertIn("return try writeExport(data, fileName: LostCatOutput.foundFileName)", create)
+
+    def test_small_flyer_and_story(self) -> None:
+        preview = section(self.view, "private struct LostCatPreviewView", "private struct LostCatActivitySheet")
+        self.assertIn("ForEach(LostCatOutput.allCases) { Text($0.title).tag($0) }", preview)
+        self.assertIn("LostCatFlyerRenderer.create(draft, output: format)", preview)
+        self.assertIn("LostCatFlyerRenderer.createFixture(draft, output: format, verify: verify)", preview)
+        self.assertIn(".accessibilityIdentifier(format.accessibilityIdentifier)", preview)
+        self.assertIn("LostCatFlyerRenderer.previewImage(draft, output: format)", preview)
+        create = section(self.renderer, "static func create(_ draft: LostCatPublicDraft, output: LostCatOutput)", "private static func outputData(")
+        self.assertIn("case .social: return try createImage(draft)", create)
+        self.assertIn("case .paper: return try createPDF(draft)", create)
+        data = section(self.renderer, "private static func outputData(", "// MARK: 見つかりました")
+        self.assertIn("guard fits(draft, output: output) else { throw CocoaError(.fileWriteUnknown) }", data)
+        # The small flyer: photo, name, place and day, the contact large; four on a page.
+        small = section(self.renderer, "private static func smallLayout(", "private static func drawSmall(")
+        for field in ('id: "name"', 'id: "place"', 'id: "date"', 'id: "contact"'):
+            self.assertIn(field, small)
+        for left_out in ("features", "collar", "approachAdvice", "bodyImage"):
+            self.assertNotIn(left_out, small)
+        self.assertIn('id: "contact", maxSize: compact ? 18 : 20, minSize: 16,', small)
+        self.assertIn("if !compact { return smallLayout(draft, compact: true) }", small)
+        self.assertIn('"\\(LostCatOutput.smallPaper.issueName)に入りきりません。\\(label)を短くしてください。"', small)
+        self.assertIn('if contactValue.isEmpty { issues["contact"] =', small)
+        self.assertIn('if placeValue.isEmpty { issues["place"] =', small)
+        self.assertIn("if let lastSeen = draft.lastSeenDescription {", small)
+        draw_small = section(self.renderer, "private static func drawSmall(", "private static func foundLayout(")
+        self.assertIn("for cell in LostCatSmallFlyer.cells(page: paperSize) {", draw_small)
+        self.assertIn("context.translateBy(x: cell.minX, y: cell.minY)", draw_small)
+        self.assertIn("context.setLineDash(phase: 0, lengths: [4, 4])", draw_small)
+        self.assertIn("if format == .smallPaper { drawSmall(draft, context: context); return }", self.store)
+        self.assertIn("if output == .smallPaper { return smallLayout(draft).1 }", self.renderer)
+        # The story: the SNS layout, more room for the photo, clear of Instagram's bars.
+        self.assertIn("let insets = format.safeInsets", self.store)
+        self.assertIn("let titleBand = CGRect(x: margin, y: margin + insets.top,", self.store)
+        self.assertIn("var bottom = canvas.height - margin - insets.bottom", self.store)
+        self.assertIn(": (compact ? 300 : 455) + (format == .story ? 200 : 0)", self.store)
+        self.assertIn('self == .story ? (top: 160, bottom: 200) : (top: 0, bottom: 0)', self.model)
+        # Every written file is removed after sharing, and only those.
+        self.assertIn("guard LostCatOutput.exportFileNames.contains(file.lastPathComponent) else { return }", self.store)
+        self.assertIn('static var exportFileNames: Set<String> { Set(allCases.map(\\.fileName)).union([foundFileName]) }', self.model)
+        # The input page measures the SNS image and the A4 only; the others are judged where they are made.
+        valid = section(self.renderer, "static func validationIssues(", "/// One output's own issues.")
+        self.assertNotIn("story", valid)
+        self.assertNotIn("smallPaper", valid)
+
 
 if __name__ == "__main__":
     unittest.main()

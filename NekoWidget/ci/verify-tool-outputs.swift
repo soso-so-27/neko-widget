@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 // What the tools print, built from synthetic cats (11/8). Each check names a
@@ -27,7 +28,12 @@ struct ToolOutputVerifier {
         try careMemoHouseNotes()
         try careMemoCheckTable()
         try careMemoPlainText()
-        print("Tool outputs: care memo, evacuation sheet and shared lines checked")
+        try lostCatOldDraftDecodes()
+        try lostCatContactedOffices()
+        try lostCatFoundPost()
+        try lostCatEndingKeepsTheCat()
+        try lostCatOutputSizes()
+        print("Tool outputs: care memo, evacuation sheet, lost-cat outputs and shared lines checked")
     }
 
     /// 347: 「去勢・避妊 済み」 read oddly for a male cat.
@@ -195,5 +201,137 @@ struct ToolOutputVerifier {
         try check(!text.contains("未記入") && !text.contains("水："), "no unwritten row")
         try check(text.hasSuffix("薬・持病・アレルギーは載せていません。飼い主に聞いてください。"), "what was left out is said")
         try check(!text.contains("連絡先は、このメモには載せていません。"), "contacts were shown")
+    }
+
+    // MARK: 迷子のとき, round 2 (11/8)
+
+    /// A draft saved before round 2 has no `incident`: it still opens, and a
+    /// log saved by a later version with an office this one does not know is kept.
+    static func lostCatOldDraftDecodes() throws {
+        let old = Data(#"{"schemaVersion":1,"name":"むぎ","features":"茶白","collar":"","approachAdvice":"","contact":"090","lastSeenNear":"公園","updatedAt":0}"#.utf8)
+        let draft = try JSONDecoder().decode(LostCatDraft.self, from: old)
+        try check(draft.incident == nil && draft.name == "むぎ" && draft.lastSeenNear == "公園", "an old draft decodes")
+        try check(draft.schemaVersion == LostCatDraft.schemaVersion, "the schema version stays, so backups still accept it")
+        try check(draft.hasIncident, "a place is an incident")
+        try check(!LostCatDraft().hasIncident, "an empty draft offers no 「見つかりました」")
+        let later = Data(#"{"contactedOffices":[{"office":"futureOffice","contactedAt":0}],"futureField":true}"#.utf8)
+        var log = try JSONDecoder().decode(LostCatIncidentLog.self, from: later)
+        try check(log.contactedCount == 0, "an unknown office is not counted")
+        log.setContacted(.police, on: t0, now: t0)
+        try check(log.contactedOffices?.contains { $0.office == "futureOffice" } == true, "an unknown office is kept")
+        let empty = try JSONDecoder().decode(LostCatIncidentLog.self, from: Data("{}".utf8))
+        try check(empty.isEmpty, "every log field is optional")
+    }
+
+    /// 「連絡済み 3/4・次に確かめる日 11月9日」 on the guide row.
+    static func lostCatContactedOffices() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        let now = calendar.date(from: DateComponents(year: 2026, month: 11, day: 8, hour: 21))!
+        try check(LostCatOffice.allCases.map(\.title) == ["動物愛護センター", "保健所", "警察", "近くの動物病院"],
+                  "the offices step 2 of the guide names, in its order")
+        var draft = LostCatDraft()
+        try check(draft.incident == nil && draft.incidentLog.stateLine(now: now, calendar: calendar) == nil,
+                  "nothing recorded: no line")
+        var log = draft.incidentLog
+        log.setContacted(.police, on: now, now: now, calendar: calendar)
+        try check(log.nextCheckAt == calendar.date(from: DateComponents(year: 2026, month: 11, day: 9)),
+                  "the first office sets the next day to check to tomorrow")
+        try check(log.stateLine(now: now, calendar: calendar) == "連絡済み 1/4・次に確かめる日 11月9日", "one office and tomorrow")
+        log.nextCheckAt = calendar.date(from: DateComponents(year: 2026, month: 11, day: 11))
+        log.setContacted(.healthCenter, on: now, now: now, calendar: calendar)
+        try check(LostCatText.day(log.nextCheckAt!, calendar: calendar) == "11月11日", "a chosen day is kept")
+        log.setContacted(.animalCenter, on: calendar.date(byAdding: .day, value: -1, to: now)!, now: now, calendar: calendar)
+        try check(log.stateLine(now: now, calendar: calendar) == "連絡済み 3/4・次に確かめる日 11月11日", "the guide row line")
+        log.setContacted(.police, on: nil, now: now, calendar: calendar)
+        try check(log.contactedAt(.police) == nil && log.contactedCount == 2, "a second tap unmarks")
+        log.setContacted(.healthCenter, on: calendar.date(byAdding: .day, value: -2, to: now)!, now: now, calendar: calendar)
+        try check(log.contactedCount == 2 && log.contactedOffices?.count == 2
+                  && LostCatText.day(log.contactedAt(.healthCenter)!, calendar: calendar) == "11月6日",
+                  "the day can be changed without a second entry")
+        log.nextCheckAt = now
+        try check(log.stateLine(now: now, calendar: calendar) == "連絡済み 2/4・次に確かめる日 今日", "today reads 今日")
+        log.nextCheckAt = nil
+        try check(log.stateLine(now: now, calendar: calendar) == "連絡済み 2/4", "the next day is optional")
+        draft.incidentLog = log
+        try check(draft.incident == log, "a log is saved with the draft")
+        let encoded = try JSONEncoder().encode(draft)
+        try check(try JSONDecoder().decode(LostCatDraft.self, from: encoded).incident == log, "the log reads back")
+        draft.incidentLog = LostCatIncidentLog()
+        try check(draft.incident == nil, "an emptied log is saved as nothing")
+    }
+
+    /// The post that closes the earlier ones: the same hashtags, no empty line.
+    static func lostCatFoundPost() throws {
+        try check(LostCatText.foundPost(name: "むぎ", message: "  近所の方が知らせてくださいました。 ")
+                  == "見つかりました。\nむぎ\nご協力ありがとうございました。\n近所の方が知らせてくださいました。\n#迷子猫 #迷い猫",
+                  "title, name, thanks, message and the hashtags")
+        try check(LostCatText.foundPost(name: "", message: "  ")
+                  == "見つかりました。\nご協力ありがとうございました。\n#迷子猫 #迷い猫", "nothing unwritten is printed")
+        try check(LostCatText.hashtags == "#迷子猫 #迷い猫", "the flyer's hashtags")
+        try check(LostCatText.takeDownFlyers == "貼ったチラシをはがしに行きましょう", "the reminder after sharing")
+        var draft = LostCatDraft()
+        draft.foundMessage = "ありがとうございました"
+        try check(draft.incident?.foundMessage == "ありがとうございました", "the message is kept with the draft")
+        draft.foundMessage = ""
+        try check(draft.incident == nil, "an emptied message leaves nothing")
+    }
+
+    /// 「この迷子の記録を終える」 clears the incident and keeps the cat.
+    static func lostCatEndingKeepsTheCat() throws {
+        var draft = LostCatDraft()
+        draft.faceFileName = "face.jpg"; draft.bodyFileName = "body.jpg"
+        draft.name = "むぎ"; draft.features = "茶白"; draft.collar = "赤い首輪"
+        draft.approachAdvice = "追いかけないでください"; draft.contact = "090"
+        draft.prefilledFields = ["features"]
+        draft.lastSeenNear = "公園"; draft.lastSeenAt = t0
+        var log = LostCatIncidentLog()
+        log.setContacted(.police, on: t0, now: t0)
+        log.foundMessage = "ありがとう"
+        draft.incident = log
+        let ended = draft.endingIncident()
+        try check(ended.lastSeenNear.isEmpty && ended.lastSeenAt == nil && ended.incident == nil, "the incident is cleared")
+        try check(!ended.hasIncident, "「見つかりました」 is no longer offered")
+        try check(ended.faceFileName == "face.jpg" && ended.bodyFileName == "body.jpg", "the photos stay")
+        try check(ended.name == draft.name && ended.features == draft.features && ended.collar == draft.collar
+                  && ended.approachAdvice == draft.approachAdvice && ended.contact == draft.contact
+                  && ended.prefilledFields == draft.prefilledFields, "the cat's features and the contact stay")
+    }
+
+    /// The four outputs and the small flyer's 2 x 2 page.
+    static func lostCatOutputSizes() throws {
+        func ratio(_ size: CGSize) -> CGFloat { size.width / size.height }
+        try check(LostCatOutput.allCases.map(\.title) == ["SNS・LINE", "ストーリー", "A4チラシ", "小さいチラシ"], "the switch")
+        try check(LostCatOutput.social.canvas == CGSize(width: 1080, height: 1350), "SNS stays 1080 x 1350 (4:5)")
+        try check(LostCatOutput.story.canvas == CGSize(width: 1080, height: 1920), "the story is 1080 x 1920 (9:16)")
+        try check(LostCatOutput.paper.canvas == LostCatOutput.smallPaper.canvas, "both flyers are one A4 page")
+        try check(abs(ratio(LostCatOutput.paper.canvas) - 210.0 / 297.0) < 0.001, "A4")
+        let insets = LostCatOutput.story.safeInsets
+        try check(LostCatOutput.story.canvas.height - insets.top - insets.bottom >= LostCatOutput.social.canvas.height + 200,
+                  "the story has more room for the photo than the SNS image")
+        for output in [LostCatOutput.social, .paper, .smallPaper] {
+            try check(output.safeInsets.top == 0 && output.safeInsets.bottom == 0, "only the story has insets")
+        }
+        try check(LostCatOutput.allCases.filter(\.sharesPost) == [.social], "the post goes with the SNS image only")
+        try check(LostCatOutput.allCases.allSatisfy { $0.fileName.hasSuffix($0.isPDF ? ".pdf" : ".png") }, "file types")
+        try check(LostCatOutput.exportFileNames.count == LostCatOutput.allCases.count + 1
+                  && LostCatOutput.exportFileNames.contains(LostCatOutput.foundFileName), "every written file is cleaned up")
+        try check(Set(LostCatOutput.allCases.map(\.accessibilityIdentifier)).count == 4
+                  && LostCatOutput.social.accessibilityIdentifier == "lost-cat-share-image"
+                  && LostCatOutput.paper.accessibilityIdentifier == "lost-cat-share-pdf", "the UI tests' buttons keep their names")
+        let page = LostCatOutput.smallPaper.canvas
+        let cells = LostCatSmallFlyer.cells(page: page)
+        try check(cells.count == 4, "four copies")
+        for (index, cell) in cells.enumerated() {
+            try check(CGRect(origin: .zero, size: page).insetBy(dx: -0.001, dy: -0.001).contains(cell),
+                      "copy \(index + 1) is on the page")
+            try check(abs(ratio(cell.size) - ratio(page)) < 0.001, "copy \(index + 1) is A6, the shape of the page")
+            for other in cells[(index + 1)...] {
+                let overlap = cell.intersection(other)
+                try check(overlap.isNull || overlap.width * overlap.height < 0.001, "copies do not overlap")
+            }
+        }
+        let area = cells.reduce(0) { $0 + $1.width * $1.height }
+        try check(abs(area - page.width * page.height) < 0.01, "the copies fill the page")
     }
 }
