@@ -2757,11 +2757,12 @@ final class SoloMemoriesUITests: XCTestCase {
         // This cat's own photos come first; any iPhone photo is a visible button.
         XCTAssertEqual(candidates.count, 1)
         XCTAssertTrue(app.buttons["lost-cat-system-photos"].exists)
-        XCTAssertEqual(app.buttons["lost-cat-system-photos"].label, "iPhoneの写真から選ぶ")
+        XCTAssertEqual(app.buttons["lost-cat-system-photos"].label, "写真アプリから選ぶ")
         capture("lost-cat-app-cat-photos")
-        app.segmentedControls.buttons["猫の写真"].tap()
+        // 11/8: every recent photo is one tap away, under a name that says so.
+        app.segmentedControls.buttons["最近の写真"].tap()
         XCTAssertEqual(candidates.count, 3)
-        app.segmentedControls.buttons["この子"].tap()
+        app.segmentedControls.buttons["この子の写真"].tap()
         XCTAssertEqual(candidates.count, 1)
         app.buttons["キャンセル"].tap()
         let features = app.descendants(matching: .any).matching(identifier: "lost-cat-features").firstMatch

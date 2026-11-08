@@ -933,12 +933,8 @@ struct ShowcasePreparationView: View {
     }
 
     /// Manual choices may use any detected-cat photo; prior profile sorting is
-    /// optional. Prefer known photos without hiding unassigned ones.
-    private var eligibleCandidates: [PhotoPresentation] {
-        let known = knownIdentifiers
-        return candidates.filter { known.contains($0.localIdentifier) }
-            + candidates.filter { !known.contains($0.localIdentifier) }
-    }
+    /// optional. The picker shows them newest first, unassigned ones too (11/8).
+    private var eligibleCandidates: [PhotoPresentation] { candidates }
 
     /// Automatic selection must not guess which cat an unassigned photo shows.
     private var recommendationCandidates: [PhotoPresentation] {
@@ -1075,11 +1071,9 @@ struct ShowcasePreparationView: View {
                 let offered = eligibleCandidates.filter { candidate in
                     !allEntries.contains { $0.photoIdentifier == candidate.localIdentifier }
                 }
-                let known = knownIdentifiers
                 ShowcaseCandidatePicker(
                     candidates: offered,
-                    leadingCount: offered.prefix { known.contains($0.localIdentifier) }.count,
-                    leadingTitle: profiles.first(where: { $0.identifier == scopeID }).map { "\($0.displayName)の写真" },
+                    own: knownIdentifiers,
                     maximumSelection: {
                         switch mode {
                         case .add: max(0, ShowcasePhotoStore.maximumCount - allEntries.count)
@@ -1236,12 +1230,13 @@ struct ShowcasePreparationView: View {
 private struct ShowcaseCandidatePicker: View {
     @Environment(\.dismiss) private var dismiss
     let candidates: [PhotoPresentation]
-    /// This cat's own photos come first, under their own heading (11/8).
-    var leadingCount = 0
-    var leadingTitle: String? = nil
+    /// This cat's photos: 「この子の写真だけ」 narrows to them; off at first (11/8,
+    /// as in the other tools: a photo whose cat is not assigned is not hidden).
+    var own: Set<String> = []
     let maximumSelection: Int
     let onSelect: ([String]) async -> Bool
     @State private var selected = Set<String>()
+    @State private var onlyThisCat = false
     @State private var isSaving = false
     @State private var saveFailed = false
     private let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8),
@@ -1249,19 +1244,14 @@ private struct ShowcaseCandidatePicker: View {
 
     private var isReplacing: Bool { maximumSelection == 1 }
 
-    private struct CandidateGroup: Identifiable {
-        let id: Int
-        let title: String?
-        let start: Int
-        let photos: [PhotoPresentation]
+    /// 「最近の写真」: every offered photo, newest first.
+    private var recent: [PhotoPresentation] {
+        candidates.sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
     }
 
-    private var groups: [CandidateGroup] {
-        guard let leadingTitle, leadingCount > 0, leadingCount < candidates.count else {
-            return [CandidateGroup(id: 0, title: nil, start: 0, photos: candidates)]
-        }
-        return [CandidateGroup(id: 0, title: leadingTitle, start: 0, photos: Array(candidates.prefix(leadingCount))),
-                CandidateGroup(id: 1, title: "ほかの写真", start: leadingCount, photos: Array(candidates.dropFirst(leadingCount)))]
+    /// The switch shows only when it would change the grid.
+    private var canNarrow: Bool {
+        candidates.contains { own.contains($0.localIdentifier) } && candidates.contains { !own.contains($0.localIdentifier) }
     }
 
     private func candidateLabel(_ photo: PhotoPresentation, index: Int) -> String {
@@ -1283,20 +1273,18 @@ private struct ShowcaseCandidatePicker: View {
                 if candidates.isEmpty {
                     ContentUnavailableView("追加できる猫の写真はありません", systemImage: "photo")
                 } else {
-                    LazyVGrid(columns: columns, spacing: 8) {
-                        ForEach(groups) { group in
-                            Section {
-                                ForEach(Array(group.photos.enumerated()), id: \.element.localIdentifier) { offset, photo in
-                                    candidateCell(photo, index: group.start + offset)
-                                }
-                            } header: {
-                                if let title = group.title {
-                                    Text(title)
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(.secondary)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.top, group.id == 0 ? 0 : 8)
-                                }
+                    let shown = onlyThisCat && canNarrow ? recent.filter { own.contains($0.localIdentifier) } : recent
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("最近の写真")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        if canNarrow {
+                            Toggle("この子の写真だけ", isOn: $onlyThisCat)
+                                .accessibilityIdentifier("showcase-only-this-cat")
+                        }
+                        LazyVGrid(columns: columns, spacing: 8) {
+                            ForEach(Array(shown.enumerated()), id: \.element.localIdentifier) { index, photo in
+                                candidateCell(photo, index: index)
                             }
                         }
                     }
@@ -1329,7 +1317,7 @@ private struct ShowcaseCandidatePicker: View {
                 Button {
                     isSaving = true
                     Task {
-                        let ordered = candidates.map(\.localIdentifier).filter { selected.contains($0) }
+                        let ordered = recent.map(\.localIdentifier).filter { selected.contains($0) }
                         let saved = await onSelect(ordered)
                         isSaving = false
                         if saved { dismiss() }
@@ -1383,6 +1371,8 @@ struct ShowcaseToolCatPicker: View {
     let select: (String) -> Void
     /// Removes a former cat's set (「前の写真」), by swiping its row (11/8).
     var remove: ((String) -> Void)? = nil
+    /// The former set waiting for 「削除」 to be confirmed (11/8: deleted at once before).
+    @State private var removing: String?
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
@@ -1393,7 +1383,7 @@ struct ShowcaseToolCatPicker: View {
                     ForEach(profiles) { profile in
                         Button { select(profile.identifier); dismiss() } label: {
                             HStack {
-                                Label(profile.displayName, systemImage: "cat")
+                                Text(profile.displayName)
                                 Spacer(minLength: 8)
                                 Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
                             }
@@ -1413,7 +1403,7 @@ struct ShowcaseToolCatPicker: View {
                             Button("前に選んだ写真（\(storeOrder(scope))）") { select(scope); dismiss() }
                                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                     if let remove {
-                                        Button("削除", role: .destructive) { remove(scope) }
+                                        Button("削除", role: .destructive) { removing = scope }
                                     }
                                 }
                                 .accessibilityIdentifier("showcase-former-scope")
@@ -1422,6 +1412,11 @@ struct ShowcaseToolCatPicker: View {
                 }
             }.navigationTitle("猫を選ぶ").navigationBarTitleDisplayMode(.inline)
                 .toolbar { Button("閉じる") { dismiss() } }
+                .confirmationDialog("前に選んだ写真を削除しますか？",
+                                    isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+                                    titleVisibility: .visible, presenting: removing) { scope in
+                    Button("削除", role: .destructive) { remove?(scope); removing = nil }
+                } message: { _ in Text("写真アプリの写真は消えません。") }
         }
     }
     private func storeOrder(_ scope: String) -> Int { (storedScopes.firstIndex(of: scope) ?? 0) + 1 }

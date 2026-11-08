@@ -207,6 +207,8 @@ struct LostCatDraftView: View {
     @State private var showsPreview = false
     @State private var previewDraft: LostCatPublicDraft?
     @State private var showsGuide = false
+    /// 「まとめてコピー」 was pressed: the button says so until the guide is opened again.
+    @State private var reportCopied = false
     @AppStorage("lostCat.lastKey.v1") private var lastKey = ""
     @State private var showsDatePicker = false
     @State private var pendingDate = Date()
@@ -248,7 +250,7 @@ struct LostCatDraftView: View {
                         if loaded { saveNow() }
                         else { load(initialKey, name: initialName) }
                     } label: {
-                        Label("もう一度保存する", systemImage: "arrow.clockwise")
+                        Text("もう一度保存する")
                             .frame(maxWidth: .infinity, minHeight: 36)
                     }
                     .buttonStyle(.bordered)
@@ -274,7 +276,7 @@ struct LostCatDraftView: View {
                         .multilineTextAlignment(.center)
                 }
             } action: {
-                Button { openPreview() } label: { Text("チラシを作る").frame(maxWidth: .infinity) }
+                Button { openPreview() } label: { Label("チラシを作る", systemImage: "doc.richtext").frame(maxWidth: .infinity) }
                     .disabled(!canPreview)
             }
         }
@@ -317,7 +319,7 @@ struct LostCatDraftView: View {
             }
         }
         // Reporting is in one place: step 2 of the guide (11/8).
-        .sheet(isPresented: $showsGuide) { LostCatGuideView { reportSection } }
+        .sheet(isPresented: $showsGuide, onDismiss: { reportCopied = false }) { LostCatGuideView { reportSection } }
         .sheet(isPresented: $showsDatePicker) { dateSheet }
         .sheet(item: $cropRequest) { request in
             LostCatPhotoCropView(image: request.image) { data in
@@ -382,7 +384,7 @@ struct LostCatDraftView: View {
                 }
             }
             if faceImage == nil, catCarePhotoURL(.face) != nil {
-                Button("「この子のこと」の写真を使う", systemImage: "photo") { useCatCarePhotos() }
+                Button("「この子のこと」の写真を使う") { useCatCarePhotos() }
                     .disabled(photoBusy)
                     .accessibilityIdentifier("lost-cat-use-cat-care-photos")
             }
@@ -390,7 +392,7 @@ struct LostCatDraftView: View {
                       limit: LostCatFlyerRenderer.featuresLimit,
                       example: "例：茶白。胸と足先が白く、しっぽは長い。左耳の先に切れ込み。", issues: issues)
             if let line = CatCareLostCat.publicLine(catCareRecord), !draft.features.contains(line) {
-                Button("「\(line)」を特徴に足す", systemImage: "plus.circle") {
+                Button("「\(line)」を特徴に足す", systemImage: "plus") {
                     let current = draft.features.trimmingCharacters(in: .whitespacesAndNewlines)
                     textBinding(\.features, field: "features").wrappedValue = current.isEmpty ? line : line + "。" + current
                 }
@@ -458,7 +460,7 @@ struct LostCatDraftView: View {
                 if draft.contact.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                    let owner = catCareStore.state?.household.ownerContact?.value
                     .trimmingCharacters(in: .whitespacesAndNewlines), !owner.isEmpty {
-                    Button("「この子のこと」の連絡先を使う", systemImage: "person.crop.circle") { draft.contact = owner }
+                    Button("「この子のこと」の連絡先を使う") { draft.contact = owner }
                         .buttonStyle(.borderless)
                         .accessibilityIdentifier("lost-cat-use-cat-care-contact")
                 }
@@ -482,8 +484,9 @@ struct LostCatDraftView: View {
                                footer: "チラシ・画像には載りません。",
                                identifier: "lost-cat-report", editIdentifier: "lost-cat-open-cat-care",
                                profiles: profiles) {
-                Button("まとめてコピー", systemImage: "doc.on.doc") {
+                Button(reportCopied ? "コピーしました" : "まとめてコピー") {
                     UIPasteboard.general.string = Self.reportCopy(name: profile.displayName, fields: fields)
+                    reportCopied = true
                 }
                 .accessibilityIdentifier("lost-cat-copy-report")
             }
@@ -804,7 +807,8 @@ private struct LostCatPhotoChoiceView: View {
     let loadingPhoto: Bool
     let choose: (String) async -> Bool
     let cancel: () -> Void
-    /// This cat's own photos come first when the cat has a profile.
+    /// This cat's own photos come first when the cat has a profile (kept on
+    /// 11/8); 「最近の写真」, every offered photo newest first, is one tap away.
     @State private var showsAllCats = false
     @State private var busy = false
     @State private var task: Task<Void, Never>?
@@ -817,9 +821,10 @@ private struct LostCatPhotoChoiceView: View {
         ScrollView {
             if !ownPhotos.isEmpty && ownPhotos.count != allPhotos.count {
                 Picker("写真の範囲", selection: $showsAllCats) {
-                    Text("この子").tag(false)
-                    Text("猫の写真").tag(true)
+                    Text("この子の写真").tag(false)
+                    Text("最近の写真").tag(true)
                 }.pickerStyle(.segmented).padding(.horizontal)
+                    .accessibilityIdentifier("lost-cat-photo-scope")
             }
             if photos.isEmpty {
                 ContentUnavailableView {
@@ -879,7 +884,7 @@ private struct LostCatPhotoChoiceView: View {
 
     /// Any photo in the iPhone, shown as a button rather than kept in a menu.
     private var systemPickerButton: some View {
-        Button("iPhoneの写真から選ぶ", systemImage: "photo.on.rectangle") { showsSystemPicker = true }
+        Button("写真アプリから選ぶ", systemImage: "photo.on.rectangle") { showsSystemPicker = true }
             .buttonStyle(.bordered)
             .disabled(busy || loadingPhoto)
             .accessibilityIdentifier("lost-cat-system-photos")

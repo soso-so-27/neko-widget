@@ -327,17 +327,20 @@ private struct CareCatEditor: View {
                 // Period and request are written once, where the memo is made
                 // (347: a family cat had a second form here, and what was typed
                 // there replaced the memo's own). Family cats get the same values.
-                // 11/8 型: notes and delete, last and small.
+                // 11/8 型: notes last and small; delete alone in the last section.
+                if cat.familyDetached == true || candidateRefreshError {
+                    Section {
+                        if cat.familyDetached == true {
+                            Text("このメモは、家族の手帳には入っていません。").font(.footnote).foregroundStyle(.secondary)
+                        }
+                        if candidateRefreshError {
+                            Text("前に入れた内容を読み込めませんでした。")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                }
                 Section {
-                    if cat.familyDetached == true {
-                        Text("このメモは、家族の手帳には入っていません。").font(.footnote).foregroundStyle(.secondary)
-                    }
-                    if candidateRefreshError {
-                        Text("前に入れた内容を読み込めませんでした。")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
                     Button("このお世話メモを削除", role: .destructive) { deleteRequested = true }
-                        .font(.footnote)
                 }
             }
         }
@@ -407,11 +410,11 @@ private struct CarePhotoPicker: View {
                 PhotosPicker(selection: $item, matching: .images) { Label("写真アプリから選ぶ", systemImage: "photo.badge.plus") }
                     .disabled(busy)
             } footer: { Text("預かる人が見分けやすい写真を選んでください。") }
-            if !ownPhotos.isEmpty { grid("この子の写真", ownPhotos) }
-            let own = Set(ownPhotos.map(\.localIdentifier))
-            let remaining = otherPhotos.filter { !own.contains($0.localIdentifier) }
-            if !remaining.isEmpty { grid("ほかの猫の写真", remaining) }
-            if let error { Text(error).foregroundStyle(.red) }
+            // 11/8: every offered photo, newest first; a photo whose cat is not
+            // assigned yet is not hidden under 「ほかの猫の写真」.
+            ToolRecentPhotoSection(photos: ownPhotos + otherPhotos, own: Set(ownPhotos.map(\.localIdentifier)),
+                                   disabled: busy, identifierPrefix: "care-candidate-") { use($0) }
+            if let error { Section { Text(error).foregroundStyle(.red) } }
         }.navigationTitle("写真を選ぶ")
             .toolbar { Button("キャンセル") { dismiss() }.disabled(busy) }
             .interactiveDismissDisabled(busy)
@@ -427,26 +430,13 @@ private struct CarePhotoPicker: View {
                 }
             }
     }
-    private func grid(_ title: String, _ photos: [CatProfilePhotoPresentation]) -> some View {
-        Section(title) {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 95))], spacing: 10) {
-                ForEach(photos) { photo in
-                    Button {
-                        busy = true; error = nil
-                        Task {
-                            do {
-                                let data = try await PhotoLibraryJPEGExporter().export(localIdentifier: photo.localIdentifier)
-                                try store.replacePhoto(data.jpeg, catID: catID); busy = false; dismiss()
-                            } catch { self.error = "この写真は使えませんでした。「写真アプリから選ぶ」から選び直せます。"; busy = false }
-                        }
-                    } label: {
-                        PhotoAssetImageView(localIdentifier: photo.localIdentifier,
-                            targetPixelSize: CGSize(width: 300, height: 300), targetAspectRatio: 1, showsFullImage: true)
-                            .aspectRatio(1, contentMode: .fit)
-                    }.buttonStyle(.plain).disabled(busy)
-                        .accessibilityLabel(ToolPhotoLabel.text("この写真を使う", date: photo.creationDate))
-                }
-            }
+    private func use(_ photo: CatProfilePhotoPresentation) {
+        busy = true; error = nil
+        Task {
+            do {
+                let data = try await PhotoLibraryJPEGExporter().export(localIdentifier: photo.localIdentifier)
+                try store.replacePhoto(data.jpeg, catID: catID); busy = false; dismiss()
+            } catch { self.error = "この写真は使えませんでした。「写真アプリから選ぶ」から選び直せます。"; busy = false }
         }
     }
 }

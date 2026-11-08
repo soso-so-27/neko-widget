@@ -323,6 +323,16 @@ final class EvacuationRepository {
         reconcileOwnedPhotos()
     }
 
+    /// 11/8: a photo copy that could not be removed is tried again quietly,
+    /// never shown as a task for the owner (as in CareHandoffRepository).
+    func retryPhotoCleanup() {
+        guard pendingPhotoCleanup > 0 else { return }
+#if os(iOS)
+        AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
+#endif
+        reconcileOwnedPhotos()
+    }
+
     /// The exclusive directory plus UUID.jpg filename is the ownership boundary.
     /// Rescanning retries failures after relaunch and also finds pre-commit crash
     /// leftovers. Never clean anything while the manifest is unreadable.

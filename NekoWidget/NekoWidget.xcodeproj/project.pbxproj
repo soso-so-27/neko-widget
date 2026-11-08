@@ -19,6 +19,7 @@
 		C02609290000000000000013 /* CareHandoffStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02609290000000000000014 /* CareHandoffStore.swift */; };
 		C02609290000000000000015 /* CareHandoffExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02609290000000000000016 /* CareHandoffExporter.swift */; };
 		C02609290000000000000017 /* CareHandoffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02609290000000000000018 /* CareHandoffView.swift */; };
+		7A11080F0000000000000001 /* ToolRecentPhotos.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A11080F0000000000000002 /* ToolRecentPhotos.swift */; };
 		C02609290000000000000019 /* CareHandoffFixtureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0260929000000000000001A /* CareHandoffFixtureView.swift */; };
 		E02609290000000000000011 /* EvacuationPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609290000000000000012 /* EvacuationPlan.swift */; };
 		E02609290000000000000013 /* EvacuationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609290000000000000014 /* EvacuationStore.swift */; };
@@ -346,6 +347,7 @@
 		C02609290000000000000014 /* CareHandoffStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareHandoffStore.swift; sourceTree = "<group>"; };
 		C02609290000000000000016 /* CareHandoffExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareHandoffExporter.swift; sourceTree = "<group>"; };
 		C02609290000000000000018 /* CareHandoffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareHandoffView.swift; sourceTree = "<group>"; };
+		7A11080F0000000000000002 /* ToolRecentPhotos.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRecentPhotos.swift; sourceTree = "<group>"; };
 		C0260929000000000000001A /* CareHandoffFixtureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareHandoffFixtureView.swift; sourceTree = "<group>"; };
 		E02609290000000000000012 /* EvacuationPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvacuationPlan.swift; sourceTree = "<group>"; };
 		E02609290000000000000014 /* EvacuationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvacuationStore.swift; sourceTree = "<group>"; };
@@ -926,6 +928,7 @@
 				E02609290000000000000018 /* EvacuationPreparationView.swift */,
 				E0260929000000000000001A /* EvacuationFixtureView.swift */,
 				C02609290000000000000018 /* CareHandoffView.swift */,
+				7A11080F0000000000000002 /* ToolRecentPhotos.swift */,
                 D02609300000000000000004 /* VeterinaryVisitView.swift */,
 				C0260929000000000000001A /* CareHandoffFixtureView.swift */,
 				A16600000000000000000011 /* WidgetPhotoOpening.swift */,
@@ -1306,6 +1309,7 @@
 				C02609290000000000000013 /* CareHandoffStore.swift in Sources */,
 				C02609290000000000000015 /* CareHandoffExporter.swift in Sources */,
 				C02609290000000000000017 /* CareHandoffView.swift in Sources */,
+				7A11080F0000000000000001 /* ToolRecentPhotos.swift in Sources */,
 				C02609290000000000000019 /* CareHandoffFixtureView.swift in Sources */,
 				100000000000000000000168 /* MomentSharingCore.swift in Sources */,
 				AA2610200000000000000006 /* GroupWindowFixture.swift in Sources */,
