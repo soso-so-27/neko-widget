@@ -26,6 +26,8 @@ enum AlbumPrototype {
     static var canReadPhotos: Bool {
         [.authorized, .limited].contains(PHPhotoLibrary.authorizationStatus(for: .readWrite))
     }
+    // The "debug." prefix is historical: these keys hold real state in every
+    // build, so they keep their names (renaming would lose what was opened).
     static let enabledAtKey = "debug.albumPrototype.enabledAt.v1"
     static let openedKey = "debug.albumPrototype.opened.v1"
 #if DEBUG || INTERNAL_PRESENTATION
@@ -102,6 +104,7 @@ enum AlbumPrototype {
         pick(photos(in: letter.monthStart, from: catPhotos), count: 1).first ?? letter.coverPhoto
     }
 
+#if DEBUG || INTERNAL_PRESENTATION
     /// Test only: the newest finished month (and the year's work) arrive
     /// again under cloud, so holding to clear can be tried any day.
     static func cloudLatestAgain(now: Date = Date()) {
@@ -112,6 +115,7 @@ enum AlbumPrototype {
         defaults.set(lastMonth.timeIntervalSince1970, forKey: enabledAtKey)
         defaults.removeObject(forKey: openedKey)
     }
+#endif
 
     static func markOpened(_ period: String) {
         UsageCounter.shared.count(.albumWorkOpened)  // Usage (11/7): every opening, not only the first.
@@ -458,7 +462,7 @@ struct AlbumPrototypeView: View {
         let id = YearStoryView.periodIdentifier(year)
         let photos = AlbumPrototype.photos(inYear: year, from: catPhotos)
         return arrivalCard(id: id, wrapped: !opened.contains(id), cover: AlbumPrototype.pickYear(photos).first,
-                           caption: "1 年の作品", title: String(year), titleSize: 40,
+                           caption: nil, title: "\(String(year))年", titleSize: 34,
                            names: AlbumPrototype.names(for: photos, assignments: assignments, profileNames: profileNames),
                            accessibilityTitle: "\(String(year))年の作品") { yearStory = YearStory(year: year) }
             .accessibilityIdentifier("album-prototype-year")
@@ -967,7 +971,7 @@ struct MonthlyStoryView: View {
                 if let image = await Self.thumbnail(photo.localIdentifier, side: 600) { images.append(image) }
             }
             guard !Task.isCancelled else { return }
-            cardShare.complete(BestNineComposer.image(images, title: request.input.title),
+            cardShare.complete(BestNineComposer.image(images, title: nil),
                                for: request, isCancelled: Task.isCancelled)
         }
     }
@@ -1245,10 +1249,10 @@ enum AlbumArrivalNotice {
         guard await isAllowed(center) else { return }
         if let month {
             let number = Calendar.current.component(.month, from: month.start)
-            await add(monthID, "\(number)月の作品がとどきました。", trigger: calendarTrigger(month.at))
+            await add(monthID, "\(number)月の作品が届きました。", trigger: calendarTrigger(month.at))
         }
         if let year {
-            await add(yearID, "\(year.year)年の作品がとどきました。", trigger: calendarTrigger(year.at))
+            await add(yearID, "\(year.year)年の作品が届きました。", trigger: calendarTrigger(year.at))
         }
     }
 
@@ -1274,7 +1278,7 @@ enum AlbumArrivalNotice {
         guard await isAllowed(center) else { return false }
         let calendar = Calendar.current
         let last = calendar.date(byAdding: .month, value: -1, to: Date()) ?? Date()
-        await add(tryID, "\(calendar.component(.month, from: last))月の作品がとどきました。",
+        await add(tryID, "\(calendar.component(.month, from: last))月の作品が届きました。",
                   trigger: UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false))
         return true
     }
@@ -1483,7 +1487,7 @@ private struct YearBookView: View {
                 if let image = await MonthlyStoryView.thumbnail(photo.localIdentifier, side: 600) { images.append(image) }
             }
             guard !Task.isCancelled else { return }
-            cardShare.complete(BestNineComposer.image(images, title: request.input.title),
+            cardShare.complete(BestNineComposer.image(images, title: nil),
                                for: request, isCancelled: Task.isCancelled)
         }
     }
@@ -1724,7 +1728,7 @@ private struct YearStoryContentView: View {
                 if let image = await MonthlyStoryView.thumbnail(photo.localIdentifier, side: 600) { images.append(image) }
             }
             guard !Task.isCancelled else { return }
-            cardShare.complete(BestNineComposer.image(images, title: request.input.title),
+            cardShare.complete(BestNineComposer.image(images, title: nil),
                                for: request, isCancelled: Task.isCancelled)
         }
     }
@@ -1982,7 +1986,7 @@ struct MonthlyBookView: View {
                 if let image = await MonthlyStoryView.thumbnail(photo.localIdentifier, side: 600) { images.append(image) }
             }
             guard !Task.isCancelled else { return }
-            cardShare.complete(BestNineComposer.image(images, title: request.input.title),
+            cardShare.complete(BestNineComposer.image(images, title: nil),
                                for: request, isCancelled: Task.isCancelled)
         }
     }

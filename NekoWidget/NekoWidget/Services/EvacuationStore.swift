@@ -15,6 +15,11 @@ final class EvacuationStore: ObservableObject {
     @Published private(set) var loadError: String?
     @Published private(set) var saveError: String?
     @Published private(set) var pendingPhotoCleanup = false
+    /// What each cat's memo shows (11/8, 31): the cat's page sets it, and the
+    /// hub's 「〇〇を見せる」 opens the same memo. Kept while the app runs only;
+    /// nothing new is saved.
+    @Published var disclosures: [UUID: EvacuationDisclosure] = [:]
+    func disclosure(for catID: UUID) -> EvacuationDisclosure { disclosures[catID] ?? EvacuationDisclosure() }
     private var repository: EvacuationRepository?
     private let directory: URL
     private let allowsCandidateRefresh: Bool
@@ -38,6 +43,13 @@ final class EvacuationStore: ObservableObject {
             repository = nil
             loadError = EvacuationStorageError.unreadable.errorDescription
         }
+    }
+
+    /// 11/8: tried again in the background when the tool opens, as 預けるとき does.
+    func retryPhotoCleanup() {
+        guard pendingPhotoCleanup, let repository else { return }
+        repository.retryPhotoCleanup()
+        pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
     }
 
     @discardableResult
@@ -220,8 +232,14 @@ final class EvacuationStore: ObservableObject {
     }
 
     func image(_ name: String?) -> UIImage? {
-        guard let name, let url = try? repository?.photoURL(name) else { return nil }
+        guard let url = imageURL(name) else { return nil }
         return UIImage(contentsOfFile: url.path)
+    }
+    /// Where a kept photo is, for the small picture on screen
+    /// (`ToolPhotoThumbnail`). The memo itself reads the full photo.
+    func imageURL(_ name: String?) -> URL? {
+        guard let name else { return nil }
+        return try? repository?.photoURL(name)
     }
 
     func replacePhoto(_ data: Data, catID: UUID, role: EvacuationCat.PhotoRole) throws {
@@ -269,8 +287,9 @@ final class EvacuationStore: ObservableObject {
                 attachments.append(("\(vaccination.kind)の証明", image))
             }
         }
+        // 11/8: the plan's one 「最後に見直した日」, not a date per cat.
         return EvacuationShareRecord(name: cat.displayName, photos: photos,
-            fields: fields, reviewedAt: cat.reviewedAt,
+            fields: fields, reviewedAt: plan.lastReadyDate,
             includesPrivateInformation: disclosure.medical || disclosure.contact || disclosure.withOwnerPhoto
                 || disclosure.catCare,
             attachments: attachments)
@@ -294,8 +313,7 @@ final class EvacuationStore: ObservableObject {
                 place.kind.map { "種類：" + $0.title },
                 trimmed(place.address).isEmpty ? nil : "住所：" + trimmed(place.address),
                 trimmed(place.conditions).isEmpty ? nil : "受け入れの条件：" + place.conditions,
-                trimmed(place.telephone).isEmpty ? nil : "電話：" + place.telephone,
-                "確かめた日：" + (place.checkedAt?.formatted(date: .numeric, time: .omitted) ?? "未確認")
+                trimmed(place.telephone).isEmpty ? nil : "電話：" + place.telephone
             ].compactMap { $0 }
             return (trimmed(place.name).isEmpty ? "行き先の候補" : place.name, lines.joined(separator: "\n"))
         }
@@ -304,9 +322,10 @@ final class EvacuationStore: ObservableObject {
         if !meeting.isEmpty { places.append(("家族の集合場所と連絡方法", meeting)) }
         places += contactLines()
         var records = [
+            // The one 「最後に見直した日」 opens the paper copy (11/8).
             EvacuationShareRecord(name: "持ち出すもの（\(needed.count)）", photos: [],
-                fields: supplies.isEmpty ? [("持ち物", "まだありません")] : supplies, reviewedAt: nil,
-                includesPrivateInformation: true, heading: "避難の備え", showsReviewDate: false),
+                fields: supplies.isEmpty ? [("持ち物", "まだありません")] : supplies, reviewedAt: plan.lastReadyDate,
+                includesPrivateInformation: true, heading: "避難の備え"),
             EvacuationShareRecord(name: "行き先と連絡先", photos: [],
                 fields: places.isEmpty ? [("行き先", "まだありません")] : places, reviewedAt: nil,
                 includesPrivateInformation: true, heading: "避難の備え", showsReviewDate: false)
@@ -316,7 +335,11 @@ final class EvacuationStore: ObservableObject {
         disclosure.medical = true
         disclosure.catCare = true
         disclosure.withOwnerPhoto = true
-        for cat in plan.cats { records.append(try shareRecord(catID: cat.id, disclosure: disclosure)) }
+        for cat in plan.cats {
+            var record = try shareRecord(catID: cat.id, disclosure: disclosure)
+            record.showsReviewDate = false
+            records.append(record)
+        }
         return records
     }
 

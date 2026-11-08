@@ -81,7 +81,7 @@ struct CatFarewellEditor: View {
                 Section {
                     DatePicker("旅立った日", selection: $date, in: ...Date(), displayedComponents: .date)
                 } footer: {
-                    Text("写真や記録、ホーム画面のウィジェットは、すべてそのまま残ります。ウィジェットを変えたいときは、長押しして「ウィジェットを編集」から選べます。")
+                    Text("写真や記録、ホーム画面のウィジェットは、すべてそのまま残ります。")
                 }
                 if recorded != nil {
                     Section {
@@ -574,13 +574,13 @@ struct CatCareDetailView: View {
     /// offers to record the day instead, as before (11/7: moved from 写真).
     private func deleteSection(_ profile: CatProfilePresentation) -> some View {
         Section {
-            Button("プロフィールを削除", role: .destructive) {
+            Button("この子を削除", role: .destructive) {
                 deleteFailed = false
                 showsDeleteConfirmation = true
             }
             .accessibilityIdentifier("cat-profile-delete")
-            .alert("\(profile.displayName)のプロフィールを削除しますか？", isPresented: $showsDeleteConfirmation) {
-                Button("プロフィールを削除", role: .destructive) {
+            .alert("\(profile.displayName)を削除しますか？", isPresented: $showsDeleteConfirmation) {
+                Button("この子を削除", role: .destructive) {
                     isDeleting = true
                     deleteFailed = false
                     Task {
@@ -1420,14 +1420,18 @@ struct ToolCatCareSection<Extra: View>: View {
     let profiles: [CatProfilePresentation]
     /// The cat's birthday and adoption day; off for a box of contacts (347).
     let showsLifeDates: Bool
+    /// Folded to one row on a tool's input page: what is read from 「この子のこと」
+    /// is not something to do there (11/8: a long read-only box sat among
+    /// the steps and looked like more to write).
+    let folded: Bool
     let extra: () -> Extra
 
     init(title: String, lines: [(String, String)], subject: CatCareSubject?, footer: String? = nil,
          identifier: String, editIdentifier: String, profiles: [CatProfilePresentation] = [],
-         showsLifeDates: Bool = true, @ViewBuilder extra: @escaping () -> Extra) {
+         showsLifeDates: Bool = true, folded: Bool = false, @ViewBuilder extra: @escaping () -> Extra) {
         self.title = title; self.lines = lines; self.subject = subject; self.footer = footer
         self.identifier = identifier; self.editIdentifier = editIdentifier; self.profiles = profiles
-        self.showsLifeDates = showsLifeDates
+        self.showsLifeDates = showsLifeDates; self.folded = folded
         self.extra = extra
     }
 
@@ -1447,48 +1451,277 @@ struct ToolCatCareSection<Extra: View>: View {
         let birthday = showsLifeDates ? profile?.lifeDates.birthday : nil
         let adoption = showsLifeDates ? profile?.lifeDates.adoptionDay : nil
         Section {
-            // The dates were a second 「猫のプロフィール」 box above; they are
-            // facts of この子のこと, so they sit here, in the one box (11/7).
-            if let birthday {
-                LabeledContent("誕生日", value: birthday.date.formatted(date: .abbreviated, time: .omitted))
-            }
-            if let adoption {
-                LabeledContent("迎えた日", value: adoption.date.formatted(date: .abbreviated, time: .omitted))
-            }
-            ForEach(Array(filled.enumerated()), id: \.offset) { _, line in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(line.0).font(.subheadline).foregroundStyle(.secondary)
-                    Text(line.1).font(.body).textSelection(.enabled)
+            if folded {
+                // One row (349): its name, what the tool uses, what is not
+                // written yet; a tap opens the cat's 「この子のこと」.
+                if let subject {
+                    NavigationLink { CatCareSubjectView(subject: subject, profiles: profiles) } label: {
+                        foldedLabel(filled: filled, missing: missing, dated: birthday != nil || adoption != nil)
+                    }
+                    .accessibilityIdentifier(identifier + "-folded")
+                } else {
+                    foldedLabel(filled: filled, missing: missing, dated: birthday != nil || adoption != nil)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier(identifier + "-folded")
+                }
+                extra()
+            } else {
+                readRows(filled: filled, birthday: birthday, adoption: adoption)
+                if filled.isEmpty && birthday == nil && adoption == nil && missing.isEmpty {
+                    Text("まだ何も書いていません。")
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier(identifier + "-empty")
+                }
+                if !missing.isEmpty {
+                    // 「、」 between items: some names already contain 「・」.
+                    Text("まだ書いていないこと：" + missing.joined(separator: "、"))
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                extra()
+                if let subject {
+                    NavigationLink("「この子のこと」を開く") { CatCareSubjectView(subject: subject, profiles: profiles) }
+                        .accessibilityIdentifier(editIdentifier)
                 }
             }
-            .accessibilityIdentifier(identifier)
-            if filled.isEmpty && birthday == nil && adoption == nil && missing.isEmpty {
-                Text("まだ何も書いていません。")
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier(identifier + "-empty")
+        } header: { if !folded { Text(title) } }
+          footer: { if let footer { Text(footer) } }
+    }
+
+    /// The folded row: 「この子のこと」, then what is used (up to four names),
+    /// then, short, what is not written yet.
+    private func foldedLabel(filled: [(String, String)], missing: [String], dated: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).foregroundStyle(Color.primary)
+            let summary = filled.prefix(4).map(\.0).joined(separator: "・") + (filled.count > 4 ? " など" : "")
+            if !summary.isEmpty {
+                Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             if !missing.isEmpty {
-                // 「、」 between items: some names already contain 「・」.
-                Text("まだ書いていないこと：" + missing.joined(separator: "、"))
-                    .font(.footnote).foregroundStyle(.secondary)
+                Text("まだ：" + missing.prefix(4).joined(separator: "・") + (missing.count > 4 ? " など" : ""))
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
-            extra()
-            if let subject {
-                NavigationLink("「この子のこと」を開く") { CatCareSubjectView(subject: subject, profiles: profiles) }
-                    .accessibilityIdentifier(editIdentifier)
+            if summary.isEmpty && missing.isEmpty && !dated {
+                Text("まだ何も書いていません。").font(.caption).foregroundStyle(.secondary)
             }
-        } header: { Text(title) }
-          footer: { if let footer { Text(footer) } }
+        }
+    }
+
+    @ViewBuilder
+    private func readRows(filled: [(String, String)], birthday: CatProfileLifeReferencePresentation?,
+                          adoption: CatProfileLifeReferencePresentation?) -> some View {
+        // The dates were a second 「猫のプロフィール」 box above; they are
+        // facts of この子のこと, so they sit here, in the one box (11/7).
+        if let birthday {
+            LabeledContent("誕生日", value: birthday.date.formatted(date: .abbreviated, time: .omitted))
+        }
+        if let adoption {
+            LabeledContent("迎えた日", value: adoption.date.formatted(date: .abbreviated, time: .omitted))
+        }
+        ForEach(Array(filled.enumerated()), id: \.offset) { _, line in
+            VStack(alignment: .leading, spacing: 4) {
+                Text(line.0).font(.subheadline).foregroundStyle(.secondary)
+                Text(line.1).font(.body).textSelection(.enabled)
+            }
+        }
+        .accessibilityIdentifier(identifier)
     }
 }
 
 extension ToolCatCareSection where Extra == EmptyView {
     init(title: String, lines: [(String, String)], subject: CatCareSubject?, footer: String? = nil,
          identifier: String, editIdentifier: String, profiles: [CatProfilePresentation] = [],
-         showsLifeDates: Bool = true) {
+         showsLifeDates: Bool = true, folded: Bool = false) {
         self.init(title: title, lines: lines, subject: subject, footer: footer,
                   identifier: identifier, editIdentifier: editIdentifier, profiles: profiles,
-                  showsLifeDates: showsLifeDates) { EmptyView() }
+                  showsLifeDates: showsLifeDates, folded: folded) { EmptyView() }
+    }
+}
+
+// MARK: - One shape for every tool's input page (11/8)
+//
+// The four tools (病院・迷子・預ける・避難) each had their own layout: it was
+// unclear what to do first or where to look. Every input page reads the same
+// way, top to bottom (ねこのまど_ツール入力ページの型_1108):
+//   1. the cat row, then one gray sentence: what the page makes (ToolPurpose)
+//   2. numbered steps, each a Section with a ToolStepHeader; done shows a check
+//   3. 「この子のこと」 folded to one row (ToolCatCareSection(folded: true))
+//   4. notes, 「診察済み」-style marks and delete, last and small
+//   5. at the bottom, ToolMakeBar: 「あと：…」 and the one button
+// One page with marked steps, not a wizard: 病院 and 預ける are repeated
+// tasks, and steps can be filled in any order.
+
+/// Where a step stands: the first one not done is the one to do now.
+enum ToolStepState: Equatable {
+    case todo, current, done
+
+    static func states(_ done: [Bool]) -> [ToolStepState] {
+        let current = done.firstIndex(of: false)
+        return done.indices.map { done[$0] ? .done : ($0 == current ? .current : .todo) }
+    }
+}
+
+/// A step's heading: its number, or a check once done.
+struct ToolStepHeader: View {
+    let number: Int
+    let title: String
+    var state: ToolStepState = .todo
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ZStack {
+                switch state {
+                case .done:
+                    Circle().fill(Color.green.opacity(0.2))
+                    Image(systemName: "checkmark").font(.caption2.weight(.bold)).foregroundStyle(Color.green)
+                case .current:
+                    Circle().fill(Color.accentColor)
+                    Text("\(number)").font(.caption.weight(.bold)).foregroundStyle(Color.white)
+                case .todo:
+                    Circle().strokeBorder(Color.secondary.opacity(0.6), lineWidth: 1)
+                    Text("\(number)").font(.caption.weight(.semibold)).foregroundStyle(Color.secondary)
+                }
+            }
+            .frame(width: 22, height: 22)
+            .accessibilityHidden(true)
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(state == .todo ? Color.secondary : Color.primary)
+        }
+        .textCase(nil)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(number)、\(title)" + (state == .done ? "、済み" : ""))
+    }
+}
+
+/// One gray sentence under the cat row: what this page makes.
+struct ToolPurpose: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
+    }
+}
+
+/// The one way forward, in the same place on every tool page: what is still
+/// missing, then the button (a Button or a NavigationLink; styled here).
+struct ToolMakeBar<Top: View, Action: View>: View {
+    let missing: [String]
+    let top: Top
+    let action: Action
+
+    init(missing: [String] = [], @ViewBuilder top: () -> Top, @ViewBuilder action: () -> Action) {
+        self.missing = missing; self.top = top(); self.action = action()
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            top
+            if !missing.isEmpty {
+                Text("あと：" + missing.joined(separator: "・"))
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .accessibilityIdentifier("tool-make-missing")
+            }
+            action
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .background(.regularMaterial)
+    }
+}
+
+extension View {
+    /// The same spacing on every tool page: the purpose line right under the
+    /// cat row, the steps close together (349: a tall gap above the purpose).
+    func toolPageSpacing() -> some View {
+        listSectionSpacing(.compact)
+            .contentMargins(.top, 4, for: .scrollContent)
+    }
+}
+
+/// One photo on a tool page, the same in every tool (349): the photo (tap to
+/// choose), its name under it, and 「⋯」 for the rest. Taking a photo off sits
+/// in that menu, never as red text on the page.
+/// A kept photo is given as `file` and shown from a small copy made off the
+/// main thread (`ToolPhotoThumbnail`, 11/8); `image` is for a photo already
+/// in memory.
+struct ToolPhotoSlot<Actions: View>: View {
+    let title: String
+    let image: UIImage?
+    var file: URL?
+    var dimmedTitle = false
+    var disabled = false
+    let identifier: String
+    let actionsIdentifier: String
+    let choose: () -> Void
+    let actions: Actions
+    @State private var thumbnail: UIImage?
+
+    init(_ title: String, image: UIImage?, file: URL? = nil, dimmedTitle: Bool = false, disabled: Bool = false,
+         identifier: String, actionsIdentifier: String, choose: @escaping () -> Void,
+         @ViewBuilder actions: () -> Actions) {
+        self.title = title; self.image = image; self.file = file
+        self.dimmedTitle = dimmedTitle; self.disabled = disabled
+        self.identifier = identifier; self.actionsIdentifier = actionsIdentifier
+        self.choose = choose; self.actions = actions()
+    }
+
+    private var hasPhoto: Bool { image != nil || file != nil }
+    private var shown: UIImage? { file == nil ? image : thumbnail }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Button(action: choose) {
+                Color(.tertiarySystemGroupedBackground)
+                    .aspectRatio(4.0 / 3.0, contentMode: .fit)
+                    .overlay {
+                        if let shown { Image(uiImage: shown).resizable().scaledToFit() }
+                        else if !hasPhoto { Image(systemName: "photo.badge.plus").font(.title2).foregroundStyle(.secondary) }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(title)
+            .accessibilityIdentifier(identifier)
+            .disabled(disabled)
+            HStack {
+                Text(title).font(.caption)
+                    .foregroundStyle(dimmedTitle ? Color.secondary : Color.primary)
+                Spacer(minLength: 0)
+                if hasPhoto {
+                    Menu { actions } label: {
+                        Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("\(title)の操作")
+                    .accessibilityIdentifier(actionsIdentifier)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .task(id: file) { thumbnail = await ToolPhotoThumbnail.load(file) }
+    }
+}
+
+/// Photo slots side by side, two to a row; one slot keeps the same size.
+struct ToolPhotoGrid<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12, alignment: .top),
+                            GridItem(.flexible(), spacing: 12, alignment: .top)], spacing: 12, content: content)
+            .padding(.vertical, 4)
+    }
+}
+
+extension ToolMakeBar where Top == EmptyView {
+    init(missing: [String] = [], @ViewBuilder action: () -> Action) {
+        self.init(missing: missing, top: { EmptyView() }, action: action)
     }
 }
 
@@ -1500,6 +1733,35 @@ extension View {
             guard let new, !new.isEmpty else { return }
             AccessibilityNotification.Announcement(new).post()
         }
+    }
+}
+
+extension View {
+    /// A tool's bottom bar, out of the way while the keyboard is up, so the
+    /// field being written stays in view (348: 「先生に見せる」 and the keyboard
+    /// left two lines to write in). Swipe down or 「キーボードを閉じる」 to finish.
+    func toolBottomBar<Bar: View>(@ViewBuilder _ bar: () -> Bar) -> some View {
+        modifier(ToolBottomBar(bar: bar()))
+    }
+}
+
+private struct ToolBottomBar<Bar: View>: ViewModifier {
+    let bar: Bar
+    @State private var typing = false
+    func body(content: Content) -> some View {
+        content
+            .safeAreaInset(edge: .bottom) { if !typing { bar } }
+            .scrollDismissesKeyboard(.interactively)
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("キーボードを閉じる") {
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in typing = true }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in typing = false }
     }
 }
 

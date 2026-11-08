@@ -21,11 +21,11 @@ struct AccountDeletionChoicesView: View {
             if let client = GroupWindowClientProvider.production {
                 Section {
                     NavigationLink { GroupIdentityDeletionView(client: client) } label: {
-                        Label("まどと家族の手帳のID", systemImage: "person.2.slash")
+                        Label("まどと家族の手帳から抜ける", systemImage: "person.2.slash")
                     }
                     .accessibilityIdentifier("account-deletion-group-identity")
                 } footer: {
-                    Text("まどと家族の手帳から抜け、届けた写真とIDを消します。")
+                    Text("届けた写真も消します。")
                 }
             }
             if ManagedPreservationConfiguration.current.isEnabled {
@@ -37,6 +37,13 @@ struct AccountDeletionChoicesView: View {
                 } footer: {
                     Text("自動保存で保存したものと、そのアカウントを消します。")
                 }
+            }
+            // 11/8 (29): said once in the deletion flow, here, not on each screen.
+            Section {
+                Link("サブスクリプションを管理", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
+                    .accessibilityIdentifier("account-deletion-subscriptions")
+            } footer: {
+                Text("Plusは、ここで消しても解約されません。解約はApp Storeのサブスクリプションからです。")
             }
         }
         .navigationTitle("アカウントとデータを消す")
@@ -304,8 +311,9 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings-family-notebook")
                     }
                     if GroupWindowClientProvider.ui != nil {
+                        // 11/8: 「表示しない」 was folded into ブロック; un-blocking stays here.
                         NavigationLink { GroupHiddenMembersView() } label: {
-                            Label("表示しない・ブロックした人", systemImage: "eye.slash")
+                            Label("ブロックした人", systemImage: "hand.raised")
                         }
                         .accessibilityIdentifier("settings-group-hidden-members")
                     }
@@ -351,7 +359,7 @@ struct SettingsView: View {
                 Text("ねこのまどについて")
             } footer: {
                 // Read-only facts live in the footer, not in a row that looks tappable.
-                Text("ねこのまど バージョン \(appVersion)・iOS 17.1以上")
+                Text("ねこのまど バージョン \(appVersion)")
                     .accessibilityIdentifier("settings-app-version")
             }
 
@@ -511,10 +519,9 @@ struct SettingsView: View {
 #endif
     }
 
+    /// 「1.0」 only: no build number or OS requirement on the screen (11/8).
     private var appVersion: String {
-        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
-        return build.isEmpty ? short : "\(short)（\(build)）"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
     }
 
     private var photoSettingsSummary: String {
@@ -545,9 +552,12 @@ struct SettingsView: View {
             } header: {
                 Text("写真へのアクセス")
             } footer: {
-                Text(hasPhotoAccess
-                     ? (isLimitedAccess ? "選んだ写真だけを使っています。" : "すべての写真を使えます。")
-                     : "まだ写真へのアクセスを許可していません。")
+                // Nothing to add when every photo can be used (11/8).
+                if !hasPhotoAccess {
+                    Text("まだ写真へのアクセスを許可していません。")
+                } else if isLimitedAccess {
+                    Text("選んだ写真だけを使っています。")
+                }
             }
 
             Section {

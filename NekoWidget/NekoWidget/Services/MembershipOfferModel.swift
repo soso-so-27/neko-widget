@@ -156,12 +156,9 @@ enum MembershipRestoreFailure: Equatable {
     var message: String {
         let reason: String
         switch self {
-        case .appleConfirmation: reason = "Appleの購入情報を同期できませんでした。"
-        case .purchaseEvidence: reason = "引き継ぎに必要な購入情報を確認できませんでした。"
-        case .localRegistration: reason = "このiPhoneにある購入情報を読み書きできませんでした。"
-        case .connection: reason = "購入情報を引き継ぐサービスに通信できませんでした。"
-        case .server: reason = "サービスで購入情報の引き継ぎを完了できませんでした。"
-        case .unknown: reason = "購入情報の引き継ぎを完了できませんでした。"
+        case .connection: reason = "通信できませんでした。"
+        case .appleConfirmation, .purchaseEvidence, .localRegistration, .server, .unknown:
+            reason = "購入を確かめられませんでした。"
         }
         return reason + "もう一度購入せず、時間をおいて「購入を復元」をお試しください。"
     }
@@ -929,6 +926,8 @@ struct PlusOfferPrompt: View {
             }
             .multilineTextAlignment(.center).padding(24)
             .frame(maxWidth: .infinity)
+            // A container keeps the button's own identifier (11/8).
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("plus-offer-prompt")
             .onAppear {
                 guard presentsImmediately, !didPresent else { return }
@@ -1061,10 +1060,19 @@ struct MembershipOfferPreviewView: View {
                         .accessibilityIdentifier("membership-preview-open-\(context.identifier)")
                 }
             }
+        }
+        // Above the list, not its last row: with every entry listed (11/7: 10
+        // rows) a last row is below the screen and not loaded, so the result
+        // of the action just taken was not shown.
+        .safeAreaInset(edge: .top, spacing: 0) {
             if let resultText {
-                Text(resultText).accessibilityIdentifier("membership-preview-result")
+                Text(resultText)
+                    .font(.footnote)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20).padding(.vertical, 8)
+                    .background(.bar)
+                    .accessibilityIdentifier("membership-preview-result")
             }
-
         }
         .navigationTitle("Plusの画面の確認")
         .sheet(isPresented: Binding(get: { offerContext != nil },

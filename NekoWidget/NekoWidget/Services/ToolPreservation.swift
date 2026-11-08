@@ -46,11 +46,11 @@ enum ToolBackupError: Error, LocalizedError {
 }
 
 /// A failed cleanup journal does not establish that a saved snapshot is bad.
-/// Codes disclose only the failed validation stage, never paths or owner IDs.
+/// The raw codes name only the failed validation stage; the message shows no code.
 enum ToolBackupJournalError: String, Error, LocalizedError {
     case read = "J1", decode = "J2", index = "J3", identity = "J4"
     var errorDescription: String? {
-        "途中の片づけの情報を読み込めませんでした。このiPhoneの記録と保存したコピーは残っています。（確認コード: \(rawValue)）"
+        "途中の片づけを確かめられませんでしたが、記録は残っています。"
     }
 }
 
@@ -1442,12 +1442,17 @@ enum ToolBackupTransfer {
     }
 }
 
-@MainActor
 enum ToolBackupValidation {
     private struct Showcase: Decodable {
         let entries: [ShowcasePhotoStore.Entry]
     }
     static func validate(_ index: ToolBackupIndex, at root: URL, authenticatedPhotos: [ToolBackupIndex.File] = []) async throws {
+        try await AppRecordBackground.run {
+            try await validateInBackground(index, at: root, authenticatedPhotos: authenticatedPhotos)
+        }
+    }
+    private static func validateInBackground(_ index: ToolBackupIndex, at root: URL, authenticatedPhotos: [ToolBackupIndex.File]) async throws {
+        precondition(!Thread.isMainThread)
         try index.validate()
         let decoder = JSONDecoder()
         var referenced = Set<String>()

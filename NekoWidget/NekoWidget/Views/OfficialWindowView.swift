@@ -630,20 +630,10 @@ struct OfficialWindowView: View {
         .background(Color(.systemGroupedBackground))
         .toolbarBackground(Color(.systemGroupedBackground), for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
+        // 11/8: one way to check again (pull to refresh), plus 「もう一度確認」
+        // only when something went wrong; no ↻ button in the bar.
         .refreshable { await refresh(interactive: true) }
         .toolbar {
-            if store.endpoint != nil, !stoppedHere {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { Task { await refresh(interactive: true) } } label: {
-                        if isChecking { ProgressView() }
-                        else { Image(systemName: "arrow.clockwise").frame(minWidth: 44, minHeight: 44) }
-                    }
-                    .disabled(isChecking)
-                    .accessibilityLabel(state.isSubscribed ? "新着を確認" : "写真を確認")
-                    .accessibilityValue(isChecking ? "確認中" : "")
-                    .accessibilityIdentifier("official-window-refresh")
-                }
-            }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button("このまどについて") { showsAbout = true }
@@ -664,14 +654,11 @@ struct OfficialWindowView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     Text(store.displayName).font(.title2.weight(.semibold))
-                    Text(store.definition.subtitle)
-                    Text(store.definition.catID == nil
-                         ? "運営が選んだ猫の写真が届きます。"
-                         : "この猫の写真が届くまどです。")
-                    if store.windowID == "black-cats" {
-                        Text("のわは、ねこのまどの黒猫です。街のどこかにいるのわが、毎日1枚届きます。")
-                        Text("毎日0時（日本時間）に新しい1枚に変わります。")
-                    }
+                    // 11/8: one short line. のわのまど is one cat, so the
+                    // generic 「運営が選んだ猫」 line does not apply to it.
+                    Text(store.windowID == "black-cats"
+                         ? "のわは、ねこのまどの黒猫です。毎日0時（日本時間）に新しい1枚に変わります。"
+                         : store.definition.subtitle)
                 }
                 .padding(24)
             }

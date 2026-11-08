@@ -796,7 +796,7 @@ private struct MainlineAcceptanceFixtureRootView: View {
     private var photos: [PhotoPresentation] {
         switch scenario {
         case "one", "review-first-photo": return Array(AppStoreScreenshotFixture.photos.prefix(1))
-        // Four inputs exercise the shipping three-thumbnail cap.
+        // Four inputs, all within the first scan's nine-photo grid (10/21).
         case "three": return Array(AppStoreScreenshotFixture.photos.prefix(4))
         case "unavailable":
             return [PhotoPresentation(localIdentifier: "mainline-unavailable-photo", creationDate: nil,
@@ -1496,7 +1496,8 @@ private struct ToolProfileDataCheckView: View {
     @State private var failed = false
     @State private var failureMessage = ""
     var body: some View {
-        Text(passed ? "passed" : failed ? "failed" : "checking")
+        // The failing check is in the text itself, so a UI test failure shows it.
+        Text(passed ? "passed" : failed ? "failed: \(failureMessage)" : "checking")
             .accessibilityIdentifier(passed ? "tool-profile-data-passed" : failed ? "tool-profile-data-failed" : "tool-profile-data-checking")
             .accessibilityValue(failureMessage)
             .task {
@@ -1504,7 +1505,7 @@ private struct ToolProfileDataCheckView: View {
                 catch {
                     let failure = error as NSError
                     failureMessage = failure.domain == "ToolProfileDataCheck"
-                        ? "fixture-check-\(failure.code)" : "fixture-operation-failed"
+                        ? "fixture-check-\(failure.code)" : "fixture-operation-failed \(failure.domain) \(failure.code)"
                     failed = true
                 }
             }

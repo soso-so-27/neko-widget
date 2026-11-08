@@ -56,11 +56,11 @@ enum CatCareSummary {
         fields.append(("性別", bothUnknown ? empty : sex + "・" + neutered))
         fields.append(("年齢", CatCareLostCat.age(record?.birthday?.value, today: CatCareDay(date: Date())) ?? empty))
         fields.append(("マイクロチップ", record?.microchipStatus == CatCareMicrochipStatus.none
-                       ? "入っていない（飼い主の記入）" : text(record?.microchip?.value)))
+                       ? "入っていない" : text(record?.microchip?.value)))
         fields.append(("持病", record?.conditionsStatus == CatCareConditionsStatus.none
-                       ? "なし（飼い主の記入）" : text(record?.conditions?.value)))
+                       ? "なし" : text(record?.conditions?.value)))
         let allergy: String = switch record?.allergy?.value.status ?? .unknown {
-        case .none: "なし（飼い主の記入）"
+        case .none: "なし"
         case .recorded: text(record?.allergy?.value.text)
         case .unknown: "未確認"
         }
@@ -73,13 +73,13 @@ enum CatCareSummary {
             "\($0.kind)（\(CatCareFormat.day($0.givenOn))）" + ($0.proof != nil ? " 証明あり" : "")
         }
         fields.append(("ワクチン", vaccinations.isEmpty
-                       ? (record?.vaccinationStatus == CatCareVaccinationStatus.none ? "受けていない（飼い主の記入）" : empty)
+                       ? (record?.vaccinationStatus == CatCareVaccinationStatus.none ? "受けていない" : empty)
                        : vaccinations.joined(separator: "\n")))
         fields.append(("体重の推移", weightTrend(record).map { $0.isEmpty ? empty : $0.joined(separator: "\n") } ?? empty))
         if let diet = record?.specialDiet?.value, !diet.isEmpty { fields.append(("療法食など", diet)) }
         let vet = record?.vetOverride?.value ?? household?.vet?.value
         if let vet, vet.vetStatus == CatCareVetStatus.none {
-            fields.append(("かかりつけ病院", "まだない（飼い主の記入）"))
+            fields.append(("かかりつけ病院", "まだない"))
         } else if let vet, !vet.isEmpty {
             fields.append(("かかりつけ病院", [vet.name, vet.phone].filter { !$0.isEmpty }.joined(separator: " ")))
         }
@@ -107,7 +107,7 @@ enum CatCareSummary {
         }.filter { !$0.isEmpty }
         if !medicines.isEmpty { fields.append(("飲んでいる薬（量・時間）", medicines.joined(separator: "\n"))) }
         switch record?.allergy?.value.status ?? .unknown {
-        case .none: fields.append(("アレルギー", "なし（飼い主の記入）"))
+        case .none: fields.append(("アレルギー", "なし"))
         case .recorded:
             let text = (record?.allergy?.value.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             fields.append(("アレルギー", text.isEmpty ? "あり（くわしくは飼い主に聞いてください）" : text))
@@ -171,7 +171,7 @@ enum CatCareSummary {
         var fields = careHandoffHealthFields(record)
         if let conditions = nonEmpty(record?.conditions?.value) { fields.append(("持病", conditions)) }
         if fields.isEmpty, cat.healthStatus != .unknown {
-            fields.append(("薬・アレルギー（前にここに書いた内容）", cat.healthText))
+            fields.append(("薬・アレルギー", cat.healthText))
         }
         if fields.isEmpty { fields.append(("薬・アレルギー", "未記入（飼い主に聞いてください）")) }
         return fields
@@ -200,7 +200,7 @@ enum CatCareSummary {
             health += careHandoffHealthFields(record)
             if health.isEmpty {
                 // Older entry from this tool only when it says something.
-                health.append(cat.medicalStatus == .unknown ? ("病歴・薬", empty) : ("病歴・薬（飼い主の記録）", cat.medicalText))
+                health.append(cat.medicalStatus == .unknown ? ("病歴・薬", empty) : ("病歴・薬", cat.medicalText))
             }
             fields += health
         }
@@ -227,7 +227,7 @@ enum CatCareSummary {
         var fields: [(String, String)] = [("性別・年齢・体重", about.isEmpty ? empty : about.joined(separator: "・"))]
         let chip = (record?.microchip?.value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         fields.append(("マイクロチップ番号", chip.isEmpty
-                       ? (record?.microchipStatus == CatCareMicrochipStatus.none ? "入っていない（飼い主の記入）" : empty) : chip))
+                       ? (record?.microchipStatus == CatCareMicrochipStatus.none ? "入っていない" : empty) : chip))
         let vaccinations = (record?.activeVaccinations ?? []).prefix(4).map { entry in
             var line = "\(entry.kind)（\(CatCareFormat.day(entry.givenOn))）"
             if let next = entry.nextDueOn { line += " 次回 \(CatCareFormat.day(next))" }
@@ -235,7 +235,7 @@ enum CatCareSummary {
             return line
         }
         fields.append(("ワクチン", vaccinations.isEmpty
-                       ? (record?.vaccinationStatus == CatCareVaccinationStatus.none ? "受けていない（飼い主の記入）" : empty)
+                       ? (record?.vaccinationStatus == CatCareVaccinationStatus.none ? "受けていない" : empty)
                        : vaccinations.joined(separator: "\n")))
         return fields
     }
@@ -264,7 +264,7 @@ enum CatCareSummary {
         fields.append(("毛色", text(record?.coat?.value)))
         fields.append(("見分ける特徴", text(record?.marks?.value)))
         fields.append(("マイクロチップ番号", record?.microchipStatus == CatCareMicrochipStatus.none
-                       ? "入っていない（飼い主の記入）" : text(record?.microchip?.value)))
+                       ? "入っていない" : text(record?.microchip?.value)))
         let indoor: String = switch record?.indoorOnly?.value ?? .unknown {
         case .yes: "室内飼い（外に慣れていない）"
         case .no: "外にも出る"

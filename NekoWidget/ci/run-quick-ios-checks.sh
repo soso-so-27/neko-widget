@@ -39,6 +39,14 @@ xcrun swiftc -frontend -parse "${internal_boundary_sources[@]}"
 xcrun swiftc -frontend -parse -D INTERNAL_PRESENTATION "${internal_boundary_sources[@]}"
 xcrun swiftc -frontend -parse -D DEBUG "${internal_boundary_sources[@]}"
 
+# Cheap executor / intent observations precede either expensive product build.
+python3 ci/prepare-autosave-background-probe.py "$RUNNER_TEMP/autosave-background.swift"
+xcrun --sdk macosx swiftc -parse-as-library "$RUNNER_TEMP/autosave-background.swift" -o "$RUNNER_TEMP/autosave-background"
+"$RUNNER_TEMP/autosave-background"
+python3 ci/prepare-preservation-rebind-probe.py "$RUNNER_TEMP/preservation-rebind-probe.swift"
+xcrun --sdk macosx swiftc -parse-as-library "$RUNNER_TEMP/preservation-rebind-probe.swift" -o "$RUNNER_TEMP/preservation-rebind-probe"
+"$RUNNER_TEMP/preservation-rebind-probe"
+
 owner_build_settings=(
   INTERNAL_PRESENTATION_CONDITION=INTERNAL_PRESENTATION
   OWNER_INTERNAL_REPORTS_DISABLED=YES GROUP_REPORTING_PRODUCTION_ENABLED=NO GROUP_WINDOWS_ENABLED=YES
@@ -196,9 +204,6 @@ xcrun --sdk macosx swiftc -parse-as-library "$RUNNER_TEMP/preservation-signin-pr
 python3 ci/prepare-preservation-opening-probe.py "$RUNNER_TEMP/opening.swift"
 swiftc -parse-as-library "$RUNNER_TEMP/opening.swift" -o "$RUNNER_TEMP/opening"
 "$RUNNER_TEMP/opening"
-python3 ci/prepare-preservation-rebind-probe.py "$RUNNER_TEMP/preservation-rebind-probe.swift"
-xcrun --sdk macosx swiftc -parse-as-library "$RUNNER_TEMP/preservation-rebind-probe.swift" -o "$RUNNER_TEMP/preservation-rebind-probe"
-"$RUNNER_TEMP/preservation-rebind-probe"
 "$RUNNER_TEMP/preservation-signin-probe"
 
 xcrun --sdk macosx swiftc -D INTERNAL_PRESENTATION -parse-as-library -target "$(uname -m)-apple-macos14.0" \

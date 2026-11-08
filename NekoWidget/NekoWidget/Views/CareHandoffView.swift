@@ -197,11 +197,15 @@ private struct CareField: View {
     @Binding var text: String
     var limit = 4000
     var isPrefilled = false
+    /// Off when the step's heading already says the same words (11/8 型).
+    var showsLabel = true
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(label).font(.subheadline.weight(.medium))
-                if isPrefilled { Text("前に入れた内容").font(.caption).foregroundStyle(.secondary) }
+            if showsLabel || isPrefilled {
+                HStack {
+                    if showsLabel { Text(label).font(.subheadline.weight(.medium)) }
+                    if isPrefilled { Text("前に入れた内容").font(.caption).foregroundStyle(.secondary) }
+                }
             }
             TextField(example, text: Binding(get: { text }, set: { text = String($0.prefix(limit)) }), axis: .vertical)
                 .lineLimit(1...8).frame(minHeight: 36)
@@ -225,7 +229,6 @@ private struct CareCatEditor: View {
     @State private var showsPhotoPicker = false
     @State private var deleteRequested = false
     @State private var refreshedCandidates = false
-    @State private var candidateRefreshError = false
     @Environment(\.dismiss) private var dismiss
     private var cat: CareCat? { store.plan.cats.first { $0.id == id } }
     private func text(_ key: WritableKeyPath<CareCat, String>) -> Binding<String> {
@@ -252,17 +255,28 @@ private struct CareCatEditor: View {
         let vet = CareHandoffDisclosure.vetFields(plan: store.plan, household: catCare.state?.household, record: care)
         let subject: CatCareSubject = profiles.first(where: { $0.identifier == cat.profileID }).map(CatCareSubject.profile)
             ?? .toolCat(id: cat.toolCatID ?? cat.id, name: cat.name)
-        // 11/7: said once below, not after every heading.
+        // 11/8: no footer; what goes on the memo is chosen on the next page.
         ToolCatCareSection(title: "この子のこと",
                            lines: CatCareSummary.careHandoffLines(care, legacy: cat) + health + vet, subject: subject,
-                           footer: CareHandoffDisclosure.written(health).isEmpty && vet.isEmpty
-                               ? nil : "薬と連絡先は、次の画面で選ぶと載ります。",
-                           identifier: "care-cat-care-fields", editIdentifier: "care-open-cat-care", profiles: profiles)
+                           identifier: "care-cat-care-fields", editIdentifier: "care-open-cat-care", profiles: profiles,
+                           folded: true)
+    }
+
+    /// Where the three steps stand (11/8 型): photo, what to say first, when to call.
+    private func stepStates(_ cat: CareCat) -> [ToolStepState] {
+        ToolStepState.states([cat.photoName != nil, Self.isFilled(cat.important), Self.isFilled(cat.callWhen)])
+    }
+    static func isFilled(_ text: String?) -> Bool {
+        !(text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
         Form {
             if let cat {
+                let states = stepStates(cat)
+                Section { ToolPurpose(text: "預ける人に渡すお世話メモを作ります。") }
+                // 11/8 型: numbered steps first, what is written this time above
+                // what is read from 「この子のこと」.
                 Section {
                     if let profile = profiles.first(where: { $0.identifier == cat.profileID }) {
                         // The cat's dates are in この子のこと below; the name stays here (11/7).
@@ -271,33 +285,27 @@ private struct CareCatEditor: View {
                         CareField(label: "猫の名前", example: "例：むぎ", identifier: "care-cat-name", text: text(\.name), limit: 80,
                                   isPrefilled: cat.prefilledFields?.contains("name") == true)
                     }
-                    Button { showsPhotoPicker = true } label: {
-                        ToolAdaptiveStack(spacing: 16) {
-                            CarePhoto(image: store.image(cat.photoName)).frame(width: 88, height: 88)
-                            Label(cat.photoName == nil ? "写真を選ぶ" : "写真を変える", systemImage: "photo")
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                    }.buttonStyle(.plain).accessibilityIdentifier("care-photo-open")
-                    if cat.photoName != nil {
-                        Button("このメモの写真を外す", role: .destructive) {
-                            store.editCat(id) { $0.photoName = nil; $0.photoRemoved = true }
+                    ToolPhotoGrid {
+                        ToolPhotoSlot("渡す写真", image: nil, file: store.imageURL(cat.photoName),
+                                      identifier: "care-photo-open", actionsIdentifier: "care-photo-actions",
+                                      choose: { showsPhotoPicker = true }) {
+                            Button("写真を選び直す", systemImage: "photo") { showsPhotoPicker = true }
+                            Button("このメモの写真を外す", systemImage: "minus.circle", role: .destructive) {
+                                store.editCat(id) { $0.photoName = nil; $0.photoRemoved = true }
+                            }
                         }
                     }
-                }
-                if candidateRefreshError {
-                    Text("前に入れた内容を読み込めませんでした。")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                // 11/8: what is written this time comes first, above what is read
-                // from 「この子のこと」.
+                } header: { ToolStepHeader(number: 1, title: "名前と写真", state: states[0]) }
                 Section {
-                    CareField(label: "まず伝えたいこと", example: "例：玄関を開ける前に、猫が別の部屋にいるか確認", identifier: "care-important", text: text(\.important))
+                    CareField(label: "まず伝えたいこと", example: "例：玄関を開ける前に、猫が別の部屋にいるか確認", identifier: "care-important", text: text(\.important),
+                              showsLabel: false)
+                } header: { ToolStepHeader(number: 2, title: "まず伝えたいこと", state: states[1]) }
+                Section {
                     CareField(label: "こんなときは連絡を", example: "例：丸1日ごはんを食べない、何度も吐く、トイレに行ってもおしっこが出ない",
                               identifier: "care-call-when",
                               text: Binding(get: { self.cat?.callWhen ?? "" }, set: { new in
                                   store.editCat(id) { $0.callWhen = new.isEmpty ? nil : new }
-                              }))
+                              }), showsLabel: false)
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
                             ForEach(Self.callWhenChoices, id: \.self) { choice in
@@ -311,31 +319,33 @@ private struct CareCatEditor: View {
                         }
                     }
                     .accessibilityIdentifier("care-call-when-choices")
-                }
+                } header: { ToolStepHeader(number: 3, title: "こんなときは連絡を", state: states[2]) }
                 catCareSection(cat)
                 // Period and request are written once, where the memo is made
                 // (347: a family cat had a second form here, and what was typed
                 // there replaced the memo's own). Family cats get the same values.
-                if cat.familyDetached == true { Text("このメモは、家族の手帳には入っていません。").font(.footnote).foregroundStyle(.secondary) }
+                // 11/8 型: notes last and small; delete alone in the last section.
+                if cat.familyDetached == true {
+                    Section {
+                        Text("このメモは、家族の手帳には入っていません。").font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
                 Section {
                     Button("このお世話メモを削除", role: .destructive) { deleteRequested = true }
                 }
             }
         }
+        .toolPageSpacing()
         .navigationTitle("預けるとき").navigationBarTitleDisplayMode(.inline)
         .task {
             CatCareStore.shared.importFromTools()
             CatCareStore.shared.importBirthdays(profiles)
             guard !refreshedCandidates else { return }
             refreshedCandidates = true
-            do { try store.refreshCandidates(id, using: reuseStore) }
-            catch { candidateRefreshError = true }
+            // A failed refresh keeps what is here; nothing to say about it (11/8).
+            try? store.refreshCandidates(id, using: reuseStore)
             await useCatCarePhoto()
         }
-        .scrollDismissesKeyboard(.interactively)
-        .toolbar { ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("キーボードを閉じる") {
-            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        } } }
         .sheet(isPresented: $showsPhotoPicker) {
             NavigationStack { CarePhotoPicker(catID: id, ownPhotos: ownPhotos, otherPhotos: otherPhotos, store: store) }
         }
@@ -346,14 +356,15 @@ private struct CareCatEditor: View {
                 }
             }
         } message: { Text("この子のお世話メモだけを削除します。") }
-        .safeAreaInset(edge: .bottom) {
-            VStack(spacing: 6) {
-                CareSaveNotice(store: store)
+        .toolBottomBar {
+            // NN/g: the button names the next step.
+            ToolMakeBar(top: { CareSaveNotice(store: store) }) {
                 NavigationLink { CareDisclosureView(store: store, currentCatID: id) } label: {
-                    Label("メモを作る", systemImage: "doc.text").frame(maxWidth: .infinity, minHeight: 44)
-                }.buttonStyle(.borderedProminent).disabled(store.saveError != nil)
-                    .accessibilityIdentifier("care-disclosure-open")
-            }.padding().background(.regularMaterial)
+                    Text("次へ：期間とお願い").frame(maxWidth: .infinity)
+                }
+                .disabled(store.saveError != nil)
+                .accessibilityIdentifier("care-disclosure-open")
+            }
         }
     }
 
@@ -375,17 +386,6 @@ private struct CareCatEditor: View {
     }
 }
 
-private struct CarePhoto: View {
-    let image: UIImage?
-    var body: some View {
-        Group {
-            if let image { Image(uiImage: image).resizable().scaledToFit() }
-            else { Image(systemName: "cat").font(.title2).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(.tertiarySystemFill)) }
-        }.clipShape(RoundedRectangle(cornerRadius: 12)).accessibilityLabel(image == nil ? "写真はありません" : "この子の写真")
-    }
-}
-
 private struct CarePhotoPicker: View {
     let catID: UUID
     let ownPhotos: [CatProfilePhotoPresentation]
@@ -401,11 +401,11 @@ private struct CarePhotoPicker: View {
                 PhotosPicker(selection: $item, matching: .images) { Label("写真アプリから選ぶ", systemImage: "photo.badge.plus") }
                     .disabled(busy)
             } footer: { Text("預かる人が見分けやすい写真を選んでください。") }
-            if !ownPhotos.isEmpty { grid("この子の写真", ownPhotos) }
-            let own = Set(ownPhotos.map(\.localIdentifier))
-            let remaining = otherPhotos.filter { !own.contains($0.localIdentifier) }
-            if !remaining.isEmpty { grid("ほかの猫の写真", remaining) }
-            if let error { Text(error).foregroundStyle(.red) }
+            // 11/8: every offered photo, newest first; a photo whose cat is not
+            // assigned yet is not hidden under 「ほかの猫の写真」.
+            ToolRecentPhotoSection(photos: ownPhotos + otherPhotos, own: Set(ownPhotos.map(\.localIdentifier)),
+                                   disabled: busy, identifierPrefix: "care-candidate-") { use($0) }
+            if let error { Section { Text(error).foregroundStyle(.red) } }
         }.navigationTitle("写真を選ぶ")
             .toolbar { Button("キャンセル") { dismiss() }.disabled(busy) }
             .interactiveDismissDisabled(busy)
@@ -421,26 +421,13 @@ private struct CarePhotoPicker: View {
                 }
             }
     }
-    private func grid(_ title: String, _ photos: [CatProfilePhotoPresentation]) -> some View {
-        Section(title) {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 95))], spacing: 10) {
-                ForEach(photos) { photo in
-                    Button {
-                        busy = true; error = nil
-                        Task {
-                            do {
-                                let data = try await PhotoLibraryJPEGExporter().export(localIdentifier: photo.localIdentifier)
-                                try store.replacePhoto(data.jpeg, catID: catID); busy = false; dismiss()
-                            } catch { self.error = "この写真は使えませんでした。「写真アプリから選ぶ」から選び直せます。"; busy = false }
-                        }
-                    } label: {
-                        PhotoAssetImageView(localIdentifier: photo.localIdentifier,
-                            targetPixelSize: CGSize(width: 300, height: 300), targetAspectRatio: 1, showsFullImage: true)
-                            .aspectRatio(1, contentMode: .fit)
-                    }.buttonStyle(.plain).disabled(busy)
-                        .accessibilityLabel(ToolPhotoLabel.text("この写真を使う", date: photo.creationDate))
-                }
-            }
+    private func use(_ photo: CatProfilePhotoPresentation) {
+        busy = true; error = nil
+        Task {
+            do {
+                let data = try await PhotoLibraryJPEGExporter().export(localIdentifier: photo.localIdentifier)
+                try store.replacePhoto(data.jpeg, catID: catID); busy = false; dismiss()
+            } catch { self.error = "この写真は使えませんでした。「写真アプリから選ぶ」から選び直せます。"; busy = false }
         }
     }
 }
@@ -488,34 +475,27 @@ private struct CareDisclosureView: View {
         Binding(get: { store.plan.requestText(key, planKey, chosen: disclosure.catIDs) },
                 set: { new in store.update { $0.setRequestText(new, key, planKey, chosen: disclosure.catIDs) } })
     }
-    /// 11/8: shown here before the memo is made, never printed.
-    private var unwritten: [String] {
-        let chosen = cats.filter { disclosure.catIDs.contains($0.id) }
-        var result: [String] = chosen.compactMap { cat -> String? in
-            let care = record(cat)
-            var lines = [("まず伝えたいこと", cat.important)] + CatCareSummary.careHandoffLines(care, legacy: cat)
-            if disclosure.health { lines += CatCareSummary.careHandoffHealthLines(care, legacy: cat) }
-            let missing = lines.filter { CareHandoffDisclosure.isUnwritten($0.1) }.map(\.0)
-            guard !missing.isEmpty else { return nil }
-            let who = chosen.count > 1 ? "（\(cat.displayName)）" : ""
-            return "まだ書いていないこと\(who)：" + missing.joined(separator: "、")
-        }
-        if disclosure.contacts && !contacts.contains(where: { $0.0 == "飼い主の連絡先" }) {
-            result.append("まだ書いていないこと：飼い主の連絡先")
-        }
-        return result
+    /// Where the three steps stand (11/8 型): the period, a chosen cat, and
+    /// what to include (done once the page is seen: the choices start set).
+    private var stepStates: [ToolStepState] {
+        ToolStepState.states([
+            CareCatEditor.isFilled(store.plan.requestText(\.period, \.period, chosen: disclosure.catIDs)),
+            !disclosure.catIDs.isEmpty,
+            true,
+        ])
     }
 
     var body: some View {
+        let states = stepStates
         List {
             // 11/8: this time's period and request first, where the memo is made.
             Section {
                 CareField(label: "お願いする相手", example: "例：お母さん", identifier: "care-recipient", text: request(\.recipient, \.recipient))
                 CareField(label: "期間", example: "例：10月5日 夜〜10月7日 朝", identifier: "care-period", text: request(\.period, \.period))
                 CareField(label: "ほかにお願いしたいこと", example: "例：お世話が終わったら写真を1枚送ってください", identifier: "care-request", text: request(\.request, \.request))
-            } header: { Text("期間とお願い")
+            } header: { ToolStepHeader(number: 1, title: "期間とお願い", state: states[0])
             } footer: { ToolImportantInformation(text: "住所や鍵の番号は、別の方法で伝えてください。") }
-            Section("今回お願いする猫") {
+            Section {
                 ForEach(cats) { cat in
                     let selected = disclosure.catIDs.contains(cat.id)
                     Button {
@@ -531,7 +511,7 @@ private struct CareDisclosureView: View {
                         .accessibilityValue(selected ? "選択済み" : "未選択")
                         .accessibilityIdentifier("care-select-\(cat.id.uuidString)")
                 }
-            }
+            } header: { ToolStepHeader(number: 2, title: "お願いする猫", state: states[1]) }
             Section {
                 Toggle("薬・持病・アレルギーを載せる", isOn: $disclosure.health).accessibilityIdentifier("care-disclose-health")
                 Toggle("連絡先・動物病院を載せる", isOn: $disclosure.contacts).accessibilityIdentifier("care-disclose-contacts")
@@ -542,16 +522,12 @@ private struct CareDisclosureView: View {
                     }
                     .accessibilityIdentifier("care-contacts")
                 }
-            } footer: { Text("写真・名前・お世話・お願いは、いつも載ります。") }
-            if !unwritten.isEmpty {
-                Section {
-                    ForEach(unwritten, id: \.self) { line in
-                        Text(line).font(.footnote).foregroundStyle(.secondary)
-                    }
-                }.accessibilityIdentifier("care-unwritten")
-            }
+            } header: { ToolStepHeader(number: 3, title: "載せるもの", state: states[2]) }
+            // What is not written yet is shown once, on each cat's
+            // 「この子のこと」 row; not listed again here (11/8).
             if let error { Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) } }
         }.navigationTitle("メモを作る").navigationBarTitleDisplayMode(.inline)
+        .toolPageSpacing()
             .scrollDismissesKeyboard(.interactively)
             .announcesWhenShown(error)
             .onAppear {
@@ -578,19 +554,19 @@ private struct CareDisclosureView: View {
                     store.recordMade(health: item.record.includesHealth, contacts: item.record.includesContacts)
                 }
             }
-            .safeAreaInset(edge: .bottom) {
-                VStack(spacing: 6) {
-                    CareSaveNotice(store: store)
+            .toolBottomBar {
+                // The button has the name of what it makes (11/8 型).
+                ToolMakeBar(missing: disclosure.catIDs.isEmpty ? ["お願いする猫"] : [],
+                            top: { CareSaveNotice(store: store) }) {
                     Button {
                         do { preview = CarePreview(record: try store.shareRecord(disclosure)); error = nil }
                         catch { self.error = (error as? CareHandoffError)?.errorDescription ?? "表示できませんでした。もう一度お試しください。" }
                     } label: {
-                        Label("この内容で作る", systemImage: "doc.text").frame(maxWidth: .infinity, minHeight: 44)
+                        Label("お世話メモを作る", systemImage: "doc.text").frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
                     .disabled(disclosure.catIDs.isEmpty || store.saveError != nil)
                     .accessibilityIdentifier("care-preview-open")
-                }.padding().background(.regularMaterial)
+                }
             }
     }
 }

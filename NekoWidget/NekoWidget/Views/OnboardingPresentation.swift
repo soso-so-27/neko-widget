@@ -75,28 +75,8 @@ enum OnboardingPresentationCopy {
         "このiPhoneの中から、",
         "猫の写真と動画を見つけます。"
     ]
-    static func permissionPrivacyLines(isMediaAvailable: Bool) -> [String] {
-        if isMediaAvailable {
-            return [
-                "・猫を探すのは、このiPhoneの中だけです",
-                "・まどに届けるのは、自分で選んだ写真だけです（小さくしてから届けます）",
-                "・写真や動画を、勝手に送ったり消したり変えたりしません"
-            ]
-        }
-        return [
-            "・猫を探すのは、このiPhoneの中だけです",
-            "・写真や動画を、勝手にiPhoneの外へ送りません",
-            "・写真や動画を消したり変えたりしません"
-        ]
-    }
-
-    static func homePermissionBody(isMediaAvailable: Bool) -> String {
-        if isMediaAvailable {
-            return "猫を探すのはこのiPhoneの中だけで、写真を勝手に送ったり消したりしません。まどに届けるのは、自分で選んだ写真だけです。"
-        }
-        return "猫を探すのはこのiPhoneの中だけです。写真や動画を勝手に外へ送ったり、消したり変えたりしません。"
-    }
-    static let permissionLimitedAccessNote = "すべての写真へのアクセスがおすすめです。一部の写真だけでも使えます。"
+    // The promise is said once, on page one (and on Home's card for anyone
+    // who skipped). Page two is the title and the Photos dialog only (11/8).
     static let permissionAction = "写真へのアクセスを許可"
     static let permissionSkipAction = "あとで"
 
