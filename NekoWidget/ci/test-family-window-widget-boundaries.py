@@ -4587,7 +4587,7 @@ class VeterinaryRoundOneTests(unittest.TestCase):
                      "Saving results changed what was shown", "A received family change erased or churned local results"):
             self.assertIn(case, verifier)
         # The screen: three fields, written before or after 「診察済み」.
-        for text in ('title: "先生の話"', 'title: "出た薬"', 'Toggle("次に行く日を記録"', 'Text("診察のあと")',
+        for text in ('title: "先生の話"', 'title: "出た薬"', 'Toggle("次に行く日を記録"', 'ToolStepHeader(number: 4, title: "診察のあと"',
                      "adopt(try await store.saveResults(draft,", '"診察済みにすると、書けるのは「診察のあと」だけになります。"'):
             self.assertIn(text, self.view)
         self.assertNotIn("このメモは書き直せなくなります", self.view)
@@ -4651,6 +4651,76 @@ class VeterinaryRoundOneTests(unittest.TestCase):
         dates = section(self.view, "private struct VeterinaryEntryDates: View {", "\n}\n")
         self.assertIn("entry.weight?.measuredOn ?? entry.capturedAt.map(VeterinaryVisit.day) ?? entry.writtenAt.map(VeterinaryVisit.day)", dates)
         self.assertNotIn("不明", dates)
+
+    def test_page_follows_the_tool_input_shape(self) -> None:
+        # 11/8 (ねこのまど_ツール入力ページの型_1108): what the page makes, four
+        # numbered steps, この子のこと folded, the rest small, past memos last.
+        view = self.view
+        page = section(view, "@ViewBuilder private var formContent: some View {", "private func lifecycle<")
+        content = section(page, "@ViewBuilder private var formContent: some View {", "@ViewBuilder private var errorSection")
+        order = [content.index("headerSections(visit)"), content.index("stepSections(visit)"),
+                 content.index("catCareSection(visit)"), content.index("closingSections(visit)"),
+                 content.index("errorSection"), content.index("pastSection")]
+        self.assertEqual(order, sorted(order))
+        header = section(page, "@ViewBuilder private func headerSections(", "@ViewBuilder private func stepSections(")
+        self.assertIn('ToolPurpose(text: "先生に見せる診察メモを作ります。")', header)
+        self.assertLess(header.index("ToolPurpose("), header.index('"vet-started-day"'))
+        self.assertLess(header.index('"vet-started-day"'), header.index('Text("前の診察は終わりましたか？")'))
+        steps = section(page, "@ViewBuilder private func stepSections(", "/// Shown in a step of a finished memo")
+        self.assertIn("let states = stepStates(visit)", steps)
+        order = [steps.index("noticedStep(visit, states[0])"), steps.index("recordsStep(visit, states[1])"),
+                 steps.index("questionsStep(visit, states[2])"), steps.index("resultsStep(states[3])")]
+        self.assertEqual(order, sorted(order))
+        titles = [('noticedStep(', 'ToolStepHeader(number: 1, title: "家で気付いたこと", state: state)'),
+                  ('recordsStep(', 'ToolStepHeader(number: 2, title: "見せる写真・記録（任意）", state: state)'),
+                  ('questionsStep(', 'ToolStepHeader(number: 3, title: "先生に聞きたいこと（任意）", state: state)')]
+        for start, title in titles:
+            self.assertIn(title, section(view, "private func " + start, "\n    }\n"))
+        results = section(view, "private func resultsStep(", "\n    }\n")
+        self.assertIn('ToolStepHeader(number: 4, title: "診察のあと", state: state)', results)
+        # Each step holds its own fields: the questions moved out of step 1.
+        noticed = section(view, "private func noticedStep(", "private func recordsStep(")
+        self.assertIn('identifier: "vet-observations"', noticed)
+        self.assertIn('Toggle("いつからかを記録", isOn: $hasStartedDay)', noticed)
+        self.assertNotIn('"vet-questions"', noticed)
+        records = section(view, "private func recordsStep(", "private func entryRow(")
+        self.assertIn('"vet-pick-records"', records)
+        self.assertIn('"vet-step-records"', records)
+        questions = section(view, "private func questionsStep(", "/// Read from 「この子のこと」")
+        self.assertIn('identifier: "vet-questions"', questions)
+        for name in ("vet-doctor-note", "vet-prescription", "vet-next-visit-toggle"):
+            self.assertIn(f'"{name}"', results)
+        # Done when written; the first not done is the one to do now.
+        states = section(view, "private func stepStates(", "private static func filled(")
+        self.assertIn("ToolStepState.states(written)", states)
+        self.assertIn("[Self.filled(observations), !visit.entries.isEmpty, Self.filled(questions), results]", states)
+        self.assertIn("Self.filled(doctorNote) || Self.filled(prescription)", states)
+        # A finished memo keeps only 「診察のあと」 editable, under the same headers.
+        for step in (noticed, questions):
+            self.assertIn("if visit.completedAt == nil {", step)
+        self.assertNotIn('Section("伝えたこと")', view)
+        self.assertNotIn('Text("今回伝えること")', view)
+        # この子のこと folded, right after the steps.
+        care = section(view, "private func catCareSection(", "/// Not part of writing the memo")
+        self.assertIn("folded: true)", care)
+        self.assertIn('editIdentifier: "vet-open-cat-care"', care)
+        # The rest, small: the note, 診察済み, delete.
+        closing = section(view, "@ViewBuilder private func closingSections(", "private func lifecycle<")
+        order = [closing.index("ToolImportantInformation("), closing.index('Button("診察済みにする"'),
+                 closing.index('Button("この診察メモを削除", role: .destructive)')]
+        self.assertEqual(order, sorted(order))
+        self.assertIn(".font(.subheadline)", closing)
+        # The bar: save status on top, then the one button.
+        bar = section(view, "private var bottomBar: some View {", "@ViewBuilder private var formContent")
+        self.assertIn("ToolMakeBar(top: { saveStatus }) {", bar)
+        self.assertIn('Label("先生に見せる", systemImage: "stethoscope")', bar)
+        self.assertIn('.accessibilityIdentifier("vet-show").disabled(changes || busy)', bar)
+        self.assertIn('Button("もう一度保存する") { Task { await save() } }.accessibilityIdentifier("vet-save")', bar)
+        self.assertIn(".toolBottomBar { bottomBar }", view)
+        # A field under a step heading of the same name hides its own; VoiceOver keeps it.
+        field = section(view, "private struct VeterinaryLabeledField: View {", "\n}\n")
+        self.assertIn("if showsTitle {", field)
+        self.assertIn(".accessibilityLabel(title)", field)
 
     def test_confirmation_asks_only_when_ownership_is_unclear(self) -> None:
         confirm = section(self.view, "private struct VeterinaryRecordConfirmation: View {", "var body: some View {")

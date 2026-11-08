@@ -1963,7 +1963,10 @@ final class SoloMemoriesUITests: XCTestCase {
         let observations = app.descendants(matching: .any).matching(identifier: "vet-observations").firstMatch
         XCTAssertTrue(["", "例：1日2回吐く・食欲が半分"].contains(observations.value as? String ?? ""))
         revealVetElement(app.buttons["vet-pick-records"], app: app)
-        XCTAssertTrue(app.staticTexts["見せる記録 · 0件"].exists)
+        // Step 2 without a check: no record chosen yet (11/8 step headers).
+        let recordsStep = app.descendants(matching: .any).matching(identifier: "vet-step-records").firstMatch
+        XCTAssertTrue(recordsStep.exists)
+        XCTAssertEqual(recordsStep.label, "2、見せる写真・記録（任意）")
         app.buttons["vet-pick-records"].tap()
         let measuredSource = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
             "vet-source-", "食べる量が少なかった。")).firstMatch
@@ -1991,7 +1994,8 @@ final class SoloMemoriesUITests: XCTestCase {
         app.navigationBars["診察メモ"].buttons["閉じる"].tap()
         XCTAssertTrue(sameNameOtherCat.waitForExistence(timeout: 5)); sameNameOtherCat.tap()
         revealVetElement(app.buttons["vet-pick-records"], app: app)
-        XCTAssertTrue(app.staticTexts["見せる記録 · 0件"].exists)
+        XCTAssertTrue(recordsStep.exists)
+        XCTAssertEqual(recordsStep.label, "2、見せる写真・記録（任意）", "Same name must not carry the other cat's records")
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).firstMatch.exists)
         revealVetElement(app.buttons["vet-pick-records"], app: app); app.buttons["vet-pick-records"].tap()
         XCTAssertFalse(measuredSource.waitForExistence(timeout: 3), "Same name must not reuse the other cat's weight")
