@@ -258,8 +258,10 @@ final class EvacuationStore: ObservableObject {
         }
         // Everything per cat comes from 「この子のこと」; the toggles choose what shows.
         let care = CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
+        // Shown to others: rows not written are left out, never 「未記入」 (347).
         let fields = CatCareSummary.evacuationShareFields(care, legacy: cat,
             household: CatCareStore.shared.state?.household, planContact: plan.contact, disclosure: disclosure)
+            .filter { !$0.1.hasPrefix("未記入") && !$0.1.hasPrefix("未確認") }
         var attachments: [(String, UIImage)] = []
         if disclosure.catCare {
             for vaccination in care?.activeVaccinations ?? [] {

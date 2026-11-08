@@ -421,12 +421,15 @@ struct LostCatDraftView: View {
             }
             Button { pendingDate = draft.lastSeenAt ?? Date(); showsDatePicker = true } label: {
                 HStack {
-                    Text("日時").foregroundStyle(.primary)
+                    Text("日時")
                     Spacer()
-                    Text(draft.lastSeenAt.map(LostCatPublicDraft.lastSeenText) ?? "不明")
-                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                    Text(draft.lastSeenAt.map(LostCatPublicDraft.lastSeenText) ?? "不明").foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
                 }
+                .contentShape(Rectangle())
             }
+            // Like the rows around it, not a tinted action (347 showed it blue).
+            .foregroundStyle(.primary)
         } header: { Text("最後に見かけた場所・日時") }
     }
 

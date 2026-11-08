@@ -3152,7 +3152,10 @@ class LostCatToolReview1108Tests(unittest.TestCase):
         self.assertIn("parts.append(Self.hashtags)", public)
         renderer = section(store, "enum LostCatFlyerRenderer {", "private static func draw(")
         self.assertIn("if let lastSeen = draft.lastSeenDescription {", renderer)
-        self.assertIn('field("最後に見かけた日時  \\(lastSeen)"', renderer)
+        self.assertIn('field("最後に見かけた日時：\\(lastSeen)"', renderer)
+        # 347: labels read 「場所：公園」; whole photos sit on white, no gray bars.
+        self.assertIn('field("最後に見かけた場所：\\(placeValue)"', renderer)
+        self.assertNotIn("UIColor(white: 0.96, alpha: 1).setFill()", store)
         self.assertNotIn('"日時  ', renderer)
 
     def test_share_sends_image_and_post_with_plain_names(self) -> None:
@@ -3474,8 +3477,12 @@ class CareHandoffReviewTests(unittest.TestCase):
         self.assertLess(body.index('identifier: "care-call-when"'), body.index("catCareSection(cat)"))
         self.assertIn('"薬と連絡先は、次の画面で選ぶと載ります。"', editor)
         self.assertNotIn("CareRequestEditor", self.view)
-        # Family-shared request is named apart from the household one.
-        self.assertIn('Section("この子の期間とお願い")', editor)
+        # 347: period and request are written in one place, the make screen.
+        # A chosen family cat keeps its own shared request (never this iPhone's
+        # household one), so the form writes there.
+        self.assertNotIn("この子の期間とお願い", editor)
+        self.assertIn('text: request(\.period, \.period))', self.view)
+        self.assertIn("familyCats.first?.familyContext?[keyPath: key] ?? store.plan[keyPath: planKey]", self.view)
         self.assertEqual(self.view.count('"今回のお願い"'), 0)
         # Face photo from 「この子のこと」 first; never after the owner removed it.
         self.assertIn("care?.facePhoto?.value", editor)

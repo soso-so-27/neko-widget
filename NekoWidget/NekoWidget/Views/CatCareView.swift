@@ -1418,13 +1418,16 @@ struct ToolCatCareSection<Extra: View>: View {
     let editIdentifier: String
     /// Every cat, passed on to the cat's page.
     let profiles: [CatProfilePresentation]
+    /// The cat's birthday and adoption day; off for a box of contacts (347).
+    let showsLifeDates: Bool
     let extra: () -> Extra
 
     init(title: String, lines: [(String, String)], subject: CatCareSubject?, footer: String? = nil,
          identifier: String, editIdentifier: String, profiles: [CatProfilePresentation] = [],
-         @ViewBuilder extra: @escaping () -> Extra) {
+         showsLifeDates: Bool = true, @ViewBuilder extra: @escaping () -> Extra) {
         self.title = title; self.lines = lines; self.subject = subject; self.footer = footer
         self.identifier = identifier; self.editIdentifier = editIdentifier; self.profiles = profiles
+        self.showsLifeDates = showsLifeDates
         self.extra = extra
     }
 
@@ -1441,8 +1444,8 @@ struct ToolCatCareSection<Extra: View>: View {
     var body: some View {
         let filled = lines.filter { !Self.isEmptyLine($0) }
         let missing = lines.filter(Self.isEmptyLine).map(\.0)
-        let birthday = profile?.lifeDates.birthday
-        let adoption = profile?.lifeDates.adoptionDay
+        let birthday = showsLifeDates ? profile?.lifeDates.birthday : nil
+        let adoption = showsLifeDates ? profile?.lifeDates.adoptionDay : nil
         Section {
             // The dates were a second 「猫のプロフィール」 box above; they are
             // facts of この子のこと, so they sit here, in the one box (11/7).
@@ -1459,12 +1462,12 @@ struct ToolCatCareSection<Extra: View>: View {
                 }
             }
             .accessibilityIdentifier(identifier)
-            if filled.isEmpty && birthday == nil && adoption == nil {
+            if filled.isEmpty && birthday == nil && adoption == nil && missing.isEmpty {
                 Text("まだ何も書いていません。")
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier(identifier + "-empty")
             }
-            if !missing.isEmpty && !filled.isEmpty {
+            if !missing.isEmpty {
                 // 「、」 between items: some names already contain 「・」.
                 Text("まだ書いていないこと：" + missing.joined(separator: "、"))
                     .font(.footnote).foregroundStyle(.secondary)
@@ -1481,9 +1484,11 @@ struct ToolCatCareSection<Extra: View>: View {
 
 extension ToolCatCareSection where Extra == EmptyView {
     init(title: String, lines: [(String, String)], subject: CatCareSubject?, footer: String? = nil,
-         identifier: String, editIdentifier: String, profiles: [CatProfilePresentation] = []) {
+         identifier: String, editIdentifier: String, profiles: [CatProfilePresentation] = [],
+         showsLifeDates: Bool = true) {
         self.init(title: title, lines: lines, subject: subject, footer: footer,
-                  identifier: identifier, editIdentifier: editIdentifier, profiles: profiles) { EmptyView() }
+                  identifier: identifier, editIdentifier: editIdentifier, profiles: profiles,
+                  showsLifeDates: showsLifeDates) { EmptyView() }
     }
 }
 
@@ -1552,6 +1557,20 @@ private struct CatCareCameraView: UIViewControllerRepresentable {
 // MARK: - Formatting
 
 enum CatCareFormat {
+    /// 「去勢済み」 for a male, 「避妊済み」 for a female, both words when the sex
+    /// is not written; nil when it is not known (347: 「去勢・避妊 済み」 read oddly).
+    static func neutered(_ value: CatCareTriState?, sex: CatCareSex?) -> String? {
+        let word: String = switch sex ?? .unknown {
+        case .male: "去勢"
+        case .female: "避妊"
+        case .unknown: "去勢・避妊"
+        }
+        switch value ?? .unknown {
+        case .yes: return word + "済み"
+        case .no: return word + "はまだ"
+        case .unknown: return nil
+        }
+    }
     static func day(_ day: CatCareDay) -> String { "\(day.year)/\(day.month)/\(day.day)" }
 
     static func weight(_ grams: Int) -> String {
@@ -1603,11 +1622,7 @@ enum CatCareSummary {
         case .female: "メス"
         case .unknown: "未記入"
         }
-        let neutered: String = switch record?.neutered?.value ?? .unknown {
-        case .yes: "去勢・避妊 済み"
-        case .no: "去勢・避妊 まだ"
-        case .unknown: "去勢・避妊 未記入"
-        }
+        let neutered: String = CatCareFormat.neutered(record?.neutered?.value, sex: record?.sex?.value) ?? "去勢・避妊 未記入"
         // Both unknown: one 「未記入」, not 「未記入・去勢・避妊 未記入」.
         let bothUnknown = (record?.sex?.value ?? .unknown) == .unknown && (record?.neutered?.value ?? .unknown) == .unknown
         fields.append(("性別", bothUnknown ? empty : sex + "・" + neutered))
@@ -1785,11 +1800,7 @@ enum CatCareSummary {
         case .female: about.append("メス")
         case .unknown: break
         }
-        switch record?.neutered?.value ?? .unknown {
-        case .yes: about.append("去勢・避妊 済み")
-        case .no: about.append("去勢・避妊 まだ")
-        case .unknown: break
-        }
+        if let neutered = CatCareFormat.neutered(record?.neutered?.value, sex: record?.sex?.value) { about.append(neutered) }
         if let age = CatCareLostCat.age(record?.birthday?.value, today: today) { about.append(age) }
         if let latest = record?.activeWeights.first { about.append(CatCareFormat.weight(latest.grams)) }
         var fields: [(String, String)] = [("性別・年齢・体重", about.isEmpty ? empty : about.joined(separator: "・"))]
@@ -1823,11 +1834,7 @@ enum CatCareSummary {
         case .female: "メス"
         case .unknown: empty
         }
-        let neutered: String = switch record?.neutered?.value ?? .unknown {
-        case .yes: "・去勢・避妊 済み"
-        case .no: "・去勢・避妊 まだ"
-        case .unknown: ""
-        }
+        let neutered: String = CatCareFormat.neutered(record?.neutered?.value, sex: record?.sex?.value).map { "・" + $0 } ?? ""
         fields.append(("性別", sex + neutered))
         fields.append(("年齢", CatCareLostCat.age(record?.birthday?.value, today: today) ?? empty))
         if let latest = record?.activeWeights.first {

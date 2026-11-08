@@ -767,24 +767,24 @@ enum LostCatFlyerRenderer {
                       id: "advice", maxSize: paper ? (compact ? 14 : 19) : 33,
                       minSize: paper ? 14 : 27, lines: 4,
                       weight: .regular, measuredWidth: width))
-        prepend(field(draft.collar.isEmpty ? "" : "首輪  \(draft.collar)",
+        prepend(field(draft.collar.isEmpty ? "" : "首輪：\(draft.collar)",
                       id: "collar", maxSize: paper ? (compact ? 14 : 19) : 33,
                       minSize: paper ? 14 : 29, lines: 3,
                       weight: .regular, measuredWidth: width))
         prepend(field(draft.features.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                      ? "" : "特徴  \(draft.features)",
+                      ? "" : "特徴：\(draft.features)",
                       id: "features", maxSize: paper ? (compact ? 14 : 21) : 36,
                       minSize: paper ? 14 : 29, lines: 8,
                       weight: .regular, measuredWidth: width))
         // An unknown day is left out, never printed as 「不明」.
         if let lastSeen = draft.lastSeenDescription {
-            prepend(field("最後に見かけた日時  \(lastSeen)", id: "date",
+            prepend(field("最後に見かけた日時：\(lastSeen)", id: "date",
                           maxSize: paper ? 18 : 33, minSize: paper ? 18 : 33,
                           lines: 1, weight: .regular, measuredWidth: width))
         }
         let placeValue = draft.lastSeenNear.trimmingCharacters(in: .whitespacesAndNewlines)
         if placeValue.isEmpty { issues["place"] = "最後に見かけた場所を入力してください。" }
-        prepend(field("最後に見かけた場所  \(placeValue)", id: "place",
+        prepend(field("最後に見かけた場所：\(placeValue)", id: "place",
                       maxSize: paper ? (compact ? 17 : 24) : 43, minSize: paper ? 17 : 34,
                       lines: 3, weight: .bold, measuredWidth: width))
 
@@ -898,13 +898,13 @@ enum LostCatFlyerRenderer {
         return image.size.width * scale * image.size.height * scale
     }
 
+    /// The whole photo, never cropped (marks and coat must show), at the top
+    /// of its space on the white page: no gray bars around it (347, 11/8).
     private static func drawPhoto(_ image: UIImage, in rect: CGRect) {
-        UIColor(white: 0.96, alpha: 1).setFill()
-        UIRectFill(rect)
         guard image.size.width > 0, image.size.height > 0 else { return }
         let scale = min(rect.width / image.size.width, rect.height / image.size.height)
         let fitted = CGRect(x: rect.midX - image.size.width * scale / 2,
-                            y: rect.midY - image.size.height * scale / 2,
+                            y: rect.minY,
                             width: image.size.width * scale, height: image.size.height * scale)
         image.draw(in: fitted)
     }

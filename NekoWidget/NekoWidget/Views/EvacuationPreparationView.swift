@@ -838,8 +838,10 @@ private struct EvacuationDisplayView: View {
                         Image(uiImage: attachment.1).resizable().scaledToFit().accessibilityLabel(attachment.0)
                     }
                 }
-                Text("内容を確かめた日：" + (record.reviewedAt?.formatted(date: .numeric, time: .omitted) ?? "未確認"))
-                    .font(.footnote).foregroundStyle(.secondary)
+                if let reviewed = record.reviewedAt {
+                    Text("内容を確かめた日：" + reviewed.formatted(date: .numeric, time: .omitted))
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 if let error { Text(error).foregroundStyle(.red) }
 
             }.frame(maxWidth: .infinity, alignment: .leading).padding(20)
@@ -957,7 +959,8 @@ private struct EvacuationDestinationsView: View {
             // 11/8: shown here as on paper; written only in 「この子のこと」.
             ToolCatCareSection(title: "連絡先と病院", lines: store.contactLines(includeEmpty: true),
                                subject: contactSubject, identifier: "evacuation-contact-lines",
-                               editIdentifier: "evacuation-open-contacts", profiles: profiles)
+                               editIdentifier: "evacuation-open-contacts", profiles: profiles,
+                               showsLifeDates: false)
             Section("家族の集合場所と連絡方法") {
                 TextField("家族で決めた場所や連絡方法", text: Binding(get: {
                     CatCareStore.shared.state?.household.meetingPlace == nil

@@ -238,14 +238,6 @@ private struct CareCatEditor: View {
             }
         })
     }
-    private func contextText(_ key: WritableKeyPath<CareHandoffContext, String>, fallback: String) -> Binding<String> {
-        Binding(get: { cat?.familyContext?[keyPath: key] ?? fallback }, set: { value in
-            store.editCat(id) { cat in
-                var context = cat.familyContext ?? .init()
-                context[keyPath: key] = value; cat.familyContext = context
-            }
-        })
-    }
     /// Common signs to call about. The owner picks; nothing is judged here.
     static let callWhenChoices = ["丸1日ごはんを食べない", "何度も吐く", "おしっこが出ていない",
                                   "隠れて出てこない", "ぐったりしている", "けがをした", "外に出てしまった"]
@@ -321,14 +313,9 @@ private struct CareCatEditor: View {
                     .accessibilityIdentifier("care-call-when-choices")
                 }
                 catCareSection(cat)
-                // Shared in the family notebook: this cat's own period and request.
-                if let context = cat.familyContext {
-                    Section("この子の期間とお願い") {
-                        CareField(label: "お願いする相手", example: "例：お母さん", identifier: "care-family-recipient", text: contextText(\.recipient, fallback: context.recipient))
-                        CareField(label: "期間", example: "例：金曜の夜まで", identifier: "care-family-period", text: contextText(\.period, fallback: context.period))
-                        CareField(label: "ほかにお願いしたいこと", example: "例：終わったら写真を1枚", identifier: "care-family-request", text: contextText(\.request, fallback: context.request))
-                    }
-                }
+                // Period and request are written once, where the memo is made
+                // (347: a family cat had a second form here, and what was typed
+                // there replaced the memo's own). Family cats get the same values.
                 if cat.familyDetached == true { Text("このメモは、家族の手帳には入っていません。").font(.footnote).foregroundStyle(.secondary) }
                 Section {
                     Button("このお世話メモを削除", role: .destructive) { deleteRequested = true }
@@ -495,6 +482,28 @@ private struct CareDisclosureView: View {
     private func text(_ key: WritableKeyPath<CareHandoffPlan, String>) -> Binding<String> {
         Binding(get: { store.plan[keyPath: key] }, set: { new in store.update { $0[keyPath: key] = new } })
     }
+    /// Chosen cats shared in the family notebook: their own request is printed
+    /// (never this iPhone's household one), so the form writes there (347).
+    private var familyCats: [CareCat] {
+        store.plan.cats.filter { disclosure.catIDs.contains($0.id) && $0.familyContext != nil }
+    }
+    /// Period and request, written in one place: the chosen family cats' shared
+    /// request when there are any, else this memo's own.
+    private func request(_ key: WritableKeyPath<CareHandoffContext, String>,
+                         _ planKey: WritableKeyPath<CareHandoffPlan, String>) -> Binding<String> {
+        Binding(get: {
+            familyCats.first?.familyContext?[keyPath: key] ?? store.plan[keyPath: planKey]
+        }, set: { new in
+            let cats = familyCats
+            if cats.isEmpty { store.update { $0[keyPath: planKey] = new }; return }
+            for cat in cats {
+                store.editCat(cat.id) { cat in
+                    var context = cat.familyContext ?? .init()
+                    context[keyPath: key] = new; cat.familyContext = context
+                }
+            }
+        })
+    }
     /// 11/8: shown here before the memo is made, never printed.
     private var unwritten: [String] {
         let chosen = cats.filter { disclosure.catIDs.contains($0.id) }
@@ -517,9 +526,9 @@ private struct CareDisclosureView: View {
         List {
             // 11/8: this time's period and request first, where the memo is made.
             Section {
-                CareField(label: "お願いする相手", example: "例：お母さん", identifier: "care-recipient", text: text(\.recipient))
-                CareField(label: "期間", example: "例：10月5日 夜〜10月7日 朝", identifier: "care-period", text: text(\.period))
-                CareField(label: "ほかにお願いしたいこと", example: "例：お世話が終わったら写真を1枚送ってください", identifier: "care-request", text: text(\.request))
+                CareField(label: "お願いする相手", example: "例：お母さん", identifier: "care-recipient", text: request(\.recipient, \.recipient))
+                CareField(label: "期間", example: "例：10月5日 夜〜10月7日 朝", identifier: "care-period", text: request(\.period, \.period))
+                CareField(label: "ほかにお願いしたいこと", example: "例：お世話が終わったら写真を1枚送ってください", identifier: "care-request", text: request(\.request, \.request))
             } header: { Text("期間とお願い")
             } footer: { ToolImportantInformation(text: "住所や鍵の番号は、別の方法で伝えてください。") }
             Section("今回お願いする猫") {
