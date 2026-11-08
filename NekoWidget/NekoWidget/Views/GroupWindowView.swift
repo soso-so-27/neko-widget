@@ -331,16 +331,18 @@ final class GroupWindowScreenModel: ObservableObject {
         guard let windowName = window?.name ?? GroupWidgetCache.entry(windowID: windowID)?.windowName else { return }
         let safety = GroupSafety.shared
         let newest = entries.first { !$0.isHidden && !safety.hasReported($0.id, in: windowID) }
-        var jpeg: Data?
-        if let newest, let url = await store.imageURL(photoID: newest.id, windowID: windowID) {
-            jpeg = try? Data(contentsOf: url)
-        }
-        // A foreground hide may happen while the JPEG is being read above.
+        var imageURL: URL?
+        if let newest { imageURL = await store.imageURL(photoID: newest.id, windowID: windowID) }
+        // A foreground hide may happen while the photo is looked up above.
         let current = await store.entries(windowID: windowID)
         if let newest, !current.contains(where: { $0.id == newest.id && !$0.isHidden })
             || safety.hasReported(newest.id, in: windowID) { return }
         guard !Task.isCancelled else { return }
         let previous = GroupWidgetCache.entry(windowID: windowID)
+        // The cache keeps the image it already has for the same photo, so the
+        // full photo is read only when the home screen needs a new one.
+        let keepsCachedImage = previous?.photoID == newest?.id && previous?.imageFileName != nil
+        let jpeg = keepsCachedImage ? nil : imageURL.flatMap { try? Data(contentsOf: $0) }
         do {
             try GroupWidgetCache.update(
                 windowID: windowID, windowName: windowName, photoID: newest?.id, jpeg: jpeg,
@@ -1780,7 +1782,9 @@ private struct GroupPhotoDetail: View {
 private struct GroupPhotoPage: View {
     @ObservedObject var model: GroupWindowScreenModel
     let entry: GroupWindowLocalPhotoStore.Entry
-    @State private var url: URL?
+    /// Decoded once per photo off the main thread, not on every redraw of
+    /// the model. A window's photos are at most 2048px, so this is the full photo.
+    @State private var image: UIImage?
     @ObservedObject private var safety = GroupSafety.shared
 
     var body: some View {
@@ -1795,7 +1799,7 @@ private struct GroupPhotoPage: View {
             } else if entry.isHidden {
                 ContentUnavailableView("この写真は表示しません", systemImage: "eye.slash",
                     description: Text("センシティブな内容が含まれている可能性があります。右上の「…」から消せます。"))
-            } else if let url, let image = UIImage(contentsOfFile: url.path) {
+            } else if let image {
                 Image(uiImage: image).resizable().scaledToFit()
                     .accessibilityLabel(entry.isOwn ? "自分が届けた写真" : "\(GroupDisplayName.withSan(entry.senderDisplayName))から届いた写真")
             } else {
@@ -1803,8 +1807,18 @@ private struct GroupPhotoPage: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task(id: entry.id) { url = await model.imageURL(for: entry) }
+        .task(id: GroupPhotoPageImageKey(id: entry.id, isHidden: entry.isHidden)) {
+            guard !entry.isHidden, let url = await model.imageURL(for: entry) else { return }
+            image = await Task.detached(priority: .userInitiated) {
+                GroupPhotoDecoder.image(at: url, maxPixel: 2048)
+            }.value
+        }
     }
+}
+
+private struct GroupPhotoPageImageKey: Hashable {
+    let id: String
+    let isHidden: Bool
 }
 
 // MARK: - Members screen with the production client

@@ -1227,21 +1227,30 @@ final class AppRecordPersistence: ObservableObject {
             await synchronizeOnce()
         }
     }
+    /// The binding when there is work to do; nil when this second has none.
+    /// Runs before `busy` is taken, with no await, so an idle second of the
+    /// loop publishes nothing. A thrown error is handled after `busy`.
+    private func bindingWithWork() throws -> Binding? {
+        guard let value = try binding(), value.enabled else { title = "自動保存はオフです"; return nil }
+        try AppRecordDataset.requireScope(owner: value.owner, origin: value.origin)
+        // Every live store commit and foreground entry requests work. An
+        // idle timer must not reassemble years of notes every eight seconds.
+        guard requested || cleanupPending || value.pending != nil || !(value.retiring ?? []).isEmpty || waitingForEditor else { return nil }
+        if !requested, Date() < cleanupNextAttempt { return nil }
+        return value
+    }
     private func synchronizeOnce() async {
         let intent = saveIntent.ticket()
         guard enabled, active || requested, !busy, !conflict, Date() >= nextAttempt else { return }
+        let starting = Result { try bindingWithWork() }
+        if case .success(nil) = starting { return }
         busy = true
         defer { busy = false }
         var phase = "保存設定を確認"
         var accepted: AcceptedSave?
         var cleanup = false
         do {
-            guard var value = try binding(), value.enabled else { title = "自動保存はオフです"; return }
-            try AppRecordDataset.requireScope(owner: value.owner, origin: value.origin)
-            // Every live store commit and foreground entry requests work. An
-            // idle timer must not reassemble years of notes every eight seconds.
-            guard requested || cleanupPending || value.pending != nil || !(value.retiring ?? []).isEmpty || waitingForEditor else { return }
-            if !requested, Date() < cleanupNextAttempt { return }
+            guard var value = try starting.get() else { return }
             try AppRecordEditingLease.requireIdle()
             let currentFingerprint = try await AppRecordBackground.fingerprint()
             try saveIntent.require(intent)

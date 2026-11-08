@@ -28,6 +28,11 @@ extension Notification.Name {
     static let receivedMemoryImportNeedsRefresh = Notification.Name(
         "jp.nekowidget.received-memory-import-needs-refresh"
     )
+    /// Photos reported a change. Views that remember something read from
+    /// Photos (for example the quarter's video digest) read it again.
+    static let photoLibraryContentDidChange = Notification.Name(
+        "jp.nekowidget.photo-library-content-did-change"
+    )
 }
 
 /// Sent only after the private favorite store accepted the mutation. A
@@ -381,6 +386,7 @@ final class AppViewModel: ObservableObject {
     private lazy var libraryObserver = PhotoLibraryObserver { [weak self] in
         guard let self else { return }
         self.libraryChangePending = true
+        NotificationCenter.default.post(name: .photoLibraryContentDidChange, object: nil)
         let previousStatus = self.authorizationStatus
         self.authorizationStatus = self.authorizationService.status
         guard self.authorizationStatus == .limited else {

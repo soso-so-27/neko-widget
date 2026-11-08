@@ -149,17 +149,25 @@ final class GroupSafety: ObservableObject {
     }
 
     /// This iPhone's own records only, without asking the server.
+    /// Values are assigned only when they changed, so opening a window does
+    /// not announce unchanged records (each announcement rewrites the
+    /// home-screen photo).
     func loadRecords(windowID: String) async {
         do {
-            locallyReportedPhotos[windowID] = try await service.locallyReportedPhotoIDs(windowID: windowID)
-            unreadableSuppression.remove(windowID)
+            let reported = try await service.locallyReportedPhotoIDs(windowID: windowID)
+            if locallyReportedPhotos[windowID] != reported { locallyReportedPhotos[windowID] = reported }
+            if unreadableSuppression.contains(windowID) { unreadableSuppression.remove(windowID) }
         } catch {
             // An unreadable local record must never uncover a reported photo.
             unreadableSuppression.insert(windowID)
             failure = .storageUnavailable
         }
-        records[windowID] = await service.reports(windowID: windowID)
-        do { pendingBlocks[windowID] = try await service.pendingBlocks(windowID: windowID) }
+        let nextRecords = await service.reports(windowID: windowID)
+        if records[windowID] != nextRecords { records[windowID] = nextRecords }
+        do {
+            let nextBlocks = try await service.pendingBlocks(windowID: windowID)
+            if pendingBlocks[windowID] != nextBlocks { pendingBlocks[windowID] = nextBlocks }
+        }
         catch { failure = error as? GroupSafetyError ?? .storageUnavailable }
     }
 

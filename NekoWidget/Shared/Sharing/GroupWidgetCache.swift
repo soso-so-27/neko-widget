@@ -127,6 +127,8 @@ enum GroupWidgetCache {
         let entry = Entry(windowID: windowID, windowName: windowName, photoID: photoID,
                           imageFileName: imageFileName, senderDisplayName: senderDisplayName,
                           capturedAt: capturedAt, isPaused: isPaused, myHeartActive: myHeartActive)
+        // Nothing changed: the catalog on disk already says exactly this.
+        if previous == entry, catalog.entries.count <= maximumWindows { return }
         // Keep each window where it is, so the widget's list does not reorder.
         if let index = catalog.entries.firstIndex(where: { $0.windowID == windowID }) {
             catalog.entries[index] = entry
