@@ -340,6 +340,7 @@ private struct VeterinaryConsultationView: View {
     }
     private var page: some View {
         Form { formContent }
+        .toolPageSpacing()
         .navigationTitle(isPage ? "病院で見せる" : "診察メモ").navigationBarTitleDisplayMode(.inline)
         .announcesWhenShown(error)
         .toolbar {

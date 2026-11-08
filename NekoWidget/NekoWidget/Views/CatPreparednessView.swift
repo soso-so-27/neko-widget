@@ -196,12 +196,10 @@ struct LostCatDraftView: View {
     @State private var photoRequest = UUID()
     @State private var selectedRole: CatPreparednessStore.PhotoRole?
     @State private var pendingPhotoItem: PhotosPickerItem?
-    /// The full photos: the flyer and 切り取る use these.
+    /// The full photos: the flyer and 切り取る use these. The tiles show the
+    /// kept files from small copies (`tileFile`, 11/8).
     @State private var faceImage: UIImage?
     @State private var bodyImage: UIImage?
-    /// Small copies for the two tiles, made off the main thread (11/8).
-    @State private var faceTile: UIImage?
-    @State private var bodyTile: UIImage?
     @State private var photoBusy = false
     @State private var photoError: String?
     @State private var saveError = false
@@ -259,6 +257,7 @@ struct LostCatDraftView: View {
                 }
             }
         }
+        .toolPageSpacing()
         .navigationTitle("迷子のとき")
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -275,7 +274,7 @@ struct LostCatDraftView: View {
                         .multilineTextAlignment(.center)
                 }
             } action: {
-                Button("チラシを作る") { openPreview() }
+                Button { openPreview() } label: { Text("チラシを作る").frame(maxWidth: .infinity) }
                     .disabled(!canPreview)
             }
         }
@@ -371,12 +370,11 @@ struct LostCatDraftView: View {
                 ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
             tiles {
                 photoTile("顔・毛柄の写真", role: .face, image: faceImage,
-                          shown: faceImage == nil ? nil : faceTile ?? (faceTileName == nil ? faceImage : nil))
+                          file: faceImage == nil ? nil : tileFile(draft.faceFileName, draft.bodyFileName))
                 photoTile("全身の写真（任意）", role: .body, image: bodyImage,
-                          shown: bodyImage == nil ? nil : bodyTile ?? (bodyTileName == nil ? bodyImage : nil))
+                          file: bodyImage == nil || draft.faceFileName == nil ? nil : tileFile(draft.bodyFileName))
             }
             .padding(.vertical, 4)
-            .task(id: "\(draft.faceFileName ?? "-")|\(draft.bodyFileName ?? "-")") { await loadTiles() }
             if let photoError {
                 Text(photoError).font(.footnote).foregroundStyle(.red)
                 if faceImage != nil {
@@ -672,54 +670,27 @@ struct LostCatDraftView: View {
         loaded && !saveError && !photoBusy && photoError == nil && requiredFields.isEmpty
     }
 
-    /// Whether a tile has a kept file to show; without one (a photo handed in
-    /// on opening) the tile shows `faceImage` itself.
-    private var faceTileName: String? { draft.faceFileName ?? draft.bodyFileName }
-    private var bodyTileName: String? { draft.faceFileName == nil ? nil : draft.bodyFileName }
-
-    /// The same choice as `faceImage` and `bodyImage`, from small copies.
-    private func loadTiles() async {
-        let face = draft.faceFileName, body = draft.bodyFileName
-        var faceSmall = await ToolPhotoThumbnail.load(store.imageURL(face))
-        if faceSmall == nil { faceSmall = await ToolPhotoThumbnail.load(store.imageURL(body)) }
-        var bodySmall: UIImage?
-        if face != nil { bodySmall = await ToolPhotoThumbnail.load(store.imageURL(body)) }
-        guard !Task.isCancelled else { return }
-        faceTile = faceSmall
-        bodyTile = bodySmall
+    /// The first kept file that is there, the same choice as `faceImage` and
+    /// `bodyImage` make. Nil (a photo handed in on opening) shows the image itself.
+    private func tileFile(_ names: String?...) -> URL? {
+        names.lazy.compactMap { store.imageURL($0) }.first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
-    /// `image` is the full photo (切り取る, the flyer); `shown` is its small copy.
+    /// `image` is the full photo (切り取る, the flyer); `file` is shown from a small copy.
     private func photoTile(_ title: String, role: CatPreparednessStore.PhotoRole, image: UIImage?,
-                           shown: UIImage?) -> some View {
+                           file: URL?) -> some View {
         VStack(spacing: 4) {
-            Button { photoError = nil; selectedRole = role } label: {
-                Color(.tertiarySystemGroupedBackground)
-                    .aspectRatio(4.0 / 3.0, contentMode: .fit)
-                    .overlay {
-                        if let shown { Image(uiImage: shown).resizable().scaledToFit() }
-                        else if image == nil { Image(systemName: "photo.badge.plus").font(.title2) }
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(title)
-            .accessibilityIdentifier(role == .face ? "lost-cat-face-photo" : "lost-cat-body-photo")
-            .disabled(photoBusy || (role == .body && faceImage == nil))
-            HStack {
-                Text(title).font(.caption)
-                    .foregroundStyle(isPrefilled(role == .face ? "face" : "body") ? Color.secondary : Color.primary)
-                Spacer(minLength: 0)
+            ToolPhotoSlot(title, image: image, file: file, dimmedTitle: isPrefilled(role == .face ? "face" : "body"),
+                          disabled: photoBusy || (role == .body && faceImage == nil),
+                          identifier: role == .face ? "lost-cat-face-photo" : "lost-cat-body-photo",
+                          actionsIdentifier: role == .face ? "lost-cat-face-actions" : "lost-cat-body-actions",
+                          choose: { photoError = nil; selectedRole = role }) {
+                Button("写真を選び直す", systemImage: "photo") { selectedRole = role }
                 if let image {
-                    Menu {
-                        Button("写真を選び直す", systemImage: "photo") { selectedRole = role }
-                        Button("切り取る", systemImage: "crop") { cropRequest = LostCatCropRequest(role: role, image: image) }
-                        if role == .body {
-                            Button("全身の写真を外す", systemImage: "minus.circle", role: .destructive) { removeSecondPhoto() }
-                        }
-                    } label: { Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle()) }
-                    .accessibilityLabel("\(title)の操作")
-                    .accessibilityIdentifier(role == .face ? "lost-cat-face-actions" : "lost-cat-body-actions")
+                    Button("切り取る", systemImage: "crop") { cropRequest = LostCatCropRequest(role: role, image: image) }
+                }
+                if role == .body {
+                    Button("全身の写真を外す", systemImage: "minus.circle", role: .destructive) { removeSecondPhoto() }
                 }
             }
             if role == .body && faceImage == nil {
