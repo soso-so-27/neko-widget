@@ -35,7 +35,9 @@ struct AppRootView: View {
     @State private var presentedError: PresentedError?
     @State private var showsWidgetPlacementGuide = false
     @ObservedObject private var invitationInbox = GroupInvitationInbox.shared
-    @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
+    /// Made at launch so 「この子のこと」 reaches the family notebook from the
+    /// first run on. Nothing here draws from it, so it is not observed.
+    private let familyNotebook = FamilyNotebookPrototype.shared
     private struct FamilyLink: Identifiable { let id = UUID(); let url: URL }
     @State private var familyLink: FamilyLink?
     /// Joined a family from a link: the notebook opens once that sheet is gone.
@@ -468,12 +470,11 @@ struct AppRootView: View {
                 ? effectiveAlbumState(catAssetCount: visibleCatAssets.count)
                 : .idle,
             settings: settingsPresentation,
-            detectionAccuracySample: hasPhotoAccess
-                ? detectionAccuracySamplePresentation
-                : .init(),
-            highResolutionRecoverySample: hasPhotoAccess
-                ? highResolutionRecoverySamplePresentation(records: visibleCatAssets)
-                : .init(),
+            detectionAccuracySample: internalDetectionAccuracySample(hasPhotoAccess: hasPhotoAccess),
+            highResolutionRecoverySample: internalHighResolutionRecoverySample(
+                hasPhotoAccess: hasPhotoAccess,
+                records: visibleCatAssets
+            ),
             excludedCatPhotos: hasPhotoAccess
                 ? excludedCatPhotoPresentations(assetsByIdentifier: assetsByIdentifier)
                 : [],
@@ -598,6 +599,30 @@ struct AppRootView: View {
         )
     }
 
+    /// The samples are shown only in internal builds' Settings, so the
+    /// SHA-256 ranking and sort are skipped entirely in shipping builds.
+    private func internalDetectionAccuracySample(
+        hasPhotoAccess: Bool
+    ) -> DetectionAccuracySamplePresentation {
+#if DEBUG || INTERNAL_PRESENTATION
+        hasPhotoAccess ? detectionAccuracySamplePresentation : .init()
+#else
+        .init()
+#endif
+    }
+
+    private func internalHighResolutionRecoverySample(
+        hasPhotoAccess: Bool,
+        records: [AssetRecord]
+    ) -> DetectionAccuracySamplePresentation {
+#if DEBUG || INTERNAL_PRESENTATION
+        hasPhotoAccess ? highResolutionRecoverySamplePresentation(records: records) : .init()
+#else
+        .init()
+#endif
+    }
+
+#if DEBUG || INTERNAL_PRESENTATION
     private var detectionAccuracySamplePresentation: DetectionAccuracySamplePresentation {
         guard DetectionAccuracySampler.isFinal(viewModel.snapshot) else {
             return DetectionAccuracySamplePresentation()
@@ -647,6 +672,7 @@ struct AppRootView: View {
             }
         )
     }
+#endif
 
     private func excludedCatPhotoPresentations(
         assetsByIdentifier: [String: AssetRecord]

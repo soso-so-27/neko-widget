@@ -2734,6 +2734,147 @@ try MomentSharingStateStore.verifyPrivateAlias()
 
 
 
+class AppDrawingWasteTests(unittest.TestCase):
+    """Work that drawing used to repeat for nothing stays removed."""
+
+    def test_internal_detection_samples_are_not_built_in_shipping_builds(self) -> None:
+        root = source("NekoWidget/App/AppRootView.swift")
+        samples = section(root, "private func internalDetectionAccuracySample(", "private func excludedCatPhotoPresentations(")
+        for name in ("internalDetectionAccuracySample", "internalHighResolutionRecoverySample"):
+            body = section(samples, f"private func {name}(", "\n    }\n")
+            self.assertIn("#if DEBUG || INTERNAL_PRESENTATION", body)
+            self.assertIn("#else\n        .init()\n#endif", body)
+        # The ranking itself only exists where Settings shows it.
+        guarded = samples[samples.index("#if DEBUG || INTERNAL_PRESENTATION\n    private var detectionAccuracySamplePresentation"):]
+        self.assertIn("private func highResolutionRecoverySamplePresentation(", guarded)
+        self.assertTrue(guarded.rstrip().endswith("#endif"))
+        presentation = section(root, "settings: settingsPresentation,", "excludedCatPhotos:")
+        self.assertIn("detectionAccuracySample: internalDetectionAccuracySample(hasPhotoAccess: hasPhotoAccess)", presentation)
+        self.assertIn("highResolutionRecoverySample: internalHighResolutionRecoverySample(", presentation)
+        self.assertNotIn("? detectionAccuracySamplePresentation", presentation)
+
+    def test_app_root_does_not_observe_the_family_notebook(self) -> None:
+        root = source("NekoWidget/App/AppRootView.swift")
+        self.assertNotIn("@ObservedObject private var familyNotebook", root)
+        # Still made at launch, so the first run's 「この子のこと」 reaches it.
+        self.assertIn("private let familyNotebook = FamilyNotebookPrototype.shared", root)
+        main = source("NekoWidget/Views/MainTabView.swift")
+        self.assertIn("@ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared", main)
+
+    def test_seasonal_movie_video_digest_is_remembered_between_drawings(self) -> None:
+        main = source("NekoWidget/Views/MainTabView.swift")
+        key = section(main, "private var seasonalMoviePreparationKey: SeasonalMoviePreparationKey {", "private func prepareSeasonalMovie()")
+        self.assertNotIn("SeasonalMovieVideoCatalog.digest(", key)
+        self.assertIn("seasonalMovieVideoCatalogDigest.digest(for: .init(", key)
+        self.assertIn("photoPresentationVersion: photoPresentationVersion,\n                libraryChangeCount: photoLibraryChangeCount", key)
+        self.assertIn("seasonalMovieVideoCatalogDigest.forget()", key)
+        cache = section(main, "private final class SeasonalMovieVideoCatalogDigestCache {", "private struct LazyToolDestination")
+        self.assertIn("if self.input != input {\n            digest = SeasonalMovieVideoCatalog.digest(", cache)
+        self.assertIn("@State private var seasonalMovieVideoCatalogDigest = SeasonalMovieVideoCatalogDigestCache()", main)
+        self.assertIn(".onReceive(NotificationCenter.default.publisher(for: .photoLibraryContentDidChange)) { _ in\n            photoLibraryChangeCount &+= 1", main)
+        model = source("NekoWidget/ViewModels/AppViewModel.swift")
+        observer = section(model, "private lazy var libraryObserver = PhotoLibraryObserver {", "init() {")
+        self.assertIn("NotificationCenter.default.post(name: .photoLibraryContentDidChange, object: nil)", observer)
+
+    def test_plus_offer_photo_is_found_without_sorting_every_candidate(self) -> None:
+        main = source("NekoWidget/Views/MainTabView.swift")
+        self.assertIn(".environment(\\.plusOfferPhoto, bestShowcaseCandidate.map {", main)
+        self.assertNotIn("showcaseCandidates.first.map", main)
+        best = section(main, "private var bestShowcaseCandidate: PhotoPresentation? {", "private var toolsView: some View {")
+        self.assertNotIn(".sorted", best)
+        self.assertNotIn("Dictionary(", best)
+        self.assertIn("!Self.showcaseCandidatePrecedes(photo, current)", best)
+        self.assertIn("for photos in [libraryPhotos, likedPhotos, catPhotos] {", best)
+        # One ordering rule for the list and for the single best photo.
+        candidates = section(main, "private var showcaseCandidates: [PhotoPresentation] {", "private static func showcaseCandidatePrecedes(")
+        self.assertIn("}.sorted(by: Self.showcaseCandidatePrecedes)", candidates)
+
+    def test_photo_library_filter_is_built_once_per_list(self) -> None:
+        main = source("NekoWidget/Views/MainTabView.swift")
+        builder = section(main, "private func photoLibraryIncludesFilter() -> (String) -> Bool {", "private var photoLibraryCatPhotos")
+        self.assertLess(builder.index("guard let selected = photoLibraryProfileIdentifier else { return { _ in true } }"),
+                        builder.index("let registered = photoLibraryRegisteredIdentifiers"))
+        closure = builder[builder.index("return { identifier in"):]
+        self.assertNotIn("photoLibraryRegisteredIdentifiers", closure)
+        self.assertNotIn("currentPhotoLibraryAssignments", closure)
+        for start, end in (("private var photoLibraryCatPhotos", "private var photoLibraryLikedPhotos"),
+                           ("private var photoLibraryLikedPhotos", "private var photoLibraryBrowserPhotos"),
+                           ("private var unavailablePhotoLibrarySavedCount", "private var photoLibraryCatPicker")):
+            body = section(main, start, end)
+            self.assertIn("let includes = photoLibraryIncludesFilter()", body)
+            self.assertNotIn("photoLibraryIncludes(", body)
+        scoped = section(main, "private func scopedCatPhotos(for scope:", "guard case let .profile(identifier) = scope else {")
+        self.assertNotIn("photoLibraryIncludes(", scoped)
+
+    def test_tool_pages_are_built_only_when_shown(self) -> None:
+        main = source("NekoWidget/Views/MainTabView.swift")
+        tools = section(main, "private var toolsView: some View {", "private var showcaseToolCard: some View {")
+        for page in ("VeterinaryVisitsView(", "LostCatEmergencyEntryView(", "CareHandoffView(", "EvacuationPreparationView("):
+            self.assertIn("NavigationLink {\n                        LazyToolDestination {\n                            " + page, tools)
+        self.assertEqual(tools.count("LazyToolDestination {"), 4)
+        lazy = section(main, "private struct LazyToolDestination<Content: View>: View {", "private struct PhotoThemeCatKey")
+        self.assertIn("var body: some View { content() }", lazy)
+
+    def test_home_screen_photo_is_read_and_written_only_when_it_changes(self) -> None:
+        screen = source("NekoWidget/Views/GroupWindowView.swift")
+        home = section(screen, "    func updateHomeScreenPhoto() async {", "private func receive(")
+        self.assertIn("let keepsCachedImage = previous?.photoID == newest?.id && previous?.imageFileName != nil", home)
+        self.assertIn("let jpeg = keepsCachedImage ? nil : imageURL.flatMap { try? Data(contentsOf: $0) }", home)
+        self.assertEqual(home.count("Data(contentsOf"), 1)
+        # The hide check still runs before anything is handed to the cache.
+        self.assertLess(home.index("|| safety.hasReported(newest.id, in: windowID) { return }"), home.index("let jpeg ="))
+        self.assertLess(home.index("let jpeg ="), home.index("try GroupWidgetCache.update("))
+        cache = source("Shared/Sharing/GroupWidgetCache.swift")
+        update = section(cache, "static func update(", "// MARK: Files")
+        self.assertLess(update.index("if previous == entry, catalog.entries.count <= maximumWindows { return }"),
+                        update.index('appendingPathComponent("catalog.json")'))
+        safety = source("NekoWidget/Services/GroupReporting.swift")
+        load = section(safety, "func loadRecords(windowID: String) async {", "func hasReported(")
+        self.assertIn("if records[windowID] != nextRecords { records[windowID] = nextRecords }", load)
+        self.assertIn("if locallyReportedPhotos[windowID] != reported { locallyReportedPhotos[windowID] = reported }", load)
+        self.assertIn("if pendingBlocks[windowID] != nextBlocks { pendingBlocks[windowID] = nextBlocks }", load)
+        # An unreadable record still covers the photo.
+        self.assertIn("unreadableSuppression.insert(windowID)", load)
+
+    def test_group_photo_page_decodes_once_off_the_main_thread(self) -> None:
+        screen = source("NekoWidget/Views/GroupWindowView.swift")
+        page = section(screen, "private struct GroupPhotoPage: View {", "private struct GroupPhotoPageImageKey")
+        self.assertNotIn("UIImage(contentsOfFile", page)
+        self.assertIn("@State private var image: UIImage?", page)
+        self.assertIn(".task(id: GroupPhotoPageImageKey(id: entry.id, isHidden: entry.isHidden)) {", page)
+        self.assertIn("GroupPhotoDecoder.image(at: url, maxPixel: 2048)", page)
+        self.assertIn("Task.detached(priority: .userInitiated)", page)
+        # 2048px is the largest photo a window accepts, so nothing is shrunk.
+        self.assertIn("(1...2048).contains(width), (1...2048).contains(height)",
+                      source("NekoWidget/Services/GroupWindowPhotoValidation.swift"))
+
+    def test_month_jump_months_are_worked_out_once_per_drawing(self) -> None:
+        home = source("NekoWidget/Views/HomeView.swift")
+        heading = section(home, "@ViewBuilder private var detectedPhotosSection: some View {", '.id("photo-library-all-heading")')
+        self.assertEqual(heading.count("monthDestinations"), 1)
+        self.assertIn("monthJumpMenu(monthDestinations)", heading)
+        menu = section(home, "@ViewBuilder private func monthJumpMenu(", "private func moveToMonth(")
+        self.assertNotIn("monthDestinations", menu)
+        self.assertIn('.accessibilityIdentifier("photo-library-month-jump")', menu)
+
+    def test_idle_auto_save_seconds_publish_nothing(self) -> None:
+        persistence = source("NekoWidget/Services/AppRecordPersistence.swift")
+        once = section(persistence, "    private func synchronizeOnce() async {", "        var phase = ")
+        # No await before `busy`, and an idle second returns before it.
+        self.assertNotIn("await", once)
+        self.assertLess(once.index("if case .success(nil) = starting { return }"),
+                        once.index("busy = true\n        defer { busy = false }"))
+        work = section(persistence, "private func bindingWithWork() throws -> Binding? {", "    private func synchronizeOnce()")
+        self.assertIn("guard requested || cleanupPending || value.pending != nil"
+                      " || !(value.retiring ?? []).isEmpty || waitingForEditor else { return nil }", work)
+        self.assertIn("if !requested, Date() < cleanupNextAttempt { return nil }", work)
+        self.assertIn("try AppRecordDataset.requireScope(owner: value.owner, origin: value.origin)", work)
+        self.assertNotIn("await", work)
+        # A thrown binding error is still handled inside, while busy.
+        body = section(persistence, "        var phase = \"保存設定を確認\"", "try AppRecordEditingLease.requireIdle()")
+        self.assertIn("guard var value = try starting.get() else { return }", body)
+
+
 class GroupWindowUITests(unittest.TestCase):
     def test_group_window_screens_stay_behind_the_client_boundary(self) -> None:
         view = source("NekoWidget/Views/GroupWindowSetupView.swift")

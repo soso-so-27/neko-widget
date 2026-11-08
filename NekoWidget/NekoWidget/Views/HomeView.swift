@@ -598,6 +598,23 @@ struct HomeView: View {
         }
     }
 
+    /// The months are worked out once per drawing and handed in here.
+    @ViewBuilder private func monthJumpMenu(_ months: [PhotoLibraryMonthDestination]) -> some View {
+        if !months.isEmpty {
+            Menu {
+                ForEach(months) { month in
+                    Button(month.label) { moveToMonth(month.identifier) }
+                }
+            } label: {
+                Label("日付", systemImage: "calendar")
+                    .font(.subheadline.weight(.medium))
+                    .frame(minHeight: 44)
+            }
+            .accessibilityLabel("年月へ移動")
+            .accessibilityIdentifier("photo-library-month-jump")
+        }
+    }
+
     private func moveToMonth(_ identifier: String) {
         guard let index = catPhotos.firstIndex(where: { $0.localIdentifier == identifier }) else { return }
         visibleDetectedPhotoCount = max(visibleDetectedPhotoCount, index + 120)
@@ -622,18 +639,8 @@ struct HomeView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("photo-hub-detected-grid")
                 Spacer()
-                if isEmbedded, !monthDestinations.isEmpty {
-                    Menu {
-                        ForEach(monthDestinations) { month in
-                            Button(month.label) { moveToMonth(month.identifier) }
-                        }
-                    } label: {
-                        Label("日付", systemImage: "calendar")
-                            .font(.subheadline.weight(.medium))
-                            .frame(minHeight: 44)
-                    }
-                    .accessibilityLabel("年月へ移動")
-                    .accessibilityIdentifier("photo-library-month-jump")
+                if isEmbedded {
+                    monthJumpMenu(monthDestinations)
                 }
             }
             .padding(.top, 2)

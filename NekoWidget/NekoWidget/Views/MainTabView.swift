@@ -319,6 +319,45 @@ private struct SeasonalMoviePreparationKey: Hashable {
     let sourceAlbumIdentifier: String?
 }
 
+/// Remembers the quarter's video digest, so drawing the tabs does not fetch
+/// and walk the quarter's videos in Photos every time. It is read again when
+/// the quarter, source or photo version changes, when Photos reports a
+/// change, and each time preparation becomes possible again (returning to the
+/// foreground, a scan ending, access or the source coming back). Used only
+/// while drawing MainTabView.
+private final class SeasonalMovieVideoCatalogDigestCache {
+    struct Input: Equatable {
+        let quarter: DateInterval
+        let sourceAlbumIdentifier: String?
+        let photoPresentationVersion: LibraryPresentationVersion
+        let libraryChangeCount: Int
+    }
+
+    private var input: Input?
+    private var digest = 0
+
+    func digest(for input: Input) -> Int {
+        if self.input != input {
+            digest = SeasonalMovieVideoCatalog.digest(
+                in: input.quarter,
+                sourceAlbumIdentifier: input.sourceAlbumIdentifier
+            )
+            self.input = input
+        }
+        return digest
+    }
+
+    func forget() { input = nil }
+}
+
+/// Builds a tool page only when it is shown, so drawing the tools list does
+/// not gather each page's photos (the memo photos, the unregistered cats).
+private struct LazyToolDestination<Content: View>: View {
+    private let content: () -> Content
+    init(@ViewBuilder _ content: @escaping () -> Content) { self.content = content }
+    var body: some View { content() }
+}
+
 private struct PhotoThemeCatKey: Hashable {
     let profileIdentifier: String
     let photoPresentationVersion: LibraryPresentationVersion
@@ -582,6 +621,8 @@ struct MainTabView: View {
     @StateObject private var householdAlbumCatalog = HouseholdAlbumCatalogCoordinator()
     @State private var seasonalMovie: SeasonalMoviePresentation?
     @State private var completedSeasonalMoviePreparationKey: SeasonalMoviePreparationKey?
+    @State private var seasonalMovieVideoCatalogDigest = SeasonalMovieVideoCatalogDigestCache()
+    @State private var photoLibraryChangeCount = 0
     @State private var monthlyWindowCollection: MonthlyWindowCollectionPresentation?
     @State private var completedMonthlyWindowCollectionKey: MonthlyWindowCollectionKey?
     @StateObject private var seasonalMovieArchive = SeasonalMovieArchiveLibrary()
@@ -768,7 +809,7 @@ struct MainTabView: View {
         }
         // The Plus screen opens over its own cat (the best candidate, favorites
         // first) from every tab and sheet below, Settings included.
-        .environment(\.plusOfferPhoto, showcaseCandidates.first.map {
+        .environment(\.plusOfferPhoto, bestShowcaseCandidate.map {
             PlusOfferPhoto(localIdentifier: $0.localIdentifier, catBoundingBox: $0.catBoundingBox)
         })
     }
@@ -932,6 +973,9 @@ struct MainTabView: View {
         .onReceive(NotificationCenter.default.publisher(for: .groupWindowNewPhotosDidChange)) { _ in
             Task { await refreshGroupWindowNewPhotos() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .photoLibraryContentDidChange)) { _ in
+            photoLibraryChangeCount &+= 1
+        }
         .onChange(of: selectedTab) { oldTab, tab in
             if tab != .windows { groupWindowOpenInbox.dismissCreatePrompt() }
             if oldTab == .windows && tab != .windows { rememberMadoVisit() }
@@ -1080,15 +1124,54 @@ struct MainTabView: View {
         return (catPhotos + confirmedPhotos).filter {
             !excludedCatCandidateIdentifiers.contains($0.localIdentifier)
                 && seen.insert($0.localIdentifier).inserted
-        }.sorted { first, second in
-            let firstFavorite = first.isLiked || first.isPhotoLibraryFavorite
-            let secondFavorite = second.isLiked || second.isPhotoLibraryFavorite
-            if firstFavorite != secondFavorite { return firstFavorite }
-            if first.creationDate != second.creationDate {
-                return (first.creationDate ?? .distantPast) > (second.creationDate ?? .distantPast)
-            }
-            return first.localIdentifier < second.localIdentifier
+        }.sorted(by: Self.showcaseCandidatePrecedes)
+    }
+
+    /// Favorites first, then newest, then by identifier.
+    private static func showcaseCandidatePrecedes(_ first: PhotoPresentation, _ second: PhotoPresentation) -> Bool {
+        let firstFavorite = first.isLiked || first.isPhotoLibraryFavorite
+        let secondFavorite = second.isLiked || second.isPhotoLibraryFavorite
+        if firstFavorite != secondFavorite { return firstFavorite }
+        if first.creationDate != second.creationDate {
+            return (first.creationDate ?? .distantPast) > (second.creationDate ?? .distantPast)
         }
+        return first.localIdentifier < second.localIdentifier
+    }
+
+    /// `showcaseCandidates.first`, found in one pass: drawing needs only the
+    /// best photo, so the whole library is neither indexed nor sorted.
+    private var bestShowcaseCandidate: PhotoPresentation? {
+        let excludedIdentifiers = excludedCatCandidateIdentifiers
+        var seen = Set<String>()
+        var best: PhotoPresentation?
+        func consider(_ photo: PhotoPresentation) {
+            guard !excludedIdentifiers.contains(photo.localIdentifier),
+                  seen.insert(photo.localIdentifier).inserted else { return }
+            if let current = best, !Self.showcaseCandidatePrecedes(photo, current) { return }
+            best = photo
+        }
+        for photo in catPhotos { consider(photo) }
+        let confirmed = catProfilesPresentation.profiles.flatMap(\.confirmedPhotos)
+        // Same lookup as `showcaseCandidates`: the first known copy wins.
+        let wanted = Set(confirmed.map(\.localIdentifier)).subtracting(seen)
+        var knownPhotos: [String: PhotoPresentation] = [:]
+        if !wanted.isEmpty {
+            for photos in [libraryPhotos, likedPhotos, catPhotos] {
+                for photo in photos where wanted.contains(photo.localIdentifier)
+                    && knownPhotos[photo.localIdentifier] == nil {
+                    knownPhotos[photo.localIdentifier] = photo
+                }
+            }
+        }
+        for photo in confirmed {
+            consider(knownPhotos[photo.localIdentifier] ?? PhotoPresentation(
+                localIdentifier: photo.localIdentifier,
+                creationDate: photo.creationDate,
+                catBoundingBox: photo.catBoundingBox,
+                detectedCatCount: photo.detectedCatCount
+            ))
+        }
+        return best
     }
 
     private var toolsView: some View {
@@ -1101,8 +1184,10 @@ struct MainTabView: View {
                 toolSection("ふだん") {
                     showcaseToolCard
                     NavigationLink {
-                        VeterinaryVisitsView(profiles: catProfilesPresentation.profiles,
-                            photos: memoryNotePhotos, noteStore: memoStore)
+                        LazyToolDestination {
+                            VeterinaryVisitsView(profiles: catProfilesPresentation.profiles,
+                                photos: memoryNotePhotos, noteStore: memoStore)
+                        }
                     } label: {
                         ToolTile(title: "病院で見せる", systemImage: "cross.case.fill",
                                  subtitle: "診察メモ", tint: ToolTint.everydayDeep)
@@ -1112,10 +1197,12 @@ struct MainTabView: View {
                 }
                 toolSection("もしものとき") {
                     NavigationLink {
-                        LostCatEmergencyEntryView(
-                            profiles: catProfilesPresentation.profiles,
-                            unregisteredPhotos: unregisteredCatPhotos
-                        )
+                        LazyToolDestination {
+                            LostCatEmergencyEntryView(
+                                profiles: catProfilesPresentation.profiles,
+                                unregisteredPhotos: unregisteredCatPhotos
+                            )
+                        }
                     } label: {
                         ToolTile(title: "迷子のとき", systemImage: "magnifyingglass",
                                  subtitle: "探すための画像を作る", tint: ToolTint.emergency)
@@ -1123,8 +1210,10 @@ struct MainTabView: View {
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-lost-cat-open")
                     NavigationLink {
-                        CareHandoffView(profiles: catProfilesPresentation.profiles,
-                                        unregisteredPhotos: unregisteredCatPhotos)
+                        LazyToolDestination {
+                            CareHandoffView(profiles: catProfilesPresentation.profiles,
+                                            unregisteredPhotos: unregisteredCatPhotos)
+                        }
                     } label: {
                         ToolTile(title: "預けるとき", systemImage: "hand.raised.fill",
                                  subtitle: "お世話のメモを渡す", tint: ToolTint.emergencyWarm)
@@ -1132,8 +1221,10 @@ struct MainTabView: View {
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-care-open")
                     NavigationLink {
-                        EvacuationPreparationView(profiles: catProfilesPresentation.profiles,
-                                                  unregisteredPhotos: unregisteredCatPhotos)
+                        LazyToolDestination {
+                            EvacuationPreparationView(profiles: catProfilesPresentation.profiles,
+                                                      unregisteredPhotos: unregisteredCatPhotos)
+                        }
                     } label: {
                         ToolTile(title: "避難に備える", systemImage: "backpack.fill",
                                  subtitle: "持ち物と行き先", tint: ToolTint.emergencyBrown)
@@ -1536,20 +1627,38 @@ struct MainTabView: View {
     }
 
     private func photoLibraryIncludes(_ identifier: String) -> Bool {
-        let registered = photoLibraryRegisteredIdentifiers
-        let assignments = (currentPhotoLibraryAssignments[identifier] ?? []).intersection(registered)
-        return PhotoMemoryNoteLibraryPolicy.includes(selected: photoLibraryProfileIdentifier, identifiers: assignments)
+        photoLibraryIncludesFilter()(identifier)
     }
 
-    private var photoLibraryCatPhotos: [PhotoPresentation] { catPhotos.filter { photoLibraryIncludes($0.localIdentifier) } }
-    private var photoLibraryLikedPhotos: [PhotoPresentation] { likedPhotos.filter { photoLibraryIncludes($0.localIdentifier) } }
+    /// The cat filter for a whole list, built once: with no cat chosen every
+    /// photo is kept without reading assignments, and otherwise the
+    /// registered cats and assignments are gathered once, not per photo.
+    private func photoLibraryIncludesFilter() -> (String) -> Bool {
+        guard let selected = photoLibraryProfileIdentifier else { return { _ in true } }
+        let registered = photoLibraryRegisteredIdentifiers
+        let allAssignments = currentPhotoLibraryAssignments
+        return { identifier in
+            let assignments = (allAssignments[identifier] ?? []).intersection(registered)
+            return PhotoMemoryNoteLibraryPolicy.includes(selected: selected, identifiers: assignments)
+        }
+    }
+
+    private var photoLibraryCatPhotos: [PhotoPresentation] {
+        let includes = photoLibraryIncludesFilter()
+        return catPhotos.filter { includes($0.localIdentifier) }
+    }
+    private var photoLibraryLikedPhotos: [PhotoPresentation] {
+        let includes = photoLibraryIncludesFilter()
+        return likedPhotos.filter { includes($0.localIdentifier) }
+    }
     private var photoLibraryBrowserPhotos: [PhotoPresentation] {
         photoLibraryCatPhotos.filter { !excludedCatCandidateIdentifiers.contains($0.localIdentifier) }
     }
     private var unavailablePhotoLibrarySavedCount: Int {
         let saved = savedPhotoIdentifiers ?? Set(likedPhotos.map(\.localIdentifier))
         let visible = Set((hasPhotoAccess ? photoLibraryLikedPhotos : []).map(\.localIdentifier))
-        return saved.filter { photoLibraryIncludes($0) && !visible.contains($0) }.count
+        let includes = photoLibraryIncludesFilter()
+        return saved.filter { includes($0) && !visible.contains($0) }.count
     }
 
     private var photoLibraryCatPicker: some View {
@@ -2830,11 +2939,14 @@ struct MainTabView: View {
         }
         let videoCatalogDigest: Int
         if hasPhotoAccess, sourceIsAvailable, !isScanning, scenePhase == .active, let interval {
-            videoCatalogDigest = SeasonalMovieVideoCatalog.digest(
-                in: interval,
-                sourceAlbumIdentifier: sourceAlbumIdentifier
-            )
+            videoCatalogDigest = seasonalMovieVideoCatalogDigest.digest(for: .init(
+                quarter: interval,
+                sourceAlbumIdentifier: sourceAlbumIdentifier,
+                photoPresentationVersion: photoPresentationVersion,
+                libraryChangeCount: photoLibraryChangeCount
+            ))
         } else {
+            seasonalMovieVideoCatalogDigest.forget()
             videoCatalogDigest = 0
         }
         return SeasonalMoviePreparationKey(
@@ -3054,8 +3166,9 @@ struct MainTabView: View {
         if relatedPhotoUsesLibraryScope, photoLibraryProfileIdentifier != nil {
             guard permitsPhotoLibraryRediscovery,
                   scope == photoLibraryRediscoveryScope else { return [] }
+            let includes = photoLibraryIncludesFilter()
             return albumEligibleCatPhotos.filter {
-                photoLibraryIncludes($0.localIdentifier) && !excludedIdentifiers.contains($0.localIdentifier)
+                includes($0.localIdentifier) && !excludedIdentifiers.contains($0.localIdentifier)
             }
         }
         guard case let .profile(identifier) = scope else {
