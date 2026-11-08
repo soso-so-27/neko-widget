@@ -2108,7 +2108,6 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(recordsStep.exists)
         XCTAssertEqual(recordsStep.label, "2、見せる写真・記録（任意）")
         app.buttons["vet-pick-records"].tap()
-        let picker = app.navigationBars["見せる写真を選ぶ"]
         XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
         let measuredSource = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
             "vet-source-", "食べる量が少なかった。")).firstMatch
