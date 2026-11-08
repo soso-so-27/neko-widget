@@ -391,11 +391,11 @@ final class OfficialWindowUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--window-list-ui-fixture", "--window-list-cat-window", "-AppleLanguages", "(ja)"]
         app.launch()
-        let discover = app.buttons["window-list-discover"]
-        XCTAssertTrue(discover.waitForExistence(timeout: 10))
-        discover.tap()
-        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
-        app.buttons["official-window-entry"].tap()
+        // 1.0: windows not yet received are listed under 「公式のまど」 on the まど tab itself.
+        let original = app.buttons["official-window-entry"]
+        XCTAssertTrue(original.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["public-window-add-official-cats"].exists)
+        original.tap()
         XCTAssertTrue(app.navigationBars["どこかの猫"].waitForExistence(timeout: 5),
                       "The chosen discovery card must open its own window")
         let photo = app.buttons["official-window-photo-fixture-photo"]
@@ -429,11 +429,15 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertTrue(app.scrollViews["public-window-overview-official-cats"].buttons["official-window-subscribe"].exists,
                       "Opening a cat must not subscribe to its discovery source")
         app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
-        app.navigationBars["まどを探す"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["public-window-entry-cat-tabby-nap"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["official-window-entry"].exists)
+        let catEntry = app.buttons["public-window-entry-cat-tabby-nap"]
+        XCTAssertTrue(catEntry.waitForExistence(timeout: 5))
+        waitForWindowEntry("public-window-entry-cat-tabby-nap", value: "受け取り中", in: app)
+        XCTAssertFalse(app.buttons["public-window-add-cat-tabby-nap"].exists,
+                       "The received cat window moves out of discovery")
+        // The original window stays in discovery, still offered with 「受け取る」.
+        waitForWindowEntry("official-window-entry", value: "まだ受け取っていません", in: app)
+        XCTAssertTrue(app.buttons["public-window-add-official-cats"].exists)
         capture("cat-window-receiving-list", app)
     }
 
@@ -482,12 +486,11 @@ final class OfficialWindowUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--window-list-ui-fixture", "--window-list-two-public", "-AppleLanguages", "(ja)"]
         app.launch()
-        let discover = app.buttons["window-list-discover"]
-        XCTAssertTrue(discover.waitForExistence(timeout: 10))
-        discover.tap()
-        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
+        // 1.0: both windows wait under 「公式のまど」 on the まど tab itself.
         let nap = app.buttons["public-window-entry-nap-cats"]
-        XCTAssertTrue(nap.waitForExistence(timeout: 5))
+        XCTAssertTrue(nap.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["public-window-add-nap-cats"].exists)
+        XCTAssertTrue(app.buttons["public-window-add-official-cats"].exists)
         for _ in 0..<3 { if nap.isHittable { break }; app.swipeUp() }
         capture("public-windows-discovery", app)
         nap.tap()
@@ -508,11 +511,13 @@ final class OfficialWindowUITests: XCTestCase {
         capture("nap-window-widget-guide", app)
         app.buttons["widget-placement-close"].tap()
         app.navigationBars["おひるね"].buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
-        app.navigationBars["まどを探す"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5))
         XCTAssertTrue(nap.waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["official-window-entry"].exists, "Receiving a theme must not subscribe to the other window")
+        waitForWindowEntry("public-window-entry-nap-cats", value: "受け取り中", in: app)
+        XCTAssertFalse(app.buttons["public-window-add-nap-cats"].exists)
+        waitForWindowEntry("official-window-entry", value: "まだ受け取っていません", in: app)
+        XCTAssertTrue(app.buttons["public-window-add-official-cats"].exists,
+                      "Receiving a theme must not subscribe to the other window")
         capture("nap-window-receiving-list", app)
     }
 
@@ -551,17 +556,20 @@ final class OfficialWindowUITests: XCTestCase {
         app.resetAuthorizationStatus(for: .photos)
         app.launchArguments = ["--window-list-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
-        let discover = app.buttons["window-list-discover"]
-        XCTAssertTrue(discover.waitForExistence(timeout: 10))
+        // 1.0: a window not yet received waits under 「公式のまど」 on the まど tab,
+        // with its own 「受け取る」; there is no separate discovery screen.
+        let entry = app.buttons["official-window-entry"]
+        let add = app.buttons["public-window-add-official-cats"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 10))
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        XCTAssertTrue(add.isHittable, "The list itself must offer receiving")
         XCTAssertFalse(app.buttons["window-list-connect"].exists,
                        "A public-only configuration must not offer private connections")
-        XCTAssertFalse(app.buttons["official-window-entry"].exists, "Unsubscribed windows belong in discovery")
-        let start = app.buttons["window-list-start"]
-        XCTAssertTrue(start.waitForExistence(timeout: 5))
-        start.tap()
-        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5),
-                      "The empty-list action must open discovery directly")
-        app.buttons["official-window-entry"].tap()
+        waitForWindowEntry("official-window-entry", value: "まだ受け取っていません", in: app)
+        XCTAssertTrue(entry.isHittable)
+        entry.tap()
+        XCTAssertTrue(app.navigationBars["どこかの猫"].waitForExistence(timeout: 5),
+                      "The discovery row must open its window to look before receiving")
         XCTAssertTrue(app.tabBars.buttons["写真"].exists)
         XCTAssertTrue(app.tabBars.buttons["アルバム"].exists)
         for _ in 0..<5 { if app.buttons["official-window-subscribe"].isHittable { break }; app.swipeUp() }
@@ -583,37 +591,41 @@ final class OfficialWindowUITests: XCTestCase {
         // The guide was offered once, after 「受け取る」; later it is in 設定 → ホーム画面.
         XCTAssertFalse(app.buttons["official-window-widget-guide"].exists)
         app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
-        let discoveryEntry = app.buttons["official-window-entry"]
-        XCTAssertTrue((discoveryEntry.value as? String ?? "").contains("受け取り中"))
-        discoveryEntry.tap()
+        XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5))
+        waitForWindowEntry("official-window-entry", value: "受け取り中", in: app)
+        XCTAssertFalse(add.exists, "A received window leaves 「公式のまど」")
+        capture("window-list-after-receiving", app)
+        entry.tap()
         stopReceiving(app)
         app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
-        expectation(for: NSPredicate { _, _ in
-            (discoveryEntry.value as? String ?? "").contains("まだ受け取っていません")
-        }, evaluatedWith: discoveryEntry)
-        waitForExpectations(timeout: 5)
-        capture("window-discovery-after-stop", app)
-        discoveryEntry.tap()
-        let receiveAgain = app.buttons["official-window-subscribe"]
-        for _ in 0..<5 where !receiveAgain.isHittable { app.swipeUp(velocity: .slow) }
-        receiveAgain.tap()
-        app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
-        expectation(for: NSPredicate { _, _ in
-            (discoveryEntry.value as? String ?? "").contains("受け取り中")
-        }, evaluatedWith: discoveryEntry)
-        waitForExpectations(timeout: 5)
-        app.navigationBars["まどを探す"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["official-window-entry"].waitForExistence(timeout: 5))
-        capture("window-list-after-receiving", app)
-        app.buttons["official-window-entry"].tap()
+        waitForWindowEntry("official-window-entry", value: "まだ受け取っていません", in: app)
+        XCTAssertTrue(add.waitForExistence(timeout: 5), "A stopped window returns to 「公式のまど」")
+        capture("window-discovery-after-stop", app)
+        // Receiving again from the list: the same confirmation and guide as in the window.
+        for _ in 0..<3 where !add.isHittable { app.swipeUp(velocity: .slow) }
+        add.tap()
+        waitForWindowEntry("official-window-entry", value: "受け取り中", in: app)
+        let listGuide = app.buttons["window-list-widget-guide"]
+        XCTAssertTrue(listGuide.waitForExistence(timeout: 5), "「受け取る」 on the list must confirm the start")
+        XCTAssertFalse(add.exists)
+        listGuide.tap()
+        XCTAssertTrue(app.buttons["widget-placement-close"].waitForExistence(timeout: 5))
+        let listSource = app.descendants(matching: .any)["official-window-widget-source"].firstMatch
+        XCTAssertTrue(listSource.waitForExistence(timeout: 5))
+        XCTAssertTrue(listSource.label.contains("どこかの猫"), "The guide must name the window just received")
+        capture("window-list-widget-guide", app)
+        app.buttons["widget-placement-close"].tap()
+        XCTAssertFalse(listGuide.exists, "The list's guide is offered once")
+        for _ in 0..<3 where !entry.isHittable { app.swipeDown(velocity: .slow) }
+        entry.tap()
         stopReceiving(app)
         XCTAssertTrue(app.buttons["official-window-subscribe"].waitForExistence(timeout: 5))
         app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(discover.waitForExistence(timeout: 5))
-        XCTAssertTrue(start.isHittable)
-        XCTAssertFalse(app.buttons["official-window-entry"].exists)
+        XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5))
+        waitForWindowEntry("official-window-entry", value: "まだ受け取っていません", in: app)
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        XCTAssertTrue(add.isHittable)
         XCTAssertFalse(XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch.exists)
     }
 
@@ -621,20 +633,33 @@ final class OfficialWindowUITests: XCTestCase {
     func testWindowListLargeTextKeepsDiscoveryAndPhotoReachable() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--window-list-ui-fixture", "--window-list-subscribed",
+        // 1.0: the received window is a card at the top and 「公式のまど」 (here
+        // おひるね, not received) is listed below it on the same tab.
+        app.launchArguments = ["--window-list-ui-fixture", "--window-list-subscribed", "--window-list-nap-discoverable",
                                "--window-list-large-text", "-AppleLanguages", "(ja)"]
         app.launch()
         let card = app.buttons["official-window-entry"]
         XCTAssertTrue(card.waitForExistence(timeout: 10))
         XCTAssertTrue(card.isHittable)
-        let discover = app.buttons["window-list-discover"]
-        XCTAssertTrue(discover.isHittable)
+        XCTAssertTrue((card.value as? String ?? "").contains("受け取り中"))
         XCTAssertTrue(app.tabBars.buttons["写真"].isHittable)
         capture("window-list-large-text", app)
+        let discover = app.buttons["public-window-entry-nap-cats"]
+        let receive = app.buttons["public-window-add-nap-cats"]
+        XCTAssertTrue(discover.waitForExistence(timeout: 5))
+        for _ in 0..<5 where !(discover.isHittable && receive.isHittable) { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(discover.isHittable, "Discovery must stay reachable at large text")
+        XCTAssertTrue(receive.isHittable, "「受け取る」 must stay reachable at large text")
+        XCTAssertGreaterThanOrEqual(receive.frame.height, 44)
+        XCTAssertTrue(app.tabBars.buttons["写真"].isHittable)
+        capture("window-list-large-text-discovery", app)
         discover.tap()
-        XCTAssertTrue(app.navigationBars["まどを探す"].waitForExistence(timeout: 5))
-        app.navigationBars["まどを探す"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["おひるね"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["official-window-subscribe"].exists, "Looking must not receive")
+        app.navigationBars["おひるね"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 5))
+        XCTAssertTrue(receive.waitForExistence(timeout: 5))
+        for _ in 0..<5 where !card.isHittable { app.swipeDown(velocity: .slow) }
         XCTAssertTrue(card.isHittable, "Discovery must return to the receiving photo")
         card.tap()
         let manage = app.buttons["official-window-manage"]
@@ -780,6 +805,19 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertEqual(result.label, "passed", "Export lifecycle fixture reported a bounded failure code")
     }
 
+    /// 1.0: one window is a row under 「公式のまど」 or a card above it. While it
+    /// moves, both can exist for a moment; wait until exactly one entry remains
+    /// and it reads the expected receiving state.
+    @MainActor
+    private func waitForWindowEntry(_ identifier: String, value expected: String, in app: XCUIApplication) {
+        let entries = app.buttons.matching(identifier: identifier)
+        let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            entries.count == 1 && (entries.firstMatch.value as? String ?? "").contains(expected)
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed,
+                       "\(identifier) must settle as 「\(expected)」")
+    }
+
     @MainActor
     private func stopReceiving(_ app: XCUIApplication, windowName: String = "どこかの猫") {
         let manage = app.navigationBars[windowName].buttons["official-window-manage"]
@@ -855,8 +893,13 @@ final class OfficialWindowUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--official-window-ui-fixture", "--official-window-unconfigured", "-AppleLanguages", "(ja)"]
         app.launch()
-        XCTAssertTrue(app.staticTexts["公式まどを準備しています"].waitForExistence(timeout: 10))
+        // The copy says 「公式のまど」 since the 10/30 wording pass.
+        let state = app.descendants(matching: .any)["official-window-state-title"].firstMatch
+        XCTAssertTrue(state.waitForExistence(timeout: 10))
+        XCTAssertTrue(state.label.contains("公式のまどを準備しています"), state.label)
         XCTAssertFalse(app.buttons["official-window-subscribe"].exists)
+        XCTAssertFalse(app.buttons["official-window-refresh-retry"].exists,
+                       "An unconfigured window has nothing to check again")
         capture("official-window-preparing", app)
     }
 
@@ -1622,10 +1665,15 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(result.waitForExistence(timeout: 40), app.debugDescription)
         app.buttons["復元したツールを開く"].tap()
         XCTAssertTrue(app.buttons["預けるとき"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.staticTexts["restored-tool-contents-summary"].label, "ツールの入力内容・添付写真3枚")
+        // 10/31 plain-Japanese copy (75eb9286): 「ツールの内容・写真N枚」.
+        XCTAssertEqual(app.staticTexts["restored-tool-contents-summary"].label, "ツールの内容・写真3枚")
         capture("restored-tools-show-attachment-count")
         app.buttons["預けるとき"].tap()
-        let cats = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-cat-"))
+        // 11/7: the care tool opens a cat in place, with the row of cats on top.
+        // Count only the row's cat buttons (care-cat-<UUID>), not other
+        // care-cat-… controls of the open memo such as the folded この子のこと.
+        let cats = app.buttons.matching(NSPredicate(format: "identifier MATCHES %@",
+            "care-cat-[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}"))
         XCTAssertTrue(cats.firstMatch.waitForExistence(timeout: 5)); XCTAssertEqual(cats.count, 2)
         cats.firstMatch.tap()
         let name = app.textFields["care-cat-name"]
@@ -1633,12 +1681,15 @@ final class SoloMemoriesUITests: XCTestCase {
         name.tap(); name.typeText("編集")
         let edited = name.value as? String
         XCTAssertTrue(edited?.contains("編集") == true)
+        // Leave the tool (one back: the memo is the tool's page) and reopen it.
         app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["預けるとき"].waitForExistence(timeout: 5)); app.buttons["預けるとき"].tap()
+        XCTAssertTrue(cats.firstMatch.waitForExistence(timeout: 5)); XCTAssertEqual(cats.count, 2)
         cats.firstMatch.tap()
         XCTAssertTrue(name.waitForExistence(timeout: 5)); XCTAssertEqual(name.value as? String, edited)
         capture("restored-care-edit-keeps-same-name-cats-separate")
         app.navigationBars.buttons.element(boundBy: 0).tap()
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["病院で見せる"].waitForExistence(timeout: 5))
         app.buttons["病院で見せる"].tap()
         // 11/8: a past memo row is named by its day; find it by its identifier.
         let previousVisit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-past-")).firstMatch
@@ -1703,14 +1754,18 @@ final class SoloMemoriesUITests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertEqual(app.staticTexts["app-record-fixture-photo-count"].label, "写真の送信 4回")
         app.buttons["預けるとき"].tap()
-        let cats = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-cat-"))
+        // 11/7: the care tool opens a cat in place (no list to go back to), with
+        // the row of cats on top. Count only the row's care-cat-<UUID> buttons.
+        let cats = app.buttons.matching(NSPredicate(format: "identifier MATCHES %@",
+            "care-cat-[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}"))
         XCTAssertTrue(cats.firstMatch.waitForExistence(timeout: 5)); XCTAssertEqual(cats.count, 2)
         cats.firstMatch.tap()
         let name = app.textFields["care-cat-name"]
         XCTAssertTrue(name.waitForExistence(timeout: 5)); name.tap(); name.typeText("変更")
         let edited = name.value as? String
+        // One back leaves the tool and returns to the fixture's own list.
         app.navigationBars.buttons.element(boundBy: 0).tap()
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["自動保存の検査"].waitForExistence(timeout: 5), app.debugDescription)
         let status = app.staticTexts["app-record-fixture-status"]
         let updates = expectation(for: NSPredicate(format: "label == %@", "保存済み"), evaluatedWith: status)
         wait(for: [updates], timeout: 25)
@@ -1724,7 +1779,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(name.waitForExistence(timeout: 5)); XCTAssertEqual(name.value as? String, edited)
         capture("automatic-restore-keeps-normal-tool-edit-and-cat-identity")
         app.navigationBars.buttons.element(boundBy: 0).tap()
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["自動保存の検査"].waitForExistence(timeout: 5), app.debugDescription)
     }
 
     @MainActor
@@ -1903,14 +1958,31 @@ final class SoloMemoriesUITests: XCTestCase {
         app.terminate()
     }
 
+    /// 11/7–11/8: 「診察メモに追加」 opens 「病院で見せる」 on the last (else the
+    /// first) cat in the row and presents this memo's confirmation at once.
+    /// The memo's own cat must be the open page; it is chosen in the row only
+    /// when another cat was opened last time.
+    @MainActor
+    private func openVetConfirmationForMemoCat(_ cat: XCUIElement, confirm: XCUIElement, app: XCUIApplication) {
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(cat.exists, app.debugDescription)
+        if !cat.isSelected {
+            app.navigationBars["内容を確認"].buttons["閉じる"].tap()
+            XCTAssertTrue(confirm.waitForNonExistence(timeout: 5))
+            XCTAssertTrue(cat.isHittable); cat.tap()
+            XCTAssertTrue(confirm.waitForExistence(timeout: 10), app.debugDescription)
+        }
+        XCTAssertTrue(cat.isSelected, "The memo's own cat must be the open page")
+    }
+
     @MainActor
     func testVeterinarySelectionIsExplicitAndRemovalKeepsSource() {
         let app = launchWeightMemo()
         let open = app.buttons["memory-note-add-vet"]; revealVetElement(open, app: app); open.tap()
         let cat = app.buttons["vet-cat-09300000-0000-0000-0000-000000000001"]
-        XCTAssertTrue(cat.waitForExistence(timeout: 5)); cat.tap()
         let confirm = app.switches["vet-confirm-target"]
-        XCTAssertTrue(confirm.waitForExistence(timeout: 5)); revealVetElement(confirm, app: app)
+        openVetConfirmationForMemoCat(cat, confirm: confirm, app: app)
+        revealVetElement(confirm, app: app)
         dismissVetPhotosPromptIfPresent()
         let add = app.buttons["vet-add-confirmed"]
         // 11/8: the memo names only むぎ (by saved identity), so it is not asked again.
@@ -1926,7 +1998,9 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["食べる量が少なかった。"].exists)
         XCTAssertFalse(app.staticTexts["選んでいない別の猫の記録"].exists)
         capture("vet-selected-record-in-person-display")
-        app.navigationBars["病院で見せる"].buttons["閉じる"].tap()
+        // The reading screen is titled 「診察メモ」; the page under it 「病院で見せる」.
+        app.navigationBars["診察メモ"].buttons["閉じる"].tap()
+        XCTAssertTrue(app.scrollViews["vet-reading"].waitForNonExistence(timeout: 5))
         let remove = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).firstMatch
         for _ in 0..<8 where !remove.isHittable { app.swipeDown(velocity: .slow) }
         XCTAssertTrue(remove.isHittable); remove.tap()
@@ -1941,7 +2015,8 @@ final class SoloMemoriesUITests: XCTestCase {
         source.tap()
         XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Picker dismissal must present the real confirmation")
         app.navigationBars["内容を確認"].buttons["閉じる"].tap()
-        app.navigationBars["診察メモ"].buttons["閉じる"].tap()
+        // The cat's memo is the 「病院で見せる」 page itself (11/7); closing it
+        // returns to the photo memo.
         app.navigationBars["病院で見せる"].buttons["閉じる"].tap()
         XCTAssertTrue(app.staticTexts["memory-note-body"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["memory-note-body"].label, "食べる量が少なかった。")
@@ -1960,20 +2035,27 @@ final class SoloMemoriesUITests: XCTestCase {
         let firstCat = app.buttons["vet-cat-E0260929-0000-0000-0000-000000000001"]
         let sameNameOtherCat = app.buttons["vet-cat-E0260929-0000-0000-0000-000000000002"]
         XCTAssertTrue(firstCat.waitForExistence(timeout: 5)); XCTAssertTrue(sameNameOtherCat.exists)
-        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-cat-")).count, 2)
+        // Cats in the row only: the folded 「この子のこと」 row (11/8) is
+        // "vet-cat-care-fields-folded" and is not a cat.
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT (identifier BEGINSWITH %@)",
+            "vet-cat-", "vet-cat-care-")).count, 2)
         capture("vet-saved-cats-same-name-large-text")
         app.buttons["vet-saved-cat-edit-memo"].tap()
         let catPicker = app.descendants(matching: .any).matching(identifier: "memo-weight-cat-picker").firstMatch
         XCTAssertTrue(catPicker.waitForExistence(timeout: 5)); revealVetElement(catPicker, app: app)
-        XCTAssertTrue(catPicker.label.contains("未指定") || (catPicker.value as? String)?.contains("未指定") == true)
+        // 10/31 copy: no cat chosen reads 「選ばない」 (was 「未指定」).
+        XCTAssertTrue(catPicker.label.contains("選ばない") || (catPicker.value as? String)?.contains("選ばない") == true)
         catPicker.tap()
         let choice = app.buttons["むぎ · 預けるとき・避難に備える"]
         XCTAssertTrue(choice.waitForExistence(timeout: 5)); choice.tap()
         capture("weight-cat-explicit-tool-selection")
         app.buttons["photo-memory-note-save"].tap()
         XCTAssertTrue(catPicker.waitForNonExistence(timeout: 5))
+        // 11/7: choosing a cat in the row opens its memo in place on 「病院で見せる」.
+        let chosenInRow = NSPredicate(format: "selected == true")
         firstCat.tap()
-        XCTAssertTrue(app.navigationBars["診察メモ"].waitForExistence(timeout: 5))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: chosenInRow, object: firstCat)], timeout: 5), .completed)
+        XCTAssertTrue(app.navigationBars["病院で見せる"].exists)
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).count, 0)
         let observations = app.descendants(matching: .any).matching(identifier: "vet-observations").firstMatch
         XCTAssertTrue(["", "例：1日2回吐く・食欲が半分"].contains(observations.value as? String ?? ""))
@@ -2003,11 +2085,13 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("vet-saved-cat-weight-in-person-display")
         app.terminate(); app.launch()
         XCTAssertTrue(firstCat.waitForExistence(timeout: 10)); firstCat.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: chosenInRow, object: firstCat)], timeout: 5), .completed)
         let retainedRecord = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).firstMatch
         revealVetElement(retainedRecord, app: app)
         XCTAssertTrue(retainedRecord.exists)
-        app.navigationBars["診察メモ"].buttons["閉じる"].tap()
+        // The row stays above the page; the other むぎ opens in place.
         XCTAssertTrue(sameNameOtherCat.waitForExistence(timeout: 5)); sameNameOtherCat.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: chosenInRow, object: sameNameOtherCat)], timeout: 5), .completed)
         revealVetElement(app.buttons["vet-pick-records"], app: app)
         XCTAssertTrue(recordsStep.exists)
         XCTAssertEqual(recordsStep.label, "2、見せる写真・記録（任意）", "Same name must not carry the other cat's records")
@@ -2030,8 +2114,8 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(date.waitForNonExistence(timeout: 5))
         let open = app.buttons["memory-note-add-vet"]; revealVetElement(open, app: app); open.tap()
         let cat = app.buttons["vet-cat-09300000-0000-0000-0000-000000000001"]
-        XCTAssertTrue(cat.waitForExistence(timeout: 5)); cat.tap()
         let confirm = app.switches["vet-confirm-target"]
+        openVetConfirmationForMemoCat(cat, confirm: confirm, app: app)
         XCTAssertTrue(app.staticTexts["元の写真を開けません。文章と体重だけ追加します。"].waitForExistence(timeout: 5))
         // At the largest size the confirmation thumb is below the first screen.
         // Verify the missing-photo explanation before scrolling it offscreen.
@@ -2067,9 +2151,17 @@ final class SoloMemoriesUITests: XCTestCase {
         let boundaries = app.staticTexts["care-boundary-result"]
         XCTAssertTrue(boundaries.waitForExistence(timeout: 10))
         XCTAssertEqual(boundaries.label, "境界検証成功")
-        let saved = app.buttons["care-saved-cat-C0260929-0000-0000-0000-000000000001"]
-        XCTAssertTrue(saved.waitForExistence(timeout: 5))
-        saved.tap()
+        // 11/7: the tool opens its cat in place. The cat written only in
+        // 避難に備える becomes this tool's memo at once, filled from that record;
+        // with one cat the row of cats stays away. Right after a deleted memo
+        // the tool waits for a tap instead of making one by itself.
+        let make = app.buttons["care-disclosure-open"]
+        let create = app.buttons["care-create-saved-C0260929-0000-0000-0000-000000000001"]
+        if !make.waitForExistence(timeout: 5), create.exists { create.tap() }
+        XCTAssertTrue(make.waitForExistence(timeout: 5), app.debugDescription)
+        let name = app.descendants(matching: .any).matching(identifier: "care-cat-name").firstMatch
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        XCTAssertEqual(name.value as? String, "むぎ")
         // Everyday care is shown from 「この子のこと」; the older tool entry fills
         // it until 「この子のこと」 has meals of its own. 11/8: folded to one row
         // below the steps until opened.
@@ -2077,17 +2169,16 @@ final class SoloMemoriesUITests: XCTestCase {
         for _ in 0..<5 where !folded.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(folded.isHittable)
         folded.tap()
-        let food = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "いつものフード 20g")).firstMatch
+        let food = app.staticTexts["いつものフード 20g"]
+        XCTAssertTrue(food.waitForExistence(timeout: 5))
         for _ in 0..<5 where !food.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(food.isHittable)
         capture("care-autofill-visible-real-value")
-        app.navigationBars.buttons.element(boundBy: 0).tap()
-        let disclosure = app.buttons["care-disclosure-open"]
-        for _ in 0..<5 where !disclosure.isHittable { app.swipeUp(velocity: .slow) }
-        disclosure.tap()
+        make.tap()
+        XCTAssertTrue(app.navigationBars["メモを作る"].waitForExistence(timeout: 5))
         let selected = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-select-")).firstMatch
         XCTAssertTrue(selected.waitForExistence(timeout: 5))
-        if selected.value as? String != "選択済み" { selected.tap() }
+        // 11/8: every cat starts chosen.
         XCTAssertEqual(selected.value as? String, "選択済み")
         let preview = app.buttons["care-preview-open"]
         XCTAssertTrue(preview.isEnabled); preview.tap()
@@ -2097,41 +2188,54 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(previewFood.isHittable)
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "private-")).firstMatch.exists)
         capture("care-autofill-output-without-editing")
-        app.navigationBars.buttons.element(boundBy: 0).tap()
-        app.navigationBars.buttons.element(boundBy: 0).tap()
         app.terminate()
+        // The source changes; the unedited candidate follows it when the memo
+        // is opened again, and stays the same memo (no second copy).
         app.launchEnvironment["NEKO_TOOL_REFRESH_PHASE"] = "2"
         app.launch()
-        let cat = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-cat-")).firstMatch
-        XCTAssertTrue(cat.waitForExistence(timeout: 10))
-        for _ in 0..<5 where !cat.isHittable { app.swipeDown(velocity: .slow) }
-        cat.tap()
+        XCTAssertTrue(make.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(create.exists)
         for _ in 0..<5 where !folded.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(folded.isHittable)
         folded.tap()
-        for _ in 0..<5 where !food.isHittable { app.swipeUp(velocity: .slow) }
-        let refreshed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "更新したフード 25g"), object: food)
-        XCTAssertEqual(XCTWaiter.wait(for: [refreshed], timeout: 5), .completed)
+        let refreshed = app.staticTexts["更新したフード 25g"]
+        XCTAssertTrue(refreshed.waitForExistence(timeout: 5))
+        for _ in 0..<5 where !refreshed.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(refreshed.isHittable)
+        XCTAssertFalse(app.staticTexts["いつものフード 20g"].exists)
         capture("care-refreshed-unedited-candidate")
-        food.tap()
+        // The food is written in 「この子のこと」 now; the filled-in name is the
+        // value still edited here. Edit it and check the edit is kept.
+        for _ in 0..<8 where !name.isHittable { app.swipeDown(velocity: .slow) }
+        XCTAssertTrue(name.isHittable)
+        XCTAssertEqual(name.value as? String, "むぎ")
+        name.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         // Verify app-owned editing/persistence, not the OS selection-menu geometry.
         // An insertion may land at any caret position; it must preserve every
         // original character plus exactly one copy of the entered fragment.
-        let entered = "今回のフード"
-        food.typeText(entered)
-        let edited = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", entered), object: food)
+        let entered = "今回の名前"
+        name.typeText(entered)
+        let edited = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", entered), object: name)
         XCTAssertEqual(XCTWaiter.wait(for: [edited], timeout: 5), .completed)
-        let editedValue = food.value as? String ?? ""
-        XCTAssertEqual(editedValue.replacingOccurrences(of: entered, with: ""), "更新したフード 25g")
-        XCTAssertEqual(editedValue.count, "更新したフード 25g".count + entered.count)
+        let editedValue = name.value as? String ?? ""
+        XCTAssertEqual(editedValue.replacingOccurrences(of: entered, with: ""), "むぎ")
+        XCTAssertEqual(editedValue.count, "むぎ".count + entered.count)
+        // Phase 3 changes both the food and the name in 避難に備える.
         app.launchEnvironment["NEKO_TOOL_REFRESH_PHASE"] = "3"
         app.terminate(); app.launch()
-        let reopened = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-cat-")).firstMatch
-        XCTAssertTrue(reopened.waitForExistence(timeout: 10)); reopened.tap()
+        XCTAssertTrue(make.waitForExistence(timeout: 10), app.debugDescription)
         for _ in 0..<5 where !folded.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(folded.isHittable)
         folded.tap()
-        for _ in 0..<5 where !food.isHittable { app.swipeUp(velocity: .slow) }
-        XCTAssertEqual(food.value as? String, editedValue)
+        // The refresh has run once the newer food shows; only then is the name
+        // compared, so a late overwrite could not pass unnoticed.
+        let newest = app.staticTexts["さらに更新したフード 30g"]
+        XCTAssertTrue(newest.waitForExistence(timeout: 5))
+        for _ in 0..<8 where !name.isHittable { app.swipeDown(velocity: .slow) }
+        XCTAssertTrue(name.isHittable)
+        XCTAssertEqual(name.value as? String, editedValue)
+        XCTAssertNotEqual(name.value as? String, "むぎ（避難に備えるで変更）")
         capture("care-autofill-edited-value-restored")
         app.terminate()
     }
@@ -2147,9 +2251,14 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launch()
         let open = app.buttons["evacuation-cats-open"]
         XCTAssertTrue(open.waitForExistence(timeout: 10)); open.tap()
-        let saved = app.buttons["evacuation-saved-cat-E0260929-0000-0000-0000-000000000001"]
-        XCTAssertTrue(saved.waitForExistence(timeout: 5)); saved.tap()
-        app.buttons["evacuation-cat-edit"].tap()
+        // 11/7: 「猫の情報」 opens the first cat in place. The only cat is the one
+        // written in 預けるとき, so its page is made from it at once, and the
+        // row of cats stays away with a single cat.
+        let edit = app.buttons["evacuation-cat-edit"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(app.buttons["evacuation-saved-E0260929-0000-0000-0000-000000000001"].exists)
+        for _ in 0..<5 where !edit.isHittable { app.swipeUp(velocity: .slow) }
+        edit.tap()
         XCTAssertTrue(app.buttons["evacuation-photo-reference"].waitForExistence(timeout: 5))
         capture("evacuation-autofill-general-photo-large-text")
         app.navigationBars.buttons.element(boundBy: 0).tap()
@@ -2168,15 +2277,19 @@ final class SoloMemoriesUITests: XCTestCase {
         let preview = app.buttons["evacuation-preview-open"]
         for _ in 0..<8 where !preview.isHittable { app.swipeUp(velocity: .slow) }
         preview.tap()
+        XCTAssertTrue(app.navigationBars["むぎの避難メモ"].waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "private-")).firstMatch.exists)
         capture("evacuation-autofill-output-without-editing-large-text")
         app.launchEnvironment["NEKO_TOOL_REFRESH_PHASE"] = "2"
         app.terminate(); app.launch()
-        app.buttons["evacuation-cats-open"].tap()
-        let restored = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "evacuation-cat-")).firstMatch
-        XCTAssertTrue(restored.waitForExistence(timeout: 5)); restored.tap()
-        app.buttons["evacuation-cat-edit"].tap()
-        XCTAssertTrue(app.buttons["evacuation-photo-reference"].exists)
+        let reopen = app.buttons["evacuation-cats-open"]
+        XCTAssertTrue(reopen.waitForExistence(timeout: 10)); reopen.tap()
+        // The saved cat's page opens in place again (its own record now).
+        let restoredEdit = app.buttons["evacuation-cat-edit"]
+        XCTAssertTrue(restoredEdit.waitForExistence(timeout: 10), app.debugDescription)
+        for _ in 0..<5 where !restoredEdit.isHittable { app.swipeUp(velocity: .slow) }
+        restoredEdit.tap()
+        XCTAssertTrue(app.buttons["evacuation-photo-reference"].waitForExistence(timeout: 5))
         app.navigationBars.buttons.element(boundBy: 0).tap()
         // After a restart the meal is still there. Later edits happen in
         // 「この子のこと」, which every tool reads, so nothing is copied again.
@@ -2321,6 +2434,9 @@ final class SoloMemoriesUITests: XCTestCase {
         let preview = app.buttons["evacuation-preview-open"]
         for _ in 0..<5 where !preview.isHittable { app.swipeUp() }
         preview.tap()
+        // The show screen itself (11/8: 「この子のこと」 on the cat's page is
+        // folded, so its food line is not what is read here).
+        XCTAssertTrue(app.navigationBars["むぎの避難メモ"].waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(app.staticTexts["むぎ専用フード"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["非公開の薬メモ"].exists)
         XCTAssertFalse(app.staticTexts["private-contact@example.invalid"].exists)
@@ -2330,7 +2446,8 @@ final class SoloMemoriesUITests: XCTestCase {
         for _ in 0..<6 where !share.isHittable { app.swipeUp() }
         XCTAssertTrue(share.isHittable)
         share.tap()
-        let confirmation = app.buttons["PDFを作って保存・印刷"]
+        // The show screen's 「PDFで渡す」 asks once before making the file.
+        let confirmation = app.buttons["PDFを作って渡す"]
         let presented = confirmation.waitForExistence(timeout: 5)
         capture("evacuation-print-confirmation")
         XCTAssertTrue(presented, "The print confirmation must be presented before confirming export")
@@ -2457,11 +2574,22 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTFail("Input did not reach the visible form band: \(name)")
             return element
         }
+        // 11/8 (#872): the bar with 「チラシを作る」 steps aside while the keyboard
+        // is up. Close the keyboard the way a person would, then use the bar.
+        func closeKeyboard() {
+            let keyboard = app.keyboards.firstMatch
+            guard keyboard.exists else { return }
+            let close = app.buttons["キーボードを閉じる"]
+            XCTAssertTrue(close.waitForExistence(timeout: 5), app.debugDescription); close.tap()
+            XCTAssertTrue(keyboard.waitForNonExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["チラシを作る"].waitForExistence(timeout: 5), app.debugDescription)
+        }
         for (name, value) in [("lost-cat-name", "むぎ"),
                               ("lost-cat-place", "駅の近く"),
                               ("lost-cat-contact", "08000000000")] {
             let input = field(name); input.tap(); input.typeText(value)
         }
+        closeKeyboard()
         XCTAssertTrue(app.buttons["チラシを作る"].isEnabled)
         app.buttons["チラシを作る"].tap()
         let preview = app.buttons["共有する迷子の猫の画像"]
@@ -2497,6 +2625,7 @@ final class SoloMemoriesUITests: XCTestCase {
         let features = field("lost-cat-features")
         features.tap(); features.typeText(overLimit)
         XCTAssertEqual(features.value as? String, overLimit)
+        closeKeyboard()
         XCTAssertTrue(app.buttons["チラシを作る"].isEnabled)
         app.buttons["チラシを作る"].tap()
         XCTAssertTrue(app.buttons["lost-cat-edit-text"].waitForExistence(timeout: 5))
@@ -2518,6 +2647,7 @@ final class SoloMemoriesUITests: XCTestCase {
         selectAll.tap()
         restoredFeatures.typeText(String(repeating: "茶", count: 200))
         XCTAssertEqual((restoredFeatures.value as? String)?.count, 200)
+        closeKeyboard()
         app.buttons["チラシを作る"].tap()
         XCTAssertTrue(app.buttons["共有する迷子の猫の画像"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["lost-cat-share-image"].isEnabled)
@@ -2548,10 +2678,17 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertEqual(field("lost-cat-features").value as? String, "茶白・右耳に印・しっぽが長い")
         capture("lost-cat-refreshed-candidate-large-text")
         let candidateFeatures = field("lost-cat-features")
-        candidateFeatures.tap(); candidateFeatures.press(forDuration: 1.2)
-        let candidateSelectAll = app.descendants(matching: .any).matching(
-            NSPredicate(format: "label IN %@", ["すべてを選択", "Select All"])).firstMatch
-        XCTAssertTrue(candidateSelectAll.waitForExistence(timeout: 5)); candidateSelectAll.tap()
+        let refreshedFeatures = candidateFeatures.value as? String ?? ""
+        candidateFeatures.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        // At this large text the system edit menu put 「すべてを選択」 out of
+        // view (old run: not found). Verify the app's editing, not the OS menu:
+        // hold to pick up the caret, drag it past the end of the text, and
+        // delete the whole candidate, as a person replacing it would.
+        let focusedFeatures = field("lost-cat-features")
+        focusedFeatures.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 1.2,
+            thenDragTo: focusedFeatures.coordinate(withNormalizedOffset: CGVector(dx: 1.0, dy: 1.0)))
+        focusedFeatures.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: refreshedFeatures.count))
         candidateFeatures.typeText("茶白・右耳に小さな傷")
         XCTAssertEqual(candidateFeatures.value as? String, "茶白・右耳に小さな傷")
         let contact = field("lost-cat-contact")
@@ -2560,6 +2697,7 @@ final class SoloMemoriesUITests: XCTestCase {
         let place = field("lost-cat-place")
         XCTAssertFalse((place.value as? String ?? "").contains("非公開"))
         place.tap(); place.typeText("公園の近く")
+        closeKeyboard()
         app.buttons["チラシを作る"].tap()
         XCTAssertTrue(preview.waitForExistence(timeout: 5))
         let publicText = preview.value as? String ?? ""
@@ -2677,7 +2815,10 @@ final class SoloMemoriesUITests: XCTestCase {
             let largeText = appearance == "large"
             let app = XCUIApplication()
             // Acceptance scenarios use a separate two-tab harness; this opens MainTabView.
-            app.launchArguments = ["--app-store-screenshot-fixture",
+            // The harness has no cats; its tools start from empty records, not
+            // from memos other UI tests left on this Simulator (a leftover
+            // 預けるとき memo opened its page instead of 「猫を追加」).
+            app.launchArguments = ["--app-store-screenshot-fixture", "--isolated-app-records",
                                    "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
                 + (largeText ? ["--ux-large-text"] : [])
                 + [appearance == "dark" ? "--tools-hub-dark" : "--tools-hub-light"]
@@ -2753,7 +2894,8 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(app.navigationBars["病院で見せる"].waitForExistence(timeout: 5))
             let close = app.navigationBars.buttons.element(boundBy: 0)
             XCTAssertTrue(close.isHittable)
-            XCTAssertTrue(app.buttons["tool-profile-add"].exists)
+            // The visits load before the page shows its cats (or 「猫を追加」).
+            XCTAssertTrue(app.buttons["tool-profile-add"].waitForExistence(timeout: 5))
             capture("tools-vet-entry-\(appearance)")
             close.tap()
             XCTAssertTrue(preview.waitForExistence(timeout: 5))
@@ -2838,7 +2980,10 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertEqual(first.width, first.height, accuracy: 1)
             XCTAssertEqual(first.width, second.width, accuracy: 1)
             XCTAssertEqual(first.minY, second.minY, accuracy: 1)
-            XCTAssertGreaterThanOrEqual(second.minX, first.maxX + 7)
+            // 11/8 (4cf0c2b8): a tight 3pt gap, so the nine read as one picture
+            // (ShowcasePhotoView.gallery: GridItem spacing 3) at every text size.
+            XCTAssertEqual(second.minX - first.maxX, 3, accuracy: 0.5)
+            XCTAssertEqual(cells.element(boundBy: 3).frame.minY - first.maxY, 3, accuracy: 0.5)
             cells.element(boundBy: 1).tap()
             XCTAssertTrue(app.staticTexts["2 / 9"].waitForExistence(timeout: 5))
             app.buttons["写真の一覧に戻る"].tap()
@@ -3195,7 +3340,9 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(probe.waitForExistence(timeout: 15))
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value == %@", "ready"), object: probe)], timeout: 5), .completed)
-        XCTAssertTrue(app.buttons["main-tab-tools"].waitForExistence(timeout: 5))
+        // iOS 26 may drop the tab label's identifier; the tab itself must be there.
+        XCTAssertTrue(app.buttons["main-tab-tools"].waitForExistence(timeout: 5)
+                      || app.tabBars.buttons["ツール"].waitForExistence(timeout: 5))
         return app
     }
 
@@ -3207,7 +3354,9 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(sheet.waitForExistence(timeout: 10))
         capture(screenshot)
         let close = sheet.buttons["header.closeButton"].firstMatch
-        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        // The remote sheet can still be sliding in on a busy CI Simulator: its
+        // container exists before its header (11/8 diagnostic).
+        XCTAssertTrue(close.waitForExistence(timeout: 15))
         let beforeScreen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         beforeScreen.name = screenshot + "-before-close-screen"
         beforeScreen.lifetime = .keepAlways
@@ -3305,54 +3454,58 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(existing.waitForExistence(timeout: 10))
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "enabled == true"), object: existing)], timeout: 5), .completed)
-        app.buttons["membership-care"].tap()
-        let cat = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-cat-")).firstMatch
-        XCTAssertTrue(cat.waitForExistence(timeout: 5))
-        cat.tap()
-        XCTAssertTrue(app.textFields["care-cat-name"].waitForExistence(timeout: 5), "Existing care memo remains editable")
-        app.navigationBars.buttons.element(boundBy: 0).tap()
         // ADR-027: ツールは無料。会員が切れていても（inactive）新しい記録を作れる。
         // 新しい記録は「猫のプロフィール」から作る（プロフィールごとに1件）。
+        // 11/7: each tool is one page; the row of cats switches the memo in
+        // place (no list to go back to). A profile cat's name is read-only, so
+        // an opened memo is the chosen chip with that memo's own fields.
         let sora = "tool-profile-AB000000-0000-0000-0000-000000000002"
         let hana = "tool-profile-AB000000-0000-0000-0000-000000000003"
         let kuro = "tool-profile-AB000000-0000-0000-0000-000000000004"
-        app.buttons[sora].tap()
-        XCTAssertTrue(app.textFields["care-cat-name"].waitForExistence(timeout: 5),
-            "An expired membership must not block a new care memo")
-        XCTAssertFalse(app.staticTexts["membership-offer-heading"].exists)
+        func choose(_ chip: XCUIElement, _ message: String) {
+            XCTAssertTrue(chip.waitForExistence(timeout: 5), message); chip.tap()
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "selected == true"), object: chip)], timeout: 5), .completed, message)
+        }
+        func opensCareMemo(_ identifier: String, _ message: String) {
+            choose(app.buttons[identifier], message)
+            XCTAssertTrue(app.descendants(matching: .any)["care-important"].firstMatch.waitForExistence(timeout: 5), message)
+            XCTAssertFalse(app.staticTexts["membership-offer-heading"].exists, message)
+        }
+        func showsVetQuestions(_ message: String) {
+            let questions = app.descendants(matching: .any)["vet-questions"].firstMatch
+            for _ in 0..<6 where !questions.exists { app.swipeUp(velocity: .slow) }
+            XCTAssertTrue(questions.waitForExistence(timeout: 5), message)
+        }
+        app.buttons["membership-care"].tap()
+        // The existing memo's cat has no profile here: its chip is care-cat-<UUID>.
+        let cat = app.buttons.matching(NSPredicate(format: "identifier MATCHES %@", "care-cat-[0-9A-F-]{36}")).firstMatch
+        choose(cat, "The existing care memo's cat stays in the row")
+        XCTAssertTrue(app.descendants(matching: .any)["care-cat-name"].firstMatch.waitForExistence(timeout: 5),
+                      "Existing care memo remains editable")
+        opensCareMemo(sora, "An expired membership must not block a new care memo")
         capture("membership-care-new-free")
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        choose(cat, "The existing care memo can be opened again")
         XCTAssertTrue(app.buttons["care-disclosure-open"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["care-disclosure-open"].isHittable, "Existing output remains available")
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.buttons["membership-veterinary"].tap()
-        let visit = app.buttons["vet-cat-AB000000-0000-0000-0000-000000000001"]
-        XCTAssertTrue(visit.waitForExistence(timeout: 5)); visit.tap()
-        XCTAssertTrue(app.textFields["vet-questions"].waitForExistence(timeout: 5)
-            || app.textViews["vet-questions"].waitForExistence(timeout: 5), "Existing draft remains editable")
-        app.navigationBars.buttons["閉じる"].tap()
-        app.buttons[sora].tap()
-        XCTAssertTrue(app.textFields["vet-questions"].waitForExistence(timeout: 5)
-            || app.textViews["vet-questions"].waitForExistence(timeout: 5),
-            "An expired membership must not block a new veterinary visit")
+        choose(app.buttons["vet-cat-AB000000-0000-0000-0000-000000000001"], "The existing draft's cat stays in the row")
+        showsVetQuestions("Existing draft remains editable")
+        choose(app.buttons[sora], "An expired membership must not block a new veterinary visit")
+        showsVetQuestions("An expired membership must not block a new veterinary visit")
         XCTAssertFalse(app.staticTexts["membership-offer-heading"].exists)
         capture("membership-veterinary-new-free")
-        app.navigationBars.buttons["閉じる"].tap()
         app.navigationBars.buttons.element(boundBy: 0).tap()
         // 確認不能（checking）でもツールは止まらない。
         app.buttons["membership-unknown"].tap()
         app.buttons["membership-care"].tap()
-        app.buttons[hana].tap()
-        XCTAssertTrue(app.textFields["care-cat-name"].waitForExistence(timeout: 5),
-            "Unknown membership must not block a new care memo")
+        opensCareMemo(hana, "Unknown membership must not block a new care memo")
         XCTAssertFalse(app.buttons["購入を復元"].exists)
-        XCTAssertFalse(app.staticTexts["membership-offer-heading"].exists)
-        app.navigationBars.buttons.element(boundBy: 0).tap()
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.buttons["membership-beta"].tap()
         app.buttons["membership-care"].tap()
-        app.buttons[kuro].tap()
-        XCTAssertTrue(app.textFields["care-cat-name"].waitForExistence(timeout: 5), "Beta creation remains unrestricted")
+        opensCareMemo(kuro, "Beta creation remains unrestricted")
         app.terminate()
     }
 
@@ -3588,7 +3741,9 @@ final class SoloMemoriesUITests: XCTestCase {
         purchase.tap()
         let message = app.staticTexts["membership-offer-message"]
         XCTAssertTrue(message.waitForExistence(timeout: 5))
-        XCTAssertTrue(message.label.contains("確認を待っています"))
+        // 10/30 wording: wait for Apple's purchase, and do not buy again.
+        XCTAssertTrue(message.label.contains("購入手続きが終わるのを待っています"), message.label)
+        XCTAssertTrue(message.label.contains("もう一度購入せず"), message.label)
         XCTAssertFalse(purchase.isEnabled)
         XCTAssertFalse(app.staticTexts["membership-preview-result"].exists)
         let restore = app.buttons["membership-offer-restore"]

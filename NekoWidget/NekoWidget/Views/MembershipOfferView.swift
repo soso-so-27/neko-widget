@@ -46,6 +46,19 @@ struct MembershipOfferView: View {
     ]
     /// Apple's own instructions; the app never cancels on the person's behalf.
     static let cancellationHelpURL = URL(string: "https://support.apple.com/ja-jp/118428")
+    /// The privacy page under the purchase button (App Review). A build that
+    /// can sell always has it: the live storefront does not load an offer
+    /// without it (`MembershipStoreKitClient.load`), and release overlays set it.
+    static var privacyURL: URL? {
+#if DEBUG
+        // The no-charge preview fixture stands in for such a build. Debug
+        // leaves the release overlay's links empty, which hid this link there.
+        if CommandLine.arguments.contains("--membership-offer-ui-fixture") {
+            return AppPublicLinksConfiguration.current.privacyURL ?? URL(string: "https://nekonomado.com/privacy/")
+        }
+#endif
+        return AppPublicLinksConfiguration.current.privacyURL
+    }
 
     init(
         context: PlusOfferContext,
@@ -323,7 +336,7 @@ struct MembershipOfferView: View {
                 .frame(minHeight: 44)
                 .accessibilityIdentifier("membership-offer-terms")
         }
-        if let privacyURL = AppPublicLinksConfiguration.current.privacyURL {
+        if let privacyURL = Self.privacyURL {
             Link("プライバシー", destination: privacyURL)
                 .frame(minHeight: 44)
                 .accessibilityIdentifier("membership-offer-privacy")

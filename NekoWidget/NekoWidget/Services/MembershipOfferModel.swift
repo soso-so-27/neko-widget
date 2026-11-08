@@ -929,6 +929,8 @@ struct PlusOfferPrompt: View {
             }
             .multilineTextAlignment(.center).padding(24)
             .frame(maxWidth: .infinity)
+            // A container keeps the button's own identifier (11/8).
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("plus-offer-prompt")
             .onAppear {
                 guard presentsImmediately, !didPresent else { return }
@@ -1061,10 +1063,19 @@ struct MembershipOfferPreviewView: View {
                         .accessibilityIdentifier("membership-preview-open-\(context.identifier)")
                 }
             }
+        }
+        // Above the list, not its last row: with every entry listed (11/7: 10
+        // rows) a last row is below the screen and not loaded, so the result
+        // of the action just taken was not shown.
+        .safeAreaInset(edge: .top, spacing: 0) {
             if let resultText {
-                Text(resultText).accessibilityIdentifier("membership-preview-result")
+                Text(resultText)
+                    .font(.footnote)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20).padding(.vertical, 8)
+                    .background(.bar)
+                    .accessibilityIdentifier("membership-preview-result")
             }
-
         }
         .navigationTitle("Plusの画面の確認")
         .sheet(isPresented: Binding(get: { offerContext != nil },

@@ -3,6 +3,9 @@ import SwiftUI
 import UIKit
 import PDFKit
 
+/// A named in-app check that did not hold; shown on screen for UI test runs.
+enum FixtureCheckFailure: Error { case assertion(String) }
+
 /// Isolated synthetic records. Exercises native persistence/disclosure/rendering,
 /// not real PhotoKit permission, purchases or another person's records.
 struct CareHandoffFixtureView: View {
@@ -33,7 +36,12 @@ struct CareHandoffFixtureView: View {
         }
         if let phase = ProcessInfo.processInfo.environment["NEKO_TOOL_REFRESH_PHASE"],
            phase == "2" || phase == "3" {
-            reuse.editCat(Self.mugi) { $0.food = phase == "2" ? "更新したフード 25g" : "さらに更新したフード 30g" }
+            reuse.editCat(Self.mugi) {
+                $0.food = phase == "2" ? "更新したフード 25g" : "さらに更新したフード 30g"
+                // Phase 3 also renames the source: a name the owner edited in
+                // 預けるとき must stay, while the unedited food keeps following.
+                if phase == "3" { $0.name = "むぎ（避難に備えるで変更）" }
+            }
         }
         if store.plan.cats.isEmpty && ProcessInfo.processInfo.environment["NEKO_CARE_EMPTY"] != "1" {
             var mugi = CareCat(); mugi.id = Self.mugi; mugi.name = "むぎ"
@@ -77,15 +85,22 @@ struct CareHandoffFixtureView: View {
             } }.accessibilityIdentifier("care-rendered-output")
         }
         .task {
+            // The failed check is named on screen so a UI run says which one broke.
             do { rendered = try Self.verifyBoundaries(); try Self.verifyAutofill(); checks = "境界検証成功" }
-            catch { checks = "境界検証失敗" }
+            catch {
+                // Only the check's own name, never the raw error text (diagnostic privacy).
+                let check: String
+                if case let .assertion(name)? = error as? FixtureCheckFailure { check = name }
+                else { check = "check stopped by " + String(reflecting: type(of: error)) }
+                checks = "境界検証失敗：" + check
+            }
         }
     }
 
     /// Executes production stores and repositories, not a parallel fake implementation.
     @MainActor
     private static func verifyAutofill() throws {
-        enum Failure: Error { case assertion(String) }
+        typealias Failure = FixtureCheckFailure
         func require(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
             if !(try condition()) { throw Failure.assertion(message) }
         }
@@ -135,18 +150,21 @@ struct CareHandoffFixtureView: View {
         _ = try care.refreshCandidates(id, using: evacuation)
         try require(care.addCat(using: evacuation, sourceCatID: a.id, access: .beta) == id, "same identity reopens instead of importing again")
         let expired = MembershipActionAccess(enforcementEnabled: true, personal: .inactive)
-        let beforeDeniedCreation = care.plan
         try require(care.addCat(using: evacuation, sourceCatID: a.id, access: expired) == id,
                     "expiry keeps existing saved identity accessible")
-        try require(care.addCat(using: evacuation, sourceCatID: b.id, access: expired) == nil,
-                    "expiry blocks new saved identity")
-        try require(care.addCat(profileID: UUID().uuidString, name: "新規", access: expired) == nil,
-                    "expiry blocks new profile")
-        try require(care.addCat(access: expired) == nil && care.plan == beforeDeniedCreation && care.saveError == nil,
-                    "denied blank creation neither saves nor becomes a storage error")
+        // ADR-027 (10/20): the tools are free, so an expired membership never
+        // blocks a new memo. Creation stays a plain save, not a storage error.
+        try require(expired.decision(for: .createCareMemo) == .allowed, "tools stay free after expiry")
+        let freeAfterExpiry = CareHandoffStore(directory: directory.appendingPathComponent("free-after-expiry"))
+        try require(freeAfterExpiry.addCat(profileID: UUID().uuidString, name: "新規", access: expired) != nil
+            && freeAfterExpiry.addCat(access: expired) != nil
+            && freeAfterExpiry.plan.cats.count == 2 && freeAfterExpiry.saveError == nil,
+                    "expiry still creates a new profile memo and a blank memo")
         let restarted = CareHandoffStore(directory: careDirectory)
         try require(restarted.plan.cats[0].usualFood == "" && restarted.plan.cats[0].handling == "今回の接し方", "cleared and edited fields survive restart")
-        guard let secondID = care.addCat(using: evacuation, sourceCatID: b.id, access: .beta) else { throw Failure.assertion("second same-name cat") }
+        guard let secondID = care.addCat(using: evacuation, sourceCatID: b.id, access: expired) else {
+            throw Failure.assertion("expiry still creates the second same-name cat")
+        }
         try require(care.plan.cats.count == 2 && care.plan.cats.first(where: { $0.id == secondID })?.photoName == nil, "distinct identity; owner-only photo excluded")
         // Reverse direction retains structured meal values as text, without guessing.
         var c = CareCat(); c.name = "新しい猫"; c.profileID = "profile-c"
@@ -213,15 +231,16 @@ struct CareHandoffFixtureView: View {
 
     @MainActor
     private static func verifyRefreshFailures(directory: URL) throws {
-        enum Failure: Error { case invariant }
-        func require(_ value: Bool) throws { if !value { throw Failure.invariant } }
+        func require(_ value: Bool, line: Int = #line) throws {
+            if !value { throw FixtureCheckFailure.assertion("refresh failure check, line \(line)") }
+        }
         let careDirectory = directory.appendingPathComponent("care")
         let source = EvacuationStore(directory: directory.appendingPathComponent("source"))
         var a = EvacuationCat(); a.profileID = "a"; a.name = "同名"; a.food = "元のフード"
         var b = EvacuationCat(); b.profileID = "b"; b.name = "同名"; b.food = "別猫のフード"
         try require(source.update { $0.cats = [a, b] })
         let target = CareHandoffStore(directory: careDirectory)
-        guard let id = target.addCat(using: source, sourceCatID: a.id, access: .beta) else { throw Failure.invariant }
+        guard let id = target.addCat(using: source, sourceCatID: a.id, access: .beta) else { throw FixtureCheckFailure.assertion("refresh failure check, line \(#line)") }
         let before = target.plan
         source.editCat(b.id) { $0.food = "別猫の更新" }
         try require(!(try target.refreshCandidates(id, using: source)) && target.plan == before)
@@ -249,7 +268,7 @@ struct CareHandoffFixtureView: View {
     }
 
     private static func verifyBoundaries() throws -> [UIImage] {
-        enum Failure: Error { case assertion(String) }
+        typealias Failure = FixtureCheckFailure
         func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
             if !condition() { throw Failure.assertion(message) }
         }
@@ -383,6 +402,9 @@ enum ToolProfileDataChecks {
         try require(ToolCatProfileLinker.care(cat.id, profileID: profileID, care: care, evacuation: evacuation))
         var expectedCare = carePlan; expectedCare.cats[0].profileID = profileID
         var expectedEvac = evacPlan; expectedEvac.cats[0].profileID = profileID
+        // 11/8: the first save of an evacuation plan records when it was made
+        // (from its earliest date), so the half-year review has a start.
+        expectedEvac.stampCreation()
         try require(care.plan == expectedCare && evacuation.plan == expectedEvac)
         try require(Data(contentsOf: careRoot.appendingPathComponent(carePhoto)) == jpeg)
         try require(Data(contentsOf: evacRoot.appendingPathComponent(evacPhoto)) == jpeg)

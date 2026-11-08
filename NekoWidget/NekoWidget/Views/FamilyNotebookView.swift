@@ -89,7 +89,10 @@ final class FamilyNotebookPrototype: ObservableObject {
         if let store, let author = realAuthor, let saved = try? store.snapshot(),
            let binding = try? FamilyNotebookLocalBinding(directory: store.localDirectory, support: AppRecordDataset.support,
                familyID: saved.familyID, deviceID: store.localDeviceID, author: author),
-           let bytes = try? JSONEncoder().encode(binding) {
+           let bytes = try? JSONEncoder().encode(binding),
+           UserDefaults.standard.data(forKey: Self.bindingKey) != bytes {
+            // Runs on open and every 5 s while a tool is shown: write only a
+            // changed binding, never during scrolling (11/8).
             UserDefaults.standard.set(bytes, forKey: Self.bindingKey)
         }
         reload()
