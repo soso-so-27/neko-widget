@@ -91,7 +91,21 @@ struct CareHandoffPlan: Codable, Equatable {
     /// 11/8: when the last memo was made. 14 days later the period and the
     /// request start empty, so an old trip is not handed over again.
     var lastMadeAt: Date? = nil
+    /// Round 2 (11/8): 「家の中のこと」, once for the household, never per cat.
+    /// No address or keys. Optional so older plans still open.
+    var houseFoodPlace: String? = nil
+    var houseCarrierPlace: String? = nil
+    var houseHidingPlace: String? = nil
+    var houseOther: String? = nil
     var photoNames: Set<String> { Set(cats.compactMap(\.photoName)) }
+
+    /// Round 2 (11/8): cats with a profile but no care memo yet, in the
+    /// profiles' order. They are offered in 「お願いする猫」; a tap makes the
+    /// memo, the same way opening the cat in the tool does.
+    func profileIDsWithoutMemo(_ profileIDs: [String]) -> [String] {
+        var seen = Set<String>()
+        return profileIDs.filter { id in seen.insert(id).inserted && !cats.contains { $0.profileID == id } }
+    }
 
     static let staleRequestAge: TimeInterval = 14 * 24 * 60 * 60
     /// 347: period and request are written in one place, where the memo is
@@ -283,12 +297,50 @@ struct CareHandoffDisclosure {
             add("お願いする期間", plan.period)
             add("ほかにお願いしたいこと", plan.request)
         }
+        // Round 2: the house, once on page 1, only what is written.
+        fields += Self.houseFields(plan: plan)
         if contacts {
             add("飼い主の連絡先", plan.contact)
             add("つながらないときの連絡先", plan.backupContact)
             add("かかりつけの動物病院", plan.veterinarian)
         }
         return fields
+    }
+
+    /// Round 2 (11/8): 「家の中のこと」 as handed over, once for every cat.
+    static func houseFields(plan: CareHandoffPlan) -> [(String, String)] {
+        written([("フードと砂の置き場所", trimmed(plan.houseFoodPlace)),
+                 ("キャリーの場所", trimmed(plan.houseCarrierPlace)),
+                 ("隠れる場所", trimmed(plan.houseHidingPlace)),
+                 ("家の中のこと", trimmed(plan.houseOther))])
+    }
+
+    /// The closing lines of the handed memo when something was left out; the
+    /// same words in the PDF, the image and the text.
+    static func closingNotes(health: Bool, contacts: Bool) -> [String] {
+        var notes: [String] = []
+        if !health { notes.append("薬・持病・アレルギーは載せていません。飼い主に聞いてください。") }
+        if !contacts { notes.append("連絡先は、このメモには載せていません。") }
+        return notes
+    }
+
+    /// Round 2 (11/8): 「文字で送る」. The handed memo as plain text, sent with
+    /// the PDF or image so it can be pasted into LINE: the common rows once,
+    /// then each cat's rows under its name.
+    static func plainText(heading: String, common: [(String, String)],
+                          cats: [(name: String, fields: [(String, String)])], notes: [String]) -> String {
+        func lines(_ fields: [(String, String)]) -> [String] {
+            written(fields).map { field -> String in
+                let value = trimmed(field.1)
+                return value.contains("\n") ? "\(field.0)：\n\(value)" : "\(field.0)：\(value)"
+            }
+        }
+        var blocks = [heading]
+        let commonLines = lines(common)
+        if !commonLines.isEmpty { blocks.append(commonLines.joined(separator: "\n")) }
+        for cat in cats { blocks.append((["【\(cat.name)】"] + lines(cat.fields)).joined(separator: "\n")) }
+        if !notes.isEmpty { blocks.append(notes.joined(separator: "\n")) }
+        return blocks.joined(separator: "\n\n")
     }
 
     /// The first rows of a cat: this time's notes, written in the tool.
@@ -371,5 +423,104 @@ struct CareHandoffDisclosure {
         }
         let text = lines.isEmpty ? trimmed(plan.veterinarian) : lines.joined(separator: "\n")
         return text.isEmpty ? [] : [("かかりつけの動物病院", text)]
+    }
+}
+
+/// Round 2 (11/8): 「日ごとのチェック表」 on the last page of the PDF. One row
+/// a day when the period is a date range; else 7 blank rows to write the
+/// date in. 「薬」 only when a chosen cat takes medicine and health is shown.
+struct CareCheckTable: Equatable {
+    var days: [String]
+    var columns: [String]
+    var catNames: [String]
+
+    static let blankRows = 7
+    static let longestPeriod = 31
+
+    init(period: String, catNames: [String], medicine: Bool, now: Date = Date(),
+         calendar: Calendar = CareCheckTable.calendar) {
+        days = Self.days(period: period, now: now, calendar: calendar)
+            ?? Array(repeating: "", count: Self.blankRows)
+        columns = Self.columns(medicine: medicine)
+        self.catNames = catNames
+    }
+
+    /// Always the Western calendar: 「11/3（月）」 even on an iPhone set to 和暦.
+    static var calendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        return calendar
+    }
+
+    static func columns(medicine: Bool) -> [String] {
+        medicine ? ["ごはん", "薬", "トイレ", "様子"] : ["ごはん", "トイレ", "様子"]
+    }
+
+    /// A medicine written in 「この子のこと」: the same ones the memo prints
+    /// under 「飲んでいる薬」.
+    static func hasMedicine(_ record: CatCareRecord?) -> Bool {
+        (record?.activeMedications ?? []).contains { medicine in
+            [medicine.name, medicine.dose, medicine.schedule, medicine.note]
+                .contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        }
+    }
+
+    /// 「11/3（月）」 for each day from the first date in the period to the
+    /// second, or nil when the period is not such a range (one date, no
+    /// date, or longer than a month). A year left out is this year's; a date
+    /// half a year back is next year's. The end may leave out the month.
+    static func days(period: String, now: Date, calendar: Calendar) -> [String]? {
+        let text = String(String.UnicodeScalarView(period.unicodeScalars.map { scalar -> Unicode.Scalar in
+            switch scalar.value {
+            case 0xFF10...0xFF19: return Unicode.Scalar(scalar.value - 0xFF10 + 0x30) ?? scalar
+            case 0xFF0F: return "/"
+            case 0xFF0E: return "."
+            default: return scalar
+            }
+        }))
+        guard let full = try? NSRegularExpression(pattern: #"(?:(\d{4})\s*[年/.\-]\s*)?(\d{1,2})\s*[月/.\-]\s*(\d{1,2})"#),
+              let dayOnly = try? NSRegularExpression(pattern: #"(\d{1,2})\s*日(?!間)"#) else { return nil }
+        let whole = text as NSString
+        func number(_ match: NSTextCheckingResult, _ group: Int) -> Int? {
+            let range = match.range(at: group)
+            return range.location == NSNotFound ? nil : Int(whole.substring(with: range))
+        }
+        func date(_ year: Int, _ month: Int, _ day: Int) -> Date? {
+            guard (1...12).contains(month), (1...31).contains(day),
+                  let value = calendar.date(from: DateComponents(year: year, month: month, day: day)),
+                  calendar.component(.month, from: value) == month, calendar.component(.day, from: value) == day
+            else { return nil }
+            return value
+        }
+        guard let first = full.firstMatch(in: text, range: NSRange(location: 0, length: whole.length)),
+              let startMonth = number(first, 2), let startDay = number(first, 3) else { return nil }
+        let today = calendar.startOfDay(for: now)
+        var startYear = number(first, 1) ?? calendar.component(.year, from: today)
+        guard var start = date(startYear, startMonth, startDay) else { return nil }
+        if number(first, 1) == nil, let back = calendar.date(byAdding: .day, value: -183, to: today), start < back {
+            startYear += 1
+            guard let next = date(startYear, startMonth, startDay) else { return nil }
+            start = next
+        }
+        let rest = NSRange(location: NSMaxRange(first.range), length: whole.length - NSMaxRange(first.range))
+        var end: Date?
+        if let second = full.firstMatch(in: text, range: rest), let month = number(second, 2), let day = number(second, 3) {
+            let year = number(second, 1) ?? startYear
+            end = date(year, month, day)
+            if number(second, 1) == nil, let value = end, value < start { end = date(year + 1, month, day) }
+        } else if let second = dayOnly.firstMatch(in: text, range: rest), let day = number(second, 1) {
+            end = date(startYear, startMonth, day)
+            if end.map({ $0 < start }) ?? true, let nextMonth = calendar.date(byAdding: .month, value: 1, to: start) {
+                end = date(calendar.component(.year, from: nextMonth), calendar.component(.month, from: nextMonth), day)
+            }
+        }
+        guard let end, let count = calendar.dateComponents([.day], from: start, to: end).day,
+              (0..<longestPeriod).contains(count) else { return nil }
+        let weekdays = ["日", "月", "火", "水", "木", "金", "土"]
+        return (0...count).compactMap { offset in
+            guard let day = calendar.date(byAdding: .day, value: offset, to: start) else { return nil }
+            return "\(calendar.component(.month, from: day))/\(calendar.component(.day, from: day))"
+                + "（\(weekdays[calendar.component(.weekday, from: day) - 1])）"
+        }
     }
 }

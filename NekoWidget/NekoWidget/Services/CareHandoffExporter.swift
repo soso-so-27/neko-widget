@@ -17,6 +17,15 @@ struct CareHandoffShareRecord {
     /// The page heading. 「病院で見せる」 uses its own, without the care notes.
     var heading = "お世話メモ"
     var isCareMemo = true
+    /// Round 2 (11/8): 「日ごとのチェック表」, the last page of the PDF only.
+    var checkTable: CareCheckTable? = nil
+
+    /// Round 2 (11/8): 「文字で送る」, shared with the PDF or the image.
+    var plainText: String {
+        CareHandoffDisclosure.plainText(heading: heading, common: commonFields,
+            cats: cats.map { (name: $0.name, fields: $0.fields) },
+            notes: isCareMemo ? CareHandoffDisclosure.closingNotes(health: includesHealth, contacts: includesContacts) : [])
+    }
 }
 
 @MainActor
@@ -65,8 +74,9 @@ enum CareHandoffExporter {
             }
             guard closing else { return body }
             if record.isCareMemo {
-                if !record.includesHealth { append("薬・持病・アレルギーは載せていません。飼い主に聞いてください。", size: font - 2) }
-                if !record.includesContacts { append("連絡先は、このメモには載せていません。", size: font - 2) }
+                for note in CareHandoffDisclosure.closingNotes(health: record.includesHealth, contacts: record.includesContacts) {
+                    append(note, size: font - 2)
+                }
             }
             append("作った日：" + record.createdAt.formatted(date: .numeric, time: .shortened), size: font - 2)
             append("このメモは作った時点の内容です。変わったところは飼い主に確かめてください。", size: font - 2)
@@ -100,16 +110,118 @@ enum CareHandoffExporter {
                 offset += visible.length
             } while offset < text.length
         }
-        func draw(_ context: CGContext, index: Int) {
-            let page = pages[index]
-            UIColor.white.setFill(); context.fill(CGRect(origin: .zero, size: size))
+        // Round 2 (11/8): 「日ごとのチェック表」 after the memo, in the PDF only.
+        // One block a cat; a block that does not fit goes on to the next page.
+        struct TablePiece { let cat: Int; let rows: Range<Int>; let y: CGFloat }
+        let rowHeight: CGFloat = 24
+        let table = pdf ? record.checkTable.flatMap { $0.days.isEmpty || $0.catNames.isEmpty ? nil : $0 } : nil
+        let tableTop = margin + 58, tableBottom = size.height - margin - 26
+        let tableTitle: CGFloat = (table?.catNames.count ?? 0) > 1 ? 24 : 0
+        var tablePages: [[TablePiece]] = []
+        if let table {
+            var current: [TablePiece] = []
+            var y = tableTop
+            for cat in table.catNames.indices {
+                var start = 0
+                while start < table.days.count {
+                    let left = table.days.count - start
+                    let fit = Int((tableBottom - y - tableTitle - rowHeight) / rowHeight)
+                    if fit < min(left, 3), !current.isEmpty {
+                        tablePages.append(current); current = []; y = tableTop; continue
+                    }
+                    let count = max(1, min(fit, left))
+                    current.append(TablePiece(cat: cat, rows: start..<start + count, y: y))
+                    y += tableTitle + rowHeight * CGFloat(count + 1) + 18
+                    start += count
+                }
+            }
+            if !current.isEmpty { tablePages.append(current) }
+        }
+        guard pages.count + tablePages.count <= 80 else { throw CareHandoffError.tooLarge }
+        let pageCount = pages.count + tablePages.count
+        func drawHeading(_ heading: String) {
             let headingStyle = NSMutableParagraphStyle(); headingStyle.lineBreakMode = .byTruncatingTail
-            let heading = page.catIndex.map { "\(record.heading) · \(record.cats[$0].name)" } ?? record.heading
             (heading as NSString).draw(in:
                 CGRect(x: margin, y: margin, width: size.width - margin * 2, height: 26), withAttributes: [
                     .font: UIFont.boldSystemFont(ofSize: 16), .foregroundColor: UIColor.black,
                     .paragraphStyle: headingStyle
                 ])
+        }
+        func drawFooter(_ index: Int) {
+            ("ねこのまど  ·  \(index + 1) / \(pageCount)" as NSString).draw(
+                at: CGPoint(x: margin, y: size.height - margin), withAttributes: [
+                    .font: UIFont.systemFont(ofSize: 11), .foregroundColor: UIColor.darkGray
+                ])
+        }
+        func drawTable(_ context: CGContext, pieces: [TablePiece], table: CareCheckTable, index: Int) {
+            UIColor.white.setFill(); context.fill(CGRect(origin: .zero, size: size))
+            drawHeading("\(record.heading) · 日ごとのチェック")
+            ("済んだら□に印を付けてください。" as NSString).draw(
+                at: CGPoint(x: margin, y: margin + 30), withAttributes: [
+                    .font: UIFont.systemFont(ofSize: 12), .foregroundColor: UIColor.darkGray
+                ])
+            // The date, then the columns; 「様子」 is wider, to write in.
+            let width = size.width - margin * 2
+            let dateWidth: CGFloat = 92
+            let weights = table.columns.map { $0 == "様子" ? 2.5 : 1.0 }
+            let unit = (width - dateWidth) / CGFloat(weights.reduce(0, +))
+            var lefts: [CGFloat] = []
+            var x = margin + dateWidth
+            for weight in weights { lefts.append(x); x += unit * CGFloat(weight) }
+            let center: NSParagraphStyle = { let style = NSMutableParagraphStyle(); style.alignment = .center; return style }()
+            func text(_ value: String, in cell: CGRect, size font: CGFloat, bold: Bool = false,
+                      color: UIColor = .black, centered: Bool = true) {
+                let face = bold ? UIFont.boldSystemFont(ofSize: font) : UIFont.systemFont(ofSize: font)
+                let inset = centered ? cell : cell.insetBy(dx: 6, dy: 0)
+                (value as NSString).draw(in: CGRect(x: inset.minX, y: cell.midY - face.lineHeight / 2,
+                                                    width: inset.width, height: face.lineHeight),
+                    withAttributes: [.font: face, .foregroundColor: color,
+                                     .paragraphStyle: centered ? center : NSParagraphStyle.default])
+            }
+            context.setLineWidth(0.6)
+            for piece in pieces {
+                var y = piece.y
+                if tableTitle > 0 {
+                    text(table.catNames[piece.cat], in: CGRect(x: margin, y: y, width: width, height: tableTitle - 4),
+                         size: 14, bold: true, centered: false)
+                    y += tableTitle
+                }
+                let header = CGRect(x: margin, y: y, width: width, height: rowHeight)
+                UIColor(white: 0.93, alpha: 1).setFill(); context.fill(header)
+                text("日付", in: CGRect(x: margin, y: y, width: dateWidth, height: rowHeight), size: 11, bold: true)
+                for (column, left) in zip(table.columns, lefts) {
+                    let right = lefts.first(where: { $0 > left }) ?? margin + width
+                    text(column, in: CGRect(x: left, y: y, width: right - left, height: rowHeight), size: 11, bold: true)
+                }
+                for row in piece.rows {
+                    let top = y + rowHeight * CGFloat(row - piece.rows.lowerBound + 1)
+                    let day = table.days[row]
+                    text(day.isEmpty ? "　/　（　）" : day, in: CGRect(x: margin, y: top, width: dateWidth, height: rowHeight),
+                         size: 12, color: day.isEmpty ? .gray : .black, centered: false)
+                    for (column, left) in zip(table.columns, lefts) where column != "様子" {
+                        let right = lefts.first(where: { $0 > left }) ?? margin + width
+                        let box = CGRect(x: (left + right) / 2 - 6, y: top + rowHeight / 2 - 6, width: 12, height: 12)
+                        UIColor.darkGray.setStroke(); context.stroke(box)
+                    }
+                }
+                // The grid: every row and column.
+                let bottom = y + rowHeight * CGFloat(piece.rows.count + 1)
+                UIColor.gray.setStroke()
+                for line in 0...(piece.rows.count + 1) {
+                    let lineY = y + rowHeight * CGFloat(line)
+                    context.move(to: CGPoint(x: margin, y: lineY)); context.addLine(to: CGPoint(x: margin + width, y: lineY))
+                }
+                for lineX in [margin] + lefts + [margin + width] {
+                    context.move(to: CGPoint(x: lineX, y: y)); context.addLine(to: CGPoint(x: lineX, y: bottom))
+                }
+                context.strokePath()
+            }
+            drawFooter(index)
+        }
+        func draw(_ context: CGContext, index: Int) {
+            let page = pages[index]
+            UIColor.white.setFill(); context.fill(CGRect(origin: .zero, size: size))
+            drawHeading(page.catIndex.map { "\(record.heading) · \(record.cats[$0].name)" } ?? record.heading)
             if page.first, let photo = catPhoto(page.catIndex) {
                 let width = size.width - margin * 2
                 let scale = min(width / photo.size.width, photoHeight / photo.size.height)
@@ -124,10 +236,7 @@ enum CareHandoffExporter {
                 width: bounds.width, height: bounds.height), transform: nil)
             CTFrameDraw(CTFramesetterCreateFrame(page.framesetter, page.range, path, nil), context)
             context.restoreGState()
-            ("ねこのまど  ·  \(index + 1) / \(pages.count)" as NSString).draw(
-                at: CGPoint(x: margin, y: size.height - margin), withAttributes: [
-                    .font: UIFont.systemFont(ofSize: 11), .foregroundColor: UIColor.darkGray
-                ])
+            drawFooter(index)
         }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(prefix + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
@@ -138,6 +247,12 @@ enum CareHandoffExporter {
                 let file = directory.appendingPathComponent("cat-care.pdf")
                 let data = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: size)).pdfData { context in
                     for index in pages.indices { context.beginPage(); draw(context.cgContext, index: index) }
+                    if let table {
+                        for (offset, pieces) in tablePages.enumerated() {
+                            context.beginPage()
+                            drawTable(context.cgContext, pieces: pieces, table: table, index: pages.count + offset)
+                        }
+                    }
                 }
                 try data.write(to: file, options: [.atomic, .completeFileProtection]); files.append(file)
             } else {

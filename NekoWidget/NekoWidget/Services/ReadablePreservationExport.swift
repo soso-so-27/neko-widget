@@ -316,7 +316,10 @@ enum ReadablePreservationText {
         "lastMadeAt": "最後にメモを作った日", "veterinarian": "かかりつけの動物病院",
         "checkStartedAt": "チェックを始めた日", "lastCheckedAt": "最後にそろえた日", "familyMeetingMemo": "家族の集合のメモ",
         "kindValue": "行き先の種類", "identifyingFeatures": "見分ける特徴",
-        "vetName": "病院名", "vetPhone": "病院の電話番号", "vetNote": "病院のメモ", "medicationName": "薬の名前", "farewellDay": "家族の手帳をやめた日"]
+        "vetName": "病院名", "vetPhone": "病院の電話番号", "vetNote": "病院のメモ", "medicationName": "薬の名前", "farewellDay": "家族の手帳をやめた日",
+        // Round 2 (11/8): 預けるときの「家の中のこと」.
+        "houseFoodPlace": "フードと砂の置き場所", "houseCarrierPlace": "キャリーの場所",
+        "houseHidingPlace": "隠れる場所", "houseOther": "家の中のこと"]
     private static let bookkeeping: Set<String> = ["schemaVersion", "version", "revision", "id", "catID", "familyID", "deviceID", "ownerID", "generation", "deletedAt",
         "profileID", "toolCatID", "sourceNoteID", "sourceRevision", "familyRecordID", "familyDetached", "prefilledFields", "prefilledUsualFood",
         "mutationRevision", "memberships", "globalExcludedAssets", "legacyUnscoped", "mode", "photoAlbumLink", "keyPhotoLocalIdentifier",
