@@ -20,6 +20,9 @@ struct EvacuationPreparationView: View {
     /// A cat's 「見せる」 row opens the show screen directly.
     @State private var showing: EvacuationPreviewItem?
     @State private var showError: String?
+    /// 「見直しの時期に知らせる」 (round 2): off until the owner turns it on.
+    @AppStorage(EvacuationNotice.settingKey) private var noticeSetting = 0
+    @State private var noticesBlocked = false
 
     var body: some View {
         Group {
@@ -29,6 +32,15 @@ struct EvacuationPreparationView: View {
                 } description: { Text(error) } actions: { Button("もう一度読み込む") { store.reload() } }
             } else {
                 List {
+                    // Round 2 (11/9): the day itself, first, from what is on this iPhone.
+                    Section {
+                        NavigationLink { EvacuationNowView(profiles: profiles, store: store) } label: {
+                            Label("いま避難する", systemImage: "figure.walk.departure")
+                                .font(.headline).foregroundStyle(Color.red)
+                                .frame(minHeight: 44)
+                        }
+                        .accessibilityIdentifier("evacuation-now-open")
+                    }
                     if showsReviewReminder {
                         Section {
                             VStack(alignment: .leading, spacing: 6) {
@@ -38,7 +50,10 @@ struct EvacuationPreparationView: View {
                             }
                             Button("見直しを始める") { startReview() }
                                 .accessibilityIdentifier("evacuation-review-start")
-                            Button("閉じる") { reminderDismissedAt = Date().timeIntervalSince1970 }
+                            Button("閉じる") {
+                                reminderDismissedAt = Date().timeIntervalSince1970
+                                store.followNotices()
+                            }
                         }
                         .accessibilityIdentifier("evacuation-review-reminder")
                     }
@@ -73,6 +88,20 @@ struct EvacuationPreparationView: View {
                             if let showError { Text(showError).foregroundStyle(.red) }
                         } header: { Text("見せる") }
                     }
+                    // Quiet and off at first; the only place, with the first 期限,
+                    // that asks for notifications (round 2).
+                    Section {
+                        Toggle("見直しの時期に知らせる", isOn: Binding(get: { noticeSetting == 1 }, set: { on in
+                            noticeSetting = on ? 1 : 2
+                            if on { Task { noticesBlocked = !(await store.turnOnNotices()) } }
+                            else { noticesBlocked = false; store.turnOffNotices() }
+                        }))
+                        .accessibilityIdentifier("evacuation-notices-toggle")
+                        if noticesBlocked {
+                            Text("通知が許可されていません。iPhoneの設定で許可できます。")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
                     Section {
                         ToolImportantInformation(text: "災害のときは、まず自分と家族の安全を守ってください。")
                     }
@@ -101,6 +130,7 @@ struct EvacuationPreparationView: View {
             CatCareStore.shared.importFromTools()
             CatCareStore.shared.importBirthdays(profiles)
             store.retryPhotoCleanup()
+            if noticeSetting == 1 { noticesBlocked = !(await EvacuationNotice.allowed()) }
         }
         .confirmationDialog("印刷用のPDFを作ります", isPresented: $confirmBook, titleVisibility: .visible) {
             Button("PDFを作る") { Task { await makeBook() } }
@@ -138,8 +168,9 @@ struct EvacuationPreparationView: View {
 
     /// Clears every check, so each item is made ready again, and opens the list.
     private func startReview() {
-        store.update { $0.clearChecks() }
+        // Closed first, so the review notice moves with this save.
         reminderDismissedAt = Date().timeIntervalSince1970
+        store.update { $0.clearChecks() }
         openPacking = true
     }
 
@@ -160,6 +191,8 @@ struct EvacuationPreparationView: View {
     private var packingState: String {
         let needed = store.plan.supplies.filter(\.isNeeded)
         if needed.isEmpty { return "持ち物 0個" }
+        // Round 2: the nearest 期限 first, 「フードの期限まであと12日」.
+        if let expiry = store.plan.expiryState() { return expiry }
         let noPlace = needed.filter { $0.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
         if noPlace > 0 { return "\(needed.count)個中 \(noPlace)個は置き場所が未記入" }
         let ready = needed.filter { store.plan.carriedIDs.contains($0.id) }.count
@@ -279,6 +312,7 @@ private struct EvacuationPackingView: View {
                                 Text([item.quantity, item.location.isEmpty ? "置き場所は未記入" : item.location]
                                     .filter { !$0.isEmpty }.joined(separator: "・"))
                                     .font(.subheadline).foregroundStyle(.secondary)
+                                EvacuationExpiryLine(item: item)
                             }
                         }.frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
                             .contentShape(Rectangle())
@@ -312,6 +346,119 @@ private struct EvacuationPackingView: View {
         .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
         // Medicines follow 「この子のこと」 and amounts the number of cats (11/8).
         .task { store.followCatsAndMedicines() }
+    }
+}
+
+/// 「期限まであと〇日」 within 30 days, 「期限切れ」 after (round 2).
+private struct EvacuationExpiryLine: View {
+    let item: EvacuationSupply
+    var body: some View {
+        if let text = item.expiryText(now: Date()) {
+            Text(text).font(.subheadline.weight(.semibold))
+                .foregroundStyle(text == "期限切れ" ? Color.red : Color.orange)
+        }
+    }
+}
+
+/// 「いま避難する」 (round 2, 11/9): the day itself on one screen, from what is
+/// kept on this iPhone only, so it works without a connection: what to take
+/// (tapped as it goes in the bag), each cat's memo to show, and where to go,
+/// with a call and the map. The list's own checks stay as they are; a check
+/// here records the day (recordTaken), and leaving without one changes nothing.
+private struct EvacuationNowView: View {
+    let profiles: [CatProfilePresentation]
+    @ObservedObject var store: EvacuationStore
+    @State private var showing: EvacuationPreviewItem?
+    @State private var showError: String?
+    private var needed: [EvacuationSupply] { store.plan.supplies.filter(\.isNeeded) }
+    private var takenCount: Int { needed.filter { store.takenIDs.contains($0.id) }.count }
+
+    var body: some View {
+        List {
+            ToolPurpose(text: "持ち物を確かめて、猫と一緒に避難します。")
+            Section {
+                if needed.isEmpty { Text("持ち物はまだありません。").foregroundStyle(.secondary) }
+                ForEach(needed) { item in
+                    Button { take(item.id) } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: store.takenIDs.contains(item.id) ? "checkmark.circle.fill" : "circle")
+                                .font(.title2).foregroundStyle(Color.accentColor)
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(item.title.isEmpty ? "名前のない持ち物" : item.title).foregroundStyle(.primary)
+                                if let cat = store.plan.cats.first(where: { $0.id == item.catID }) {
+                                    Text(name(of: cat)).font(.caption).foregroundStyle(.secondary)
+                                }
+                                let detail = [item.location, item.quantity].filter { !$0.isEmpty }.joined(separator: "・")
+                                if !detail.isEmpty { Text(detail).font(.subheadline).foregroundStyle(.secondary) }
+                            }
+                        }.frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityValue(store.takenIDs.contains(item.id) ? "持った" : "まだ")
+                    .accessibilityIdentifier("evacuation-now-supply-\(item.id.uuidString)")
+                }
+            } header: {
+                Text("持ち出すもの  \(takenCount) / \(needed.count)")
+                    .accessibilityIdentifier("evacuation-now-count")
+            }
+            if !store.plan.cats.isEmpty {
+                Section {
+                    ForEach(store.plan.cats) { cat in
+                        Button("\(name(of: cat))を見せる") { show(cat) }
+                            .disabled(store.saveError != nil)
+                            .accessibilityIdentifier("evacuation-now-show-\(cat.id.uuidString)")
+                    }
+                    if let showError { Text(showError).foregroundStyle(.red) }
+                } header: { Text("見せる") }
+            }
+            Section {
+                if store.plan.destinations.isEmpty { Text("行き先はまだありません。").foregroundStyle(.secondary) }
+                ForEach(store.plan.destinations) { place in
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(place.name.isEmpty ? "行き先の候補" : place.name).font(.headline)
+                        if let kind = place.kind { Text(kind.title).font(.subheadline).foregroundStyle(.secondary) }
+                    }
+                    if let url = place.telephoneURL {
+                        Link(destination: url) { Label(place.telephone, systemImage: "phone") }
+                            .accessibilityIdentifier("evacuation-now-call-\(place.id.uuidString)")
+                    }
+                    if let url = place.mapURL {
+                        Link(destination: url) { Label(place.address ?? "", systemImage: "map") }
+                            .accessibilityIdentifier("evacuation-now-map-\(place.id.uuidString)")
+                    }
+                }
+            } header: { Text("行き先") }
+            Section {
+                ToolImportantInformation(text: "まず自分と家族の安全を守ってください。")
+            }
+        }
+        .toolPageSpacing()
+        .navigationTitle("いま避難する").navigationBarTitleDisplayMode(.inline)
+        .announcesWhenShown(showError)
+        .navigationDestination(item: $showing) { EvacuationDisplayView(record: $0.record) }
+        .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
+    }
+
+    /// Only a check records the day; taking it off again leaves the day.
+    private func take(_ id: UUID) {
+        if store.takenIDs.contains(id) { store.takenIDs.remove(id); return }
+        store.takenIDs.insert(id)
+        store.update { $0.recordTaken(id) }
+    }
+
+    private func show(_ cat: EvacuationCat) {
+        do {
+            // The same memo as the hub's 「〇〇を見せる」.
+            showing = EvacuationPreviewItem(record: try store.shareRecord(catID: cat.id, disclosure: store.disclosure(for: cat.id)))
+            showError = nil
+        } catch {
+            showError = (error as? EvacuationStorageError)?.errorDescription ?? "表示できませんでした。もう一度お試しください。"
+        }
+    }
+
+    private func name(of cat: EvacuationCat) -> String {
+        profiles.first(where: { $0.identifier == cat.profileID })?.displayName ?? cat.displayName
     }
 }
 
@@ -379,7 +526,17 @@ private struct EvacuationSupplyEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State private var deleteRequested = false
     @FocusState private var nameFocused: Bool
+    @AppStorage(EvacuationNotice.settingKey) private var noticeSetting = 0
     private var item: EvacuationSupply? { store.plan.supplies.first { $0.id == id } }
+    /// A new 期限 does not undo the item's check: it is when the stock runs
+    /// out, not a change to what is packed. The first one turns the notices on.
+    private func setExpiry(_ date: Date?) {
+        let saved = store.update { plan in
+            guard let index = plan.supplies.firstIndex(where: { $0.id == id }) else { return }
+            plan.supplies[index].expiresAt = date
+        }
+        if saved, date != nil { Task { await store.firstExpirySet() } }
+    }
     private func value<T>(_ key: WritableKeyPath<EvacuationSupply, T>, fallback: T) -> Binding<T> {
         Binding(get: { item?[keyPath: key] ?? fallback }, set: { new in
             store.update { plan in
@@ -404,6 +561,23 @@ private struct EvacuationSupplyEditor: View {
                     }
                     Toggle("チェックリストに入れる", isOn: value(\.isNeeded, fallback: true))
                 } footer: { Text("直した持ち物は、チェックが外れます。") }
+                // Round 2: food, water, medicine and 療法食 have a 期限 (optional).
+                if let item, item.canHaveExpiry {
+                    Section {
+                        Toggle("期限（任意）", isOn: Binding(get: { item.expiresAt != nil }, set: { on in
+                            setExpiry(on ? Calendar.current.date(byAdding: .month, value: 6,
+                                                                 to: Calendar.current.startOfDay(for: Date())) : nil)
+                        }))
+                        .accessibilityIdentifier("evacuation-item-expiry")
+                        if let date = item.expiresAt {
+                            DatePicker("期限", selection: Binding(get: { date }, set: { setExpiry($0) }),
+                                       displayedComponents: .date)
+                                .accessibilityIdentifier("evacuation-item-expiry-date")
+                        }
+                    } footer: {
+                        if noticeSetting != 2 { Text("期限の14日前に知らせます。") }
+                    }
+                }
                 Section { Button("この持ち物を削除", role: .destructive) { deleteRequested = true } }
             }
         }.navigationTitle("持ち物と置き場所").navigationBarTitleDisplayMode(.inline)

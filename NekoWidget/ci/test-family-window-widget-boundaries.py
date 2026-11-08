@@ -3503,7 +3503,9 @@ class EvacuationCatCareTests(unittest.TestCase):
         self.assertIn("EvacuationExporter.createBook(store.bookRecords())", view)
         self.assertIn("EvacuationExporter.remove(retainedBookDirectory)", view)
         self.assertIn('confirmationDialog("印刷用のPDFを作ります"', view)
-        # The half-year review is a quiet in-app note, not a notification.
+        # The half-year review is a quiet in-app note. Round 2 adds an optional
+        # local notice, set only through EvacuationNotice in the store: the
+        # screen and the rules never touch the notification center.
         self.assertIn("halfYear", plan)
         self.assertIn("store.plan.reviewIsDue(", view)
         self.assertNotIn("UNUserNotificationCenter", view)
@@ -3524,7 +3526,8 @@ class EvacuationCatCareTests(unittest.TestCase):
         self.assertIn('"$RUNNER_TEMP/evacuation-plan-tests"\n', checks)
         verify = source("ci/verify-evacuation-plan.swift")
         for name in ("try oldDataDecodes()", "try amountsFollowCatCount()", "try medicinesFollowCatCare()",
-                     "try reviewCountsFromCreation()", "try destinations()"):
+                     "try reviewCountsFromCreation()", "try destinations()",
+                     "try expiryRules()", "try noticeSchedule()", "try takenOnTheDay()"):
             self.assertIn(name, verify)
         # The review counts from when the plan was made, and leads to the checklist.
         self.assertIn("let made = createdAt ?? earliestKnownDate ?? now", plan)
@@ -3662,6 +3665,117 @@ class EvacuationCatCareTests(unittest.TestCase):
         notice = section(view, "private struct EvacuationSaveNotice: View {", "private struct EvacuationPackingView: View {")
         self.assertIn('.accessibilityIdentifier("evacuation-save-error")', notice)
         self.assertIn("if inBar { content } else { content.padding().frame(maxWidth: .infinity).background(.regularMaterial) }", notice)
+
+
+class EvacuationRoundTwoTests(unittest.TestCase):
+    """Round 2 (11/9): 期限, the local notices, and 「いま避難する」. The rules
+    run in ci/verify-evacuation-plan.swift; these check the wiring."""
+
+    def setUp(self) -> None:
+        self.plan = source("NekoWidget/Services/EvacuationPlan.swift")
+        self.store = source("NekoWidget/Services/EvacuationStore.swift")
+        self.view = source("NekoWidget/Views/EvacuationPreparationView.swift")
+
+    def test_expiry_is_optional_and_shown(self) -> None:
+        supply = section(self.plan, "struct EvacuationSupply: Codable, Equatable, Identifiable {", "struct EvacuationDestination")
+        self.assertIn("    var expiresAt: Date?\n", supply)
+        self.assertNotIn("init(from decoder", self.plan)
+        for word in ('"フード"', '"水"', '"薬"', '"療法食"'):
+            self.assertIn(word, supply)
+        self.assertIn('"期限切れ"', supply)
+        self.assertIn('"期限まであと\\(days)日"', supply)
+        self.assertIn("static let expirySoonDays = 30", supply)
+        # The list shows it under the item; the hub's step 1 names the nearest.
+        packing = section(self.view, "private struct EvacuationPackingView", "private struct EvacuationGuidelineLink")
+        self.assertIn("EvacuationExpiryLine(item: item)", packing)
+        state = section(self.view, "private var packingState: String {", "private var catsState: String {")
+        self.assertIn("if let expiry = store.plan.expiryState() { return expiry }", state)
+        # Only food, water, medicine and 療法食 offer it; it is optional.
+        editor = section(self.view, "private struct EvacuationSupplyEditor: View {", "private struct EvacuationCatsView: View {")
+        self.assertIn("if let item, item.canHaveExpiry {", editor)
+        self.assertIn('Toggle("期限（任意）"', editor)
+        self.assertIn("displayedComponents: .date", editor)
+        self.assertIn("if saved, date != nil { Task { await store.firstExpirySet() } }", editor)
+        # On paper, and in the readable backup in Japanese, as a date.
+        self.assertIn('"期限 " + $0.formatted(date: .numeric, time: .omitted)', section(self.store, "func bookRecords()", "private static func normalizedJPEG("))
+        readable = source("NekoWidget/Services/ReadablePreservationExport.swift")
+        self.assertIn('"expiresAt": "期限"', readable)
+        self.assertIn('"lastMadeAt", "expiresAt", "checkStartedAt"', readable)
+
+    def test_notices_are_local_asked_only_on_a_tap_and_follow_the_plan(self) -> None:
+        notice = section(self.store, "enum EvacuationNotice {", "\n}\n")
+        # Local only; no server, no push, no item or cat's name in the text.
+        self.assertIn("import UserNotifications", self.store)
+        self.assertIn("UNCalendarNotificationTrigger(dateMatching: parts, repeats: false)", notice)
+        for forbidden in ("registerForRemoteNotifications", "URLSession", "content.userInfo", "content.sound", "badge"):
+            self.assertNotIn(forbidden, notice)
+        self.assertIn('content.title = "ねこのまど"', notice)
+        # The permission is asked in one place, reached only from the toggle and the first 期限.
+        self.assertEqual(self.store.count("requestAuthorization"), 1)
+        turn_on = section(notice, "static func turnOn(", "static func turnOff()")
+        self.assertIn("requestAuthorization(options: [.alert])", turn_on)
+        self.assertEqual(self.store.count("EvacuationNotice.turnOn("), 2)
+        self.assertIn("return await EvacuationNotice.turnOn(plan)", section(self.store, "func turnOnNotices()", "func firstExpirySet()"))
+        first = section(self.store, "func firstExpirySet()", "func turnOffNotices()")
+        self.assertIn("guard schedulesNotices, !EvacuationNotice.wasChosen else { return }", first)
+        self.assertNotIn("turnOn", section(self.store, "func reload()", "func retryPhotoCleanup()"))
+        self.assertNotIn("turnOn", section(self.store, "func followNotices()", "func turnOnNotices()"))
+        self.assertEqual(self.view.count("store.turnOnNotices()"), 1)
+        self.assertEqual(self.view.count("store.firstExpirySet()"), 1)
+        # Off at first; one quiet toggle on the hub, below 「見せる」.
+        self.assertIn("@AppStorage(EvacuationNotice.settingKey) private var noticeSetting = 0", self.view)
+        self.assertIn("static var isOn: Bool { UserDefaults.standard.integer(forKey: settingKey) == 1 }", notice)
+        hub = section(self.view, "struct EvacuationPreparationView: View {", "private func makeBook() async {")
+        self.assertIn('Toggle("見直しの時期に知らせる"', hub)
+        self.assertIn('"evacuation-notices-toggle"', hub)
+        self.assertLess(hub.index('} header: { Text("見せる") }'), hub.index('Toggle("見直しの時期に知らせる"'))
+        # Replaced as the plan changes, all under one prefix; only the app's own plan.
+        self.assertIn("let value = EvacuationStore(schedulesNotices: true)", self.store)
+        self.assertIn("schedulesNotices: Bool = false", self.store)
+        self.assertIn("guard schedulesNotices, loadError == nil else { return }", self.store)
+        self.assertGreaterEqual(self.store.count("followNotices()"), 7)
+        self.assertIn(".filter { $0.hasPrefix(EvacuationScheduledNotice.prefix) }", notice)
+        self.assertIn("center.removePendingNotificationRequests(withIdentifiers: old)", notice)
+        self.assertIn('static let prefix = "evacuation."', self.plan)
+        self.assertIn("let wanted = isOn ? plan.notices(now: now, dismissedAt: dismissed) : []", notice)
+        # The review notice counts as the in-app note: 「閉じる」 moves both.
+        self.assertIn('nonisolated static let dismissedKey = "evacuation-review-reminder-dismissed"', notice)
+        self.assertIn('@AppStorage("evacuation-review-reminder-dismissed")', self.view)
+        review = section(self.view, "private func startReview() {", "private func show(")
+        self.assertLess(review.index("reminderDismissedAt ="), review.index("$0.clearChecks()"))
+        self.assertIn("store.followNotices()", hub)
+
+    def test_evacuate_now_is_first_and_uses_local_data(self) -> None:
+        hub = section(self.view, "struct EvacuationPreparationView: View {", "private func makeBook() async {")
+        self.assertLess(hub.index('Label("いま避難する"'), hub.index('"evacuation-review-reminder"'))
+        self.assertLess(hub.index('Label("いま避難する"'), hub.index("ToolPurpose(text:"))
+        self.assertIn("EvacuationNowView(profiles: profiles, store: store)", hub)
+        self.assertIn('"evacuation-now-open"', hub)
+        now = section(self.view, "private struct EvacuationNowView: View {", "/// 環境省「人とペットの災害対策ガイドライン」")
+        # The checklist, each cat's memo, and the places with a call and the map.
+        self.assertIn("ForEach(needed) { item in", now)
+        self.assertIn("store.takenIDs.contains(item.id)", now)
+        self.assertIn('Button("\\(name(of: cat))を見せる") { show(cat) }', now)
+        self.assertIn("store.shareRecord(catID: cat.id, disclosure: store.disclosure(for: cat.id))", now)
+        self.assertIn("EvacuationDisplayView(record: $0.record)", now)
+        self.assertIn("if let url = place.telephoneURL {", now)
+        self.assertIn("if let url = place.mapURL {", now)
+        self.assertIn('.navigationTitle("いま避難する")', now)
+        # Offline: nothing fetched; outside pages stay out of this screen.
+        for forbidden in ("URLSession", "https://", "AsyncImage", "EvacuationGuidelineLink"):
+            self.assertNotIn(forbidden, now)
+        # Only a check records the day; leaving changes nothing; the list's checks stay.
+        take = section(now, "private func take(_ id: UUID) {", "private func show(")
+        self.assertIn("store.update { $0.recordTaken(id) }", take)
+        self.assertLess(take.index("store.takenIDs.remove(id); return"), take.index("recordTaken"))
+        self.assertNotIn("toggleCarried", now)
+        self.assertNotIn("onDisappear", now)
+        self.assertNotIn("carriedIDs", now)
+        self.assertIn("@Published var takenIDs: Set<UUID> = []", self.store)
+        taken = section(self.plan, "mutating func recordTaken(", "mutating func clearChecks()")
+        self.assertIn("guard supplies.contains(where: { $0.id == id }) else { return }", taken)
+        self.assertIn("lastCheckedAt = now", taken)
+        self.assertNotIn("carriedIDs", taken)
 
 
 class OwnerDecisions1108Tests(unittest.TestCase):
@@ -4854,8 +4968,9 @@ class ToolPageReview349Tests(unittest.TestCase):
         spacing = section(shared, "func toolPageSpacing() -> some View {", "extension ToolMakeBar where Top == EmptyView {")
         self.assertIn("listSectionSpacing(.compact)", spacing)
         self.assertIn(".contentMargins(.top, 4, for: .scrollContent)", spacing)
+        # Round 2: 「いま避難する」 is the third evacuation page with the same spacing.
         for path, count in (("NekoWidget/Views/VeterinaryVisitView.swift", 1), ("NekoWidget/Views/CatPreparednessView.swift", 1),
-                            ("NekoWidget/Views/CareHandoffView.swift", 2), ("NekoWidget/Views/EvacuationPreparationView.swift", 2)):
+                            ("NekoWidget/Views/CareHandoffView.swift", 2), ("NekoWidget/Views/EvacuationPreparationView.swift", 3)):
             self.assertEqual(source(path).count(".toolPageSpacing()"), count, path)
         folded = section(shared, "struct ToolCatCareSection<Extra: View>: View {", "private func readRows(")
         self.assertIn('filled.prefix(4).map(\\.0).joined(separator: "・")', folded)

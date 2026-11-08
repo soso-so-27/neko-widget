@@ -17,6 +17,9 @@ struct VerifyEvacuationPlan {
         try checklistDates()
         try reviewCountsFromCreation()
         try destinations()
+        try expiryRules()
+        try noticeSchedule()
+        try takenOnTheDay()
         print("Evacuation plan (避難に備える) decoding and rule checks passed")
     }
 
@@ -38,6 +41,7 @@ struct VerifyEvacuationPlan {
         try plan.validate()
         try check(plan.createdAt == nil && plan.lastCheckedAt == nil, "old plan has no new dates")
         try check(plan.destinations[0].address == nil && plan.destinations[0].kind == nil, "old place has no address or kind")
+        try check(plan.supplies[0].expiresAt == nil, "old item has no 期限 (round 2)")
         try check(plan.lastReadyDate == Date(timeIntervalSinceReferenceDate: 810_000_000), "old check day is shown")
         // 11/8: the per-cat and per-place dates are no longer shown, but still read.
         try check(plan.cats[0].reviewedAt == Date(timeIntervalSinceReferenceDate: 805_000_000), "old cat date still decodes")
@@ -172,5 +176,130 @@ struct VerifyEvacuationPlan {
         let map = place.mapURL?.absoluteString ?? ""
         try check(map.hasPrefix("https://maps.apple.com/?q=") && !map.contains(" "), "map link")
         try check(EvacuationDestination.Kind.allCases.map(\.title) == ["避難所", "親戚・知人", "ペットホテル・病院"], "kinds")
+    }
+
+    /// Round 2: a calendar fixed to Tokyo, so the day counts do not move with the runner.
+    static var tokyo: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        return calendar
+    }
+
+    static func day(_ year: Int, _ month: Int, _ day: Int, hour: Int = 12) -> Date {
+        tokyo.date(from: DateComponents(year: year, month: month, day: day, hour: hour))!
+    }
+
+    /// Round 2: 期限 on food, water, medicine and 療法食; shown from 30 days before.
+    static func expiryRules() throws {
+        var plan = EvacuationPlan()
+        let food = plan.supplies.firstIndex(where: { $0.title == "フード・水・食器" })!
+        let medicine = plan.supplies.firstIndex(where: { $0.title == "薬・療法食" })!
+        let carrier = plan.supplies.firstIndex(where: { $0.title == "キャリー" })!
+        try check(plan.supplies[food].canHaveExpiry && plan.supplies[medicine].canHaveExpiry, "food and medicine have a 期限")
+        try check(!plan.supplies[carrier].canHaveExpiry, "a carrier has no 期限")
+        try check(EvacuationSupply(title: "水 2L").canHaveExpiry && EvacuationSupply(title: "療法食").canHaveExpiry
+                  && EvacuationSupply(title: "薬：A錠").canHaveExpiry, "water, 療法食 and a cat's medicine")
+        let now = day(2026, 11, 9)
+        try check(plan.expiryState(now: now, calendar: tokyo) == nil, "no 期限, no line")
+        plan.supplies[food].expiresAt = day(2026, 11, 21, hour: 0)
+        try check(plan.supplies[food].daysUntilExpiry(now: now, calendar: tokyo) == 12, "whole days")
+        try check(plan.supplies[food].expiryText(now: now, calendar: tokyo) == "期限まであと12日", "期限まであと〇日")
+        try check(plan.expiryState(now: now, calendar: tokyo) == "フード・水・食器の期限まであと12日", "the hub names it")
+        plan.supplies[food].expiresAt = day(2026, 12, 9)
+        try check(plan.supplies[food].expiryText(now: now, calendar: tokyo) == "期限まであと30日", "30 days is shown")
+        plan.supplies[food].expiresAt = day(2026, 12, 10)
+        try check(plan.supplies[food].expiryText(now: now, calendar: tokyo) == nil, "31 days is not")
+        try check(plan.expiryState(now: now, calendar: tokyo) == nil, "nothing near")
+        plan.supplies[food].expiresAt = day(2026, 11, 9, hour: 23)
+        try check(plan.supplies[food].expiryText(now: now, calendar: tokyo) == "期限は今日", "the day itself")
+        plan.supplies[food].expiresAt = day(2026, 11, 8, hour: 23)
+        try check(plan.supplies[food].expiryText(now: now, calendar: tokyo) == "期限切れ", "the day after")
+        try check(plan.expiryState(now: now, calendar: tokyo) == "フード・水・食器が期限切れ", "an expired item")
+        // The nearest one is named; an item not on the checklist is left out.
+        plan.supplies[food].expiresAt = day(2026, 11, 30)
+        plan.supplies[medicine].expiresAt = day(2026, 11, 20)
+        try check(plan.expiryState(now: now, calendar: tokyo) == "薬・療法食の期限まであと11日", "the nearest first")
+        plan.supplies[medicine].isNeeded = false
+        try check(plan.expiryState(now: now, calendar: tokyo) == "フード・水・食器の期限まであと21日", "only the checklist")
+        // A 期限 is kept when the title changes, so it can still be taken off.
+        plan.supplies[food].title = "皿"
+        try check(plan.supplies[food].canHaveExpiry, "an item with a 期限 keeps the field")
+        // It round-trips, and the plan stays valid.
+        let again = try JSONDecoder().decode(EvacuationPlan.self, from: JSONEncoder().encode(plan))
+        try check(again == plan, "期限 round-trips")
+        try again.validate()
+    }
+
+    /// Round 2: the half-year review and 14 days before each 期限, 9:00, text only.
+    static func noticeSchedule() throws {
+        let never = Date(timeIntervalSince1970: 0)
+        let now = day(2026, 11, 9)
+        var plan = EvacuationPlan()
+        try check(plan.notices(now: now, dismissedAt: never, calendar: tokyo).isEmpty, "a plan never saved has none")
+        plan.createdAt = day(2026, 11, 1, hour: 10)
+        var notices = plan.notices(now: now, dismissedAt: never, calendar: tokyo)
+        try check(notices.map(\.id) == ["evacuation.review"], "the review only")
+        let due = plan.reviewDueDate(dismissedAt: never)!
+        try check(due == plan.createdAt!.addingTimeInterval(halfYear), "half a year after making")
+        // The notice is the first 9:00 at or after the moment the in-app note shows.
+        try check(notices[0].date >= due && notices[0].date.timeIntervalSince(due) < 24 * 60 * 60, "on the day it falls due")
+        try check(tokyo.component(.hour, from: notices[0].date) == 9, "at 9:00")
+        try check(!plan.reviewIsDue(now: due.addingTimeInterval(-60), dismissedAt: never)
+                  && plan.reviewIsDue(now: due.addingTimeInterval(60), dismissedAt: never), "the same day as the in-app note")
+        try check(notices[0].body == "避難の備えを見直す時期です。", "review text")
+        // A later 「最後に見直した日」 or 「閉じる」 moves it.
+        plan.lastCheckedAt = day(2027, 1, 10)
+        try check(plan.reviewDueDate(dismissedAt: never) == day(2027, 1, 10).addingTimeInterval(halfYear), "counts from the last review")
+        let closed = day(2027, 3, 1)
+        try check(plan.reviewDueDate(dismissedAt: closed) == closed.addingTimeInterval(halfYear), "counts from 閉じる")
+        try check(plan.notices(now: closed.addingTimeInterval(halfYear + 2 * 24 * 60 * 60), dismissedAt: closed, calendar: tokyo).isEmpty,
+                  "nothing for a day already past")
+        // 14 days before each 期限, one per day; past ones are not set.
+        let food = plan.supplies.firstIndex(where: { $0.title == "フード・水・食器" })!
+        let medicine = plan.supplies.firstIndex(where: { $0.title == "薬・療法食" })!
+        plan.supplies[food].expiresAt = day(2026, 12, 20)
+        plan.supplies[medicine].expiresAt = day(2026, 12, 20, hour: 8)
+        notices = plan.notices(now: now, dismissedAt: never, calendar: tokyo)
+        let expiry = notices.filter { $0.id.hasPrefix("evacuation.expiry.") }
+        try check(expiry.map(\.id) == ["evacuation.expiry.2026-12-06"], "one notice for the day, 14 days before")
+        try check(expiry[0].date == day(2026, 12, 6, hour: 9), "at 9:00")
+        try check(expiry[0].body == "持ち出すものの期限まであと14日です。", "expiry text")
+        plan.supplies[medicine].expiresAt = day(2026, 11, 15)
+        try check(plan.notices(now: now, dismissedAt: never, calendar: tokyo).filter { $0.id.hasPrefix("evacuation.expiry.") }.count == 1,
+                  "a 期限 within 14 days has no notice (the list shows it)")
+        plan.supplies[medicine].isNeeded = false
+        plan.supplies[medicine].expiresAt = day(2027, 2, 1)
+        try check(plan.notices(now: now, dismissedAt: never, calendar: tokyo).filter { $0.id.hasPrefix("evacuation.expiry.") }.count == 1,
+                  "an item not on the checklist has none")
+        // Every identifier has the tool's prefix; no item or cat's name in the text.
+        plan.supplies[food].title = "むぎの療法食"
+        for notice in plan.notices(now: now, dismissedAt: never, calendar: tokyo) {
+            try check(notice.id.hasPrefix(EvacuationScheduledNotice.prefix), "prefix")
+            try check(!notice.body.contains("むぎ") && !notice.body.contains("療法食"), "text only")
+        }
+        // Many 期限 stay under the app's limit.
+        for index in 0..<40 {
+            var item = EvacuationSupply(title: "フード\(index)")
+            item.expiresAt = day(2027, 1, 1).addingTimeInterval(Double(index) * 24 * 60 * 60)
+            plan.supplies.append(item)
+        }
+        try check(plan.notices(now: now, dismissedAt: never, calendar: tokyo).count <= 1 + EvacuationScheduledNotice.expiryLimit, "limit")
+        // A plan with nothing left to tell has no notices to keep.
+        var emptied = EvacuationPlan()
+        emptied.supplies = []
+        try check(emptied.notices(now: now, dismissedAt: never, calendar: tokyo).isEmpty, "nothing for an empty plan")
+    }
+
+    /// Round 2: 「いま避難する」 records the day only when an item is checked.
+    static func takenOnTheDay() throws {
+        var plan = EvacuationPlan()
+        let before = plan
+        plan.recordTaken(UUID(), now: t0)
+        try check(plan == before, "an unknown item records nothing")
+        let id = plan.supplies[0].id
+        plan.carriedIDs = [plan.supplies[1].id]
+        plan.recordTaken(id, now: t0)
+        try check(plan.lastCheckedAt == t0 && plan.lastReadyDate == t0, "a check records the day")
+        try check(plan.carriedIDs == [plan.supplies[1].id] && plan.checkStartedAt == nil, "the list's own checks stay")
     }
 }
