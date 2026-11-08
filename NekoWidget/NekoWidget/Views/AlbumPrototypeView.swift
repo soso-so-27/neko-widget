@@ -967,7 +967,7 @@ struct MonthlyStoryView: View {
                 if let image = await Self.thumbnail(photo.localIdentifier, side: 600) { images.append(image) }
             }
             guard !Task.isCancelled else { return }
-            cardShare.complete(BestNineComposer.image(images, title: request.input.title),
+            cardShare.complete(BestNineComposer.image(images, title: nil),
                                for: request, isCancelled: Task.isCancelled)
         }
     }
@@ -1483,7 +1483,7 @@ private struct YearBookView: View {
                 if let image = await MonthlyStoryView.thumbnail(photo.localIdentifier, side: 600) { images.append(image) }
             }
             guard !Task.isCancelled else { return }
-            cardShare.complete(BestNineComposer.image(images, title: request.input.title),
+            cardShare.complete(BestNineComposer.image(images, title: nil),
                                for: request, isCancelled: Task.isCancelled)
         }
     }
@@ -1724,7 +1724,7 @@ private struct YearStoryContentView: View {
                 if let image = await MonthlyStoryView.thumbnail(photo.localIdentifier, side: 600) { images.append(image) }
             }
             guard !Task.isCancelled else { return }
-            cardShare.complete(BestNineComposer.image(images, title: request.input.title),
+            cardShare.complete(BestNineComposer.image(images, title: nil),
                                for: request, isCancelled: Task.isCancelled)
         }
     }
@@ -1982,7 +1982,7 @@ struct MonthlyBookView: View {
                 if let image = await MonthlyStoryView.thumbnail(photo.localIdentifier, side: 600) { images.append(image) }
             }
             guard !Task.isCancelled else { return }
-            cardShare.complete(BestNineComposer.image(images, title: request.input.title),
+            cardShare.complete(BestNineComposer.image(images, title: nil),
                                for: request, isCancelled: Task.isCancelled)
         }
     }
