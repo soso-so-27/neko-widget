@@ -171,7 +171,7 @@ enum CatCareSummary {
         var fields = careHandoffHealthFields(record)
         if let conditions = nonEmpty(record?.conditions?.value) { fields.append(("持病", conditions)) }
         if fields.isEmpty, cat.healthStatus != .unknown {
-            fields.append(("薬・アレルギー（前にここに書いた内容）", cat.healthText))
+            fields.append(("薬・アレルギー", cat.healthText))
         }
         if fields.isEmpty { fields.append(("薬・アレルギー", "未記入（飼い主に聞いてください）")) }
         return fields

@@ -797,7 +797,7 @@ struct ToolCatPicker<Legacy: View>: View {
             }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("キャンセル", role: .cancel) {}
         }
-        .alert("プロフィールを追加できませんでした", isPresented: $failed) {
+        .alert("この子を追加できませんでした", isPresented: $failed) {
             Button("閉じる", role: .cancel) {}
         } message: { Text("もう一度お試しください。") }
     }
@@ -906,31 +906,6 @@ struct ToolCatStrip: View {
                 .fill(chosen ? Color.primary.opacity(0.1) : Color.clear)
         )
         .contentShape(Rectangle())
-    }
-}
-
-struct ToolPromoteCatButton: View {
-    let name: String
-    let link: (String) -> Bool
-    @Environment(\.toolProfileActions) private var actions
-    @State private var busy = false
-    @State private var failed = false
-    @State private var createdID: String?
-    var body: some View {
-        Button(createdID == nil ? "プロフィールにする" : "もう一度試す") {
-            busy = true
-            Task {
-                let id: String?
-                if let createdID { id = createdID }
-                else { id = await actions.createProfile(CatProfileDraftPresentation(name: name.isEmpty ? "名前未設定の猫" : name)) }
-                createdID = id
-                failed = id.map { !link($0) } ?? true
-                busy = false
-            }
-        }.disabled(busy)
-        .alert("プロフィールにできませんでした", isPresented: $failed) {
-            Button("閉じる", role: .cancel) {}
-        } message: { Text("少し待ってから、もう一度お試しください。") }
     }
 }
 

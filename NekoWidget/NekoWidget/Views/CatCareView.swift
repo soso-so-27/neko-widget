@@ -81,7 +81,7 @@ struct CatFarewellEditor: View {
                 Section {
                     DatePicker("旅立った日", selection: $date, in: ...Date(), displayedComponents: .date)
                 } footer: {
-                    Text("写真や記録、ホーム画面のウィジェットは、すべてそのまま残ります。ウィジェットを変えたいときは、長押しして「ウィジェットを編集」から選べます。")
+                    Text("写真や記録、ホーム画面のウィジェットは、すべてそのまま残ります。")
                 }
                 if recorded != nil {
                     Section {
@@ -574,13 +574,13 @@ struct CatCareDetailView: View {
     /// offers to record the day instead, as before (11/7: moved from 写真).
     private func deleteSection(_ profile: CatProfilePresentation) -> some View {
         Section {
-            Button("プロフィールを削除", role: .destructive) {
+            Button("この子を削除", role: .destructive) {
                 deleteFailed = false
                 showsDeleteConfirmation = true
             }
             .accessibilityIdentifier("cat-profile-delete")
-            .alert("\(profile.displayName)のプロフィールを削除しますか？", isPresented: $showsDeleteConfirmation) {
-                Button("プロフィールを削除", role: .destructive) {
+            .alert("\(profile.displayName)を削除しますか？", isPresented: $showsDeleteConfirmation) {
+                Button("この子を削除", role: .destructive) {
                     isDeleting = true
                     deleteFailed = false
                     Task {

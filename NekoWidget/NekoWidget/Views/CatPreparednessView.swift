@@ -203,7 +203,6 @@ struct LostCatDraftView: View {
     @State private var photoBusy = false
     @State private var photoError: String?
     @State private var saveError = false
-    @State private var candidateRefreshError = false
     @State private var showsPreview = false
     @State private var previewDraft: LostCatPublicDraft?
     @State private var showsGuide = false
@@ -236,12 +235,6 @@ struct LostCatDraftView: View {
             catSection(issues).disabled(!loaded)
             incidentSection(issues).disabled(!loaded)
             contactSection(issues).disabled(!loaded)
-            if candidateRefreshError {
-                Section {
-                    Text("前に入れた内容を読み込めませんでした。")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-            }
             if saveError {
                 Section {
                     Label("保存できませんでした", systemImage: "exclamationmark.triangle")
@@ -712,7 +705,6 @@ struct LostCatDraftView: View {
         catch { saveError = true }
     }
     private func load(_ identity: String, name: String) {
-        candidateRefreshError = false
         do {
             let candidates = LostCatSavedCat.candidates(evacuation: evacuationStore, care: careStore)
                 .filter { $0.id == identity }
@@ -724,8 +716,9 @@ struct LostCatDraftView: View {
             if !alreadyPrepared { saved = fillFromCatCare(saved, key: identity) }
             if alreadyPrepared, candidates.count == 1 {
                 // Failure must not block an already saved emergency draft.
-                do { saved = try store.refreshCandidateText(for: identity, information: candidates[0].textForCandidateRefresh()) }
-                catch { candidateRefreshError = true }
+                // Nothing to say when it fails; the saved draft stays (11/8).
+                if let refreshed = try? store.refreshCandidateText(for: identity,
+                    information: candidates[0].textForCandidateRefresh()) { saved = refreshed }
             }
             key = identity
             lastKey = identity

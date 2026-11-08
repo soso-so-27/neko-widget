@@ -202,7 +202,7 @@ struct InitialScanView: View {
                 .foregroundStyle(.secondary)
             } else if scan.hasDeferredAssets {
                 Label(
-                    "読み込めなかった\(scan.deferredAssets.formatted())枚は、「ツール」右上の設定→「写真の表示と整理」からもう一度探せます。",
+                    "読み込めなかった写真が\(scan.deferredAssets.formatted())枚あります。",
                     systemImage: "exclamationmark.triangle"
                 )
                 .font(.caption)

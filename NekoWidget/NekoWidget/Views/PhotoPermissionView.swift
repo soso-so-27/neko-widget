@@ -90,13 +90,8 @@ struct LimitedAccessBanner: View {
                 .foregroundStyle(.tint)
                 .padding(.top, 2)
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text("選んだ写真だけを探しています")
-                    .font(.subheadline.weight(.semibold))
-                Text("あとからいつでも写真を追加できます。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Text("選んだ写真だけを探しています")
+                .font(.subheadline.weight(.semibold))
 
             Spacer(minLength: 4)
 

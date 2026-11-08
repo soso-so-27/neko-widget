@@ -580,7 +580,7 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["official-window-subscription-confirmation"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.navigationBars["どこかの猫"].exists, "Receiving must not send the user back to the list")
         XCTAssertTrue(app.descendants(matching: .any)["official-window-image-unavailable"].firstMatch.waitForExistence(timeout: 10))
-        app.buttons["official-window-refresh"].tap()
+        pullToRefresh(app)
         XCTAssertTrue(app.descendants(matching: .any)["official-window-image-loaded"].firstMatch.waitForExistence(timeout: 10))
         let guide = app.buttons["official-window-widget-guide"]
         for _ in 0..<5 { if guide.isHittable { break }; app.swipeUp() }
@@ -753,7 +753,7 @@ final class OfficialWindowUITests: XCTestCase {
         app.buttons["閉じる"].tap()
         // The next edition renews the same IDs, bytes and original publication
         // dates. It must not be described as newly received photos.
-        app.buttons["official-window-refresh"].tap()
+        pullToRefresh(app)
         XCTAssertTrue(app.staticTexts["新しい写真はありませんでした"].waitForExistence(timeout: 10))
         for _ in 0..<5 { if preview.isHittable { break }; app.swipeDown() }
         capture("official-window-photo", app)
@@ -812,6 +812,17 @@ final class OfficialWindowUITests: XCTestCase {
     /// moves, both can exist for a moment; wait until exactly one entry remains
     /// and it reads the expected receiving state.
     @MainActor
+    /// 公式のまど checks again by pull to refresh only; there is no ↻ button (11/8).
+    private func pullToRefresh(_ app: XCUIApplication) {
+        XCTAssertFalse(app.buttons["official-window-refresh"].exists)
+        let scroll = app.scrollViews.firstMatch
+        XCTAssertTrue(scroll.waitForExistence(timeout: 5))
+        for _ in 0..<3 { scroll.swipeDown() }
+        let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15))
+        let end = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
+        start.press(forDuration: 0.1, thenDragTo: end)
+    }
+
     private func waitForWindowEntry(_ identifier: String, value expected: String, in app: XCUIApplication) {
         let entries = app.buttons.matching(identifier: identifier)
         let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
@@ -1050,11 +1061,11 @@ final class CatProfilePhotoFlowUITests: XCTestCase {
             app.swipeUp()
         }
         XCTAssertTrue(delete.isHittable, app.debugDescription)
-        XCTAssertEqual(delete.label, "プロフィールを削除")
+        XCTAssertEqual(delete.label, "この子を削除")
         delete.tap()
-        let confirmation = app.alerts["テスト猫Bのプロフィールを削除しますか？"]
+        let confirmation = app.alerts["テスト猫Bを削除しますか？"]
         XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
-        confirmation.buttons["プロフィールを削除"].tap()
+        confirmation.buttons["この子を削除"].tap()
         XCTAssertTrue(app.navigationBars["猫ごとの写真"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons.matching(identifier: "cat-profile-open").count, 1)
         capture("multi-cat-after-delete", app: app)
@@ -3851,7 +3862,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertFalse(app.buttons["membership-restore-refresh"].exists)
         XCTAssertFalse(app.buttons["購入状況を再確認"].exists)
         restore.tap()
-        let failure = NSPredicate(format: "label CONTAINS %@", "Appleの購入情報を同期できませんでした")
+        let failure = NSPredicate(format: "label == %@", "購入を確かめられませんでした。もう一度購入せず、時間をおいて「購入を復元」をお試しください。")
         expectation(for: failure, evaluatedWith: message)
         waitForExpectations(timeout: 5)
         XCTAssertTrue(restore.isEnabled)
@@ -3879,7 +3890,7 @@ final class SoloMemoriesUITests: XCTestCase {
         for _ in 0..<3 where !restore.isHittable { app.swipeUp() }
         restore.tap()
         let message = app.staticTexts["membership-offer-message"]
-        let failure = NSPredicate(format: "label CONTAINS %@", "Appleの購入情報を同期できませんでした")
+        let failure = NSPredicate(format: "label == %@", "購入を確かめられませんでした。もう一度購入せず、時間をおいて「購入を復元」をお試しください。")
         expectation(for: failure, evaluatedWith: message)
         waitForExpectations(timeout: 5)
         XCTAssertTrue(restore.isEnabled)
