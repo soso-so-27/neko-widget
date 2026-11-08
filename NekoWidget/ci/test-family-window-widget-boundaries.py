@@ -3587,7 +3587,7 @@ class CareHandoffReviewTests(unittest.TestCase):
         self.assertNotIn('.navigationTitle("プレビュー")', self.view)
 
     def test_editor_order_and_quiet_cleanup(self) -> None:
-        editor = section(self.view, "private struct CareCatEditor: View {", "private struct CarePhoto: View {")
+        editor = section(self.view, "private struct CareCatEditor: View {", "private struct CarePhotoPicker: View {")
         body = editor[editor.index("var body: some View {"):]
         self.assertLess(body.index('identifier: "care-important"'), body.index("catCareSection(cat)"))
         self.assertLess(body.index('identifier: "care-call-when"'), body.index("catCareSection(cat)"))
@@ -3615,7 +3615,7 @@ class CareHandoffReviewTests(unittest.TestCase):
     def test_both_pages_follow_the_input_page_shape(self) -> None:
         """ねこのまど_ツール入力ページの型_1108: purpose, numbered steps, folded
         「この子のこと」, notes last, one button at the bottom."""
-        editor = section(self.view, "private struct CareCatEditor: View {", "private struct CarePhoto: View {")
+        editor = section(self.view, "private struct CareCatEditor: View {", "private struct CarePhotoPicker: View {")
         body = editor[editor.index("var body: some View {"):]
         self.assertIn('ToolPurpose(text: "預ける人に渡すお世話メモを作ります。")', body)
         order = [body.index('ToolPurpose(text:'),
@@ -4467,6 +4467,22 @@ class ToolPageReview349Tests(unittest.TestCase):
         folded = section(shared, "struct ToolCatCareSection<Extra: View>: View {", "private func readRows(")
         self.assertIn('filled.prefix(4).map(\\.0).joined(separator: "・")', folded)
         self.assertIn("header: { if !folded { Text(title) } }", folded)
+
+    def test_photos_use_one_slot_and_removal_sits_in_its_menu(self) -> None:
+        shared = source("NekoWidget/Views/CatCareView.swift")
+        slot = section(shared, "struct ToolPhotoSlot<Actions: View>: View {", "struct ToolPhotoGrid<Content: View>: View {")
+        self.assertIn("Menu { actions } label:", slot)
+        self.assertIn('Image(systemName: "ellipsis")', slot)
+        care = source("NekoWidget/Views/CareHandoffView.swift")
+        lost = source("NekoWidget/Views/CatPreparednessView.swift")
+        evac = source("NekoWidget/Views/EvacuationPreparationView.swift")
+        for text in (care, lost, evac):
+            self.assertIn("ToolPhotoSlot(", text)
+        # Taking a photo off is a menu item, not red text on the page (349).
+        self.assertIn('Button("このメモの写真を外す", systemImage: "minus.circle", role: .destructive)', care)
+        self.assertNotIn('Button("このメモの写真を外す", role: .destructive)', care)
+        self.assertIn('Button("\(role.title)を外す", systemImage: "minus.circle", role: .destructive)', evac)
+        self.assertNotIn('Button("\(role.title)を外す", role: .destructive)', evac)
 
 
 class SettingsLayoutTests(unittest.TestCase):

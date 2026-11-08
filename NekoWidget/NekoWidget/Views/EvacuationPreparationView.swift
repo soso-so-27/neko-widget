@@ -725,20 +725,16 @@ private struct EvacuationCatEditor: View {
                         TextField("名前（任意）", text: text(\.name)).accessibilityIdentifier("evacuation-cat-name")
                             .foregroundStyle(Color.primary)
                     }
-                    ForEach(EvacuationCat.PhotoRole.allCases.filter { $0 != .reference || cat.photos["reference"] != nil }) { role in
-                        Button { photoRole = role } label: {
-                            HStack {
-                                EvacuationPhoto(image: store.image(cat.photos[role.rawValue]), label: role.title)
-                                    .frame(width: 62, height: 66)
-                                Text(role.title).foregroundStyle(.primary)
-                                Spacer()
-                                Image(systemName: "chevron.right").foregroundStyle(.secondary)
-                            }
-                        }.buttonStyle(.plain)
-                            .accessibilityIdentifier("evacuation-photo-\(role.rawValue)")
-                        if cat.photos[role.rawValue] != nil {
-                            Button("\(role.title)を外す", role: .destructive) {
-                                store.editCat(id) { $0.photos.removeValue(forKey: role.rawValue) }
+                    ToolPhotoGrid {
+                        ForEach(EvacuationCat.PhotoRole.allCases.filter { $0 != .reference || cat.photos["reference"] != nil }) { role in
+                            ToolPhotoSlot(role.title, image: store.image(cat.photos[role.rawValue]),
+                                          identifier: "evacuation-photo-\(role.rawValue)",
+                                          actionsIdentifier: "evacuation-photo-actions-\(role.rawValue)",
+                                          choose: { photoRole = role }) {
+                                Button("写真を選び直す", systemImage: "photo") { photoRole = role }
+                                Button("\(role.title)を外す", systemImage: "minus.circle", role: .destructive) {
+                                    store.editCat(id) { $0.photos.removeValue(forKey: role.rawValue) }
+                                }
                             }
                         }
                     }

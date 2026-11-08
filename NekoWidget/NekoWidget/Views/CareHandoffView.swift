@@ -288,17 +288,14 @@ private struct CareCatEditor: View {
                         CareField(label: "猫の名前", example: "例：むぎ", identifier: "care-cat-name", text: text(\.name), limit: 80,
                                   isPrefilled: cat.prefilledFields?.contains("name") == true)
                     }
-                    Button { showsPhotoPicker = true } label: {
-                        ToolAdaptiveStack(spacing: 16) {
-                            CarePhoto(image: store.image(cat.photoName)).frame(width: 88, height: 88)
-                            Label(cat.photoName == nil ? "写真を選ぶ" : "写真を変える", systemImage: "photo")
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                    }.buttonStyle(.plain).accessibilityIdentifier("care-photo-open")
-                    if cat.photoName != nil {
-                        Button("このメモの写真を外す", role: .destructive) {
-                            store.editCat(id) { $0.photoName = nil; $0.photoRemoved = true }
+                    ToolPhotoGrid {
+                        ToolPhotoSlot("渡す写真", image: store.image(cat.photoName),
+                                      identifier: "care-photo-open", actionsIdentifier: "care-photo-actions",
+                                      choose: { showsPhotoPicker = true }) {
+                            Button("写真を選び直す", systemImage: "photo") { showsPhotoPicker = true }
+                            Button("このメモの写真を外す", systemImage: "minus.circle", role: .destructive) {
+                                store.editCat(id) { $0.photoName = nil; $0.photoRemoved = true }
+                            }
                         }
                     }
                 } header: { ToolStepHeader(number: 1, title: "名前と写真", state: states[0]) }
@@ -392,17 +389,6 @@ private struct CareCatEditor: View {
         }
         guard let data, self.cat?.photoName == nil, self.cat?.photoRemoved != true else { return }
         try? store.replacePhoto(data, catID: id)
-    }
-}
-
-private struct CarePhoto: View {
-    let image: UIImage?
-    var body: some View {
-        Group {
-            if let image { Image(uiImage: image).resizable().scaledToFit() }
-            else { Image(systemName: "cat").font(.title2).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(.tertiarySystemFill)) }
-        }.clipShape(RoundedRectangle(cornerRadius: 12)).accessibilityLabel(image == nil ? "写真はありません" : "この子の写真")
     }
 }
 

@@ -655,33 +655,17 @@ struct LostCatDraftView: View {
 
     private func photoTile(_ title: String, role: CatPreparednessStore.PhotoRole, image: UIImage?) -> some View {
         VStack(spacing: 4) {
-            Button { photoError = nil; selectedRole = role } label: {
-                Color(.tertiarySystemGroupedBackground)
-                    .aspectRatio(4.0 / 3.0, contentMode: .fit)
-                    .overlay {
-                        if let image { Image(uiImage: image).resizable().scaledToFit() }
-                        else { Image(systemName: "photo.badge.plus").font(.title2) }
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(title)
-            .accessibilityIdentifier(role == .face ? "lost-cat-face-photo" : "lost-cat-body-photo")
-            .disabled(photoBusy || (role == .body && faceImage == nil))
-            HStack {
-                Text(title).font(.caption)
-                    .foregroundStyle(isPrefilled(role == .face ? "face" : "body") ? Color.secondary : Color.primary)
-                Spacer(minLength: 0)
+            ToolPhotoSlot(title, image: image, dimmedTitle: isPrefilled(role == .face ? "face" : "body"),
+                          disabled: photoBusy || (role == .body && faceImage == nil),
+                          identifier: role == .face ? "lost-cat-face-photo" : "lost-cat-body-photo",
+                          actionsIdentifier: role == .face ? "lost-cat-face-actions" : "lost-cat-body-actions",
+                          choose: { photoError = nil; selectedRole = role }) {
+                Button("写真を選び直す", systemImage: "photo") { selectedRole = role }
                 if let image {
-                    Menu {
-                        Button("写真を選び直す", systemImage: "photo") { selectedRole = role }
-                        Button("切り取る", systemImage: "crop") { cropRequest = LostCatCropRequest(role: role, image: image) }
-                        if role == .body {
-                            Button("全身の写真を外す", systemImage: "minus.circle", role: .destructive) { removeSecondPhoto() }
-                        }
-                    } label: { Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle()) }
-                    .accessibilityLabel("\(title)の操作")
-                    .accessibilityIdentifier(role == .face ? "lost-cat-face-actions" : "lost-cat-body-actions")
+                    Button("切り取る", systemImage: "crop") { cropRequest = LostCatCropRequest(role: role, image: image) }
+                }
+                if role == .body {
+                    Button("全身の写真を外す", systemImage: "minus.circle", role: .destructive) { removeSecondPhoto() }
                 }
             }
             if role == .body && faceImage == nil {
