@@ -270,6 +270,10 @@ private struct VeterinaryConsultationView: View {
     @State private var autosaveTask: Task<Void, Never>?
     @State private var removingEntry: VeterinaryVisitEntry?
     @ObservedObject private var catCareStore = CatCareStore.shared
+    /// Which entries are videos, and how long each is (11/9).
+    @State private var videos: [UUID: Double] = [:]
+    /// The weight form of 「この子のこと」, opened from here (11/9).
+    @State private var weighing = false
 
     private var changes: Bool {
         guard let visit else { return false }
@@ -491,6 +495,7 @@ private struct VeterinaryConsultationView: View {
                                        text: $observations, lines: 3...8, identifier: "vet-observations", showsTitle: false)
                 Toggle("いつからかを記録", isOn: $hasStartedDay)
                 if hasStartedDay { DatePicker("気付いた日", selection: $startedDay, displayedComponents: .date) }
+                weightRow(visit)
             } else {
                 // What was told: read only once the memo is finished.
                 if !visit.observations.isEmpty { Text(visit.observations) }
@@ -499,6 +504,33 @@ private struct VeterinaryConsultationView: View {
             }
         } header: {
             ToolStepHeader(number: 1, title: "家で気付いたこと", state: state).accessibilityIdentifier("vet-step-noticed")
+        }
+    }
+    /// その日の体重 (11/9). The weight has one place, 「この子のこと」: this row
+    /// shows the newest one there and opens its own form to add today's.
+    private func weightRow(_ visit: VeterinaryVisit) -> some View {
+        Button { weighing = true } label: {
+            HStack {
+                Text("体重").foregroundStyle(Color.primary)
+                Spacer(minLength: 8)
+                Text(VeterinaryDayWeight.of(visit).map(VeterinaryDayWeight.text) ?? "入れる")
+            }
+        }
+        .accessibilityIdentifier("vet-weight")
+    }
+    /// Written into 「この子のこと」, the record every tool reads; made for this
+    /// cat when it has none yet, as 「この子のこと」 itself does.
+    private func recordWeight(_ result: CatCareListEditor.Result, _ visit: VeterinaryVisit) {
+        let profile = profiles.first { $0.identifier == visit.catID.uuidString }
+        let record = CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString)
+            ?? (profile != nil ? catCareStore.ensureRecord(profileID: visit.catID, name: profile?.displayName)
+                : catCareStore.ensureRecord(toolCatID: visit.catID, profileIdentifier: nil, name: visit.catName))
+        guard let id = record?.catID, catCareStore.update({ state in
+            guard let index = state.cats.firstIndex(where: { $0.catID == id }) else { return }
+            result.apply(to: &state.cats[index], by: state.deviceID, now: Date())
+        }) else {
+            error = "体重を保存できませんでした。もう一度お試しください。"
+            return
         }
     }
     private func recordsStep(_ visit: VeterinaryVisit, _ state: ToolStepState) -> some View {
@@ -516,7 +548,7 @@ private struct VeterinaryConsultationView: View {
     }
     private func entryRow(_ entry: VeterinaryVisitEntry, visit: VeterinaryVisit) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            VeterinaryEntryPhoto(entry: entry, visitID: visit.id, store: store)
+            VeterinaryEntryPhoto(entry: entry, visitID: visit.id, store: store, videoSeconds: videos[entry.id])
             if !entry.text.isEmpty { Text(entry.text) }
             if entry.familyRetained == true { Text("家族の手帳から外れた記録です").font(.caption).foregroundStyle(.secondary) }
             if let weight = entry.weight { PhotoMemoWeightLabel(weight: weight) }
@@ -589,6 +621,9 @@ private struct VeterinaryConsultationView: View {
         }
         .disabled(busy)
         .interactiveDismissDisabled(changes || busy)
+        .task(id: visit?.revision) {
+            if let loaded = try? await store.videoDurations() { videos = loaded }
+        }
         .task {
             catCareStore.importFromTools()
             catCareStore.importBirthdays(profiles)
@@ -615,7 +650,15 @@ private struct VeterinaryConsultationView: View {
             }
         }
         .fullScreenCover(isPresented: $showing) {
-            if let visit { VeterinaryReadView(visit: visit, store: store, displayName: profiles.first(where: { $0.identifier == visit.catID.uuidString })?.displayName).environment(\.dynamicTypeSize, typeSize) }
+            if let visit { VeterinaryReadView(visit: visit, store: store, displayName: profiles.first(where: { $0.identifier == visit.catID.uuidString })?.displayName, videos: videos).environment(\.dynamicTypeSize, typeSize) }
+        }
+        .sheet(isPresented: $weighing) {
+            if let visit {
+                CatCareListEntrySheet(editor: CatCareListEditor(kind: .weight), catID: nil) { result in
+                    recordWeight(result, visit)
+                }
+                .environment(\.dynamicTypeSize, typeSize)
+            }
         }
         .confirmationDialog("まだ保存できていません", isPresented: $discarding, titleVisibility: .visible) {
             Button("書いた内容を消して閉じる", role: .destructive) { dismiss() }; Button("画面に戻る", role: .cancel) {}
@@ -635,7 +678,7 @@ private struct VeterinaryConsultationView: View {
         } message: { Text("この診察メモだけを削除します。") }
         .confirmationDialog("診察メモから外しますか？", isPresented: removingEntryPresented, titleVisibility: .visible,
                             presenting: removingEntry, actions: removalActions, message: removalMessage)
-        .appRecordEditing(retainWhileHidden: changes || busy || picking || chosen != nil)
+        .appRecordEditing(retainWhileHidden: changes || busy || picking || chosen != nil || weighing)
     }
     private func scheduleSave() {
         autosaveTask?.cancel()
@@ -737,6 +780,14 @@ private struct VeterinaryRecordPicker: View {
     @State private var chosen: PhotoMemoryNoteRecord?
     /// Off at first: photos are often not given to a cat.
     @State private var onlyMine = false
+    /// Recent videos in the library (11/9), and their lengths by identifier.
+    @State private var videos: [PhotoPresentation] = []
+    @State private var videoSeconds: [String: Double] = [:]
+    /// 「撮る」 (11/9): the camera, why it cannot open, and saving the shot.
+    @State private var capturing = false
+    @State private var captureBlocked: String?
+    @State private var savingShot = false
+    @Environment(\.openURL) private var openURL
 
     private var profile: CatProfilePresentation? { profiles.first { $0.identifier == visit.catID.uuidString } }
     /// The photos the owner put on this cat's page.
@@ -749,7 +800,7 @@ private struct VeterinaryRecordPicker: View {
     /// Every photo, this cat's page photos among them.
     private var everyPhoto: [PhotoPresentation] {
         var seen = Set<String>()
-        return (photos + mine).filter { seen.insert($0.localIdentifier).inserted }
+        return (photos + mine + videos).filter { seen.insert($0.localIdentifier).inserted }
     }
     /// Newest first, three to a row.
     private var gridPhotos: [PhotoPresentation] {
@@ -775,10 +826,50 @@ private struct VeterinaryRecordPicker: View {
         chosen = PhotoMemoryNoteRecord(photoIdentifier: photo.localIdentifier, note: note)
     }
 
+    /// Asks for the camera and for saving to the library first; says why
+    /// when either is turned off.
+    private func openCamera() async {
+        captureBlocked = await VeterinaryCapture.blockedReason()
+        if captureBlocked == nil { capturing = true }
+    }
+    /// The shot goes to the photo library, then into this memo. Taken here,
+    /// for this cat's memo: whose it is is already known.
+    private func addShot(_ shot: VeterinaryCapture.Shot) async {
+        savingShot = true; defer { savingShot = false }
+        do {
+            let saved = try await VeterinaryCapture.save(shot)
+            let note = PhotoMemoryNote(text: "", updatedAt: Date(), revision: UUID().uuidString,
+                context: PhotoMemoryNoteContext(capturedAt: Date(), cats: [PhotoMemoryNoteCat(id: visit.catID, name: visit.catName)]))
+            let source = PhotoMemoryNoteRecord(photoIdentifier: saved.identifier, note: note)
+            added(try await store.add(source: source, jpeg: saved.jpeg, to: visit.id, expectedRevision: visit.revision,
+                confirmedTarget: VeterinaryRecordConfirmation.belongsOnly(to: visit.catID, source), videoSeconds: saved.seconds))
+            error = nil
+        } catch let failure as VeterinaryVisitError {
+            error = veterinaryErrorMessage(failure)
+        } catch {
+            self.error = "撮ったものを保存できませんでした。もう一度お試しください。"
+        }
+    }
+    @ViewBuilder private var captureRows: some View {
+        if VeterinaryCapture.cameraAvailable {
+            Button("撮る", systemImage: "camera") { Task { await openCamera() } }
+                .disabled(savingShot).accessibilityIdentifier("vet-capture")
+            if savingShot { ProgressView("保存しています…") }
+            if let captureBlocked {
+                Text(captureBlocked).font(.footnote).foregroundStyle(.secondary)
+                Button("設定を開く") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                }
+                .accessibilityIdentifier("vet-capture-settings")
+            }
+        }
+    }
+
     var body: some View {
         NavigationStack {
             List {
                 Section("最近の写真") {
+                    captureRows
                     if !mine.isEmpty {
                         Toggle("この子の写真だけ", isOn: $onlyMine)
                             .font(.subheadline)
@@ -807,6 +898,9 @@ private struct VeterinaryRecordPicker: View {
                 }
             }
             .task {
+                let recent = VeterinaryCapture.recentVideos()
+                videos = recent.map { $0.photo }
+                videoSeconds = Dictionary(recent.map { ($0.photo.localIdentifier, $0.seconds) }, uniquingKeysWith: { first, _ in first })
                 access.start(photos: everyPhoto)
                 do {
                     // Known other-cat measurements are never offered. Unknown
@@ -820,10 +914,18 @@ private struct VeterinaryRecordPicker: View {
             // Each pick is confirmed over the list, which stays open for the next.
             .sheet(item: $chosen) { source in
                 VeterinaryRecordConfirmation(source: source, visit: visit, photos: everyPhoto,
-                                             noteStore: noteStore, store: store) { updated in
+                                             noteStore: noteStore, store: store,
+                                             videoSeconds: videoSeconds[source.photoIdentifier]) { updated in
                     added(updated); chosen = nil
                 }
                 .environment(\.dynamicTypeSize, typeSize)
+            }
+            .fullScreenCover(isPresented: $capturing) {
+                VeterinaryCameraView { shot in
+                    capturing = false
+                    if let shot { Task { await addShot(shot) } }
+                }
+                .ignoresSafeArea()
             }
         }
     }
@@ -855,6 +957,8 @@ private struct VeterinaryRecordPicker: View {
 
     private func photoCell(_ photo: PhotoPresentation) -> some View {
         let added = visit.entries.contains { $0.sourcePhotoIdentifier == photo.localIdentifier }
+        let seconds = videoSeconds[photo.localIdentifier]
+        let taken = photo.creationDate.map { "撮影 " + DayText.japanese(VeterinaryVisit.day($0)) } ?? "写真"
         return Button { choosePhoto(photo) } label: {
             Color(.secondarySystemFill)
                 .aspectRatio(1, contentMode: .fit)
@@ -869,10 +973,13 @@ private struct VeterinaryRecordPicker: View {
                             .font(.title3).symbolRenderingMode(.multicolor).padding(4)
                     }
                 }
+                .overlay(alignment: .bottomLeading) {
+                    if let seconds { VeterinaryVideoBadge(seconds: seconds) }
+                }
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(photo.creationDate.map { "撮影 \(DayText.japanese(VeterinaryVisit.day($0)))" } ?? "写真")
+        .accessibilityLabel(seconds == nil ? taken : "動画、" + taken)
         .accessibilityValue(added ? "追加済み" : "")
         .accessibilityIdentifier("vet-photo-\(photo.localIdentifier)")
     }
@@ -884,6 +991,8 @@ private struct VeterinaryRecordConfirmation: View {
     let photos: [PhotoPresentation]
     let noteStore: PhotoMemoryNoteStore
     let store: VeterinaryVisitStore
+    /// Set when the choice is a video (11/9): its length.
+    let videoSeconds: Double?
     let saved: (VeterinaryVisit) -> Void
     @Environment(\.dismiss) private var dismiss
     @StateObject private var access = PhotoMemoryNotePhotoAccess()
@@ -893,9 +1002,10 @@ private struct VeterinaryRecordConfirmation: View {
     @State private var savedPhotoURL: URL?
 
     init(source: PhotoMemoryNoteRecord, visit: VeterinaryVisit, photos: [PhotoPresentation],
-         noteStore: PhotoMemoryNoteStore, store: VeterinaryVisitStore, saved: @escaping (VeterinaryVisit) -> Void) {
+         noteStore: PhotoMemoryNoteStore, store: VeterinaryVisitStore, videoSeconds: Double? = nil,
+         saved: @escaping (VeterinaryVisit) -> Void) {
         self.source = source; self.visit = visit; self.photos = photos
-        self.noteStore = noteStore; self.store = store; self.saved = saved
+        self.noteStore = noteStore; self.store = store; self.videoSeconds = videoSeconds; self.saved = saved
         // Asked only when it is unclear whose record it is (11/8).
         _confirmed = State(initialValue: Self.belongsOnly(to: visit.catID, source))
     }
@@ -917,6 +1027,9 @@ private struct VeterinaryRecordConfirmation: View {
                         PhotoAssetImageView(localIdentifier: source.photoIdentifier, catBoundingBox: nil,
                             targetPixelSize: CGSize(width: 1000, height: 1000), showsFullImage: true)
                             .aspectRatio(1, contentMode: .fit).clipShape(RoundedRectangle(cornerRadius: 12))
+                            .overlay(alignment: .bottomLeading) {
+                                if let videoSeconds { VeterinaryVideoBadge(seconds: videoSeconds) }
+                            }
                     } else if let savedPhotoURL {
                         AppRecordSavedPhoto(url: savedPhotoURL).aspectRatio(1, contentMode: .fit)
                     } else { Label("元の写真を開けません。文章と体重だけ追加します。", systemImage: "photo").font(.caption) }
@@ -965,7 +1078,8 @@ private struct VeterinaryRecordConfirmation: View {
             guard !photoOnly || bytes != nil else { throw VeterinaryVisitError.changed }
             let updated = try await store.add(source: source, jpeg: bytes, to: visit.id,
                 expectedRevision: visit.revision, confirmedTarget: confirmed,
-                replace: visit.entries.contains { $0.sourceNoteID == source.id })
+                replace: visit.entries.contains { $0.sourceNoteID == source.id },
+                videoSeconds: bytes == nil ? nil : videoSeconds)
             saved(updated)
         } catch { self.error = veterinaryErrorMessage(error) }
     }
@@ -1023,25 +1137,44 @@ private struct VeterinaryEntryPhoto: View {
     let entry: VeterinaryVisitEntry
     let visitID: UUID
     let store: VeterinaryVisitStore
+    /// Set for a video (11/9): its first frame is the copy; a tap plays it
+    /// here, never by itself.
+    var videoSeconds: Double? = nil
     /// Longest side of the copy shown in a row.
     static let maxPixel: CGFloat = 900
     @State private var thumbnail: UIImage?
     @State private var failed = false
     @State private var expanded = false
+    @State private var playing = false
     /// A photo copy's file is never reused for another photo.
     private var key: String { "vet/\(visitID.uuidString)/\(entry.photoFile ?? "")" }
 
     var body: some View {
         Group {
-            if let thumbnail {
-                Button { expanded = true } label: {
+            if playing, let identifier = entry.sourcePhotoIdentifier {
+                VeterinaryEntryVideo(identifier: identifier)
+                    .aspectRatio(thumbnail.map { $0.size.width / max($0.size.height, 1) } ?? 16 / 9, contentMode: .fit)
+                    .frame(maxHeight: 260)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+            } else if let thumbnail {
+                Button { if videoSeconds != nil { playing = true } else { expanded = true } } label: {
                     Image(uiImage: thumbnail).resizable().scaledToFit()
+                        .overlay {
+                            if videoSeconds != nil {
+                                Image(systemName: "play.circle.fill")
+                                    .font(.system(size: 44)).symbolRenderingMode(.palette)
+                                    .foregroundStyle(Color.white, Color.black.opacity(0.5))
+                            }
+                        }
+                        .overlay(alignment: .bottomLeading) {
+                            if let videoSeconds { VeterinaryVideoBadge(seconds: videoSeconds) }
+                        }
                 }
                 .buttonStyle(.plain)
                 .clipShape(RoundedRectangle(cornerRadius: 16))
                 .frame(maxHeight: 260)
-                .accessibilityLabel("写真を大きく見る")
-                .accessibilityIdentifier("memory-note-photo")
+                .accessibilityLabel(videoSeconds == nil ? "写真を大きく見る" : "動画を再生する")
+                .accessibilityIdentifier(videoSeconds == nil ? "memory-note-photo" : "vet-video")
             } else if failed { Label("写真を開けません", systemImage: "photo").font(.caption) }
             else if entry.photoFile != nil { ProgressView().frame(maxWidth: .infinity, minHeight: 80) }
         }
@@ -1102,6 +1235,8 @@ private struct VeterinaryReadView: View {
     let visit: VeterinaryVisit
     let store: VeterinaryVisitStore
     var displayName: String? = nil
+    /// Which entries are videos, and how long each is (11/9).
+    var videos: [UUID: Double] = [:]
     @Environment(\.dismiss) private var dismiss
     @State private var export: CareHandoffExporter.Export?
     @State private var retainedDirectory: URL?
@@ -1112,6 +1247,8 @@ private struct VeterinaryReadView: View {
     /// True while the memo for the desk is being made (11/6).
     @State private var exporting = false
 
+    /// その日の体重 (11/9), from 「この子のこと」.
+    private var dayWeight: (day: String, grams: Int)? { VeterinaryDayWeight.of(visit) }
     private var catCareFields: [(String, String)] {
         CatCareSummary.veterinaryFields(
             CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString),
@@ -1141,6 +1278,14 @@ private struct VeterinaryReadView: View {
                 // 11/8: what is happening now first; the cat's standing facts last.
                 VStack(alignment: .leading, spacing: 24) {
                     Text(displayName ?? visit.catName).font(.largeTitle.bold())
+                    if let weight = dayWeight {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("体重").font(.headline)
+                            Text(VeterinaryDayWeight.text(weight))
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("vet-reading-weight")
+                    }
                     if !visit.observations.isEmpty || visit.startedOn != nil {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("家で気付いたこと").font(.headline)
@@ -1153,7 +1298,7 @@ private struct VeterinaryReadView: View {
                     }
                     ForEach(visit.orderedEntries) { entry in
                         VStack(alignment: .leading, spacing: 12) {
-                            VeterinaryEntryPhoto(entry: entry, visitID: visit.id, store: store)
+                            VeterinaryEntryPhoto(entry: entry, visitID: visit.id, store: store, videoSeconds: videos[entry.id])
                             if !entry.text.isEmpty { Text(entry.text) }
                             if let weight = entry.weight { PhotoMemoWeightLabel(weight: weight) }
                             VeterinaryEntryDates(entry: entry)
@@ -1170,7 +1315,7 @@ private struct VeterinaryReadView: View {
                         VeterinaryCatCareFields(fields: care.other)
                     }
                     if visit.entries.isEmpty && visit.observations.isEmpty && visit.questions.isEmpty && results.isEmpty
-                        && care.medical.isEmpty && care.other.isEmpty {
+                        && care.medical.isEmpty && care.other.isEmpty && dayWeight == nil {
                         Text("まだ見せる内容がありません。").foregroundStyle(.secondary)
                     }
                 }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
@@ -1252,6 +1397,7 @@ private struct VeterinaryReadView: View {
         try? await Task.sleep(for: .milliseconds(100))
         var blocks: [VeterinaryMemoExporter.Block] = []
         var noticed: [(String, String)] = []
+        if let weight = dayWeight { noticed.append(("体重", VeterinaryDayWeight.text(weight))) }
         if !visit.observations.isEmpty { noticed.append(("家で気付いたこと", visit.observations)) }
         if let day = visit.startedOn { noticed.append(("気付いた日", DayText.japanese(day))) }
         blocks.append(.fields(noticed + results))
@@ -1266,6 +1412,7 @@ private struct VeterinaryReadView: View {
                 images.append((number, image))
             }
             var lines: [String] = []
+            if let seconds = videos[entry.id] { lines.append("動画 " + VeterinaryVisitEntry.durationText(seconds)) }
             if !entry.text.isEmpty { lines.append(entry.text) }
             if let weight = entry.weight, !catCareFields.contains(where: { $0.1.contains(CatCareFormat.weight(weight.grams)) }) {
                 lines.append("体重 \(CatCareFormat.weight(weight.grams))")
@@ -1288,6 +1435,23 @@ private struct VeterinaryReadView: View {
             retainedDirectory = made.directory; export = made
         }
         catch { exportError = "空き容量やメモの長さを確かめてください。" }
+    }
+}
+
+/// その日の体重 (11/9): the newest weight in 「この子のこと」 measured on or
+/// before the memo's day (today, or the day it was finished), with its day.
+private enum VeterinaryDayWeight {
+    @MainActor
+    static func of(_ visit: VeterinaryVisit) -> (day: String, grams: Int)? {
+        guard let record = CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString) else { return nil }
+        let weights = record.activeWeights.map { weight in
+            (day: String(format: "%04d-%02d-%02d", weight.measuredOn.year, weight.measuredOn.month, weight.measuredOn.day),
+             grams: weight.grams)
+        }
+        return VeterinaryVisitWeight.latest(weights, onOrBefore: VeterinaryVisit.day(visit.completedAt ?? Date()))
+    }
+    static func text(_ weight: (day: String, grams: Int)) -> String {
+        CatCareFormat.weight(weight.grams) + "（" + DayText.japanese(weight.day) + "）"
     }
 }
 
