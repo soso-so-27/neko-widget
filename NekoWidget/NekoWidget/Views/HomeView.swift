@@ -132,13 +132,16 @@ struct PhotoLibraryGridRowView<Cell: View>: View {
 /// on every frame and made the photo grid stutter all the way down (proved on
 /// a real iPhone in 284 by turning it off). Now rows report when they come and
 /// go to a plain object (no SwiftUI state, so scrolling re-renders nothing),
-/// the top row is saved as it changes, and a restore is one `scrollTo`.
+/// the top row is kept in memory as it changes, and a restore is one `scrollTo`.
 private struct PhotoLibraryPositionRestoration: ViewModifier {
     let section: String?
     let isSearching: Bool
     let firstRow: String?
     let normalize: (String) -> String
     @State private var tracker = PhotoLibraryRowTracker()
+    /// Where the visible part of the list begins (below a bar laid over it,
+    /// such as the memo search field). Changes with the layout, not the scroll.
+    @State private var readingTop: CGFloat = 0
 
     init(section: String?, isSearching: Bool, firstRow: String?, normalize: @escaping (String) -> String) {
         self.section = section
@@ -152,11 +155,24 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
             ScrollViewReader { proxy in
                 content
                     .environment(\.photoLibraryRowTracker, tracker)
+                    .environment(\.photoLibraryReadingTop, readingTop)
+                    .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { readingTop = $0 }
                     .modifier(PhotoLibraryUserScrollDetector(tracker: tracker))
                     .onAppear {
                         tracker.isVisible = true
                         PhotoLibraryReadingPosition.activeSection = section
                         configure(section: section)
+                        // 11/8: back from a memo (or a photo, or another app tab)
+                        // this same scroll view kept its offset, with the opened
+                        // row where it was. Scrolling to the saved top row only
+                        // moved it away: back from 「スクロール確認 8」 the list
+                        // showed 13-16. Only a newly made list restores.
+                        guard !tracker.hasAppeared else {
+                            tracker.userScrolled = false
+                            PhotoLibraryReadingPosition.diagnose("reappear \(section): kept")
+                            return
+                        }
+                        tracker.hasAppeared = true
                         let saved = PhotoLibraryReadingPosition.identifier(for: section).map(normalize)
                         PhotoLibraryReadingPosition.diagnose("appear \(section): \(saved ?? "nil")")
                         restore(saved, with: proxy)
@@ -231,9 +247,18 @@ final class PhotoLibraryRowTracker {
     var isVisible = false
     var isSearching = false
     var userScrolled = false
+    /// The list has restored once. Later appearances are the same scroll view
+    /// coming back with its offset kept, so they do not move it.
+    var hasAppeared = false
     var generation: UInt64 = 0
     var onTopChange: (@MainActor (String) -> Void)?
-    private var visible: [String: Int] = [:]
+    /// Rows the lazy stack has made. It makes rows before they reach the
+    /// screen and keeps them after they leave, so this is not what is visible.
+    private var rendered: [String: Int] = [:]
+    /// Made rows more than half above the visible top. 11/8: the top used to be
+    /// the first made row, rows above the screen; back on the memo list 13-16
+    /// showed instead of 8, and the photo grids saved rows above as well.
+    private var passed: Set<String> = []
     private var lastTop: String?
 
     /// The list the person is touching is the one whose place is kept. The
@@ -244,17 +269,27 @@ final class PhotoLibraryRowTracker {
     }
 
     func appear(_ id: String, index: Int) {
-        visible[id] = index
+        rendered[id] = index
         report()
     }
 
+    /// No report: rows also go when the whole list leaves for a pushed screen,
+    /// which must not move the place. A row scrolled away passed the top first.
     func disappear(_ id: String) {
-        visible[id] = nil
+        rendered[id] = nil
+    }
+
+    func move(_ id: String, isPast: Bool) {
+        if isPast { passed.insert(id) } else { passed.remove(id) }
         report()
     }
 
     private func report() {
-        guard let first = visible.min(by: { $0.value < $1.value }) else { return }
+        var first: (key: String, value: Int)?
+        for (id, index) in rendered where !passed.contains(id) && index < (first?.value ?? .max) {
+            first = (id, index)
+        }
+        guard let first else { return }
         let top = first.value == 0 ? PhotoLibraryReadingPosition.listTop : first.key
         guard top != lastTop else { return }
         lastTop = top
@@ -266,10 +301,19 @@ private struct PhotoLibraryRowTrackerKey: EnvironmentKey {
     static let defaultValue: PhotoLibraryRowTracker? = nil
 }
 
+private struct PhotoLibraryReadingTopKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+
 extension EnvironmentValues {
     var photoLibraryRowTracker: PhotoLibraryRowTracker? {
         get { self[PhotoLibraryRowTrackerKey.self] }
         set { self[PhotoLibraryRowTrackerKey.self] = newValue }
+    }
+
+    fileprivate var photoLibraryReadingTop: CGFloat {
+        get { self[PhotoLibraryReadingTopKey.self] }
+        set { self[PhotoLibraryReadingTopKey.self] = newValue }
     }
 }
 
@@ -284,11 +328,23 @@ private struct PhotoLibraryReadingRow: ViewModifier {
     let id: String
     let index: Int
     @Environment(\.photoLibraryRowTracker) private var tracker
+    @Environment(\.photoLibraryReadingTop) private var readingTop
 
-    func body(content: Content) -> some View {
-        content
-            .onAppear { tracker?.appear(id, index: index) }
-            .onDisappear { tracker?.disappear(id) }
+    @ViewBuilder func body(content: Content) -> some View {
+        if let tracker {
+            let top = readingTop
+            content
+                .onAppear { tracker.appear(id, index: index) }
+                .onDisappear { tracker.disappear(id) }
+                .onChange(of: index) { _, index in tracker.appear(id, index: index) }
+                // Only the flip past the visible top is reported: nothing is
+                // redrawn and nothing is written while the list scrolls.
+                .onGeometryChange(for: Bool.self) { $0.frame(in: .scrollView).midY <= top } action: { isPast in
+                    tracker.move(id, isPast: isPast)
+                }
+        } else {
+            content
+        }
     }
 }
 

@@ -219,7 +219,9 @@ struct PhotoMemoryNotesListView: View {
         // Scope the list identity to the ScrollView itself. Applying it after
         // safeAreaInset propagates it to the separate search/sort controls.
         .accessibilityIdentifier("memory-notes-list")
-        .restoringPhotoLibraryPosition(section: positionSection,
+        // 11/8: the memos load after the list appears. Restoring before that
+        // scrolled an empty list, and the memos then showed from the top.
+        .restoringPhotoLibraryPosition(section: library.isLoaded ? positionSection : nil,
                                        isSearching: !search.isEmpty)
     }
 

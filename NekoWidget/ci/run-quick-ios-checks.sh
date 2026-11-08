@@ -250,6 +250,7 @@ xcrun --sdk macosx swiftc -parse-as-library \
 xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
   NekoWidget/Services/CatCareCore.swift NekoWidget/Services/CareHandoffPlan.swift \
   NekoWidget/Services/EvacuationPlan.swift NekoWidget/Services/CatCareOutputLines.swift \
+  NekoWidget/Services/LostCatIncident.swift \
   ci/verify-tool-outputs.swift -o "$RUNNER_TEMP/tool-output-tests"
 "$RUNNER_TEMP/tool-output-tests"
 

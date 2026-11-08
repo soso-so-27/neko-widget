@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import UIKit
 import ImageIO
+import UserNotifications
 
 @MainActor
 final class EvacuationStore: ObservableObject {
@@ -9,7 +10,7 @@ final class EvacuationStore: ObservableObject {
     static var shared: EvacuationStore {
         let root = AppRecordDataset.directory("EvacuationPreparation")
         if let cached = sharedCache, cached.0 == root { return cached.1 }
-        let value = EvacuationStore(); sharedCache = (root, value); return value
+        let value = EvacuationStore(schedulesNotices: true); sharedCache = (root, value); return value
     }
     @Published private(set) var plan = EvacuationPlan()
     @Published private(set) var loadError: String?
@@ -20,14 +21,47 @@ final class EvacuationStore: ObservableObject {
     /// nothing new is saved.
     @Published var disclosures: [UUID: EvacuationDisclosure] = [:]
     func disclosure(for catID: UUID) -> EvacuationDisclosure { disclosures[catID] ?? EvacuationDisclosure() }
+    /// 「いま避難する」 (round 2): what was taken on the day. Kept while the app
+    /// runs only, apart from the list's own checks; a check there records the
+    /// day (EvacuationPlan.recordTaken), nothing else is saved.
+    @Published var takenIDs: Set<UUID> = []
     private var repository: EvacuationRepository?
     private let directory: URL
     private let allowsCandidateRefresh: Bool
+    /// Only the app's own plan sets notices; fixtures and checks never do.
+    private let schedulesNotices: Bool
 
-    init(directory: URL? = nil, allowsCandidateRefresh: Bool = true) {
+    init(directory: URL? = nil, allowsCandidateRefresh: Bool = true, schedulesNotices: Bool = false) {
         self.allowsCandidateRefresh = allowsCandidateRefresh
+        self.schedulesNotices = schedulesNotices
         self.directory = directory ?? AppRecordDataset.directory("EvacuationPreparation")
         reload()
+    }
+
+    /// Notices follow the saved plan: after a load and after every save. A plan
+    /// emptied or replaced (a restore) takes its notices with it. Never asks.
+    func followNotices() {
+        guard schedulesNotices, loadError == nil else { return }
+        EvacuationNotice.follow(plan)
+    }
+
+    /// The hub's 「見直しの時期に知らせる」, and the first 期限: the only places that
+    /// ask for notifications. False: they are not allowed on this iPhone.
+    func turnOnNotices() async -> Bool {
+        guard schedulesNotices else { return true }
+        return await EvacuationNotice.turnOn(plan)
+    }
+
+    /// A 期限 was set: the first time ever, notices turn on and the app asks.
+    /// Once the owner has chosen on the hub, that choice stays.
+    func firstExpirySet() async {
+        guard schedulesNotices, !EvacuationNotice.wasChosen else { return }
+        _ = await EvacuationNotice.turnOn(plan)
+    }
+
+    func turnOffNotices() {
+        guard schedulesNotices else { return }
+        EvacuationNotice.turnOff()
     }
 
     func reload() {
@@ -39,6 +73,7 @@ final class EvacuationStore: ObservableObject {
             plan = loaded.committed
             loadError = nil
             pendingPhotoCleanup = loaded.pendingPhotoCleanup > 0
+            followNotices()
         } catch {
             repository = nil
             loadError = EvacuationStorageError.unreadable.errorDescription
@@ -70,6 +105,7 @@ final class EvacuationStore: ObservableObject {
             try repository.commit(plan)
             saveError = nil
             pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
+            followNotices()
             return true
         } catch {
             saveError = "保存できませんでした。空き容量を確かめて、もう一度お試しください。"
@@ -101,6 +137,7 @@ final class EvacuationStore: ObservableObject {
         do {
             try repository.commit(next)
             plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
+            followNotices()
             return true
         } catch {
             saveError = "猫を選べませんでした。「もう一度保存する」を押してから、選び直してください。"
@@ -151,6 +188,7 @@ final class EvacuationStore: ObservableObject {
             next.stampCreation()
             try repository.commit(next, newPhotos: photos)
             plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
+            followNotices()
             return cat.id
         } catch {
             saveError = "この子を追加できませんでした。「もう一度保存する」を押してから、選び直してください。"
@@ -188,6 +226,7 @@ final class EvacuationStore: ObservableObject {
         next.stampCreation()
         try repository.commit(next)
         plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
+        followNotices()
         return true
     }
     /// Each cat's current medicines in 「この子のこと」.
@@ -260,22 +299,27 @@ final class EvacuationStore: ObservableObject {
         plan = next
         saveError = nil
         pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
+        followNotices()
     }
 
     func shareRecord(catID: UUID, disclosure: EvacuationDisclosure) throws -> EvacuationShareRecord {
         guard loadError == nil, saveError == nil,
               let cat = plan.cats.first(where: { $0.id == catID }) else { throw EvacuationStorageError.unreadable }
-        // Prefer purpose-selected identification photos; a general saved photo is a fallback.
-        var roles: [EvacuationCat.PhotoRole] = cat.photos["face"] != nil || cat.photos["body"] != nil
-            ? [.face, .body] : [.reference]
-        if disclosure.withOwnerPhoto { roles.append(.withOwner) }
-        let photos = try roles.compactMap { role -> UIImage? in
-            guard let name = cat.photos[role.rawValue] else { return nil }
-            guard let image = image(name) else { throw EvacuationStorageError.photoUnavailable }
-            return image
-        }
         // Everything per cat comes from 「この子のこと」; the toggles choose what shows.
         let care = CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
+        // 11/9: the face and body photos of 「この子のこと」 (this tool's older
+        // ones until they are set there); the photo with the owner is this tool's.
+        var photos: [UIImage] = []
+        for role in CatCarePhotoRole.allCases {
+            guard let url = CatCareSummary.identifyingPhotoURL(care, role, legacy: imageURL(cat.legacyIdentifyingPhoto(role)))
+            else { continue }
+            guard let image = UIImage(contentsOfFile: url.path) else { throw EvacuationStorageError.photoUnavailable }
+            photos.append(image)
+        }
+        if disclosure.withOwnerPhoto, let name = cat.photos[EvacuationCat.PhotoRole.withOwner.rawValue] {
+            guard let image = image(name) else { throw EvacuationStorageError.photoUnavailable }
+            photos.append(image)
+        }
         // Shown to others: rows not written are left out, never 「未記入」 (347).
         let fields = CatCareSummary.shown(CatCareSummary.evacuationShareFields(care, legacy: cat,
             household: CatCareStore.shared.state?.household, planContact: plan.contact, disclosure: disclosure))
@@ -304,7 +348,8 @@ final class EvacuationStore: ObservableObject {
         let supplies = needed.map { item -> (String, String) in
             let owner = plan.cats.first { $0.id == item.catID }.map { "（\($0.displayName)）" } ?? ""
             let title = (trimmed(item.title).isEmpty ? "名前のない持ち物" : item.title) + owner
-            let detail = [item.quantity, item.location.isEmpty ? "置き場所は未記入" : item.location]
+            let expiry = item.expiresAt.map { "期限 " + $0.formatted(date: .numeric, time: .omitted) } ?? ""
+            let detail = [item.quantity, item.location.isEmpty ? "置き場所は未記入" : item.location, expiry]
                 .filter { !$0.isEmpty }.joined(separator: "・")
             return ("□ " + title, detail)
         }
@@ -368,5 +413,85 @@ final class EvacuationStore: ObservableObject {
         }
         guard let jpeg = normalized.jpegData(compressionQuality: 0.9) else { throw EvacuationStorageError.photoUnavailable }
         return jpeg
+    }
+}
+
+/// 「見直しの時期に知らせる」 (round 2, 11/9): local notices only, no server. The
+/// half-year review and 14 days before each 期限, worked out by
+/// EvacuationPlan.notices. Off until the owner turns it on on the hub, or sets
+/// a 期限 for the first time; the app asks for notifications only then, never
+/// at launch. Text only (no item or cat's name), as AlbumArrivalNotice.
+@MainActor
+enum EvacuationNotice {
+    /// 0: never chosen (off), 1: on, 2: turned off by the owner.
+    nonisolated static let settingKey = "evacuation.notices.v1"
+    /// The hub's 「閉じる」 on the half-year note; the notice counts as the note does.
+    nonisolated static let dismissedKey = "evacuation-review-reminder-dismissed"
+    private static var scheduled: [EvacuationScheduledNotice]?
+    private static var generation = 0
+
+    static var isOn: Bool { UserDefaults.standard.integer(forKey: settingKey) == 1 }
+    static var wasChosen: Bool { UserDefaults.standard.integer(forKey: settingKey) != 0 }
+
+    /// Asks the first time, then sets the notices. False: not allowed.
+    static func turnOn(_ plan: EvacuationPlan) async -> Bool {
+        UserDefaults.standard.set(1, forKey: settingKey)
+        let center = UNUserNotificationCenter.current()
+        if await center.notificationSettings().authorizationStatus == .notDetermined {
+            _ = try? await center.requestAuthorization(options: [.alert])
+        }
+        scheduled = nil
+        follow(plan)
+        return await isAllowed(center)
+    }
+
+    static func turnOff() {
+        UserDefaults.standard.set(2, forKey: settingKey)
+        scheduled = []
+        let ticket = next()
+        Task { await replace(with: [], generation: ticket) }
+    }
+
+    /// Replaces what was set before. Does nothing when nothing changed, so a
+    /// save on each typed letter costs only the comparison.
+    static func follow(_ plan: EvacuationPlan, now: Date = Date()) {
+        let dismissed = Date(timeIntervalSince1970: UserDefaults.standard.double(forKey: dismissedKey))
+        let wanted = isOn ? plan.notices(now: now, dismissedAt: dismissed) : []
+        guard wanted != scheduled else { return }
+        scheduled = wanted
+        let ticket = next()
+        Task { await replace(with: wanted, generation: ticket) }
+    }
+
+    private static func next() -> Int { generation += 1; return generation }
+
+    private static func replace(with wanted: [EvacuationScheduledNotice], generation ticket: Int) async {
+        let center = UNUserNotificationCenter.current()
+        let old = await center.pendingNotificationRequests().map(\.identifier)
+            .filter { $0.hasPrefix(EvacuationScheduledNotice.prefix) }
+        guard ticket == generation else { return }
+        center.removePendingNotificationRequests(withIdentifiers: old)
+        guard !wanted.isEmpty else { return }
+        guard await isAllowed(center) else {
+            // Set again once notifications are allowed in the iPhone's settings.
+            if ticket == generation { scheduled = nil }
+            return
+        }
+        for notice in wanted {
+            guard ticket == generation else { return }
+            let content = UNMutableNotificationContent()
+            content.title = "ねこのまど"
+            content.body = notice.body
+            let parts = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: notice.date)
+            try? await center.add(UNNotificationRequest(identifier: notice.id, content: content,
+                trigger: UNCalendarNotificationTrigger(dateMatching: parts, repeats: false)))
+        }
+    }
+
+    static func allowed() async -> Bool { await isAllowed(UNUserNotificationCenter.current()) }
+
+    private static func isAllowed(_ center: UNUserNotificationCenter) async -> Bool {
+        let status = await center.notificationSettings().authorizationStatus
+        return [UNAuthorizationStatus.authorized, .provisional, .ephemeral].contains(status)
     }
 }

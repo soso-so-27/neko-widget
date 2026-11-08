@@ -316,7 +316,15 @@ enum ReadablePreservationText {
         "lastMadeAt": "最後にメモを作った日", "veterinarian": "かかりつけの動物病院",
         "checkStartedAt": "チェックを始めた日", "lastCheckedAt": "最後にそろえた日", "familyMeetingMemo": "家族の集合のメモ",
         "kindValue": "行き先の種類", "identifyingFeatures": "見分ける特徴",
-        "vetName": "病院名", "vetPhone": "病院の電話番号", "vetNote": "病院のメモ", "medicationName": "薬の名前", "farewellDay": "家族の手帳をやめた日"]
+        "vetName": "病院名", "vetPhone": "病院の電話番号", "vetNote": "病院のメモ", "medicationName": "薬の名前", "farewellDay": "家族の手帳をやめた日",
+        // Round 2 (11/8): 預けるときの「家の中のこと」.
+        "houseFoodPlace": "フードと砂の置き場所", "houseCarrierPlace": "キャリーの場所",
+        "houseHidingPlace": "隠れる場所", "houseOther": "家の中のこと",
+        // Round 2 (11/8): 迷子のときの連絡したところと「見つかりました」.
+        "incident": "迷子の記録", "contactedOffices": "連絡したところ", "office": "窓口",
+        "contactedAt": "連絡した日", "nextCheckAt": "次に確かめる日", "foundMessage": "見つかったときのひとこと",
+        // Round 2 (11/9): 避難に備えるの持ち物の期限.
+        "expiresAt": "期限"]
     private static let bookkeeping: Set<String> = ["schemaVersion", "version", "revision", "id", "catID", "familyID", "deviceID", "ownerID", "generation", "deletedAt",
         "profileID", "toolCatID", "sourceNoteID", "sourceRevision", "familyRecordID", "familyDetached", "prefilledFields", "prefilledUsualFood",
         "mutationRevision", "memberships", "globalExcludedAssets", "legacyUnscoped", "mode", "photoAlbumLink", "keyPhotoLocalIdentifier",
@@ -324,7 +332,8 @@ enum ReadablePreservationText {
         "photoRemoved", "pendingPhotoCleanup"]
     /// Stored codes shown as words (11/8: 「shelter」 read as English).
     private static let valueWords: [String: [String: String]] = [
-        "kindValue": ["shelter": "避難所", "family": "親戚・知人", "hotel": "ペットホテル・病院"]]
+        "kindValue": ["shelter": "避難所", "family": "親戚・知人", "hotel": "ペットホテル・病院"],
+        "office": ["animalCenter": "動物愛護センター", "healthCenter": "保健所", "police": "警察", "nearbyVet": "近くの動物病院"]]
 
     static func render(_ data: Data, title: String, photoPaths: [String: String] = [:]) throws -> (text: String, count: Int) {
         let value = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
@@ -356,7 +365,7 @@ enum ReadablePreservationText {
             else if let number = value as? NSNumber {
                 if CFGetTypeID(number) == CFBooleanGetTypeID() { lines.append(indentation + (number.boolValue ? "はい" : "いいえ")) }
                 else if let key, ["createdAt", "updatedAt", "writtenAt", "capturedAt", "date", "completedAt", "reviewedAt", "checkedAt", "confirmedAt", "lastSeenAt",
-                                        "lastMadeAt", "checkStartedAt", "lastCheckedAt"].contains(key) {
+                                        "lastMadeAt", "expiresAt", "checkStartedAt", "lastCheckedAt", "contactedAt", "nextCheckAt"].contains(key) {
                     lines.append(indentation + ISO8601DateFormatter().string(from: Date(timeIntervalSinceReferenceDate: number.doubleValue)))
                 } else { lines.append(indentation + number.stringValue) }
             } else {
