@@ -807,8 +807,8 @@ final class AppRecordPersistence: ObservableObject {
         }) ?? false
     }
 
-    private func reportSyncFailure(_ error: Error, cleanup: Bool, accepted: AcceptedSave?) async {
-        let intent = saveIntent.ticket()
+    private func reportSyncFailure(_ error: Error, cleanup: Bool, accepted: AcceptedSave?, intent requestedIntent: UInt64? = nil) async {
+        let intent = requestedIntent ?? saveIntent.ticket()
         let saved = await stillSaved(accepted)
         guard (try? saveIntent.require(intent)) != nil else { return }
         guard enabled else { title = "自動保存はオフです"; detail = nil; return }
@@ -1155,20 +1155,21 @@ final class AppRecordPersistence: ObservableObject {
         guard cleanupTask == nil, cleanupForeground, Date() >= cleanupNextAttempt else { return }
         cleanupYield = false; cleanupPending = true
         cleanupRequiredForCapacity = requiredForCapacity
+        let intent = saveIntent.ticket()
         cleanupTask = Task { [weak self] in
             await Task.yield()
             guard let self else { return }
-            await self.runCleanup(initial, remote: remote, checkpoint: checkpoint, retainedIndex: retainedIndex)
+            await self.runCleanup(initial, remote: remote, checkpoint: checkpoint, retainedIndex: retainedIndex, intent: intent)
             self.cleanupTask = nil
             self.cleanupRequiredForCapacity = false
         }
     }
     private func runCleanup(_ initial: Binding, remote: (ManagedPreservationRecord, AppRecordHead)?,
                             checkpoint: ManagedPreservationClient.SessionCheckpoint,
-                            retainedIndex: ToolBackupIndex?) async {
-        let intent = saveIntent.ticket()
+                            retainedIndex: ToolBackupIndex?, intent: UInt64) async {
         var value = initial
         do {
+            try saveIntent.require(intent)
             try await cleanupBoundary(value, checkpoint: checkpoint)
             let retained: Set<UUID>
             if let retainedIndex { retained = retainedIndex.recordIDs }
@@ -1446,7 +1447,7 @@ final class AppRecordPersistence: ObservableObject {
         }
           catch {
             guard (try? saveIntent.require(intent)) != nil else { return }
-            await reportSyncFailure(error, cleanup: cleanup, accepted: accepted)
+            await reportSyncFailure(error, cleanup: cleanup, accepted: accepted, intent: intent)
         }
     }
     static func needsAuthenticatedWork(_ value: Binding, fingerprint: String, requested: Bool) -> Bool {
