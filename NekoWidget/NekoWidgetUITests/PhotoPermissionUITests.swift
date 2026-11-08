@@ -4318,7 +4318,8 @@ final class SoloMemoriesUITests: XCTestCase {
         let allPhotos = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "すべての写真")).firstMatch
         XCTAssertTrue(allPhotos.isHittable)
         allPhotos.tap()
-        XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 5),
+        // The photo settings page is titled 「写真の表示と整理」 (10/21).
+        XCTAssertTrue(app.navigationBars["写真の表示と整理"].waitForExistence(timeout: 5),
                       "Selecting a source returns directly to photo settings")
         let excluded = app.buttons["settings-excluded-photos"]
         for _ in 0..<5 where !excluded.isHittable { app.swipeUp() }
