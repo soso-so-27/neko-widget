@@ -4451,6 +4451,24 @@ class AppOrientationTests(unittest.TestCase):
         self.assertNotIn("TARGETED_DEVICE_FAMILY = \"1,2\"", project)
 
 
+class AutoSaveScreenLayoutTests(unittest.TestCase):
+    def test_status_first_then_kept_records_account_profiles_and_stop_last(self) -> None:
+        # 349: start / stop / export / account were mixed in one box; the stop
+        # row sat far from the status it changes.
+        saving = source("NekoWidget/Services/AppRecordPersistence.swift")
+        body = section(saving, "@ViewBuilder private var settingsSections: some View {", "@ViewBuilder private var startAction: some View {")
+        order = [body.index('.accessibilityIdentifier("app-record-save-status")'),
+                 body.index("if !persistence.enabled { startAction } else { savingActions }"),
+                 body.index('header: { Text("保存されているもの") }'),
+                 body.index('NavigationLink("自動保存のアカウント")'),
+                 body.index('"app-record-cat-profile-transfer"'),
+                 body.index('"app-record-pause"')]
+        self.assertEqual(order, sorted(order))
+        stop = body[body.index("// Stopping on this iPhone"):]
+        self.assertIn("if persistence.enabled, authentication.isSignedIn", stop)
+        self.assertNotIn("savingSections", saving)
+
+
 class SettingsLayoutTests(unittest.TestCase):
     def test_settings_put_plus_and_saving_first_and_test_tools_last(self) -> None:
         settings = source("NekoWidget/Views/SettingsView.swift")
@@ -5041,7 +5059,7 @@ class OnePlaceSettingsTests(unittest.TestCase):
         self.assertIn("GroupWindowClientProvider.production != nil || ManagedPreservationConfiguration.current.isEnabled", choices)
         saving = source("NekoWidget/Services/AppRecordPersistence.swift")
         self.assertNotIn("アカウント（削除・サインアウト）", saving)
-        self.assertIn('NavigationLink("アカウント") { ManagedPreservationView() }', saving)
+        self.assertIn('NavigationLink("自動保存のアカウント") { ManagedPreservationView() }', saving)
         # The delete button and its confirmation exist only on the deletion entry.
         view = source("NekoWidget/Views/ManagedPreservationView.swift")
         buttons = section(view, "if deletesAccount {", "} footer: {")

@@ -1751,6 +1751,16 @@ struct AppRecordSettingsView: View {
     }
 
     /// One status, one action. How it works is in the privacy policy, not on this screen.
+    ///
+    /// 11/8 (349): the screen reads top to bottom as
+    ///   1. 状態 — the status, one sentence, and the one thing to do now
+    ///      (start, retry, choose which records, or Plus);
+    ///   2. 保存されているもの — space used, records, and taking them out;
+    ///   3. 自動保存のアカウント;
+    ///   4. the way without Plus (cat profiles only);
+    ///   5. stopping on this iPhone, last.
+    /// Before, start / stop / export / account were mixed in one box and the
+    /// stop row sat far from the status it changes.
     @ViewBuilder private var settingsSections: some View {
         Section {
             // Plus ending outranks any retry message: nothing new is saved until it comes back.
@@ -1775,7 +1785,14 @@ struct AppRecordSettingsView: View {
                     .accessibilityIdentifier("app-record-save-status")
                 if let detail = persistence.shownDetail { Text(detail).font(.footnote) }
                 else if !persistence.enabled { Text("猫のこと、メモ、ツールの記録を自動で保存して、新しいiPhoneに戻せます。") }
+                // The one thing to do now sits with the status it changes.
+                if authentication.isSignedIn && authentication.accountDeletionState == nil {
+                    if !persistence.enabled { startAction } else { savingActions }
+                }
             }
+        } footer: {
+            if authentication.isSignedIn, authentication.accountDeletionState == nil, !persistence.enabled,
+               hasPlusHere, authentication.membership?.linked != true { plusLinkText }
         }
         if let error = authentication.errorMessage { Section { Text(error).foregroundStyle(.red) } }
         if authentication.accountDeletionState != nil {
@@ -1794,43 +1811,30 @@ struct AppRecordSettingsView: View {
                             .accessibilityIdentifier("app-record-check-session")
                     }
                 }
-                if persistence.enabled { savingSections }
             }
-        } else if !persistence.enabled {
+        } else if persistence.enabled, !plusEnded, authentication.membership?.linked == false, !hasPlusHere,
+                  purchases.entitlementState != .checking {
             Section {
-                // Without Plus, 「保存を始める」 could do nothing: only the way to Plus (11/7).
-                if offersPlus && authentication.membership?.canSave != true {
-                    plusOfferButton
-                } else {
-                    Button("保存を始める") { start() }
-                        .disabled(persistence.busy || authentication.isBusy)
-                        .accessibilityIdentifier("app-record-enable")
-                }
-            } footer: {
-                if hasPlusHere, authentication.membership?.linked != true { plusLinkText }
+                Text("Plusを始めると、保存が始まります。")
+                if offersPlus { plusOfferButton }
             }
-        } else {
-            savingSections
         }
-        Section {
-            if authentication.isSignedIn && authentication.accountDeletionState == nil {
+        // What is kept: how much, and taking it out. Shown while signed in,
+        // also after stopping here (the saved records stay).
+        if authentication.isSignedIn && authentication.accountDeletionState == nil {
+            Section {
+                if let quota = displayedQuota { ProductQuotaSummary(quota: quota) }
                 Button("保存したものを書き出す") { authentication.exportAllCopies(using: exporter) }
                     .disabled(!authentication.canExportAllCopies || exporter.payload != nil)
                     .accessibilityIdentifier("app-record-export")
                 if PreservationExportFailureText.isShown(exporter) { PreservationExportFailureText(exporter: exporter) }
-            }
-            if authentication.isSignedIn || authentication.accountDeletionState != nil {
-                // Deleting is under 設定 → 「アカウントとデータを消す」 (11/7).
-                NavigationLink("アカウント") { ManagedPreservationView() }
+            } header: { Text("保存されているもの") }
+        }
+        if authentication.isSignedIn || authentication.accountDeletionState != nil {
+            // Deleting is under 設定 → 「アカウントとデータを消す」 (11/7).
+            Section {
+                NavigationLink("自動保存のアカウント") { ManagedPreservationView() }
                     .accessibilityIdentifier("app-record-account")
-                if persistence.enabled, authentication.accountDeletionState == nil {
-                    Button("このiPhoneで自動保存をやめる") { confirmsPause = true }
-                        .accessibilityIdentifier("app-record-pause")
-                        .confirmationDialog("このiPhoneで自動保存をやめますか？", isPresented: $confirmsPause,
-                                            titleVisibility: .visible) {
-                            Button("自動保存をやめる", role: .destructive) { persistence.pause() }
-                        } message: { Text("保存した記録と、このiPhoneの記録は残ります。新しい変更は保存されなくなります。") }
-                }
             }
         }
         if let profileTransfer {
@@ -1842,6 +1846,29 @@ struct AppRecordSettingsView: View {
                 }
                 .accessibilityIdentifier("app-record-cat-profile-transfer")
             }
+        }
+        // Stopping on this iPhone, last and quiet: the saved records stay.
+        if persistence.enabled, authentication.isSignedIn, authentication.accountDeletionState == nil {
+            Section {
+                Button("このiPhoneで自動保存をやめる") { confirmsPause = true }
+                    .accessibilityIdentifier("app-record-pause")
+                    .confirmationDialog("このiPhoneで自動保存をやめますか？", isPresented: $confirmsPause,
+                                        titleVisibility: .visible) {
+                        Button("自動保存をやめる", role: .destructive) { persistence.pause() }
+                    } message: { Text("保存した記録と、このiPhoneの記録は残ります。新しい変更は保存されなくなります。") }
+            }
+        }
+    }
+
+    /// Off and signed in: start, or (without Plus) the way to Plus. Without Plus,
+    /// 「保存を始める」 could do nothing (11/7).
+    @ViewBuilder private var startAction: some View {
+        if offersPlus && authentication.membership?.canSave != true {
+            plusOfferButton
+        } else {
+            Button("保存を始める") { start() }
+                .disabled(persistence.busy || authentication.isBusy)
+                .accessibilityIdentifier("app-record-enable")
         }
     }
 
@@ -1875,37 +1902,26 @@ struct AppRecordSettingsView: View {
         }
     }
 
-    @ViewBuilder private var savingSections: some View {
-        Section {
-            if persistence.conflict {
-                Text("ほかのiPhoneでも保存しています。どちらの記録を使うか選んでください。")
-                Button { confirmsLocal = true } label: {
-                    WorkingLabel(title: "このiPhoneの記録を使う", workingTitle: "切り替えています…",
-                                 working: running == "このiPhoneの記録を使う")
-                }
-                .disabled(persistence.busy)
-                Button { confirmsRemote = true } label: {
-                    WorkingLabel(title: "ほかのiPhoneの記録を使う", workingTitle: "切り替えています…",
-                                 working: running == "ほかのiPhoneの記録を使う")
-                }
-                .disabled(persistence.busy)
+    /// On: which records to keep when two iPhones saved, or one retry for a
+    /// failure the person is looking at. Saving retries by itself otherwise.
+    @ViewBuilder private var savingActions: some View {
+        if persistence.conflict {
+            Text("ほかのiPhoneでも保存しています。どちらの記録を使うか選んでください。")
+            Button { confirmsLocal = true } label: {
+                WorkingLabel(title: "このiPhoneの記録を使う", workingTitle: "切り替えています…",
+                             working: running == "このiPhoneの記録を使う")
             }
-            if let quota = displayedQuota {
-                ProductQuotaSummary(quota: quota)
+            .disabled(persistence.busy)
+            Button { confirmsRemote = true } label: {
+                WorkingLabel(title: "ほかのiPhoneの記録を使う", workingTitle: "切り替えています…",
+                             working: running == "ほかのiPhoneの記録を使う")
             }
-            // Saving retries by itself; the button is only for a failure the person is looking at.
-            if persistence.needsAttention && !persistence.conflict && !plusEnded {
-                Button("もう一度試す") { Task { await persistence.retry() } }
-                    .disabled(persistence.busy)
-                    .accessibilityIdentifier("app-record-retry")
-            }
+            .disabled(persistence.busy)
         }
-        if !plusEnded && authentication.membership?.linked == false && !hasPlusHere
-            && purchases.entitlementState != .checking {
-            Section {
-                Text("Plusを始めると、保存が始まります。")
-                if offersPlus { plusOfferButton }
-            }
+        if persistence.needsAttention && !persistence.conflict && !plusEnded {
+            Button("もう一度試す") { Task { await persistence.retry() } }
+                .disabled(persistence.busy)
+                .accessibilityIdentifier("app-record-retry")
         }
     }
 
