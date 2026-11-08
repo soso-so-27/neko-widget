@@ -342,9 +342,7 @@ private struct CareCatEditor: View {
             CatCareStore.shared.importBirthdays(profiles)
             guard !refreshedCandidates else { return }
             refreshedCandidates = true
-            // A failed refresh keeps what is here; nothing to say about it (11/8).
-            try? store.refreshCandidates(id, using: reuseStore)
-            await useCatCarePhoto()
+            await Self.fillFromCatCare(id, store: store, reuseStore: reuseStore, profiles: profiles)
         }
         .sheet(isPresented: $showsPhotoPicker) {
             NavigationStack { CarePhotoPicker(catID: id, ownPhotos: ownPhotos, otherPhotos: otherPhotos, store: store) }
@@ -359,7 +357,9 @@ private struct CareCatEditor: View {
         .toolBottomBar {
             // NN/g: the button names the next step.
             ToolMakeBar(top: { CareSaveNotice(store: store) }) {
-                NavigationLink { CareDisclosureView(store: store, currentCatID: id) } label: {
+                NavigationLink {
+                    CareDisclosureView(store: store, currentCatID: id, profiles: profiles, reuseStore: reuseStore)
+                } label: {
                     Text("次へ：期間とお願い").frame(maxWidth: .infinity)
                 }
                 .disabled(store.saveError != nil)
@@ -368,10 +368,23 @@ private struct CareCatEditor: View {
         }
     }
 
+    /// What opening a memo does first, once: the text from 避難に備える and the
+    /// photo from 「この子のこと」. Round 2: also for a cat chosen on the make page.
+    /// A failed refresh keeps what is here; nothing to say about it (11/8).
+    @MainActor
+    static func fillFromCatCare(_ id: UUID, store: CareHandoffStore, reuseStore: EvacuationStore,
+                                profiles: [CatProfilePresentation]) async {
+        try? store.refreshCandidates(id, using: reuseStore)
+        await useCatCarePhoto(id, store: store, profiles: profiles)
+    }
+
     /// 11/8: a memo without a photo starts with the face photo of 「この子のこと」,
     /// else the cat's photo. Not after 「このメモの写真を外す」; 「写真を変える」 stays.
-    private func useCatCarePhoto() async {
-        guard let cat, cat.photoName == nil, cat.photoRemoved != true else { return }
+    @MainActor
+    private static func useCatCarePhoto(_ id: UUID, store: CareHandoffStore,
+                                        profiles: [CatProfilePresentation]) async {
+        func current() -> CareCat? { store.plan.cats.first { $0.id == id } }
+        guard let cat = current(), cat.photoName == nil, cat.photoRemoved != true else { return }
         let care = CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
         var data: Data?
         if let ref = care?.facePhoto?.value ?? nil, let url = CatCareStore.shared.photoURL(ref) {
@@ -381,7 +394,7 @@ private struct CareCatEditor: View {
            let identifier = profile.keyPhotoIdentifier ?? profile.coverPhoto?.localIdentifier {
             data = try? await PhotoLibraryJPEGExporter().export(localIdentifier: identifier).jpeg
         }
-        guard let data, self.cat?.photoName == nil, self.cat?.photoRemoved != true else { return }
+        guard let data, current()?.photoName == nil, current()?.photoRemoved != true else { return }
         try? store.replacePhoto(data, catID: id)
     }
 }
@@ -443,6 +456,9 @@ private struct CareDisclosureView: View {
     @ObservedObject var store: CareHandoffStore
     /// The cat whose memo this was opened from.
     var currentCatID: UUID? = nil
+    var profiles: [CatProfilePresentation] = []
+    @ObservedObject var reuseStore: EvacuationStore = .shared
+    @Environment(\.membershipActions) private var actionAccess
     @AppStorage(CatFarewell.key) private var farewellJSON = ""
     @ObservedObject private var catCare = CatCareStore.shared
     @State private var disclosure = CareHandoffDisclosure()
@@ -455,6 +471,30 @@ private struct CareDisclosureView: View {
         let days = CatFarewell.days(farewellJSON)
         return store.plan.cats.filter { cat in
             !(cat.profileID.map { days[$0] != nil } ?? false) && days["tool-" + (cat.toolCatID ?? cat.id).uuidString] == nil
+        }
+    }
+    /// Round 2 (11/8): every cat with a profile is offered, not only cats that
+    /// already have a memo (347: あめ was missing). Not one whose farewell day is recorded.
+    private var profilesWithoutMemo: [CatProfilePresentation] {
+        let days = CatFarewell.days(farewellJSON)
+        return store.plan.profileIDsWithoutMemo(profiles.map(\.identifier)).compactMap { id in
+            days[id] == nil ? profiles.first { $0.identifier == id } : nil
+        }
+    }
+    /// A tap makes the cat's memo from 「この子のこと」, as opening the cat in
+    /// the tool does, and chooses it. Nothing is made without a tap.
+    private func choose(_ profile: CatProfilePresentation) {
+        guard let id = store.addCat(profileID: profile.identifier, name: profile.displayName,
+                                    using: reuseStore, access: actionAccess) else {
+            // A failed save is shown by CareSaveNotice; say it here only otherwise.
+            if store.saveError == nil { error = "\(profile.displayName)のお世話メモを作れませんでした。もう一度押してください。" }
+            return
+        }
+        disclosure.catIDs.insert(id); error = nil
+        Task {
+            CatCareStore.shared.importFromTools()
+            CatCareStore.shared.importBirthdays(profiles)
+            await CareCatEditor.fillFromCatCare(id, store: store, reuseStore: reuseStore, profiles: profiles)
         }
     }
     private func record(_ cat: CareCat) -> CatCareRecord? {
@@ -475,8 +515,17 @@ private struct CareDisclosureView: View {
         Binding(get: { store.plan.requestText(key, planKey, chosen: disclosure.catIDs) },
                 set: { new in store.update { $0.setRequestText(new, key, planKey, chosen: disclosure.catIDs) } })
     }
+    /// Round 2 (11/8): 「家の中のこと」, once for the household.
+    private func house(_ key: WritableKeyPath<CareHandoffPlan, String?>) -> Binding<String> {
+        Binding(get: { store.plan[keyPath: key] ?? "" },
+                set: { new in store.update { $0[keyPath: key] = new.isEmpty ? nil : new } })
+    }
+    private var houseWritten: Bool {
+        !CareHandoffDisclosure.houseFields(plan: store.plan).isEmpty
+    }
     /// Where the three steps stand (11/8 型): the period, a chosen cat, and
     /// what to include (done once the page is seen: the choices start set).
+    /// 「家の中のこと（任意）」 is not counted: ✓ once written, else grey.
     private var stepStates: [ToolStepState] {
         ToolStepState.states([
             CareCatEditor.isFilled(store.plan.requestText(\.period, \.period, chosen: disclosure.catIDs)),
@@ -493,7 +542,18 @@ private struct CareDisclosureView: View {
                 CareField(label: "お願いする相手", example: "例：お母さん", identifier: "care-recipient", text: request(\.recipient, \.recipient))
                 CareField(label: "期間", example: "例：10月5日 夜〜10月7日 朝", identifier: "care-period", text: request(\.period, \.period))
                 CareField(label: "ほかにお願いしたいこと", example: "例：お世話が終わったら写真を1枚送ってください", identifier: "care-request", text: request(\.request, \.request))
-            } header: { ToolStepHeader(number: 1, title: "期間とお願い", state: states[0])
+            } header: { ToolStepHeader(number: 1, title: "期間とお願い", state: states[0]) }
+            // Round 2 (11/8): the house, once for every cat. No address or keys.
+            Section {
+                CareField(label: "フードと砂の置き場所", example: "例：洗面所の棚の下", identifier: "care-house-food",
+                          text: house(\.houseFoodPlace), limit: 1000)
+                CareField(label: "キャリーの場所", example: "例：玄関の物入れ", identifier: "care-house-carrier",
+                          text: house(\.houseCarrierPlace), limit: 1000)
+                CareField(label: "隠れる場所", example: "例：ベッドの下、押し入れの奥", identifier: "care-house-hiding",
+                          text: house(\.houseHidingPlace), limit: 1000)
+                CareField(label: "ほかに", example: "例：エアコンは27度のままにしてください", identifier: "care-house-other",
+                          text: house(\.houseOther), limit: 2000)
+            } header: { ToolStepHeader(number: 2, title: "家の中のこと（任意）", state: houseWritten ? .done : .todo)
             } footer: { ToolImportantInformation(text: "住所や鍵の番号は、別の方法で伝えてください。") }
             Section {
                 ForEach(cats) { cat in
@@ -511,7 +571,20 @@ private struct CareDisclosureView: View {
                         .accessibilityValue(selected ? "選択済み" : "未選択")
                         .accessibilityIdentifier("care-select-\(cat.id.uuidString)")
                 }
-            } header: { ToolStepHeader(number: 2, title: "お願いする猫", state: states[1]) }
+                // A cat with a profile but no memo yet; a tap makes it and chooses it.
+                ForEach(profilesWithoutMemo, id: \.identifier) { profile in
+                    Button { choose(profile) } label: {
+                        HStack {
+                            Text(profile.displayName).foregroundStyle(.primary)
+                            Spacer()
+                            Image(systemName: "circle").foregroundStyle(Color.secondary)
+                        }.frame(minHeight: 44).contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                        .disabled(store.saveError != nil)
+                        .accessibilityValue("未選択")
+                        .accessibilityIdentifier("care-add-profile-\(profile.identifier)")
+                }
+            } header: { ToolStepHeader(number: 3, title: "お願いする猫", state: states[1]) }
             Section {
                 Toggle("薬・持病・アレルギーを載せる", isOn: $disclosure.health).accessibilityIdentifier("care-disclose-health")
                 Toggle("連絡先・動物病院を載せる", isOn: $disclosure.contacts).accessibilityIdentifier("care-disclose-contacts")
@@ -522,7 +595,7 @@ private struct CareDisclosureView: View {
                     }
                     .accessibilityIdentifier("care-contacts")
                 }
-            } header: { ToolStepHeader(number: 3, title: "載せるもの", state: states[2]) }
+            } header: { ToolStepHeader(number: 4, title: "載せるもの", state: states[2]) }
             // What is not written yet is shown once, on each cat's
             // 「この子のこと」 row; not listed again here (11/8).
             if let error { Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) } }
@@ -610,7 +683,7 @@ private struct CareDisplayView: View {
             .sheet(item: $export, onDismiss: {
                 if let retainedDirectory { CareHandoffExporter.remove(retainedDirectory) }
                 retainedDirectory = nil
-            }) { CareActivitySheet(items: $0.files) }
+            }) { CareActivitySheet(items: $0.files, text: record.plainText) }
     }
     private func fields(_ values: [(String, String)]) -> some View {
         ForEach(Array(values.enumerated()), id: \.offset) { _, value in
@@ -656,8 +729,10 @@ private struct CareDisplayView: View {
 
 private struct CareActivitySheet: UIViewControllerRepresentable {
     let items: [URL]
+    /// Round 2 (11/8): 「文字で送る」. The memo as text, to paste into LINE.
+    var text = ""
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: items, applicationActivities: nil)
+        UIActivityViewController(activityItems: (items as [Any]) + (text.isEmpty ? [] : [text]), applicationActivities: nil)
     }
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }

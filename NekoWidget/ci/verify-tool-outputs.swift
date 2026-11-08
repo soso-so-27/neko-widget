@@ -23,6 +23,10 @@ struct ToolOutputVerifier {
         try careMemoRequestIsWrittenInOnePlace()
         try careMemoRows()
         try careMemoVetPrefersTheCatsOwn()
+        try careMemoOffersEveryProfile()
+        try careMemoHouseNotes()
+        try careMemoCheckTable()
+        try careMemoPlainText()
         print("Tool outputs: care memo, evacuation sheet and shared lines checked")
     }
 
@@ -104,5 +108,92 @@ struct ToolOutputVerifier {
         let rows = CareHandoffDisclosure.vetFields(plan: CareHandoffPlan(), household: household, record: record)
         try check(rows.contains { $0.1.contains("むぎ専門の病院") }, "the cat's own vet is printed")
         try check(!rows.contains { $0.1.contains("家の病院") }, "the household vet is not printed over it")
+    }
+
+    /// Round 2 (11/8), 347: あめ had a profile but no care memo, so it could not
+    /// be chosen in 「お願いする猫」.
+    static func careMemoOffersEveryProfile() throws {
+        var mugi = CareCat(); mugi.profileID = "PROFILE-MUGI"
+        var plan = CareHandoffPlan(); plan.cats = [mugi]
+        try check(plan.profileIDsWithoutMemo(["PROFILE-MUGI", "PROFILE-AME", "PROFILE-AME", "PROFILE-SORA"])
+                  == ["PROFILE-AME", "PROFILE-SORA"], "every profile without a memo is offered once, in order")
+        try check(plan.profileIDsWithoutMemo([]).isEmpty, "no profile, nothing offered")
+    }
+
+    /// Round 2 (11/8): 「家の中のこと」 is printed once, only what is written,
+    /// and an older saved plan without it still opens.
+    static func careMemoHouseNotes() throws {
+        let old = #"{"schemaVersion":1,"cats":[],"recipient":"","period":"","request":"","contact":"","backupContact":"","veterinarian":""}"#
+        let decoded = try JSONDecoder().decode(CareHandoffPlan.self, from: Data(old.utf8))
+        try check(decoded.houseFoodPlace == nil && decoded.houseOther == nil, "an older plan opens without the house notes")
+
+        var mugi = CareCat(); mugi.name = "むぎ"; mugi.updatedAt = t0
+        var ame = CareCat(); ame.name = "あめ"; ame.updatedAt = t0
+        var plan = CareHandoffPlan(); plan.cats = [mugi, ame]
+        plan.houseFoodPlace = "洗面所の棚の下"; plan.houseCarrierPlace = "  "; plan.houseHidingPlace = "ベッドの下"
+        let again = try JSONDecoder().decode(CareHandoffPlan.self, from: JSONEncoder().encode(plan))
+        try check(again == plan, "the house notes are saved")
+
+        var disclosure = CareHandoffDisclosure(); disclosure.catIDs = [mugi.id, ame.id]
+        let common = disclosure.commonFields(plan: plan, household: nil)
+        try check(has(common, "フードと砂の置き場所", "洗面所の棚の下") && has(common, "隠れる場所", "ベッドの下"),
+                  "the house notes are on page 1")
+        try check(!common.contains { $0.0 == "キャリーの場所" || $0.0 == "家の中のこと" }, "an empty house row is left out")
+        try check(common.filter { $0.0 == "フードと砂の置き場所" }.count == 1, "once for every cat")
+        try check(!disclosure.fields(cat: mugi).contains { $0.0 == "フードと砂の置き場所" }, "never with one cat")
+        try check(CareHandoffDisclosure.houseFields(plan: CareHandoffPlan()).isEmpty, "nothing written, nothing printed")
+    }
+
+    /// Round 2 (11/8): 「日ごとのチェック表」. One row a day for a date range,
+    /// else 7 blank rows; 「薬」 only when a chosen cat takes medicine.
+    static func careMemoCheckTable() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        let now = calendar.date(from: DateComponents(year: 2026, month: 11, day: 8, hour: 9))!
+        func days(_ period: String) -> [String]? { CareCheckTable.days(period: period, now: now, calendar: calendar) }
+
+        try check(days("11月10日 夜〜11月12日 朝") == ["11/10（火）", "11/11（水）", "11/12（木）"],
+                  "the example on the make page is a range of three days")
+        try check(days("12/30〜1/2") == ["12/30（水）", "12/31（木）", "1/1（金）", "1/2（土）"], "a range over New Year")
+        try check(days("１１／３〜５日") == ["11/3（火）", "11/4（水）", "11/5（木）"], "full-width digits and an end without its month")
+        try check(days("1月3日〜1月5日") == ["1/3（日）", "1/4（月）", "1/5（火）"], "a date half a year back is next year's")
+        try check(days("2027年2月27日〜3月1日") == ["2/27（土）", "2/28（日）", "3/1（月）"], "a year written is used")
+        try check(days("11/8〜11/8") == ["11/8（日）"], "one day")
+        for period in ["11月10日まで", "11月3日から3日間", "", "土曜の朝から月曜の夜", "11/1〜12/31", "2/30〜3/2"] {
+            try check(days(period) == nil, "not a range: \(period)")
+        }
+        let blank = CareCheckTable(period: "11月10日まで", catNames: ["むぎ", "あめ"], medicine: false, now: now, calendar: calendar)
+        try check(blank.days == Array(repeating: "", count: 7), "7 blank rows when the period is not a range")
+        try check(blank.catNames == ["むぎ", "あめ"], "one block a cat")
+        try check(blank.columns == ["ごはん", "トイレ", "様子"], "no 薬 column without medicine")
+        try check(CareCheckTable.columns(medicine: true) == ["ごはん", "薬", "トイレ", "様子"], "the 薬 column with medicine")
+
+        var record = CatCareRecord(catID: UUID())
+        try check(!CareCheckTable.hasMedicine(record) && !CareCheckTable.hasMedicine(nil), "no medicine written")
+        record.medications = [CatCareMedication(name: "  ", editedAt: t0, editedBy: "verify")]
+        try check(!CareCheckTable.hasMedicine(record), "an empty medicine is not one")
+        record.medications.append(CatCareMedication(name: "腎臓の薬", editedAt: t0, editedBy: "verify"))
+        try check(CareCheckTable.hasMedicine(record), "a written medicine")
+        record.medications[1].deletedAt = t0
+        try check(!CareCheckTable.hasMedicine(record), "a deleted medicine is not one")
+    }
+
+    /// Round 2 (11/8): 「文字で送る」. The same rows as the PDF, as text to paste.
+    static func careMemoPlainText() throws {
+        let text = CareHandoffDisclosure.plainText(heading: "お世話メモ",
+            common: [("お願いする期間", "11月10日〜11月12日"), ("キャリーの場所", "玄関の物入れ"), ("水", "")],
+            cats: [(name: "むぎ", fields: [("まず伝えたいこと", "玄関に注意"), ("ごはん 1", "時間：8時\nフード：カリカリ"),
+                                         ("トイレ", "未記入（飼い主に聞いてください）")]),
+                   (name: "あめ", fields: [("接し方・苦手なこと", "大きな音が苦手")])],
+            notes: CareHandoffDisclosure.closingNotes(health: false, contacts: true))
+        try check(text.hasPrefix("お世話メモ\n\nお願いする期間：11月10日〜11月12日\nキャリーの場所：玄関の物入れ\n\n【むぎ】"),
+                  "heading, the common rows once, then each cat")
+        try check(text.contains("【むぎ】\nまず伝えたいこと：玄関に注意\nごはん 1：\n時間：8時\nフード：カリカリ"),
+                  "a cat's rows under its name; a long value on its own lines")
+        try check(text.contains("【あめ】\n接し方・苦手なこと：大きな音が苦手"), "every chosen cat")
+        try check(text.range(of: "【むぎ】")!.lowerBound < text.range(of: "【あめ】")!.lowerBound, "in the memo's order")
+        try check(!text.contains("未記入") && !text.contains("水："), "no unwritten row")
+        try check(text.hasSuffix("薬・持病・アレルギーは載せていません。飼い主に聞いてください。"), "what was left out is said")
+        try check(!text.contains("連絡先は、このメモには載せていません。"), "contacts were shown")
     }
 }

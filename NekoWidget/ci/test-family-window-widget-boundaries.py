@@ -3893,15 +3893,16 @@ class CareHandoffReviewTests(unittest.TestCase):
         self.assertNotIn("footer:", cat_care)
         bar = body[body.index(".toolBottomBar {"):]
         self.assertIn("ToolMakeBar(top: { CareSaveNotice(store: store) }) {", bar)
-        self.assertIn("NavigationLink { CareDisclosureView(store: store, currentCatID: id) }", bar)
+        self.assertIn("CareDisclosureView(store: store, currentCatID: id, profiles: profiles, reuseStore: reuseStore)", bar)
         self.assertIn(".disabled(store.saveError != nil)", bar)
         self.assertIn('.accessibilityIdentifier("care-disclosure-open")', bar)
 
         making = section(self.view, "private struct CareDisclosureView: View {", "private struct CareDisplayView: View {")
         page = making[making.index("    var body: some View {"):]
         order = [page.index('ToolStepHeader(number: 1, title: "期間とお願い", state: states[0])'),
-                 page.index('ToolStepHeader(number: 2, title: "お願いする猫", state: states[1])'),
-                 page.index('ToolStepHeader(number: 3, title: "載せるもの", state: states[2])'),
+                 page.index('ToolStepHeader(number: 2, title: "家の中のこと（任意）", state: houseWritten ? .done : .todo)'),
+                 page.index('ToolStepHeader(number: 3, title: "お願いする猫", state: states[1])'),
+                 page.index('ToolStepHeader(number: 4, title: "載せるもの", state: states[2])'),
                  page.index("if let error { Section"),
                  page.index(".toolBottomBar {")]
         self.assertEqual(order, sorted(order))
@@ -3931,6 +3932,112 @@ class CareHandoffReviewTests(unittest.TestCase):
         self.assertIn("(sharedFirstPage ? [] : record.commonFields) + cat.fields", self.exporter)
         self.assertIn('page.catIndex.map { "\\(record.heading) · \\(record.cats[$0].name)" } ?? record.heading', self.exporter)
         self.assertNotIn("append(cat.name", self.exporter)
+
+
+class CareHandoffRoundTwoTests(unittest.TestCase):
+    """預けるとき, round 2 (11/8): every profile cat, the daily check table,
+    the house notes and the memo as text. The logic is run in
+    ci/verify-tool-outputs.swift; these check that the screens use it."""
+
+    def setUp(self) -> None:
+        self.plan = source("NekoWidget/Services/CareHandoffPlan.swift")
+        self.store = source("NekoWidget/Services/CareHandoffStore.swift")
+        self.exporter = source("NekoWidget/Services/CareHandoffExporter.swift")
+        self.view = source("NekoWidget/Views/CareHandoffView.swift")
+        self.making = section(self.view, "private struct CareDisclosureView: View {", "private struct CareDisplayView: View {")
+        self.verify = source("ci/verify-tool-outputs.swift")
+
+    def test_logic_is_run_in_ci(self) -> None:
+        for name in ("careMemoOffersEveryProfile", "careMemoHouseNotes", "careMemoCheckTable", "careMemoPlainText"):
+            self.assertIn("try %s()" % name, self.verify)
+            self.assertIn("static func %s() throws" % name, self.verify)
+
+    def test_every_profile_cat_can_be_chosen(self) -> None:
+        # Profiles without a memo are offered, except a cat whose farewell day is recorded.
+        offered = section(self.making, "private var profilesWithoutMemo:", "private func choose(")
+        self.assertIn("store.plan.profileIDsWithoutMemo(profiles.map(\\.identifier))", offered)
+        self.assertIn("CatFarewell.days(farewellJSON)", offered)
+        # A tap makes the memo the way opening the cat does: the same addCat,
+        # then the same fill from 「この子のこと」 as the editor.
+        choose = section(self.making, "private func choose(", "private func record(")
+        self.assertIn("store.addCat(profileID: profile.identifier, name: profile.displayName,", choose)
+        self.assertIn("using: reuseStore, access: actionAccess)", choose)
+        self.assertIn("disclosure.catIDs.insert(id)", choose)
+        self.assertIn("await CareCatEditor.fillFromCatCare(id, store: store, reuseStore: reuseStore, profiles: profiles)", choose)
+        editor = section(self.view, "private struct CareCatEditor: View {", "private struct CarePhotoPicker: View {")
+        self.assertIn("await Self.fillFromCatCare(id, store: store, reuseStore: reuseStore, profiles: profiles)", editor)
+        fill = section(editor, "static func fillFromCatCare(", "private static func useCatCarePhoto(")
+        self.assertIn("try? store.refreshCandidates(id, using: reuseStore)", fill)
+        self.assertIn("await useCatCarePhoto(id, store: store, profiles: profiles)", fill)
+        # The tool opens a cat through the same store call.
+        self.assertIn("if let id = store.addCat(profileID: profileID, name: name, using: reuseStore,", self.view)
+        cats = section(self.making, 'ForEach(profilesWithoutMemo, id: \\.identifier) { profile in', 'title: "お願いする猫"')
+        self.assertIn("Button { choose(profile) }", cats)
+        self.assertIn('.accessibilityIdentifier("care-add-profile-\\(profile.identifier)")', cats)
+        # Not 「care-select-」: the UI test takes the first of those as already chosen.
+        self.assertNotIn('"care-select-profile', self.view)
+        self.assertIn("var profiles: [CatProfilePresentation] = []", self.making)
+
+    def test_house_notes_are_optional_and_once(self) -> None:
+        for field in ("houseFoodPlace", "houseCarrierPlace", "houseHidingPlace", "houseOther"):
+            self.assertIn("var %s: String? = nil" % field, self.plan)
+            self.assertIn("text: house(\\.%s)" % field, self.making)
+        self.assertNotIn("init(from decoder", self.plan)
+        # The readable backup names them in Japanese, as every saved field.
+        readable = source("NekoWidget/Services/ReadablePreservationExport.swift")
+        for key in ("houseFoodPlace", "houseCarrierPlace", "houseHidingPlace", "houseOther"):
+            self.assertIn(f'"{key}": "', readable)
+        # Page 1 of the memo, once for every cat, never per cat.
+        common = section(self.plan, "func commonFields(plan: CareHandoffPlan) -> [(String, String)] {", "/// Round 2 (11/8): 「家の中のこと」 as handed over")
+        self.assertIn("fields += Self.houseFields(plan: plan)", common)
+        per_cat = section(self.plan, "func fields(cat: CareCat) -> [(String, String)] {", "/// Contacts from 「この子のこと」's household")
+        self.assertNotIn("house", per_cat)
+        for label in ('label: "フードと砂の置き場所"', 'label: "キャリーの場所"', 'label: "隠れる場所"', 'label: "ほかに"'):
+            self.assertIn(label, self.making)
+        # No address or keys: the note stays, under the house notes.
+        house = section(self.making, 'identifier: "care-house-food"', 'ForEach(cats) { cat in')
+        self.assertIn('ToolImportantInformation(text: "住所や鍵の番号は、別の方法で伝えてください。")', house)
+        for word in ("住所", "鍵", "暗証"):
+            self.assertNotIn(word, house.replace("住所や鍵の番号は、別の方法で伝えてください。", ""))
+
+    def test_check_table_is_the_last_pdf_page_only(self) -> None:
+        share = section(self.store, "func shareRecord(", "private static func normalizedJPEG(")
+        self.assertIn("record.checkTable = CareCheckTable(period: plan.requestText(\\.period, \\.period, chosen: disclosure.catIDs),", share)
+        self.assertIn("let medicine = disclosure.health && plan.cats.contains { cat in", share)
+        self.assertIn("disclosure.catIDs.contains(cat.id) && CareCheckTable.hasMedicine(", share)
+        # PDF only; the image has no table.
+        self.assertIn("let table = pdf ? record.checkTable", self.exporter)
+        pdf = section(self.exporter, "if pdf {", "} else {")
+        self.assertIn("drawTable(context.cgContext, pieces: pieces, table: table, index: pages.count + offset)", pdf)
+        self.assertLess(pdf.index("draw(context.cgContext, index: index)"), pdf.index("drawTable("))
+        images = section(self.exporter, "let format = UIGraphicsImageRendererFormat(); format.scale = 2", "return Export(")
+        self.assertNotIn("drawTable", images)
+        # Page numbers count the table pages; the page limit still holds.
+        self.assertIn("guard pages.count + tablePages.count <= 80 else { throw CareHandoffError.tooLarge }", self.exporter)
+        self.assertIn("\\(index + 1) / \\(pageCount)", self.exporter)
+        # 「様子」 is the wide column to write in; the others get a box.
+        self.assertIn('$0 == "様子" ? 2.5 : 1.0', self.exporter)
+        self.assertIn('where column != "様子"', self.exporter)
+        # Western dates even on a 和暦 iPhone.
+        self.assertIn("Calendar(identifier: .gregorian)", self.plan)
+        self.assertIn("static let blankRows = 7", self.plan)
+        # The vet sheet uses its own exporter, without a table.
+        self.assertNotIn("checkTable", source("NekoWidget/Views/VeterinaryVisitView.swift"))
+
+    def test_memo_is_also_sent_as_text(self) -> None:
+        display = section(self.view, "private struct CareDisplayView: View {", "private struct CareActivitySheet")
+        self.assertIn("CareActivitySheet(items: $0.files, text: record.plainText)", display)
+        sheet = section(self.view, "private struct CareActivitySheet", "/// The tool's one safety sentence")
+        self.assertIn("(items as [Any]) + (text.isEmpty ? [] : [text])", sheet)
+        # The text is built from the same rows as the PDF and the image.
+        record = section(self.exporter, "struct CareHandoffShareRecord {", "@MainActor")
+        self.assertIn("CareHandoffDisclosure.plainText(heading: heading, common: commonFields,", record)
+        self.assertIn("cats: cats.map { (name: $0.name, fields: $0.fields) }", record)
+        self.assertIn("CareHandoffDisclosure.closingNotes(health: includesHealth, contacts: includesContacts)", record)
+        self.assertIn("CareHandoffDisclosure.closingNotes(health: record.includesHealth, contacts: record.includesContacts)",
+                      self.exporter)
+        text = section(self.plan, "static func plainText(", "/// The first rows of a cat")
+        self.assertIn("written(fields)", text)
 
 
 class ShowcaseCatCareTests(unittest.TestCase):
