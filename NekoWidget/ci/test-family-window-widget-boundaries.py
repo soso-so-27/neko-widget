@@ -3152,7 +3152,10 @@ class LostCatToolReview1108Tests(unittest.TestCase):
         self.assertIn("parts.append(Self.hashtags)", public)
         renderer = section(store, "enum LostCatFlyerRenderer {", "private static func draw(")
         self.assertIn("if let lastSeen = draft.lastSeenDescription {", renderer)
-        self.assertIn('field("最後に見かけた日時  \\(lastSeen)"', renderer)
+        self.assertIn('field("最後に見かけた日時：\\(lastSeen)"', renderer)
+        # 347: labels read 「場所：公園」; whole photos sit on white, no gray bars.
+        self.assertIn('field("最後に見かけた場所：\\(placeValue)"', renderer)
+        self.assertNotIn("UIColor(white: 0.96, alpha: 1).setFill()", store)
         self.assertNotIn('"日時  ', renderer)
 
     def test_share_sends_image_and_post_with_plain_names(self) -> None:

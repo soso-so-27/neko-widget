@@ -407,8 +407,11 @@ private struct VeterinaryConsultationView: View {
     @ViewBuilder private func headerSections(_ visit: VeterinaryVisit) -> some View {
         // The cat's name; its dates are in この子のこと below (11/7).
         Section {
-            Label(profiles.first(where: { $0.identifier == visit.catID.uuidString })?.displayName ?? visit.catName,
-                  systemImage: "cat").font(.headline)
+            // With two or more cats the row of faces above already names it (347).
+            if profiles.count < 2 {
+                Label(profiles.first(where: { $0.identifier == visit.catID.uuidString })?.displayName ?? visit.catName,
+                      systemImage: "cat").font(.headline)
+            }
             if visit.completedAt != nil { Text("診察済み").font(.caption).foregroundStyle(.secondary) }
             // The day the memo was started (11/8).
             if let started = visit.createdAt {
