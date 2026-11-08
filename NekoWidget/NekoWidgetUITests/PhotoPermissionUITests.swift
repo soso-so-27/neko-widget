@@ -1000,13 +1000,13 @@ final class CatProfilePhotoFlowUITests: XCTestCase {
         for _ in 0..<4 where !basics.isHittable { app.swipeUp() }
         XCTAssertTrue(basics.isHittable)
         basics.tap()
+        // The page is a lazy form: the row exists once it scrolls near.
         let delete = app.buttons["cat-profile-delete"]
-        XCTAssertTrue(delete.waitForExistence(timeout: 5), app.debugDescription)
-        for _ in 0..<8 {
-            if delete.isHittable { break }
+        for _ in 0..<10 {
+            if delete.exists && delete.isHittable { break }
             app.swipeUp()
         }
-        XCTAssertTrue(delete.isHittable)
+        XCTAssertTrue(delete.isHittable, app.debugDescription)
         XCTAssertEqual(delete.label, "プロフィールを削除")
         delete.tap()
         let confirmation = app.alerts["テスト猫Bのプロフィールを削除しますか？"]
@@ -4056,7 +4056,9 @@ final class SoloMemoriesUITests: XCTestCase {
         func openTheme(_ title: String) {
             let theme = app.buttons["photos-theme-\(title)"]
             XCTAssertTrue(theme.waitForExistence(timeout: 10), app.debugDescription)
-            for _ in 0..<6 where !theme.isHittable { themeRow.swipeLeft() }
+            // Off-screen tiles of the horizontal row have no hit point yet:
+            // swipe the row until the tile's frame is inside the screen.
+            for _ in 0..<8 where !app.frame.contains(theme.frame) { themeRow.swipeLeft() }
             XCTAssertTrue(theme.isHittable, "The \(title) theme must stay reachable in the row")
             theme.tap()
             XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5))
@@ -4338,7 +4340,7 @@ final class SoloMemoriesUITests: XCTestCase {
                 openPhotosTab(in: app)
                 let album = app.buttons["photos-theme-昔と最近"]
                 XCTAssertTrue(album.waitForExistence(timeout: 15), app.debugDescription)
-                for _ in 0..<6 where !album.isHittable { element("photos-theme-row", in: app).swipeLeft() }
+                for _ in 0..<8 where !app.frame.contains(album.frame) { element("photos-theme-row", in: app).swipeLeft() }
                 XCTAssertTrue(album.isHittable)
                 capture("albums-comparison-standard")
                 album.tap()
@@ -4733,10 +4735,16 @@ final class SoloMemoriesUITests: XCTestCase {
             // next to 同じ日の写真.
             let more = app.buttons.matching(identifier: "photo-browser-related")
             let related = app.buttons.matching(NSPredicate(format: "label == %@", "関連する写真"))
+            let relatedItems = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "photo-related-"))
             func openRelated(expectingLabel: Bool = false) throws {
                 try foreground(more).tap()
                 if expectingLabel { XCTAssertEqual(try foreground(related).label, "関連する写真") }
                 try foreground(related).tap()
+                // A tap that lands while the menu is still appearing does not
+                // open the submenu; tap the same visible item once more.
+                if !relatedItems.firstMatch.waitForExistence(timeout: 3) {
+                    try foreground(related).tap()
+                }
             }
             let sameDay = app.buttons.matching(identifier: "photo-browser-same-day")
             let secondDayPhoto = app.buttons.matching(identifier: "day-photos-photo-app-store-screenshot-fixture-2")
@@ -5478,13 +5486,16 @@ final class SoloMemoriesUITests: XCTestCase {
         card.tap()
         if expectedRoute.hasPrefix("monthly:") {
             XCTAssertTrue(element("monthly-window-browser", in: app).waitForExistence(timeout: 10))
-            XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 5))
+            // The month's photos are titled 「8月のまとめ」 (10/19), not 写真.
+            let month = Int(expectedRoute.split(separator: "-").last ?? "") ?? 0
+            let title = "\(month)月のまとめ"
+            XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5), app.debugDescription)
             XCTAssertTrue(app.images["photo-detail-zoom-surface"].waitForExistence(timeout: 10))
             let destination = element("solo-memories-monthly-destination", in: app)
             XCTAssertTrue(destination.waitForExistence(timeout: 10))
             XCTAssertEqual(destination.label, String(expectedRoute.dropFirst("monthly:".count)))
             XCTAssertFalse((destination.value as? String ?? "").isEmpty)
-            app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
+            app.navigationBars[title].buttons.element(boundBy: 0).tap()
             return
         }
         let destination = app.staticTexts["solo-memories-detail-destination"]
