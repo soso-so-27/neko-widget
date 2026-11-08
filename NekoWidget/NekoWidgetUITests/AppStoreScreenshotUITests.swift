@@ -335,7 +335,8 @@ final class AppStoreScreenshotUITests: XCTestCase {
         // The cat filter appears once there are cats to filter by (11/7).
         app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
         app.launch()
-        XCTAssertTrue(app.buttons["main-tab-photos"].waitForExistence(timeout: 20))
+        // UIKit can omit the tab item's identifier; wait for the tab bar itself.
+        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 20), app.debugDescription)
         let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
         if permission.waitForExistence(timeout: 3) {
             let deny = permission.buttons.matching(NSPredicate(format: "label IN %@", ["Don’t Allow", "Don't Allow", "許可しない"])).firstMatch
