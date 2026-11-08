@@ -34,6 +34,7 @@ function main(){
       const permission=/\b(401|403|FORBIDDEN|NOT_AUTHORIZED)\b/i.test(all);
       const code=all.match(/\b(401|403|409|422|429|500|502|503)\b/)?.[1]??'unknown';
       console.log(JSON.stringify({operation:args.slice(0,2).join(' '),HTTP:code,permissionDenied:permission,
+        fieldHints:['whatsNew','subtitle','description','keywords','promotionalText','supportUrl','notes','demoAccountRequired'].filter(f=>all.includes(f)),
         completedActions:obj?.actions?.map(a=>({scope:a.scope,status:a.status}))??[]}));
       throw Error(permission?'STOP_PERMISSION':'STOP_API');
     }
@@ -96,14 +97,16 @@ function main(){
   }
   // Content-rights has no native dry-run flag: this wrapper plans that one field.
   const desired='DOES_NOT_USE_THIRD_PARTY_CONTENT';
-  const oldRights=apps[0].attributes.contentRightsDeclaration;
+  const currentApp=call(['apps','list','--name','ねこのまど','--output','json']).data?.find(a=>a.id===app);
+  if(!currentApp)throw Error('STOP_IDENTITY');
+  const oldRights=currentApp.attributes.contentRightsDeclaration;
   if(oldRights&&!['DOES_NOT_USE_THIRD_PARTY_CONTENT','USES_THIRD_PARTY_CONTENT'].includes(oldRights))throw Error('STOP_SCOPE');
   console.log(JSON.stringify({dryRun:true,scope:'app',field:'contentRightsDeclaration',from:oldRights??null,to:desired}));
-  if(mode==='--apply' && apps[0].attributes.contentRightsDeclaration!==desired){
+  if(mode==='--apply' && oldRights!==desired){
     call(['apps','update','--id',app,'--content-rights',desired,'--output','json']);
     const after=call(['apps','list','--name','ねこのまど','--output','json']).data?.find(a=>a.id===app);
     if(after?.attributes?.contentRightsDeclaration!==desired)throw Error('STOP_READBACK');
-    const beforeAttrs={...apps[0].attributes},afterAttrs={...after.attributes};
+    const beforeAttrs={...currentApp.attributes},afterAttrs={...after.attributes};
     delete beforeAttrs.contentRightsDeclaration;delete afterAttrs.contentRightsDeclaration;
     if(!isDeepStrictEqual(beforeAttrs,afterAttrs))throw Error('STOP_SCOPE');
     console.log(JSON.stringify({applied:true,scope:'content-rights',readbackMatches:true}));
