@@ -1557,6 +1557,20 @@ private struct CatCareCameraView: UIViewControllerRepresentable {
 // MARK: - Formatting
 
 enum CatCareFormat {
+    /// 「去勢済み」 for a male, 「避妊済み」 for a female, both words when the sex
+    /// is not written; nil when it is not known (347: 「去勢・避妊 済み」 read oddly).
+    static func neutered(_ value: CatCareTriState?, sex: CatCareSex?) -> String? {
+        let word: String = switch sex ?? .unknown {
+        case .male: "去勢"
+        case .female: "避妊"
+        case .unknown: "去勢・避妊"
+        }
+        switch value ?? .unknown {
+        case .yes: return word + "済み"
+        case .no: return word + "はまだ"
+        case .unknown: return nil
+        }
+    }
     static func day(_ day: CatCareDay) -> String { "\(day.year)/\(day.month)/\(day.day)" }
 
     static func weight(_ grams: Int) -> String {

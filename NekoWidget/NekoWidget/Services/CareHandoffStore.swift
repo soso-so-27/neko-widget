@@ -217,13 +217,6 @@ final class CareHandoffStore: ObservableObject {
         plan = next; saveError = nil; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
     }
     func shareRecord(_ disclosure: CareHandoffDisclosure) throws -> CareHandoffShareRecord {
-        // One period and request for the memo (347). A family cat's shared copy
-        // follows it, so the family notebook says the same as the paper.
-        let request = CareHandoffContext(recipient: plan.recipient, period: plan.period, request: plan.request)
-        for cat in plan.cats where disclosure.catIDs.contains(cat.id) && cat.familyContext != nil
-            && cat.familyContext != request {
-            editCat(cat.id) { $0.familyContext = request }
-        }
         guard loadError == nil, saveError == nil else { throw CareHandoffError.unreadable }
         guard !disclosure.catIDs.isEmpty, disclosure.catIDs.isSubset(of: Set(plan.cats.map(\.id)))
         else { throw CareHandoffError.noSelection }
@@ -240,6 +233,11 @@ final class CareHandoffStore: ObservableObject {
                 everyday: CatCareSummary.careHandoffLines(care, legacy: cat),
                 health: CatCareSummary.careHandoffHealthLines(care, legacy: cat),
                 vet: CareHandoffDisclosure.vetFields(plan: plan, household: household, record: care))
+            if plan.cats.contains(where: { disclosure.catIDs.contains($0.id) && $0.familyContext != nil }) {
+                let context = cat.familyContext ?? .init(recipient: plan.recipient, period: plan.period, request: plan.request)
+                fields = CareHandoffDisclosure.written([("お願いする相手", context.recipient), ("お願いする期間", context.period),
+                                                        ("ほかにお願いしたいこと", context.request)]) + fields
+            }
             return CareHandoffShareRecord.Cat(name: cat.displayName, photo: photo,
                 fields: fields, updatedAt: cat.updatedAt)
         }

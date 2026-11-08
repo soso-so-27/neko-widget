@@ -253,10 +253,13 @@ struct CareHandoffDisclosure {
         func add(_ label: String, _ text: String) {
             if !Self.trimmed(text).isEmpty { fields.append((label, text)) }
         }
-        // One period and request for the whole memo, written where it is made (347).
-        add("お願いする相手", plan.recipient)
-        add("お願いする期間", plan.period)
-        add("ほかにお願いしたいこと", plan.request)
+        // Mixed requests belong beside their own cat, never in one common
+        // heading that could disclose an unselected cat's recipient.
+        if !plan.cats.contains(where: { catIDs.contains($0.id) && $0.familyContext != nil }) {
+            add("お願いする相手", plan.recipient)
+            add("お願いする期間", plan.period)
+            add("ほかにお願いしたいこと", plan.request)
+        }
         if contacts {
             add("飼い主の連絡先", plan.contact)
             add("つながらないときの連絡先", plan.backupContact)
