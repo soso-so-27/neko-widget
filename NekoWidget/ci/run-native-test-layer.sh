@@ -19,7 +19,8 @@ if [[ "$layer" == ui ]]; then
       git restore --worktree -- NekoWidgetWidget/NekoWidgetView.swift NekoWidget/Views/PhotoNoteInput.swift
       export NEKO_NATIVE_TEST_SELECTION="$selected"
       export NEKO_IOS_RUNTIME_LANE=app-ui
-      bash ci/run-sharing-runtime-matrix.sh > "$out/$(basename "$selected").log" 2>&1 || status=1
+      mkdir -p "$out/work-$(basename "$selected")"
+      RUNNER_TEMP="$out/work-$(basename "$selected")" bash ci/run-sharing-runtime-matrix.sh > "$out/$(basename "$selected").log" 2>&1 || status=1
       cat "$out/$(basename "$selected").log"
     done < "$out/selected.txt"
     cat "$out/"*.log > "$out/xcodebuild.log"

@@ -556,7 +556,7 @@ PY
             xcrun simctl privacy "$simulator_udid" grant photos "$APP_BUNDLE_ID" || return $?
         fi
         TEST_RUNNER_NEKO_MOVIE_SYNTHETIC_DIAGNOSTIC="$MOVIE_SYNTHETIC_REQUESTED" \
-        TEST_RUNNER_NEKO_MOVIE_BUILD_SHA="${NEKO_IOS_DIAGNOSTIC_SOURCE_SHA:-not supplied}" \
+        TEST_RUNNER_NEKO_MOVIE_BUILD_SHA="${NEKO_IOS_DIAGNOSTIC_SOURCE_SHA:-${GITHUB_SHA:-not supplied}}" \
         python3 "$RECORDED_COMMAND" --record "$runtime_artifacts/composer-test-timing.json" -- xcodebuild \
             -project NekoWidget.xcodeproj \
             -scheme NekoWidget \
