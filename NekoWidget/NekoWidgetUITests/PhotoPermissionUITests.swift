@@ -3223,7 +3223,9 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(probe.waitForExistence(timeout: 15))
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value == %@", "ready"), object: probe)], timeout: 5), .completed)
-        XCTAssertTrue(app.buttons["main-tab-tools"].waitForExistence(timeout: 5))
+        // iOS 26 may drop the tab label's identifier; the tab itself must be there.
+        XCTAssertTrue(app.buttons["main-tab-tools"].waitForExistence(timeout: 5)
+                      || app.tabBars.buttons["ツール"].waitForExistence(timeout: 5))
         return app
     }
 
@@ -3235,7 +3237,9 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(sheet.waitForExistence(timeout: 10))
         capture(screenshot)
         let close = sheet.buttons["header.closeButton"].firstMatch
-        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        // The remote sheet can still be sliding in on a busy CI Simulator: its
+        // container exists before its header (11/8 diagnostic).
+        XCTAssertTrue(close.waitForExistence(timeout: 15))
         let beforeScreen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         beforeScreen.name = screenshot + "-before-close-screen"
         beforeScreen.lifetime = .keepAlways
