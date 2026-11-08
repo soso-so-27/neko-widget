@@ -354,7 +354,10 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(app.buttons["すべての猫"].firstMatch.waitForExistence(timeout: 5))
         app.buttons["すべての猫"].firstMatch.tap()
         app.buttons["photos-section-favorites"].tap()
-        XCTAssertTrue(app.buttons["photos-section-favorites"].isSelected, app.debugDescription)
+        // The section is kept once the pages come to rest (11/7 pager).
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isSelected == true"), object: app.buttons["photos-section-favorites"]
+        )], timeout: 5), .completed, app.debugDescription)
         XCTAssertTrue(app.buttons["saved-memories-selection-toggle"].waitForExistence(timeout: 10), app.debugDescription)
         app.terminate()
     }

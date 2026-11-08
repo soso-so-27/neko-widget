@@ -1350,9 +1350,10 @@ final class PhotoPermissionUITests: XCTestCase {
                 XCTAssertFalse(app.buttons["initial-scan-widget-guide"].exists)
                 XCTAssertFalse(app.buttons["first-run-photo-close"].exists)
                 captureMainlineScreen(scenario)
-                app.buttons["もっと写真を選ぶ"].tap()
+                // 10/30 plain-Japanese copy: 「写真を追加で選ぶ」「もう一度探す」.
+                app.buttons["写真を追加で選ぶ"].tap()
                 XCTAssertTrue(app.staticTexts["mainline-action-choose"].waitForExistence(timeout: 5))
-                app.buttons["もう一度スキャン"].tap()
+                app.buttons["もう一度探す"].tap()
                 XCTAssertTrue(app.staticTexts["mainline-action-rescan"].waitForExistence(timeout: 5))
                 app.buttons["initial-scan-continue"].tap()
                 XCTAssertTrue(app.staticTexts["mainline-fixture-finished"].waitForExistence(timeout: 10))
@@ -4485,7 +4486,9 @@ final class SoloMemoriesUITests: XCTestCase {
         for mode in ["favorites", "notes", "all"] {
             let section = app.buttons["photos-section-\(mode)"]
             section.tap()
-            XCTAssertTrue(section.isSelected)
+            // The section is kept once the pages come to rest (11/7 pager).
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "isSelected == true"), object: section)], timeout: 5), .completed)
             assertPhotoLibraryCat("ミケ", in: app)
             if mode == "favorites" {
                 XCTAssertFalse(app.buttons["saved-memory-photo-app-store-screenshot-fixture-2"].exists)
@@ -5014,7 +5017,9 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["albums-preparing"].exists)
         openPhotosTab(in: app)
         XCTAssertTrue(app.staticTexts["写真を最後まで探せませんでした"].waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertTrue(app.buttons["photo-library-partial-retry"].exists)
+        // The status's own identifier is given to its button (iOS 26), so
+        // the retry is read by its role and visible title.
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label == %@", "もう一度探す")).firstMatch.exists)
         XCTAssertFalse(app.staticTexts["新しいアルバムを準備しています"].exists)
         XCTAssertFalse(app.staticTexts["アルバムを準備しています"].exists)
         XCTAssertFalse(app.staticTexts["猫の写真を探しています"].exists)
@@ -5458,7 +5463,12 @@ final class SoloMemoriesUITests: XCTestCase {
 
     @MainActor
     private func monthlyCard(in app: XCUIApplication) -> XCUIElement {
-        element("memories-monthly-window", in: app)
+        // On iOS 26 the ふりかえり section's own identifier is given to the
+        // month card inside it; the card's label ends with its photo count.
+        app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier == %@ OR (identifier == %@ AND label ENDSWITH %@)",
+            "memories-monthly-window", "memories-summaries-section", "枚"
+        )).firstMatch
     }
 
     @MainActor
