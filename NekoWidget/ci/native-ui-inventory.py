@@ -18,10 +18,22 @@ def inventory():
     assert result and len(result) == len(set(result))
     return sorted(result)
 
+def route(test):
+    if 'WidgetPlacementScreenshotUITests/' in test: return 'widget'
+    if test.endswith('/testSyntheticMovieShippingExportsSoundOnAndOff'): return 'movie'
+    if test.endswith('/testReviewPublicIPadCompatibility'): return 'ipad'
+    if test.endswith('/testReviewPublicPresentation'): return 'release'
+    if test.endswith('/testGrantFullPhotoLibraryAccess'): return 'empty'
+    return 'standard'
+
 if sys.argv[1] == 'select':
     shard = int(sys.argv[2])
     assert 0 <= shard < 4
-    selected = inventory()[shard::4]
+    lane = sys.argv[4] if len(sys.argv) > 4 else 'standard'
+    needle = sys.argv[5] if len(sys.argv) > 5 else ''
+    candidates = [t for t in inventory() if route(t) == lane and needle in t]
+    selected = candidates[shard::4] if lane == 'standard' and not needle else candidates
+    if needle and shard != 0: selected = []
     assert selected
     Path(sys.argv[3]).write_text('\n'.join(selected) + '\n', encoding='utf-8')
     print(f'UI shard {shard}: {len(selected)} of {len(inventory())} tests; no exclusions')

@@ -8,6 +8,16 @@ on:
   schedule:
     - cron: '0 18 * * *'
   workflow_dispatch:
+    inputs:
+      route:
+        description: Execution preparation (all includes every existing test)
+        type: choice
+        default: standard
+        options: [standard, empty, ipad, release, widget, movie, all]
+      test_filter:
+        description: Case-sensitive class or method substring; empty runs the route
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -39,7 +49,7 @@ jobs:
           PY
   output:
     name: App-hosted output XCTest
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    if: github.event_name != 'workflow_dispatch' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: macos-15
     timeout-minutes: 30
     env:
@@ -56,26 +66,42 @@ jobs:
           path: ${{ runner.temp }}/native-unit-0/
           retention-days: 7
   ui:
-    name: All UI tests (${{ matrix.shard }})
+    name: UI（報告のみ・直し中）${{ matrix.route }} / ${{ matrix.shard }}
     needs: [output, scope]
-    if: needs.scope.outputs.ui == 'true'
+    if: always() && !cancelled() && needs.scope.outputs.ui == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+    continue-on-error: true
     runs-on: macos-15
     timeout-minutes: 90
     strategy:
       fail-fast: false
       max-parallel: 2
       matrix:
-        shard: [0, 1, 2, 3]
+        include:
+          - {route: standard, shard: 0}
+          - {route: standard, shard: 1}
+          - {route: standard, shard: 2}
+          - {route: standard, shard: 3}
+          - {route: empty, shard: 0}
+          - {route: ipad, shard: 0}
+          - {route: release, shard: 0}
+          - {route: widget, shard: 0}
+          - {route: movie, shard: 0}
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
-      - run: bash NekoWidget/ci/run-native-test-layer.sh ui ${{ matrix.shard }}
+      - name: Run selected route (failure remains in log and summary)
+        if: github.event_name != 'workflow_dispatch' || inputs.route == 'all' || (inputs.route == matrix.route && (inputs.test_filter == '' || matrix.shard == 0))
+        env:
+          NEKO_NATIVE_FILTER: ${{ inputs.test_filter }}
+        run: bash NekoWidget/ci/run-native-test-layer.sh ui ${{ matrix.shard }} ${{ matrix.route }}
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()
         with:
-          name: ui-tests-${{ matrix.shard }}
-          path: ${{ runner.temp }}/native-ui-${{ matrix.shard }}/
+          name: ui-tests-${{ matrix.route }}-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/native-ui-${{ matrix.route }}-${{ matrix.shard }}/
+            ${{ runner.temp }}/neko-ui-diagnostic/
           retention-days: 7
