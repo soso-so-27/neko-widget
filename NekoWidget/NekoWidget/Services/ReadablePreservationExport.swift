@@ -322,7 +322,9 @@ enum ReadablePreservationText {
         "houseHidingPlace": "隠れる場所", "houseOther": "家の中のこと",
         // Round 2 (11/8): 迷子のときの連絡したところと「見つかりました」.
         "incident": "迷子の記録", "contactedOffices": "連絡したところ", "office": "窓口",
-        "contactedAt": "連絡した日", "nextCheckAt": "次に確かめる日", "foundMessage": "見つかったときのひとこと"]
+        "contactedAt": "連絡した日", "nextCheckAt": "次に確かめる日", "foundMessage": "見つかったときのひとこと",
+        // Round 2 (11/9): 避難に備えるの持ち物の期限.
+        "expiresAt": "期限"]
     private static let bookkeeping: Set<String> = ["schemaVersion", "version", "revision", "id", "catID", "familyID", "deviceID", "ownerID", "generation", "deletedAt",
         "profileID", "toolCatID", "sourceNoteID", "sourceRevision", "familyRecordID", "familyDetached", "prefilledFields", "prefilledUsualFood",
         "mutationRevision", "memberships", "globalExcludedAssets", "legacyUnscoped", "mode", "photoAlbumLink", "keyPhotoLocalIdentifier",
@@ -363,7 +365,7 @@ enum ReadablePreservationText {
             else if let number = value as? NSNumber {
                 if CFGetTypeID(number) == CFBooleanGetTypeID() { lines.append(indentation + (number.boolValue ? "はい" : "いいえ")) }
                 else if let key, ["createdAt", "updatedAt", "writtenAt", "capturedAt", "date", "completedAt", "reviewedAt", "checkedAt", "confirmedAt", "lastSeenAt",
-                                        "lastMadeAt", "checkStartedAt", "lastCheckedAt", "contactedAt", "nextCheckAt"].contains(key) {
+                                        "lastMadeAt", "expiresAt", "checkStartedAt", "lastCheckedAt", "contactedAt", "nextCheckAt"].contains(key) {
                     lines.append(indentation + ISO8601DateFormatter().string(from: Date(timeIntervalSinceReferenceDate: number.doubleValue)))
                 } else { lines.append(indentation + number.stringValue) }
             } else {
