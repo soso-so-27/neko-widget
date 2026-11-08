@@ -251,6 +251,11 @@ struct AppRootView: View {
             PhotosTabOpenInbox.shared.pending = true
             return
         }
+        if ShowcaseWidgetRoute.matches(url) {
+            // The iOS 17 widget: the same request as Control Center and Siri.
+            ShowcaseLaunchRequest.request()
+            return
+        }
         Task { @MainActor in
             await viewModel.syncLikesForPresentation(trigger: "deeplink")
             viewModel.handleURL(url)

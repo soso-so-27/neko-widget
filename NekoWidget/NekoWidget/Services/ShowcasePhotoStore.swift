@@ -155,7 +155,8 @@ final class ShowcasePhotoStore: ObservableObject {
         let pinned = current.filter(\.pinned)
         let retained = current.filter { !$0.pinned }
         let exclusions = before.scopes[scopeID]?.excluded ?? []
-        var ordered = pinned
+        // Recommended photos fill the places the owner did not keep (round 2).
+        var fills = [Entry]()
         var seen = Set(pinned.map(\.photoIdentifier))
         var created = [String]()
         var committed = false
@@ -166,16 +167,16 @@ final class ShowcasePhotoStore: ObservableObject {
                 }
             }
         }
-        for identifier in identifiers where ordered.count < Self.maximumCount {
+        for identifier in identifiers where pinned.count + fills.count < Self.maximumCount {
             guard !exclusions.contains(identifier), seen.insert(identifier).inserted else { continue }
             if let old = retained.first(where: { $0.photoIdentifier == identifier }) {
-                ordered.append(old)
+                fills.append(old)
             } else {
                 do {
                     let entry = try await exportedEntry(identifier, scopeID: scopeID, pinned: false,
                                                         catBoundingBox: boxes[identifier])
                     created.append(entry.imageFileName)
-                    ordered.append(entry)
+                    fills.append(entry)
                 } catch is MemoryPhotoJPEGExportError {
                     // An inaccessible iCloud/deleted photo must not block the
                     // next eligible candidate or erase the existing set.
@@ -183,9 +184,10 @@ final class ShowcasePhotoStore: ObservableObject {
                 }
             }
         }
-        for old in retained where ordered.count < Self.maximumCount {
-            if seen.insert(old.photoIdentifier).inserted { ordered.append(old) }
+        for old in retained where pinned.count + fills.count < Self.maximumCount {
+            if seen.insert(old.photoIdentifier).inserted { fills.append(old) }
         }
+        let ordered = Self.keepingPinnedPlaces(current, fills: fills)
         guard startRevision == revision else { throw Error.changedDuringPreparation }
         if current.isEmpty && !identifiers.isEmpty && ordered.isEmpty {
             throw Error.unavailable
@@ -288,6 +290,47 @@ final class ShowcasePhotoStore: ObservableObject {
         guard let index = state.entries.firstIndex(of: entry) else { return }
         var next = state
         next.entries[index].isPinned = pinned
+        try commit(next, undoable: true)
+    }
+
+    /// 「おすすめで入れ替えない」 photos stay where they were (first, fifth…);
+    /// the other places take `fills` in order. With too few fills, the later
+    /// kept photos move up so no place is empty (round 2).
+    static func keepingPinnedPlaces(_ current: [Entry], fills: [Entry]) -> [Entry] {
+        var kept = [Int: Entry]()
+        for (place, entry) in current.enumerated() where entry.pinned { kept[place] = entry }
+        let total = kept.count + fills.count
+        var ordered = [Entry]()
+        var queue = fills[...]
+        var place = 0
+        while ordered.count < total {
+            if let entry = kept[place] {
+                ordered.append(entry)
+            } else if let next = queue.popFirst() {
+                ordered.append(next)
+            }
+            place += 1
+        }
+        return ordered
+    }
+
+    /// Drag in 「編集」 (round 2): the photo takes the place of the one it was
+    /// dropped on, and is kept there by 「おすすめで選び直す」, as 「先頭にする」 is.
+    func move(_ entry: Entry, to target: Entry) throws {
+        guard entry != target, entry.scopeID == target.scopeID,
+              state.entries.contains(entry) else { return }
+        var next = state
+        var scope = next.entries.filter { $0.scopeID == entry.scopeID }
+        guard let source = scope.firstIndex(of: entry),
+              let destination = scope.firstIndex(of: target) else { return }
+        var moved = scope.remove(at: source)
+        moved.isPinned = true
+        scope.insert(moved, at: destination)
+        // Other cats' photos keep their own places in the file.
+        var queue = scope[...]
+        for index in next.entries.indices where next.entries[index].scopeID == entry.scopeID {
+            if let value = queue.popFirst() { next.entries[index] = value }
+        }
         try commit(next, undoable: true)
     }
 
