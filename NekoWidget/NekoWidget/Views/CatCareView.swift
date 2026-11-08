@@ -1459,7 +1459,7 @@ struct ToolCatCareSection<Extra: View>: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("「この子のこと」から入ります").foregroundStyle(Color.primary)
-                        let summary = filled.prefix(3).map(\.1).joined(separator: "・")
+                        let summary = filled.prefix(4).map(\.0).joined(separator: "・") + (filled.count > 4 ? " など" : "")
                         if !summary.isEmpty {
                             Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }
@@ -1484,7 +1484,7 @@ struct ToolCatCareSection<Extra: View>: View {
                 NavigationLink("「この子のこと」を開く") { CatCareSubjectView(subject: subject, profiles: profiles) }
                     .accessibilityIdentifier(editIdentifier)
             }
-        } header: { Text(title) }
+        } header: { if !folded { Text(title) } }
           footer: { if let footer { Text(footer) } }
     }
 
@@ -1616,6 +1616,78 @@ struct ToolMakeBar<Top: View, Action: View>: View {
         .padding(.horizontal)
         .padding(.vertical, 10)
         .background(.regularMaterial)
+    }
+}
+
+extension View {
+    /// The same spacing on every tool page: the purpose line right under the
+    /// cat row, the steps close together (349: a tall gap above the purpose).
+    func toolPageSpacing() -> some View {
+        listSectionSpacing(.compact)
+            .contentMargins(.top, 4, for: .scrollContent)
+    }
+}
+
+/// One photo on a tool page, the same in every tool (349): the photo (tap to
+/// choose), its name under it, and 「⋯」 for the rest. Taking a photo off sits
+/// in that menu, never as red text on the page.
+struct ToolPhotoSlot<Actions: View>: View {
+    let title: String
+    let image: UIImage?
+    var dimmedTitle = false
+    var disabled = false
+    let identifier: String
+    let actionsIdentifier: String
+    let choose: () -> Void
+    let actions: Actions
+
+    init(_ title: String, image: UIImage?, dimmedTitle: Bool = false, disabled: Bool = false,
+         identifier: String, actionsIdentifier: String, choose: @escaping () -> Void,
+         @ViewBuilder actions: () -> Actions) {
+        self.title = title; self.image = image; self.dimmedTitle = dimmedTitle; self.disabled = disabled
+        self.identifier = identifier; self.actionsIdentifier = actionsIdentifier
+        self.choose = choose; self.actions = actions()
+    }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Button(action: choose) {
+                Color(.tertiarySystemGroupedBackground)
+                    .aspectRatio(4.0 / 3.0, contentMode: .fit)
+                    .overlay {
+                        if let image { Image(uiImage: image).resizable().scaledToFit() }
+                        else { Image(systemName: "photo.badge.plus").font(.title2).foregroundStyle(.secondary) }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(title)
+            .accessibilityIdentifier(identifier)
+            .disabled(disabled)
+            HStack {
+                Text(title).font(.caption)
+                    .foregroundStyle(dimmedTitle ? Color.secondary : Color.primary)
+                Spacer(minLength: 0)
+                if image != nil {
+                    Menu { actions } label: {
+                        Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("\(title)の操作")
+                    .accessibilityIdentifier(actionsIdentifier)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+/// Photo slots side by side, two to a row; one slot keeps the same size.
+struct ToolPhotoGrid<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12, alignment: .top),
+                            GridItem(.flexible(), spacing: 12, alignment: .top)], spacing: 12, content: content)
+            .padding(.vertical, 4)
     }
 }
 
