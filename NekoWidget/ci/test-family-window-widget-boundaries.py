@@ -3681,7 +3681,18 @@ class ToolTemplateTests(unittest.TestCase):
         # 11/7: the page has the link's name, 「猫の情報」.
         bottom = section(evacuation, '}.navigationTitle("猫の情報")', ".navigationDestination(item: $preview)")
         self.assertIn('"evacuation-preview-open"', bottom)
-        self.assertIn(".safeAreaInset(edge: .bottom)", bottom)
+        self.assertIn(".toolBottomBar {", bottom)
+        # 348: tool bottom bars step aside while typing, with one way to close the keyboard.
+        care_view = source("NekoWidget/Views/CatCareView.swift")
+        bar = section(care_view, "private struct ToolBottomBar<Bar: View>: ViewModifier {", "/// A photo beside its text")
+        self.assertIn(".safeAreaInset(edge: .bottom) { if !typing { bar } }", bar)
+        self.assertIn("UIResponder.keyboardWillShowNotification", bar)
+        self.assertIn('Button("キーボードを閉じる")', bar)
+        for path in ("NekoWidget/Views/VeterinaryVisitView.swift", "NekoWidget/Views/CareHandoffView.swift",
+                     "NekoWidget/Views/CatPreparednessView.swift"):
+            text = source(path)
+            self.assertIn(".toolBottomBar {", text, path)
+            self.assertNotIn('Button("キーボードを閉じる")', text, path)
 
 
 class CatCareUsabilityTests(unittest.TestCase):

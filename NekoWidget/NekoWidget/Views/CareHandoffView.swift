@@ -332,10 +332,6 @@ private struct CareCatEditor: View {
             catch { candidateRefreshError = true }
             await useCatCarePhoto()
         }
-        .scrollDismissesKeyboard(.interactively)
-        .toolbar { ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("キーボードを閉じる") {
-            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        } } }
         .sheet(isPresented: $showsPhotoPicker) {
             NavigationStack { CarePhotoPicker(catID: id, ownPhotos: ownPhotos, otherPhotos: otherPhotos, store: store) }
         }
@@ -346,7 +342,7 @@ private struct CareCatEditor: View {
                 }
             }
         } message: { Text("この子のお世話メモだけを削除します。") }
-        .safeAreaInset(edge: .bottom) {
+        .toolBottomBar {
             VStack(spacing: 6) {
                 CareSaveNotice(store: store)
                 NavigationLink { CareDisclosureView(store: store, currentCatID: id) } label: {
@@ -578,7 +574,7 @@ private struct CareDisclosureView: View {
                     store.recordMade(health: item.record.includesHealth, contacts: item.record.includesContacts)
                 }
             }
-            .safeAreaInset(edge: .bottom) {
+            .toolBottomBar {
                 VStack(spacing: 6) {
                     CareSaveNotice(store: store)
                     Button {
