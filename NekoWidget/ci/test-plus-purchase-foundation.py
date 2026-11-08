@@ -357,6 +357,15 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         production = source("Config.Production.xcconfig")
         self.assertRegex(production, r"(?m)^APP_PRIVACY_URL = https:/\$\(\)/\S+/privacy/$")
 
+    def test_plus_prompt_keeps_its_entry_button_identifier(self) -> None:
+        # 11/8: the prompt's identifier on a plain stack replaced its button's
+        # (plus-offer-entry-*), so closing the Plus screen showed no button to UI tests.
+        model = source("NekoWidget/Services/MembershipOfferModel.swift")
+        prompt = section(model, "struct PlusOfferPrompt: View {", "struct PlusSettingsSection: View {")
+        self.assertIn(r'.accessibilityIdentifier("plus-offer-entry-\(context.identifier)")', prompt)
+        before = prompt[:prompt.index('.accessibilityIdentifier("plus-offer-prompt")')].rstrip()
+        self.assertTrue(before.endswith(".accessibilityElement(children: .contain)"))
+
     def test_restore_is_one_button_that_also_rechecks(self) -> None:
         # 11/5: 「購入状況を再確認」 and 「購入を復元」 are one button, 「購入を復元」.
         for path in sorted((ROOT / "NekoWidget").rglob("*.swift")):

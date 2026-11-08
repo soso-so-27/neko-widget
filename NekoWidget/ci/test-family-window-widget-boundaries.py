@@ -4604,6 +4604,14 @@ class WindowListOrderTests(unittest.TestCase):
         self.assertIn('publicCard(source, presentation: .wide)', arrival)
         self.assertIn('publicCard(source, presentation: .row)', arrival)
         self.assertIn('"window-list-discover"', tab)
+        # 11/8: an identifier on a plain stack replaced every row's and button's
+        # own identifier (iOS 26 UI test). Identified stacks that hold
+        # identified controls are containers.
+        for container in ('"window-list-discover-section"', '"window-list-subscription-confirmation"'):
+            before = tab[:tab.index(".accessibilityIdentifier(" + container + ")")].rstrip()
+            self.assertTrue(before.endswith(".accessibilityElement(children: .contain)"), container)
+        self.assertIn(r'.accessibilityIdentifier("public-window-add-\(source.id)")', tab)
+        self.assertIn('.accessibilityIdentifier("window-list-widget-guide")', tab)
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
         self.assertNotIn("退出", setup)
 

@@ -3535,6 +3535,9 @@ private struct WindowListView: View {
                         .transition(.opacity)
                 }
             }
+            // A container keeps the rows' own identifiers; on a plain stack the
+            // section's identifier replaced every row's and button's (11/8).
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("window-list-discover-section")
         }
         if let addPublicWindowError {
@@ -3561,6 +3564,7 @@ private struct WindowListView: View {
                     .frame(minHeight: 44)
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("window-list-subscription-confirmation")
     }
 

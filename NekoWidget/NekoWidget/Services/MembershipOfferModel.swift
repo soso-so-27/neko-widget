@@ -929,6 +929,8 @@ struct PlusOfferPrompt: View {
             }
             .multilineTextAlignment(.center).padding(24)
             .frame(maxWidth: .infinity)
+            // A container keeps the button's own identifier (11/8).
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("plus-offer-prompt")
             .onAppear {
                 guard presentsImmediately, !didPresent else { return }
