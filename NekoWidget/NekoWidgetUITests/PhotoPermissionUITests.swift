@@ -22,6 +22,55 @@ fileprivate func revealSaveSection(_ app: XCUIApplication) {
 }
 
 final class OfficialWindowUITests: XCTestCase {
+    private var holdsSlowLaunchAssertion = false
+    private var heldSlowLaunchIssue: XCTIssue?
+
+    /// A hosted Simulator still settling Xcode's install can take longer than
+    /// XCTest's fixed 30 s to grant the background assertion for a process that
+    /// is already starting (11/9, run 42507589058: the app drew its screen and
+    /// the Photos prompt, and the launch was still reported as failed). Only
+    /// that one issue, only during the movie diagnostic's launch, is held. It
+    /// is recorded unchanged unless the same app then reaches the foreground,
+    /// and tearDown records it if the test stops before that is decided.
+    override func record(_ issue: XCTIssue) {
+        if holdsSlowLaunchAssertion, heldSlowLaunchIssue == nil,
+           issue.compactDescription.contains("Timed out while acquiring background assertion") {
+            heldSlowLaunchIssue = issue
+            return
+        }
+        super.record(issue)
+    }
+
+    override func tearDown() {
+        holdsSlowLaunchAssertion = false
+        if let issue = heldSlowLaunchIssue {
+            heldSlowLaunchIssue = nil
+            super.record(issue)
+        }
+        super.tearDown()
+    }
+
+    /// Launches once. Not a relaunch: the diagnostic keeps exactly one run of
+    /// the app, so its single receipt directory stays the evidence.
+    @MainActor
+    private func launchWaitingForSlowAssertion(_ app: XCUIApplication) -> Bool {
+        holdsSlowLaunchAssertion = true
+        app.launch()
+        holdsSlowLaunchAssertion = false
+        guard let issue = heldSlowLaunchIssue else { return true }
+        heldSlowLaunchIssue = nil
+        guard app.wait(for: .runningForeground, timeout: 60) else {
+            super.record(issue)
+            return false
+        }
+        let note = XCTAttachment(string: "Launch reported: \(issue.compactDescription) "
+            + "The same app then reached the foreground; every later check is unchanged.")
+        note.name = "movie-launch-slow-assertion"
+        note.lifetime = .keepAlways
+        add(note)
+        return true
+    }
+
     @MainActor
     func testSyntheticMovieShippingExportsSoundOnAndOff() throws {
         guard ProcessInfo.processInfo.environment["NEKO_MOVIE_SYNTHETIC_DIAGNOSTIC"] == "true" else {
@@ -47,7 +96,7 @@ final class OfficialWindowUITests: XCTestCase {
         let photosMonitor = addUIInterruptionMonitor(withDescription: "Synthetic movie Photos authorization",
             handler: acceptFullPhotosAccess)
         defer { removeUIInterruptionMonitor(photosMonitor); app.terminate() }
-        app.launch()
+        guard launchWaitingForSlowAssertion(app) else { return }
         let ready = app.staticTexts["mainline-movie-ready"]
         let deadline = Date().addingTimeInterval(180)
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")

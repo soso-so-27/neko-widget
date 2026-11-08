@@ -254,8 +254,16 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn('["medium", "large"].enumerated()', self.widget_ui_test)
         self.assertNotIn('springboard.pageIndicators.firstMatch', self.widget_ui_test)
         self.assertIn('.containing(.pageIndicator, identifier: nil)', self.widget_ui_test)
-        self.assertIn('galleryPage(pages) == [1, 3]', self.widget_ui_test)
-        self.assertIn('galleryPage(pages) == [index + 2, 3]', self.widget_ui_test)
+        # Four Gallery pages: the three NekoWidget sizes, then ShowcaseWidget small.
+        self.assertIn('galleryPage(pages) == [1, 4]', self.widget_ui_test)
+        self.assertIn('galleryPage(pages) == [index + 2, 4]', self.widget_ui_test)
+        self.assertIn('galleryPage(pages) == [2 - index, 4]', self.widget_ui_test)
+        bundle = source("NekoWidget/NekoWidgetWidget/NekoWidgetBundle.swift")
+        self.assertIn("        NekoWidget()\n        ShowcaseWidget()\n", bundle)
+        self.assertIn(".supportedFamilies([.systemSmall, .systemMedium, .systemLarge])",
+                      source("NekoWidget/NekoWidgetWidget/NekoWidget.swift"))
+        self.assertIn(".supportedFamilies([.accessoryCircular, .systemSmall])",
+                      source("NekoWidget/NekoWidgetWidget/ShowcaseWidget.swift"))
         self.assertIn('NSPredicate(format: "value != %@", previousPage)', self.widget_ui_test)
         self.assertNotIn('pixels == previousPixels', self.widget_ui_test)
         self.assertIn('timeIntervalSince(visibleSince) >= 0.5', self.widget_ui_test)

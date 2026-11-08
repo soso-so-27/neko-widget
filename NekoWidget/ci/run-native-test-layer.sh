@@ -55,7 +55,7 @@ if [[ "$layer" == ui ]]; then
   if [[ "$route" != empty ]]; then xcrun simctl addmedia "$device" ci/fixtures/cats/*.png; fi
 fi
 status=0
-if [[ "$route" == ipad || "$route" == release ]]; then
+if [[ "$route" == ipad ]]; then
   python3 ci/production_candidate.py fixture --synthetic --contract "$out/contract.json"
   python3 ci/production_candidate.py build --synthetic --contract "$out/contract.json" -- \
     build-for-testing -sdk iphonesimulator -destination "platform=iOS Simulator,id=$device" \

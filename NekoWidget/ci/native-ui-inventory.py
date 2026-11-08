@@ -22,7 +22,10 @@ def route(test):
     if 'WidgetPlacementScreenshotUITests/' in test: return 'widget'
     if test.endswith('/testSyntheticMovieShippingExportsSoundOnAndOff'): return 'movie'
     if test.endswith('/testReviewPublicIPadCompatibility'): return 'ipad'
-    if test.endswith('/testReviewPublicPresentation'): return 'release'
+    # testReviewPublicPresentation needs the DEBUG fixture and DEBUG previews
+    # (--app-store-screenshot-fixture, --review-public-presentation), so it
+    # runs in the Debug preparation. The public Release build is covered by
+    # testReviewPublicIPadCompatibility in the ipad preparation.
     if test.endswith('/testGrantFullPhotoLibraryAccess'): return 'empty'
     return 'standard'
 

@@ -13,7 +13,7 @@ on:
         description: Execution preparation (all includes every existing test)
         type: choice
         default: standard
-        options: [standard, empty, ipad, release, widget, movie, all]
+        options: [standard, empty, ipad, widget, movie, all]
       test_filter:
         description: Case-sensitive class or method substring; empty runs the route
         type: string
@@ -49,7 +49,7 @@ jobs:
           paths = [] if always else subprocess.check_output(['git','diff','--name-only',base,'HEAD'],text=True).splitlines()
           ui = always or any(re.search(r'(CareHandoff|Evacuation|Veterinary|LostCat|Showcase|Tool|CatCare|CatHousehold|PhotoNote|NekoWidgetTests|NekoWidgetUITests|run-native|native-ui|native-tests|project\.pbxproj|\.xcscheme)', p) for p in paths)
           with open(os.environ['GITHUB_OUTPUT'],'a') as f: f.write('ui=' + str(ui).lower() + '\n')
-          routes = ['standard','empty','ipad','release','widget','movie']
+          routes = ['standard','empty','ipad','widget','movie']
           requested = os.environ.get('REQUESTED_ROUTE', '')
           if os.environ['EVENT'] == 'workflow_dispatch' and requested != 'all': routes = [requested]
           matrix = [{'route':r,'shard':i} for r in routes for i in (range(4) if r == 'standard' and not os.environ.get('TEST_FILTER') else [0])]
