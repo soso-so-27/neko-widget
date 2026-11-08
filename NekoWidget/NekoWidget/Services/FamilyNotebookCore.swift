@@ -418,7 +418,7 @@ enum FamilyNotebookCore {
         return .init(operation: winner, status: status, history: history)
     }
 
-    private static func validDay(_ day: String) -> Bool {
+    fileprivate static func validDay(_ day: String) -> Bool {
         let parts = day.split(separator: "-", omittingEmptySubsequences: false)
         guard parts.count == 3, parts[0].count == 4, parts[1].count == 2, parts[2].count == 2,
               day.utf8.allSatisfy({ (48...57).contains($0) || $0 == 45 }),
