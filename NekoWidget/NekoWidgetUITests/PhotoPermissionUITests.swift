@@ -1892,6 +1892,14 @@ final class SoloMemoriesUITests: XCTestCase {
         return app
     }
 
+    /// The picker lists recent photos first (349); bring 「写真に付けたメモ」 up.
+    @MainActor
+    private func revealVetPickerMemos(_ app: XCUIApplication) {
+        let memos = app.staticTexts["写真に付けたメモ"]
+        for _ in 0..<8 where !(memos.exists && memos.isHittable) { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(memos.exists, app.debugDescription)
+    }
+
     @MainActor
     private func revealVetElement(_ element: XCUIElement, app: XCUIApplication) {
         for _ in 0..<10 where !element.isHittable { app.swipeUp(velocity: .slow) }
@@ -2023,13 +2031,22 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(remove.waitForNonExistence(timeout: 5))
         capture("vet-record-removed-source-kept")
         let pick = app.buttons["vet-pick-records"]; revealVetElement(pick, app: app); pick.tap()
+        // 349: 「見せる写真を選ぶ」, recent photos first, then the memos below.
+        let picker = app.navigationBars["見せる写真を選ぶ"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
         let source = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-source-")).firstMatch
+        revealVetPickerMemos(app)
         XCTAssertTrue(source.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
             "vet-source-", "選んでいない別の猫の記録")).firstMatch.exists)
         source.tap()
-        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Picker dismissal must present the real confirmation")
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "A pick must present the real confirmation")
         app.navigationBars["内容を確認"].buttons["閉じる"].tap()
+        // The list stays open for more picks; 「完了」 closes it.
+        XCTAssertTrue(confirm.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(picker.exists, "The picker stays open after a pick")
+        picker.buttons["vet-pick-done"].tap()
+        XCTAssertTrue(picker.waitForNonExistence(timeout: 5))
         // The cat's memo is the 「病院で見せる」 page itself (11/7); closing it
         // returns to the photo memo.
         app.navigationBars["病院で見せる"].buttons["閉じる"].tap()
@@ -2080,8 +2097,11 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(recordsStep.exists)
         XCTAssertEqual(recordsStep.label, "2、見せる写真・記録（任意）")
         app.buttons["vet-pick-records"].tap()
+        let picker = app.navigationBars["見せる写真を選ぶ"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
         let measuredSource = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
             "vet-source-", "食べる量が少なかった。")).firstMatch
+        revealVetPickerMemos(app)
         XCTAssertTrue(measuredSource.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
             "vet-source-", "選んでいない別の猫の記録")).firstMatch.exists)
@@ -2090,6 +2110,12 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(confirm.waitForExistence(timeout: 5)); XCTAssertEqual(confirm.value as? String, "1")
         setVetToggle(confirm, to: "1", app: app); revealVetElement(add, app: app); XCTAssertTrue(add.isEnabled); add.tap()
         XCTAssertTrue(confirm.waitForNonExistence(timeout: 10))
+        // 349: back on the list, the memo is marked added; 「完了」 closes it.
+        XCTAssertTrue(picker.exists, "The picker stays open after an addition")
+        XCTAssertTrue(measuredSource.waitForExistence(timeout: 5))
+        XCTAssertTrue(measuredSource.label.contains("追加済み"), measuredSource.label)
+        picker.buttons["vet-pick-done"].tap()
+        XCTAssertTrue(picker.waitForNonExistence(timeout: 5))
         revealVetElement(show, app: app); show.tap()
         let reading = app.scrollViews["vet-reading"]
         XCTAssertTrue(reading.waitForExistence(timeout: 5))
@@ -2112,6 +2138,8 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertEqual(recordsStep.label, "2、見せる写真・記録（任意）", "Same name must not carry the other cat's records")
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).firstMatch.exists)
         revealVetElement(app.buttons["vet-pick-records"], app: app); app.buttons["vet-pick-records"].tap()
+        XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
+        revealVetPickerMemos(app)
         XCTAssertFalse(measuredSource.waitForExistence(timeout: 3), "Same name must not reuse the other cat's weight")
         capture("vet-same-name-other-cat-keeps-separate-records")
         app.terminate()
@@ -2178,16 +2206,13 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(name.waitForExistence(timeout: 5))
         XCTAssertEqual(name.value as? String, "むぎ")
         // Everyday care is shown from 「この子のこと」; the older tool entry fills
-        // it until 「この子のこと」 has meals of its own. 11/8: folded to one row
-        // below the steps until opened.
+        // it until 「この子のこと」 has meals of its own. 349: one row below the
+        // steps that opens the cat; the value itself is read on the made memo.
         let folded = app.descendants(matching: .any)["care-cat-care-fields-folded"].firstMatch
         for _ in 0..<5 where !folded.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(folded.isHittable)
-        folded.tap()
-        let food = app.staticTexts["いつものフード 20g"]
-        XCTAssertTrue(food.waitForExistence(timeout: 5))
-        for _ in 0..<5 where !food.isHittable { app.swipeUp(velocity: .slow) }
-        XCTAssertTrue(food.isHittable)
+        XCTAssertTrue(folded.label.contains("この子のこと"), folded.label)
+        XCTAssertFalse(app.staticTexts["いつものフード 20g"].exists, "The folded row does not repeat the values")
         capture("care-autofill-visible-real-value")
         make.tap()
         XCTAssertTrue(app.navigationBars["メモを作る"].waitForExistence(timeout: 5))
@@ -2210,15 +2235,21 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(make.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertFalse(create.exists)
-        for _ in 0..<5 where !folded.isHittable { app.swipeUp(velocity: .slow) }
-        XCTAssertTrue(folded.isHittable)
-        folded.tap()
+        // The refreshed value, read on the made memo (349: the row is folded).
+        make.tap()
+        XCTAssertTrue(app.navigationBars["メモを作る"].waitForExistence(timeout: 5))
+        XCTAssertTrue(preview.waitForExistence(timeout: 5)); preview.tap()
+        XCTAssertTrue(app.navigationBars["できあがり"].waitForExistence(timeout: 5))
         let refreshed = app.staticTexts["更新したフード 25g"]
         XCTAssertTrue(refreshed.waitForExistence(timeout: 5))
         for _ in 0..<5 where !refreshed.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(refreshed.isHittable)
         XCTAssertFalse(app.staticTexts["いつものフード 20g"].exists)
         capture("care-refreshed-unedited-candidate")
+        app.navigationBars["できあがり"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["メモを作る"].waitForExistence(timeout: 5))
+        app.navigationBars["メモを作る"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(make.waitForExistence(timeout: 5))
         // The food is written in 「この子のこと」 now; the filled-in name is the
         // value still edited here. Edit it and check the edit is kept.
         for _ in 0..<8 where !name.isHittable { app.swipeDown(velocity: .slow) }
@@ -2240,13 +2271,18 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launchEnvironment["NEKO_TOOL_REFRESH_PHASE"] = "3"
         app.terminate(); app.launch()
         XCTAssertTrue(make.waitForExistence(timeout: 10), app.debugDescription)
-        for _ in 0..<5 where !folded.isHittable { app.swipeUp(velocity: .slow) }
-        XCTAssertTrue(folded.isHittable)
-        folded.tap()
-        // The refresh has run once the newer food shows; only then is the name
-        // compared, so a late overwrite could not pass unnoticed.
+        // The refresh has run once the newer food shows on the made memo; only
+        // then is the name compared, so a late overwrite could not pass unnoticed.
+        make.tap()
+        XCTAssertTrue(app.navigationBars["メモを作る"].waitForExistence(timeout: 5))
+        XCTAssertTrue(preview.waitForExistence(timeout: 5)); preview.tap()
+        XCTAssertTrue(app.navigationBars["できあがり"].waitForExistence(timeout: 5))
         let newest = app.staticTexts["さらに更新したフード 30g"]
         XCTAssertTrue(newest.waitForExistence(timeout: 5))
+        app.navigationBars["できあがり"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["メモを作る"].waitForExistence(timeout: 5))
+        app.navigationBars["メモを作る"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(make.waitForExistence(timeout: 5))
         for _ in 0..<8 where !name.isHittable { app.swipeDown(velocity: .slow) }
         XCTAssertTrue(name.isHittable)
         XCTAssertEqual(name.value as? String, editedValue)
@@ -2277,22 +2313,22 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["evacuation-photo-reference"].waitForExistence(timeout: 5))
         capture("evacuation-autofill-general-photo-large-text")
         app.navigationBars.buttons.element(boundBy: 0).tap()
-        // The meal is shown from 「この子のこと」's section on the cat's page,
-        // folded to one row under the steps (11/8); open it to read every line.
+        // The meal comes from 「この子のこと」, folded to one row under the steps
+        // that opens the cat (349); every line is read on the made memo.
         let folded = app.descendants(matching: .any).matching(identifier: "evacuation-cat-care-fields-folded").firstMatch
         for _ in 0..<9 where !folded.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(folded.isHittable)
-        folded.tap()
-        let food = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "むぎ専用フード")).firstMatch
-        for _ in 0..<9 where !food.isHittable { app.swipeUp(velocity: .slow) }
-        XCTAssertTrue(food.isHittable)
-        let value = food.label
-        XCTAssertTrue(value.contains("朝8時") && value.contains("20g"))
+        XCTAssertTrue(folded.label.contains("この子のこと"), folded.label)
         capture("evacuation-autofill-visible-values-large-text")
         let preview = app.buttons["evacuation-preview-open"]
         for _ in 0..<8 where !preview.isHittable { app.swipeUp(velocity: .slow) }
         preview.tap()
         XCTAssertTrue(app.navigationBars["むぎの避難メモ"].waitForExistence(timeout: 5), app.debugDescription)
+        let food = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "むぎ専用フード")).firstMatch
+        for _ in 0..<9 where !food.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(food.isHittable)
+        let value = food.label
+        XCTAssertTrue(value.contains("朝8時") && value.contains("20g"))
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "private-")).firstMatch.exists)
         capture("evacuation-autofill-output-without-editing-large-text")
         app.launchEnvironment["NEKO_TOOL_REFRESH_PHASE"] = "2"
@@ -2311,7 +2347,9 @@ final class SoloMemoriesUITests: XCTestCase {
         let restoredFolded = app.descendants(matching: .any).matching(identifier: "evacuation-cat-care-fields-folded").firstMatch
         for _ in 0..<9 where !restoredFolded.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(restoredFolded.isHittable)
-        restoredFolded.tap()
+        for _ in 0..<8 where !preview.isHittable { app.swipeUp(velocity: .slow) }
+        preview.tap()
+        XCTAssertTrue(app.navigationBars["むぎの避難メモ"].waitForExistence(timeout: 5), app.debugDescription)
         let restoredFood = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "むぎ専用フード")).firstMatch
         for _ in 0..<9 where !restoredFood.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(restoredFood.waitForExistence(timeout: 5))

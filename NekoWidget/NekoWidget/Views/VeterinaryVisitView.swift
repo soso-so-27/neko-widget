@@ -244,7 +244,7 @@ private struct VeterinaryConsultationView: View {
     var pastVisits: [VeterinaryVisit] = []
     var openPast: ((VeterinaryVisit) -> Void)? = nil
     var onDeleted: (() -> Void)? = nil
-    /// After 「診察済みにする」 on the tool's page: open the next memo.
+    /// After 「診察を終える」 on the tool's page: open the next memo.
     var onFinished: (() -> Void)? = nil
     private var isPage: Bool { openPast != nil }
     @Environment(\.dismiss) private var dismiss
@@ -265,8 +265,8 @@ private struct VeterinaryConsultationView: View {
     @State private var deletesVisit = false
     @State private var error: String?
     @State private var busy = false
+    /// The record a photo memo was opened with, confirmed over the page.
     @State private var chosen: PhotoMemoryNoteRecord?
-    @State private var pendingSource: PhotoMemoryNoteRecord?
     @State private var autosaveTask: Task<Void, Never>?
     @State private var removingEntry: VeterinaryVisitEntry?
     @ObservedObject private var catCareStore = CatCareStore.shared
@@ -320,9 +320,9 @@ private struct VeterinaryConsultationView: View {
     private static func filled(_ text: String) -> Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
-    /// Step 4: what came after the consultation. On a finished memo it is the
-    /// only part that can still be written (11/8).
-    private func resultsStep(_ state: ToolStepState) -> some View {
+    /// Step 4: what came after the consultation, then 「診察を終える」. On a
+    /// finished memo it is the only part that can still be written (11/8).
+    private func resultsStep(_ visit: VeterinaryVisit, _ state: ToolStepState) -> some View {
         Section {
             VeterinaryLabeledField(title: "先生の話", example: "例：胃腸炎。2日ほどで治る見込み",
                                    text: $doctorNote, lines: 2...8, identifier: "vet-doctor-note")
@@ -330,6 +330,13 @@ private struct VeterinaryConsultationView: View {
                                    text: $prescription, lines: 1...6, identifier: "vet-prescription")
             Toggle("次に行く日を記録", isOn: $hasNextVisit).accessibilityIdentifier("vet-next-visit-toggle")
             if hasNextVisit { DatePicker("次に行く日", selection: $nextVisitDay, displayedComponents: .date) }
+            // Last in 「診察のあと」 (349): finishing is what comes after the
+            // consultation. While the question at the top is shown, it is the
+            // one place to finish.
+            if visit.completedAt == nil, !looksFinished(visit) {
+                Button("診察を終える") { finishing = true }
+                    .disabled(changes).accessibilityIdentifier("vet-finish")
+            }
         } header: {
             ToolStepHeader(number: 4, title: "診察のあと", state: state).accessibilityIdentifier("vet-step-results")
         }
@@ -460,7 +467,7 @@ private struct VeterinaryConsultationView: View {
         if looksFinished(visit) {
             Section {
                 Text("前の診察は終わりましたか？")
-                Button("診察済みにする", systemImage: "checkmark") { finishing = true }
+                Button("診察を終える") { finishing = true }
                     .disabled(changes).accessibilityIdentifier("vet-finish-previous")
             }
         }
@@ -471,7 +478,7 @@ private struct VeterinaryConsultationView: View {
         noticedStep(visit, states[0])
         recordsStep(visit, states[1])
         questionsStep(visit, states[2])
-        resultsStep(states[3])
+        resultsStep(visit, states[3])
     }
     /// Shown in a step of a finished memo that had nothing written.
     private var nothingWritten: some View {
@@ -498,7 +505,7 @@ private struct VeterinaryConsultationView: View {
         Section {
             ForEach(visit.orderedEntries) { entry in entryRow(entry, visit: visit) }
             if visit.completedAt == nil {
-                Button("写真・メモを選ぶ", systemImage: "plus") { picking = true }
+                Button("写真を選ぶ", systemImage: "plus") { picking = true }
                     .accessibilityIdentifier("vet-pick-records")
             } else if visit.entries.isEmpty {
                 nothingWritten
@@ -546,17 +553,15 @@ private struct VeterinaryConsultationView: View {
             identifier: "vet-cat-care-fields", editIdentifier: "vet-open-cat-care", profiles: profiles,
             folded: true)
     }
-    /// Not part of writing the memo: last, and small.
+    /// Not part of writing the memo: last, and small. Delete is a section of
+    /// its own, plain red text (349).
     @ViewBuilder private func closingSections(_ visit: VeterinaryVisit) -> some View {
         Section {
             ToolImportantInformation(text: "飼い主の記録をまとめたもので、医療の判断ではありません。様子がおかしいときは、迷わず動物病院に連絡してください。")
         }
         Section {
-            // While the question above is shown, it is the one place to finish.
-            if visit.completedAt == nil, !looksFinished(visit) {
-                Button("診察済みにする", systemImage: "checkmark") { finishing = true }.disabled(changes)
-            }
             Button("この診察メモを削除", role: .destructive) { deletesVisit = true }
+                .accessibilityIdentifier("vet-delete")
         }
         .font(.subheadline)
     }
@@ -594,9 +599,10 @@ private struct VeterinaryConsultationView: View {
     }
     private func dialogs<Content: View>(_ content: Content) -> some View {
         content
-        .sheet(isPresented: $picking, onDismiss: { chosen = pendingSource; pendingSource = nil }) {
+        .sheet(isPresented: $picking) {
             if let visit {
-                VeterinaryRecordPicker(visit: visit, photos: photos, profiles: profiles, noteStore: noteStore) { pendingSource = $0; picking = false }
+                VeterinaryRecordPicker(visit: visit, photos: photos, profiles: profiles, noteStore: noteStore,
+                                       store: store) { self.visit = $0 }
                     .environment(\.dynamicTypeSize, typeSize)
             }
         }
@@ -618,16 +624,18 @@ private struct VeterinaryConsultationView: View {
                  ? "500文字を超えた欄があると保存できません。短くしてから閉じてください。"
                  : (error ?? "保存できませんでした。") + " 画面に戻って、もう一度お試しください。")
         }
-        .confirmationDialog("診察済みにしますか？", isPresented: $finishing, titleVisibility: .visible) {
-            Button("診察済みにする") { Task { await save(completing: true) } }; Button("キャンセル", role: .cancel) {}
-        } message: { Text("診察済みにすると、書けるのは「診察のあと」だけになります。") }
+        .confirmationDialog("この診察メモを終えますか？", isPresented: $finishing, titleVisibility: .visible) {
+            Button("診察を終える") { Task { await save(completing: true) } }; Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text("家で気付いたこと・写真・聞きたいことは変えられなくなり、「これまでの診察メモ」に入ります。先生の話・出た薬・次に行く日は、あとからも書けます。")
+        }
         .confirmationDialog("この診察メモを削除しますか？", isPresented: $deletesVisit, titleVisibility: .visible) {
             Button("削除", role: .destructive) { Task { await deleteVisit() } }
             Button("キャンセル", role: .cancel) {}
         } message: { Text("この診察メモだけを削除します。") }
         .confirmationDialog("診察メモから外しますか？", isPresented: removingEntryPresented, titleVisibility: .visible,
                             presenting: removingEntry, actions: removalActions, message: removalMessage)
-        .appRecordEditing(retainWhileHidden: changes || busy || picking || chosen != nil || pendingSource != nil)
+        .appRecordEditing(retainWhileHidden: changes || busy || picking || chosen != nil)
     }
     private func scheduleSave() {
         autosaveTask?.cancel()
@@ -710,31 +718,48 @@ private struct VeterinaryConsultationView: View {
     }
 }
 
+/// 「見せる写真を選ぶ」 (349): the recent photos first, since a photo often has
+/// no cat on it yet, then the memos put on photos. Several can be added
+/// before 「完了」; each still goes through 「内容を確認」 and its rules.
 private struct VeterinaryRecordPicker: View {
+    /// The page's memo, kept current by the page after every addition.
     let visit: VeterinaryVisit
     let photos: [PhotoPresentation]
     var profiles: [CatProfilePresentation] = []
     let noteStore: PhotoMemoryNoteStore
-    let choose: (PhotoMemoryNoteRecord) -> Void
+    let store: VeterinaryVisitStore
+    let added: (VeterinaryVisit) -> Void
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var records: [PhotoMemoryNoteRecord] = []
     @StateObject private var access = PhotoMemoryNotePhotoAccess()
     @State private var error: String?
+    @State private var chosen: PhotoMemoryNoteRecord?
+    /// Off at first: photos are often not given to a cat.
+    @State private var onlyMine = false
 
     private var profile: CatProfilePresentation? { profiles.first { $0.identifier == visit.catID.uuidString } }
-    /// This cat's photos (11/8): the ones the owner put on its page. A cat
-    /// without any still offers every photo, as before.
-    private var offered: [PhotoPresentation] {
-        guard let mine = profile?.confirmedPhotos, !mine.isEmpty else { return photos }
+    /// The photos the owner put on this cat's page.
+    private var mine: [PhotoPresentation] {
         var seen = Set<String>()
-        return mine.filter { seen.insert($0.localIdentifier).inserted }.map {
+        return (profile?.confirmedPhotos ?? []).filter { seen.insert($0.localIdentifier).inserted }.map {
             PhotoPresentation(localIdentifier: $0.localIdentifier, creationDate: $0.creationDate, catBoundingBox: $0.catBoundingBox)
         }
     }
-    /// Newest first, in a grid of three.
+    /// Every photo, this cat's page photos among them.
+    private var everyPhoto: [PhotoPresentation] {
+        var seen = Set<String>()
+        return (photos + mine).filter { seen.insert($0.localIdentifier).inserted }
+    }
+    /// Newest first, three to a row.
     private var gridPhotos: [PhotoPresentation] {
-        offered.filter { access.photo(for: $0.localIdentifier) != nil }
+        (onlyMine ? mine : everyPhoto).filter { access.photo(for: $0.localIdentifier) != nil }
             .sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
+    }
+    /// One list row per three photos, so only the rows on screen are made.
+    private var gridRows: [[PhotoPresentation]] {
+        let grid = gridPhotos
+        return stride(from: 0, to: grid.count, by: 3).map { Array(grid[$0..<min($0 + 3, grid.count)]) }
     }
     /// Put on this cat's page and no other: the owner already said whose it is.
     private func onlyThisCat(_ photo: PhotoPresentation) -> Bool {
@@ -747,42 +772,42 @@ private struct VeterinaryRecordPicker: View {
         let cats = onlyThisCat(photo) ? [PhotoMemoryNoteCat(id: visit.catID, name: visit.catName)] : []
         let note = PhotoMemoryNote(id: selected?.sourceNoteID ?? UUID(), text: "", updatedAt: Date(),
             revision: UUID().uuidString, context: PhotoMemoryNoteContext(capturedAt: photo.creationDate, cats: cats))
-        choose(PhotoMemoryNoteRecord(photoIdentifier: photo.localIdentifier, note: note))
+        chosen = PhotoMemoryNoteRecord(photoIdentifier: photo.localIdentifier, note: note)
     }
 
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    ForEach(records) { record in
-                        Button { choose(record) } label: {
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(record.note.text.isEmpty ? "体重の記録" : record.note.text).lineLimit(3).foregroundStyle(.primary)
-                                if let weight = record.note.weight { PhotoMemoWeightLabel(weight: weight.value) }
-                                if let selected = visit.entries.first(where: { $0.sourceNoteID == record.id }) {
-                                    Text(selected.sourceRevision == record.note.revision ? "追加済み" : "元のメモが書き直されています。選ぶと新しい内容にできます")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                            }.padding(.vertical, 4)
-                        }.accessibilityIdentifier("vet-source-\(record.id.uuidString)")
+                Section("最近の写真") {
+                    if !mine.isEmpty {
+                        Toggle("この子の写真だけ", isOn: $onlyMine)
+                            .font(.subheadline)
+                            .accessibilityIdentifier("vet-only-this-cat")
                     }
-                    if records.isEmpty && error == nil { Text("写真に付けたメモはまだありません。") }
-                } header: { Text("\(visit.catName)に見せるメモを選ぶ") }
-                Section("写真だけ選ぶ") {
-                    let grid = gridPhotos
-                    if !grid.isEmpty {
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 3), spacing: 4) {
-                            ForEach(grid) { photo in photoCell(photo) }
+                    ForEach(gridRows, id: \.first?.localIdentifier) { row in
+                        HStack(spacing: 4) {
+                            ForEach(row) { photo in photoCell(photo) }
+                            ForEach(row.count..<3, id: \.self) { _ in Color.clear.aspectRatio(1, contentMode: .fit) }
                         }
-                        .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
+                        .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
+                        .listRowSeparator(.hidden)
                     }
+                    if gridRows.isEmpty { Text("写真はありません。").foregroundStyle(.secondary) }
+                }
+                Section("写真に付けたメモ") {
+                    ForEach(records) { record in recordRow(record) }
+                    if records.isEmpty && error == nil { Text("写真に付けたメモはまだありません。") }
                 }
                 if let error { Text(error) }
             }
-            .navigationTitle("写真・メモを選ぶ").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
+            .navigationTitle("見せる写真を選ぶ").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完了") { dismiss() }.accessibilityIdentifier("vet-pick-done")
+                }
+            }
             .task {
-                access.start(photos: offered)
+                access.start(photos: everyPhoto)
                 do {
                     // Known other-cat measurements are never offered. Unknown
                     // ownership requires confirmation, not a name match.
@@ -792,7 +817,40 @@ private struct VeterinaryRecordPicker: View {
                 } catch { self.error = veterinaryErrorMessage(error) }
             }
             .onDisappear { access.stop() }
+            // Each pick is confirmed over the list, which stays open for the next.
+            .sheet(item: $chosen) { source in
+                VeterinaryRecordConfirmation(source: source, visit: visit, photos: everyPhoto,
+                                             noteStore: noteStore, store: store) { updated in
+                    added(updated); chosen = nil
+                }
+                .environment(\.dynamicTypeSize, typeSize)
+            }
         }
+    }
+
+    private func recordRow(_ record: PhotoMemoryNoteRecord) -> some View {
+        let selected = visit.entries.first(where: { $0.sourceNoteID == record.id })
+        let current = selected?.sourceRevision == record.note.revision
+        return Button { chosen = record } label: {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(record.note.text.isEmpty ? "体重の記録" : record.note.text).lineLimit(3).foregroundStyle(.primary)
+                    if let weight = record.note.weight { PhotoMemoWeightLabel(weight: weight.value) }
+                    if selected != nil {
+                        Text(current ? "追加済み" : "元のメモが書き直されています。選ぶと新しい内容にできます")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 8)
+                if current {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title3).symbolRenderingMode(.multicolor)
+                        .accessibilityHidden(true)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        .accessibilityIdentifier("vet-source-\(record.id.uuidString)")
     }
 
     private func photoCell(_ photo: PhotoPresentation) -> some View {
@@ -957,21 +1015,85 @@ private struct VeterinaryLabeledField: View {
     }
 }
 
+/// A chosen photo on the page and on the show screen: a small copy, made away
+/// from the main thread and kept, so the page scrolls smoothly (349). The full
+/// photo is read only when it is opened large; the PDF and images read it
+/// on their own, at full size.
 private struct VeterinaryEntryPhoto: View {
     let entry: VeterinaryVisitEntry
     let visitID: UUID
     let store: VeterinaryVisitStore
-    @State private var bytes: Data?
+    /// Longest side of the copy shown in a row.
+    static let maxPixel: CGFloat = 900
+    @State private var thumbnail: UIImage?
     @State private var failed = false
+    @State private var expanded = false
+    /// A photo copy's file is never reused for another photo.
+    private var key: String { "vet/\(visitID.uuidString)/\(entry.photoFile ?? "")" }
+
     var body: some View {
         Group {
-            if let bytes { MemoArchivePhoto(data: bytes, allowsExpansion: true).frame(maxHeight: 260) }
-            else if failed { Label("写真を開けません", systemImage: "photo").font(.caption) }
-            else if entry.photoFile != nil { ProgressView() }
-        }.task(id: entry) {
-            bytes = nil; failed = false
-            do { bytes = try await store.image(for: entry, visitID: visitID); failed = false }
-            catch { bytes = nil; failed = true }
+            if let thumbnail {
+                Button { expanded = true } label: {
+                    Image(uiImage: thumbnail).resizable().scaledToFit()
+                }
+                .buttonStyle(.plain)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .frame(maxHeight: 260)
+                .accessibilityLabel("写真を大きく見る")
+                .accessibilityIdentifier("memory-note-photo")
+            } else if failed { Label("写真を開けません", systemImage: "photo").font(.caption) }
+            else if entry.photoFile != nil { ProgressView().frame(maxWidth: .infinity, minHeight: 80) }
+        }
+        .task(id: entry) {
+            failed = false
+            guard entry.photoFile != nil else { thumbnail = nil; return }
+            if let hit = ToolPhotoThumbnail.cached(key, maxPixel: Self.maxPixel) { thumbnail = hit; return }
+            thumbnail = nil
+            do {
+                guard let bytes = try await store.image(for: entry, visitID: visitID) else { return }
+                let small = await ToolPhotoThumbnail.load(bytes, key: key, maxPixel: Self.maxPixel)
+                guard !Task.isCancelled else { return }
+                thumbnail = small; failed = small == nil
+            } catch { thumbnail = nil; failed = true }
+        }
+        .fullScreenCover(isPresented: $expanded) {
+            VeterinaryEntryFullPhoto(entry: entry, visitID: visitID, store: store)
+        }
+    }
+}
+
+/// The chosen photo opened large: only now is the full photo read and decoded.
+private struct VeterinaryEntryFullPhoto: View {
+    let entry: VeterinaryVisitEntry
+    let visitID: UUID
+    let store: VeterinaryVisitStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var image: UIImage?
+    @State private var failed = false
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let image { MomentZoomablePhoto(image: image) }
+                else if failed { Label("写真を開けません", systemImage: "photo").foregroundStyle(.white) }
+                else { ProgressView().tint(.white) }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.black)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
+            }
+        }
+        .task {
+            do {
+                guard let bytes = try await store.image(for: entry, visitID: visitID) else { failed = true; return }
+                let full = await Task.detached(priority: .userInitiated) {
+                    ToolPhotoThumbnail.decode(bytes, maxPixel: 4096)
+                }.value
+                guard !Task.isCancelled else { return }
+                image = full; failed = full == nil
+            } catch { failed = true }
         }
     }
 }
