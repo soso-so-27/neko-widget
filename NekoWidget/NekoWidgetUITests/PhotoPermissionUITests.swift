@@ -4058,7 +4058,9 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(theme.waitForExistence(timeout: 10), app.debugDescription)
             // Off-screen tiles of the horizontal row have no hit point yet:
             // swipe the row until the tile's frame is inside the screen.
-            for _ in 0..<8 where !app.frame.contains(theme.frame) { themeRow.swipeLeft() }
+            for _ in 0..<8 where !app.frame.contains(theme.frame) {
+                if theme.frame.minX < app.frame.minX { themeRow.swipeRight() } else { themeRow.swipeLeft() }
+            }
             XCTAssertTrue(theme.isHittable, "The \(title) theme must stay reachable in the row")
             theme.tap()
             XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5))
