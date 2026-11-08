@@ -22,6 +22,34 @@ enum ToolPhotoThumbnail {
         }.value
     }
 
+    /// A copy kept by the caller's key: the photos of 「病院で見せる」, which the
+    /// store hands over as checked bytes, never as a file (349).
+    static func cached(_ key: String, maxPixel: CGFloat) -> UIImage? {
+        cache.object(forKey: "\(key)#\(Int(maxPixel))" as NSString)
+    }
+
+    static func load(_ data: Data, key: String, maxPixel: CGFloat) async -> UIImage? {
+        if let hit = cached(key, maxPixel: maxPixel) { return hit }
+        return await Task.detached(priority: .userInitiated) {
+            guard let image = decode(data, maxPixel: maxPixel) else { return nil }
+            cache.setObject(image, forKey: "\(key)#\(Int(maxPixel))" as NSString)
+            return image
+        }.value
+    }
+
+    /// Made small straight from the bytes, never decoded whole.
+    static func decode(_ data: Data, maxPixel: CGFloat) -> UIImage? {
+        let options: [CFString: Any] = [kCGImageSourceShouldCache: false]
+        guard let source = CGImageSourceCreateWithData(data as CFData, options as CFDictionary),
+              let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixel
+              ] as CFDictionary) else { return nil }
+        return UIImage(cgImage: cg)
+    }
+
     private static func decode(_ url: URL, maxPixel: CGFloat) -> UIImage? {
         let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
         let key = "\(url.path)#\(modified?.timeIntervalSinceReferenceDate ?? 0)#\(Int(maxPixel))" as NSString

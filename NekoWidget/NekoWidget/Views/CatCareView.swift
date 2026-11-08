@@ -1425,7 +1425,6 @@ struct ToolCatCareSection<Extra: View>: View {
     /// the steps and looked like more to write).
     let folded: Bool
     let extra: () -> Extra
-    @State private var expanded = false
 
     init(title: String, lines: [(String, String)], subject: CatCareSubject?, footer: String? = nil,
          identifier: String, editIdentifier: String, profiles: [CatProfilePresentation] = [],
@@ -1453,39 +1452,58 @@ struct ToolCatCareSection<Extra: View>: View {
         let adoption = showsLifeDates ? profile?.lifeDates.adoptionDay : nil
         Section {
             if folded {
-                DisclosureGroup(isExpanded: $expanded) {
-                    readRows(filled: filled, birthday: birthday, adoption: adoption)
-                    extra()
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("「この子のこと」から入ります").foregroundStyle(Color.primary)
-                        let summary = filled.prefix(4).map(\.0).joined(separator: "・") + (filled.count > 4 ? " など" : "")
-                        if !summary.isEmpty {
-                            Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                        }
+                // One row (349): its name, what the tool uses, what is not
+                // written yet; a tap opens the cat's 「この子のこと」.
+                if let subject {
+                    NavigationLink { CatCareSubjectView(subject: subject, profiles: profiles) } label: {
+                        foldedLabel(filled: filled, missing: missing, dated: birthday != nil || adoption != nil)
                     }
+                    .accessibilityIdentifier(identifier + "-folded")
+                } else {
+                    foldedLabel(filled: filled, missing: missing, dated: birthday != nil || adoption != nil)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier(identifier + "-folded")
                 }
-                .accessibilityIdentifier(identifier + "-folded")
+                extra()
             } else {
                 readRows(filled: filled, birthday: birthday, adoption: adoption)
-            }
-            if filled.isEmpty && birthday == nil && adoption == nil && missing.isEmpty {
-                Text("まだ何も書いていません。")
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier(identifier + "-empty")
-            }
-            if !missing.isEmpty {
-                // 「、」 between items: some names already contain 「・」.
-                Text("まだ書いていないこと：" + missing.joined(separator: "、"))
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-            if !folded { extra() }
-            if let subject {
-                NavigationLink("「この子のこと」を開く") { CatCareSubjectView(subject: subject, profiles: profiles) }
-                    .accessibilityIdentifier(editIdentifier)
+                if filled.isEmpty && birthday == nil && adoption == nil && missing.isEmpty {
+                    Text("まだ何も書いていません。")
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier(identifier + "-empty")
+                }
+                if !missing.isEmpty {
+                    // 「、」 between items: some names already contain 「・」.
+                    Text("まだ書いていないこと：" + missing.joined(separator: "、"))
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                extra()
+                if let subject {
+                    NavigationLink("「この子のこと」を開く") { CatCareSubjectView(subject: subject, profiles: profiles) }
+                        .accessibilityIdentifier(editIdentifier)
+                }
             }
         } header: { if !folded { Text(title) } }
           footer: { if let footer { Text(footer) } }
+    }
+
+    /// The folded row: 「この子のこと」, then what is used (up to four names),
+    /// then, short, what is not written yet.
+    private func foldedLabel(filled: [(String, String)], missing: [String], dated: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).foregroundStyle(Color.primary)
+            let summary = filled.prefix(4).map(\.0).joined(separator: "・") + (filled.count > 4 ? " など" : "")
+            if !summary.isEmpty {
+                Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            if !missing.isEmpty {
+                Text("まだ：" + missing.prefix(4).joined(separator: "・") + (missing.count > 4 ? " など" : ""))
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            if summary.isEmpty && missing.isEmpty && !dated {
+                Text("まだ何も書いていません。").font(.caption).foregroundStyle(.secondary)
+            }
+        }
     }
 
     @ViewBuilder

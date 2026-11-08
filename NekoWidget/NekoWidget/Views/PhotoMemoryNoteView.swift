@@ -211,57 +211,6 @@ struct PhotoMemoWeightLabel: View {
     }
 }
 
-/// Only the selected record decodes a viewing-sized copy, away from the main actor.
-struct MemoArchivePhoto: View {
-    let data: Data
-    var allowsExpansion = false
-    @State private var image: UIImage?
-    @State private var expanded = false
-
-    var body: some View {
-        Group {
-            if let image {
-                if allowsExpansion {
-                    Button { expanded = true } label: {
-                        Image(uiImage: image).resizable().scaledToFit()
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("写真を大きく見る")
-                    .accessibilityIdentifier("memory-note-photo")
-                } else { Image(uiImage: image).resizable().scaledToFit() }
-            } else { ProgressView().frame(maxWidth: .infinity, minHeight: 80) }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .task(id: data) {
-            let bytes = data
-            let loaded = await Task.detached(priority: .userInitiated) { () -> UIImage? in
-                guard let source = CGImageSourceCreateWithData(bytes as CFData, nil),
-                      let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                        kCGImageSourceCreateThumbnailFromImageAlways: true,
-                        kCGImageSourceCreateThumbnailWithTransform: true,
-                        kCGImageSourceThumbnailMaxPixelSize: 4096
-                      ] as CFDictionary) else { return nil }
-                return UIImage(cgImage: cg)
-            }.value
-            guard !Task.isCancelled else { return }
-            image = loaded
-        }
-        .fullScreenCover(isPresented: $expanded) {
-            NavigationStack {
-                if let image {
-                    MomentZoomablePhoto(image: image)
-                        .background(.black)
-                        .toolbar {
-                            ToolbarItem(placement: .cancellationAction) {
-                                Button("閉じる") { expanded = false }
-                            }
-                        }
-                }
-            }
-        }
-    }
-}
-
 /// `photo` is frozen when the editor opens, including when its parent pages.
 /// The local original stays independent of any explicitly attached send copy.
 struct PhotoMemoryNoteEditor: View {
