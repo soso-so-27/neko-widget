@@ -4515,6 +4515,24 @@ class OwnerEntryWordingTests(unittest.TestCase):
             self.assertNotIn("（飼い主の記録）", text, path)
         self.assertIn("飼い主の記録をまとめたもの", source("NekoWidget/Views/VeterinaryVisitView.swift"))
 
+class PhotoScanStatusTests(unittest.TestCase):
+    def test_searching_says_so_and_a_retry_only_appears_when_it_can_work(self) -> None:
+        home = source("NekoWidget/Views/HomeView.swift")
+        status = section(home, "private var partialScanStatus: some View {", "private var monthDestinations")
+        self.assertLess(status.index("if scan.isScanning {"), status.index('"もう一度探す"'))
+        self.assertNotIn("まだ読み込めない写真があります", status)
+        self.assertNotIn(".disabled(scan.isScanning)", status)
+        self.assertIn('"読み込めなかった写真が\\(scan.deferredAssets.formatted())枚あります"', status)
+        self.assertIn(".padding(.horizontal, isEmbedded ? 16 : 0)", status)
+
+    def test_monthly_nine_share_image_has_no_title_band(self) -> None:
+        # 349: 「あめとむぎ　10月の9枚」 on the shared image was in the way; the
+        # name stays in the share sheet's preview title only.
+        album = source("NekoWidget/Views/AlbumPrototypeView.swift")
+        self.assertEqual(album.count("BestNineComposer.image(images, title: nil)"), 4)
+        self.assertNotIn("BestNineComposer.image(images, title: request.input.title)", album)
+        self.assertIn("SharePreview(input.title, image:", album)
+
 
 class SettingsLayoutTests(unittest.TestCase):
     def test_settings_put_plus_and_saving_first_and_test_tools_last(self) -> None:

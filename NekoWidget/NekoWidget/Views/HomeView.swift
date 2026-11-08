@@ -557,22 +557,32 @@ struct HomeView: View {
         .accessibilityHint("ホーム画面にウィジェットを追加する手順を開きます")
     }
 
+    /// One state and, only when it can help, one button (349: while a search
+    /// was still running, 「まだ読み込めない写真があります」 stayed up for a
+    /// long time with a gray 「もう一度探す」 that could not be pressed).
     private var partialScanStatus: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(scan.hasFailed ? "写真を最後まで探せませんでした"
-                  : scan.hasDeferredAssets ? "まだ読み込めない写真があります"
-                  : scan.isPaused ? "写真を探すのを一時停止しています" : "猫の写真を探しています",
-                  systemImage: scan.hasFailed ? "exclamationmark.triangle" : "photo.badge.clock")
-                .font(.subheadline)
-            if scan.hasFailed || scan.hasDeferredAssets || scan.isPaused {
-                Button("もう一度探す", action: rescan)
-                    .frame(minHeight: 44)
-                    .disabled(scan.isScanning)
-                    .accessibilityIdentifier("photo-library-partial-retry")
+            if scan.isScanning {
+                // Still searching: say so; there is nothing to press yet.
+                Label("猫の写真を探しています", systemImage: "photo.badge.clock")
+                    .font(.subheadline)
+            } else {
+                Label(scan.hasFailed ? "写真を最後まで探せませんでした"
+                      : scan.hasDeferredAssets ? "読み込めなかった写真が\(scan.deferredAssets.formatted())枚あります"
+                      : scan.isPaused ? "写真を探すのを一時停止しています" : "猫の写真を探しています",
+                      systemImage: scan.hasFailed ? "exclamationmark.triangle" : "photo.badge.clock")
+                    .font(.subheadline)
+                if scan.hasFailed || scan.hasDeferredAssets || scan.isPaused {
+                    Button("もう一度探す", action: rescan)
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("photo-library-partial-retry")
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 8)
+        // The same side margin as the 「〇枚」 row under it.
+        .padding(.horizontal, isEmbedded ? 16 : 0)
         .accessibilityIdentifier("photo-library-partial-status")
     }
 
