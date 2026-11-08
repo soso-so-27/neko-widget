@@ -43,5 +43,17 @@ class WidgetRelatedAlbumNavigationContracts(unittest.TestCase):
         self.assertIn('closeWidgetPhotoOnce(in: app)', self.case)
         self.assertIn('Foreground element changed before use', self.case)
 
+    def test_widget_route_is_never_replaced_by_the_cold_start_tab(self):
+        # 11/8: a Widget link that opens 「この写真は開けません」 kept no route
+        # mark, so the start-tab policy could move the app to the last tab.
+        route = MAIN.split('.onChange(of: deepLinkSelection, initial: true)', 1)[1]
+        route = route.split('.onChange(of: deepLinkedFamilyWindowIsPresented', 1)[0]
+        self.assertIn('didApplyInitialTab = true', route)
+        self.assertLess(route.index('didApplyInitialTab = true'), route.index('guard !excludedCatCandidateIdentifiers'))
+        self.assertEqual(route.count('selectedTab = .photos'), 2)
+        self.assertNotIn('MainTabStartupPolicy', route)
+        start = MAIN.split('guard !didApplyInitialTab else { return }', 1)[1].split('@StateObject', 1)[0]
+        self.assertIn('MainTabStartupPolicy.selection(', start)
+
 if __name__ == "__main__":
     unittest.main()

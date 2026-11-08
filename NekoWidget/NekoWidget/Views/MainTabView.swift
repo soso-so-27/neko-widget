@@ -783,6 +783,9 @@ struct MainTabView: View {
                 && !catPhotos.contains(where: {
                     $0.localIdentifier == identifier
                 })
+            // A Widget link is a route: the cold-start tab must not replace
+            // it afterwards, whether the photo opens or 「開けません」 does (11/8).
+            didApplyInitialTab = true
             guard !excludedCatCandidateIdentifiers.contains(identifier),
                   !isOutsideScopedSource else {
                 widgetOpenedPhotoIdentifier = nil

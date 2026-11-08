@@ -203,18 +203,27 @@ final class AppStoreScreenshotUITests: XCTestCase {
     @MainActor
     func testReviewPersonalPhotoLayout() {
         let app = XCUIApplication()
-        app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
+        // 「まどに届ける」 is the group まど's main action (10/31); the screen
+        // fixture supplies a まど client so the button is shown as shipped.
+        app.launchArguments = japaneseLaunchArguments
+            + ["--app-store-screenshot-fixture", "--group-window-screens-fixture"]
         app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "review-photo-layout"
         app.launch()
-        XCTAssertTrue(app.buttons["photo-browser-deliver"].waitForExistence(timeout: 15))
-        XCTAssertEqual(app.buttons["photo-browser-deliver"].label, "まどに届ける")
+        let deliver = app.buttons["photo-browser-deliver-group"]
+        XCTAssertTrue(deliver.waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertEqual(deliver.label, "まどに届ける")
         captureScreenshot(named: "personal-photo-deliver")
-        XCTAssertFalse(app.buttons["photo-memory-note-open"].exists)
+        // 10/21: お気に入り・メモ・共有 are under the photo; 「…」 holds the rest.
+        XCTAssertTrue(app.buttons["photo-browser-memory-saved-state"].exists)
+        XCTAssertTrue(app.buttons["photo-memory-note-open"].exists)
         app.buttons["photo-browser-related"].tap()
-        XCTAssertTrue(app.buttons["photo-memory-note-open"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label == %@", "関連する写真"))
+            .firstMatch.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertFalse(app.buttons["photo-browser-rediscovery-history"].exists)
         app.terminate()
         app.launchEnvironment.removeValue(forKey: "NEKO_MAINLINE_ACCEPTANCE_CASE")
+        // The cat filter appears once there are cats to filter by.
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
         app.launch()
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真"))
         // The cat menu only filters since 10/31; profiles live in 設定.
@@ -227,16 +236,27 @@ final class AppStoreScreenshotUITests: XCTestCase {
 
     @MainActor
     func testReviewStartupTab() {
+        // 11/8: a cold start opens the last tab the person tapped, except
+        // ツール (a task, not a place to come back to), which opens アルバム.
         let app = XCUIApplication()
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
         app.launch()
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真"))
+        XCTAssertTrue(app.buttons["photos-section-all"].waitForExistence(timeout: 10))
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.buttons["photos-section-all"].waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(app.navigationBars["写真"].exists)
+        captureScreenshot(named: "startup-restored-photos")
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
         XCTAssertTrue(app.buttons["tools-care-open"].waitForExistence(timeout: 10))
         captureScreenshot(named: "startup-last-tools")
         app.terminate()
         app.launch()
-        XCTAssertTrue(app.buttons["tools-care-open"].waitForExistence(timeout: 15), app.debugDescription)
-        captureScreenshot(named: "startup-restored-tools")
+        XCTAssertTrue(app.navigationBars["アルバム"].waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertFalse(app.buttons["tools-care-open"].exists)
+        XCTAssertFalse(app.buttons["photos-section-all"].exists)
+        captureScreenshot(named: "startup-tools-opens-albums")
         app.terminate()
     }
 
@@ -312,6 +332,8 @@ final class AppStoreScreenshotUITests: XCTestCase {
     func testReviewConsistentPhotosAndAlbums() {
         let app = XCUIApplication()
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
+        // The cat filter appears once there are cats to filter by (11/7).
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
         app.launch()
         XCTAssertTrue(app.buttons["main-tab-photos"].waitForExistence(timeout: 20))
         let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
@@ -319,6 +341,9 @@ final class AppStoreScreenshotUITests: XCTestCase {
             let deny = permission.buttons.matching(NSPredicate(format: "label IN %@", ["Don’t Allow", "Don't Allow", "許可しない"])).firstMatch
             if deny.exists { deny.tap() }
         }
+        // A cold start opens the last tab tapped (11/8): open アルバム for its shot.
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-memories", fallbackLabel: "アルバム"))
+        XCTAssertTrue(app.navigationBars["アルバム"].waitForExistence(timeout: 10))
         captureScreenshot(named: "PR3-albums")
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真"))
         let picker = app.buttons["photos-cat-picker"]
@@ -343,11 +368,10 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let continueButton = app.buttons["initial-scan-continue"]
         XCTAssertTrue(continueButton.waitForExistence(timeout: 20))
         continueButton.tap()
-        let close = app.buttons["first-run-photo-close"]
-        XCTAssertTrue(close.waitForExistence(timeout: 10))
-        close.tap()
+        // 10/22: 「あとで」 enters the 写真 tab directly; no first photo opens.
         let all = app.buttons["photos-section-all"]
-        XCTAssertTrue(all.waitForExistence(timeout: 10))
+        XCTAssertTrue(all.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(app.buttons["first-run-photo-close"].exists)
         XCTAssertTrue(all.isSelected)
         app.buttons["photos-section-notes"].tap()
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-memories", fallbackLabel: "アルバム"))
