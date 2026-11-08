@@ -21,11 +21,11 @@ struct AccountDeletionChoicesView: View {
             if let client = GroupWindowClientProvider.production {
                 Section {
                     NavigationLink { GroupIdentityDeletionView(client: client) } label: {
-                        Label("まどと家族の手帳のID", systemImage: "person.2.slash")
+                        Label("まどと家族の手帳から抜ける", systemImage: "person.2.slash")
                     }
                     .accessibilityIdentifier("account-deletion-group-identity")
                 } footer: {
-                    Text("まどと家族の手帳から抜け、届けた写真とIDを消します。")
+                    Text("届けた写真も消します。")
                 }
             }
             if ManagedPreservationConfiguration.current.isEnabled {
@@ -37,6 +37,13 @@ struct AccountDeletionChoicesView: View {
                 } footer: {
                     Text("自動保存で保存したものと、そのアカウントを消します。")
                 }
+            }
+            // 11/8 (29): said once in the deletion flow, here, not on each screen.
+            Section {
+                Link("サブスクリプションを管理", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
+                    .accessibilityIdentifier("account-deletion-subscriptions")
+            } footer: {
+                Text("Plusは、ここで消しても解約されません。解約はApp Storeのサブスクリプションからです。")
             }
         }
         .navigationTitle("アカウントとデータを消す")
@@ -304,8 +311,9 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings-family-notebook")
                     }
                     if GroupWindowClientProvider.ui != nil {
+                        // 11/8: 「表示しない」 was folded into ブロック; un-blocking stays here.
                         NavigationLink { GroupHiddenMembersView() } label: {
-                            Label("表示しない・ブロックした人", systemImage: "eye.slash")
+                            Label("ブロックした人", systemImage: "hand.raised")
                         }
                         .accessibilityIdentifier("settings-group-hidden-members")
                     }

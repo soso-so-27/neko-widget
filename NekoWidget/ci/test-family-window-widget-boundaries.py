@@ -3043,7 +3043,7 @@ class GroupWindowPausedTests(unittest.TestCase):
         self.assertIn("if let error = error as? GroupSubscriptionError {", presentation)
         self.assertIn("case .ownerPlusRequired:", presentation)
         self.assertIn("case .windowPaused:", presentation)
-        self.assertIn("これまでの写真・メンバー・ハートはそのままです。", presentation)
+        self.assertIn('static let pausedDetail = "これまでの写真はそのままで、新しい写真だけ届きません。"', presentation)
         self.assertIn("window.deliveryStatus == .paused", presentation)
         # Never says anything is deleted.
         for forbidden in ("削除", "消え"):
@@ -3051,12 +3051,18 @@ class GroupWindowPausedTests(unittest.TestCase):
 
         paused = section(view, "private func pausedSection(", "private func statusSection(")
         self.assertIn('Label("このまどは止まっています"', paused)
-        self.assertIn('Text("このまどを続ける")', paused)
-        self.assertIn("showsPlusOffer = true", paused)
-        # The one Plus screen, with the continue-window context only.
-        self.assertEqual(view.count("MembershipOfferSheet("), 1)
-        self.assertIn("MembershipOfferSheet(model: plusOfferModel(), context: .continueWindow)", view)
-        self.assertIn("plusOfferModel: { .preview() }", view)
+        # 11/8 (30): 「このまどを続ける」 is on the window's own card only.
+        self.assertNotIn("このまどを続ける\")", paused)
+        self.assertNotIn("showsPlusOffer", view)
+        self.assertNotIn("plusOfferModel", view)
+        self.assertEqual(view.count("MembershipOfferSheet("), 0)
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        card = section(window, "private func pausedCard(", "private func failedDeliveryRow(")
+        self.assertEqual(card.count('Text("このまどを続ける")'), 1)
+        self.assertIn("MembershipOfferSheet(model: .live(), context: .continueWindow)", window)
+        # The state, then one sentence: the owner's, or who can resume it.
+        self.assertEqual(card.count("GroupWindowPresentation.pausedDetail"), 1)
+        self.assertLess(card.index("if GroupWindowPresentation.isMyWindow(window) {"), card.index("GroupWindowPresentation.pausedDetail"))
         checks = source("ci/run-cheap-safety-checks.sh")
         self.assertIn("NekoWidget/Views/GroupWindowSetupView.swift", checks)
         self.assertIn("がPlusを続けると、また届くようになります。", paused)
@@ -3478,7 +3484,8 @@ class EvacuationCatCareTests(unittest.TestCase):
         self.assertIn('? (record?.microchipStatus == CatCareMicrochipStatus.none ? "入っていない" : empty) : chip))', summary)
         # One PDF: supplies, destinations and every cat, after a confirmation.
         book = section(store, "func bookRecords()", "private static func normalizedJPEG(")
-        self.assertIn("for cat in plan.cats { records.append(try shareRecord(", book)
+        self.assertIn("var record = try shareRecord(catID: cat.id, disclosure: disclosure)", book)
+        self.assertIn("record.showsReviewDate = false", book)
         self.assertIn("disclosure.medical = true", book)
         self.assertIn("static func createBook(", exporter)
         self.assertIn("all.count <= 120", exporter)
@@ -3510,7 +3517,8 @@ class EvacuationCatCareTests(unittest.TestCase):
                      "try reviewCountsFromCreation()", "try destinations()"):
             self.assertIn(name, verify)
         # The review counts from when the plan was made, and leads to the checklist.
-        self.assertIn("let start = createdAt ?? earliestKnownDate ?? now", plan)
+        self.assertIn("let made = createdAt ?? earliestKnownDate ?? now", plan)
+        self.assertIn("let start = max(made, lastReadyDate ?? made)", plan)
         self.assertIn("if createdAt == nil { createdAt = earliestKnownDate ?? now }", plan)
         update = section(store, "func update(_ change:", "func retrySave()")
         self.assertIn("next.stampCreation()", update)
@@ -3531,7 +3539,8 @@ class EvacuationCatCareTests(unittest.TestCase):
         packing = section(view, "private struct EvacuationPackingView", "private struct EvacuationGuidelineLink")
         self.assertIn(".task { store.followCatsAndMedicines() }", packing)
         self.assertIn('Text("そろっているもの  \\(confirmedCount) / \\(needed.count)")', packing)
-        self.assertIn('Text("最後にそろえた日：', packing)
+        self.assertIn('Text("最後に見直した日：', packing)
+        self.assertNotIn("最後にそろえた日", view)
         for old in ("今回、持ったもの", "チェックを始めた日"):
             self.assertNotIn(old, view)
         # The show screen is named for what it makes, one tap from the entry.
@@ -3541,7 +3550,7 @@ class EvacuationCatCareTests(unittest.TestCase):
         for old in ("できあがりを見る", '"プレビュー"', "1冊のPDFにまとめる", "新しい持ち物"):
             self.assertNotIn(old, view)
         self.assertIn('"evacuation-show-\\(cat.id.uuidString)"', view)
-        self.assertIn("EvacuationPreviewItem(record: try store.shareRecord(catID: cat.id, disclosure: EvacuationDisclosure()))", view)
+        self.assertIn("EvacuationPreviewItem(record: try store.shareRecord(catID: cat.id, disclosure: store.disclosure(for: cat.id)))", view)
         # The owner's paper copy has the photo with the owner; the button says it prints.
         self.assertIn("disclosure.withOwnerPhoto = true", section(store, "func bookRecords()", "private static func normalizedJPEG("))
         book = section(view, "@ViewBuilder private var bookButton", "private struct EvacuationSaveNotice")
@@ -3550,9 +3559,9 @@ class EvacuationCatCareTests(unittest.TestCase):
         # Each entry row shows one state.
         for state in ('個は置き場所が未記入"', '"写真なし："', '"行き先 \\(store.plan.destinations.count)件"'):
             self.assertIn(state, view)
-        # Places: why it cannot be pressed, optional source, the day kept unless the conditions change.
-        self.assertIn('Text("施設名と条件を書くと押せます")', view)
-        self.assertIn(".disabled(!place.canConfirm)", view)
+        # Places: optional source; the stored day (old plans) is kept unless the conditions change.
+        self.assertNotIn('Text("施設名と条件を書くと押せます")', view)
+        self.assertNotIn("受け入れの条件を確かめた", view)
         self.assertIn("![name, conditions].contains", plan)
         self.assertIn("if key == \\EvacuationDestination.conditions { checkedAt = nil }", plan)
         self.assertIn('TextField("どこで確かめたか（任意）"', view)
@@ -3628,9 +3637,6 @@ class EvacuationCatCareTests(unittest.TestCase):
                  "ToolCatCareSection(",
                  "profiles: profiles, folded: true)",
                  'ToolImportantInformation(text: "病歴・連絡先・ワクチンの証明・マイクロチップ番号は、必要な相手にだけ見せてください。")',
-                 'LabeledContent("内容を確かめた日"',
-                 'Button("内容を確かめた")',
-                 'footer: { Text("押した日が、避難メモに載ります。") }',
                  'Button("この子の避難用の記録を削除", role: .destructive)',
                  ".toolBottomBar {"]
         positions = [cat_page.index(needle) for needle in order]
@@ -3646,6 +3652,83 @@ class EvacuationCatCareTests(unittest.TestCase):
         notice = section(view, "private struct EvacuationSaveNotice: View {", "private struct EvacuationPackingView: View {")
         self.assertIn('.accessibilityIdentifier("evacuation-save-error")', notice)
         self.assertIn("if inBar { content } else { content.padding().frame(maxWidth: .infinity).background(.regularMaterial) }", notice)
+
+
+class OwnerDecisions1108Tests(unittest.TestCase):
+    """11/8 owner decisions: fewer things shown, nothing hidden or lost."""
+
+    def test_window_offers_block_and_report_only_and_keeps_old_hidden_people(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        settings = source("NekoWidget/Views/SettingsView.swift")
+        # D: the photo's 「…」 has ブロック and 通報 (App Review 1.2), no 「表示しない」.
+        for gone in ("の写真を表示しない", "showsHideConfirmation", "hideSender(", "の写真を表示しないようにしますか"):
+            self.assertNotIn(gone, window)
+        menu = section(window, 'ToolbarItem(placement: .topBarTrailing) {\n                    Menu {', '.accessibilityLabel("この写真の操作")')
+        self.assertIn('.accessibilityIdentifier("group-photo-report")', menu)
+        self.assertIn('.accessibilityIdentifier("group-photo-block")', menu)
+        block = section(window, "func blockSender(of entry: GroupWindowLocalPhotoStore.Entry) async {", "/// For a window this iPhone left")
+        self.assertIn("blocked: true)", block)
+        self.assertIn("await model.blockSender(of: blocked)", window)
+        # People hidden before stay hidden and readable: listed, shown again only on request.
+        self.assertIn("func hide(memberID: String, name: String, windowID: String, blocked: Bool = false)",
+                      source("NekoWidget/Services/GroupWindowLocalPhotoStore.swift"))
+        restore = section(window, "static func restore(_ member: GroupWindowLocalPhotoStore.HiddenMember, windowID: String)",
+                          "struct GroupIdentityDeletionView: View {")
+        self.assertIn("if member.blocked == true {", restore)
+        self.assertIn('"ブロックを解除" : "表示する"', window)
+        self.assertIn('Button(member.blocked == true ? "ブロックを解除" : "表示する") { restore(member) }', setup)
+        # The settings row and its screen are 「ブロックした人」; un-blocking stays there.
+        self.assertIn('Label("ブロックした人", systemImage: "hand.raised")', settings)
+        self.assertIn('NavigationLink { GroupHiddenMembersView() } label: {', settings)
+        self.assertIn('.navigationTitle("ブロックした人")', window)
+        for old in ("表示しない・ブロックした人",):
+            self.assertNotIn(old, window)
+            self.assertNotIn(old, settings)
+            self.assertNotIn(old, setup)
+        # 16: where to undo a block is said once.
+        self.assertEqual(window.count("から戻せます。"), 1)
+        self.assertIn('"困る写真は、写真の「…」から通報・ブロックできます。"', setup)
+
+    def test_window_notes_are_short(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        # 15: no parenthetical notes; 38: the internal notice is only in internal builds.
+        for gone in ("（7日後に削除）", "（位置情報は付きません）"):
+            self.assertNotIn(gone, window)
+        self.assertIn("#if DEBUG || INTERNAL_PRESENTATION\n        if SharingAPIConfiguration.current.isOwnerInternalReportsDisabled {", window)
+        for gone in ("知らない人なら断れます。", "参加したあとでも外せます。", "リンクから「参加する」を押した人は"):
+            self.assertNotIn(gone, setup)
+        # 17: the invitation's message and expiry are not drawn; the message still travels in the share sheet.
+        invitation = section(setup, "private func invitationSection(_ window: GroupWindow) -> some View {", "private func renewAndShareInvitation()")
+        self.assertNotIn('"有効期限"', invitation)
+        self.assertNotIn("GroupWindowPresentation.inviteMessage(", invitation)
+        sheet = section(setup, "private func invitationShareSheet(", "private func manageSection(")
+        self.assertIn("message: GroupWindowPresentation.inviteMessage(windowName:", sheet)
+
+    def test_evacuation_one_pdf_and_one_memo(self) -> None:
+        view = source("NekoWidget/Views/EvacuationPreparationView.swift")
+        store = source("NekoWidget/Services/EvacuationStore.swift")
+        # C: one 「印刷用のPDF」, drawn by createBook on the hub and on the show screen.
+        display = section(view, "private struct EvacuationDisplayView: View {", "private struct EvacuationActivitySheet")
+        self.assertIn('Label("印刷用のPDF", systemImage: "printer")', display)
+        self.assertIn('.accessibilityIdentifier("evacuation-share-pdf")', display)
+        self.assertIn("? EvacuationExporter.createBook([record])", display)
+        self.assertIn(": EvacuationExporter.create(record, printCopy: false))", display)
+        self.assertIn('Label("画像で渡す", systemImage: "photo")', display)
+        for gone in ("PDFで渡す", "PDFを作って渡す"):
+            self.assertNotIn(gone, view)
+        # 31: the hub's 「〇〇を見せる」 and the cat's 「避難メモを見せる」 open the same memo.
+        self.assertIn("store.shareRecord(catID: cat.id, disclosure: store.disclosure(for: cat.id))", view)
+        self.assertIn("store.shareRecord(catID: id, disclosure: disclosure.wrappedValue)", view)
+        self.assertIn("Binding(get: { store.disclosure(for: id) }, set: { store.disclosures[id] = $0 })", view)
+        self.assertNotIn("@State private var disclosure", view)
+        self.assertIn("@Published var disclosures: [UUID: EvacuationDisclosure] = [:]", store)
+        # C: old per-cat and per-place dates still decode (kept, not shown).
+        plan = source("NekoWidget/Services/EvacuationPlan.swift")
+        self.assertIn("    var reviewedAt: Date?\n", plan)
+        self.assertIn("    var checkedAt: Date?\n", plan)
+        self.assertIn("guard before.reviewedAt == nil else { return false }", store)
 
 
 class CareHandoffCatCareTests(unittest.TestCase):
@@ -4450,7 +4533,8 @@ class ReviewBRestTests(unittest.TestCase):
         self.assertNotIn("保存したコピーを削除すると", client)
         self.assertEqual(client.count("保存する写真やメモを減らすと、また保存できます。"), 3)
         window = source("NekoWidget/Views/GroupWindowView.swift")
-        self.assertIn("Plusの支払いは、ここでは止まりません。", window)
+        # 11/8 (29): said once, on 「アカウントとデータを消す」 (SettingsView).
+        self.assertNotIn("Plusの支払いは、ここでは止まりません。", window)
         offer = source("NekoWidget/Services/MembershipOfferModel.swift")
         prompt = section(offer, "struct PlusOfferPrompt: View {", "struct PlusSettingsSection")
         # The sheet sits on the whole prompt, after both branches.
@@ -5392,7 +5476,7 @@ class NavigationAfterActionTests(unittest.TestCase):
 
     def test_account_page_returns_to_auto_save_after_sign_out(self) -> None:
         view = source("NekoWidget/Views/ManagedPreservationView.swift")
-        self.assertIn("returnsWhenDone = isAccountEntry\n                                    coordinator.signOut()", view)
+        self.assertIn("returnsWhenDone = isAccountEntry\n                                coordinator.signOut()", view)
         self.assertEqual(view.count("returnsWhenDone = isAccountEntry; coordinator.dismissCompletedDeletion()"), 2)
         self.assertIn("if coordinator.errorMessage == nil, !coordinator.isSignedIn, !coordinator.hasUnsecuredMemo { dismiss() }", view)
 
@@ -5434,18 +5518,42 @@ class OnePlaceSettingsTests(unittest.TestCase):
         choices = section(settings, "struct AccountDeletionChoicesView: View {", "struct SettingsSheetHost")
         self.assertIn("GroupIdentityDeletionView(client: client)", choices)
         self.assertIn("ManagedPreservationView(deletesAccount: true)", choices)
-        self.assertEqual(choices.count("} footer: {"), 2, "each choice says what it deletes")
+        self.assertEqual(choices.count("} footer: {"), 3, "each choice says what it deletes, then the one Plus note")
+        # 11/8 (29): 「Plusは解約されません」 once in the deletion flow, here.
+        self.assertIn('"account-deletion-subscriptions"', choices)
+        self.assertIn("Plusは、ここで消しても解約されません。", choices)
+        self.assertNotIn("サブスクリプション", source("NekoWidget/Views/GroupWindowView.swift"))
+        # 11/8 (2): no ID or server in the words.
+        self.assertIn('Label("まどと家族の手帳から抜ける"', choices)
+        for word in ("のID", "とID", "サーバー"):
+            self.assertNotIn(word, choices)
         self.assertIn("GroupWindowClientProvider.production != nil || ManagedPreservationConfiguration.current.isEnabled", choices)
         saving = source("NekoWidget/Services/AppRecordPersistence.swift")
         self.assertNotIn("アカウント（削除・サインアウト）", saving)
         self.assertIn('NavigationLink("自動保存のアカウント") { ManagedPreservationView() }', saving)
         # The delete button and its confirmation exist only on the deletion entry.
         view = source("NekoWidget/Views/ManagedPreservationView.swift")
-        buttons = section(view, "if deletesAccount {", "} footer: {")
-        self.assertLess(buttons.index('"preservation-account-delete"'), buttons.index("} else {"))
-        self.assertGreater(buttons.index('Button("サインアウト", role: .destructive)'), buttons.index("} else {"))
         self.assertEqual(view.count('"preservation-account-delete"'), 1)
         self.assertIn('Button("アカウントと保存したコピーを削除", role: .destructive) { coordinator.deleteServiceAccount() }', view)
+        # 11/8 (28): the deletion entry is one sentence and the button, not the account screen again.
+        self.assertIn("if deletesAccount { deletionContent }", view)
+        deletion = section(view, "@ViewBuilder private var deletionContent: some View {", "private func accountDeletionSection(")
+        self.assertIn('"preservation-account-delete"', deletion)
+        self.assertEqual(deletion.count("Text("), 1)
+        for other in ("noticeContactSection", "retentionSection", "usageSection", "membershipSection", "サインアウト"):
+            self.assertNotIn(other, deletion)
+        sign_out = section(view, "if !deletesAccount && coordinator.isSignedIn && coordinator.accountDeletionState == nil {",
+                           "private var deletionContent")
+        self.assertIn('Button("サインアウト", role: .destructive)', sign_out)
+        self.assertIn('message: { Text("記録は残ります。") }', sign_out)
+        # 11/8 (29): the Plus note is not repeated on the account or deletion screens.
+        for old in ("Plusの解約は", "解約されない", "サブスクリプション"):
+            self.assertNotIn(old, view)
+        group = source("NekoWidget/Views/GroupWindowView.swift")
+        identity = section(group, "struct GroupIdentityDeletionView: View {", "private func refresh() async {")
+        self.assertIn('Text("まどと家族の手帳から抜けて、あなたが届けた写真・ひとこと・ハートを消します。")', identity)
+        for word in ("のID", "の ID", "IDを", "サーバー", "解約"):
+            self.assertNotIn(word, identity)
 
     def test_family_notebook_cats_and_leaving_have_one_place(self) -> None:
         notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
@@ -5715,22 +5823,23 @@ class ToolConsistency1108Tests(unittest.TestCase):
         self.assertNotIn("leadingTitle", self.showcase)
         self.assertIn("own: knownIdentifiers,", self.showcase)
 
-    def test_review_mark_says_what_it_does_and_is_not_mixed_with_delete(self) -> None:
+    def test_one_review_date_and_delete_alone_1108(self) -> None:
+        # 11/8 (C): the cat page has no date of its own; delete stays alone, last.
         page = section(self.evacuation, "private struct EvacuationCatView: View {", "private struct EvacuationCatEditor: View {")
         note = page.index('ToolImportantInformation(text: "病歴・連絡先')
-        mark = page.index('Button("内容を確かめた")')
-        footer = page.index('footer: { Text("押した日が、避難メモに載ります。") }')
         delete = page.index('Button("この子の避難用の記録を削除", role: .destructive)')
-        self.assertLess(note, mark)
-        self.assertLess(mark, footer)
-        self.assertLess(footer, delete)
-        # Each in its own section: a section closes between them.
-        self.assertIn("}\n                Section {", page[note:mark])
-        self.assertIn("}\n                Section {", page[footer:delete])
-        self.assertIn('.accessibilityIdentifier("evacuation-mark-reviewed")', page)
-        # The date it puts on the memo is really on the memo.
-        self.assertIn("reviewedAt: cat.reviewedAt,", source("NekoWidget/Services/EvacuationStore.swift"))
-        self.assertIn('"内容を確かめた日："', source("NekoWidget/Services/EvacuationExporter.swift"))
+        self.assertLess(note, delete)
+        self.assertIn("}\n                Section {", page[note:delete])
+        for gone in ('Button("内容を確かめた")', '"evacuation-mark-reviewed"', "内容を確かめた日", "押した日が、避難メモに載ります。"):
+            self.assertNotIn(gone, self.evacuation)
+        # The memo and the PDF carry the plan's one 「最後に見直した日」.
+        store = source("NekoWidget/Services/EvacuationStore.swift")
+        self.assertIn("fields: fields, reviewedAt: plan.lastReadyDate,", store)
+        self.assertNotIn("reviewedAt: cat.reviewedAt", store)
+        self.assertNotIn('"確かめた日："', store)
+        exporter = source("NekoWidget/Services/EvacuationExporter.swift")
+        self.assertIn('"最後に見直した日："', exporter)
+        self.assertNotIn("内容を確かめた日", exporter)
 
     def test_delete_sits_alone_at_the_bottom_in_plain_red(self) -> None:
         editor = section(self.care, "private struct CareCatEditor: View {", "private struct CarePhotoPicker: View {")

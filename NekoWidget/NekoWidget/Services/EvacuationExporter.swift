@@ -24,11 +24,13 @@ enum EvacuationExporter {
     private static let prefix = "neko-evacuation-"
     private typealias Page = (CGContext, String) -> Void
 
+    /// One memo. The app makes images with it; 「印刷用のPDF」 is createBook (11/8).
     static func create(_ record: EvacuationShareRecord, printCopy: Bool) throws -> Export {
         try write(pages(record, printCopy: printCopy), printCopy: printCopy, name: "cat-evacuation")
     }
 
-    /// One PDF to carry on paper: supplies, destinations and every cat, in order.
+    /// 「印刷用のPDF」, the one PDF (11/8): supplies, destinations and every cat
+    /// from the hub, or the one memo from its show screen, drawn the same way.
     static func createBook(_ records: [EvacuationShareRecord]) throws -> Export {
         var all: [Page] = []
         for record in records {
@@ -65,7 +67,7 @@ enum EvacuationExporter {
         }
         if record.showsReviewDate {
             if let reviewed = record.reviewedAt {
-                append("内容を確かめた日：" + reviewed.formatted(date: .numeric, time: .omitted), size: fontSize - 3)
+                append("最後に見直した日：" + reviewed.formatted(date: .numeric, time: .omitted), size: fontSize - 3)
             }
         }
         append("作った日：" + Date().formatted(date: .numeric, time: .omitted), size: fontSize - 3)

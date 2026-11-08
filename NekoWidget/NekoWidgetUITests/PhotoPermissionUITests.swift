@@ -2510,8 +2510,8 @@ final class SoloMemoriesUITests: XCTestCase {
         for _ in 0..<6 where !share.isHittable { app.swipeUp() }
         XCTAssertTrue(share.isHittable)
         share.tap()
-        // The show screen's 「PDFで渡す」 asks once before making the file.
-        let confirmation = app.buttons["PDFを作って渡す"]
+        // The show screen's 「印刷用のPDF」 asks once before making the file.
+        let confirmation = app.buttons["印刷用のPDFを作る"]
         let presented = confirmation.waitForExistence(timeout: 5)
         capture("evacuation-print-confirmation")
         XCTAssertTrue(presented, "The print confirmation must be presented before confirming export")
@@ -3223,7 +3223,9 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(button.isHittable, label)
             button.tap()
         }
-        XCTAssertTrue(app.buttons["preservation-membership-connect"].waitForExistence(timeout: 15))
+        // 11/8: the deletion screen is one sentence and the button, not the account screen.
+        XCTAssertTrue(app.buttons["preservation-account-delete"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["preservation-membership-connect"].exists)
         tap("preservation-account-delete")
         XCTAssertTrue(app.buttons["preservation-account-delete-confirm"].waitForExistence(timeout: 5))
         capture("preservation-account-delete-confirmation")

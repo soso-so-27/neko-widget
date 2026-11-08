@@ -561,15 +561,15 @@ final class GroupWindowScreenModel: ObservableObject {
         await updateHomeScreenPhoto()
     }
 
-    /// Stops showing this person's photos here. They are not told.
-    func hideSender(of entry: GroupWindowLocalPhotoStore.Entry, blocked: Bool = false) async {
-        await store.hide(memberID: entry.senderParticipantID, name: entry.senderDisplayName, windowID: windowID, blocked: blocked)
+    /// Blocks this person here; they are not told. 11/8: 「表示しない」 was
+    /// folded into ブロック, so the window offers only ブロック and 通報.
+    /// People hidden before stay hidden (their saved state is kept as it was).
+    func blockSender(of entry: GroupWindowLocalPhotoStore.Entry) async {
+        await store.hide(memberID: entry.senderParticipantID, name: entry.senderDisplayName, windowID: windowID, blocked: true)
         entries = await store.entries(windowID: windowID)
         await updateHomeScreenPhoto()
-        let name = GroupDisplayName.withSan(entry.senderDisplayName)
-        actionMessage = blocked
-            ? "\(name)をブロックしました。設定の「表示しない・ブロックした人」から戻せます。"
-            : "\(name)の写真を表示しないようにしました。設定の「表示しない・ブロックした人」から戻せます。"
+        // 11/8: where to undo it is said here only, once.
+        actionMessage = "\(GroupDisplayName.withSan(entry.senderDisplayName))をブロックしました。設定の「ブロックした人」から戻せます。"
     }
 
     /// For a window this iPhone left: deletes every kept photo.
@@ -1014,11 +1014,12 @@ struct GroupWindowScreen: View {
         VStack(alignment: .leading, spacing: 8) {
             Label("このまどは止まっています", systemImage: "pause.circle")
                 .font(.headline)
-            Text(GroupWindowPresentation.pausedDetail)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            // 11/8 (15): the state, one sentence, and the one button.
             if GroupWindowPresentation.isMyWindow(window) {
+                Text(GroupWindowPresentation.pausedDetail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 // 11/7 (W2): Plus opens from here; the members screen asked
                 // for the same press again. This iPhone has Plus: check it
                 // again right here, as elsewhere (11/7), not a restore sheet.
@@ -1541,7 +1542,6 @@ private struct GroupPhotoDetail: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showsFavoriteConfirmation = false
     @State private var showsRemoveConfirmation = false
-    @State private var showsHideConfirmation = false
     @State private var reportTarget: GroupWindowLocalPhotoStore.Entry?
     @State private var showsBlockConfirmation = false
     @State private var showsReportUnavailable = false
@@ -1599,10 +1599,8 @@ private struct GroupPhotoDetail: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         if let current, !current.isOwn {
-                            Button("\(GroupDisplayName.withSan(current.senderDisplayName))の写真を表示しない", systemImage: "eye.slash") {
-                                showsHideConfirmation = true
-                            }
-                            // Reporting and blocking are always offered (App Review 1.2).
+                            // Reporting and blocking are always offered (App Review 1.2);
+                            // 11/8: they are the only two (「表示しない」 is ブロック now).
                             // When the report service cannot be reached, reporting
                             // hands over to the support contact instead of vanishing.
                             if !safety.hasReported(current.id, in: model.windowID) {
@@ -1640,33 +1638,18 @@ private struct GroupPhotoDetail: View {
                 }
                 Button("戻る", role: .cancel) {}
             } message: {
-                Text("写真アプリに保存して、お気に入りに入れます（位置情報は付きません）。届けた人には知らせません。")
-            }
-            .confirmationDialog(current.map { "\(GroupDisplayName.withSan($0.senderDisplayName))の写真を表示しないようにしますか？" } ?? "",
-                                isPresented: $showsHideConfirmation, titleVisibility: .visible) {
-                Button("表示しない", role: .destructive) {
-                    guard let current else { return }
-                    Task {
-                        await model.hideSender(of: current)
-                        if model.entries.isEmpty { dismiss() } else if let first = model.entries.first { selection = first.id }
-                    }
-                }
-                Button("戻る", role: .cancel) {}
-            } message: {
-                Text("この人から届いた写真が、このまどで見えなくなります。相手には知らせず、設定の「表示しない・ブロックした人」から戻せます。")
+                Text("写真アプリに保存して、お気に入りに入れます。届けた人には知らせません。")
             }
             .alert("いまは通報を受け付けられません", isPresented: $showsReportUnavailable) {
                 if let url = SharingAPIConfiguration.current.supportURL { Link("問い合わせる", destination: url) }
                 Button("閉じる", role: .cancel) {}
             } message: {
-                Text(SharingAPIConfiguration.current.isOwnerInternalReportsDisabled
-                     ? "この内部版では通報の受付を停止しています。"
-                     : "通信を確かめて、もう一度お試しください。急ぐときは問い合わせから連絡してください。")
+                Text(GroupReportUnavailableText.message)
             }
             .modifier(GroupPhotoSafetyDialogs(windowID: model.windowID, current: current,
                                               reportTarget: $reportTarget,
                                               showsBlockConfirmation: $showsBlockConfirmation) { blocked in
-                await model.hideSender(of: blocked, blocked: true)
+                await model.blockSender(of: blocked)
                 if model.entries.isEmpty { dismiss() } else if let first = model.entries.first { selection = first.id }
             })
             .confirmationDialog("この写真を、自分のまどから消しますか？",
@@ -2603,7 +2586,7 @@ private struct KnownWindowCard: View {
     }
 }
 
-// MARK: - People hidden on this iPhone (設定)
+// MARK: - People blocked on this iPhone (設定「ブロックした人」)
 
 struct GroupHiddenMembersView: View {
     @State private var windows: [GroupWindowLocalPhotoStore.KnownWindow] = []
@@ -2649,14 +2632,15 @@ struct GroupHiddenMembersView: View {
         }
         .overlay {
             if loaded && hidden.isEmpty {
-                ContentUnavailableView("表示しない・ブロックした人はいません", systemImage: "eye.slash",
-                    description: Text("まどの写真の「…」から、その人の写真を表示しないようにしたり、ブロックしたりできます。"))
+                ContentUnavailableView("ブロックした人はいません", systemImage: "hand.raised")
             }
         }
         .alert("まど", isPresented: Binding(get: { safety.failure != nil }, set: { if !$0 { safety.failure = nil } })) {
             Button("閉じる", role: .cancel) {}
         } message: { Text(safety.failure?.message ?? "") }
-        .navigationTitle("表示しない・ブロックした人")
+        // 11/8: 「表示しない」 is ブロック now. People hidden before 11/8 are
+        // still listed here, still hidden, and shown again only from here.
+        .navigationTitle("ブロックした人")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             windows = await GroupWindowLocalPhotoStore.shared.knownWindows()
@@ -2689,7 +2673,7 @@ struct GroupHiddenMembersView: View {
     }
 }
 
-/// 設定「まどと家族の手帳のIDを消す」(A1): one state, one sentence, one button.
+/// 設定「まどと家族の手帳から抜ける」(A1): one state, one sentence, one button.
 /// Named for its weight (11/7): it ends every window and the family notebook,
 /// so it is not taken for leaving only the notebook (that is in the notebook).
 struct GroupIdentityDeletionView: View {
@@ -2715,13 +2699,11 @@ struct GroupIdentityDeletionView: View {
                         .frame(minHeight: 44)
                         .disabled(working)
                 } else {
-                    Text("参加しているまどと家族の手帳から抜け、あなたが届けた写真・ひとこと・ハートと、まどの ID をサーバーから消します。")
-                    // Leaving is not cancelling: Apple keeps billing until the
-                    // subscription itself is cancelled (11/6).
-                    Text("Plusの支払いは、ここでは止まりません。止めるときは、iPhoneの「設定」→ Apple アカウント →「サブスクリプション」から解約してください。")
-                        .font(.footnote).foregroundStyle(.secondary)
+                    // 11/8 (28): one sentence and the button. Plus is not cancelled
+                    // here; that is said once, on 「アカウントとデータを消す」 (29).
+                    Text("まどと家族の手帳から抜けて、あなたが届けた写真・ひとこと・ハートを消します。")
                     Button(role: .destructive) { confirms = true } label: {
-                        WorkingLabel(title: "まどと家族の手帳のIDを消す", workingTitle: "消しています…", working: working)
+                        WorkingLabel(title: "まどと家族の手帳から抜ける", workingTitle: "抜けています…", working: working)
                     }
                         .frame(minHeight: 44)
                         .disabled(working || !loaded)
@@ -2737,14 +2719,14 @@ struct GroupIdentityDeletionView: View {
                 }
             }
         }
-        .confirmationDialog("まどと家族の手帳のIDを消しますか？", isPresented: $confirms, titleVisibility: .visible) {
-            Button("消す", role: .destructive) { Task { await delete() } }
+        .confirmationDialog("まどと家族の手帳から抜けますか？", isPresented: $confirms, titleVisibility: .visible) {
+            Button("抜ける", role: .destructive) { Task { await delete() } }
             Button("戻る", role: .cancel) {}
         } message: {
             // 11/7: say that this cannot be undone, as the auto-save deletion does.
             Text("元に戻せません。あなたが作ったまども終わりになります。メンバーの iPhone に届いた写真は残ります。")
         }
-        .navigationTitle("まどと家族の手帳のIDを消す")
+        .navigationTitle("まどと家族の手帳から抜ける")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             record = try? await client.identityDeletion()
@@ -2960,7 +2942,7 @@ struct GroupReportSheet: View {
                     } header: {
                         Text("理由")
                     } footer: {
-                        Text("運営に送るのはこの写真1枚だけで、ひとことは送りません（7日後に削除）。送ると、この写真はこのiPhoneでは見えなくなります。")
+                        Text("運営に送るのはこの写真1枚だけで、ひとことは送りません。送ると、この写真はこのiPhoneでは見えなくなります。")
                     }
                     if let record, record.progress == .retryable {
                         Section {
@@ -3121,6 +3103,19 @@ private struct GroupReportReceiptRow: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("group-report-receipt-number")
+    }
+}
+
+/// 「いまは通報を受け付けられません」. The internal build's own sentence is
+/// compiled only into internal and DEBUG builds (11/8, 38).
+enum GroupReportUnavailableText {
+    static var message: String {
+#if DEBUG || INTERNAL_PRESENTATION
+        if SharingAPIConfiguration.current.isOwnerInternalReportsDisabled {
+            return "この内部版では通報の受付を停止しています。"
+        }
+#endif
+        return "通信を確かめて、もう一度お試しください。急ぐときは問い合わせから連絡してください。"
     }
 }
 

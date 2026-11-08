@@ -145,7 +145,8 @@ struct EvacuationPreparationView: View {
 
     private func show(_ cat: EvacuationCat) {
         do {
-            showing = EvacuationPreviewItem(record: try store.shareRecord(catID: cat.id, disclosure: EvacuationDisclosure()))
+            // 11/8 (31): the same memo as the cat's 「避難メモを見せる」.
+            showing = EvacuationPreviewItem(record: try store.shareRecord(catID: cat.id, disclosure: store.disclosure(for: cat.id)))
             showError = nil
         } catch {
             showError = (error as? EvacuationStorageError)?.errorDescription ?? "表示できませんでした。もう一度お試しください。"
@@ -290,8 +291,10 @@ private struct EvacuationPackingView: View {
                 Text("そろっているもの  \(confirmedCount) / \(needed.count)")
                     .accessibilityIdentifier("evacuation-packing-count")
             } footer: {
+                // 11/8: the one date of this tool (the half-year review counts from it).
                 if let date = store.plan.lastReadyDate {
-                    Text("最後にそろえた日：\(date.formatted(date: .numeric, time: .omitted))")
+                    Text("最後に見直した日：\(date.formatted(date: .numeric, time: .omitted))")
+                        .accessibilityIdentifier("evacuation-last-reviewed")
                 }
             }
             Section {
@@ -587,7 +590,11 @@ private struct EvacuationCatView: View {
     var onDeleted: (() -> Void)? = nil
     /// Redraws when 「この子のこと」 changes, for example after 「この子のことを直す」.
     @ObservedObject private var catCare = CatCareStore.shared
-    @State private var disclosure = EvacuationDisclosure()
+    /// What this cat's memo shows, kept on the store so the hub's
+    /// 「〇〇を見せる」 opens the same memo (11/8, 31).
+    private var disclosure: Binding<EvacuationDisclosure> {
+        Binding(get: { store.disclosure(for: id) }, set: { store.disclosures[id] = $0 })
+    }
     @State private var preview: EvacuationPreviewItem?
     @State private var error: String?
     @State private var deleteRequested = false
@@ -622,12 +629,12 @@ private struct EvacuationCatView: View {
                         .accessibilityIdentifier("evacuation-cat-edit")
                 } header: { ToolStepHeader(number: 1, title: "見分ける写真", state: states[0]) }
                 Section {
-                    Toggle("いつものごはん", isOn: $disclosure.food)
-                    Toggle("接し方・苦手なこと", isOn: $disclosure.handling)
-                    Toggle("病歴・薬・アレルギー", isOn: $disclosure.medical).accessibilityIdentifier("evacuation-disclose-medical")
-                    Toggle("飼い主の連絡先", isOn: $disclosure.contact).accessibilityIdentifier("evacuation-disclose-contact")
-                    if cat.photos["withOwner"] != nil { Toggle("飼い主と一緒の写真", isOn: $disclosure.withOwnerPhoto) }
-                    Toggle("ワクチン・マイクロチップ番号", isOn: $disclosure.catCare)
+                    Toggle("いつものごはん", isOn: disclosure.food)
+                    Toggle("接し方・苦手なこと", isOn: disclosure.handling)
+                    Toggle("病歴・薬・アレルギー", isOn: disclosure.medical).accessibilityIdentifier("evacuation-disclose-medical")
+                    Toggle("飼い主の連絡先", isOn: disclosure.contact).accessibilityIdentifier("evacuation-disclose-contact")
+                    if cat.photos["withOwner"] != nil { Toggle("飼い主と一緒の写真", isOn: disclosure.withOwnerPhoto) }
+                    Toggle("ワクチン・マイクロチップ番号", isOn: disclosure.catCare)
                         .accessibilityIdentifier("evacuation-disclose-cat-care")
                 } header: { ToolStepHeader(number: 2, title: "見せる内容", state: states[1]) }
                 // Read from 「この子のこと」, folded right after the steps.
@@ -641,24 +648,11 @@ private struct EvacuationCatView: View {
                         ?? .toolCat(id: cat.toolCatID ?? cat.id, name: cat.name),
                     identifier: "evacuation-cat-care-fields", editIdentifier: "evacuation-open-cat-care",
                     profiles: profiles, folded: true)
-                // Not steps (11/8 型): the note, then the review mark on its own
-                // with one line on what it does, then delete alone, last.
+                // Not steps (11/8 型): the note, then delete alone, last. The memo
+                // carries the plan's one 「最後に見直した日」 (11/8), not a date per cat.
                 Section {
                     ToolImportantInformation(text: "病歴・連絡先・ワクチンの証明・マイクロチップ番号は、必要な相手にだけ見せてください。")
                 }
-                Section {
-                    LabeledContent("内容を確かめた日", value: cat.reviewedAt?.formatted(date: .numeric, time: .omitted) ?? "まだ")
-                        .accessibilityIdentifier("evacuation-reviewed-at")
-                    Button("内容を確かめた") {
-                        store.update { plan in
-                            if let index = plan.cats.firstIndex(where: { $0.id == id }) {
-                                plan.cats[index].reviewedAt = Date()
-                                plan.cats[index].prefilledFields = []
-                            }
-                        }
-                    }
-                    .accessibilityIdentifier("evacuation-mark-reviewed")
-                } footer: { Text("押した日が、避難メモに載ります。") }
                 Section {
                     Button("この子の避難用の記録を削除", role: .destructive) { deleteRequested = true }
                 }
@@ -673,7 +667,7 @@ private struct EvacuationCatView: View {
                     if let error { Text(error).font(.footnote).foregroundStyle(.red) }
                 }) {
                     Button {
-                        do { preview = EvacuationPreviewItem(record: try store.shareRecord(catID: id, disclosure: disclosure)); error = nil }
+                        do { preview = EvacuationPreviewItem(record: try store.shareRecord(catID: id, disclosure: disclosure.wrappedValue)); error = nil }
                         catch {
                             self.error = (error as? EvacuationStorageError)?.errorDescription
                                 ?? "表示できませんでした。もう一度お試しください。"
@@ -862,7 +856,7 @@ private struct EvacuationDisplayView: View {
                     }
                 }
                 if let reviewed = record.reviewedAt {
-                    Text("内容を確かめた日：" + reviewed.formatted(date: .numeric, time: .omitted))
+                    Text("最後に見直した日：" + reviewed.formatted(date: .numeric, time: .omitted))
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 if let error { Text(error).foregroundStyle(.red) }
@@ -880,7 +874,7 @@ private struct EvacuationDisplayView: View {
         .accessibilityIdentifier("evacuation-share-preview")
         .disabled(busy)
         .confirmationDialog("この内容で作りますか？", isPresented: $confirmShare, titleVisibility: .visible) {
-            Button(wantsPrint == true ? "PDFを作って渡す" : "画像を作って渡す") { Task { await createExport() } }
+            Button(wantsPrint == true ? "印刷用のPDFを作る" : "画像を作って渡す") { Task { await createExport() } }
         } message: {
             Text(record.includesPrivateInformation
                  ? "選んだ病歴や連絡先が載るので、渡す相手を確かめてください。"
@@ -895,9 +889,9 @@ private struct EvacuationDisplayView: View {
         Button { wantsPrint = true; confirmShare = true } label: {
             Group {
                 if busy && wantsPrint == true {
-                    WorkingLabel(title: "PDFで渡す", workingTitle: "作っています…", working: true)
+                    WorkingLabel(title: "印刷用のPDF", workingTitle: "作っています…", working: true)
                 } else {
-                    Label("PDFで渡す", systemImage: "doc")
+                    Label("印刷用のPDF", systemImage: "printer")
                 }
             }
             .frame(maxWidth: .infinity, minHeight: 44)
@@ -923,7 +917,11 @@ private struct EvacuationDisplayView: View {
         defer { busy = false }
         try? await Task.sleep(for: .milliseconds(100))
         do {
-            let made = try EvacuationExporter.create(record, printCopy: wantsPrint == true)
+            // 11/8: one PDF. Its print copy is 「印刷用のPDF」, drawn as the hub's,
+            // with what this memo shows; images stay for showing on a screen.
+            let made = try (wantsPrint == true
+                ? EvacuationExporter.createBook([record])
+                : EvacuationExporter.create(record, printCopy: false))
             retainedDirectory = made.directory; export = made; error = nil
         } catch { self.error = "作れませんでした。空き容量や記録の長さを確かめてください。" }
     }
@@ -958,8 +956,6 @@ private struct EvacuationDestinationsView: View {
                         VStack(alignment: .leading, spacing: 7) {
                             Text(place.name.isEmpty ? "行き先の候補" : place.name).font(.headline)
                             if let kind = place.kind { Text(kind.title).font(.subheadline).foregroundStyle(.secondary) }
-                            Text(place.checkedAt.map { "受け入れの条件を確かめた日：" + $0.formatted(date: .numeric, time: .omitted) } ?? "受け入れの条件はまだ確かめていません")
-                                .font(.subheadline).foregroundStyle(.secondary)
                             if !place.conditions.isEmpty { Text(place.conditions).font(.subheadline) }
                         }
                     }
@@ -1018,7 +1014,7 @@ private struct EvacuationDestinationEditor: View {
     var body: some View {
         Form {
             if let place {
-                Section("行き先の候補") {
+                Section {
                     TextField("施設名", text: text(\.name))
                     Picker("種類", selection: Binding(get: { place.kind }, set: { new in change { $0.kind = new } })) {
                         Text("選んでいない").tag(Optional<EvacuationDestination.Kind>.none)
@@ -1034,23 +1030,9 @@ private struct EvacuationDestinationEditor: View {
                         .textContentType(.telephoneNumber)
                     TextField("確かめた受け入れの条件", text: text(\.conditions), axis: .vertical)
                     TextField("どこで確かめたか（任意）", text: text(\.source), axis: .vertical)
-                }
-                Section {
-                    if let date = place.checkedAt {
-                        DatePicker("確かめた日", selection: Binding(get: { date }, set: { new in
-                            change { $0.checkedAt = new }
-                        }), in: ...Date(), displayedComponents: .date)
-                    } else {
-                        Text("受け入れの条件は、まだ確かめていません").foregroundStyle(.secondary)
-                        Button("受け入れの条件を確かめた") { change { $0.checkedAt = Date() } }
-                            .disabled(!place.canConfirm)
-                            .accessibilityIdentifier("evacuation-destination-confirm")
-                        if !place.canConfirm {
-                            // 11/8: say why it cannot be pressed yet.
-                            Text("施設名と条件を書くと押せます").font(.footnote).foregroundStyle(.secondary)
-                        }
-                    }
-                } footer: { Text("避難するときの空きは、そのときに施設に確かめてください。") }
+                // 11/8: no date per place; the tool has one 「最後に見直した日」.
+                } header: { Text("行き先の候補") }
+                footer: { Text("避難するときの空きは、そのときに施設に確かめてください。") }
                 Section { Button("この候補を削除", role: .destructive) { deleteRequested = true } }
             }
         }.navigationTitle("候補を編集").navigationBarTitleDisplayMode(.inline)

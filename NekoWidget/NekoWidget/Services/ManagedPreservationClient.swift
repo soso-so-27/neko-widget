@@ -87,6 +87,15 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
         }
     }
 
+    /// The internal pilot's registration words (11/8, 37): internal and DEBUG builds only.
+    private static func pilotRegistrationText(_ reference: String) -> String {
+#if DEBUG || INTERNAL_PRESENTATION
+        return "内部テストの登録確認待ちです。登録番号：\(reference)"
+#else
+        return "いまは新しく保存できません。保存した記録は開けます。"
+#endif
+    }
+
     var errorDescription: String? {
         switch self {
         case .toolPartReferenced: "この写真はほかのコピーでも使われているため、残しておきます。"
@@ -105,7 +114,7 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
         case .appleAuthorizationFailed(let code): code == 1001
             ? "Appleでのサインインを途中でやめました。"
             : "Appleでサインインできませんでした。もう一度お試しください。"
-        case .pilotRegistrationPending(let reference): "内部テストの登録確認待ちです。登録番号：\(reference)"
+        case .pilotRegistrationPending(let reference): Self.pilotRegistrationText(reference)
         case .staleSession: "サインインの状況が変わりました。記録を読み込み直してください。"
         case .secureStorage: "サインインの情報を保存できませんでした。iPhoneのロックを解除してから、もう一度お試しください。"
         case .invalidRecord: "この写真かメモは保存できません。大きさや形式を確かめてください。"

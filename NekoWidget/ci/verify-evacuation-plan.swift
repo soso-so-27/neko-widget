@@ -28,7 +28,7 @@ struct VerifyEvacuationPlan {
         let json = """
         {"schemaVersion":1,
          "cats":[{"id":"\(cat)","name":"むぎ","features":"","food":"","handling":"",
-                  "medicalStatus":"unknown","medicalDetails":"","photos":{},"updatedAt":800000000}],
+                  "medicalStatus":"unknown","medicalDetails":"","photos":{},"updatedAt":800000000,"reviewedAt":805000000}],
          "supplies":[{"id":"\(supply)","title":"キャリー","quantity":"1個","location":"玄関","isNeeded":true}],
          "destinations":[{"id":"\(place)","name":"第一小学校","conditions":"ケージ持参","source":"",
                           "telephone":"03-1234-5678","checkedAt":790000000}],
@@ -39,6 +39,9 @@ struct VerifyEvacuationPlan {
         try check(plan.createdAt == nil && plan.lastCheckedAt == nil, "old plan has no new dates")
         try check(plan.destinations[0].address == nil && plan.destinations[0].kind == nil, "old place has no address or kind")
         try check(plan.lastReadyDate == Date(timeIntervalSinceReferenceDate: 810_000_000), "old check day is shown")
+        // 11/8: the per-cat and per-place dates are no longer shown, but still read.
+        try check(plan.cats[0].reviewedAt == Date(timeIntervalSinceReferenceDate: 805_000_000), "old cat date still decodes")
+        try check(plan.destinations[0].checkedAt == Date(timeIntervalSinceReferenceDate: 790_000_000), "old place date still decodes")
         try check(plan.earliestKnownDate == Date(timeIntervalSinceReferenceDate: 790_000_000), "earliest known date")
         var stamped = plan
         stamped.stampCreation(now: t0)
@@ -133,6 +136,16 @@ struct VerifyEvacuationPlan {
         try check(plan.reviewIsDue(now: closed.addingTimeInterval(halfYear + 60), dismissedAt: closed), "again later")
         let empty = EvacuationPlan()
         try check(!empty.reviewIsDue(now: t0, dismissedAt: never), "a plan with no dates counts from now")
+        // 11/8: one date. A later 「最後に見直した日」 moves the next review.
+        var reviewed = EvacuationPlan()
+        reviewed.createdAt = t0
+        reviewed.lastCheckedAt = t0.addingTimeInterval(halfYear)
+        try check(!reviewed.reviewIsDue(now: t0.addingTimeInterval(halfYear + 60), dismissedAt: never), "counts from the last review")
+        try check(reviewed.reviewIsDue(now: t0.addingTimeInterval(2 * halfYear + 60), dismissedAt: never), "half a year after the last review")
+        var earlier = EvacuationPlan()
+        earlier.createdAt = t0
+        earlier.checkStartedAt = t0.addingTimeInterval(-halfYear)
+        try check(earlier.reviewIsDue(now: t0.addingTimeInterval(halfYear + 60), dismissedAt: never), "an older day never delays it past creation")
     }
 
     static func destinations() throws {
