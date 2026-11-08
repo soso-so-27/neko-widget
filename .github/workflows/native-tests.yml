@@ -28,6 +28,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       ui: ${{ steps.scope.outputs.ui }}
+      matrix: ${{ steps.scope.outputs.matrix }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -36,16 +37,23 @@ jobs:
       - id: scope
         env:
           EVENT: ${{ github.event_name }}
+          REQUESTED_ROUTE: ${{ inputs.route }}
+          TEST_FILTER: ${{ inputs.test_filter }}
           BASE: ${{ github.event.before || github.event.pull_request.base.sha }}
         shell: bash
         run: |
           python3 - <<'PY'
-          import os, re, subprocess
+          import os, re, subprocess, json
           base = os.environ.get('BASE', '')
           always = os.environ['EVENT'] in ('schedule', 'workflow_dispatch') or not base.strip('0')
           paths = [] if always else subprocess.check_output(['git','diff','--name-only',base,'HEAD'],text=True).splitlines()
           ui = always or any(re.search(r'(CareHandoff|Evacuation|Veterinary|LostCat|Showcase|Tool|CatCare|CatHousehold|PhotoNote|NekoWidgetTests|NekoWidgetUITests|run-native|native-ui|native-tests|project\.pbxproj|\.xcscheme)', p) for p in paths)
           with open(os.environ['GITHUB_OUTPUT'],'a') as f: f.write('ui=' + str(ui).lower() + '\n')
+          routes = ['standard','empty','ipad','release','widget','movie']
+          requested = os.environ.get('REQUESTED_ROUTE', '')
+          if os.environ['EVENT'] == 'workflow_dispatch' and requested != 'all': routes = [requested]
+          matrix = [{'route':r,'shard':i} for r in routes for i in (range(4) if r == 'standard' and not os.environ.get('TEST_FILTER') else [0])]
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f: f.write('matrix=' + json.dumps({'include':matrix}) + '\n')
           PY
   output:
     name: App-hosted output XCTest
@@ -75,17 +83,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 2
-      matrix:
-        include:
-          - {route: standard, shard: 0}
-          - {route: standard, shard: 1}
-          - {route: standard, shard: 2}
-          - {route: standard, shard: 3}
-          - {route: empty, shard: 0}
-          - {route: ipad, shard: 0}
-          - {route: release, shard: 0}
-          - {route: widget, shard: 0}
-          - {route: movie, shard: 0}
+      matrix: ${{ fromJSON(needs.scope.outputs.matrix) }}
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
