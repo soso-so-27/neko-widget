@@ -297,6 +297,12 @@ final class LostCatDraftStore: ObservableObject {
     private func persistDraft(_ draft: LostCatDraft, for key: String, allowingNewFiles: Set<String> = []) throws {
         try AppRecordDataset.requireWritable(manifest)
         try requireReadableManifest(allowingNewFiles: allowingNewFiles)
+        // Opening a draft or saving it again unchanged writes nothing and
+        // wakes nothing: only the time would differ (11/8).
+        if var unchanged = drafts[key] {
+            unchanged.updatedAt = draft.updatedAt
+            if unchanged == draft { return }
+        }
         var next = drafts
         var value = draft
         value.updatedAt = Date()
@@ -371,9 +377,16 @@ final class LostCatDraftStore: ObservableObject {
     }
 
     func image(_ name: String?) -> UIImage? {
+        guard let url = imageURL(name) else { return nil }
+        return UIImage(contentsOfFile: url.path)
+    }
+
+    /// Where a kept copy is, for the small picture on screen. Outputs read the
+    /// full photo through `image(_:)`.
+    func imageURL(_ name: String?) -> URL? {
         guard let name, name == URL(fileURLWithPath: name).lastPathComponent,
               name.hasSuffix(".jpg") else { return nil }
-        return UIImage(contentsOfFile: directory.appendingPathComponent(name).path)
+        return directory.appendingPathComponent(name)
     }
 
     func delete(for key: String) throws {

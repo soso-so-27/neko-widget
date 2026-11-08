@@ -3174,7 +3174,7 @@ class LostCatToolReview1108Tests(unittest.TestCase):
 
     def test_reporting_lives_in_step_two_of_the_guide(self) -> None:
         view = source("NekoWidget/Views/CatPreparednessView.swift")
-        form = section(view, "struct LostCatDraftView: View {", "private var catSection: some View {")
+        form = section(view, "struct LostCatDraftView: View {", "private func catSection(_ issues: [String: String]) -> some View {")
         self.assertNotIn("            reportSection\n", form)
         self.assertIn("LostCatGuideView { reportSection }", form)
         guide = section(view, "private struct LostCatGuideView<Report: View>: View {", "#if DEBUG")
@@ -3206,12 +3206,12 @@ class LostCatToolReview1108Tests(unittest.TestCase):
 
     def test_input_page_has_the_shared_tool_shape(self) -> None:
         view = source("NekoWidget/Views/CatPreparednessView.swift")
-        form = section(view, "struct LostCatDraftView: View {", "private var catSection: some View {")
+        form = section(view, "struct LostCatDraftView: View {", "private func catSection(_ issues: [String: String]) -> some View {")
         # Top to bottom: purpose, the guide, steps 1-3, then errors last.
         order = ['ToolPurpose(text: "探すためのチラシを作ります。")',
                  'Label("先にすること：探す・届け出る", systemImage: "info.circle")',
-                 "catSection.disabled(!loaded)", "incidentSection.disabled(!loaded)",
-                 "contactSection.disabled(!loaded)", 'Text("前に入れた内容を読み込めませんでした。")',
+                 "catSection(issues).disabled(!loaded)", "incidentSection(issues).disabled(!loaded)",
+                 "contactSection(issues).disabled(!loaded)", 'Text("前に入れた内容を読み込めませんでした。")',
                  'Label("保存できませんでした"']
         positions = [form.index(text) for text in order]
         self.assertEqual(positions, sorted(positions))
@@ -5099,6 +5099,115 @@ class OnePlaceSettingsTests(unittest.TestCase):
         self.assertEqual(offer.count('"自動保存も始めますか？"'), 1, "one prompt for every entry")
         root = source("NekoWidget/App/AppRootView.swift")
         self.assertIn(".autoSaveOfferAfterOnboarding(ended: !OnboardingPresentationPersistence.requiresPresentation(", root)
+
+
+class ToolOpenWasteTests(unittest.TestCase):
+    """11/8: opening a tool does no needless work while it is scrolled."""
+
+    def test_lost_cat_opening_saves_nothing_unchanged(self) -> None:
+        store = source("NekoWidget/Services/CatPreparednessStore.swift")
+        persist = section(store, "private func persistDraft(_", "/// Text-only refresh")
+        # The checks still come first; an unchanged draft then writes and wakes nothing.
+        skip = persist.index("if var unchanged = drafts[key] {")
+        self.assertLess(persist.index("try AppRecordDataset.requireWritable(manifest)"), skip)
+        self.assertLess(persist.index("try requireReadableManifest(allowingNewFiles: allowingNewFiles)"), skip)
+        self.assertIn("unchanged.updatedAt = draft.updatedAt\n            if unchanged == draft { return }", persist)
+        early = persist.index("if unchanged == draft { return }")
+        for effect in ("value.updatedAt = Date()", "write(to: manifest", "AppRecordDataset.committed(manifest)"):
+            self.assertLess(early, persist.index(effect), effect)
+        view = source("NekoWidget/Views/CatPreparednessView.swift")
+        editor = section(view, "struct LostCatDraftView: View {", "private struct LostCatPhotoChoiceView")
+        self.assertIn("@State private var savedDraft: LostCatDraft?", editor)
+        # Editing still saves on its own, 350 ms later.
+        on_change = section(editor, ".onChange(of: draft) { _, _ in", ".onDisappear")
+        self.assertIn("guard loaded, draft != savedDraft else { return }", on_change)
+        self.assertIn("try? await Task.sleep(for: .milliseconds(350))", on_change)
+        self.assertIn("saveNow()", on_change)
+        save = section(editor, "private func saveNow() {", "private func load(_ identity:")
+        self.assertIn("if !saveError, draft == savedDraft { return }", save)
+        self.assertIn("try store.save(draft, for: key); savedDraft = draft; saveError = false", save)
+        load = section(editor, "private func load(_ identity:", "private func switchTo(")
+        self.assertLess(load.index("savedDraft = saved"), load.index("draft = saved\n"))
+        commit = section(editor, "private func commitPhoto(", "private func removeSecondPhoto(")
+        self.assertIn("savedDraft = draft", commit)
+        remove = section(editor, "private func removeSecondPhoto(", "private func cancelPhotoLoad(")
+        self.assertIn("savedDraft = draft", remove)
+
+    def test_lost_cat_flyer_issues_are_measured_once_per_drawing(self) -> None:
+        view = source("NekoWidget/Views/CatPreparednessView.swift")
+        editor = section(view, "struct LostCatDraftView: View {", "private struct LostCatPhotoChoiceView")
+        self.assertEqual(editor.count("flyerIssues"), 2, "declared once, read once in body")
+        body = section(editor, "    var body: some View {", "        Form {")
+        self.assertIn("let issues = flyerIssues", body)
+        self.assertNotIn("private var issues:", editor)
+        self.assertIn("LostCatFlyerRenderer.validationIssues(publicDraft)",
+                      section(editor, "private var flyerIssues: [String: String] {", "private var requiredFields"))
+        self.assertIn("@ViewBuilder private func fieldIssue(_ field: String, _ issues: [String: String]) -> some View {", editor)
+        for field in ('"name"', '"place"', '"contact"', "String(describing: field)"):
+            self.assertIn(f"fieldIssue({field}, issues)", editor)
+        # Every call is handed the one dictionary.
+        calls = re.findall(r"fieldIssue\(([^()]*(?:\([^()]*\))?[^()]*)\)", editor)
+        self.assertEqual([c for c in calls if not c.endswith(", issues") and "_ field: String" not in c], [])
+        self.assertEqual(editor.count("textEntry(") - 1, editor.count("issues: issues)"))
+        for name in ("catSection", "incidentSection", "contactSection"):
+            self.assertIn(f"private func {name}(_ issues: [String: String]) -> some View {{", editor)
+
+    def test_tool_photos_on_screen_are_small_copies_made_off_the_main_thread(self) -> None:
+        loader = source("NekoWidget/Services/ToolPhotoThumbnail.swift")
+        self.assertIn("static let tileMaxPixel: CGFloat = 600", loader)
+        self.assertIn("NSCache<NSString, UIImage>", loader)
+        self.assertIn("Task.detached(priority: .userInitiated)", loader)
+        self.assertIn(".contentModificationDateKey", loader)
+        self.assertIn("GroupPhotoDecoder.image(at: url, maxPixel: maxPixel)", loader)
+        self.assertNotIn("UIImage(contentsOfFile", loader)
+        decoder = section(source("NekoWidget/Views/GroupWindowView.swift"), "enum GroupPhotoDecoder {", "private struct GroupPhotoTile")
+        self.assertIn("CGImageSourceCreateThumbnailAtIndex", decoder)
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+        self.assertEqual(project.count("/* ToolPhotoThumbnail.swift in Sources */"), 2)
+        self.assertEqual(project.count("path = ToolPhotoThumbnail.swift;"), 1)
+
+        evacuation = source("NekoWidget/Views/EvacuationPreparationView.swift")
+        care = source("NekoWidget/Views/CareHandoffView.swift")
+        for view, photo in ((evacuation, "private struct EvacuationPhoto: View {"),
+                            (care, "private struct CarePhoto: View {")):
+            self.assertNotIn("store.image(", view)
+            tile = view[view.index(photo):]
+            tile = tile[:tile.index("\n}\n") + 3]
+            self.assertIn("@State private var image: UIImage?", tile)
+            self.assertIn(".task(id: name) { image = await ToolPhotoThumbnail.load(store.imageURL(name)) }", tile)
+        self.assertIn('EvacuationPhoto(name: cat.identificationPhoto, store: store, label: "この子の写真")', evacuation)
+        self.assertIn("EvacuationPhoto(name: cat.photos[role.rawValue], store: store, label: role.title)", evacuation)
+        self.assertIn("CarePhoto(name: cat.photoName, store: store)", care)
+
+        lost = source("NekoWidget/Views/CatPreparednessView.swift")
+        editor = section(lost, "struct LostCatDraftView: View {", "private struct LostCatPhotoChoiceView")
+        tiles = section(editor, "private func loadTiles() async {", "private func photoTile(")
+        self.assertIn("ToolPhotoThumbnail.load(store.imageURL(face))", tiles)
+        self.assertIn("ToolPhotoThumbnail.load(store.imageURL(body))", tiles)
+        self.assertIn('.task(id: "\\(draft.faceFileName ?? "-")|\\(draft.bodyFileName ?? "-")") { await loadTiles() }', editor)
+        tile = section(editor, "private func photoTile(", "private func saveNow()")
+        self.assertIn("if let shown { Image(uiImage: shown).resizable().scaledToFit() }", tile)
+        self.assertNotIn("Image(uiImage: image)", tile)
+        # The flyer and 切り取る keep the full photos.
+        self.assertIn("faceImage: faceImage, bodyImage: bodyImage)", editor)
+        self.assertIn("cropRequest = LostCatCropRequest(role: role, image: image)", tile)
+        # 「この子のこと」's photo is only looked for while drawing, never read.
+        cat_section = section(editor, "private func catSection(", "private func incidentSection(")
+        self.assertIn("if faceImage == nil, catCarePhotoURL(.face) != nil {", cat_section)
+        self.assertNotIn("catCarePhoto(", cat_section)
+        self.assertNotIn("Data(contentsOf", section(editor, "private func catCarePhotoURL(", "private func catCarePhoto("))
+        for path in ("NekoWidget/Services/EvacuationStore.swift", "NekoWidget/Services/CareHandoffStore.swift",
+                     "NekoWidget/Services/CatPreparednessStore.swift"):
+            self.assertIn("func imageURL(_ name: String?) -> URL? {", source(path))
+
+    def test_family_tool_sync_writes_the_binding_only_when_it_changes(self) -> None:
+        view = source("NekoWidget/Views/FamilyNotebookView.swift")
+        attach = section(view, "func attachReal(_ service:", "    /// Explicit personal-to-family boundary.")
+        self.assertEqual(attach.count("UserDefaults.standard.set("), 1)
+        self.assertLess(attach.index("UserDefaults.standard.data(forKey: Self.bindingKey) != bytes {"),
+                        attach.index("UserDefaults.standard.set(bytes, forKey: Self.bindingKey)"))
+        sync = section(view, "private struct FamilyNotebookToolSyncModifier: ViewModifier {", "extension View {")
+        self.assertIn("try await Task.sleep(for: .seconds(5))", sync)
 
 
 if __name__ == "__main__":

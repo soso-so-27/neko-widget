@@ -290,7 +290,7 @@ private struct CareCatEditor: View {
                     }
                     Button { showsPhotoPicker = true } label: {
                         ToolAdaptiveStack(spacing: 16) {
-                            CarePhoto(image: store.image(cat.photoName)).frame(width: 88, height: 88)
+                            CarePhoto(name: cat.photoName, store: store).frame(width: 88, height: 88)
                             Label(cat.photoName == nil ? "写真を選ぶ" : "写真を変える", systemImage: "photo")
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -394,14 +394,19 @@ private struct CareCatEditor: View {
     }
 }
 
+/// A small copy of the kept photo, made off the main thread (11/8); the
+/// memo itself still reads the full photo.
 private struct CarePhoto: View {
-    let image: UIImage?
+    let name: String?
+    let store: CareHandoffStore
+    @State private var image: UIImage?
     var body: some View {
         Group {
             if let image { Image(uiImage: image).resizable().scaledToFit() }
             else { Image(systemName: "cat").font(.title2).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(.tertiarySystemFill)) }
         }.clipShape(RoundedRectangle(cornerRadius: 12)).accessibilityLabel(image == nil ? "写真はありません" : "この子の写真")
+        .task(id: name) { image = await ToolPhotoThumbnail.load(store.imageURL(name)) }
     }
 }
 

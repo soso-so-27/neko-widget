@@ -220,8 +220,14 @@ final class EvacuationStore: ObservableObject {
     }
 
     func image(_ name: String?) -> UIImage? {
-        guard let name, let url = try? repository?.photoURL(name) else { return nil }
+        guard let url = imageURL(name) else { return nil }
         return UIImage(contentsOfFile: url.path)
+    }
+    /// Where a kept photo is, for the small picture on screen
+    /// (`ToolPhotoThumbnail`). The memo itself reads the full photo.
+    func imageURL(_ name: String?) -> URL? {
+        guard let name else { return nil }
+        return try? repository?.photoURL(name)
     }
 
     func replacePhoto(_ data: Data, catID: UUID, role: EvacuationCat.PhotoRole) throws {
