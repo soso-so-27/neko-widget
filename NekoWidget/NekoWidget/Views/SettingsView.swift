@@ -1345,15 +1345,18 @@ struct ExternalLinkRow: View {
     var body: some View {
         // Words in the text color and 「↗」 in gray, like the 「›」 rows: only
         // the icon carries the tint (11/8: the link words were the icons' blue).
-        LabeledContent {
-            Image(systemName: "arrow.up.right")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(Color(uiColor: .tertiaryLabel))
-        } label: {
+        // An HStack, so a two-line title keeps 「↗」 at the end (347: it fell under the title).
+        HStack(spacing: 8) {
             Label { Text(title).foregroundStyle(Color.primary) } icon: {
                 Image(systemName: systemImage)
             }
+            Spacer(minLength: 8)
+            Image(systemName: "arrow.up.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Color(uiColor: .tertiaryLabel))
+                .accessibilityHidden(true)
         }
+        .contentShape(Rectangle())
     }
 }
 

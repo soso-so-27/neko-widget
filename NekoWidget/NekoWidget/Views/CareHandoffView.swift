@@ -238,14 +238,6 @@ private struct CareCatEditor: View {
             }
         })
     }
-    private func contextText(_ key: WritableKeyPath<CareHandoffContext, String>, fallback: String) -> Binding<String> {
-        Binding(get: { cat?.familyContext?[keyPath: key] ?? fallback }, set: { value in
-            store.editCat(id) { cat in
-                var context = cat.familyContext ?? .init()
-                context[keyPath: key] = value; cat.familyContext = context
-            }
-        })
-    }
     /// Common signs to call about. The owner picks; nothing is judged here.
     static let callWhenChoices = ["丸1日ごはんを食べない", "何度も吐く", "おしっこが出ていない",
                                   "隠れて出てこない", "ぐったりしている", "けがをした", "外に出てしまった"]
@@ -321,14 +313,9 @@ private struct CareCatEditor: View {
                     .accessibilityIdentifier("care-call-when-choices")
                 }
                 catCareSection(cat)
-                // Shared in the family notebook: this cat's own period and request.
-                if let context = cat.familyContext {
-                    Section("この子の期間とお願い") {
-                        CareField(label: "お願いする相手", example: "例：お母さん", identifier: "care-family-recipient", text: contextText(\.recipient, fallback: context.recipient))
-                        CareField(label: "期間", example: "例：金曜の夜まで", identifier: "care-family-period", text: contextText(\.period, fallback: context.period))
-                        CareField(label: "ほかにお願いしたいこと", example: "例：終わったら写真を1枚", identifier: "care-family-request", text: contextText(\.request, fallback: context.request))
-                    }
-                }
+                // Period and request are written once, where the memo is made
+                // (347: a family cat had a second form here, and what was typed
+                // there replaced the memo's own). Family cats get the same values.
                 if cat.familyDetached == true { Text("このメモは、家族の手帳には入っていません。").font(.footnote).foregroundStyle(.secondary) }
                 Section {
                     Button("このお世話メモを削除", role: .destructive) { deleteRequested = true }

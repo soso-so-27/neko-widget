@@ -3477,8 +3477,17 @@ class CareHandoffReviewTests(unittest.TestCase):
         self.assertLess(body.index('identifier: "care-call-when"'), body.index("catCareSection(cat)"))
         self.assertIn('"薬と連絡先は、次の画面で選ぶと載ります。"', editor)
         self.assertNotIn("CareRequestEditor", self.view)
-        # Family-shared request is named apart from the household one.
-        self.assertIn('Section("この子の期間とお願い")', editor)
+        # 347: one period and request, written where the memo is made; a family
+        # cat's shared copy follows it, and the memo always prints it.
+        self.assertNotIn("この子の期間とお願い", editor)
+        store = source("NekoWidget/Services/CareHandoffStore.swift")
+        share = section(store, "func shareRecord(_ disclosure: CareHandoffDisclosure)", "private static func normalizedJPEG(")
+        self.assertIn("editCat(cat.id) { $0.familyContext = request }", share)
+        self.assertNotIn("cat.familyContext ?? .init(", share)
+        plan = source("NekoWidget/Services/CareHandoffPlan.swift")
+        common = section(plan, "func commonFields(plan: CareHandoffPlan)", "private func notes(cat: CareCat)")
+        self.assertIn('add("お願いする期間", plan.period)', common)
+        self.assertNotIn("familyContext", common)
         self.assertEqual(self.view.count('"今回のお願い"'), 0)
         # Face photo from 「この子のこと」 first; never after the owner removed it.
         self.assertIn("care?.facePhoto?.value", editor)

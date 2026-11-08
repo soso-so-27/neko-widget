@@ -64,7 +64,9 @@ enum EvacuationExporter {
             append(value, size: fontSize)
         }
         if record.showsReviewDate {
-            append("内容を確かめた日：" + (record.reviewedAt?.formatted(date: .numeric, time: .omitted) ?? "未確認"), size: fontSize - 3)
+            if let reviewed = record.reviewedAt {
+                append("内容を確かめた日：" + reviewed.formatted(date: .numeric, time: .omitted), size: fontSize - 3)
+            }
         }
         append("作った日：" + Date().formatted(date: .numeric, time: .omitted), size: fontSize - 3)
         let framesetter = CTFramesetterCreateWithAttributedString(body)
