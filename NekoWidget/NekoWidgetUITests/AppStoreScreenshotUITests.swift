@@ -260,7 +260,12 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(profile.waitForExistence(timeout: 10))
         captureScreenshot(named: "PR5-cat-picker")
         profile.tap()
-        XCTAssertTrue(app.staticTexts["この子のこと"].waitForExistence(timeout: 10))
+        // 11/8: 「この子のこと」 is the section under the three numbered steps,
+        // so its heading can start below the first screen of the memo.
+        XCTAssertTrue(app.buttons["care-disclosure-open"].waitForExistence(timeout: 10), app.debugDescription)
+        let catCareHeading = app.staticTexts["この子のこと"]
+        XCTAssertTrue(scrollUpUntilHittable(catCareHeading, application: app)
+                      || catCareHeading.waitForExistence(timeout: 10), app.debugDescription)
         captureScreenshot(named: "PR5-profile-in-tool")
         // 11/7: 「この子のこと」 opens the cat's one page (no 写真 tab); the profile
         // is deleted at the bottom of that same page.
@@ -575,10 +580,16 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let living = app.buttons["cat-care-part-living"]
         XCTAssertTrue(living.waitForExistence(timeout: 10), app.debugDescription)
         living.tap()
-        XCTAssertTrue(app.staticTexts["抱っこは少し苦手。名前を呼ぶと来ます。"].waitForExistence(timeout: 10)
-                      || app.textViews["抱っこは少し苦手。名前を呼ぶと来ます。"].exists
-                      || app.descendants(matching: .any).matching(NSPredicate(format: "value == %@ OR label == %@",
-                          "抱っこは少し苦手。名前を呼ぶと来ます。", "抱っこは少し苦手。名前を呼ぶと来ます。")).firstMatch.exists,
+        // 11/7: the cat's photo and name lead the page, so 接し方 (the last row
+        // of 暮らし) opens below the first screen; the list makes it only once
+        // it scrolls near. Bring it up so the shot shows what was written.
+        let temperamentText = "抱っこは少し苦手。名前を呼ぶと来ます。"
+        let temperament = app.descendants(matching: .any).matching(NSPredicate(format: "value == %@ OR label == %@",
+            temperamentText, temperamentText)).firstMatch
+        XCTAssertTrue(scrollUpUntilHittable(temperament, application: app), app.debugDescription)
+        XCTAssertTrue(temperament.exists
+                      || app.staticTexts[temperamentText].waitForExistence(timeout: 10)
+                      || app.textViews[temperamentText].exists,
                       app.debugDescription)
         sleep(1)
         captureScreenshot(named: "09-cat-care")

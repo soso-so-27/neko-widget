@@ -198,7 +198,11 @@ enum AppRecordDataset {
     }
     #if DEBUG
     private static var fixtureSupport: URL? = {
-        guard CommandLine.arguments.contains("--app-records-ui-fixture") else { return nil }
+        // `--isolated-app-records`: a UI harness (e.g. the ツール hub with no
+        // cats) that must start from empty tool records, whatever earlier UI
+        // tests on the same Simulator left in Application Support.
+        guard CommandLine.arguments.contains("--app-records-ui-fixture")
+                || CommandLine.arguments.contains("--isolated-app-records") else { return nil }
         let name = "app-records-fixture-" + UUID().uuidString
         if CommandLine.arguments.contains("--app-records-journal-probe") {
             // Exercise an actual Application Support directory through a valid
@@ -2726,7 +2730,11 @@ private final class AppRecordFixture {
                 if !persistence.busy, ["保存の途中です", "保存済み"].contains(persistence.title) { break }
                 try await Task.sleep(for: .milliseconds(20))
             }
-            persistence.setActive(false)
+            // Simulate the app ending, not moving to the background: since 11/1
+            // setActive(false) starts a background save, which then raced the
+            // next coordinator for the same photo and failed at the third one.
+            guard !persistence.busy else { throw ToolBackupError.storage }
+            persistence.stopLoopForFixture()
         }
         guard persistence.title == "保存済み", try ToolBackupFiles.pending(owner: owner) == nil,
               await server.photoRequestCount() == files.count else { throw ToolBackupError.storage }

@@ -5159,6 +5159,34 @@ class OnePlaceSettingsTests(unittest.TestCase):
         root = source("NekoWidget/App/AppRootView.swift")
         self.assertIn(".autoSaveOfferAfterOnboarding(ended: !OnboardingPresentationPersistence.requiresPresentation(", root)
 
+    def test_tool_ui_fixtures_name_the_failed_check_and_follow_free_tools(self) -> None:
+        # 11/8: the in-app checks of the tool UI tests said only 「境界検証失敗」
+        # or "failed"; a UI run must say which check broke.
+        care = source("NekoWidget/Views/CareHandoffFixtureView.swift")
+        self.assertIn('checks = "境界検証失敗：" + check', care)
+        self.assertIn("if case let .assertion(name)? = error as? FixtureCheckFailure { check = name }", care)
+        self.assertNotIn('catch { checks = "境界検証失敗" }', care)
+        self.assertIn('FixtureCheckFailure.assertion("refresh failure check, line \(line)")', care)
+        profile = source("NekoWidget/App/AppStoreScreenshotFixture.swift")
+        self.assertIn('"failed: \\(failureMessage)"', profile)
+        # ADR-027: the tools are free. The fixture must not expect an expired
+        # membership to block a new care memo while the policy allows it.
+        policy = source("Shared/MembershipAccessPolicy.swift")
+        allowed = section(policy, "switch operation {", "return .allowed")
+        self.assertIn(".createCareMemo", allowed)
+        self.assertNotIn("expiry blocks", care)
+        self.assertIn('expired.decision(for: .createCareMemo) == .allowed, "tools stay free after expiry"', care)
+        # An empty-records UI harness is DEBUG only and only by its own argument.
+        persistence = source("NekoWidget/Services/AppRecordPersistence.swift")
+        fixture = section(persistence, "#if DEBUG\n    private static var fixtureSupport: URL? = {", "#endif")
+        self.assertIn('CommandLine.arguments.contains("--isolated-app-records")', fixture)
+        self.assertEqual(persistence.count("--isolated-app-records"), 2)
+        # The repeated photo interruption ends each round like an app exit;
+        # setActive(false) would start a background save that races the next round.
+        probe = section(persistence, "verifyRepeatedPhotoInterruption", "guard persistence.title == \"保存済み\"")
+        self.assertIn("persistence.stopLoopForFixture()", probe)
+        self.assertNotIn("persistence.setActive(false)", probe)
+
 
 if __name__ == "__main__":
     unittest.main()
