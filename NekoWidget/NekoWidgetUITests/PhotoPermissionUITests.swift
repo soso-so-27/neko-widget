@@ -4213,8 +4213,11 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(theme.waitForExistence(timeout: 10), app.debugDescription)
             // Off-screen tiles of the horizontal row have no hit point yet:
             // swipe the row until the tile's frame is inside the screen.
-            for _ in 0..<8 where !app.frame.contains(theme.frame) {
-                if theme.frame.minX < app.frame.minX { themeRow.swipeRight() } else { themeRow.swipeLeft() }
+            // A swipe flings past a tile; drag a short distance at a time.
+            for _ in 0..<12 where !app.frame.contains(theme.frame) {
+                let center = themeRow.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+                let step: CGFloat = theme.frame.minX < app.frame.minX ? 150 : -150
+                center.press(forDuration: 0.05, thenDragTo: center.withOffset(CGVector(dx: step, dy: 0)))
             }
             XCTAssertTrue(theme.isHittable, "The \(title) theme must stay reachable in the row")
             theme.tap()
