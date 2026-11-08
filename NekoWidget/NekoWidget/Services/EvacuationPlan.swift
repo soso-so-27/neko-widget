@@ -30,7 +30,7 @@ struct EvacuationCat: Codable, Equatable, Identifiable {
     var medicalText: String {
         switch medicalStatus {
         case .unknown: "病歴・薬は書いていません"
-        case .none: "病歴・薬はなし（飼い主の記入）"
+        case .none: "病歴・薬はなし"
         case .recorded: medicalDetails.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "病歴・薬があります。くわしくは飼い主に聞いてください。" : medicalDetails
         }
@@ -376,7 +376,7 @@ struct EvacuationDisclosure: Equatable {
         add("見分ける特徴", cat.features)
         if food { add("いつものごはん", cat.food) }
         if handling { add("接し方・苦手なこと", cat.handling) }
-        if medical { add("病歴・薬（飼い主の記録）", cat.medicalText) }
+        if medical { add("病歴・薬", cat.medicalText) }
         if contact { add("飼い主の連絡先", plan.contact) }
         return result
     }
