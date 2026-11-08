@@ -2125,7 +2125,12 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["evacuation-photo-reference"].waitForExistence(timeout: 5))
         capture("evacuation-autofill-general-photo-large-text")
         app.navigationBars.buttons.element(boundBy: 0).tap()
-        // The meal is shown from 「この子のこと」's section on the cat's page.
+        // The meal is shown from 「この子のこと」's section on the cat's page,
+        // folded to one row under the steps (11/8); open it to read every line.
+        let folded = app.descendants(matching: .any).matching(identifier: "evacuation-cat-care-fields-folded").firstMatch
+        for _ in 0..<9 where !folded.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(folded.isHittable)
+        folded.tap()
         let food = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "むぎ専用フード")).firstMatch
         for _ in 0..<9 where !food.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(food.isHittable)
@@ -2147,6 +2152,10 @@ final class SoloMemoriesUITests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
         // After a restart the meal is still there. Later edits happen in
         // 「この子のこと」, which every tool reads, so nothing is copied again.
+        let restoredFolded = app.descendants(matching: .any).matching(identifier: "evacuation-cat-care-fields-folded").firstMatch
+        for _ in 0..<9 where !restoredFolded.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(restoredFolded.isHittable)
+        restoredFolded.tap()
         let restoredFood = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "むぎ専用フード")).firstMatch
         for _ in 0..<9 where !restoredFood.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(restoredFood.waitForExistence(timeout: 5))

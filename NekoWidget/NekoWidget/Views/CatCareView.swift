@@ -1420,14 +1420,19 @@ struct ToolCatCareSection<Extra: View>: View {
     let profiles: [CatProfilePresentation]
     /// The cat's birthday and adoption day; off for a box of contacts (347).
     let showsLifeDates: Bool
+    /// Folded to one row on a tool's input page: what is read from 「この子のこと」
+    /// is not something to do there (11/8: a long read-only box sat among
+    /// the steps and looked like more to write).
+    let folded: Bool
     let extra: () -> Extra
+    @State private var expanded = false
 
     init(title: String, lines: [(String, String)], subject: CatCareSubject?, footer: String? = nil,
          identifier: String, editIdentifier: String, profiles: [CatProfilePresentation] = [],
-         showsLifeDates: Bool = true, @ViewBuilder extra: @escaping () -> Extra) {
+         showsLifeDates: Bool = true, folded: Bool = false, @ViewBuilder extra: @escaping () -> Extra) {
         self.title = title; self.lines = lines; self.subject = subject; self.footer = footer
         self.identifier = identifier; self.editIdentifier = editIdentifier; self.profiles = profiles
-        self.showsLifeDates = showsLifeDates
+        self.showsLifeDates = showsLifeDates; self.folded = folded
         self.extra = extra
     }
 
@@ -1447,21 +1452,23 @@ struct ToolCatCareSection<Extra: View>: View {
         let birthday = showsLifeDates ? profile?.lifeDates.birthday : nil
         let adoption = showsLifeDates ? profile?.lifeDates.adoptionDay : nil
         Section {
-            // The dates were a second 「猫のプロフィール」 box above; they are
-            // facts of この子のこと, so they sit here, in the one box (11/7).
-            if let birthday {
-                LabeledContent("誕生日", value: birthday.date.formatted(date: .abbreviated, time: .omitted))
-            }
-            if let adoption {
-                LabeledContent("迎えた日", value: adoption.date.formatted(date: .abbreviated, time: .omitted))
-            }
-            ForEach(Array(filled.enumerated()), id: \.offset) { _, line in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(line.0).font(.subheadline).foregroundStyle(.secondary)
-                    Text(line.1).font(.body).textSelection(.enabled)
+            if folded {
+                DisclosureGroup(isExpanded: $expanded) {
+                    readRows(filled: filled, birthday: birthday, adoption: adoption)
+                    extra()
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("「この子のこと」から入ります").foregroundStyle(Color.primary)
+                        let summary = filled.prefix(3).map(\.1).joined(separator: "・")
+                        if !summary.isEmpty {
+                            Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
                 }
+                .accessibilityIdentifier(identifier + "-folded")
+            } else {
+                readRows(filled: filled, birthday: birthday, adoption: adoption)
             }
-            .accessibilityIdentifier(identifier)
             if filled.isEmpty && birthday == nil && adoption == nil && missing.isEmpty {
                 Text("まだ何も書いていません。")
                     .foregroundStyle(.secondary)
@@ -1472,7 +1479,7 @@ struct ToolCatCareSection<Extra: View>: View {
                 Text("まだ書いていないこと：" + missing.joined(separator: "、"))
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            extra()
+            if !folded { extra() }
             if let subject {
                 NavigationLink("「この子のこと」を開く") { CatCareSubjectView(subject: subject, profiles: profiles) }
                     .accessibilityIdentifier(editIdentifier)
@@ -1480,15 +1487,141 @@ struct ToolCatCareSection<Extra: View>: View {
         } header: { Text(title) }
           footer: { if let footer { Text(footer) } }
     }
+
+    @ViewBuilder
+    private func readRows(filled: [(String, String)], birthday: CatProfileLifeReferencePresentation?,
+                          adoption: CatProfileLifeReferencePresentation?) -> some View {
+        // The dates were a second 「猫のプロフィール」 box above; they are
+        // facts of この子のこと, so they sit here, in the one box (11/7).
+        if let birthday {
+            LabeledContent("誕生日", value: birthday.date.formatted(date: .abbreviated, time: .omitted))
+        }
+        if let adoption {
+            LabeledContent("迎えた日", value: adoption.date.formatted(date: .abbreviated, time: .omitted))
+        }
+        ForEach(Array(filled.enumerated()), id: \.offset) { _, line in
+            VStack(alignment: .leading, spacing: 4) {
+                Text(line.0).font(.subheadline).foregroundStyle(.secondary)
+                Text(line.1).font(.body).textSelection(.enabled)
+            }
+        }
+        .accessibilityIdentifier(identifier)
+    }
 }
 
 extension ToolCatCareSection where Extra == EmptyView {
     init(title: String, lines: [(String, String)], subject: CatCareSubject?, footer: String? = nil,
          identifier: String, editIdentifier: String, profiles: [CatProfilePresentation] = [],
-         showsLifeDates: Bool = true) {
+         showsLifeDates: Bool = true, folded: Bool = false) {
         self.init(title: title, lines: lines, subject: subject, footer: footer,
                   identifier: identifier, editIdentifier: editIdentifier, profiles: profiles,
-                  showsLifeDates: showsLifeDates) { EmptyView() }
+                  showsLifeDates: showsLifeDates, folded: folded) { EmptyView() }
+    }
+}
+
+// MARK: - One shape for every tool's input page (11/8)
+//
+// The four tools (病院・迷子・預ける・避難) each had their own layout: it was
+// unclear what to do first or where to look. Every input page reads the same
+// way, top to bottom (ねこのまど_ツール入力ページの型_1108):
+//   1. the cat row, then one gray sentence: what the page makes (ToolPurpose)
+//   2. numbered steps, each a Section with a ToolStepHeader; done shows a check
+//   3. 「この子のこと」 folded to one row (ToolCatCareSection(folded: true))
+//   4. notes, 「診察済み」-style marks and delete, last and small
+//   5. at the bottom, ToolMakeBar: 「あと：…」 and the one button
+// One page with marked steps, not a wizard: 病院 and 預ける are repeated
+// tasks, and steps can be filled in any order.
+
+/// Where a step stands: the first one not done is the one to do now.
+enum ToolStepState: Equatable {
+    case todo, current, done
+
+    static func states(_ done: [Bool]) -> [ToolStepState] {
+        let current = done.firstIndex(of: false)
+        return done.indices.map { done[$0] ? .done : ($0 == current ? .current : .todo) }
+    }
+}
+
+/// A step's heading: its number, or a check once done.
+struct ToolStepHeader: View {
+    let number: Int
+    let title: String
+    var state: ToolStepState = .todo
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ZStack {
+                switch state {
+                case .done:
+                    Circle().fill(Color.green.opacity(0.2))
+                    Image(systemName: "checkmark").font(.caption2.weight(.bold)).foregroundStyle(Color.green)
+                case .current:
+                    Circle().fill(Color.accentColor)
+                    Text("\(number)").font(.caption.weight(.bold)).foregroundStyle(Color.white)
+                case .todo:
+                    Circle().strokeBorder(Color.secondary.opacity(0.6), lineWidth: 1)
+                    Text("\(number)").font(.caption.weight(.semibold)).foregroundStyle(Color.secondary)
+                }
+            }
+            .frame(width: 22, height: 22)
+            .accessibilityHidden(true)
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(state == .todo ? Color.secondary : Color.primary)
+        }
+        .textCase(nil)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(number)、\(title)" + (state == .done ? "、済み" : ""))
+    }
+}
+
+/// One gray sentence under the cat row: what this page makes.
+struct ToolPurpose: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
+    }
+}
+
+/// The one way forward, in the same place on every tool page: what is still
+/// missing, then the button (a Button or a NavigationLink; styled here).
+struct ToolMakeBar<Top: View, Action: View>: View {
+    let missing: [String]
+    let top: Top
+    let action: Action
+
+    init(missing: [String] = [], @ViewBuilder top: () -> Top, @ViewBuilder action: () -> Action) {
+        self.missing = missing; self.top = top(); self.action = action()
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            top
+            if !missing.isEmpty {
+                Text("あと：" + missing.joined(separator: "・"))
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .accessibilityIdentifier("tool-make-missing")
+            }
+            action
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .background(.regularMaterial)
+    }
+}
+
+extension ToolMakeBar where Top == EmptyView {
+    init(missing: [String] = [], @ViewBuilder action: () -> Action) {
+        self.init(missing: missing, top: { EmptyView() }, action: action)
     }
 }
 

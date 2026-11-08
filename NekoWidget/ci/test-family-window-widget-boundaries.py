@@ -3331,8 +3331,9 @@ class EvacuationCatCareTests(unittest.TestCase):
         self.assertIn('Text("最後にそろえた日：', packing)
         for old in ("今回、持ったもの", "チェックを始めた日"):
             self.assertNotIn(old, view)
-        # The show screen is named for what opens, one tap from the entry.
-        self.assertIn('Label("見せる画面を開く"', view)
+        # The show screen is named for what it makes, one tap from the entry.
+        self.assertIn('Label("避難メモを見せる"', view)
+        self.assertNotIn("見せる画面を開く", view)
         self.assertIn('.navigationTitle("\\(record.name)の避難メモ")', view)
         for old in ("できあがりを見る", '"プレビュー"', "1冊のPDFにまとめる", "新しい持ち物"):
             self.assertNotIn(old, view)
@@ -3371,6 +3372,72 @@ class EvacuationCatCareTests(unittest.TestCase):
         self.assertEqual(view.count("Link(destination: URL(string: \"https://"), 1)
         self.assertIn('ExternalLinkRow("環境省「人とペットの災害対策ガイドライン」（通信が必要）"', view)
         self.assertNotIn("metro.tokyo", view)
+
+    def test_evacuation_follows_the_input_page_shape_1108(self) -> None:
+        view = source("NekoWidget/Views/EvacuationPreparationView.swift")
+        # Hub: the review card, one sentence, three numbered steps, 「見せる」, the note.
+        hub = section(view, "struct EvacuationPreparationView: View {", "private func makeBook() async {")
+        order = ['"evacuation-review-reminder"',
+                 'ToolPurpose(text: "災害のときに持ち出すものと、猫の避難メモを用意します。")',
+                 "let states = ToolStepState.states(stepsDone)",
+                 'step(1, "持ち出すもの", detail: packingState, state: states[0])',
+                 'step(2, "猫の情報", detail: catsState, state: states[1])',
+                 'step(3, "行き先と連絡先", detail: "行き先 \(store.plan.destinations.count)件", state: states[2])',
+                 '} header: { Text("見せる") }',
+                 'ToolImportantInformation(text: "災害のときは、まず自分と家族の安全を守ってください。")',
+                 ".toolBottomBar {"]
+        positions = [hub.index(needle) for needle in order]
+        self.assertEqual(positions, sorted(positions))
+        for identifier in ('"evacuation-packing-open"', '"evacuation-cats-open"', '"evacuation-destinations-open"'):
+            self.assertIn(identifier, hub)
+        self.assertIn("ToolStepHeader(number: number, title: title, state: state)", view)
+        self.assertNotIn("private func entry(", view)
+        # Done rules: every item has a place, every cat a photo to tell it apart, one place.
+        done = section(view, "private var stepsDone: [Bool] {", "private var missingSteps: [String] {")
+        self.assertIn("!needed.isEmpty && needed.allSatisfy { !$0.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }", done)
+        self.assertIn("!cats.isEmpty && cats.allSatisfy { $0.identificationPhoto != nil }", done)
+        self.assertIn("!store.plan.destinations.isEmpty", done)
+        self.assertIn('var identificationPhoto: String? { photos["face"] ?? photos["body"] ?? photos["reference"] }', view)
+        self.assertIn('cats.filter { $0.identificationPhoto == nil }.map { name(of: $0) }', view)
+        # 「印刷用のPDFを作る」 is in the bottom bar, not in the list.
+        bar = section(hub, ".toolBottomBar {", '.navigationTitle("避難に備える")')
+        self.assertIn("ToolMakeBar(missing: missingSteps, top: {", bar)
+        self.assertIn("EvacuationSaveNotice(store: store, inBar: true)", bar)
+        self.assertIn("bookButton", bar)
+        self.assertIn('.accessibilityIdentifier("evacuation-book-open")', bar)
+        self.assertIn(".disabled(store.saveError != nil || makingBook)", bar)
+        self.assertEqual(hub.count("bookButton"), 1)
+        self.assertNotIn(".listRowInsets(EdgeInsets())", hub)
+        self.assertNotIn(".safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }", hub)
+        self.assertIn('confirmationDialog("印刷用のPDFを作ります"', hub)
+        # 猫の情報: one sentence, 1 見分ける写真, 2 見せる内容, この子のこと folded, then the rest small.
+        cat_page = section(view, "private struct EvacuationCatView: View {", "private struct EvacuationCatEditor: View {")
+        order = ['ToolPurpose(text: "避難所で見せる、この子の避難メモを作ります。")',
+                 "let states = ToolStepState.states([cat.identificationPhoto != nil, true])",
+                 '"evacuation-cat-edit"',
+                 'ToolStepHeader(number: 1, title: "見分ける写真", state: states[0])',
+                 '"evacuation-disclose-cat-care"',
+                 'ToolStepHeader(number: 2, title: "見せる内容", state: states[1])',
+                 "ToolCatCareSection(",
+                 "profiles: profiles, folded: true)",
+                 'ToolImportantInformation(text: "病歴・連絡先・ワクチンの証明・マイクロチップ番号は、必要な相手にだけ見せてください。")',
+                 'Text("内容を確かめた日："',
+                 'Button("内容を確かめた")',
+                 'Button("この子の避難用の記録を削除", role: .destructive)',
+                 ".toolBottomBar {"]
+        positions = [cat_page.index(needle) for needle in order]
+        self.assertEqual(positions, sorted(positions))
+        cat_bar = section(cat_page, ".toolBottomBar {", ".navigationDestination(item: $preview)")
+        self.assertIn('ToolMakeBar(missing: cat?.identificationPhoto == nil ? ["見分ける写真"] : [], top: {', cat_bar)
+        self.assertIn("EvacuationSaveNotice(store: store, inBar: true)", cat_bar)
+        self.assertIn("if let error { Text(error)", cat_bar)
+        self.assertIn('Label("避難メモを見せる"', cat_bar)
+        self.assertIn(".disabled(store.saveError != nil || cat == nil)", cat_bar)
+        self.assertNotIn(".safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }", cat_page)
+        # The save error keeps its identifier wherever the notice is shown.
+        notice = section(view, "private struct EvacuationSaveNotice: View {", "private struct EvacuationPackingView: View {")
+        self.assertIn('.accessibilityIdentifier("evacuation-save-error")', notice)
+        self.assertIn("if inBar { content } else { content.padding().frame(maxWidth: .infinity).background(.regularMaterial) }", notice)
 
 
 class CareHandoffCatCareTests(unittest.TestCase):
