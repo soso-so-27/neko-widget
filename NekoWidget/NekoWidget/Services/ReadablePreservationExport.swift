@@ -311,11 +311,20 @@ enum ReadablePreservationText {
         "allergy": "アレルギー", "weights": "体重", "medications": "薬", "vaccinations": "ワクチン", "specialDiet": "食事の注意",
         "litter": "トイレ", "temperament": "性格", "vetOverride": "この猫の病院", "allergyStatus": "アレルギー", "allergyText": "アレルギーの内容",
         "doctorNote": "先生の話", "prescription": "出た薬", "nextVisitOn": "次に行く日",
+        // 11/8: fields the tools added; every saved name reads in Japanese.
+        "includesHealth": "薬・持病・アレルギーを載せる", "includesContacts": "連絡先・動物病院を載せる",
+        "lastMadeAt": "最後にメモを作った日", "veterinarian": "かかりつけの動物病院",
+        "checkStartedAt": "チェックを始めた日", "lastCheckedAt": "最後にそろえた日", "familyMeetingMemo": "家族の集合のメモ",
+        "kindValue": "行き先の種類", "identifyingFeatures": "見分ける特徴",
         "vetName": "病院名", "vetPhone": "病院の電話番号", "vetNote": "病院のメモ", "medicationName": "薬の名前", "farewellDay": "家族の手帳をやめた日"]
     private static let bookkeeping: Set<String> = ["schemaVersion", "version", "revision", "id", "catID", "familyID", "deviceID", "ownerID", "generation", "deletedAt",
         "profileID", "toolCatID", "sourceNoteID", "sourceRevision", "familyRecordID", "familyDetached", "prefilledFields", "prefilledUsualFood",
         "mutationRevision", "memberships", "globalExcludedAssets", "legacyUnscoped", "mode", "photoAlbumLink", "keyPhotoLocalIdentifier",
-        "archiveBindings", "sharedWindowIDs", "editedBy", "editedAt", "sourceAssetID", "origin", "sourcePhotoIdentifier", "source", "order", "status"]
+        "archiveBindings", "sharedWindowIDs", "editedBy", "editedAt", "sourceAssetID", "origin", "sourcePhotoIdentifier", "source", "order", "status",
+        "photoRemoved", "pendingPhotoCleanup"]
+    /// Stored codes shown as words (11/8: 「shelter」 read as English).
+    private static let valueWords: [String: [String: String]] = [
+        "kindValue": ["shelter": "避難所", "family": "親戚・知人", "hotel": "ペットホテル・病院"]]
 
     static func render(_ data: Data, title: String, photoPaths: [String: String] = [:]) throws -> (text: String, count: Int) {
         let value = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
@@ -346,12 +355,13 @@ enum ReadablePreservationText {
             } else if value is NSNull { lines.append(indentation + "未記入") }
             else if let number = value as? NSNumber {
                 if CFGetTypeID(number) == CFBooleanGetTypeID() { lines.append(indentation + (number.boolValue ? "はい" : "いいえ")) }
-                else if let key, ["createdAt", "updatedAt", "writtenAt", "capturedAt", "date", "completedAt", "reviewedAt", "checkedAt", "confirmedAt", "lastSeenAt"].contains(key) {
+                else if let key, ["createdAt", "updatedAt", "writtenAt", "capturedAt", "date", "completedAt", "reviewedAt", "checkedAt", "confirmedAt", "lastSeenAt",
+                                        "lastMadeAt", "checkStartedAt", "lastCheckedAt"].contains(key) {
                     lines.append(indentation + ISO8601DateFormatter().string(from: Date(timeIntervalSinceReferenceDate: number.doubleValue)))
                 } else { lines.append(indentation + number.stringValue) }
             } else {
                 let text = String(describing: value)
-                lines.append(indentation + (photoPaths[text] ?? text))
+                lines.append(indentation + (key.flatMap { valueWords[$0]?[text] } ?? photoPaths[text] ?? text))
             }
         }
         try walk(value, depth: 0)

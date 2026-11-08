@@ -4610,6 +4610,12 @@ class VeterinaryRoundOneTests(unittest.TestCase):
         self.assertIn("_ = try? await store.cleanupPending()", self.view)
         readable = source("NekoWidget/Services/ReadablePreservationExport.swift")
         self.assertIn('"VeterinaryVisits": "診察メモ"', readable)
+        # 11/8: the fields the tools added read in Japanese; codes become words.
+        for key in ("includesHealth", "includesContacts", "lastMadeAt", "lastCheckedAt", "checkStartedAt",
+                    "kindValue", "identifyingFeatures", "familyMeetingMemo", "veterinarian"):
+            self.assertIn(f'"{key}": "', readable)
+        self.assertIn('"kindValue": ["shelter": "避難所", "family": "親戚・知人", "hotel": "ペットホテル・病院"]', readable)
+        self.assertIn('"photoRemoved", "pendingPhotoCleanup"]', readable)
         self.assertNotIn("通院", readable)
 
     def test_started_day_previous_visit_and_past_rows(self) -> None:
