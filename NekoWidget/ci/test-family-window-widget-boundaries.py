@@ -5104,9 +5104,10 @@ class OnePlaceSettingsTests(unittest.TestCase):
         # 11/8: the in-app checks of the tool UI tests said only 「境界検証失敗」
         # or "failed"; a UI run must say which check broke.
         care = source("NekoWidget/Views/CareHandoffFixtureView.swift")
-        self.assertIn('checks = "境界検証失敗：\\(String(describing: error))"', care)
+        self.assertIn('checks = "境界検証失敗：" + check', care)
+        self.assertIn("if case let .assertion(name)? = error as? FixtureCheckFailure { check = name }", care)
         self.assertNotIn('catch { checks = "境界検証失敗" }', care)
-        self.assertIn("case invariant(line: Int)", care)
+        self.assertIn('FixtureCheckFailure.assertion("refresh failure check, line \(line)")', care)
         profile = source("NekoWidget/App/AppStoreScreenshotFixture.swift")
         self.assertIn('"failed: \\(failureMessage)"', profile)
         # ADR-027: the tools are free. The fixture must not expect an expired

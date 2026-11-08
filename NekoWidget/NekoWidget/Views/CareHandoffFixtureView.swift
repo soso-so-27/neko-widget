@@ -3,6 +3,9 @@ import SwiftUI
 import UIKit
 import PDFKit
 
+/// A named in-app check that did not hold; shown on screen for UI test runs.
+enum FixtureCheckFailure: Error { case assertion(String) }
+
 /// Isolated synthetic records. Exercises native persistence/disclosure/rendering,
 /// not real PhotoKit permission, purchases or another person's records.
 struct CareHandoffFixtureView: View {
@@ -84,14 +87,20 @@ struct CareHandoffFixtureView: View {
         .task {
             // The failed check is named on screen so a UI run says which one broke.
             do { rendered = try Self.verifyBoundaries(); try Self.verifyAutofill(); checks = "境界検証成功" }
-            catch { checks = "境界検証失敗：\(String(describing: error))" }
+            catch {
+                // Only the check's own name, never the raw error text (diagnostic privacy).
+                let check: String
+                if case let .assertion(name)? = error as? FixtureCheckFailure { check = name }
+                else { check = "check stopped by " + String(reflecting: type(of: error)) }
+                checks = "境界検証失敗：" + check
+            }
         }
     }
 
     /// Executes production stores and repositories, not a parallel fake implementation.
     @MainActor
     private static func verifyAutofill() throws {
-        enum Failure: Error { case assertion(String) }
+        typealias Failure = FixtureCheckFailure
         func require(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
             if !(try condition()) { throw Failure.assertion(message) }
         }
@@ -222,15 +231,16 @@ struct CareHandoffFixtureView: View {
 
     @MainActor
     private static func verifyRefreshFailures(directory: URL) throws {
-        enum Failure: Error { case invariant(line: Int) }
-        func require(_ value: Bool, line: Int = #line) throws { if !value { throw Failure.invariant(line: line) } }
+        func require(_ value: Bool, line: Int = #line) throws {
+            if !value { throw FixtureCheckFailure.assertion("refresh failure check, line \(line)") }
+        }
         let careDirectory = directory.appendingPathComponent("care")
         let source = EvacuationStore(directory: directory.appendingPathComponent("source"))
         var a = EvacuationCat(); a.profileID = "a"; a.name = "同名"; a.food = "元のフード"
         var b = EvacuationCat(); b.profileID = "b"; b.name = "同名"; b.food = "別猫のフード"
         try require(source.update { $0.cats = [a, b] })
         let target = CareHandoffStore(directory: careDirectory)
-        guard let id = target.addCat(using: source, sourceCatID: a.id, access: .beta) else { throw Failure.invariant(line: #line) }
+        guard let id = target.addCat(using: source, sourceCatID: a.id, access: .beta) else { throw FixtureCheckFailure.assertion("refresh failure check, line \(#line)") }
         let before = target.plan
         source.editCat(b.id) { $0.food = "別猫の更新" }
         try require(!(try target.refreshCandidates(id, using: source)) && target.plan == before)
@@ -258,7 +268,7 @@ struct CareHandoffFixtureView: View {
     }
 
     private static func verifyBoundaries() throws -> [UIImage] {
-        enum Failure: Error { case assertion(String) }
+        typealias Failure = FixtureCheckFailure
         func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
             if !condition() { throw Failure.assertion(message) }
         }
