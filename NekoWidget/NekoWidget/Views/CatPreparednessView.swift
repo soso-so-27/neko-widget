@@ -253,9 +253,8 @@ struct LostCatDraftView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             ToolCatStrip(cats: stripCats, selectedID: key) { switchTo($0.id, name: $0.profile?.displayName ?? "") }
         }
-        .scrollDismissesKeyboard(.interactively)
         .announcesWhenShown(photoError)
-        .safeAreaInset(edge: .bottom) {
+        .toolBottomBar {
             VStack(spacing: 4) {
                 if !requiredFields.isEmpty {
                     Text("\(requiredFields.joined(separator: "・"))を入れると作れます")

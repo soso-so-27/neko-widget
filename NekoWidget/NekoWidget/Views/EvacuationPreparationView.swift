@@ -633,7 +633,7 @@ private struct EvacuationCatView: View {
             }
         }.navigationTitle("猫の情報").navigationBarTitleDisplayMode(.inline)
             .announcesWhenShown(error)
-            .safeAreaInset(edge: .bottom) {
+            .toolBottomBar {
                 Button {
                     do { preview = EvacuationPreviewItem(record: try store.shareRecord(catID: id, disclosure: disclosure)); error = nil }
                     catch {

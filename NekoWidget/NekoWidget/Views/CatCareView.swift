@@ -1503,6 +1503,35 @@ extension View {
     }
 }
 
+extension View {
+    /// A tool's bottom bar, out of the way while the keyboard is up, so the
+    /// field being written stays in view (348: 「先生に見せる」 and the keyboard
+    /// left two lines to write in). Swipe down or 「キーボードを閉じる」 to finish.
+    func toolBottomBar<Bar: View>(@ViewBuilder _ bar: () -> Bar) -> some View {
+        modifier(ToolBottomBar(bar: bar()))
+    }
+}
+
+private struct ToolBottomBar<Bar: View>: ViewModifier {
+    let bar: Bar
+    @State private var typing = false
+    func body(content: Content) -> some View {
+        content
+            .safeAreaInset(edge: .bottom) { if !typing { bar } }
+            .scrollDismissesKeyboard(.interactively)
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("キーボードを閉じる") {
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in typing = true }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in typing = false }
+    }
+}
+
 /// A photo beside its text, stacked when the text is very large.
 struct ToolAdaptiveStack<Content: View>: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize

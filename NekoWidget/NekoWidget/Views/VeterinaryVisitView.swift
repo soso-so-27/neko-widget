@@ -330,7 +330,7 @@ private struct VeterinaryConsultationView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("閉じる") { close() }.disabled(busy) }
             }
         }
-        .safeAreaInset(edge: .bottom) { bottomBar }
+        .toolBottomBar { bottomBar }
     }
     private var bottomBar: some View {
         VStack(spacing: 6) {
