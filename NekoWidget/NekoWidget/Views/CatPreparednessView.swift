@@ -211,10 +211,13 @@ struct LostCatDraftView: View {
 
     var body: some View {
         Form {
+            // The tool's one shape (11/8): purpose, guide, numbered steps, then
+            // errors last; the one way forward is the bar below.
+            ToolPurpose(text: "探すためのチラシを作ります。")
             Section {
                 Button { showsGuide = true } label: {
                     HStack {
-                        Label("まず探す・届け出る", systemImage: "info.circle")
+                        Label("先にすること：探す・届け出る", systemImage: "info.circle")
                         Spacer(minLength: 8)
                         Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
                     }
@@ -255,21 +258,18 @@ struct LostCatDraftView: View {
         }
         .announcesWhenShown(photoError)
         .toolBottomBar {
-            VStack(spacing: 4) {
-                if !requiredFields.isEmpty {
-                    Text("\(requiredFields.joined(separator: "・"))を入れると作れます")
-                        .font(.caption).foregroundStyle(.secondary)
-                } else if !issues.isEmpty {
+            // A text that does not fit is said instead of 「あと：…」; the red
+            // line is beside its field.
+            ToolMakeBar(missing: issues.isEmpty ? requiredFields : []) {
+                if !issues.isEmpty {
                     Text("直すところがあります。赤い文字の欄を見てください")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.footnote).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                 }
-                Button("チラシを見る") { openPreview() }
-                    .buttonStyle(.borderedProminent)
+            } action: {
+                Button("チラシを作る") { openPreview() }
                     .disabled(!canPreview)
-                    .frame(maxWidth: .infinity, minHeight: 44)
             }
-            .padding(.horizontal, 16).padding(.vertical, 8)
-            .background(.regularMaterial)
         }
         .navigationDestination(isPresented: $showsPreview) {
             if let value = previewDraft { LostCatPreviewView(draft: value) }
@@ -349,8 +349,9 @@ struct LostCatDraftView: View {
                 // The dates are with 「この子のこと」 in 届け出の情報 (11/7).
                 LabeledContent("名前", value: profile.displayName)
             } else {
-            LabeledContent("名前") {
-                TextField("猫の名前（任意）", text: textBinding(\.name, field: "name"), prompt: Text("任意"))
+            VStack(alignment: .leading, spacing: 8) {
+                Text("名前（任意）").font(.subheadline).foregroundStyle(.secondary)
+                TextField("猫の名前（任意）", text: textBinding(\.name, field: "name"), prompt: Text("例：むぎ"))
                     .foregroundStyle(Color.primary)
                     .accessibilityIdentifier("lost-cat-name")
                     .accessibilityLabel("猫の名前（任意）")
@@ -396,7 +397,7 @@ struct LostCatDraftView: View {
                           example: "例：赤い布製、鈴付き", minimumLines: 1)
             }
         } header: {
-            Text("猫の写真と特徴")
+            ToolStepHeader(number: 1, title: "写真と特徴", state: stepStates[0])
         } footer: {
             if !(draft.prefilledFields ?? []).isEmpty {
                 Text("前に書いた内容を入れておきました。いまの姿に合わせて直してください。")
@@ -410,7 +411,7 @@ struct LostCatDraftView: View {
         Section {
             VStack(alignment: .leading, spacing: 4) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("場所")
+                    Text("場所").font(.subheadline).foregroundStyle(.secondary)
                     TextField("例：○○町2丁目・○○公園の近く", text: $draft.lastSeenNear)
                         .accessibilityIdentifier("lost-cat-place")
                         .accessibilityLabel("最後に見かけた場所")
@@ -420,7 +421,7 @@ struct LostCatDraftView: View {
             }
             Button { pendingDate = draft.lastSeenAt ?? Date(); showsDatePicker = true } label: {
                 HStack {
-                    Text("日時")
+                    Text("日時（任意）")
                     Spacer()
                     Text(draft.lastSeenAt.map(LostCatPublicDraft.lastSeenText) ?? "不明").foregroundStyle(.secondary)
                     Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
@@ -429,16 +430,16 @@ struct LostCatDraftView: View {
             }
             // Like the rows around it, not a tinted action (347 showed it blue).
             .foregroundStyle(.primary)
-        } header: { Text("最後に見かけた場所・日時") }
+        } header: { ToolStepHeader(number: 2, title: "いなくなった場所と日時", state: stepStates[1]) }
     }
 
     private var contactSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 4) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("連絡先")
+                    Text("連絡先").font(.subheadline).foregroundStyle(.secondary)
                     TextField("電話・メール・SNSアカウントなど", text: $draft.contact,
-                              prompt: Text("電話・メール・SNS"))
+                              prompt: Text("例：電話番号・メール・SNS"))
                         .accessibilityIdentifier("lost-cat-contact")
                         .accessibilityLabel("電話・メール・SNSアカウントなど")
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -456,7 +457,7 @@ struct LostCatDraftView: View {
             textEntry("見かけた方へ（任意）", text: $draft.approachAdvice, field: .advice,
                       limit: LostCatFlyerRenderer.adviceLimit,
                       example: "例：追いかけず、見かけた場所をお知らせください。お礼をいたします", minimumLines: 2)
-        } header: { Text("見かけた方からの連絡") }
+        } header: { ToolStepHeader(number: 3, title: "見かけた人からの連絡先", state: stepStates[2]) }
           footer: {
             Text("この連絡先は画像とチラシに載り、だれでも見られます。")
         }
@@ -637,6 +638,15 @@ struct LostCatDraftView: View {
         if draft.lastSeenNear.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { values.append("場所") }
         if draft.contact.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { values.append("連絡先") }
         return values
+    }
+    /// 1 is done with the face photo, 2 with the place, 3 with the contact:
+    /// the three things the flyer cannot be made without.
+    private var stepStates: [ToolStepState] {
+        ToolStepState.states([
+            faceImage != nil,
+            !draft.lastSeenNear.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            !draft.contact.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        ])
     }
     private var canPreview: Bool {
         loaded && !saveError && !photoBusy && photoError == nil && requiredFields.isEmpty

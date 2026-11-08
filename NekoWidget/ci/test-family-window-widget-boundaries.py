@@ -3166,7 +3166,9 @@ class LostCatToolReview1108Tests(unittest.TestCase):
         self.assertIn("text: format == 0 ? draft.message : nil", preview)
         self.assertIn("LostCatActivitySheet(items: item.items)", preview)
         self.assertIn("if let text { return [url, text] }", view)
-        self.assertIn('Button("チラシを見る") { openPreview() }', view)
+        # 11/8 tool shape: the button names what it makes.
+        self.assertIn('Button("チラシを作る") { openPreview() }', view)
+        self.assertNotIn("チラシを見る", view)
         self.assertNotIn("できあがりを見る", view)
         self.assertNotIn('"プレビュー"', view)
 
@@ -3201,6 +3203,49 @@ class LostCatToolReview1108Tests(unittest.TestCase):
         self.assertNotIn("保存してある写真を使う", view)
         self.assertIn('photoTile("顔・毛柄の写真", role: .face', view)
         self.assertNotIn("・前の写真", view)
+
+    def test_input_page_has_the_shared_tool_shape(self) -> None:
+        view = source("NekoWidget/Views/CatPreparednessView.swift")
+        form = section(view, "struct LostCatDraftView: View {", "private var catSection: some View {")
+        # Top to bottom: purpose, the guide, steps 1-3, then errors last.
+        order = ['ToolPurpose(text: "探すためのチラシを作ります。")',
+                 'Label("先にすること：探す・届け出る", systemImage: "info.circle")',
+                 "catSection.disabled(!loaded)", "incidentSection.disabled(!loaded)",
+                 "contactSection.disabled(!loaded)", 'Text("前に入れた内容を読み込めませんでした。")',
+                 'Label("保存できませんでした"']
+        positions = [form.index(text) for text in order]
+        self.assertEqual(positions, sorted(positions))
+        self.assertNotIn("まず探す・届け出る", view)
+        # Numbered steps; each is done when what the flyer needs is there.
+        self.assertIn('ToolStepHeader(number: 1, title: "写真と特徴", state: stepStates[0])', view)
+        self.assertIn('ToolStepHeader(number: 2, title: "いなくなった場所と日時", state: stepStates[1])', view)
+        self.assertIn('ToolStepHeader(number: 3, title: "見かけた人からの連絡先", state: stepStates[2])', view)
+        states = section(view, "private var stepStates: [ToolStepState] {", "private var canPreview: Bool {")
+        self.assertIn("ToolStepState.states([", states)
+        self.assertLess(states.index("faceImage != nil"), states.index("draft.lastSeenNear"))
+        self.assertLess(states.index("draft.lastSeenNear"), states.index("draft.contact"))
+        for old in ('Text("猫の写真と特徴")', 'Text("最後に見かけた場所・日時")', 'Text("見かけた方からの連絡")'):
+            self.assertNotIn(old, view)
+        # Labels above the fields, examples inside, optional ones say so.
+        self.assertIn('Text("名前（任意）").font(.subheadline).foregroundStyle(.secondary)', view)
+        self.assertIn('prompt: Text("例：むぎ")', view)
+        self.assertIn('Text("場所").font(.subheadline).foregroundStyle(.secondary)', view)
+        self.assertIn('Text("連絡先").font(.subheadline).foregroundStyle(.secondary)', view)
+        self.assertIn('prompt: Text("例：電話番号・メール・SNS")', view)
+        self.assertIn('Text("日時（任意）")', view)
+        self.assertNotIn('LabeledContent("名前") {', view)
+        # The page reads no 「この子のこと」 box itself; reporting stays in the guide.
+        self.assertNotIn("ToolCatCareSection(", form)
+        # One bar: 「あと：…」 or the issue sentence, and 「チラシを作る」.
+        bar = section(form, ".toolBottomBar {", ".navigationDestination(isPresented: $showsPreview)")
+        self.assertIn('Button("チラシを作る") { openPreview() }', bar)
+        self.assertIn("ToolMakeBar(missing: issues.isEmpty ? requiredFields : []) {", form)
+        self.assertIn('Text("直すところがあります。赤い文字の欄を見てください")', form)
+        self.assertIn(".disabled(!canPreview)", form)
+        self.assertNotIn("を入れると作れます", view)
+        required = section(view, "private var requiredFields: [String] {", "private var stepStates")
+        for name in ('"写真"', '"場所"', '"連絡先"'):
+            self.assertIn(name, required)
 
     def test_input_examples_and_empty_state_sentences(self) -> None:
         view = source("NekoWidget/Views/CatPreparednessView.swift")
