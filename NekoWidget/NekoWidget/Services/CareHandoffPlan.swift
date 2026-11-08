@@ -94,6 +94,20 @@ struct CareHandoffPlan: Codable, Equatable {
     var photoNames: Set<String> { Set(cats.compactMap(\.photoName)) }
 
     static let staleRequestAge: TimeInterval = 14 * 24 * 60 * 60
+    /// 347: period and request are written in one place, where the memo is
+    /// made. A chosen cat shared in the family notebook prints its own shared
+    /// request (never this iPhone's household one), so that is read and written.
+    func requestText(_ key: WritableKeyPath<CareHandoffContext, String>,
+                     _ planKey: WritableKeyPath<CareHandoffPlan, String>, chosen: Set<UUID>) -> String {
+        cats.first(where: { chosen.contains($0.id) && $0.familyContext != nil })?.familyContext?[keyPath: key]
+            ?? self[keyPath: planKey]
+    }
+    mutating func setRequestText(_ value: String, _ key: WritableKeyPath<CareHandoffContext, String>,
+                                 _ planKey: WritableKeyPath<CareHandoffPlan, String>, chosen: Set<UUID>) {
+        let family = cats.indices.filter { chosen.contains(cats[$0].id) && cats[$0].familyContext != nil }
+        if family.isEmpty { self[keyPath: planKey] = value; return }
+        for index in family { cats[index].familyContext?[keyPath: key] = value }
+    }
     func requestIsStale(now: Date = Date()) -> Bool {
         guard let lastMadeAt else { return false }
         return now.timeIntervalSince(lastMadeAt) > Self.staleRequestAge
@@ -246,6 +260,15 @@ struct CareHandoffDisclosure {
     }
     static func written(_ fields: [(String, String)]) -> [(String, String)] {
         fields.filter { !isUnwritten($0.1) }
+    }
+
+    /// A family cat's own request, printed with the cat when the memo carries
+    /// one (any chosen cat is shared in the family notebook); else nothing.
+    func requestFields(cat: CareCat, plan: CareHandoffPlan) -> [(String, String)] {
+        guard plan.cats.contains(where: { catIDs.contains($0.id) && $0.familyContext != nil }) else { return [] }
+        let context = cat.familyContext ?? .init(recipient: plan.recipient, period: plan.period, request: plan.request)
+        return Self.written([("お願いする相手", context.recipient), ("お願いする期間", context.period),
+                             ("ほかにお願いしたいこと", context.request)])
     }
 
     func commonFields(plan: CareHandoffPlan) -> [(String, String)] {

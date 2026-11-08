@@ -3083,13 +3083,13 @@ class CatCareTests(unittest.TestCase):
 class VeterinaryCatCareTests(unittest.TestCase):
     def test_vet_shows_and_exports_cat_care_without_copying_it(self) -> None:
         view = source("NekoWidget/Views/VeterinaryVisitView.swift")
-        summary = source("NekoWidget/Views/CatCareView.swift")
+        summary = source("NekoWidget/Services/CatCareOutputLines.swift")
         self.assertIn("CatCareSummary.veterinaryFields(", view)
         self.assertIn('editIdentifier: "vet-open-cat-care"', view)
         self.assertNotIn("以前の薬やお世話情報は自動で入りません", view)
         # Matched by the saved identity, never by name.
         self.assertIn("CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString)", view)
-        record = section(summary, "static func record(profileIdentifier: String)", "static func veterinaryFields(")
+        record = section(source("NekoWidget/Views/CatCareView.swift"), "static func record(profileIdentifier: String)", "/// The record for a tool's cat")
         self.assertIn("$0.profileID == profileID", record)
         self.assertNotIn("name", record)
         # Export: PDF or images in the screen's order (11/8), with a caution line,
@@ -3218,7 +3218,7 @@ class LostCatToolReview1108Tests(unittest.TestCase):
 class LostCatCatCareTests(unittest.TestCase):
     def test_lost_cat_reads_cat_care_without_publishing_private_details(self) -> None:
         view = source("NekoWidget/Views/CatPreparednessView.swift")
-        summary = source("NekoWidget/Views/CatCareView.swift")
+        summary = source("NekoWidget/Services/CatCareOutputLines.swift")
         store = source("NekoWidget/Services/CatPreparednessStore.swift")
         # The public flyer value is unchanged: no chip number, medicine or report field.
         public = section(store, "struct LostCatPublicDraft {", "enum LostCatFlyerRenderer {")
@@ -3256,7 +3256,7 @@ class EvacuationCatCareTests(unittest.TestCase):
         store = source("NekoWidget/Services/EvacuationStore.swift")
         view = source("NekoWidget/Views/EvacuationPreparationView.swift")
         exporter = source("NekoWidget/Services/EvacuationExporter.swift")
-        summary = source("NekoWidget/Views/CatCareView.swift")
+        summary = source("NekoWidget/Services/CatCareOutputLines.swift")
         # A fuller starter list; adding never edits what the owner already has.
         for item in ("ワクチン証明の控え", "首輪・迷子札", "洗濯ネット", "ハーネス・リード"):
             self.assertIn(item, plan)
@@ -3269,7 +3269,7 @@ class EvacuationCatCareTests(unittest.TestCase):
         self.assertIn("if disclosure.catCare {", share)
         self.assertIn("CatCareSummary.evacuationShareFields(care, legacy: cat,", share)
         self.assertIn("attachments.append", share)
-        matching = section(summary, "static func record(toolCatID:", "static func evacuationFields(")
+        matching = section(source("NekoWidget/Views/CatCareView.swift"), "static func record(toolCatID:", "\n}\n")
         self.assertLess(matching.index("$0.catID == toolCatID"), matching.index("record(profileIdentifier:"))
         self.assertIn('("マイクロチップ番号", chip.isEmpty', summary)
         self.assertIn('? (record?.microchipStatus == CatCareMicrochipStatus.none ? "入っていない（飼い主の記入）" : empty) : chip))', summary)
@@ -3378,7 +3378,7 @@ class CareHandoffCatCareTests(unittest.TestCase):
         plan = source("NekoWidget/Services/CareHandoffPlan.swift")
         store = source("NekoWidget/Services/CareHandoffStore.swift")
         view = source("NekoWidget/Views/CareHandoffView.swift")
-        summary = source("NekoWidget/Views/CatCareView.swift")
+        summary = source("NekoWidget/Services/CatCareOutputLines.swift")
         # Older saved memos still decode: the new field is optional.
         self.assertIn("var callWhen: String?", plan)
         self.assertIn('("こんなときは連絡を", callWhen)', plan)
@@ -3405,7 +3405,7 @@ class CareHandoffReviewTests(unittest.TestCase):
         self.store = source("NekoWidget/Services/CareHandoffStore.swift")
         self.exporter = source("NekoWidget/Services/CareHandoffExporter.swift")
         self.view = source("NekoWidget/Views/CareHandoffView.swift")
-        self.summary = source("NekoWidget/Views/CatCareView.swift")
+        self.summary = source("NekoWidget/Services/CatCareOutputLines.swift")
 
     def test_new_saved_fields_are_optional(self) -> None:
         for field in ("var includesHealth: Bool? = nil", "var includesContacts: Bool? = nil",
@@ -3446,7 +3446,7 @@ class CareHandoffReviewTests(unittest.TestCase):
 
     def test_medicine_note_moved_to_medicine_input(self) -> None:
         self.assertNotIn("薬は、獣医師に言われたとおりに書いてください。", self.view)
-        medicine = section(self.summary, 'case .medication:\n                    TextField("薬の名前"', "case .vaccination:")
+        medicine = section(source("NekoWidget/Views/CatCareView.swift"), 'case .medication:\n                    TextField("薬の名前"', "case .vaccination:")
         self.assertIn("薬は、獣医師に言われたとおりに書いてください。", medicine)
 
     def test_making_screen_order_defaults_and_steps(self) -> None:
@@ -3482,7 +3482,8 @@ class CareHandoffReviewTests(unittest.TestCase):
         # household one), so the form writes there.
         self.assertNotIn("この子の期間とお願い", editor)
         self.assertIn('text: request(\.period, \.period))', self.view)
-        self.assertIn("familyCats.first?.familyContext?[keyPath: key] ?? store.plan[keyPath: planKey]", self.view)
+        self.assertIn("store.plan.requestText(key, planKey, chosen: disclosure.catIDs)", self.view)
+        self.assertIn("ci/verify-tool-outputs.swift", source("ci/run-quick-ios-checks.sh"))
         self.assertEqual(self.view.count('"今回のお願い"'), 0)
         # Face photo from 「この子のこと」 first; never after the owner removed it.
         self.assertIn("care?.facePhoto?.value", editor)
@@ -4540,7 +4541,7 @@ class CatCareOnePlaceTests(unittest.TestCase):
             self.assertNotIn(old, vet)
         exporter = source("NekoWidget/Services/CareHandoffExporter.swift")
         self.assertIn("record.heading", exporter)
-        summary = source("NekoWidget/Views/CatCareView.swift")
+        summary = source("NekoWidget/Services/CatCareOutputLines.swift")
         self.assertIn('fields.append(("年齢", CatCareLostCat.age(', summary)
 
 

@@ -240,6 +240,14 @@ xcrun --sdk macosx swiftc -parse-as-library \
   -o "$RUNNER_TEMP/evacuation-plan-tests"
 "$RUNNER_TEMP/evacuation-plan-tests"
 
+# 11/8: what the tools print (care memo, evacuation sheet, vet and lost-cat
+# lines) from synthetic cats, so an output mistake stops CI, not a TestFlight build.
+xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+  NekoWidget/Services/CatCareCore.swift NekoWidget/Services/CareHandoffPlan.swift \
+  NekoWidget/Services/EvacuationPlan.swift NekoWidget/Services/CatCareOutputLines.swift \
+  ci/verify-tool-outputs.swift -o "$RUNNER_TEMP/tool-output-tests"
+"$RUNNER_TEMP/tool-output-tests"
+
 xcrun --sdk macosx swiftc -parse-as-library \
   NekoWidget/Services/PlusAuthorityCache.swift ci/verify-plus-authority-cache.swift \
   -o "$RUNNER_TEMP/plus-cache-tests"

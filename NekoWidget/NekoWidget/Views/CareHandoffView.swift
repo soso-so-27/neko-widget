@@ -482,27 +482,11 @@ private struct CareDisclosureView: View {
     private func text(_ key: WritableKeyPath<CareHandoffPlan, String>) -> Binding<String> {
         Binding(get: { store.plan[keyPath: key] }, set: { new in store.update { $0[keyPath: key] = new } })
     }
-    /// Chosen cats shared in the family notebook: their own request is printed
-    /// (never this iPhone's household one), so the form writes there (347).
-    private var familyCats: [CareCat] {
-        store.plan.cats.filter { disclosure.catIDs.contains($0.id) && $0.familyContext != nil }
-    }
-    /// Period and request, written in one place: the chosen family cats' shared
-    /// request when there are any, else this memo's own.
+    /// Period and request, written in one place (347): see CareHandoffPlan.requestText.
     private func request(_ key: WritableKeyPath<CareHandoffContext, String>,
                          _ planKey: WritableKeyPath<CareHandoffPlan, String>) -> Binding<String> {
-        Binding(get: {
-            familyCats.first?.familyContext?[keyPath: key] ?? store.plan[keyPath: planKey]
-        }, set: { new in
-            let cats = familyCats
-            if cats.isEmpty { store.update { $0[keyPath: planKey] = new }; return }
-            for cat in cats {
-                store.editCat(cat.id) { cat in
-                    var context = cat.familyContext ?? .init()
-                    context[keyPath: key] = new; cat.familyContext = context
-                }
-            }
-        })
+        Binding(get: { store.plan.requestText(key, planKey, chosen: disclosure.catIDs) },
+                set: { new in store.update { $0.setRequestText(new, key, planKey, chosen: disclosure.catIDs) } })
     }
     /// 11/8: shown here before the memo is made, never printed.
     private var unwritten: [String] {

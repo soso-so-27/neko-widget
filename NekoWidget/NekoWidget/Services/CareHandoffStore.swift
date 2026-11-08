@@ -233,11 +233,7 @@ final class CareHandoffStore: ObservableObject {
                 everyday: CatCareSummary.careHandoffLines(care, legacy: cat),
                 health: CatCareSummary.careHandoffHealthLines(care, legacy: cat),
                 vet: CareHandoffDisclosure.vetFields(plan: plan, household: household, record: care))
-            if plan.cats.contains(where: { disclosure.catIDs.contains($0.id) && $0.familyContext != nil }) {
-                let context = cat.familyContext ?? .init(recipient: plan.recipient, period: plan.period, request: plan.request)
-                fields = CareHandoffDisclosure.written([("お願いする相手", context.recipient), ("お願いする期間", context.period),
-                                                        ("ほかにお願いしたいこと", context.request)]) + fields
-            }
+            fields = disclosure.requestFields(cat: cat, plan: plan) + fields
             return CareHandoffShareRecord.Cat(name: cat.displayName, photo: photo,
                 fields: fields, updatedAt: cat.updatedAt)
         }
