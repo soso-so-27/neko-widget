@@ -5810,8 +5810,14 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "isSelected == true"), object: all)], timeout: 10), .completed)
         func assertVisible(_ target: XCUIElement) {
+            // Asking an element whose frame is still off screen (mid back
+            // animation) for hittability fails the test outright; poll the
+            // frame first, then require it to be hittable.
             let outcome = XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-                predicate: NSPredicate { _, _ in target.exists && target.isHittable }, object: nil)],
+                predicate: NSPredicate { _, _ in
+                    target.exists && app.frame.contains(CGPoint(x: target.frame.midX, y: target.frame.midY))
+                        && target.isHittable
+                }, object: nil)],
                 timeout: 10)
             if outcome != .completed { attach(app, name: "photos-position-restoration-failure") }
             let trace = app.otherElements["memory-library-fixture"].value as? String ?? "No position trace"
@@ -5819,7 +5825,8 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         }
         func scrollTo(_ target: XCUIElement) {
             for _ in 0..<8 {
-                if target.exists && target.isHittable { break }
+                if target.exists && app.frame.contains(CGPoint(x: target.frame.midX, y: target.frame.midY))
+                    && target.isHittable { break }
                 app.swipeUp()
             }
             assertVisible(target)
