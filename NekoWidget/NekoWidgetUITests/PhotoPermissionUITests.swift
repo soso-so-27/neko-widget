@@ -2384,7 +2384,7 @@ final class SoloMemoriesUITests: XCTestCase {
         let entered = "今回の名前"
         name.typeText(entered)
         let edited = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", entered), object: name)
-        XCTAssertEqual(XCTWaiter.wait(for: [edited], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [edited], timeout: 10), .completed, name.value as? String ?? "値なし")
         let editedValue = name.value as? String ?? ""
         XCTAssertEqual(editedValue.replacingOccurrences(of: entered, with: ""), "むぎ")
         XCTAssertEqual(editedValue.count, "むぎ".count + entered.count)
@@ -2866,7 +2866,13 @@ final class SoloMemoriesUITests: XCTestCase {
         app.buttons["lost-cat-saved-\(firstKey)"].tap()
         lastFieldIndex = 0
         XCTAssertEqual(field("lost-cat-name").value as? String, "むぎ")
-        XCTAssertTrue(app.buttons["lost-cat-face-actions"].exists)
+        // 11/9 (#900): a tool's saved cat has 「この子のこと」, so its face photo
+        // (still filled from the saved record) is shown here, not chosen here.
+        let savedFace = app.descendants(matching: .any).matching(identifier: "lost-cat-identifying-photos-face").firstMatch
+        for _ in 0..<4 where !savedFace.exists { app.swipeDown(velocity: .slow) }
+        XCTAssertTrue(savedFace.exists, app.debugDescription)
+        XCTAssertEqual(savedFace.label, "顔の写真")
+        XCTAssertFalse(app.buttons["lost-cat-face-actions"].exists)
         XCTAssertEqual(field("lost-cat-features").value as? String, "茶白・しっぽが長い")
         capture("lost-cat-saved-candidates-large-text")
         app.terminate()
@@ -2916,9 +2922,12 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["lost-cat-saved-\(otherKey)"].waitForExistence(timeout: 8))
         app.buttons["lost-cat-saved-\(otherKey)"].tap()
         lastFieldIndex = 0
-        XCTAssertEqual(field("lost-cat-features").value as? String, "黒猫・短いしっぽ")
-        XCTAssertFalse(app.buttons["lost-cat-face-actions"].exists,
+        // Shown from 「この子のこと」 now (#900): its face stays empty.
+        let otherFace = app.descendants(matching: .any).matching(identifier: "lost-cat-identifying-photos-face").firstMatch
+        XCTAssertTrue(otherFace.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(otherFace.label, "顔の写真、まだありません",
             "A photo marked as including the owner must not become a public candidate")
+        XCTAssertEqual(field("lost-cat-features").value as? String, "黒猫・短いしっぽ")
         app.terminate()
     }
 
@@ -5132,9 +5141,29 @@ final class SoloMemoriesUITests: XCTestCase {
                 try foreground(related).tap()
                 // A tap that lands while the menu is still appearing does not
                 // open the submenu; tap the same visible item once more.
-                if !relatedItems.firstMatch.waitForExistence(timeout: 3) {
+                if !relatedItems.firstMatch.waitForExistence(timeout: 5) {
                     try foreground(related).tap()
                 }
+            }
+            // The 「関連する写真」 submenu can fold back into the 「…」 menu, or the
+            // menu close, while it is read (runs 42545036862 and 42556129520 on the
+            // hosted Simulator). Open it again, at most twice; every item must
+            // still be shown, exactly once.
+            func visible(_ query: XCUIElementQuery) -> [XCUIElement] {
+                query.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }
+            }
+            func inRelated(_ query: XCUIElementQuery) throws -> XCUIElement {
+                for _ in 0..<2 {
+                    let shown = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in visible(query).count == 1 }, object: nil)
+                    if XCTWaiter.wait(for: [shown], timeout: 3) == .completed { break }
+                    if let parent = visible(related).first {
+                        parent.tap()
+                    } else if let menu = visible(more).first {
+                        menu.tap()
+                        if related.firstMatch.waitForExistence(timeout: 3), let parent = visible(related).first { parent.tap() }
+                    }
+                }
+                return try foreground(query)
             }
             let sameDay = app.buttons.matching(identifier: "photo-browser-same-day")
             let thisPhotoSameDay = app.buttons.matching(identifier: "cloudy-photo-same-day")
@@ -5169,20 +5198,6 @@ final class SoloMemoriesUITests: XCTestCase {
                     print("RELATED_MENU_ELEMENT type=\(element.elementType.rawValue) id=\(element.identifier) label=\(element.label) frame=\(element.frame) exists=\(element.exists) enabled=\(element.isEnabled) hittable=\(element.isHittable)")
                 }
             }
-            // The 「関連する写真」 submenu can fold back into the 「…」 menu while it
-            // is read (run 42545036862: the parent row with its chevron was on
-            // screen, the submenu items were not). Open it again once; every
-            // item must still be shown, exactly once.
-            func inRelated(_ query: XCUIElementQuery) throws -> XCUIElement {
-                let shown = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                    query.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }.count == 1
-                }, object: nil)
-                if XCTWaiter.wait(for: [shown], timeout: 3) != .completed {
-                    let parent = related.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }
-                    if parent.count == 1 { parent[0].tap() }
-                }
-                return try foreground(query)
-            }
             _ = try inRelated(theme)
             _ = try inRelated(cat)
             XCTAssertEqual(try inRelated(cat).label, "この猫、ミケ")
@@ -5201,7 +5216,7 @@ final class SoloMemoriesUITests: XCTestCase {
             try foreground(secondDayPhoto).tap()
             _ = try foreground(secondPage)
             try openRelated()
-            try foreground(theme).tap()
+            try inRelated(theme).tap()
             let secondThemePhoto = app.buttons.matching(identifier: "curated-album-photo-close_up-app-store-screenshot-fixture-2")
             _ = try foreground(secondThemePhoto)
             _ = try hittableElements(app.buttons.matching(identifier: "curated-album-photo-close_up-app-store-screenshot-fixture-3"), count: 0)
@@ -5210,7 +5225,7 @@ final class SoloMemoriesUITests: XCTestCase {
             _ = try foreground(app.buttons.matching(identifier: "photo-related-close"))
             capture("photo-related-sheet-photo")
             try openRelated()
-            try foreground(cat).tap()
+            try inRelated(cat).tap()
             let firstCatPhoto = app.buttons.matching(identifier: "curated-album-photo-all_cat_photos-app-store-screenshot-fixture-1")
             _ = try foreground(firstCatPhoto)
             _ = try hittableElements(app.buttons.matching(identifier: "curated-album-photo-all_cat_photos-app-store-screenshot-fixture-3"), count: 0)
@@ -5220,7 +5235,7 @@ final class SoloMemoriesUITests: XCTestCase {
             try foreground(secondDayPhoto).tap()
             _ = try foreground(secondPage)
             try openRelated()
-            _ = try foreground(year)
+            _ = try inRelated(year)
             _ = try hittableElements(app.buttons.matching(identifier: "photo-related-cat-fixture-cat-1"), count: 0)
             try foreground(year).tap()
             _ = try foreground(app.buttons.matching(identifier: "curated-album-photo-calendar_year_2025-app-store-screenshot-fixture-1"))
@@ -5249,7 +5264,7 @@ final class SoloMemoriesUITests: XCTestCase {
             // This grid deliberately contains two choices; open its first visible card.
             try hittableElements(catPhotos, count: 2)[0].tap()
             try openRelated()
-            try foreground(year).tap()
+            try inRelated(year).tap()
             try closeSheet(in: app)
             _ = try foreground(app.buttons.matching(identifier: "photo-memory-note-open"))
             try foreground(back).tap()

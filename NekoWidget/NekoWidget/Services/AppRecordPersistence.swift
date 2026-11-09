@@ -3569,6 +3569,10 @@ struct AppRecordPersistenceFixtureView: View {
             try originalIdentity.write(to: identityURL, options: [.atomic, .completeFileProtection])
             phase = "転送準備の欠落から再開"
             try await next.persistence.verifyMissingStagingRecovery()
+            // The save just checked can leave its older snapshot being tidied;
+            // the fence check reads the archive, so let that finish first
+            // (run 42556129520 stopped here with a conflict, most likely that).
+            await next.persistence.finishCleanupForFixture()
             phase = "入力中の復元・公開直前の保護"
             try await next.persistence.verifyEditingPublicationFences()
             fixture = next; next.persistence.setActive(true)
