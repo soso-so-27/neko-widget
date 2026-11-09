@@ -1886,8 +1886,7 @@ final class SoloMemoriesUITests: XCTestCase {
         app.buttons["別端末での自動復元を検査"].tap()
         let restoreResult = app.staticTexts["app-record-fixture-result"]
         XCTAssertTrue(app.staticTexts["自動復元・通常画面・元記録保全を確認"].waitForExistence(timeout: 20),
-                      (restoreResult.exists ? restoreResult.label : "結果なし") + "
-" + app.debugDescription)
+                      (restoreResult.exists ? restoreResult.label : "結果なし") + " / " + app.debugDescription)
         app.buttons["預けるとき"].tap()
         XCTAssertTrue(cats.firstMatch.waitForExistence(timeout: 5)); XCTAssertEqual(cats.count, 2)
         cats.firstMatch.tap()
