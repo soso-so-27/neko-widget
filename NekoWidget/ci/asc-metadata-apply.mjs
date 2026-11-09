@@ -147,16 +147,19 @@ function main(){
   groups.push(['content-rights',()=>{
   // Content-rights has no native dry-run flag: this wrapper plans that one field.
   const desired='DOES_NOT_USE_THIRD_PARTY_CONTENT';
-  const currentApp=call(['apps','list','--name','ねこのまど','--output','json']).data?.find(a=>a.id===app);
-  if(!currentApp)throw Error('STOP_IDENTITY');
+  const readApp=()=>{
+    const value=call(['apps','view','--id',app,'--fields','name,bundleId,sku,primaryLocale,contentRightsDeclaration,accessibilityUrl,subscriptionStatusUrl,subscriptionStatusUrlVersion,subscriptionStatusUrlForSandbox,subscriptionStatusUrlVersionForSandbox','--output','json']).data;
+    if(value?.id!==app)throw Error('STOP_IDENTITY');
+    return value;
+  };
+  const currentApp=readApp();
   const oldRights=currentApp.attributes.contentRightsDeclaration;
   if(oldRights&&!['DOES_NOT_USE_THIRD_PARTY_CONTENT','USES_THIRD_PARTY_CONTENT'].includes(oldRights))throw Error('STOP_SCOPE');
   console.log(JSON.stringify({dryRun:true,scope:'app',field:'contentRightsDeclaration',from:oldRights??null,to:desired}));
   if(mode==='--apply' && oldRights!==desired){
     let writeError;
     try{call(['apps','update','--id',app,'--content-rights',desired,'--output','json']);}catch(e){writeError=e;}
-    const after=call(['apps','list','--name','ねこのまど','--output','json']).data?.find(a=>a.id===app);
-    if(!after)throw Error('STOP_IDENTITY');
+    const after=readApp();
     const beforeAttrs={...currentApp.attributes},afterAttrs={...after.attributes};
     delete beforeAttrs.contentRightsDeclaration;delete afterAttrs.contentRightsDeclaration;
     if(!isDeepStrictEqual(beforeAttrs,afterAttrs))throw Error('STOP_SCOPE');
@@ -166,12 +169,15 @@ function main(){
   }
   }]);
   groups.push(['plus-localization',()=>{
-    const products=call(['subscriptions','list','--app',app,'--include','subscriptionLocalizations','--paginate','--output','json']);
+    const products=call(['subscriptions','list','--app',app,'--paginate','--output','json']);
     const matches=products.data?.filter(x=>x.attributes?.productId==='jp.nekowidget.plus.monthly');
     if(matches?.length!==1)throw Error('STOP_IDENTITY');
-    const product=matches[0];sensitive.push(product.id);
+    sensitive.push(matches[0].id);
+    const detail=call(['subscriptions','view','--id',matches[0].id,'--include','subscriptionLocalizations','--output','json']);
+    const product=detail.data;
+    if(product?.id!==matches[0].id||product.attributes?.productId!=='jp.nekowidget.plus.monthly')throw Error('STOP_IDENTITY');
     const ids=new Set(product.relationships?.subscriptionLocalizations?.data?.map(x=>x.id)??[]);
-    const existing=products.included?.filter(x=>ids.has(x.id)&&x.attributes?.locale==='ja')??[];
+    const existing=detail.included?.filter(x=>ids.has(x.id)&&x.attributes?.locale==='ja')??[];
     if(existing.length>1)throw Error('STOP_IDENTITY');
     if(existing[0]?.attributes?.name&&existing[0]?.attributes?.description){
       console.log(JSON.stringify({scope:'plus-localization',status:'existing-nonempty-preserved',productState:product.attributes?.state}));return;
