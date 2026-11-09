@@ -288,9 +288,11 @@ final class AppStoreScreenshotUITests: XCTestCase {
                       || catCareHeading.waitForExistence(timeout: 10), app.debugDescription)
         captureScreenshot(named: "PR5-profile-in-tool")
         // 11/7: 「この子のこと」 opens the cat's one page (no 写真 tab); the profile
-        // is deleted at the bottom of that same page.
-        let edit = app.descendants(matching: .any)["care-open-cat-care"].firstMatch
-        XCTAssertTrue(scrollUpUntilHittable(edit, application: app), app.debugDescription); edit.tap()
+        // is deleted at the bottom of that same page. 349 (#886): in a tool the
+        // section is one folded row, and that row itself opens the page.
+        let edit = app.descendants(matching: .any)["care-cat-care-fields-folded"].firstMatch
+        XCTAssertTrue(scrollUpUntilHittable(edit, application: app), app.debugDescription)
+        XCTAssertTrue(edit.label.contains("この子のこと"), edit.label); edit.tap()
         XCTAssertTrue(app.buttons["cat-care-part-basics"].waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertFalse(app.buttons["cat-profile-page-photos"].exists, "The cat's page has no 写真 tab")
         // The name and the key photo are in 基本.
@@ -326,7 +328,14 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let observations = app.descendants(matching: .any)["vet-observations"].firstMatch
         XCTAssertTrue(observations.waitForExistence(timeout: 10), app.debugDescription)
         observations.tap(); observations.typeText("いつもの様子")
+        // 11/8 (130f6436): a tool's bottom bar steps aside while the keyboard
+        // is up. Close it as a person would; the bar's button then shows
+        // whether the automatic save went through.
+        let closeKeyboard = app.buttons["キーボードを閉じる"]
+        XCTAssertTrue(closeKeyboard.waitForExistence(timeout: 5), app.debugDescription); closeKeyboard.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
         let preview = app.buttons["vet-show"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 5), app.debugDescription)
         let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: preview)
         XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 10), .completed)
         preview.tap()
@@ -602,8 +611,11 @@ final class AppStoreScreenshotUITests: XCTestCase {
         folded.tap()
         XCTAssertTrue(app.buttons["cat-care-family-notebook"].waitForExistence(timeout: 10), app.debugDescription)
         // Open 「暮らし」 so the shot shows what was written (接し方・ごはん・トイレ).
+        // 11/9 (#900): 「見分ける写真」 sits open above the parts, so 暮らし can
+        // start below the first screen; the list makes its row only near view.
         let living = app.buttons["cat-care-part-living"]
-        XCTAssertTrue(living.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.buttons["cat-care-part-basics"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(scrollUpUntilHittable(living, application: app), app.debugDescription)
         living.tap()
         // 11/7: the cat's photo and name lead the page, so 接し方 (the last row
         // of 暮らし) opens below the first screen; the list makes it only once

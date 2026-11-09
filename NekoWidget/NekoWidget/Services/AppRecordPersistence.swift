@@ -2228,6 +2228,9 @@ struct AppRecordSavedPhoto: View {
 /// Isolated synthetic transport. The real D1/S3 reference graph is checked by
 /// backend integration tests; this fixture drives the normal iPhone stores/UI.
 private actor AppRecordFixtureServer {
+    /// As PreservationService/src/storage.ts says it: every tool it keeps. Without
+    /// it a save that holds 「この子のこと」 (CatCare) stops as paused (11/9).
+    static let supportedTools = ToolBackupIndex.manifests.keys.sorted()
     private var measuredRoutes: [String: Int] = [:]
     private var routesAtHead: [String: Int] = [:]
     private var headWrites = 0
@@ -2423,7 +2426,8 @@ private actor AppRecordFixtureServer {
                 let used = headWrites > 0 ? 4096 : 0
                 let saved = headWrites > 0 ? 3 : 0
                 return try response(["version": 1, "accounting": "encrypted-records-v1",
-                    "toolSnapshots": ["maximumIndexVersion": 4, "strictPartDeletion": true, "metadataBatchVersion": 1],
+                    "toolSnapshots": ["maximumIndexVersion": 4, "strictPartDeletion": true, "metadataBatchVersion": 1,
+                                      "supportedTools": Self.supportedTools],
                     "storage": ["usedBytes": used, "reservedBytes": 0, "limitBytes": 3000000000, "availableBytes": 3000000000-used, "overLimit": false],
                     "records": ["saved": saved, "pending": 0, "maximumRecords": 3000, "creationLimitReached": false],
                     "productQuota": ["configurationStatus": "valid", "accountingStatus": "ready", "enforcementStatus": "enabled",
@@ -2436,7 +2440,8 @@ private actor AppRecordFixtureServer {
                             "records": ["saved": saved, "maximumRecords": 3000, "available": 3000-saved, "overLimit": false]]]])
             }
             return try response(["version": 1, "accounting": "encrypted-records-v1",
-                "toolSnapshots": ["maximumIndexVersion": maximumIndexVersion, "strictPartDeletion": true, "metadataBatchVersion": metadataBatchMode ? 1 : 0],
+                "toolSnapshots": ["maximumIndexVersion": maximumIndexVersion, "strictPartDeletion": true, "metadataBatchVersion": metadataBatchMode ? 1 : 0,
+                                  "supportedTools": Self.supportedTools],
                 "storage": ["usedBytes": 0, "reservedBytes": 0, "limitBytes": 100000000,
                     "availableBytes": 100000000, "overLimit": false],
                 "records": ["saved": records.count, "pending": 0, "maximumRecords": 200, "creationLimitReached": false]])
@@ -3564,13 +3569,20 @@ struct AppRecordPersistenceFixtureView: View {
             try originalIdentity.write(to: identityURL, options: [.atomic, .completeFileProtection])
             phase = "転送準備の欠落から再開"
             try await next.persistence.verifyMissingStagingRecovery()
+            // The save just checked can leave its older snapshot being tidied;
+            // the fence check reads the archive, so let that finish first
+            // (run 42556129520 stopped here with a conflict, most likely that).
+            await next.persistence.finishCleanupForFixture()
             phase = "入力中の復元・公開直前の保護"
             try await next.persistence.verifyEditingPublicationFences()
             fixture = next; next.persistence.setActive(true)
             result = "自動復元・通常画面・元記録保全を確認"
         } catch {
-            // Keep the failing fixture stage visible without raw error details.
-            result = "自動復元の検査失敗: \(phase) / \(target?.persistence.title ?? "") / \(target?.persistence.detail ?? "")"
+            // Keep the failing fixture stage visible without raw error details:
+            // only the error's type and, for preservation, its fixed support code.
+            let code = (error as? ManagedPreservationError).map { " " + $0.preservationSupportCode } ?? ""
+            let kind = "\(type(of: error))" + code
+            result = "自動復元の検査失敗: \(phase) / \(target?.persistence.title ?? "") / \(target?.persistence.detail ?? "") / \(kind)"
         }
     }
 }
@@ -3598,6 +3610,10 @@ private struct AppRecordFixtureContent: View {
         NavigationStack(path: $path) {
             List {
                 Text(persistence.title).accessibilityIdentifier("app-record-fixture-status")
+                // Why a save is waiting, so a failed UI check can say it.
+                if let detail = persistence.detail {
+                    Text(detail).accessibilityIdentifier("app-record-fixture-detail")
+                }
                 Text(counts).accessibilityIdentifier("app-record-fixture-photo-count")
                 if !result.isEmpty { Text(result).accessibilityIdentifier("app-record-fixture-result") }
                 if !AppRecordFixture.measurementSummary.isEmpty {
