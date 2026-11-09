@@ -1837,12 +1837,33 @@ final class SoloMemoriesUITests: XCTestCase {
         }
         capture("automatic-save-apple-contract-entry")
         app.navigationBars.buttons.element(boundBy: 0).tap()
-        XCTAssertEqual(app.staticTexts["app-record-fixture-photo-count"].label, "写真の送信 4回")
-        app.buttons["預けるとき"].tap()
+        let photoCount = app.staticTexts["app-record-fixture-photo-count"]
+        XCTAssertEqual(photoCount.label, "写真の送信 4回")
+        let status = app.staticTexts["app-record-fixture-status"]
+        let detail = app.staticTexts["app-record-fixture-detail"]
+        func waitUntilSaved() {
+            let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "保存済み"), object: status)
+            XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 25), .completed,
+                           "\(status.label) / \(detail.exists ? detail.label : "説明なし")")
+        }
         // 11/7: the care tool opens a cat in place (no list to go back to), with
         // the row of cats on top. Count only the row's care-cat-<UUID> buttons.
         let cats = app.buttons.matching(NSPredicate(format: "identifier MATCHES %@",
             "care-cat-[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}"))
+        // 11/9 (#900): the first time a tool opens, the identifying photos the
+        // tools kept are copied once into 「この子のこと」 (two in this fixture;
+        // run 42540048321 counted 6 after the first save). Those new files are
+        // saved once; open the tool first so they are counted apart from the
+        // ordinary edit below.
+        app.buttons["預けるとき"].tap()
+        XCTAssertTrue(cats.firstMatch.waitForExistence(timeout: 5)); XCTAssertEqual(cats.count, 2)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["自動保存の検査"].waitForExistence(timeout: 5), app.debugDescription)
+        let copied = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "写真の送信 6回"), object: photoCount)
+        XCTAssertEqual(XCTWaiter.wait(for: [copied], timeout: 25), .completed,
+                       "\(photoCount.label) / \(status.label) / \(detail.exists ? detail.label : "説明なし")")
+        waitUntilSaved()
+        app.buttons["預けるとき"].tap()
         XCTAssertTrue(cats.firstMatch.waitForExistence(timeout: 5)); XCTAssertEqual(cats.count, 2)
         cats.firstMatch.tap()
         let name = app.textFields["care-cat-name"]
@@ -1851,12 +1872,9 @@ final class SoloMemoriesUITests: XCTestCase {
         // One back leaves the tool and returns to the fixture's own list.
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.navigationBars["自動保存の検査"].waitForExistence(timeout: 5), app.debugDescription)
-        let status = app.staticTexts["app-record-fixture-status"]
-        let updates = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "保存済み"), object: status)
-        let detail = app.staticTexts["app-record-fixture-detail"]
-        XCTAssertEqual(XCTWaiter.wait(for: [updates], timeout: 25), .completed,
-                       "\(status.label) / \(detail.exists ? detail.label : "説明なし")")
-        XCTAssertEqual(app.staticTexts["app-record-fixture-photo-count"].label, "写真の送信 4回")
+        waitUntilSaved()
+        // The ordinary edit sends no photo again.
+        XCTAssertEqual(photoCount.label, "写真の送信 6回")
         capture("automatic-save-from-ordinary-care-edit-no-photo-resend")
         app.buttons["別端末での自動復元を検査"].tap()
         XCTAssertTrue(app.staticTexts["自動復元・通常画面・元記録保全を確認"].waitForExistence(timeout: 20), app.debugDescription)
