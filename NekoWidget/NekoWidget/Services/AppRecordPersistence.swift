@@ -3579,10 +3579,9 @@ struct AppRecordPersistenceFixtureView: View {
             result = "自動復元・通常画面・元記録保全を確認"
         } catch {
             // Keep the failing fixture stage visible without raw error details:
-            // only the error's type and case name, so a UI check can say which.
-            let mirror = Mirror(reflecting: error)
-            let kind = mirror.displayStyle == .enum
-                ? "\(type(of: error)).\(mirror.children.first?.label ?? String(describing: error))" : "\(type(of: error))"
+            // only the error's type and, for preservation, its fixed support code.
+            let code = (error as? ManagedPreservationError).map { " " + $0.preservationSupportCode } ?? ""
+            let kind = "\(type(of: error))" + code
             result = "自動復元の検査失敗: \(phase) / \(target?.persistence.title ?? "") / \(target?.persistence.detail ?? "") / \(kind)"
         }
     }
