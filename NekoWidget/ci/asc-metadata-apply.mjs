@@ -57,6 +57,9 @@ export function runGroups(groups,report=console.log){
   }
   return failed;
 }
+export function permissionFailure(text){
+  return /\b(?:401|403)\b|\b(?:FORBIDDEN|NOT_AUTHORIZED|NOT_AUTHENTICATED|UNAUTHORIZED|AUTHENTICATION_ERROR|INSUFFICIENT_PERMISSIONS)(?:\b|_)/i.test(text);
+}
 function main(){
   const mode=process.argv[2]; if(!['--dry-run','--apply','--validate'].includes(mode)) throw Error('STOP_MODE');
   const env={...process.env,ASC_TELEMETRY_DISABLED:'1',DO_NOT_TRACK:'1'};
@@ -66,7 +69,7 @@ function main(){
     let obj;try{obj=JSON.parse(r.stdout);}catch{}
     if(r.error||!obj||(r.status!==0&&!(allowFindings&&Array.isArray(obj.checks)))){
       const all=(r.stderr??'')+(r.stdout??'');
-      const permission=/\b(401|403|FORBIDDEN|NOT_AUTHORIZED)\b/i.test(all);
+      const permission=permissionFailure(all);
       const code=all.match(/\b(401|403|409|422|429|500|502|503)\b/)?.[1]??'unknown';
       console.log(JSON.stringify({operation:args.slice(0,2).join(' '),HTTP:code,permissionDenied:permission,
         fieldHints:['whatsNew','subtitle','description','keywords','promotionalText','supportUrl','notes','demoAccountRequired'].filter(f=>all.includes(f)),

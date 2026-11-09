@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {checkPlan,errorDetails,runGroups} from './asc-metadata-apply.mjs';
+import {checkPlan,errorDetails,runGroups,permissionFailure} from './asc-metadata-apply.mjs';
 import {readFileSync} from 'node:fs';
 const allowed=[{scope:'app-info',locale:'ja',field:'subtitle',value:'approved'}];
 const change={scope:'app-info',locale:'ja',field:'subtitle',to:'approved'};
@@ -47,4 +47,8 @@ test('first version never requests whatsNew',()=>{
   const input=JSON.parse(readFileSync(new URL('./asc-metadata-1109d/version/1.0/ja.json',import.meta.url),'utf8'));
   assert.equal(Object.hasOwn(input,'whatsNew'),false);
   assert.deepEqual(Object.keys(input).sort(),['description','keywords','promotionalText','supportUrl']);
+});
+test('Apple permission error suffixes still stop every group without an HTTP code',()=>{
+  for(const text of ['FORBIDDEN_ERROR','NOT_AUTHORIZED','AUTHENTICATION_ERROR','HTTP 403','UNAUTHORIZED_ERROR'])assert.equal(permissionFailure(text),true);
+  assert.equal(permissionFailure('ENTITY_ERROR.ATTRIBUTE.INVALID whatsNew'),false);
 });
