@@ -220,6 +220,10 @@ final class PlusPurchaseStore: ObservableObject {
     /// Presentation eligibility only; this never grants an entitlement.
     @Published private(set) var canStartNewPurchase = false
     @Published private(set) var hasBillingIssue = false
+    /// Presentation only (11/9): StoreKit's auto-renewal and end date, so a
+    /// cancelled member sees until when Plus lasts. Never grants or withdraws
+    /// access; nil when StoreKit has no current Plus subscription to describe.
+    @Published private(set) var renewal: PlusRenewalSnapshot?
     private var authorityExpiryTask: Task<Void, Never>?
 
     private struct EntitlementScan {
@@ -331,6 +335,7 @@ final class PlusPurchaseStore: ObservableObject {
         startTransactionUpdatesListener()
         startStorefrontUpdatesListener()
         await reconcileCurrentEntitlements()
+        await refreshRenewal()
         await loadProducts()
     }
 
@@ -364,7 +369,36 @@ final class PlusPurchaseStore: ObservableObject {
 
     private func performRefresh() async {
         await reconcileCurrentEntitlements()
+        await refreshRenewal()
         await loadProducts()
+    }
+
+    /// Reads whether the current Plus subscription renews, for the words on
+    /// screen only. Runs with every launch/foreground/Settings refresh, which
+    /// includes returning from Apple's subscription management sheet.
+    /// A failed read keeps the last answer; it never changes entitlementState.
+    private func refreshRenewal() async {
+        guard configuration.isConfigured else { renewal = nil; return }
+        var groupIDs = Set<String>()
+        for await result in Transaction.currentEntitlements {
+            if case let .verified(transaction) = result, isEligibleStoreKitTransaction(transaction),
+               let groupID = transaction.subscriptionGroupID {
+                groupIDs.insert(groupID)
+            }
+        }
+        var snapshots: [PlusRenewalSnapshot] = []
+        for groupID in groupIDs.sorted() {
+            guard let statuses = try? await Product.SubscriptionInfo.status(for: groupID) else { return }
+            for status in statuses {
+                guard case let .verified(transaction) = status.transaction,
+                      isEligibleStoreKitTransaction(transaction),
+                      case let .verified(renewalInfo) = status.renewalInfo else { continue }
+                snapshots.append(PlusRenewalSnapshot(willAutoRenew: renewalInfo.willAutoRenew,
+                                                     expirationDate: transaction.expirationDate))
+            }
+        }
+        let latest = PlusRenewalSnapshot.combined(snapshots)
+        if renewal != latest { renewal = latest }
     }
 
     /// Fetch a fresh offer when its sheet is opened. This does not purchase,
@@ -600,6 +634,7 @@ final class PlusPurchaseStore: ObservableObject {
             for await update in Transaction.updates {
                 guard !Task.isCancelled else { return }
                 await self?.handleTransactionUpdate(update)
+                await self?.refreshRenewal()
             }
         }
     }

@@ -522,6 +522,84 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertIn("generation == offerLoadGeneration", model)
         self.assertIn("store.productCatalogRevision", model)
 
+    def test_cancelled_member_sees_until_when_plus_lasts(self) -> None:
+        # 11/9: auto-renewal off but still active shows its end date, so the
+        # cancellation visibly worked; renewing stays 「Plus（利用中）」.
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+        app_sources = section(project, "A00000000000000000000021 /* Sources */ = {",
+                              "A00000000000000000000025 /* Sources */ = {")
+        extension_sources = project[project.index("A00000000000000000000025 /* Sources */ = {"):]
+        self.assertIn("PlusRenewalPresentation.swift in Sources", app_sources)
+        self.assertNotIn("PlusRenewalPresentation.swift in Sources", extension_sources)
+        words = source("NekoWidget/Services/PlusRenewalPresentation.swift")
+        self.assertNotIn("import SwiftUI", words)
+        self.assertNotIn("import StoreKit", words)
+        self.assertIn('"Plus（\\($0)まで）"', words)
+        self.assertIn('"\\($0)まで使えます"', words)
+        self.assertIn("guard willAutoRenew == false, let expiration, expiration > now", words)
+
+        # StoreKit 2 renewal info, verified only, read for words and never for access.
+        self.assertIn("@Published private(set) var renewal: PlusRenewalSnapshot?", self.store)
+        renewal = section(self.store, "private func refreshRenewal() async {", "func refreshProductsForOffer()")
+        self.assertIn("Transaction.currentEntitlements", renewal)
+        self.assertIn("Product.SubscriptionInfo.status(for: groupID)", renewal)
+        self.assertIn("case let .verified(transaction) = status.transaction", renewal)
+        self.assertIn("case let .verified(renewalInfo) = status.renewalInfo", renewal)
+        self.assertIn("renewalInfo.willAutoRenew", renewal)
+        self.assertIn("transaction.expirationDate", renewal)
+        self.assertIn("isEligibleStoreKitTransaction(transaction)", renewal)
+        for forbidden in ("entitlementState =", "canStartNewPurchase", "AppStore.sync", "refreshServerAuthority"):
+            self.assertNotIn(forbidden, renewal)
+        # Every launch / foreground / refresh request re-reads it.
+        start = section(self.store, "private func performStart() async {", "func refreshAfterForegroundEntry()")
+        self.assertLess(start.index("await reconcileCurrentEntitlements()"), start.index("await refreshRenewal()"))
+        refresh = section(self.store, "private func performRefresh() async {", "private func refreshRenewal()")
+        self.assertLess(refresh.index("await reconcileCurrentEntitlements()"), refresh.index("await refreshRenewal()"))
+        updates = section(self.store, "private func startTransactionUpdatesListener()", "private func handleTransactionUpdate(")
+        self.assertIn("await self?.refreshRenewal()", updates)
+
+        model = source("NekoWidget/Services/MembershipOfferModel.swift")
+        settings = section(model, "struct PlusSettingsSection: View {", "#if DEBUG || INTERNAL_PRESENTATION")
+        self.assertNotIn('"Plus（利用中）"', model)
+        self.assertIn("Text(status == .member ? memberHeader :", settings)
+        self.assertIn("PlusRenewalPresentation.settingsHeader(willAutoRenew: purchases.renewal?.willAutoRenew,", settings)
+        self.assertIn('.accessibilityIdentifier(status == .member ? "settings-membership-active"', settings)
+        # Closing Apple's management sheet re-reads renewal through the shared refresh.
+        self.assertIn(".manageSubscriptionsSheet(isPresented: $showsManagement)", settings)
+        self.assertIn("if !isPresented { refreshMembership() }", settings)
+        self.assertIn("NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)",
+                      settings[settings.index("private func refreshMembership()"):])
+        app = source("NekoWidget/App/NekoWidgetApp.swift")
+        notified = section(app, ".onReceive(NotificationCenter.default.publisher(for: .membershipAccessRefreshRequested))",
+                           ".task {")
+        self.assertIn("await plusPurchases.refreshAfterForegroundEntry()", notified)
+        sheet = section(model, "struct MembershipOfferSheet: View {", "struct PlusOfferPrompt: View {")
+        self.assertIn("await model.refreshAfterSubscriptionManagement()", sheet)
+        self.assertIn("isMember: model.isMember, memberEndLine: model.memberEndLine,", sheet)
+        state = section(model, "private func updateMembershipState()", "static func preview(state:")
+        self.assertIn("let endLine = isMember ? PlusRenewalPresentation.offerEndLine(willAutoRenew: renewal?.willAutoRenew,",
+                      state)
+        # Previews and fixtures have no StoreKit renewal: they keep 「Plusを利用中です」.
+        self.assertIn("let renewal = purchases?.renewal", state)
+
+        # The Plus screen: one line, the end date, in place of 「Plusを利用中です」.
+        view = source("NekoWidget/Views/MembershipOfferView.swift")
+        member = section(view, "            if isMember {", "            } else if let offer {")
+        self.assertIn('Label(memberEndLine ?? PlusRenewalPresentation.renewingOfferTitle, systemImage: "checkmark.circle.fill")',
+                      member)
+        self.assertIn('.accessibilityIdentifier("membership-offer-active")', member)
+        self.assertLess(member.index("if memberEndLine == nil {"), member.index("新しく申し込む必要はありません。"))
+        self.assertEqual(member.count("Text("), 1)
+
+        # The words run on macOS in the ordinary quick checks.
+        quick = source("ci/run-quick-ios-checks.sh")
+        self.assertIn("NekoWidget/Services/PlusAuthorityCache.swift NekoWidget/Services/PlusRenewalPresentation.swift \\\n"
+                      "  ci/verify-plus-authority-cache.swift", quick)
+        verifier = source("ci/verify-plus-authority-cache.swift")
+        self.assertIn("try verifyRenewalWords()", verifier)
+        for expected in ('"Plus（11月9日まで）"', '"11月9日まで使えます"', '"Plus（2027年1月9日まで）"', '"Plus（利用中）"'):
+            self.assertIn(expected, verifier)
+
 
 if __name__ == "__main__":
     unittest.main()

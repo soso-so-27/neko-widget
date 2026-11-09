@@ -180,6 +180,8 @@ final class MembershipOfferModel: ObservableObject {
     @Published private(set) var isMember = false
     @Published private(set) var verificationRequired = false
     @Published private(set) var purchaseTitle: String?
+    /// 「11月9日まで使えます」 when a member's Plus will not renew (11/9); nil while it renews.
+    @Published private(set) var memberEndLine: String?
     private var purchases: PlusPurchaseStore?
     private var observation: AnyCancellable?
     private var expiryTask: Task<Void, Never>?
@@ -468,8 +470,12 @@ final class MembershipOfferModel: ObservableObject {
             return
 #endif
         }
+        let renewal = purchases?.renewal
+        let endLine = isMember ? PlusRenewalPresentation.offerEndLine(willAutoRenew: renewal?.willAutoRenew,
+            expiration: renewal?.expirationDate, now: .now, calendar: .current) : nil
+        if memberEndLine != endLine { memberEndLine = endLine }
         if isMember {
-            purchaseTitle = "Plusを利用中です"
+            purchaseTitle = PlusRenewalPresentation.renewingOfferTitle
             message = nil
         } else if isWaiting {
             purchaseTitle = "購入の確認待ちです"
@@ -829,7 +835,8 @@ struct MembershipOfferSheet: View {
                     photo: photo, photoAsset: placePhoto, offer: model.offer, isWorking: model.isWorking,
                     canPurchase: model.canPurchase, canRestore: model.canRestore,
                     message: model.message,
-                    isMember: model.isMember, purchaseTitle: model.purchaseTitle,
+                    isMember: model.isMember, memberEndLine: model.memberEndLine,
+                    purchaseTitle: model.purchaseTitle,
                     canRefresh: model.canRefresh,
                     onRefresh: { Task { await model.refresh() } },
                     onManageSubscription: {
@@ -1006,7 +1013,7 @@ struct PlusSettingsSection: View {
         } header: {
             // Presenters live on the header, which stays while the rows switch
             // between states (a list Section would copy them onto every row).
-            Text(status == .member ? "Plus（利用中）" : status == .unknown ? "Plus（購入状況を確認できません）" : "Plus")
+            Text(status == .member ? memberHeader : status == .unknown ? "Plus（購入状況を確認できません）" : "Plus")
                 .accessibilityIdentifier(status == .member ? "settings-membership-active"
                                          : status == .unknown ? "settings-membership-unknown" : "settings-membership-header")
                 .sheet(isPresented: $showsOffer, onDismiss: {
@@ -1023,6 +1030,13 @@ struct PlusSettingsSection: View {
                     if !isPresented { refreshMembership() }
                 }
         }
+    }
+
+    /// 「Plus（11月9日まで）」 once auto-renewal is off, so a cancellation shows
+    /// it worked; 「Plus（利用中）」 while it renews (11/9).
+    private var memberHeader: String {
+        PlusRenewalPresentation.settingsHeader(willAutoRenew: purchases.renewal?.willAutoRenew,
+            expiration: purchases.renewal?.expirationDate, now: .now, calendar: .current)
     }
 
     private func refreshMembership() {

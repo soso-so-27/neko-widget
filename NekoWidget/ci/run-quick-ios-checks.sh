@@ -256,7 +256,8 @@ xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0
 "$RUNNER_TEMP/tool-output-tests"
 
 xcrun --sdk macosx swiftc -parse-as-library \
-  NekoWidget/Services/PlusAuthorityCache.swift ci/verify-plus-authority-cache.swift \
+  NekoWidget/Services/PlusAuthorityCache.swift NekoWidget/Services/PlusRenewalPresentation.swift \
+  ci/verify-plus-authority-cache.swift \
   -o "$RUNNER_TEMP/plus-cache-tests"
 "$RUNNER_TEMP/plus-cache-tests"
 

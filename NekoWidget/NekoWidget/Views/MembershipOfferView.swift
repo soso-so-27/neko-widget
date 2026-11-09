@@ -16,6 +16,8 @@ struct MembershipOfferView: View {
     let canRestore: Bool
     let message: String?
     let isMember: Bool
+    /// 「11月9日まで使えます」 in place of 「Plusを利用中です」 when Plus will not renew.
+    let memberEndLine: String?
     let purchaseTitle: String?
     let canRefresh: Bool
     let onRefresh: (() -> Void)?
@@ -70,6 +72,7 @@ struct MembershipOfferView: View {
         canRestore: Bool,
         message: String?,
         isMember: Bool = false,
+        memberEndLine: String? = nil,
         purchaseTitle: String? = nil,
         canRefresh: Bool = false,
         onRefresh: (() -> Void)? = nil,
@@ -88,6 +91,7 @@ struct MembershipOfferView: View {
         self.canRestore = canRestore
         self.message = message
         self.isMember = isMember
+        self.memberEndLine = memberEndLine
         self.purchaseTitle = purchaseTitle
         self.canRefresh = canRefresh
         self.onRefresh = onRefresh
@@ -197,13 +201,16 @@ struct MembershipOfferView: View {
     private var offerDetails: some View {
         VStack(spacing: 6) {
             if isMember {
-                Label("Plusを利用中です", systemImage: "checkmark.circle.fill")
+                // 11/9: cancelled but still usable is one line, its end date.
+                Label(memberEndLine ?? PlusRenewalPresentation.renewingOfferTitle, systemImage: "checkmark.circle.fill")
                     .font(.headline)
                     .foregroundStyle(.tint)
                     .accessibilityIdentifier("membership-offer-active")
-                Text("新しく申し込む必要はありません。")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                if memberEndLine == nil {
+                    Text("新しく申し込む必要はありません。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             } else if let offer {
                 if offer.isPreview {
                     Text("操作の確認用です。請求されません")
