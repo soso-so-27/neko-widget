@@ -43,7 +43,6 @@
 		6387AC337AC420C39954EB1B /* VeterinaryCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ECEA0305B053B99E1245523 /* VeterinaryCapture.swift */; };
 		C02609290000000000000011 /* CareHandoffPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02609290000000000000012 /* CareHandoffPlan.swift */; };
 		C10811080000000000000001 /* CatCareOutputLines.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10811080000000000000002 /* CatCareOutputLines.swift */; };
-		C10911090000000000000101 /* MemoCaptionBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10911090000000000000102 /* MemoCaptionBridge.swift */; };
 		C10811090000000000000001 /* LostCatIncident.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10811090000000000000002 /* LostCatIncident.swift */; };
 		C02609290000000000000013 /* CareHandoffStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02609290000000000000014 /* CareHandoffStore.swift */; };
 		C02609290000000000000015 /* CareHandoffExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02609290000000000000016 /* CareHandoffExporter.swift */; };
@@ -376,7 +375,6 @@
 		6ECEA0305B053B99E1245523 /* VeterinaryCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VeterinaryCapture.swift; sourceTree = "<group>"; };
 		C02609290000000000000012 /* CareHandoffPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareHandoffPlan.swift; sourceTree = "<group>"; };
 		C10811080000000000000002 /* CatCareOutputLines.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCareOutputLines.swift; sourceTree = "<group>"; };
-		C10911090000000000000102 /* MemoCaptionBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoCaptionBridge.swift; sourceTree = "<group>"; };
 		C10811090000000000000002 /* LostCatIncident.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LostCatIncident.swift; sourceTree = "<group>"; };
 		C02609290000000000000014 /* CareHandoffStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareHandoffStore.swift; sourceTree = "<group>"; };
 		C02609290000000000000016 /* CareHandoffExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareHandoffExporter.swift; sourceTree = "<group>"; };
@@ -912,7 +910,6 @@
 				E02609290000000000000016 /* EvacuationExporter.swift */,
 				C02609290000000000000012 /* CareHandoffPlan.swift */,
 				C10811080000000000000002 /* CatCareOutputLines.swift */,
-				C10911090000000000000102 /* MemoCaptionBridge.swift */,
 				C10811090000000000000002 /* LostCatIncident.swift */,
 				C02609290000000000000014 /* CareHandoffStore.swift */,
 				C02609290000000000000016 /* CareHandoffExporter.swift */,
@@ -1352,7 +1349,6 @@
 				E02609290000000000000019 /* EvacuationFixtureView.swift in Sources */,
 				C02609290000000000000011 /* CareHandoffPlan.swift in Sources */,
 				C10811080000000000000001 /* CatCareOutputLines.swift in Sources */,
-				C10911090000000000000101 /* MemoCaptionBridge.swift in Sources */,
 				C10811090000000000000001 /* LostCatIncident.swift in Sources */,
 				C02609290000000000000013 /* CareHandoffStore.swift in Sources */,
 				C02609290000000000000015 /* CareHandoffExporter.swift in Sources */,

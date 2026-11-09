@@ -139,6 +139,10 @@ struct GroupShareComposer: View {
                         TextField("ひとこと", text: $model.caption, axis: .vertical)
                             .lineLimit(1...3).disabled(!model.canEdit)
                             .accessibilityIdentifier("group-share-caption")
+                        // Who sees it, right at the field, as in the app (11/9).
+                        Text(GroupPhotoCaption.visibilityFooter)
+                            .font(.footnote).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("group-share-caption-footer")
                         if let error = model.captionError { Text(error).foregroundStyle(.secondary) }
                         if let message = model.message { Text(message).foregroundStyle(.secondary) }
                         Button(model.sending ? "届けています" : "届ける") { Task { await model.send() } }

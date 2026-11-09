@@ -1,5 +1,4 @@
 import ImageIO
-import Photos
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -188,28 +187,15 @@ final class GroupWindowScreenModel: ObservableObject {
     struct PreparedPhoto: Identifiable {
         let id = UUID()
         let jpeg: Data
-        /// The Photos item, for the owner's own memo. Nil when unknown.
-        let photoIdentifier: String?
         /// Kept for a retry, so a photo the relay already took is not sent twice.
         var operationID = UUID()
     }
 
-    /// What the sent ひとこと may become in this photo's own memo, decided on
-    /// the screen where Plus is known. The memo itself is never sent.
-    struct MemoKeeping {
-        /// `createPersonalMemo`: a new memo needs Plus; adding to one is free.
-        let createDecision: MembershipAccessDecision
-        /// The editor's context (capture date, assigned cats) for a new memo.
-        var context: PhotoMemoryNoteContext? = nil
-        /// Not decided on a screen (a send resumed after the app closed).
-        static let existingMemoOnly = MemoKeeping(createDecision: .membershipRequired)
-    }
-
+    /// A photo not delivered yet, with its ひとこと for 「もう一度届ける」.
     struct FailedDelivery {
         let photo: PreparedPhoto
         let memo: String
         var confirmationPhotoID: String? = nil
-        var keeping: MemoKeeping = .existingMemoOnly
     }
 
     func imageURL(for entry: GroupWindowLocalPhotoStore.Entry) async -> URL? {
@@ -307,13 +293,12 @@ final class GroupWindowScreenModel: ObservableObject {
             if failedDelivery == nil, !isSending, latest.state == .active,
                let pending = await client.pendingDelivery(windowID: windowID) {
                 failedDelivery = FailedDelivery(
-                    photo: PreparedPhoto(jpeg: pending.jpeg, photoIdentifier: nil, operationID: pending.operationID),
+                    photo: PreparedPhoto(jpeg: pending.jpeg, operationID: pending.operationID),
                     memo: pending.caption ?? "", confirmationPhotoID: pending.confirmationPhotoID)
             }
             if let pending = failedDelivery, let photoID = pending.confirmationPhotoID,
                photos.contains(where: { $0.id == photoID && $0.senderParticipantID == latest.myParticipantID }),
                await store.contains(photoID: photoID, windowID: windowID) {
-                await saveMemo(pending.memo, for: pending.photo.photoIdentifier, keeping: pending.keeping)
                 await client.discardPendingDelivery(operationID: pending.photo.operationID)
                 failedDelivery = nil
                 sendCompleted = true
@@ -428,13 +413,13 @@ final class GroupWindowScreenModel: ObservableObject {
             return nil
         }
         message = nil
-        return PreparedPhoto(jpeg: picked.jpeg, photoIdentifier: item.itemIdentifier)
+        return PreparedPhoto(jpeg: picked.jpeg)
     }
 
     /// Sends the confirmed photo with its ひとこと (encrypted with the window's
-    /// key). The same words stay on this iPhone as the photo's own memo when
-    /// the person can keep memos for it (`MemoCaptionBridge.keeping`).
-    func deliver(_ prepared: PreparedPhoto, memo: String, keeping: MemoKeeping) async {
+    /// key). Sending never writes the photo's own memo: the memo is this
+    /// iPhone's alone, the ひとこと is the まど's (11/9, one-way).
+    func deliver(_ prepared: PreparedPhoto, memo: String) async {
         guard canSend, let me = window?.myParticipantID else { return }
         isSending = true
         sendCompleted = false
@@ -447,14 +432,12 @@ final class GroupWindowScreenModel: ObservableObject {
             let sent = try await client.sendPhoto(normalizedJPEG: prepared.jpeg, caption: memo,
                                                   windowID: windowID, operationID: operationID)
             await receive(sent, me: me, outgoingOperationID: operationID)
-            await saveMemo(memo, for: prepared.photoIdentifier, keeping: keeping)
             sendCompleted = true
             UsageCounter.shared.count(.madoPhotoSent)  // Usage (11/7)
             message = nil
             await sync()
         } catch let pending as GroupDeliveryConfirmationPending {
-            failedDelivery = FailedDelivery(photo: prepared, memo: memo, confirmationPhotoID: pending.photoID,
-                                            keeping: keeping)
+            failedDelivery = FailedDelivery(photo: prepared, memo: memo, confirmationPhotoID: pending.photoID)
             message = "届いたか確かめています。"
             await sync()
         } catch {
@@ -471,8 +454,8 @@ final class GroupWindowScreenModel: ObservableObject {
                     await client.discardPendingDelivery(operationID: prepared.operationID)
                 }
                 let retry = keepsOperation
-                    ? prepared : PreparedPhoto(jpeg: prepared.jpeg, photoIdentifier: prepared.photoIdentifier)
-                failedDelivery = FailedDelivery(photo: retry, memo: memo, keeping: keeping)
+                    ? prepared : PreparedPhoto(jpeg: prepared.jpeg)
+                failedDelivery = FailedDelivery(photo: retry, memo: memo)
             }
             let reason = message
             await sync()
@@ -495,7 +478,7 @@ final class GroupWindowScreenModel: ObservableObject {
 
     func retryFailedDelivery() async {
         guard let failed = failedDelivery else { return }
-        await deliver(failed.photo, memo: failed.memo, keeping: failed.keeping)
+        await deliver(failed.photo, memo: failed.memo)
     }
 
     func discardFailedDelivery() {
@@ -512,7 +495,7 @@ final class GroupWindowScreenModel: ObservableObject {
         guard let jpeg = AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-4")?
             .jpegData(compressionQuality: 0.8) else { return }
         message = Self.deliveryMessage(for: GroupClientError.offline)
-        failedDelivery = FailedDelivery(photo: PreparedPhoto(jpeg: jpeg, photoIdentifier: nil), memo: "")
+        failedDelivery = FailedDelivery(photo: PreparedPhoto(jpeg: jpeg), memo: "")
     }
 #endif
 
@@ -520,9 +503,9 @@ final class GroupWindowScreenModel: ObservableObject {
 
     /// 「お気に入りに追加」: the same copy into the Photos app as the
     /// two-person window, then the ordinary favorite, so it can join albums.
-    /// With Plus, the photo's ひとこと stays as the new photo's memo.
-    func addToFavorites(_ entry: GroupWindowLocalPhotoStore.Entry,
-                        memoDecision: MembershipAccessDecision) async {
+    /// The ひとこと is never copied into the memo; the photo screen shows it
+    /// read-only beside 「○○さんから」 (11/9).
+    func addToFavorites(_ entry: GroupWindowLocalPhotoStore.Entry) async {
         guard !entry.isOwn, !entry.isHidden else { return }
         addingFavoriteID = entry.id
         defer { addingFavoriteID = nil }
@@ -556,12 +539,6 @@ final class GroupWindowScreenModel: ObservableObject {
             }
             guard let favorite = identifier else { throw ReceivedPhotoMemoryImportError.importFailed }
             try SharedLikeStore.set(localIdentifier: favorite, isLiked: true, source: "received-memory")
-            if MemoCaptionBridge.keepsReceivedCaption(entry.caption, createDecision: memoDecision),
-               let caption = entry.caption {
-                // The copy's capture date, as in the payload above.
-                await saveMemo(caption, for: favorite, keeping: MemoKeeping(createDecision: memoDecision,
-                    context: PhotoMemoryNoteContext(capturedAt: entry.createdAt, cats: [])))
-            }
             NotificationCenter.default.post(name: .receivedMemoryImportNeedsRefresh, object: favorite)
             entries = await store.entries(windowID: windowID)
             actionMessage = "お気に入りに追加しました。写真アプリにも保存しました。"
@@ -602,30 +579,6 @@ final class GroupWindowScreenModel: ObservableObject {
         WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
     }
 
-    /// Keeps the sent ひとこと in this photo's own memo, only when the person
-    /// can keep memos for it and the words are not there yet. Never fails the
-    /// send (the photo is already delivered): a memo that cannot take the
-    /// words stays as it was, with no dialog.
-    private func saveMemo(_ memo: String, for identifier: String?, keeping: MemoKeeping) async {
-        guard let identifier else { return }
-        let notes = PhotoMemoryNoteStore.shared
-        let existing: PhotoMemoryNote?
-        // A memo that cannot be read is never replaced.
-        do { existing = try await notes.note(for: identifier) } catch { return }
-        guard case let .save(text) = MemoCaptionBridge.keeping(
-            caption: memo, existingMemo: existing?.text, createDecision: keeping.createDecision,
-            maximumMemoCharacters: PhotoMemoryNoteStore.maximumCharacters) else { return }
-        // A new memo gets the same context the editor gives it.
-        let context = existing == nil ? keeping.context ?? Self.captureContext(localIdentifier: identifier) : nil
-        _ = try? await notes.save(text: text, for: identifier, expectedRevision: existing?.revision, context: context)
-    }
-
-    /// The capture date the editor would show, when no screen supplied it.
-    private static func captureContext(localIdentifier: String) -> PhotoMemoryNoteContext {
-        PhotoMemoryNoteContext(capturedAt: PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
-            .firstObject?.creationDate, cats: [])
-    }
-
     /// Reads only the window (state, name, members), so a delivery from a
     /// photo's detail can check it without downloading every photo.
     func loadWindow() async {
@@ -661,7 +614,7 @@ final class GroupWindowScreenModel: ObservableObject {
             return nil
         }
         message = nil
-        return PreparedPhoto(jpeg: jpeg, photoIdentifier: localIdentifier)
+        return PreparedPhoto(jpeg: jpeg)
     }
 
     func toggleHeart(_ photoID: String) async {
@@ -1039,9 +992,7 @@ struct GroupWindowScreen: View {
         .sheet(item: $prepared) { photo in
             GroupSendConfirmSheet(photo: photo, windowName: model.window?.name ?? "まど") { memo in
                 prepared = nil
-                let keeping = GroupWindowScreenModel.MemoKeeping(
-                    createDecision: membershipAccess.decision(for: .createPersonalMemo))
-                Task { await model.deliver(photo, memo: memo, keeping: keeping) }
+                Task { await model.deliver(photo, memo: memo) }
             }
         }
         .announcesWhenShown(model.message)
@@ -1324,10 +1275,6 @@ private extension GroupPhotoTile {
 struct GroupLibraryDeliverySheet: View {
     let client: any GroupWindowMediaClient
     let localIdentifier: String
-    /// The editor's memo context for this photo, for a ひとこと kept as a new memo.
-    let memoContext: PhotoMemoryNoteContext?
-    /// After a photo was delivered (the photo's memo may have changed).
-    let sent: () -> Void
     @Environment(\.dismiss) private var dismiss
     @StateObject private var list: GroupWindowListModel
     @State private var screen: GroupWindowScreenModel?
@@ -1338,12 +1285,12 @@ struct GroupLibraryDeliverySheet: View {
     /// The window last chosen from this sheet, shown first as the highlight.
     @State private var highlightedWindowID: String?
 
-    init(client: any GroupWindowMediaClient, localIdentifier: String,
-         memoContext: PhotoMemoryNoteContext? = nil, sent: @escaping () -> Void = {}) {
+    /// `initialCaption`: the memo page's words, cut to the ひとこと limits
+    /// (still editable). Empty from the photo screen.
+    init(client: any GroupWindowMediaClient, localIdentifier: String, initialCaption: String = "") {
         self.client = client
         self.localIdentifier = localIdentifier
-        self.memoContext = memoContext
-        self.sent = sent
+        _memo = State(initialValue: initialCaption)
         _list = StateObject(wrappedValue: GroupWindowListModel(client: client))
         _highlightedWindowID = State(initialValue: GroupLibraryDeliveryMemory.lastWindowID)
     }
@@ -1356,8 +1303,7 @@ struct GroupLibraryDeliverySheet: View {
         NavigationStack(path: $path) {
             Group {
                 if let screen {
-                    GroupLibraryDeliveryStep(model: screen, localIdentifier: localIdentifier, memo: $memo,
-                                             memoContext: memoContext, sent: sent) { dismiss() }
+                    GroupLibraryDeliveryStep(model: screen, localIdentifier: localIdentifier, memo: $memo) { dismiss() }
                 } else if !list.hasLoaded {
                     ProgressView("まどを読み込んでいます…").frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if windows.isEmpty, let message = list.message {
@@ -1411,9 +1357,7 @@ struct GroupLibraryDeliverySheet: View {
                 // 「届け先」 goes back to this list; the typed ひとこと stays.
                 GroupLibraryDeliveryChosenWindow(client: client, windowID: windowID,
                                                  localIdentifier: localIdentifier, memo: $memo,
-                                                 memoContext: memoContext,
-                                                 changeWindow: openWindows.count > 1 ? { path.removeAll() } : nil,
-                                                 sent: sent) { dismiss() }
+                                                 changeWindow: openWindows.count > 1 ? { path.removeAll() } : nil) { dismiss() }
             }
             .navigationTitle("まどに届ける")
             .navigationBarTitleDisplayMode(.inline)
@@ -1464,15 +1408,11 @@ private struct GroupLibraryDeliveryStep: View {
     let localIdentifier: String
     /// The ひとこと, owned by the sheet so choosing another まど keeps it.
     @Binding var memo: String
-    /// The editor's memo context for this photo, for a ひとこと kept as a new memo.
-    var memoContext: PhotoMemoryNoteContext? = nil
     /// Opened from the list: the system 「戻る」 stays on the left (11/7).
     var pushed = false
     /// With 2 or more まど: back to the pick list from the 「届け先」 row.
     var changeWindow: (() -> Void)? = nil
-    var sent: () -> Void = {}
     let close: () -> Void
-    @Environment(\.membershipAccess) private var membershipAccess
     @State private var prepared: GroupWindowScreenModel.PreparedPhoto?
     @State private var checked = false
 
@@ -1523,7 +1463,7 @@ private struct GroupLibraryDeliveryStep: View {
                                 .accessibilityLabel("届ける写真")
                         }
                     }
-                    GroupCaptionField(text: $memo, photoIdentifier: localIdentifier)
+                    GroupCaptionField(text: $memo)
                     if let message = model.message {
                         Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
                     }
@@ -1532,9 +1472,7 @@ private struct GroupLibraryDeliveryStep: View {
                     Button {
                         // After a failure, the copy the model kept (a new seal
                         // when the window's key changed), not the first one.
-                        let keeping = GroupWindowScreenModel.MemoKeeping(
-                            createDecision: membershipAccess.decision(for: .createPersonalMemo), context: memoContext)
-                        Task { await model.deliver(model.failedDelivery?.photo ?? prepared, memo: memo, keeping: keeping) }
+                        Task { await model.deliver(model.failedDelivery?.photo ?? prepared, memo: memo) }
                     } label: {
                         Group {
                             if model.isSending {
@@ -1569,9 +1507,6 @@ private struct GroupLibraryDeliveryStep: View {
             }
         }
         .announcesWhenShown(model.message)
-        .onChange(of: model.sendCompleted) { _, completed in
-            if completed { sent() }
-        }
         .task {
             await model.loadWindow()
             prepared = await model.prepare(localIdentifier: localIdentifier)
@@ -1585,28 +1520,22 @@ private struct GroupLibraryDeliveryStep: View {
 private struct GroupLibraryDeliveryChosenWindow: View {
     let localIdentifier: String
     @Binding var memo: String
-    let memoContext: PhotoMemoryNoteContext?
     let changeWindow: (() -> Void)?
-    let sent: () -> Void
     let close: () -> Void
     @StateObject private var model: GroupWindowScreenModel
 
     init(client: any GroupWindowMediaClient, windowID: String, localIdentifier: String, memo: Binding<String>,
-         memoContext: PhotoMemoryNoteContext?, changeWindow: (() -> Void)?,
-         sent: @escaping () -> Void, close: @escaping () -> Void) {
+         changeWindow: (() -> Void)?, close: @escaping () -> Void) {
         self.localIdentifier = localIdentifier
         _memo = memo
-        self.memoContext = memoContext
         self.changeWindow = changeWindow
-        self.sent = sent
         self.close = close
         _model = StateObject(wrappedValue: GroupWindowScreenModel(client: client, windowID: windowID))
     }
 
     var body: some View {
         GroupLibraryDeliveryStep(model: model, localIdentifier: localIdentifier, memo: $memo,
-                                 memoContext: memoContext, pushed: true, changeWindow: changeWindow,
-                                 sent: sent, close: close)
+                                 pushed: true, changeWindow: changeWindow, close: close)
     }
 }
 
@@ -1629,7 +1558,7 @@ private struct GroupSendConfirmSheet: View {
                             .accessibilityLabel("届ける写真")
                     }
                 }
-                GroupCaptionField(text: $memo, photoIdentifier: photo.photoIdentifier)
+                GroupCaptionField(text: $memo)
             }
             .navigationTitle("「\(windowName)」に届ける")
             .navigationBarTitleDisplayMode(.inline)
@@ -1650,63 +1579,25 @@ private struct GroupSendConfirmSheet: View {
     }
 }
 
-/// ひとこと on the send confirmation: what the window will read, and whether
-/// the same words stay as this iPhone's memo. Empty sends the photo alone.
-/// The memo is private: it enters the field only with 「メモから入れる」.
+/// ひとこと on the send confirmation: what the window will read. Empty sends
+/// the photo alone. Who sees it is said right at the field (11/9). The photo's
+/// own memo is separate: the ひとこと never comes from it or goes into it.
 private struct GroupCaptionField: View {
     @Binding var text: String
-    /// The Photos item, for its own memo. Nil when unknown.
-    let photoIdentifier: String?
-    @Environment(\.membershipAccess) private var membershipAccess
-    /// False until read, and when the memo could not be read.
-    @State private var memoRead = false
-    /// This photo's memo text; nil when the photo has no memo.
-    @State private var memoText: String?
-
-    /// The memo offered by 「メモから入れる」, when there is one.
-    private var memoToOffer: String? {
-        guard photoIdentifier != nil, memoRead, let memoText, !memoText.isEmpty else { return nil }
-        return memoText
-    }
-
-    private var keepsInMemo: Bool {
-        photoIdentifier != nil && memoRead && MemoCaptionBridge.footerSaysKept(
-            caption: text, existingMemo: memoText,
-            createDecision: membershipAccess.decision(for: .createPersonalMemo),
-            maximumMemoCharacters: PhotoMemoryNoteStore.maximumCharacters)
-    }
 
     var body: some View {
         Section {
             TextField("例：おなかを見せて寝ていた", text: $text, axis: .vertical)
                 .lineLimit(2...5)
                 .accessibilityIdentifier("group-window-send-caption")
-                .task(id: photoIdentifier) { await readMemo() }
             if let message = GroupPhotoCaption.validationMessage(for: text) {
                 Text(message).font(.footnote).foregroundStyle(.orange)
             }
-            if let memo = memoToOffer {
-                Button("メモから入れる") { text = MemoCaptionBridge.captionDraft(fromMemo: memo) }
-                    .font(.subheadline)
-                    .accessibilityIdentifier("group-window-send-caption-from-memo")
-            }
         } header: { Text("ひとこと") }
           footer: {
-              Text(keepsInMemo ? "まどのみんなに届きます。この写真のメモにも残ります。" : "まどのみんなに届きます。")
+              Text(GroupPhotoCaption.visibilityFooter)
                   .accessibilityIdentifier("group-window-send-caption-footer")
           }
-    }
-
-    private func readMemo() async {
-        memoRead = false
-        memoText = nil
-        guard let photoIdentifier else { return }
-        do {
-            memoText = try await PhotoMemoryNoteStore.shared.note(for: photoIdentifier)?.text
-            memoRead = true
-        } catch {
-            // Unread: nothing offered, and the footer does not promise a memo.
-        }
     }
 }
 
@@ -1720,7 +1611,6 @@ private struct GroupPhotoDetail: View {
     @State private var showsBlockConfirmation = false
     @State private var showsReportUnavailable = false
     @ObservedObject private var safety = GroupSafety.shared
-    @Environment(\.membershipAccess) private var membershipAccess
 
     init(model: GroupWindowScreenModel, startID: String) {
         self.model = model
@@ -1809,15 +1699,11 @@ private struct GroupPhotoDetail: View {
             .confirmationDialog("自分のお気に入りに追加しますか？",
                                 isPresented: $showsFavoriteConfirmation, titleVisibility: .visible) {
                 Button("お気に入りに追加") {
-                    let decision = membershipAccess.decision(for: .createPersonalMemo)
-                    if let current { Task { await model.addToFavorites(current, memoDecision: decision) } }
+                    if let current { Task { await model.addToFavorites(current) } }
                 }
                 Button("戻る", role: .cancel) {}
             } message: {
-                Text(MemoCaptionBridge.keepsReceivedCaption(current?.caption,
-                        createDecision: membershipAccess.decision(for: .createPersonalMemo))
-                     ? "写真アプリに保存して、お気に入りに入れます。ひとことはメモに残ります。届けた人には知らせません。"
-                     : "写真アプリに保存して、お気に入りに入れます。届けた人には知らせません。")
+                Text("写真アプリに保存して、お気に入りに入れます。届けた人には知らせません。")
             }
             .alert("いまは通報を受け付けられません", isPresented: $showsReportUnavailable) {
                 if let url = SharingAPIConfiguration.current.supportURL { Link("問い合わせる", destination: url) }

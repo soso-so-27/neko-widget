@@ -57,83 +57,38 @@ private func checkWireVector(path: String) throws {
     print("GROUP public wire vector signature and canonical bytes passed")
 }
 
-/// 写真のメモとひとことのあいだの決まり（MemoCaptionBridge）。メモは「メモから入れる」で
-/// だけひとことに入り、届けたひとことはメモを持てるときだけ、重ねずに、上限内で残る。
-private func checkMemoCaptionBridge() throws {
-    typealias Bridge = MemoCaptionBridge
-    let limit = 500
-    let now = Date(timeIntervalSince1970: 1_800_000_000)
-    func decision(enforced: Bool, _ personal: MembershipPersonalState) -> MembershipAccessDecision {
-        MembershipAccessPolicy.decision(for: .createPersonalMemo, enforcementEnabled: enforced,
-                                        personal: personal, window: .checking, now: now)
-    }
-    let plus = decision(enforced: true, .verified(validUntil: now.addingTimeInterval(3_600)))
-    let free = decision(enforced: true, .inactive)
-    let beta = decision(enforced: false, .inactive)
-    try check(plus == .allowed && free == .membershipRequired && beta == .allowed, "memo bridge uses the Plus rule for new memos")
+/// ひとことは一方向（11/9）：欄のすぐ下に、見える人と上限だけを書く。
+/// メモのページの「まどに届ける」はメモの文を上限で切って欄に入れるだけ。
+private func checkCaptionVisibilityFooter() throws {
+    try check(GroupPhotoCaption.visibilityFooter == "まどのみんなに見えます（100文字まで）",
+              "the ひとこと field says who sees it and the limit")
+    try check(GroupPhotoCaption.visibilityFooter.contains("\(GroupPhotoCaption.maximumCharacters)文字"),
+              "the footer limit follows the caption rule")
+    try check(!GroupPhotoCaption.visibilityFooter.contains("メモ"), "the ひとこと footer never promises a memo")
 
-    // メモ → ひとこと: cut at the caption limits, always a valid caption.
+    // メモ → ひとこと (memo page's 「まどに届ける」): cut at the caption limits, always valid.
+    typealias Caption = GroupPhotoCaption
     let long = String(repeating: "ね", count: 130)
-    let longDraft = Bridge.captionDraft(fromMemo: long)
-    try check(longDraft == String(repeating: "ね", count: GroupPhotoCaption.maximumCharacters), "memo draft keeps the first 100 characters")
-    let lines = Bridge.captionDraft(fromMemo: "一\n二\r\n三\n四\n五")
-    try check(lines == "一\n二\n三", "memo draft keeps at most two line breaks")
-    try check(Bridge.captionDraft(fromMemo: "  窓辺で眠った日\n\n") == "窓辺で眠った日", "memo draft trims like a caption")
-    try check(Bridge.captionDraft(fromMemo: "短いメモ") == "短いメモ", "a short memo is taken as is")
+    try check(Caption.draft(fromMemo: long) == String(repeating: "ね", count: Caption.maximumCharacters),
+              "memo draft keeps the first 100 characters")
+    try check(Caption.draft(fromMemo: "一\n二\r\n三\n四\n五") == "一\n二\n三", "memo draft keeps at most two line breaks")
+    try check(Caption.draft(fromMemo: "  窓辺で眠った日\n\n") == "窓辺で眠った日", "memo draft trims like a caption")
+    try check(Caption.draft(fromMemo: "短いメモ") == "短いメモ", "a short memo is taken as is")
+    try check(Caption.draft(fromMemo: "") == "" && Caption.draft(fromMemo: " \n ") == "", "an empty memo starts an empty ひとこと")
     let edge = String(repeating: "あ", count: 99) + "\nい"
-    try check(Bridge.captionDraft(fromMemo: edge) == String(repeating: "あ", count: 99), "a cut never ends on a line break")
+    try check(Caption.draft(fromMemo: edge) == String(repeating: "あ", count: 99), "a cut never ends on a line break")
     for memo in [long, "一\n二\n三\n四", edge, String(repeating: "🐈‍⬛", count: 120), String(repeating: "a\n", count: 80)] {
-        let draft = Bridge.captionDraft(fromMemo: memo)
-        try check(GroupPhotoCaption.validationMessage(for: draft) == nil && !draft.isEmpty, "memo draft is always a valid caption")
+        let draft = Caption.draft(fromMemo: memo)
+        try check(Caption.validationMessage(for: draft) == nil && !draft.isEmpty, "memo draft is always a valid caption")
     }
-
-    // Who may keep: an existing memo is editing (free); a new memo is Plus.
-    try check(Bridge.canKeepMemo(hasExistingMemo: true, createDecision: free), "adding to an existing memo is free")
-    try check(!Bridge.canKeepMemo(hasExistingMemo: false, createDecision: free), "a new memo needs Plus")
-    try check(Bridge.canKeepMemo(hasExistingMemo: false, createDecision: plus), "Plus keeps a new memo")
-    try check(!Bridge.canKeepMemo(hasExistingMemo: false, createDecision: .verificationRequired), "an unconfirmed Plus does not create a memo")
-
-    // ひとこと → メモ after sending.
-    func keep(_ caption: String, _ memo: String?, _ decision: MembershipAccessDecision) -> Bridge.Keeping {
-        Bridge.keeping(caption: caption, existingMemo: memo, createDecision: decision, maximumMemoCharacters: limit)
-    }
-    try check(keep("おなかを見せて寝ていた", nil, plus) == .save("おなかを見せて寝ていた"), "Plus keeps the words as a new memo")
-    try check(keep("おなかを見せて寝ていた", nil, free) == .notAllowed, "no new memo without Plus")
-    try check(keep("おなかを見せて寝ていた", "窓辺で眠った日", free) == .save("窓辺で眠った日\nおなかを見せて寝ていた"), "words are added to an existing memo without Plus")
-    try check(keep("ねむい", "", free) == .save("ねむい"), "a memo with only a weight takes the words alone")
-    try check(keep("  \n ", nil, plus) == .nothingToKeep && keep("", "メモ", plus) == .nothingToKeep, "an empty ひとこと keeps nothing")
-    let fromMemo = Bridge.captionDraft(fromMemo: "窓辺で眠った日\nしっぽが長い")
-    try check(keep(fromMemo, "窓辺で眠った日\nしっぽが長い", plus) == .alreadyKept, "words from the memo are not added again")
-    try check(keep("眠った", "窓辺で眠った日", free) == .alreadyKept, "words already in the memo are not added again")
-    try check(keep("一\r\n二", "一\n二", free) == .alreadyKept, "line breaks are read the same way")
-    let nearlyFull = String(repeating: "あ", count: 497)
-    try check(keep("いいい", nearlyFull, plus) == .tooLong, "a memo past 500 characters stays as it was")
-    try check(keep("いいい", String(repeating: "あ", count: 496), plus) == .save(String(repeating: "あ", count: 496) + "\nいいい"),
-              "a memo of exactly 500 characters is kept")
-
-    // The footer promises a memo only when the words will really stay.
-    func footer(_ caption: String, _ memo: String?, _ decision: MembershipAccessDecision) -> Bool {
-        Bridge.footerSaysKept(caption: caption, existingMemo: memo, createDecision: decision, maximumMemoCharacters: limit)
-    }
-    try check(footer("", nil, plus) && footer("ねむい", nil, plus), "Plus: the footer says the memo keeps the words")
-    try check(!footer("", nil, free) && !footer("ねむい", nil, free), "no Plus and no memo: the footer promises nothing")
-    try check(footer("", "メモ", free) && footer("ねむい", "メモ", free), "an existing memo keeps the words without Plus")
-    try check(footer("メモ", "メモ", free), "words already in the memo stay there")
-    try check(!footer("いいい", nearlyFull, plus), "a memo that cannot take the words is not promised")
-
-    // 届いたひとこと → the new Photos copy's memo: Plus only, never empty.
-    try check(Bridge.keepsReceivedCaption("いい顔", createDecision: plus), "Plus keeps a received ひとこと")
-    try check(!Bridge.keepsReceivedCaption("いい顔", createDecision: free), "no Plus: a received ひとこと is not kept")
-    try check(!Bridge.keepsReceivedCaption(nil, createDecision: plus) && !Bridge.keepsReceivedCaption(" ", createDecision: plus),
-              "no ひとこと: nothing to keep")
-    print("Memo and ひとこと bridge checks passed")
+    print("ひとこと visibility footer checks passed")
 }
 
 @main
 private enum GroupWindowChecks {
     static func main() async throws {
         if CommandLine.arguments.count > 1 { try checkWireVector(path: CommandLine.arguments[1]) }
-        try checkMemoCaptionBridge()
+        try checkCaptionVisibilityFooter()
         let a = Person(id: "person-a"), b = Person(id: "person-b"), c = Person(id: "person-c")
         let a1 = Device(id: "a1"), b1 = Device(id: "b1"), b2 = Device(id: "b2"), c1 = Device(id: "c1")
         func member(_ person: Person, _ devices: [Device], owner: Bool = false) throws -> GroupRosterMember {
