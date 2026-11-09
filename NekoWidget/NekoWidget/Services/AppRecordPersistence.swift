@@ -3574,8 +3574,12 @@ struct AppRecordPersistenceFixtureView: View {
             fixture = next; next.persistence.setActive(true)
             result = "自動復元・通常画面・元記録保全を確認"
         } catch {
-            // Keep the failing fixture stage visible without raw error details.
-            result = "自動復元の検査失敗: \(phase) / \(target?.persistence.title ?? "") / \(target?.persistence.detail ?? "")"
+            // Keep the failing fixture stage visible without raw error details:
+            // only the error's type and case name, so a UI check can say which.
+            let mirror = Mirror(reflecting: error)
+            let kind = mirror.displayStyle == .enum
+                ? "\(type(of: error)).\(mirror.children.first?.label ?? String(describing: error))" : "\(type(of: error))"
+            result = "自動復元の検査失敗: \(phase) / \(target?.persistence.title ?? "") / \(target?.persistence.detail ?? "") / \(kind)"
         }
     }
 }

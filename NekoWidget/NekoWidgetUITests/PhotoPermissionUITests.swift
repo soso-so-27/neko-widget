@@ -1872,12 +1872,22 @@ final class SoloMemoriesUITests: XCTestCase {
         // One back leaves the tool and returns to the fixture's own list.
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.navigationBars["自動保存の検査"].waitForExistence(timeout: 5), app.debugDescription)
+        // The list can still show the earlier 「保存済み」 until this edit's save
+        // starts (run 42545036862 went on 0.1 s after coming back). Let the
+        // save begin; a save quicker than a poll leaves this wait unmet, which
+        // is fine: 「保存済み」 is still required below, and the restore on the
+        // other device checks this edit's name.
+        _ = XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label != %@", "保存済み"), object: status)], timeout: 10)
         waitUntilSaved()
         // The ordinary edit sends no photo again.
         XCTAssertEqual(photoCount.label, "写真の送信 6回")
         capture("automatic-save-from-ordinary-care-edit-no-photo-resend")
         app.buttons["別端末での自動復元を検査"].tap()
-        XCTAssertTrue(app.staticTexts["自動復元・通常画面・元記録保全を確認"].waitForExistence(timeout: 20), app.debugDescription)
+        let restoreResult = app.staticTexts["app-record-fixture-result"]
+        XCTAssertTrue(app.staticTexts["自動復元・通常画面・元記録保全を確認"].waitForExistence(timeout: 20),
+                      (restoreResult.exists ? restoreResult.label : "結果なし") + "
+" + app.debugDescription)
         app.buttons["預けるとき"].tap()
         XCTAssertTrue(cats.firstMatch.waitForExistence(timeout: 5)); XCTAssertEqual(cats.count, 2)
         cats.firstMatch.tap()
@@ -2132,10 +2142,20 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["外す"].waitForExistence(timeout: 5)); app.buttons["外す"].tap()
         XCTAssertTrue(remove.waitForNonExistence(timeout: 5))
         capture("vet-record-removed-source-kept")
-        let pick = app.buttons["vet-pick-records"]; revealVetElement(pick, app: app); pick.tap()
+        // After the removal the page can rest below 「写真を選ぶ」 (run 42545036862
+        // showed 「診察のあと」 at the top), so reach it from either side.
+        let pick = app.buttons["vet-pick-records"]
+        for _ in 0..<8 where !pick.isHittable {
+            if pick.exists, showBar.exists, pick.frame.midY > showBar.frame.minY - 24 {
+                app.swipeUp(velocity: .slow)
+            } else { app.swipeDown(velocity: .slow) }
+        }
+        XCTAssertTrue(pick.isHittable, app.debugDescription); pick.tap()
         // 349: 「見せる写真を選ぶ」, recent photos first, then the memos below.
+        // 11/9 (#899): it also reads the recent videos; the sheet was still
+        // coming up at 5 s on the hosted Simulator (dimming already shown).
         let picker = app.navigationBars["見せる写真を選ぶ"]
-        XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(picker.waitForExistence(timeout: 15), app.debugDescription)
         let source = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-source-")).firstMatch
         revealVetPickerMemos(app)
         XCTAssertTrue(source.waitForExistence(timeout: 5))
@@ -2709,8 +2729,15 @@ final class SoloMemoriesUITests: XCTestCase {
                 // keyboard is the bottom of the visible form.
                 let make = app.buttons["チラシを作る"]
                 let keyboard = app.keyboards.firstMatch
+                // The keyboard's 「キーボードを閉じる」 floats above its frame (iOS 26,
+                // 130f6436); a drag that starts on it never scrolls the form
+                // (run 42545036862 pressed at y 507 on it ten times).
+                let keyboardClose = app.buttons["キーボードを閉じる"]
+                let keyboardTop = keyboard.exists
+                    ? min(keyboard.frame.minY, keyboardClose.exists ? keyboardClose.frame.minY - 8 : keyboard.frame.minY)
+                    : app.frame.maxY
                 let buttonTop = make.exists ? make.frame.minY
-                    : (keyboard.exists ? keyboard.frame.minY + 28 : app.frame.maxY)
+                    : (keyboard.exists ? keyboardTop + 28 : app.frame.maxY)
                 // The floating action also includes guidance above its button.
                 // At largest text it wraps; starting a drag there never scrolls
                 // the form. Bound both tapping and dragging above the full inset.
@@ -5143,10 +5170,24 @@ final class SoloMemoriesUITests: XCTestCase {
                     print("RELATED_MENU_ELEMENT type=\(element.elementType.rawValue) id=\(element.identifier) label=\(element.label) frame=\(element.frame) exists=\(element.exists) enabled=\(element.isEnabled) hittable=\(element.isHittable)")
                 }
             }
-            _ = try foreground(theme)
-            _ = try foreground(cat)
-            XCTAssertEqual(try foreground(cat).label, "この猫、ミケ")
-            _ = try foreground(year)
+            // The 「関連する写真」 submenu can fold back into the 「…」 menu while it
+            // is read (run 42545036862: the parent row with its chevron was on
+            // screen, the submenu items were not). Open it again once; every
+            // item must still be shown, exactly once.
+            func inRelated(_ query: XCUIElementQuery) throws -> XCUIElement {
+                let shown = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    query.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }.count == 1
+                }, object: nil)
+                if XCTWaiter.wait(for: [shown], timeout: 3) != .completed {
+                    let parent = related.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }
+                    if parent.count == 1 { parent[0].tap() }
+                }
+                return try foreground(query)
+            }
+            _ = try inRelated(theme)
+            _ = try inRelated(cat)
+            XCTAssertEqual(try inRelated(cat).label, "この猫、ミケ")
+            _ = try inRelated(year)
             _ = try hittableElements(app.buttons.matching(identifier: "photo-related-cat-fixture-cat-1"), count: 0)
             capture(largeText ? "photo-related-menu-largest-text" : "photo-related-menu")
             if largeText { app.terminate(); continue }
