@@ -35,10 +35,11 @@ final class FamilyNotebookStore: @unchecked Sendable {
         // so an older app refuses to reopen it as an active sharing outbox.
         var sharingEnded: Bool?
         var farewellDecisions: [FamilyNotebookFarewellDecision]?
+        var opaqueOperations: [FamilyNotebookOpaqueOperation]?
 
         private enum CodingKeys: String, CodingKey {
             case schemaVersion, familyID, revision, clock, operations, outboxIDs
-            case acknowledgements, mappings, ledgerKeys, sharingEnded, farewellDecisions
+            case acknowledgements, mappings, ledgerKeys, sharingEnded, farewellDecisions, opaqueOperations
         }
 
         // Backup fingerprints compare encoded bytes. Set iteration order can
@@ -57,13 +58,14 @@ final class FamilyNotebookStore: @unchecked Sendable {
             try values.encode(ledgerKeys.sorted(), forKey: .ledgerKeys)
             try values.encodeIfPresent(sharingEnded, forKey: .sharingEnded)
             try values.encodeIfPresent(farewellDecisions, forKey: .farewellDecisions)
+            try values.encodeIfPresent(opaqueOperations, forKey: .opaqueOperations)
         }
 
         var snapshot: FamilyNotebookSnapshot {
             .init(familyID: familyID, revision: revision, clock: clock, operations: operations,
                   mappings: mappings, ledgerKeys: ledgerKeys, outbox: operations.filter { outboxIDs.contains($0.id) },
                   acknowledgements: acknowledgements, sharingEnded: sharingEnded == true,
-                  farewellDecisions: farewellDecisions ?? [])
+                  farewellDecisions: farewellDecisions ?? [], opaqueOperations: opaqueOperations ?? [])
         }
     }
 
@@ -101,7 +103,7 @@ final class FamilyNotebookStore: @unchecked Sendable {
     @discardableResult
     func endSharing() throws -> FamilyNotebookSnapshot {
         try transaction { state in
-            state.schemaVersion = 2
+            state.schemaVersion = state.opaqueOperations?.isEmpty == false ? 3 : 2
             state.sharingEnded = true
         }
         return try snapshot()
@@ -159,6 +161,32 @@ final class FamilyNotebookStore: @unchecked Sendable {
             state.clock = max(state.clock, operations.map(\.version.clock).max() ?? 0)
         }
         return try snapshot()
+    }
+
+    /// One atomic page commit, including future payloads. Cursor is written by
+    /// Sync only after this succeeds. Unknown payloads never enter the outbox.
+    func receiveRetaining(_ incoming: [FamilyNotebookReceivedOperation]) throws {
+        try transaction { state in
+            guard state.sharingEnded != true else { throw FamilyNotebookError.sharingEnded }
+            var known: [FamilyNotebookOperation] = []
+            var opaque = state.opaqueOperations ?? []
+            for item in incoming {
+                switch item {
+                case .known(let operation): known.append(operation)
+                case .opaque(let operation):
+                    let h = try operation.header()
+                    guard h.familyID == familyID else { throw FamilyNotebookError.familyMismatch }
+                    if let old = try opaque.first(where: { try $0.header().version.operationID == h.version.operationID }) {
+                        guard old == operation else { throw FamilyNotebookError.operationCollision }
+                    } else { opaque.append(operation) }
+                    state.clock = max(state.clock, h.version.clock)
+                }
+            }
+            guard known.allSatisfy({ $0.familyID == familyID }) else { throw FamilyNotebookError.familyMismatch }
+            state.operations = try FamilyNotebookCore.merge(state.operations, known)
+            state.clock = max(state.clock, known.map(\.version.clock).max() ?? 0)
+            if !opaque.isEmpty { state.opaqueOperations = opaque; state.schemaVersion = 3 }
+        }
     }
 
     // This models a matching receipt; it does not assert that a server exists
@@ -351,7 +379,7 @@ final class FamilyNotebookStore: @unchecked Sendable {
         struct Header: Decodable { let schemaVersion: Int }
         let decoder = JSONDecoder()
         guard let header = try? decoder.decode(Header.self, from: bytes) else { throw FamilyNotebookError.corruptStorage }
-        guard [1, 2].contains(header.schemaVersion) else { throw FamilyNotebookError.unsupportedSchema }
+        guard [1, 2, 3].contains(header.schemaVersion) else { throw FamilyNotebookError.unsupportedSchema }
         let state: State
         do { state = try decoder.decode(State.self, from: bytes) }
         catch { throw FamilyNotebookError.corruptStorage }
@@ -360,12 +388,23 @@ final class FamilyNotebookStore: @unchecked Sendable {
     }
 
     static func validate(_ state: State, familyID: UUID) throws {
-        guard [1, 2].contains(state.schemaVersion) else { throw FamilyNotebookError.unsupportedSchema }
+        guard [1, 2, 3].contains(state.schemaVersion) else { throw FamilyNotebookError.unsupportedSchema }
         guard (state.schemaVersion == 1 && state.sharingEnded == nil)
                 || (state.schemaVersion == 2 && state.sharingEnded == true)
+                || state.schemaVersion == 3
         else { throw FamilyNotebookError.corruptStorage }
         guard state.familyID == familyID, state.operations.allSatisfy({ $0.familyID == familyID })
         else { throw FamilyNotebookError.familyMismatch }
+        let opaque = state.opaqueOperations ?? []
+        guard opaque.isEmpty || state.schemaVersion == 3 else { throw FamilyNotebookError.corruptStorage }
+        var opaqueIDs = Set<UUID>()
+        let knownIDs = Set(state.operations.map(\.id))
+        for retained in opaque {
+            let h = try retained.header()
+            guard h.familyID == familyID, h.version.clock <= state.clock,
+                  opaqueIDs.insert(h.version.operationID).inserted,
+                  !knownIDs.contains(h.version.operationID) else { throw FamilyNotebookError.operationCollision }
+        }
         let operations = try FamilyNotebookCore.merge([], state.operations)
         guard operations.count == state.operations.count, state.clock >= (operations.map(\.version.clock).max() ?? 0),
               Set(state.snapshot.activeMappings.map(\.sourceKey)).count == state.snapshot.activeMappings.count,

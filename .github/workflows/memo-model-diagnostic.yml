@@ -3,6 +3,10 @@ name: Private memo model diagnostic
 on:
   workflow_dispatch:
     inputs:
+      veterinary_models:
+        description: Run existing private memo and veterinary persistence checks only
+        type: boolean
+        default: false
       notebook_models:
         description: Run isolated family notebook models only
         type: boolean
@@ -30,9 +34,9 @@ concurrency:
 
 jobs:
   private-models:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.veterinary_models)
     name: Apple persistence models only - not release evidence
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 10
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
@@ -64,7 +68,7 @@ jobs:
           if-no-files-found: warn
 
   personal-store:
-    if: github.event_name == 'workflow_dispatch' && !inputs.notebook_models
+    if: github.event_name == 'workflow_dispatch' && !inputs.notebook_models && !inputs.veterinary_models
     name: Personal store concurrency probe - not release evidence
     runs-on: macos-15
     timeout-minutes: 5
@@ -86,7 +90,7 @@ jobs:
   family-notebook:
     if: github.event_name == 'workflow_dispatch' && inputs.notebook_models
     name: Family notebook model probe - not release evidence
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 10
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer

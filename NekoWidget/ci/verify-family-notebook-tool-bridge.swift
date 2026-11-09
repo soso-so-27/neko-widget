@@ -54,6 +54,49 @@ enum FamilyNotebookToolBridgeVerifier {
         _ = try source.receive(receiver.pendingOperations())
         let ownVisits = try FamilyNotebookToolBridge.apply(source.snapshot(), to: fixture.visits)
         try check(ownVisits[0].questions == "受け手の質問" && ownVisits[0].entries[0].photoFile == fixture.visits[0].entries[0].photoFile, "visit reply preserves private photo")
+        // Finished consultations still share editable follow-up fields.
+        var results = ownVisits
+        results[0].completedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        results[0].doctorNote = "先生の話"; results[0].prescription = "薬を1日1回"
+        results[0].nextVisitOn = "2026-11-20"
+        let resultsDelta = try FamilyNotebookToolBridge.changes(before: .init(visits: ownVisits),
+            after: .init(visits: results), snapshot: source.snapshot())
+        try source.applyLocalChanges(resultsDelta, author: author)
+        _ = try receiver.receive(source.snapshot().operations)
+        let followup = try FamilyNotebookToolBridge.apply(receiver.snapshot(), to: changedVisits)
+        try check(followup[0].doctorNote == results[0].doctorNote && followup[0].prescription == results[0].prescription
+            && followup[0].nextVisitOn == results[0].nextVisitOn && followup[0].completedAt != nil, "follow-up received after completion")
+        var revised = followup
+        revised[0].doctorNote = "受け手の追記"; revised[0].prescription = "薬を変更"; revised[0].nextVisitOn = "2026-11-22"
+        try receiver.applyLocalChanges(FamilyNotebookToolBridge.changes(before: .init(visits: followup),
+            after: .init(visits: revised), snapshot: receiver.snapshot()), author: author)
+        _ = try source.receive(receiver.pendingOperations())
+        let reply = try FamilyNotebookToolBridge.apply(source.snapshot(), to: results)
+        try check(reply[0].id == results[0].id
+            && reply[0].entries.map(\.id) == results[0].entries.map(\.id),
+            "Family result projection changed IDs used by the video-length sidecar")
+        try check(reply[0].doctorNote == revised[0].doctorNote && reply[0].prescription == revised[0].prescription
+            && reply[0].nextVisitOn == revised[0].nextVisitOn, "all follow-up fields survive return edits")
+        var empty = revised; empty[0].doctorNote = nil; empty[0].prescription = nil; empty[0].nextVisitOn = nil
+        try receiver.applyLocalChanges(FamilyNotebookToolBridge.changes(before: .init(visits: revised),
+            after: .init(visits: empty), snapshot: receiver.snapshot()), author: author)
+        _ = try source.receive(receiver.pendingOperations())
+        let cleared = try FamilyNotebookToolBridge.apply(source.snapshot(), to: reply)
+        try check(cleared[0].id == reply[0].id
+            && cleared[0].entries.map(\.id) == reply[0].entries.map(\.id),
+            "Family result clear changed IDs used by the video-length sidecar")
+        try check(cleared[0].doctorNote == nil && cleared[0].prescription == nil && cleared[0].nextVisitOn == nil,
+            "explicit follow-up clears survive receive")
+        // A pre-extension notebook has no new operations: retain existing local results.
+        let oldOperations = try source.snapshot().operations.filter {
+            ![FamilyNotebookField.doctorNote, .prescription, .nextVisitOn].contains($0.target.field ?? .name)
+        }
+        let legacy = try FamilyNotebookStore(directory: root.appendingPathComponent("legacy"), familyID: fixture.family, deviceID: "legacy")
+        _ = try legacy.receive(oldOperations)
+        _ = try legacy.applyImport(.init(familyID: fixture.family, entries: [], mappings: source.snapshot().mappings), author: author)
+        let oldRead = try FamilyNotebookToolBridge.apply(legacy.snapshot(), to: results)
+        try check(oldRead[0].doctorNote == results[0].doctorNote && oldRead[0].prescription == results[0].prescription
+            && oldRead[0].nextVisitOn == results[0].nextVisitOn, "old shared records do not erase local follow-up")
         let visitID = ownVisits[0].familyRecordID!
         _ = try source.edit(target: .init(familyCatID: fixture.familyA, collection: .visit, recordID: visitID, field: nil), value: nil, author: author)
         let retained = try FamilyNotebookToolBridge.apply(source.snapshot(), to: ownVisits)

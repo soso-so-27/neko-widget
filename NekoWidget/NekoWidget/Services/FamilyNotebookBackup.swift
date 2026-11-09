@@ -58,7 +58,7 @@ enum FamilyNotebookBackup {
         var state: FamilyNotebookStore.State
         var isRestored: Bool? = nil
         var snapshot: FamilyNotebookSnapshot {
-            var retained = state; retained.schemaVersion = 2; retained.sharingEnded = true
+            var retained = state; retained.schemaVersion = retained.opaqueOperations?.isEmpty == false ? 3 : 2; retained.sharingEnded = true
             return retained.snapshot
         }
     }
@@ -79,7 +79,7 @@ enum FamilyNotebookBackup {
     static func restored(_ data: Data) throws -> Data {
         let value = try decode(data)
         let copies = value.copies.map { copy -> Copy in
-            var state = copy.state; state.schemaVersion = 2; state.sharingEnded = true
+            var state = copy.state; state.schemaVersion = state.opaqueOperations?.isEmpty == false ? 3 : 2; state.sharingEnded = true
             if copy.isRestored == true { return Copy(id: copy.id, state: state, isRestored: true) }
             let digest = Array(SHA256.hash(data: Data(("restored/" + copy.id.uuidString).utf8)))
             let id = UUID(uuid: (digest[0],digest[1],digest[2],digest[3],digest[4],digest[5],digest[6],digest[7],

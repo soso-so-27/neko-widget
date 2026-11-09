@@ -177,6 +177,13 @@ enum FamilyNotebookToolBridge {
                 revision: old?.revision ?? UUID(), startedOn: started.isEmpty ? nil : started,
                 observations: try values.text(.observations, old?.observations ?? ""), questions: try values.text(.questions, old?.questions ?? ""),
                 entries: old?.entries ?? [], completedAt: try values.date(.completedAt, old?.completedAt), familyRecordID: record)
+            func optionalText(_ field: FamilyNotebookField, _ old: String?) throws -> String? {
+                let text = try values.text(field, old ?? "")
+                return text.isEmpty ? nil : text
+            }
+            visit.doctorNote = try optionalText(.doctorNote, old?.doctorNote)
+            visit.prescription = try optionalText(.prescription, old?.prescription)
+            visit.nextVisitOn = try optionalText(.nextVisitOn, old?.nextVisitOn)
             for child in snapshot.activeMappings where child.familyCatID == mapping.familyCatID {
                 guard let childRecord = child.recordID, let entryID = localID(child.sourceKey, prefix: mapping.sourceKey + ":entry:") else { continue }
                 let v = Values(snapshot: snapshot, cat: mapping.familyCatID, collection: .visitEntry, record: childRecord, parent: record)

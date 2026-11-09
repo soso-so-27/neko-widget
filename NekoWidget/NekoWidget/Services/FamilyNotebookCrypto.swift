@@ -236,6 +236,12 @@ enum FamilyNotebookOperationCrypto {
                      signature: try signingKey.signature(for: signedBytes(aad, ciphertext: ciphertext)))
     }
     static func open(_ packet: EncryptedFamilyNotebookOperation, roster: VerifiedFamilyNotebookRoster, key: Data) throws -> FamilyNotebookOperation {
+        guard case .known(let operation) = try openRetaining(packet, roster: roster, key: key) else {
+            throw FamilyNotebookCryptoError.untrusted
+        }
+        return operation
+    }
+    static func openRetaining(_ packet: EncryptedFamilyNotebookOperation, roster: VerifiedFamilyNotebookRoster, key: Data) throws -> FamilyNotebookReceivedOperation {
         guard packet.familyID == roster.roster.familyID, packet.keyEpoch == roster.roster.epoch, packet.rosterHash == roster.hash,
               (29...maximumCiphertextBytes).contains(packet.ciphertext.count), packet.signature.count == 64,
               key.count == 32, GroupCanonical.hash(key) == roster.roster.keyCommitment,
@@ -245,12 +251,12 @@ enum FamilyNotebookOperationCrypto {
         guard try Curve25519.Signing.PublicKey(rawRepresentation: author.device.signingPublicKey).isValidSignature(packet.signature,
           for: signedBytes(aad, ciphertext: packet.ciphertext)) else { throw FamilyNotebookCryptoError.untrusted }
         let plaintext = try AES.GCM.open(AES.GCM.SealedBox(combined: packet.ciphertext), using: SymmetricKey(data: key), authenticating: aad)
-        let operation = try GroupWire.decode(FamilyNotebookOperation.self, plaintext)
-        try FamilyNotebookCore.validate(operation)
-        guard operation.familyID == packet.familyID, operation.id == packet.operationID,
-              operation.version.deviceID == packet.deviceID, operation.author.personID == packet.personID else {
+        let retained = FamilyNotebookOpaqueOperation(plaintext: plaintext)
+        let header = try retained.header()
+        guard header.familyID == packet.familyID, header.version.operationID == packet.operationID,
+              header.version.deviceID == packet.deviceID, header.author.personID == packet.personID else {
             throw FamilyNotebookCryptoError.untrusted
         }
-        return operation
+        return try FamilyNotebookReceivedOperation.decode(plaintext)
     }
 }

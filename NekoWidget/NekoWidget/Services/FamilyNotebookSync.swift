@@ -91,7 +91,7 @@ actor FamilyNotebookSync {
             let local = try store.snapshot()
             // A restored/older local copy must refill history rather than use
             // a newer cursor to skip records that it does not contain yet.
-            if local.revision >= saved.notebookRevision && local.operations.count >= saved.notebookOperationCount {
+            if local.revision >= saved.notebookRevision && local.retainedOperationCount >= saved.notebookOperationCount {
                 cursor = saved.sequence
             }
         }
@@ -119,17 +119,17 @@ actor FamilyNotebookSync {
                 sequence += 1
                 guard entry.sequence == sequence else { throw FamilyNotebookTransportError.invalidResponse }
                 guard let key = keys[entry.packet.keyEpoch] else { throw FamilyNotebookSyncError.missingKey(epoch: entry.packet.keyEpoch) }
-                return try FamilyNotebookOperationCrypto.open(entry.packet, roster: source(entry.packet.keyEpoch), key: key)
+                return try FamilyNotebookOperationCrypto.openRetaining(entry.packet, roster: source(entry.packet.keyEpoch), key: key)
             }
             guard sequence == page.nextCursor else { throw FamilyNotebookTransportError.invalidResponse }
             // Commit plaintext only after EVERY envelope on this page verifies.
             // Save the cursor last; a crash/write failure merely replays a page
             // through the operation-ID collision checks, never skips it.
-            if !incoming.isEmpty { _ = try store.receive(incoming) }
+            if !incoming.isEmpty { try store.receiveRetaining(incoming) }
             let committed = try store.snapshot()
             try journal.write(GroupWire.encode(Cursor(schemaVersion: 1, familyID: familyID, deviceID: identity.deviceID,
                 endpointID: endpointID, sequence: sequence, notebookRevision: committed.revision,
-                notebookOperationCount: committed.operations.count)), account: cursorAccount, createOnly: false)
+                notebookOperationCount: committed.retainedOperationCount)), account: cursorAccount, createOnly: false)
             cursor = sequence; downloaded += incoming.count; more = cursor < page.headCursor
             if !more { break }
         }

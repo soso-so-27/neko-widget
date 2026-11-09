@@ -147,25 +147,31 @@ actor VeterinaryVisitStore {
     }
     #if os(iOS)
     func receiveFamilyChanges() throws {
+        try receiveFamilyChanges(project: FamilyNotebookToolSharing.visitsReceived)
+    }
+    #endif
+
+    /// Apply the family projection under the same persistence boundary on every
+    /// platform, so isolated model checks exercise the real sidecar write.
+    func receiveFamilyChanges(project: ([VeterinaryVisit]) throws -> [VeterinaryVisit]) throws {
         Self.lock.lock(); defer { Self.lock.unlock() }
+        #if os(iOS)
         AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
         guard directory.standardizedFileURL == AppRecordDataset.directory("VeterinaryVisits").standardizedFileURL else { return }
+        #endif
         var state = try load()
-        let next = Self.keepingLocalResults(try FamilyNotebookToolSharing.visitsReceived(state.visits), from: state.visits)
+        let next = Self.keepingLocalResults(try project(state.visits), from: state.visits)
         guard next != state.visits else { return }
         for visit in next { try validate(visit) }
         state.visits = next; try commit(state, familyProjection: true)
     }
-    #endif
 
-    /// What came after the consultation and the memo's own dates stay on this
-    /// iPhone for now: a received family change keeps them as they were, and
-    /// does not count as a change by itself.
+    /// Keep device-local memo dates. Consultation results now come from the
+    /// field-scoped family projection (including explicit clears).
     static func keepingLocalResults(_ received: [VeterinaryVisit], from local: [VeterinaryVisit]) -> [VeterinaryVisit] {
         received.map { visit in
             guard let old = local.first(where: { $0.id == visit.id }) else { return visit }
             var kept = visit
-            kept.doctorNote = old.doctorNote; kept.prescription = old.prescription; kept.nextVisitOn = old.nextVisitOn
             kept.createdAt = old.createdAt; kept.updatedAt = old.updatedAt
             var unchanged = kept; unchanged.revision = old.revision
             return unchanged == old ? old : kept

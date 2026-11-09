@@ -239,18 +239,21 @@ import CoreGraphics
             && written.createdAt == open.createdAt && written.updatedAt != nil, "Results on an open memo were not saved")
         try require(try await VeterinaryVisitStore(directory: root).visits().contains(written), "Start and edit days were not durable")
 
-        // A received family change keeps what stays on this iPhone and, when
-        // nothing else changed, is no change at all.
+        // Shared results (including clears) apply, while local memo dates stay.
         var received = written
         received.doctorNote = nil; received.prescription = nil; received.nextVisitOn = nil
         received.createdAt = nil; received.updatedAt = nil; received.revision = UUID()
-        try require(VeterinaryVisitStore.keepingLocalResults([received], from: [written]) == [written],
-            "A received family change erased or churned local results")
+        let cleared = VeterinaryVisitStore.keepingLocalResults([received], from: [written])[0]
+        try require(cleared.doctorNote == nil && cleared.nextVisitOn == nil
+            && cleared.createdAt == written.createdAt && cleared.updatedAt == written.updatedAt,
+            "A received result clear was overwritten or changed local dates")
         var changedRemotely = received; changedRemotely.questions = "家族が書いた質問"
+        changedRemotely.doctorNote = "家族が書いた先生の話"
         let merged = VeterinaryVisitStore.keepingLocalResults([changedRemotely], from: [written])
-        try require(merged.count == 1 && merged[0].questions == "家族が書いた質問" && merged[0].doctorNote == written.doctorNote
+        try require(merged.count == 1 && merged[0].questions == changedRemotely.questions
+            && merged[0].doctorNote == changedRemotely.doctorNote
             && merged[0].createdAt == written.createdAt && merged[0].revision == changedRemotely.revision,
-            "A received family change lost local results or its own change")
+            "A received family result or local date was lost")
     }
 
     private static func fixtureJPEG() throws -> Data {
@@ -305,8 +308,45 @@ import CoreGraphics
         struct OlderState: Decodable { let schema: Int; let visits: [VeterinaryVisit]; let retiredPhotoFiles: [String]? }
         let older = try JSONDecoder().decode(OlderState.self, from: Data(contentsOf: ledger))
         try require(older.visits == [added], "An older version could not read a memo with a video")
+        // 1109e: receiving all three results rewrites the visit, but must not
+        // erase its separate video-length table or private first-frame bytes.
+        let frameURL = root.appendingPathComponent(entry.photoFile!)
+        let frameBytes = try Data(contentsOf: frameURL)
+        try await store.receiveFamilyChanges { local in
+            var received = local
+            received[0].doctorNote = "家族が書いた先生の話"
+            received[0].prescription = "家族が書いた薬"
+            received[0].nextVisitOn = "2026-11-20"
+            received[0].createdAt = nil; received[0].updatedAt = nil
+            received[0].revision = UUID()
+            return received
+        }
+        let reopened = VeterinaryVisitStore(directory: root)
+        let received = try await reopened.visits()[0]
+        try require(received.doctorNote == "家族が書いた先生の話"
+            && received.prescription == "家族が書いた薬" && received.nextVisitOn == "2026-11-20",
+            "Family consultation results did not survive the real store write")
+        try require(received.createdAt == added.createdAt && received.updatedAt == added.updatedAt,
+            "Family receive changed device-local memo dates")
+        try require(try await reopened.videoDurations() == [entry.id: 12.4],
+            "Receiving consultation results erased the video sidecar")
+        try require(try Data(contentsOf: frameURL) == frameBytes, "Family receive changed the private first frame")
+        let receivedBytes = try Data(contentsOf: ledger)
+        try await reopened.receiveFamilyChanges { $0 }
+        try require(try Data(contentsOf: ledger) == receivedBytes, "Unchanged family projection rewrote the store")
+        try await reopened.receiveFamilyChanges { local in
+            var received = local
+            received[0].doctorNote = nil; received[0].prescription = nil; received[0].nextVisitOn = nil
+            received[0].revision = UUID()
+            return received
+        }
+        let clearedReceived = try await VeterinaryVisitStore(directory: root).visits()[0]
+        try require(!clearedReceived.hasResults, "Local results overwrote a received explicit clear")
+        try require(try await VeterinaryVisitStore(directory: root).videoDurations() == [entry.id: 12.4],
+            "Clearing consultation results erased the video sidecar")
+        print("Family results receive/clear: video sidecar, local dates and private first frame preserved")
         // A photo next to it is not a video; replacing the video with a photo drops its length.
-        let photo = try await store.add(source: shot("photo-1"), jpeg: jpeg, to: visit.id, expectedRevision: added.revision, confirmedTarget: true)
+        let photo = try await store.add(source: shot("photo-1"), jpeg: jpeg, to: visit.id, expectedRevision: clearedReceived.revision, confirmedTarget: true)
         try require(try await store.videoDurations() == [entry.id: 12.4], "A photo became a video")
         let asPhoto = try await store.add(source: video, jpeg: jpeg, to: visit.id, expectedRevision: photo.revision,
             confirmedTarget: true, replace: true)
