@@ -70,8 +70,47 @@ private func check(_ condition: Bool, _ message: String) throws {
             cachedAuthority: memory) == .identityChanged, "known identity change overrides valid memory and disk")
         try check(PlusAuthorityRestoreDecision.resolve(memoryIsUsable: memory.isUsable(at: now.addingTimeInterval(1800)),
             identityChanged: false, cachedAuthority: nil) == .checking, "expired memory cannot bridge a missing cache")
+        try verifyRenewalWords()
         print("Plus foreground: valid memory survives missing cache; identity changes and expiry still withdraw access")
         print("Plus cache: expiry, clock rollback, identity, environment, reinstall and exact-ACK boundaries passed")
         print("Plus transport policy: unchanged acknowledged transaction 1 POST + 1 GET -> 0 POST + 1 GET; device latency unmeasured")
+    }
+
+    /// 11/9: a cancelled member sees the end date; a renewing one sees 利用中.
+    static func verifyRenewalWords() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        func date(_ y: Int, _ m: Int, _ d: Int, _ h: Int = 12) -> Date {
+            calendar.date(from: DateComponents(year: y, month: m, day: d, hour: h))!
+        }
+        let now = date(2026, 11, 2)
+        let end = date(2026, 11, 9)
+        typealias P = PlusRenewalPresentation
+        func header(_ renews: Bool?, _ expiration: Date?, at moment: Date? = nil) -> String {
+            P.settingsHeader(willAutoRenew: renews, expiration: expiration, now: moment ?? now, calendar: calendar)
+        }
+        func line(_ renews: Bool?, _ expiration: Date?) -> String? {
+            P.offerEndLine(willAutoRenew: renews, expiration: expiration, now: now, calendar: calendar)
+        }
+        try check(header(true, end) == "Plus（利用中）", "renewing stays 利用中")
+        try check(line(true, end) == nil, "renewing keeps 「Plusを利用中です」")
+        try check(header(false, end) == "Plus（11月9日まで）", "cancelled shows its end date")
+        try check(line(false, end) == "11月9日まで使えます", "cancelled offer line")
+        try check(header(nil, end) == "Plus（利用中）" && line(nil, end) == nil, "unknown renewal stays 利用中")
+        try check(header(false, nil) == "Plus（利用中）" && line(false, nil) == nil, "unknown end stays 利用中")
+        try check(header(false, end, at: end) == "Plus（利用中）", "a past end never shows as a future date")
+        try check(header(false, date(2027, 1, 9)) == "Plus（2027年1月9日まで）", "another year shows the year")
+        try check(line(false, date(2027, 1, 9)) == "2027年1月9日まで使えます", "another year on the offer line")
+        try check(header(false, date(2026, 11, 9, 0).addingTimeInterval(60)) == "Plus（11月9日まで）",
+                  "the calendar's own day, not UTC's")
+        try check(P.renewingOfferTitle == "Plusを利用中です", "renewing offer title")
+        let renewing = PlusRenewalSnapshot(willAutoRenew: true, expirationDate: end)
+        let monthly = PlusRenewalSnapshot(willAutoRenew: false, expirationDate: end)
+        let annual = PlusRenewalSnapshot(willAutoRenew: false, expirationDate: date(2027, 1, 9))
+        try check(PlusRenewalSnapshot.combined([]) == nil, "no subscription, no words")
+        try check(PlusRenewalSnapshot.combined([monthly, renewing]) == renewing, "any renewing one renews")
+        try check(PlusRenewalSnapshot.combined([monthly, annual])?.expirationDate == date(2027, 1, 9),
+                  "the latest end when none renews")
+        print("Plus renewal words: 利用中 while renewing, 「11月9日まで」 once cancelled, the year only when it differs")
     }
 }
