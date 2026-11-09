@@ -147,16 +147,24 @@ actor VeterinaryVisitStore {
     }
     #if os(iOS)
     func receiveFamilyChanges() throws {
+        try receiveFamilyChanges(project: FamilyNotebookToolSharing.visitsReceived)
+    }
+    #endif
+
+    /// Apply the family projection under the same persistence boundary on every
+    /// platform, so isolated model checks exercise the real sidecar write.
+    func receiveFamilyChanges(project: ([VeterinaryVisit]) throws -> [VeterinaryVisit]) throws {
         Self.lock.lock(); defer { Self.lock.unlock() }
+        #if os(iOS)
         AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
         guard directory.standardizedFileURL == AppRecordDataset.directory("VeterinaryVisits").standardizedFileURL else { return }
+        #endif
         var state = try load()
-        let next = Self.keepingLocalResults(try FamilyNotebookToolSharing.visitsReceived(state.visits), from: state.visits)
+        let next = Self.keepingLocalResults(try project(state.visits), from: state.visits)
         guard next != state.visits else { return }
         for visit in next { try validate(visit) }
         state.visits = next; try commit(state, familyProjection: true)
     }
-    #endif
 
     /// Keep device-local memo dates. Consultation results now come from the
     /// field-scoped family projection (including explicit clears).

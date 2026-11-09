@@ -72,6 +72,9 @@ enum FamilyNotebookToolBridgeVerifier {
             after: .init(visits: revised), snapshot: receiver.snapshot()), author: author)
         _ = try source.receive(receiver.pendingOperations())
         let reply = try FamilyNotebookToolBridge.apply(source.snapshot(), to: results)
+        try check(reply[0].id == results[0].id
+            && reply[0].entries.map(\.id) == results[0].entries.map(\.id),
+            "Family result projection changed IDs used by the video-length sidecar")
         try check(reply[0].doctorNote == revised[0].doctorNote && reply[0].prescription == revised[0].prescription
             && reply[0].nextVisitOn == revised[0].nextVisitOn, "all follow-up fields survive return edits")
         var empty = revised; empty[0].doctorNote = nil; empty[0].prescription = nil; empty[0].nextVisitOn = nil
@@ -79,6 +82,9 @@ enum FamilyNotebookToolBridgeVerifier {
             after: .init(visits: empty), snapshot: receiver.snapshot()), author: author)
         _ = try source.receive(receiver.pendingOperations())
         let cleared = try FamilyNotebookToolBridge.apply(source.snapshot(), to: reply)
+        try check(cleared[0].id == reply[0].id
+            && cleared[0].entries.map(\.id) == reply[0].entries.map(\.id),
+            "Family result clear changed IDs used by the video-length sidecar")
         try check(cleared[0].doctorNote == nil && cleared[0].prescription == nil && cleared[0].nextVisitOn == nil,
             "explicit follow-up clears survive receive")
         // A pre-extension notebook has no new operations: retain existing local results.

@@ -5488,7 +5488,8 @@ class VeterinaryRoundOneTests(unittest.TestCase):
         validate = section(self.store, "private func validate(_ visit: VeterinaryVisit)", "for entry in visit.entries")
         self.assertIn("(visit.doctorNote?.count ?? 0) <= 500, (visit.prescription?.count ?? 0) <= 500", validate)
         self.assertIn("visit.nextVisitOn.map(PhotoMemoWeightValue.validDay) ?? true", validate)
-        self.assertIn("Self.keepingLocalResults(try FamilyNotebookToolSharing.visitsReceived(state.visits), from: state.visits)", self.store)
+        self.assertIn("receiveFamilyChanges(project: FamilyNotebookToolSharing.visitsReceived)", self.store)
+        self.assertIn("Self.keepingLocalResults(try project(state.visits), from: state.visits)", self.store)
         verifier = (ROOT / "ci/verify-veterinary-visits.swift").read_text(encoding="utf-8")
         for case in ("A memo saved before the results fields became unreadable", "A finished memo was rewritten",
                      "Saving results changed what was shown", "A received result clear was overwritten or changed local dates"):
@@ -5846,7 +5847,8 @@ class VeterinaryRoundTwoTests(unittest.TestCase):
         self.assertNotIn("video", model.lower())
         state = section(self.store, "private struct State: Codable {", "private let directory: URL")
         self.assertIn("var videoSeconds: [String: Double]? = nil", state)
-        self.assertIn("Self.keepingLocalResults(try FamilyNotebookToolSharing.visitsReceived(state.visits), from: state.visits)", self.store)
+        self.assertIn("receiveFamilyChanges(project: FamilyNotebookToolSharing.visitsReceived)", self.store)
+        self.assertIn("Self.keepingLocalResults(try project(state.visits), from: state.visits)", self.store)
         keeping = section(self.store, "static func keepingLocalResults(", "/// The UI supplies a live membership boundary")
         self.assertNotIn("video", keeping)
         add = section(self.store, "func add(source: PhotoMemoryNoteRecord", "func remove(entryID:")
