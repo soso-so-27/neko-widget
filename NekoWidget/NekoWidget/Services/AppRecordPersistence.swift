@@ -2228,6 +2228,9 @@ struct AppRecordSavedPhoto: View {
 /// Isolated synthetic transport. The real D1/S3 reference graph is checked by
 /// backend integration tests; this fixture drives the normal iPhone stores/UI.
 private actor AppRecordFixtureServer {
+    /// As PreservationService/src/storage.ts says it: every tool it keeps. Without
+    /// it a save that holds 「この子のこと」 (CatCare) stops as paused (11/9).
+    static let supportedTools = ToolBackupIndex.manifests.keys.sorted()
     private var measuredRoutes: [String: Int] = [:]
     private var routesAtHead: [String: Int] = [:]
     private var headWrites = 0
@@ -2423,7 +2426,8 @@ private actor AppRecordFixtureServer {
                 let used = headWrites > 0 ? 4096 : 0
                 let saved = headWrites > 0 ? 3 : 0
                 return try response(["version": 1, "accounting": "encrypted-records-v1",
-                    "toolSnapshots": ["maximumIndexVersion": 4, "strictPartDeletion": true, "metadataBatchVersion": 1],
+                    "toolSnapshots": ["maximumIndexVersion": 4, "strictPartDeletion": true, "metadataBatchVersion": 1,
+                                      "supportedTools": Self.supportedTools],
                     "storage": ["usedBytes": used, "reservedBytes": 0, "limitBytes": 3000000000, "availableBytes": 3000000000-used, "overLimit": false],
                     "records": ["saved": saved, "pending": 0, "maximumRecords": 3000, "creationLimitReached": false],
                     "productQuota": ["configurationStatus": "valid", "accountingStatus": "ready", "enforcementStatus": "enabled",
@@ -2436,7 +2440,8 @@ private actor AppRecordFixtureServer {
                             "records": ["saved": saved, "maximumRecords": 3000, "available": 3000-saved, "overLimit": false]]]])
             }
             return try response(["version": 1, "accounting": "encrypted-records-v1",
-                "toolSnapshots": ["maximumIndexVersion": maximumIndexVersion, "strictPartDeletion": true, "metadataBatchVersion": metadataBatchMode ? 1 : 0],
+                "toolSnapshots": ["maximumIndexVersion": maximumIndexVersion, "strictPartDeletion": true, "metadataBatchVersion": metadataBatchMode ? 1 : 0,
+                                  "supportedTools": Self.supportedTools],
                 "storage": ["usedBytes": 0, "reservedBytes": 0, "limitBytes": 100000000,
                     "availableBytes": 100000000, "overLimit": false],
                 "records": ["saved": records.count, "pending": 0, "maximumRecords": 200, "creationLimitReached": false]])
