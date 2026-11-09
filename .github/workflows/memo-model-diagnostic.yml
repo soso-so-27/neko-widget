@@ -36,7 +36,7 @@ jobs:
   private-models:
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.veterinary_models)
     name: Apple persistence models only - not release evidence
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 10
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
@@ -90,7 +90,7 @@ jobs:
   family-notebook:
     if: github.event_name == 'workflow_dispatch' && inputs.notebook_models
     name: Family notebook model probe - not release evidence
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 10
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
