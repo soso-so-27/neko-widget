@@ -87,8 +87,6 @@ struct NekoWidgetApp: App {
                 LostCatDraftFixtureView()
             } else if CommandLine.arguments.contains("--widget-photo-opening-ui-fixture") {
                 WidgetPhotoOpeningFixture()
-            } else if CommandLine.arguments.contains("--personal-rediscovery-ui-fixture") {
-                PersonalRediscoveryHistoryFixture()
             } else if CommandLine.arguments.contains("--official-window-ui-fixture") {
                 OfficialWindowUIFixture()
             } else if CommandLine.arguments.contains("--window-list-ui-fixture") {
