@@ -1778,8 +1778,7 @@ final class SoloMemoriesUITests: XCTestCase {
         // 「これまでの診察メモ」 is under the four steps and the delete row, below
         // the first screen (11/9: step 1 also has 体重); the Form makes it near view.
         XCTAssertTrue(app.buttons["vet-show"].waitForExistence(timeout: 5), app.debugDescription)
-        for _ in 0..<8 where !previousVisit.isHittable { app.swipeUp(velocity: .slow) }
-        XCTAssertTrue(previousVisit.waitForExistence(timeout: 5), app.debugDescription)
+        revealVetRow(previousVisit, app: app)
         previousVisit.tap()
         XCTAssertTrue(app.staticTexts["診察済み"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["保存当時の診察"].exists)
@@ -2005,6 +2004,27 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(element.isHittable, "Required action must be reachable: \(element.identifier)")
     }
 
+    /// 病院で見せる's page between the row of cats on top and 「先生に見せる」 at
+    /// the bottom. A row under either still reads as hittable, but a tap there
+    /// does nothing (runs 42545036862 and 42564398913: the picker and a past
+    /// memo did not open). Scrolls toward the row from either side.
+    @MainActor
+    private func revealVetRow(_ element: XCUIElement, app: XCUIApplication) {
+        let bar = app.buttons["vet-show"]
+        let strip = app.descendants(matching: .any).matching(identifier: "tool-cat-strip").firstMatch
+        func shown() -> Bool {
+            guard element.exists, element.isHittable else { return false }
+            let y = element.frame.midY
+            return (!bar.exists || y < bar.frame.minY - 24) && (!strip.exists || y > strip.frame.maxY + 8)
+        }
+        for _ in 0..<10 where !shown() {
+            if !element.exists || (bar.exists && element.frame.midY > bar.frame.minY - 24) {
+                app.swipeUp(velocity: .slow)
+            } else { app.swipeDown(velocity: .slow) }
+        }
+        XCTAssertTrue(shown(), "Required row must be reachable: \(element.identifier) / " + app.debugDescription)
+    }
+
     // The real PhotoKit request can arrive while the fixture's source-confirmation
     // sheet is visible. Grant access only to the imported public test photos;
     // XCTest's default interruption handler otherwise denies and consumes a tap.
@@ -2131,25 +2151,14 @@ final class SoloMemoriesUITests: XCTestCase {
         let remove = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).firstMatch
         // 11/9 (#899): step 1 gained the 体重 row, so the record's
         // 「診察メモから外す」 can sit below the bottom bar as well as above the screen.
-        let showBar = app.buttons["vet-show"]
-        for _ in 0..<8 where !remove.isHittable {
-            if remove.exists, showBar.exists, remove.frame.midY > showBar.frame.minY - 24 {
-                app.swipeUp(velocity: .slow)
-            } else { app.swipeDown(velocity: .slow) }
-        }
-        XCTAssertTrue(remove.isHittable); remove.tap()
+        revealVetRow(remove, app: app); remove.tap()
         XCTAssertTrue(app.buttons["外す"].waitForExistence(timeout: 5)); app.buttons["外す"].tap()
         XCTAssertTrue(remove.waitForNonExistence(timeout: 5))
         capture("vet-record-removed-source-kept")
         // After the removal the page can rest below 「写真を選ぶ」 (run 42545036862
         // showed 「診察のあと」 at the top), so reach it from either side.
         let pick = app.buttons["vet-pick-records"]
-        for _ in 0..<8 where !pick.isHittable {
-            if pick.exists, showBar.exists, pick.frame.midY > showBar.frame.minY - 24 {
-                app.swipeUp(velocity: .slow)
-            } else { app.swipeDown(velocity: .slow) }
-        }
-        XCTAssertTrue(pick.isHittable, app.debugDescription); pick.tap()
+        revealVetRow(pick, app: app); pick.tap()
         // 349: 「見せる写真を選ぶ」, recent photos first, then the memos below.
         // 11/9 (#899): it also reads the recent videos; the sheet was still
         // coming up at 5 s on the hosted Simulator (dimming already shown).
@@ -2723,7 +2732,11 @@ final class SoloMemoriesUITests: XCTestCase {
                 "tool-make-missing", "直すところがあります。赤い文字の欄を見てください"
             )).firstMatch
             for _ in 0..<10 {
-                let top = app.navigationBars.firstMatch.frame.maxY + 16
+                // Below the row of cats too: it is its own sideways list, so
+                // a drag that starts on it never scrolls the form (run
+                // 42564398913, largest text, pressed at y 183 on it ten times).
+                let strip = app.descendants(matching: .any).matching(identifier: "tool-cat-strip").firstMatch
+                let top = max(app.navigationBars.firstMatch.frame.maxY, strip.exists ? strip.frame.maxY : 0) + 16
                 // The bar steps aside while the keyboard is up; then the
                 // keyboard is the bottom of the visible form.
                 let make = app.buttons["チラシを作る"]
