@@ -228,13 +228,16 @@ final class CareHandoffStore: ObservableObject {
         else { throw CareHandoffError.noSelection }
         let household = CatCareStore.shared.state?.household
         let cats = try plan.cats.filter { disclosure.catIDs.contains($0.id) }.map { cat in
-            var photo: UIImage?
-            if let name = cat.photoName {
-                guard let loaded = image(name) else { throw CareHandoffError.photoUnavailable }
-                photo = loaded
-            }
             // Everyday care and health come from 「この子のこと」, one place for each cat.
             let care = CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
+            // 11/9: the face photo of 「この子のこと」 (the memo's own older photo
+            // until one is set there); none after 「このメモには載せない」.
+            var photo: UIImage?
+            if cat.photoRemoved != true,
+               let url = CatCareSummary.identifyingPhotoURL(care, .face, legacy: imageURL(cat.photoName)) {
+                guard let loaded = UIImage(contentsOfFile: url.path) else { throw CareHandoffError.photoUnavailable }
+                photo = loaded
+            }
             var fields = disclosure.fields(cat: cat,
                 everyday: CatCareSummary.careHandoffLines(care, legacy: cat),
                 health: CatCareSummary.careHandoffHealthLines(care, legacy: cat),
@@ -243,9 +246,18 @@ final class CareHandoffStore: ObservableObject {
             return CareHandoffShareRecord.Cat(name: cat.displayName, photo: photo,
                 fields: fields, updatedAt: cat.updatedAt)
         }
-        return CareHandoffShareRecord(cats: cats,
+        var record = CareHandoffShareRecord(cats: cats,
             commonFields: disclosure.commonFields(plan: plan, household: CatCareStore.shared.state?.household),
             includesHealth: disclosure.health, includesContacts: disclosure.contacts, createdAt: Date())
+        // Round 2 (11/8): the PDF ends with 「日ごとのチェック表」 for the period
+        // written on the make page; 「薬」 only when a chosen cat's medicine is shown.
+        let medicine = disclosure.health && plan.cats.contains { cat in
+            disclosure.catIDs.contains(cat.id) && CareCheckTable.hasMedicine(
+                CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID))
+        }
+        record.checkTable = CareCheckTable(period: plan.requestText(\.period, \.period, chosen: disclosure.catIDs),
+                                           catNames: cats.map(\.name), medicine: medicine)
+        return record
     }
     private static func normalizedJPEG(_ data: Data) throws -> Data {
         guard data.count <= 40_000_000,

@@ -2,6 +2,7 @@ import ImageIO
 import Photos
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 struct ShowcaseOpenOneKey: EnvironmentKey {
     static let defaultValue: ((String) -> Void)? = nil
@@ -196,6 +197,8 @@ struct ShowcasePhotoView: View {
     @State private var bestNineCount = 0
     /// The picture is being made: its button shows, disabled (11/7).
     @State private var isPreparingBestNine = false
+    /// Round 2: the photos one by one, full screen, to hand the iPhone over.
+    @State private var showsSlideshow = false
     @AppStorage("showcase-shows-name-and-age") private var showsCaption = true
 
     private var scopeID: String { selectedScopeID ?? initialScopeID ?? "" }
@@ -263,7 +266,7 @@ struct ShowcasePhotoView: View {
             topBar
             if !tiles.isEmpty {
                 ZStack {
-                    gallery(tiles)
+                    gallery(tiles, slides: Array(all.prefix(ShowcasePhotoStore.maximumCount)))
                         .opacity(detailIndex == nil ? 1 : 0)
                         .allowsHitTesting(detailIndex == nil)
                         .accessibilityHidden(detailIndex != nil)
@@ -287,6 +290,11 @@ struct ShowcasePhotoView: View {
             ShowcaseToolCatPicker(profiles: profiles, storedScopes: storedScopeIDs,
                                   select: { selectScope($0) },
                                   remove: { removeFormerScope($0) })
+        }
+        .fullScreenCover(isPresented: $showsSlideshow) {
+            ShowcaseSlideshowView(items: Array(all.prefix(ShowcasePhotoStore.maximumCount))) {
+                showsSlideshow = false
+            }
         }
         .sheet(isPresented: $showsPreparation) {
             // 11/7: the cat is chosen only here; the edit screen edits this cat's set.
@@ -354,7 +362,7 @@ struct ShowcasePhotoView: View {
         .accessibilityLabel("見せる写真を編集")
     }
 
-    private func gallery(_ tiles: [Item]) -> some View {
+    private func gallery(_ tiles: [Item], slides: [Item]) -> some View {
         ScrollView {
             // A tight grid read as one picture, with the cat's name on a band
             // under it (not over the photos). Three columns at every text size.
@@ -419,6 +427,18 @@ struct ShowcasePhotoView: View {
                     .padding(.horizontal, 16)
                     .accessibilityLabel("画像を作っています")
                     .accessibilityIdentifier("showcase-share-best-nine-preparing")
+                }
+                if slides.count > 1 {
+                    // Round 2: quiet, under the main button.
+                    Button { showsSlideshow = true } label: {
+                        Label("スライドショー", systemImage: "play")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .tint(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 6)
+                    .accessibilityIdentifier("showcase-slideshow-open")
                 }
                 if caption != nil {
                     // One switch for the band here and in the shared picture.
@@ -748,6 +768,106 @@ private struct ShowcaseItemImage: View {
     }
 }
 
+/// Round 2: the photos one at a time, for handing the iPhone to someone. No
+/// controls: each photo stays about 3 seconds and fades into the next, round
+/// and round. A tap pauses or goes on; a swipe down or 「閉じる」 leaves. The
+/// screen stays on while it is open and in front, and is let go on leaving.
+/// With Reduce Motion the photos change without a fade.
+struct ShowcaseSlideshowView: View {
+    static let seconds: UInt64 = 3
+    static let idleOwner = "showcase-slideshow"
+
+    let items: [ShowcasePhotoView.Item]
+    let close: () -> Void
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var index = 0
+    @State private var paused = false
+    @State private var follow: CGFloat = 0
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            if items.indices.contains(index) {
+                ShowcaseItemImage(item: items[index], square: false)
+                    .id(items[index].id)
+                    .transition(reduceMotion ? .identity : .opacity)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .ignoresSafeArea()
+            }
+        }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.8), value: index)
+        .offset(y: follow)
+        .opacity(follow > 0 ? max(0.4, 1 - follow / 400) : 1)
+        .contentShape(Rectangle())
+        .onTapGesture { paused.toggle() }
+        .gesture(
+            DragGesture(minimumDistance: 20)
+                .onChanged { value in follow = max(0, value.translation.height) }
+                .onEnded { value in
+                    if value.translation.height > 110 { leave() }
+                    else { withAnimation(.easeOut(duration: 0.2)) { follow = 0 } }
+                }
+        )
+        .overlay(alignment: .topTrailing) {
+            Button("閉じる") { leave() }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.8))
+                .frame(minWidth: 44, minHeight: 44)
+                .padding(.horizontal, 16)
+                .accessibilityIdentifier("showcase-slideshow-close")
+        }
+        .overlay {
+            if paused {
+                Image(systemName: "pause.fill")
+                    .font(.title)
+                    .foregroundStyle(.white.opacity(0.8))
+                    .padding(18)
+                    .background(.black.opacity(0.4), in: Circle())
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+        .statusBarHidden()
+        .persistentSystemOverlays(.hidden)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("スライドショー、\(items.count)枚中\(index + 1)枚目")
+        .accessibilityAction(named: Text(paused ? "続ける" : "止める")) { paused.toggle() }
+        .accessibilityIdentifier("showcase-slideshow")
+        .task(id: paused) {
+            guard !paused, items.count > 1 else { return }
+            while !Task.isCancelled {
+                // The next photo is read before its turn, so it fades in whole.
+                let next = (index + 1) % items.count
+                await Self.preload(items[next])
+                try? await Task.sleep(nanoseconds: Self.seconds * 1_000_000_000)
+                guard !Task.isCancelled, !paused else { return }
+                index = next
+            }
+        }
+        .onAppear { keepAwake(scenePhase == .active) }
+        .onChange(of: scenePhase) { _, phase in keepAwake(phase == .active) }
+        .onDisappear { keepAwake(false) }
+    }
+
+    @MainActor
+    private func keepAwake(_ on: Bool) {
+        AppIdleTimer.setPreventSleep(on, for: Self.idleOwner)
+    }
+
+    @MainActor
+    private func leave() {
+        keepAwake(false)
+        close()
+    }
+
+    private static func preload(_ item: ShowcasePhotoView.Item) async {
+        if case let .prepared(entry, url) = item {
+            _ = await ShowcaseImageLoader.load(url, box: entry.catBoundingBox, side: 2400, square: false)
+        }
+    }
+}
+
 /// The enlarged photo (11/8): swipe sideways for the next one, pinch or
 /// double-tap to zoom, drag down to close. Zoomed, a drag moves the photo.
 private struct ShowcaseDetailPhoto: View {
@@ -882,6 +1002,9 @@ struct ShowcasePreparationView: View {
     @State private var errorMessage: String?
     /// 「おすすめで選ぶ」 or 「おすすめで選び直す」 was pressed, so that place says so (11/6).
     @State private var running: String?
+    /// The photo being dragged to a new place, and the place under the finger.
+    @State private var draggingEntry: ShowcasePhotoStore.Entry?
+    @State private var dropTargetID: String?
 
     private enum PickerMode: Identifiable {
         case add
@@ -970,21 +1093,8 @@ struct ShowcasePreparationView: View {
                     } else {
                         LazyVGrid(columns: columns, spacing: 8) {
                             ForEach(Array(shown.enumerated()), id: \.element.id) { index, image in
-                                let entry = image.entry
                                 // Past the 1／4／6／9 shape, a photo waits for the next one (11/8).
-                                let waiting = index >= tileCount
-                                Button { previewEntry = entry } label: {
-                                    thumbnail(entry, url: image.url)
-                                        .opacity(waiting ? 0.4 : 1)
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityElement(children: .ignore)
-                                .accessibilityAddTraits(.isButton)
-                                .accessibilityAction { previewEntry = entry }
-                                .accessibilityLabel("見せる写真")
-                                .accessibilityValue([entry.pinned ? "おすすめで入れ替えない" : nil,
-                                                     waiting ? "見せる画面には出ません" : nil]
-                                    .compactMap { $0 }.joined(separator: "、"))
+                                photoCell(image, index: index, in: shown, waiting: index >= tileCount)
                             }
                             if allEntries.count < ShowcasePhotoStore.maximumCount {
                                 Button { pickerMode = .add } label: {
@@ -1133,6 +1243,47 @@ struct ShowcasePreparationView: View {
                     in: RoundedRectangle(cornerRadius: 14))
     }
 
+    private func photoCell(_ image: ShowcasePhotoStore.AvailableImage, index: Int,
+                           in shown: [ShowcasePhotoStore.AvailableImage], waiting: Bool) -> some View {
+        let entry = image.entry
+        return Button { previewEntry = entry } label: {
+            thumbnail(entry, url: image.url)
+                .opacity(waiting ? 0.4 : 1)
+                .overlay {
+                    if dropTargetID == entry.id {
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.accentColor, lineWidth: 3)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        // Round 2: hold and drag to change the order. Only the
+        // grid knows which photo moves; nothing is handed out.
+        .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 10))
+        .onDrag {
+            draggingEntry = entry
+            return NSItemProvider(object: "" as NSString)
+        }
+        .onDrop(of: [.text], delegate: ShowcaseReorderDrop(
+            target: entry, dragging: $draggingEntry, highlighted: $dropTargetID,
+            move: { moved in change { try store.move(moved, to: entry) } }
+        ))
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { previewEntry = entry }
+        .accessibilityAction(named: Text("前へ")) {
+            if index > 0 { change { try store.move(entry, to: shown[index - 1].entry) } }
+        }
+        .accessibilityAction(named: Text("後ろへ")) {
+            if index + 1 < shown.count { change { try store.move(entry, to: shown[index + 1].entry) } }
+        }
+        .accessibilityLabel("見せる写真")
+        .accessibilityValue([entry.pinned ? "おすすめで入れ替えない" : nil,
+                             waiting ? "見せる画面には出ません" : nil]
+            .compactMap { $0 }.joined(separator: "、"))
+        .accessibilityIdentifier("showcase-preparation-photo")
+    }
+
     private func thumbnail(_ entry: ShowcasePhotoStore.Entry, url: URL) -> some View {
         ShowcaseSquare {
             ShowcaseItemImage(item: .prepared(entry, url), square: true)
@@ -1214,6 +1365,33 @@ struct ShowcasePreparationView: View {
         }
         do { try await store.applyRecommendations(identifiers, boxes: boxes, to: targetScope) }
         catch { errorMessage = "おすすめで選べませんでした。もう一度お試しください" }
+    }
+}
+
+/// One place in the 「編集」 grid. Dropping a photo here moves it to this place.
+private struct ShowcaseReorderDrop: DropDelegate {
+    let target: ShowcasePhotoStore.Entry
+    @Binding var dragging: ShowcasePhotoStore.Entry?
+    @Binding var highlighted: String?
+    let move: (ShowcasePhotoStore.Entry) -> Void
+
+    func validateDrop(info: DropInfo) -> Bool { dragging != nil }
+
+    func dropEntered(info: DropInfo) {
+        if let dragging, dragging.id != target.id { highlighted = target.id }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func dropExited(info: DropInfo) {
+        if highlighted == target.id { highlighted = nil }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        defer { dragging = nil; highlighted = nil }
+        guard let dragging, dragging.id != target.id else { return false }
+        move(dragging)
+        return true
     }
 }
 

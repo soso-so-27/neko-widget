@@ -1,0 +1,105 @@
+name: Native output and UI tests
+on:
+  push:
+    branches-ignore: ['diagnostic/**']
+    paths: ['NekoWidget/**', '.github/workflows/native-tests.yml']
+  pull_request:
+    paths: ['NekoWidget/**', '.github/workflows/native-tests.yml']
+  schedule:
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+    inputs:
+      route:
+        description: Execution preparation (all includes every existing test)
+        type: choice
+        default: standard
+        options: [standard, empty, ipad, widget, movie, all]
+      test_filter:
+        description: Case-sensitive class or method substring; empty runs the route
+        type: string
+        default: ''
+permissions:
+  contents: read
+concurrency:
+  group: native-tests-${{ github.ref }}-${{ inputs.route || github.event_name }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+jobs:
+  scope:
+    runs-on: ubuntu-24.04
+    outputs:
+      ui: ${{ steps.scope.outputs.ui }}
+      matrix: ${{ steps.scope.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          REQUESTED_ROUTE: ${{ inputs.route }}
+          TEST_FILTER: ${{ inputs.test_filter }}
+          BASE: ${{ github.event.before || github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess, json
+          base = os.environ.get('BASE', '')
+          always = os.environ['EVENT'] in ('schedule', 'workflow_dispatch') or not base.strip('0')
+          paths = [] if always else subprocess.check_output(['git','diff','--name-only',base,'HEAD'],text=True).splitlines()
+          ui = always or any(re.search(r'(CareHandoff|Evacuation|Veterinary|LostCat|Showcase|Tool|CatCare|CatHousehold|PhotoNote|NekoWidgetTests|NekoWidgetUITests|run-native|native-ui|native-tests|project\.pbxproj|\.xcscheme)', p) for p in paths)
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f: f.write('ui=' + str(ui).lower() + '\n')
+          routes = ['standard','empty','ipad','widget','movie']
+          requested = os.environ.get('REQUESTED_ROUTE', '')
+          if os.environ['EVENT'] == 'workflow_dispatch' and requested != 'all': routes = [requested]
+          matrix = [{'route':r,'shard':i} for r in routes for i in (range(4) if r == 'standard' and not os.environ.get('TEST_FILTER') else [0])]
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f: f.write('matrix=' + json.dumps({'include':matrix}) + '\n')
+          PY
+  output:
+    name: App-hosted output XCTest
+    if: github.event_name != 'workflow_dispatch' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - run: bash NekoWidget/ci/run-native-test-layer.sh unit
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: output-xctest
+          path: ${{ runner.temp }}/native-unit-0/
+          retention-days: 7
+  ui:
+    name: UI（報告のみ・直し中）${{ matrix.route }} / ${{ matrix.shard }}
+    needs: [output, scope]
+    if: always() && !cancelled() && needs.scope.outputs.ui == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+    continue-on-error: true
+    runs-on: macos-15
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.scope.outputs.matrix) }}
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Run selected route (failure remains in log and summary)
+        if: github.event_name != 'workflow_dispatch' || inputs.route == 'all' || (inputs.route == matrix.route && (inputs.test_filter == '' || matrix.shard == 0))
+        env:
+          NEKO_NATIVE_FILTER: ${{ inputs.test_filter }}
+        run: bash NekoWidget/ci/run-native-test-layer.sh ui ${{ matrix.shard }} ${{ matrix.route }}
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: ui-tests-${{ matrix.route }}-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/native-ui-${{ matrix.route }}-${{ matrix.shard }}/
+            ${{ runner.temp }}/neko-ui-diagnostic/
+          retention-days: 7

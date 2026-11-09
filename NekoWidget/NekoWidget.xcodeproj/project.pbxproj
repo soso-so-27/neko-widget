@@ -5,6 +5,32 @@
 	};
 	objectVersion = 56;
 	objects = {
+		C1108C000000000000000002 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputHarnessTests.swift; sourceTree = "<group>"; };
+		C1108C000000000000000003 = { isa = PBXBuildFile; fileRef = C1108C000000000000000002; };
+		C1108C000000000000000005 = { isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = NekoWidgetTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C1108C000000000000000004 = { isa = PBXGroup; children = (C1108C000000000000000002,); path = NekoWidgetTests; sourceTree = "<group>"; };
+		C1108C000000000000000006 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (C1108C000000000000000003,); runOnlyForDeploymentPostprocessing = 0; };
+		C1108C000000000000000007 = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		C1108C000000000000000008 = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		C1108C00000000000000000A = { isa = XCBuildConfiguration; baseConfigurationReference = F00000000000000000000001; buildSettings = {
+ GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_IDENTIFIER).tests";
+ PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1;
+ SUPPORTED_PLATFORMS = "iphonesimulator"; CODE_SIGN_STYLE = Automatic;
+ TEST_HOST = "$(BUILT_PRODUCTS_DIR)/NekoWidget.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/NekoWidget";
+ BUNDLE_LOADER = "$(TEST_HOST)"; SWIFT_EMIT_LOC_STRINGS = NO;
+ }; name = Debug; };
+		C1108C00000000000000000B = { isa = XCBuildConfiguration; baseConfigurationReference = F00000000000000000000001; buildSettings = {
+ GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_IDENTIFIER).tests";
+ PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1;
+ SUPPORTED_PLATFORMS = "iphonesimulator"; CODE_SIGN_STYLE = Automatic;
+ TEST_HOST = "$(BUILT_PRODUCTS_DIR)/NekoWidget.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/NekoWidget";
+ BUNDLE_LOADER = "$(TEST_HOST)"; SWIFT_EMIT_LOC_STRINGS = NO;
+ }; name = Release; };
+		C1108C000000000000000009 = { isa = XCConfigurationList; buildConfigurations = (C1108C00000000000000000A,C1108C00000000000000000B,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		C1108C000000000000000001 = { isa = PBXNativeTarget; buildConfigurationList = C1108C000000000000000009;
+ buildPhases = (C1108C000000000000000006,C1108C000000000000000007,C1108C000000000000000008,); buildRules = ();
+ dependencies = (A00000000000000000000033,); name = NekoWidgetTests; productName = NekoWidgetTests;
+ productReference = C1108C000000000000000005; productType = "com.apple.product-type.bundle.unit-test"; };
 
 /* Begin PBXBuildFile section */
         C02610150000000000000001 /* AppRecordPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02610150000000000000002 /* AppRecordPersistence.swift */; };
@@ -14,8 +40,10 @@
 		D02611070000000000000001 /* UsageReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02611070000000000000002 /* UsageReport.swift */; };
 		D02611070000000000000003 /* UsageCounter.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02611070000000000000004 /* UsageCounter.swift */; };
         D02609300000000000000003 /* VeterinaryVisitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02609300000000000000004 /* VeterinaryVisitView.swift */; };
+		6387AC337AC420C39954EB1B /* VeterinaryCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ECEA0305B053B99E1245523 /* VeterinaryCapture.swift */; };
 		C02609290000000000000011 /* CareHandoffPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02609290000000000000012 /* CareHandoffPlan.swift */; };
 		C10811080000000000000001 /* CatCareOutputLines.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10811080000000000000002 /* CatCareOutputLines.swift */; };
+		C10811090000000000000001 /* LostCatIncident.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10811090000000000000002 /* LostCatIncident.swift */; };
 		C02609290000000000000013 /* CareHandoffStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02609290000000000000014 /* CareHandoffStore.swift */; };
 		C02609290000000000000015 /* CareHandoffExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02609290000000000000016 /* CareHandoffExporter.swift */; };
 		C02609290000000000000017 /* CareHandoffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02609290000000000000018 /* CareHandoffView.swift */; };
@@ -34,6 +62,7 @@
 		E02609230000000000000009 /* OpenShowcaseIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0260923000000000000000A /* OpenShowcaseIntent.swift */; };
 		E0260923000000000000000B /* OpenShowcaseIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0260923000000000000000A /* OpenShowcaseIntent.swift */; };
 		E0260923000000000000000C /* ShowcaseControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0260923000000000000000D /* ShowcaseControl.swift */; };
+		E02611090000000000000001 /* ShowcaseWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02611090000000000000002 /* ShowcaseWidget.swift */; };
 		E0260923000000000000000E /* ShowcaseAppShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0260923000000000000000F /* ShowcaseAppShortcuts.swift */; };
 		E02609220000000000000002 /* MembershipAccessPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000001 /* MembershipAccessPolicy.swift */; };
 		E02609220000000000000003 /* MembershipAccessPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000001 /* MembershipAccessPolicy.swift */; };
@@ -342,8 +371,10 @@
 		D02611070000000000000002 /* UsageReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageReport.swift; sourceTree = "<group>"; };
 		D02611070000000000000004 /* UsageCounter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageCounter.swift; sourceTree = "<group>"; };
         D02609300000000000000004 /* VeterinaryVisitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VeterinaryVisitView.swift; sourceTree = "<group>"; };
+		6ECEA0305B053B99E1245523 /* VeterinaryCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VeterinaryCapture.swift; sourceTree = "<group>"; };
 		C02609290000000000000012 /* CareHandoffPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareHandoffPlan.swift; sourceTree = "<group>"; };
 		C10811080000000000000002 /* CatCareOutputLines.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCareOutputLines.swift; sourceTree = "<group>"; };
+		C10811090000000000000002 /* LostCatIncident.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LostCatIncident.swift; sourceTree = "<group>"; };
 		C02609290000000000000014 /* CareHandoffStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareHandoffStore.swift; sourceTree = "<group>"; };
 		C02609290000000000000016 /* CareHandoffExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareHandoffExporter.swift; sourceTree = "<group>"; };
 		C02609290000000000000018 /* CareHandoffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareHandoffView.swift; sourceTree = "<group>"; };
@@ -361,6 +392,7 @@
 		E02609230000000000000008 /* CatPreparednessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatPreparednessView.swift; sourceTree = "<group>"; };
 		E0260923000000000000000A /* OpenShowcaseIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenShowcaseIntent.swift; sourceTree = "<group>"; };
 		E0260923000000000000000D /* ShowcaseControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowcaseControl.swift; sourceTree = "<group>"; };
+		E02611090000000000000002 /* ShowcaseWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowcaseWidget.swift; sourceTree = "<group>"; };
 		E0260923000000000000000F /* ShowcaseAppShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowcaseAppShortcuts.swift; sourceTree = "<group>"; };
 		E02609220000000000000001 /* MembershipAccessPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipAccessPolicy.swift; sourceTree = "<group>"; };
 		E02609220000000000000004 /* PersonalWidgetMembershipStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalWidgetMembershipStore.swift; sourceTree = "<group>"; };
@@ -635,6 +667,7 @@
 				D00000000000000000000001 /* NekoWidgetWidget */,
 				E00000000000000000000002 /* NekoWidgetShareExtension */,
 				E00000000000000000000001 /* NekoWidgetUITests */,
+				C1108C000000000000000004,
 				A00000000000000000000004 /* Frameworks */,
 				A00000000000000000000003 /* Products */,
 			);
@@ -647,6 +680,7 @@
 				F00000000000000000000402 /* NekoWidgetWidgetExtension.appex */,
 				F00000000000000000000403 /* NekoWidgetShareExtension.appex */,
 				F00000000000000000000602 /* NekoWidgetUITests.xctest */,
+				C1108C000000000000000005,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -874,6 +908,7 @@
 				E02609290000000000000016 /* EvacuationExporter.swift */,
 				C02609290000000000000012 /* CareHandoffPlan.swift */,
 				C10811080000000000000002 /* CatCareOutputLines.swift */,
+				C10811090000000000000002 /* LostCatIncident.swift */,
 				C02609290000000000000014 /* CareHandoffStore.swift */,
 				C02609290000000000000016 /* CareHandoffExporter.swift */,
 				F00000000000000000000250 /* MomentCanonicalPreviewBuilder.swift */,
@@ -930,6 +965,7 @@
 				C02609290000000000000018 /* CareHandoffView.swift */,
 				7A11080F0000000000000002 /* ToolRecentPhotos.swift */,
                 D02609300000000000000004 /* VeterinaryVisitView.swift */,
+				6ECEA0305B053B99E1245523 /* VeterinaryCapture.swift */,
 				C0260929000000000000001A /* CareHandoffFixtureView.swift */,
 				A16600000000000000000011 /* WidgetPhotoOpening.swift */,
 				A16600000000000000000012 /* WidgetPhotoOpeningFixture.swift */,
@@ -970,6 +1006,7 @@
 				F00000000000000000000311 /* NekoWidgetBundle.swift */,
 				E0260923000000000000000A /* OpenShowcaseIntent.swift */,
 				E0260923000000000000000D /* ShowcaseControl.swift */,
+				E02611090000000000000002 /* ShowcaseWidget.swift */,
 				F00000000000000000000312 /* NekoWidgetEntry.swift */,
 				F00000000000000000000313 /* NekoWidgetTimelineProvider.swift */,
 				F00000000000000000000314 /* NekoWidgetView.swift */,
@@ -1142,6 +1179,7 @@
 				A00000000000000000000010 /* NekoWidget */,
 				A00000000000000000000011 /* NekoWidgetWidgetExtension */,
 				A00000000000000000000012 /* NekoWidgetUITests */,
+				C1108C000000000000000001,
 				A00000000000000000000013 /* NekoWidgetShareExtension */,
 			);
 		};
@@ -1236,6 +1274,7 @@
 				D02611070000000000000001 /* UsageReport.swift in Sources */,
 				D02611070000000000000003 /* UsageCounter.swift in Sources */,
                 D02609300000000000000003 /* VeterinaryVisitView.swift in Sources */,
+				6387AC337AC420C39954EB1B /* VeterinaryCapture.swift in Sources */,
 				A18300000000000000000001 /* PhotoMemoryNoteExporter.swift in Sources */,
 				A731D0000000000000000001 /* ReadablePreservationExport.swift in Sources */,
 				A20300000000000000000103 /* ManagedPreservationCoordinator.swift in Sources */,
@@ -1306,6 +1345,7 @@
 				E02609290000000000000019 /* EvacuationFixtureView.swift in Sources */,
 				C02609290000000000000011 /* CareHandoffPlan.swift in Sources */,
 				C10811080000000000000001 /* CatCareOutputLines.swift in Sources */,
+				C10811090000000000000001 /* LostCatIncident.swift in Sources */,
 				C02609290000000000000013 /* CareHandoffStore.swift in Sources */,
 				C02609290000000000000015 /* CareHandoffExporter.swift in Sources */,
 				C02609290000000000000017 /* CareHandoffView.swift in Sources */,
@@ -1427,6 +1467,7 @@
 				A261024B0000000000000008 /* RevealCloudyWindowIntent.swift in Sources */,
 				E0260923000000000000000B /* OpenShowcaseIntent.swift in Sources */,
 				E0260923000000000000000C /* ShowcaseControl.swift in Sources */,
+				E02611090000000000000001 /* ShowcaseWidget.swift in Sources */,
 				200000000000000000000018 /* NekoWidgetConfigurationIntent.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1874,3 +1915,4 @@
 	};
 	rootObject = A00000000000000000000001 /* Project object */;
 }
+

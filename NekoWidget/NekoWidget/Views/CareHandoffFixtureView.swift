@@ -333,6 +333,10 @@ struct CareHandoffFixtureView: View {
         defer { CareHandoffExporter.remove(pdf.directory) }
         guard let document = PDFDocument(url: pdf.files[0]), let text = document.string else { throw Failure.assertion("PDF readable") }
         try require(document.pageCount >= 3 && text.contains("記録の末尾") && text.contains("Bだけの食事") && !text.contains("private-"), "pagination and disclosure in actual PDF")
+        // Round 2 (11/8): the last page is the daily check table, one block a cat.
+        let lastText = document.page(at: document.pageCount - 1)?.string ?? ""
+        try require(lastText.contains("日ごとのチェック") && lastText.contains("むぎ") && lastText.contains("そら")
+                    && lastText.contains("様子") && !lastText.contains("Bだけの食事"), "check table on the last PDF page")
         let images = try CareHandoffExporter.create(one, pdf: false)
         defer { CareHandoffExporter.remove(images.directory) }
         try require(images.files.count >= 2 && images.files.allSatisfy { UIImage(contentsOfFile: $0.path) != nil }, "PNG pages readable")

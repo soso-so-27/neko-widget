@@ -47,6 +47,32 @@ struct EvacuationSupply: Codable, Equatable, Identifiable {
     var location = ""
     var catID: UUID?
     var isNeeded = true
+    /// 「期限」 (round 2, 11/9). Optional so lists saved before still decode.
+    var expiresAt: Date?
+
+    /// Food, water, medicine and 療法食 have a 期限. An item that already has
+    /// one keeps the field, so it can be taken off after a rename.
+    var canHaveExpiry: Bool {
+        expiresAt != nil || Self.expiryWords.contains { title.contains($0) }
+    }
+    static let expiryWords = ["フード", "水", "薬", "療法食", "ごはん", "おやつ", "缶"]
+    /// 「期限まであと〇日」 shows from 30 days before.
+    static let expirySoonDays = 30
+
+    /// Whole days from today to the 期限: 0 on the day, below 0 after it.
+    func daysUntilExpiry(now: Date, calendar: Calendar = .current) -> Int? {
+        guard let expiresAt else { return nil }
+        return calendar.dateComponents([.day], from: calendar.startOfDay(for: now),
+                                       to: calendar.startOfDay(for: expiresAt)).day
+    }
+
+    /// 「期限まであと〇日」 within 30 days, 「期限切れ」 after; nil otherwise.
+    func expiryText(now: Date, calendar: Calendar = .current) -> String? {
+        guard let days = daysUntilExpiry(now: now, calendar: calendar), days <= Self.expirySoonDays else { return nil }
+        if days < 0 { return "期限切れ" }
+        if days == 0 { return "期限は今日" }
+        return "期限まであと\(days)日"
+    }
 }
 
 struct EvacuationDestination: Codable, Equatable, Identifiable {
@@ -196,6 +222,14 @@ struct EvacuationPlan: Codable, Equatable {
         lastCheckedAt = now
     }
 
+    /// 「いま避難する」 (round 2): an item taken on the day is in hand, so the
+    /// day is recorded; nothing else changes (the list's own checks stay).
+    /// Opening and leaving that screen without a check records nothing.
+    mutating func recordTaken(_ id: UUID, now: Date = Date()) {
+        guard supplies.contains(where: { $0.id == id }) else { return }
+        lastCheckedAt = now
+    }
+
     /// 「見直しを始める」 and 「チェックをやり直す」: every item is checked again.
     mutating func clearChecks() {
         carriedIDs = []
@@ -231,6 +265,61 @@ struct EvacuationPlan: Codable, Equatable {
         return now.timeIntervalSince(start) > halfYear && now.timeIntervalSince(dismissedAt) > halfYear
     }
 
+    /// The item on the list whose 期限 comes first, when it is within 30 days or past.
+    func nearestExpiry(now: Date = Date(), calendar: Calendar = .current) -> EvacuationSupply? {
+        supplies.filter { $0.isNeeded && $0.expiryText(now: now, calendar: calendar) != nil }
+            .min { ($0.expiresAt ?? .distantFuture) < ($1.expiresAt ?? .distantFuture) }
+    }
+
+    /// The hub's step 1 line: 「フードの期限まであと12日」.
+    func expiryState(now: Date = Date(), calendar: Calendar = .current) -> String? {
+        guard let item = nearestExpiry(now: now, calendar: calendar),
+              let text = item.expiryText(now: now, calendar: calendar) else { return nil }
+        let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = title.isEmpty ? "持ち物" : title
+        return text == "期限切れ" ? name + "が期限切れ" : name + "の" + text
+    }
+
+    /// When the half-year review falls due, as `reviewIsDue` counts it (the
+    /// later of the start and the day the note was closed, plus half a year).
+    /// Nil for a plan never saved.
+    func reviewDueDate(dismissedAt: Date) -> Date? {
+        guard let made = createdAt ?? earliestKnownDate else { return nil }
+        let start = max(made, lastReadyDate ?? made, dismissedAt)
+        return start.addingTimeInterval(182 * 24 * 60 * 60)
+    }
+
+    /// The notices 「見直しの時期に知らせる」 sets (round 2): the half-year review,
+    /// and 14 days before each 期限 (one per day). Text only: no item and no
+    /// cat's name, as the app's other notices. Only days still ahead.
+    func notices(now: Date = Date(), dismissedAt: Date, calendar: Calendar = .current) -> [EvacuationScheduledNotice] {
+        func nineOClock(onOrAfter date: Date) -> Date? {
+            guard let day = calendar.date(bySettingHour: EvacuationScheduledNotice.hour, minute: 0, second: 0,
+                                          of: date) else { return nil }
+            return day >= date ? day : calendar.date(byAdding: .day, value: 1, to: day)
+        }
+        var result: [EvacuationScheduledNotice] = []
+        if let due = reviewDueDate(dismissedAt: dismissedAt), let at = nineOClock(onOrAfter: due), at > now {
+            result.append(EvacuationScheduledNotice(id: EvacuationScheduledNotice.reviewID, date: at,
+                                                    body: "避難の備えを見直す時期です。"))
+        }
+        let days = Set(supplies.filter(\.isNeeded).compactMap { item -> Date? in
+            guard let expiresAt = item.expiresAt else { return nil }
+            return calendar.date(byAdding: .day, value: -EvacuationScheduledNotice.expiryDaysBefore,
+                                 to: calendar.startOfDay(for: expiresAt))
+        })
+        for day in days.sorted().prefix(EvacuationScheduledNotice.expiryLimit) {
+            guard let at = calendar.date(bySettingHour: EvacuationScheduledNotice.hour, minute: 0, second: 0, of: day),
+                  at > now else { continue }
+            let parts = calendar.dateComponents([.year, .month, .day], from: day)
+            let id = EvacuationScheduledNotice.expiryPrefix
+                + String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+            result.append(EvacuationScheduledNotice(id: id, date: at,
+                body: "持ち出すものの期限まであと\(EvacuationScheduledNotice.expiryDaysBefore)日です。"))
+        }
+        return result
+    }
+
     func validate() throws {
         guard schemaVersion == 1, cats.count <= 30, supplies.count <= 200,
               destinations.count <= 30,
@@ -252,6 +341,22 @@ struct EvacuationPlan: Codable, Equatable {
         let stem = String(name.dropLast(4))
         return UUID(uuidString: stem)?.uuidString == stem
     }
+}
+
+/// One local notice of 「避難に備える」 (round 2). The identifiers share the
+/// 「evacuation.」 prefix, as the album's 「album-arrival.」, so every one can be
+/// replaced or removed together.
+struct EvacuationScheduledNotice: Equatable {
+    static let prefix = "evacuation."
+    static let reviewID = "evacuation.review"
+    static let expiryPrefix = "evacuation.expiry."
+    static let hour = 9
+    static let expiryDaysBefore = 14
+    /// iOS keeps 64 waiting notices for the whole app; this tool uses few.
+    static let expiryLimit = 20
+    let id: String
+    let date: Date
+    let body: String
 }
 
 enum EvacuationStorageError: LocalizedError {

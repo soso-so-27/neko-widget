@@ -170,7 +170,8 @@ import CoreGraphics
         try require(try await store.visits().contains { $0.id == other.id }, "deleting consultation deleted other cat")
         try await verifiesOwnedPhotoCleanup(root.appendingPathComponent("photos"))
         try await verifiesResultsAfterConsultation(suiteRoot.appendingPathComponent("results"))
-        print("Veterinary visit boundaries passed: selection, identity, persistence, snapshots, replacement, removal, completion, results, corruption")
+        try await verifiesVideosAndDayWeight(suiteRoot.appendingPathComponent("videos"))
+        print("Veterinary visit boundaries passed: selection, identity, persistence, snapshots, replacement, removal, completion, results, videos, weight, corruption")
     }
 
     /// 11/8: 「先生の話」「出た薬」「次に行く日」 and the memo's own dates are
@@ -253,6 +254,109 @@ import CoreGraphics
             && merged[0].doctorNote == changedRemotely.doctorNote
             && merged[0].createdAt == written.createdAt && merged[0].revision == changedRemotely.revision,
             "A received family result or local date was lost")
+    }
+
+    private static func fixtureJPEG() throws -> Data {
+#if canImport(ImageIO)
+        let context = CGContext(data: nil, width: 2, height: 2, bitsPerComponent: 8, bytesPerRow: 8,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        context.setFillColor(CGColor(red: 0.5, green: 0.4, blue: 0.3, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+        let output = NSMutableData()
+        let destination = CGImageDestinationCreateWithData(output, "public.jpeg" as CFString, 1, nil)!
+        CGImageDestinationAddImage(destination, context.makeImage()!, nil)
+        try require(CGImageDestinationFinalize(destination), "native JPEG fixture failed")
+        return output as Data
+#else
+        return Data([0xff, 0xd8, 0xff, 0xe0, 1, 0xff, 0xd9])
+#endif
+    }
+
+    /// 11/9: a video is an entry whose first frame is its photo copy; its
+    /// length is kept beside the memos, so older versions still read them.
+    /// The day's weight is read from 「この子のこと」, never one measured later.
+    private static func verifiesVideosAndDayWeight(_ root: URL) async throws {
+        let store = VeterinaryVisitStore(directory: root)
+        let cat = UUID()
+        let visit = try await store.current(catID: cat, catName: "むぎ") { try $0() }
+        let jpeg = try fixtureJPEG()
+        func shot(_ identifier: String) -> PhotoMemoryNoteRecord {
+            PhotoMemoryNoteRecord(photoIdentifier: identifier, note: PhotoMemoryNote(text: "", updatedAt: Date(),
+                revision: UUID().uuidString, context: PhotoMemoryNoteContext(capturedAt: Date(timeIntervalSinceReferenceDate: 800_000_000), cats: [.init(id: cat, name: "むぎ")])))
+        }
+        let ledger = root.appendingPathComponent("state.json")
+        let before = try Data(contentsOf: ledger)
+        // Without a first frame, without its identifier or with an impossible
+        // length, a video is refused and nothing is written.
+        let refused: [(String, Data?, Double)] = [("video-1", nil, 12), ("", jpeg, 12), ("video-1", jpeg, -1),
+                                                  ("video-1", jpeg, .nan), ("video-1", jpeg, .infinity), ("video-1", jpeg, 86_401)]
+        for (identifier, frame, seconds) in refused {
+            do {
+                _ = try await store.add(source: shot(identifier), jpeg: frame, to: visit.id, expectedRevision: visit.revision,
+                    confirmedTarget: true, videoSeconds: seconds)
+                throw Failure(message: "An incomplete video was accepted")
+            } catch VeterinaryVisitError.changed {}
+            try require(try Data(contentsOf: ledger) == before, "A refused video changed the memo")
+        }
+        let video = shot("video-1")
+        let added = try await store.add(source: video, jpeg: jpeg, to: visit.id, expectedRevision: visit.revision,
+            confirmedTarget: true, videoSeconds: 12.4)
+        let entry = added.entries[0]
+        try require(entry.photoFile != nil && entry.sourcePhotoIdentifier == "video-1", "A video lost its first frame or identifier")
+        try require(try await store.videoDurations() == [entry.id: 12.4], "A video's length was not kept")
+        try require(try await VeterinaryVisitStore(directory: root).videoDurations() == [entry.id: 12.4], "A video's length was not durable")
+        // An older version reads the same file: the memo and its first frame.
+        struct OlderState: Decodable { let schema: Int; let visits: [VeterinaryVisit]; let retiredPhotoFiles: [String]? }
+        let older = try JSONDecoder().decode(OlderState.self, from: Data(contentsOf: ledger))
+        try require(older.visits == [added], "An older version could not read a memo with a video")
+        // A photo next to it is not a video; replacing the video with a photo drops its length.
+        let photo = try await store.add(source: shot("photo-1"), jpeg: jpeg, to: visit.id, expectedRevision: added.revision, confirmedTarget: true)
+        try require(try await store.videoDurations() == [entry.id: 12.4], "A photo became a video")
+        let asPhoto = try await store.add(source: video, jpeg: jpeg, to: visit.id, expectedRevision: photo.revision,
+            confirmedTarget: true, replace: true)
+        try require(try await store.videoDurations().isEmpty && asPhoto.entries.count == 2, "A replaced video kept its length")
+        let again = try await store.add(source: video, jpeg: jpeg, to: visit.id, expectedRevision: asPhoto.revision,
+            confirmedTarget: true, replace: true, videoSeconds: 3)
+        let againEntry = again.entries.first { $0.sourceNoteID == video.id }!
+        try require(try await store.videoDurations() == [againEntry.id: 3], "A video chosen again lost its length")
+        // Taking it off the memo leaves no length behind.
+        let removed = try await store.remove(entryID: againEntry.id, from: visit.id, expectedRevision: again.revision)
+        try require(try await store.videoDurations().isEmpty, "A removed video kept its length")
+        let afterRemoval = try JSONSerialization.jsonObject(with: Data(contentsOf: ledger)) as! [String: Any]
+        try require(afterRemoval["videoSeconds"] == nil, "A removed video's length stayed in the file")
+        // A memo saved before videos reads with none.
+        let withVideo = try await store.add(source: shot("video-2"), jpeg: jpeg, to: visit.id, expectedRevision: removed.revision,
+            confirmedTarget: true, videoSeconds: 30)
+        var state = try JSONSerialization.jsonObject(with: Data(contentsOf: ledger)) as! [String: Any]
+        let saved = try Data(contentsOf: ledger)
+        state["videoSeconds"] = nil
+        try JSONSerialization.data(withJSONObject: state).write(to: ledger)
+        let withoutLengths = try await store.visits()
+        try require(try await store.videoDurations().isEmpty && withoutLengths == [withVideo],
+            "A memo without video lengths did not read as before")
+        // Impossible lengths, keys and counts are refused, never guessed.
+        let videoID = withVideo.entries.first { $0.sourcePhotoIdentifier == "video-2" }!.id.uuidString
+        let impossible: [[String: Any]] = [[videoID: -5], ["not-a-uuid": 3],
+                                           [videoID: 3, UUID().uuidString: 3, UUID().uuidString: 3]]
+        for bad in impossible {
+            state["videoSeconds"] = bad
+            try JSONSerialization.data(withJSONObject: state).write(to: ledger)
+            do { _ = try await store.videoDurations(); throw Failure(message: "An impossible video length was read") }
+            catch VeterinaryVisitError.corrupted {}
+        }
+        try saved.write(to: ledger)
+        try require(try await store.videoDurations().count == 1, "Restored video length did not read")
+
+        let lengths: [(Double, String)] = [(0, "0:00"), (12.4, "0:12"), (65, "1:05"), (3723, "1:02:03"), (.nan, "0:00")]
+        for (seconds, text) in lengths {
+            try require(VeterinaryVisitEntry.durationText(seconds) == text, "A video length read as " + VeterinaryVisitEntry.durationText(seconds))
+        }
+        let weights: [(day: String, grams: Int)] = [(day: "2026-11-01", grams: 4200), (day: "2026-11-09", grams: 4300),
+                                                    (day: "2026-11-20", grams: 4400), (day: "bad", grams: 9999)]
+        let today = VeterinaryVisitWeight.latest(weights, onOrBefore: "2026-11-09")
+        try require(today?.day == "2026-11-09" && today?.grams == 4300, "The day's weight was not the newest on that day")
+        let past = VeterinaryVisitWeight.latest(weights, onOrBefore: "2026-11-05")
+        try require(past?.day == "2026-11-01" && past?.grams == 4200, "A past memo showed a weight measured later")
+        try require(VeterinaryVisitWeight.latest(weights, onOrBefore: "2026-10-01") == nil, "A weight from after the memo was shown")
     }
 
     private static func verifiesOwnedPhotoCleanup(_ root: URL) async throws {

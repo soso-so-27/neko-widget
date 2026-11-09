@@ -685,6 +685,131 @@ enum CatCareMemoWeights {
     }
 }
 
+// MARK: - 見分ける写真 (one place to choose them, 11/9)
+
+/// The two photos that tell a cat apart: its face and its whole body.
+enum CatCarePhotoRole: String, CaseIterable, Sendable { case face, body }
+
+extension CatCareRecord {
+    func identifyingPhoto(_ role: CatCarePhotoRole) -> CatCareStamped<CatCarePhotoRef?>? {
+        role == .face ? facePhoto : bodyPhoto
+    }
+
+    mutating func setIdentifyingPhoto(_ role: CatCarePhotoRole, _ ref: CatCarePhotoRef?, editedAt: Date, editedBy: String) {
+        let value = CatCareStamped<CatCarePhotoRef?>(value: ref, editedAt: editedAt, editedBy: editedBy)
+        if role == .face { facePhoto = value } else { bodyPhoto = value }
+    }
+}
+
+/// A photo one tool kept for a cat before 「この子のこと」 chose them (迷子・避難・
+/// 預ける each had their own). `face` and `body` are that tool's own file names.
+struct CatCareToolPhotos: Equatable, Sendable {
+    var tool: String
+    var catID: UUID?
+    var profileID: UUID?
+    var face: String?
+    var body: String?
+}
+
+/// 見分ける写真 are chosen in 「この子のこと」 only; the tools show them. A
+/// tool's older photo is taken in once, never deleted, and still read until
+/// 「この子のこと」 has been set.
+enum CatCareIdentifyingPhotos {
+    /// When two tools have a photo, the first in this order is taken.
+    static let adoptionOrder = ["LostCat", "Evacuation", "CareHandoff"]
+
+    struct Adoption: Equatable, Sendable {
+        var catID: UUID?
+        var profileID: UUID?
+        var role: CatCarePhotoRole
+        var tool: String
+        var file: String
+    }
+
+    enum Choice<Legacy: Equatable>: Equatable {
+        case catCare(CatCarePhotoRef)
+        case legacy(Legacy)
+        case missing
+    }
+
+    /// What a tool shows: 「この子のこと」 once its photo has been set there (one
+    /// taken off there stays off), else the tool's own older photo.
+    static func choice<Legacy: Equatable>(_ field: CatCareStamped<CatCarePhotoRef?>?, legacy: Legacy?) -> Choice<Legacy> {
+        if let field { return field.value.map { Choice<Legacy>.catCare($0) } ?? .missing }
+        return legacy.map { Choice<Legacy>.legacy($0) } ?? .missing
+    }
+
+    /// The record a tool's cat belongs to: the shared tool ID first, then the profile.
+    static func recordIndex(in state: CatCareState, catID: UUID?, profileID: UUID?,
+                            includingDeleted: Bool = false) -> Int? {
+        if let catID, let found = state.cats.firstIndex(where: {
+            $0.catID == catID && (includingDeleted || $0.deletedAt == nil) }) {
+            return found
+        }
+        if let profileID {
+            return state.cats.firstIndex { $0.profileID == profileID && (includingDeleted || $0.deletedAt == nil) }
+        }
+        return nil
+    }
+
+    /// A cat whose 「この子のこと」 was deleted is not made again by a tool's photo.
+    private static func isDeleted(in state: CatCareState, catID: UUID?, profileID: UUID?) -> Bool {
+        recordIndex(in: state, catID: catID, profileID: profileID) == nil
+            && recordIndex(in: state, catID: catID, profileID: profileID, includingDeleted: true) != nil
+    }
+
+    /// For each cat and role never set in 「この子のこと」, the photo to take in:
+    /// the first tool in `adoptionOrder` that has one. A role set here, even
+    /// taken off, is never filled again.
+    static func adoptions(_ sources: [CatCareToolPhotos], state: CatCareState) -> [Adoption] {
+        let ordered = sources.enumerated()
+            .filter { $0.element.catID != nil || $0.element.profileID != nil }
+            .sorted { a, b in
+                let x = adoptionOrder.firstIndex(of: a.element.tool) ?? adoptionOrder.count
+                let y = adoptionOrder.firstIndex(of: b.element.tool) ?? adoptionOrder.count
+                return x != y ? x < y : a.offset < b.offset
+            }
+            .map(\.element)
+        var taken = Set<String>()
+        var result: [Adoption] = []
+        for source in ordered where !isDeleted(in: state, catID: source.catID, profileID: source.profileID) {
+            let index = recordIndex(in: state, catID: source.catID, profileID: source.profileID)
+            // The same cat seen by two tools shares one key: its record, else its profile.
+            let key = index.map { "record-\($0)" }
+                ?? source.profileID.map { "profile-\($0.uuidString)" }
+                ?? "tool-\(source.catID?.uuidString ?? "")"
+            for role in CatCarePhotoRole.allCases {
+                guard let file = role == .face ? source.face : source.body, !file.isEmpty,
+                      !taken.contains(key + role.rawValue) else { continue }
+                if let index, state.cats[index].identifyingPhoto(role) != nil { continue }
+                taken.insert(key + role.rawValue)
+                result.append(Adoption(catID: index.map { state.cats[$0].catID } ?? source.catID,
+                                       profileID: index.flatMap { state.cats[$0].profileID } ?? source.profileID,
+                                       role: role, tool: source.tool, file: file))
+            }
+        }
+        return result
+    }
+
+    /// Takes in one copied photo, only while the role is still unset. A cat
+    /// with no record yet gets one, as opening 「この子のこと」 would make.
+    static func apply(_ adoption: Adoption, ref: CatCarePhotoRef, to state: inout CatCareState, now: Date) {
+        guard !isDeleted(in: state, catID: adoption.catID, profileID: adoption.profileID) else { return }
+        let index: Int
+        if let found = recordIndex(in: state, catID: adoption.catID, profileID: adoption.profileID) {
+            index = found
+        } else {
+            state.cats.append(CatCareRecord(catID: adoption.catID ?? UUID(), profileID: adoption.profileID))
+            index = state.cats.count - 1
+        }
+        guard state.cats[index].identifyingPhoto(adoption.role) == nil else { return }
+        var adopted = ref
+        adopted.origin = .importedFromTool
+        state.cats[index].setIdentifyingPhoto(adoption.role, adopted, editedAt: now, editedBy: "import:" + adoption.tool)
+        state.updatedAt = now
+    }
+}
+
 // MARK: - 迷子のとき
 
 enum CatCareLostCat {

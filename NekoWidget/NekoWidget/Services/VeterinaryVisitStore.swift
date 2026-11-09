@@ -64,6 +64,27 @@ struct VeterinaryVisit: Codable, Identifiable, Equatable, Sendable {
     }
 }
 
+extension VeterinaryVisitEntry {
+    /// A video's length as it reads on its badge: 「0:12」「1:05」「1:02:03」.
+    static func durationText(_ seconds: Double) -> String {
+        let total = seconds.isFinite ? max(0, Int(seconds.rounded())) : 0
+        let hours = total / 3600, minutes = total / 60 % 60, rest = total % 60
+        return hours > 0 ? String(format: "%d:%02d:%02d", hours, minutes, rest) : String(format: "%d:%02d", minutes, rest)
+    }
+    /// A length a video can have: a finite number of seconds up to a day.
+    static func validVideoSeconds(_ seconds: Double) -> Bool { seconds.isFinite && seconds >= 0 && seconds <= 86_400 }
+}
+
+/// その日の体重 (11/9): the weight is kept in 「この子のこと」, its one place.
+/// A memo shows the newest one measured on or before its day, so a past memo
+/// shows the weight of its time, never one measured later.
+enum VeterinaryVisitWeight {
+    static func latest(_ weights: [(day: String, grams: Int)], onOrBefore day: String) -> (day: String, grams: Int)? {
+        weights.filter { PhotoMemoWeightValue.validDay($0.day) && $0.day <= day }
+            .max { $0.day == $1.day ? $0.grams < $1.grams : $0.day < $1.day }
+    }
+}
+
 enum VeterinaryVisitError: Error, LocalizedError {
     case storage, corrupted, changed, wrongCat, confirmationRequired, invalidName, visitLimit, tooLarge
     var errorDescription: String? {
@@ -92,6 +113,11 @@ actor VeterinaryVisitStore {
         var schema = 1
         var visits: [VeterinaryVisit] = []
         var retiredPhotoFiles: [String]? = nil
+        /// Videos (11/9): an entry's length in seconds, by entry ID. Beside the
+        /// visits, not in them: an older version still reads the memo (the
+        /// first frame shows as a photo), and a change received from the
+        /// family keeps it as it was. Entries no longer there are dropped.
+        var videoSeconds: [String: Double]? = nil
     }
     private let directory: URL
 
@@ -107,6 +133,17 @@ actor VeterinaryVisitStore {
     func visits() throws -> [VeterinaryVisit] {
         Self.lock.lock(); defer { Self.lock.unlock() }
         return try load().visits
+    }
+    /// Which entries are videos, and how long each is.
+    func videoDurations() throws -> [UUID: Double] {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        let state = try load()
+        let live = Set(state.visits.flatMap { $0.entries.map(\.id) })
+        var result: [UUID: Double] = [:]
+        for (key, seconds) in state.videoSeconds ?? [:] {
+            if let id = UUID(uuidString: key), live.contains(id) { result[id] = seconds }
+        }
+        return result
     }
     #if os(iOS)
     func receiveFamilyChanges() throws {
@@ -205,8 +242,11 @@ actor VeterinaryVisitStore {
 
     /// Caller freezes and rechecks the source after preparing an optional copy.
     /// Existing selections change only through an explicit Replace action.
+    /// A video (11/9) comes with its first frame as `jpeg` and its length;
+    /// it plays from the iPhone's photo library by its identifier.
     func add(source: PhotoMemoryNoteRecord, jpeg: Data?, to visitID: UUID,
-             expectedRevision: UUID, confirmedTarget: Bool, replace: Bool = false) throws -> VeterinaryVisit {
+             expectedRevision: UUID, confirmedTarget: Bool, replace: Bool = false,
+             videoSeconds: Double? = nil) throws -> VeterinaryVisit {
         Self.lock.lock(); defer { Self.lock.unlock() }
         guard confirmedTarget else { throw VeterinaryVisitError.confirmationRequired }
         var state = try load()
@@ -220,6 +260,10 @@ actor VeterinaryVisitStore {
         guard old == nil || replace else { throw VeterinaryVisitError.changed }
         guard old != nil || visit.entries.count < 20 else { throw VeterinaryVisitError.tooLarge }
         if let jpeg { try Self.validateJPEG(jpeg) }
+        if let videoSeconds {
+            guard VeterinaryVisitEntry.validVideoSeconds(videoSeconds), jpeg != nil,
+                  !source.photoIdentifier.isEmpty else { throw VeterinaryVisitError.changed }
+        }
         let file = jpeg.map { _ in UUID().uuidString + ".jpg" }
         let weight = source.note.weight.map { PhotoMemoWeightValue(grams: $0.value.grams,
             measuredOn: $0.value.measuredOn, catName: visit.catName) }
@@ -238,6 +282,9 @@ actor VeterinaryVisitStore {
             try commit(intent)
         }
         state.visits[index] = visit
+        var videos = state.videoSeconds ?? [:]
+        videos[entry.id.uuidString] = videoSeconds
+        state.videoSeconds = videos.isEmpty ? nil : videos
         if let file = old?.photoFile { state.retiredPhotoFiles = (state.retiredPhotoFiles ?? []) + [file] }
         do {
             if let jpeg, let file { try write(jpeg, to: directory.appendingPathComponent(file)) }
@@ -338,6 +385,9 @@ actor VeterinaryVisitStore {
             let retired = state.retiredPhotoFiles ?? []
             guard retired.count <= 2000, Set(retired).count == retired.count,
                   retired.allSatisfy({ Self.validPhotoFile($0) && !photoFiles.contains($0) }) else { throw VeterinaryVisitError.corrupted }
+            let videos = state.videoSeconds ?? [:]
+            guard videos.count <= state.visits.reduce(0, { $0 + $1.entries.count }),
+                  videos.allSatisfy({ UUID(uuidString: $0.key) != nil && VeterinaryVisitEntry.validVideoSeconds($0.value) }) else { throw VeterinaryVisitError.corrupted }
             return state
         } catch { throw VeterinaryVisitError.corrupted }
     }
@@ -391,6 +441,12 @@ actor VeterinaryVisitStore {
     }
     private func commit(_ state: State, familyProjection: Bool = false) throws {
         var state = state
+        // Only entries still in a memo keep their video length.
+        if let videos = state.videoSeconds {
+            let live = Set(state.visits.flatMap { $0.entries.map(\.id.uuidString) })
+            let kept = videos.filter { live.contains($0.key) }
+            state.videoSeconds = kept.isEmpty ? nil : kept
+        }
         if state.visits.contains(where: { $0.familyRecordID != nil || $0.familyDetached != nil || $0.entries.contains(where: { $0.familyRetained != nil }) }) { state.schema = 2 }
         #if os(iOS)
         AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }

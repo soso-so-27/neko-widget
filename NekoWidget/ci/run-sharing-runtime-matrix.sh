@@ -27,7 +27,7 @@ APP_GROUP_ID=""
 
 # BEGIN DIAGNOSTIC-ONLY artifact
 DIAGNOSTIC_REQUESTED=false
-if [[ -n "${NEKO_IOS_DIAGNOSTIC_TEST_METHOD+x}" \
+if [[ -n "${NEKO_NATIVE_TEST_SELECTION:-}" || -n "${NEKO_IOS_DIAGNOSTIC_TEST_METHOD+x}" \
     || -n "${NEKO_IOS_DIAGNOSTIC_TEST_CLASS+x}" \
     || -n "${NEKO_IOS_DIAGNOSTIC_SOURCE_SHA+x}" \
     || "${GITHUB_WORKFLOW_REF:-}" == */.github/workflows/ios-ui-diagnostic.yml@* ]]; then
@@ -52,11 +52,28 @@ method = os.environ.get("NEKO_IOS_DIAGNOSTIC_TEST_METHOD", "")
 test_class = os.environ.get("NEKO_IOS_DIAGNOSTIC_TEST_CLASS", "MomentDeliveryComposerUITests")
 repository = os.environ.get("GITHUB_REPOSITORY", "")
 ref = os.environ.get("GITHUB_REF", "")
-if (not repository or os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
-        or not ref.startswith("refs/heads/diagnostic/")
-        or os.environ.get("GITHUB_WORKFLOW_REF") != f"{repository}/.github/workflows/ios-ui-diagnostic.yml@{ref}"
-        or os.environ.get("NEKO_IOS_RUNTIME_LANE") != "app-ui"):
-    raise SystemExit("A focused-test override is allowed only in the dedicated diagnostic workflow.")
+native = os.environ.get('NEKO_NATIVE_TEST_SELECTION', '')
+native_workflow = os.environ.get('GITHUB_WORKFLOW_REF') == f'{repository}/.github/workflows/native-tests.yml@{ref}'
+if native:
+    if not native_workflow or not ref.startswith('refs/heads/') or os.environ.get('NEKO_IOS_RUNTIME_LANE') != 'app-ui':
+        raise SystemExit('Native selection requires the report-only native workflow on a branch.')
+    sys.path.insert(0, str(project / 'ci'))
+    import runpy
+    # Import inventory without executing its CLI.
+    source_text = (project / 'ci/native-ui-inventory.py').read_text()
+    namespace = {}
+    exec(source_text.split("if sys.argv[1] == 'select':")[0], namespace)
+    os.chdir(project)
+    if native not in namespace['inventory']() or namespace['route'](native) not in ('widget', 'movie'):
+        raise SystemExit('Unknown native widget/movie selection')
+    _, test_class, method = native.split('/')
+    source = os.environ['GITHUB_SHA']
+else:
+    if (not repository or os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
+            or not ref.startswith("refs/heads/diagnostic/")
+            or os.environ.get("GITHUB_WORKFLOW_REF") != f"{repository}/.github/workflows/ios-ui-diagnostic.yml@{ref}"
+            or os.environ.get("NEKO_IOS_RUNTIME_LANE") != "app-ui"):
+        raise SystemExit("A focused-test override is allowed only in the dedicated diagnostic workflow.")
 if (re.fullmatch(r"[0-9a-f]{40}", source) is None
         or source != os.environ.get("GITHUB_SHA")
         or source != subprocess.check_output(["git", "-C", str(project), "rev-parse", "HEAD"], text=True).strip()):
@@ -67,7 +84,7 @@ try:
     test_source = ("WidgetPlacementScreenshotUITests.swift"
                    if test_class == "WidgetPlacementScreenshotUITests"
                    else "PhotoPermissionUITests.swift")
-    tests = diagnostic_tests(test_class, method,
+    tests = (native,) if native else diagnostic_tests(test_class, method,
         (project / "NekoWidgetUITests" / test_source).read_text(encoding="utf-8"))
 except ValueError as error:
     raise SystemExit(str(error))
@@ -79,7 +96,7 @@ metadata_path.write_text(json.dumps({
 }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 selection_path.write_text("".join(f"-only-testing:{test}\n" for test in tests), encoding="utf-8")
 PY
-    if [[ "${NEKO_IOS_DIAGNOSTIC_TEST_CLASS:-}" == "WidgetPlacementScreenshotUITests" ]]; then
+    if [[ "${NEKO_NATIVE_TEST_SELECTION:-}" == */WidgetPlacementScreenshotUITests/* || "${NEKO_IOS_DIAGNOSTIC_TEST_CLASS:-}" == "WidgetPlacementScreenshotUITests" ]]; then
         # Keep the same generated-data preparation and fresh Simulator as the
         # failed owning lane; execute this one Widget test exactly once.
         RUNTIME_LANE="gallery-white"
@@ -135,6 +152,15 @@ case "$RUNTIME_LANE" in
             WIDGET_SCENARIOS="long-white-large no-caption"
         elif [[ "$RUNTIME_LANE" == gallery-white && "$DIAGNOSTIC_REQUESTED" == true ]]; then
             WIDGET_SCENARIOS="long-white-large"
+            if [[ -n "${NEKO_NATIVE_TEST_SELECTION:-}" ]]; then
+                case "${NEKO_NATIVE_TEST_SELECTION##*/}" in
+                    testCapturePersonalRediscoveryWidgetAvailableAllSupportedSizes) WIDGET_SCENARIOS=personal-available ;;
+                    testCapturePersonalRediscoveryWidgetUsedAllSupportedSizes) WIDGET_SCENARIOS=personal-used ;;
+                    testCaptureSharedWidgetWhiteBackgroundAllSupportedSizes) WIDGET_SCENARIOS=long-white-large ;;
+                    testCaptureSharedWidgetWithoutCaptionAllSupportedSizes) WIDGET_SCENARIOS=no-caption ;;
+                    *) WIDGET_SCENARIOS=native ;;
+                esac
+            fi
         elif [[ "$RUNTIME_LANE" == gallery-white ]]; then
             echo "The standalone white Gallery lane is diagnostic-only." >&2
             exit 1
@@ -530,7 +556,7 @@ PY
             xcrun simctl privacy "$simulator_udid" grant photos "$APP_BUNDLE_ID" || return $?
         fi
         TEST_RUNNER_NEKO_MOVIE_SYNTHETIC_DIAGNOSTIC="$MOVIE_SYNTHETIC_REQUESTED" \
-        TEST_RUNNER_NEKO_MOVIE_BUILD_SHA="${NEKO_IOS_DIAGNOSTIC_SOURCE_SHA:-not supplied}" \
+        TEST_RUNNER_NEKO_MOVIE_BUILD_SHA="${NEKO_IOS_DIAGNOSTIC_SOURCE_SHA:-${GITHUB_SHA:-not supplied}}" \
         python3 "$RECORDED_COMMAND" --record "$runtime_artifacts/composer-test-timing.json" -- xcodebuild \
             -project NekoWidget.xcodeproj \
             -scheme NekoWidget \
@@ -557,7 +583,7 @@ PY
                 || movie_collection_status=$?
             python3 "$PROJECT_DIRECTORY/../acceptance/movie/diagnostic_fixture.py" collect \
                 "$app_data_container/Documents" "$runtime_artifacts/movie-synthetic" \
-                --source-sha "$NEKO_IOS_DIAGNOSTIC_SOURCE_SHA" \
+                --source-sha "${NEKO_IOS_DIAGNOSTIC_SOURCE_SHA:-${GITHUB_SHA:-}}" \
                 || movie_collection_status=$?
             if (( composer_status == 0 && movie_collection_status != 0 )); then
                 composer_status=$movie_collection_status
@@ -590,6 +616,14 @@ PY
             widget_scenario_conditions=""
             widget_scenario_test="testCaptureSharedWidgetAllSupportedSizes"
             case "$widget_scenario" in
+                native)
+                    widget_scenario_test="${NEKO_NATIVE_TEST_SELECTION##*/}"
+                    case "$widget_scenario_test" in
+                        testCaptureOfficialWidgetAllSupportedSizesAndHomeScreen) widget_review_conditions="APP_STORE_SCREENSHOT_WIDGET_FIXTURE OFFICIAL_WINDOW_WIDGET_FIXTURE" ;;
+                        testCaptureJapaneseCurrentWidgetPlacementGuide) widget_review_conditions="" ;;
+                        testCaptureJapaneseLocalOnlyWidgetPreviewForAppStore) widget_review_conditions="APP_STORE_SCREENSHOT_WIDGET_FIXTURE" ;;
+                    esac
+                    ;;
                 personal-available)
                     widget_review_conditions="APP_STORE_SCREENSHOT_WIDGET_FIXTURE PERSONAL_REDISCOVERY_WIDGET_FIXTURE"
                     widget_scenario_test="testCapturePersonalRediscoveryWidgetAvailableAllSupportedSizes"
