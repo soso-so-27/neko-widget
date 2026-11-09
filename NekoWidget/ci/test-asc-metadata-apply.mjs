@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {checkPlan} from './asc-metadata-apply.mjs';
+import {checkPlan,errorDetails,runGroups,permissionFailure} from './asc-metadata-apply.mjs';
 import {readFileSync} from 'node:fs';
 const allowed=[{scope:'app-info',locale:'ja',field:'subtitle',value:'approved'}];
 const change={scope:'app-info',locale:'ja',field:'subtitle',to:'approved'};
@@ -21,4 +21,34 @@ test('write credential stays in the protected metadata workflow only',()=>{
   assert.doesNotMatch(readonly,/asc-metadata/);
   const implementation=readFileSync(new URL('./asc-metadata-apply.mjs',import.meta.url),'utf8');
   assert.doesNotMatch(implementation,/\['(?:submit|review)'/);
+});
+
+test('ordinary API failure continues while protected boundaries stop all groups',()=>{
+  const visited=[];
+  const actions=[['first',()=>{visited.push('first');throw Error('STOP_API');}],['second',()=>visited.push('second')]];
+  assert.deepEqual(runGroups(actions,()=>{}),['first']);
+  assert.deepEqual(visited,['first','second']);
+  for(const code of ['STOP_PERMISSION','STOP_SCOPE','STOP_AGE_RATING','STOP_READBACK','STOP_IDENTITY']){
+    let later=false;
+    assert.throws(()=>runGroups([['first',()=>{throw Error(code)}],['second',()=>{later=true}]],()=>{}),new RegExp(code));
+    assert.equal(later,false);
+  }
+});
+
+test('Apple error details survive but keys, IDs and contacts do not',()=>{
+  const details=errorDetails(JSON.stringify({actions:[{error:JSON.stringify({errors:[{code:'ENTITY_ERROR.ATTRIBUTE.INVALID',title:'Invalid attribute',detail:'whatsNew not allowed: secret-key 1234567890 owner@example.com'}]})}]}),'',['secret-key']);
+  assert.equal(details[0].code,'ENTITY_ERROR.ATTRIBUTE.INVALID');
+  assert.match(details[0].detail,/whatsNew not allowed/);
+  for(const value of ['secret-key','1234567890','owner@example.com'])assert.ok(!JSON.stringify(details).includes(value));
+  assert.doesNotMatch(JSON.stringify(errorDetails('', '-----BEGIN PRIVATE KEY----- hidden',[])),/hidden/);
+});
+
+test('first version never requests whatsNew',()=>{
+  const input=JSON.parse(readFileSync(new URL('./asc-metadata-1109d/version/1.0/ja.json',import.meta.url),'utf8'));
+  assert.equal(Object.hasOwn(input,'whatsNew'),false);
+  assert.deepEqual(Object.keys(input).sort(),['description','keywords','promotionalText','supportUrl']);
+});
+test('Apple permission error suffixes still stop every group without an HTTP code',()=>{
+  for(const text of ['FORBIDDEN_ERROR','NOT_AUTHORIZED','AUTHENTICATION_ERROR','HTTP 403','UNAUTHORIZED_ERROR'])assert.equal(permissionFailure(text),true);
+  assert.equal(permissionFailure('ENTITY_ERROR.ATTRIBUTE.INVALID whatsNew'),false);
 });
