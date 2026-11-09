@@ -2650,7 +2650,9 @@ struct PhotoBrowserView: View {
     @State private var memoryPhotoSharePayload: MemoryPhotoJPEGSharePayload?
     @State private var memoryPhotoExportErrorMessage: String?
     @State private var groupDelivery: GroupDeliveryRequest?
-    @State private var groupDeliverySent = false
+    /// A まど photo kept with 「お気に入りに追加」: who sent it and their
+    /// ひとこと, read once per opened photo and shown read-only (11/9).
+    @State private var groupFavoriteSource: GroupFavoriteSource?
     /// A まど kept on this iPhone; until checked, the deliver button stays as it was.
     @State private var knowsAnyWindow = true
     @State private var showsWidgetInformation = false
@@ -2795,6 +2797,9 @@ struct PhotoBrowserView: View {
     private var browserFooter: some View {
         VStack(spacing: 8) {
             if let selectedPhoto {
+                if let source = groupFavoriteSource, source.localIdentifier == selectedPhoto.localIdentifier {
+                    groupFavoriteSourceView(source)
+                }
                 quickActions(selectedPhoto)
                 if navigationTitleText == "この1枚", let date = selectedPhoto.creationDate,
                    photos(onSameDayAs: date).count > 1 {
@@ -2862,6 +2867,24 @@ struct PhotoBrowserView: View {
         .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 8 : 16)
         .padding(.vertical, 8)
         .background(.ultraThinMaterial)
+    }
+
+    /// 「○○さんから」 and, under it, the sender's ひとこと: read-only, never
+    /// edited here and never copied into this iPhone's memo (11/9).
+    private func groupFavoriteSourceView(_ source: GroupFavoriteSource) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(source.senderLabel)
+                .font(.subheadline.weight(.semibold))
+            if let caption = source.caption {
+                Text(caption)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("photo-browser-group-source")
     }
 
     /// The three things people do with a photo, as icons under it:
@@ -3202,16 +3225,19 @@ struct PhotoBrowserView: View {
             CloudyWindowStore.shared.noteViewed(photoID: selectedPhotoIdentifier)
             await personalNote.load(for: selectedPhotoIdentifier)
         }
-        .sheet(item: $groupDelivery, onDismiss: {
-            // The sent ひとこと may now be in this photo's memo.
-            guard groupDeliverySent else { return }
-            groupDeliverySent = false
-            Task { await personalNote.load(for: selectedPhotoIdentifier) }
-        }) { request in
+        .task(id: selectedPhotoIdentifier) {
+            // Only photos copied in from a まど are looked up, once each time
+            // one is opened; other photos read nothing.
+            let identifier = selectedPhotoIdentifier
+            guard receivedPhotoIdentifiers.contains(identifier) else { groupFavoriteSource = nil; return }
+            if groupFavoriteSource?.localIdentifier == identifier { return }
+            let source = await GroupFavoriteSource.load(localIdentifier: identifier)
+            guard !Task.isCancelled, identifier == selectedPhotoIdentifier else { return }
+            groupFavoriteSource = source
+        }
+        .sheet(item: $groupDelivery) { request in
             if let client = GroupWindowClientProvider.ui {
-                GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier,
-                    memoContext: browserPhotoByIdentifier[request.localIdentifier].map { memoryNoteContext(for: $0) }
-                ) { groupDeliverySent = true }
+                GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .confirmedMemorySavedStateChanged)) { notification in
@@ -3842,6 +3868,37 @@ struct DayPhotosView: View {
             targetAspectRatio: 1
         )
         .aspectRatio(1, contentMode: .fit)
+    }
+}
+
+/// A まど photo kept with 「お気に入りに追加」, as the photo screen shows it:
+/// 「○○さんから」 and the sender's ひとこと. Read-only; the ひとこと stays the
+/// sender's words and is never copied into this iPhone's memo (11/9).
+struct GroupFavoriteSource: Equatable {
+    let localIdentifier: String
+    let senderLabel: String
+    /// Nil when there is none, or the photo is hidden or was reported here.
+    let caption: String?
+
+    /// Nil when the Photos item is not a kept まど photo, or that photo was
+    /// removed here or is from a person hidden here. The kept photo is the
+    /// one whose `favoriteLocalIdentifier` is this item.
+    @MainActor
+    static func load(localIdentifier: String) async -> GroupFavoriteSource? {
+        guard let kept = await GroupWindowLocalPhotoStore.shared.favoriteEntry(localIdentifier: localIdentifier)
+        else { return nil }
+        let entry = kept.entry
+        let label = GroupDisplayName.withSan(entry.senderDisplayName) + "から"
+        // A report that cannot be read counts as reported: no words shown.
+        let service = GroupSafety.shared.service
+        let reportedHere = (try? await service.locallyReportedPhotoIDs(windowID: kept.windowID))?
+            .contains(entry.id) ?? true
+        let records = await service.reports(windowID: kept.windowID)
+        let reported = reportedHere || records.contains { $0.photoID == entry.id }
+        let words = entry.caption?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let shows = !entry.isHidden && !reported && !words.isEmpty
+        return GroupFavoriteSource(localIdentifier: localIdentifier, senderLabel: label,
+                                   caption: shows ? words : nil)
     }
 }
 

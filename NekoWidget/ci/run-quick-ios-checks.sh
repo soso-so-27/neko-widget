@@ -171,7 +171,6 @@ xcrun --sdk macosx swiftc -D DEBUG -parse-as-library \
   -target "$(uname -m)-apple-macos14.0" \
   Shared/Sharing/GroupWindowCore.swift \
   NekoWidget/Services/GroupWindowContract.swift \
-  Shared/MembershipAccessPolicy.swift NekoWidget/Services/MemoCaptionBridge.swift \
   NekoWidget/Services/GroupWindowFixture.swift ci/verify-group-windows.swift \
   -o "$RUNNER_TEMP/group-window-tests"
 "$RUNNER_TEMP/group-window-tests" ci/fixtures/group-roster-v3.json

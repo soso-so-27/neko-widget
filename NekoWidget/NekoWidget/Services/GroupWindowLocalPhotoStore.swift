@@ -82,6 +82,18 @@ actor GroupWindowLocalPhotoStore {
         entries(windowID: windowID).first { $0.id == photoID }
     }
 
+    /// The received photo that 「お気に入りに追加」 copied to this Photos item,
+    /// among the photos to show (not removed, not from a hidden person).
+    func favoriteEntry(localIdentifier: String) -> (windowID: String, entry: Entry)? {
+        for window in knownWindows() {
+            if let entry = entries(windowID: window.id)
+                .first(where: { !$0.isOwn && $0.favoriteLocalIdentifier == localIdentifier }) {
+                return (window.id, entry)
+            }
+        }
+        return nil
+    }
+
     /// Removes the image from this iPhone only. The window and the other
     /// members' iPhones are not changed.
     func remove(photoID: String, windowID: String) throws {

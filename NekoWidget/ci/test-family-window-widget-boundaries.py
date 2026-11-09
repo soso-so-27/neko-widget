@@ -4790,7 +4790,7 @@ class WindowStateTests(unittest.TestCase):
         self.assertIn("if !model.isFormer && !model.isGone { sendBar }", window)
         self.assertIn("if message == nil, !isGone { message = reason }", window)
         self.assertIn("window.state == .rotationRequired, !window.canManage", window)
-        self.assertIn("model.deliver(model.failedDelivery?.photo ?? prepared, memo: memo, keeping: keeping)", window)
+        self.assertIn("model.deliver(model.failedDelivery?.photo ?? prepared, memo: memo)", window)
 
     def test_recent_writes_never_show_internal_field_names(self) -> None:
         notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
@@ -4943,10 +4943,11 @@ class GroupSendConfirmTests(unittest.TestCase):
         self.assertIn("Task { prepared = await model.prepare(item) }", screen)
         self.assertIn("GroupSendConfirmSheet(photo: photo", screen)
         self.assertIn('"group-window-send-confirm"', screen)
-        # The memo is the photo's own memo on this iPhone, saved only after sending.
+        # 11/9: one-way. Sending never writes the photo's own memo on this iPhone.
         deliver = section(screen, "func deliver(", "func toggleHeart(")
-        self.assertLess(deliver.index("client.sendPhoto("), deliver.index("await saveMemo(memo"))
-        self.assertIn("PhotoMemoryNoteStore.shared", deliver)
+        self.assertIn("client.sendPhoto(", deliver)
+        self.assertNotIn("PhotoMemoryNoteStore", deliver)
+        self.assertNotIn("saveMemo", screen)
         # Progress is visible while checking and sending.
         self.assertIn('"group-window-send-progress"', screen)
         # Making a window asks for Plus first, and again if the relay says so.
@@ -5298,7 +5299,7 @@ class LibraryGroupDeliveryTests(unittest.TestCase):
         self.assertIn('"photo-browser-deliver-group"', browser)
         # The deliver button is pinned at the bottom, visible without scrolling the footer.
         self.assertIn("// The one main action, always in view (not below the fold).", browser)
-        self.assertIn("GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier,", browser)
+        self.assertIn("GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier)", browser)
         window = source("NekoWidget/Views/GroupWindowView.swift")
         sheet = section(window, "struct GroupLibraryDeliverySheet: View {", "/// Shown after a photo is picked")
         # One window: no choosing step. Sending only from the confirmation's button.
@@ -5359,7 +5360,7 @@ class GroupWindowAuditFixTests(unittest.TestCase):
         deliver = section(window, "    func deliver(_ prepared: PreparedPhoto", "func retryFailedDelivery()")
         self.assertIn("let operationID = prepared.operationID", deliver)
         self.assertNotIn("UUID()\n            let sent", deliver)
-        self.assertIn("failedDelivery = FailedDelivery(photo: retry, memo: memo, keeping: keeping)", deliver)
+        self.assertIn("failedDelivery = FailedDelivery(photo: retry, memo: memo)", deliver)
         self.assertIn('"group-window-send-retry"', window)
 
     def test_left_windows_keep_their_photos(self) -> None:
@@ -6799,106 +6800,103 @@ class IdentifyingPhotosOnePlace1109Tests(unittest.TestCase):
         self.assertIn('editedBy: "import:Profile")', key_photo)
 
 
-class MemoCaptionBridgeWiringTests(unittest.TestCase):
-    """写真のメモ（自分だけ）と、まどへ届けるひとことを一つの仕組みとしてつなぐ（11/9）。"""
+class MemoCaptionOneWayTests(unittest.TestCase):
+    """写真のメモ（自分だけ）と、まどのひとことは別の文。行き来させない（11/9）。"""
 
     def setUp(self) -> None:
         self.screen = source("NekoWidget/Views/GroupWindowView.swift")
         self.browser = source("NekoWidget/Views/LikedPhotosView.swift")
-        self.bridge = source("NekoWidget/Services/MemoCaptionBridge.swift")
+        self.share = source("NekoWidgetShareExtension/GroupShareComposer.swift")
+        self.core = source("Shared/Sharing/GroupWindowCore.swift")
 
-    def test_memo_enters_the_caption_only_by_the_quiet_button(self) -> None:
+    def test_the_memo_never_enters_the_caption(self) -> None:
+        for text in (self.screen, self.browser, self.share):
+            self.assertNotIn("メモから入れる", text)
+            self.assertNotIn("caption-from-memo", text)
+            self.assertNotIn("MemoCaptionBridge", text)
+        self.assertFalse((ROOT / "NekoWidget/Services/MemoCaptionBridge.swift").exists())
         field = section(self.screen, "private struct GroupCaptionField: View {", "private struct GroupPhotoDetail: View {")
-        self.assertIn('Button("メモから入れる") { text = MemoCaptionBridge.captionDraft(fromMemo: memo) }', field)
-        self.assertIn('"group-window-send-caption-from-memo"', field)
-        # Hidden without a memo or a known photo; a memo that cannot be read is not offered.
-        offer = section(field, "private var memoToOffer: String? {", "private var keepsInMemo: Bool {")
-        self.assertIn("guard photoIdentifier != nil, memoRead, let memoText, !memoText.isEmpty else { return nil }", offer)
-        # The memo is never put in the field by itself: one assignment, inside the button.
-        self.assertEqual(self.screen.count("captionDraft(fromMemo:"), 1)
-        self.assertEqual(field.count("text = "), 1)
-        # Both send screens use the field with the photo's identifier, starting empty.
-        self.assertIn("GroupCaptionField(text: $memo, photoIdentifier: localIdentifier)", self.screen)
-        self.assertIn("GroupCaptionField(text: $memo, photoIdentifier: photo.photoIdentifier)", self.screen)
-        self.assertNotIn("GroupCaptionField(text: $memo)", self.screen)
-        # Owners of the ひとこと: the detail's delivery sheet, the window's cat photo, the picked photo.
+        self.assertNotIn("PhotoMemoryNoteStore", field)
+        self.assertNotIn("text = ", field)
+        # Both send screens start from an empty ひとこと of their own.
+        self.assertEqual(self.screen.count("GroupCaptionField(text: $memo)"), 2)
+        self.assertNotIn("GroupCaptionField(text: $memo, photoIdentifier:", self.screen)
         self.assertEqual(self.screen.count('@State private var memo = ""'), 3)
-        # The draft is cut to the caption's own limits.
-        draft = section(self.bridge, "static func captionDraft(fromMemo memo: String) -> String {", "/// The same line-break reading")
-        self.assertIn("GroupPhotoCaption.maximumCharacters", draft)
-        self.assertIn("GroupPhotoCaption.maximumLineBreaks", draft)
-        self.assertIn("GroupPhotoCaption.validationMessage(for: draft) != nil", draft)
 
-    def test_footer_says_the_memo_keeps_the_words_only_when_it_will(self) -> None:
-        field = section(self.screen, "private struct GroupCaptionField: View {", "private struct GroupPhotoDetail: View {")
-        self.assertIn('Text(keepsInMemo ? "まどのみんなに届きます。この写真のメモにも残ります。" : "まどのみんなに届きます。")', field)
-        keeps = section(field, "private var keepsInMemo: Bool {", "var body: some View {")
-        self.assertIn("photoIdentifier != nil && memoRead && MemoCaptionBridge.footerSaysKept(", keeps)
-        self.assertIn("membershipAccess.decision(for: .createPersonalMemo)", keeps)
-        self.assertIn("PhotoMemoryNoteStore.maximumCharacters", keeps)
-        # The limits stay visible through the validation messages, not more footer text.
-        self.assertIn("GroupPhotoCaption.validationMessage(for: text)", field)
-        self.assertNotIn("文字・改行", field)
-
-    def test_sent_words_are_kept_only_when_allowed_and_never_fail_the_send(self) -> None:
-        deliver = section(self.screen, "func deliver(_ prepared: PreparedPhoto, memo: String, keeping: MemoKeeping) async {",
+    def test_sending_never_writes_the_memo(self) -> None:
+        deliver = section(self.screen, "    func deliver(_ prepared: PreparedPhoto, memo: String) async {",
                           "/// After a failed send:")
-        self.assertLess(deliver.index("client.sendPhoto("),
-                        deliver.index("await saveMemo(memo, for: prepared.photoIdentifier, keeping: keeping)"))
-        self.assertLess(deliver.index("await saveMemo(memo"), deliver.index("sendCompleted = true"))
-        # A retry and a confirmed pending send keep the same decision.
-        self.assertIn("FailedDelivery(photo: retry, memo: memo, keeping: keeping)", deliver)
-        self.assertIn("await deliver(failed.photo, memo: failed.memo, keeping: failed.keeping)", self.screen)
-        self.assertIn("await saveMemo(pending.memo, for: pending.photo.photoIdentifier, keeping: pending.keeping)", self.screen)
-        self.assertIn("static let existingMemoOnly = MemoKeeping(createDecision: .membershipRequired)", self.screen)
-        save = section(self.screen, "    private func saveMemo(_ memo: String, for identifier: String?, keeping: MemoKeeping) async {",
-                       "    /// The capture date the editor would show")
-        self.assertIn("do { existing = try await notes.note(for: identifier) } catch { return }", save)
-        self.assertIn("guard case let .save(text) = MemoCaptionBridge.keeping(", save)
-        self.assertIn("createDecision: keeping.createDecision", save)
-        self.assertIn("maximumMemoCharacters: PhotoMemoryNoteStore.maximumCharacters", save)
-        self.assertIn("let context = existing == nil ? keeping.context ?? Self.captureContext(localIdentifier: identifier) : nil", save)
-        self.assertIn("_ = try? await notes.save(text: text, for: identifier, expectedRevision: existing?.revision, context: context)", save)
-        self.assertNotIn("$0.text + ", save)
-        # The decision comes from Plus on the screen that sends.
-        self.assertIn("let keeping = GroupWindowScreenModel.MemoKeeping(\n"
-                      "                    createDecision: membershipAccess.decision(for: .createPersonalMemo))\n"
-                      "                Task { await model.deliver(photo, memo: memo, keeping: keeping) }", self.screen)
-        self.assertIn("createDecision: membershipAccess.decision(for: .createPersonalMemo), context: memoContext)", self.screen)
-        # The rules themselves: Plus for a new memo, free to add, no repeats, within the limit.
-        keeping = section(self.bridge, "static func keeping(caption: String", "/// The ひとこと footer")
-        self.assertIn("guard canKeepMemo(hasExistingMemo: existingMemo != nil, createDecision: createDecision)", keeping)
-        self.assertIn("unified(memo).contains(words) { return .alreadyKept }", keeping)
-        self.assertIn("guard combined.count <= maximumMemoCharacters else { return .tooLong }", keeping)
-        self.assertIn("hasExistingMemo || createDecision == .allowed", self.bridge)
+        self.assertIn("client.sendPhoto(normalizedJPEG: prepared.jpeg, caption: memo,", deliver)
+        self.assertNotIn("PhotoMemoryNoteStore", deliver)
+        self.assertNotIn("saveMemo", self.screen)
+        self.assertNotIn("MemoKeeping", self.screen)
+        # A failed send still keeps its ひとこと for 「もう一度届ける」.
+        self.assertIn("FailedDelivery(photo: retry, memo: memo)", deliver)
+        self.assertIn("FailedDelivery(photo: prepared, memo: memo, confirmationPhotoID: pending.photoID)", deliver)
+        self.assertIn("await deliver(failed.photo, memo: failed.memo)", self.screen)
+        self.assertIn('memo: pending.caption ?? "", confirmationPhotoID: pending.confirmationPhotoID)', self.screen)
+        # The memo screen no longer reloads after a send: nothing there changed.
+        self.assertNotIn("groupDeliverySent", self.browser)
+        self.assertNotIn("memoContext", self.screen + self.browser)
 
-    def test_photo_detail_passes_the_editor_context_and_reads_the_memo_again(self) -> None:
-        self.assertIn("memoContext: browserPhotoByIdentifier[request.localIdentifier].map { memoryNoteContext(for: $0) }",
-                      self.browser)
-        sheet = section(self.browser, ".sheet(item: $groupDelivery, onDismiss: {", "        .onReceive(")
-        self.assertIn("guard groupDeliverySent else { return }", sheet)
-        self.assertIn("Task { await personalNote.load(for: selectedPhotoIdentifier) }", sheet)
-        self.assertIn("{ groupDeliverySent = true }", sheet)
-        step = section(self.screen, "private struct GroupLibraryDeliveryStep: View {", "private struct GroupLibraryDeliveryChosenWindow: View {")
-        self.assertIn(".onChange(of: model.sendCompleted) { _, completed in\n            if completed { sent() }", step)
-        # The memo itself is still never sent.
+    def test_the_field_says_who_sees_it(self) -> None:
+        self.assertIn('static let visibilityFooter = "まどのみんなに見えます（\\(maximumCharacters)文字まで）"', self.core)
+        field = section(self.screen, "private struct GroupCaptionField: View {", "private struct GroupPhotoDetail: View {")
+        self.assertIn('} header: { Text("ひとこと") }', field)
+        self.assertIn('TextField("例：おなかを見せて寝ていた", text: $text, axis: .vertical)', field)
+        self.assertIn("Text(GroupPhotoCaption.visibilityFooter)", section(field, "footer: {", "\n    }\n"))
+        self.assertIn('"group-window-send-caption-footer"', field)
+        self.assertIn("GroupPhotoCaption.validationMessage(for: text)", field)
+        for old in ("まどのみんなに届きます", "メモにも残ります", "文字・改行"):
+            self.assertNotIn(old, self.screen)
+        # The share extension says the same, right under its ひとこと field.
+        composer = section(self.share, 'TextField("ひとこと", text: $model.caption, axis: .vertical)', 'Button(model.sending')
+        self.assertIn("Text(GroupPhotoCaption.visibilityFooter)", composer)
+        # The memo button still says the memo is private.
         self.assertIn('.accessibilityHint("自分だけのメモです。相手には送られません")', self.browser)
-        # One entry: the detail's 「まどに届ける」 opens the same delivery sheet.
-        self.assertEqual(self.browser.count("GroupLibraryDeliverySheet("), 1)
 
-    def test_received_caption_becomes_the_memo_of_the_copy_with_plus(self) -> None:
-        detail = section(self.screen, "private struct GroupPhotoDetail: View {", "    private func neighbor(of entry:")
-        self.assertIn("await model.addToFavorites(current, memoDecision: decision)", detail)
-        self.assertIn('"写真アプリに保存して、お気に入りに入れます。ひとことはメモに残ります。届けた人には知らせません。"', detail)
-        self.assertIn('"写真アプリに保存して、お気に入りに入れます。届けた人には知らせません。"', detail)
-        self.assertIn("MemoCaptionBridge.keepsReceivedCaption(current?.caption,", detail)
-        favorite = section(self.screen, "    func addToFavorites(_ entry: GroupWindowLocalPhotoStore.Entry,",
+    def test_a_kept_photo_does_not_copy_the_caption_into_the_memo(self) -> None:
+        favorite = section(self.screen, "    func addToFavorites(_ entry: GroupWindowLocalPhotoStore.Entry) async {",
                            "    /// Removes a photo from this iPhone only.")
-        self.assertLess(favorite.index("try SharedLikeStore.set(localIdentifier: favorite"),
-                        favorite.index("MemoCaptionBridge.keepsReceivedCaption(entry.caption, createDecision: memoDecision)"))
-        self.assertIn("context: PhotoMemoryNoteContext(capturedAt: entry.createdAt, cats: [])", favorite)
-        self.assertIn("await saveMemo(caption, for: favorite, keeping:", favorite)
-        self.assertIn("return !words.isEmpty && createDecision == .allowed", self.bridge)
+        self.assertNotIn("PhotoMemoryNoteStore", favorite)
+        self.assertNotIn("saveMemo", favorite)
+        self.assertNotIn("caption", favorite)
+        detail = section(self.screen, "private struct GroupPhotoDetail: View {", "    private func neighbor(of entry:")
+        self.assertIn("await model.addToFavorites(current)", detail)
+        self.assertIn('Text("写真アプリに保存して、お気に入りに入れます。届けた人には知らせません。")', detail)
+        self.assertNotIn("ひとことはメモに残ります", self.screen)
+
+    def test_the_photo_screen_shows_the_received_caption_read_only(self) -> None:
+        store = source("NekoWidget/Services/GroupWindowLocalPhotoStore.swift")
+        lookup = section(store, "func favoriteEntry(localIdentifier: String)", "\n    }\n")
+        # Only photos to show (removed and hidden people left out), matched by the copy's identifier.
+        self.assertIn("entries(windowID: window.id)", lookup)
+        self.assertIn("!$0.isOwn && $0.favoriteLocalIdentifier == localIdentifier", lookup)
+        loader = section(self.browser, "struct GroupFavoriteSource: Equatable {", "struct GroupDeliveryRequest: Identifiable {")
+        self.assertIn("GroupWindowLocalPhotoStore.shared.favoriteEntry(localIdentifier: localIdentifier)", loader)
+        self.assertIn('GroupDisplayName.withSan(entry.senderDisplayName) + "から"', loader)
+        # Hidden or reported (or reports that cannot be read): no words.
+        self.assertIn(".contains(entry.id) ?? true", loader)
+        self.assertIn("let shows = !entry.isHidden && !reported && !words.isEmpty", loader)
+        self.assertNotIn("PhotoMemoryNoteStore", loader)
+        # Read once per opened photo, and only for photos copied in from a まど.
+        task = section(self.browser, "        .task(id: selectedPhotoIdentifier) {\n            // Only photos copied in from a まど",
+                       "        .sheet(item: $groupDelivery)")
+        self.assertIn("guard receivedPhotoIdentifiers.contains(identifier) else { groupFavoriteSource = nil; return }", task)
+        self.assertIn("if groupFavoriteSource?.localIdentifier == identifier { return }", task)
+        self.assertIn("await GroupFavoriteSource.load(localIdentifier: identifier)", task)
+        self.assertIn("guard !Task.isCancelled, identifier == selectedPhotoIdentifier else { return }", task)
+        # Shown under the photo: 「○○さんから」, then the ひとこと in secondary style. No button, no editing.
+        footer = section(self.browser, "    private var browserFooter: some View {", "    private func quickActions(")
+        self.assertLess(footer.index("groupFavoriteSourceView(source)"), footer.index("quickActions(selectedPhoto)"))
+        self.assertIn("source.localIdentifier == selectedPhoto.localIdentifier", footer)
+        view = section(self.browser, "private func groupFavoriteSourceView(_ source: GroupFavoriteSource) -> some View {",
+                       "/// The three things people do with a photo")
+        self.assertLess(view.index("Text(source.senderLabel)"), view.index("Text(caption)"))
+        self.assertIn(".foregroundStyle(.secondary)", view)
+        self.assertIn('"photo-browser-group-source"', view)
+        for editable in ("Button", "TextField", "onTapGesture", "personalNote"):
+            self.assertNotIn(editable, view)
 
     def test_destination_row_goes_back_to_the_pick_list_keeping_the_words(self) -> None:
         sheet = section(self.screen, "struct GroupLibraryDeliverySheet: View {", "enum GroupLibraryDeliveryMemory {")
@@ -6908,11 +6906,11 @@ class MemoCaptionBridgeWiringTests(unittest.TestCase):
         # The ひとこと belongs to the sheet, so going back to the list keeps it.
         self.assertIn("NavigationStack(path: $path) {", sheet)
         self.assertIn('@State private var memo = ""', sheet)
-        self.assertIn("GroupLibraryDeliveryStep(model: screen, localIdentifier: localIdentifier, memo: $memo,", sheet)
+        self.assertIn("GroupLibraryDeliveryStep(model: screen, localIdentifier: localIdentifier, memo: $memo)", sheet)
         self.assertIn("localIdentifier: localIdentifier, memo: $memo,", section(
             sheet, ".navigationDestination(for: String.self) { windowID in", ".navigationTitle("))
         # 「届け先」 only with 2 or more まど, and it only empties the path (no reset of the words).
-        self.assertIn("changeWindow: openWindows.count > 1 ? { path.removeAll() } : nil,", sheet)
+        self.assertIn("changeWindow: openWindows.count > 1 ? { path.removeAll() } : nil)", sheet)
         self.assertNotIn('memo = ""\n', sheet.replace('@State private var memo = ""\n', ""))
         step = section(self.screen, "private struct GroupLibraryDeliveryStep: View {", "private struct GroupLibraryDeliveryChosenWindow: View {")
         self.assertIn("@Binding var memo: String", step)
@@ -6927,7 +6925,7 @@ class MemoCaptionBridgeWiringTests(unittest.TestCase):
         # The row comes first, above the photo.
         self.assertLess(form.index('Text("届け先")'), form.index('.accessibilityLabel("届ける写真")'))
         chosen = section(self.screen, "private struct GroupLibraryDeliveryChosenWindow: View {", "/// Shown after a photo is picked")
-        self.assertIn("pushed: true, changeWindow: changeWindow,", chosen)
+        self.assertIn("pushed: true, changeWindow: changeWindow, close: close)", chosen)
         self.assertIn("@Binding var memo: String", chosen)
         # The last まど chosen is only a highlight, kept in memory (no UserDefaults).
         memory = section(self.screen, "enum GroupLibraryDeliveryMemory {", "\n}\n")
@@ -6936,21 +6934,21 @@ class MemoCaptionBridgeWiringTests(unittest.TestCase):
         self.assertIn("GroupLibraryDeliveryMemory.lastWindowID = windowID", sheet)
         self.assertIn(".listRowBackground(last ? Color.accentColor.opacity(0.12) : nil)", sheet)
         self.assertNotIn("UserDefaults", sheet + memory)
+        # One entry: the detail's 「まどに届ける」 opens the same delivery sheet.
+        self.assertEqual(self.browser.count("GroupLibraryDeliverySheet("), 1)
 
-    def test_rules_are_built_into_the_app_and_checked_in_ci(self) -> None:
+    def test_the_footer_rule_is_checked_in_ci_and_the_bridge_is_gone(self) -> None:
         project = source("NekoWidget.xcodeproj/project.pbxproj")
-        app_sources = section(project, "A00000000000000000000021 /* Sources */ = {", "A00000000000000000000025 /* Sources */")
-        self.assertIn("MemoCaptionBridge.swift in Sources", app_sources)
-        self.assertEqual(project.count("MemoCaptionBridge.swift"), 6)
+        self.assertNotIn("MemoCaptionBridge", project)
         quick = source("ci/run-quick-ios-checks.sh")
+        self.assertNotIn("MemoCaptionBridge", quick)
         compile_line = section(quick, "Shared/Sharing/GroupWindowCore.swift \\\n  NekoWidget/Services/GroupWindowContract.swift \\\n",
                                '-o "$RUNNER_TEMP/group-window-tests"')
-        self.assertIn("NekoWidget/Services/MemoCaptionBridge.swift", compile_line)
-        self.assertIn("Shared/MembershipAccessPolicy.swift", compile_line)
         self.assertIn("ci/verify-group-windows.swift", compile_line)
         verify = source("ci/verify-group-windows.swift")
-        self.assertIn("try checkMemoCaptionBridge()", verify)
-        self.assertIn("private func checkMemoCaptionBridge() throws {", verify)
+        self.assertIn("try checkCaptionVisibilityFooter()", verify)
+        self.assertIn('GroupPhotoCaption.visibilityFooter == "まどのみんなに見えます（100文字まで）"', verify)
+        self.assertNotIn("MemoCaptionBridge", verify)
 
 
 if __name__ == "__main__":

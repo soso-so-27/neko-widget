@@ -311,6 +311,9 @@ enum GroupPhotoCaption {
     static let maximumCharacters = 100
     static let maximumLineBreaks = 2
     static let maximumUTF8Bytes = 4_096
+    /// Said right at every ひとこと field: who sees it (11/9). The photo's own
+    /// memo is separate and never sent.
+    static let visibilityFooter = "まどのみんなに見えます（\(maximumCharacters)文字まで）"
     static func normalized(_ text: String?) throws -> String? {
         guard let text else { return nil }
         let value = text.replacingOccurrences(of: "\r\n", with: "\n")
