@@ -6808,9 +6808,10 @@ class MemoCaptionOneWayTests(unittest.TestCase):
         self.browser = source("NekoWidget/Views/LikedPhotosView.swift")
         self.share = source("NekoWidgetShareExtension/GroupShareComposer.swift")
         self.core = source("Shared/Sharing/GroupWindowCore.swift")
+        self.memo_page = source("NekoWidget/Views/PhotoMemoryNoteLibraryView.swift")
 
-    def test_the_memo_never_enters_the_caption(self) -> None:
-        for text in (self.screen, self.browser, self.share):
+    def test_the_send_field_never_reads_the_memo(self) -> None:
+        for text in (self.screen, self.browser, self.share, self.memo_page):
             self.assertNotIn("メモから入れる", text)
             self.assertNotIn("caption-from-memo", text)
             self.assertNotIn("MemoCaptionBridge", text)
@@ -6818,10 +6819,39 @@ class MemoCaptionOneWayTests(unittest.TestCase):
         field = section(self.screen, "private struct GroupCaptionField: View {", "private struct GroupPhotoDetail: View {")
         self.assertNotIn("PhotoMemoryNoteStore", field)
         self.assertNotIn("text = ", field)
-        # Both send screens start from an empty ひとこと of their own.
         self.assertEqual(self.screen.count("GroupCaptionField(text: $memo)"), 2)
         self.assertNotIn("GroupCaptionField(text: $memo, photoIdentifier:", self.screen)
         self.assertEqual(self.screen.count('@State private var memo = ""'), 3)
+
+    def test_the_memo_page_sends_its_words_as_the_starting_caption(self) -> None:
+        detail = section(self.memo_page, "struct PhotoMemoryNoteDetailView: View {", "struct PhotoMemoryNotePhotoDestination")
+        status = section(detail, "} status: {", "} else if loaded {")
+        # Only with the photo in the library and まど on this build, like the photo screen.
+        self.assertIn("if access.photo(for: record.photoIdentifier) != nil, GroupWindowClientProvider.ui != nil {", status)
+        self.assertIn('Button("まどに届ける", systemImage: "paperplane")', status)
+        self.assertIn('"memory-note-deliver-group"', status)
+        self.assertIn("initialCaption: GroupPhotoCaption.draft(fromMemo: record.note.text))", status)
+        # The same delivery sheet (pick step, 届け先 row), starting from the memo's words.
+        self.assertIn("GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier,\n"
+                      "                                          initialCaption: request.initialCaption)", detail)
+        # Sending from here never writes the memo.
+        self.assertNotIn("store.save(", status)
+        # The editor stays for writing only: no send button there.
+        editor = section(source("NekoWidget/Views/PhotoMemoryNoteView.swift"), "struct PhotoMemoryNoteEditor", "\n}\n")
+        self.assertNotIn("まどに届ける", editor)
+        self.assertNotIn("GroupLibraryDeliverySheet", editor)
+        # The sheet starts from the given words; the photo screen gives none.
+        sheet = section(self.screen, "struct GroupLibraryDeliverySheet: View {", "enum GroupLibraryDeliveryMemory {")
+        self.assertIn('init(client: any GroupWindowMediaClient, localIdentifier: String, initialCaption: String = "") {', sheet)
+        self.assertIn("_memo = State(initialValue: initialCaption)", sheet)
+        self.assertIn("GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier)\n", self.browser)
+        self.assertNotIn("initialCaption:", self.browser)
+        self.assertIn('var initialCaption = ""', section(self.browser, "struct GroupDeliveryRequest: Identifiable {", "\n}\n"))
+        # The cut keeps the ひとこと limits.
+        draft = section(self.core, "static func draft(fromMemo memo: String) -> String {", "static func normalized(")
+        self.assertIn("maximumCharacters", draft)
+        self.assertIn("maximumLineBreaks", draft)
+        self.assertIn("validationMessage(for: draft) != nil", draft)
 
     def test_sending_never_writes_the_memo(self) -> None:
         deliver = section(self.screen, "    func deliver(_ prepared: PreparedPhoto, memo: String) async {",
@@ -6947,6 +6977,7 @@ class MemoCaptionOneWayTests(unittest.TestCase):
         self.assertIn("ci/verify-group-windows.swift", compile_line)
         verify = source("ci/verify-group-windows.swift")
         self.assertIn("try checkCaptionVisibilityFooter()", verify)
+        self.assertIn("Caption.draft(fromMemo:", verify)
         self.assertIn('GroupPhotoCaption.visibilityFooter == "まどのみんなに見えます（100文字まで）"', verify)
         self.assertNotIn("MemoCaptionBridge", verify)
 

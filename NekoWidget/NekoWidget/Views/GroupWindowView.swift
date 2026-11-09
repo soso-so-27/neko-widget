@@ -1285,9 +1285,12 @@ struct GroupLibraryDeliverySheet: View {
     /// The window last chosen from this sheet, shown first as the highlight.
     @State private var highlightedWindowID: String?
 
-    init(client: any GroupWindowMediaClient, localIdentifier: String) {
+    /// `initialCaption`: the memo page's words, cut to the ひとこと limits
+    /// (still editable). Empty from the photo screen.
+    init(client: any GroupWindowMediaClient, localIdentifier: String, initialCaption: String = "") {
         self.client = client
         self.localIdentifier = localIdentifier
+        _memo = State(initialValue: initialCaption)
         _list = StateObject(wrappedValue: GroupWindowListModel(client: client))
         _highlightedWindowID = State(initialValue: GroupLibraryDeliveryMemory.lastWindowID)
     }

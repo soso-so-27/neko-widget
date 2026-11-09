@@ -444,6 +444,8 @@ struct PhotoMemoryNoteDetailView: View {
     @State private var addsToVet = false
     @State private var preservingWithService = false
     @State private var savedPhotoURL: URL?
+    /// 11/9: 「まどに届ける」 from the memo page, with the memo as the starting ひとこと.
+    @State private var groupDelivery: GroupDeliveryRequest?
 
     /// A memo is saved by 自動保存; its own 「保存状況」 entry stays for the
     /// selected-copy UI fixture only (10/31).
@@ -498,6 +500,17 @@ struct PhotoMemoryNoteDetailView: View {
                 } status: {
                     Button("診察メモに追加", systemImage: "cross.case") { addsToVet = true }
                         .accessibilityIdentifier("memory-note-add-vet")
+                    // Same conditions as the photo screen's button: a photo in
+                    // the library and まど on this build. Writing stays in the
+                    // editor; sending is here, and the memo itself never changes.
+                    if access.photo(for: record.photoIdentifier) != nil, GroupWindowClientProvider.ui != nil {
+                        Button("まどに届ける", systemImage: "paperplane") {
+                            groupDelivery = GroupDeliveryRequest(localIdentifier: record.photoIdentifier,
+                                initialCaption: GroupPhotoCaption.draft(fromMemo: record.note.text))
+                        }
+                        .accessibilityHint("メモの文をひとことに入れて、届ける前に確かめます")
+                        .accessibilityIdentifier("memory-note-deliver-group")
+                    }
                 }
             } else if loaded {
                 ContentUnavailableView("このメモはありません", systemImage: "note.text",
@@ -525,6 +538,12 @@ struct PhotoMemoryNoteDetailView: View {
                         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { addsToVet = false } } }
                 }
                 .environment(\.dynamicTypeSize, typeSize)
+            }
+        }
+        .sheet(item: $groupDelivery) { request in
+            if let client = GroupWindowClientProvider.ui {
+                GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier,
+                                          initialCaption: request.initialCaption)
             }
         }
         .sheet(isPresented: $preservingWithService) {

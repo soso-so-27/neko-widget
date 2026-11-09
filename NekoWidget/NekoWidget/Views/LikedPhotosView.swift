@@ -3906,6 +3906,8 @@ struct GroupFavoriteSource: Equatable {
 struct GroupDeliveryRequest: Identifiable {
     let id = UUID()
     let localIdentifier: String
+    /// The ひとこと the sheet starts with: a memo page's words, else empty.
+    var initialCaption = ""
 }
 
 /// 「まどに届ける」: the main action once there is a まど, a plain button before.

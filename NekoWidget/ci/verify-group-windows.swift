@@ -58,13 +58,29 @@ private func checkWireVector(path: String) throws {
 }
 
 /// ひとことは一方向（11/9）：欄のすぐ下に、見える人と上限だけを書く。
-/// 写真のメモ（自分だけ）とは行き来しない。
+/// メモのページの「まどに届ける」はメモの文を上限で切って欄に入れるだけ。
 private func checkCaptionVisibilityFooter() throws {
     try check(GroupPhotoCaption.visibilityFooter == "まどのみんなに見えます（100文字まで）",
               "the ひとこと field says who sees it and the limit")
     try check(GroupPhotoCaption.visibilityFooter.contains("\(GroupPhotoCaption.maximumCharacters)文字"),
               "the footer limit follows the caption rule")
     try check(!GroupPhotoCaption.visibilityFooter.contains("メモ"), "the ひとこと footer never promises a memo")
+
+    // メモ → ひとこと (memo page's 「まどに届ける」): cut at the caption limits, always valid.
+    typealias Caption = GroupPhotoCaption
+    let long = String(repeating: "ね", count: 130)
+    try check(Caption.draft(fromMemo: long) == String(repeating: "ね", count: Caption.maximumCharacters),
+              "memo draft keeps the first 100 characters")
+    try check(Caption.draft(fromMemo: "一\n二\r\n三\n四\n五") == "一\n二\n三", "memo draft keeps at most two line breaks")
+    try check(Caption.draft(fromMemo: "  窓辺で眠った日\n\n") == "窓辺で眠った日", "memo draft trims like a caption")
+    try check(Caption.draft(fromMemo: "短いメモ") == "短いメモ", "a short memo is taken as is")
+    try check(Caption.draft(fromMemo: "") == "" && Caption.draft(fromMemo: " \n ") == "", "an empty memo starts an empty ひとこと")
+    let edge = String(repeating: "あ", count: 99) + "\nい"
+    try check(Caption.draft(fromMemo: edge) == String(repeating: "あ", count: 99), "a cut never ends on a line break")
+    for memo in [long, "一\n二\n三\n四", edge, String(repeating: "🐈‍⬛", count: 120), String(repeating: "a\n", count: 80)] {
+        let draft = Caption.draft(fromMemo: memo)
+        try check(Caption.validationMessage(for: draft) == nil && !draft.isEmpty, "memo draft is always a valid caption")
+    }
     print("ひとこと visibility footer checks passed")
 }
 

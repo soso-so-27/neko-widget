@@ -314,6 +314,29 @@ enum GroupPhotoCaption {
     /// Said right at every ひとこと field: who sees it (11/9). The photo's own
     /// memo is separate and never sent.
     static let visibilityFooter = "まどのみんなに見えます（\(maximumCharacters)文字まで）"
+    /// 「まどに届ける」 from a memo page: the memo cut where the ひとこと limits
+    /// end, so the field starts valid. Only a starting text: the person edits
+    /// it before sending, and the memo itself never changes (11/9).
+    static func draft(fromMemo memo: String) -> String {
+        let unified = memo.replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: .newlines).joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var result = ""
+        var lineBreaks = 0
+        for character in unified {
+            if result.count == maximumCharacters { break }
+            if character == "\n" {
+                if lineBreaks == maximumLineBreaks { break }
+                lineBreaks += 1
+            }
+            result.append(character)
+        }
+        var draft = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        while !draft.isEmpty, validationMessage(for: draft) != nil {
+            draft = String(draft.dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return draft
+    }
     static func normalized(_ text: String?) throws -> String? {
         guard let text else { return nil }
         let value = text.replacingOccurrences(of: "\r\n", with: "\n")
