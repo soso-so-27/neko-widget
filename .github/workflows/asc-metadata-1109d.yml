@@ -14,7 +14,7 @@ jobs:
   read:
     if: github.ref == 'refs/heads/main'
     runs-on: macos-15
-    environment: testflight
+    environment: asc-metadata
     timeout-minutes: 12
     env:
       ASC_TELEMETRY_DISABLED: '1'
@@ -44,7 +44,6 @@ jobs:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY_BASE64 }}
-          OWNER_INTERNAL_GROUP_ID: ${{ secrets.OWNER_INTERNAL_GROUP_ID }}
           ASC_MODE: ${{ inputs.mode }}
         run: node NekoWidget/ci/asc-metadata-apply.mjs "--$ASC_MODE"
       - name: Read remaining readiness findings
@@ -53,6 +52,4 @@ jobs:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY_BASE64 }}
-          OWNER_INTERNAL_GROUP_ID: ${{ secrets.OWNER_INTERNAL_GROUP_ID }}
-          ASC_READ_BUILD: '352'
-        run: node NekoWidget/ci/asc-readonly.mjs
+        run: node NekoWidget/ci/asc-metadata-apply.mjs --validate

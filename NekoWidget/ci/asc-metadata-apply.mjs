@@ -6,6 +6,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {validationSummary} from './asc-readonly.mjs';
 
 const root=resolve('NekoWidget/ci/asc-metadata-1109d');
 const scopes={localizations:['app-info/ja.json','version/1.0/ja.json'],categories:['categories.json'],'age-rating':['age-rating.json'],'review-information':['review-information.json']};
@@ -24,12 +25,12 @@ export function checkPlan(plan,allowed){
   return changes.map(c=>({scope:c.scope,field:c.field,locale:c.locale||undefined}));
 }
 function main(){
-  const mode=process.argv[2]; if(!['--dry-run','--apply'].includes(mode)) throw Error('STOP_MODE');
+  const mode=process.argv[2]; if(!['--dry-run','--apply','--validate'].includes(mode)) throw Error('STOP_MODE');
   const env={...process.env,ASC_TELEMETRY_DISABLED:'1',DO_NOT_TRACK:'1'};
-  function call(args){
+  function call(args,allowFindings=false){
     const r=spawnSync('asc',args,{env,encoding:'utf8',timeout:240000,maxBuffer:32*1024*1024});
     let obj;try{obj=JSON.parse(r.stdout);}catch{}
-    if(r.error||r.status!==0||!obj){
+    if(r.error||!obj||(r.status!==0&&!(allowFindings&&Array.isArray(obj.checks)))){
       const all=(r.stderr??'')+(r.stdout??'');
       const permission=/\b(401|403|FORBIDDEN|NOT_AUTHORIZED)\b/i.test(all);
       const code=all.match(/\b(401|403|409|422|429|500|502|503)\b/)?.[1]??'unknown';
@@ -49,6 +50,11 @@ function main(){
   const apps=call(['apps','list','--name','ねこのまど','--output','json']).data?.filter(a=>a.attributes?.name==='ねこのまど');
   if(apps?.length!==1)throw Error('STOP_IDENTITY');
   const app=apps[0].id;
+  if(mode==='--validate'){
+    const report=call(['validate','--app',app,'--version','1.0','--output','json'],true);
+    console.log('VALIDATION '+JSON.stringify(validationSummary(report,[app,process.env.APP_STORE_CONNECT_KEY_ID,process.env.APP_STORE_CONNECT_ISSUER_ID])));
+    return;
+  }
   function snapshot(scope){
     const dir=mkdtempSync(join(tmpdir(),'asc-before-after-'));
     call(['metadata','pull','--app',app,'--version','1.0','--platform','IOS','--dir',dir,'--include',scope,'--output','json']);
