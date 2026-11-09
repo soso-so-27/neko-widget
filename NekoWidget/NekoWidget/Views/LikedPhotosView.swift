@@ -2650,6 +2650,7 @@ struct PhotoBrowserView: View {
     @State private var memoryPhotoSharePayload: MemoryPhotoJPEGSharePayload?
     @State private var memoryPhotoExportErrorMessage: String?
     @State private var groupDelivery: GroupDeliveryRequest?
+    @State private var groupDeliverySent = false
     /// A まど kept on this iPhone; until checked, the deliver button stays as it was.
     @State private var knowsAnyWindow = true
     @State private var showsWidgetInformation = false
@@ -3201,9 +3202,16 @@ struct PhotoBrowserView: View {
             CloudyWindowStore.shared.noteViewed(photoID: selectedPhotoIdentifier)
             await personalNote.load(for: selectedPhotoIdentifier)
         }
-        .sheet(item: $groupDelivery) { request in
+        .sheet(item: $groupDelivery, onDismiss: {
+            // The sent ひとこと may now be in this photo's memo.
+            guard groupDeliverySent else { return }
+            groupDeliverySent = false
+            Task { await personalNote.load(for: selectedPhotoIdentifier) }
+        }) { request in
             if let client = GroupWindowClientProvider.ui {
-                GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier)
+                GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier,
+                    memoContext: browserPhotoByIdentifier[request.localIdentifier].map { memoryNoteContext(for: $0) }
+                ) { groupDeliverySent = true }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .confirmedMemorySavedStateChanged)) { notification in
