@@ -546,7 +546,7 @@ bash "$1"
     def test_three_solo_methods_share_one_selection_and_reject_cross_class_or_duplicates(self):
         names = ("testAlbumRelatedPhotoRoutesPreserveScopeAndReturnToOrigin",
                  "testAlbumRootUpdatesAndPreservesFavoritesAndReflectionDestinations",
-                 "testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText")
+                 "testAlbumMemoReadFailureCanRetryAndKeepRecoveredMemoOnReturn")
         overrides = {"NEKO_IOS_DIAGNOSTIC_TEST_CLASS": "SoloMemoriesUITests",
                      "NEKO_IOS_DIAGNOSTIC_TEST_METHOD": ",".join(names)}
         result, metadata, selected = self.selection(overrides=overrides)
