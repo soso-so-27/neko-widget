@@ -130,8 +130,35 @@ def match_info(info, mapping, expected):
         require(info.get(info_key) == expected[setting], "Processed Info.plist differs: " + info_key)
 
 
+def verify_public_hosts(app):
+    """Inspect actual bundled bytes, including UTF-16 strings, without echoing hosts."""
+    patterns = [
+        (b"workers.dev", re.compile(rb"(?:[a-z0-9-]{1,63}\.)+workers\.dev", re.I)),
+        ("workers.dev".encode("utf-16-le"), re.compile(
+            rb"(?:(?:[a-z0-9-]\x00){1,63}\.\x00)+" + re.escape("workers.dev".encode("utf-16-le")), re.I)),
+        ("workers.dev".encode("utf-16-be"), re.compile(
+            rb"(?:(?:\x00[a-z0-9-]){1,63}\x00\.)+" + re.escape("workers.dev".encode("utf-16-be")), re.I)),
+    ]
+    for path in app.rglob("*"):
+        if not path.is_file():
+            continue
+        with path.open("rb") as stream:
+            overlap = b""
+            while block := stream.read(4 * 1024 * 1024):
+                window = overlap + block
+                lower = window.lower()
+                for suffix, pattern in patterns:
+                    offset = lower.find(suffix)
+                    while offset >= 0:
+                        require(not pattern.search(window[max(0, offset - 1024):offset + len(suffix)]),
+                                "Public product contains a workers.dev host")
+                        offset = lower.find(suffix, offset + len(suffix))
+                overlap = window[-1024:]
+
+
 def verify_products(app, contract, *, synthetic=False):
     expected = settings(contract, synthetic=synthetic)
+    verify_public_hosts(app)
     config = (ROOT / "Config.xcconfig").read_text(encoding="utf-8")
     identity_keys = dict(zip(TARGETS, ("APP_BUNDLE_IDENTIFIER", "SHARE_EXTENSION_BUNDLE_IDENTIFIER", "WIDGET_BUNDLE_IDENTIFIER")))
     infos = {}

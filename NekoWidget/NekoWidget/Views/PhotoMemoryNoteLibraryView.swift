@@ -227,9 +227,9 @@ struct PhotoMemoryNotesListView: View {
 
     @ViewBuilder private func yearSections(_ visible: [MemoryReadingItem]) -> some View {
         ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
-            let year = Calendar.current.component(.year, from: sortingDate(item))
-            let startsYear = index == 0 || Calendar.current.component(.year, from: sortingDate(visible[index - 1])) != year
-            let endsYear = index == visible.count - 1 || Calendar.current.component(.year, from: sortingDate(visible[index + 1])) != year
+            let year = Calendar.nekoGregorian.component(.year, from: sortingDate(item))
+            let startsYear = index == 0 || Calendar.nekoGregorian.component(.year, from: sortingDate(visible[index - 1])) != year
+            let endsYear = index == visible.count - 1 || Calendar.nekoGregorian.component(.year, from: sortingDate(visible[index + 1])) != year
             VStack(alignment: .leading, spacing: 0) {
                 if startsYear {
                     Text(String(year) + "年")

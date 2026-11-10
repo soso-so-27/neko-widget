@@ -22,6 +22,7 @@ struct VerifyCatCare {
         try conditionsStatus()
         try absenceAnswers()
         try identifyingPhotos()
+        try gregorianDays()
         print("Cat care (この子のこと) model, merge, import and decoding checks passed")
     }
 
@@ -275,6 +276,36 @@ struct VerifyCatCare {
         do { _ = try CatCareDecoding.backupPhotoNames(CatCareDecoding.encode(state)) }
         catch { return }
         throw Failure.check("unsafe photo path accepted")
+    }
+
+    /// 11/10: an iPhone set to 和暦 (or 仏暦) still saves and counts 西暦 days.
+    static func gregorianDays() throws {
+        let tokyo = TimeZone(identifier: "Asia/Tokyo")!
+        var japanese = Calendar(identifier: .japanese); japanese.timeZone = tokyo
+        var buddhist = Calendar(identifier: .buddhist); buddhist.timeZone = tokyo
+        let gregorian = Calendar.nekoGregorian(in: japanese)
+        let noon = gregorian.date(from: DateComponents(year: 2026, month: 11, day: 9, hour: 12))!
+        try check(japanese.component(.year, from: noon) == 8, "the 和暦 calendar says 8 for 2026")
+        try check(Calendar.nekoGregorian.identifier == .gregorian, "the shared calendar is 西暦")
+        try check(gregorian.timeZone == tokyo, "the shared calendar keeps the time zone")
+        let expected = CatCareDay(year: 2026, month: 11, day: 9)
+        try check(CatCareDay(date: noon, calendar: japanese) == expected, "a 和暦 calendar still gives 2026-11-09")
+        try check(CatCareDay(date: noon, calendar: buddhist) == expected, "a 仏暦 calendar still gives 2026-11-09")
+        try check(CatCareDay(date: noon, calendar: gregorian) == expected, "西暦 gives 2026-11-09")
+        try check(CatCareDay(date: Date()) != nil, "today is always a valid day")
+        // Back to a Date for the DatePicker: the same day, not 2000 years off.
+        let back = expected!.date(calendar: gregorian)!
+        try check(CatCareDay(date: back, calendar: gregorian) == expected, "a stored day reopens on the same day")
+        try check(japanese.component(.year, from: back) == 8, "and the 和暦 picker shows 令和8年")
+        // Ages count 西暦 days on both ends.
+        let birthday = CatCareDay(date: gregorian.date(from: DateComponents(year: 2018, month: 4, day: 20, hour: 12))!,
+                                  calendar: japanese)
+        try check(birthday == CatCareDay(year: 2018, month: 4, day: 20), "a 平成 birthday is stored as 2018")
+        try check(CatCareLostCat.age(birthday, today: CatCareDay(date: noon, calendar: japanese)) == "8歳", "age 8 on a 和暦 iPhone")
+        // Year works and labels: the year number is 西暦.
+        try check(Calendar.nekoGregorian(in: japanese).component(.year, from: noon) == 2026, "a year's work is 2026")
+        try check(noon.nekoExportText().hasPrefix("2026"), "exports print 2026, not 令和8")
+        try check(!noon.nekoExportText().contains("令和"), "exports never print 令和")
     }
 
     static func values() throws {

@@ -17,6 +17,22 @@ import distribution_profile
 
 
 class ProductionCandidateTests(unittest.TestCase):
+    def test_bundled_hosts_are_checked_in_binary_and_unicode_without_echoing(self):
+        with tempfile.TemporaryDirectory() as root:
+            app = Path(root)
+            payload = app / "binary"
+            host = "https://service.account.workers.dev/v1/usage"
+            for encoding in ("utf-8", "utf-16-le", "utf-16-be"):
+                payload.write_bytes(b"\x01\x02" + host.encode(encoding))
+                with self.assertRaisesRegex(ValueError, r"Public product contains a workers.dev host") as failure:
+                    candidate.verify_public_hosts(app)
+                self.assertNotIn("account", str(failure.exception))
+            payload.write_bytes(b"a" * (4 * 1024 * 1024 - 12) + host.encode())
+            with self.assertRaises(ValueError):
+                candidate.verify_public_hosts(app)
+            payload.write_bytes(b"https://usage.nekonomado.com/v1/usage\x00.workers.dev")
+            candidate.verify_public_hosts(app)
+
     def setUp(self):
         self.contract = candidate.fixture()
         self.settings = candidate.settings(self.contract, synthetic=True)

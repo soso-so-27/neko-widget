@@ -7,7 +7,7 @@ xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0
   Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
   NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupInvitationLink.swift NekoWidget/Services/GroupWindowStorage.swift \
   NekoWidget/Services/GroupWindowOperationStore.swift Shared/Sharing/ClientUpgradeRequirement.swift NekoWidget/Services/GroupWindowTransport.swift \
-  Shared/Models/AppSettings.swift Shared/Models/NormalizedRect.swift \
+  Shared/Models/AppSettings.swift Shared/Models/NekoCalendar.swift Shared/Models/NormalizedRect.swift \
   Shared/Models/CatCandidateCuration.swift Shared/Models/CatHouseholdIdentity.swift \
   Shared/Models/CatProfileTransfer.swift Shared/Models/NekoWidgetError.swift \
   Shared/Models/WidgetRenderPlan.swift Shared/Models/WidgetManifest.swift \

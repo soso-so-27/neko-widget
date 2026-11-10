@@ -153,6 +153,8 @@ struct ProductionAppRootView: View {
             // and the file is written only on going to the background.
             .task(id: scenePhase) {
                 guard scenePhase == .active else { return }
+                // One small write at most once a day, for the review prompt's 3 days.
+                ReviewPromptPolicy.noteActive()
                 await UsageCounter.shared.appBecameActive(viewModel: viewModel,
                     plus: plusPurchases.entitlementState.permitsPersonalPlus)
             }

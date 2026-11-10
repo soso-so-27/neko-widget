@@ -1045,7 +1045,7 @@ struct LikedPhotosView: View {
         + (hasPeriodCollections ? months.map(AlbumRecommendationItem.month) + seasonalMovies.map(AlbumRecommendationItem.movie) : [])
     }
     private var recommendationDay: String {
-        let parts = Calendar.current.dateComponents([.year, .month, .day], from: referenceDate)
+        let parts = Calendar.nekoGregorian.dateComponents([.year, .month, .day], from: referenceDate)
         return "\(parts.year ?? 0)-\(parts.month ?? 0)-\(parts.day ?? 0)"
     }
     private var proposedRecommendations: [AlbumRecommendationItem] {
@@ -1073,7 +1073,7 @@ struct LikedPhotosView: View {
     private var dailyMemo: (record: PhotoMemoryNoteRecord, photo: PhotoPresentation)? {
         let candidates = eligibleMemos
         guard !candidates.isEmpty else { return nil }
-        let day = Calendar.current.ordinality(of: .day, in: .era, for: referenceDate) ?? 0
+        let day = Calendar.nekoGregorian.ordinality(of: .day, in: .era, for: referenceDate) ?? 0
         return candidates[day % candidates.count]
     }
     private func distinctRecommendations(_ items: [AlbumRecommendationItem]) -> [AlbumRecommendationItem] {
@@ -1532,7 +1532,7 @@ private struct AlbumFeaturedSnapshot: Codable {
 private enum PhotoRediscoveryContext {
     static func yearsAgo(for date: Date?, relativeTo now: Date = Date()) -> String? {
         guard let date, date.timeIntervalSinceReferenceDate.isFinite, date <= now else { return nil }
-        let calendar = Calendar.current
+        let calendar = Calendar.nekoGregorian
         let start = calendar.startOfDay(for: date)
         let end = calendar.startOfDay(for: now)
         let years = calendar.dateComponents([.year], from: start, to: end).year ?? 0

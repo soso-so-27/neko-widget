@@ -102,7 +102,30 @@ private struct UsageReportVerifier {
         afterSend.remove(day: "2026-11-06", batch: yesterday.batch)
         require(!afterSend.days.contains { $0.day == "2026-11-06" }, "The sent day is removed")
 
-        print("PASS usage report: names, buckets, local days, 7-day window, batches, payload fields")
+        // Review prompt (11/10): 3 西暦 days kept, then once; free users reach it.
+        var japanese = Calendar(identifier: .japanese); japanese.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        require(ReviewPromptPolicy.dayKey(lateUTC, calendar: .nekoGregorian(in: japanese)) == "2026-11-07",
+                "review days are 西暦 on a 和暦 iPhone")
+        require(ReviewPromptPolicy.adding("2026-11-07", to: ["2026-11-07"]) == nil, "the same day is not written again")
+        require(ReviewPromptPolicy.adding("2026-11-08", to: ["2026-11-07"]) == ["2026-11-07", "2026-11-08"], "a new day is kept")
+        let three = ["2026-11-01", "2026-11-03", "2026-11-07"]
+        require(ReviewPromptPolicy.adding("2026-11-09", to: three) == nil, "nothing is written after 3 days")
+        func may(_ days: [String], widget: Bool = true, onboarding: Bool = true, photo: Bool = false,
+                 book: Bool = false, session: Bool = false) -> Bool {
+            ReviewPromptPolicy.mayAskAfterPhoto(usedDays: days, widgetPlaced: widget, onboardingDone: onboarding,
+                                                askedAfterPhoto: photo, askedAfterMonthlyBook: book,
+                                                askedThisSession: session)
+        }
+        require(may(three), "3 days, a widget: may ask")
+        require(!may(Array(three.prefix(2))), "2 days: not yet")
+        require(!may(["2026-11-07", "2026-11-07", "2026-11-07"]), "one day three times is one day")
+        require(!may(three, widget: false), "no widget: no prompt")
+        require(!may(three, onboarding: false), "never during onboarding")
+        require(!may(three, photo: true), "asked after a photo once, ever")
+        require(!may(three, book: true), "the monthly book already asked")
+        require(!may(three, session: true), "once per launch")
+
+        print("PASS usage report: names, buckets, local days, 7-day window, batches, payload fields, review prompt")
     }
 }
 

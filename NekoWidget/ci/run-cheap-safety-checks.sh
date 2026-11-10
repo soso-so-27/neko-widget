@@ -10,7 +10,7 @@ xcrun --sdk macosx swiftc -parse-as-library Shared/Sharing/ClientUpgradeRequirem
 
 # Shared composer and isolated credential/transport contracts. Synthetic only;
 # this does not claim a signed iPhone extension's entitlements were exercised.
-xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+xcrun --sdk macosx swiftc -D INTERNAL_PRESENTATION -parse-as-library -target "$(uname -m)-apple-macos14.0" \
   Shared/Sharing/GroupWindowCore.swift Shared/Sharing/GroupShareCreateRequest.swift \
   Shared/Sharing/PairingCore.swift Shared/Models/WidgetRenderPlan.swift \
   Shared/Models/WidgetManifest.swift Shared/Sharing/MomentSharingCore.swift \
@@ -74,7 +74,7 @@ python3 ci/test-background-moment-refresh.py
 
 xcrun --sdk macosx swiftc \
   -parse-as-library \
-  Shared/Models/AppSettings.swift \
+  Shared/Models/AppSettings.swift Shared/Models/NekoCalendar.swift \
   Shared/Models/NormalizedRect.swift \
   Shared/Models/CatCandidateCuration.swift \
   Shared/Models/CatHouseholdIdentity.swift \
@@ -109,9 +109,11 @@ xcrun swiftc -parse-as-library Shared/MembershipAccessPolicy.swift \
 # Anonymous usage counts (11/7): the payload alone, synthetic days only; one
 # sender, one Info.plist key, and no identifier beyond the per-day batch.
 xcrun --sdk macosx swiftc -parse-as-library NekoWidget/Services/UsageReport.swift \
+  Shared/Models/NekoCalendar.swift NekoWidget/Services/ReviewPromptPolicy.swift \
   ci/verify-usage-report.swift -o "$RUNNER_TEMP/verify-usage-report"
 "$RUNNER_TEMP/verify-usage-report"
 python3 ci/test-usage-report-boundary.py
+python3 ci/test-gregorian-dates.py
 xcrun swiftc -parse-as-library Shared/MembershipAccessPolicy.swift \
   Shared/PersonalWidgetMembershipStore.swift ci/verify-personal-widget-membership.swift \
   -o "$RUNNER_TEMP/verify-personal-widget-membership"
@@ -137,7 +139,7 @@ xcrun --sdk macosx swiftc -parse-as-library -D PERSONAL_REDISCOVERY_CHECKS \
 "$RUNNER_TEMP/verify-cloudy-window"
 
 xcrun --sdk macosx swiftc -parse-as-library \
-  Shared/Models/AppSettings.swift Shared/Models/NormalizedRect.swift \
+  Shared/Models/AppSettings.swift Shared/Models/NekoCalendar.swift Shared/Models/NormalizedRect.swift \
   Shared/Models/CatDetection.swift Shared/Models/AssetRecord.swift \
   Shared/Models/ScanState.swift Shared/Models/LibrarySnapshot.swift \
   NekoWidget/Views/GrowthAlbumSelector.swift NekoWidget/Views/AppPresentationModels.swift \
@@ -202,7 +204,7 @@ xcrun swiftc \
   ci/fixtures/window-name-protocol-v1.json
 
 # Production runtime policy; synthetic data only.
-xcrun swiftc -parse-as-library Shared/Sharing/SharingAPIConfiguration.swift \
+xcrun swiftc -D INTERNAL_PRESENTATION -parse-as-library Shared/Sharing/SharingAPIConfiguration.swift \
   ci/verify-production-configuration.swift -o "$RUNNER_TEMP/verify-production-configuration"
 "$RUNNER_TEMP/verify-production-configuration"
 

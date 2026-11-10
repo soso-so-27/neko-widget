@@ -74,6 +74,7 @@
 		E02609080000000000000001 /* PhotoNoteInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609080000000000000002 /* PhotoNoteInput.swift */; };
 		E02609090000000000000011 /* PhotoMemoryNoteFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609090000000000000012 /* PhotoMemoryNoteFixture.swift */; };
 		100000000000000000000001 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000101 /* SharedContainer.swift */; };
+		A26111100000000000000002 /* NekoCalendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = A26111100000000000000001 /* NekoCalendar.swift */; };
 		100000000000000000000002 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000102 /* AppSettings.swift */; };
 		100000000000000000000003 /* AssetRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000103 /* AssetRecord.swift */; };
 		100000000000000000000004 /* CatDetection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000104 /* CatDetection.swift */; };
@@ -186,6 +187,7 @@
 		100000000000000000000137 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000237 /* SettingsView.swift */; };
 		100000000000000000000138 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000238 /* LogView.swift */; };
 		CC2610200000000000000012 /* CatCareCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000011 /* CatCareCore.swift */; };
+		A26111100000000000000004 /* ReviewPromptPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A26111100000000000000003 /* ReviewPromptPolicy.swift */; };
 		CC2610200000000000000014 /* CatCareStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000013 /* CatCareStore.swift */; };
 		FA2610290000000000000006 /* FamilyNotebookSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610290000000000000005 /* FamilyNotebookSync.swift */; };
 		FA2610290000000000000004 /* FamilyNotebookTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610290000000000000003 /* FamilyNotebookTransport.swift */; };
@@ -408,6 +410,7 @@
 		F00000000000000000000001 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 		F00000000000000000000002 /* Config.Disabled.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.Disabled.xcconfig; sourceTree = "<group>"; };
 		F00000000000000000000101 /* SharedContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedContainer.swift; sourceTree = "<group>"; };
+		A26111100000000000000001 /* NekoCalendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoCalendar.swift; sourceTree = "<group>"; };
 		F00000000000000000000102 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		F00000000000000000000103 /* AssetRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssetRecord.swift; sourceTree = "<group>"; };
 		F00000000000000000000104 /* CatDetection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatDetection.swift; sourceTree = "<group>"; };
@@ -502,6 +505,7 @@
 		F00000000000000000000237 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		F00000000000000000000238 /* LogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogView.swift; sourceTree = "<group>"; };
 		CC2610200000000000000011 /* CatCareCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCareCore.swift; sourceTree = "<group>"; };
+		A26111100000000000000003 /* ReviewPromptPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewPromptPolicy.swift; sourceTree = "<group>"; };
 		CC2610200000000000000013 /* CatCareStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCareStore.swift; sourceTree = "<group>"; };
 		FA2610290000000000000005 /* FamilyNotebookSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookSync.swift; sourceTree = "<group>"; };
 		FA2610290000000000000003 /* FamilyNotebookTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookTransport.swift; sourceTree = "<group>"; };
@@ -737,6 +741,7 @@
 			children = (
 				D02609100000000000000100 /* OfficialWindowCatalog.swift */,
 				F00000000000000000000102 /* AppSettings.swift */,
+				A26111100000000000000001 /* NekoCalendar.swift */,
 				F00000000000000000000103 /* AssetRecord.swift */,
 				F00000000000000000000104 /* CatDetection.swift */,
 				F00000000000000000000105 /* LibrarySnapshot.swift */,
@@ -876,6 +881,7 @@
 				AA2610200000000000000005 /* GroupWindowFixture.swift */,
 				AA2610200000000000000003 /* GroupWindowContract.swift */,
 				CC2610200000000000000011 /* CatCareCore.swift */,
+				A26111100000000000000003 /* ReviewPromptPolicy.swift */,
 				CC2610200000000000000013 /* CatCareStore.swift */,
 				FA2610290000000000000005 /* FamilyNotebookSync.swift */,
 				FA2610290000000000000003 /* FamilyNotebookTransport.swift */,
@@ -1245,6 +1251,7 @@
 				D02609100000000000000101 /* OfficialWindowCatalog.swift in Sources */,
 				100000000000000000000001 /* SharedContainer.swift in Sources */,
 				100000000000000000000002 /* AppSettings.swift in Sources */,
+				A26111100000000000000002 /* NekoCalendar.swift in Sources */,
 				100000000000000000000003 /* AssetRecord.swift in Sources */,
 				100000000000000000000004 /* CatDetection.swift in Sources */,
 				100000000000000000000005 /* LibrarySnapshot.swift in Sources */,
@@ -1406,6 +1413,7 @@
 				100000000000000000000137 /* SettingsView.swift in Sources */,
 				100000000000000000000138 /* LogView.swift in Sources */,
 				CC2610200000000000000012 /* CatCareCore.swift in Sources */,
+				A26111100000000000000004 /* ReviewPromptPolicy.swift in Sources */,
 				CC2610200000000000000014 /* CatCareStore.swift in Sources */,
 				FA2610290000000000000006 /* FamilyNotebookSync.swift in Sources */,
 				FA2610290000000000000004 /* FamilyNotebookTransport.swift in Sources */,
