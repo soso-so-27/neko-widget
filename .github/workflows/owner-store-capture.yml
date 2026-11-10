@@ -21,6 +21,10 @@ on:
         description: Ciphertext ingress probe only (no Mac, no photos decrypted)
         type: boolean
         default: false
+      widget_probe:
+        description: Capture only the Widget controls (synthetic media only)
+        type: boolean
+        default: false
       media_asset_id:
         description: Encrypted owner input asset ID (synthetic always uses the fixed control asset)
         type: string
@@ -53,10 +57,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           OWNER_ASSET_ID: ${{ inputs.media_asset_id }}
           SYNTHETIC: ${{ inputs.synthetic }}
+          WIDGET_PROBE: ${{ inputs.widget_probe }}
         shell: bash
         run: |
           set -Eeuo pipefail
           umask 077
+          [[ "$WIDGET_PROBE" != 'true' || "$SYNTHETIC" == 'true' ]]
           asset_id="$OWNER_ASSET_ID"
           if [[ "$SYNTHETIC" == 'true' ]]; then asset_id=731575605; fi
           [[ "$asset_id" =~ ^[0-9]+$ ]]
@@ -243,15 +249,20 @@ jobs:
           unset NEKO_CAPTURE_KEY
           udid=$(cat "$PRIVATE_ROOT/simulator-id")
           test_run=$(find "$PRIVATE_ROOT/DerivedData/Build/Products" -maxdepth 1 -name '*.xctestrun')
+          targets=(-only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureOwnerStoreHomeWidgets)
+          if [[ '${{ inputs.widget_probe }}' != 'true' ]]; then
+            targets+=(
+              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreAppScreens
+              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreWindow
+              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreTools
+              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreShowcase
+              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreAlbum
+              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreCare
+            )
+          fi
           if ! xcodebuild test-without-building -xctestrun "$test_run" \
             -destination "platform=iOS Simulator,id=$udid" -resultBundlePath "$PRIVATE_ROOT/Capture.xcresult" \
-            -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreAppScreens \
-            -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreWindow \
-            -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreTools \
-            -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreShowcase \
-            -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreAlbum \
-            -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreCare \
-            -only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureOwnerStoreHomeWidgets \
+            "${targets[@]}" \
             -parallel-testing-enabled NO -testLanguage ja -testRegion JP > "$PRIVATE_ROOT/test.log" 2>&1; then
               echo 'Private capture failed; diagnostics will be encrypted, never uploaded in plaintext.'
               exit 1

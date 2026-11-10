@@ -169,31 +169,30 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                 fail("The Widget gallery did not report its current size.", application: springboard)
                 return
             }
-            // Read the actual selection each time; SpringBoard can retain
-            // the family selected for the preceding Widget.
-            let forward = desiredPage > pageState[0]
-            for _ in 0..<abs(desiredPage - pageState[0]) {
-                let previews = gallery.buttons.matching(NSPredicate(
-                    format: "value BEGINSWITH %@ OR value BEGINSWITH %@", "Widget,", "ウィジェット,"))
-                let deadline = Date().addingTimeInterval(40)
-                var renderedPreview: XCUIElement?
+            let pager = try XCTUnwrap(gallery.scrollViews.allElementsBoundByIndex.last(where: {
+                $0.frame.height > 200 && $0.frame.maxY <= pages.frame.minY + 1
+            }))
+            var currentPage = pageState[0]
+            for _ in 0..<abs(desiredPage - currentPage) {
+                let forward = desiredPage > currentPage
+                let nextPage = currentPage + (forward ? 1 : -1)
+                // The observed pager has a clear strip above all three sizes.
+                // Drag there so an interactive/loading Widget cannot take it.
+                let start = pager.coordinate(withNormalizedOffset: CGVector(dx: forward ? 0.85 : 0.15, dy: 0.03))
+                let end = pager.coordinate(withNormalizedOffset: CGVector(dx: forward ? 0.15 : 0.85, dy: 0.03))
+                start.press(forDuration: 0.05, thenDragTo: end)
+                let deadline = Date().addingTimeInterval(12)
                 repeat {
-                    renderedPreview = previews.allElementsBoundByIndex.first(where: {
-                        $0.exists && abs($0.frame.midX - springboard.frame.midX) < 20
-                    })
-                    if renderedPreview != nil { break }
+                    if galleryPage(pages) == [nextPage, 4] {
+                        currentPage = nextPage
+                        break
+                    }
                     RunLoop.current.run(until: Date().addingTimeInterval(0.25))
                 } while Date() < deadline
-                guard let preview = renderedPreview else {
-                    fail("The Widget preview did not finish rendering before paging.", application: springboard)
+                guard currentPage == nextPage else {
+                    fail("The Widget gallery did not advance to the next confirmed size.", application: springboard)
                     return
                 }
-                let start = preview.coordinate(withNormalizedOffset: CGVector(dx: forward ? 0.8 : 0.2, dy: 0.3))
-                let end = springboard.coordinate(withNormalizedOffset: .zero).withOffset(
-                    CGVector(dx: forward ? 20 : springboard.frame.width - 20,
-                             dy: preview.frame.minY + preview.frame.height * 0.3))
-                start.press(forDuration: 0.1, thenDragTo: end)
-                sleep(1)
             }
             XCTAssertEqual(galleryPage(pages), [desiredPage, 4])
             let addButton = try XCTUnwrap(waitForElement(in: springboard,
