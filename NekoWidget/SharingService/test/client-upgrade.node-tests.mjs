@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { clientUpgradeResponse } from '../../ServiceProtocol/client-upgrade-required.ts';
+import { clientUpgradeResponse } from '../src/client-upgrade-required.ts';
 
 const request = build => new Request('https://service.example/v3/group-windows', {
   headers: build === undefined ? {} : { 'X-Neko-App-Build': build }

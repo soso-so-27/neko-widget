@@ -1,4 +1,4 @@
-import { clientUpgradeResponse } from '../../ServiceProtocol/client-upgrade-required';
+import { clientUpgradeResponse } from '../../SharingService/src/client-upgrade-required';
 import { ServiceError, sha256, type IdentityVerifier } from './contracts';
 import { DurableAuth } from './auth';
 import { deviceSessionCleanupStatements } from './device-sessions';

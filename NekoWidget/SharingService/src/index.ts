@@ -1,4 +1,4 @@
-import { clientUpgradeResponse } from '../../ServiceProtocol/client-upgrade-required';
+import { clientUpgradeResponse } from './client-upgrade-required';
 import { beginReadDiagnostic, finishReadDiagnostic, readStage } from './read-failure-diagnostic';
 import {advanceIdentityDeletion,deletionRequired,scopeIdentityCheck,identityDeletionAPI,isIdentityDeletionPath,protectedGroupRead} from './group-identity-service';
 import { cleanupDissolvedFamilyRosters } from './family-notebook-roster-cleanup';
