@@ -20,6 +20,9 @@ def inventory():
 
 def route(test):
     if 'WidgetPlacementScreenshotUITests/' in test: return 'widget'
+    # Display-speed measurements (no pass/fail threshold). Manual only:
+    # route=speed is not in the push/nightly route list.
+    if 'ScreenSpeedSweepUITests/' in test: return 'speed'
     if test.endswith('/testSyntheticMovieShippingExportsSoundOnAndOff'): return 'movie'
     if test.endswith('/testReviewPublicIPadCompatibility'): return 'ipad'
     # testReviewPublicPresentation needs the DEBUG fixture and DEBUG previews
