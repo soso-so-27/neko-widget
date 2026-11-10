@@ -151,27 +151,23 @@ struct MembershipOfferView: View {
 
     private var photoHeader: some View {
         VStack(spacing: 12) {
+            // 11/10: the photo fills a fixed box as an overlay. Sized by
+            // itself, a scaledToFill photo wider than the screen made the
+            // whole stack wider, so the rows, the button and the box below
+            // ran past both edges (TestFlight 354).
             if let photo {
-                Image(uiImage: photo)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(height: 164)
-                    .frame(maxWidth: .infinity)
-                    .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .accessibilityLabel("あなたの猫の写真")
-                    .accessibilityIdentifier("membership-offer-photo")
+                Self.photoBox {
+                    Image(uiImage: photo)
+                        .resizable()
+                        .scaledToFill()
+                }
             } else if let photoAsset {
-                PhotoAssetImageView(localIdentifier: photoAsset.localIdentifier,
-                                    catBoundingBox: photoAsset.catBoundingBox,
-                                    targetPixelSize: CGSize(width: 1_200, height: 600),
-                                    targetAspectRatio: 2.5)
-                    .frame(height: 164)
-                    .frame(maxWidth: .infinity)
-                    .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .accessibilityLabel("あなたの猫の写真")
-                    .accessibilityIdentifier("membership-offer-photo")
+                Self.photoBox {
+                    PhotoAssetImageView(localIdentifier: photoAsset.localIdentifier,
+                                        catBoundingBox: photoAsset.catBoundingBox,
+                                        targetPixelSize: CGSize(width: 1_200, height: 600),
+                                        targetAspectRatio: 2.5)
+                }
             } else {
                 Image(systemName: "cat")
                     .font(.system(size: 48, weight: .light))
@@ -198,6 +194,19 @@ struct MembershipOfferView: View {
         }
     }
 
+    /// The header box: its size comes from the margins, never from the photo.
+    private static func photoBox<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        Color.clear
+            .frame(maxWidth: .infinity)
+            .frame(height: 164)
+            .overlay { content() }
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .accessibilityElement(children: .ignore)
+            .accessibilityAddTraits(.isImage)
+            .accessibilityLabel("あなたの猫の写真")
+            .accessibilityIdentifier("membership-offer-photo")
+    }
+
     private var offerDetails: some View {
         VStack(spacing: 6) {
             if isMember {
@@ -212,32 +221,21 @@ struct MembershipOfferView: View {
                         .foregroundStyle(.secondary)
                 }
             } else if let offer {
+                // The trial is the button's own words and the price is said
+                // once, right under it (11/10).
                 if offer.isPreview {
                     Text("操作の確認用です。請求されません")
                         .font(.footnote.weight(.semibold))
                         .accessibilityIdentifier("membership-offer-preview-notice")
                 }
-                if let trial = offer.trialText {
-                    Text(trial)
-                        .font(.subheadline.weight(.semibold))
-                        .accessibilityIdentifier("membership-offer-trial")
-                }
-            } else {
-                Text(isWorking ? "料金を確認中…" : "料金を確認できません")
-                    .font(.headline)
-                    .accessibilityIdentifier("membership-offer-unavailable")
-                if !isWorking {
-                    // refresh() is a no-op unless the model can refresh; only
-                    // then is a reload button honest.
-                    if let onRefresh, canRefresh {
-                        Button("もう一度読み込む", action: onRefresh)
-                            .font(.footnote)
-                            .accessibilityIdentifier("membership-offer-reload")
-                    } else {
-                        Text("時間をおいて、もう一度開いてください。")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
-                }
+            } else if !isWorking, let onRefresh, canRefresh {
+                // While loading, the button shows the spinner; with no product
+                // after loading, the one message line says so (11/10).
+                // refresh() is a no-op unless the model can refresh; only
+                // then is a reload button honest.
+                Button("もう一度読み込む", action: onRefresh)
+                    .font(.footnote)
+                    .accessibilityIdentifier("membership-offer-reload")
             }
         }
         .multilineTextAlignment(.center)
@@ -255,13 +253,15 @@ struct MembershipOfferView: View {
                 } label: {
                     HStack(spacing: 8) {
                         if isWorking && running != "購入を復元" { ProgressView().tint(.white) }
-                        Text(purchaseTitle ?? offer?.purchaseTitle ?? (isWorking ? "料金を確認中…" : "料金を確認できません"))
+                        Text(purchaseTitle ?? offer?.purchaseTitle
+                             ?? (isWorking ? "料金を確認中…" : MembershipOfferPresentation.startTitle))
                             .font(.headline)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 34)
+                    .frame(maxWidth: .infinity, minHeight: 36)
                 }
                 .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.roundedRectangle(radius: 14))
                 .controlSize(.large)
                 .disabled(isWorking || !canPurchase || offer == nil)
                 .accessibilityIdentifier("membership-offer-purchase")
@@ -270,8 +270,10 @@ struct MembershipOfferView: View {
             // The billed amount stays as prominent as the trial: it is the
             // headline directly under the button, never a footnote.
             if !isMember, let offer {
-                Text(offer.afterTrialText ?? offer.priceText)
+                Text(offer.billingLine)
                     .font(.headline)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("membership-offer-price")
                 Text(offer.renewalText)
                     .font(.footnote).foregroundStyle(.secondary)

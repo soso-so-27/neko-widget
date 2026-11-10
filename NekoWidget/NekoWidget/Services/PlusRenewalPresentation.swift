@@ -48,3 +48,43 @@ enum PlusRenewalPresentation {
             .map { "\($0)まで使えます" }
     }
 }
+
+/// The Plus row in Settings (11/10). Every launch/foreground refresh passes
+/// through `.checking` again, even for a known non-member; showing that
+/// swapped the rows and the Plus sheet hung on this section each time.
+enum PlusSettingsRowStatus: Equatable, Sendable {
+    case notMember, member, unknown, checking
+
+    /// A re-check keeps the last answer on screen. Only the very first check,
+    /// with no answer yet, shows 「確認しています…」.
+    static func steady(_ current: Self, lastAnswer: Self?) -> Self {
+        current == .checking ? (lastAnswer ?? .checking) : current
+    }
+}
+
+/// When the Plus screen re-reads its price (11/10: it reloaded over and over,
+/// and 「料金を確認できません」 showed next to the price).
+enum PlusOfferReloadPolicy {
+    static let unavailableMessage = "料金を確認できません。時間をおいて開き直してください。"
+
+    /// Once per settled catalog: never while products are still loading, and
+    /// never twice for the same catalog revision.
+    static func shouldReload(observedRevision: UInt64?, currentRevision: UInt64,
+                             catalogLoading: Bool) -> Bool {
+        !catalogLoading && observedRevision != currentRevision
+    }
+
+    /// The price on screen: a new one as soon as it loads; nothing only when a
+    /// settled load found no product; otherwise (a load overtaken by a newer
+    /// catalog) the last price stays instead of blinking away.
+    static func displayed<Offer>(previous: Offer?, loaded: Offer?, settled: Bool) -> Offer? {
+        if let loaded { return loaded }
+        return settled ? nil : previous
+    }
+
+    /// The unavailable line only when loading finished with no product at all,
+    /// never while a price is shown and never for a member.
+    static func showsUnavailable(loadFinishedWithoutOffer: Bool, showsPrice: Bool, isMember: Bool) -> Bool {
+        loadFinishedWithoutOffer && !showsPrice && !isMember
+    }
+}

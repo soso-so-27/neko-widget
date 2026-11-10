@@ -71,6 +71,7 @@ private func check(_ condition: Bool, _ message: String) throws {
         try check(PlusAuthorityRestoreDecision.resolve(memoryIsUsable: memory.isUsable(at: now.addingTimeInterval(1800)),
             identityChanged: false, cachedAuthority: nil) == .checking, "expired memory cannot bridge a missing cache")
         try verifyRenewalWords()
+        try verifyOfferSteadiness()
         print("Plus foreground: valid memory survives missing cache; identity changes and expiry still withdraw access")
         print("Plus cache: expiry, clock rollback, identity, environment, reinstall and exact-ACK boundaries passed")
         print("Plus transport policy: unchanged acknowledged transaction 1 POST + 1 GET -> 0 POST + 1 GET; device latency unmeasured")
@@ -112,5 +113,42 @@ private func check(_ condition: Bool, _ message: String) throws {
         try check(PlusRenewalSnapshot.combined([monthly, annual])?.expirationDate == date(2027, 1, 9),
                   "the latest end when none renews")
         print("Plus renewal words: 利用中 while renewing, 「11月9日まで」 once cancelled, the year only when it differs")
+    }
+    /// 11/10: the Plus screen reloaded over and over. One read per settled
+    /// catalog, the price kept through a refresh, the unavailable line only
+    /// with no price, and Settings keeps its last answer while re-checking.
+    static func verifyOfferSteadiness() throws {
+        typealias R = PlusOfferReloadPolicy
+        try check(R.shouldReload(observedRevision: nil, currentRevision: 2, catalogLoading: false), "first settled catalog loads")
+        try check(!R.shouldReload(observedRevision: 2, currentRevision: 2, catalogLoading: false), "same catalog never reloads again")
+        try check(!R.shouldReload(observedRevision: 2, currentRevision: 3, catalogLoading: true), "no read while products load")
+        try check(R.shouldReload(observedRevision: 2, currentRevision: 4, catalogLoading: false), "a new settled catalog reloads once")
+        // Every publish of one refresh (loading, products, availability, revision) reads at most once.
+        var observed: UInt64? = 2
+        var reads = 0
+        for (revision, loading) in [(3, true), (3, true), (4, false), (4, false), (4, false)] as [(UInt64, Bool)] {
+            if R.shouldReload(observedRevision: observed, currentRevision: revision, catalogLoading: loading) {
+                observed = revision; reads += 1
+            }
+        }
+        try check(reads == 1, "one refresh, one offer read")
+        try check(R.displayed(previous: "$5.99", loaded: "¥980", settled: true) == "¥980", "a new price replaces the old")
+        try check(R.displayed(previous: "$5.99", loaded: nil, settled: false) == "$5.99", "an overtaken read keeps the price")
+        try check(R.displayed(previous: "$5.99", loaded: nil, settled: true) == nil, "a settled empty catalog shows no price")
+        try check(!R.showsUnavailable(loadFinishedWithoutOffer: true, showsPrice: true, isMember: false),
+                  "never 料金を確認できません next to a price")
+        try check(!R.showsUnavailable(loadFinishedWithoutOffer: false, showsPrice: false, isMember: false),
+                  "not before loading finished")
+        try check(!R.showsUnavailable(loadFinishedWithoutOffer: true, showsPrice: false, isMember: true), "not for a member")
+        try check(R.showsUnavailable(loadFinishedWithoutOffer: true, showsPrice: false, isMember: false),
+                  "finished with no product shows it")
+        try check(R.unavailableMessage == "料金を確認できません。時間をおいて開き直してください。", "unavailable words")
+        typealias S = PlusSettingsRowStatus
+        try check(S.steady(.checking, lastAnswer: nil) == .checking, "first launch check shows 確認しています")
+        try check(S.steady(.checking, lastAnswer: .notMember) == .notMember, "a re-check keeps the Plus row")
+        try check(S.steady(.checking, lastAnswer: .member) == .member, "a re-check keeps the member row")
+        try check(S.steady(.unknown, lastAnswer: .notMember) == .unknown, "a real answer always wins")
+        try check(S.steady(.member, lastAnswer: .notMember) == .member, "a purchase shows at once")
+        print("Plus screen: one offer read per settled catalog; price kept through refresh; Settings rows steady while re-checking")
     }
 }

@@ -3689,10 +3689,18 @@ final class SoloMemoriesUITests: XCTestCase {
             overview.lifetime = .keepAlways
             add(overview)
             // Trial eligibility comes from StoreKit; the preview stands in for it.
-            XCTAssertEqual(app.buttons["membership-offer-purchase"].label, "14日間無料で始める")
+            XCTAssertEqual(app.buttons["membership-offer-purchase"].label, "14日間無料で試す")
             let price = app.staticTexts["membership-offer-price"]
             for _ in 0..<10 { if price.isHittable { break }; app.swipeUp() }
-            XCTAssertEqual(price.label, "その後は月額¥980")
+            XCTAssertEqual(price.label, "その後 月額¥980（自動更新）")
+            // 11/10: the button, the price line and the trust box sit inside
+            // the same side margins, never at the screen edge.
+            let margin = app.windows.firstMatch.frame
+            for element in [app.buttons["membership-offer-purchase"], price,
+                            app.descendants(matching: .any)["membership-offer-reassurance"].firstMatch] {
+                XCTAssertGreaterThanOrEqual(element.frame.minX - margin.minX, 16, element.identifier)
+                XCTAssertGreaterThanOrEqual(margin.maxX - element.frame.maxX, 16, element.identifier)
+            }
             let values = app.descendants(matching: .any)["membership-offer-values"].firstMatch
             for line in ["毎日、新しい1枚がホーム画面に", "月の作品、季節のムービー", "写真に新しいメモを書く",
                          "まどを作って、家族と写真を届け合う", "猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる"] {
@@ -3782,7 +3790,7 @@ final class SoloMemoriesUITests: XCTestCase {
             let heading = app.staticTexts["membership-offer-heading"]
             XCTAssertTrue(heading.waitForExistence(timeout: 5), identifier)
             XCTAssertEqual(heading.label, "うちの子との毎日を、続ける")
-            XCTAssertEqual(app.buttons["membership-offer-purchase"].label, "14日間無料で始める")
+            XCTAssertEqual(app.buttons["membership-offer-purchase"].label, "14日間無料で試す")
             let reasonText = app.staticTexts["membership-offer-reason"]
             if let reason {
                 XCTAssertTrue(reasonText.label.contains(reason), identifier)
@@ -3806,7 +3814,9 @@ final class SoloMemoriesUITests: XCTestCase {
         noTrial.buttons["membership-preview-open"].tap()
         let purchase = noTrial.buttons["membership-offer-purchase"]
         XCTAssertTrue(purchase.waitForExistence(timeout: 5))
-        XCTAssertEqual(purchase.label, "Plusを始める（月額¥980）")
+        XCTAssertEqual(purchase.label, "Plusを始める")
+        // The price is said once, under the button, with that it renews.
+        XCTAssertEqual(noTrial.staticTexts["membership-offer-price"].label, "月額¥980（自動更新）")
         XCTAssertFalse(noTrial.staticTexts["membership-offer-trial"].exists)
         let capture = XCTAttachment(screenshot: noTrial.screenshot())
         capture.name = "membership-offer-without-trial"
@@ -4038,13 +4048,13 @@ final class SoloMemoriesUITests: XCTestCase {
         app.buttons["membership-preview-open"].tap()
         let price = app.staticTexts["membership-offer-price"]
         XCTAssertTrue(price.waitForExistence(timeout: 5))
-        XCTAssertEqual(price.label, "月額$5.99")
+        XCTAssertEqual(price.label, "月額$5.99（自動更新）")
         let purchase = app.buttons["membership-offer-purchase"]
         for _ in 0..<5 where !purchase.isHittable { app.swipeUp() }
         purchase.tap()
-        let updated = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "その後は月額¥980"), object: price)
+        let updated = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "その後 月額¥980（自動更新）"), object: price)
         XCTAssertEqual(XCTWaiter.wait(for: [updated], timeout: 5), .completed)
-        XCTAssertEqual(app.staticTexts["membership-offer-trial"].label, "1週間無料")
+        XCTAssertEqual(purchase.label, "1週間無料で試す")
         XCTAssertTrue(app.staticTexts["membership-offer-message"].label.contains("表示を確かめてから"))
         XCTAssertFalse(app.staticTexts["membership-preview-result"].exists,
                        "An old quote must update in place without purchasing or dismissing")

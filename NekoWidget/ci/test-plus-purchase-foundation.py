@@ -331,7 +331,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertNotIn("restorePurchases", refresh)
         self.assertNotIn("purchaseAction", refresh)
         self.assertIn("if isMember {", view)
-        self.assertLess(view.index("if isMember {"), view.index("Text(offer.afterTrialText ?? offer.priceText)"))
+        self.assertLess(view.index("if isMember {"), view.index("Text(offer.billingLine)"))
         self.assertIn(".disabled(isWorking || !canPurchase || offer == nil)", view)
 
     def test_purchase_screen_keeps_terms_and_privacy_links(self) -> None:
@@ -600,6 +600,109 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         for expected in ('"Plus（11月9日まで）"', '"11月9日まで使えます"', '"Plus（2027年1月9日まで）"', '"Plus（利用中）"'):
             self.assertIn(expected, verifier)
 
+
+    def test_plus_screen_loads_once_and_keeps_its_price_and_photo(self) -> None:
+        # 11/10 (build 354): the Plus screen reloaded over and over; the photo
+        # blinked and 「料金を確認できません…」 showed next to the price.
+        model = source("NekoWidget/Services/MembershipOfferModel.swift")
+        live_factory = section(model, "static func live(", "func refresh() async")
+        sink = section(live_factory, "store.objectWillChange.sink", "        return model")
+        # A publication never clears the offer itself: one shared, settled read.
+        self.assertIn("if model.presentsOffer && model.hasLoaded {", sink)
+        self.assertIn("await model.reloadOfferForCurrentCatalog()", sink)
+        self.assertNotIn("reloadOfferPresentation()", sink)
+        coalesce = section(model, "private func reloadOfferForCurrentCatalog() async {",
+                           "private func applyOfferUnavailableMessage()")
+        self.assertIn("if observedCatalogRevision == revision, let offerReloadTask {", coalesce)
+        self.assertIn("PlusOfferReloadPolicy.shouldReload(", coalesce)
+        self.assertIn("catalogLoading: store.productAvailability == .loading", coalesce)
+        load = section(model, "    func load() async {", "    func purchase() async")
+        self.assertIn("await reloadOfferForCurrentCatalog()", load)
+        self.assertNotIn("時間をおいて開き直して", load)
+        self.assertEqual(model.count("PlusOfferReloadPolicy.unavailableMessage"), 2)
+        self.assertNotIn('"料金を確認できません。時間をおいて開き直してください。"', model)
+        reload = section(model, "private func reloadOfferPresentation() async {",
+                         "private func reloadOfferForCurrentCatalog() async {")
+        # What a tap may buy is still cleared during a read; the screen keeps the price.
+        self.assertLess(reload.index("offer = nil"), reload.index("await loadAction()"))
+        self.assertIn("PlusOfferReloadPolicy.displayed(previous: displayedOffer, loaded: updated, settled: settled)", reload)
+        self.assertIn("$0.productAvailability != .loading && $0.productCatalogRevision == revision", reload)
+        state = section(model, "private func updateMembershipState()", "static func preview(state:")
+        self.assertIn("applyOfferUnavailableMessage()", state)
+        sheet = section(model, "struct MembershipOfferSheet: View {", "struct PlusOfferPrompt: View {")
+        self.assertIn("offer: model.displayedOffer,", sheet)
+        self.assertIn("canPurchase: model.canPurchase", sheet)
+        self.assertIn("photoAsset: heldPhoto ?? placePhoto", sheet)
+        self.assertIn("if heldPhoto == nil { heldPhoto = placePhoto }", sheet)
+        self.assertIn(".task { await model.load() }", sheet)
+        self.assertIn("guard !hasLoaded else { return }", load)
+        # Settings keeps its last answer while re-checking, so the sheet on its header stays.
+        settings = section(model, "struct PlusSettingsSection: View {", "private func refreshMembership()")
+        self.assertIn("private var status: Status { Status.steady(liveStatus, lastAnswer: lastAnswer) }", settings)
+        self.assertIn(".onChange(of: liveStatus, initial: true) { _, answer in", settings)
+        self.assertIn("if answer != .checking { lastAnswer = answer }", settings)
+        verifier = source("ci/verify-plus-authority-cache.swift")
+        self.assertIn("try verifyOfferSteadiness()", verifier)
+        self.assertIn('"one refresh, one offer read"', verifier)
+        self.assertIn('"never 料金を確認できません next to a price"', verifier)
+
+    def test_plus_screen_sits_inside_its_margins_and_says_the_price_once(self) -> None:
+        # 11/10 (TestFlight 354): the rows, the button and the trust box ran to
+        # the screen edges. A scaledToFill photo sized by itself widened the
+        # whole stack; it now fills a fixed box as an overlay.
+        view = source("NekoWidget/Views/MembershipOfferView.swift")
+        body = section(view, "    var body: some View {", "    private var photoHeader: some View {")
+        self.assertIn(".frame(maxWidth: 440)\n            .padding(.horizontal, 24)", body)
+        for forbidden in ("ignoresSafeArea", "UIScreen.main", "containerRelativeFrame", ".padding(.horizontal, 0)"):
+            self.assertNotIn(forbidden, view)
+        header = section(view, "    private var photoHeader: some View {", "    private var offerDetails: some View {")
+        box = section(header, "private static func photoBox<Content: View>", "\n    }\n")
+        self.assertLess(box.index("Color.clear"), box.index(".frame(height: 164)"))
+        self.assertLess(box.index(".frame(height: 164)"), box.index(".overlay { content() }"))
+        self.assertIn(".clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))", box)
+        self.assertEqual(header.count("Self.photoBox {"), 2)
+        # Every scaledToFill photo is inside the overlay box, never sizing the stack.
+        self.assertEqual(header.count(".scaledToFill()"), 1)
+        self.assertLess(header.index("Self.photoBox {"), header.index(".scaledToFill()"))
+        values = section(body, "ForEach(Self.values", "offerDetails")
+        self.assertIn(".frame(maxWidth: .infinity, alignment: .leading)", values)
+        actions = section(view, "    private var actions: some View {", "    private var reassurance: some View {")
+        self.assertIn(".frame(maxWidth: .infinity, minHeight: 36)", actions)
+        self.assertIn(".buttonBorderShape(.roundedRectangle(radius: 14))", actions)
+        self.assertIn(".controlSize(.large)", actions)
+        reassurance = section(view, "    private var reassurance: some View {", "    private var footerLinks: some View {")
+        self.assertIn(".frame(maxWidth: .infinity, alignment: .leading)", reassurance)
+        self.assertIn("in: RoundedRectangle(cornerRadius: 14, style: .continuous)", reassurance)
+        # Order: photo, heading, the five rows, the purchase block, the trust box, the links.
+        order = ["photoHeader", 'accessibilityIdentifier("membership-offer-values")', "offerDetails",
+                 "actions", "reassurance", "footerLinks"]
+        self.assertEqual(sorted(order, key=body.index), order)
+        # Guideline 3.1.2: the price once, under the button, with 自動更新, as a headline.
+        model = source("NekoWidget/Services/MembershipOfferModel.swift")
+        monthly = section(model, "static let startTitle", "enum MembershipRestoreFailure")
+        self.assertIn('static let startTitle = "Plusを始める"', monthly)
+        self.assertIn('var billingLine: String { afterTrialText ?? "\\(priceText)（自動更新）" }', monthly)
+        self.assertIn('purchaseTitle: "\\(trialPeriod)無料で試す"', monthly)
+        self.assertIn('afterTrialText: "その後 \\(price)（自動更新）"', monthly)
+        self.assertNotIn("（\\(price)）", monthly)
+        self.assertIn('let price = "月額\\(displayPrice)"', monthly)
+        billing = section(actions, "Text(offer.billingLine)", 'accessibilityIdentifier("membership-offer-price")')
+        self.assertIn(".font(.headline)", billing)
+        self.assertNotIn("membership-offer-trial", view)
+        # Loading: spinner on the disabled button; no product: only the one message line.
+        self.assertIn('if isWorking && running != "購入を復元" { ProgressView().tint(.white) }', actions)
+        self.assertNotIn("membership-offer-unavailable", view)
+        self.assertNotIn('"料金を確認できません"', view)
+        for link in ("membership-offer-restore", "membership-offer-cancel-help", "membership-offer-terms",
+                     "membership-offer-privacy"):
+            self.assertIn(f'.accessibilityIdentifier("{link}")', view)
+        ui = source("NekoWidgetUITests/PhotoPermissionUITests.swift")
+        self.assertIn('"14日間無料で試す"', ui)
+        self.assertIn('"その後 月額¥980（自動更新）"', ui)
+        self.assertIn('XCTAssertEqual(purchase.label, "Plusを始める")', ui)
+        self.assertIn('"月額¥980（自動更新）"', ui)
+        self.assertIn("XCTAssertGreaterThanOrEqual(element.frame.minX - margin.minX, 16, element.identifier)", ui)
+        self.assertNotIn("無料で始める", ui)
 
 if __name__ == "__main__":
     unittest.main()
