@@ -100,6 +100,25 @@ enum AlbumPrototype {
         return chosen
     }
 
+    /// A finished month whose photos were too few for a work.
+    static let fewPhotosLine = "この月は写真が少なく、作品はありません。"
+
+    /// 11/10: with cat photos but no work yet, the one line under the shelf.
+    /// This month's work arrives on the 1st of next month (Gregorian months);
+    /// with too few photos so far, say what a work needs instead.
+    static func noWorkLine(thisMonthPhotoCount: Int, now: Date = Date()) -> String {
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = .current
+        guard thisMonthPhotoCount >= MonthlyWindowBuilder.minimumSceneCount,
+              let start = gregorian.dateInterval(of: .month, for: now)?.start,
+              let next = gregorian.date(byAdding: .month, value: 1, to: start) else {
+            return "猫の写真がひと月に 5 枚ほどたまると、その月の作品がとどきます。"
+        }
+        let month = gregorian.component(.month, from: start)
+        let nextMonth = gregorian.component(.month, from: next)
+        return "\(month)月の作品は、\(nextMonth)月1日にとどきます。"
+    }
+
     static func cover(of letter: MonthlyWindowPresentation, from catPhotos: [PhotoPresentation]) -> PhotoPresentation? {
         pick(photos(in: letter.monthStart, from: catPhotos), count: 1).first ?? letter.coverPhoto
     }
@@ -294,10 +313,7 @@ struct AlbumPrototypeView: View {
                         newMovieCard(movie)
                     }
                     yearShelf
-                    if letters.isEmpty && lettersAreFinal {
-                        ContentUnavailableView("まだ作品はありません", systemImage: "photo.stack",
-                                               description: Text("猫の写真がひと月に 5 枚ほどたまると、その月の作品がとどきます。"))
-                    }
+                    if letters.isEmpty && lettersAreFinal { noWorkYet }
                 }
             }
             .padding(16)
@@ -329,6 +345,22 @@ struct AlbumPrototypeView: View {
                               assignments: assignments, profileNames: profileNames)
             }
             .zoomTransition(YearStoryView.periodIdentifier(story.year), in: zoom)
+        }
+    }
+
+    /// 11/10: no work yet. 「まだ作品はありません」 only with no cat photos at
+    /// all; with photos, one line under the shelf that matches its cards.
+    @ViewBuilder
+    private var noWorkYet: some View {
+        if catPhotos.isEmpty {
+            ContentUnavailableView("まだ作品はありません", systemImage: "photo.stack",
+                                   description: Text("猫の写真がひと月に 5 枚ほどたまると、その月の作品がとどきます。"))
+        } else {
+            Text(AlbumPrototype.noWorkLine(thisMonthPhotoCount: nextDelivery?.photoCount ?? 0))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("album-prototype-no-work")
         }
     }
 
@@ -381,6 +413,14 @@ struct AlbumPrototypeView: View {
     }
 
     private static let slotSize = CGSize(width: 76, height: 101)
+
+    /// A finished month without a work: no photos, or too few for one.
+    private func emptySlotLabel(month: Int) -> String {
+        let year = calendar.component(.year, from: Date())
+        guard let start = calendar.date(from: DateComponents(year: year, month: month, day: 1)),
+              !AlbumPrototype.photos(in: start, from: catPhotos).isEmpty else { return "\(month)月、作品はありません" }
+        return "\(month)月、" + AlbumPrototype.fewPhotosLine
+    }
 
     @ViewBuilder
     private func shelfSlot(month: Int, thisMonth: Int, book: MonthlyWindowPresentation?,
@@ -453,7 +493,7 @@ struct AlbumPrototypeView: View {
                 }
                 .opacity(ahead ? 0.5 : 1)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(ahead ? "\(month)月、これから" : "\(month)月、作品はありません")
+                .accessibilityLabel(ahead ? "\(month)月、これから" : emptySlotLabel(month: month))
         }
     }
 
