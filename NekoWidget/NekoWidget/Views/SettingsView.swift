@@ -170,7 +170,9 @@ struct SettingsView: View {
     @State private var cloudyWindowError: String?
 
 #endif
-    private var showsFamilyNotebookRow: Bool { Version1.familyNotebook || familyNotebook.hasFamily }
+    /// Only once there is a family to open or leave; making one stays in
+    /// この子のこと (11/10: one place to start it).
+    private var showsFamilyNotebookRow: Bool { familyNotebook.hasFamily }
 
     private var canOpenMembershipOffer: Bool {
         PlusOfferAvailability.isConfigured
@@ -1336,7 +1338,11 @@ private struct ActivityView: UIViewControllerRepresentable {
 /// listing exists; until then nothing that points at it is shown.
 enum AppStoreListing {
     static let appID: String? = "6801962436"
+    /// The page goes live with the release, not with review: 1.0 does not
+    /// link to it (11/10). Turn this on in the first build after release.
+    static let isPagePublished = false
     static var pageURL: URL? {
+        guard isPagePublished else { return nil }
         guard let appID, !appID.isEmpty, appID.allSatisfy(\.isNumber) else { return nil }
         return URL(string: "https://apps.apple.com/jp/app/id\(appID)")
     }

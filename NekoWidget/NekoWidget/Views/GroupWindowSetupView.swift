@@ -13,6 +13,8 @@ enum GroupWindowPresentation {
     static let memberLimit = 6
     static let deviceLimitPerPerson = 3
     static let totalWindowLimit = 10
+    /// The server's five-room limit (SharingService migration 0063).
+    static let ownedWindowLimit = 5
 
     static func message(for error: Error) -> String {
         if let error = error as? GroupWindowManagementError {
@@ -72,7 +74,7 @@ enum GroupWindowPresentation {
         case .totalWindowLimit:
             return "まどは全部で\(totalWindowLimit)個までです。使っていないまどから抜けると、新しく作ったり参加したりできます。"
         case .ownedWindowLimit:
-            return "これ以上、自分でまどを作れません。"
+            return "自分で作れるまどは\(ownedWindowLimit)つまでです。"
         case .invitationExpired:
             return "招待リンクの期限が切れました。新しいリンクを送ってもらってください。"
         case .invitationRevoked:

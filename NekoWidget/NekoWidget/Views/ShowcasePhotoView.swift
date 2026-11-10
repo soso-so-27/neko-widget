@@ -548,8 +548,8 @@ struct ShowcasePhotoView: View {
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("showcase-gallery-settings")
             } else if failedScopes.contains(scopeID) {
-                ContentUnavailableView("おすすめで選べませんでした", systemImage: "photo")
-                Button("自分で選ぶ") { showsPreparation = true }
+                ContentUnavailableView("猫の写真が見つかると、おすすめを出します", systemImage: "photo")
+                Button("写真を選ぶ") { showsPreparation = true }
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("showcase-gallery-select")
             } else {

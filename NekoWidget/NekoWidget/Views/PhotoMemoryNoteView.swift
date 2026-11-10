@@ -511,7 +511,7 @@ struct PhotoMemoryNoteEditor: View {
         guard isLoaded, !isSaving else { return }
         guard !createsNewMemo || (value.isEmpty && !weightEnabled)
                 || membershipAccess.decision(for: .createPersonalMemo) == .allowed else {
-            saveError = "新しくメモを書くにはPlusが必要です。"
+            saveError = "メモを書くのはPlusの機能です。"
             return
         }
         isSaving = true
