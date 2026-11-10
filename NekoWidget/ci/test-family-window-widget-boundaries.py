@@ -4803,11 +4803,12 @@ class WindowStateTests(unittest.TestCase):
 class RecommendAppTests(unittest.TestCase):
     def test_settings_can_recommend_the_app_once_the_listing_exists(self) -> None:
         settings = source("NekoWidget/Views/SettingsView.swift")
-        self.assertIn("enum AppStoreListing {", settings)
-        self.assertIn('https://apps.apple.com/jp/app/id', settings)
+        listing_source = source("Shared/Sharing/ClientUpgradeRequirement.swift")
+        self.assertIn("enum AppStoreListing {", listing_source)
+        self.assertIn('https://apps.apple.com/jp/app/id', listing_source)
         self.assertIn("if let url = AppStoreListing.pageURL {", settings)
         # 1.0 is reviewed before its page exists: no row points at it (11/10).
-        listing = section(settings, "enum AppStoreListing {", "static let recommendMessage")
+        listing = section(listing_source, "enum AppStoreListing {", "static let recommendMessage")
         self.assertIn("static let isPagePublished = false", listing)
         self.assertIn("guard isPagePublished else { return nil }", listing)
         self.assertLess(listing.index("guard isPagePublished"), listing.index("return URL(string:"))

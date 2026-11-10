@@ -9,6 +9,7 @@ struct NekoWidgetApp: App {
     private var appDelegate
 
     init() {
+        ClientUpgradePresenter.shared.start()
         ShowcaseAppShortcuts.updateAppShortcutParameters()
 #if DEBUG
         if CommandLine.arguments.contains("--personal-archive-ui-fixture") {
@@ -63,7 +64,9 @@ struct NekoWidgetApp: App {
     var body: some Scene {
         WindowGroup {
 #if DEBUG
-            if CommandLine.arguments.contains("--family-unshare-ui-fixture") {
+            if CommandLine.arguments.contains("--client-upgrade-response-fixture") {
+                ClientUpgradeResponseFixture()
+            } else if CommandLine.arguments.contains("--family-unshare-ui-fixture") {
                 FamilyNotebookUnshareFixture()
             } else if CommandLine.arguments.contains("--app-records-ui-fixture") {
                 AppRecordPersistenceFixtureView()
@@ -179,6 +182,61 @@ private struct SharingRuntimeSelfTestRootView: View {
         Color.clear
             .task {
                 await SharingRuntimeSelfTestRunner.shared.runIfRequested()
+            }
+    }
+}
+#endif
+
+
+/// Independent of navigation/sheet state; ordinary errors keep their current UI.
+@MainActor
+private final class ClientUpgradePresenter {
+    static let shared = ClientUpgradePresenter()
+    private var observers: [NSObjectProtocol] = []
+    private var windows: [UIWindow] = []
+
+    func start() {
+        guard observers.isEmpty else { return }
+        for name in [ClientUpgradeRequirement.notification, UIScene.didActivateNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+                Task { @MainActor in self.presentIfRequired() }
+            })
+        }
+    }
+
+    private func presentIfRequired() {
+        guard ClientUpgradeRequirement.shared.isRequired else { return }
+        windows.removeAll { $0.windowScene?.activationState == .unattached }
+        for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+            where scene.activationState == .foregroundActive {
+            guard !windows.contains(where: { $0.windowScene === scene }) else { continue }
+            let window = UIWindow(windowScene: scene)
+            window.windowLevel = .alert + 1
+            window.rootViewController = UIHostingController(rootView: ClientUpgradeRequiredView())
+            window.makeKeyAndVisible()
+            windows.append(window)
+        }
+    }
+}
+
+#if DEBUG
+private struct ClientUpgradeResponseFixture: View {
+    @State private var sheet = false
+    var body: some View {
+        Button("設定を開く") { sheet = true }
+            .accessibilityIdentifier("upgrade-fixture-settings")
+            .sheet(isPresented: $sheet) {
+                VStack {
+                    Text("通常のエラー")
+                    Button("426 を受け取る") {
+                        try? ClientUpgradeRequirement.shared.checkResponse(status: 426,
+                            data: Data(#"{"error":{"code":"CLIENT_UPGRADE_REQUIRED"}}"#.utf8))
+                    }.accessibilityIdentifier("upgrade-fixture-426")
+                    Button("503 を受け取る") {
+                        try? ClientUpgradeRequirement.shared.checkResponse(status: 503,
+                            data: Data(#"{"error":{"code":"CLIENT_UPGRADE_REQUIRED"}}"#.utf8))
+                    }.accessibilityIdentifier("upgrade-fixture-503")
+                }
             }
     }
 }

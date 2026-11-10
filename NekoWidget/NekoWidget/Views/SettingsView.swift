@@ -1334,21 +1334,6 @@ private struct ActivityView: UIViewControllerRepresentable {
 
 /// A row that leaves the app: tinted, with an arrow out, so blue means "opens outside".
 #endif
-/// The app's App Store page. The id comes from App Store Connect once the
-/// listing exists; until then nothing that points at it is shown.
-enum AppStoreListing {
-    static let appID: String? = "6801962436"
-    /// The page goes live with the release, not with review: 1.0 does not
-    /// link to it (11/10). Turn this on in the first build after release.
-    static let isPagePublished = false
-    static var pageURL: URL? {
-        guard isPagePublished else { return nil }
-        guard let appID, !appID.isEmpty, appID.allSatisfy(\.isNumber) else { return nil }
-        return URL(string: "https://apps.apple.com/jp/app/id\(appID)")
-    }
-    static let recommendMessage = "うちの猫の写真が、ホーム画面に。ねこのまど"
-}
-
 struct ExternalLinkRow: View {
     let title: String
     let systemImage: String

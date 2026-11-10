@@ -1,3 +1,4 @@
+import { clientUpgradeResponse } from '../../ServiceProtocol/client-upgrade-required';
 import { beginReadDiagnostic, finishReadDiagnostic, readStage } from './read-failure-diagnostic';
 import {advanceIdentityDeletion,deletionRequired,scopeIdentityCheck,identityDeletionAPI,isIdentityDeletionPath,protectedGroupRead} from './group-identity-service';
 import { cleanupDissolvedFamilyRosters } from './family-notebook-roster-cleanup';
@@ -677,6 +678,8 @@ export default {
     if (productionIntakeClosed(env)) {
       return new Response(null, { status: 503, headers: { "Cache-Control": "no-store" } });
     }
+    const upgrade = clientUpgradeResponse(request, env);
+    if (upgrade) return upgrade;
     try {
       return await route(request, env, ctx);
     } catch (error) {

@@ -1585,6 +1585,7 @@ actor ManagedPreservationClient {
                          expectedStatus: Int? = nil, beforeDispatch: (() throws -> Void)? = nil,
                          responseFile: URL? = nil, expectedMIMEType: String = "application/json", strictToolDeletion: Bool = false) async throws -> Data {
         try Task.checkCancellation()
+        try ClientUpgradeRequirement.shared.checkAllowed()
         guard let origin = configuration.origin,
               var parts = URLComponents(url: origin, resolvingAgainstBaseURL: false) else {
             throw ManagedPreservationError.disabled
@@ -1594,6 +1595,7 @@ actor ManagedPreservationClient {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData, timeoutInterval: 60)
         request.httpMethod = method; request.httpBody = body
         request.httpShouldHandleCookies = false
+        request.setValue(ClientUpgradeRequirement.buildHeader, forHTTPHeaderField: "X-Neko-App-Build")
         request.setValue(expectedMIMEType, forHTTPHeaderField: "Accept")
         request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
@@ -1618,6 +1620,7 @@ actor ManagedPreservationClient {
             guard let http = response as? HTTPURLResponse, http.url == url else {
                 throw ManagedPreservationError.invalidResponse
             }
+            try ClientUpgradeRequirement.shared.checkResponse(status: http.statusCode, data: data)
             guard (200...299).contains(http.statusCode) else {
                 let failure = (try? ManagedPreservationWire.decoder().decode(Failure.self, from: data))?.error
                 let code = failure?.code
@@ -1686,6 +1689,7 @@ actor ManagedPreservationClient {
             }
             return data
         } catch is CancellationError { throw CancellationError() }
+        catch let error as ClientUpgradeRequiredError { throw error }
         catch let error as ManagedPreservationError { throw error }
         catch let error as URLError where error.code == .cancelled { throw CancellationError() }
         catch let error as URLError where error.code == .timedOut { throw ManagedPreservationError.uploadTimedOut }

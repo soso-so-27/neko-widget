@@ -149,6 +149,7 @@
 		100000000000000000000169 /* MomentSharingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A4 /* MomentSharingStore.swift */; };
 		100000000000000000000170 /* MomentShareHandoffStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A5 /* MomentShareHandoffStore.swift */; };
 		100000000000000000000171 /* SharingAPIConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A6 /* SharingAPIConfiguration.swift */; };
+		D1110D000000000000000001 /* ClientUpgradeRequirement.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1110D000000000000000003 /* ClientUpgradeRequirement.swift */; };
 		10000000000000000000016A /* MomentCanonicalPreviewBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000250 /* MomentCanonicalPreviewBuilder.swift */; };
 		10000000000000000000016B /* MomentSharePreparationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000251 /* MomentSharePreparationService.swift */; };
 		1000000000000000000001F0 /* MomentBlockWithdrawalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000002F0 /* MomentBlockWithdrawalStore.swift */; };
@@ -264,6 +265,7 @@
 		70000000000000000000000E /* WidgetRenderPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000110 /* WidgetRenderPlan.swift */; };
 		70000000000000000000000F /* MomentShareHandoffStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A5 /* MomentShareHandoffStore.swift */; };
 		700000000000000000000010 /* SharingAPIConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A6 /* SharingAPIConfiguration.swift */; };
+		D1110D000000000000000002 /* ClientUpgradeRequirement.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1110D000000000000000003 /* ClientUpgradeRequirement.swift */; };
 		700000000000000000000011 /* MomentShareIngressService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000354 /* MomentShareIngressService.swift */; };
 		720000000000000000000001 /* ImageIO.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000504 /* ImageIO.framework */; };
 		720000000000000000000002 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000506 /* UIKit.framework */; };
@@ -433,6 +435,7 @@
 		F000000000000000000001A4 /* MomentSharingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentSharingStore.swift; sourceTree = "<group>"; };
 		F000000000000000000001A5 /* MomentShareHandoffStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentShareHandoffStore.swift; sourceTree = "<group>"; };
 		F000000000000000000001A6 /* SharingAPIConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharingAPIConfiguration.swift; sourceTree = "<group>"; };
+		D1110D000000000000000003 /* ClientUpgradeRequirement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientUpgradeRequirement.swift; sourceTree = "<group>"; };
 		F00000000000000000000201 /* AppRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRootView.swift; sourceTree = "<group>"; };
 		F00000000000000000000202 /* NekoWidgetApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidgetApp.swift; sourceTree = "<group>"; };
 		F00000000000000000000267 /* BillingInternalDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillingInternalDiagnostics.swift; sourceTree = "<group>"; };
@@ -801,6 +804,7 @@
 				F000000000000000000001A4 /* MomentSharingStore.swift */,
 				F000000000000000000001A5 /* MomentShareHandoffStore.swift */,
 				F000000000000000000001A6 /* SharingAPIConfiguration.swift */,
+				D1110D000000000000000003 /* ClientUpgradeRequirement.swift */,
 			);
 			path = Sharing;
 			sourceTree = "<group>";
@@ -1374,6 +1378,7 @@
 				100000000000000000000169 /* MomentSharingStore.swift in Sources */,
 				100000000000000000000170 /* MomentShareHandoffStore.swift in Sources */,
 				100000000000000000000171 /* SharingAPIConfiguration.swift in Sources */,
+				D1110D000000000000000001 /* ClientUpgradeRequirement.swift in Sources */,
 				10000000000000000000016A /* MomentCanonicalPreviewBuilder.swift in Sources */,
 				10000000000000000000016B /* MomentSharePreparationService.swift in Sources */,
 				1000000000000000000001F0 /* MomentBlockWithdrawalStore.swift in Sources */,
@@ -1519,6 +1524,7 @@
 				70000000000000000000000E /* WidgetRenderPlan.swift in Sources */,
 				70000000000000000000000F /* MomentShareHandoffStore.swift in Sources */,
 				700000000000000000000010 /* SharingAPIConfiguration.swift in Sources */,
+				D1110D000000000000000002 /* ClientUpgradeRequirement.swift in Sources */,
 				700000000000000000000011 /* MomentShareIngressService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -14,6 +14,7 @@ protocol GroupShareServing: Sendable {
 final class GroupShareComposerModel: ObservableObject {
     @Published private(set) var windows: [GroupWindow] = []
     @Published private(set) var selected: GroupWindow?
+    @Published private(set) var upgradeRequired = false
     @Published private(set) var loading = true
     @Published private(set) var sending = false
     @Published private(set) var delivered = false
@@ -51,6 +52,7 @@ final class GroupShareComposerModel: ObservableObject {
         } catch {
             message = "まどを読み込めませんでした。ねこのまどを開いて、もう一度お試しください。"
         }
+        upgradeRequired = ClientUpgradeRequirement.shared.isRequired
         loading = false
     }
 
@@ -88,11 +90,13 @@ final class GroupShareComposerModel: ObservableObject {
         } catch {
             message = Self.message(for: error)
         }
+        upgradeRequired = ClientUpgradeRequirement.shared.isRequired
         sending = false
     }
 
     static func message(for error: Error) -> String {
         switch error {
+        case is ClientUpgradeRequiredError: return ClientUpgradeRequirement.message
         case MomentSharingError.invalidPayload, MomentSharingError.payloadTooLarge:
             return "この写真は読み込めませんでした。別の写真を選んでください。"
         case GroupSubscriptionError.windowPaused, GroupSubscriptionError.ownerPlusRequired:
@@ -119,6 +123,14 @@ struct GroupShareComposer: View {
     let finish: () -> Void
 
     var body: some View {
+        Group {
+            if model.upgradeRequired { ClientUpgradeRequiredView() }
+            else { composer }
+        }
+        .task { await model.load() }
+    }
+
+    private var composer: some View {
         NavigationStack {
             Group {
                 if model.delivered {
@@ -188,7 +200,6 @@ struct GroupShareComposer: View {
                 }
             }
         }
-        .task { await model.load() }
     }
 
     @ViewBuilder private func thumbnail(_ windowID: String) -> some View {

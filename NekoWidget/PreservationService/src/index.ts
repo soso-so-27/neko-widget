@@ -1,3 +1,4 @@
+import { clientUpgradeResponse } from '../../ServiceProtocol/client-upgrade-required';
 import { ServiceError, sha256, type IdentityVerifier } from './contracts';
 import { DurableAuth } from './auth';
 import { deviceSessionCleanupStatements } from './device-sessions';
@@ -30,6 +31,8 @@ import { readBoundedBody } from './bounded-body';
 export { OwnerDeletionInventory } from './owner-deletion-inventory';
 
 export interface Env extends ProductQuotaSettings {
+  CLIENT_UPGRADE_REQUIRED_ENABLED?: string;
+  MINIMUM_SUPPORTED_IOS_BUILD?: string;
   DB: D1Database; ARCHIVE: R2Bucket;
   ENVIRONMENT?: string; PILOT_MODE?: string; PILOT_IDENTITY_KEYS_JSON?: string;
   PILOT_STORAGE_ACCESS_ENABLED?: string; PILOT_REGISTRATION_ENABLED?: string;
@@ -453,6 +456,8 @@ export async function reserveNoticeSend(db: D1Database, now = Date.now()): Promi
 export default {
   async fetch(request: Request, env: Env, context?: ExecutionContext): Promise<Response> {
     try {
+      const upgrade = clientUpgradeResponse(request, env);
+      if (upgrade) return upgrade;
       if (env.PRESERVATION_ENABLED !== 'YES') throw new ServiceError('PRESERVATION_DISABLED', 503);
       const ip = request.headers.get('CF-Connecting-IP');
       if (!ip) throw new ServiceError('REQUEST_IDENTITY_UNCONFIRMED', 403);

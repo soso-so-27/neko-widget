@@ -4,6 +4,27 @@ import XCTest
 /// Photos or signing in to any account. The product screens use the shipping
 /// SwiftUI views with DEBUG-only, code-generated cat illustrations.
 final class AppStoreScreenshotUITests: XCTestCase {
+    @MainActor
+    func testReviewClientUpgradeRequired() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--client-upgrade-response-fixture", "-AppleLanguages", "(ja)"]
+        app.launch()
+        XCTAssertTrue(app.buttons["upgrade-fixture-settings"].waitForExistence(timeout: 10))
+        app.buttons["upgrade-fixture-settings"].tap()
+        XCTAssertTrue(app.buttons["upgrade-fixture-503"].waitForExistence(timeout: 5))
+        app.buttons["upgrade-fixture-503"].tap()
+        XCTAssertFalse(app.staticTexts["client-upgrade-message"].exists)
+        XCTAssertTrue(app.staticTexts["通常のエラー"].exists)
+        app.buttons["upgrade-fixture-426"].tap()
+        let message = app.staticTexts["client-upgrade-message"]
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+        XCTAssertEqual(message.label, "新しいバージョンにアップデートしてください。")
+        XCTAssertFalse(app.links["client-upgrade-store"].exists)
+        XCTAssertFalse(app.buttons["upgrade-fixture-426"].isHittable)
+        captureScreenshot(named: "client-upgrade-required-over-settings")
+        app.terminate()
+    }
+
     override func setUpWithError() throws {
         continueAfterFailure = false
         executionTimeAllowance = 180
