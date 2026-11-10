@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 
 # Shared composer and isolated credential/transport contracts. Synthetic only;
 # this does not claim a signed iPhone extension's entitlements were exercised.
-xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+xcrun --sdk macosx swiftc -D INTERNAL_PRESENTATION -parse-as-library -target "$(uname -m)-apple-macos14.0" \
   Shared/Sharing/GroupWindowCore.swift Shared/Sharing/GroupShareCreateRequest.swift \
   Shared/Sharing/PairingCore.swift Shared/Models/WidgetRenderPlan.swift \
   Shared/Models/WidgetManifest.swift Shared/Sharing/MomentSharingCore.swift \
@@ -199,7 +199,7 @@ xcrun swiftc \
   ci/fixtures/window-name-protocol-v1.json
 
 # Production runtime policy; synthetic data only.
-xcrun swiftc -parse-as-library Shared/Sharing/SharingAPIConfiguration.swift \
+xcrun swiftc -D INTERNAL_PRESENTATION -parse-as-library Shared/Sharing/SharingAPIConfiguration.swift \
   ci/verify-production-configuration.swift -o "$RUNNER_TEMP/verify-production-configuration"
 "$RUNNER_TEMP/verify-production-configuration"
 

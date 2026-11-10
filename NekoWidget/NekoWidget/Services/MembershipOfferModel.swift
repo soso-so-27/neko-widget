@@ -1223,6 +1223,7 @@ struct MembershipOfferPreviewView: View {
 
 enum BillingSandboxOwnerEnrollmentAvailability {
     static var isAvailable: Bool {
+#if DEBUG || INTERNAL_PRESENTATION
         let preservation = ManagedPreservationConfiguration.current
         return InternalBuildPresentationAvailability.isAvailable
             && Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
@@ -1231,6 +1232,9 @@ enum BillingSandboxOwnerEnrollmentAvailability {
             && preservation.origin?.absoluteString
                 == "https://neko-preservation-staging-disabled.nakanishisoya.workers.dev"
             && preservation.membershipAudience == "neko-preservation-staging"
+#else
+        return false
+#endif
     }
 }
 

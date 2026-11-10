@@ -42,4 +42,4 @@ PERSONAL_ARCHIVE_ENABLED = YES
 PERSONAL_ARCHIVE_READ_ONLY = YES
 
 // Anonymous daily usage; empty means no transmission.
-USAGE_REPORT_URL = https:/$()/neko-usage-production.nakanishisoya.workers.dev/v1/usage
+USAGE_REPORT_URL = https:/$()/usage.nekonomado.com/v1/usage
