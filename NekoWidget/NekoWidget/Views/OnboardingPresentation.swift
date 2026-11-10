@@ -10,19 +10,27 @@ enum OnboardingPartialScanRecovery {
     static func showsProgress(hasFinalResult: Bool, hasPreliminaryResult: Bool, error: String?) -> Bool {
         !hasFinalResult && message(hasPreliminaryResult: hasPreliminaryResult, error: error) == nil
     }
+
+    /// The count appears with the first cat. 「いま 0枚」 over an empty grid
+    /// read as "nothing found" while the newest photos had no cat (11/10).
+    static func showsCount(hasPreliminaryResult: Bool, displayedCount: Int) -> Bool {
+        hasPreliminaryResult && displayedCount > 0
+    }
 }
 
 /// The onboarding is deliberately limited to these moments. Adding a case
 /// changes the product flow, so the standalone verifier locks the count and
 /// order. `plusOffer` (ADR-027) is appended so persisted indices keep their
-/// meaning, and it is reachable only when the caller says Plus is offered.
+/// meaning. Since 11/10 the first run no longer moves to it: the Widget guide
+/// ends the first run, and the first Plus offer comes later
+/// (`FirstPlusOfferPolicy`). A first run saved on that page still resumes it.
 enum OnboardingPresentationPage: Int, CaseIterable, Identifiable, Sendable {
     case purpose
     case photoPermission
     case scanResult
     case widgetGuide
-    /// The last, skippable page introducing Plus. It follows the Widget guide
-    /// only; skipping Photos access or finishing without a photo never shows it.
+    /// The skippable Plus page. Reached only by resuming a first run saved
+    /// on it before 11/10; nothing routes to it any more.
     case plusOffer
 
     var id: Int { rawValue }
@@ -71,18 +79,16 @@ enum OnboardingPresentationCopy {
     static let purposeAction = "猫を探す"
     static let purposeFootnote = ""
 
-    static let permissionTitleLines = [
-        "このiPhoneの中から、",
-        "猫の写真と動画を見つけます。"
-    ]
     // The promise is said once, on page one (and on Home's card for anyone
-    // who skipped). Page two is the title and the Photos dialog only (11/8).
+    // who skipped). Page two is the windows and the Photos dialog only: its
+    // own title repeated page one (11/10).
     static let permissionAction = "写真へのアクセスを許可"
     static let permissionSkipAction = "あとで"
 
     /// Page three shows the cats as they are found: a grid that fills, a count,
     /// and the one next step (place the Widget). The count reads 「いま 32枚」
-    /// while the scan runs and 「128枚」 once it is final.
+    /// while the scan runs and 「128枚」 once it is final. Before the first
+    /// cat it shows no count: 「いま 0枚」 read as a failure (11/10).
     static let scanTitle = "猫を探しています"
     static let scanFoundTitle = "猫の写真が見つかりました"
     static let scanBodyLines = [
@@ -108,9 +114,21 @@ enum OnboardingPresentationCopy {
         "左上の「＋」をタップ",
         "「ねこのまど」を探し、好きな大きさで追加"
     ]
+    /// Said under the steps (11/10): place first, then come back.
     static let widgetReturnHint = "追加してアプリへ戻ると、自動で確認します。"
-    static let widgetAction = "完了"
+    static let widgetAction = "置きました"
     static let widgetLaterAction = "あとで"
+
+    /// The first run's last screen once WidgetKit sees the Widget (11/10):
+    /// one state, one sentence, one button. Plus is not offered here.
+    static let widgetPlacedTitle = "置けました"
+    static let widgetPlacedBody = "ホーム画面で札を押すと、きょうの1枚が出ます。"
+    static let widgetPlacedAction = "写真を見る"
+
+    /// Page two, when the app's own records could not be read: the Photos
+    /// request cannot start, so the button tries the loading again (11/10).
+    static let loadFailedTitle = "読み込めませんでした"
+    static let loadFailedAction = "もう一度"
 
 }
 
@@ -126,9 +144,9 @@ struct OnboardingPresentationState: Equatable, Sendable {
     }
 
     let mode: Mode
-    /// Whether the skippable Plus page ends the first run. The caller passes
-    /// the product configuration; while Plus is not offered the flow is the
-    /// original four pages.
+    /// Whether a first run saved on the Plus page may resume there. The
+    /// caller passes the product configuration. No transition leads to the
+    /// Plus page any more (11/10: it showed before the cat on the Home Screen).
     let offersPlus: Bool
     private(set) var currentPage: OnboardingPresentationPage?
     private(set) var resumePageIndex: Int
@@ -195,14 +213,9 @@ struct OnboardingPresentationState: Equatable, Sendable {
             routeFirstRun(to: .scanResult)
         case .scanResult:
             routeFirstRun(to: .widgetGuide)
-        case .widgetGuide:
-            if offersPlus {
-                routeFirstRun(to: .plusOffer)
-            } else {
-                completedVersion = OnboardingPresentationPersistence.currentCompletedVersion
-                self.currentPage = nil
-            }
-        case .plusOffer:
+        case .widgetGuide, .plusOffer:
+            // 11/10: the Widget guide (or its 「置けました」) ends the first
+            // run. Plus is offered later, once, by FirstPlusOfferPolicy.
             completedVersion = OnboardingPresentationPersistence.currentCompletedVersion
             self.currentPage = nil
         }
@@ -255,15 +268,13 @@ struct OnboardingPresentationState: Equatable, Sendable {
         routeFirstRun(to: .photoPermission)
     }
 
-    /// "あとで" completes the Widget handoff: the first run ends, or moves to
-    /// the optional Plus page when it is offered. In a Settings replay it
-    /// simply dismisses the guide without touching saved first-run progress.
+    /// "あとで" completes the Widget handoff: the first run ends (never on
+    /// the Plus page, 11/10). In a Settings replay it simply dismisses the
+    /// guide without touching saved first-run progress.
     mutating func skipWidgetGuide() {
         guard currentPage == .widgetGuide else { return }
         if mode == .widgetGuideReplay {
             currentPage = nil
-        } else if offersPlus {
-            routeFirstRun(to: .plusOffer)
         } else {
             completedVersion = OnboardingPresentationPersistence.currentCompletedVersion
             currentPage = nil
@@ -277,6 +288,53 @@ struct OnboardingPresentationState: Equatable, Sendable {
 
     private static func clampedPageIndex(_ value: Int, lastPage: OnboardingPresentationPage) -> Int {
         min(max(0, value), lastPage.rawValue)
+    }
+}
+
+/// The first Plus offer (11/10). The first run no longer ends on Plus: the
+/// person first meets their cat on the Home Screen. The offer comes once, on a
+/// later opening of the app, after a cloudy window was cleared at least once
+/// or from the next day, with a Widget placed and over the person's own cat.
+/// It never shares a launch with the review prompt, and waits while any other
+/// screen is presented.
+enum FirstPlusOfferPolicy {
+    /// When the first run ended through the Widget guide (seconds since 1970).
+    /// Written once, when the first run ends; never while scrolling.
+    static let dueSinceKey = "plusOffer.first.dueSince.v1"
+    /// Set once the offer was shown (or the first run's own Plus page was).
+    static let shownKey = "plusOffer.first.shown.v1"
+
+    /// When the app last became active, in memory only. The opening that
+    /// ended the first run started before `dueSince`, so it never qualifies.
+    @MainActor static var activeSince: Date?
+    /// One prompt per launch: this offer or the review prompt, never both.
+    @MainActor static var promptedThisLaunch = false
+
+    static func isDue(dueSince: Date?, shown: Bool, activeSince: Date?, now: Date,
+                      hasClearedCloudyWindow: Bool, plusIsOffered: Bool, widgetPlaced: Bool,
+                      promptedThisLaunch: Bool, otherScreenPresented: Bool,
+                      calendar: Calendar = Calendar(identifier: .gregorian)) -> Bool {
+        guard let dueSince, !shown, plusIsOffered, widgetPlaced, !promptedThisLaunch,
+              !otherScreenPresented, let activeSince, activeSince > dueSince, now >= activeSince
+        else { return false }
+        return hasClearedCloudyWindow || !calendar.isDate(now, inSameDayAs: dueSince)
+    }
+
+    /// The first run ended through the Widget guide: the offer becomes due.
+    /// An earlier value is kept, so ending twice never moves it later.
+    static func noteFirstRunEnded(now: Date = Date(), defaults: UserDefaults = .standard) {
+        guard defaults.object(forKey: dueSinceKey) == nil, !defaults.bool(forKey: shownKey) else { return }
+        defaults.set(now.timeIntervalSince1970, forKey: dueSinceKey)
+    }
+
+    static func noteShown(defaults: UserDefaults = .standard) {
+        guard !defaults.bool(forKey: shownKey) else { return }
+        defaults.set(true, forKey: shownKey)
+    }
+
+    static func dueSince(defaults: UserDefaults = .standard) -> Date? {
+        guard defaults.object(forKey: dueSinceKey) != nil else { return nil }
+        return Date(timeIntervalSince1970: defaults.double(forKey: dueSinceKey))
     }
 }
 

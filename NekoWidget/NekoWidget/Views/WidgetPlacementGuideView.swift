@@ -7,8 +7,6 @@ import SwiftUI
 struct WidgetPlacementGuideView: View {
     let onComplete: () -> Void
     let onSkip: () -> Void
-    /// Cats are already registered: the line about registering is left out.
-    var hasCats = false
     /// Opened again from 設定: one button with this title (it calls
     /// `onComplete`) in place of 「完了」 and 「あとで」 (11/7).
     var closeTitle: String? = nil
@@ -101,11 +99,16 @@ struct WidgetPlacementGuideView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 20)
                     .accessibilityIdentifier("official-window-widget-source")
-            } else if !hasCats {
-                Text("猫を登録すると、猫ごとにも選べます。")
+            } else if closeTitle == nil {
+                // 11/10: place first, then come back; the app confirms by
+                // itself (the 設定 page only closes). Naming cats is not part
+                // of placing a Widget.
+                Text(OnboardingPresentationCopy.widgetReturnHint)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
+                    .accessibilityIdentifier("widget-placement-return-hint")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

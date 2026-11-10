@@ -12,7 +12,8 @@ import SwiftUI
 /// seasonal movie, preservation, the personal Widget resume path, and the
 /// current group-window creation/continuation screens.
 enum PlusOfferContext: Equatable, Sendable {
-    /// The last, skippable page of the first run.
+    /// The first Plus offer (11/10): once, on a later opening after the
+    /// Widget was placed (FirstPlusOfferPolicy), or a resumed first-run page.
     case onboarding
     /// The app was opened from a personal Widget that kept its last photo.
     case widgetResume
@@ -50,7 +51,9 @@ enum PlusOfferContext: Equatable, Sendable {
     /// One line above the heading saying why the screen appeared here.
     var reason: String? {
         switch self {
-        case .onboarding, .settings: nil
+        // 11/10: the free Widget keeps its one photo; Plus makes it new daily.
+        case .onboarding: "ホーム画面の1枚は無料です。毎日新しくなるのはPlusです。"
+        case .settings: nil
         case .widgetResume: "ホーム画面の写真を毎日新しくするのは、Plusの機能です。"
         case .monthlySummary: "月の作品と季節のムービーは、Plusで見られます。"
         case .newMemo: "メモを書くのはPlusの機能です。"
