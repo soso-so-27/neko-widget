@@ -94,6 +94,7 @@ private enum CloudyWindowVerifier {
         try staleDisplayReveal()
         try cacheReleaseKeepsSelection()
         try widgetSelectionWithoutSwitch()
+        try beforePlacementPreparesTheNewestFew()
         try rotationAndSmallPools()
         try catScopesAndExpiry()
         try permissionAndPublicBoundary()
@@ -148,6 +149,45 @@ private enum CloudyWindowVerifier {
                 configurationRevision: plan.configuration.revision, now: closing)
             throw Failure.failed("removed Widget's in-flight render accepted")
         } catch PersonalRediscoveryStore.Error.staleRevision { }
+    }
+
+    /// 11/10: a Widget placed during the first run draws the cloudy window at
+    /// once. Before any Widget, the newest few cats are prepared; once a
+    /// window was drawn, removing every Widget still releases everything.
+    private static func beforePlacementPreparesTheNewestFew() throws {
+        let f = try Fixture(count: 6, installed: false)
+        defer { f.cleanup() }
+        try check(f.store.preparation(now: baseline) == nil, "no preparation before WidgetKit answered")
+        try f.store.synchronizeInstalledSources([])
+        let plan = try f.store.preparation(now: baseline)!
+        let newest = ["photo-00", "photo-01", "photo-02"]
+        try check(plan.candidates.map { $0.item.localIdentifier } == newest
+                  && CloudyWindowStore.prePlacementPhotoCount == 3, "the newest three cats are prepared before placement")
+        let image = try Data(contentsOf: f.directory.appendingPathComponent("widget-cache")
+            .appendingPathComponent(f.candidates[0].item.cacheFilename))
+        for photo in f.prepared where newest.contains(photo.photoID) {
+            try f.store.publish(photo, files: Dictionary(uniqueKeysWithValues: photo.filenames.map { ($0, image) }),
+                authorityRevision: plan.authorityRevision, configurationRevision: plan.configuration.revision,
+                protectedPhotoIDs: plan.protectedPhotoIDs, now: baseline)
+        }
+        try check(!f.store.hasRevealedAnyWindow(), "nothing cleared yet")
+        // The Widget is placed while the app is in the background: its first
+        // drawing is the cloudy window, never an empty 「アプリを開いて」.
+        let first = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: baseline)
+        try check(!first.isEmpty && first[0].isCloudy && newest.contains(first[0].photo.photoID),
+                  "the first drawing after placement is cloudy and ready")
+        try check(f.store.reveal(selectionID: first[0].selection.id, scopeID: first[0].selection.scopeID,
+            photoID: first[0].photo.photoID, now: baseline), "only the tag clears it")
+        try check(f.store.hasRevealedAnyWindow(), "a cleared window is known for the first Plus offer")
+        try check(f.store.preparation(now: baseline) == nil, "after the first drawing, no Widget means no preparation")
+        try f.store.synchronizeInstalledSources([CloudyWindowStore.personalScope])
+        try f.store.synchronizeInstalledSources([])
+        try check(f.store.imageURL(filename: first[0].photo.clear.small) == nil, "removal still releases derived cache")
+        try check(f.store.preparation(now: baseline) == nil, "removal stops preparation")
+        let disabled = try Fixture(count: 6, enabled: false, installed: false)
+        defer { disabled.cleanup() }
+        try disabled.store.synchronizeInstalledSources([])
+        try check(disabled.store.preparation(now: baseline) == nil, "nothing prepared while the window is not cloudy")
     }
 
     private static func deliver(_ f: Fixture, photoID: String = "photo-05", now: Date = closing,

@@ -470,10 +470,10 @@ final class AppStoreScreenshotUITests: XCTestCase {
             fail("The local-only Photos privacy page did not finish preparing.", application: app)
             return
         }
-        guard app.staticTexts["このiPhoneの中から、猫の写真と動画を見つけます。"].exists else {
-            fail("The Photos permission title was not visible.", application: app)
-            return
-        }
+        // 11/10: page two is the windows and the Photos dialog; its own title
+        // repeated page one and was removed.
+        XCTAssertFalse(app.staticTexts["このiPhoneの中から、猫の写真と動画を見つけます。"].exists,
+                       "The Photos permission page repeated page one's promise")
         // The privacy promise is said once, on page one (11/8).
         XCTAssertFalse(app.staticTexts["・写真や動画を、勝手にiPhoneの外へ送りません"].exists)
 

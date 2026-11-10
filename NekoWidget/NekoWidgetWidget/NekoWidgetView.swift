@@ -615,7 +615,8 @@ struct NekoWidgetView: View {
         }
         if effectiveEmptyStateReason == .needsApp {
             if entry.photoSourceIdentifier.hasPrefix(CloudyWindowStore.profilePrefix) { return "くもりのまどを準備しています" }
-            return "写真を表示できません"
+            // 11/10: not an error. Seen right after placing, before the app ran.
+            return "写真を準備しています"
         }
         if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier) {
             // Waiting also follows the expiry of a previously displayed photo.
@@ -642,7 +643,7 @@ struct NekoWidgetView: View {
         }
         if effectiveEmptyStateReason == .needsApp {
             if entry.photoSourceIdentifier.hasPrefix(CloudyWindowStore.profilePrefix) { return "アプリを一度開くと始まります" }
-            return "アプリを開いて更新"
+            return "アプリを開くと始まります"
         }
         if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)
             || GroupWidgetCache.isGroupSourceID(entry.photoSourceIdentifier) {

@@ -12,10 +12,17 @@ struct OnboardingView: View {
 
     let authorizationStatus: PHAuthorizationStatus
     let isPhotoRequestReady: Bool
+    /// The app's records could not be read, so the Photos request cannot
+    /// start: page two offers 「もう一度」 instead of a spinner (11/10).
+    var isStartupLoadFailed = false
+    var retryStartupLoad: () -> Void = {}
     let scan: ScanPresentation
     let resultPhotos: [PhotoPresentation]
     let scanErrorMessage: String?
     let isLimitedAccess: Bool
+    /// WidgetKit sees the Widget while the guide is open: the guide becomes
+    /// the one 「置けました」 screen that ends the first run (11/10).
+    var isWidgetPlaced = false
 
     let requestPhotoAccess: () -> Void
     let skipPhotoAccess: () -> Void
@@ -45,10 +52,14 @@ struct OnboardingView: View {
                 scanPage
 
             case .widgetGuide:
-                WidgetPlacementGuideView(
-                    onComplete: finish,
-                    onSkip: finish
-                )
+                if isWidgetPlaced {
+                    OnboardingWidgetPlacedPage(close: finish)
+                } else {
+                    WidgetPlacementGuideView(
+                        onComplete: finish,
+                        onSkip: finish
+                    )
+                }
 
             case .plusOffer:
                 OnboardingPlusOfferPage(
@@ -73,7 +84,9 @@ struct OnboardingView: View {
         case .notDetermined:
             OnboardingPhotoPermissionPage(
                 isRequestReady: isPhotoRequestReady,
+                isLoadFailed: isStartupLoadFailed,
                 requestAccess: requestPhotoAccess,
+                retryLoad: retryStartupLoad,
                 skip: skipPhotoAccess
             )
 
@@ -81,7 +94,6 @@ struct OnboardingView: View {
             VStack(spacing: 0) {
                 PhotoPermissionView(
                     status: authorizationStatus,
-                    requestAccess: requestPhotoAccess,
                     openSettings: openPhotoSettings
                 )
 
@@ -101,7 +113,6 @@ struct OnboardingView: View {
         @unknown default:
             PhotoPermissionView(
                 status: .denied,
-                requestAccess: {},
                 openSettings: openPhotoSettings
             )
         }
@@ -300,56 +311,66 @@ struct OnboardingWindowMosaic: View {
 
 /// Page two: the same windows, dimmed, and the Photos dialog. The dialog is
 /// requested as soon as the app can ask, so there is nothing to read first;
-/// the promise was said on page one, and the buttons remain for anyone
-/// the dialog did not reach (a slow start, or a test).
+/// the promise was said on page one (11/10: page two's own title repeated
+/// it), and the buttons remain for anyone the dialog did not reach (a slow
+/// start, or a test). A failed start offers 「もう一度」, never an endless spinner.
 private struct OnboardingPhotoPermissionPage: View {
     let isRequestReady: Bool
+    var isLoadFailed = false
     let requestAccess: () -> Void
+    var retryLoad: () -> Void = {}
     let skip: () -> Void
     @State private var hasRequested = false
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 22) {
-                OnboardingWindowMosaic(dimmed: true)
-                    .padding(.top, 8)
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(OnboardingPresentationCopy.permissionTitleLines.joined(separator: ""))
-                        .font(.headline)
-                        .accessibilityAddTraits(.isHeader)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxWidth: 520)
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 20)
-            .padding(.bottom, 24)
+            OnboardingWindowMosaic(dimmed: true)
+                .padding(.top, 8)
+                .frame(maxWidth: 520)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 24)
         }
         .scrollBounceBehavior(.basedOnSize)
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 10) {
-                Button(action: requestAccess) {
-                    HStack(spacing: 9) {
-                        if !isRequestReady {
-                            ProgressView()
-                                .tint(.white)
-                        }
-                        Text(OnboardingPresentationCopy.permissionAction)
+                if isLoadFailed {
+                    Text(OnboardingPresentationCopy.loadFailedTitle)
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .accessibilityIdentifier("onboarding-load-failed")
+                    Button(action: retryLoad) {
+                        Text(OnboardingPresentationCopy.loadFailedAction)
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 5)
                     }
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 5)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .accessibilityIdentifier("onboarding-load-retry")
+                } else {
+                    Button(action: requestAccess) {
+                        HStack(spacing: 9) {
+                            if !isRequestReady {
+                                ProgressView()
+                                    .tint(.white)
+                            }
+                            Text(OnboardingPresentationCopy.permissionAction)
+                        }
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 5)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(!isRequestReady)
+                    .accessibilityIdentifier("onboarding-photo-permission-allow")
+                    .accessibilityHint(
+                        isRequestReady
+                            ? "写真へのアクセス方法を選びます"
+                            : "アプリの準備が終わると操作できます"
+                    )
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(!isRequestReady)
-                .accessibilityIdentifier("onboarding-photo-permission-allow")
-                .accessibilityHint(
-                    isRequestReady
-                        ? "写真へのアクセス方法を選びます"
-                        : "アプリの準備が終わると操作できます"
-                )
 
                 Button(OnboardingPresentationCopy.permissionSkipAction, action: skip)
                     .buttonStyle(.bordered)
@@ -405,7 +426,9 @@ private struct OnboardingScanPage: View {
                         .font(.title2.bold())
                         .accessibilityAddTraits(.isHeader)
                     Spacer(minLength: 8)
-                    if scan.hasPreliminaryResult, !isFinalZero {
+                    if OnboardingPartialScanRecovery.showsCount(
+                        hasPreliminaryResult: scan.hasPreliminaryResult,
+                        displayedCount: scan.displayedCatCount), !isFinalZero {
                         Text(scan.hasFinalResult
                              ? "\(scan.displayedCatCount.formatted())枚"
                              : "\(OnboardingPresentationCopy.scanCountLead) \(scan.displayedCatCount.formatted())枚")
@@ -431,6 +454,12 @@ private struct OnboardingScanPage: View {
                     .controlSize(.large)
                     .frame(maxWidth: .infinity)
                 } else {
+                    // Only the chosen photos are searched: said here too, with
+                    // the 写真 tab's own banner (11/10).
+                    if isLimitedAccess {
+                        LimitedAccessBanner(chooseMorePhotos: chooseMorePhotos)
+                            .accessibilityIdentifier("onboarding-limited-access")
+                    }
                     photoGrid
 
                     if showsProgress {
@@ -532,9 +561,51 @@ private struct OnboardingScanPage: View {
     }
 }
 
-/// The last, optional page of the first run (ADR-027 1章). It comes after
-/// Photos access, the scan, and the Widget guide, so it never stands between
-/// a person and their photos. The page is the one Plus screen itself, price
+/// The first run's end once WidgetKit sees the Widget (11/10): one state, one
+/// sentence, one button into the 写真 tab. Plus is not offered here; the
+/// person has not met their cat on the Home Screen yet.
+private struct OnboardingWidgetPlacedPage: View {
+    let close: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 56, weight: .regular))
+                .foregroundStyle(.tint)
+                .accessibilityHidden(true)
+            Text(OnboardingPresentationCopy.widgetPlacedTitle)
+                .font(.title2.bold())
+                .accessibilityAddTraits(.isHeader)
+            Text(OnboardingPresentationCopy.widgetPlacedBody)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 28)
+        .safeAreaInset(edge: .bottom) {
+            Button(action: close) {
+                Text(OnboardingPresentationCopy.widgetPlacedAction)
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .accessibilityIdentifier("onboarding-widget-placed-close")
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .background(.bar)
+        }
+        .accessibilityIdentifier("onboarding-widget-placed")
+    }
+}
+
+/// The optional Plus page (ADR-027 1章), now reached only by resuming a first
+/// run saved on it before 11/10. It comes after Photos access, the scan, and
+/// the Widget guide, so it never stands between a person and their photos. The page is the one Plus screen itself, price
 /// and trial from StoreKit (11/7: a page with the same heading and values
 /// opened a second, identical screen); "あとで" is one tap.
 private struct OnboardingPlusOfferPage: View {

@@ -277,7 +277,7 @@ struct SettingsView: View {
                     }
                 }
                 NavigationLink {
-                    WidgetPlacementGuidePage(hasCats: !catProfilesPresentation.profiles.isEmpty)
+                    WidgetPlacementGuidePage()
                 } label: {
                     Label("ウィジェットの置き方", systemImage: "rectangle.on.rectangle.angled")
                 }
@@ -1387,11 +1387,10 @@ struct SettingsActionRow: View {
 /// The widget guide as a page inside 設定: one 「閉じる」 goes back (11/7:
 /// 「完了」 and 「あとで」 both only closed it).
 struct WidgetPlacementGuidePage: View {
-    var hasCats = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        WidgetPlacementGuideView(onComplete: { dismiss() }, onSkip: { dismiss() }, hasCats: hasCats,
+        WidgetPlacementGuideView(onComplete: { dismiss() }, onSkip: { dismiss() },
                                  closeTitle: "閉じる")
             .navigationBarTitleDisplayMode(.inline)
     }

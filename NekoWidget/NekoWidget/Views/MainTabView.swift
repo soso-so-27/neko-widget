@@ -620,6 +620,8 @@ struct MainTabView: View {
     @State private var relatedPhotoRoute: PhotoRediscoveryRoute?
     @State private var relatedPhotoUsesLibraryScope = false
     @State private var showsSettings = false
+    /// The first Plus offer, once, on a later opening (FirstPlusOfferPolicy).
+    @State private var showsFirstPlusOffer = false
     @State private var replaysWidgetGuideAfterSettingsDismiss = false
     @State private var widgetOpenedPhotoIdentifier: String?
     @State private var widgetShownAt: Date?
@@ -815,6 +817,12 @@ struct MainTabView: View {
         .sheet(item: $relatedPhotoRoute, onDismiss: { relatedPhotoUsesLibraryScope = false }) { route in
             relatedAlbumsSheet(for: route)
         }
+        // 11/10: the first Plus offer, after the cat was met on the Home Screen.
+        .sheet(isPresented: $showsFirstPlusOffer, onDismiss: {
+            NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
+        }) {
+            MembershipOfferSheet(model: .live(), context: .onboarding) { _ in showsFirstPlusOffer = false }
+        }
         // The Plus screen opens over its own cat (the best candidate, favorites
         // first) from every tab and sheet below, Settings included.
         .environment(\.plusOfferPhoto, bestShowcaseCandidate.map {
@@ -940,8 +948,18 @@ struct MainTabView: View {
         }
     }
 
-    var body: some View {
+    /// The first Plus offer is checked on each opening. Kept out of `body`'s
+    /// long chain so the compiler can type-check it.
+    private var routedTabContentOfferingFirstPlus: some View {
         routedTabContent
+            .task(id: scenePhase) {
+                guard scenePhase == .active else { return }
+                await offerFirstPlusIfDue()
+            }
+    }
+
+    var body: some View {
+        routedTabContentOfferingFirstPlus
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active {
                 consumeShowcaseLaunchRequest()
@@ -1965,6 +1983,49 @@ struct MainTabView: View {
         )
     }
 
+    /// The first Plus offer (11/10, FirstPlusOfferPolicy): once, on a later
+    /// opening than the one that ended the first run, after a cloudy window
+    /// was cleared or from the next day, with a Widget placed. Never over
+    /// another screen, never in a launch that asked for a review. Reads only,
+    /// until it shows.
+    @MainActor
+    private func offerFirstPlusIfDue() async {
+        let defaults = UserDefaults.standard
+        // Cheap checks first; nothing is read from disk for most openings.
+        guard Version1.isOn, PlusOfferAvailability.isConfigured, !membershipAccess.hasPersonalPlus(),
+              let dueSince = FirstPlusOfferPolicy.dueSince(defaults: defaults),
+              !defaults.bool(forKey: FirstPlusOfferPolicy.shownKey),
+              !FirstPlusOfferPolicy.promptedThisLaunch else { return }
+        // Let an opening from the Widget or a link settle first.
+        try? await Task.sleep(for: .seconds(1.5))
+        guard !Task.isCancelled, scenePhase == .active else { return }
+        let presented = widgetOpenedPhotoIdentifier != nil || deepLinkedPhotoIdentifier != nil
+            || deepLinkedFamilyWindowIsPresented || showsSettings || showcaseSession != nil
+            || relatedPhotoRoute != nil || Self.isPresentingOverApp
+        let cleared = await Task.detached(priority: .utility) {
+            CloudyWindowStore.shared.hasRevealedAnyWindow()
+        }.value
+        let placed = await UsageCounter.anyWidgetPlaced() == true
+        guard !Task.isCancelled, FirstPlusOfferPolicy.isDue(
+            dueSince: dueSince, shown: defaults.bool(forKey: FirstPlusOfferPolicy.shownKey),
+            activeSince: FirstPlusOfferPolicy.activeSince, now: .now,
+            hasClearedCloudyWindow: cleared, plusIsOffered: true, widgetPlaced: placed,
+            promptedThisLaunch: FirstPlusOfferPolicy.promptedThisLaunch,
+            otherScreenPresented: presented) else { return }
+        FirstPlusOfferPolicy.promptedThisLaunch = true
+        FirstPlusOfferPolicy.noteShown(defaults: defaults)
+        showsFirstPlusOffer = true
+    }
+
+    /// A sheet, cover, alert or the Widget's photo is up over the app.
+    @MainActor
+    private static var isPresentingOverApp: Bool {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .contains { $0.isKeyWindow && $0.rootViewController?.presentedViewController != nil }
+    }
+
     /// A cat photo opened (not during onboarding, not with an offer or an
     /// error on screen): Apple's review prompt once the widget is set up and
     /// the app was used on 3 days (ReviewPromptPolicy). Reads only, until it asks.
@@ -1981,11 +2042,13 @@ struct MainTabView: View {
                     completedVersion: defaults.integer(forKey: OnboardingPresentationPersistence.completedVersionKey)),
                 askedAfterPhoto: defaults.bool(forKey: ReviewPromptPolicy.askedAfterPhotoKey),
                 askedAfterMonthlyBook: defaults.bool(forKey: ReviewPromptPolicy.askedAfterMonthlyBookKey),
-                askedThisSession: !firstThisSession),
+                // The first Plus offer and the review never share a launch (11/10).
+                askedThisSession: !firstThisSession || FirstPlusOfferPolicy.promptedThisLaunch),
               await UsageCounter.anyWidgetPlaced() == true else { return }
         // Let the photo be seen first; leaving it within that time asks nothing.
         try? await Task.sleep(for: .seconds(2))
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, !FirstPlusOfferPolicy.promptedThisLaunch else { return }
+        FirstPlusOfferPolicy.promptedThisLaunch = true
         defaults.set(true, forKey: ReviewPromptPolicy.askedAfterPhotoKey)
         requestReview()
     }
