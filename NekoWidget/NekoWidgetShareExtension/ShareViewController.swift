@@ -41,7 +41,11 @@ final class ShareViewController: UIViewController {
         } catch is CancellationError {
             return
         } catch {
-            showError(GroupShareComposerModel.message(for: error))
+            if ClientUpgradeRequirement.shared.isRequired {
+                install(UIHostingController(rootView: ClientUpgradeRequiredView()))
+            } else {
+                showError(GroupShareComposerModel.message(for: error))
+            }
         }
     }
 

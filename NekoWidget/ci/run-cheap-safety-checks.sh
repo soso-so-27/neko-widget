@@ -3,6 +3,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Exact 426 contract and retry stop, with no transport, identity, or stored data.
+xcrun --sdk macosx swiftc -parse-as-library Shared/Sharing/ClientUpgradeRequirement.swift \
+  ci/verify-client-upgrade.swift -o "$RUNNER_TEMP/client-upgrade-tests"
+"$RUNNER_TEMP/client-upgrade-tests"
+
 # Shared composer and isolated credential/transport contracts. Synthetic only;
 # this does not claim a signed iPhone extension's entitlements were exercised.
 xcrun --sdk macosx swiftc -D INTERNAL_PRESENTATION -parse-as-library -target "$(uname -m)-apple-macos14.0" \
@@ -11,7 +16,7 @@ xcrun --sdk macosx swiftc -D INTERNAL_PRESENTATION -parse-as-library -target "$(
   Shared/Models/WidgetManifest.swift Shared/Sharing/MomentSharingCore.swift \
   NekoWidget/Services/GroupWindowContract.swift NekoWidget/Services/GroupWindowWire.swift \
   NekoWidget/Services/GroupInvitationLink.swift NekoWidget/Services/GroupWindowStorage.swift \
-  NekoWidget/Services/GroupWindowTransport.swift NekoWidget/Services/GroupShareAccess.swift \
+  Shared/Sharing/ClientUpgradeRequirement.swift NekoWidget/Services/GroupWindowTransport.swift NekoWidget/Services/GroupShareAccess.swift \
   NekoWidgetShareExtension/GroupShareComposer.swift NekoWidgetShareExtension/GroupShareService.swift \
   ci/verify-group-share.swift -o "$RUNNER_TEMP/group-share-tests"
 "$RUNNER_TEMP/group-share-tests"

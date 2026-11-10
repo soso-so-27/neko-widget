@@ -1,6 +1,8 @@
 import type {GroupReportMailEnv} from './group-report-mail';
 
 export interface Env extends GroupReportMailEnv {
+  CLIENT_UPGRADE_REQUIRED_ENABLED?: string;
+  MINIMUM_SUPPORTED_IOS_BUILD?: string;
   BILLING_TRANSACTION_RETENTION_REQUIRED?: string;
   DB: D1Database;
   MEDIA?: R2Bucket;

@@ -72,6 +72,9 @@ final class GroupURLSessionTransport: GroupHTTPTransport, Sendable {
         session = URLSession(configuration: config, delegate: GroupNoRedirect(), delegateQueue: nil)
     }
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
+        try ClientUpgradeRequirement.shared.checkAllowed()
+        var request = request
+        request.setValue(ClientUpgradeRequirement.buildHeader, forHTTPHeaderField: "X-Neko-App-Build")
         do {
             let (bytes, response) = try await session.bytes(for: request)
             guard let http = response as? HTTPURLResponse, response.url == request.url,
@@ -84,6 +87,7 @@ final class GroupURLSessionTransport: GroupHTTPTransport, Sendable {
                 guard data.count < maximumBytes else { throw GroupClientError.invalidResponse }
                 data.append(byte)
             }
+            try ClientUpgradeRequirement.shared.checkResponse(status: http.statusCode, data: data)
             return .init(status: http.statusCode, data: data)
         } catch let error as URLError {
             // A request the app itself cancelled (a screen closed) is not an outage.

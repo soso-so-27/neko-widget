@@ -1356,6 +1356,8 @@ actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
                                         body: body, memberID: memberID, credential: participant)
         }
 
+        try ClientUpgradeRequirement.shared.checkAllowed()
+        request.setValue(ClientUpgradeRequirement.buildHeader, forHTTPHeaderField: "X-Neko-App-Build")
         let bytes: URLSession.AsyncBytes
         let response: URLResponse
         do {
@@ -1389,6 +1391,7 @@ actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
         } catch {
             throw BillingClientError.transportUnavailable
         }
+        try ClientUpgradeRequirement.shared.checkResponse(status: http.statusCode, data: responseData)
         guard http.statusCode == endpoint.expectedStatus else {
             let apiError = try? decoder.decode(
                 BillingAPIErrorResponse.self,
