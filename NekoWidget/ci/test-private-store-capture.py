@@ -31,10 +31,18 @@ class PrivateCaptureTests(unittest.TestCase):
 
     def test_private_capture_has_no_plaintext_artifact_path(self):
         workflow = (ROOT / '.github/workflows/owner-store-capture.yml').read_text(encoding='utf-8')
-        self.assertEqual(workflow.count('actions/upload-artifact@'), 1)
-        upload = workflow.split('uses: actions/upload-artifact@', 1)[1].split('- name:', 1)[0]
-        self.assertIn('path: ${{ runner.temp }}/private-capture-output.nekoenc', upload)
-        self.assertNotIn('xcresult', upload)
+        self.assertEqual(workflow.count('actions/upload-artifact@'), 2)
+        for upload in workflow.split('uses: actions/upload-artifact@')[1:]:
+            upload = upload.split('- name:', 1)[0]
+            path = next(line.strip() for line in upload.splitlines() if line.strip().startswith('path:'))
+            self.assertTrue(path.endswith('.nekoenc'), path)
+            self.assertNotIn('xcresult', upload)
+        ingress = workflow.split('  ingress:', 1)[1].split('  synthetic:', 1)[0]
+        self.assertIn('github.actor == github.repository_owner', ingress)
+        self.assertIn('contents: write', ingress)
+        self.assertNotIn('actions/checkout', ingress)
+        self.assertNotIn('secrets.', ingress)
+        self.assertNotIn('gh api --method', ingress)
         self.assertIn("if: github.ref == 'refs/heads/main'", workflow)
         self.assertIn('environment: testflight', workflow)
         synthetic = workflow.split('  synthetic:', 1)[1].split('\n  capture:', 1)[0]

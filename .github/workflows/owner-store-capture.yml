@@ -18,9 +18,13 @@ on:
         default: ""
 
       transport_probe:
-        description: Read-only ciphertext download probe (no Mac, no photos decrypted)
+        description: Ciphertext ingress probe only (no Mac, no photos decrypted)
         type: boolean
         default: false
+      media_asset_id:
+        description: Encrypted owner input asset ID (synthetic always uses the fixed control asset)
+        type: string
+        default: ""
       build_run_id:
         description: Successful synthetic run with identical source tree (owner capture only)
         type: string
@@ -35,34 +39,56 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  transport-probe:
-    if: inputs.transport_probe
+  ingress:
+    # Only the repository owner can request this short-lived draft-asset read.
+    # No checkout, compiler, owner decryption key or arbitrary API method here.
+    if: github.actor == github.repository_owner && (inputs.synthetic || github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
-    timeout-minutes: 3
+    timeout-minutes: 5
+    permissions:
+      contents: write
     steps:
-      - name: Fetch only the encrypted control asset using the job read token
+      - name: Retrieve the authenticated encrypted asset
         env:
           GH_TOKEN: ${{ github.token }}
+          OWNER_ASSET_ID: ${{ inputs.media_asset_id }}
+          SYNTHETIC: ${{ inputs.synthetic }}
         shell: bash
         run: |
           set -Eeuo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/releases/assets/731575605" -H 'Accept: application/octet-stream' > "$RUNNER_TEMP/control.nekoenc"
-          python3 - "$RUNNER_TEMP/control.nekoenc" <<'PY'
+          umask 077
+          asset_id="$OWNER_ASSET_ID"
+          if [[ "$SYNTHETIC" == 'true' ]]; then asset_id=731575605; fi
+          [[ "$asset_id" =~ ^[0-9]+$ ]]
+          mkdir -p "$RUNNER_TEMP/neko-capture-ingress"
+          gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" -H 'Accept: application/octet-stream' > "$RUNNER_TEMP/neko-capture-ingress/input.nekoenc"
+          python3 - "$RUNNER_TEMP/neko-capture-ingress/input.nekoenc" <<'PY'
           import sys
           from pathlib import Path
-          data=Path(sys.argv[1]).read_bytes()
-          assert data[:8] == b'NEKOCAP1'
-          print('Ciphertext downloaded with the built-in read-only job token')
+          with Path(sys.argv[1]).open('rb') as file:
+              assert file.read(8) == b'NEKOCAP1'
+          print('Encrypted input retrieved; no decryption performed')
           PY
-          rm "$RUNNER_TEMP/control.nekoenc"
+      - name: Hand off ciphertext only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: encrypted-capture-input-${{ github.run_id }}
+          path: ${{ runner.temp }}/neko-capture-ingress/input.nekoenc
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+      - name: Remove the ingress copy
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/neko-capture-ingress/input.nekoenc"
   synthetic:
+    needs: ingress
     if: inputs.synthetic && !inputs.transport_probe
     runs-on: macos-15-intel
     timeout-minutes: 45
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       NEKO_CAPTURE_KEY: c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1
-      NEKO_CAPTURE_INPUT_URL: ${{ inputs.synthetic_input_url }}
       PRIVATE_ROOT: /tmp/neko-owner-capture-${{ github.run_id }}
       BUILD_RUN_ID: ${{ inputs.build_run_id }}
     steps: &capture_steps
@@ -71,24 +97,15 @@ jobs:
           persist-credentials: false
       - name: Download authenticated ciphertext only
         env:
-          MEDIA_TAG: ${{ inputs.media_release_tag }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -Eeuo pipefail
-          [[ "$MEDIA_TAG" =~ ^private-store-capture-[a-zA-Z0-9-]+$ ]]
           [[ "$NEKO_CAPTURE_KEY" =~ ^[0-9a-fA-F]{64}$ ]]
           umask 077
           mkdir -p "$PRIVATE_ROOT"
-          # A one-file, expiring download URL avoids giving the job repository
-          # write access merely to read a draft asset. The bytes remain encrypted.
-          python3 - <<'PY'
-          import os
-          from urllib.parse import urlsplit
-          url = urlsplit(os.environ['NEKO_CAPTURE_INPUT_URL'])
-          assert url.scheme == 'https' and url.hostname == 'release-assets.githubusercontent.com'
-          PY
-          curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
-            "$NEKO_CAPTURE_INPUT_URL" --output "$PRIVATE_ROOT/input.nekoenc"
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "encrypted-capture-input-$GITHUB_RUN_ID" --dir "$PRIVATE_ROOT"
       - name: Build before decrypting owner media
         env:
           GH_TOKEN: ${{ github.token }}
@@ -247,6 +264,7 @@ jobs:
           path: ${{ runner.temp }}/private-capture-output.nekoenc
           if-no-files-found: error
           retention-days: 1
+          overwrite: true
       - name: Remove every runner working copy and Simulator
         if: always()
         shell: bash
@@ -261,6 +279,7 @@ jobs:
           rm -f "$RUNNER_TEMP/private-capture-output.tar" "$RUNNER_TEMP/private-capture-output.nekoenc"
 
   capture:
+    needs: ingress
     if: github.ref == 'refs/heads/main' && !inputs.synthetic && !inputs.transport_probe
     environment: testflight
     runs-on: macos-15-intel
@@ -268,7 +287,6 @@ jobs:
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       NEKO_CAPTURE_KEY: ${{ secrets.OWNER_STORE_CAPTURE_KEY }}
-      NEKO_CAPTURE_INPUT_URL: ${{ secrets.OWNER_STORE_CAPTURE_INPUT_URL }}
       PRIVATE_ROOT: /tmp/neko-owner-capture-${{ github.run_id }}
       BUILD_RUN_ID: ${{ inputs.build_run_id }}
     steps: *capture_steps
