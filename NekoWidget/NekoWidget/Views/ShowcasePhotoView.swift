@@ -621,6 +621,12 @@ struct ShowcasePhotoView: View {
 
 #if DEBUG && targetEnvironment(simulator)
     static var layoutFixtureItems: [Item]? {
+        if OwnerStoreCaptureFixture.isRequested {
+            return (9...17).compactMap { number in
+                guard let image = AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-\(number)") else { return nil }
+                return .fixture("owner-store-\(number)", image)
+            }
+        }
         guard ProcessInfo.processInfo.arguments.contains("--showcase-gallery-ui-fixture") else { return nil }
         return (0..<9).compactMap { index in
             guard let image = AppStoreScreenshotFixture.image(

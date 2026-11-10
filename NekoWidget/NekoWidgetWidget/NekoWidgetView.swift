@@ -750,6 +750,12 @@ enum AppStoreWidgetPreviewFixture {
     static let cacheFilename = "app-store-widget-gallery-preview.fixture"
 
     static func image(maximumPixelSize: Int) -> UIImage? {
+        if let root = ownerCaptureDirectory {
+            let name = maximumPixelSize == WidgetImageVariant.medium.maximumPixelDimension ? "medium" : "large"
+            guard let data = try? Data(contentsOf: root.appendingPathComponent(name + ".jpg")) else { return nil }
+            return WidgetCacheImageLoader.decodedImage(data: data, maximumPixelSize: maximumPixelSize,
+                fileHash: SharedLog.shortHash(cacheFilename))
+        }
 #if WIDGET_VISUAL_REVIEW_FIXTURE
 #if WIDGET_VISUAL_REVIEW_WHITE_BACKGROUND
         // Uniform white is a worst-case text-contrast control, not a cat photo
@@ -792,6 +798,20 @@ enum AppStoreWidgetPreviewFixture {
     }
 
     static func entry(at date: Date, variant: WidgetImageVariant) -> NekoWidgetEntry {
+        if ownerCaptureDirectory != nil {
+            var entry = NekoWidgetEntry(date: date, localIdentifier: nil, cacheFilename: cacheFilename,
+                imageVariant: variant, photoSourceIdentifier: WidgetPhotoSource.personalLibraryID,
+                familySourceDigest: nil, usesFamilySpecificImage: true,
+                windowDisplayName: variant == .medium ? "むぎ" : "あめ",
+                isLiked: false, isLikeInteractionEnabled: false, isBookmarked: false,
+                isBookmarkInteractionEnabled: false, familyHeartStatus: .hidden,
+                familyActionsRequireApp: false, emptyStateReason: .none)
+            if variant == .medium {
+                entry.cloudyWindowSelection = CloudyWindowSelection(scopeID: "fixture-owner-cloudy",
+                    day: date, photoID: "fixture-owner-mugi", profileID: nil)
+            }
+            return entry
+        }
 #if OFFICIAL_WINDOW_WIDGET_FIXTURE
         // Exercise the shipping official-photo footer and hidden-action branch.
         // These existing illustration pixels bypass feed/cache I/O only in this
@@ -888,6 +908,13 @@ enum AppStoreWidgetPreviewFixture {
             emptyStateReason: .none
         )
 #endif
+    }
+
+    private static var ownerCaptureDirectory: URL? {
+        guard let root = SharedContainer.containerURL?.appendingPathComponent("owner-store-capture"),
+              FileManager.default.fileExists(atPath: root.appendingPathComponent("medium.jpg").path),
+              FileManager.default.fileExists(atPath: root.appendingPathComponent("large.jpg").path) else { return nil }
+        return root
     }
 
 #if WIDGET_VISUAL_REVIEW_FIXTURE

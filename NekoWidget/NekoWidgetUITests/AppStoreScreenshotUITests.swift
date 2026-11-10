@@ -716,6 +716,85 @@ final class AppStoreScreenshotUITests: XCTestCase {
         ]
     }
 
+    /// Manual encrypted-media workflow only; never supplied with owner media
+    /// by an ordinary PR, release, or public screenshot job.
+    @MainActor
+    func testCaptureOwnerStoreAppScreens() throws {
+        let root = try XCTUnwrap(ProcessInfo.processInfo.environment["NEKO_PRIVATE_CAPTURE_ROOT"])
+        executionTimeAllowance = 420
+        func launch(_ screen: String) -> XCUIApplication {
+            let app = XCUIApplication()
+            app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture",
+                "--review-public-presentation", "--owner-store-capture", "--tools-hub-light",
+                "--app-store-screenshot-album", "--app-store-screenshot-cat-care", "--group-window-screens-fixture"]
+            app.launchEnvironment["NEKO_PRIVATE_CAPTURE_ROOT"] = root
+            app.launchEnvironment["NEKO_CAPTURE_SCREEN"] = screen
+            app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "tool-profiles"
+            app.launch()
+            return app
+        }
+
+        var app = launch("photos")
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真"))
+        app.buttons["photos-section-all"].tap()
+        XCTAssertTrue(waitForFixturePhotos(in: app, requirements: [(1, 1), (2, 1), (3, 1)]))
+        XCTAssertTrue(app.staticTexts["むぎ"].exists || app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "むぎ")).firstMatch.exists)
+        captureScreenshot(named: "02_photos")
+
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-windows", fallbackLabel: "まど"))
+        let room = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "わが家")).firstMatch
+        XCTAssertTrue(room.waitForExistence(timeout: 15)); room.tap()
+        XCTAssertTrue(app.buttons["group-window-open-members"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["ふたりでくっついて寝ていた"].waitForExistence(timeout: 15))
+        sleep(2)
+        captureScreenshot(named: "03_window")
+        app.terminate()
+
+        app = launch("tools")
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
+        for identifier in ["tools-showcase-open", "tools-care-open", "tools-vet-open", "tools-lost-cat-open", "tools-evacuation-open"] {
+            XCTAssertTrue(app.buttons[identifier].waitForExistence(timeout: 10))
+        }
+        sleep(1)
+        captureScreenshot(named: "07_tools")
+        app.buttons["tools-showcase-open"].tap()
+        XCTAssertTrue(app.buttons["showcase-slideshow-open"].waitForExistence(timeout: 15))
+        XCTAssertEqual(app.buttons.matching(identifier: "showcase-gallery-photo").count, 9)
+        sleep(1)
+        captureScreenshot(named: "04_showcase")
+        app.terminate()
+
+        app = launch("album")
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-memories", fallbackLabel: "アルバム"))
+        let latest = app.buttons["album-prototype-latest"]
+        XCTAssertTrue(latest.waitForExistence(timeout: 15))
+        XCTAssertTrue(waitForAnyFixturePhoto(in: app, numbers: Array(19...24)))
+        // Keep the actual shelf as an encrypted supplementary attachment. The
+        // seven-file delivery uses the open book, without inventing a composite.
+        captureScreenshot(named: "supplement_album_shelf")
+        latest.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["monthly-book"].waitForExistence(timeout: 15))
+        XCTAssertTrue(waitForAnyFixturePhoto(in: app, numbers: Array(19...24)))
+        app.swipeLeft()
+        sleep(2)
+        captureScreenshot(named: "05_album")
+        app.terminate()
+
+        app = launch("care")
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
+        app.buttons["tools-care-open"].tap()
+        let cat = app.buttons["tool-profile-11111111-1111-4111-8111-111111111111"]
+        XCTAssertTrue(cat.waitForExistence(timeout: 10)); cat.tap()
+        let folded = app.descendants(matching: .any)["care-cat-care-fields-folded"].firstMatch
+        XCTAssertTrue(scrollUpUntilHittable(folded, application: app)); folded.tap()
+        XCTAssertTrue(app.buttons["cat-care-family-notebook"].waitForExistence(timeout: 10))
+        let living = app.buttons["cat-care-part-living"]
+        XCTAssertTrue(scrollUpUntilHittable(living, application: app)); living.tap()
+        sleep(1)
+        captureScreenshot(named: "06_cat_care")
+        app.terminate()
+    }
+
     @MainActor
     private func tapTab(
         application: XCUIApplication,

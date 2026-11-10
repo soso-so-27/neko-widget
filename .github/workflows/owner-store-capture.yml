@@ -1,0 +1,174 @@
+name: Capture owner Store screens (encrypted)
+
+on:
+  workflow_dispatch:
+    inputs:
+      media_release_tag:
+        description: Temporary draft release containing input.nekoenc
+        type: string
+        required: true
+      synthetic:
+        description: Use only generated control images and a non-secret control key
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: owner-store-capture
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    if: github.ref == 'refs/heads/main'
+    environment: testflight
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      NEKO_CAPTURE_KEY: ${{ inputs.synthetic && 'c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1' || secrets.OWNER_STORE_CAPTURE_KEY }}
+      PRIVATE_ROOT: ${{ runner.temp }}/neko-owner-capture
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Download authenticated ciphertext only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MEDIA_TAG: ${{ inputs.media_release_tag }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$MEDIA_TAG" =~ ^private-store-capture-[a-zA-Z0-9-]+$ ]]
+          [[ "$NEKO_CAPTURE_KEY" =~ ^[0-9a-fA-F]{64}$ ]]
+          umask 077
+          mkdir -p "$PRIVATE_ROOT"
+          gh release view "$MEDIA_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft' | grep -qx true
+          gh release download "$MEDIA_TAG" --repo "$GITHUB_REPOSITORY" --pattern input.nekoenc --dir "$PRIVATE_ROOT"
+      - name: Build before decrypting owner media
+        shell: bash
+        working-directory: NekoWidget
+        run: |
+          set -Eeuo pipefail
+          udid=$(xcrun simctl create OwnerStoreCapture com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro-Max com.apple.CoreSimulator.SimRuntime.iOS-26-2)
+          printf '%s' "$udid" > "$PRIVATE_ROOT/simulator-id"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b > "$PRIVATE_ROOT/boot.log" 2>&1
+          xcrun simctl spawn "$udid" defaults write NSGlobalDomain AppleLanguages -array ja-JP
+          xcrun simctl spawn "$udid" defaults write NSGlobalDomain AppleLocale ja_JP
+          xcrun simctl shutdown "$udid"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b >> "$PRIVATE_ROOT/boot.log" 2>&1
+          xcrun simctl ui "$udid" appearance light
+          xcrun simctl status_bar "$udid" override --time 09:41 --batteryLevel 100 --batteryState charged --wifiBars 3 --cellularBars 4
+          if ! xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Debug \
+            -sdk iphonesimulator -destination "platform=iOS Simulator,id=$udid" \
+            -derivedDataPath "$PRIVATE_ROOT/DerivedData" COMPILER_INDEX_STORE_ENABLE=NO \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            WIDGET_SCREENSHOT_FIXTURE_CONDITION=APP_STORE_SCREENSHOT_WIDGET_FIXTURE \
+            SHARING_RELEASE_MODE=production GROUP_WINDOWS_ENABLED=YES \
+            OFFICIAL_WINDOW_FEED_URL= MANAGED_PRESERVATION_ORIGIN= MANAGED_PRESERVATION_ENABLED=NO \
+            PLUS_BILLING_API_BASE_URL= PLUS_BILLING_CLIENT_ENABLED=NO PLUS_STOREFRONT_ENABLED=NO \
+            PERSONAL_ARCHIVE_ENABLED=NO SHARING_FEATURE_ENABLED=NO SHARING_MEDIA_ENABLED=NO \
+            SHARING_SHARE_EXTENSION_HANDOFF_ENABLED=NO SHARING_SHARE_EXTENSION_SEND_ENABLED=NO \
+            SHARING_REVIEW_PREVIEW_ENABLED=NO SHARING_API_BASE_URL= SHARING_MODERATION_KEY_ID= \
+            SHARING_MODERATION_PUBLIC_KEY= SHARING_PRIVACY_URL= SHARING_SUPPORT_URL= \
+            SHARING_COMMUNITY_STANDARDS_URL= APP_PRIVACY_URL= APP_SUPPORT_URL= \
+            SHARE_EXTENSION_INFOPLIST_FILE=NekoWidgetShareExtension/Info.Disabled.plist \
+            build-for-testing > "$PRIVATE_ROOT/build.log" 2>&1; then
+              grep -m 5 -E 'error:|BUILD FAILED' "$PRIVATE_ROOT/build.log" || true
+              exit 1
+          fi
+          python3 - "$PRIVATE_ROOT/DerivedData/Build/Products/Debug-iphonesimulator/NekoWidget.app/Info.plist" <<'PY'
+          import plistlib, sys
+          info = plistlib.loads(open(sys.argv[1], 'rb').read())
+          for key, value in {'SharingReleaseMode':'production','GroupWindowsEnabled':'YES','SharingFeatureEnabled':'NO','SharingMediaEnabled':'NO'}.items():
+              assert info.get(key) == value, key
+          for key in ('SharingAPIBaseURL','PlusBillingAPIBaseURL','OfficialWindowFeedURL','ManagedPreservationOrigin','SharingModerationPublicKey'):
+              assert not info.get(key), key
+          PY
+      - name: Authenticate and unpack into the disposable Simulator
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node NekoWidget/ci/private-capture-crypto.mjs open "$PRIVATE_ROOT/input.nekoenc" "$PRIVATE_ROOT/input.zip"
+          python3 - "$PRIVATE_ROOT" <<'PY'
+          import zipfile, sys
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          names = {'IMG_1194','IMG_9082','IMG_9393','NYXC6588','IMG_5794','IMG_7958','MJIN0556','VZRR6412','IMG_0968','IMG_6666','IMG_7175','IMG_1513','EEMW5137','IMG_8862','IMG_5261','IMG_7671','IMG_9423','IMG_2260','IMG_8971','IMG_2264','IMG_7866','IMG_5806','IMG_8536'}
+          with zipfile.ZipFile(root/'input.zip') as z:
+              assert set(z.namelist()) == {x+'.JPG' for x in names} and len(z.infolist()) == len(names)
+              assert sum(x.file_size for x in z.infolist()) <= 150*1024*1024
+              for x in z.infolist():
+                  assert x.file_size <= 12*1024*1024 and not x.is_dir() and (x.external_attr >> 16 & 0o170000) != 0o120000
+                  data = z.read(x)
+                  assert data[:2] == b'\xff\xd8'
+                  dest = root/'media'/x.filename
+                  dest.parent.mkdir(exist_ok=True)
+                  dest.write_bytes(data)
+          PY
+          rm "$PRIVATE_ROOT/input.zip"
+          # The UITest runner passes this path only to the DEBUG fixture app.
+          python3 - "$PRIVATE_ROOT" <<'PY'
+          import plistlib, sys
+          from pathlib import Path
+          root=Path(sys.argv[1]); files=list((root/'DerivedData/Build/Products').glob('*.xctestrun'))
+          assert len(files)==1
+          file=files[0]; data=plistlib.loads(file.read_bytes())
+          found=0
+          for config in data.get('TestConfigurations',[]):
+              for target in config.get('TestTargets',[]):
+                  if target.get('BlueprintName') == 'NekoWidgetUITests':
+                      target.setdefault('EnvironmentVariables',{})['NEKO_PRIVATE_CAPTURE_ROOT']=str(root/'media'); found+=1
+          assert found == 1
+          file.write_bytes(plistlib.dumps(data))
+          PY
+      - name: Capture actual app views and SpringBoard
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          udid=$(cat "$PRIVATE_ROOT/simulator-id")
+          test_run=$(find "$PRIVATE_ROOT/DerivedData/Build/Products" -maxdepth 1 -name '*.xctestrun')
+          if ! xcodebuild test-without-building -xctestrun "$test_run" \
+            -destination "platform=iOS Simulator,id=$udid" -resultBundlePath "$PRIVATE_ROOT/Capture.xcresult" \
+            -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreAppScreens \
+            -only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureOwnerStoreHomeWidgets \
+            -parallel-testing-enabled NO -testLanguage ja -testRegion JP > "$PRIVATE_ROOT/test.log" 2>&1; then
+              echo 'Private capture failed; diagnostics will be encrypted, never uploaded in plaintext.'
+              exit 1
+          fi
+          xcrun xcresulttool export attachments --path "$PRIVATE_ROOT/Capture.xcresult" --output-path "$PRIVATE_ROOT/attachments" > "$PRIVATE_ROOT/export.log" 2>&1
+      - name: Encrypt all screenshots and failure attachments
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ -d "$PRIVATE_ROOT" ]]; then
+            # Compiled products cannot contain owner media: decryption was later.
+            rm -rf "$PRIVATE_ROOT/DerivedData"
+            tar -cf "$RUNNER_TEMP/private-capture-output.tar" -C "$PRIVATE_ROOT" .
+            node NekoWidget/ci/private-capture-crypto.mjs seal "$RUNNER_TEMP/private-capture-output.tar" "$RUNNER_TEMP/private-capture-output.nekoenc"
+            rm "$RUNNER_TEMP/private-capture-output.tar"
+          fi
+      - name: Upload ciphertext only (including failures)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: encrypted-owner-store-capture-${{ github.run_id }}
+          path: ${{ runner.temp }}/private-capture-output.nekoenc
+          if-no-files-found: error
+          retention-days: 1
+      - name: Remove every runner working copy and Simulator
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ -f "$PRIVATE_ROOT/simulator-id" ]]; then
+            udid=$(cat "$PRIVATE_ROOT/simulator-id")
+            xcrun simctl shutdown "$udid" || true
+            xcrun simctl delete "$udid"
+          fi
+          rm -rf "$PRIVATE_ROOT"
+          rm -f "$RUNNER_TEMP/private-capture-output.tar" "$RUNNER_TEMP/private-capture-output.nekoenc"

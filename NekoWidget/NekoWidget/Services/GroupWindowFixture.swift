@@ -21,7 +21,7 @@ actor GroupWindowFixture: GroupWindowClient {
         let owner = GroupMember(id: "fixture-owner", personID: "fixture-person-a", displayName: "自分",
             role: .owner, state: .active,
             devices: [.init(id: "fixture-a1", displayName: "このiPhone", isThisDevice: true)])
-        var mother = GroupMember(id: "fixture-mother", personID: "fixture-person-b", displayName: "お母さん",
+        var mother = GroupMember(id: "fixture-mother", personID: "fixture-person-b", displayName: CommandLine.arguments.contains("--owner-store-capture") ? "パパ" : "お母さん",
             role: .member, state: .active,
             devices: [.init(id: "fixture-b1", displayName: "iPhone", isThisDevice: false)])
         if scenario == .threeDevices {
@@ -35,7 +35,7 @@ actor GroupWindowFixture: GroupWindowClient {
                     devices: [.init(id: "fixture-device-\(i)", displayName: "iPhone", isThisDevice: false)])
             }
         }
-        room = GroupWindow(id: "fixture-window", name: "実家のまど", revision: 8, keyEpoch: 3,
+        room = GroupWindow(id: "fixture-window", name: CommandLine.arguments.contains("--owner-store-capture") ? "わが家" : "実家のまど", revision: 8, keyEpoch: 3,
             myParticipantID: owner.id, myRole: .owner,
             state: scenario == .rotationPending ? .rotationRequired : .active, members: members)
         pictures = [.init(id: "fixture-photo", windowID: "fixture-window", senderParticipantID: mother.id,

@@ -44,6 +44,9 @@ enum AppStoreScreenshotFixture {
     private static let identifiers = (1...24).map {
         "\(identifierPrefix)\($0)"
     }
+    private static var activeIdentifiers: [String] {
+        OwnerStoreCaptureFixture.isRequested ? (1...32).map { "\(identifierPrefix)\($0)" } : identifiers
+    }
     private static var imageCache: [String: UIImage] = [:]
 
     static func image(for localIdentifier: String) -> UIImage? {
@@ -55,13 +58,19 @@ enum AppStoreScreenshotFixture {
             // must not manufacture a large decoded-image memory footprint.
             return image(for: "\(identifierPrefix)\((number - 1) % 8 + 1)")
         }
-        guard let index = identifiers.firstIndex(of: localIdentifier) else {
+        guard let index = activeIdentifiers.firstIndex(of: localIdentifier) else {
             return nil
         }
         if let cached = imageCache[localIdentifier] {
             return cached
         }
-        let image = makeCatIllustration(variant: index)
+        let image: UIImage
+        if OwnerStoreCaptureFixture.isRequested {
+            // Missing input fails closed. A final screen must never silently
+            // fall back to the public illustration fixture.
+            guard let supplied = OwnerStoreCaptureFixture.image(number: index + 1) else { return nil }
+            image = supplied
+        } else { image = makeCatIllustration(variant: index) }
         imageCache[localIdentifier] = image
         return image
     }
@@ -70,10 +79,18 @@ enum AppStoreScreenshotFixture {
         if localIdentifier.hasPrefix("app-store-screenshot-fixture-page-"),
            let number = Int(localIdentifier.dropFirst("app-store-screenshot-fixture-page-".count)),
            (1...6_000).contains(number) { return true }
-        return identifiers.contains(localIdentifier)
+        return activeIdentifiers.contains(localIdentifier)
     }
 
     static var photos: [PhotoPresentation] {
+        if OwnerStoreCaptureFixture.isRequested {
+            if OwnerStoreCaptureFixture.screen == "album" { return albumPhotos }
+            return ([1, 2, 3, 4, 5, 6, 7, 8, 27, 28, 29, 30]).enumerated().map { index, number in
+                PhotoPresentation(localIdentifier: "\(identifierPrefix)\(number)",
+                    creationDate: date(year: 2026, month: 11, day: 9 - index / 3),
+                    catBoundingBox: nil)
+            }
+        }
         let dates = [
             date(year: 2025, month: 12, day: 18),
             date(year: 2025, month: 8, day: 4),
@@ -239,7 +256,7 @@ enum AppStoreScreenshotFixture {
     static func seedCatCareIfRequested() {
         guard showsProductionFamilyEntry,
               let profileID = UUID(uuidString: "11111111-1111-4111-8111-111111111111"),
-              let record = CatCareStore.shared.ensureRecord(profileID: profileID, name: "ミケ"),
+              let record = CatCareStore.shared.ensureRecord(profileID: profileID, name: OwnerStoreCaptureFixture.isRequested ? "むぎ" : "ミケ"),
               record.temperament == nil else { return }
         CatCareStore.shared.update { state in
             guard let index = state.cats.firstIndex(where: { $0.catID == record.catID }) else { return }
@@ -250,7 +267,7 @@ enum AppStoreScreenshotFixture {
             state.cats[index].neutered = stamp(.yes)
             state.cats[index].indoorOnly = stamp(.yes)
             state.cats[index].birthday = stamp(CatCareDay(year: 2021, month: 5, day: 3))
-            state.cats[index].coat = stamp("三毛")
+            state.cats[index].coat = stamp(OwnerStoreCaptureFixture.isRequested ? "茶白" : "三毛")
             state.cats[index].temperament = stamp("抱っこは少し苦手。名前を呼ぶと来ます。")
             state.cats[index].litter = stamp("朝と夜に片づける")
             state.cats[index].water = stamp("いつでも新しい水を2か所に")
@@ -455,8 +472,10 @@ struct AppStoreScreenshotFixtureRootView: View {
             }
             let assigned = Set(confirmed.map(\.localIdentifier))
             return CatProfilePresentation(
-                identifier: identifier, name: index == 0 ? "ミケ" : "ソラ",
-                coverPhoto: confirmed[0], confirmedPhotos: confirmed,
+                identifier: identifier, name: OwnerStoreCaptureFixture.isRequested ? (index == 0 ? "むぎ" : "あめ") : (index == 0 ? "ミケ" : "ソラ"),
+                coverPhoto: OwnerStoreCaptureFixture.isRequested
+                    ? CatProfilePhotoPresentation(localIdentifier: "app-store-screenshot-fixture-\(index == 0 ? 25 : 26)", creationDate: nil)
+                    : confirmed[0], confirmedPhotos: confirmed,
                 manualCandidatePhotos: all.filter { !assigned.contains($0.localIdentifier) }
             )
         }
@@ -573,7 +592,10 @@ struct AppStoreScreenshotFixtureRootView: View {
         .preferredColorScheme(CommandLine.arguments.contains("--tools-hub-dark") ? .dark
                               : CommandLine.arguments.contains("--tools-hub-light") ? .light : nil)
         .accessibilityIdentifier("app-store-screenshot-fixture-root")
-        .task { AppStoreScreenshotFixture.seedCatCareIfRequested() }
+        .task {
+            AppStoreScreenshotFixture.seedCatCareIfRequested()
+            OwnerStoreCaptureFixture.prepareWidgets()
+        }
         .onReceive(NotificationCenter.default.publisher(for: PhotoLibraryReadingPosition.diagnosticNotification)) { _ in
             guard widgetRecoveryCase == "paging",
                   ProcessInfo.processInfo.environment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] != nil else { return }
@@ -1207,7 +1229,7 @@ private struct SoloMemoriesFixtureView: View {
                 CatProfilePhotoPresentation(localIdentifier: $0.localIdentifier, creationDate: $0.creationDate,
                                             assignedProfileIdentifiers: [identifier])
             }
-            return CatProfilePresentation(identifier: identifier, name: index == 0 ? "ミケ" : "ソラ",
+            return CatProfilePresentation(identifier: identifier, name: OwnerStoreCaptureFixture.isRequested ? (index == 0 ? "むぎ" : "あめ") : (index == 0 ? "ミケ" : "ソラ"),
                 coverPhoto: photos.first, confirmedPhotos: photos)
         }
     }

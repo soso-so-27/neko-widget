@@ -132,6 +132,63 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    func testCaptureOwnerStoreHomeWidgets() throws {
+        let root = try XCTUnwrap(ProcessInfo.processInfo.environment["NEKO_PRIVATE_CAPTURE_ROOT"])
+        executionTimeAllowance = 240
+        let app = XCUIApplication()
+        app.launchArguments += ["-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP",
+            "--app-store-screenshot-fixture", "--owner-store-capture", "--review-public-presentation"]
+        app.launchEnvironment["NEKO_PRIVATE_CAPTURE_ROOT"] = root
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        sleep(3)
+        XCUIDevice.shared.press(.home)
+        let springboard = XCUIApplication(bundleIdentifier: springboardBundleIdentifier)
+        // Large first, then Medium: the two real WidgetKit sizes occupy six
+        // rows on the disposable Home Screen. No app-drawn Home Screen is used.
+        for desiredPage in [3, 2] {
+            let edit = try XCTUnwrap(enterHomeScreenEditing(in: springboard))
+            edit.tap()
+            let addMenu = try XCTUnwrap(waitForElement(in: springboard,
+                labels: ["ウィジェットを追加", "Add Widget"],
+                elementTypes: [.button, .staticText, .menuItem], timeout: 10))
+            addMenu.tap()
+            let search = try XCTUnwrap(waitForFirstElement(springboard.searchFields, timeout: 15))
+            focusForTyping(search, in: springboard); search.typeText("ねこのまど")
+            let result = try XCTUnwrap(findFixtureGalleryResult(in: springboard)); result.tap()
+            let gallery = springboard.scrollViews.containing(.pageIndicator, identifier: nil).firstMatch
+            let pages = gallery.pageIndicators.firstMatch
+            XCTAssertTrue(pages.waitForExistence(timeout: 15))
+            for _ in 1..<desiredPage {
+                let preview = try XCTUnwrap(gallery.buttons.matching(
+                    NSPredicate(format: "value BEGINSWITH %@", "Widget,")
+                ).allElementsBoundByIndex.first(where: {
+                    $0.exists && abs($0.frame.midX - springboard.frame.midX) < 20
+                }))
+                let start = preview.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.3))
+                let end = springboard.coordinate(withNormalizedOffset: .zero).withOffset(
+                    CGVector(dx: 20, dy: preview.frame.minY + preview.frame.height * 0.3))
+                start.press(forDuration: 0.1, thenDragTo: end)
+                sleep(1)
+            }
+            XCTAssertEqual(galleryPage(pages), [desiredPage, 4])
+            let addButton = try XCTUnwrap(waitForElement(in: springboard,
+                labels: ["ウィジェットを追加", "Add Widget"], elementTypes: [.button], timeout: 10))
+            addButton.tap()
+            sleep(2)
+            if let done = waitForElement(in: springboard, labels: ["完了", "Done"],
+                elementTypes: [.button], timeout: 3, requireHittable: true) { done.tap() }
+            XCUIDevice.shared.press(.home)
+        }
+        sleep(5)
+        let hierarchy = XCTAttachment(string: springboard.debugDescription)
+        hierarchy.name = "private-home-widget-layout"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
+        captureScreenshot(named: "01_widget", screenshot: XCUIScreen.main.screenshot())
+    }
+
+    @MainActor
     func testCaptureSharedWidgetAllSupportedSizes() {
         executionTimeAllowance = 180
         captureFixtureGallery(captureAllSizes: true)

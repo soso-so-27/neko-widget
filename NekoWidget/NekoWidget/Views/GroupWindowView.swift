@@ -2873,6 +2873,15 @@ actor GroupWindowScreenFixture: GroupWindowMediaClient {
     private func photoList(_ window: GroupWindow) -> [GroupPhoto] {
         let others = window.members.filter { $0.id != window.myParticipantID }
         let now = GroupWindowUIFixture.fixtureNow
+        if OwnerStoreCaptureFixture.isRequested {
+            return [GroupPhoto(id: "fixture-owner-store-photo", windowID: window.id,
+                senderParticipantID: others.first?.id ?? window.myParticipantID,
+                senderDisplayName: "パパ", createdAt: Date().addingTimeInterval(-3600),
+                fixtureAssetName: "app-store-screenshot-fixture-18",
+                hearts: [GroupHeart(participantID: others.first?.id ?? "fixture-mother",
+                    displayName: "パパ", active: true, updatedAt: now)],
+                caption: "ふたりでくっついて寝ていた")]
+        }
         let fixed = (1...6).map { index -> GroupPhoto in
             let sender = index % 3 == 0 || others.isEmpty ? nil : others[(index - 1) % others.count]
             let id = "fixture-group-photo-\(index)"
