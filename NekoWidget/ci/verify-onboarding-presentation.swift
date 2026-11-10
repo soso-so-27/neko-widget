@@ -16,6 +16,8 @@ enum OnboardingPresentationVerifier {
         try verifiesWidgetGuideReplayIsNonDestructive()
         try verifiesWidgetPlacementRecoveryPolicy()
         try verifiesPartialScanFailureRetainsResultAndStopsProgress()
+        try verifiesScanCountStartsWithTheFirstCat()
+        try verifiesFirstPlusOfferComesLaterOnce()
         print("Onboarding presentation verifier passed")
     }
 
@@ -37,6 +39,63 @@ enum OnboardingPresentationVerifier {
                     "the no-result failure became a partial-result screen")
     }
 
+    /// 11/10: 「いま 0枚」 over an empty grid read as a failure.
+    private static func verifiesScanCountStartsWithTheFirstCat() throws {
+        try require(!OnboardingPartialScanRecovery.showsCount(hasPreliminaryResult: true, displayedCount: 0),
+                    "the scan showed 「いま 0枚」")
+        try require(OnboardingPartialScanRecovery.showsCount(hasPreliminaryResult: true, displayedCount: 1),
+                    "the first cat did not show the count")
+        try require(!OnboardingPartialScanRecovery.showsCount(hasPreliminaryResult: false, displayedCount: 3),
+                    "a count showed before any result")
+    }
+
+    /// 11/10: the first Plus offer is not part of the first run. It comes
+    /// once, on a later opening, after a cloudy window was cleared or from the
+    /// next day, with a Widget placed, and never with another prompt or screen.
+    private static func verifiesFirstPlusOfferComesLaterOnce() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        let ended = ISO8601DateFormatter().date(from: "2026-11-10T01:00:00Z")!  // 10:00 JST
+        let sameDay = ended.addingTimeInterval(3 * 3_600)
+        let nextDay = ended.addingTimeInterval(20 * 3_600)                     // 06:00 JST the next day
+        func due(dueSince: Date? = ended, shown: Bool = false, activeSince: Date? = sameDay, now: Date = sameDay,
+                 cleared: Bool = true, offered: Bool = true, placed: Bool = true,
+                 prompted: Bool = false, presented: Bool = false) -> Bool {
+            FirstPlusOfferPolicy.isDue(dueSince: dueSince, shown: shown, activeSince: activeSince, now: now,
+                hasClearedCloudyWindow: cleared, plusIsOffered: offered, widgetPlaced: placed,
+                promptedThisLaunch: prompted, otherScreenPresented: presented, calendar: calendar)
+        }
+        try require(due(), "a later opening after clearing the window did not offer Plus")
+        try require(!due(activeSince: ended.addingTimeInterval(-60)),
+                    "Plus was offered in the opening that ended the first run (on return from placing)")
+        try require(!due(cleared: false), "Plus came the same day before the window was ever cleared")
+        try require(due(activeSince: nextDay, now: nextDay, cleared: false), "Plus did not come from the next day")
+        try require(!due(shown: true), "the first Plus offer came twice")
+        try require(!due(dueSince: nil), "Plus was offered without the first run ending through the Widget guide")
+        try require(!due(placed: false), "Plus was offered while no Widget is placed")
+        try require(!due(offered: false), "Plus was offered to a member or an unconfigured build")
+        try require(!due(prompted: true), "Plus shared a launch with the review prompt")
+        try require(!due(presented: true), "Plus stacked over another screen")
+        try require(FirstPlusOfferPolicy.dueSinceKey == "plusOffer.first.dueSince.v1"
+                    && FirstPlusOfferPolicy.shownKey == "plusOffer.first.shown.v1", "first Plus offer keys changed")
+
+        let suite = "first-plus-offer-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        FirstPlusOfferPolicy.noteFirstRunEnded(now: ended, defaults: defaults)
+        FirstPlusOfferPolicy.noteFirstRunEnded(now: nextDay, defaults: defaults)
+        try require(FirstPlusOfferPolicy.dueSince(defaults: defaults) == ended, "ending twice moved the offer later")
+        FirstPlusOfferPolicy.noteShown(defaults: defaults)
+        try require(defaults.bool(forKey: FirstPlusOfferPolicy.shownKey), "the shown offer was not remembered")
+        let resumedSuite = "first-plus-offer-resumed-\(UUID().uuidString)"
+        let resumed = UserDefaults(suiteName: resumedSuite)!
+        defer { resumed.removePersistentDomain(forName: resumedSuite) }
+        FirstPlusOfferPolicy.noteShown(defaults: resumed)
+        FirstPlusOfferPolicy.noteFirstRunEnded(now: ended, defaults: resumed)
+        try require(FirstPlusOfferPolicy.dueSince(defaults: resumed) == nil,
+                    "a person who saw the first run's Plus page was offered it again")
+    }
+
     private static func verifiesPagesInTheApprovedOrder() throws {
         try require(
             OnboardingPresentationPage.allCases == [
@@ -52,8 +111,10 @@ enum OnboardingPresentationVerifier {
                     "persisted Widget-guide progress changed meaning")
     }
 
-    /// ADR-027: the Plus page is last, optional, and never in the way of
-    /// Photos access or the scan. Without Plus configured the flow is unchanged.
+    /// 11/10: the first run never moves to the Plus page. Placing the Widget
+    /// (and coming back) or 「あとで」 ends the first run; Plus comes later,
+    /// once (FirstPlusOfferPolicy). A first run saved on the Plus page before
+    /// 11/10 still resumes it, and one tap on 「あとで」 enters the app.
     private static func verifiesPlusOfferIsTheLastSkippablePage() throws {
         var state = OnboardingPresentationState(offersPlus: true)
         state.advance()
@@ -61,12 +122,15 @@ enum OnboardingPresentationVerifier {
         state.advance()
         try require(state.currentPage == .widgetGuide, "Plus moved ahead of the Widget guide")
         state.advance()
-        try require(state.currentPage == .plusOffer, "Widget guide did not lead to the Plus page")
-        try require(!state.isFirstRunComplete, "the Plus page completed onboarding before it was seen")
-        try require(state.resumePageIndex == OnboardingPresentationPage.plusOffer.rawValue,
-                    "the Plus page was not resumable")
-        state.skipPlusOffer()
-        try require(!state.isPresented && state.isFirstRunComplete, "one tap on later did not enter the app")
+        try require(!state.isPresented && state.isFirstRunComplete,
+                    "returning from the Widget placement still led to the Plus page")
+        try require(state.resumePageIndex == OnboardingPresentationPage.widgetGuide.rawValue,
+                    "the first run recorded the Plus page as seen")
+
+        var resumed = OnboardingPresentationState(persistedResumePageIndex: 4, offersPlus: true)
+        try require(resumed.currentPage == .plusOffer, "a first run saved on the Plus page lost it")
+        resumed.skipPlusOffer()
+        try require(!resumed.isPresented && resumed.isFirstRunComplete, "one tap on later did not enter the app")
 
         var afterPurchase = OnboardingPresentationState(persistedResumePageIndex: 4, offersPlus: true)
         try require(afterPurchase.currentPage == .plusOffer, "Plus page progress was discarded")
@@ -76,7 +140,8 @@ enum OnboardingPresentationVerifier {
 
         var widgetLater = OnboardingPresentationState(persistedResumePageIndex: 3, offersPlus: true)
         widgetLater.skipWidgetGuide()
-        try require(widgetLater.currentPage == .plusOffer, "Widget later skipped the optional Plus page")
+        try require(!widgetLater.isPresented && widgetLater.isFirstRunComplete,
+                    "Widget later led to the Plus page instead of the app")
 
         var permissionSkip = OnboardingPresentationState(persistedResumePageIndex: 1, offersPlus: true)
         permissionSkip.skipPhotoPermission()
@@ -118,13 +183,7 @@ enum OnboardingPresentationVerifier {
             OnboardingPresentationCopy.purposeFootnote.isEmpty,
             "page-one grew a footnote again"
         )
-        try require(
-            OnboardingPresentationCopy.permissionTitleLines == [
-                "このiPhoneの中から、",
-                "猫の写真と動画を見つけます。"
-            ],
-            "Photos permission request changed"
-        )
+        // 11/10: page two has no title of its own; it repeated page one.
         // The privacy promise is said once (page one, purposeBody); page two
         // no longer repeats it as bullets or a limited-access note (11/8).
         try require(
@@ -194,8 +253,19 @@ enum OnboardingPresentationVerifier {
             "Widget guide stopped explaining automatic confirmation"
         )
         try require(
-            OnboardingPresentationCopy.widgetAction == "完了",
+            OnboardingPresentationCopy.widgetAction == "置きました",
             "Widget guide primary action changed"
+        )
+        try require(
+            OnboardingPresentationCopy.widgetPlacedTitle == "置けました"
+                && OnboardingPresentationCopy.widgetPlacedBody == "ホーム画面で札を押すと、きょうの1枚が出ます。"
+                && OnboardingPresentationCopy.widgetPlacedAction == "写真を見る",
+            "the one 「置けました」 screen changed"
+        )
+        try require(
+            OnboardingPresentationCopy.loadFailedTitle == "読み込めませんでした"
+                && OnboardingPresentationCopy.loadFailedAction == "もう一度",
+            "a failed start stopped offering one retry"
         )
         try require(
             OnboardingPresentationCopy.widgetLaterAction

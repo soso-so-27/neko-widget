@@ -213,6 +213,10 @@ final class AppViewModel: ObservableObject {
     /// internally, while public candidate surfaces stay hidden. Failure also
     /// makes the internal candidate view empty so managed outputs fail closed.
     private var catIdentityLoadState: CatIdentityLoadState = .loading
+    /// The start could not read the app's own records (snapshot, curation,
+    /// or the cat ledger). The Photos request cannot begin, so the screens
+    /// offer 「もう一度」 (`retryStartup`) instead of a button that does nothing.
+    @Published private(set) var startupLoadFailed = false
     private var candidatePhotoRouteGate = CandidatePhotoRouteGate()
     private var libraryChangePending = false
     private var lastActivationSyncAt: Date?
@@ -572,6 +576,7 @@ final class AppViewModel: ObservableObject {
                 snapshot.albumLocalIdentifier = recovered
             }
             catIdentityLoadState = .failed
+            startupLoadFailed = true
             currentAsset = nil
             hasFinishedSnapshotLoad = true
             discardPendingDeepLink(reason: "candidate-state-unavailable")
@@ -603,6 +608,7 @@ final class AppViewModel: ObservableObject {
                 snapshot.albumLocalIdentifier = try? await store
                     .recoverAlbumLocalIdentifier()
                 catIdentityLoadState = .failed
+                startupLoadFailed = true
                 currentAsset = nil
                 hasFinishedSnapshotLoad = true
                 discardPendingDeepLink(reason: "snapshot-state-unavailable")
@@ -612,6 +618,7 @@ final class AppViewModel: ObservableObject {
         } else if let storeInitializationError {
             errorMessage = storeInitializationError
             catIdentityLoadState = .failed
+            startupLoadFailed = true
             currentAsset = nil
             hasFinishedSnapshotLoad = true
             discardPendingDeepLink(reason: "snapshot-store-unavailable")
@@ -620,6 +627,7 @@ final class AppViewModel: ObservableObject {
         }
         guard await loadCatHouseholdIdentity() else {
             catIdentityLoadState = .failed
+            startupLoadFailed = true
             currentAsset = nil
             hasFinishedSnapshotLoad = true
             discardPendingDeepLink(reason: "cat-identity-state-unavailable")
@@ -658,6 +666,16 @@ final class AppViewModel: ObservableObject {
         await refreshCandidateOutputsAfterCurationChange(reportErrors: false)
         libraryObserver.start()
         await synchronizeOnActive(refreshLimitedAccess: false)
+    }
+
+    /// 「もう一度」 after a failed start: the same start, from the beginning.
+    func retryStartup() async {
+        guard startupLoadFailed else { return }
+        startupLoadFailed = false
+        errorMessage = nil
+        catIdentityLoadState = .loading
+        hasStarted = false
+        await start()
     }
 
     func requestAccess() async {

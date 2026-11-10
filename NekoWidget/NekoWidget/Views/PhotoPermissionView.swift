@@ -1,9 +1,11 @@
 import Photos
 import SwiftUI
 
+/// Photos access is off (denied or restricted) on the first run's page two.
+/// One state, one sentence, 「設定を開く」 (11/10: the old text listed
+/// features, Plus's movies among them, to someone who had just said no).
 struct PhotoPermissionView: View {
     let status: PHAuthorizationStatus
-    let requestAccess: () -> Void
     let openSettings: () -> Void
 
     var body: some View {
@@ -26,8 +28,8 @@ struct PhotoPermissionView: View {
                     .lineSpacing(3)
             }
 
-            Button(action: primaryAction) {
-                Text(buttonTitle)
+            Button(action: openSettings) {
+                Text("設定を開く")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 5)
@@ -36,13 +38,6 @@ struct PhotoPermissionView: View {
             .controlSize(.large)
             .accessibilityIdentifier("photo-permission-primary")
 
-            if status == .notDetermined {
-                Text("一部の写真だけを許可しても使えます。\n元の写真をアプリにコピーすることはありません。")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .multilineTextAlignment(.center)
-            }
-
             Spacer()
         }
         .padding(28)
@@ -50,34 +45,13 @@ struct PhotoPermissionView: View {
     }
 
     private var title: String {
-        switch status {
-        case .denied: "写真へのアクセスが必要です"
-        case .restricted: "写真へのアクセスが制限されています"
-        default: "猫の写真や動画を見つけよう"
-        }
+        status == .restricted ? "写真へのアクセスが制限されています" : "写真へのアクセスがオフです"
     }
 
     private var message: String {
-        switch status {
-        case .denied:
-            "設定で写真へのアクセスを許可すると、猫の写真を整理し、猫が写る動画を季節のムービーに使えます。"
-        case .restricted:
-            "スクリーンタイムなどの制限で、写真を読み込めません。"
-        default:
-            "写真から猫が写っているものを探して整理します。季節のムービーには、猫が写る動画も使います。"
-        }
-    }
-
-    private var buttonTitle: String {
-        status == .notDetermined ? "写真へのアクセスを許可" : "設定を開く"
-    }
-
-    private func primaryAction() {
-        if status == .notDetermined {
-            requestAccess()
-        } else {
-            openSettings()
-        }
+        status == .restricted
+            ? "スクリーンタイムなどの制限で、写真を読み込めません。"
+            : "設定で許可すると、猫の写真を探せます。"
     }
 }
 

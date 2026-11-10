@@ -600,8 +600,12 @@ try MomentSharingStateStore.verifyPrivateAlias()
                          ["none", "waiting", "needsApp", "sourceUnavailable"])
 
         view = source("NekoWidgetWidget/NekoWidgetView.swift")
-        self.assertIn('return "写真を表示できません"', view)
-        self.assertIn('return "アプリを開いて更新"', view)
+        # 11/10: right after placing, the personal Widget is "being prepared",
+        # not an error that tells the person to update.
+        self.assertIn('return "写真を準備しています"', view)
+        self.assertIn('return "アプリを開くと始まります"', view)
+        self.assertNotIn('return "写真を表示できません"', view)
+        self.assertNotIn('return "アプリを開いて更新"', view)
         self.assertIn("let image = WidgetCacheImageLoader.image(", view)
         empty = section(view, "private var emptyState: some View", "private var emptyStateTitle: String")
         self.assertNotIn("familyPhotoFooter", empty)
@@ -2203,8 +2207,12 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("CatProfilesView(", settings)
         self.assertIn('.accessibilityIdentifier("tools-cat-\\(profile.identifier)")', source("NekoWidget/Views/MainTabView.swift"))
         self.assertIn('.navigationTitle(opensProfileSettings ? "猫のプロフィール" : "猫ごとの写真")', profiles)
-        self.assertIn('"このiPhoneの中から、"', onboarding)
-        self.assertIn('"猫の写真や動画を見つけよう"', permission)
+        # 11/10: page two has no title of its own (it repeated page one), and
+        # Photos turned off says one state and one sentence, no features.
+        self.assertNotIn('"このiPhoneの中から、"', onboarding)
+        self.assertIn('"写真へのアクセスがオフです"', permission)
+        self.assertIn('"設定で許可すると、猫の写真を探せます。"', permission)
+        self.assertNotIn("季節のムービー", permission)
         self.assertIn('"このiPhoneの猫写真を探しています"', scan)
 
         surfaces_without_legacy_album_copy = [
@@ -2715,8 +2723,13 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("widgetLegacyPlacementSteps", guide)
         self.assertIn("if #available(iOS 18.0, *)", guide)
         self.assertIn('"widget-placement-steps"', guide)
-        self.assertIn('"完了"', presentation)
+        # 11/10: place first, then come back. The hint is on the screen and
+        # the button says it was placed.
+        self.assertIn('static let widgetAction = "置きました"', presentation)
         self.assertIn('"追加してアプリへ戻ると、自動で確認します。"', presentation)
+        self.assertIn("Text(OnboardingPresentationCopy.widgetReturnHint)", guide)
+        self.assertNotIn("猫を登録すると", guide)
+        self.assertNotIn("hasCats", guide)
         self.assertIn(
             ".onChange(of: widgetInstallationChecker.isInstalled, initial: true)",
             app_root,
@@ -2725,8 +2738,27 @@ try MomentSharingStateStore.verifyPrivateAlias()
             ".onChange(of: onboardingState.currentPage, initial: true)",
             app_root,
         )
-        self.assertIn("guard page == .widgetGuide,", app_root)
-        self.assertIn("widgetInstallationChecker.isInstalled else { return }", app_root)
+        # Coming back from placing the Widget closes a 写真-tab guide and
+        # turns the first run's guide into 「置けました」. It never advances
+        # the first run by itself, so no Plus page opens on return (11/10).
+        installed = section(app_root, ".onChange(of: widgetInstallationChecker.isInstalled, initial: true)",
+                            ".onChange(of: onboardingState.currentPage, initial: true)")
+        self.assertIn("showsWidgetPlacementGuide = false", installed)
+        self.assertNotIn("completeWidgetPlacementGuideIfNeeded()", installed)
+        self.assertNotIn("advance()", installed)
+        self.assertIn("isWidgetPlaced: widgetInstallationChecker.isInstalled,", app_root)
+        onboarding_view = source("NekoWidget/Views/OnboardingView.swift")
+        self.assertIn("if isWidgetPlaced {\n                    OnboardingWidgetPlacedPage(close: finish)", onboarding_view)
+        self.assertNotIn("(.widgetGuide, .plusOffer)", app_root)
+        # The cloudy images are prepared when the guide opens, before the
+        # person reaches the Home Screen (11/10).
+        guide_page = section(app_root, ".onChange(of: onboardingState.currentPage, initial: true)", ".onDisappear {")
+        self.assertIn("guard page == .widgetGuide else { return }", guide_page)
+        self.assertIn("await viewModel.refreshInstalledCloudyWindows()", guide_page)
+        store = source("Shared/Storage/CloudyWindowStore.swift")
+        self.assertIn("static let prePlacementPhotoCount = 3", store)
+        self.assertIn("guard preparesBeforePlacement(state) else { return nil }", store)
+        self.assertIn("!installed.isEmpty || preparesBeforePlacement(state),", store)
         completion = section(
             app_root,
             "private func completeWidgetPlacementGuideIfNeeded()",
@@ -2735,7 +2767,50 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("showsWidgetPlacementGuide = false", completion)
         self.assertIn("guard state.currentPage == .widgetGuide else { return }", completion)
         self.assertIn("state.advance()", completion)
+        self.assertIn("FirstPlusOfferPolicy.noteFirstRunEnded()", completion)
         self.assertIn("WidgetCenter.shared.getCurrentConfigurations", checker)
+
+    def test_first_run_lands_on_photos_and_plus_comes_later_once(self) -> None:
+        app_root = source("NekoWidget/App/AppRootView.swift")
+        presentation = source("NekoWidget/Views/OnboardingPresentation.swift")
+        main = source("NekoWidget/Views/MainTabView.swift")
+        app = source("NekoWidget/App/NekoWidgetApp.swift")
+        # 11/10: every ending of the first run lands on the 写真 tab, once;
+        # MainTabStartupPolicy still decides every later launch.
+        for name, end in (("private func completeOnboarding() {", "/// One tap past a resumed Plus page."),
+                          ("private func skipOnboardingPlusOffer() {", "private func completeOnboardingWithoutPhotoAccess()"),
+                          ("private func completeOnboardingWithoutPhotoAccess() {", "/// Joined a まど"),
+                          ("private func completeOnboardingWithoutWidgetPhoto() {", "private func persistOnboardingState("),
+                          ("private func completeWidgetPlacementGuideIfNeeded() {", "@MainActor\nprivate final class")):
+            body = section(app_root, name, end)
+            self.assertIn("startsInPhotosAfterOnboarding = ", body, name)
+        self.assertIn("MainTabStartupPolicy.selection(lastTab: lastViewedTab", main)
+        # The first run never routes to the Plus page; the reducer completes.
+        reducer = section(presentation, "mutating func advance() {", "mutating func skipPlusOffer()")
+        self.assertIn("case .widgetGuide, .plusOffer:", reducer)
+        self.assertNotIn("routeFirstRun(to: .plusOffer)", presentation)
+        # The first offer: once, on a later opening, after a cleared window or
+        # the next day, over the person's own cat, never with the review prompt.
+        policy = section(presentation, "enum FirstPlusOfferPolicy {", "extension Notification.Name {")
+        self.assertIn("activeSince > dueSince", policy)
+        self.assertIn("hasClearedCloudyWindow || !calendar.isDate(now, inSameDayAs: dueSince)", policy)
+        self.assertIn("FirstPlusOfferPolicy.activeSince = .now", app)
+        offer = section(main, "private func offerFirstPlusIfDue() async {", "/// A sheet, cover, alert")
+        self.assertIn("CloudyWindowStore.shared.hasRevealedAnyWindow()", offer)
+        self.assertIn("await UsageCounter.anyWidgetPlaced() == true", offer)
+        self.assertIn("!membershipAccess.hasPersonalPlus()", offer)
+        self.assertIn("FirstPlusOfferPolicy.promptedThisLaunch = true", offer)
+        self.assertIn("FirstPlusOfferPolicy.noteShown(defaults: defaults)", offer)
+        self.assertLess(main.index("MembershipOfferSheet(model: .live(), context: .onboarding)"),
+                        main.index(".environment(\\.plusOfferPhoto, bestShowcaseCandidate.map {"),
+                        "the first offer must show the person's own cat")
+        review = section(main, "private func askForReviewAfterPhotoIfDue() async {", "@ViewBuilder")
+        self.assertIn("askedThisSession: !firstThisSession || FirstPlusOfferPolicy.promptedThisLaunch", review)
+        self.assertIn("FirstPlusOfferPolicy.promptedThisLaunch = true", review)
+        # A resumed first-run Plus page also shows the person's own cat.
+        self.assertIn(".environment(\\.plusOfferPhoto, hasPhotoAccess ? viewModel.catAssets.first.map {", app_root)
+        model = source("NekoWidget/Services/MembershipOfferModel.swift")
+        self.assertIn('case .onboarding: "ホーム画面の1枚は無料です。毎日新しくなるのはPlusです。"', model)
 
     def test_paired_consent_renewal_and_dynamic_build_identity_are_explicit(self) -> None:
 

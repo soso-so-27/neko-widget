@@ -153,6 +153,9 @@ struct ProductionAppRootView: View {
             // and the file is written only on going to the background.
             .task(id: scenePhase) {
                 guard scenePhase == .active else { return }
+                // In memory only: the first Plus offer waits for an opening
+                // later than the one that ended the first run (11/10).
+                FirstPlusOfferPolicy.activeSince = .now
                 // One small write at most once a day, for the review prompt's 3 days.
                 ReviewPromptPolicy.noteActive()
                 await UsageCounter.shared.appBecameActive(viewModel: viewModel,

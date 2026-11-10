@@ -115,6 +115,9 @@ private struct CloudyWindowState: Codable {
     var albumArrival: CloudyWindowAlbumArrival? = nil
     /// Only a successful host WidgetCenter query can grant image preparation.
     /// Nil is an older install, not permission to render in the background.
+    /// An empty set (WidgetKit answered: none placed) before any Widget was
+    /// ever drawn still prepares the few newest cats of 「このiPhoneの猫写真」,
+    /// so the first Widget draws its cloudy window at once (11/10).
     var installedSources: Set<String>? = nil
     /// Windows that have ever been given a photo. Without Plus, a window not
     /// in here still gets its first photo once (ADR-027 「最初の1枚」).
@@ -129,6 +132,10 @@ struct CloudyWindowStore: Sendable {
     static let personalScope = "personal-library"
     static let profilePrefix = "personal-cat:"
     static let maximumPhotoCount = 32
+    /// Before any Widget is placed: this many of the newest cats are kept
+    /// ready (11/10: a Widget placed during the first run said 「写真を表示
+    /// できません」 until the app was opened again).
+    static let prePlacementPhotoCount = 3
     static let maximumFileBytes = 220 * 1_024
     private let containerURL: URL?
     private let authorityStore: PersonalRediscoveryStore
@@ -201,6 +208,13 @@ struct CloudyWindowStore: Sendable {
             try write(state)
             collectFiles(keeping: Set(state.photos.flatMap(\.filenames)))
         }
+    }
+
+    /// Before the first Widget: WidgetKit answered "none", no window was ever
+    /// given a photo, and 「このiPhoneの猫写真」 is cloudy.
+    private func preparesBeforePlacement(_ state: CloudyWindowState) -> Bool {
+        state.installedSources?.isEmpty == true && (state.issuedScopeIDs ?? []).isEmpty
+            && state.selections.isEmpty && supports(Self.personalScope, in: state)
     }
 
     private func supports(_ sourceID: String, in state: CloudyWindowState) -> Bool {
@@ -326,10 +340,21 @@ struct CloudyWindowStore: Sendable {
         return try authorityStore.withAuthoritySnapshot(now: now) { authority in
             guard let authority, authority.isAuthorized else { return nil }
             var state = try read()
-            guard state.installedSources?.isEmpty == false else { return nil }
+            guard let installed = state.installedSources else { return nil }
             reconcile(&state, authority: authority, now: now)
             let available = authority.candidates.filter { state.metadata[$0.item.localIdentifier] != nil }
                 .sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
+            if installed.isEmpty {
+                // No Widget yet, and none ever drawn: the newest few cats of
+                // 「このiPhoneの猫写真」 only, cloudy like every first photo
+                // (11/10). Removing a Widget later still releases everything.
+                guard preparesBeforePlacement(state) else { return nil }
+                let planned = Array(available.prefix(Self.prePlacementPhotoCount))
+                return .init(configuration: state.configuration, authorityRevision: authority.eligibilityRevision,
+                             candidates: planned, existing: state.photos.filter(filesExist),
+                             protectedPhotoIDs: protectedSelections(in: state, now: now)
+                                .union(planned.map { $0.item.localIdentifier }))
+            }
             let month = Self.calendar.component(.month, from: now)
             var pools = [
                 available.filter { !state.seenPhotoIDs.contains($0.item.localIdentifier)
@@ -390,7 +415,9 @@ struct CloudyWindowStore: Sendable {
                  protectedPhotoIDs: Set<String> = [], now: Date = .now) throws {
         try authorityStore.withAuthoritySnapshot(now: now) { authority in
             var state = try read()
-            guard internalPresentation, state.installedSources?.isEmpty == false,
+            let beforePlacement = state.installedSources?.isEmpty == true
+            guard internalPresentation, let installed = state.installedSources,
+                  !installed.isEmpty || preparesBeforePlacement(state),
                   state.configuration.revision == configurationRevision,
                   authority?.eligibilityRevision == authorityRevision,
                   valid(photo, in: state, authority: authority),
@@ -399,6 +426,11 @@ struct CloudyWindowStore: Sendable {
                   files.values.allSatisfy({ !$0.isEmpty && $0.count <= Self.maximumFileBytes })
             else { throw PersonalRediscoveryStore.Error.staleRevision }
             state.photos.removeAll { $0.photoID == photo.photoID }
+            if beforePlacement {
+                // Before placement the set stays at the planned few.
+                let pinned = protectedSelections(in: state, now: now).union(protectedPhotoIDs)
+                state.photos.removeAll { !pinned.contains($0.photoID) }
+            }
             if state.photos.count >= Self.maximumPhotoCount {
                 let pinned = protectedSelections(in: state, now: now).union(protectedPhotoIDs)
                 guard let index = state.photos.firstIndex(where: { !pinned.contains($0.photoID) }) else {
@@ -560,6 +592,15 @@ struct CloudyWindowStore: Sendable {
             }
             if changed { try write(state) }
         }
+    }
+
+    /// Whether a window was cleared by its tag at least once (read only): the
+    /// first Plus offer waits for it, or for the next day (11/10).
+    func hasRevealedAnyWindow() -> Bool {
+        guard internalPresentation else { return false }
+        return (try? authorityStore.withAuthoritySnapshot { _ in
+            try read().selections.contains { $0.revealedAt != nil }
+        }) ?? false
     }
 
     /// Photos revealed in the window between the dates (read only), for the
