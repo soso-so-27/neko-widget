@@ -156,7 +156,11 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
             let search = try XCTUnwrap(waitForFirstElement(springboard.searchFields, timeout: 15))
             focusForTyping(search, in: springboard); search.typeText("ねこのまど")
             let result = try XCTUnwrap(findFixtureGalleryResult(in: springboard)); result.tap()
-            let gallery = springboard.scrollViews.containing(.pageIndicator, identifier: nil).firstMatch
+            // The modal's innermost scroll view follows the Home Screen's
+            // scroll view in AX. The latter also contains a page indicator.
+            let gallery = try XCTUnwrap(springboard.scrollViews.allElementsBoundByIndex.last(where: {
+                $0.pageIndicators.count > 0
+            }))
             let pages = gallery.pageIndicators.firstMatch
             XCTAssertTrue(pages.waitForExistence(timeout: 15))
             let pageState = galleryPage(pages)
@@ -169,7 +173,8 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
             // the family selected for the preceding Widget.
             let forward = desiredPage > pageState[0]
             for _ in 0..<abs(desiredPage - pageState[0]) {
-                let previews = gallery.buttons.matching(NSPredicate(format: "value BEGINSWITH %@", "Widget,"))
+                let previews = gallery.buttons.matching(NSPredicate(
+                    format: "value BEGINSWITH %@ OR value BEGINSWITH %@", "Widget,", "ウィジェット,"))
                 let deadline = Date().addingTimeInterval(40)
                 var renderedPreview: XCUIElement?
                 repeat {
@@ -199,7 +204,12 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                 elementTypes: [.button], timeout: 3, requireHittable: true) { done.tap() }
             else { XCUIDevice.shared.press(.home) }
         }
-        sleep(5)
+        let cloudyCaption = springboard.descendants(matching: .any).matching(NSPredicate(
+            format: "label CONTAINS %@ OR value CONTAINS %@", "タップで きょうの 1 枚", "タップで きょうの 1 枚")).firstMatch
+        // WidgetKit can expose only the combined Widget accessibility element.
+        // Keep the screenshot for visual inspection even if that text is not AX.
+        _ = cloudyCaption.waitForExistence(timeout: 30)
+        sleep(3)
         let hierarchy = XCTAttachment(string: springboard.debugDescription)
         hierarchy.name = "private-home-widget-layout"
         hierarchy.lifetime = .keepAlways
@@ -657,7 +667,11 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     @MainActor
     private func galleryPage(_ indicator: XCUIElement) -> [Int] {
         guard let value = indicator.value as? String else { return [] }
-        return value.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+        let numbers = value.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+        if value.contains("ページ中"), numbers.count == 2 {
+            return [numbers[1], numbers[0]]
+        }
+        return numbers
     }
 
     @MainActor
