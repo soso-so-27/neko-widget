@@ -147,8 +147,8 @@ jobs:
             git fetch --no-tags origin "$build_sha" --depth=1 > "$PRIVATE_ROOT/reuse-fetch.log" 2>&1
             # Match every project input from the repository root. Then verify
             # the packaged offline capture profile below before opening media.
-            # This standalone workflow/crypto validator is not a project input.
-            (cd "$GITHUB_WORKSPACE"; git diff --quiet "$build_sha" "$GITHUB_SHA" -- NekoWidget ':(exclude)NekoWidget/ci/test-private-store-capture.py')
+            # These standalone CI selectors/validators are not project inputs.
+            (cd "$GITHUB_WORKSPACE"; git diff --quiet "$build_sha" "$GITHUB_SHA" -- NekoWidget ':(exclude)NekoWidget/ci/test-private-store-capture.py' ':(exclude)NekoWidget/ci/native-ui-inventory.py')
             mkdir "$PRIVATE_ROOT/reuse"
             gh run download "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" \
               --name "encrypted-owner-store-capture-$BUILD_RUN_ID" --dir "$PRIVATE_ROOT/reuse"
