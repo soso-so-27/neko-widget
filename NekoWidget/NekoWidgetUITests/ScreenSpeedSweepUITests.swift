@@ -82,6 +82,15 @@ final class ScreenSpeedSweepUITests: XCTestCase {
         guard tapTab(app, "main-tab-memories", "アルバム") else { missing("タブ", app); return }
         _ = app.navigationBars["アルバム"].waitForExistence(timeout: 15)
         baseline(app, app.navigationBars["アルバム"])
+        // タップ＋問い合わせの基準: いま選ばれているタブをもう一度タップする。
+        var tapBase: [Double] = []
+        for _ in 0..<Self.samples {
+            let start = Date()
+            guard tapTab(app, "main-tab-memories", "アルバム"),
+                  app.buttons["album-prototype-past"].waitForExistence(timeout: 10) else { break }
+            tapBase.append(Date().timeIntervalSince(start) * 1000)
+        }
+        report("基準（同じタブをタップ＋問い合わせ）", "ms_overhead", tapBase)
         let tabs: [(String, String, String, () -> [XCUIElement])] = [
             ("写真", "main-tab-photos", "写真", { [app.buttons["photos-section-all"]] }),
             ("まど", "main-tab-windows", "まど", { [app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "実家のまど")).firstMatch] }),
@@ -196,19 +205,19 @@ final class ScreenSpeedSweepUITests: XCTestCase {
         let profile = app.buttons["tool-profile-11111111-1111-4111-8111-111111111111"]
 
         let showcase = app.buttons["tools-showcase-open"]
-        timeOpen("写真を見せる", app, open: { showcase.tap() },
+        timeOpen("写真を見せる", app, open: { self.safeTap(showcase, app) },
                  until: [anyIdentifierPrefix(app, "showcase-")],
-                 close: { self.back(app) }, back: [showcase])
+                 close: { self.closeTop(app) }, back: [showcase])
 
         let tools: [(String, String, String, [String])] = [
             ("病院で見せる", "tools-vet-open", "病院で見せる", ["vet-observations"]),
             ("預けるとき", "tools-care-open", "預けるとき", ["care-disclosure-open", "care-preview-open"]),
-            ("迷子のとき", "tools-lost-cat-open", "迷子のとき", ["lost-cat-name", "lost-cat-place", "lost-cat-contact"]),
+            ("迷子のとき", "tools-lost-cat-open", "迷子のとき", ["lost-cat-identifying-photos", "lost-cat-features", "lost-cat-collar-choice"]),
         ]
         for (name, identifier, title, pageIdentifiers) in tools {
             let tile = app.buttons[identifier]
             guard scrollToHittable(tile, app) else { missing(name, app); continue }
-            timeOpen(name + "（猫を選ぶ画面）", app, open: { tile.tap() },
+            timeOpen(name + "（猫を選ぶ画面）", app, open: { self.safeTap(tile, app) },
                      until: [profile, app.navigationBars[title]],
                      close: { self.back(app) }, back: [tile])
             tile.tap()
@@ -317,8 +326,7 @@ final class ScreenSpeedSweepUITests: XCTestCase {
         guard gear.waitForExistence(timeout: 15) else { missing("スクロール:設定", app); return }
         gear.tap()
         guard app.navigationBars["設定"].waitForExistence(timeout: 15) else { missing("スクロール:設定", app); return }
-        let form = app.collectionViews.firstMatch
-        measureScroll("設定", form.exists ? form : app)
+        measureScroll("設定", app)
         app.terminate()
     }
 
@@ -326,7 +334,7 @@ final class ScreenSpeedSweepUITests: XCTestCase {
     @MainActor func testScroll06ToolShowcase() { scrollTool(name: "写真を見せる", tile: "tools-showcase-open", profile: false, until: [], prefix: "showcase-") }
     @MainActor func testScroll07ToolVet() { scrollTool(name: "病院で見せる", tile: "tools-vet-open", profile: true, until: ["vet-observations"]) }
     @MainActor func testScroll08ToolCare() { scrollTool(name: "預けるとき", tile: "tools-care-open", profile: true, until: ["care-disclosure-open", "care-preview-open"]) }
-    @MainActor func testScroll09ToolLostCat() { scrollTool(name: "迷子のとき", tile: "tools-lost-cat-open", profile: true, until: ["lost-cat-name", "lost-cat-place", "lost-cat-contact"]) }
+    @MainActor func testScroll09ToolLostCat() { scrollTool(name: "迷子のとき", tile: "tools-lost-cat-open", profile: true, until: ["lost-cat-identifying-photos", "lost-cat-features", "lost-cat-collar-choice"]) }
     @MainActor func testScroll10ToolEvacuation() { scrollTool(name: "避難に備える", tile: "tools-evacuation-open", profile: false, until: ["evacuation-now-open"]) }
     @MainActor func testScroll11ToolEvacuationNow() { scrollTool(name: "いま避難する", tile: "tools-evacuation-open", profile: false, until: ["evacuation-now-open"], then: "evacuation-now-open", thenTitle: "いま避難する") }
 
@@ -487,6 +495,12 @@ final class ScreenSpeedSweepUITests: XCTestCase {
         let labelled = app.tabBars.buttons[label]
         if labelled.waitForExistence(timeout: 5) { labelled.tap(); return true }
         return false
+    }
+
+    @MainActor
+    private func safeTap(_ element: XCUIElement, _ app: XCUIApplication) {
+        if element.exists, element.isHittable { element.tap(); return }
+        if scrollToHittable(element, app) { element.tap() }
     }
 
     @MainActor
