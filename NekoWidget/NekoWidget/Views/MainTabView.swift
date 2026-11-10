@@ -649,7 +649,9 @@ struct MainTabView: View {
             }
             if selectedTab == .windows && tab != .windows { rememberMadoVisit() }
             didApplyInitialTab = true
-            lastViewedTab = tab.rawValue
+            // Written only when it changes: writing the same value still
+            // tells UserDefaults (and every @AppStorage on this view) to redraw.
+            if lastViewedTab != tab.rawValue { lastViewedTab = tab.rawValue }
             selectedTab = tab
         })) {
             // 1.0: 写真・まど・アルバム・ツール.
@@ -1537,9 +1539,11 @@ struct MainTabView: View {
     /// すべて・お気に入り・メモ side by side, as in Instagram and X (10/28):
     /// the next page is already there, follows the finger with a gap between
     /// pages, and a short flick is enough. One page per swipe.
+    /// Lazy (11/10): the first open builds only the page on screen; the next
+    /// page is built as soon as a swipe shows its edge.
     private var photoLibraryPager: some View {
         ScrollView(.horizontal) {
-            HStack(spacing: PhotoLibraryPagerProgress.gap) {
+            LazyHStack(spacing: PhotoLibraryPagerProgress.gap) {
                 ForEach(PhotoLibrarySection.allCases, id: \.self) { section in
                     ZStack {
                         photoLibraryContent(section)

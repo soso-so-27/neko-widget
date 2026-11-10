@@ -1299,6 +1299,18 @@ struct GroupLibraryDeliverySheet: View {
     private var windows: [GroupWindow] { list.windows.filter { $0.state == .active } }
     private var openWindows: [GroupWindow] { windows.filter { !GroupWindowPresentation.isPaused($0) } }
 
+    /// One open まど: its step, not a list of one. When a fresh list no longer
+    /// has exactly that one, the list is shown again.
+    private func chooseOnlyWindow() {
+        guard list.hasLoaded else { return }
+        if openWindows.count == 1 {
+            let only = openWindows[0].id
+            if screen?.windowID != only { screen = GroupWindowScreenModel(client: client, windowID: only) }
+        } else if screen != nil {
+            screen = nil
+        }
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             Group {
@@ -1374,10 +1386,12 @@ struct GroupLibraryDeliverySheet: View {
             highlightedWindowID = windowID
         }
         .task {
+            // 11/10: the rows (or the one まど's step) from the last list at
+            // once, not 「まどを読み込んでいます…」 on every open; then read again.
+            list.showListed(GroupWindowListNavigation.shared.lastListed)
+            chooseOnlyWindow()
             await list.load()
-            if openWindows.count == 1 {
-                screen = GroupWindowScreenModel(client: client, windowID: openWindows[0].id)
-            }
+            chooseOnlyWindow()
         }
         .announcesWhenShown(list.message)
     }
@@ -1933,9 +1947,13 @@ final class GroupWindowListNavigation: ObservableObject {
     /// The windows the list last read, so an opened window draws its name
     /// and state at once (11/7). Not published: nothing redraws for it.
     private(set) var listedWindows: [String: GroupWindow] = [:]
+    /// The same windows in the list's order, so 「まどに届ける」 draws its rows
+    /// at once and reads the list again behind them (11/10).
+    private(set) var lastListed: [GroupWindow] = []
 
     func rememberListed(_ windows: [GroupWindow]) {
         listedWindows = Dictionary(windows.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        lastListed = windows
     }
 
     /// After leaving or ending a window: the list, with its page gone.
@@ -1961,6 +1979,14 @@ final class GroupWindowListModel: ObservableObject {
     let client: any GroupWindowMediaClient
 
     init(client: any GroupWindowMediaClient) { self.client = client }
+
+    /// The windows this app run last listed, shown until `load()` answers.
+    /// Only before the first load: a load's answer always wins.
+    func showListed(_ listed: [GroupWindow]) {
+        guard !hasLoaded, !listed.isEmpty else { return }
+        windows = listed
+        hasLoaded = true
+    }
 
 #if DEBUG || INTERNAL_PRESENTATION
     /// Test builds only: how long the last list load took, to find where the wait is.
