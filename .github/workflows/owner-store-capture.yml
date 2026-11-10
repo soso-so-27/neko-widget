@@ -26,7 +26,7 @@ on:
         type: string
         default: ""
       build_run_id:
-        description: Synthetic run with a successful build step and identical project inputs
+        description: Synthetic compiler output with identical project inputs
         type: string
         default: ""
 
@@ -139,21 +139,24 @@ jobs:
             build_sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID" \
               --jq 'select(.workflow_id == 413328452) | .head_sha')
             [[ "$build_sha" =~ ^[0-9a-f]{40}$ ]]
-            # A passed compiler result remains reusable when a later UI step
-            # exhausts its job budget. This does not qualify the UI result.
+            # Preserve a completed compiler result independently of subsequent
+            # packaging or UI checks; rerun profile and architecture checks here.
             built=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID/jobs" \
-              --jq '[.jobs[] | select(.name == "synthetic") | .steps[] | select(.name == "Build before decrypting owner media" and .conclusion == "success")] | length')
+              --jq '[.jobs[] | select(.name == "synthetic")] | length')
             [[ "$built" == '1' ]]
             git fetch --no-tags origin "$build_sha" --depth=1 > "$PRIVATE_ROOT/reuse-fetch.log" 2>&1
             # Match every project input from the repository root. Then verify
             # the packaged offline capture profile below before opening media.
-            (cd "$GITHUB_WORKSPACE"; git diff --quiet "$build_sha" "$GITHUB_SHA" -- NekoWidget)
+            # This standalone workflow/crypto validator is not a project input.
+            (cd "$GITHUB_WORKSPACE"; git diff --quiet "$build_sha" "$GITHUB_SHA" -- NekoWidget ':(exclude)NekoWidget/ci/test-private-store-capture.py')
             mkdir "$PRIVATE_ROOT/reuse"
             gh run download "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" \
               --name "encrypted-owner-store-capture-$BUILD_RUN_ID" --dir "$PRIVATE_ROOT/reuse"
             NEKO_CAPTURE_KEY=c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1 \
               node ci/private-capture-crypto.mjs open "$PRIVATE_ROOT/reuse/private-capture-output.nekoenc" "$PRIVATE_ROOT/reuse/output.tar"
-            tar -xf "$PRIVATE_ROOT/reuse/output.tar" -C "$PRIVATE_ROOT/reuse" ./compiled-products.tar.gz
+            tar -xf "$PRIVATE_ROOT/reuse/output.tar" -C "$PRIVATE_ROOT/reuse" ./compiled-products.tar.gz ./build.log
+            grep -Fxq '** TEST BUILD SUCCEEDED **' "$PRIVATE_ROOT/reuse/build.log"
+            cp "$PRIVATE_ROOT/reuse/build.log" "$PRIVATE_ROOT/build.log"
             mkdir -p "$PRIVATE_ROOT/DerivedData/Build/Products"
             tar -xzf "$PRIVATE_ROOT/reuse/compiled-products.tar.gz" -C "$PRIVATE_ROOT/DerivedData/Build/Products"
             rm -rf "$PRIVATE_ROOT/reuse"
@@ -175,7 +178,7 @@ jobs:
               grep -m 5 -E 'error:|BUILD FAILED' "$PRIVATE_ROOT/build.log" || true
               exit 1
           fi
-          lipo -verify_arch "$(uname -m)" "$PRIVATE_ROOT/DerivedData/Build/Products/Debug-iphonesimulator/NekoWidget.app/NekoWidget"
+          lipo "$PRIVATE_ROOT/DerivedData/Build/Products/Debug-iphonesimulator/NekoWidget.app/NekoWidget" -verify_arch "$(uname -m)"
           python3 - "$PRIVATE_ROOT/DerivedData/Build/Products/Debug-iphonesimulator/NekoWidget.app/Info.plist" <<'PY'
           import plistlib, sys
           info = plistlib.loads(open(sys.argv[1], 'rb').read())

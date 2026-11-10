@@ -49,7 +49,8 @@ class PrivateCaptureTests(unittest.TestCase):
         self.assertNotIn('secrets.', synthetic)
         self.assertIn("if: github.ref == 'refs/heads/main' && !inputs.synthetic", workflow)
         self.assertIn('git diff --quiet "$build_sha" "$GITHUB_SHA"', workflow)
-        self.assertIn('.conclusion == "success"', workflow)
+        self.assertIn("grep -Fxq '** TEST BUILD SUCCEEDED **'", workflow)
+        self.assertIn('NekoWidget.app/NekoWidget" -verify_arch "$(uname -m)"', workflow)
 
         self.assertIn('contents: read', workflow)
         self.assertIn('retention-days: 1', workflow)
