@@ -26,7 +26,7 @@ on:
         type: string
         default: ""
       build_run_id:
-        description: Successful synthetic run with identical source tree (owner capture only)
+        description: Synthetic run with a successful build step and identical project inputs
         type: string
         default: ""
 
@@ -125,10 +125,15 @@ jobs:
           xcrun simctl ui "$udid" appearance light
           xcrun simctl status_bar "$udid" override --time 09:41 --batteryLevel 100 --batteryState charged --wifiBars 3 --cellularBars 4
           if [[ -n "$BUILD_RUN_ID" ]]; then
-            [[ '${{ inputs.synthetic }}' == 'false' && "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
+            [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
             build_sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID" \
-              --jq 'select(.workflow_id == 413328452 and .conclusion == "success") | .head_sha')
+              --jq 'select(.workflow_id == 413328452) | .head_sha')
             [[ "$build_sha" =~ ^[0-9a-f]{40}$ ]]
+            # A passed compiler result remains reusable when a later UI step
+            # exhausts its job budget. This does not qualify the UI result.
+            built=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID/jobs" \
+              --jq '[.jobs[] | select(.name == "synthetic") | .steps[] | select(.name == "Build before decrypting owner media" and .conclusion == "success")] | length')
+            [[ "$built" == '1' ]]
             git fetch --no-tags origin "$build_sha" --depth=1 > "$PRIVATE_ROOT/reuse-fetch.log" 2>&1
             # Match every project input from the repository root. Then verify
             # the packaged offline capture profile below before opening media.
