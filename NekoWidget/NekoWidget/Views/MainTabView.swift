@@ -2307,7 +2307,10 @@ struct MainTabView: View {
     private func memoriesDestination(for route: MemoriesRoute, libraryContext: Bool = false) -> some View {
         switch route {
         case .memoryNotes:
-            PhotoMemoryNotesListView(photos: memoryNotePhotos, store: memoStore) {
+            PhotoMemoryNotesListView(photos: memoryNotePhotos, store: memoStore,
+                                     currentPhotoAssignments: currentPhotoLibraryAssignments,
+                                     registeredProfileIdentifiers: photoLibraryRegisteredIdentifiers,
+                                     currentProfileNames: currentPhotoLibraryProfileNames) {
                 photoLibrarySelection.select(.all)
                 photosPath = NavigationPath()
                 selectedTab = .photos

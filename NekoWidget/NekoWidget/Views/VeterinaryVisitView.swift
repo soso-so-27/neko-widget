@@ -56,7 +56,6 @@ struct VeterinaryVisitsView: View {
     var photos: [PhotoPresentation]
     var noteStore: PhotoMemoryNoteStore = .shared
     var store: VeterinaryVisitStore = .shared
-    var initialRecord: PhotoMemoryNoteRecord? = nil
     @ObservedObject var careStore: CareHandoffStore = .shared
     @ObservedObject var evacuationStore: EvacuationStore = .shared
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -106,7 +105,7 @@ struct VeterinaryVisitsView: View {
                 VStack(spacing: 0) {
                     noticeBar
                     VeterinaryConsultationView(initialVisit: current, photos: photos, noteStore: noteStore,
-                        store: store, initialRecord: initialRecord, profiles: profiles,
+                        store: store, profiles: profiles,
                         pastVisits: Array(visits.filter { $0.id != current.id && $0.catID == current.catID }.reversed()),
                         openPast: { selected = $0 },
                         onDeleted: {
@@ -153,7 +152,7 @@ struct VeterinaryVisitsView: View {
         .sheet(item: $selected, onDismiss: { Task { await reload() } }) { visit in
             NavigationStack {
                 VeterinaryConsultationView(initialVisit: visit, photos: photos, noteStore: noteStore,
-                    store: store, initialRecord: nil, profiles: profiles)
+                    store: store, profiles: profiles)
             }
             .environment(\.dynamicTypeSize, typeSize)
         }
@@ -213,7 +212,6 @@ struct VeterinaryVisitsView: View {
             // Keep each append separately typed; a long chain of overloaded +
             // exceeded the native compiler's expression-checking budget.
             var candidates: [PhotoMemoryNoteCat] = known
-            candidates.append(contentsOf: initialRecord?.note.context?.cats ?? [])
             candidates.append(contentsOf: notes.flatMap { $0.note.context?.cats ?? [] })
             candidates.append(contentsOf: loaded.map { PhotoMemoryNoteCat(id: $0.catID, name: $0.catName) })
             candidates.append(contentsOf: savedTools.map(\.cat))
@@ -237,7 +235,6 @@ private struct VeterinaryConsultationView: View {
     let photos: [PhotoPresentation]
     let noteStore: PhotoMemoryNoteStore
     let store: VeterinaryVisitStore
-    let initialRecord: PhotoMemoryNoteRecord?
     var profiles: [CatProfilePresentation] = []
     /// Set when the memo is the tool's page: this cat's past memos below,
     /// no 「閉じる」 (the back button leaves and saves).
@@ -265,8 +262,6 @@ private struct VeterinaryConsultationView: View {
     @State private var deletesVisit = false
     @State private var error: String?
     @State private var busy = false
-    /// The record a photo memo was opened with, confirmed over the page.
-    @State private var chosen: PhotoMemoryNoteRecord?
     @State private var autosaveTask: Task<Void, Never>?
     @State private var removingEntry: VeterinaryVisitEntry?
     @ObservedObject private var catCareStore = CatCareStore.shared
@@ -629,7 +624,6 @@ private struct VeterinaryConsultationView: View {
             catCareStore.importBirthdays(profiles)
             guard visit == nil else { return }
             adopt(initialVisit)
-            if initialVisit.completedAt == nil { chosen = initialRecord }
         }
     }
     private func dialogs<Content: View>(_ content: Content) -> some View {
@@ -639,14 +633,6 @@ private struct VeterinaryConsultationView: View {
                 VeterinaryRecordPicker(visit: visit, photos: photos, profiles: profiles, noteStore: noteStore,
                                        store: store) { self.visit = $0 }
                     .environment(\.dynamicTypeSize, typeSize)
-            }
-        }
-        .sheet(item: $chosen) { source in
-            if let visit {
-                VeterinaryRecordConfirmation(source: source, visit: visit, photos: photos, noteStore: noteStore, store: store) { updated in
-                    self.visit = updated; chosen = nil
-                }
-                .environment(\.dynamicTypeSize, typeSize)
             }
         }
         .fullScreenCover(isPresented: $showing) {
@@ -678,7 +664,7 @@ private struct VeterinaryConsultationView: View {
         } message: { Text("この診察メモだけを削除します。") }
         .confirmationDialog("診察メモから外しますか？", isPresented: removingEntryPresented, titleVisibility: .visible,
                             presenting: removingEntry, actions: removalActions, message: removalMessage)
-        .appRecordEditing(retainWhileHidden: changes || busy || picking || chosen != nil || weighing)
+        .appRecordEditing(retainWhileHidden: changes || busy || picking || weighing)
     }
     private func scheduleSave() {
         autosaveTask?.cancel()

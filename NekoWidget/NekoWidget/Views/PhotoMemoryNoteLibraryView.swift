@@ -345,9 +345,6 @@ struct PhotoMemoryNotesListView: View {
                 } else if !item.cats.isEmpty {
                     Text("メモを書いたとき：" + item.cats.joined(separator: "・")).font(.subheadline).foregroundStyle(.secondary)
                 }
-                if identifiers(for: item).isEmpty {
-                    Text("写っている猫を選んでいません").font(.caption).foregroundStyle(.secondary)
-                }
                 Text("\(sort == .updated ? "更新" : item.dateLabel) \(sortingDate(item).formatted(.dateTime.month().day()))")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -431,7 +428,6 @@ struct PhotoMemoryNoteDetailView: View {
     let store: PhotoMemoryNoteStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.dynamicTypeSize) private var typeSize
     @StateObject private var access = PhotoMemoryNotePhotoAccess()
     @State private var record: PhotoMemoryNoteRecord?
     @State private var loaded = false
@@ -441,7 +437,6 @@ struct PhotoMemoryNoteDetailView: View {
     @State private var deleting = false
     @State private var error: String?
     @State private var request = UUID()
-    @State private var addsToVet = false
     @State private var preservingWithService = false
     @State private var savedPhotoURL: URL?
     /// 11/9: 「まどに届ける」 from the memo page, with the memo as the starting ひとこと.
@@ -498,8 +493,6 @@ struct PhotoMemoryNoteDetailView: View {
                                 .accessibilityIdentifier("memory-note-photo-unavailable")
                         }
                 } status: {
-                    Button("診察メモに追加", systemImage: "cross.case") { addsToVet = true }
-                        .accessibilityIdentifier("memory-note-add-vet")
                     // Same conditions as the photo screen's button: a photo in
                     // the library and まど on this build. Writing stays in the
                     // editor; sending is here, and the memo itself never changes.
@@ -529,15 +522,6 @@ struct PhotoMemoryNoteDetailView: View {
                 PhotoMemoryNoteEditor(record: record, photo: access.photo(for: record.photoIdentifier), store: store) {
                     Task { await reload(reportsFailure: true) }
                 }
-            }
-        }
-        .sheet(isPresented: $addsToVet) {
-            if let record {
-                NavigationStack {
-                    VeterinaryVisitsView(photos: photos, noteStore: store, store: veterinaryStore, initialRecord: record)
-                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { addsToVet = false } } }
-                }
-                .environment(\.dynamicTypeSize, typeSize)
             }
         }
         .sheet(item: $groupDelivery) { request in
@@ -598,13 +582,6 @@ struct PhotoMemoryNoteDetailView: View {
                     .disabled(deleting)
                 }
             }
-    }
-
-    private var veterinaryStore: VeterinaryVisitStore {
-#if DEBUG
-        if CommandLine.arguments.contains("--memory-library-fixture") { return PhotoMemoryNoteLibraryFixture.veterinaryStore }
-#endif
-        return .shared
     }
 
     /// Coming back to the app reads again quietly: a failed pass keeps the
@@ -704,7 +681,7 @@ struct PhotoMemoryNotePhotoDestination<PhotoContent: View>: View {
 /// Uses the real album entry, library, editor and photo routes with an isolated
 /// temporary store. No live sharing, settings, or Photos writes are involved.
 struct PhotoMemoryNoteLibraryFixture: View {
-    static let veterinaryStore = VeterinaryVisitStore(directory:
+    private static let veterinaryStore = VeterinaryVisitStore(directory:
         FileManager.default.temporaryDirectory.appendingPathComponent("VeterinaryUIFixture/\(UUID().uuidString)"))
     private static let store = PhotoMemoryNoteStore(fileURL:
         FileManager.default.temporaryDirectory
@@ -714,6 +691,8 @@ struct PhotoMemoryNoteLibraryFixture: View {
     @State private var path: [MemoriesRoute] = []
     @StateObject private var selection = PhotoLibrarySelectionState(defaults: PhotoLibraryReadingPosition.defaults)
     @State private var showsSettings = false
+    /// 「病院で見せる」 as the tools open it; a memo reaches it only through 「写真を選ぶ」.
+    @State private var showsVeterinary = false
     @State private var readingRevision = 0
     @State private var positionDiagnostics = ""
 
@@ -747,6 +726,11 @@ struct PhotoMemoryNoteLibraryFixture: View {
                                 .accessibilityLabel("設定")
                                 .accessibilityIdentifier("window-settings-button")
                         }
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button { showsVeterinary = true } label: { Image(systemName: "cross.case") }
+                                .accessibilityLabel("病院で見せる")
+                                .accessibilityIdentifier("memory-library-fixture-open-vet")
+                        }
                     }
                 } else if failure { Text("Fixture preparation failed") }
                 else { ProgressView() }
@@ -770,6 +754,13 @@ struct PhotoMemoryNoteLibraryFixture: View {
                 default: Text("Fixture route is unavailable")
                 }
             }
+        }
+        .sheet(isPresented: $showsVeterinary) {
+            NavigationStack {
+                VeterinaryVisitsView(photos: photos, noteStore: Self.store, store: Self.veterinaryStore)
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { showsVeterinary = false } } }
+            }
+            .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--photo-window-large") ? .accessibility5 : .large)
         }
         .sheet(isPresented: $showsSettings, onDismiss: { readingRevision &+= 1 }) {
             SettingsSheetHost(onClose: { showsSettings = false }) {
