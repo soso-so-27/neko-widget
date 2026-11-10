@@ -13,7 +13,7 @@ on:
         description: Execution preparation (all includes every existing test)
         type: choice
         default: standard
-        options: [standard, empty, ipad, widget, movie, all]
+        options: [standard, empty, ipad, widget, movie, speed, all]
       test_filter:
         description: Case-sensitive class or method substring; empty runs the route
         type: string
@@ -51,6 +51,8 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'],'a') as f: f.write('ui=' + str(ui).lower() + '\n')
           routes = ['standard','empty','ipad','widget','movie']
           requested = os.environ.get('REQUESTED_ROUTE', '')
+          # speed (display-speed measurements) runs only when asked for.
+          if os.environ['EVENT'] == 'workflow_dispatch' and requested == 'all': routes.append('speed')
           if os.environ['EVENT'] == 'workflow_dispatch' and requested != 'all': routes = [requested]
           matrix = [{'route':r,'shard':i} for r in routes for i in (range(4) if r == 'standard' and not os.environ.get('TEST_FILTER') else [0])]
           with open(os.environ['GITHUB_OUTPUT'],'a') as f: f.write('matrix=' + json.dumps({'include':matrix}) + '\n')

@@ -254,6 +254,7 @@
 		600000000000000000000001 /* PhotoPermissionUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000601 /* PhotoPermissionUITests.swift */; };
 		600000000000000000000002 /* WidgetPlacementScreenshotUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000603 /* WidgetPlacementScreenshotUITests.swift */; };
 		600000000000000000000003 /* AppStoreScreenshotUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000604 /* AppStoreScreenshotUITests.swift */; };
+		5EED00000000000000000001 /* ScreenSpeedSweepUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EED00000000000000000002 /* ScreenSpeedSweepUITests.swift */; };
 		700000000000000000000001 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000101 /* SharedContainer.swift */; };
 		700000000000000000000002 /* AtomicJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010C /* AtomicJSON.swift */; };
 		700000000000000000000005 /* MomentSharingCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A3 /* MomentSharingCore.swift */; };
@@ -574,6 +575,7 @@
 		F00000000000000000000601 /* PhotoPermissionUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoPermissionUITests.swift; sourceTree = "<group>"; };
 		F00000000000000000000603 /* WidgetPlacementScreenshotUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetPlacementScreenshotUITests.swift; sourceTree = "<group>"; };
 		F00000000000000000000604 /* AppStoreScreenshotUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreScreenshotUITests.swift; sourceTree = "<group>"; };
+		5EED00000000000000000002 /* ScreenSpeedSweepUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenSpeedSweepUITests.swift; sourceTree = "<group>"; };
 		F00000000000000000000602 /* NekoWidgetUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NekoWidgetUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D02609100000000000000100 /* OfficialWindowCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficialWindowCatalog.swift; sourceTree = "<group>"; };
 		D02609100000000000000200 /* OfficialWindowStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficialWindowStore.swift; sourceTree = "<group>"; };
@@ -1046,6 +1048,7 @@
 				F00000000000000000000601 /* PhotoPermissionUITests.swift */,
 				F00000000000000000000603 /* WidgetPlacementScreenshotUITests.swift */,
 				F00000000000000000000604 /* AppStoreScreenshotUITests.swift */,
+				5EED00000000000000000002 /* ScreenSpeedSweepUITests.swift */,
 			);
 			path = NekoWidgetUITests;
 			sourceTree = "<group>";
@@ -1483,6 +1486,7 @@
 				600000000000000000000001 /* PhotoPermissionUITests.swift in Sources */,
 				600000000000000000000002 /* WidgetPlacementScreenshotUITests.swift in Sources */,
 				600000000000000000000003 /* AppStoreScreenshotUITests.swift in Sources */,
+				5EED00000000000000000001 /* ScreenSpeedSweepUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
