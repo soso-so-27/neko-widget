@@ -35,7 +35,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: owner-store-capture
+  group: owner-store-capture-arm
   cancel-in-progress: false
 
 jobs:
@@ -84,7 +84,7 @@ jobs:
   synthetic:
     needs: ingress
     if: inputs.synthetic && !inputs.transport_probe
-    runs-on: macos-15-intel
+    runs-on: macos-15
     timeout-minutes: 45
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
@@ -106,7 +106,8 @@ jobs:
           mkdir -p "$PRIVATE_ROOT"
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name "encrypted-capture-input-$GITHUB_RUN_ID" --dir "$PRIVATE_ROOT"
-      - name: Build before decrypting owner media
+      - name: Prepare the disposable Simulator
+        timeout-minutes: 6
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -124,6 +125,15 @@ jobs:
           xcrun simctl bootstatus "$udid" -b >> "$PRIVATE_ROOT/boot.log" 2>&1
           xcrun simctl ui "$udid" appearance light
           xcrun simctl status_bar "$udid" override --time 09:41 --batteryLevel 100 --batteryState charged --wifiBars 3 --cellularBars 4
+      - name: Build before decrypting owner media
+        timeout-minutes: 20
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        working-directory: NekoWidget
+        run: |
+          set -Eeuo pipefail
+          udid=$(cat "$PRIVATE_ROOT/simulator-id")
           if [[ -n "$BUILD_RUN_ID" ]]; then
             [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
             build_sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID" \
@@ -149,7 +159,7 @@ jobs:
             rm -rf "$PRIVATE_ROOT/reuse"
           elif ! xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Debug \
             -sdk iphonesimulator -destination "platform=iOS Simulator,id=$udid" \
-            -derivedDataPath "$PRIVATE_ROOT/DerivedData" COMPILER_INDEX_STORE_ENABLE=NO \
+            -derivedDataPath "$PRIVATE_ROOT/DerivedData" COMPILER_INDEX_STORE_ENABLE=NO ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES \
             WIDGET_SCREENSHOT_FIXTURE_CONDITION=APP_STORE_SCREENSHOT_WIDGET_FIXTURE \
             SHARING_RELEASE_MODE=production GROUP_WINDOWS_ENABLED=YES \
@@ -165,6 +175,7 @@ jobs:
               grep -m 5 -E 'error:|BUILD FAILED' "$PRIVATE_ROOT/build.log" || true
               exit 1
           fi
+          lipo -verify_arch "$(uname -m)" "$PRIVATE_ROOT/DerivedData/Build/Products/Debug-iphonesimulator/NekoWidget.app/NekoWidget"
           python3 - "$PRIVATE_ROOT/DerivedData/Build/Products/Debug-iphonesimulator/NekoWidget.app/Info.plist" <<'PY'
           import plistlib, sys
           info = plistlib.loads(open(sys.argv[1], 'rb').read())
@@ -289,7 +300,7 @@ jobs:
     needs: ingress
     if: github.ref == 'refs/heads/main' && !inputs.synthetic && !inputs.transport_probe
     environment: testflight
-    runs-on: macos-15-intel
+    runs-on: macos-15
     timeout-minutes: 45
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
