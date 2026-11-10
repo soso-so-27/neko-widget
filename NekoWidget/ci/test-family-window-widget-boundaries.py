@@ -6472,6 +6472,15 @@ class ScreenTextTrimTests(unittest.TestCase):
         self.assertEqual(len(guarded), 2)
         self.assertIn("static func cloudLatestAgain(", guarded[1].split("#endif", 1)[0])
         self.assertIn('static let openedKey = "debug.albumPrototype.opened.v1"', album)
+        # 11/10: 「まだ作品はありません」 only with no cat photos; with photos, one
+        # line that matches the shelf (this month's arrival, or what a work needs).
+        no_work = section(album, "private var noWorkYet: some View {", "/// This year's twelve books")
+        self.assertIn("if catPhotos.isEmpty {", no_work)
+        self.assertEqual(album.count('"まだ作品はありません"'), 1)
+        self.assertIn("if letters.isEmpty && lettersAreFinal { noWorkYet }", album)
+        self.assertIn('return "\(month)月の作品は、\(nextMonth)月1日にとどきます。"', album)
+        self.assertIn("Calendar(identifier: .gregorian)", section(album, "static func noWorkLine(", "static func cover("))
+        self.assertIn('"この月は写真が少なく、作品はありません。"', album)
 
     def test_one_door_each(self) -> None:
         home = source("NekoWidget/Views/HomeView.swift")
