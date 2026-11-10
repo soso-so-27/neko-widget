@@ -17,8 +17,14 @@ on:
         type: string
         default: ""
 
+      build_run_id:
+        description: Successful synthetic run with identical source tree (owner capture only)
+        type: string
+        default: ""
+
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: owner-store-capture
@@ -34,6 +40,7 @@ jobs:
       NEKO_CAPTURE_KEY: c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1
       NEKO_CAPTURE_INPUT_URL: ${{ inputs.synthetic_input_url }}
       PRIVATE_ROOT: /tmp/neko-owner-capture-${{ github.run_id }}
+      BUILD_RUN_ID: ${{ inputs.build_run_id }}
     steps: &capture_steps
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -59,6 +66,8 @@ jobs:
           curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
             "$NEKO_CAPTURE_INPUT_URL" --output "$PRIVATE_ROOT/input.nekoenc"
       - name: Build before decrypting owner media
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         working-directory: NekoWidget
         run: |
@@ -74,7 +83,23 @@ jobs:
           xcrun simctl bootstatus "$udid" -b >> "$PRIVATE_ROOT/boot.log" 2>&1
           xcrun simctl ui "$udid" appearance light
           xcrun simctl status_bar "$udid" override --time 09:41 --batteryLevel 100 --batteryState charged --wifiBars 3 --cellularBars 4
-          if ! xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Debug \
+          if [[ -n "$BUILD_RUN_ID" ]]; then
+            [[ '${{ inputs.synthetic }}' == 'false' && "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
+            build_sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID" \
+              --jq 'select(.workflow_id == 413328452 and .conclusion == "success") | .head_sha')
+            [[ "$build_sha" =~ ^[0-9a-f]{40}$ ]]
+            git fetch --no-tags origin "$build_sha" --depth=1 > "$PRIVATE_ROOT/reuse-fetch.log" 2>&1
+            git diff --quiet "$build_sha" "$GITHUB_SHA"
+            mkdir "$PRIVATE_ROOT/reuse"
+            gh run download "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+              --name "encrypted-owner-store-capture-$BUILD_RUN_ID" --dir "$PRIVATE_ROOT/reuse"
+            NEKO_CAPTURE_KEY=c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1 \
+              node ci/private-capture-crypto.mjs open "$PRIVATE_ROOT/reuse/private-capture-output.nekoenc" "$PRIVATE_ROOT/reuse/output.tar"
+            tar -xf "$PRIVATE_ROOT/reuse/output.tar" -C "$PRIVATE_ROOT/reuse" ./compiled-products.tar.gz
+            mkdir -p "$PRIVATE_ROOT/DerivedData/Build/Products"
+            tar -xzf "$PRIVATE_ROOT/reuse/compiled-products.tar.gz" -C "$PRIVATE_ROOT/DerivedData/Build/Products"
+            rm -rf "$PRIVATE_ROOT/reuse"
+          elif ! xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Debug \
             -sdk iphonesimulator -destination "platform=iOS Simulator,id=$udid" \
             -derivedDataPath "$PRIVATE_ROOT/DerivedData" COMPILER_INDEX_STORE_ENABLE=NO \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES \
@@ -129,6 +154,16 @@ jobs:
           root=Path(sys.argv[1]); files=list((root/'DerivedData/Build/Products').glob('*.xctestrun'))
           assert len(files)==1
           file=files[0]; data=plistlib.loads(file.read_bytes())
+          import os
+          reused=os.environ.get('BUILD_RUN_ID', '')
+          if reused:
+              old=f'/tmp/neko-owner-capture-{reused}'
+              def relocate(value):
+                  if isinstance(value,str): return value.replace(old,str(root))
+                  if isinstance(value,list): return [relocate(x) for x in value]
+                  if isinstance(value,dict): return {k:relocate(v) for k,v in value.items()}
+                  return value
+              data=relocate(data)
           found=0
           for config in data.get('TestConfigurations',[]):
               for target in config.get('TestTargets',[]):
@@ -170,7 +205,11 @@ jobs:
         run: |
           set -Eeuo pipefail
           if [[ -d "$PRIVATE_ROOT" ]]; then
-            # Compiled products cannot contain owner media: decryption was later.
+            # Only a synthetic run retains portable, ad-hoc-signed test products.
+            # They were built before media decryption; app data live in the Simulator.
+            if [[ '${{ inputs.synthetic }}' == 'true' && -d "$PRIVATE_ROOT/DerivedData/Build/Products" ]]; then
+              tar -czf "$PRIVATE_ROOT/compiled-products.tar.gz" -C "$PRIVATE_ROOT/DerivedData/Build/Products" .
+            fi
             rm -rf "$PRIVATE_ROOT/DerivedData"
             tar -cf "$RUNNER_TEMP/private-capture-output.tar" -C "$PRIVATE_ROOT" .
             node NekoWidget/ci/private-capture-crypto.mjs seal "$RUNNER_TEMP/private-capture-output.tar" "$RUNNER_TEMP/private-capture-output.nekoenc"
@@ -207,4 +246,5 @@ jobs:
       NEKO_CAPTURE_KEY: ${{ secrets.OWNER_STORE_CAPTURE_KEY }}
       NEKO_CAPTURE_INPUT_URL: ${{ secrets.OWNER_STORE_CAPTURE_INPUT_URL }}
       PRIVATE_ROOT: /tmp/neko-owner-capture-${{ github.run_id }}
+      BUILD_RUN_ID: ${{ inputs.build_run_id }}
     steps: *capture_steps

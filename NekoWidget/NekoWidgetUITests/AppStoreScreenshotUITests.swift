@@ -749,7 +749,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(room.waitForExistence(timeout: 15)); room.tap()
         XCTAssertTrue(app.buttons["group-window-open-members"].waitForExistence(timeout: 15))
         let delivered = app.descendants(matching: .any).matching(
-            NSPredicate(format: "label BEGINSWITH %@", "自分が届けた写真")).firstMatch
+            NSPredicate(format: "label CONTAINS %@", "から届いた写真")).firstMatch
         XCTAssertTrue(delivered.waitForExistence(timeout: 15)); delivered.tap()
         XCTAssertTrue(app.staticTexts["ふたりでくっついて寝ていた"].waitForExistence(timeout: 15))
         sleep(2)
@@ -815,6 +815,10 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(app.buttons["cat-care-family-notebook"].waitForExistence(timeout: 10))
         let living = app.buttons["cat-care-part-living"]
         XCTAssertTrue(scrollUpUntilHittable(living, application: app)); living.tap()
+        let household = app.buttons["cat-care-part-household"]
+        XCTAssertTrue(scrollUpUntilHittable(household, application: app)); household.tap()
+        let vet = app.descendants(matching: .any).matching(NSPredicate(format: "value == %@ OR label == %@", "みどり動物病院", "みどり動物病院")).firstMatch
+        XCTAssertTrue(scrollUpUntilHittable(vet, application: app))
         sleep(1)
         captureScreenshot(named: "06_cat_care")
         app.terminate()

@@ -2875,10 +2875,10 @@ actor GroupWindowScreenFixture: GroupWindowMediaClient {
         let now = GroupWindowUIFixture.fixtureNow
         if OwnerStoreCaptureFixture.isRequested {
             return [GroupPhoto(id: "fixture-owner-store-photo", windowID: window.id,
-                senderParticipantID: window.myParticipantID,
-                senderDisplayName: "自分", createdAt: Date().addingTimeInterval(-3600),
+                senderParticipantID: "fixture-owner",
+                senderDisplayName: "ママ", createdAt: Date().addingTimeInterval(-3600),
                 fixtureAssetName: "app-store-screenshot-fixture-18",
-                hearts: [GroupHeart(participantID: others.first?.id ?? "fixture-mother",
+                hearts: [GroupHeart(participantID: window.myParticipantID,
                     displayName: "パパ", active: true, updatedAt: now)],
                 caption: "ふたりでくっついて寝ていた")]
         }

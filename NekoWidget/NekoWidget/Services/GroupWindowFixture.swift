@@ -18,7 +18,7 @@ actor GroupWindowFixture: GroupWindowClient {
          now: Date = Date(timeIntervalSince1970: 1_792_454_400)) {
         self.scenario = scenario
         self.now = now
-        let owner = GroupMember(id: "fixture-owner", personID: "fixture-person-a", displayName: "自分",
+        let owner = GroupMember(id: "fixture-owner", personID: "fixture-person-a", displayName: CommandLine.arguments.contains("--owner-store-capture") ? "ママ" : "自分",
             role: .owner, state: .active,
             devices: [.init(id: "fixture-a1", displayName: "このiPhone", isThisDevice: true)])
         var mother = GroupMember(id: "fixture-mother", personID: "fixture-person-b", displayName: CommandLine.arguments.contains("--owner-store-capture") ? "パパ" : "お母さん",
@@ -36,7 +36,8 @@ actor GroupWindowFixture: GroupWindowClient {
             }
         }
         room = GroupWindow(id: "fixture-window", name: CommandLine.arguments.contains("--owner-store-capture") ? "わが家" : "実家のまど", revision: 8, keyEpoch: 3,
-            myParticipantID: owner.id, myRole: .owner,
+            myParticipantID: CommandLine.arguments.contains("--owner-store-capture") ? mother.id : owner.id,
+            myRole: CommandLine.arguments.contains("--owner-store-capture") ? .member : .owner,
             state: scenario == .rotationPending ? .rotationRequired : .active, members: members)
         pictures = [.init(id: "fixture-photo", windowID: "fixture-window", senderParticipantID: mother.id,
             senderDisplayName: mother.displayName, createdAt: now, fixtureAssetName: nil,

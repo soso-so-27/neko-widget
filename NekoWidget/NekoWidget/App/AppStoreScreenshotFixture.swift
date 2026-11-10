@@ -258,11 +258,17 @@ enum AppStoreScreenshotFixture {
               let profileID = UUID(uuidString: "11111111-1111-4111-8111-111111111111"),
               let record = CatCareStore.shared.ensureRecord(profileID: profileID, name: OwnerStoreCaptureFixture.isRequested ? "むぎ" : "ミケ"),
               record.temperament == nil else { return }
+        let suppliedFace = OwnerStoreCaptureFixture.isRequested ? OwnerStoreCaptureFixture.image(number: 25)?.jpegData(compressionQuality: 0.85) : nil
+        let suppliedBody = OwnerStoreCaptureFixture.isRequested ? OwnerStoreCaptureFixture.image(number: 31)?.jpegData(compressionQuality: 0.85) : nil
+        let faceRef = suppliedFace.flatMap { CatCareStore.shared.savePhoto($0, sourceAssetID: "app-store-screenshot-fixture-25", origin: .photos) }
+        let bodyRef = suppliedBody.flatMap { CatCareStore.shared.savePhoto($0, sourceAssetID: "app-store-screenshot-fixture-31", origin: .photos) }
         CatCareStore.shared.update { state in
             guard let index = state.cats.firstIndex(where: { $0.catID == record.catID }) else { return }
             let now = Date()
             let by = state.deviceID
             func stamp<Value>(_ value: Value) -> CatCareStamped<Value> { .init(value: value, editedAt: now, editedBy: by) }
+            if let faceRef { state.cats[index].setIdentifyingPhoto(.face, faceRef, editedAt: now, editedBy: by) }
+            if let bodyRef { state.cats[index].setIdentifyingPhoto(.body, bodyRef, editedAt: now, editedBy: by) }
             state.cats[index].sex = stamp(.female)
             state.cats[index].neutered = stamp(.yes)
             state.cats[index].indoorOnly = stamp(.yes)

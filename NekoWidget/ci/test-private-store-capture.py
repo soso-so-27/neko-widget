@@ -37,6 +37,12 @@ class PrivateCaptureTests(unittest.TestCase):
         self.assertNotIn('xcresult', upload)
         self.assertIn("if: github.ref == 'refs/heads/main'", workflow)
         self.assertIn('environment: testflight', workflow)
+        synthetic = workflow.split('  synthetic:', 1)[1].split('\n  capture:', 1)[0]
+        self.assertNotIn('secrets.', synthetic)
+        self.assertIn("if: github.ref == 'refs/heads/main' && !inputs.synthetic", workflow)
+        self.assertIn('git diff --quiet "$build_sha" "$GITHUB_SHA"', workflow)
+        self.assertIn('.conclusion == "success"', workflow)
+
         self.assertIn('contents: read', workflow)
         self.assertIn('retention-days: 1', workflow)
         self.assertLess(workflow.index('Build before decrypting'), workflow.index('Authenticate and unpack'))

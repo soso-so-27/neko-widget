@@ -134,7 +134,7 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     @MainActor
     func testCaptureOwnerStoreHomeWidgets() throws {
         let root = try XCTUnwrap(ProcessInfo.processInfo.environment["NEKO_PRIVATE_CAPTURE_ROOT"])
-        executionTimeAllowance = 240
+        executionTimeAllowance = 420
         let app = XCUIApplication()
         app.launchArguments += ["-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP",
             "--app-store-screenshot-fixture", "--owner-store-capture", "--review-public-presentation"]
@@ -160,11 +160,20 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
             let pages = gallery.pageIndicators.firstMatch
             XCTAssertTrue(pages.waitForExistence(timeout: 15))
             for _ in 1..<desiredPage {
-                let preview = try XCTUnwrap(gallery.buttons.matching(
-                    NSPredicate(format: "value BEGINSWITH %@", "Widget,")
-                ).allElementsBoundByIndex.first(where: {
-                    $0.exists && abs($0.frame.midX - springboard.frame.midX) < 20
-                }))
+                let previews = gallery.buttons.matching(NSPredicate(format: "value BEGINSWITH %@", "Widget,"))
+                let deadline = Date().addingTimeInterval(40)
+                var renderedPreview: XCUIElement?
+                repeat {
+                    renderedPreview = previews.allElementsBoundByIndex.first(where: {
+                        $0.exists && abs($0.frame.midX - springboard.frame.midX) < 20
+                    })
+                    if renderedPreview != nil { break }
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+                } while Date() < deadline
+                guard let preview = renderedPreview else {
+                    fail("The Widget preview did not finish rendering before paging.", application: springboard)
+                    return
+                }
                 let start = preview.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.3))
                 let end = springboard.coordinate(withNormalizedOffset: .zero).withOffset(
                     CGVector(dx: 20, dy: preview.frame.minY + preview.frame.height * 0.3))
