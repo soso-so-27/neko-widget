@@ -87,7 +87,7 @@ enum AppStoreScreenshotFixture {
             if OwnerStoreCaptureFixture.screen == "album" { return albumPhotos }
             return ([1, 2, 3, 4, 5, 6, 7, 8, 27, 28, 29, 30]).enumerated().map { index, number in
                 PhotoPresentation(localIdentifier: "\(identifierPrefix)\(number)",
-                    creationDate: date(year: 2026, month: 11, day: 9 - index / 3),
+                    creationDate: date(year: 2026, month: 11, day: 9).addingTimeInterval(Double(-index)),
                     catBoundingBox: nil)
             }
         }

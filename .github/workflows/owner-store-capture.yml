@@ -12,6 +12,11 @@ on:
         type: boolean
         default: true
 
+      synthetic_input_url:
+        description: Expiring URL for generated controls only (never owner media)
+        type: string
+        default: ""
+
 permissions:
   contents: read
 
@@ -20,17 +25,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  capture:
-    if: github.ref == 'refs/heads/main'
-    environment: testflight
+  synthetic:
+    if: inputs.synthetic
     runs-on: macos-15-intel
     timeout-minutes: 45
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
-      NEKO_CAPTURE_KEY: ${{ inputs.synthetic && 'c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1' || secrets.OWNER_STORE_CAPTURE_KEY }}
-      NEKO_CAPTURE_INPUT_URL: ${{ secrets.OWNER_STORE_CAPTURE_INPUT_URL }}
+      NEKO_CAPTURE_KEY: c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1
+      NEKO_CAPTURE_INPUT_URL: ${{ inputs.synthetic_input_url }}
       PRIVATE_ROOT: /tmp/neko-owner-capture-${{ github.run_id }}
-    steps:
+    steps: &capture_steps
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
@@ -142,12 +146,24 @@ jobs:
           if ! xcodebuild test-without-building -xctestrun "$test_run" \
             -destination "platform=iOS Simulator,id=$udid" -resultBundlePath "$PRIVATE_ROOT/Capture.xcresult" \
             -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreAppScreens \
+            -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreWindow \
+            -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreTools \
+            -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreShowcase \
+            -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreAlbum \
+            -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreCare \
             -only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureOwnerStoreHomeWidgets \
             -parallel-testing-enabled NO -testLanguage ja -testRegion JP > "$PRIVATE_ROOT/test.log" 2>&1; then
               echo 'Private capture failed; diagnostics will be encrypted, never uploaded in plaintext.'
               exit 1
           fi
-          xcrun xcresulttool export attachments --path "$PRIVATE_ROOT/Capture.xcresult" --output-path "$PRIVATE_ROOT/attachments" > "$PRIVATE_ROOT/export.log" 2>&1
+      - name: Export success and failure attachments before encryption
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ -d "$PRIVATE_ROOT/Capture.xcresult" ]]; then
+            xcrun xcresulttool export attachments --path "$PRIVATE_ROOT/Capture.xcresult" --output-path "$PRIVATE_ROOT/attachments" > "$PRIVATE_ROOT/export.log" 2>&1
+          fi
       - name: Encrypt all screenshots and failure attachments
         if: always()
         shell: bash
@@ -180,3 +196,15 @@ jobs:
           fi
           rm -rf "$PRIVATE_ROOT"
           rm -f "$RUNNER_TEMP/private-capture-output.tar" "$RUNNER_TEMP/private-capture-output.nekoenc"
+
+  capture:
+    if: github.ref == 'refs/heads/main' && !inputs.synthetic
+    environment: testflight
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      NEKO_CAPTURE_KEY: ${{ secrets.OWNER_STORE_CAPTURE_KEY }}
+      NEKO_CAPTURE_INPUT_URL: ${{ secrets.OWNER_STORE_CAPTURE_INPUT_URL }}
+      PRIVATE_ROOT: /tmp/neko-owner-capture-${{ github.run_id }}
+    steps: *capture_steps

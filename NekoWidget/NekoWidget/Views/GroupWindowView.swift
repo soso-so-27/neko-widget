@@ -2875,8 +2875,8 @@ actor GroupWindowScreenFixture: GroupWindowMediaClient {
         let now = GroupWindowUIFixture.fixtureNow
         if OwnerStoreCaptureFixture.isRequested {
             return [GroupPhoto(id: "fixture-owner-store-photo", windowID: window.id,
-                senderParticipantID: others.first?.id ?? window.myParticipantID,
-                senderDisplayName: "パパ", createdAt: Date().addingTimeInterval(-3600),
+                senderParticipantID: window.myParticipantID,
+                senderDisplayName: "自分", createdAt: Date().addingTimeInterval(-3600),
                 fixtureAssetName: "app-store-screenshot-fixture-18",
                 hearts: [GroupHeart(participantID: others.first?.id ?? "fixture-mother",
                     displayName: "パパ", active: true, updatedAt: now)],

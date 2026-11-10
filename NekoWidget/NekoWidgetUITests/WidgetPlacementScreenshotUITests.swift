@@ -178,7 +178,7 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
             sleep(2)
             if let done = waitForElement(in: springboard, labels: ["完了", "Done"],
                 elementTypes: [.button], timeout: 3, requireHittable: true) { done.tap() }
-            XCUIDevice.shared.press(.home)
+            else { XCUIDevice.shared.press(.home) }
         }
         sleep(5)
         let hierarchy = XCTAttachment(string: springboard.debugDescription)
