@@ -130,7 +130,9 @@ jobs:
               --jq 'select(.workflow_id == 413328452 and .conclusion == "success") | .head_sha')
             [[ "$build_sha" =~ ^[0-9a-f]{40}$ ]]
             git fetch --no-tags origin "$build_sha" --depth=1 > "$PRIVATE_ROOT/reuse-fetch.log" 2>&1
-            git diff --quiet "$build_sha" "$GITHUB_SHA" -- NekoWidget .github/workflows/owner-store-capture.yml
+            # Match every project input from the repository root. Then verify
+            # the packaged offline capture profile below before opening media.
+            (cd "$GITHUB_WORKSPACE"; git diff --quiet "$build_sha" "$GITHUB_SHA" -- NekoWidget)
             mkdir "$PRIVATE_ROOT/reuse"
             gh run download "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" \
               --name "encrypted-owner-store-capture-$BUILD_RUN_ID" --dir "$PRIVATE_ROOT/reuse"
