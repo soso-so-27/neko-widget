@@ -1,9 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {checkPlan,errorDetails,runGroups,permissionFailure} from './asc-metadata-apply.mjs';
+import {checkPlan,errorDetails,runGroups,permissionFailure,approvedDescriptionUpdate} from './asc-metadata-apply.mjs';
 import {readFileSync} from 'node:fs';
 const allowed=[{scope:'app-info',locale:'ja',field:'subtitle',value:'approved'}];
 const change={scope:'app-info',locale:'ja',field:'subtitle',to:'approved'};
+
+test('1110b description allows only the two approved edits and preserves all other copy',()=>{
+  const before='approved opening\n季節のムービーもあります。\napproved middle（3GB・記録 3,000 件まで）\napproved ending';
+  const after=before.replace('季節のムービーもあります。','季節のムービーもあります。作品を開くのは Plus です（14 日間無料）。')
+    .replace('（3GB・記録 3,000 件まで）','（3GB・記録 3,000 件まで。お試し中は 250MB）');
+  assert.equal(approvedDescriptionUpdate(before,after),true);
+  assert.equal(approvedDescriptionUpdate(after,after),true);
+  assert.equal(approvedDescriptionUpdate(before,after.replace('approved ending','other ending')),false);
+  assert.equal(approvedDescriptionUpdate(undefined,after),false);
+  assert.equal(approvedDescriptionUpdate(before+before,after),false);
+});
 test('only the exact approved field, locale and value can be applied',()=>{
   assert.equal(checkPlan({dryRun:true,adds:[],updates:[change],deletes:[]},allowed).length,1);
   for(const c of [{...change,locale:'en-US'},{...change,field:'name'},{...change,to:'different'}])assert.throws(()=>checkPlan({dryRun:true,adds:[c],updates:[],deletes:[]},allowed));

@@ -8,12 +8,18 @@ on:
         required: true
         type: choice
         options: [dry-run, apply]
+      scope:
+        description: Approved groups, or only the two approved 1110b description edits
+        default: approved-groups
+        required: true
+        type: choice
+        options: [approved-groups, version-description]
 permissions:
   contents: read
 jobs:
   read:
     if: github.ref == 'refs/heads/main'
-    runs-on: macos-15
+    runs-on: ubuntu-24.04
     environment: asc-metadata
     timeout-minutes: 12
     env:
@@ -23,18 +29,18 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
       - name: Install pinned asc and verify telemetry is disabled
         shell: bash
         run: |
           set -euo pipefail
-          case "$(uname -m)" in
-            arm64) arch=arm64; expected=1c490d5df9b8263c043f43e6dfc10d7d5f3ec7821137e39a603b9348221f248d ;;
-            x86_64) arch=amd64; expected=128d379d962755bf76ab81017b4ffe0df0b346055d272d7233f51f09eec880b8 ;;
-            *) exit 1 ;;
-          esac
+          [[ "$(uname -m)" == "x86_64" ]]
+          expected=886d004a33e24558769ffd95f937297aa1413fec145667fae888817b491726e4
           mkdir -p "$RUNNER_TEMP/asc-bin"
-          curl --fail --silent --show-error --location "https://github.com/rorkai/App-Store-Connect-CLI/releases/download/6.5.3/asc_6.5.3_macOS_$arch" -o "$RUNNER_TEMP/asc-bin/asc"
-          echo "$expected  $RUNNER_TEMP/asc-bin/asc" | shasum -a 256 -c -
+          curl --fail --silent --show-error --location "https://github.com/rorkai/App-Store-Connect-CLI/releases/download/6.5.3/asc_6.5.3_linux_amd64" -o "$RUNNER_TEMP/asc-bin/asc"
+          echo "$expected  $RUNNER_TEMP/asc-bin/asc" | sha256sum -c -
           chmod 700 "$RUNNER_TEMP/asc-bin/asc"
           echo "$RUNNER_TEMP/asc-bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/asc-bin/asc" version
@@ -45,6 +51,7 @@ jobs:
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY_BASE64 }}
           ASC_MODE: ${{ inputs.mode }}
+          ASC_METADATA_SCOPE: ${{ inputs.scope }}
         run: node NekoWidget/ci/asc-metadata-apply.mjs "--$ASC_MODE"
       - name: Read remaining readiness findings
         if: always()
