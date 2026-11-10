@@ -17,6 +17,10 @@ on:
         type: string
         default: ""
 
+      transport_probe:
+        description: Read-only ciphertext download probe (no Mac, no photos decrypted)
+        type: boolean
+        default: false
       build_run_id:
         description: Successful synthetic run with identical source tree (owner capture only)
         type: string
@@ -31,8 +35,28 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  transport-probe:
+    if: inputs.transport_probe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Fetch only the encrypted control asset using the job read token
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases/assets/731575605" -H 'Accept: application/octet-stream' > "$RUNNER_TEMP/control.nekoenc"
+          python3 - "$RUNNER_TEMP/control.nekoenc" <<'PY'
+          import sys
+          from pathlib import Path
+          data=Path(sys.argv[1]).read_bytes()
+          assert data[:8] == b'NEKOCAP1'
+          print('Ciphertext downloaded with the built-in read-only job token')
+          PY
+          rm "$RUNNER_TEMP/control.nekoenc"
   synthetic:
-    if: inputs.synthetic
+    if: inputs.synthetic && !inputs.transport_probe
     runs-on: macos-15-intel
     timeout-minutes: 45
     env:
@@ -237,7 +261,7 @@ jobs:
           rm -f "$RUNNER_TEMP/private-capture-output.tar" "$RUNNER_TEMP/private-capture-output.nekoenc"
 
   capture:
-    if: github.ref == 'refs/heads/main' && !inputs.synthetic
+    if: github.ref == 'refs/heads/main' && !inputs.synthetic && !inputs.transport_probe
     environment: testflight
     runs-on: macos-15-intel
     timeout-minutes: 45
