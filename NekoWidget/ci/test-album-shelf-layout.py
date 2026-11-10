@@ -49,7 +49,8 @@ class AlbumShelfLayoutTests(unittest.TestCase):
         tests = read("NekoWidgetUITests/PhotoPermissionUITests.swift")
         largest = block(tests, "func testAlbumCoversAndFavoritesRemainReachableWithLargestText()", "private func assertHighlightPhotos")
         self.assertIn('otherThemes.tap()', largest)
-        self.assertIn('scrollsDown: identifier == "albums-months-all"', largest)
+        self.assertIn('reveal(entry, in: app, scrollsDown: true)', largest)
+        self.assertIn('reflectionsArchiveEntry(in: app)', largest)
         self.assertIn('element("album-secondary-close_up", in: app)', largest)
         self.assertIn('expectedRoute: "album:close_up"', largest)
 
