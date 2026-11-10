@@ -348,7 +348,7 @@ final class EvacuationStore: ObservableObject {
         let supplies = needed.map { item -> (String, String) in
             let owner = plan.cats.first { $0.id == item.catID }.map { "（\($0.displayName)）" } ?? ""
             let title = (trimmed(item.title).isEmpty ? "名前のない持ち物" : item.title) + owner
-            let expiry = item.expiresAt.map { "期限 " + $0.formatted(date: .numeric, time: .omitted) } ?? ""
+            let expiry = item.expiresAt.map { "期限 " + $0.nekoExportText() } ?? ""
             let detail = [item.quantity, item.location.isEmpty ? "置き場所は未記入" : item.location, expiry]
                 .filter { !$0.isEmpty }.joined(separator: "・")
             return ("□ " + title, detail)

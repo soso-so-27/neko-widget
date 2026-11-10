@@ -67,10 +67,10 @@ enum EvacuationExporter {
         }
         if record.showsReviewDate {
             if let reviewed = record.reviewedAt {
-                append("最後に見直した日：" + reviewed.formatted(date: .numeric, time: .omitted), size: fontSize - 3)
+                append("最後に見直した日：" + reviewed.nekoExportText(), size: fontSize - 3)
             }
         }
-        append("作った日：" + Date().formatted(date: .numeric, time: .omitted), size: fontSize - 3)
+        append("作った日：" + Date().nekoExportText(), size: fontSize - 3)
         let framesetter = CTFramesetterCreateWithAttributedString(body)
         func bodyRect(first: Bool) -> CGRect {
             let top = margin + 35 + (first ? CGFloat(record.photos.count) * (photoHeight + 12) : 0)

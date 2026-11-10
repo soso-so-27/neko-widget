@@ -1578,7 +1578,7 @@ private enum VeterinaryMemoExporter {
                 y += 6
             }
         }
-        body.append(line("作った日：" + Date().formatted(date: .numeric, time: .shortened), size: font - 2))
+        body.append(line("作った日：" + Date().nekoExportText(time: .shortened), size: font - 2))
         body.append(line("このメモは作った時点の内容です。変わったところは飼い主に確かめてください。", size: font - 2))
         try flush()
         if pages.last?.isEmpty == true, pages.count > 1 { pages.removeLast() }

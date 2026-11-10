@@ -3,7 +3,7 @@ set -euo pipefail
 # Family notebook stage 1: isolated stores and synthetic data only. The same
 # source files are compiled into the app, with no UI or network connection.
 notebook_common=(
-  Shared/Models/AppSettings.swift Shared/Models/NormalizedRect.swift
+  Shared/Models/AppSettings.swift Shared/Models/NekoCalendar.swift Shared/Models/NormalizedRect.swift
   Shared/Models/CatCandidateCuration.swift Shared/Models/CatHouseholdIdentity.swift
   Shared/Models/CatProfileTransfer.swift Shared/Models/NekoWidgetError.swift
   Shared/Models/WidgetRenderPlan.swift Shared/Models/WidgetManifest.swift

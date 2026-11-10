@@ -78,7 +78,7 @@ enum CareHandoffExporter {
                     append(note, size: font - 2)
                 }
             }
-            append("作った日：" + record.createdAt.formatted(date: .numeric, time: .shortened), size: font - 2)
+            append("作った日：" + record.createdAt.nekoExportText(time: .shortened), size: font - 2)
             append("このメモは作った時点の内容です。変わったところは飼い主に確かめてください。", size: font - 2)
             return body
         }

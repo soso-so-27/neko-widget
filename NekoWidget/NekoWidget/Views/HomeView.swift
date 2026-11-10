@@ -644,7 +644,7 @@ struct HomeView: View {
         var seen = Set<String>()
         return catPhotos.compactMap { photo in
             guard let date = photo.creationDate else { return nil }
-            let components = Calendar.current.dateComponents([.year, .month], from: date)
+            let components = Calendar.nekoGregorian.dateComponents([.year, .month], from: date)
             guard let year = components.year, let month = components.month else { return nil }
             let label = "\(year)年\(month)月"
             guard seen.insert(label).inserted else { return nil }

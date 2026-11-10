@@ -21,8 +21,9 @@ struct CatLifeDate: Codable, Equatable, Sendable {
     var month: Int
     var day: Int
 
-    init?(date: Date, calendar: Calendar = .current) {
-        let values = calendar.dateComponents([.year, .month, .day], from: date)
+    /// Always 西暦, in `calendar`'s time zone: a 和暦 calendar still gives 2026.
+    init?(date: Date, calendar: Calendar = .nekoGregorian) {
+        let values = Calendar.nekoGregorian(in: calendar).dateComponents([.year, .month, .day], from: date)
         guard let year = values.year,
               let month = values.month,
               let day = values.day else { return nil }
@@ -31,8 +32,15 @@ struct CatLifeDate: Codable, Equatable, Sendable {
         self.day = day
     }
 
-    func date(in inputCalendar: Calendar = .current) -> Date? {
+    func date(in inputCalendar: Calendar = .nekoGregorian,
+              deviceCalendar: Calendar = .current) -> Date? {
         var calendar = inputCalendar
+        if Self.isDeviceCalendarYear(year, reading: inputCalendar, device: deviceCalendar) {
+            // Saved before 11/10 on an iPhone set to 和暦 or 仏暦: the year is
+            // that calendar's (「8」, 「2569」). Read it as it was read then.
+            calendar = deviceCalendar
+            calendar.timeZone = inputCalendar.timeZone
+        }
         calendar.locale = Locale(identifier: "en_US_POSIX")
         return calendar.date(from: DateComponents(
             calendar: calendar,
@@ -42,6 +50,14 @@ struct CatLifeDate: Codable, Equatable, Sendable {
             day: day,
             hour: 12
         ))
+    }
+
+    /// A 西暦 year no cat could have (before 1900 or after next year), on an
+    /// iPhone whose own calendar is not 西暦: an old value in that calendar.
+    static func isDeviceCalendarYear(_ year: Int, reading calendar: Calendar, device: Calendar) -> Bool {
+        guard calendar.identifier == .gregorian, device.identifier != .gregorian else { return false }
+        let nextYear = calendar.component(.year, from: Date()) + 1
+        return year < 1900 || year > nextYear
     }
 }
 

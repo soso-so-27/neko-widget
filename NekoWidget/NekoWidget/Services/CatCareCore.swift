@@ -26,10 +26,16 @@ struct CatCareDay: Codable, Equatable, Comparable, Hashable, Sendable {
         self.year = year; self.month = month; self.day = day
     }
 
-    init?(date: Date, calendar: Calendar = .current) {
-        let values = calendar.dateComponents([.year, .month, .day], from: date)
+    /// Always 西暦, in `calendar`'s time zone: a 和暦 calendar still gives 2026.
+    init?(date: Date, calendar: Calendar = .nekoGregorian) {
+        let values = Calendar.nekoGregorian(in: calendar).dateComponents([.year, .month, .day], from: date)
         guard let year = values.year, let month = values.month, let day = values.day else { return nil }
         self.init(year: year, month: month, day: day)
+    }
+
+    /// The start of this day on the iPhone (西暦), for a DatePicker.
+    func date(calendar: Calendar = .nekoGregorian) -> Date? {
+        calendar.date(from: DateComponents(year: year, month: month, day: day))
     }
 
     /// "2026-10-20" (the photo memo's weight date format).
@@ -671,7 +677,7 @@ enum CatCareMemoWeights {
     /// One source per cat that has memo weights. A memo without a chosen cat is
     /// skipped; a name never decides the cat. Deleted cats get nothing.
     static func sources(_ weights: [CatCareMemoWeight], cats: [CatCareRecord],
-                        calendar: Calendar = .current) -> [CatCareImportSource] {
+                        calendar: Calendar = .nekoGregorian) -> [CatCareImportSource] {
         cats.filter { $0.deletedAt == nil }.compactMap { cat in
             let mine = weights.compactMap { weight -> (noteID: String, day: CatCareDay, grams: Int)? in
                 guard let id = weight.catID, id == cat.catID || id == cat.profileID else { return nil }

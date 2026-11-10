@@ -499,7 +499,7 @@ jobs:
           set -euo pipefail
           xcrun --sdk macosx swiftc \
             -parse-as-library \
-            Shared/Models/AppSettings.swift \
+            Shared/Models/AppSettings.swift Shared/Models/NekoCalendar.swift \
             Shared/Models/NormalizedRect.swift \
             Shared/Models/CatDetection.swift \
             Shared/Models/AssetRecord.swift \
@@ -526,7 +526,7 @@ jobs:
           set -euo pipefail
           xcrun --sdk macosx swiftc \
             -parse-as-library \
-            Shared/Models/AppSettings.swift \
+            Shared/Models/AppSettings.swift Shared/Models/NekoCalendar.swift \
             Shared/Models/NormalizedRect.swift \
             Shared/Models/CatDetection.swift \
             Shared/Models/AssetRecord.swift \
@@ -590,7 +590,7 @@ jobs:
           fi
           xcrun --sdk macosx swiftc \
             -parse-as-library \
-            Shared/Models/AppSettings.swift \
+            Shared/Models/AppSettings.swift Shared/Models/NekoCalendar.swift \
             Shared/Models/NormalizedRect.swift \
             Shared/Models/CatDetection.swift \
             Shared/Models/AssetRecord.swift \
@@ -608,7 +608,7 @@ jobs:
           set -euo pipefail
           xcrun --sdk macosx swiftc \
             -parse-as-library \
-            Shared/Models/AppSettings.swift \
+            Shared/Models/AppSettings.swift Shared/Models/NekoCalendar.swift \
             Shared/Models/NormalizedRect.swift \
             Shared/Models/CatDetection.swift \
             Shared/Models/AssetRecord.swift \
@@ -875,7 +875,7 @@ jobs:
           set -euo pipefail
           xcrun --sdk macosx swiftc \
             -parse-as-library \
-            Shared/Models/AppSettings.swift \
+            Shared/Models/AppSettings.swift Shared/Models/NekoCalendar.swift \
             Shared/Models/NormalizedRect.swift \
             Shared/Models/CatCandidateCuration.swift \
             Shared/Models/CatHouseholdIdentity.swift \

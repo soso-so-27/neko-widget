@@ -3703,7 +3703,7 @@ class EvacuationRoundTwoTests(unittest.TestCase):
         self.assertIn("displayedComponents: .date", editor)
         self.assertIn("if saved, date != nil { Task { await store.firstExpirySet() } }", editor)
         # On paper, and in the readable backup in Japanese, as a date.
-        self.assertIn('"期限 " + $0.formatted(date: .numeric, time: .omitted)', section(self.store, "func bookRecords()", "private static func normalizedJPEG("))
+        self.assertIn('"期限 " + $0.nekoExportText()', section(self.store, "func bookRecords()", "private static func normalizedJPEG("))
         readable = source("NekoWidget/Services/ReadablePreservationExport.swift")
         self.assertIn('"expiresAt": "期限"', readable)
         self.assertIn('"lastMadeAt", "expiresAt", "checkStartedAt"', readable)

@@ -142,7 +142,7 @@ struct CatProfileTransfer: Codable, Equatable, Sendable {
               (1...31).contains(date.day) else { return false }
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        guard let resolved = date.date(in: calendar),
+        guard let resolved = date.date(in: calendar, deviceCalendar: calendar),
               let roundTrip = CatLifeDate(date: resolved, calendar: calendar) else { return false }
         return roundTrip == date
     }

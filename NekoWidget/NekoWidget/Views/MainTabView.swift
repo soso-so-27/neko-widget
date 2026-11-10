@@ -1,3 +1,4 @@
+import StoreKit
 import SwiftUI
 import UIKit
 import WidgetKit
@@ -400,6 +401,9 @@ private struct SeasonalMovieArchiveValidationKey: Hashable {
 
 struct MainTabView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.requestReview) private var requestReview
+    /// Only the first cat photo of a launch may bring the review prompt.
+    @MainActor private static var reviewPhotoOpenedThisSession = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.photoMemoStore) private var memoStore
 
@@ -1942,7 +1946,7 @@ struct MainTabView: View {
                catPhotos.contains(where: { $0.localIdentifier == localIdentifier }),
                !excludedCatCandidateIdentifiers.contains(localIdentifier) {
                 photoDetail(for: localIdentifier, shownAt: nil, openedFromWidget: false,
-                            openRelatedAlbumOverride: openRelatedAlbum)
+                            mayAskForReview: false, openRelatedAlbumOverride: openRelatedAlbum)
             } else {
                 ContentUnavailableView("この写真は開けません", systemImage: "photo",
                                        description: Text("いまの設定では表示しない写真か、写真へのアクセスが許可されていません。"))
@@ -1961,9 +1965,35 @@ struct MainTabView: View {
         )
     }
 
+    /// A cat photo opened (not during onboarding, not with an offer or an
+    /// error on screen): Apple's review prompt once the widget is set up and
+    /// the app was used on 3 days (ReviewPromptPolicy). Reads only, until it asks.
+    @MainActor
+    private func askForReviewAfterPhotoIfDue() async {
+        let defaults = UserDefaults.standard
+        let firstThisSession = !Self.reviewPhotoOpenedThisSession
+        Self.reviewPhotoOpenedThisSession = true
+        guard Version1.isOn,
+              ReviewPromptPolicy.mayAskAfterPhoto(
+                usedDays: defaults.stringArray(forKey: ReviewPromptPolicy.usedDaysKey) ?? [],
+                widgetPlaced: true,  // WidgetKit is asked last, only when the rest holds.
+                onboardingDone: !OnboardingPresentationPersistence.requiresPresentation(
+                    completedVersion: defaults.integer(forKey: OnboardingPresentationPersistence.completedVersionKey)),
+                askedAfterPhoto: defaults.bool(forKey: ReviewPromptPolicy.askedAfterPhotoKey),
+                askedAfterMonthlyBook: defaults.bool(forKey: ReviewPromptPolicy.askedAfterMonthlyBookKey),
+                askedThisSession: !firstThisSession),
+              await UsageCounter.anyWidgetPlaced() == true else { return }
+        // Let the photo be seen first; leaving it within that time asks nothing.
+        try? await Task.sleep(for: .seconds(2))
+        guard !Task.isCancelled else { return }
+        defaults.set(true, forKey: ReviewPromptPolicy.askedAfterPhotoKey)
+        requestReview()
+    }
+
     @ViewBuilder
     private func photoDetail(for localIdentifier: String, shownAt: Date?,
                              openedFromWidget: Bool, fromNote: Bool = false, libraryContext: Bool = false,
+                             mayAskForReview: Bool = true,
                              openRelatedAlbumOverride: OpenPhotoRelatedAlbum? = nil) -> some View {
         if hasPhotoAccess, photoPresentationVersion.canPresent,
            fromNote || photoSourceStatus != .unavailable,
@@ -2005,6 +2035,7 @@ struct MainTabView: View {
             .safeAreaInset(edge: .top) {
                 if openedFromWidget, personalWidgetPaused { WidgetResumeOffer() }
             }
+            .task { if mayAskForReview, !personalWidgetPaused { await askForReviewAfterPhotoIfDue() } }
             .id(photoPresentationVersion.sourceResolutionRevision)
         } else {
             unavailablePersonalPhotoView
