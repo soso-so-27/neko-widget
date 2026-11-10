@@ -1,6 +1,7 @@
 import AppIntents
 import SwiftUI
 import WidgetKit
+import UIKit
 
 @main
 @MainActor

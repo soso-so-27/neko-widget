@@ -333,6 +333,11 @@ jobs:
           set -euo pipefail
           [[ "$REVIEW_TEST" =~ ^testReview[A-Za-z0-9_]+$ ]]
           grep -Fq "func ${REVIEW_TEST}(" NekoWidgetUITests/AppStoreScreenshotUITests.swift
+          if [[ "$REVIEW_TEST" == testReviewClientUpgradeRequired ]]; then
+            xcrun swiftc -parse-as-library Shared/Sharing/ClientUpgradeRequirement.swift \
+              ci/verify-client-upgrade.swift -o "$RUNNER_TEMP/client-upgrade-tests"
+            "$RUNNER_TEMP/client-upgrade-tests"
+          fi
           runtime=$(xcrun simctl list runtimes -j | python3 -c '
           import json,sys
           print(next(r["identifier"] for r in json.load(sys.stdin)["runtimes"]
