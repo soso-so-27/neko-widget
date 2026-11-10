@@ -238,6 +238,9 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          # The app and XCTest need media paths, never the transport key.
+          # The later encryption step receives the job secret independently.
+          unset NEKO_CAPTURE_KEY
           udid=$(cat "$PRIVATE_ROOT/simulator-id")
           test_run=$(find "$PRIVATE_ROOT/DerivedData/Build/Products" -maxdepth 1 -name '*.xctestrun')
           if ! xcodebuild test-without-building -xctestrun "$test_run" \
