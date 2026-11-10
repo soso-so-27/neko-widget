@@ -204,6 +204,7 @@ jobs:
           python3 ci/test-app-store-screenshot-workflow.py
           python3 ci/test-runtime-preparation.py
           python3 ci/test-background-moment-refresh.py
+          python3 ci/test-screen-speed-rules.py
 
       - name: Verify window entry and cover presentation
         working-directory: NekoWidget

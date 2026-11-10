@@ -536,8 +536,10 @@ struct MainTabView: View {
         for (window, dates) in arrivalDates {
             guard let latest = dates.max() else { continue }
             let key = "navigation.madoVisited.v1.\(window)"
-            UserDefaults.standard.set(max(UserDefaults.standard.double(forKey: key),
-                                          latest.timeIntervalSince1970), forKey: key)
+            // Leaving the tab writes only a newer visit (11/10): the same
+            // value again is a UserDefaults write on every tab switch.
+            guard latest.timeIntervalSince1970 > UserDefaults.standard.double(forKey: key) else { continue }
+            UserDefaults.standard.set(latest.timeIntervalSince1970, forKey: key)
         }
     }
 
@@ -1539,11 +1541,9 @@ struct MainTabView: View {
     /// すべて・お気に入り・メモ side by side, as in Instagram and X (10/28):
     /// the next page is already there, follows the finger with a gap between
     /// pages, and a short flick is enough. One page per swipe.
-    /// Lazy (11/10): the first open builds only the page on screen; the next
-    /// page is built as soon as a swipe shows its edge.
     private var photoLibraryPager: some View {
         ScrollView(.horizontal) {
-            LazyHStack(spacing: PhotoLibraryPagerProgress.gap) {
+            HStack(spacing: PhotoLibraryPagerProgress.gap) {
                 ForEach(PhotoLibrarySection.allCases, id: \.self) { section in
                     ZStack {
                         photoLibraryContent(section)
