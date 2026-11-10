@@ -6931,7 +6931,11 @@ class MemoCaptionOneWayTests(unittest.TestCase):
     def test_destination_row_goes_back_to_the_pick_list_keeping_the_words(self) -> None:
         sheet = section(self.screen, "struct GroupLibraryDeliverySheet: View {", "enum GroupLibraryDeliveryMemory {")
         # The pick step stays; it is skipped only with exactly one open まど.
-        self.assertIn("if openWindows.count == 1 {\n                screen = GroupWindowScreenModel(", sheet)
+        # 11/10: also from the last list while it reads again (one helper for both).
+        choose = section(sheet, "private func chooseOnlyWindow() {", "var body: some View {")
+        self.assertIn("if openWindows.count == 1 {\n            let only = openWindows[0].id\n"
+                      "            if screen?.windowID != only { screen = GroupWindowScreenModel(", choose)
+        self.assertIn("} else if screen != nil {\n            screen = nil", choose)
         self.assertIn("NavigationLink(value: window.id) {", sheet)
         # The ひとこと belongs to the sheet, so going back to the list keeps it.
         self.assertIn("NavigationStack(path: $path) {", sheet)

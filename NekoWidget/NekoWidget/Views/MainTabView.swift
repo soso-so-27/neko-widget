@@ -536,8 +536,10 @@ struct MainTabView: View {
         for (window, dates) in arrivalDates {
             guard let latest = dates.max() else { continue }
             let key = "navigation.madoVisited.v1.\(window)"
-            UserDefaults.standard.set(max(UserDefaults.standard.double(forKey: key),
-                                          latest.timeIntervalSince1970), forKey: key)
+            // Leaving the tab writes only a newer visit (11/10): the same
+            // value again is a UserDefaults write on every tab switch.
+            guard latest.timeIntervalSince1970 > UserDefaults.standard.double(forKey: key) else { continue }
+            UserDefaults.standard.set(latest.timeIntervalSince1970, forKey: key)
         }
     }
 
@@ -649,7 +651,9 @@ struct MainTabView: View {
             }
             if selectedTab == .windows && tab != .windows { rememberMadoVisit() }
             didApplyInitialTab = true
-            lastViewedTab = tab.rawValue
+            // Written only when it changes: writing the same value still
+            // tells UserDefaults (and every @AppStorage on this view) to redraw.
+            if lastViewedTab != tab.rawValue { lastViewedTab = tab.rawValue }
             selectedTab = tab
         })) {
             // 1.0: 写真・まど・アルバム・ツール.

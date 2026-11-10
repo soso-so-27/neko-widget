@@ -396,7 +396,6 @@ struct AppStoreScreenshotFixtureRootView: View {
     @State private var photoPositionDiagnostics = ""
     @State private var addedToolProfiles: [CatProfilePresentation] = []
     @State private var deletedToolProfiles = Set<String>()
-    @ObservedObject private var loadTracker = AppStoreScreenshotFixture.loadTracker
 
     private var photos: [PhotoPresentation] {
         if widgetRecoveryCase == "rediscovery" {
@@ -606,31 +605,14 @@ struct AppStoreScreenshotFixtureRootView: View {
                     .accessibilityIdentifier("photo-reading-position-diagnostics")
                     .accessibilityValue(photoPositionDiagnostics)
             }
-            ForEach(sortedLoadedImages, id: \.self) { loaded in
-                Text("fixture image loaded")
-                    .foregroundStyle(Color.clear)
-                    .frame(width: 1, height: 1)
-                    .clipped()
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("fixture image loaded")
-                    .accessibilityIdentifier(
-                        AppStoreScreenshotFixture.loadedAccessibilityIdentifierPrefix
-                            + loaded.localIdentifier
-                    )
-            }
+            // 11/10: the markers watch the loads themselves. A load used to
+            // redraw this root and the whole MainTabView once per photo cell,
+            // which the screen-speed sweep then timed as the app's own work.
+            AppStoreScreenshotFixtureLoadedMarkers()
         }
         .frame(width: 1, height: 1)
         .allowsHitTesting(false)
         .accessibilityElement(children: .contain)
-    }
-
-    private var sortedLoadedImages: [AppStoreScreenshotFixtureLoadedImage] {
-        loadTracker.loadedImages.sorted { lhs, rhs in
-            if lhs.localIdentifier != rhs.localIdentifier {
-                return lhs.localIdentifier < rhs.localIdentifier
-            }
-            return lhs.loaderIdentifier.uuidString < rhs.loaderIdentifier.uuidString
-        }
     }
 
     private var scan: ScanPresentation {
@@ -650,6 +632,37 @@ struct AppStoreScreenshotFixtureRootView: View {
             .compactMap(\.creationDate)
             .max()
         return value
+    }
+}
+
+/// One marker per finished fixture image load, for XCTest. Only these
+/// markers observe the load tracker, so a load redraws nothing else.
+@MainActor
+private struct AppStoreScreenshotFixtureLoadedMarkers: View {
+    @ObservedObject private var loadTracker = AppStoreScreenshotFixture.loadTracker
+
+    var body: some View {
+        ForEach(sortedLoadedImages, id: \.self) { loaded in
+            Text("fixture image loaded")
+                .foregroundStyle(Color.clear)
+                .frame(width: 1, height: 1)
+                .clipped()
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("fixture image loaded")
+                .accessibilityIdentifier(
+                    AppStoreScreenshotFixture.loadedAccessibilityIdentifierPrefix
+                        + loaded.localIdentifier
+                )
+        }
+    }
+
+    private var sortedLoadedImages: [AppStoreScreenshotFixtureLoadedImage] {
+        loadTracker.loadedImages.sorted { lhs, rhs in
+            if lhs.localIdentifier != rhs.localIdentifier {
+                return lhs.localIdentifier < rhs.localIdentifier
+            }
+            return lhs.loaderIdentifier.uuidString < rhs.loaderIdentifier.uuidString
+        }
     }
 }
 
