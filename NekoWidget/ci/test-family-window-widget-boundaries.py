@@ -4894,8 +4894,8 @@ class ReviewBRestTests(unittest.TestCase):
 
 class CodexWiringTests(unittest.TestCase):
     def test_outcomes_from_the_relay_reach_the_screen(self) -> None:
-        settings = source("NekoWidget/Views/SettingsView.swift")
-        self.assertIn('static let appID: String? = "6801962436"', settings)
+        listing = source("Shared/Sharing/ClientUpgradeRequirement.swift")
+        self.assertIn('static let appID: String? = "6801962436"', listing)
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
         self.assertIn('case .alreadyMember: return "もうこのまどに入っています。', setup)
         self.assertIn('case .windowClosed: return "このまどは終わりました。"', setup)
