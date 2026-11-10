@@ -116,9 +116,16 @@ struct MembershipOfferPresentation: Equatable {
     /// "14日間無料" only when StoreKit reports introductory-offer eligibility.
     let trialText: String?
     let purchaseTitle: String
-    /// "その後は月額¥980" under the trial button; `nil` without a trial.
+    /// "その後 月額¥980（自動更新）" under the trial button; `nil` without a trial.
     let afterTrialText: String?
     let isPreview: Bool
+
+    /// The button without a trial: the price is said once, under it (11/10).
+    static let startTitle = "Plusを始める"
+
+    /// The headline under the button: what is billed and that it renews, as
+    /// prominent as the trial (guideline 3.1.2).
+    var billingLine: String { afterTrialText ?? "\(priceText)（自動更新）" }
 
     /// One formatting path for the live offer and its previews.
     /// `displayPrice` and `trialPeriod` are StoreKit's values as given.
@@ -126,13 +133,13 @@ struct MembershipOfferPresentation: Equatable {
         let price = "月額\(displayPrice)"
         guard let trialPeriod else {
             return Self(priceText: price, renewalText: "1か月ごとに自動で更新されます。次の更新日の24時間前までに解約すれば、次の料金はかかりません。",
-                        trialText: nil, purchaseTitle: "Plusを始める（\(price)）",
+                        trialText: nil, purchaseTitle: startTitle,
                         afterTrialText: nil, isPreview: isPreview)
         }
         return Self(priceText: price,
                     renewalText: "無料期間が終わると、1か月ごとに自動で更新されます。無料期間が終わる24時間前までに解約すれば、料金はかかりません。",
-                    trialText: "\(trialPeriod)無料", purchaseTitle: "\(trialPeriod)無料で始める",
-                    afterTrialText: "その後は\(price)", isPreview: isPreview)
+                    trialText: "\(trialPeriod)無料", purchaseTitle: "\(trialPeriod)無料で試す",
+                    afterTrialText: "その後 \(price)（自動更新）", isPreview: isPreview)
     }
 }
 
@@ -196,6 +203,14 @@ final class MembershipOfferModel: ObservableObject {
 #endif
     private var observedCatalogRevision: UInt64?
     private var offerLoadGeneration: UInt64 = 0
+    /// The price on screen. `offer` (what a tap may buy) is cleared during each
+    /// reload; this keeps the last price instead, so a store refresh does not
+    /// blink the price, the button and the unavailable line (11/10).
+    @Published private(set) var displayedOffer: MembershipOfferPresentation?
+    /// A settled load found no product at all; only then 「料金を確認できません…」.
+    private var offerLoadFinishedWithoutOffer = false
+    /// One offer read per catalog revision, shared by whoever asks (coalesced).
+    private var offerReloadTask: Task<Void, Never>?
 
     var canRefresh: Bool { !isWorking && !isMember && (verificationRequired || isWaiting) }
     let isPreview: Bool
@@ -251,10 +266,10 @@ final class MembershipOfferModel: ObservableObject {
         }
         isWorking = true
         await prepareOfferAction()
-        await reloadOfferPresentation()
+        await reloadOfferForCurrentCatalog()
         isWorking = false
         updateMembershipState()
-        if offer == nil && !isMember { message = "料金を確認できません。時間をおいて開き直してください。" }
+        applyOfferUnavailableMessage()
     }
 
     func purchase() async -> MembershipOfferActionResult {
@@ -372,9 +387,10 @@ final class MembershipOfferModel: ObservableObject {
             Task { @MainActor in
                 guard let model else { return }
                 model.updateMembershipState()
-                if model.presentsOffer && model.observedCatalogRevision != store.productCatalogRevision {
-                    model.observedCatalogRevision = store.productCatalogRevision
-                    await model.reloadOfferPresentation()
+                // Only after the screen's own load began, once per settled
+                // catalog: a refresh publishes many times (11/10).
+                if model.presentsOffer && model.hasLoaded {
+                    await model.reloadOfferForCurrentCatalog()
                 }
             }
         }
@@ -387,10 +403,54 @@ final class MembershipOfferModel: ObservableObject {
     private func reloadOfferPresentation() async {
         offerLoadGeneration &+= 1
         let generation = offerLoadGeneration
+        let revision = purchases?.productCatalogRevision
         offer = nil
         let updated = await loadAction()
         guard generation == offerLoadGeneration else { return }
         offer = updated
+        // Settled: the catalog this read used is still the current one. A read
+        // overtaken by a newer catalog is followed by that catalog's own read.
+        let settled = purchases.map {
+            $0.productAvailability != .loading && $0.productCatalogRevision == revision
+        } ?? true
+        displayedOffer = PlusOfferReloadPolicy.displayed(previous: displayedOffer, loaded: updated, settled: settled)
+        if updated != nil || settled { offerLoadFinishedWithoutOffer = updated == nil }
+        applyOfferUnavailableMessage()
+    }
+
+    /// The screen's load and every store publication share this: one read per
+    /// settled catalog revision, joined while it runs, never in a loop (11/10).
+    private func reloadOfferForCurrentCatalog() async {
+        guard let store = purchases else {
+            await reloadOfferPresentation()
+            return
+        }
+        let revision = store.productCatalogRevision
+        if observedCatalogRevision == revision, let offerReloadTask {
+            await offerReloadTask.value
+            return
+        }
+        guard PlusOfferReloadPolicy.shouldReload(observedRevision: observedCatalogRevision,
+                                                 currentRevision: revision,
+                                                 catalogLoading: store.productAvailability == .loading)
+        else { return }
+        observedCatalogRevision = revision
+        let task = Task { await self.reloadOfferPresentation() }
+        offerReloadTask = task
+        await task.value
+        if offerReloadTask == task { offerReloadTask = nil }
+    }
+
+    /// 「料金を確認できません…」 only when a finished load found no product and
+    /// no price is on screen; it goes away as soon as a price loads.
+    private func applyOfferUnavailableMessage() {
+        let shows = PlusOfferReloadPolicy.showsUnavailable(loadFinishedWithoutOffer: offerLoadFinishedWithoutOffer,
+                                                           showsPrice: displayedOffer != nil, isMember: isMember)
+        if shows, actionResult == nil, purchaseTitle == nil, message == nil {
+            message = PlusOfferReloadPolicy.unavailableMessage
+        } else if !shows, message == PlusOfferReloadPolicy.unavailableMessage {
+            message = nil
+        }
     }
 
     func refresh() async {
@@ -495,6 +555,7 @@ final class MembershipOfferModel: ObservableObject {
         } else {
             purchaseTitle = nil
             message = nil
+            applyOfferUnavailableMessage()
         }
     }
 
@@ -804,6 +865,9 @@ struct MembershipOfferSheet: View {
     @State private var showsManagementPreview = false
 #endif
     @Environment(\.plusOfferPhoto) private var placePhoto
+    /// The cat photo the screen opened with, kept while it is open: a new
+    /// best candidate behind the sheet must not reload the header (11/10).
+    @State private var heldPhoto: PlusOfferPhoto?
     let context: PlusOfferContext
     let photo: UIImage?
     /// False only where the screen is a page with its own 「あとで」 (onboarding, 11/7).
@@ -832,7 +896,8 @@ struct MembershipOfferSheet: View {
             } else {
                 MembershipOfferView(
                     context: context,
-                    photo: photo, photoAsset: placePhoto, offer: model.offer, isWorking: model.isWorking,
+                    photo: photo, photoAsset: heldPhoto ?? placePhoto, offer: model.displayedOffer,
+                    isWorking: model.isWorking,
                     canPurchase: model.canPurchase, canRestore: model.canRestore,
                     message: model.message,
                     isMember: model.isMember, memberEndLine: model.memberEndLine,
@@ -885,7 +950,10 @@ struct MembershipOfferSheet: View {
         // While asking, a swipe must not drop the purchase the caller waits for.
         .interactiveDismissDisabled(model.isWorking || asksAutoSave || showsAutoSave)
         // Usage (11/7): each time the one Plus screen is shown, by its entry place.
-        .onAppear { if !model.isPreview { UsageCounter.shared.count(.plusOfferShown(.init(context))) } }
+        .onAppear {
+            if heldPhoto == nil { heldPhoto = placePhoto }
+            if !model.isPreview { UsageCounter.shared.count(.plusOfferShown(.init(context))) }
+        }
         .manageSubscriptionsSheet(isPresented: $showsSubscriptionManagement)
         .onChange(of: showsSubscriptionManagement) { _, isPresented in
             if !isPresented {
@@ -964,10 +1032,17 @@ struct PlusSettingsSection: View {
     @ObservedObject private var purchases = PlusPurchaseStore.productionShared
     @State private var showsOffer = false
     @State private var showsManagement = false
+    /// The last answer before a re-check: shown while it runs (11/10).
+    @State private var lastAnswer: Status?
 
-    private enum Status { case notMember, member, unknown, checking }
+    private typealias Status = PlusSettingsRowStatus
 
-    private var status: Status {
+    /// Each refresh (launch, foreground, a closed sheet) is `.checking` again
+    /// for a moment; the rows keep the last answer so the Plus sheet hung on
+    /// this section is not rebuilt, which reloaded it over and over (11/10).
+    private var status: Status { Status.steady(liveStatus, lastAnswer: lastAnswer) }
+
+    private var liveStatus: Status {
         if purchases.entitlementState.permitsPersonalPlus { return .member }
         // Just after launch: neither the offer nor restore until the answer is in (11/5).
         if purchases.entitlementState == .checking { return .checking }
@@ -1028,6 +1103,9 @@ struct PlusSettingsSection: View {
                 .onChange(of: showsManagement) { _, isPresented in
                     // Closing Apple's sheet is not evidence of a cancellation.
                     if !isPresented { refreshMembership() }
+                }
+                .onChange(of: liveStatus, initial: true) { _, answer in
+                    if answer != .checking { lastAnswer = answer }
                 }
         }
     }
