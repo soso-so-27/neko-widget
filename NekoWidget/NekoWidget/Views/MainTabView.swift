@@ -948,8 +948,18 @@ struct MainTabView: View {
         }
     }
 
-    var body: some View {
+    /// The first Plus offer is checked on each opening. Kept out of `body`'s
+    /// long chain so the compiler can type-check it.
+    private var routedTabContentOfferingFirstPlus: some View {
         routedTabContent
+            .task(id: scenePhase) {
+                guard scenePhase == .active else { return }
+                await offerFirstPlusIfDue()
+            }
+    }
+
+    var body: some View {
+        routedTabContentOfferingFirstPlus
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active {
                 consumeShowcaseLaunchRequest()
@@ -1040,10 +1050,6 @@ struct MainTabView: View {
             guard scenePhase == .active else { return }
             if memoriesPath.isEmpty { albumHighlightsReferenceDate = Date() }
             await seasonalMovieArchive.load()
-        }
-        .task(id: scenePhase) {
-            guard scenePhase == .active else { return }
-            await offerFirstPlusIfDue()
         }
     }
 
