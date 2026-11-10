@@ -29,7 +29,7 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       NEKO_CAPTURE_KEY: ${{ inputs.synthetic && 'c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1' || secrets.OWNER_STORE_CAPTURE_KEY }}
       NEKO_CAPTURE_INPUT_URL: ${{ secrets.OWNER_STORE_CAPTURE_INPUT_URL }}
-      PRIVATE_ROOT: ${{ runner.temp }}/neko-owner-capture
+      PRIVATE_ROOT: /tmp/neko-owner-capture-${{ github.run_id }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
