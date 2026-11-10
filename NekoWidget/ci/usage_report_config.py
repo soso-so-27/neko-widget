@@ -1,5 +1,5 @@
 """Usage endpoint and privacy boundary; no network access."""
-PRODUCTION = 'https://neko-usage-production.nakanishisoya.workers.dev/v1/usage'
+PRODUCTION = 'https://usage.nekonomado.com/v1/usage'
 STAGING = 'https://neko-usage-staging.nakanishisoya.workers.dev/v1/usage'
 ANALYTICS = 'NSPrivacyCollectedDataTypePurposeAnalytics'
 PRODUCT = 'NSPrivacyCollectedDataTypeProductInteraction'

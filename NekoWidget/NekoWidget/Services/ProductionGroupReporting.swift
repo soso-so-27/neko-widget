@@ -11,7 +11,9 @@ struct GroupReportEvidence: Sendable {
 
 @MainActor
 final class ProductionGroupReporting: GroupReportingService {
+#if DEBUG || INTERNAL_PRESENTATION
     static let stagingEndpoint = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
+#endif
     private let endpoint: URL
     private let secrets: any GroupSecretStore
     private let transport: any GroupHTTPTransport
@@ -28,8 +30,11 @@ final class ProductionGroupReporting: GroupReportingService {
          directory: URL, publicKey: Data, reportsDisabled: Bool = false,
          evidence: @escaping (String, String) async throws -> GroupReportEvidence) throws {
         self.reportsDisabled = reportsDisabled
-        var approved = endpoint.absoluteString == Self.stagingEndpoint
+        var approved = false
+#if DEBUG || INTERNAL_PRESENTATION
+        approved = endpoint.absoluteString == Self.stagingEndpoint
             && publicKey == (try? GroupWire.bytes("T5C7__1xlc4XmIDr6zTJqMtdhBjPnMD10O3vFK_bYWg", count: 32))
+#endif
 #if os(iOS)
         let configuration = SharingAPIConfiguration.current
         self.reportsDisabled = reportsDisabled || configuration.isOwnerInternalReportsDisabled

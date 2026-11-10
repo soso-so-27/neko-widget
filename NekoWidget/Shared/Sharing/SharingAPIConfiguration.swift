@@ -155,6 +155,7 @@ struct SharingAPIConfiguration: Equatable, Sendable {
                 // Never reuse staging's evidence recipient in a public build.
                 && moderationPublicKey != Self.decodeCanonicalBase64URL("T5C7__1xlc4XmIDr6zTJqMtdhBjPnMD10O3vFK_bYWg")
         }
+#if DEBUG || INTERNAL_PRESENTATION
         return isInternalEncryptedReportEnabled
             && internalEncryptedReportScope == "internal-owner-first-connection"
             && releaseMode == "media-staging"
@@ -166,6 +167,9 @@ struct SharingAPIConfiguration: Equatable, Sendable {
             && moderationPublicKey == Self.decodeCanonicalBase64URL(
                 "T5C7__1xlc4XmIDr6zTJqMtdhBjPnMD10O3vFK_bYWg"
             )
+#else
+        return false
+#endif
     }
 
     /// The extension may only place one canonical, short-lived input in the

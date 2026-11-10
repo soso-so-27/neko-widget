@@ -27,7 +27,11 @@ struct GroupShareConfiguration {
               parts.query == nil, parts.fragment == nil, ["", "/"].contains(parts.path)
         else { return nil }
         if mode == "media-staging" {
+#if DEBUG || INTERNAL_PRESENTATION
             guard raw == "https://neko-window-sharing-staging.nakanishisoya.workers.dev" else { return nil }
+#else
+            return nil
+#endif
         } else {
             guard !host.lowercased().contains("staging") else { return nil }
         }
