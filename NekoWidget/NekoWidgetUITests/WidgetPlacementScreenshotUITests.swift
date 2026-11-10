@@ -159,7 +159,16 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
             let gallery = springboard.scrollViews.containing(.pageIndicator, identifier: nil).firstMatch
             let pages = gallery.pageIndicators.firstMatch
             XCTAssertTrue(pages.waitForExistence(timeout: 15))
-            for _ in 1..<desiredPage {
+            let pageState = galleryPage(pages)
+            guard pageState.count == 2, pageState[1] == 4,
+                  (1...4).contains(pageState[0]) else {
+                fail("The Widget gallery did not report its current size.", application: springboard)
+                return
+            }
+            // Read the actual selection each time; SpringBoard can retain
+            // the family selected for the preceding Widget.
+            let forward = desiredPage > pageState[0]
+            for _ in 0..<abs(desiredPage - pageState[0]) {
                 let previews = gallery.buttons.matching(NSPredicate(format: "value BEGINSWITH %@", "Widget,"))
                 let deadline = Date().addingTimeInterval(40)
                 var renderedPreview: XCUIElement?
@@ -174,9 +183,10 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                     fail("The Widget preview did not finish rendering before paging.", application: springboard)
                     return
                 }
-                let start = preview.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.3))
+                let start = preview.coordinate(withNormalizedOffset: CGVector(dx: forward ? 0.8 : 0.2, dy: 0.3))
                 let end = springboard.coordinate(withNormalizedOffset: .zero).withOffset(
-                    CGVector(dx: 20, dy: preview.frame.minY + preview.frame.height * 0.3))
+                    CGVector(dx: forward ? 20 : springboard.frame.width - 20,
+                             dy: preview.frame.minY + preview.frame.height * 0.3))
                 start.press(forDuration: 0.1, thenDragTo: end)
                 sleep(1)
             }
