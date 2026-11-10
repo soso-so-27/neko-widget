@@ -542,7 +542,7 @@ final class MembershipOfferModel: ObservableObject {
         }
         let renewal = purchases?.renewal
         let endLine = isMember ? PlusRenewalPresentation.offerEndLine(willAutoRenew: renewal?.willAutoRenew,
-            expiration: renewal?.expirationDate, now: .now, calendar: .current) : nil
+            expiration: renewal?.expirationDate, now: .now, calendar: .nekoGregorian) : nil
         if memberEndLine != endLine { memberEndLine = endLine }
         if isMember {
             purchaseTitle = PlusRenewalPresentation.renewingOfferTitle
@@ -1124,7 +1124,7 @@ struct PlusSettingsSection: View {
     /// it worked; 「Plus（利用中）」 while it renews (11/9).
     private var memberHeader: String {
         PlusRenewalPresentation.settingsHeader(willAutoRenew: purchases.renewal?.willAutoRenew,
-            expiration: purchases.renewal?.expirationDate, now: .now, calendar: .current)
+            expiration: purchases.renewal?.expirationDate, now: .now, calendar: .nekoGregorian)
     }
 
     private func refreshMembership() {

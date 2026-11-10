@@ -44,13 +44,13 @@ enum AlbumPrototype {
     static let yearArrival = (month: 12, day: 6)
 
     static func yearArrivalDate(_ year: Int) -> Date? {
-        Calendar.current.date(from: DateComponents(year: year, month: yearArrival.month, day: yearArrival.day))
+        Calendar.nekoGregorian.date(from: DateComponents(year: year, month: yearArrival.month, day: yearArrival.day))
     }
 
     /// Years whose work has arrived, newest first: earlier years with photos,
     /// and this year once 12/6 has come (or the test switch says now).
     static func arrivedYears(from catPhotos: [PhotoPresentation], now: Date = Date(), deliverNow: Bool) -> [Int] {
-        let calendar = Calendar.current
+        let calendar = Calendar.nekoGregorian
         let thisYear = calendar.component(.year, from: now)
         var counts: [Int: Int] = [:]
         for photo in catPhotos {
@@ -67,7 +67,7 @@ enum AlbumPrototype {
 
     /// Every cat photo taken in `year`.
     static func photos(inYear year: Int, from catPhotos: [PhotoPresentation]) -> [PhotoPresentation] {
-        let calendar = Calendar.current
+        let calendar = Calendar.nekoGregorian
         return catPhotos.filter { photo in
             photo.creationDate.map { calendar.component(.year, from: $0) == year } ?? false
         }
@@ -76,7 +76,7 @@ enum AlbumPrototype {
     /// The year's nine: the best photos, at most two from one month, so the
     /// nine are the whole year and not one good week.
     static func pickYear(_ photos: [PhotoPresentation]) -> [PhotoPresentation] {
-        let calendar = Calendar.current
+        let calendar = Calendar.nekoGregorian
         var chosen: [PhotoPresentation] = []
         var perMonth: [Int: Int] = [:]
         var days: Set<Date> = []
@@ -108,7 +108,7 @@ enum AlbumPrototype {
     /// Test only: the newest finished month (and the year's work) arrive
     /// again under cloud, so holding to clear can be tried any day.
     static func cloudLatestAgain(now: Date = Date()) {
-        let calendar = Calendar.current
+        let calendar = Calendar.nekoGregorian
         guard let thisMonth = calendar.dateInterval(of: .month, for: now)?.start,
               let lastMonth = calendar.date(byAdding: .month, value: -1, to: thisMonth) else { return }
         let defaults = UserDefaults.standard
@@ -127,7 +127,7 @@ enum AlbumPrototype {
 
     /// Every cat photo taken in the month of `monthStart`.
     static func photos(in monthStart: Date, from catPhotos: [PhotoPresentation]) -> [PhotoPresentation] {
-        let calendar = Calendar.current
+        let calendar = Calendar.nekoGregorian
         guard let end = calendar.date(byAdding: .month, value: 1, to: monthStart) else { return [] }
         return catPhotos.filter { photo in
             guard let date = photo.creationDate else { return false }
@@ -148,7 +148,7 @@ enum AlbumPrototype {
     /// other (bursts, near-duplicates) and at most two from the same day.
     static func pick(_ photos: [PhotoPresentation], count: Int,
                      by rank: (PhotoPresentation) -> Double = AlbumPrototype.score) -> [PhotoPresentation] {
-        let calendar = Calendar.current
+        let calendar = Calendar.nekoGregorian
         var chosen: [PhotoPresentation] = []
         var perDay: [Date: Int] = [:]
         for photo in photos.sorted(by: { rank($0) > rank($1) }) {
@@ -246,7 +246,7 @@ struct AlbumPrototypeView: View {
         Set(openedJSON.split(separator: ",").map(String.init))
     }
 
-    private var calendar: Calendar { Calendar.current }
+    private var calendar: Calendar { Calendar.nekoGregorian }
 
     private var latestPreparationKey: MonthlyStoryPreparationKey? {
         letters.first.map { .init(letter: $0, catPhotos: catPhotos,
@@ -657,7 +657,7 @@ struct PastWorksView: View {
         Array(Set(letters.map(\.yearNumber)).union(years)).sorted(by: >)
     }
 
-    private var calendar: Calendar { Calendar.current }
+    private var calendar: Calendar { Calendar.nekoGregorian }
 
     var body: some View {
         ScrollView {
@@ -1218,7 +1218,7 @@ enum AlbumArrivalNotice {
 
     /// The next 1st at 9:00, and the month whose work it brings.
     static func nextMonthDelivery(after now: Date = Date()) -> (month: Date, at: Date)? {
-        let calendar = Calendar.current
+        let calendar = Calendar.nekoGregorian
         guard let thisMonth = calendar.dateInterval(of: .month, for: now)?.start,
               let firstAt = calendar.date(bySettingHour: hour, minute: 0, second: 0, of: thisMonth) else { return nil }
         if now < firstAt, let previous = calendar.date(byAdding: .month, value: -1, to: thisMonth) {
@@ -1231,7 +1231,7 @@ enum AlbumArrivalNotice {
 
     static func yearDelivery(_ year: Int) -> Date? {
         AlbumPrototype.yearArrivalDate(year).flatMap {
-            Calendar.current.date(bySettingHour: hour, minute: 0, second: 0, of: $0)
+            Calendar.nekoGregorian.date(bySettingHour: hour, minute: 0, second: 0, of: $0)
         }
     }
 
@@ -1248,7 +1248,7 @@ enum AlbumArrivalNotice {
         }
         guard await isAllowed(center) else { return }
         if let month {
-            let number = Calendar.current.component(.month, from: month.start)
+            let number = Calendar.nekoGregorian.component(.month, from: month.start)
             await add(monthID, "\(number)月の作品が届きました。", trigger: calendarTrigger(month.at))
         }
         if let year {
@@ -1276,7 +1276,7 @@ enum AlbumArrivalNotice {
             _ = try? await center.requestAuthorization(options: [.alert])
         }
         guard await isAllowed(center) else { return false }
-        let calendar = Calendar.current
+        let calendar = Calendar.nekoGregorian
         let last = calendar.date(byAdding: .month, value: -1, to: Date()) ?? Date()
         await add(tryID, "\(calendar.component(.month, from: last))月の作品が届きました。",
                   trigger: UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false))
@@ -1290,6 +1290,7 @@ enum AlbumArrivalNotice {
     }
 
     private static func calendarTrigger(_ date: Date) -> UNCalendarNotificationTrigger {
+        // The iPhone's own calendar on both sides: the trigger matches in it.
         let parts = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: date)
         return UNCalendarNotificationTrigger(dateMatching: parts, repeats: false)
     }
@@ -1393,7 +1394,7 @@ private struct YearBookView: View {
 
     /// Built once when the book opens.
     private func build() {
-        let calendar = Calendar.current
+        let calendar = Calendar.nekoGregorian
         let catPhotos = input.library.catPhotos
         let yearPhotos = AlbumPrototype.photos(inYear: year, from: catPhotos)
         nine = AlbumPrototype.pickYear(yearPhotos)
@@ -1626,7 +1627,7 @@ private struct YearStoryContentView: View {
     private static func makePages(year: Int, yearPhotos: [PhotoPresentation], nine: [PhotoPresentation],
                               catPhotos: [PhotoPresentation], assignments: [String: Set<String>],
                               profileNames: [String: String]) -> [Page] {
-        let calendar = Calendar.current
+        let calendar = Calendar.nekoGregorian
         guard let cover = nine.first else { return [] }
         var result: [Page] = [.cover(cover)]
         for month in 1...12 {
@@ -1895,7 +1896,7 @@ struct MonthlyBookView: View {
     /// 「10月3日」, as a book prints it (not 「10/3」).
     private static func date(_ photo: PhotoPresentation) -> String? {
         guard let date = photo.creationDate else { return nil }
-        let parts = Calendar.current.dateComponents([.month, .day], from: date)
+        let parts = Calendar.nekoGregorian.dateComponents([.month, .day], from: date)
         return "\(parts.month ?? 0)月\(parts.day ?? 0)日"
     }
 
@@ -2104,8 +2105,8 @@ struct MonthlyBookView: View {
 
     /// The 1st of the next month: the day the book arrives.
     private var arrivalDay: String {
-        let next = Calendar.current.date(byAdding: .month, value: 1, to: letter.monthStart) ?? letter.monthStart
-        let parts = Calendar.current.dateComponents([.year, .month, .day], from: next)
+        let next = Calendar.nekoGregorian.date(byAdding: .month, value: 1, to: letter.monthStart) ?? letter.monthStart
+        let parts = Calendar.nekoGregorian.dateComponents([.year, .month, .day], from: next)
         return "\(parts.year ?? 0)年\(parts.month ?? 0)月\(parts.day ?? 0)日"
     }
 

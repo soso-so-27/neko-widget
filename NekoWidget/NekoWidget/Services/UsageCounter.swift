@@ -134,7 +134,8 @@ final class UsageCounter: @unchecked Sendable {
     }
 
     /// Any of this app's widgets on the Home or Lock Screen; nil if unknown.
-    private static func anyWidgetPlaced() async -> Bool? {
+    /// Nil when WidgetKit cannot answer. Also read by the review prompt.
+    static func anyWidgetPlaced() async -> Bool? {
         await withCheckedContinuation { continuation in
             WidgetCenter.shared.getCurrentConfigurations { result in
                 guard case let .success(configurations) = result else {

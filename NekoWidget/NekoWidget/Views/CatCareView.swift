@@ -99,8 +99,7 @@ struct CatFarewellEditor: View {
                 }
             }
             .onAppear {
-                if let recorded, let day = Calendar.current.date(from: DateComponents(
-                    year: recorded.year, month: recorded.month, day: recorded.day)) { date = day }
+                if let recorded, let day = recorded.date() { date = day }
             }
         }
         .presentationDetents([.medium])
@@ -1444,7 +1443,7 @@ struct CatCareListEntrySheet: View {
         guard let entryID = editor.entryID, let catID,
               let record = store.state?.record(catID: catID) else { return }
         func dateOf(_ day: CatCareDay) -> Date {
-            Calendar.current.date(from: DateComponents(year: day.year, month: day.month, day: day.day)) ?? Date()
+            day.date() ?? Date()
         }
         switch editor.kind {
         case .weight:

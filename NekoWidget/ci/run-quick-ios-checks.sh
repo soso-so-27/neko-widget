@@ -145,7 +145,7 @@ xcrun swiftc -parse-as-library \
   ci/verify-onboarding-presentation.swift -o "$RUNNER_TEMP/onboarding-tests"
 "$RUNNER_TEMP/onboarding-tests"
 xcrun swiftc -parse-as-library \
-  Shared/Models/AppSettings.swift Shared/Models/NormalizedRect.swift \
+  Shared/Models/AppSettings.swift Shared/Models/NekoCalendar.swift Shared/Models/NormalizedRect.swift \
   Shared/Models/CatDetection.swift Shared/Models/AssetRecord.swift \
   Shared/Models/ScanState.swift Shared/Models/LibrarySnapshot.swift \
   NekoWidget/Views/GrowthAlbumSelector.swift \
@@ -235,7 +235,7 @@ xcrun --sdk macosx swiftc -parse-as-library \
 
 xcrun --sdk macosx swiftc -parse-as-library \
   -target "$(uname -m)-apple-macos14.0" \
-  NekoWidget/Services/CatCareCore.swift ci/verify-cat-care.swift \
+  Shared/Models/NekoCalendar.swift NekoWidget/Services/CatCareCore.swift ci/verify-cat-care.swift \
   -o "$RUNNER_TEMP/cat-care-tests"
 "$RUNNER_TEMP/cat-care-tests"
 
@@ -248,7 +248,7 @@ xcrun --sdk macosx swiftc -parse-as-library \
 # 11/8: what the tools print (care memo, evacuation sheet, vet and lost-cat
 # lines) from synthetic cats, so an output mistake stops CI, not a TestFlight build.
 xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
-  NekoWidget/Services/CatCareCore.swift NekoWidget/Services/CareHandoffPlan.swift \
+  Shared/Models/NekoCalendar.swift NekoWidget/Services/CatCareCore.swift NekoWidget/Services/CareHandoffPlan.swift \
   NekoWidget/Services/EvacuationPlan.swift NekoWidget/Services/CatCareOutputLines.swift \
   NekoWidget/Services/LostCatIncident.swift \
   ci/verify-tool-outputs.swift -o "$RUNNER_TEMP/tool-output-tests"

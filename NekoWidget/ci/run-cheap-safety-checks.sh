@@ -69,7 +69,7 @@ python3 ci/test-background-moment-refresh.py
 
 xcrun --sdk macosx swiftc \
   -parse-as-library \
-  Shared/Models/AppSettings.swift \
+  Shared/Models/AppSettings.swift Shared/Models/NekoCalendar.swift \
   Shared/Models/NormalizedRect.swift \
   Shared/Models/CatCandidateCuration.swift \
   Shared/Models/CatHouseholdIdentity.swift \
@@ -104,9 +104,11 @@ xcrun swiftc -parse-as-library Shared/MembershipAccessPolicy.swift \
 # Anonymous usage counts (11/7): the payload alone, synthetic days only; one
 # sender, one Info.plist key, and no identifier beyond the per-day batch.
 xcrun --sdk macosx swiftc -parse-as-library NekoWidget/Services/UsageReport.swift \
+  Shared/Models/NekoCalendar.swift NekoWidget/Services/ReviewPromptPolicy.swift \
   ci/verify-usage-report.swift -o "$RUNNER_TEMP/verify-usage-report"
 "$RUNNER_TEMP/verify-usage-report"
 python3 ci/test-usage-report-boundary.py
+python3 ci/test-gregorian-dates.py
 xcrun swiftc -parse-as-library Shared/MembershipAccessPolicy.swift \
   Shared/PersonalWidgetMembershipStore.swift ci/verify-personal-widget-membership.swift \
   -o "$RUNNER_TEMP/verify-personal-widget-membership"
@@ -132,7 +134,7 @@ xcrun --sdk macosx swiftc -parse-as-library -D PERSONAL_REDISCOVERY_CHECKS \
 "$RUNNER_TEMP/verify-cloudy-window"
 
 xcrun --sdk macosx swiftc -parse-as-library \
-  Shared/Models/AppSettings.swift Shared/Models/NormalizedRect.swift \
+  Shared/Models/AppSettings.swift Shared/Models/NekoCalendar.swift Shared/Models/NormalizedRect.swift \
   Shared/Models/CatDetection.swift Shared/Models/AssetRecord.swift \
   Shared/Models/ScanState.swift Shared/Models/LibrarySnapshot.swift \
   NekoWidget/Views/GrowthAlbumSelector.swift NekoWidget/Views/AppPresentationModels.swift \
