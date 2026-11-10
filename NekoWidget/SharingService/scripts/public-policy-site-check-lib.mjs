@@ -199,8 +199,8 @@ const PUBLIC_1_0_PAGES = Object.freeze([
     requiredPhrases: ["1つのまどは6人まで", "エンドツーエンド暗号化してから送ります", "中身を読む鍵を持ちません", "確認用の画像は7日で消えます", "暗号化して最大35日保持", "購読の終わりから12か月", "知らせが届いてから少なくとも30日は待ちます"] },
   { name: "community", path: "community/", h1: "コミュニティ基準", visibleRevision: true,
     requiredPhrases: ["1つのまどは6人まで", "入れるのは招待された人だけ", "運営者だけが開ける鍵で暗号化して送ります", "受付番号が出る", "その相手からの新しい写真を止められます", "確認用の画像は7日で消し"] },
-  { name: "support", path: "support/", h1: "サポート", visibleRevision: true,
-    requiredPhrases: ["毎日の入れ替わりはPlusの機能", "まどを作った人がPlusを使っている必要があります", "招待された人は無料", "1人1日5枚まで", "500枚まで", "写真アプリに保存してください", "それまでの記録は消えません", "緊急通報先ではありません"] },
+  { name: "support", path: "support/", h1: "サポート", visibleRevision: true, visibleRevisionDate: "2026-11-10",
+    requiredPhrases: ["毎日の入れ替わりはPlusの機能", "まどを作った人がPlusを使っている必要があります", "招待された人は無料", "1人1日5枚まで", "500枚まで", "写真アプリに保存してください", "それまでの記録は消えません", "緊急通報先ではありません", "販売について", "月額980円（税込）", "14日間無料", "氏名・住所・電話番号", "家族が入れない", "iOS 17.1以上"] },
   { name: "guide", path: "guide/", h1: "ねこのまどの使い方", visibleRevision: true,
     requiredPhrases: ["「猫を探す」を押します", "1つのまどに届けられるのは、1人1日5枚まで", "1つのまどにつき新しいものから500枚まで", "招待されて入るのは無料です", "月額980円です", "解約しても、写真・まど・メモは消えません"] },
 ].map(page => Object.freeze({ ...page, forbiddenPhrases: [SHARING_BETA_BOUNDARY_PHRASE, "完全ローカル版", "新規の暗号化通報受付は停止"] })));
@@ -597,7 +597,7 @@ async function fetchPolicyPage({
     }
     const text = visibleText(html);
     if (page.visibleRevision) {
-      const [year, month, day] = expectedRevision.split("-").map(Number);
+      const [year, month, day] = (page.visibleRevisionDate ?? expectedRevision).split("-").map(Number);
       const visibleRevision = `最終更新日：${year}年${month}月${day}日`;
       if (!text.includes(visibleRevision)) {
         throw new Error(`${page.name} is missing the visible policy revision`);

@@ -48,8 +48,9 @@ function pageHtml(profileCase, page, overrides = {}) {
   const phrases = overrides.phrases ?? page.requiredPhrases;
   const extraHead = overrides.extraHead ?? "";
   const extraBody = overrides.extraBody ?? "";
+  const [year, month, day] = (page.visibleRevisionDate ?? revision).split("-").map(Number);
   const visibleRevision = page.visibleRevision
-    ? "<p>最終更新日：2026年8月24日</p>"
+    ? `<p>最終更新日：${year}年${month}月${day}日</p>`
     : "";
   return `<!doctype html>
 <html lang="ja"><head>
@@ -659,4 +660,16 @@ test("public guide requires the exact title, revision, six phrases and shared fo
   await assert.rejects(check(publicOne, new Map([["guide", pageHtml(publicOne, guide, {
     links: [...profileUrls(publicOne), "http://policy.example.net/unsafe"],
   })]])), /non-HTTPS/u);
+});
+
+
+test("public support requires its exact content date while the policy revision stays shared", async () => {
+  const page = publicOne.definition.pages.find(page => page.name === "support");
+  assert.equal(page.visibleRevisionDate, "2026-11-10");
+  for (const wrong of ["2026年11月9日", "2026年11月11日", ""]) {
+    const html = pageHtml(publicOne, page).replace("2026年11月10日", wrong);
+    await assert.rejects(check(publicOne, new Map([["support", html]])), /visible policy revision/);
+  }
+  const result = await check(publicOne);
+  assert.ok(result.pages.every(page => page.revision === revision));
 });

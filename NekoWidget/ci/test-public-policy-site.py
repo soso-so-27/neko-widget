@@ -170,7 +170,8 @@ class PublicPolicySiteTests(unittest.TestCase):
         year, month, day = (int(part) for part in next(iter(revisions.values())).split("-"))
         visible_revision = f"最終更新日：{year}年{month}月{day}日"
         for page in PAGES[1:]:
-            self.assertIn(visible_revision, "".join(self.parsed(page).text), page)
+            expected = "最終更新日：2026年11月10日" if page == SITE / "support" / "index.html" else visible_revision
+            self.assertIn(expected, "".join(self.parsed(page).text), page)
 
     def test_private_window_capability_boundary_is_consistent(self):
         required_by_page = (
