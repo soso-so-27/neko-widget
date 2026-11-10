@@ -3535,7 +3535,7 @@ final class SoloMemoriesUITests: XCTestCase {
         app.buttons["membership-new"].tap()
         // A new memo opens the one Plus screen directly (no intermediate notice).
         XCTAssertTrue(app.staticTexts["membership-offer-heading"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["membership-offer-reason"].label.contains("新しいメモ"))
+        XCTAssertTrue(app.staticTexts["membership-offer-reason"].label.contains("メモを書くのはPlusの機能です"))
         XCTAssertFalse(editor.exists)
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "membership-new-memo-boundary"
@@ -3727,7 +3727,8 @@ final class SoloMemoriesUITests: XCTestCase {
             }
             let values = app.descendants(matching: .any)["membership-offer-values"].firstMatch
             for line in ["毎日、新しい1枚がホーム画面に", "月の作品、季節のムービー", "写真に新しいメモを書く",
-                         "まどを作って、家族と写真を届け合う", "猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる"] {
+                         "まどを作って、家族と写真を届け合う", "家族の手帳を、家族と一緒に書く",
+                         "猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる"] {
                 XCTAssertTrue(values.label.contains(line), "Missing value: \(line)")
             }
             let reassurance = app.descendants(matching: .any)["membership-offer-reassurance"].firstMatch
@@ -3800,7 +3801,7 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launch()
         let reasons: [(String, String?)] = [
             ("onboarding", nil), ("widget-resume", "ホーム画面の写真"),
-            ("monthly-summary", "月の作品"), ("new-memo", "新しいメモ"),
+            ("monthly-summary", "月の作品"), ("new-memo", "メモを書くのは"),
             ("create-window", "まどを作る"), ("continue-window", "作った人のPlus"),
             ("create-family", "家族の手帳を作る"), ("continue-family", "家族の誰か1人のPlus"), ("preservation", "保存"), ("settings", nil),
         ]

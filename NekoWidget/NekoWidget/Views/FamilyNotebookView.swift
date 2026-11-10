@@ -737,8 +737,12 @@ struct FamilyNotebookView: View {
     @State private var rechecking = false
 
     private var prototypeInvitationAction: (@MainActor () -> Void)? {
+#if DEBUG || INTERNAL_PRESENTATION
         guard !model.isReal else { return nil }
         return { triesInvitation = true }
+#else
+        return nil
+#endif
     }
     @ToolbarContentBuilder private var closeToolbar: some ToolbarContent {
         ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
@@ -960,6 +964,7 @@ struct FamilyNotebookView: View {
                     Text(FamilyNotebookWords.leaveDetail(payer: membership.role == .payer))
                 }
             }
+#if DEBUG || INTERNAL_PRESENTATION
             if !model.isReal { Section {
                 DisclosureGroup("テスト用") {
                     Button("家族が書いたときを試す") { model.tryFamilyWrite() }
@@ -972,6 +977,7 @@ struct FamilyNotebookView: View {
             } footer: {
                 Text("試した結果は、この画面のいちばん上に出ます。「家族が書いた」は「この子のこと」の接し方・トイレに（試し）の文が入ります。家族を終えると元に戻ります。")
             } }
+#endif
         }
         .refreshable { if !sharing.isWorking { await sharing.refresh(reportsFailure: true) } }
         // The only place to leave (11/7: your own page no longer offers it).
@@ -1414,11 +1420,13 @@ struct FamilyNotebookIntroView: View {
             .accessibilityLabel(FamilyNotebookPlusMark.isShown(for: access) ? "家族の手帳を作る、Plus" : "家族の手帳を作る")
             Text("招待された人は無料です。")
                 .font(.footnote).foregroundStyle(.secondary)
+#if DEBUG || INTERNAL_PRESENTATION
             if let tryInvitation {
                 Button("招待を受けたときを試す（テスト用）") { tryInvitation() }
                     .font(.footnote)
                     .accessibilityIdentifier("family-notebook-try-invitation")
             }
+#endif
         }
         .padding(24)
     }

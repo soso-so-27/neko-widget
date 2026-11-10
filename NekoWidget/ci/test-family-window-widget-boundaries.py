@@ -4806,6 +4806,11 @@ class RecommendAppTests(unittest.TestCase):
         self.assertIn("enum AppStoreListing {", settings)
         self.assertIn('https://apps.apple.com/jp/app/id', settings)
         self.assertIn("if let url = AppStoreListing.pageURL {", settings)
+        # 1.0 is reviewed before its page exists: no row points at it (11/10).
+        listing = section(settings, "enum AppStoreListing {", "static let recommendMessage")
+        self.assertIn("static let isPagePublished = false", listing)
+        self.assertIn("guard isPagePublished else { return nil }", listing)
+        self.assertLess(listing.index("guard isPagePublished"), listing.index("return URL(string:"))
         self.assertIn('Text("ねこのまどを紹介する").foregroundStyle(Color.primary)', settings)
         self.assertIn('Image(systemName: "square.and.arrow.up")', settings)
 
@@ -5991,6 +5996,8 @@ class OnePlaceSettingsTests(unittest.TestCase):
         self.assertIn('"settings-family-notebook"', body)
         # Not tinted: hierarchical styles inside a list button turn blue (346, 11/8).
         family = section(body, "if showsFamilyNotebookRow {", '"settings-family-notebook"')
+        # 11/10: only for someone already in a family; starting one is in この子のこと.
+        self.assertIn("private var showsFamilyNotebookRow: Bool { familyNotebook.hasFamily }", settings)
         self.assertIn('Text("家族の手帳").foregroundStyle(Color.primary)', family)
         self.assertIn(".foregroundStyle(Color(uiColor: .tertiaryLabel))", family)
         self.assertNotIn('"settings-cat-profiles"', body)
@@ -6981,6 +6988,74 @@ class MemoCaptionOneWayTests(unittest.TestCase):
         self.assertIn('GroupPhotoCaption.visibilityFooter == "まどのみんなに見えます（100文字まで）"', verify)
         self.assertNotIn("MemoCaptionBridge", verify)
 
+
+class PresubmitFixes1110Tests(unittest.TestCase):
+    """11/10 通し点検: the small fixes before submission."""
+
+    def test_plus_values_name_the_family_notebook(self) -> None:
+        offer = source("NekoWidget/Views/MembershipOfferView.swift")
+        values = section(offer, "static let values = [", "    ]\n")
+        rows = ['("まどを作って、家族と写真を届け合う", "person.2")',
+                '("家族の手帳を、家族と一緒に書く", "book.closed")',
+                '("猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる", "icloud")']
+        for row in rows:
+            self.assertIn(row, values)
+        self.assertLess(values.index(rows[0]), values.index(rows[1]))
+        self.assertLess(values.index(rows[1]), values.index(rows[2]))
+
+    def test_new_memo_reason_promises_free_days_only_from_storekit(self) -> None:
+        model = source("NekoWidget/Services/MembershipOfferModel.swift")
+        self.assertIn('case .newMemo: "メモを書くのはPlusの機能です。"', model)
+        self.assertNotIn("新しいメモはPlusで書けます", model)
+        reason = section(model, "func reason(trialPeriod: String?) -> String? {", "\n    }\n")
+        self.assertIn("guard case .newMemo = self, let trialPeriod, let base = reason else { return reason }", reason)
+        self.assertIn('return base + "\\(trialPeriod)は無料です。"', reason)
+        self.assertNotIn("14", reason)
+        monthly = section(model, "static func monthly(", "enum MembershipRestoreFailure")
+        no_trial = section(monthly, "guard let trialPeriod else {", "\n        }\n")
+        self.assertNotIn("trialPeriod:", no_trial)
+        self.assertIn("trialPeriod: trialPeriod)", monthly)
+        offer = source("NekoWidget/Views/MembershipOfferView.swift")
+        self.assertIn("if let reason = context.reason(trialPeriod: offer?.trialPeriod) {", offer)
+        self.assertNotIn("context.reason {", offer)
+        note = source("NekoWidget/Views/PhotoMemoryNoteView.swift")
+        self.assertIn('saveError = "メモを書くのはPlusの機能です。"', note)
+
+    def test_family_notebook_test_tools_are_compiled_out(self) -> None:
+        notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
+        gate = "#if DEBUG || INTERNAL_PRESENTATION"
+        for marker in ('DisclosureGroup("テスト用")', 'Button("招待を受けたときを試す（テスト用）")',
+                       "return { triesInvitation = true }"):
+            at = notebook.index(marker)
+            opened = notebook.rindex(gate, 0, at)
+            self.assertNotIn("#endif", notebook[opened:at], marker)
+            self.assertIn("#endif", notebook[at:], marker)
+        action = section(notebook, "private var prototypeInvitationAction:", "@ToolbarContentBuilder")
+        self.assertIn("#else\n        return nil\n#endif", action)
+
+    def test_limits_and_waiting_purchase_say_what_happens(self) -> None:
+        setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        self.assertIn("static let ownedWindowLimit = 5", setup)
+        self.assertIn('return "自分で作れるまどは\\(ownedWindowLimit)つまでです。"', setup)
+        migration = source("SharingService/migrations/0063_group_environment_policy.sql")
+        self.assertIn("role='owner' AND state='active')>5", migration)
+        model = source("NekoWidget/Services/MembershipOfferModel.swift")
+        auto = "\\nApp Store で手続きが終わると、自動で使えるようになります。"
+        state = section(model, "        } else if isWaiting {", "        } else {\n            purchaseTitle = nil")
+        self.assertIn("もう一度購入しないでください。" + auto + '"', state)
+        self.assertIn("お支払い方法を確認してください。" + auto + '"', state)
+        checking = state[state.index("} else if verificationRequired {"):]
+        self.assertNotIn(auto, checking)
+        # The server-side check is waited out with 「購入を復元」, not automatically.
+        self.assertIn('もう一度購入せずに、「購入を復元」を押してください。"', state)
+        self.assertEqual(model.count(auto), 3)
+
+    def test_showcase_without_recommendation_offers_picking(self) -> None:
+        showcase = source("NekoWidget/Views/ShowcasePhotoView.swift")
+        failed = section(showcase, "} else if failedScopes.contains(scopeID) {", '"showcase-gallery-select"')
+        self.assertIn('ContentUnavailableView("猫の写真が見つかると、おすすめを出します", systemImage: "photo")', failed)
+        self.assertIn('Button("写真を選ぶ") { showsPreparation = true }', failed)
+        self.assertNotIn('"おすすめで選べませんでした"', showcase)
 
 if __name__ == "__main__":
     unittest.main()

@@ -53,13 +53,20 @@ enum PlusOfferContext: Equatable, Sendable {
         case .onboarding, .settings: nil
         case .widgetResume: "ホーム画面の写真を毎日新しくするのは、Plusの機能です。"
         case .monthlySummary: "月の作品と季節のムービーは、Plusで見られます。"
-        case .newMemo: "新しいメモはPlusで書けます。書いたメモは、いつでも読めます。"
+        case .newMemo: "メモを書くのはPlusの機能です。"
         case .createWindow: "まどを作るのは、Plusの機能です。"
         case .continueWindow: "このまどは、作った人のPlusで続きます。"
         case .createFamily: "家族の手帳を作るのは、Plusの機能です。"
         case .continueFamily: "家族の手帳は、家族の誰か1人のPlusで続きます。"
         case .preservation: "写真やメモの保存は、Plusの機能です。"
         }
+    }
+
+    /// The reason on the Plus screen, where StoreKit's offer is known: a new
+    /// memo also says the free days, only when this person can have them (11/10).
+    func reason(trialPeriod: String?) -> String? {
+        guard case .newMemo = self, let trialPeriod, let base = reason else { return reason }
+        return base + "\(trialPeriod)は無料です。"
     }
 
     /// Stable suffix for accessibility identifiers and UI fixtures.
@@ -119,6 +126,8 @@ struct MembershipOfferPresentation: Equatable {
     /// "その後 月額¥980（自動更新）" under the trial button; `nil` without a trial.
     let afterTrialText: String?
     let isPreview: Bool
+    /// StoreKit's trial length as given ("14日間"); `nil` without a trial.
+    var trialPeriod: String? = nil
 
     /// The button without a trial: the price is said once, under it (11/10).
     static let startTitle = "Plusを始める"
@@ -139,7 +148,8 @@ struct MembershipOfferPresentation: Equatable {
         return Self(priceText: price,
                     renewalText: "無料期間が終わると、1か月ごとに自動で更新されます。無料期間が終わる24時間前までに解約すれば、料金はかかりません。",
                     trialText: "\(trialPeriod)無料", purchaseTitle: "\(trialPeriod)無料で試す",
-                    afterTrialText: "その後 \(price)（自動更新）", isPreview: isPreview)
+                    afterTrialText: "その後 \(price)（自動更新）", isPreview: isPreview,
+                    trialPeriod: trialPeriod)
     }
 }
 
@@ -353,7 +363,7 @@ final class MembershipOfferModel: ObservableObject {
             if result == .completed { isWaiting = false }
         case .waiting:
             isWaiting = true
-            message = "Appleでの購入手続きが終わるのを待っています。もう一度購入せずに、しばらくしてから「購入を復元」を押してください。"
+            message = "Appleでの購入手続きが終わるのを待っています。もう一度購入せずに、しばらくしてから「購入を復元」を押してください。\nApp Store で手続きが終わると、自動で使えるようになります。"
         case .nothingToRestore:
             actionResult = "Plusの購入が見つかりませんでした。購入したときと同じApple Accountでサインインしているか確かめてください。"
         case .unavailable:
@@ -544,11 +554,11 @@ final class MembershipOfferModel: ObservableObject {
             applePending = applePending || fixtureStatus == .applePending
 #endif
             message = applePending
-                ? "Appleでの購入手続きが終わるのを待っています。もう一度購入しないでください。"
+                ? "Appleでの購入手続きが終わるのを待っています。もう一度購入しないでください。\nApp Store で手続きが終わると、自動で使えるようになります。"
                 : "購入の確認を待っています。もう一度購入せずに、「購入を復元」を押してください。"
         } else if purchases?.hasBillingIssue == true {
             purchaseTitle = "お支払い方法の確認が必要です"
-            message = "Appleでお支払いを確認できていません。「サブスクリプションを管理」からお支払い方法を確認してください。"
+            message = "Appleでお支払いを確認できていません。「サブスクリプションを管理」からお支払い方法を確認してください。\nApp Store で手続きが終わると、自動で使えるようになります。"
         } else if verificationRequired {
             purchaseTitle = "購入状況の確認が必要です"
             message = "購入状況を確認できません。もう一度購入せずに、「購入を復元」を押してください。"

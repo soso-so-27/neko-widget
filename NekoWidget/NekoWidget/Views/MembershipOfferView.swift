@@ -39,6 +39,7 @@ struct MembershipOfferView: View {
         ("月の作品、季節のムービー", "rectangle.stack"),
         ("写真に新しいメモを書く", "square.and.pencil"),
         ("まどを作って、家族と写真を届け合う", "person.2"),
+        ("家族の手帳を、家族と一緒に書く", "book.closed"),
         ("猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる", "icloud"),
     ]
     static let reassurances = [
@@ -176,7 +177,7 @@ struct MembershipOfferView: View {
                     .accessibilityHidden(true)
             }
 
-            if let reason = context.reason {
+            if let reason = context.reason(trialPeriod: offer?.trialPeriod) {
                 Text(reason)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
