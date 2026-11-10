@@ -28,6 +28,7 @@ jobs:
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       NEKO_CAPTURE_KEY: ${{ inputs.synthetic && 'c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1' || secrets.OWNER_STORE_CAPTURE_KEY }}
+      NEKO_CAPTURE_INPUT_URL: ${{ secrets.OWNER_STORE_CAPTURE_INPUT_URL }}
       PRIVATE_ROOT: ${{ runner.temp }}/neko-owner-capture
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -35,7 +36,6 @@ jobs:
           persist-credentials: false
       - name: Download authenticated ciphertext only
         env:
-          GH_TOKEN: ${{ github.token }}
           MEDIA_TAG: ${{ inputs.media_release_tag }}
         shell: bash
         run: |
@@ -44,8 +44,16 @@ jobs:
           [[ "$NEKO_CAPTURE_KEY" =~ ^[0-9a-fA-F]{64}$ ]]
           umask 077
           mkdir -p "$PRIVATE_ROOT"
-          gh release view "$MEDIA_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft' | grep -qx true
-          gh release download "$MEDIA_TAG" --repo "$GITHUB_REPOSITORY" --pattern input.nekoenc --dir "$PRIVATE_ROOT"
+          # A one-file, expiring download URL avoids giving the job repository
+          # write access merely to read a draft asset. The bytes remain encrypted.
+          python3 - <<'PY'
+          import os
+          from urllib.parse import urlsplit
+          url = urlsplit(os.environ['NEKO_CAPTURE_INPUT_URL'])
+          assert url.scheme == 'https' and url.hostname == 'release-assets.githubusercontent.com'
+          PY
+          curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
+            "$NEKO_CAPTURE_INPUT_URL" --output "$PRIVATE_ROOT/input.nekoenc"
       - name: Build before decrypting owner media
         shell: bash
         working-directory: NekoWidget

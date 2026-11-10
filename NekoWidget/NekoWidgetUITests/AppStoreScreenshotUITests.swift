@@ -745,6 +745,10 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let room = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "わが家")).firstMatch
         XCTAssertTrue(room.waitForExistence(timeout: 15)); room.tap()
         XCTAssertTrue(app.buttons["group-window-open-members"].waitForExistence(timeout: 15))
+        // Captions belong to the shipping full-photo view, not its feed tile.
+        let delivered = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@", "から届いた写真")).firstMatch
+        XCTAssertTrue(delivered.waitForExistence(timeout: 15)); delivered.tap()
         XCTAssertTrue(app.staticTexts["ふたりでくっついて寝ていた"].waitForExistence(timeout: 15))
         sleep(2)
         captureScreenshot(named: "03_window")
