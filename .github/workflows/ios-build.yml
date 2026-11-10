@@ -33,7 +33,7 @@ jobs:
     name: Build, unit tests, and launch
     # Same-repository push already validates the PR head; forks use PR CI.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
-    runs-on: macos-15
+    runs-on: macos-15-intel
     # Public launch and owner-only products have independent budgets. Run
     # every check, but do not discard a passed public launch while rebuilding
     # the second configuration. Keep the independent 90s launch bound.
@@ -67,7 +67,7 @@ jobs:
   owner-products:
     name: Build and inspect owner-only products
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 25
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
@@ -81,7 +81,7 @@ jobs:
   safety-check:
     name: Privacy, saved data, and sharing checks
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
-    runs-on: macos-15
+    runs-on: macos-15-intel
     # Execution budget only: hosted-runner acquisition failures are separate.
     # Keep every safety check and the independent 90s launch bound unchanged.
     timeout-minutes: 20
