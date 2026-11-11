@@ -107,10 +107,11 @@ export async function familyNotebookAdmission(request: Request, env: Env): Promi
     if (!policy.environment && !['revoke', 'reject'].includes(operation)) {
       throw new ApiError(503, 'billing_runtime_disabled', 'Membership verification is unavailable.');
     }
-    let proofKey: string | null = null, cipher: string | null = null;
+    let proofKey: string | null = null, cipher: string | null = null, joinProof: string | null = null;
     if (operation === 'invite') { proofKey = binaryField(body, 'proofPublicKey', 32); cipher = ciphertext(body, 'encryptedPreview'); }
     if (operation === 'join') {
-      await proveInvitation(env, actor, familyId, invitationId!, 'join', operationId, binaryField(body, 'proofSignature', 64));
+      joinProof = binaryField(body, 'proofSignature', 64);
+      await proveInvitation(env, actor, familyId, invitationId!, 'join', operationId, joinProof);
       cipher = ciphertext(body, 'encryptedDisplayName');
     }
     const configured = operation === 'approve' ? env.FAMILY_NOTEBOOK_MAX_MEMBERS ?? '6' : '6';
@@ -121,9 +122,11 @@ export async function familyNotebookAdmission(request: Request, env: Env): Promi
     await env.DB.batch([...groupAuthorizationStatements(env, actor),
       env.DB.prepare(`INSERT INTO family_notebook_admission_events
         (actor_device_id,operation_id,actor_person_id,request_hash,family_id,operation,expected_generation,
-          resulting_generation,invitation_id,join_id,proof_public_key,ciphertext,store_environment,maximum_members,accept_sandbox_in_production)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(actor.deviceId, operationId, actor.personId, actor.requestHash,
-          familyId, operation, generation, resultingGeneration, invitationId, joinId, proofKey, cipher, policy.environment, Number(configured), policy.acceptSandbox)]);
+          resulting_generation,invitation_id,join_id,proof_public_key,ciphertext,store_environment,maximum_members,
+          accept_sandbox_in_production,join_proof_signature)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(actor.deviceId, operationId, actor.personId, actor.requestHash,
+          familyId, operation, generation, resultingGeneration, invitationId, joinId, proofKey, cipher,
+          policy.environment, Number(configured), policy.acceptSandbox, joinProof)]);
     const committed = await env.DB.prepare(`SELECT actor_person_id,request_hash,family_id,operation,
       resulting_generation,invitation_id,join_id,recorded_at FROM family_notebook_admission_events
       WHERE actor_device_id=? AND operation_id=?`).bind(actor.deviceId, operationId).first<Event>();

@@ -6,7 +6,7 @@ import { verifyCloudflareAccessJWT } from "../src/moderation-operator-auth";
 import { actorSQL, admitSession, type Actor } from "../src/moderation-operator-identity";
 import { routeLocalModerationOperatorTriage } from "../src/moderation-operator-triage-local";
 import { readLocalModerationReviewSource } from "../src/moderation-review-source";
-import { runDurableModerationAdvisory } from "../src/moderation-ai-durable";
+import { runDurableModerationAdvisory } from "./fixtures/moderation-ai-durable";
 
 const db = (env as unknown as { DB: D1Database }).DB;
 const migrations = (env as unknown as { TEST_MIGRATIONS: D1Migration[] }).TEST_MIGRATIONS;

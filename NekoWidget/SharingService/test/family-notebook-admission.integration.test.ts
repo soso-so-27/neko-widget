@@ -112,6 +112,11 @@ describe('independent family admission, not publicly enabled', () => {
     const j = await join(newcomer, f.id, i); ok(j.reply);
     expect((await db.prepare('SELECT COUNT(*) n FROM family_notebook_members WHERE person_id=?').bind(newcomer.id).first())?.n).toBe(0);
     expect(ok(await call(newcomer, `${root}/${f.id}/invitations/${i.id}/join`, j.body))).toEqual(j.reply.data);
+    const directory = ok(await invoke(await signed(p, `${root}/${f.id}/requests`)));
+    expect(directory.requests).toEqual([expect.objectContaining({
+      requestId: j.id, invitationId: i.id, personId: newcomer.id, deviceId: newcomer.deviceId,
+      proofSignature: j.body.proofSignature, encryptedDisplayName: j.body.encryptedDisplayName,
+    })]);
     expect((await approve(outsider, f.id, j.id)).status).not.toBe(200);
     ok(await approve(p, f.id, j.id));
     expect(await db.prepare('SELECT state,admitted_generation FROM family_notebook_members WHERE person_id=?').bind(newcomer.id).first())

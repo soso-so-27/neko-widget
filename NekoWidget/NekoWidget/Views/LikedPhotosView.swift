@@ -689,8 +689,8 @@ private struct CuratedAlbumCard: View {
             .frame(minHeight: footerHeight)
         }
         .frame(maxWidth: .infinity)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .background(NekoPalette.groupedCard)
+        .clipShape(NekoRadius.shape(NekoRadius.card))
     }
 }
 
@@ -2364,7 +2364,7 @@ private struct BookDemandPreviewView: View {
         TabView(selection: $currentPage) {
             ForEach(Array(photos.enumerated()), id: \.element.localIdentifier) { index, photo in
                 ZStack(alignment: .bottomLeading) {
-                    Color(.secondarySystemBackground)
+                    NekoPalette.groupedCard
                     PhotoAssetImageView(
                         localIdentifier: photo.localIdentifier,
                         catBoundingBox: photo.catBoundingBox,
@@ -2608,6 +2608,9 @@ struct PhotoBrowserView: View {
     @Environment(\.showcaseAddPhoto) private var showcaseAddPhoto
     @Environment(\.receivedPhotoIdentifiers) private var receivedPhotoIdentifiers
     @State private var pendingReceivedRemoval: String?
+    /// Counts only taps that add a favorite, so paging to a photo that is
+    /// already a favorite neither bounces nor vibrates (11/11).
+    @State private var favoriteAddedTaps = 0
 
     private static let imageTargetPixelSize = CGSize(width: 1600, height: 1600)
     private static let preheatRadius = 2
@@ -2897,6 +2900,7 @@ struct PhotoBrowserView: View {
                         identifier: "photo-browser-bookmark") {
                 // The requested state, never a toggle of a stale display.
                 if !saved {
+                    favoriteAddedTaps += 1
                     setMemorySaved(photo.localIdentifier, true)
                 } else if receivedPhotoIdentifiers.contains(photo.localIdentifier) {
                     pendingReceivedRemoval = photo.localIdentifier
@@ -2908,6 +2912,10 @@ struct PhotoBrowserView: View {
             .accessibilityHint("自分のお気に入りです。相手には共有されません")
             .accessibilityIdentifier("photo-browser-memory-saved-state")
             .disabled(isExportingMemoryPhoto)
+            // The same answer as the まど heart: the symbol bounces and a
+            // light tap is felt, only when a favorite is added.
+            .symbolEffect(.bounce, value: favoriteAddedTaps)
+            .sensoryFeedback(.impact(weight: .light), trigger: favoriteAddedTaps)
 
             quickAction("square.and.pencil", "メモ", tinted: personalNote.note(for: photo.localIdentifier) != nil,
                         identifier: "photo-memory-note-open") {

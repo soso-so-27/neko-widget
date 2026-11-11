@@ -3,7 +3,7 @@ import {
   MODERATION_ADVISORY_MODEL, MODERATION_ADVISORY_ENDPOINT,
   moderationAdvisoryCategories, prepareModerationAdvisory, completeModerationAdvisory,
   type ModerationAdvisoryCase, type ModerationAdvisoryInput, type ModerationAdvisoryTicket,
-} from "../src/moderation-ai-advisory";
+} from "./fixtures/moderation-ai-advisory";
 
 const now = 1_800_000_000_000;
 const binding = (): ModerationAdvisoryCase => ({

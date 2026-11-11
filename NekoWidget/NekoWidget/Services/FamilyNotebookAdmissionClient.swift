@@ -23,9 +23,17 @@ actor FamilyNotebookAdmissionClient {
         let requestID: UUID, invitationID: UUID
         let personID: String, deviceID: String
         let encryptedDisplayName: Data, identityPublicKey: Data, signingPublicKey: Data, hpkePublicKey: Data
+        let proofSignature: Data?
         let expiresAt: Int64
     }
-    struct Requests: Decodable, Sendable { let schemaVersion: Int; let familyID: UUID; let generation: Int64; let requests: [Request] }
+    struct Requests: Sendable { let generation: Int64; let requests: [Request] }
+    private struct WireRequests: Decodable {
+        struct Row: Decodable {
+            let request: Request?
+            init(from decoder: Decoder) { request = try? Request(from: decoder) }
+        }
+        let schemaVersion: Int; let familyID: UUID; let generation: Int64; let requests: [Row]
+    }
     private struct PreviewReply: Codable, Sendable {
         let schemaVersion: Int; let familyID: UUID, invitationID: UUID
         let generation: Int64; let inviterPersonID: String, inviterDeviceID: String
@@ -52,6 +60,7 @@ actor FamilyNotebookAdmissionClient {
         let operation: String, familyID: UUID, operationID: UUID, targetID: UUID?
         let generation: Int64, path: String, body: Data
         let approvedPersonID: String?, approvedRoot: Data?, approvedName: String?
+        let verifiedJoinApproval: Bool?
         var semantic: String { operation + ":" + familyID.uuidString + ":" + (targetID?.uuidString ?? "") }
     }
     private let endpoint: String, identity: GroupDeviceIdentity
@@ -78,6 +87,12 @@ actor FamilyNotebookAdmissionClient {
               value.operation == "create" ? (value.generation == 0 && body.familyID == value.familyID.uuidString.lowercased())
                 : ((1...1_000_000_000).contains(value.generation) && body.expectedGeneration == value.generation) else {
             throw FamilySharingError.unknownOutcome
+        }
+        if value.operation == "approve", value.verifiedJoinApproval != true {
+            // Older versions journaled approvals without a locally verified
+            // proof. Never retry or apply their local trust effects.
+            try journal.remove(pendingAccount)
+            return nil
         }
         return value
     }
@@ -109,20 +124,29 @@ actor FamilyNotebookAdmissionClient {
         return value
     }
     func requests(_ family: UUID) async throws -> Requests {
-        let value = try GroupWire.decode(Requests.self, await wire.read(root(family) + "/requests"))
+        let value = try GroupWire.decode(WireRequests.self, await wire.read(root(family) + "/requests"))
         guard value.schemaVersion == 1, value.familyID == family, (1...1_000_000_000).contains(value.generation),
-              value.requests.count <= 64, Set(value.requests.map(\.requestID)).count == value.requests.count else { throw FamilyNotebookTransportError.invalidResponse }
-        for request in value.requests {
-            guard request.identityPublicKey.count == 32, request.signingPublicKey.count == 32, request.hpkePublicKey.count == 32,
-                  request.personID == GroupWire.base64(GroupCanonical.hash(request.identityPublicKey)),
-                  request.deviceID == (try GroupWire.base64(GroupCanonical.hash(GroupCanonical.fields([request.signingPublicKey, request.hpkePublicKey])))),
-                  request.expiresAt > 0, request.expiresAt <= 32_503_680_000 else { throw FamilyNotebookTransportError.invalidResponse }
-            _ = try requestName(request, family: family)
+              value.requests.count <= 64 else { throw FamilyNotebookTransportError.invalidResponse }
+        let candidates = value.requests.compactMap(\.request)
+        let byID = Dictionary(grouping: candidates, by: \.requestID)
+        let verified = candidates.filter { request in
+            byID[request.requestID]?.count == 1 && (try? requestName(request, family: family)) != nil
         }
-        return value
+        return .init(generation: value.generation, requests: verified)
     }
     func requestName(_ request: Request, family: UUID) throws -> String {
-        try FamilyNotebookJoinNameCrypto.open(request.encryptedDisplayName, familyID: family, invitationID: request.invitationID,
+        guard request.identityPublicKey.count == 32, request.signingPublicKey.count == 32, request.hpkePublicKey.count == 32,
+              request.personID == GroupWire.base64(GroupCanonical.hash(request.identityPublicKey)),
+              request.deviceID == (try GroupWire.base64(GroupCanonical.hash(GroupCanonical.fields([request.signingPublicKey, request.hpkePublicKey])))),
+              request.expiresAt > 0, request.expiresAt <= 32_503_680_000,
+              let signature = request.proofSignature,
+              let bytes = try secrets.read(secretAccount(request.invitationID)) else { throw FamilyNotebookCryptoError.untrusted }
+        let capability = try GroupWire.decode(FamilyNotebookInvitationCapability.self, bytes).validated()
+        guard capability.familyID == family, capability.invitationID == request.invitationID,
+              capability.inviterIdentityPublicKey == identity.personPublicKey,
+              try capability.verifiesJoinProof(signature, personID: request.personID, deviceID: request.deviceID,
+                                               requestID: request.requestID) else { throw FamilyNotebookCryptoError.untrusted }
+        return try FamilyNotebookJoinNameCrypto.open(request.encryptedDisplayName, familyID: family, invitationID: request.invitationID,
             requestID: request.requestID, personID: request.personID, deviceID: request.deviceID,
             signingPublicKey: request.signingPublicKey, recipient: identity)
     }
@@ -138,7 +162,8 @@ actor FamilyNotebookAdmissionClient {
             operation: action, familyID: family, operationID: operation, targetID: target, generation: generation,
             path: path(action, family, target), body: GroupWire.encode(body),
             approvedPersonID: approved?.personID, approvedRoot: approved?.identityPublicKey,
-            approvedName: try approved.map { try requestName($0, family: family) })
+            approvedName: try approved.map { try requestName($0, family: family) },
+            verifiedJoinApproval: approved == nil ? nil : true)
     }
     func knownNames(family: UUID) throws -> [String: String] {
         guard let bytes = try journal.read("op:fnb-names:" + family.uuidString.lowercased()) else { return [:] }
@@ -301,8 +326,8 @@ actor FamilyNotebookAdmissionClient {
     }
     func decide(family: UUID, request: Request, generation: Int64, approve: Bool, operation: UUID) async throws {
         let action = approve ? "approve" : "reject"
+        _ = try requestName(request, family: family)
         _ = try await perform(action: action, family: family, target: request.requestID) {
-            _ = try requestName(request, family: family)
             return try prepare(action, family: family, generation: generation, operation: operation, target: request.requestID,
                 approved: approve ? request : nil, body: .init(operationID: operation.uuidString.lowercased(), expectedGeneration: generation))
         }

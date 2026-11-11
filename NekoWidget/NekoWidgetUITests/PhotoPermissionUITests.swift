@@ -3715,6 +3715,13 @@ final class SoloMemoriesUITests: XCTestCase {
             // Trial eligibility comes from StoreKit; the preview stands in for it.
             XCTAssertEqual(app.buttons["membership-offer-purchase"].label, "14日間無料で試す")
             let price = app.staticTexts["membership-offer-price"]
+            if !largeText {
+                // 11/11: the button, the price and the renewal sentence are
+                // pinned at the bottom of the first screen, with no scrolling.
+                XCTAssertTrue(price.isHittable, "The price is pinned on the first screen")
+                XCTAssertTrue(app.buttons["membership-offer-purchase"].isHittable)
+                XCTAssertTrue(app.staticTexts["membership-offer-renewal"].isHittable)
+            }
             for _ in 0..<10 { if price.isHittable { break }; app.swipeUp() }
             XCTAssertEqual(price.label, "その後 月額¥980（自動更新）")
             // 11/10: the button, the price line and the trust box sit inside

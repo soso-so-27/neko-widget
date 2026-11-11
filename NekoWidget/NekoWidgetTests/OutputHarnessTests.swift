@@ -4,6 +4,31 @@ import UIKit
 
 final class OutputHarnessTests: XCTestCase {
     @MainActor
+    func testGroupPhotoReplayDoesNotCreateANewLocalPhoto() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = GroupWindowLocalPhotoStore(root: root)
+        let jpeg = Data([1, 2, 3])
+        func entry(_ id: String, at time: TimeInterval) -> GroupWindowLocalPhotoStore.Entry {
+            .init(id: id, senderParticipantID: "sender", senderDisplayName: "合成",
+                  createdAt: Date(timeIntervalSince1970: time), isHidden: false, isOwn: false)
+        }
+        try await store.save(entry("original", at: 1), jpeg: jpeg, windowID: "window", verifiedMomentID: "sender-photo-id")
+        let reopened = GroupWindowLocalPhotoStore(root: root)
+        try await reopened.save(entry("relay-replay", at: 2), jpeg: jpeg, windowID: "window", verifiedMomentID: "sender-photo-id")
+        let beforeRemoval = await reopened.entries(windowID: "window")
+        XCTAssertEqual(beforeRemoval.map(\.id), ["original"])
+        try await reopened.remove(photoID: "original", windowID: "window")
+        try await reopened.save(entry("after-removal", at: 3), jpeg: jpeg, windowID: "window", verifiedMomentID: "sender-photo-id")
+        try await reopened.save(entry("different-send", at: 4), jpeg: jpeg, windowID: "window", verifiedMomentID: "different-sender-id")
+        try await reopened.save(entry("other-window", at: 5), jpeg: jpeg, windowID: "other-window", verifiedMomentID: "sender-photo-id")
+        let current = await reopened.entries(windowID: "window")
+        let other = await reopened.entries(windowID: "other-window")
+        XCTAssertEqual(current.map(\.id), ["different-send"])
+        XCTAssertEqual(other.map(\.id), ["other-window"])
+    }
+
+    @MainActor
     func testHostModuleAndSyntheticImageRoundTrip() throws {
         // Establish the app-hosted renderer test harness, not a product snapshot.
         XCTAssertFalse(EvacuationDestination().canConfirm)

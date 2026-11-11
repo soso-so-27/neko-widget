@@ -668,15 +668,41 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertIn(".frame(maxWidth: .infinity, alignment: .leading)", values)
         actions = section(view, "    private var actions: some View {", "    private var reassurance: some View {")
         self.assertIn(".frame(maxWidth: .infinity, minHeight: 36)", actions)
-        self.assertIn(".buttonBorderShape(.roundedRectangle(radius: 14))", actions)
-        self.assertIn(".controlSize(.large)", actions)
+        # The shared primary button: filled, large, 14 corners (DesignTokens).
+        self.assertIn(".nekoPrimaryButton()", actions)
+        tokens = source("NekoWidget/Views/DesignTokens.swift")
+        primary = section(tokens, "func nekoPrimaryButton() -> some View {", "\n    }\n")
+        for part in (".buttonStyle(.borderedProminent)", ".buttonBorderShape(.roundedRectangle(radius: NekoRadius.button))",
+                     ".controlSize(.large)"):
+            self.assertIn(part, primary)
+        self.assertIn("static let button: CGFloat = 14", tokens)
         reassurance = section(view, "    private var reassurance: some View {", "    private var footerLinks: some View {")
         self.assertIn(".frame(maxWidth: .infinity, alignment: .leading)", reassurance)
         self.assertIn("in: RoundedRectangle(cornerRadius: 14, style: .continuous)", reassurance)
-        # Order: photo, heading, the five rows, the purchase block, the trust box, the links.
-        order = ["photoHeader", 'accessibilityIdentifier("membership-offer-values")', "offerDetails",
-                 "actions", "reassurance", "footerLinks"]
-        self.assertEqual(sorted(order, key=body.index), order)
+        # Order: photo, heading, the six rows, the purchase block, the trust box, the links.
+        scroll = section(body, "        ScrollView {", ".frame(maxWidth: 440)")
+        order = ["photoHeader", "valueRows", "if !pinsPurchase { purchaseBlock }", "reassurance", "footerLinks"]
+        self.assertEqual(sorted(order, key=scroll.index), order)
+        # 11/11: the button, the price and the renewal sentence are pinned at
+        # the bottom, so they are on the first screen even on iPhone SE. Only
+        # the accessibility text sizes keep them in the scrolling column.
+        self.assertIn(".safeAreaInset(edge: .bottom, spacing: 0) {\n            if pinsPurchase { pinnedPurchaseBar }", body)
+        self.assertIn("private var pinsPurchase: Bool { !dynamicTypeSize.isAccessibilitySize }", view)
+        block = section(view, "    private var purchaseBlock: some View {", "    private var pinnedPurchaseBar: some View {")
+        self.assertLess(block.index("offerDetails"), block.index("actions"))
+        bar = section(view, "    private var pinnedPurchaseBar: some View {", "    private var photoHeader: some View {")
+        for part in ("purchaseBlock", ".frame(maxWidth: 440)", ".padding(.horizontal, 24)", ".background(.bar)",
+                     ".accessibilityElement(children: .contain)", 'accessibilityIdentifier("membership-offer-purchase-bar")'):
+            self.assertIn(part, bar)
+        self.assertLess(actions.index('accessibilityIdentifier("membership-offer-purchase")'),
+                        actions.index('accessibilityIdentifier("membership-offer-price")'))
+        self.assertLess(actions.index('accessibilityIdentifier("membership-offer-price")'),
+                        actions.index('accessibilityIdentifier("membership-offer-renewal")'))
+        # The six rows are regular weight; only the heading is bold.
+        rows = section(view, "    private var valueRows: some View {", "    private var purchaseBlock: some View {")
+        self.assertIn("Text(value.0).font(.subheadline)", rows)
+        self.assertNotIn(".headline", rows)
+        self.assertEqual(len(re.findall(r'^        \("', view, re.M)), 6)
         # Guideline 3.1.2: the price once, under the button, with 自動更新, as a headline.
         model = source("NekoWidget/Services/MembershipOfferModel.swift")
         monthly = section(model, "static let startTitle", "enum MembershipRestoreFailure")
@@ -702,6 +728,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertIn('XCTAssertEqual(purchase.label, "Plusを始める")', ui)
         self.assertIn('"月額¥980（自動更新）"', ui)
         self.assertIn("XCTAssertGreaterThanOrEqual(element.frame.minX - margin.minX, 16, element.identifier)", ui)
+        self.assertIn('XCTAssertTrue(price.isHittable, "The price is pinned on the first screen")', ui)
         self.assertNotIn("無料で始める", ui)
 
 if __name__ == "__main__":

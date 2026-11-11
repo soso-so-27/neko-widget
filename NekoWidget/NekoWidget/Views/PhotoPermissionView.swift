@@ -59,10 +59,9 @@ struct LimitedAccessBanner: View {
     let chooseMorePhotos: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .center, spacing: 12) {
             Image(systemName: "photo.badge.checkmark")
                 .foregroundStyle(.tint)
-                .padding(.top, 2)
 
             Text("選んだ写真だけを探しています")
                 .font(.subheadline.weight(.semibold))
@@ -71,9 +70,11 @@ struct LimitedAccessBanner: View {
 
             Button("写真を追加で選ぶ", action: chooseMorePhotos)
                 .font(.subheadline.weight(.semibold))
+                .frame(minHeight: 44)
         }
-        .padding(14)
-        .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 16))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 4)
+        .background(Color.accentColor.opacity(0.1), in: NekoRadius.shape(NekoRadius.card))
         .accessibilityElement(children: .combine)
     }
 }

@@ -440,6 +440,7 @@ struct AlbumPrototypeView: View {
                     .overlay(alignment: .bottomLeading) {
                         Text(verbatim: "\(month)月")
                             .font(.system(.footnote, design: .serif).weight(.bold))
+                            .dynamicTypeSize(...DynamicTypeSize.xxLarge)
                             .foregroundStyle(.white)
                             .padding(6)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -473,6 +474,9 @@ struct AlbumPrototypeView: View {
                     }
                 }
                 Text(verbatim: "\(month)月").font(.system(.footnote, design: .serif).weight(.bold))
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                    // The box is a fixed size: the month stays inside it at large text (11/11).
+                    .dynamicTypeSize(...DynamicTypeSize.xxLarge)
             }
             .padding(4)
             .frame(width: Self.slotSize.width, height: Self.slotSize.height, alignment: .top)
@@ -488,6 +492,7 @@ struct AlbumPrototypeView: View {
                 .overlay(alignment: .bottomLeading) {
                     Text(verbatim: "\(month)月")
                         .font(.system(.footnote, design: .serif).weight(.bold))
+                        .dynamicTypeSize(...DynamicTypeSize.xxLarge)
                         .foregroundStyle(.tertiary)
                         .padding(6)
                 }
@@ -647,8 +652,10 @@ struct AlbumWorkGate<Content: View>: View {
                 PlusOfferPrompt(context: .monthlySummary(month: month), decision: decision)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("閉じる") { dismiss() }
+                        // A sheet that is only read closes with the × at the
+                        // top right, as the Plus screen does (11/11).
+                        ToolbarItem(placement: .topBarTrailing) {
+                            SheetCloseButton { dismiss() }
                         }
                     }
             }

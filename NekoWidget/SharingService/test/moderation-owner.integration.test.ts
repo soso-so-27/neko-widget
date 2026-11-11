@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fixture, type Fixture } from "./fixtures/moderation-operator";
 import { routeLocalModerationOwner, type LocalModerationOwnerEnvironment, type LocalOwnerReviewHost } from "../src/moderation-owner-local";
 import { routeLocalModerationOperatorTriage } from "../src/moderation-operator-triage-local";
-import { runDurableModerationAdvisory } from "../src/moderation-ai-durable";
+import { runDurableModerationAdvisory } from "./fixtures/moderation-ai-durable";
 import { ownerAssertionPayload } from "../src/moderation-owner-browser";
 import { base64urlDecode } from "../src/encoding";
 
