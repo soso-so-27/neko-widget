@@ -282,6 +282,7 @@ struct SettingsView: View {
                     Label("ウィジェットの置き方", systemImage: "rectangle.on.rectangle.angled")
                 }
                 .accessibilityIdentifier("settings-widget-placement-guide")
+                notificationSettingsRow
             } header: {
                 Text("写真とウィジェット")
             }
@@ -328,6 +329,7 @@ struct SettingsView: View {
             // policy instead; a switch comes back only if people ask for one).
             // The app's own pages and telling a friend, in one place.
             Section {
+                guideLinkRow
                 if let url = AppPublicLinksConfiguration.current.supportURL {
                     Link(destination: url) {
                         ExternalLinkRow("お問い合わせ", systemImage: "questionmark.circle")
@@ -340,6 +342,7 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("settings-privacy-policy")
                 }
+                termsOfUseLinkRow
                 if SharingAPIConfiguration.current.isReviewVisible,
                    let url = SharingAPIConfiguration.current.communityStandardsURL {
                     Link(destination: url) {
@@ -530,6 +533,38 @@ struct SettingsView: View {
         guard hasPhotoAccess else { return "許可していません" }
         let access = isLimitedAccess ? "選んだ写真だけ" : "すべての写真"
         return "\(access)・\(settings.range.rawValue)"
+    }
+
+    // 11/11: 使い方・利用規約・通知, kept out of `body` (type-check time).
+    @ViewBuilder private var guideLinkRow: some View {
+        if let url = AppPublicLinksConfiguration.current.guideURL {
+            Link(destination: url) {
+                ExternalLinkRow("使い方", systemImage: "book")
+            }
+            .accessibilityIdentifier("settings-guide-page")
+        }
+    }
+
+    @ViewBuilder private var termsOfUseLinkRow: some View {
+        if let url = AppPublicLinksConfiguration.termsOfUseURL {
+            Link(destination: url) {
+                ExternalLinkRow("利用規約", systemImage: "doc.plaintext")
+            }
+            .accessibilityIdentifier("settings-terms-of-use")
+        }
+    }
+
+    // Leaves the app like the links below, so it reads like them: words in
+    // the text color (ExternalLinkRow sets `Color.primary`), only the icon tinted.
+    private var notificationSettingsRow: some View {
+        Button {
+            if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
+                UIApplication.shared.open(url)
+            }
+        } label: {
+            ExternalLinkRow("通知", systemImage: "bell")
+        }
+        .accessibilityIdentifier("settings-notifications")
     }
 
     private var photoSettingsView: some View {

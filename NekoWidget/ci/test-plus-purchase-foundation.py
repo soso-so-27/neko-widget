@@ -358,6 +358,9 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         for identifier in ("membership-offer-restore", "membership-offer-terms", "membership-offer-privacy"):
             self.assertIn(f'.accessibilityIdentifier("{identifier}")', footer)
         self.assertIn('Link("利用規約", destination: termsURL)', footer)
+        # 11/11: the EULA URL is shared with 設定, written once in the configuration.
+        self.assertIn("if let termsURL = AppPublicLinksConfiguration.termsOfUseURL {", footer)
+        self.assertNotIn("stdeula", view)
         self.assertIn("if let privacyURL = Self.privacyURL {", footer)
         privacy = section(view, "static var privacyURL: URL? {", "\n    }\n")
         debug, release = privacy.split("#endif", 1)
