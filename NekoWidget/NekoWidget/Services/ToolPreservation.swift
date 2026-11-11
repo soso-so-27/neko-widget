@@ -82,6 +82,7 @@ struct ToolBackupIndex: Codable, Equatable, Sendable {
     var nodes: [ToolBackupPart]? = nil
     var reusedNodes: [UUID]? = nil
     var recordIDs: Set<UUID> { Set(files.flatMap(\.records) + (nodes ?? []).compactMap { UUID(uuidString: $0.snapshotId) } + [snapshotID]) }
+    var containsFamilyNotebook: Bool { files.contains { $0.path == "FamilyNotebook/state.json" } }
     var contentsSummary: String {
         let photos = files.filter { $0.path.hasSuffix(".jpg") }.count
         return "ツールの内容・写真\(photos)枚"
@@ -458,6 +459,8 @@ enum ToolBackupFiles {
         let owner: String
         let index: ToolBackupIndex
         var sourceSnapshotID: UUID? = nil
+        // Local receipt only. A missing value is an older capture.
+        var filteredFamilyNotebook: Bool? = nil
     }
     static var root: URL {
 #if os(iOS)

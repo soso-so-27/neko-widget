@@ -57,6 +57,7 @@ enum FamilyNotebookBackup {
         let id: UUID
         var state: FamilyNotebookStore.State
         var isRestored: Bool? = nil
+        var restoredFromPrivateCopy: Bool? = nil
         var snapshot: FamilyNotebookSnapshot {
             var retained = state; retained.schemaVersion = retained.opaqueOperations?.isEmpty == false ? 3 : 2; retained.sharingEnded = true
             return retained.snapshot
@@ -74,19 +75,33 @@ enum FamilyNotebookBackup {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(value); _ = try decode(data); return data
     }
+    /// Old restores made every state terminal. Only an originally private
+    /// restored copy is eligible to go back into automatic preservation.
+    static func automaticSaveData(_ data: Data) throws -> Data? {
+        let manifest = try decode(data)
+        let eligible = manifest.copies.filter {
+            $0.state.sharingEnded == true && ($0.isRestored != true || $0.restoredFromPrivateCopy == true)
+        }
+        return eligible.isEmpty ? nil : try encode(.init(copies: eligible))
+    }
     /// A restore is a private retained copy. Keep the complete operation history
     /// and unsent text, while the terminal state prevents outbox transmission.
-    static func restored(_ data: Data) throws -> Data {
+    static func restored(_ data: Data, keeping local: Data? = nil) throws -> Data {
         let value = try decode(data)
         let copies = value.copies.map { copy -> Copy in
             var state = copy.state; state.schemaVersion = state.opaqueOperations?.isEmpty == false ? 3 : 2; state.sharingEnded = true
-            if copy.isRestored == true { return Copy(id: copy.id, state: state, isRestored: true) }
+            if copy.isRestored == true {
+                return Copy(id: copy.id, state: state, isRestored: true, restoredFromPrivateCopy: copy.restoredFromPrivateCopy)
+            }
             let digest = Array(SHA256.hash(data: Data(("restored/" + copy.id.uuidString).utf8)))
             let id = UUID(uuid: (digest[0],digest[1],digest[2],digest[3],digest[4],digest[5],digest[6],digest[7],
                                  digest[8],digest[9],digest[10],digest[11],digest[12],digest[13],digest[14],digest[15]))
-            return Copy(id: id, state: state, isRestored: true)
+            return Copy(id: id, state: state, isRestored: true,
+                        restoredFromPrivateCopy: copy.state.sharingEnded == true ? true : nil)
         }
-        return try encode(.init(copies: copies))
+        let existing = try local.map { try decode($0).copies } ?? []
+        let localIDs = Set(existing.map(\.id))
+        return try encode(.init(copies: existing + copies.filter { !localIDs.contains($0.id) }))
     }
     #if os(iOS)
     static var url: URL { AppRecordDataset.directory("FamilyNotebook").appendingPathComponent("state.json") }

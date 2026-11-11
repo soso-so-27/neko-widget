@@ -484,7 +484,9 @@ enum AppRecordDataset {
                     ? try CatCareDecoding.backupState(AppRecordJSON.read(local)).deviceID : UUID().uuidString.lowercased()
                 try AppRecordJSON.write(CatCareDecoding.portable(AppRecordJSON.read(target), deviceID: ownDevice), to: target)
             } else {
-                try AppRecordJSON.write(FamilyNotebookBackup.restored(AppRecordJSON.read(target)), to: target)
+                let local = directory(tool).appendingPathComponent("state.json")
+                let existing = FileManager.default.fileExists(atPath: local.path) ? try AppRecordJSON.read(local) : nil
+                try AppRecordJSON.write(FamilyNotebookBackup.restored(AppRecordJSON.read(target), keeping: existing), to: target)
             }
         }
         let notesURL = destination.appendingPathComponent("PhotoMemoryNotes/state.json")
@@ -707,6 +709,11 @@ final class AppRecordPersistence: ObservableObject {
         var retiring: [UUID]?
         var requiredManifests: [String]? = nil
         var requiredDatasetID: UUID? = nil
+        var filteredNotebookSnapshotID: UUID? = nil
+
+        var needsNotebookBackupUpdate: Bool {
+            snapshotID != nil && filteredNotebookSnapshotID != snapshotID
+        }
     }
     nonisolated static let consentVersion = "app-records-automatic-v1"
     @Published private(set) var title = "自動保存はオフです" { didSet { failing = false; retriesByItself = false } }
@@ -1093,6 +1100,7 @@ final class AppRecordPersistence: ObservableObject {
                 value.fingerprint = nil
             }
             value.revision = remote.0.revision; value.snapshotID = remote.1.snapshotID
+            value.filteredNotebookSnapshotID = saved.index.containsFamilyNotebook ? nil : saved.id
             try await require(value, restoredCheckpoint); try write(value, intent: intent)
             try saveIntent.require(intent)
             conflict = false; requested = true; nextAttempt = .distantPast; flushEdits()
@@ -1279,7 +1287,21 @@ final class AppRecordPersistence: ObservableObject {
                 planEnded = false
             }
             releaseUploadedPayload(value.snapshotID, owner: value.owner)
+            var pendingCapture: ToolBackupFiles.Saved?
             if let pending = value.pending {
+                let receipt = ToolBackupFiles.directory(pending).appendingPathComponent("pending.json")
+                if FileManager.default.fileExists(atPath: receipt.path) {
+                    let saved = try JSONDecoder().decode(ToolBackupFiles.Saved.self,
+                        from: ToolBackupFiles.read(receipt, maximum: ToolBackupIndex.maximumReceiptBytes))
+                    guard saved.id == pending, saved.owner == value.owner else { throw ToolBackupError.invalid }
+                    try saved.index.validate()
+                    pendingCapture = saved
+                }
+            }
+            let replacePendingNotebook = pendingCapture.map {
+                $0.index.containsFamilyNotebook && $0.filteredFamilyNotebook != true
+            } ?? false
+            if let pending = value.pending, !replacePendingNotebook {
                 phase = "中断した送信を再開"
                 try await ToolBackupTransfer.resumeMetadataBatchIfNeeded(snapshotID: pending, owner: value.owner,
                     client: client, checkpoint: checkpoint)
@@ -1300,6 +1322,9 @@ final class AppRecordPersistence: ObservableObject {
                     // An acknowledged head whose response was lost is success,
                     // never a second snapshot or a blind overwrite.
                     value.revision = remote?.0.revision; value.snapshotID = pending
+                    if let capture = pendingCapture, !replacePendingNotebook {
+                        value.filteredNotebookSnapshotID = capture.id
+                    }
                     value.fingerprint = value.pendingFingerprint; value.pending = nil
                     if let previous = value.pendingPrevious { value.retiring = Array(Set((value.retiring ?? []) + [previous])) }
                     value.pendingPrevious = nil
@@ -1322,6 +1347,7 @@ final class AppRecordPersistence: ObservableObject {
                     try await AppRecordDataset.activate(saved, origin: value.origin, expectedFingerprint: currentFingerprint, validateSession: fence)
                     try saveIntent.require(intent)
                     value.revision = remote.0.revision; value.snapshotID = saved.id
+                    value.filteredNotebookSnapshotID = saved.index.containsFamilyNotebook ? nil : saved.id
                     value.fingerprint = try await AppRecordBackground.fingerprint(); value.pending = nil
                     try saveIntent.require(intent)
                     value.pendingFingerprint = nil; value.pendingBase = nil; try write(value, intent: intent)
@@ -1332,7 +1358,7 @@ final class AppRecordPersistence: ObservableObject {
                 accepted = try await acceptedSave(value, checkpoint: checkpoint)
                 try saveIntent.require(intent)
             }
-            if value.fingerprint == currentFingerprint, value.pending == nil {
+            if value.fingerprint == currentFingerprint, value.pending == nil, !value.needsNotebookBackupUpdate {
                 guard await stillSaved(accepted) else { throw ToolBackupError.changed }
                 try saveIntent.require(intent)
                 title = "保存済み"; detail = nil; transientFailures = 0
@@ -1346,7 +1372,7 @@ final class AppRecordPersistence: ObservableObject {
                 requested = true
                 return
             }
-            cleanup = false; accepted = nil
+            cleanup = false
             let membership = try await saveMembership(checkpoint)
             try saveIntent.require(intent)
             try await require(value, checkpoint)
@@ -1362,9 +1388,19 @@ final class AppRecordPersistence: ObservableObject {
                 previous = try await decodedIndex(remote, value: value, checkpoint: checkpoint)
                 try saveIntent.require(intent)
             } else { previous = nil }
+            if let previous, !previous.containsFamilyNotebook, value.needsNotebookBackupUpdate,
+               value.fingerprint == currentFingerprint, value.pending == nil {
+                guard await stillSaved(accepted) else { throw ToolBackupError.changed }
+                try saveIntent.require(intent)
+                value.filteredNotebookSnapshotID = previous.snapshotID
+                try write(value, intent: intent)
+                title = "保存済み"; detail = nil; transientFailures = 0
+                enqueueCleanup(value, remote: remote, checkpoint: checkpoint)
+                return
+            }
+            accepted = nil
             let saved: ToolBackupFiles.Saved
-            if let pending = value.pending,
-               !FileManager.default.fileExists(atPath: ToolBackupFiles.directory(pending).appendingPathComponent("pending.json").path) {
+            if let pending = value.pending, pendingCapture == nil || replacePendingNotebook {
                 // OS backup deliberately excludes transport staging. A head
                 // accepted before its reply was lost was reconciled above;
                 // otherwise recapture current live records under a fresh ID.
@@ -1379,12 +1415,12 @@ final class AppRecordPersistence: ObservableObject {
                 try saveIntent.require(intent)
                 value.pending = nil; value.pendingFingerprint = nil; value.pendingBase = nil; value.pendingPrevious = nil
                 try write(value, intent: intent)
+                pendingCapture = nil
                 try await collectParts(value, checkpoint: checkpoint)
                 try saveIntent.require(intent)
             }
-            if let pending = value.pending {
-                saved = try JSONDecoder().decode(ToolBackupFiles.Saved.self, from: ToolBackupFiles.read(
-                    ToolBackupFiles.directory(pending).appendingPathComponent("pending.json"), maximum: ToolBackupIndex.maximumReceiptBytes))
+            if value.pending != nil, let capture = pendingCapture {
+                saved = capture
                 guard saved.owner == value.owner, value.pendingBase == value.revision else { throw ManagedPreservationError.conflict }
             } else {
                 phase = "端末の記録から送信を準備"
@@ -1427,6 +1463,7 @@ final class AppRecordPersistence: ObservableObject {
             try await require(value, checkpoint)
             try saveIntent.require(intent)
             value.revision = revision; value.snapshotID = saved.id; value.fingerprint = value.pendingFingerprint
+            value.filteredNotebookSnapshotID = saved.id
             if let previous = value.pendingPrevious { value.retiring = Array(Set((value.retiring ?? []) + [previous])) }
             value.pendingPrevious = nil
             value.pending = nil; value.pendingFingerprint = nil; value.pendingBase = nil; try write(value, intent: intent)
@@ -1462,7 +1499,8 @@ final class AppRecordPersistence: ObservableObject {
         }
     }
     static func needsAuthenticatedWork(_ value: Binding, fingerprint: String, requested: Bool) -> Bool {
-        requested || fingerprint != value.fingerprint || value.pending != nil || !(value.retiring ?? []).isEmpty
+        requested || fingerprint != value.fingerprint || value.pending != nil || value.needsNotebookBackupUpdate
+            || !(value.retiring ?? []).isEmpty
     }
     private func report(_ error: Error) {
         if error is AppRecordEditingError {
@@ -2103,6 +2141,8 @@ enum AppRecordCapture {
         try ToolBackupFiles.protect(source)
         defer { try? FileManager.default.removeItem(at: source) }
         let previouslyStoredPhotos = Set(previous?.files.filter { $0.path.hasSuffix(".jpg") }.map(\.path) ?? [])
+        var preparedAny = false
+        var excludedNotebook = previous?.containsFamilyNotebook == true
         for (tool, manifest) in ToolBackupIndex.manifests {
             let record: (URL, Data)? = try AppRecordEditingLease.whileIdle {
                 try Task.checkCancellation()
@@ -2163,6 +2203,12 @@ enum AppRecordCapture {
                 bytes = try encoder.encode(state)
             } else if tool == "CatCare" {
                 bytes = try CatCareDecoding.portable(bytes)
+            } else if tool == "FamilyNotebook" {
+                guard let filtered = try FamilyNotebookBackup.automaticSaveData(bytes) else {
+                    excludedNotebook = true
+                    continue
+                }
+                bytes = filtered
             } else if tool == "ShowcasePhotos" {
                 let object = try JSONSerialization.jsonObject(with: bytes)
                 var state = object as? [String: Any] ?? ["entries": object, "scopes": [:]]
@@ -2185,6 +2231,14 @@ enum AppRecordCapture {
             if indexVersion == 4 && ["PhotoMemoryNotes", "VeterinaryVisits", "CatCare", "FamilyNotebook"].contains(tool) {
                 try AppRecordJSON.write(bytes, to: destination, options: [.atomic, .completeFileProtection])
             } else { try ToolBackupFiles.write(bytes, to: destination) }
+            preparedAny = true
+        }
+        if !preparedAny && excludedNotebook {
+            // Older snapshots can contain only a shared notebook. Publish an
+            // empty manifest so its previous head can retire through the same CAS.
+            let destination = source.appendingPathComponent("FamilyNotebook/state.json")
+            try ToolBackupFiles.protect(destination.deletingLastPathComponent())
+            try ToolBackupFiles.write(FamilyNotebookBackup.encode(.init(copies: [])), to: destination)
         }
         let reusable = previous?.files.map { file -> ToolBackupIndex.File in
             var value = file; value.sourceSnapshotID = file.sourceSnapshotID ?? previous!.snapshotID; return value
@@ -2196,10 +2250,11 @@ enum AppRecordCapture {
         if let previous, indexVersion == 3 {
             var index = saved.index; index.previousIndexID = previous.snapshotID
             saved = ToolBackupFiles.Saved(owner: saved.owner, index: index)
-            try ToolBackupFiles.write(JSONEncoder().encode(saved), to: ToolBackupFiles.directory(saved.id).appendingPathComponent("pending.json"))
             try ToolBackupFiles.write(JSONEncoder().encode(index), to: ToolBackupFiles.directory(saved.id).appendingPathComponent("index-wire.json"))
         }
         try await ToolBackupValidation.validate(saved.index, at: ToolBackupFiles.directory(saved.id), authenticatedPhotos: reusable)
+        saved.filteredFamilyNotebook = true
+        try ToolBackupFiles.write(JSONEncoder().encode(saved), to: ToolBackupFiles.directory(saved.id).appendingPathComponent("pending.json"))
         return saved
     }
 }
