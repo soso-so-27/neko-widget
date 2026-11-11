@@ -217,6 +217,7 @@ struct CatCareDetachedVaccination: Codable, Equatable, Identifiable, Sendable {
     var editedAt: Date?
     var editedBy: String?
     var deletedAt: Date?
+    var displayKey: String { id.uuidString + "/" + (familyPhotoLink ?? "") }
 }
 
 /// An edit of only one field of a received measurement has no complete
@@ -321,10 +322,19 @@ struct CatCareRecord: Codable, Equatable, Identifiable, Sendable {
     }
 
     mutating func replaceVaccinationProof(_ proof: CatCarePhotoRef?, for id: UUID) {
-        if let index = detachedVaccinations?.firstIndex(where: { $0.id == id }) {
+        let active = vaccinations.first { $0.id == id }
+        if let index = detachedVaccinations?.firstIndex(where: {
+            $0.id == id && ($0.familyPhotoLink == nil || $0.familyPhotoLink == active?.familyPhotoLink)
+        }) {
             detachedVaccinations?[index].proof = proof
         }
         if let index = vaccinations.firstIndex(where: { $0.id == id }) { vaccinations[index].proof = proof }
+    }
+
+    mutating func removeUnmatchedVaccinationProof(_ photo: CatCareDetachedVaccination) {
+        guard unmatchedVaccinationProofs.contains(photo),
+              let index = detachedVaccinations?.firstIndex(of: photo) else { return }
+        detachedVaccinations?[index].proof = nil
     }
 
     var conditionsStatus: CatCareConditionsStatus {
@@ -961,7 +971,9 @@ enum CatCareDecoding {
                     var row = row
                     let id = row["id"] as? String
                     row["familyPhotoLink"] = live.first { $0["id"] as? String == id }?["familyPhotoLink"]
-                    if let index = detached.firstIndex(where: { $0["id"] as? String == row["id"] as? String }) {
+                    if let index = detached.firstIndex(where: {
+                        $0["id"] as? String == id && $0["familyPhotoLink"] as? String == row["familyPhotoLink"] as? String
+                    }) {
                         detached[index].merge(row) { _, latest in latest }
                     } else { detached.append(row) }
                     return false

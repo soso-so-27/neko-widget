@@ -1273,7 +1273,7 @@ struct CatCareListView: View {
                         }
                     }
                 }
-                ForEach(record?.unmatchedVaccinationProofs ?? []) { photo in
+                ForEach(record?.unmatchedVaccinationProofs ?? [], id: \.displayKey) { photo in
                     if let proof = photo.proof {
                         DetachedToolPhotoRow(title: "証明の写真", load: {
                             guard let url = store.photoURL(proof) else { return nil }
@@ -1281,9 +1281,8 @@ struct CatCareListView: View {
                         }, remove: {
                             guard let catID else { return }
                             store.update { state in
-                                guard let i = state.cats.firstIndex(where: { $0.catID == catID }),
-                                      state.cats[i].unmatchedVaccinationProofs.contains(photo) else { return }
-                                state.cats[i].replaceVaccinationProof(nil, for: photo.id)
+                                guard let i = state.cats.firstIndex(where: { $0.catID == catID }) else { return }
+                                state.cats[i].removeUnmatchedVaccinationProof(photo)
                             }
                         })
                         .id(proof.fileName)

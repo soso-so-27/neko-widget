@@ -72,6 +72,12 @@ struct VerifyCatCare {
                   && restored.cats[1].vaccinationProof(freshRow)?.fileName == proof.fileName, "same shared record reconnects after local IDs change")
         restored.cats[1].replaceVaccinationProof(nil, for: freshRow)
         try check(try CatCareDecoding.backupPhotoNames(CatCareDecoding.encode(restored)).isEmpty, "removal clears both attachment references")
+        restored.cats[1].vaccinations[0].proof = proof
+        restored.cats[1].detachedVaccinations = [.init(id: freshRow, proof: proof, familyPhotoLink: String(repeating: "b", count: 64))]
+        let unmatched = restored.cats[1].unmatchedVaccinationProofs
+        try check(unmatched.count == 1, "reuse of a local row ID in a different family cannot consume the detached photo")
+        restored.cats[1].removeUnmatchedVaccinationProof(unmatched[0])
+        try check(restored.cats[1].vaccinationProof(freshRow) == proof, "removing an unmatched photo cannot clear a different family's attached proof")
     }
 
     /// 11/9: 見分ける写真 are chosen in 「この子のこと」 only. A tool's older photo
