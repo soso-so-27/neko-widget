@@ -741,4 +741,10 @@ struct ToolImportantInformation: View {
     var body: some View {
         Text(text).font(.footnote).foregroundStyle(.secondary)
     }
+    /// As a Section's only row: a quiet footnote on the page ground, not a
+    /// card of its own (11/12).
+    func quietRow() -> some View {
+        listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
+    }
 }

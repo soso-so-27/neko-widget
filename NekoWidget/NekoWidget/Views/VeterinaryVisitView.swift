@@ -353,12 +353,18 @@ private struct VeterinaryConsultationView: View {
             // consultation. While the question at the top is shown, it is the
             // one place to finish.
             if visit.completedAt == nil, !looksFinished(visit) {
-                Button("診察を終える") { finishing = true }
-                    .disabled(changes).accessibilityIdentifier("vet-finish")
+                finishButton("vet-finish")
             }
         } header: {
             ToolStepHeader(number: 4, title: "診察のあと", state: state).accessibilityIdentifier("vet-step-results")
         }
+    }
+    /// 「診察を終える」 as a button, not text in a row (11/12); not prominent:
+    /// the page's one prominent button is 「先生に見せる」.
+    private func finishButton(_ identifier: String) -> some View {
+        Button { finishing = true } label: { Text("診察を終える").frame(maxWidth: .infinity) }
+            .buttonStyle(.bordered)
+            .disabled(changes).accessibilityIdentifier(identifier)
     }
     // The body is split in parts so the type checker stays fast.
     var body: some View {
@@ -400,22 +406,25 @@ private struct VeterinaryConsultationView: View {
             Label("保存できませんでした。保存できると、先生に見せられます",
                   systemImage: "exclamationmark.triangle.fill")
                 .font(.caption).foregroundStyle(.red)
-        } else {
-            Text(changes ? "保存中…" : "保存しました")
+        } else if changes {
+            // Once saved, nothing (11/12): the bar is just the button, and
+            // 「先生に見せる」 becoming enabled is what says it is saved.
+            Text("保存中…")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
     /// One shape for every tool's input page (11/8): what the page makes, the
-    /// numbered steps, 「この子のこと」 folded, the rest small, past memos last.
+    /// numbered steps, 「この子のこと」 folded, past memos, then delete and the
+    /// note last, small (11/12).
     @ViewBuilder private var formContent: some View {
         if let visit {
             headerSections(visit)
             stepSections(visit)
-            catCareSection(visit)
-            closingSections(visit)
         }
         errorSection
+        if let visit { catCareSection(visit) }
         pastSection
+        if let visit { closingSections(visit) }
     }
     @ViewBuilder private var errorSection: some View {
         // 11/7: a failure in red with a mark, not small gray text.
@@ -490,8 +499,7 @@ private struct VeterinaryConsultationView: View {
         if looksFinished(visit) {
             Section {
                 Text("前の診察は終わりましたか？")
-                Button("診察を終える") { finishing = true }
-                    .disabled(changes).accessibilityIdentifier("vet-finish-previous")
+                finishButton("vet-finish-previous")
             }
         }
     }
@@ -605,16 +613,18 @@ private struct VeterinaryConsultationView: View {
             folded: true)
     }
     /// Not part of writing the memo: last, and small. Delete is a section of
-    /// its own, plain red text (349).
+    /// its own, plain red text (349); the note is a quiet footnote under it,
+    /// the page's last line (11/12).
     @ViewBuilder private func closingSections(_ visit: VeterinaryVisit) -> some View {
-        Section {
-            ToolImportantInformation(text: "飼い主の記録をまとめたもので、医療の判断ではありません。様子がおかしいときは、迷わず動物病院に連絡してください。")
-        }
         Section {
             Button("この診察メモを削除", role: .destructive) { deletesVisit = true }
                 .accessibilityIdentifier("vet-delete")
         }
         .font(.subheadline)
+        Section {
+            ToolImportantInformation(text: "飼い主の記録をまとめたもので、医療の判断ではありません。様子がおかしいときは、迷わず動物病院に連絡してください。")
+                .quietRow()
+        }
     }
     private func lifecycle<Content: View>(_ content: Content) -> some View {
         content

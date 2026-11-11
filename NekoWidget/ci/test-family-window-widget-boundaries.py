@@ -4232,6 +4232,24 @@ class CareHandoffRoundTwoTests(unittest.TestCase):
         # No address or keys: the note stays, under the house notes.
         house = section(self.making, 'identifier: "care-house-food"', 'ForEach(cats) { cat in')
         self.assertIn('ToolImportantInformation(text: "住所や鍵の番号は、別の方法で伝えてください。")', house)
+        # 11/12: as a Section's only row the note is a quiet footnote, not a card.
+        views = ROOT / "NekoWidget/Views"
+        handoff = (views / "CareHandoffView.swift").read_text(encoding="utf-8")
+        quiet = section(handoff, "struct ToolImportantInformation: View {", "\n}\n")
+        self.assertIn("func quietRow() -> some View {", quiet)
+        self.assertIn("listRowBackground(Color.clear)", quiet)
+        self.assertIn('Text(text).font(.footnote).foregroundStyle(.secondary)', quiet)
+        # As a section footer it is already quiet: unchanged.
+        self.assertIn('} footer: { ToolImportantInformation(text: "住所や鍵の番号は、別の方法で伝えてください。") }\n', handoff)
+        for name, text in (("EvacuationPreparationView.swift", "災害のときは、まず自分と家族の安全を守ってください。"),
+                           ("EvacuationPreparationView.swift", "まず自分と家族の安全を守ってください。"),
+                           ("EvacuationPreparationView.swift", "病歴・連絡先・ワクチンの証明・マイクロチップ番号は、必要な相手にだけ見せてください。"),
+                           ("CatPreparednessView.swift", "チラシを貼るときは、その場所の管理者に確かめてください。"),
+                           ("VeterinaryVisitView.swift", "飼い主の記録をまとめたもので、医療の判断ではありません。様子がおかしいときは、迷わず動物病院に連絡してください。")):
+            swift = (views / name).read_text(encoding="utf-8")
+            call = 'ToolImportantInformation(text: "' + text + '")\n'
+            self.assertIn(call, swift, name)
+            self.assertTrue(swift[swift.index(call) + len(call):].lstrip(" ").startswith(".quietRow()"), (name, text))
         for word in ("住所", "鍵", "暗証"):
             self.assertNotIn(word, house.replace("住所や鍵の番号は、別の方法で伝えてください。", ""))
 
@@ -5718,9 +5736,10 @@ class VeterinaryRoundOneTests(unittest.TestCase):
         view = self.view
         page = section(view, "@ViewBuilder private var formContent: some View {", "private func lifecycle<")
         content = section(page, "@ViewBuilder private var formContent: some View {", "@ViewBuilder private var errorSection")
+        # 11/12: the tail is この子のこと, これまでの診察メモ, delete, then the note last.
         order = [content.index("headerSections(visit)"), content.index("stepSections(visit)"),
-                 content.index("catCareSection(visit)"), content.index("closingSections(visit)"),
-                 content.index("errorSection"), content.index("pastSection")]
+                 content.index("errorSection"), content.index("catCareSection(visit)"),
+                 content.index("pastSection"), content.index("closingSections(visit)")]
         self.assertEqual(order, sorted(order))
         header = section(page, "@ViewBuilder private func headerSections(", "@ViewBuilder private func stepSections(")
         self.assertIn('ToolPurpose(text: "先生に見せる診察メモを作ります。")', header)
@@ -5766,35 +5785,59 @@ class VeterinaryRoundOneTests(unittest.TestCase):
         care = section(view, "private func catCareSection(", "/// Not part of writing the memo")
         self.assertIn("folded: true)", care)
         self.assertIn('editIdentifier: "vet-open-cat-care"', care)
-        # 349: 「診察を終える」 is the last row of 「診察のあと」, plain text, and
-        # the 7-day question uses the same words and dialog.
+        # 349: 「診察を終える」 is the last row of 「診察のあと」, and the 7-day
+        # question uses the same words and dialog. 11/12: a bordered button the
+        # row's width, not prominent (「先生に見せる」 is the one prominent button).
         self.assertIn("private func resultsStep(_ visit: VeterinaryVisit, _ state: ToolStepState) -> some View {", results)
         order = [results.index('"vet-next-visit-toggle"'), results.index('DatePicker("次に行く日"'),
                  results.index("if visit.completedAt == nil, !looksFinished(visit) {"),
-                 results.index('Button("診察を終える") { finishing = true }'), results.index("} header: {")]
+                 results.index('finishButton("vet-finish")'), results.index("} header: {")]
         self.assertEqual(order, sorted(order))
-        self.assertIn('.disabled(changes).accessibilityIdentifier("vet-finish")', results)
         header = section(view, "@ViewBuilder private func headerSections(", "@ViewBuilder private func stepSections(")
-        self.assertIn('Button("診察を終える") { finishing = true }\n                    .disabled(changes).accessibilityIdentifier("vet-finish-previous")', header)
-        self.assertEqual(view.count('Button("診察を終える") { finishing = true }'), 2)
+        self.assertLess(header.index('Text("前の診察は終わりましたか？")'), header.index('finishButton("vet-finish-previous")'))
+        finish = section(view, "private func finishButton(_ identifier: String) -> some View {", "\n    }\n")
+        self.assertIn('Button { finishing = true } label: { Text("診察を終える").frame(maxWidth: .infinity) }', finish)
+        self.assertIn(".buttonStyle(.bordered)", finish)
+        self.assertIn(".disabled(changes).accessibilityIdentifier(identifier)", finish)
+        self.assertNotIn("borderedProminent", finish)
+        self.assertNotIn(".controlSize(", finish)
+        self.assertEqual(view.count("Button { finishing = true }"), 1)
+        self.assertEqual(view.count('finishButton("vet-finish'), 2)
+        self.assertNotIn('Button("診察を終える") { finishing = true }', view)
         self.assertNotIn('"診察を終える", systemImage', view)
-        # The rest, small: the note, then delete as a section of its own, plain red text.
+        # The rest, small: delete as a section of its own, plain red text, then
+        # the note last as a quiet footnote on the page ground, not a card (11/12).
         closing = section(view, "@ViewBuilder private func closingSections(", "private func lifecycle<")
-        self.assertLess(closing.index("ToolImportantInformation("), closing.index('Button("この診察メモを削除", role: .destructive)'))
-        delete = closing[closing.rindex("Section {"):]
+        self.assertLess(closing.index('Button("この診察メモを削除", role: .destructive)'), closing.index("ToolImportantInformation("))
+        delete = closing[:closing.rindex("Section {")]
         self.assertIn('Button("この診察メモを削除", role: .destructive) { deletesVisit = true }\n                .accessibilityIdentifier("vet-delete")', delete)
+        self.assertIn(".font(.subheadline)", delete)
+        note = closing[closing.rindex("Section {"):]
+        self.assertIn('ToolImportantInformation(text: "飼い主の記録をまとめたもので、医療の判断ではありません。'
+                      '様子がおかしいときは、迷わず動物病院に連絡してください。")\n                .quietRow()', note)
+        self.assertNotIn("Button", note)
         self.assertNotIn("systemImage", closing)
         self.assertNotIn("finishing", closing)
-        self.assertIn(".font(.subheadline)", closing)
         self.assertIn('.confirmationDialog("この診察メモを削除しますか？", isPresented: $deletesVisit', view)
-        # Delete sits after the note and before これまでの診察メモ.
-        self.assertLess(content.index("closingSections(visit)"), content.index("pastSection"))
+        # これまでの診察メモ, then delete and the note, last.
+        self.assertLess(content.index("pastSection"), content.index("closingSections(visit)"))
         # The bar: save status on top, then the one button.
         bar = section(view, "private var bottomBar: some View {", "@ViewBuilder private var formContent")
         self.assertIn("ToolMakeBar(top: { saveStatus }) {", bar)
         self.assertIn('Label("先生に見せる", systemImage: "stethoscope")', bar)
         self.assertIn('.accessibilityIdentifier("vet-show").disabled(changes || busy)', bar)
         self.assertIn('Button("もう一度保存する") { Task { await save() } }.accessibilityIdentifier("vet-save")', bar)
+        # 11/12: 「保存中…」 only while saving; once saved, nothing stays (the
+        # enabled 「先生に見せる」 says so). Both red failures stay as they were.
+        status = section(view, "@ViewBuilder private var saveStatus: some View {", "@ViewBuilder private var formContent")
+        self.assertNotIn("保存しました", view)
+        self.assertIn("} else if changes {", status)
+        self.assertIn('Text("保存中…")', status)
+        self.assertNotIn("} else {", status)
+        self.assertIn('Label("500文字を超えている欄があります。短くすると保存され、先生に見せられます",', status)
+        self.assertIn('Label("保存できませんでした。保存できると、先生に見せられます",', status)
+        self.assertLess(status.index("if tooLong {"), status.index("} else if changes, error != nil {"))
+        self.assertLess(status.index("} else if changes, error != nil {"), status.index("} else if changes {"))
         self.assertIn(".toolBottomBar { bottomBar }", view)
         # A field under a step heading of the same name hides its own; VoiceOver keeps it.
         field = section(view, "private struct VeterinaryLabeledField: View {", "\n}\n")
