@@ -118,7 +118,8 @@ struct MembershipOfferView: View {
             .frame(maxWidth: 440)
             .padding(.horizontal, 24)
             .padding(.top, 8)
-            .padding(.bottom, 20)
+            // Room for the fade above the pinned bar, so the last row reads in full.
+            .padding(.bottom, pinsPurchase ? 40 : 20)
             .frame(maxWidth: .infinity)
         }
         // 11/11: the button, the price and the renewal sentence stay at the
@@ -176,8 +177,19 @@ struct MembershipOfferView: View {
             .padding(.top, 12)
             .padding(.bottom, 8)
             .frame(maxWidth: .infinity)
-            .background(.bar)
-            .overlay(alignment: .top) { Divider() }
+            // 11/11: in dark mode the bar and the page were the same grey and
+            // the hairline could not be seen, so a card looked cut in half.
+            // The page's own colour, with the rows fading out just above it.
+            .background(Color(uiColor: .systemBackground))
+            .overlay(alignment: .top) {
+                LinearGradient(colors: [Color(uiColor: .systemBackground).opacity(0),
+                                        Color(uiColor: .systemBackground)],
+                               startPoint: .top, endPoint: .bottom)
+                    .frame(height: 28)
+                    .offset(y: -28)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("membership-offer-purchase-bar")
     }

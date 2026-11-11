@@ -709,7 +709,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         block = section(view, "    private var purchaseBlock: some View {", "    private var pinnedPurchaseBar: some View {")
         self.assertLess(block.index("offerDetails"), block.index("actions"))
         bar = section(view, "    private var pinnedPurchaseBar: some View {", "    private var photoHeader: some View {")
-        for part in ("purchaseBlock", ".frame(maxWidth: 440)", ".padding(.horizontal, 24)", ".background(.bar)",
+        for part in ("purchaseBlock", ".frame(maxWidth: 440)", ".padding(.horizontal, 24)", ".background(Color(uiColor: .systemBackground))", "LinearGradient(colors: [Color(uiColor: .systemBackground).opacity(0),",
                      ".accessibilityElement(children: .contain)", 'accessibilityIdentifier("membership-offer-purchase-bar")'):
             self.assertIn(part, bar)
         self.assertLess(actions.index('accessibilityIdentifier("membership-offer-purchase")'),
