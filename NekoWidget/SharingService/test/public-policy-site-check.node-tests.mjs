@@ -642,7 +642,7 @@ test("public 1.0 requires five mutually linked pages including the guide", async
 
 test("public guide requires the exact title, revision, daily free copy and sharing boundaries", async () => {
   const guide = publicOne.definition.pages.find(page => page.name === "guide");
-  assert.deepEqual(guide.requiredPhrases, ["「猫を探す」を押します", "毎日新しい1枚に入れ替わります", "くもりのまどと「もう一枚」も無料で使えます", "1つのまどに届けられるのは、1人1日5枚まで",
+  assert.deepEqual(guide.requiredPhrases, ["「猫を探す」を押します", "毎日新しい1枚に入れ替わります", "くもりのまどと「もう一枚」も無料で使えます", "家族の手帳を作って、家族で一緒に書く", "1つのまどに届けられるのは、1人1日5枚まで",
     "1つのまどにつき新しいものから500枚まで", "招待されて入るのは無料です", "月額980円です", "解約しても、写真・まど・メモは消えません"]);
   assert.deepEqual(guide.forbiddenPhrases, publicOne.definition.pages[0].forbiddenPhrases);
   for (const phrase of guide.requiredPhrases) {
