@@ -262,6 +262,18 @@ class DisabledReleaseConfigTests(unittest.TestCase):
         self.assertIn("if let url = AppPublicLinksConfiguration.termsOfUseURL {", terms)
         self.assertIn('ExternalLinkRow("利用規約", systemImage: "doc.plaintext")', terms)
         self.assertIn('.accessibilityIdentifier("settings-terms-of-use")', terms)
+        # 11/11: 外観 (自動・ライト・ダーク), set on the windows so sheets follow;
+        # only the real root takes it, never a fixture.
+        self.assertLess(settings.index('"settings-widget-placement-guide"'), settings.index("AppAppearanceRow()"))
+        self.assertLess(settings.index("AppAppearanceRow()"), settings.index("                notificationSettingsRow"))
+        for part in ('static let key = "app.appearance.v1"', 'case .system: "自動"', 'case .light: "ライト"',
+                     'case .dark: "ダーク"', "window.overrideUserInterfaceStyle = style",
+                     'Label("外観", systemImage: "circle.lefthalf.filled")',
+                     '.accessibilityIdentifier("settings-appearance")'):
+            self.assertIn(part, settings)
+        app = (ROOT / "NekoWidget/App/NekoWidgetApp.swift").read_text(encoding="utf-8")
+        self.assertEqual(app.count("AppRecordProductionRoot().appAppearance()"), 2)
+        self.assertEqual(app.count("AppRecordProductionRoot()"), 2)
         notifications = settings.split("private var notificationSettingsRow: some View {", 1)[1].split("\n    }\n", 1)[0]
         self.assertIn('ExternalLinkRow("通知", systemImage: "bell")', notifications)
         self.assertNotIn("SettingsActionRow", notifications)

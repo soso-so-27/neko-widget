@@ -107,10 +107,10 @@ struct NekoWidgetApp: App {
             } else if CommandLine.arguments.contains("--sharing-runtime-self-test") {
                 SharingRuntimeSelfTestRootView()
             } else {
-                AppRecordProductionRoot()
+                AppRecordProductionRoot().appAppearance()
             }
 #else
-            AppRecordProductionRoot()
+            AppRecordProductionRoot().appAppearance()
 #endif
         }
     }

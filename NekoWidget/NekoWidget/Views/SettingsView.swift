@@ -282,6 +282,7 @@ struct SettingsView: View {
                     Label("ウィジェットの置き方", systemImage: "rectangle.on.rectangle.angled")
                 }
                 .accessibilityIdentifier("settings-widget-placement-guide")
+                AppAppearanceRow()
                 notificationSettingsRow
             } header: {
                 Text("写真とウィジェット")
@@ -1429,4 +1430,70 @@ struct WidgetPlacementGuidePage: View {
                                  closeTitle: "閉じる")
             .navigationBarTitleDisplayMode(.inline)
     }
+}
+
+/// 外観 (11/11): the app follows the iPhone unless the owner picks light or
+/// dark here. The home screen widgets always follow the iPhone.
+enum AppAppearance: String, CaseIterable, Identifiable {
+    case system, light, dark
+    static let key = "app.appearance.v1"
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: "自動"
+        case .light: "ライト"
+        case .dark: "ダーク"
+        }
+    }
+
+    var style: UIUserInterfaceStyle {
+        switch self {
+        case .system: .unspecified
+        case .light: .light
+        case .dark: .dark
+        }
+    }
+
+    /// Set on the windows, so sheets, alerts and the system pickers follow too.
+    @MainActor static func apply(_ raw: String) {
+        let style = (AppAppearance(rawValue: raw) ?? .system).style
+        for scene in UIApplication.shared.connectedScenes {
+            guard let scene = scene as? UIWindowScene else { continue }
+            for window in scene.windows where window.overrideUserInterfaceStyle != style {
+                window.overrideUserInterfaceStyle = style
+            }
+        }
+    }
+}
+
+struct AppAppearanceRow: View {
+    @AppStorage(AppAppearance.key) private var appearance = AppAppearance.system.rawValue
+
+    var body: some View {
+        Picker(selection: $appearance) {
+            ForEach(AppAppearance.allCases) { Text($0.title).tag($0.rawValue) }
+        } label: {
+            Label("外観", systemImage: "circle.lefthalf.filled")
+        }
+        .accessibilityIdentifier("settings-appearance")
+    }
+}
+
+private struct AppAppearanceModifier: ViewModifier {
+    @AppStorage(AppAppearance.key) private var appearance = AppAppearance.system.rawValue
+    @Environment(\.scenePhase) private var scenePhase
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { AppAppearance.apply(appearance) }
+            .onChange(of: appearance) { _, new in AppAppearance.apply(new) }
+            // A window made later (a new scene) gets it when the app comes forward.
+            .onChange(of: scenePhase) { _, phase in if phase == .active { AppAppearance.apply(appearance) } }
+    }
+}
+
+extension View {
+    /// The owner's 外観 choice, for the app's real root only.
+    func appAppearance() -> some View { modifier(AppAppearanceModifier()) }
 }
