@@ -24,6 +24,31 @@ export function approvedDescriptionUpdate(current,desired){
   return current.replace(paragraph,paragraph+'作品を開くのは Plus です（14 日間無料）。')
     .replace(storage,'（3GB・記録 3,000 件まで。お試し中は 250MB）')===desired;
 }
+const freePhotoHeading='■ ホーム画面で、ふと目が合う\n';
+const plusHeading='■ ねこのまど Plus\n';
+const paidDailyLine='・毎日、新しい 1 枚がホーム画面に\n';
+const freeDailyLine='毎日ちがう 1 枚に入れ替わります。';
+const dailyPlusDescription='月の作品、まど、家族の手帳、メモ、保存';
+export function approvedDailyPhotoAppDescription(current,desired){
+  if(typeof current!=='string'||typeof desired!=='string')return false;
+  if(current===desired)return true;
+  const paragraphs=current.split('\n\n');
+  const home=paragraphs.map((p,i)=>p.startsWith(freePhotoHeading)?i:-1).filter(i=>i>=0);
+  const plus=paragraphs.map((p,i)=>p.startsWith(plusHeading)?i:-1).filter(i=>i>=0);
+  if(home.length!==1||plus.length!==1||paragraphs[plus[0]].split(paidDailyLine).length!==2)return false;
+  if(!paragraphs[home[0]].includes(freeDailyLine))paragraphs[home[0]]+=freeDailyLine;
+  paragraphs[plus[0]]=paragraphs[plus[0]].replace(paidDailyLine,'');
+  return paragraphs.join('\n\n')===desired;
+}
+export function dailyPlusDescriptionChange(current){
+  if(current===dailyPlusDescription)return null;
+  if(typeof current!=='string'||!current.replace(/\s/gu,'').includes('毎日の新しい1枚'))throw Error('STOP_SCOPE');
+  return dailyPlusDescription;
+}
+function oldDailyPhotoCopy(value){
+  if(typeof value!=='string')return false;
+  return /毎日の新しい1枚|毎日、新しい1枚がホーム画面に|毎日の入れ替わりはPlus|毎日新しい1枚に入れ替わるのはPlus|最後の1枚のまま|最初の1枚がそのまま/u.test(value.replace(/\s/gu,''));
+}
 export function checkPlan(plan,allowed){
   if(!plan.dryRun || !Array.isArray(plan.adds) || !Array.isArray(plan.updates) || (plan.deletes?.length??0)) throw Error('STOP_SCOPE');
   const changes=[...plan.adds,...plan.updates];
@@ -71,7 +96,7 @@ export function permissionFailure(text){
 function main(){
   const mode=process.argv[2]; if(!['--dry-run','--apply','--validate'].includes(mode)) throw Error('STOP_MODE');
   const selection=process.env.ASC_METADATA_SCOPE||'approved-groups';
-  if(!['approved-groups','version-description'].includes(selection))throw Error('STOP_SCOPE');
+  if(!['approved-groups','version-description','daily-photo-app-description','daily-photo-plus-description'].includes(selection))throw Error('STOP_SCOPE');
   const env={...process.env,ASC_TELEMETRY_DISABLED:'1',DO_NOT_TRACK:'1'};
   const sensitive=[env.APP_STORE_CONNECT_KEY_ID,env.APP_STORE_CONNECT_ISSUER_ID,env.APP_STORE_CONNECT_PRIVATE_KEY_BASE64];
   function call(args,allowFindings=false){
@@ -117,7 +142,7 @@ function main(){
     }
     walk(dir);return values;
   }
-  function runScope(scope,files,probe=false,fields){
+  function runScope(scope,files,probe=false,fields,checkBefore){
     const dir=mkdtempSync(join(tmpdir(),'asc-approved-'));
     for(const file of files){const dest=join(dir,file);mkdirSync(resolve(dest,'..'),{recursive:true});
       const value=JSON.parse(readFileSync(join(root,file),'utf8'));
@@ -129,6 +154,7 @@ function main(){
     if(mode==='--apply'&&changes.length){
       const before=snapshot(scope);
       if(scope==='localizations'&&before['version/1.0/ja.json']?.marketingUrl)throw Error('STOP_SCOPE');
+      if(checkBefore&&!checkBefore(before))throw Error('STOP_SCOPE');
       let writeError;
       try{call(args);}catch(e){writeError=e;}
       // Inspect even partial failures before allowing a later group to write.
@@ -146,12 +172,55 @@ function main(){
       console.log(JSON.stringify({applied:true,scope,probe,readbackMatches:true}));
     }
   }
-  if(selection==='version-description'){
+  if(selection==='version-description'||selection==='daily-photo-app-description'){
     const file='version/1.0/ja.json';
-    const current=snapshot('localizations')[file]?.description;
+    const localizations=snapshot('localizations');
+    const current=localizations[file]?.description;
     const desired=JSON.parse(readFileSync(join(root,file),'utf8')).description;
-    if(!approvedDescriptionUpdate(current,desired))throw Error('STOP_SCOPE');
-    runScope('localizations',[file],false,['description']);
+    const approved=selection==='version-description'?approvedDescriptionUpdate:approvedDailyPhotoAppDescription;
+    if(selection==='daily-photo-app-description')for(const [location,values] of Object.entries(localizations)){
+      for(const [field,value] of Object.entries(values))if((location!==file||field!=='description')&&oldDailyPhotoCopy(value))
+        console.log(JSON.stringify({outOfScope:true,scope:selection,location,field}));
+    }
+    if(!approved(current,desired))throw Error('STOP_SCOPE');
+    runScope('localizations',[file],false,['description'],before=>approved(before[file]?.description,desired));
+    return;
+  }
+  if(selection==='daily-photo-plus-description'){
+    const productID='jp.nekowidget.plus.monthly';
+    const matches=call(['subscriptions','list','--app',app,'--paginate','--output','json']).data?.filter(x=>x.attributes?.productId===productID);
+    if(matches?.length!==1)throw Error('STOP_IDENTITY');
+    const subscription=matches[0].id;sensitive.push(subscription);
+    const drafts=(call(['subscriptions','versions','list','--subscription-id',subscription,'--paginate','--output','json']).data??[])
+      .filter(x=>['PREPARE_FOR_SUBMISSION','MISSING_METADATA'].includes(x.attributes?.state));
+    if(drafts.length!==1){console.log(JSON.stringify({scope:selection,editableVersionCount:drafts.length}));throw Error('STOP_API');}
+    const version=drafts[0].id;sensitive.push(version);
+    function read(){
+      const rows=(call(['subscriptions','versions','localizations','list','--version-id',version,'--paginate','--output','json']).data??[])
+        .sort((a,b)=>a.id.localeCompare(b.id));
+      const japanese=rows.filter(x=>x.attributes?.locale==='ja');
+      if(japanese.length!==1)throw Error('STOP_IDENTITY');
+      return {rows,target:japanese[0]};
+    }
+    const before=read(),id=before.target.id;sensitive.push(id);
+    const next=dailyPlusDescriptionChange(before.target.attributes.description);
+    console.log(JSON.stringify({dryRun:true,scope:selection,productID,locale:'ja',fields:next===null?[]:['description'],description:next??dailyPlusDescription}));
+    for(const row of before.rows){
+      if(row.id!==id&&oldDailyPhotoCopy(row.attributes?.description))
+        console.log(JSON.stringify({outOfScope:true,scope:selection,locale:row.attributes.locale,field:'description'}));
+    }
+    if(mode==='--apply'&&next!==null){
+      if([ ...next ].length>55)throw Error('STOP_SCOPE');
+      let writeError;
+      try{call(['subscriptions','versions','localizations','update','--id',id,'--description',next,'--output','json']);}
+      catch(e){writeError=e;}
+      const after=read();
+      if(after.target.id!==id)throw Error('STOP_SCOPE');
+      const comparable=rows=>rows.map(({id:rowID,attributes})=>({id:rowID,attributes:Object.fromEntries(Object.entries(attributes).filter(([key])=>rowID!==id||key!=='description'))}));
+      if(!isDeepStrictEqual(comparable(before.rows),comparable(after.rows)))throw Error('STOP_SCOPE');
+      if(after.target.attributes.description!==next){if(writeError)throw writeError;throw Error('STOP_READBACK');}
+      console.log(JSON.stringify({applied:true,scope:selection,readbackMatches:true}));
+    }
     return;
   }
   const groups=Object.entries(scopes).map(([scope,files])=>[scope,()=>{

@@ -25,6 +25,8 @@ BASE_PAGES = (
 GUIDE_PAGE = SITE / "guide" / "index.html"
 GUIDE_PHRASES = (
     "「猫を探す」を押します",
+    "毎日新しい1枚に入れ替わります",
+    "くもりのまどと「もう一枚」も無料で使えます",
     "1つのまどに届けられるのは、1人1日5枚まで",
     "1つのまどにつき新しいものから500枚まで",
     "招待されて入るのは無料です",
@@ -84,14 +86,14 @@ class PublicPolicySiteTests(unittest.TestCase):
         parser.close()
         return parser
 
-    def assert_guide_contract(self, source):
+    def assert_guide_contract(self, source, content_revision=None):
         parser = PageParser()
         parser.feed(source)
         parser.close()
         text = "".join(parser.text)
         self.assertEqual(parser.h1, ["ねこのまどの使い方"])
         self.assertRegex(parser.meta.get("neko-policy-revision", ""), r"^\d{4}-\d{2}-\d{2}$")
-        year, month, day = map(int, parser.meta["neko-policy-revision"].split("-"))
+        year, month, day = map(int, (content_revision or parser.meta["neko-policy-revision"]).split("-"))
         self.assertIn(f"最終更新日：{year}年{month}月{day}日", text)
         for phrase in GUIDE_PHRASES:
             self.assertIn(phrase, text)
@@ -117,7 +119,7 @@ class PublicPolicySiteTests(unittest.TestCase):
 
     @unittest.skipUnless(GUIDE_PAGE.is_file(), "guide source awaits separately approved #716; fixture is checked")
     def test_published_guide_source_contract(self):
-        self.assert_guide_contract(GUIDE_PAGE.read_text(encoding="utf-8"))
+        self.assert_guide_contract(GUIDE_PAGE.read_text(encoding="utf-8"), content_revision="2026-11-11")
 
     def test_expected_pages_and_mobile_metadata_exist(self):
         for page in PAGES:
@@ -170,7 +172,7 @@ class PublicPolicySiteTests(unittest.TestCase):
         year, month, day = (int(part) for part in next(iter(revisions.values())).split("-"))
         visible_revision = f"最終更新日：{year}年{month}月{day}日"
         for page in PAGES[1:]:
-            expected = "最終更新日：2026年11月10日" if page == SITE / "support" / "index.html" else visible_revision
+            expected = "最終更新日：2026年11月11日" if page.parent.name in ("support", "guide") else visible_revision
             self.assertIn(expected, "".join(self.parsed(page).text), page)
 
     def test_private_window_capability_boundary_is_consistent(self):
@@ -209,7 +211,7 @@ class PublicPolicySiteTests(unittest.TestCase):
                 '停止が続いている間は残し、問題なし・解除と決めたものは決定から1年で消します',
             ),
             (
-                '毎日の入れ替わりはPlusの機能',
+                '変わらないときは、ウィジェットを編集して「ねこのまど」の設定を確かめ',
                 'まどを作った人がPlusを使っている必要があります',
                 '招待された人は無料',
                 '1人1日5枚まで',

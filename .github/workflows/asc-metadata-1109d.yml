@@ -9,11 +9,11 @@ on:
         type: choice
         options: [dry-run, apply]
       scope:
-        description: Approved groups, or only the two approved 1110b description edits
+        description: Approved groups or one explicitly approved description scope
         default: approved-groups
         required: true
         type: choice
-        options: [approved-groups, version-description]
+        options: [approved-groups, version-description, daily-photo-app-description, daily-photo-plus-description]
 permissions:
   contents: read
 jobs:

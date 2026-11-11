@@ -1,6 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {checkPlan,errorDetails,runGroups,permissionFailure,approvedDescriptionUpdate} from './asc-metadata-apply.mjs';
+import {checkPlan,errorDetails,runGroups,permissionFailure,approvedDescriptionUpdate,approvedDailyPhotoAppDescription,dailyPlusDescriptionChange} from './asc-metadata-apply.mjs';
+
+test('1111d permits only the daily-photo copy changes in the Japanese descriptions',()=>{
+  const desired=JSON.parse(readFileSync(new URL('./asc-metadata-1109d/version/1.0/ja.json',import.meta.url),'utf8')).description;
+  const before=desired.replace('毎日ちがう 1 枚に入れ替わります。','')
+    .replace('■ ねこのまど Plus\n','■ ねこのまど Plus\n・毎日、新しい 1 枚がホーム画面に\n');
+  assert.notEqual(before,desired);
+  assert.equal(approvedDailyPhotoAppDescription(before,desired),true);
+  assert.equal(approvedDailyPhotoAppDescription(before+'\n別の追記',desired),false);
+  assert.equal(approvedDailyPhotoAppDescription(before,desired.replace('980 円','990 円')),false);
+  assert.equal(dailyPlusDescriptionChange('うちの子との毎日を続ける。まど・毎日の新しい 1 枚・まとめ'),
+    '月の作品、まど、家族の手帳、メモ、保存');
+  assert.equal(dailyPlusDescriptionChange('月の作品、まど、家族の手帳、メモ、保存'),null);
+  assert.throws(()=>dailyPlusDescriptionChange('別の説明'),/STOP_SCOPE/u);
+});
 import {readFileSync} from 'node:fs';
 const allowed=[{scope:'app-info',locale:'ja',field:'subtitle',value:'approved'}];
 const change={scope:'app-info',locale:'ja',field:'subtitle',to:'approved'};

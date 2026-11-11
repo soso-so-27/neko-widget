@@ -640,9 +640,9 @@ test("public 1.0 requires five mutually linked pages including the guide", async
   }
 });
 
-test("public guide requires the exact title, revision, six phrases and shared forbidden copy", async () => {
+test("public guide requires the exact title, revision, daily free copy and sharing boundaries", async () => {
   const guide = publicOne.definition.pages.find(page => page.name === "guide");
-  assert.deepEqual(guide.requiredPhrases, ["「猫を探す」を押します", "1つのまどに届けられるのは、1人1日5枚まで",
+  assert.deepEqual(guide.requiredPhrases, ["「猫を探す」を押します", "毎日新しい1枚に入れ替わります", "くもりのまどと「もう一枚」も無料で使えます", "1つのまどに届けられるのは、1人1日5枚まで",
     "1つのまどにつき新しいものから500枚まで", "招待されて入るのは無料です", "月額980円です", "解約しても、写真・まど・メモは消えません"]);
   assert.deepEqual(guide.forbiddenPhrases, publicOne.definition.pages[0].forbiddenPhrases);
   for (const phrase of guide.requiredPhrases) {
@@ -655,7 +655,7 @@ test("public guide requires the exact title, revision, six phrases and shared fo
       /guide contains forbidden policy content/u);
   }
   await assert.rejects(check(publicOne, new Map([["guide", pageHtml(publicOne, guide, { h1: "wrong" })]])), /unexpected h1/u);
-  await assert.rejects(check(publicOne, new Map([["guide", pageHtml(publicOne, guide).replace("<p>最終更新日：2026年8月24日</p>", "")]])), /missing the visible policy revision/u);
+  await assert.rejects(check(publicOne, new Map([["guide", pageHtml(publicOne, guide).replace("<p>最終更新日：2026年11月11日</p>", "")]])), /missing the visible policy revision/u);
   await assert.rejects(check(publicOne, new Map([["guide", new Response("missing", { status: 404 })]])), /guide returned HTTP 404/u);
   await assert.rejects(check(publicOne, new Map([["guide", pageHtml(publicOne, guide, {
     links: [...profileUrls(publicOne), "http://policy.example.net/unsafe"],
@@ -665,9 +665,9 @@ test("public guide requires the exact title, revision, six phrases and shared fo
 
 test("public support requires its exact content date while the policy revision stays shared", async () => {
   const page = publicOne.definition.pages.find(page => page.name === "support");
-  assert.equal(page.visibleRevisionDate, "2026-11-10");
-  for (const wrong of ["2026年11月9日", "2026年11月11日", ""]) {
-    const html = pageHtml(publicOne, page).replace("2026年11月10日", wrong);
+  assert.equal(page.visibleRevisionDate, "2026-11-11");
+  for (const wrong of ["2026年11月9日", "2026年11月10日", ""]) {
+    const html = pageHtml(publicOne, page).replace("2026年11月11日", wrong);
     await assert.rejects(check(publicOne, new Map([["support", html]])), /visible policy revision/);
   }
   const result = await check(publicOne);
