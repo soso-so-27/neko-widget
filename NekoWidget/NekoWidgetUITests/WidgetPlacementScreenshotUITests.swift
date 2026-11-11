@@ -147,14 +147,22 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         // Large first, then Medium: the two real WidgetKit sizes occupy six
         // rows on the disposable Home Screen. No app-drawn Home Screen is used.
         for desiredPage in [3, 2] {
-            let edit = try XCTUnwrap(enterHomeScreenEditing(in: springboard))
+            let existingEdit = springboard.buttons.matching(
+                NSPredicate(format: "label IN %@", ["編集", "Edit"])).firstMatch
+            let edit: XCUIElement
+            if existingEdit.exists && existingEdit.isHittable {
+                edit = existingEdit
+            } else {
+                edit = try XCTUnwrap(enterHomeScreenEditing(in: springboard))
+            }
             edit.tap()
             let addMenu = try XCTUnwrap(waitForElement(in: springboard,
                 labels: ["ウィジェットを追加", "Add Widget"],
                 elementTypes: [.button, .staticText, .menuItem], timeout: 10))
             addMenu.tap()
             let search = try XCTUnwrap(waitForFirstElement(springboard.searchFields, timeout: 15))
-            focusForTyping(search, in: springboard); search.typeText("ねこのまど")
+            focusForTyping(search, in: springboard)
+            if search.value as? String != "ねこのまど" { search.typeText("ねこのまど") }
             let result = try XCTUnwrap(findFixtureGalleryResult(in: springboard)); result.tap()
             // The modal's innermost scroll view follows the Home Screen's
             // scroll view in AX. The latter also contains a page indicator.
@@ -199,10 +207,12 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                 labels: ["ウィジェットを追加", "Add Widget"], elementTypes: [.button], timeout: 10))
             addButton.tap()
             sleep(2)
-            if let done = waitForElement(in: springboard, labels: ["完了", "Done"],
-                elementTypes: [.button], timeout: 3, requireHittable: true) { done.tap() }
-            else { XCUIDevice.shared.press(.home) }
+            // Keep the observed Home editing toolbar between both additions.
+            // Long-pressing the first Widget opens its own configuration instead.
         }
+        if let done = waitForElement(in: springboard, labels: ["完了", "Done"],
+            elementTypes: [.button], timeout: 5, requireHittable: true) { done.tap() }
+        else { XCUIDevice.shared.press(.home) }
         let cloudyCaption = springboard.descendants(matching: .any).matching(NSPredicate(
             format: "label CONTAINS %@ OR value CONTAINS %@", "タップで きょうの 1 枚", "タップで きょうの 1 枚")).firstMatch
         // WidgetKit can expose only the combined Widget accessibility element.
