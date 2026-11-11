@@ -377,7 +377,7 @@ final class FamilyNotebookPrototype: ObservableObject {
                 let next = try FamilyNotebookCatCareBridge.apply(snapshot, to: care)
                 applyingRemote = true; defer { applyingRemote = false }
                 if next != care {
-                    guard CatCareStore.shared.update({ $0 = next }) else { throw FamilyNotebookError.storageUnavailable }
+                    guard CatCareStore.shared.update(familyProjection: true, { $0 = next }) else { throw FamilyNotebookError.storageUnavailable }
                     familyWritesToCatCare += 1
                 }
                 try CareHandoffStore.shared.receiveFamilyChanges()
@@ -403,7 +403,7 @@ final class FamilyNotebookPrototype: ObservableObject {
             }
         }
         guard !changes.isEmpty else { return }
-        CatCareStore.shared.update { state in
+        CatCareStore.shared.update(familyProjection: true) { state in
             for (toolID, field, value, operation) in changes {
                 guard let index = state.cats.firstIndex(where: { $0.catID == toolID }) else { continue }
                 Self.put(value, field, into: &state.cats[index], household: &state.household,

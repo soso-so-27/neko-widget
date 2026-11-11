@@ -69,6 +69,9 @@ struct NekoWidgetApp: App {
                 ClientUpgradeResponseFixture()
             } else if CommandLine.arguments.contains("--family-unshare-ui-fixture") {
                 FamilyNotebookUnshareFixture()
+            } else if CommandLine.arguments.contains("--family-proof-restore-ui-fixture"),
+                      CommandLine.arguments.contains("--app-records-ui-fixture") {
+                CatCareFamilyProofRestoreFixture()
             } else if CommandLine.arguments.contains("--app-records-ui-fixture") {
                 AppRecordPersistenceFixtureView()
             } else if CommandLine.arguments.contains("--tool-backup-ui-fixture") {

@@ -1586,6 +1586,26 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("automatic-partitioned-records-migration-and-restore")
         app.terminate()
     }
+
+    @MainActor
+    func testFamilyProofOpensAfterRestoreAndReconnects() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-records-ui-fixture", "--family-proof-restore-ui-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let proof = app.buttons["cat-care-restored-vaccine-proof"]
+        XCTAssertTrue(proof.waitForExistence(timeout: 12), app.debugDescription)
+        XCTAssertEqual(proof.label, "証明の写真。開くには2回タップ")
+        XCTAssertFalse(app.staticTexts["試験のワクチン"].exists)
+        proof.tap()
+        let enlarged = app.descendants(matching: .any).matching(identifier: "tool-record-photo-full").firstMatch
+        XCTAssertTrue(enlarged.waitForExistence(timeout: 10), app.debugDescription)
+        app.buttons["閉じる"].tap()
+        app.buttons["fixture-reinvite-proof"].tap()
+        XCTAssertTrue(app.staticTexts["証明の写真あり"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(proof.exists)
+    }
     @MainActor
     func testAutomaticSaveDestinationRebind() {
         continueAfterFailure = false

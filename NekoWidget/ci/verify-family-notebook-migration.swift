@@ -129,7 +129,36 @@ enum FamilyNotebookMigrationVerifier {
         try await verifyCopiesAndRestart(fixture, root: root)
         try verifyInputFailures(fixture)
         try verifyExistingValuesAndDeletion(fixture, root: root)
+        try verifyHandoffPhotoRestore(root: root)
         print("Family notebook migration: allowlist, explicit identity, atomic restart, source preservation and deletion checks passed")
+    }
+
+    static func verifyHandoffPhotoRestore(root: URL) throws {
+        let source = try CareHandoffRepository(directory: root.appendingPathComponent("handoff-photo-source"))
+        let restoredURL = root.appendingPathComponent("handoff-photo-restored")
+        let link = String(repeating: "2", count: 64)
+        var shared = CareCat(toolCatID: UUID(), familyContext: .init(recipient: "shared recipient"),
+                             familyPhotoLink: link, name: "shared name", meals: [])
+        var display = CareHandoffPlan(); display.cats = [shared]
+        try source.commit(display, familyProjection: true)
+        let file = UUID().uuidString + ".jpg", image = Data([0x11, 0x22, 0x33])
+        display.cats[0].photoName = file
+        try source.commit(display, newPhotos: [file: image])
+        let backup = try CareHandoffPlan.personalBackup(Data(contentsOf: source.directory.appendingPathComponent("plan.json")))
+        try require(!String(decoding: backup, as: UTF8.self).contains("shared"), "handoff photos may not carry a shared name or request")
+        try write(backup, restoredURL.appendingPathComponent("plan.json"))
+        try write(image, restoredURL.appendingPathComponent(file))
+        let restored = try CareHandoffRepository(directory: restoredURL)
+        try require(restored.committed.cats.isEmpty && restored.committed.detachedPhotos?.count == 1, "photo without a handoff remains readable")
+        try require(try Data(contentsOf: restored.photoURL(file)) == image, "restore kept the owned attachment bytes")
+        shared.id = UUID(); shared.toolCatID = UUID()
+        var joined = restored.committed; joined.cats = [shared]
+        try restored.commit(joined, familyProjection: true)
+        try require(restored.committed.cats.first?.photoName == file && restored.committed.detachedPhotos?.isEmpty == true, "reinvite matched the same handoff with different local IDs")
+        var removed = restored.committed; removed.cats[0].photoName = nil
+        try restored.commit(removed)
+        let reread = try restored.personalPlanForImport()
+        try require(reread.photoNames.isEmpty, "a removed attached photo must not return in the next backup")
     }
 
     static func verifyCopiesAndRestart(_ fixture: Fixture, root: URL) async throws {

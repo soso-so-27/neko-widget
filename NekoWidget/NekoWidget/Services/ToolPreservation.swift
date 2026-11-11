@@ -83,6 +83,11 @@ struct ToolBackupIndex: Codable, Equatable, Sendable {
     var reusedNodes: [UUID]? = nil
     var recordIDs: Set<UUID> { Set(files.flatMap(\.records) + (nodes ?? []).compactMap { UUID(uuidString: $0.snapshotId) } + [snapshotID]) }
     var containsFamilyNotebook: Bool { files.contains { $0.path == "FamilyNotebook/state.json" } }
+    var containsFamilyNotebookProjections: Bool {
+        containsFamilyNotebook || files.contains { file in
+            ["CatCare", "CareHandoff", "VeterinaryVisits"].contains(String(file.path.split(separator: "/").first ?? ""))
+        }
+    }
     var contentsSummary: String {
         let photos = files.filter { $0.path.hasSuffix(".jpg") }.count
         return "ツールの内容・写真\(photos)枚"
@@ -445,9 +450,12 @@ enum ToolBackupFiles {
             return Set(try JSONDecoder().decode(PhotoMemoryNoteSnapshot.self, from: data).notes.values.compactMap(\.photoFile))
         }
         if tool == "VeterinaryVisits" {
-            struct Visits: Decodable { let visits: [VeterinaryVisit] }
-            return Set(try JSONDecoder().decode(Visits.self, from: data).visits.flatMap { $0.entries.compactMap(\.photoFile) })
+            struct Visits: Decodable { let visits: [VeterinaryVisit]; let detachedPhotos: [VeterinaryDetachedPhoto]? }
+            let decoded = try JSONDecoder().decode(Visits.self, from: data)
+            return Set(decoded.visits.flatMap { $0.entries.compactMap(\.photoFile) }
+                + (decoded.detachedPhotos ?? []).compactMap(\.entry.photoFile))
         }
+        if tool == "CareHandoff" { return try JSONDecoder().decode(CareHandoffPlan.self, from: data).photoNames }
         return photoNames(try JSONSerialization.jsonObject(with: data))
     }
     static func sourcePhotoURL(tool: String, directory: URL, name: String) -> URL {

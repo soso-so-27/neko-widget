@@ -19,11 +19,54 @@ struct VerifyCatCare {
         try lostCat()
         try memoWeights()
         try portableBackup()
+        try privateFamilyProofRestore()
         try conditionsStatus()
         try absenceAnswers()
         try identifyingPhotos()
         try gregorianDays()
         print("Cat care (この子のこと) model, merge, import and decoding checks passed")
+    }
+
+    static func privateFamilyProofRestore() throws {
+        let original = UUID(), received = UUID(), freshCat = UUID(), freshRow = UUID()
+        let proof = CatCarePhotoRef(fileName: UUID().uuidString + ".jpg", sourceAssetID: "local-library-id")
+        let link = String(repeating: "a", count: 64)
+        var personal = CatCareState(deviceID: "phone", now: t0)
+        var owner = CatCareRecord(catID: original)
+        owner.conditions = .init(value: "owner memo", editedAt: t0, editedBy: "phone")
+        owner.weights = [.init(measuredOn: day, grams: 4200, editedAt: t0, editedBy: "phone")]
+        personal.cats = [owner]
+        let old = try CatCareDecoding.encode(personal)
+        var display = personal
+        display.cats[0].conditions = .init(value: "family memo", editedAt: t1, editedBy: "family:sender")
+        display.cats[0].vaccinations = [.init(id: received, kind: "family vaccine", givenOn: day,
+                                             familyPhotoLink: link, editedAt: t1, editedBy: "family:sender")]
+        let projected = try FamilyNotebookRecordOrigin.recording(CatCareDecoding.encode(display), over: old, tool: "CatCare", family: true)
+        display.cats[0].vaccinations[0].proof = proof
+        display.cats[0].vaccinations[0].editedAt = t1.addingTimeInterval(1)
+        display.cats[0].vaccinations[0].editedBy = "phone"
+        let edited = try FamilyNotebookRecordOrigin.recording(CatCareDecoding.encode(display), over: projected, tool: "CatCare", family: false)
+        let bytes = try CatCareDecoding.personalBackup(edited)
+        let portableText = String(decoding: bytes, as: UTF8.self)
+        try check(!portableText.contains("family vaccine") && !portableText.contains("family memo") && !portableText.contains("local-library-id"), "family values and PhotoKit ID stay off backup")
+        var restored = try CatCareDecoding.backupState(CatCareDecoding.portable(bytes, deviceID: "fresh"))
+        try check(restored.cats[0].conditions?.value == "owner memo" && restored.cats[0].activeWeights.first?.grams == 4200, "private memo and weight survive clean restore")
+        try check(restored.cats[0].activeVaccinations.isEmpty && restored.cats[0].unmatchedVaccinationProofs.count == 1,
+                  "private proof is listed without a fabricated vaccination")
+        try check(try CatCareDecoding.backupPhotoNames(bytes) == [proof.fileName], "detached proof is in the actual backup file list")
+        try check(try CatCareDecoding.backupState(old).cats[0].weights == owner.weights, "old format still opens")
+        var newCat = CatCareRecord(catID: freshCat)
+        newCat.vaccinations = [.init(id: freshRow, kind: "family vaccine", givenOn: day,
+                                     familyPhotoLink: String(repeating: "b", count: 64), editedAt: t1, editedBy: "family:sender")]
+        restored.cats.append(newCat)
+        restored.reconnectVaccinationProofs()
+        try check(restored.cats[0].unmatchedVaccinationProofs.count == 1, "a different family record cannot take the photo")
+        restored.cats[1].vaccinations[0].familyPhotoLink = link
+        restored.reconnectVaccinationProofs()
+        try check(restored.cats[0].unmatchedVaccinationProofs.isEmpty && restored.cats[1].unmatchedVaccinationProofs.isEmpty
+                  && restored.cats[1].vaccinationProof(freshRow)?.fileName == proof.fileName, "same shared record reconnects after local IDs change")
+        restored.cats[1].replaceVaccinationProof(nil, for: freshRow)
+        try check(try CatCareDecoding.backupPhotoNames(CatCareDecoding.encode(restored)).isEmpty, "removal clears both attachment references")
     }
 
     /// 11/9: 見分ける写真 are chosen in 「この子のこと」 only. A tool's older photo

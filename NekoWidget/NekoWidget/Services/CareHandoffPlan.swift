@@ -27,6 +27,7 @@ struct CareCat: Codable, Equatable, Identifiable {
     var toolCatID: UUID?
     var familyContext: CareHandoffContext? = nil
     var familyDetached: Bool? = nil
+    var familyPhotoLink: String? = nil
     var prefilledFields: Set<String>?
     var name = ""
     var photoName: String?
@@ -76,6 +77,11 @@ struct CareCat: Codable, Equatable, Identifiable {
 }
 
 struct CareHandoffPlan: Codable, Equatable {
+    struct DetachedPhoto: Codable, Equatable, Identifiable {
+        var id: UUID
+        var photoName: String
+        var familyPhotoLink: String? = nil
+    }
     var schemaVersion = 1
     var cats: [CareCat] = []
     var recipient = ""
@@ -97,7 +103,57 @@ struct CareHandoffPlan: Codable, Equatable {
     var houseCarrierPlace: String? = nil
     var houseHidingPlace: String? = nil
     var houseOther: String? = nil
-    var photoNames: Set<String> { Set(cats.compactMap(\.photoName)) }
+    var detachedPhotos: [DetachedPhoto]? = nil
+    var photoNames: Set<String> { Set(cats.compactMap(\.photoName) + (detachedPhotos ?? []).map(\.photoName)) }
+
+    static func personalBackup(_ data: Data) throws -> Data {
+        typealias Object = FamilyNotebookRecordOrigin.Object
+        var plan = try FamilyNotebookRecordOrigin.personalObject(data, tool: "CareHandoff")
+        let live = try FamilyNotebookRecordOrigin.decode(data)["cats"] as? [Object] ?? []
+        guard let cats = plan["cats"] as? [Object] else { throw CareHandoffError.unreadable }
+        var detached = plan["detachedPhotos"] as? [Object] ?? []
+        plan["cats"] = cats.compactMap { input -> Object? in
+            var row = input
+            if let id = row["id"] as? String, let name = row["photoName"] as? String,
+               Set(row.keys).isSubset(of: ["id", "toolCatID", "photoName", "photoRemoved", "prefilledFields", "updatedAt"]) {
+                detached.removeAll { $0["id"] as? String == id }
+                var photo: Object = ["id": id, "photoName": name]
+                photo["familyPhotoLink"] = live.first { $0["id"] as? String == id }?["familyPhotoLink"]
+                detached.append(photo); return nil
+            }
+            row.merge(["name": "", "water": "", "toilet": "", "handling": "", "important": "",
+                       "healthStatus": "unknown", "healthDetails": "", "updatedAt": 0]) { value, _ in value }
+            var meals = (row["meals"] as? [Object] ?? []).map {
+                $0.merging(["time": "", "food": "", "amount": ""]) { value, _ in value }
+            }
+            if meals.isEmpty, row["familyContext"] == nil, let id = row["id"] { meals = [["id": id, "time": "", "food": "", "amount": ""]] }
+            if let context = row["familyContext"] as? Object {
+                row["familyContext"] = context.merging(["recipient": "", "period": "", "request": ""]) { value, _ in value }
+            }
+            row["meals"] = meals
+            return row
+        }
+        if !detached.isEmpty { plan["detachedPhotos"] = detached }
+        let bytes = try FamilyNotebookRecordOrigin.encode(plan)
+        try JSONDecoder().decode(Self.self, from: bytes).validate()
+        return bytes
+    }
+
+    mutating func reconnectPhotos() {
+        guard let detachedPhotos else { return }
+        self.detachedPhotos = detachedPhotos.filter { photo in
+            let matches = cats.indices.filter { index in
+                let cat = cats[index]
+                guard cat.familyDetached != true else { return false }
+                if let link = photo.familyPhotoLink { return cat.familyPhotoLink == link }
+                return cat.id == photo.id && cat.familyContext != nil
+            }
+            guard matches.count == 1, let index = matches.first,
+                  cats[index].photoName == nil else { return true }
+            cats[index].photoName = photo.photoName
+            return false
+        }
+    }
 
     /// Round 2 (11/8): cats with a profile but no care memo yet, in the
     /// profiles' order. They are offered in 「お願いする猫」; a tap makes the
@@ -132,7 +188,8 @@ struct CareHandoffPlan: Codable, Equatable {
               Set(cats.map(\.id)).count == cats.count,
               cats.allSatisfy({ (!$0.meals.isEmpty || $0.familyContext != nil) && $0.meals.count <= 8
                   && Set($0.meals.map(\.id)).count == $0.meals.count }),
-              photoNames.count == cats.compactMap(\.photoName).count,
+              Set((detachedPhotos ?? []).map(\.id)).count == (detachedPhotos ?? []).count,
+              photoNames.count == cats.compactMap(\.photoName).count + (detachedPhotos ?? []).count,
               photoNames.allSatisfy(Self.isPhotoName) else { throw CareHandoffError.unreadable }
     }
     static func isPhotoName(_ name: String) -> Bool {
@@ -173,7 +230,7 @@ final class CareHandoffRepository {
         self.write = write
         if FileManager.default.fileExists(atPath: manifest.path) {
             let data = try Data(contentsOf: manifest)
-            guard data.count <= 3_000_000 else { throw CareHandoffError.tooLarge }
+            guard data.count <= 6_000_000 else { throw CareHandoffError.tooLarge }
             committed = try JSONDecoder().decode(CareHandoffPlan.self, from: data)
             try committed.validate()
         } else {
@@ -186,14 +243,25 @@ final class CareHandoffRepository {
         reconcileOwnedPhotos()
     }
 
-    func commit(_ plan: CareHandoffPlan, newPhotos: [String: Data] = [:], familyProjection: Bool = false) throws {
+    func commit(_ projected: CareHandoffPlan, newPhotos: [String: Data] = [:], familyProjection: Bool = false) throws {
 #if os(iOS)
         AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
         try AppRecordDataset.requireWritable(manifest)
 #endif
+        var plan = projected
+        if familyProjection { plan.reconnectPhotos() }
         try plan.validate()
-        let data = try JSONEncoder().encode(plan)
-        guard data.count <= 3_000_000 else { throw CareHandoffError.tooLarge }
+        let displayed = try JSONEncoder().encode(plan)
+        guard displayed.count <= 3_000_000 else { throw CareHandoffError.tooLarge }
+        let before = try manifestData()
+        let data: Data
+        if familyProjection && projected != plan {
+            let marked = try FamilyNotebookRecordOrigin.recording(JSONEncoder().encode(projected), over: before, tool: "CareHandoff", family: true)
+            data = try FamilyNotebookRecordOrigin.recording(displayed, over: marked, tool: "CareHandoff", family: false)
+        } else {
+            data = try FamilyNotebookRecordOrigin.recording(displayed, over: before, tool: "CareHandoff", family: familyProjection)
+        }
+        guard data.count <= 6_000_000 else { throw CareHandoffError.tooLarge }
         guard Set(newPhotos.keys).isSubset(of: plan.photoNames),
               newPhotos.allSatisfy({ CareHandoffPlan.isPhotoName($0.key) && !$0.value.isEmpty
                   && !FileManager.default.fileExists(atPath: directory.appendingPathComponent($0.key).path) })
@@ -217,6 +285,16 @@ final class CareHandoffRepository {
         }
         committed = plan
         reconcileOwnedPhotos()
+    }
+
+    private func manifestData() throws -> Data? {
+        guard FileManager.default.fileExists(atPath: manifest.path) else { return nil }
+        return try Data(contentsOf: manifest)
+    }
+
+    func personalPlanForImport() throws -> CareHandoffPlan {
+        guard let bytes = try manifestData() else { return .init() }
+        return try JSONDecoder().decode(CareHandoffPlan.self, from: CareHandoffPlan.personalBackup(bytes))
     }
 
     /// 11/8: a photo copy that could not be removed is tried again quietly,

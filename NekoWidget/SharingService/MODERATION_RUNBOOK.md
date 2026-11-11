@@ -415,6 +415,7 @@ viewerとsandboxed decode→metadata-free canonical re-encode gateを実装し�
 
 判断記録が保存された直後にplaintext JPEGを消す。保持理由が承認されていない限りshiftをまたいで
 local copyを残さない。次のNode直呼びはPOSIX専用であり、Windowsでは後続の固定wrapperを使う。
+手動で書き出したときは、対応を中断した場合も、確認を終えた時点で下の手順に従い、平文JPEGと対応するreceiptを削除する。
 
 ```sh
 node scripts/moderation-report-tool.mjs delete \

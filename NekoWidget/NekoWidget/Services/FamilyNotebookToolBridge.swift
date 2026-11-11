@@ -118,6 +118,7 @@ enum FamilyNotebookToolBridge {
                 continue
             }
             guard cat.familyDetached != true, let latest = values.latest else { continue }
+            cat.familyPhotoLink = FamilyNotebookAttachmentLink.key(snapshot, cat: mapping.familyCatID, kind: "handoff", record: record)
             var context = cat.familyContext ?? CareHandoffContext(recipient: plan.recipient, period: plan.period, request: plan.request)
             // Never copy a recipient from the receiving phone's unrelated
             // household into a missing shared field on a newly received cat.
@@ -177,6 +178,7 @@ enum FamilyNotebookToolBridge {
                 revision: old?.revision ?? UUID(), startedOn: started.isEmpty ? nil : started,
                 observations: try values.text(.observations, old?.observations ?? ""), questions: try values.text(.questions, old?.questions ?? ""),
                 entries: old?.entries ?? [], completedAt: try values.date(.completedAt, old?.completedAt), familyRecordID: record)
+            visit.familyPhotoLink = FamilyNotebookAttachmentLink.key(snapshot, cat: mapping.familyCatID, kind: "visit", record: record)
             func optionalText(_ field: FamilyNotebookField, _ old: String?) throws -> String? {
                 let text = try values.text(field, old ?? "")
                 return text.isEmpty ? nil : text
@@ -197,10 +199,11 @@ enum FamilyNotebookToolBridge {
                 let grams = try v.number(.grams) ?? (v.state(.grams) == nil ? previous?.weight?.grams : nil)
                 let day = try v.text(.measuredOn, previous?.weight?.measuredOn ?? "")
                 let weight = grams.map { PhotoMemoWeightValue(grams: $0, measuredOn: day.isEmpty ? nil : day, catName: visit.catName) }
-                let entry = VeterinaryVisitEntry(id: entryID, sourceNoteID: previous?.sourceNoteID ?? entryID,
+                var entry = VeterinaryVisitEntry(id: entryID, sourceNoteID: previous?.sourceNoteID ?? entryID,
                     sourceRevision: previous?.sourceRevision ?? (v.latest?.id.uuidString ?? entryID.uuidString), text: try v.text(.text, previous?.text ?? ""),
                     capturedAt: try v.date(.capturedAt, previous?.capturedAt), writtenAt: try v.date(.writtenAt, previous?.writtenAt),
                     weight: weight, photoFile: previous?.photoFile, sourcePhotoIdentifier: previous?.sourcePhotoIdentifier)
+                entry.familyPhotoLink = FamilyNotebookAttachmentLink.key(snapshot, cat: mapping.familyCatID, kind: "entry", record: childRecord, parent: record)
                 if let i = visit.entries.firstIndex(where: { $0.id == entryID }) { visit.entries[i] = entry } else { visit.entries.append(entry) }
             }
             if let old, visit != old { visit.revision = UUID() }

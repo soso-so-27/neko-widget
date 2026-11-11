@@ -1183,7 +1183,7 @@ struct CatCareListEditor: Identifiable {
                 if let index = replacing.flatMap({ id in r.vaccinations.firstIndex { $0.id == id } }) {
                     r.vaccinations[index].kind = CatCareLimits.clippedText(kind)
                     r.vaccinations[index].givenOn = day
-                    if let proof { r.vaccinations[index].proof = proof }
+                    r.replaceVaccinationProof(proof, for: r.vaccinations[index].id)
                     r.vaccinations[index].editedAt = now; r.vaccinations[index].editedBy = by
                     return
                 }
@@ -1266,11 +1266,28 @@ struct CatCareListView: View {
                     row(entry.id) {
                         VStack(alignment: .leading, spacing: 2) {
                             LabeledContent(entry.kind, value: CatCareFormat.day(entry.givenOn))
-                            if entry.proof != nil {
+                            if record?.vaccinationProof(entry.id) != nil {
                                 Label("証明の写真あり", systemImage: "doc.text.image")
                                     .font(.subheadline).foregroundStyle(.secondary)
                             }
                         }
+                    }
+                }
+                ForEach(record?.unmatchedVaccinationProofs ?? []) { photo in
+                    if let proof = photo.proof {
+                        DetachedToolPhotoRow(title: "証明の写真", load: {
+                            guard let url = store.photoURL(proof) else { return nil }
+                            return try Data(contentsOf: url)
+                        }, remove: {
+                            guard let catID else { return }
+                            store.update { state in
+                                guard let i = state.cats.firstIndex(where: { $0.catID == catID }),
+                                      state.cats[i].unmatchedVaccinationProofs.contains(photo) else { return }
+                                state.cats[i].replaceVaccinationProof(nil, for: photo.id)
+                            }
+                        })
+                        .id(proof.fileName)
+                        .accessibilityIdentifier("cat-care-restored-vaccine-proof")
                     }
                 }
             case .meal:
@@ -1317,7 +1334,7 @@ struct CatCareListView: View {
         switch kind {
         case .weight: record?.activeWeights.isEmpty ?? true
         case .medication: record?.activeMedications.isEmpty ?? true
-        case .vaccination: record?.activeVaccinations.isEmpty ?? true
+        case .vaccination: (record?.activeVaccinations.isEmpty ?? true) && (record?.unmatchedVaccinationProofs.isEmpty ?? true)
         case .meal: record?.activeMeals.isEmpty ?? true
         }
     }
@@ -1331,6 +1348,62 @@ struct CatCareListView: View {
         }
     }
 }
+
+#if DEBUG
+struct CatCareFamilyProofRestoreFixture: View {
+    private let cat = UUID()
+    private let vaccination = UUID()
+    private let link = String(repeating: "3", count: 64)
+    @State private var editing: CatCareListEditor?
+    @State private var ready = false
+    @State private var failed = false
+
+    var body: some View {
+        NavigationStack {
+            if ready {
+                CatCareListView(kind: .vaccination, catID: cat, editing: $editing)
+                    .toolbar { Button("試験の再招待", action: receiveAgain).accessibilityIdentifier("fixture-reinvite-proof") }
+            } else if failed { Text("試験データを作れませんでした") }
+            else { ProgressView() }
+        }
+        .task { if !ready && !failed { restore() } }
+    }
+
+    private func restore() {
+        do {
+            let now = Date(), day = CatCareDay(isoDay: "2026-01-20")!
+            var own = CatCareState(deviceID: "fixture-original", now: now)
+            own.cats = [.init(catID: cat)]
+            let before = try CatCareDecoding.encode(own)
+            var display = own
+            display.cats[0].vaccinations = [.init(id: vaccination, kind: "試験のワクチン", givenOn: day,
+                                                familyPhotoLink: link, editedAt: now, editedBy: "family:fixture")]
+            let received = try FamilyNotebookRecordOrigin.recording(CatCareDecoding.encode(display), over: before, tool: "CatCare", family: true)
+            let jpeg = UIGraphicsImageRenderer(size: CGSize(width: 32, height: 32)).jpegData(withCompressionQuality: 0.8) { context in
+                context.cgContext.setFillColor(UIColor.systemTeal.cgColor)
+                context.cgContext.fill(CGRect(x: 0, y: 0, width: 32, height: 32))
+            }
+            guard let proof = CatCareStore.shared.savePhoto(jpeg, sourceAssetID: nil, origin: .camera) else { failed = true; return }
+            display.cats[0].vaccinations[0].proof = proof
+            display.cats[0].vaccinations[0].editedBy = "fixture-original"
+            let mixed = try FamilyNotebookRecordOrigin.recording(CatCareDecoding.encode(display), over: received, tool: "CatCare", family: false)
+            let portable = try CatCareDecoding.personalBackup(mixed)
+            let restored = try CatCareDecoding.portable(portable, deviceID: "fixture-restored")
+            let file = AppRecordDataset.directory("CatCare").appendingPathComponent("state.json")
+            try AppRecordJSON.write(restored, to: file)
+            CatCareStore.shared.reload(); ready = true
+        } catch { failed = true }
+    }
+
+    private func receiveAgain() {
+        CatCareStore.shared.update(familyProjection: true) { state in
+            guard let i = state.cats.firstIndex(where: { $0.catID == cat }) else { return }
+            state.cats[i].vaccinations = [.init(kind: "試験のワクチン", givenOn: CatCareDay(isoDay: "2026-01-20")!,
+                                               familyPhotoLink: link, editedAt: Date(), editedBy: "family:fixture")]
+        }
+    }
+}
+#endif
 
 struct CatCareListEntrySheet: View {
     /// Asks the list to confirm deleting the record this sheet was showing.
@@ -1352,6 +1425,8 @@ struct CatCareListEntrySheet: View {
     @State private var proofItem: PhotosPickerItem?
     @State private var showsCamera = false
     @State private var proof: CatCarePhotoRef?
+    @State private var opensProof = false
+    @State private var removesProof = false
     @State private var message: String?
 
     var body: some View {
@@ -1381,8 +1456,21 @@ struct CatCareListEntrySheet: View {
                         }
                         .accessibilityIdentifier("cat-care-proof-camera")
                     }
-                    if proof != nil {
-                        Label("証明の写真を付けました", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    if let current = proof {
+                        Button { opensProof = true } label: {
+                            Label("証明の写真を付けました", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                        }
+                        .contextMenu { Button("写真を外す", role: .destructive) { removesProof = true } }
+                        .confirmationDialog("写真を外しますか？", isPresented: $removesProof) {
+                            Button("写真を外す", role: .destructive) { proof = nil }
+                            Button("キャンセル", role: .cancel) { }
+                        }
+                        .fullScreenCover(isPresented: $opensProof) {
+                            ToolRecordFullPhoto {
+                                guard let url = store.photoURL(current) else { return nil }
+                                return try Data(contentsOf: url)
+                            }
+                        }
                     }
                 case .meal:
                     TextField("時間（例：朝7時）", text: $name)
@@ -1455,7 +1543,7 @@ struct CatCareListEntrySheet: View {
             name = entry.name; dose = entry.dose; schedule = entry.schedule
         case .vaccination:
             guard let entry = record.vaccinations.first(where: { $0.id == entryID }) else { return }
-            name = entry.kind; date = dateOf(entry.givenOn); proof = entry.proof
+            name = entry.kind; date = dateOf(entry.givenOn); proof = record.vaccinationProof(entry.id)
         case .meal:
             guard let entry = record.meals.first(where: { $0.id == entryID }) else { return }
             name = entry.time; food = entry.food; amount = entry.amount

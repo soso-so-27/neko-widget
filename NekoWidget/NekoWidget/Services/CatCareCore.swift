@@ -199,9 +199,37 @@ struct CatCareVaccination: CatCareListEntry {
     var givenOn: CatCareDay
     var nextDueOn: CatCareDay? = nil
     var proof: CatCarePhotoRef? = nil
+    var familyPhotoLink: String? = nil
     var editedAt: Date
     var editedBy: String
     var deletedAt: Date? = nil
+}
+
+/// The local row ID is enough to reconnect a photo after the same vaccination
+/// returns. A proof never needs a fabricated vaccine name or date to be read.
+struct CatCareDetachedVaccination: Codable, Equatable, Identifiable, Sendable {
+    var id: UUID
+    var proof: CatCarePhotoRef?
+    var familyPhotoLink: String?
+    var kind: String?
+    var givenOn: CatCareDay?
+    var nextDueOn: CatCareDay?
+    var editedAt: Date?
+    var editedBy: String?
+    var deletedAt: Date?
+}
+
+/// An edit of only one field of a received measurement has no complete
+/// private measurement to display. Keep its written fields without filling
+/// the other field from the shared value or inventing a measurement.
+struct CatCarePartialWeight: Codable, Equatable, Identifiable, Sendable {
+    var id: UUID
+    var measuredOn: CatCareDay?
+    var grams: Int?
+    var source: CatCareWeight.Source?
+    var editedAt: Date?
+    var editedBy: String?
+    var deletedAt: Date?
 }
 
 struct CatCareMeal: CatCareListEntry {
@@ -259,8 +287,10 @@ struct CatCareRecord: Codable, Equatable, Identifiable, Sendable {
     var conditions: CatCareStamped<String>?
     var allergy: CatCareStamped<CatCareAllergy>?
     var weights: [CatCareWeight] = []
+    var partialWeights: [CatCarePartialWeight]? = nil
     var medications: [CatCareMedication] = []
     var vaccinations: [CatCareVaccination] = []
+    var detachedVaccinations: [CatCareDetachedVaccination]? = nil
     var vaccinationAnswer: CatCareStamped<CatCareVaccinationAnswer>?
 
     var meals: [CatCareMeal] = []
@@ -276,6 +306,26 @@ struct CatCareRecord: Codable, Equatable, Identifiable, Sendable {
     var deletedAt: Date?
 
     var id: UUID { catID }
+
+    func vaccinationProof(_ id: UUID) -> CatCarePhotoRef? {
+        let row = vaccinations.first(where: { $0.id == id })
+        return detachedVaccinations?.first(where: { $0.id == id && ($0.familyPhotoLink == nil || $0.familyPhotoLink == row?.familyPhotoLink) })?.proof
+            ?? row?.proof
+    }
+
+    var unmatchedVaccinationProofs: [CatCareDetachedVaccination] {
+        let attached = Dictionary(grouping: activeVaccinations, by: \.id)
+        return (detachedVaccinations ?? []).filter { item in
+            item.proof != nil && !(attached[item.id] ?? []).contains { item.familyPhotoLink == nil || item.familyPhotoLink == $0.familyPhotoLink }
+        }
+    }
+
+    mutating func replaceVaccinationProof(_ proof: CatCarePhotoRef?, for id: UUID) {
+        if let index = detachedVaccinations?.firstIndex(where: { $0.id == id }) {
+            detachedVaccinations?[index].proof = proof
+        }
+        if let index = vaccinations.firstIndex(where: { $0.id == id }) { vaccinations[index].proof = proof }
+    }
 
     var conditionsStatus: CatCareConditionsStatus {
         CatCareConditionsStatus.reading(conditions?.value)
@@ -381,6 +431,22 @@ struct CatCareRecord: Codable, Equatable, Identifiable, Sendable {
 }
 
 struct CatCareState: Codable, Equatable, Sendable {
+    mutating func reconnectVaccinationProofs() {
+        let matches = cats.enumerated().flatMap { i, cat in
+            cat.activeVaccinations.compactMap { row in row.familyPhotoLink.map { (key: $0, index: i, id: row.id) } }
+        }
+        let groups = Dictionary(grouping: matches, by: \.key)
+        let detached = cats.enumerated().flatMap { i, cat in (cat.detachedVaccinations ?? []).map { (index: i, item: $0) } }
+        for (index, original) in detached {
+            guard let key = original.familyPhotoLink, let matched = groups[key], matched.count == 1,
+                  let match = matched.first, match.index != index || match.id != original.id,
+                  cats[match.index].vaccinationProof(match.id) == nil,
+                  !(cats[match.index].detachedVaccinations ?? []).contains(where: { $0.id == match.id }) else { continue }
+            var moved = original; moved.id = match.id
+            cats[index].detachedVaccinations?.removeAll { $0 == original }
+            cats[match.index].detachedVaccinations = (cats[match.index].detachedVaccinations ?? []) + [moved]
+        }
+    }
     static let currentSchemaVersion = 1
 
     var schemaVersion = Self.currentSchemaVersion
@@ -847,6 +913,65 @@ enum CatCareLostCat {
 // MARK: - Reading a file where one broken cat must not hide the others
 
 enum CatCareDecoding {
+    static func personalBackup(_ data: Data) throws -> Data {
+        typealias Object = FamilyNotebookRecordOrigin.Object
+        var state = try FamilyNotebookRecordOrigin.personalObject(data, tool: "CatCare")
+        let liveCats = try FamilyNotebookRecordOrigin.decode(data)["cats"] as? [Object] ?? []
+        let liveByID = Dictionary(grouping: liveCats, by: { $0["catID"] as? String ?? "" })
+        func fields(_ input: Object, _ defaults: Object) -> Object { input.merging(defaults) { value, _ in value } }
+        func stamped(_ cat: inout Object, _ key: String, _ defaults: Object) {
+            guard var stamp = cat[key] as? Object, let value = stamp["value"] as? Object else { return }
+            stamp["value"] = fields(value, defaults); cat[key] = stamp
+        }
+        if var household = state["household"] as? Object {
+            stamped(&household, "vet", ["name": "", "phone": "", "note": ""])
+            state["household"] = household
+        }
+        guard let cats = state["cats"] as? [Object] else { throw CocoaError(.fileReadCorruptFile) }
+        state["cats"] = cats.map { input -> Object in
+            var cat = fields(input, ["weights": [Object](), "medications": [Object](), "vaccinations": [Object](),
+                                     "meals": [Object](), "sharedWindowIDs": [String]()])
+            stamped(&cat, "allergy", ["status": "unknown", "text": ""])
+            stamped(&cat, "vetOverride", ["name": "", "phone": "", "note": ""])
+            stamped(&cat, "microchipAnswer", ["status": "unknown"])
+            stamped(&cat, "vaccinationAnswer", ["status": "unknown", "observedVaccinationIDs": [String]()])
+            cat["medications"] = (cat["medications"] as? [Object] ?? []).map {
+                fields($0, ["name": "", "dose": "", "schedule": "", "note": ""])
+            }
+            cat["meals"] = (cat["meals"] as? [Object] ?? []).map {
+                fields($0, ["time": "", "food": "", "amount": "", "order": 0])
+            }
+            var partialWeights = cat["partialWeights"] as? [Object] ?? []
+            cat["weights"] = (cat["weights"] as? [Object] ?? []).filter { row in
+                guard row["measuredOn"] != nil, row["grams"] != nil else {
+                    if let index = partialWeights.firstIndex(where: { $0["id"] as? String == row["id"] as? String }) {
+                        partialWeights[index].merge(row) { _, latest in latest }
+                    } else { partialWeights.append(row) }
+                    return false
+                }
+                return true
+            }.map { fields($0, ["source": ["manual": Object()]]) }
+            if !partialWeights.isEmpty { cat["partialWeights"] = partialWeights }
+            var detached = cat["detachedVaccinations"] as? [Object] ?? []
+            let live = liveByID[cat["catID"] as? String ?? ""]?.first?["vaccinations"] as? [Object] ?? []
+            cat["vaccinations"] = (cat["vaccinations"] as? [Object] ?? []).filter { row in
+                guard row["kind"] != nil, row["givenOn"] != nil else {
+                    var row = row
+                    let id = row["id"] as? String
+                    row["familyPhotoLink"] = live.first { $0["id"] as? String == id }?["familyPhotoLink"]
+                    if let index = detached.firstIndex(where: { $0["id"] as? String == row["id"] as? String }) {
+                        detached[index].merge(row) { _, latest in latest }
+                    } else { detached.append(row) }
+                    return false
+                }
+                return true
+            }
+            if !detached.isEmpty { cat["detachedVaccinations"] = detached }
+            return cat
+        }
+        return try portable(FamilyNotebookRecordOrigin.encode(state))
+    }
+
     static func backupState(_ data: Data) throws -> CatCareState {
         let result = try decode(data)
         guard result.unreadableCatCount == 0, result.state.mutationRevision >= 0,
@@ -860,6 +985,10 @@ enum CatCareDecoding {
             state.cats[i].facePhoto?.value?.sourceAssetID = nil
             state.cats[i].bodyPhoto?.value?.sourceAssetID = nil
             for j in state.cats[i].vaccinations.indices { state.cats[i].vaccinations[j].proof?.sourceAssetID = nil }
+            if var detached = state.cats[i].detachedVaccinations {
+                for j in detached.indices { detached[j].proof?.sourceAssetID = nil }
+                state.cats[i].detachedVaccinations = detached
+            }
         }
         return try encode(state)
     }
@@ -868,6 +997,7 @@ enum CatCareDecoding {
         let names = state.cats.flatMap { cat in
             [cat.facePhoto?.value?.fileName,cat.bodyPhoto?.value?.fileName].compactMap { $0 }
                 + cat.vaccinations.compactMap { $0.proof?.fileName }
+                + (cat.detachedVaccinations ?? []).compactMap { $0.proof?.fileName }
         }
         guard names.allSatisfy({ $0.hasSuffix(".jpg") && UUID(uuidString: String($0.dropLast(4))) != nil }) else {
             throw CocoaError(.fileReadCorruptFile)

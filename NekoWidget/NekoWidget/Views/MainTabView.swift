@@ -1364,14 +1364,23 @@ struct MainTabView: View {
         }
     }
 
-    /// Shared cats whose profile is not on this iPhone.
+    /// Shared cats without a profile, plus restored personal proofs that must
+    /// open even before their cat reappears through a new invitation.
     private var familyOnlyCats: [FamilyNotebookPrototype.FamilyCat] {
         let profileIDs = Set(catProfilesPresentation.profiles.map(\.identifier))
-        return familyNotebook.familyCats.filter { cat in
+        let shared = familyNotebook.familyCats.filter { cat in
             guard let profileID = careStore.state?.cats
                 .first(where: { $0.catID == cat.toolID && $0.deletedAt == nil })?.profileID else { return true }
             return !profileIDs.contains(profileID.uuidString)
         }
+        let listed = Set(shared.map(\.toolID))
+        let restored = (careStore.state?.cats ?? []).compactMap { record -> FamilyNotebookPrototype.FamilyCat? in
+            guard record.deletedAt == nil, !record.unmatchedVaccinationProofs.isEmpty, !listed.contains(record.catID),
+                  record.profileID.map({ !profileIDs.contains($0.uuidString) }) ?? true else { return nil }
+            let name = record.name?.value.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return .init(id: record.catID, toolID: record.catID, name: name.isEmpty ? "名前未設定の猫" : name)
+        }
+        return shared + restored
     }
 
     /// The one page of a shared cat: its own page when its profile is here,

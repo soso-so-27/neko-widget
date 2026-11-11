@@ -21,7 +21,7 @@ enum SavedToolCatChoices {
             if let profile { return UUID(uuidString: profile) }
             return tool ?? legacy
         }
-        let careCats = care.loadError == nil && care.saveError == nil ? care.plan.cats : []
+        let careCats = care.loadError == nil && care.saveError == nil ? care.personalPlanForImport.cats : []
         let evacuationCats = evacuation.loadError == nil && evacuation.saveError == nil ? evacuation.plan.cats : []
         let careGroups = Dictionary(grouping: careCats.compactMap { cat in
             identity(cat.profileID, cat.toolCatID, cat.id).map { ($0, cat.displayName) }
@@ -62,6 +62,7 @@ struct VeterinaryVisitsView: View {
     @AppStorage("vet.lastCat.v1") private var lastCatID = ""
     @AppStorage(CatFarewell.key) private var farewellJSON = ""
     @State private var visits: [VeterinaryVisit] = []
+    @State private var detachedPhotos: [VeterinaryDetachedPhoto] = []
     @State private var cats: [PhotoMemoryNoteCat] = []
     @State private var toolSources: [UUID: String] = [:]
     /// The memo on the page: the chosen cat's current one.
@@ -99,6 +100,7 @@ struct VeterinaryVisitsView: View {
                         Task { await open(PhotoMemoryNoteCat(id: id, name: profile.displayName)) }
                     }) {}
                     notices
+                    detachedPhotoRows
                 }
             } else if let current {
                 // The chosen cat's memo, with the row of cats above it to switch in place.
@@ -117,12 +119,13 @@ struct VeterinaryVisitsView: View {
                         onFinished: {
                             let cat = PhotoMemoryNoteCat(id: current.catID, name: current.catName)
                             Task { await reload(); await open(cat) }
-                        })
+                        }, detachedPhotos: detachedPhotos.filter { $0.catID == current.catID },
+                        removeDetachedPhoto: removeDetachedPhoto)
                         .id(current.id)
                 }
                 .safeAreaInset(edge: .top, spacing: 0) { strip }
             } else {
-                List { notices }
+                List { notices; detachedPhotoRows }
                     .safeAreaInset(edge: .top, spacing: 0) { strip }
             }
         }
@@ -198,6 +201,7 @@ struct VeterinaryVisitsView: View {
     private func reload() async {
         do {
             let loaded = try await store.visits()
+            detachedPhotos = try await store.detachedPhotos()
             let notes: [PhotoMemoryNoteRecord]
             var sourceError: String?
             do { notes = try await noteStore.records() }
@@ -216,6 +220,7 @@ struct VeterinaryVisitsView: View {
             candidates.append(contentsOf: loaded.map { PhotoMemoryNoteCat(id: $0.catID, name: $0.catName) })
             candidates.append(contentsOf: savedTools.map(\.cat))
             candidates.append(contentsOf: measuredCats)
+            candidates.append(contentsOf: detachedPhotos.map { .init(id: $0.catID, name: "名前未設定の猫") })
             cats = candidates.filter { seen.insert($0.id).inserted }
             toolSources = Dictionary(uniqueKeysWithValues: savedTools.map { ($0.id, $0.source) })
             if careStore.loadError != nil || careStore.saveError != nil || evacuationStore.loadError != nil || evacuationStore.saveError != nil {
@@ -227,6 +232,19 @@ struct VeterinaryVisitsView: View {
             // failure is retried on the next load, never shown (11/8).
             _ = try? await store.cleanupPending()
         } catch { self.error = veterinaryErrorMessage(error); ready = false }
+    }
+
+    private var detachedPhotoRows: some View {
+        ForEach(detachedPhotos) { photo in
+            DetachedToolPhotoRow(title: "写真", load: { try await store.image(for: photo) }, remove: { removeDetachedPhoto(photo) })
+        }
+    }
+
+    private func removeDetachedPhoto(_ photo: VeterinaryDetachedPhoto) {
+        Task {
+            do { try await store.removeDetachedPhoto(photo); await reload() }
+            catch { self.error = veterinaryErrorMessage(error) }
+        }
     }
 }
 
@@ -243,6 +261,8 @@ private struct VeterinaryConsultationView: View {
     var onDeleted: (() -> Void)? = nil
     /// After 「診察を終える」 on the tool's page: open the next memo.
     var onFinished: (() -> Void)? = nil
+    var detachedPhotos: [VeterinaryDetachedPhoto] = []
+    var removeDetachedPhoto: ((VeterinaryDetachedPhoto) -> Void)? = nil
     private var isPage: Bool { openPast != nil }
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -408,9 +428,13 @@ private struct VeterinaryConsultationView: View {
         }
     }
     @ViewBuilder private var pastSection: some View {
-        if !pastVisits.isEmpty {
+        if !pastVisits.isEmpty || !detachedPhotos.isEmpty {
             Section("これまでの診察メモ") {
                 ForEach(pastVisits) { past in pastRow(past) }
+                ForEach(detachedPhotos) { photo in
+                    DetachedToolPhotoRow(title: "写真", load: { try await store.image(for: photo) },
+                                         remove: { removeDetachedPhoto?(photo) })
+                }
             }
         }
     }
@@ -1187,33 +1211,9 @@ private struct VeterinaryEntryFullPhoto: View {
     let entry: VeterinaryVisitEntry
     let visitID: UUID
     let store: VeterinaryVisitStore
-    @Environment(\.dismiss) private var dismiss
-    @State private var image: UIImage?
-    @State private var failed = false
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let image { MomentZoomablePhoto(image: image) }
-                else if failed { Label("写真を開けません", systemImage: "photo").foregroundStyle(.white) }
-                else { ProgressView().tint(.white) }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.black)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
-            }
-        }
-        .task {
-            do {
-                guard let bytes = try await store.image(for: entry, visitID: visitID) else { failed = true; return }
-                let full = await Task.detached(priority: .userInitiated) {
-                    ToolPhotoThumbnail.decode(bytes, maxPixel: 4096)
-                }.value
-                guard !Task.isCancelled else { return }
-                image = full; failed = full == nil
-            } catch { failed = true }
-        }
+        ToolRecordFullPhoto { try await store.image(for: entry, visitID: visitID) }
     }
 }
 

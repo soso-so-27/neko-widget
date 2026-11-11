@@ -1,4 +1,15 @@
 import Foundation
+import CryptoKit
+
+/// Stable across a new local mapping of the same family. This is derived only
+/// from random record IDs, never from names, notes, dates, or membership data.
+enum FamilyNotebookAttachmentLink {
+    static func key(_ snapshot: FamilyNotebookSnapshot, cat: UUID, kind: String, record: UUID, parent: UUID? = nil) -> String {
+        let material = ["neko-family-attachment-v1", snapshot.familyID.uuidString, cat.uuidString,
+                        kind, parent?.uuidString ?? "", record.uuidString].joined(separator: "/")
+        return SHA256.hash(data: Data(material.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+}
 
 /// Local IDs stay local. Received cats never match an existing personal cat by
 /// name, and family writes never change household-wide contacts or vet details.
@@ -222,6 +233,8 @@ enum FamilyNotebookCatCareBridge {
             var item = record.vaccinations.first { $0.id == localID } ?? .init(id: localID, kind: kind, givenOn: date, editedAt: at, editedBy: by)
             guard item.deletedAt == nil else { return }
             item.kind = kind; item.givenOn = date
+            item.familyPhotoLink = FamilyNotebookAttachmentLink.key(values.snapshot, cat: values.cat,
+                kind: "vaccination", record: values.record)
             if values.state(.nextDueOn) != nil { item.nextDueOn = try values.date(.nextDueOn) }
             item.editedAt = at; item.editedBy = by; replace(item, in: &record.vaccinations)
         case .meal:

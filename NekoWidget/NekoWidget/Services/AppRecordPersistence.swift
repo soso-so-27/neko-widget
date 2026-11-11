@@ -425,7 +425,8 @@ enum AppRecordDataset {
                 return false
             case "VeterinaryVisits":
                 guard let schema = object["schema"] as? Int, [1,2].contains(schema), let visits = object["visits"] as? [Any] else { throw ToolBackupError.invalid }
-                if !visits.isEmpty || !(object["retiredPhotoFiles"] as? [Any] ?? []).isEmpty { return false }
+                if !visits.isEmpty || !(object["detachedPhotos"] as? [Any] ?? []).isEmpty
+                    || !(object["retiredPhotoFiles"] as? [Any] ?? []).isEmpty { return false }
             case "ShowcasePhotos":
                 guard let entries = object["entries"] as? [Any] else { throw ToolBackupError.invalid }
                 if !entries.isEmpty || !(object["scopes"] as? [String: Any] ?? [:]).isEmpty { return false }
@@ -1100,7 +1101,7 @@ final class AppRecordPersistence: ObservableObject {
                 value.fingerprint = nil
             }
             value.revision = remote.0.revision; value.snapshotID = remote.1.snapshotID
-            value.filteredNotebookSnapshotID = saved.index.containsFamilyNotebook ? nil : saved.id
+            value.filteredNotebookSnapshotID = saved.index.containsFamilyNotebookProjections ? nil : saved.id
             try await require(value, restoredCheckpoint); try write(value, intent: intent)
             try saveIntent.require(intent)
             conflict = false; requested = true; nextAttempt = .distantPast; flushEdits()
@@ -1299,7 +1300,7 @@ final class AppRecordPersistence: ObservableObject {
                 }
             }
             let replacePendingNotebook = pendingCapture.map {
-                $0.index.containsFamilyNotebook && $0.filteredFamilyNotebook != true
+                $0.index.containsFamilyNotebookProjections && $0.filteredFamilyNotebook != true
             } ?? false
             if let pending = value.pending, !replacePendingNotebook {
                 phase = "中断した送信を再開"
@@ -1347,7 +1348,7 @@ final class AppRecordPersistence: ObservableObject {
                     try await AppRecordDataset.activate(saved, origin: value.origin, expectedFingerprint: currentFingerprint, validateSession: fence)
                     try saveIntent.require(intent)
                     value.revision = remote.0.revision; value.snapshotID = saved.id
-                    value.filteredNotebookSnapshotID = saved.index.containsFamilyNotebook ? nil : saved.id
+                    value.filteredNotebookSnapshotID = saved.filteredFamilyNotebook == true || !saved.index.containsFamilyNotebookProjections ? saved.id : nil
                     value.fingerprint = try await AppRecordBackground.fingerprint(); value.pending = nil
                     try saveIntent.require(intent)
                     value.pendingFingerprint = nil; value.pendingBase = nil; try write(value, intent: intent)
@@ -1388,7 +1389,7 @@ final class AppRecordPersistence: ObservableObject {
                 previous = try await decodedIndex(remote, value: value, checkpoint: checkpoint)
                 try saveIntent.require(intent)
             } else { previous = nil }
-            if let previous, !previous.containsFamilyNotebook, value.needsNotebookBackupUpdate,
+            if let previous, !previous.containsFamilyNotebookProjections, value.needsNotebookBackupUpdate,
                value.fingerprint == currentFingerprint, value.pending == nil {
                 guard await stillSaved(accepted) else { throw ToolBackupError.changed }
                 try saveIntent.require(intent)
@@ -2200,7 +2201,11 @@ enum AppRecordCapture {
                 let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
                 bytes = try encoder.encode(state)
             } else if tool == "CatCare" {
-                bytes = try CatCareDecoding.portable(bytes)
+                bytes = try CatCareDecoding.personalBackup(bytes)
+            } else if tool == "CareHandoff" {
+                bytes = try CareHandoffPlan.personalBackup(bytes)
+            } else if tool == "VeterinaryVisits" {
+                bytes = try VeterinaryVisitStore.personalBackup(bytes)
             } else if tool == "ShowcasePhotos" {
                 let object = try JSONSerialization.jsonObject(with: bytes)
                 var state = object as? [String: Any] ?? ["entries": object, "scopes": [:]]
