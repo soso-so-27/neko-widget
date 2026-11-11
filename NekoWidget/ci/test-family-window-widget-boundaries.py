@@ -6321,7 +6321,7 @@ class ToolOpenWasteTests(unittest.TestCase):
         self.assertIn("private var shown: UIImage? { file == nil ? image : thumbnail }", slot)
         self.assertIn("if let shown { Image(uiImage: shown).resizable().scaledToFit() }", slot)
         self.assertNotIn("Image(uiImage: image)", slot)
-        self.assertIn("if hasPhoto && !readOnly {\n                    Menu { actions } label:", slot)
+        self.assertIn("if hasPhoto && !readOnly && !chooseOnly {\n                    Menu { actions } label:", slot)
         self.assertIn(".task(id: file) { thumbnail = await ToolPhotoThumbnail.load(file) }", slot)
 
         evacuation = source("NekoWidget/Views/EvacuationPreparationView.swift")
@@ -6826,10 +6826,23 @@ class IdentifyingPhotosOnePlace1109Tests(unittest.TestCase):
         self.assertIn('static func photoTitle(_ role: CatCarePhotoRole) -> String { role == .face ? "顔の写真" : "全身の写真" }',
                       detail)
         save = section(detail, "private func setPhoto(", "/// The same count as the ring")
-        self.assertIn("state.cats[index].setIdentifyingPhoto(role, ref, editedAt: Date(), editedBy: state.deviceID)", save)
+        self.assertIn("let saved = store.setIdentifyingPhoto(ref, role, catID: catID)", save)
+        store_write = section(self.cat_care, "func setIdentifyingPhoto(_ ref: CatCarePhotoRef?, _ role: CatCarePhotoRole, catID: UUID) -> Bool {",
+                              "/// Choosing one 見分ける写真")
+        self.assertIn("state.cats[index].setIdentifyingPhoto(role, ref, editedAt: Date(), editedBy: state.deviceID)", store_write)
+        # 11/11: one chooser, the same from 「この子のこと」 and from a tool, and
+        # one record lookup, the same as the page's own load.
+        self.assertIn("CatCareIdentifyingPhotoSheet(subject: subject, role: role) { photoFailed = !$0 }", detail)
+        self.assertIn("guard let record = store.ensureRecord(for: subject) else { catID = nil; return }", detail)
+        sheet = section(self.cat_care, "struct CatCareIdentifyingPhotoSheet: View {",
+                        "private struct CatCareIdentifyingPhotoPicker: View {")
+        self.assertIn("CatCareIdentifyingPhotoPicker(title: CatCareDetailView.photoTitle(role), photos: Self.photos(subject))", sheet)
+        self.assertIn("return profile.confirmedPhotos + profile.manualCandidatePhotos", sheet)
         # A chosen or cropped photo is a clean copy kept by 「この子のこと」.
         self.assertIn("guard let ref = store.savePhoto(jpeg, sourceAssetID: assetID, origin: .photos) else { return false }",
-                      detail)
+                      sheet)
+        self.assertIn("guard let catID = store.ensureRecord(for: subject)?.catID else { onSaved(false); return false }", sheet)
+        self.assertIn("let saved = store.setIdentifyingPhoto(ref, role, catID: catID)", sheet)
         self.assertIn("LostCatPhotoCropView(image: request.image) { data in", detail)
         self.assertIn("guard let jpeg = CatCareFormat.cleanJPEG(data),", detail)
         picker = section(self.cat_care, "private struct CatCareIdentifyingPhotoPicker: View {", "/// ② of every tool:")
@@ -6840,17 +6853,30 @@ class IdentifyingPhotosOnePlace1109Tests(unittest.TestCase):
 
     def test_tools_show_them_and_open_cat_care(self) -> None:
         shared = section(self.cat_care, "struct ToolIdentifyingPhotos: View {", "extension ToolMakeBar where Top == EmptyView {")
-        self.assertIn("NavigationLink { CatCareSubjectView(subject: subject, profiles: profiles) } label: { content }", shared)
-        self.assertIn('.accessibilityHint("「この子のこと」で変えます")', shared)
-        self.assertIn('Text("「この子のこと」で変える").font(.footnote).foregroundStyle(.secondary)', shared)
+        # 11/11: a photo in a tool opens the same chooser as 「この子のこと」, and the
+        # choice is kept there; one quiet link opens 「この子のこと」 for the rest.
+        self.assertIn("ToolIdentifyingPhotoChoice(faceFile: faceFile, bodyFile: bodyFile, subject: subject, profiles: profiles,",
+                      shared)
+        self.assertIn("NavigationLink { CatCareSubjectView(subject: subject, profiles: profiles) } label: {\n"
+                      '            Text("「この子のこと」を開く").font(.footnote)', shared)
+        self.assertIn('.accessibilityIdentifier(identifier + "-open-cat-care")', shared)
+        self.assertNotIn("「この子のこと」で変える", shared)
+        self.assertIn("CatCareIdentifyingPhotoSheet(subject: subject, role: role)", shared)
+        self.assertIn("ToolPhotoSlot(choosing: CatCareDetailView.photoTitle(role), file: file, disabled: !store.canSave,", shared)
+        self.assertIn("identifier: identifier, choose: { photoRole = role })", shared)
+        self.assertIn('slot(.face, file: faceFile, identifier: identifier + "-face")', shared)
+        self.assertIn('slot(.body, file: bodyFile, identifier: identifier + "-body")', shared)
+        # No picker or crop of its own in a tool: the shared sheet only.
         self.assertNotIn("PhotosPicker", shared)
-        self.assertNotIn("choose:", shared)
+        self.assertNotIn("LostCatPhotoCropView", shared)
+        self.assertNotIn("savePhoto(", shared)
         slot = section(self.cat_care, "struct ToolPhotoSlot<Actions: View>: View {", "struct ToolPhotoGrid<Content: View>: View {")
-        # Shown only: no button to choose and no menu.
+        # Shown only: no button to choose and no menu. Choosing only: no menu.
         self.assertIn("if readOnly {\n                tile\n", slot)
-        self.assertIn("if hasPhoto && !readOnly {", slot)
-        readonly = section(self.cat_care, "extension ToolPhotoSlot where Actions == EmptyView {", "/// 見分ける写真 in a tool (11/9)")
+        self.assertIn("if hasPhoto && !readOnly && !chooseOnly {", slot)
+        readonly = section(self.cat_care, "extension ToolPhotoSlot where Actions == EmptyView {", "/// 見分ける写真 in a tool: kept")
         self.assertIn("readOnly = true", readonly)
+        self.assertIn("chooseOnly = true", readonly)
         # Each tool: 「この子のこと」's photo once set there, else its own older one.
         url = section(self.cat_care, "static func identifyingPhotoURL(", "/// The record for a tool's cat")
         self.assertIn("CatCareIdentifyingPhotos.choice(record?.identifyingPhoto(role), legacy: legacy)", url)
