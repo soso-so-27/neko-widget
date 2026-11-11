@@ -1794,16 +1794,24 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["病院で見せる"].waitForExistence(timeout: 5))
         app.buttons["病院で見せる"].tap()
         // 11/8: a past memo row is named by its day; find it by its identifier.
+        // 11/12: the past memos are a page of their own, opened from one row
+        // under 「この子の記録」, below the first screen; the Form makes it near view.
         let previousVisit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-past-")).firstMatch
-        // 「これまでの診察メモ」 is under the four steps and the delete row, below
-        // the first screen (11/9: step 1 also has 体重); the Form makes it near view.
         XCTAssertTrue(app.buttons["vet-show"].waitForExistence(timeout: 5), app.debugDescription)
-        revealVetRow(previousVisit, app: app)
+        let pastRow = app.buttons["vet-row-past"]
+        revealVetRow(pastRow, app: app); pastRow.tap()
+        XCTAssertTrue(app.navigationBars["これまでの診察メモ"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(previousVisit.waitForExistence(timeout: 5), app.debugDescription)
         previousVisit.tap()
         XCTAssertTrue(app.staticTexts["診察済み"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["保存当時の診察"].exists)
+        // What was noticed is read only, on its row's page inside the memo.
+        openVetRow("vet-step-noticed", title: "家で気付いたこと", app: app)
+        XCTAssertTrue(app.staticTexts["保存当時の診察"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["vet-observations"].exists, "A finished memo stays read only")
         capture("restored-veterinary-history-keeps-original-context")
+        leaveVetPage("家で気付いたこと", app: app)
         app.navigationBars["診察メモ"].buttons["閉じる"].tap()
+        leaveVetPage("これまでの診察メモ", app: app)
         app.navigationBars.buttons.element(boundBy: 0).tap()
         let lost = app.buttons["迷子の控え"]
         for _ in 0..<5 where !lost.isHittable { app.swipeUp(velocity: .slow) }
@@ -2024,18 +2032,18 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(element.isHittable, "Required action must be reachable: \(element.identifier)")
     }
 
-    /// 病院で見せる's page between the row of cats on top and 「先生に見せる」 at
+    /// 病院で見せる's page between the navigation bar on top and 「先生に見せる」 at
     /// the bottom. A row under either still reads as hittable, but a tap there
     /// does nothing (runs 42545036862 and 42564398913: the picker and a past
     /// memo did not open). Scrolls toward the row from either side.
     @MainActor
     private func revealVetRow(_ element: XCUIElement, app: XCUIApplication) {
         let bar = app.buttons["vet-show"]
-        let strip = app.descendants(matching: .any).matching(identifier: "tool-cat-strip").firstMatch
+        let top = app.navigationBars.firstMatch
         func shown() -> Bool {
             guard element.exists, element.isHittable else { return false }
             let y = element.frame.midY
-            return (!bar.exists || y < bar.frame.minY - 24) && (!strip.exists || y > strip.frame.maxY + 8)
+            return (!bar.exists || y < bar.frame.minY - 24) && (!top.exists || y > top.frame.maxY + 8)
         }
         for _ in 0..<10 where !shown() {
             if !element.exists || (bar.exists && element.frame.midY > bar.frame.minY - 24) {
@@ -2043,6 +2051,66 @@ final class SoloMemoriesUITests: XCTestCase {
             } else { app.swipeDown(velocity: .slow) }
         }
         XCTAssertTrue(shown(), "Required row must be reachable: \(element.identifier) / " + app.debugDescription)
+    }
+
+    /// 11/12: 病院で見せる is a list of rows; each opens a page titled with the
+    /// row's name that holds that part's controls.
+    @MainActor
+    private func openVetRow(_ identifier: String, title: String, app: XCUIApplication) {
+        let row = app.buttons[identifier]
+        XCTAssertTrue(row.waitForExistence(timeout: 10), app.debugDescription)
+        revealVetRow(row, app: app); row.tap()
+        XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5), app.debugDescription)
+    }
+
+    /// Back from a row's page to the page that opened it (what was written
+    /// is saved on leaving).
+    @MainActor
+    private func leaveVetPage(_ title: String, app: XCUIApplication) {
+        let bar = app.navigationBars[title]
+        XCTAssertTrue(bar.waitForExistence(timeout: 5), app.debugDescription)
+        bar.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(bar.waitForNonExistence(timeout: 5), app.debugDescription)
+    }
+
+    /// 11/12: the cat is chosen from the menu in the bar (the row of faces is
+    /// gone from this tool). `identifier` is the cat's item, as the row's chip
+    /// was named; the menu then names the chosen cat.
+    @MainActor
+    private func chooseVetCat(_ identifier: String, app: XCUIApplication) {
+        let menu = app.buttons["vet-cat-menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10), app.debugDescription)
+        menu.tap()
+        let item = app.buttons[identifier]
+        XCTAssertTrue(item.waitForExistence(timeout: 5), app.debugDescription)
+        let name = item.label
+        item.tap()
+        XCTAssertTrue(item.waitForNonExistence(timeout: 5))
+        // The item may also read its checkmark; either way the names overlap.
+        let named = NSPredicate { object, _ in
+            guard let label = (object as? XCUIElement)?.label, !label.isEmpty else { return false }
+            return label.contains(name) || name.contains(label)
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: named, object: menu)], timeout: 5),
+                       .completed, "The chosen cat's memo must be the open page")
+        // The memo is replaced in place; let the new page settle before using it.
+        _ = app.buttons["vet-step-records"].waitForExistence(timeout: 5)
+        sleep(1)
+    }
+
+    /// The cats the menu offers, with the menu open; closes it again.
+    @MainActor
+    private func vetMenuCats(_ app: XCUIApplication, matching predicate: NSPredicate) -> Int {
+        let menu = app.buttons["vet-cat-menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10), app.debugDescription)
+        menu.tap()
+        let items = app.buttons.matching(predicate)
+        _ = items.firstMatch.waitForExistence(timeout: 5)
+        let count = items.count
+        // Tapping outside the menu closes it without choosing.
+        app.navigationBars.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(items.firstMatch.waitForNonExistence(timeout: 5))
+        return count
     }
 
     // The real PhotoKit request can arrive while the fixture's source-confirmation
@@ -2123,13 +2191,13 @@ final class SoloMemoriesUITests: XCTestCase {
     /// 11/10: the memo page no longer has 「診察メモに追加」; a memo reaches
     /// 「病院で見せる」 only through 「写真を選ぶ」 → 「写真に付けたメモ」.
     /// Leaves the memo page, opens 「病院で見せる」 as the tools do, makes the
-    /// memo's own cat the open page in the row, and picks this memo, which
-    /// presents its confirmation over the picker.
+    /// memo's own cat the open page from the cat menu, opens 「見せる写真・記録」
+    /// and picks this memo, which presents its confirmation over the picker.
     /// The confirmation is a Form: at the largest text its 「この記録は…」 switch
     /// starts below the first screen and is made only near view, so the sheet
     /// is known by its title here and callers reveal `confirm` themselves.
     @MainActor
-    private func openVetConfirmationThroughPicker(_ cat: XCUIElement, memo: String, app: XCUIApplication) -> XCUIElement {
+    private func openVetConfirmationThroughPicker(_ cat: String, memo: String, app: XCUIApplication) -> XCUIElement {
         let memoBar = app.navigationBars["メモ"]
         XCTAssertTrue(memoBar.waitForExistence(timeout: 5), app.debugDescription)
         let back = memoBar.buttons["写真"].exists ? memoBar.buttons["写真"] : memoBar.buttons.element(boundBy: 0)
@@ -2138,12 +2206,10 @@ final class SoloMemoriesUITests: XCTestCase {
         let open = app.buttons["memory-library-fixture-open-vet"]
         XCTAssertTrue(open.waitForExistence(timeout: 5)); open.tap()
         XCTAssertTrue(app.navigationBars["病院で見せる"].waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertTrue(cat.waitForExistence(timeout: 10), app.debugDescription)
-        if !cat.isSelected { XCTAssertTrue(cat.isHittable); cat.tap() }
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"),
-            object: cat)], timeout: 5), .completed, "The memo's own cat must be the open page")
+        chooseVetCat(cat, app: app)
+        openVetRow("vet-step-records", title: "見せる写真・記録", app: app)
         let pick = app.buttons["vet-pick-records"]
-        revealVetRow(pick, app: app); pick.tap()
+        revealVetElement(pick, app: app); pick.tap()
         dismissVetPhotosPromptIfPresent()
         let picker = app.navigationBars["見せる写真を選ぶ"]
         XCTAssertTrue(picker.waitForExistence(timeout: 15), app.debugDescription)
@@ -2160,7 +2226,7 @@ final class SoloMemoriesUITests: XCTestCase {
     @MainActor
     func testVeterinarySelectionIsExplicitAndRemovalKeepsSource() {
         let app = launchWeightMemo()
-        let cat = app.buttons["vet-cat-09300000-0000-0000-0000-000000000001"]
+        let cat = "vet-cat-09300000-0000-0000-0000-000000000001"
         let confirm = app.switches["vet-confirm-target"]
         let firstPicker = openVetConfirmationThroughPicker(cat, memo: "食べる量が少なかった。", app: app)
         revealVetElement(confirm, app: app)
@@ -2177,6 +2243,11 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(firstPicker.exists, "The picker stays open after an addition")
         firstPicker.buttons["vet-pick-done"].tap()
         XCTAssertTrue(firstPicker.waitForNonExistence(timeout: 5))
+        // 11/12: back on the page, the row counts the record.
+        leaveVetPage("見せる写真・記録", app: app)
+        let recordsRow = app.buttons["vet-step-records"]
+        XCTAssertTrue(recordsRow.waitForExistence(timeout: 5))
+        XCTAssertTrue((recordsRow.label + " " + (recordsRow.value as? String ?? "")).contains("1件"), recordsRow.debugDescription)
         let show = app.buttons["vet-show"]; revealVetElement(show, app: app); show.tap()
         XCTAssertTrue(app.scrollViews["vet-reading"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["食べる量が少なかった。"].exists)
@@ -2185,17 +2256,15 @@ final class SoloMemoriesUITests: XCTestCase {
         // The reading screen is titled 「診察メモ」; the page under it 「病院で見せる」.
         app.navigationBars["診察メモ"].buttons["閉じる"].tap()
         XCTAssertTrue(app.scrollViews["vet-reading"].waitForNonExistence(timeout: 5))
+        // 11/12: the record and 「診察メモから外す」 are on 「見せる写真・記録」's page.
+        openVetRow("vet-step-records", title: "見せる写真・記録", app: app)
         let remove = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).firstMatch
-        // 11/9 (#899): step 1 gained the 体重 row, so the record's
-        // 「診察メモから外す」 can sit below the bottom bar as well as above the screen.
-        revealVetRow(remove, app: app); remove.tap()
+        revealVetElement(remove, app: app); remove.tap()
         XCTAssertTrue(app.buttons["外す"].waitForExistence(timeout: 5)); app.buttons["外す"].tap()
         XCTAssertTrue(remove.waitForNonExistence(timeout: 5))
         capture("vet-record-removed-source-kept")
-        // After the removal the page can rest below 「写真を選ぶ」 (run 42545036862
-        // showed 「診察のあと」 at the top), so reach it from either side.
         let pick = app.buttons["vet-pick-records"]
-        revealVetRow(pick, app: app); pick.tap()
+        revealVetElement(pick, app: app); pick.tap()
         // 349: 「見せる写真を選ぶ」, recent photos first, then the memos below.
         // 11/9 (#899): it also reads the recent videos; the sheet was still
         // coming up at 5 s on the hosted Simulator (dimming already shown).
@@ -2216,6 +2285,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(picker.waitForNonExistence(timeout: 5))
         // The cat's memo is the 「病院で見せる」 page itself (11/7); closing it
         // returns to the memo list, and the photo memo itself is unchanged.
+        leaveVetPage("見せる写真・記録", app: app)
         app.navigationBars["病院で見せる"].buttons["閉じる"].tap()
         XCTAssertTrue(app.navigationBars["病院で見せる"].waitForNonExistence(timeout: 5))
         let memoRow = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
@@ -2236,13 +2306,15 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launch()
         let boundary = app.staticTexts["vet-saved-cat-boundary"]
         XCTAssertTrue(boundary.waitForExistence(timeout: 15)); XCTAssertEqual(boundary.label, "境界検証成功")
-        let firstCat = app.buttons["vet-cat-E0260929-0000-0000-0000-000000000001"]
-        let sameNameOtherCat = app.buttons["vet-cat-E0260929-0000-0000-0000-000000000002"]
-        XCTAssertTrue(firstCat.waitForExistence(timeout: 5)); XCTAssertTrue(sameNameOtherCat.exists)
-        // Cats in the row only: the folded 「この子のこと」 row (11/8) is
-        // "vet-cat-care-fields-folded" and is not a cat.
-        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT (identifier BEGINSWITH %@)",
-            "vet-cat-", "vet-cat-care-")).count, 2)
+        let firstCat = "vet-cat-E0260929-0000-0000-0000-000000000001"
+        let sameNameOtherCat = "vet-cat-E0260929-0000-0000-0000-000000000002"
+        // 11/12: the cats are in the menu in the bar. Cats only: the menu itself
+        // is "vet-cat-menu" and the folded 「この子のこと」 row (11/8) is
+        // "vet-cat-care-fields-folded"; neither is a cat.
+        XCTAssertEqual(vetMenuCats(app, matching: NSPredicate(format: "identifier IN %@", [firstCat, sameNameOtherCat])), 2)
+        XCTAssertEqual(vetMenuCats(app, matching: NSPredicate(
+            format: "identifier BEGINSWITH %@ AND NOT (identifier BEGINSWITH %@) AND identifier != %@",
+            "vet-cat-", "vet-cat-care-", "vet-cat-menu")), 2)
         capture("vet-saved-cats-same-name-large-text")
         app.buttons["vet-saved-cat-edit-memo"].tap()
         let catPicker = app.descendants(matching: .any).matching(identifier: "memo-weight-cat-picker").firstMatch
@@ -2255,19 +2327,27 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("weight-cat-explicit-tool-selection")
         app.buttons["photo-memory-note-save"].tap()
         XCTAssertTrue(catPicker.waitForNonExistence(timeout: 5))
-        // 11/7: choosing a cat in the row opens its memo in place on 「病院で見せる」.
-        let chosenInRow = NSPredicate(format: "selected == true")
-        firstCat.tap()
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: chosenInRow, object: firstCat)], timeout: 5), .completed)
+        // 11/7: choosing a cat opens its memo in place on 「病院で見せる」
+        // (11/12: from the menu in the bar).
+        chooseVetCat(firstCat, app: app)
         XCTAssertTrue(app.navigationBars["病院で見せる"].exists)
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).count, 0)
+        // 家で気付いたこと is still empty: its row says so, and its page has the empty field.
+        let noticedRow = app.buttons["vet-step-noticed"]
+        XCTAssertTrue(noticedRow.waitForExistence(timeout: 5))
+        XCTAssertTrue((noticedRow.label + " " + (noticedRow.value as? String ?? "")).contains("未記入"), noticedRow.debugDescription)
+        openVetRow("vet-step-noticed", title: "家で気付いたこと", app: app)
         let observations = app.descendants(matching: .any).matching(identifier: "vet-observations").firstMatch
+        XCTAssertTrue(observations.waitForExistence(timeout: 5))
         XCTAssertTrue(["", "例：1日2回吐く・食欲が半分"].contains(observations.value as? String ?? ""))
+        leaveVetPage("家で気付いたこと", app: app)
+        // No record chosen yet: the row says 「なし」 (11/12 rows; was the step header).
+        let recordsStep = app.buttons["vet-step-records"]
+        XCTAssertTrue(recordsStep.waitForExistence(timeout: 5))
+        func recordsValue() -> String { recordsStep.label + " " + (recordsStep.value as? String ?? "") }
+        XCTAssertTrue(recordsValue().contains("見せる写真・記録") && recordsValue().contains("なし"), recordsValue())
+        openVetRow("vet-step-records", title: "見せる写真・記録", app: app)
         revealVetElement(app.buttons["vet-pick-records"], app: app)
-        // Step 2 without a check: no record chosen yet (11/8 step headers).
-        let recordsStep = app.descendants(matching: .any).matching(identifier: "vet-step-records").firstMatch
-        XCTAssertTrue(recordsStep.exists)
-        XCTAssertEqual(recordsStep.label, "2、見せる写真・記録（任意）")
         app.buttons["vet-pick-records"].tap()
         XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
         let measuredSource = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
@@ -2287,6 +2367,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(measuredSource.label.contains("追加済み"), measuredSource.label)
         picker.buttons["vet-pick-done"].tap()
         XCTAssertTrue(picker.waitForNonExistence(timeout: 5))
+        leaveVetPage("見せる写真・記録", app: app)
         revealVetElement(show, app: app); show.tap()
         let reading = app.scrollViews["vet-reading"]
         XCTAssertTrue(reading.waitForExistence(timeout: 5))
@@ -2296,17 +2377,19 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertFalse(reading.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "private-")).firstMatch.exists)
         capture("vet-saved-cat-weight-in-person-display")
         app.terminate(); app.launch()
-        XCTAssertTrue(firstCat.waitForExistence(timeout: 10)); firstCat.tap()
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: chosenInRow, object: firstCat)], timeout: 5), .completed)
+        chooseVetCat(firstCat, app: app)
+        XCTAssertTrue(recordsStep.waitForExistence(timeout: 5))
+        XCTAssertTrue(recordsValue().contains("1件"), recordsValue())
+        openVetRow("vet-step-records", title: "見せる写真・記録", app: app)
         let retainedRecord = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).firstMatch
         revealVetElement(retainedRecord, app: app)
         XCTAssertTrue(retainedRecord.exists)
-        // The row stays above the page; the other むぎ opens in place.
-        XCTAssertTrue(sameNameOtherCat.waitForExistence(timeout: 5)); sameNameOtherCat.tap()
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: chosenInRow, object: sameNameOtherCat)], timeout: 5), .completed)
-        revealVetElement(app.buttons["vet-pick-records"], app: app)
-        XCTAssertTrue(recordsStep.exists)
-        XCTAssertEqual(recordsStep.label, "2、見せる写真・記録（任意）", "Same name must not carry the other cat's records")
+        leaveVetPage("見せる写真・記録", app: app)
+        // The menu stays in the bar; the other むぎ opens in place.
+        chooseVetCat(sameNameOtherCat, app: app)
+        XCTAssertTrue(recordsStep.waitForExistence(timeout: 5))
+        XCTAssertTrue(recordsValue().contains("なし"), "Same name must not carry the other cat's records: " + recordsValue())
+        openVetRow("vet-step-records", title: "見せる写真・記録", app: app)
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).firstMatch.exists)
         revealVetElement(app.buttons["vet-pick-records"], app: app); app.buttons["vet-pick-records"].tap()
         XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
@@ -2326,7 +2409,7 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("weight-input-unknown-day-largest-text")
         app.buttons["photo-memory-note-save"].tap()
         XCTAssertTrue(date.waitForNonExistence(timeout: 5))
-        let cat = app.buttons["vet-cat-09300000-0000-0000-0000-000000000001"]
+        let cat = "vet-cat-09300000-0000-0000-0000-000000000001"
         let confirm = app.switches["vet-confirm-target"]
         let picker = openVetConfirmationThroughPicker(cat, memo: "食べる量が少なかった。", app: app)
         XCTAssertTrue(app.staticTexts["元の写真を開けません。文章と体重だけ追加します。"].waitForExistence(timeout: 5))
@@ -2340,6 +2423,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(picker.exists, "The picker stays open after an addition")
         picker.buttons["vet-pick-done"].tap()
         XCTAssertTrue(picker.waitForNonExistence(timeout: 5))
+        leaveVetPage("見せる写真・記録", app: app)
         let show = app.buttons["vet-show"]; revealVetElement(show, app: app); show.tap()
         // Presented sheets can leave the source memo's accessibility tree alive.
         // Assert the actual in-person reading surface, not every stacked view.
@@ -3627,9 +3711,11 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertFalse(app.staticTexts["membership-offer-heading"].exists, message)
         }
         func showsVetQuestions(_ message: String) {
+            // 11/12: 先生に聞きたいこと is a row that opens its page with the field.
+            openVetRow("vet-step-questions", title: "先生に聞きたいこと", app: app)
             let questions = app.descendants(matching: .any)["vet-questions"].firstMatch
-            for _ in 0..<6 where !questions.exists { app.swipeUp(velocity: .slow) }
             XCTAssertTrue(questions.waitForExistence(timeout: 5), message)
+            leaveVetPage("先生に聞きたいこと", app: app)
         }
         app.buttons["membership-care"].tap()
         // The existing memo's cat has no profile here: its chip is care-cat-<UUID>.
@@ -3644,9 +3730,10 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["care-disclosure-open"].isHittable, "Existing output remains available")
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.buttons["membership-veterinary"].tap()
-        choose(app.buttons["vet-cat-AB000000-0000-0000-0000-000000000001"], "The existing draft's cat stays in the row")
+        // 11/12: 病院で見せる chooses the cat from the menu in the bar.
+        chooseVetCat("vet-cat-AB000000-0000-0000-0000-000000000001", app: app)
         showsVetQuestions("Existing draft remains editable")
-        choose(app.buttons[sora], "An expired membership must not block a new veterinary visit")
+        chooseVetCat(sora, app: app)
         showsVetQuestions("An expired membership must not block a new veterinary visit")
         XCTAssertFalse(app.staticTexts["membership-offer-heading"].exists)
         capture("membership-veterinary-new-free")

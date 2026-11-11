@@ -210,7 +210,8 @@ final class ScreenSpeedSweepUITests: XCTestCase {
                  close: { self.closeTop(app) }, back: [showcase])
 
         let tools: [(String, String, String, [String])] = [
-            ("病院で見せる", "tools-vet-open", "病院で見せる", ["vet-observations"]),
+            // 11/12: rows that open their pages; the first row stands for the page.
+            ("病院で見せる", "tools-vet-open", "病院で見せる", ["vet-step-noticed"]),
             ("預けるとき", "tools-care-open", "預けるとき", ["care-disclosure-open", "care-preview-open"]),
             ("迷子のとき", "tools-lost-cat-open", "迷子のとき", ["lost-cat-identifying-photos", "lost-cat-features", "lost-cat-collar-choice"]),
         ]
@@ -221,6 +222,18 @@ final class ScreenSpeedSweepUITests: XCTestCase {
                      until: [profile, app.navigationBars[title]],
                      close: { self.back(app) }, back: [tile])
             tile.tap()
+            // 11/12: 病院で見せる opens a cat's page by itself (the cats are in
+            // the menu in the bar, not a row of faces): time the tile to its rows.
+            if identifier == "tools-vet-open" {
+                back(app)
+                _ = tile.waitForExistence(timeout: 10)
+                timeOpen(name + "（1匹のページ）", app, open: { self.safeTap(tile, app) },
+                         until: [anyIdentifier(app, pageIdentifiers)],
+                         close: { self.back(app) }, back: [tile])
+                back(app)
+                _ = tile.waitForExistence(timeout: 10)
+                continue
+            }
             guard profile.waitForExistence(timeout: 15) else { missing(name + "（1匹のページ）", app); continue }
             timeOpen(name + "（1匹のページ）", app, open: { profile.tap() },
                      until: [anyIdentifier(app, pageIdentifiers)],
@@ -332,7 +345,7 @@ final class ScreenSpeedSweepUITests: XCTestCase {
 
     @MainActor func testScroll05ToolsHub() { scrollTool(name: "ツール一覧", tile: nil, profile: false, until: ["tools-care-open"]) }
     @MainActor func testScroll06ToolShowcase() { scrollTool(name: "写真を見せる", tile: "tools-showcase-open", profile: false, until: [], prefix: "showcase-") }
-    @MainActor func testScroll07ToolVet() { scrollTool(name: "病院で見せる", tile: "tools-vet-open", profile: true, until: ["vet-observations"]) }
+    @MainActor func testScroll07ToolVet() { scrollTool(name: "病院で見せる", tile: "tools-vet-open", profile: false, until: ["vet-step-noticed"]) }
     @MainActor func testScroll08ToolCare() { scrollTool(name: "預けるとき", tile: "tools-care-open", profile: true, until: ["care-disclosure-open", "care-preview-open"]) }
     @MainActor func testScroll09ToolLostCat() { scrollTool(name: "迷子のとき", tile: "tools-lost-cat-open", profile: true, until: ["lost-cat-identifying-photos", "lost-cat-features", "lost-cat-collar-choice"]) }
     @MainActor func testScroll10ToolEvacuation() { scrollTool(name: "避難に備える", tile: "tools-evacuation-open", profile: false, until: ["evacuation-now-open"]) }
