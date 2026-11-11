@@ -35,12 +35,23 @@ struct ToolRecentPhotoSection: View {
                     Toggle("この子の写真だけ", isOn: $onlyThisCat)
                         .accessibilityIdentifier("tool-photos-only-this-cat")
                 }
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 3), spacing: 4) {
-                    ForEach(shown) { photo in cell(photo) }
+                // One List row per three photos, so the List builds only the
+                // rows on screen. As one grid inside a single row, every photo
+                // was requested at once (1,225 on 11/11: slow, no scroll, crash).
+                ForEach(rows(shown), id: \.first?.localIdentifier) { row in
+                    HStack(spacing: 4) {
+                        ForEach(row) { photo in cell(photo) }
+                        ForEach(row.count..<3, id: \.self) { _ in Color.clear.aspectRatio(1, contentMode: .fit) }
+                    }
+                    .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
+                    .listRowSeparator(.hidden)
                 }
-                .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
             } header: { Text("最近の写真") }
         }
+    }
+
+    private func rows(_ photos: [CatProfilePhotoPresentation]) -> [[CatProfilePhotoPresentation]] {
+        stride(from: 0, to: photos.count, by: 3).map { Array(photos[$0..<min($0 + 3, photos.count)]) }
     }
 
     private func cell(_ photo: CatProfilePhotoPresentation) -> some View {
@@ -50,7 +61,7 @@ struct ToolRecentPhotoSection: View {
                 .overlay {
                     PhotoAssetImageView(localIdentifier: photo.localIdentifier,
                                         targetPixelSize: CGSize(width: 300, height: 300),
-                                        targetAspectRatio: 1, showsFullImage: true)
+                                        targetAspectRatio: 1)
                         .allowsHitTesting(false)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 6))
