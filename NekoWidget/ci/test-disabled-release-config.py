@@ -263,7 +263,9 @@ class DisabledReleaseConfigTests(unittest.TestCase):
         self.assertIn('ExternalLinkRow("利用規約", systemImage: "doc.plaintext")', terms)
         self.assertIn('.accessibilityIdentifier("settings-terms-of-use")', terms)
         notifications = settings.split("private var notificationSettingsRow: some View {", 1)[1].split("\n    }\n", 1)[0]
-        self.assertIn('SettingsActionRow("通知", systemImage: "bell")', notifications)
+        self.assertIn('ExternalLinkRow("通知", systemImage: "bell")', notifications)
+        self.assertNotIn("SettingsActionRow", notifications)
+        self.assertNotIn(".buttonStyle(", notifications)
         self.assertIn("UIApplication.openNotificationSettingsURLString", notifications)
         self.assertIn('.accessibilityIdentifier("settings-notifications")', notifications)
         # The guide is derived from the support page (…/support/ → …/guide/);

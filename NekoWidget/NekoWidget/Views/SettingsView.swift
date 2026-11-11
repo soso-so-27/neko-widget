@@ -554,11 +554,15 @@ struct SettingsView: View {
         }
     }
 
+    // Leaves the app like the links below, so it reads like them: words in
+    // the text color (ExternalLinkRow sets `Color.primary`), only the icon tinted.
     private var notificationSettingsRow: some View {
-        SettingsActionRow("通知", systemImage: "bell") {
+        Button {
             if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
                 UIApplication.shared.open(url)
             }
+        } label: {
+            ExternalLinkRow("通知", systemImage: "bell")
         }
         .accessibilityIdentifier("settings-notifications")
     }
