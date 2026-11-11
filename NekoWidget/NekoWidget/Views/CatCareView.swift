@@ -277,7 +277,7 @@ struct CatCareDetailView: View {
                 }
             }
             // 11/9: the photos every tool shows, open on the page, so a tool's
-            // 「この子のこと」で変える lands right on them.
+            // 「この子のこと」を開く lands right on them.
             identifyingPhotosSection
             // Folded by default: four short rows that say how full each part is.
             // Open one to write in it; nothing is hidden, only folded.
@@ -337,12 +337,7 @@ struct CatCareDetailView: View {
             }
         }
         .sheet(item: $photoRole) { role in
-            NavigationStack {
-                CatCareIdentifyingPhotoPicker(title: Self.photoTitle(role), photos: ownPhotos) { jpeg, assetID in
-                    guard let ref = store.savePhoto(jpeg, sourceAssetID: assetID, origin: .photos) else { return false }
-                    return setPhoto(ref, role)
-                }
-            }
+            CatCareIdentifyingPhotoSheet(subject: subject, role: role) { photoFailed = !$0 }
         }
         .sheet(item: $cropRequest) { request in
             LostCatPhotoCropView(image: request.image) { data in
@@ -395,12 +390,6 @@ struct CatCareDetailView: View {
 
     static func photoTitle(_ role: CatCarePhotoRole) -> String { role == .face ? "顔の写真" : "全身の写真" }
 
-    /// This cat's photos first in the picker; any photo is in 写真アプリ.
-    private var ownPhotos: [CatProfilePhotoPresentation] {
-        guard case let .profile(profile) = subject else { return [] }
-        return profile.confirmedPhotos + profile.manualCandidatePhotos
-    }
-
     private func photoFile(_ role: CatCarePhotoRole) -> URL? {
         guard let ref = currentRecord?.identifyingPhoto(role)?.value ?? nil,
               let url = store.photoURL(ref), FileManager.default.fileExists(atPath: url.path) else { return nil }
@@ -448,10 +437,7 @@ struct CatCareDetailView: View {
     @discardableResult
     private func setPhoto(_ ref: CatCarePhotoRef?, _ role: CatCarePhotoRole) -> Bool {
         guard let catID else { photoFailed = true; return false }
-        let saved = store.update { state in
-            guard let index = state.cats.firstIndex(where: { $0.catID == catID }) else { return }
-            state.cats[index].setIdentifyingPhoto(role, ref, editedAt: Date(), editedBy: state.deviceID)
-        }
+        let saved = store.setIdentifyingPhoto(ref, role, catID: catID)
         photoFailed = !saved
         return saved
     }
@@ -846,14 +832,7 @@ struct CatCareDetailView: View {
     // MARK: Load and save
 
     private func load() {
-        let found: CatCareRecord?
-        switch subject {
-        case let .profile(profile):
-            found = UUID(uuidString: profile.identifier).flatMap { store.ensureRecord(profileID: $0, name: profile.name) }
-        case let .toolCat(id, name):
-            found = store.ensureRecord(toolCatID: id, profileIdentifier: nil, name: name)
-        }
-        guard let record = found else { catID = nil; return }
+        guard let record = store.ensureRecord(for: subject) else { catID = nil; return }
         catID = record.catID
         draft = CatCareDraft(record: record, household: store.state?.household ?? CatCareHousehold())
         savedDraft = draft
@@ -1590,6 +1569,58 @@ struct CatCarePhotoCropRequest: Identifiable {
     let origin: CatCarePhotoRef.Origin
 }
 
+extension CatCareStore {
+    /// The record 「この子のこと」 shows for this cat, made when there is none yet.
+    func ensureRecord(for subject: CatCareSubject) -> CatCareRecord? {
+        switch subject {
+        case let .profile(profile):
+            return UUID(uuidString: profile.identifier).flatMap { ensureRecord(profileID: $0, name: profile.name) }
+        case let .toolCat(id, name):
+            return ensureRecord(toolCatID: id, profileIdentifier: nil, name: name)
+        }
+    }
+
+    /// One 見分ける写真 set or taken off, saved at once (not with the typed draft).
+    func setIdentifyingPhoto(_ ref: CatCarePhotoRef?, _ role: CatCarePhotoRole, catID: UUID) -> Bool {
+        update { state in
+            guard let index = state.cats.firstIndex(where: { $0.catID == catID }) else { return }
+            state.cats[index].setIdentifyingPhoto(role, ref, editedAt: Date(), editedBy: state.deviceID)
+        }
+    }
+}
+
+/// Choosing one 見分ける写真, the same sheet from 「この子のこと」 and from a
+/// tool's photo (11/11). Either way it is kept in 「この子のこと」 only.
+struct CatCareIdentifyingPhotoSheet: View {
+    let subject: CatCareSubject
+    let role: CatCarePhotoRole
+    /// Whether the chosen photo was kept, once it has been written.
+    var onSaved: (Bool) -> Void = { _ in }
+    @ObservedObject private var store = CatCareStore.shared
+
+    var body: some View {
+        NavigationStack {
+            CatCareIdentifyingPhotoPicker(title: CatCareDetailView.photoTitle(role), photos: Self.photos(subject)) { jpeg, assetID in
+                save(jpeg, assetID: assetID)
+            }
+        }
+    }
+
+    /// This cat's photos first in the picker; any photo is in 写真アプリ.
+    static func photos(_ subject: CatCareSubject) -> [CatProfilePhotoPresentation] {
+        guard case let .profile(profile) = subject else { return [] }
+        return profile.confirmedPhotos + profile.manualCandidatePhotos
+    }
+
+    private func save(_ jpeg: Data, assetID: String?) -> Bool {
+        guard let ref = store.savePhoto(jpeg, sourceAssetID: assetID, origin: .photos) else { return false }
+        guard let catID = store.ensureRecord(for: subject)?.catID else { onSaved(false); return false }
+        let saved = store.setIdentifyingPhoto(ref, role, catID: catID)
+        onSaved(saved)
+        return saved
+    }
+}
+
 /// Choosing a 見分ける写真 in 「この子のこと」: this cat's photos, newest first,
 /// or any photo from 写真アプリ.
 private struct CatCareIdentifyingPhotoPicker: View {
@@ -1907,6 +1938,9 @@ struct ToolPhotoSlot<Actions: View>: View {
     /// Shown only (11/9): a tool showing 「この子のこと」's photo. No menu and no
     /// picker; the row around it opens 「この子のこと」.
     var readOnly = false
+    /// Tap to choose, no menu (11/11): a tool's 見分ける写真, chosen into
+    /// 「この子のこと」; taking off and cropping stay there.
+    var chooseOnly = false
     let identifier: String
     let actionsIdentifier: String
     let choose: () -> Void
@@ -1947,7 +1981,7 @@ struct ToolPhotoSlot<Actions: View>: View {
             } else {
                 Button(action: choose) { tile }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(title)
+                    .accessibilityLabel(chooseOnly && !hasPhoto ? title + "、まだありません" : title)
                     .accessibilityIdentifier(identifier)
                     .disabled(disabled)
             }
@@ -1955,7 +1989,7 @@ struct ToolPhotoSlot<Actions: View>: View {
                 Text(title).font(.caption)
                     .foregroundStyle(dimmedTitle ? Color.secondary : Color.primary)
                 Spacer(minLength: 0)
-                if hasPhoto && !readOnly {
+                if hasPhoto && !readOnly && !chooseOnly {
                     Menu { actions } label: {
                         Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
                     }
@@ -1986,10 +2020,18 @@ extension ToolPhotoSlot where Actions == EmptyView {
                   choose: {}) { EmptyView() }
         readOnly = true
     }
+
+    /// A tool's 見分ける写真 (11/11): tap to choose it into 「この子のこと」.
+    init(choosing title: String, file: URL?, disabled: Bool, identifier: String, choose: @escaping () -> Void) {
+        self.init(title, image: nil, file: file, disabled: disabled, identifier: identifier,
+                  actionsIdentifier: identifier + "-actions", choose: choose) { EmptyView() }
+        chooseOnly = true
+    }
 }
 
-/// 見分ける写真 in a tool (11/9): chosen once in 「この子のこと」, shown here.
-/// The whole row opens 「この子のこと」; there is no second picker in a tool.
+/// 見分ける写真 in a tool: kept in 「この子のこと」 (11/9). Tapping a photo
+/// opens the same chooser as there and keeps the choice there (11/11);
+/// taking off and cropping stay in 「この子のこと」, one link away.
 struct ToolIdentifyingPhotos: View {
     let faceFile: URL?
     let bodyFile: URL?
@@ -2001,26 +2043,59 @@ struct ToolIdentifyingPhotos: View {
 
     var body: some View {
         if let subject {
-            NavigationLink { CatCareSubjectView(subject: subject, profiles: profiles) } label: { content }
-                .accessibilityIdentifier(identifier)
-                .accessibilityHint("「この子のこと」で変えます")
+            ToolIdentifyingPhotoChoice(faceFile: faceFile, bodyFile: bodyFile, subject: subject, profiles: profiles,
+                                       showsBody: showsBody, identifier: identifier)
         } else {
-            content
-        }
-    }
-
-    private var content: some View {
-        VStack(alignment: .leading, spacing: 6) {
             ToolPhotoGrid {
                 ToolPhotoSlot(readOnly: "顔の写真", file: faceFile, identifier: identifier + "-face")
                 if showsBody {
                     ToolPhotoSlot(readOnly: "全身の写真", file: bodyFile, identifier: identifier + "-body")
                 }
             }
-            if subject != nil {
-                Text("「この子のこと」で変える").font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// A cat with 「この子のこと」: each photo opens its chooser, and one quiet
+/// link opens 「この子のこと」 for the rest (11/11). Two rows, so the link
+/// row never takes over the taps on the photos.
+private struct ToolIdentifyingPhotoChoice: View {
+    let faceFile: URL?
+    let bodyFile: URL?
+    let subject: CatCareSubject
+    let profiles: [CatProfilePresentation]
+    let showsBody: Bool
+    let identifier: String
+    @ObservedObject private var store = CatCareStore.shared
+    @State private var photoRole: CatCarePhotoRole?
+
+    var body: some View {
+        photos
+        NavigationLink { CatCareSubjectView(subject: subject, profiles: profiles) } label: {
+            Text("「この子のこと」を開く").font(.footnote)
+        }
+        .accessibilityIdentifier(identifier + "-open-cat-care")
+    }
+
+    /// A failed save is said in the chooser, which stays open.
+    private var photos: some View {
+        ToolPhotoGrid {
+            slot(.face, file: faceFile, identifier: identifier + "-face")
+            if showsBody {
+                slot(.body, file: bodyFile, identifier: identifier + "-body")
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(identifier)
+        .sheet(item: $photoRole) { role in
+            CatCareIdentifyingPhotoSheet(subject: subject, role: role)
+        }
+        .appRecordEditing(retainWhileHidden: photoRole != nil)
+    }
+
+    private func slot(_ role: CatCarePhotoRole, file: URL?, identifier: String) -> some View {
+        ToolPhotoSlot(choosing: CatCareDetailView.photoTitle(role), file: file, disabled: !store.canSave,
+                      identifier: identifier, choose: { photoRole = role })
     }
 }
 
