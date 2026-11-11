@@ -1235,27 +1235,30 @@ private struct LostCatPreviewView: View {
             }
         }
         .navigationTitle("できあがり")
+        // 11/11: the same bottom bar as the input pages (full-width, large).
         .safeAreaInset(edge: .bottom) {
-            Button("保存・共有する", systemImage: "square.and.arrow.up") {
-                do {
-                    let url: URL
-                    #if DEBUG
-                    if let verify = fixtureVerification {
-                        url = try LostCatFlyerRenderer.createFixture(draft, output: format, verify: verify)
-                    } else {
+            ToolMakeBar {
+                Button {
+                    do {
+                        let url: URL
+                        #if DEBUG
+                        if let verify = fixtureVerification {
+                            url = try LostCatFlyerRenderer.createFixture(draft, output: format, verify: verify)
+                        } else {
+                            url = try LostCatFlyerRenderer.create(draft, output: format)
+                        }
+                        #else
                         url = try LostCatFlyerRenderer.create(draft, output: format)
-                    }
-                    #else
-                    url = try LostCatFlyerRenderer.create(draft, output: format)
-                    #endif
-                    // The SNS image and its post go out together; the others are the file alone.
-                    payload = LostCatSharePayload(url: url, text: format.sharesPost ? draft.message : nil); exportError = false
-                } catch { exportError = true }
+                        #endif
+                        // The SNS image and its post go out together; the others are the file alone.
+                        payload = LostCatSharePayload(url: url, text: format.sharesPost ? draft.message : nil); exportError = false
+                    } catch { exportError = true }
+                } label: {
+                    Label("保存・共有する", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity)
+                }
+                .disabled(!issues.isEmpty)
+                .accessibilityIdentifier(format.accessibilityIdentifier)
             }
-            .buttonStyle(.borderedProminent).frame(maxWidth: .infinity, minHeight: 44)
-            .disabled(!issues.isEmpty)
-            .accessibilityIdentifier(format.accessibilityIdentifier)
-            .padding().background(.regularMaterial)
         }
         .task(id: format) {
             if issues.isEmpty, previews[format] == nil {
@@ -1365,12 +1368,14 @@ private struct LostCatFoundView: View {
         .navigationTitle(LostCatText.foundTitle)
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) {
+            // 11/11: the input pages' bar; still hidden while the message is typed.
             if !editing {
-                VStack(spacing: 6) {
+                ToolMakeBar(top: {
                     if exportError {
                         Text("作れませんでした。もう一度お試しください。").font(.footnote).foregroundStyle(.red)
                     }
-                    Button("保存・共有する", systemImage: "square.and.arrow.up") {
+                }) {
+                    Button {
                         do {
                             // Without a photo the post goes alone.
                             var url: URL?
@@ -1378,12 +1383,12 @@ private struct LostCatFoundView: View {
                             share = LostCatFoundShare(url: url, text: found.post)
                             exportError = false
                         } catch { exportError = true }
+                    } label: {
+                        Label("保存・共有する", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent).frame(maxWidth: .infinity, minHeight: 44)
                     .disabled(issue != nil)
                     .accessibilityIdentifier("lost-cat-share-found")
                 }
-                .padding().background(.regularMaterial)
             }
         }
         .task(id: message) {

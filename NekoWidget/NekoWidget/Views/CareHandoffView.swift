@@ -665,12 +665,14 @@ private struct CareDisplayView: View {
             }.padding(16)
         }.background(Color(.systemGroupedBackground))
             .navigationTitle("できあがり").navigationBarTitleDisplayMode(.inline)
+            // 11/11: the input pages' bar (full-width, large); each button keeps its own style.
             .safeAreaInset(edge: .bottom) {
-                ViewThatFits {
-                    HStack(spacing: 12) { shareButton("PDFで渡す", pdf: true); shareButton("画像で渡す", pdf: false) }
-                    VStack(spacing: 8) { shareButton("PDFで渡す", pdf: true); shareButton("画像で渡す", pdf: false) }
+                ToolMakeBar {
+                    ViewThatFits {
+                        HStack(spacing: 12) { shareButton("PDFで渡す", pdf: true); shareButton("画像で渡す", pdf: false) }
+                        VStack(spacing: 8) { shareButton("PDFで渡す", pdf: true); shareButton("画像で渡す", pdf: false) }
+                    }
                 }
-                .padding().background(.regularMaterial)
             }
             .sheet(item: $export, onDismiss: {
                 if let retainedDirectory { CareHandoffExporter.remove(retainedDirectory) }
