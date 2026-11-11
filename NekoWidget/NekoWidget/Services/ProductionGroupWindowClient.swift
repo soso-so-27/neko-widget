@@ -1183,9 +1183,11 @@ struct GroupVerifiedIncomingPhoto: Sendable {
     let photo: GroupPhoto
     let jpeg: Data
     let ciphertextSHA256: Data
+    let clientMomentID: String
     fileprivate let recipientDeviceID: String
-    fileprivate init(photo: GroupPhoto, jpeg: Data, ciphertextSHA256: Data, recipientDeviceID: String) {
-        self.photo = photo; self.jpeg = jpeg; self.ciphertextSHA256 = ciphertextSHA256; self.recipientDeviceID = recipientDeviceID
+    fileprivate init(photo: GroupPhoto, jpeg: Data, ciphertextSHA256: Data, clientMomentID: String, recipientDeviceID: String) {
+        self.photo = photo; self.jpeg = jpeg; self.ciphertextSHA256 = ciphertextSHA256
+        self.clientMomentID = clientMomentID; self.recipientDeviceID = recipientDeviceID
     }
 }
 private struct GroupPreparedPhoto: Codable {
@@ -1383,7 +1385,8 @@ extension ProductionGroupWindowClient {
                 photo: .init(clientMomentID: row.clientMomentID, senderDeviceID: row.senderDeviceID, ciphertext: cipher, signature: row.senderSignature),
                 roomKey: key, roster: roster)
         }
-        return try .init(photo: photo, jpeg: jpeg, ciphertextSHA256: row.ciphertextSHA256, recipientDeviceID: identity.deviceID)
+        return try .init(photo: photo, jpeg: jpeg, ciphertextSHA256: row.ciphertextSHA256,
+                         clientMomentID: row.clientMomentID, recipientDeviceID: identity.deviceID)
     }
     /// ACK follows the caller's successful DURABLE app-store write. Decrypting
     /// bytes or drawing a screen alone never shortens the server's retention.

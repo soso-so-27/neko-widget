@@ -363,10 +363,18 @@ final class GroupWindowScreenModel: ObservableObject {
                          outgoingOperationID: UUID? = nil) async -> GroupPhotoModeration.Verdict? {
         do {
             let incoming = try await client.fetchPhoto(photoID: photo.id, windowID: windowID)
-            let isOwn = photo.senderParticipantID == me
-            // A photo this iPhone sent was checked before sending.
+            let verifiedMomentID = incoming.verified?.clientMomentID
+            let isOwn = incoming.photo.senderParticipantID == me
+            let alreadyReceived: Bool
+            if let verifiedMomentID {
+                alreadyReceived = try await store.hasReceived(verifiedMomentID: verifiedMomentID, windowID: windowID)
+            } else {
+                alreadyReceived = false
+            }
+            // A sent photo was checked before sending. A replay is not shown
+            // or written again: the store rechecks its signed ID before saving.
             let verdict: GroupPhotoModeration.Verdict
-            if isOwn {
+            if isOwn || alreadyReceived {
                 verdict = .safe
             } else {
                 verdict = await GroupPhotoModeration.check(incoming.jpeg, with: moderation)
@@ -377,6 +385,14 @@ final class GroupWindowScreenModel: ObservableObject {
             let windowID = self.windowID
             let hidden = verdict == .hidden
             try await client.keep(incoming, outgoingOperationID: outgoingOperationID) { kept, jpeg in
+                if alreadyReceived {
+                    // Forgetting a window between the two checks must not
+                    // turn an acknowledged replay into an unchecked write.
+                    guard let verifiedMomentID,
+                          try await store.hasReceived(verifiedMomentID: verifiedMomentID, windowID: windowID)
+                    else { throw GroupClientError.invalidResponse }
+                    return
+                }
                 try await store.save(
                     .init(
                         id: kept.id,
@@ -387,7 +403,8 @@ final class GroupWindowScreenModel: ObservableObject {
                         isOwn: isOwn, caption: hidden ? nil : kept.caption
                     ),
                     jpeg: hidden ? nil : jpeg,
-                    windowID: windowID
+                    windowID: windowID,
+                    verifiedMomentID: verifiedMomentID
                 )
             }
         } catch {

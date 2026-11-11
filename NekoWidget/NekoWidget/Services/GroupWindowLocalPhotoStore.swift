@@ -29,6 +29,8 @@ actor GroupWindowLocalPhotoStore {
     private struct Index: Codable {
         var schemaVersion = 1
         var entries: [Entry] = []
+        // A signed sender ID stays known after its visible row is evicted.
+        var receivedMomentIDs: Set<String>? = nil
     }
 
     /// Windows this iPhone has kept photos for, with the last name seen, so
@@ -76,6 +78,10 @@ actor GroupWindowLocalPhotoStore {
     /// Includes photos removed from this iPhone, which are not downloaded again.
     func contains(photoID: String, windowID: String) -> Bool {
         ((try? loadIndex(windowID: windowID).entries) ?? []).contains { $0.id == photoID }
+    }
+
+    func hasReceived(verifiedMomentID: String, windowID: String) throws -> Bool {
+        try loadIndex(windowID: windowID).receivedMomentIDs?.contains(verifiedMomentID) == true
     }
 
     func entry(photoID: String, windowID: String) -> Entry? {
@@ -213,22 +219,27 @@ actor GroupWindowLocalPhotoStore {
 
     /// Writes the image (unless hidden) before the index, both atomically,
     /// so an interrupted write never lists a photo that is not there.
-    func save(_ entry: Entry, jpeg: Data?, windowID: String) throws {
+    func save(_ entry: Entry, jpeg: Data?, windowID: String, verifiedMomentID: String? = nil) throws {
         var index = try loadIndex(windowID: windowID)
         guard !index.entries.contains(where: { $0.id == entry.id }) else { return }
+        if let id = verifiedMomentID {
+            guard GroupCanonical.validID(id) else { throw CocoaError(.fileReadCorruptFile) }
+            var received = index.receivedMomentIDs ?? []
+            guard received.insert(id).inserted else { return }
+            index.receivedMomentIDs = received
+        }
         if !entry.isHidden {
             guard let jpeg else { throw CocoaError(.fileWriteUnknown) }
             try write(jpeg, to: photoURL(photoID: entry.id, windowID: windowID))
         }
         index.entries.append(entry)
         index.entries.sort { $0.createdAt > $1.createdAt }
-        if index.entries.count > Self.maximumEntriesPerWindow {
-            for removed in index.entries[Self.maximumEntriesPerWindow...] {
-                try? FileManager.default.removeItem(at: photoURL(photoID: removed.id, windowID: windowID))
-            }
-            index.entries = Array(index.entries.prefix(Self.maximumEntriesPerWindow))
-        }
+        let evicted = index.entries.dropFirst(Self.maximumEntriesPerWindow)
+        index.entries = Array(index.entries.prefix(Self.maximumEntriesPerWindow))
         try write(JSONEncoder().encode(index), to: indexURL(windowID: windowID))
+        for removed in evicted {
+            try? FileManager.default.removeItem(at: photoURL(photoID: removed.id, windowID: windowID))
+        }
     }
 
     // MARK: - Files
