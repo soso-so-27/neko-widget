@@ -3413,7 +3413,9 @@ class LostCatToolReview1108Tests(unittest.TestCase):
         view = source("NekoWidget/Views/CatPreparednessView.swift")
         preview = section(view, "private struct LostCatPreviewView", "private struct LostCatActivitySheet")
         self.assertIn('.navigationTitle("できあがり")', preview)
-        self.assertIn('Button("保存・共有する", systemImage: "square.and.arrow.up")', preview)
+        # 11/11: the input pages' bottom bar, the button the full width.
+        self.assertIn("ToolMakeBar {", preview)
+        self.assertIn('Label("保存・共有する", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity)', preview)
         self.assertIn("text: format.sharesPost ? draft.message : nil", preview)
         self.assertIn("var sharesPost: Bool { self == .social }", source("NekoWidget/Services/LostCatIncident.swift"))
         self.assertIn("LostCatActivitySheet(items: item.items)", preview)
@@ -4483,7 +4485,13 @@ class ShowcaseCatCareTests(unittest.TestCase):
         self.assertLess(everyday.index("showcaseToolCard"), everyday.index('.accessibilityIdentifier("tools-vet-open")'))
         self.assertIn("ToolTint.everydayDeep", everyday)
         self.assertNotIn("tools-vet-open", emergency)
-        for identifier in ("tools-lost-cat-open", "tools-care-open", "tools-evacuation-open"):
+        # 11/11: 預けるとき is planned (travel), so it is everyday too, after the vet memo.
+        self.assertLess(everyday.index('.accessibilityIdentifier("tools-vet-open")'),
+                        everyday.index('.accessibilityIdentifier("tools-care-open")'))
+        self.assertIn("ToolTint.everydayMid", everyday)
+        self.assertNotIn("tools-care-open", emergency)
+        self.assertNotIn("emergencyWarm", tab)
+        for identifier in ("tools-lost-cat-open", "tools-evacuation-open"):
             self.assertIn(identifier, emergency)
 
 
@@ -4582,6 +4590,10 @@ class ToolFlowTests(unittest.TestCase):
         for text in (care, evacuation, vet):
             self.assertNotIn('Label("書き出す", systemImage: "square.and.arrow.up")', text)
         self.assertIn('shareButton("PDFで渡す", pdf: true)', care)
+        # 11/11: the output screens use the input pages' bottom bar.
+        for text in (care, evacuation, vet):
+            self.assertRegex(text, r"\.safeAreaInset\(edge: \.bottom\) \{\s*ToolMakeBar \{\s*ViewThatFits \{")
+            self.assertNotIn(".padding().background(.regularMaterial)", text)
         self.assertIn('"evacuation-share-pdf"', evacuation)
         self.assertIn('"vet-export-pdf"', vet)
         # The button says where it goes: the next step's name (11/8 型).
@@ -6691,7 +6703,9 @@ class LostCatRoundTwoTests(unittest.TestCase):
 
     def test_found_image_post_and_take_down_line(self) -> None:
         self.assertIn('.navigationTitle(LostCatText.foundTitle)', self.found)
-        self.assertIn('Button("保存・共有する", systemImage: "square.and.arrow.up")', self.found)
+        # 11/11: the input pages' bottom bar, still hidden while the message is typed.
+        self.assertRegex(self.found, r"if !editing \{\s*ToolMakeBar\(top: \{")
+        self.assertIn('Label("保存・共有する", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity)', self.found)
         self.assertIn("share = LostCatFoundShare(url: url, text: found.post)", self.found)
         self.assertIn(".disabled(issue != nil)", self.found)
         # The reminder only after a share or save finished.

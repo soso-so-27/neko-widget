@@ -217,10 +217,11 @@ private enum ToolTint {
     // (the lightest blue and the two lightest oranges were 2.2 to 2.9:1).
     static let everydayLight = Color(red: 0.30, green: 0.56, blue: 0.82)
     static let everydayDeep = Color(red: 0.22, green: 0.42, blue: 0.70)
+    // 11/11: 預けるとき moved to ふだん; a blue between the light and deep ones.
+    static let everydayMid = Color(red: 0.26, green: 0.49, blue: 0.76)
     // もしも: one warm family in steps of depth (10/26: four unrelated colours
     // read as four different apps). Red is no longer used for a tool.
     static let emergency = Color(red: 0.86, green: 0.46, blue: 0.14)
-    static let emergencyWarm = Color(red: 0.80, green: 0.41, blue: 0.17)
     static let emergencyDeep = Color(red: 0.72, green: 0.37, blue: 0.18)
     static let emergencyBrown = Color(red: 0.62, green: 0.33, blue: 0.18)
 }
@@ -1212,6 +1213,18 @@ struct MainTabView: View {
                     }
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-vet-open")
+                    // 11/11: handing a cat over is planned (travel), not an emergency.
+                    NavigationLink {
+                        LazyToolDestination {
+                            CareHandoffView(profiles: catProfilesPresentation.profiles,
+                                            unregisteredPhotos: unregisteredCatPhotos)
+                        }
+                    } label: {
+                        ToolTile(title: "預けるとき", systemImage: "hand.raised.fill",
+                                 subtitle: "お世話のメモを渡す", tint: ToolTint.everydayMid)
+                    }
+                    .buttonStyle(ToolCardButtonStyle())
+                    .accessibilityIdentifier("tools-care-open")
                 }
                 toolSection("もしものとき") {
                     NavigationLink {
@@ -1227,17 +1240,6 @@ struct MainTabView: View {
                     }
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-lost-cat-open")
-                    NavigationLink {
-                        LazyToolDestination {
-                            CareHandoffView(profiles: catProfilesPresentation.profiles,
-                                            unregisteredPhotos: unregisteredCatPhotos)
-                        }
-                    } label: {
-                        ToolTile(title: "預けるとき", systemImage: "hand.raised.fill",
-                                 subtitle: "お世話のメモを渡す", tint: ToolTint.emergencyWarm)
-                    }
-                    .buttonStyle(ToolCardButtonStyle())
-                    .accessibilityIdentifier("tools-care-open")
                     NavigationLink {
                         LazyToolDestination {
                             EvacuationPreparationView(profiles: catProfilesPresentation.profiles,
