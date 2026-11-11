@@ -305,10 +305,9 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
     /// The shared plan chooses the photo before testing a size's cache. A
     /// missing rendition stays empty at that slot instead of showing the next
     /// photo, and the store secures its lease before returning these entries.
-    /// While membership selection is stopped the store returns its frozen
-    /// photo (kept across pool changes and cache cleanup) with a long reload,
-    /// so `.needsApp` below is reached only without a journal, with a
-    /// corrupted journal, or when that photo's rendition is unreadable.
+    /// The daily photo is free (11/11), so selection is never stopped here;
+    /// `.needsApp` below is reached only without a journal, with a corrupted
+    /// journal, or when the photo's rendition is unreadable.
     private func cloudyTimeline(sourceID: String, now: Date, variant: WidgetImageVariant) -> Timeline<NekoWidgetEntry>? {
         let isProfile = sourceID.hasPrefix(CloudyWindowStore.profilePrefix)
         guard sourceID == WidgetPhotoSource.personalLibraryID || isProfile else { return nil }
@@ -316,15 +315,9 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             return isProfile ? Timeline(entries: [.empty(at: now, imageVariant: variant,
                 photoSourceIdentifier: sourceID, emptyStateReason: .sourceUnavailable)], policy: .never) : nil
         }
-        let membership = PersonalWidgetMembershipStore.read()
-        let enforced = PersonalWidgetMembershipStore.isEnforced
-        if enforced && membership == nil {
-            return Timeline(entries: [.empty(at: now, imageVariant: variant, photoSourceIdentifier: sourceID,
-                emptyStateReason: .needsApp)], policy: .after(now.addingTimeInterval(20 * 60)))
-        }
-        let allows = !enforced || membership?.allowsSelection(at: now) == true
+        // The daily photo is free for everyone (11/11): no membership gate.
         let plan = (try? CloudyWindowStore.shared.timeline(scopeID: sourceID, now: now,
-            allowsSelection: allows, selectionValidUntil: enforced ? membership?.validUntil : nil)) ?? []
+            allowsSelection: true, selectionValidUntil: nil)) ?? []
         let likes = readLikeState()
         let entries = plan.prefix(2).map { planned in
             var entry = NekoWidgetEntry(date: planned.date, localIdentifier: planned.photo.photoID,
@@ -344,22 +337,13 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
 
     private func personalRediscoveryTimeline(now: Date, variant: WidgetImageVariant) -> Timeline<NekoWidgetEntry>? {
         do {
-            let enforced = PersonalWidgetMembershipStore.isEnforced
-            let membership = PersonalWidgetMembershipStore.read()
-            let allowsSelection = !enforced || membership?.allowsSelection(at: now) == true
-            let cutoff = enforced ? membership?.validUntil : nil
+            // The daily photo is free for everyone (11/11): no membership gate.
             guard let plan = try PersonalRediscoveryStore.shared.issueTimeline(
-                now: now, variant: variant, allowsSelection: allowsSelection,
-                selectionValidUntil: cutoff
+                now: now, variant: variant, allowsSelection: true,
+                selectionValidUntil: nil
             ) else {
                 // Only a device that has not adopted the shared plan uses the
                 // legacy manifest. Corrupt or invalidated plans fail closed.
-                // With enforcement, a missing journal cannot prove which legacy
-                // photo was shown. Never restart legacy rotation to fill the gap.
-                if enforced {
-                    return Timeline(entries: [.empty(at: now, imageVariant: variant,
-                        emptyStateReason: .needsApp)], policy: .after(now.addingTimeInterval(20 * 60)))
-                }
                 return nil
             }
             let likes = readLikeState()
@@ -380,10 +364,6 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                     familyHeartStatus: .hidden, familyActionsRequireApp: false,
                     emptyStateReason: .none)
                 entry.personalRediscoveryAction = planned.action
-                // Informational only: the view shows the photo alone while
-                // paused (no pause, lock or grey treatment).
-                entry.personalSelectionPaused = enforced && (!allowsSelection
-                    || cutoff.map { planned.date >= $0 } == true)
                 return entry
             }
             return Timeline(entries: entries.isEmpty ? [.empty(at: now, imageVariant: variant)] : entries,
@@ -572,7 +552,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             familyActionsRequireApp: false,
             emptyStateReason: .none
         )
-        entry.familyCaption = cached.senderDisplayName.map { "\(GroupDisplayName.withSan($0))から" }
+        entry.familyCaption = cached.senderDisplayName.map { GroupDisplayName.from($0) }
         if let photoID = cached.photoID {
             // The app writes no sender for a photo this iPhone sent.
             entry.groupWindowPhoto = GroupWindowPhotoReference(

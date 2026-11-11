@@ -465,10 +465,6 @@ struct MainTabView: View {
     @State private var selectedTab: AppTab = .memories
     @State private var groupShareNavigationGeneration = UUID()
     @Environment(\.membershipAccess) private var membershipAccess
-    /// Without Plus the personal Widget keeps its last photo (ADR-027 1章).
-    private var personalWidgetPaused: Bool {
-        membershipAccess.decision(for: .refreshPersonalWidget) == .membershipRequired
-    }
     @ObservedObject private var groupWindowOpenInbox = GroupWindowOpenInbox.shared
     @ObservedObject private var careStore = CatCareStore.shared
     /// Shared cats with no profile on this iPhone (an invited family) sit in
@@ -522,13 +518,13 @@ struct MainTabView: View {
                 return labels
             }) ?? [:]
         }.value
-        // Group window photos kept with 「自分のお気に入りに追加」: 「ゆかさんから」.
+        // Group window photos kept with 「自分のお気に入りに追加」: 「ゆかから」.
         var labels = sources
         let store = GroupWindowLocalPhotoStore.shared
         for window in await store.knownWindows() {
             for entry in await store.entries(windowID: window.id) {
                 if let identifier = entry.favoriteLocalIdentifier {
-                    labels[identifier] = GroupDisplayName.withSan(entry.senderDisplayName) + "から"
+                    labels[identifier] = GroupDisplayName.from(entry.senderDisplayName)
                 }
             }
         }
@@ -2083,7 +2079,7 @@ struct MainTabView: View {
                 libraryPhotos: libraryContext ? photoLibraryBrowserPhotos : scopedCatPhotos(for: .everyone),
                 initialPhoto: initialPhoto,
                 widgetShownAt: shownAt,
-                showsWidgetTiming: openedFromWidget && !personalWidgetPaused,
+                showsWidgetTiming: openedFromWidget,
                 setMemorySaved: setMemorySaved,
                 exportMemoryPhoto: exportMemoryPhoto,
                 excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
@@ -2108,10 +2104,7 @@ struct MainTabView: View {
             // installed host's state, not MainTabView.body's unrelated state.
             .environment(\.openPhotoRelatedAlbum, openRelatedAlbumOverride
                 ?? (libraryContext ? openPhotoLibraryRelatedAlbum : { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 }))
-            .safeAreaInset(edge: .top) {
-                if openedFromWidget, personalWidgetPaused { WidgetResumeOffer() }
-            }
-            .task { if mayAskForReview, !personalWidgetPaused { await askForReviewAfterPhotoIfDue() } }
+            .task { if mayAskForReview { await askForReviewAfterPhotoIfDue() } }
             .id(photoPresentationVersion.sourceResolutionRevision)
         } else {
             unavailablePersonalPhotoView
@@ -3902,34 +3895,6 @@ private struct GrowingSummaryGate: ViewModifier {
 private extension View {
     func growingSummaryFeature(_ context: PlusOfferContext, hasContent: Bool) -> some View {
         modifier(GrowingSummaryGate(context: context, hasContent: hasContent))
-    }
-}
-
-/// The photo opened from a personal Widget that kept its last photo (ADR-027
-/// 5章): one line on the state and the way to Plus. Nothing opens by itself;
-/// a tap on the Widget is a look at the photo, not a request to buy.
-private struct WidgetResumeOffer: View {
-    @State private var showsOffer = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("ホーム画面の写真は、いまは最後の1枚のままです。")
-                .font(.subheadline).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button(PlusOfferContext.widgetResume.entryTitle) { showsOffer = true }
-                .font(.subheadline.weight(.semibold))
-                .frame(minHeight: 44)
-                .accessibilityIdentifier("plus-offer-entry-widget-resume")
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16).padding(.top, 8)
-        .background(.bar)
-        .accessibilityIdentifier("widget-resume-offer")
-        .sheet(isPresented: $showsOffer, onDismiss: {
-            NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
-        }) {
-            MembershipOfferSheet(model: .live(), context: .widgetResume) { _ in showsOffer = false }
-        }
     }
 }
 

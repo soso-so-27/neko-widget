@@ -249,14 +249,27 @@ enum GroupWidgetCache {
     }
 }
 
-/// A person's name as other people see it: 「ゆいさん」, but 「お母さん」
-/// stays 「お母さん」 (no 「お母さんさん」). Shared by the app and the Widget.
+/// A person's name as other people see it. Sentences about the person
+/// (block, remove, invite) use 「ゆいさん」, but 「お母さん」 stays 「お母さん」
+/// (no 「お母さんさん」). Shared by the app and the Widget.
 enum GroupDisplayName {
     private static let endings = ["さん", "ちゃん", "くん", "君", "さま", "様", "先生", "氏"]
 
     static func withSan(_ name: String) -> String {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { return "名前のない人" }
+        let trimmed = plain(name)
+        if trimmed == unnamed { return trimmed }
         return endings.contains(where: { trimmed.hasSuffix($0) }) ? trimmed : trimmed + "さん"
     }
+
+    /// The name exactly as the person chose it. Names are nicknames, so the
+    /// sender of a まど photo reads 「ママから」, never 「ママさんから」 (11/11).
+    static func plain(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? unnamed : trimmed
+    }
+
+    /// The sender line of a まど photo: 「ママから」.
+    static func from(_ name: String) -> String { plain(name) + "から" }
+
+    private static let unnamed = "名前のない人"
 }
