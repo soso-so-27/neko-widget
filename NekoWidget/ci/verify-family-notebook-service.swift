@@ -11,6 +11,7 @@ private actor Relay: GroupHTTPTransport {
     var family: UUID?, generation: Int64 = 1
     var members = Set<String>(), payer: String?
     var invite: [String: Any]?, join: [String: Any]?
+    var nextRequestOverride: Data?
     var receipts: [String: (Data, Data)] = [:], sent: [(String, Data)] = []
     var parallelProbe = false, activeReads = 0, peakReads = 0, stalePayer = false, cryptoReads = 0
     func probe(stale: Bool = false) { parallelProbe = true; activeReads = 0; peakReads = 0; cryptoReads = 0; stalePayer = stale }
@@ -24,6 +25,13 @@ private actor Relay: GroupHTTPTransport {
     func corruptNextReceipt() { corrupt = true }
     func bodies(_ suffix: String) -> [Data] { sent.filter { $0.0.hasSuffix(suffix) }.map(\.1) }
     func forgetMembership(_ person: String) { members.remove(person) }
+    func substituteRequest(field: String, value: String?) throws -> Data {
+        var row = join!
+        row[field] = value
+        let raw = try JSONSerialization.data(withJSONObject: row)
+        nextRequestOverride = raw
+        return raw
+    }
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
         let path = request.url!.path, body = request.httpBody ?? Data(), method = request.httpMethod!
         if path.contains("/crypto/") { cryptoReads += 1 }
@@ -61,7 +69,10 @@ private actor Relay: GroupHTTPTransport {
                 return try reply(["schemaVersion": 1, "familyId": familyString, "generation": stalePayer ? generation + 1 : generation, "members": rows])
             }
             if path.hasSuffix("/requests") {
-                return try reply(["schemaVersion": 1, "familyId": familyString, "generation": generation, "requests": join.map { [$0] } ?? []])
+                let override = nextRequestOverride
+                nextRequestOverride = nil
+                let requests = try override.map { [try JSONSerialization.jsonObject(with: $0)] } ?? join.map { [$0] } ?? []
+                return try reply(["schemaVersion": 1, "familyId": familyString, "generation": generation, "requests": requests])
             }
             if path.hasSuffix("/payer") {
                 return try reply(["schemaVersion": 1, "familyId": familyString, "generation": generation, "sharingStatus": "active",
@@ -101,7 +112,8 @@ private actor Relay: GroupHTTPTransport {
             join = ["requestId": op, "invitationId": invitationID, "personId": identity.personID, "deviceId": device,
                 "identityPublicKey": GroupWire.base64(identity.personPublicKey), "signingPublicKey": GroupWire.base64(try identity.signingKey.publicKey.rawRepresentation),
                 "hpkePublicKey": GroupWire.base64(try identity.agreementKey.publicKey.rawRepresentation),
-                "encryptedDisplayName": value["encryptedDisplayName"]!, "expiresAt": invitation["expiresAt"]!]
+                "encryptedDisplayName": value["encryptedDisplayName"]!, "proofSignature": value["proofSignature"]!,
+                "expiresAt": invitation["expiresAt"]!]
             result["operation"] = "join"; result["invitationId"] = invitationID; result["joinRequestId"] = op; result["expiresAt"] = invitation["expiresAt"]
         } else if path.hasSuffix("/approve") {
             generation += 1; members.insert(join!["personId"] as! String)
@@ -192,6 +204,28 @@ private actor Relay: GroupHTTPTransport {
         try check(await relay.bodies("/join").count == 2, "restart does not reseal join name or proof")
         let requests = try await creator.admission.requests(family)
         try check(requests.requests.count == 1, "only one request after lost ACK")
+        let valid = requests.requests[0]
+        let (otherInvite, _) = try FamilyNotebookInvitationCrypto.create(roster: roster, generation: 1, identity: a,
+            payerPersonID: a.personID, invitationID: UUID(), inviterName: "別の招待", catNames: [])
+        let otherProof = try otherInvite.proof(personID: valid.personID, deviceID: valid.deviceID,
+            action: "join", operationID: valid.requestID)
+        var modifiedName = valid.encryptedDisplayName
+        modifiedName[modifiedName.startIndex] ^= 1
+        let substitutions: [(String, String?)] = [
+            ("proofSignature", nil),
+            ("proofSignature", GroupWire.base64(otherProof)),
+            ("requestId", UUID().uuidString.lowercased()),
+            ("encryptedDisplayName", GroupWire.base64(modifiedName)),
+        ]
+        for (field, value) in substitutions {
+            let raw = try await relay.substituteRequest(field: field, value: value)
+            try check(try await creator.admission.requests(family).requests.isEmpty, "unverified request is hidden: " + field)
+            let altered = try GroupWire.decode(FamilyNotebookAdmissionClient.Request.self, raw)
+            try await rejects {
+                try await creator.admission.decide(family: family, request: altered, generation: 1, approve: true, operation: UUID())
+            }
+        }
+        try check(await relay.bodies("/approve").isEmpty, "unverified requests never reach the approval endpoint")
         let previewsBefore = await relay.bodies("/preview").count
         let reopenedInvitation = try await resumedGuest.admission.preview(invitation.link)
         try check(reopenedInvitation.priorRequestState == "pending", "reopened link gives authenticated pending result")

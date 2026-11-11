@@ -29,10 +29,18 @@ struct FamilyNotebookInvitationCapability: Codable, Equatable, Sendable, CustomS
             GroupCanonical.text(invitationID.uuidString.lowercased()), inviterIdentityPublicKey,
             GroupCanonical.text(String(pin.epoch)), pin.hash, proofKey.publicKey.rawRepresentation])
     }
-    func proof(personID: String, deviceID: String, action: String, operationID: UUID) throws -> Data {
+    private func proofBytes(personID: String, deviceID: String, action: String, operationID: UUID) throws -> Data {
         guard ["preview", "join"].contains(action), GroupCanonical.validID(personID), GroupCanonical.validID(deviceID) else { throw FamilyNotebookCryptoError.invalid }
-        return try proofKey.signature(for: GroupCanonical.fields(["NW.FAMILY-NOTEBOOK.INVITATION.1", familyID.uuidString.lowercased(),
-            invitationID.uuidString.lowercased(), personID, deviceID, action, operationID.uuidString.lowercased()].map(GroupCanonical.text)))
+        return try GroupCanonical.fields(["NW.FAMILY-NOTEBOOK.INVITATION.1", familyID.uuidString.lowercased(),
+            invitationID.uuidString.lowercased(), personID, deviceID, action, operationID.uuidString.lowercased()].map(GroupCanonical.text))
+    }
+    func proof(personID: String, deviceID: String, action: String, operationID: UUID) throws -> Data {
+        try proofKey.signature(for: proofBytes(personID: personID, deviceID: deviceID, action: action, operationID: operationID))
+    }
+    func verifiesJoinProof(_ signature: Data, personID: String, deviceID: String, requestID: UUID) throws -> Bool {
+        guard signature.count == 64 else { return false }
+        return try proofKey.publicKey.isValidSignature(signature,
+            for: proofBytes(personID: personID, deviceID: deviceID, action: "join", operationID: requestID))
     }
     var url: URL { get throws {
         _ = try validated()
