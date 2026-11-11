@@ -106,6 +106,7 @@ struct EvacuationPreparationView: View {
                     }
                     Section {
                         ToolImportantInformation(text: "災害のときは、まず自分と家族の安全を守ってください。")
+                            .quietRow()
                     }
                 }
                 .toolPageSpacing()
@@ -442,6 +443,7 @@ private struct EvacuationNowView: View {
             } header: { Text("行き先") }
             Section {
                 ToolImportantInformation(text: "まず自分と家族の安全を守ってください。")
+                    .quietRow()
             }
         }
         .toolPageSpacing()
@@ -849,6 +851,7 @@ private struct EvacuationCatView: View {
                 // carries the plan's one 「最後に見直した日」 (11/8), not a date per cat.
                 Section {
                     ToolImportantInformation(text: "病歴・連絡先・ワクチンの証明・マイクロチップ番号は、必要な相手にだけ見せてください。")
+                        .quietRow()
                 }
                 Section {
                     Button("この子の避難用の記録を削除", role: .destructive) { deleteRequested = true }

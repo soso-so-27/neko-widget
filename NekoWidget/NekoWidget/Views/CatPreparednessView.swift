@@ -1112,6 +1112,7 @@ private struct LostCatGuideView<Report: View>: View {
                 report()
                 Section("3  写真で周囲に知らせる") {
                     ToolImportantInformation(text: "チラシを貼るときは、その場所の管理者に確かめてください。")
+                        .quietRow()
                 }
                 Section {
                     Link("環境省の詳しい案内", destination: URL(string: "https://www.env.go.jp/nature/dobutsu/aigo/shuyo/if.html")!)
