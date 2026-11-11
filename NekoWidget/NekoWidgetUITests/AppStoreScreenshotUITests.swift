@@ -613,6 +613,12 @@ final class AppStoreScreenshotUITests: XCTestCase {
         // this test stops early.
         addTeardownBlock {
             MainActor.assumeIsolated {
+                // 11/11: a tool hides the tab bar, so go back to ツール first.
+                for _ in 0..<4 where !app.tabBars.firstMatch.isHittable {
+                    let back = app.navigationBars.buttons.element(boundBy: 0)
+                    guard back.exists else { break }
+                    back.tap()
+                }
                 _ = self.tapTab(application: app, identifier: "main-tab-memories", fallbackLabel: "アルバム")
                 app.terminate()
             }

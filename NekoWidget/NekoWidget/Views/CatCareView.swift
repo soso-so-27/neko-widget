@@ -117,22 +117,26 @@ struct CatCareSubjectView: View {
     @Environment(\.toolProfileActions) private var profileActions
 
     var body: some View {
-        switch subject {
-        case let .profile(profile):
-            CatProfileDetailView(profile: profile, allProfiles: profiles.isEmpty ? [profile] : profiles,
-                manualCandidatePhotos: profile.manualCandidatePhotos, photoAlbumOptions: [],
-                actions: profileActions)
-                .onAppear {
-                    store.importFromTools()
-                    store.importBirthdays(profiles)
-                    if profiles.isEmpty { store.importBirthdays([profile]) }
-                }
-        case let .toolCat(id, name):
-            CatCareDetailView(toolCatID: id, name: name)
-                .navigationTitle(subject.displayName)
-                .navigationBarTitleDisplayMode(.inline)
-                .onAppear { store.importFromTools() }
+        // Opened from a tool, so the tool's frame stays: popping returns to it.
+        Group {
+            switch subject {
+            case let .profile(profile):
+                CatProfileDetailView(profile: profile, allProfiles: profiles.isEmpty ? [profile] : profiles,
+                    manualCandidatePhotos: profile.manualCandidatePhotos, photoAlbumOptions: [],
+                    actions: profileActions)
+                    .onAppear {
+                        store.importFromTools()
+                        store.importBirthdays(profiles)
+                        if profiles.isEmpty { store.importBirthdays([profile]) }
+                    }
+            case let .toolCat(id, name):
+                CatCareDetailView(toolCatID: id, name: name)
+                    .navigationTitle(subject.displayName)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .onAppear { store.importFromTools() }
+            }
         }
+        .toolChrome()
     }
 }
 
@@ -1887,13 +1891,18 @@ struct ToolPurpose: View {
 
 /// The one way forward, in the same place on every tool page: what is still
 /// missing, then the button (a Button or a NavigationLink; styled here).
+/// 11/11: the bar is the page's own colour (`ground`: a list page's grouped
+/// colour unless told otherwise), with the rows fading out just above it, as
+/// on the Plus screen; and the button is the app's one primary button.
 struct ToolMakeBar<Top: View, Action: View>: View {
     let missing: [String]
+    let ground: Color
     let top: Top
     let action: Action
 
-    init(missing: [String] = [], @ViewBuilder top: () -> Top, @ViewBuilder action: () -> Action) {
-        self.missing = missing; self.top = top(); self.action = action()
+    init(missing: [String] = [], ground: Color = NekoPalette.groupedGround,
+         @ViewBuilder top: () -> Top, @ViewBuilder action: () -> Action) {
+        self.missing = missing; self.ground = ground; self.top = top(); self.action = action()
     }
 
     var body: some View {
@@ -1906,13 +1915,41 @@ struct ToolMakeBar<Top: View, Action: View>: View {
                     .accessibilityIdentifier("tool-make-missing")
             }
             action
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
+                .nekoPrimaryButton()
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal)
         .padding(.vertical, 10)
-        .background(.regularMaterial)
+        .background(ground)
+        .overlay(alignment: .top) {
+            LinearGradient(colors: [ground.opacity(0), ground], startPoint: .top, endPoint: .bottom)
+                .frame(height: ToolChrome.fade)
+                .offset(y: -ToolChrome.fade)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+}
+
+/// The frame around every tool page (11/11).
+enum ToolChrome {
+    /// How far the rows fade out above ToolMakeBar.
+    static let fade: CGFloat = 28
+}
+
+extension View {
+    /// 11/11: inside a tool the app's tab bar is hidden, so the tool's bar sits
+    /// at the very bottom instead of on top of the tab bar. Set on every page a
+    /// tool pushes: a pushed page without it brings the tab bar back. Popping
+    /// back to the ツール list shows the tab bar again.
+    func toolChrome() -> some View {
+        toolbar(.hidden, for: .tabBar)
+    }
+
+    /// Room under the last row for the fade above ToolMakeBar, so the last row
+    /// can be scrolled fully clear of it.
+    func toolBarFadeRoom() -> some View {
+        contentMargins(.bottom, ToolChrome.fade, for: .scrollContent)
     }
 }
 
@@ -2102,8 +2139,8 @@ private struct ToolIdentifyingPhotoChoice: View {
 }
 
 extension ToolMakeBar where Top == EmptyView {
-    init(missing: [String] = [], @ViewBuilder action: () -> Action) {
-        self.init(missing: missing, top: { EmptyView() }, action: action)
+    init(missing: [String] = [], ground: Color = NekoPalette.groupedGround, @ViewBuilder action: () -> Action) {
+        self.init(missing: missing, ground: ground, top: { EmptyView() }, action: action)
     }
 }
 
@@ -2133,6 +2170,7 @@ private struct ToolBottomBar<Bar: View>: ViewModifier {
     func body(content: Content) -> some View {
         content
             .safeAreaInset(edge: .bottom) { if !typing { bar } }
+            .toolBarFadeRoom()
             .scrollDismissesKeyboard(.interactively)
             .toolbar {
                 ToolbarItemGroup(placement: .keyboard) {

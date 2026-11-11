@@ -236,7 +236,7 @@ struct EvacuationPreparationView: View {
                     Label("印刷用のPDFを作る", systemImage: "printer")
                 }
             }
-                .frame(maxWidth: .infinity, minHeight: 44)
+                .frame(maxWidth: .infinity)
         }
         // 11/7: the tool's last step, filled like the other tools' last buttons;
         // 11/8: not filled while there is nothing written to print.
@@ -348,6 +348,7 @@ private struct EvacuationPackingView: View {
             }
         }
         .navigationTitle("持ち出すもの").navigationBarTitleDisplayMode(.inline)
+        .toolChrome()
         .confirmationDialog("チェックをすべて外しますか？", isPresented: $resetRequested, titleVisibility: .visible) {
             Button("すべて外す", role: .destructive) {
                 store.update { $0.clearChecks() }
@@ -445,6 +446,7 @@ private struct EvacuationNowView: View {
         }
         .toolPageSpacing()
         .navigationTitle("いま避難する").navigationBarTitleDisplayMode(.inline)
+        .toolChrome()
         .announcesWhenShown(showError)
         .navigationDestination(item: $showing) { EvacuationDisplayView(record: $0.record) }
         .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
@@ -513,6 +515,7 @@ private struct EvacuationSuppliesEditor: View {
                 EvacuationGuidelineLink()
             }
         }.navigationTitle("リストを編集").navigationBarTitleDisplayMode(.inline)
+            .toolChrome()
             .navigationDestination(item: $newItemID) { EvacuationSupplyEditor(id: $0, store: store, isNew: true) }
             .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
     }
@@ -591,6 +594,7 @@ private struct EvacuationSupplyEditor: View {
                 Section { Button("この持ち物を削除", role: .destructive) { deleteRequested = true } }
             }
         }.navigationTitle("持ち物と置き場所").navigationBarTitleDisplayMode(.inline)
+            .toolChrome()
             .confirmationDialog("この持ち物を削除しますか？", isPresented: $deleteRequested, titleVisibility: .visible) {
                 Button("削除", role: .destructive) {
                     if store.update({ $0.supplies.removeAll { $0.id == id }; $0.carriedIDs.remove(id) }) { dismiss() }
@@ -680,6 +684,7 @@ private struct EvacuationCatsView: View {
                 .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
             }
         }
+        .toolChrome()
         .task {
             guard openedID == nil else { return }
             openFirst()
@@ -865,7 +870,7 @@ private struct EvacuationCatView: View {
                                 ?? "表示できませんでした。もう一度お試しください。"
                         }
                     } label: {
-                        Label("避難メモを見せる", systemImage: "rectangle.portrait.on.rectangle.portrait").frame(maxWidth: .infinity, minHeight: 44)
+                        Label("避難メモを見せる", systemImage: "rectangle.portrait.on.rectangle.portrait").frame(maxWidth: .infinity)
                     }
                     .disabled(store.saveError != nil || cat == nil)
                     .accessibilityIdentifier("evacuation-preview-open")
@@ -932,6 +937,7 @@ private struct EvacuationCatEditor: View {
                 }
             }
         }.navigationTitle("飼い主と一緒の写真").navigationBarTitleDisplayMode(.inline)
+            .toolChrome()
             .task {
                 guard !refreshedCandidates else { return }
                 refreshedCandidates = true
@@ -1042,9 +1048,11 @@ private struct EvacuationDisplayView: View {
             }.frame(maxWidth: .infinity, alignment: .leading).padding(20)
         }
         .navigationTitle("\(record.name)の避難メモ").navigationBarTitleDisplayMode(.inline)
+        .toolChrome()
         // 11/11: the input pages' bar (full-width, large); each button keeps its own style.
+        .toolBarFadeRoom()
         .safeAreaInset(edge: .bottom) {
-            ToolMakeBar {
+            ToolMakeBar(ground: NekoPalette.plainGround) {
                 ViewThatFits {
                     HStack(spacing: 12) { exportButtons }
                     VStack(spacing: 8) { exportButtons }
@@ -1077,7 +1085,7 @@ private struct EvacuationDisplayView: View {
                     Label("印刷用のPDF", systemImage: "printer")
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 44)
+            .frame(maxWidth: .infinity)
         }
         .buttonStyle(.borderedProminent).accessibilityIdentifier("evacuation-share-pdf")
         Button { wantsPrint = false; confirmShare = true } label: {
@@ -1088,7 +1096,7 @@ private struct EvacuationDisplayView: View {
                     Label("画像で渡す", systemImage: "photo")
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 44)
+            .frame(maxWidth: .infinity)
         }
         .buttonStyle(.bordered).accessibilityIdentifier("evacuation-share-images")
     }
@@ -1176,6 +1184,7 @@ private struct EvacuationDestinationsView: View {
             }
             Section { EvacuationGuidelineLink() }
         }.navigationTitle("行き先と連絡先").navigationBarTitleDisplayMode(.inline)
+            .toolChrome()
             .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
     }
 }
@@ -1219,6 +1228,7 @@ private struct EvacuationDestinationEditor: View {
                 Section { Button("この候補を削除", role: .destructive) { deleteRequested = true } }
             }
         }.navigationTitle("候補を編集").navigationBarTitleDisplayMode(.inline)
+            .toolChrome()
             .confirmationDialog("この候補を削除しますか？", isPresented: $deleteRequested, titleVisibility: .visible) {
                 Button("削除", role: .destructive) {
                     if store.update({ $0.destinations.removeAll { $0.id == id } }) { dismiss() }

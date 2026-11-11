@@ -356,10 +356,11 @@ private final class SeasonalMovieVideoCatalogDigestCache {
 
 /// Builds a tool page only when it is shown, so drawing the tools list does
 /// not gather each page's photos (the memo photos, the unregistered cats).
+/// 11/11: and without the tab bar, so the tool's own bar sits at the bottom.
 private struct LazyToolDestination<Content: View>: View {
     private let content: () -> Content
     init(@ViewBuilder _ content: @escaping () -> Content) { self.content = content }
-    var body: some View { content() }
+    var body: some View { content().toolChrome() }
 }
 
 private struct PhotoThemeCatKey: Hashable {

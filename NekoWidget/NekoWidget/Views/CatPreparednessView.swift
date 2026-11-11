@@ -1235,9 +1235,11 @@ private struct LostCatPreviewView: View {
             }
         }
         .navigationTitle("できあがり")
+        .toolChrome()
         // 11/11: the same bottom bar as the input pages (full-width, large).
+        .toolBarFadeRoom()
         .safeAreaInset(edge: .bottom) {
-            ToolMakeBar {
+            ToolMakeBar(ground: NekoPalette.plainGround) {
                 Button {
                     do {
                         let url: URL
@@ -1367,6 +1369,8 @@ private struct LostCatFoundView: View {
         }
         .navigationTitle(LostCatText.foundTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .toolChrome()
+        .toolBarFadeRoom()
         .safeAreaInset(edge: .bottom) {
             // 11/11: the input pages' bar; still hidden while the message is typed.
             if !editing {

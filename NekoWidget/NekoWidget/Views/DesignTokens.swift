@@ -39,6 +39,9 @@ enum NekoSpacing {
 /// secondary card are the same gray, so the card disappears.
 enum NekoPalette {
     static let groupedCard = Color(uiColor: .secondarySystemGroupedBackground)
+    /// The ground of a list screen and of a one-page screen.
+    static let groupedGround = Color(uiColor: .systemGroupedBackground)
+    static let plainGround = Color(uiColor: .systemBackground)
     /// The warm colours of the Widget's ground, its empty state and the works.
     static let ink = Color(red: 0.12, green: 0.10, blue: 0.09)
     static let cream = Color(red: 0.95, green: 0.91, blue: 0.84)
