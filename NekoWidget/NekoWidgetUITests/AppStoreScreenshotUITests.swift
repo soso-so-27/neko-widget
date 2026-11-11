@@ -717,6 +717,114 @@ final class AppStoreScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    private func launchOwnerCapture(_ screen: String) throws -> XCUIApplication {
+        let root = try XCTUnwrap(ProcessInfo.processInfo.environment["NEKO_PRIVATE_CAPTURE_ROOT"])
+        executionTimeAllowance = 240
+        let app = XCUIApplication()
+        app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture",
+            "--review-public-presentation", "--owner-store-capture", "--tools-hub-light",
+            "--app-store-screenshot-album", "--app-store-screenshot-cat-care", "--group-window-screens-fixture"]
+        app.launchEnvironment["NEKO_PRIVATE_CAPTURE_ROOT"] = root
+        app.launchEnvironment["NEKO_CAPTURE_SCREEN"] = screen
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "tool-profiles"
+        app.launch()
+        return app
+    }
+
+    @MainActor
+    func testCaptureOwnerStoreAppScreens() throws {
+        let app = try launchOwnerCapture("photos")
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真"))
+        app.buttons["photos-section-all"].tap()
+        XCTAssertTrue(waitForFixturePhotos(in: app, requirements: [(1, 1), (2, 1), (3, 1)]))
+        captureScreenshot(named: "02_photos")
+        app.terminate()
+    }
+
+    @MainActor
+    func testCaptureOwnerStoreWindow() throws {
+        let app = try launchOwnerCapture("window")
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-windows", fallbackLabel: "まど"))
+        let room = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "わが家")).firstMatch
+        XCTAssertTrue(room.waitForExistence(timeout: 15)); room.tap()
+        XCTAssertTrue(app.buttons["group-window-open-members"].waitForExistence(timeout: 15))
+        let delivered = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@", "から届いた写真")).firstMatch
+        XCTAssertTrue(delivered.waitForExistence(timeout: 15)); delivered.tap()
+        XCTAssertTrue(app.staticTexts["ふたりでくっついて寝ていた"].waitForExistence(timeout: 15))
+        sleep(2)
+        captureScreenshot(named: "03_window")
+        app.terminate()
+    }
+
+    @MainActor
+    func testCaptureOwnerStoreTools() throws {
+        let app = try launchOwnerCapture("tools")
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
+        for identifier in ["tools-showcase-open", "tools-care-open", "tools-vet-open", "tools-lost-cat-open", "tools-evacuation-open"] {
+            XCTAssertTrue(app.buttons[identifier].waitForExistence(timeout: 10))
+        }
+        sleep(1)
+        captureScreenshot(named: "07_tools")
+        app.terminate()
+    }
+
+    @MainActor
+    func testCaptureOwnerStoreShowcase() throws {
+        let app = try launchOwnerCapture("showcase")
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
+        app.buttons["tools-showcase-open"].tap()
+        XCTAssertTrue(app.buttons["showcase-slideshow-open"].waitForExistence(timeout: 15))
+        if app.buttons["showcase-gallery-scope"].exists {
+            app.buttons["showcase-gallery-scope"].tap()
+            let all = app.buttons["すべての猫"]
+            XCTAssertTrue(all.waitForExistence(timeout: 5)); all.tap()
+        }
+        XCTAssertEqual(app.buttons.matching(identifier: "showcase-gallery-photo").count, 9)
+        sleep(1)
+        captureScreenshot(named: "04_showcase")
+        app.terminate()
+    }
+
+    @MainActor
+    func testCaptureOwnerStoreAlbum() throws {
+        let app = try launchOwnerCapture("album")
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-memories", fallbackLabel: "アルバム"))
+        let latest = app.buttons["album-prototype-latest"]
+        XCTAssertTrue(latest.waitForExistence(timeout: 15))
+        XCTAssertTrue(waitForAnyFixturePhoto(in: app, numbers: Array(19...24)))
+        captureScreenshot(named: "supplement_album_shelf")
+        latest.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["monthly-book"].waitForExistence(timeout: 15))
+        XCTAssertTrue(waitForAnyFixturePhoto(in: app, numbers: Array(19...24)))
+        app.swipeLeft()
+        sleep(2)
+        captureScreenshot(named: "05_album")
+        app.terminate()
+    }
+
+    @MainActor
+    func testCaptureOwnerStoreCare() throws {
+        let app = try launchOwnerCapture("care")
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
+        app.buttons["tools-care-open"].tap()
+        let cat = app.buttons["tool-profile-11111111-1111-4111-8111-111111111111"]
+        XCTAssertTrue(cat.waitForExistence(timeout: 10)); cat.tap()
+        let folded = app.descendants(matching: .any)["care-cat-care-fields-folded"].firstMatch
+        XCTAssertTrue(scrollUpUntilHittable(folded, application: app)); folded.tap()
+        XCTAssertTrue(app.buttons["cat-care-family-notebook"].waitForExistence(timeout: 10))
+        let living = app.buttons["cat-care-part-living"]
+        XCTAssertTrue(scrollUpUntilHittable(living, application: app)); living.tap()
+        let household = app.buttons["cat-care-part-household"]
+        XCTAssertTrue(scrollUpUntilHittable(household, application: app)); household.tap()
+        let vet = app.descendants(matching: .any).matching(NSPredicate(format: "value == %@ OR label == %@", "みどり動物病院", "みどり動物病院")).firstMatch
+        XCTAssertTrue(scrollUpUntilHittable(vet, application: app))
+        sleep(1)
+        captureScreenshot(named: "06_cat_care")
+        app.terminate()
+    }
+
+    @MainActor
     private func tapTab(
         application: XCUIApplication,
         identifier: String,

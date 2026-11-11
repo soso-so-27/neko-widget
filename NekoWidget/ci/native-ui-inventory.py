@@ -19,6 +19,10 @@ def inventory():
     return sorted(result)
 
 def route(test):
+    # These seven captures need owner media and a private key. They run only
+    # in owner-store-capture.yml, which encrypts every attachment, not in the
+    # ordinary public-output lanes. Keep them in the inventory, never as passes.
+    if test.rsplit('/', 1)[-1].startswith('testCaptureOwnerStore'): return 'owner-capture'
     if 'WidgetPlacementScreenshotUITests/' in test: return 'widget'
     # Display-speed measurements (no pass/fail threshold). Manual only:
     # route=speed is not in the push/nightly route list.

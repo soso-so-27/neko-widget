@@ -98,6 +98,7 @@
 		100000000000000000000102 /* NekoWidgetApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000202 /* NekoWidgetApp.swift */; };
 		100000000000000000000185 /* BillingInternalDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000267 /* BillingInternalDiagnostics.swift */; };
 		100000000000000000000176 /* AppStoreScreenshotFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000259 /* AppStoreScreenshotFixture.swift */; };
+		100000000000000000001110 /* OwnerStoreCaptureFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000001110 /* OwnerStoreCaptureFixture.swift */; };
 		DA7200010000000000000001 /* MainlineMovieAcceptance.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA7200010000000000000002 /* MainlineMovieAcceptance.swift */; };
 		100000000000000000000110 /* JSONExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000210 /* JSONExporter.swift */; };
 		100000000000000000000111 /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000211 /* LibraryStore.swift */; };
@@ -443,6 +444,7 @@
 		F00000000000000000000202 /* NekoWidgetApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidgetApp.swift; sourceTree = "<group>"; };
 		F00000000000000000000267 /* BillingInternalDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillingInternalDiagnostics.swift; sourceTree = "<group>"; };
 		F00000000000000000000259 /* AppStoreScreenshotFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreScreenshotFixture.swift; sourceTree = "<group>"; };
+		F00000000000000000001110 /* OwnerStoreCaptureFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OwnerStoreCaptureFixture.swift; sourceTree = "<group>"; };
 		DA7200010000000000000002 /* MainlineMovieAcceptance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainlineMovieAcceptance.swift; sourceTree = "<group>"; };
 		F00000000000000000000203 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F00000000000000000000204 /* NekoWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NekoWidget.entitlements; sourceTree = "<group>"; };
@@ -837,6 +839,7 @@
 				F00000000000000000000202 /* NekoWidgetApp.swift */,
 				F00000000000000000000267 /* BillingInternalDiagnostics.swift */,
 				F00000000000000000000259 /* AppStoreScreenshotFixture.swift */,
+		F00000000000000000001110 /* OwnerStoreCaptureFixture.swift */,
 				DA7200010000000000000002 /* MainlineMovieAcceptance.swift */,
 			);
 			path = App;
@@ -1283,6 +1286,7 @@
 				100000000000000000000102 /* NekoWidgetApp.swift in Sources */,
 				100000000000000000000185 /* BillingInternalDiagnostics.swift in Sources */,
 				100000000000000000000176 /* AppStoreScreenshotFixture.swift in Sources */,
+		100000000000000000001110 /* OwnerStoreCaptureFixture.swift in Sources */,
 				DA7200010000000000000001 /* MainlineMovieAcceptance.swift in Sources */,
 				100000000000000000000110 /* JSONExporter.swift in Sources */,
 				100000000000000000000111 /* LibraryStore.swift in Sources */,

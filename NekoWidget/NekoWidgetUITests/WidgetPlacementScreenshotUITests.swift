@@ -132,6 +132,101 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    func testCaptureOwnerStoreHomeWidgets() throws {
+        let root = try XCTUnwrap(ProcessInfo.processInfo.environment["NEKO_PRIVATE_CAPTURE_ROOT"])
+        executionTimeAllowance = 420
+        let app = XCUIApplication()
+        app.launchArguments += ["-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP",
+            "--app-store-screenshot-fixture", "--owner-store-capture", "--review-public-presentation"]
+        app.launchEnvironment["NEKO_PRIVATE_CAPTURE_ROOT"] = root
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        sleep(3)
+        XCUIDevice.shared.press(.home)
+        let springboard = XCUIApplication(bundleIdentifier: springboardBundleIdentifier)
+        // Large first, then Medium: the two real WidgetKit sizes occupy six
+        // rows on the disposable Home Screen. No app-drawn Home Screen is used.
+        for desiredPage in [3, 2] {
+            let existingEdit = springboard.buttons.matching(
+                NSPredicate(format: "label IN %@", ["編集", "Edit"])).firstMatch
+            let edit: XCUIElement
+            if existingEdit.exists && existingEdit.isHittable {
+                edit = existingEdit
+            } else {
+                edit = try XCTUnwrap(enterHomeScreenEditing(in: springboard))
+            }
+            edit.tap()
+            let addMenu = try XCTUnwrap(waitForElement(in: springboard,
+                labels: ["ウィジェットを追加", "Add Widget"],
+                elementTypes: [.button, .staticText, .menuItem], timeout: 10))
+            addMenu.tap()
+            let search = try XCTUnwrap(waitForFirstElement(springboard.searchFields, timeout: 15))
+            focusForTyping(search, in: springboard)
+            if search.value as? String != "ねこのまど" { search.typeText("ねこのまど") }
+            let result = try XCTUnwrap(findFixtureGalleryResult(in: springboard)); result.tap()
+            // The modal's innermost scroll view follows the Home Screen's
+            // scroll view in AX. The latter also contains a page indicator.
+            let gallery = try XCTUnwrap(springboard.scrollViews.allElementsBoundByIndex.last(where: {
+                $0.pageIndicators.count > 0
+            }))
+            let pages = gallery.pageIndicators.firstMatch
+            XCTAssertTrue(pages.waitForExistence(timeout: 15))
+            let pageState = galleryPage(pages)
+            guard pageState.count == 2, pageState[1] == 4,
+                  (1...4).contains(pageState[0]) else {
+                fail("The Widget gallery did not report its current size.", application: springboard)
+                return
+            }
+            let pager = try XCTUnwrap(gallery.scrollViews.allElementsBoundByIndex.last(where: {
+                $0.frame.height > 200 && $0.frame.maxY <= pages.frame.minY + 1
+            }))
+            var currentPage = pageState[0]
+            for _ in 0..<abs(desiredPage - currentPage) {
+                let forward = desiredPage > currentPage
+                let nextPage = currentPage + (forward ? 1 : -1)
+                // The observed pager has a clear strip above all three sizes.
+                // Drag there so an interactive/loading Widget cannot take it.
+                let start = pager.coordinate(withNormalizedOffset: CGVector(dx: forward ? 0.85 : 0.15, dy: 0.03))
+                let end = pager.coordinate(withNormalizedOffset: CGVector(dx: forward ? 0.15 : 0.85, dy: 0.03))
+                start.press(forDuration: 0.05, thenDragTo: end)
+                let deadline = Date().addingTimeInterval(12)
+                repeat {
+                    if galleryPage(pages) == [nextPage, 4] {
+                        currentPage = nextPage
+                        break
+                    }
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+                } while Date() < deadline
+                guard currentPage == nextPage else {
+                    fail("The Widget gallery did not advance to the next confirmed size.", application: springboard)
+                    return
+                }
+            }
+            XCTAssertEqual(galleryPage(pages), [desiredPage, 4])
+            let addButton = try XCTUnwrap(waitForElement(in: springboard,
+                labels: ["ウィジェットを追加", "Add Widget"], elementTypes: [.button], timeout: 10))
+            addButton.tap()
+            sleep(2)
+            // Keep the observed Home editing toolbar between both additions.
+            // Long-pressing the first Widget opens its own configuration instead.
+        }
+        if let done = waitForElement(in: springboard, labels: ["完了", "Done"],
+            elementTypes: [.button], timeout: 5, requireHittable: true) { done.tap() }
+        else { XCUIDevice.shared.press(.home) }
+        let cloudyCaption = springboard.descendants(matching: .any).matching(NSPredicate(
+            format: "label CONTAINS %@ OR value CONTAINS %@", "タップで きょうの 1 枚", "タップで きょうの 1 枚")).firstMatch
+        // WidgetKit can expose only the combined Widget accessibility element.
+        // Keep the screenshot for visual inspection even if that text is not AX.
+        _ = cloudyCaption.waitForExistence(timeout: 30)
+        sleep(3)
+        let hierarchy = XCTAttachment(string: springboard.debugDescription)
+        hierarchy.name = "private-home-widget-layout"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
+        captureScreenshot(named: "01_widget", screenshot: XCUIScreen.main.screenshot())
+    }
+
+    @MainActor
     func testCaptureSharedWidgetAllSupportedSizes() {
         executionTimeAllowance = 180
         captureFixtureGallery(captureAllSizes: true)
@@ -581,7 +676,11 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     @MainActor
     private func galleryPage(_ indicator: XCUIElement) -> [Int] {
         guard let value = indicator.value as? String else { return [] }
-        return value.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+        let numbers = value.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+        if value.contains("ページ中"), numbers.count == 2 {
+            return [numbers[1], numbers[0]]
+        }
+        return numbers
     }
 
     @MainActor
