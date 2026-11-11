@@ -8,7 +8,7 @@
  */
 export const MODERATION_ADVISORY_POLICY = "neko-owner-advisory-v1" as const;
 export const MODERATION_ADVISORY_MODEL = "omni-moderation-2024-09-26" as const;
-export const MODERATION_ADVISORY_ENDPOINT = "https://api.openai.com/v1/moderations" as const;
+export const MODERATION_ADVISORY_ENDPOINT = "https://moderation.invalid/v1/moderations" as const;
 export const moderationAdvisoryCategories = Object.freeze([
   "harassment", "harassment/threatening", "hate", "hate/threatening", "illicit",
   "illicit/violent", "self-harm", "self-harm/intent", "self-harm/instructions",

@@ -2,10 +2,10 @@ import { dailyQuotaDay } from '../src/daily-quota-day';
 import { env } from "cloudflare:workers";
 import { applyD1Migrations, reset, type D1Migration } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { runDurableModerationAdvisory, readDurableModerationAdvisory, purgeExpiredModerationAdvisories } from "../src/moderation-ai-durable";
+import { runDurableModerationAdvisory, readDurableModerationAdvisory, purgeExpiredModerationAdvisories } from "./fixtures/moderation-ai-durable";
 import { base64urlEncode } from "../src/encoding";
 import { deriveModerationOperatorCaseReference } from "../src/moderation-operator-case-reference";
-import { MODERATION_ADVISORY_MODEL, moderationAdvisoryCategories } from "../src/moderation-ai-advisory";
+import { MODERATION_ADVISORY_MODEL, moderationAdvisoryCategories } from "./fixtures/moderation-ai-advisory";
 
 const db = (env as unknown as {DB: D1Database}).DB;
 beforeEach(async () => {
