@@ -371,7 +371,7 @@ struct MembershipOfferView: View {
                 .frame(minHeight: 44)
                 .accessibilityIdentifier("membership-offer-cancel-help")
         }
-        if let termsURL = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/") {
+        if let termsURL = AppPublicLinksConfiguration.termsOfUseURL {
             Link("利用規約", destination: termsURL)
                 .frame(minHeight: 44)
                 .accessibilityIdentifier("membership-offer-terms")

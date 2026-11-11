@@ -2483,8 +2483,8 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(edit.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertFalse(app.buttons["evacuation-saved-E0260929-0000-0000-0000-000000000001"].exists)
         // 11/9: the usual photo is taken into 「この子のこと」 as the face photo,
-        // and the cat's page shows it; it is changed there, not here.
-        let photos = app.buttons["evacuation-identifying-photos"]
+        // and the cat's page shows it; it is kept there (11/11: chosen from here too).
+        let photos = app.buttons["evacuation-identifying-photos-face"]
         XCTAssertTrue(photos.waitForExistence(timeout: 5), app.debugDescription)
         for _ in 0..<5 where !photos.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertFalse(photos.label.contains("顔の写真、まだありません"), photos.label)
@@ -2514,7 +2514,7 @@ final class SoloMemoriesUITests: XCTestCase {
         // The saved cat's page opens in place again (its own record now).
         let restoredEdit = app.buttons["evacuation-cat-edit"]
         XCTAssertTrue(restoredEdit.waitForExistence(timeout: 10), app.debugDescription)
-        let restoredPhotos = app.buttons["evacuation-identifying-photos"]
+        let restoredPhotos = app.buttons["evacuation-identifying-photos-face"]
         XCTAssertTrue(restoredPhotos.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertFalse(restoredPhotos.label.contains("顔の写真、まだありません"), restoredPhotos.label)
         // After a restart the meal is still there. Later edits happen in
@@ -2918,11 +2918,12 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launchEnvironment["NEKO_LOST_CAT_PREPARED_PHOTOS"] = "1"
         app.launchEnvironment["NEKO_LOST_CAT_LONG_TEXT"] = "1"
         app.launch()
-        // 11/9 (#900): a registered cat's face and body photos are chosen once,
-        // in 「この子のこと」. The tool shows them and its row opens that page;
-        // there is no second picker here. The draft's earlier photos are shown
-        // (and copied into 「この子のこと」 once).
-        let shown = app.buttons["lost-cat-identifying-photos"]
+        // 11/9 (#900): a registered cat's face and body photos are kept once,
+        // in 「この子のこと」. 11/11: a photo here opens the same chooser as
+        // there; a link opens that page. There is no second picker of the
+        // tool's own. The draft's earlier photos are shown (and copied into
+        // 「この子のこと」 once).
+        let shown = app.descendants(matching: .any).matching(identifier: "lost-cat-identifying-photos").firstMatch
         XCTAssertTrue(shown.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertFalse(app.buttons["lost-cat-face-photo"].exists, "The tool must not offer a second photo picker")
         let toolFace = app.descendants(matching: .any).matching(identifier: "lost-cat-identifying-photos-face").firstMatch
@@ -2943,8 +2944,23 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["lost-cat-share-pdf"].isEnabled)
         capture("lost-cat-two-aspect-paper")
         app.navigationBars.buttons.element(boundBy: 0).tap()
-        for _ in 0..<5 where !shown.isHittable { app.swipeDown() }
-        shown.tap()
+        // 11/11: the tool's face photo opens 「この子のこと」's own chooser in place:
+        // this cat's photos first and 写真アプリ, nothing else.
+        let toolFaceButton = app.buttons["lost-cat-identifying-photos-face"]
+        for _ in 0..<5 where !toolFaceButton.isHittable { app.swipeDown() }
+        toolFaceButton.tap()
+        let toolCandidates = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "cat-care-photo-candidate-"))
+        XCTAssertTrue(toolCandidates.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(toolCandidates.count, 1)
+        XCTAssertTrue(app.buttons["cat-care-photo-system"].exists)
+        app.buttons["キャンセル"].tap()
+        XCTAssertTrue(toolCandidates.firstMatch.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(toolFaceButton.exists, app.debugDescription)
+        // Taking off and cropping stay in 「この子のこと」, one link away.
+        let openCatCare = app.buttons["lost-cat-identifying-photos-open-cat-care"]
+        for _ in 0..<5 where !openCatCare.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertEqual(openCatCare.label, "「この子のこと」を開く")
+        openCatCare.tap()
         // 「この子のこと」: this cat's photos come first; any iPhone photo is a
         // visible button (写真アプリ). The other cats' photos are not listed.
         let face = app.buttons["cat-care-photo-face"]
