@@ -31,6 +31,7 @@ struct MembershipOfferView: View {
     /// 「購入を復元」 was pressed, so its spinner sits on that link, not on the
     /// purchase button (11/6). Cleared when the work ends.
     @State private var running: String?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     static let heading = "うちの子との毎日を、続ける"
     /// What Plus is, in the LP's words, plus saving (part of the 980 yen since 10/20).
@@ -107,23 +108,10 @@ struct MembershipOfferView: View {
         ScrollView {
             VStack(spacing: 20) {
                 photoHeader
-
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(Self.values, id: \.0) { value in
-                        Label {
-                            Text(value.0).font(.headline)
-                                .fixedSize(horizontal: false, vertical: true)
-                        } icon: {
-                            Image(systemName: value.1).foregroundStyle(.tint)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("membership-offer-values")
-
-                offerDetails
-                actions
+                valueRows
+                // At the largest text sizes a pinned bar would cover most of
+                // the screen, so the purchase block scrolls with the rows there.
+                if !pinsPurchase { purchaseBlock }
                 reassurance
                 footerLinks
             }
@@ -133,14 +121,18 @@ struct MembershipOfferView: View {
             .padding(.bottom, 20)
             .frame(maxWidth: .infinity)
         }
+        // 11/11: the button, the price and the renewal sentence stay at the
+        // bottom, visible on the first screen even on iPhone SE (3.1.2).
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if pinsPurchase { pinnedPurchaseBar }
+        }
         .background(Color(uiColor: .systemBackground))
         .navigationTitle("ねこのまど Plus")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 if showsClose {
-                    Button("閉じる", systemImage: "xmark", action: onClose)
-                        .labelStyle(.iconOnly)
+                    SheetCloseButton(action: onClose)
                         .disabled(isWorking)
                         .accessibilityIdentifier("membership-offer-close")
                 }
@@ -148,6 +140,46 @@ struct MembershipOfferView: View {
         }
         .accessibilityIdentifier("membership-offer")
         .onChange(of: isWorking) { _, working in if !working { running = nil } }
+    }
+
+    private var pinsPurchase: Bool { !dynamicTypeSize.isAccessibilitySize }
+
+    /// What Plus does: six rows, regular weight; only the heading is bold.
+    private var valueRows: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(Self.values, id: \.0) { value in
+                Label {
+                    Text(value.0).font(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: value.1).foregroundStyle(.tint)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("membership-offer-values")
+    }
+
+    /// The trial or member line, the button, the price and the renewal sentence.
+    private var purchaseBlock: some View {
+        VStack(spacing: 8) {
+            offerDetails
+            actions
+        }
+    }
+
+    private var pinnedPurchaseBar: some View {
+        purchaseBlock
+            .frame(maxWidth: 440)
+            .padding(.horizontal, 24)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+            .frame(maxWidth: .infinity)
+            .background(.bar)
+            .overlay(alignment: .top) { Divider() }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("membership-offer-purchase-bar")
     }
 
     private var photoHeader: some View {
@@ -261,9 +293,7 @@ struct MembershipOfferView: View {
                     }
                     .frame(maxWidth: .infinity, minHeight: 36)
                 }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.roundedRectangle(radius: 14))
-                .controlSize(.large)
+                .nekoPrimaryButton()
                 .disabled(isWorking || !canPurchase || offer == nil)
                 .accessibilityIdentifier("membership-offer-purchase")
             }

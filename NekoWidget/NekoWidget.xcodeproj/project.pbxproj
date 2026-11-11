@@ -70,6 +70,7 @@
 		E02609220000000000000006 /* PersonalWidgetMembershipStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000004 /* PersonalWidgetMembershipStore.swift */; };
 		E02609220000000000000008 /* MembershipAccessContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000007 /* MembershipAccessContext.swift */; };
 		E02609210000000000000003 /* MembershipOfferView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609210000000000000004 /* MembershipOfferView.swift */; };
+		D51111D0000000000000A001 /* DesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = D51111D0000000000000A002 /* DesignTokens.swift */; };
 		E02609210000000000000001 /* MembershipOfferModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609210000000000000002 /* MembershipOfferModel.swift */; };
 		E02609080000000000000001 /* PhotoNoteInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609080000000000000002 /* PhotoNoteInput.swift */; };
 		E02609090000000000000011 /* PhotoMemoryNoteFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609090000000000000012 /* PhotoMemoryNoteFixture.swift */; };
@@ -405,6 +406,7 @@
 		E02609220000000000000004 /* PersonalWidgetMembershipStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalWidgetMembershipStore.swift; sourceTree = "<group>"; };
 		E02609220000000000000007 /* MembershipAccessContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipAccessContext.swift; sourceTree = "<group>"; };
 		E02609210000000000000004 /* MembershipOfferView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipOfferView.swift; sourceTree = "<group>"; };
+		D51111D0000000000000A002 /* DesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignTokens.swift; sourceTree = "<group>"; };
 		E02609210000000000000002 /* MembershipOfferModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipOfferModel.swift; sourceTree = "<group>"; };
 		E02609080000000000000002 /* PhotoNoteInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoNoteInput.swift; sourceTree = "<group>"; };
 		E02609090000000000000012 /* PhotoMemoryNoteFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMemoryNoteFixture.swift; sourceTree = "<group>"; };
@@ -963,6 +965,7 @@
 				D02609100000000000000300 /* OfficialWindowView.swift */,
 				F00000000000000000000230 /* AppPresentationModels.swift */,
 				E02609210000000000000004 /* MembershipOfferView.swift */,
+				D51111D0000000000000A002 /* DesignTokens.swift */,
 				BC19F186A11B000000000002 /* HouseholdAlbumCatalogCoordinator.swift */,
 				F0000000000000000000025B /* MonthlyWindowPresentation.swift */,
 				A261024C0000000000000001 /* AlbumPrototypeView.swift */,
@@ -1328,6 +1331,7 @@
 				100000000000000000000155 /* CatHouseholdIdentityStore.swift in Sources */,
 				100000000000000000000130 /* AppPresentationModels.swift in Sources */,
 				E02609210000000000000003 /* MembershipOfferView.swift in Sources */,
+				D51111D0000000000000A001 /* DesignTokens.swift in Sources */,
 				BC19F186A11B000000000001 /* HouseholdAlbumCatalogCoordinator.swift in Sources */,
 				100000000000000000000179 /* MonthlyWindowPresentation.swift in Sources */,
 				A261024C0000000000000002 /* AlbumPrototypeView.swift in Sources */,
@@ -1683,6 +1687,7 @@
 				ICLOUD_ENVIRONMENT = Development;
 				PERSONAL_ARCHIVE_ENABLED = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = NekoWidget/NekoWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = "$(inherited)";
@@ -1713,6 +1718,7 @@
 				APS_ENVIRONMENT = production;
 				ICLOUD_ENVIRONMENT = Production;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = NekoWidget/NekoWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = "$(inherited)";

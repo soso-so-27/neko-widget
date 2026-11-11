@@ -311,7 +311,7 @@ struct ScanProgressCard: View {
             }
         }
         .padding(18)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+        .background(NekoPalette.groupedCard, in: NekoRadius.shape(NekoRadius.card))
     }
 }
 

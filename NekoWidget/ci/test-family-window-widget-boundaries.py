@@ -2456,8 +2456,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("dismissAfterSaving: true", add)
         main = source("NekoWidget/Views/MainTabView.swift")
         library = section(main, "private var photoLibrary: some View {", "private var albumRoot: some View {")
-        self.assertIn("$0.identifier == photoLibraryProfileIdentifier", library)
-        self.assertIn("CatProfileAddPhotosButton(", library)
+        self.assertIn("photoLibraryCatRow", library)
+        # 11/11: the add button is in the one cat row over the pages.
+        row = section(main, "private var photoLibraryCatRow: some View {", "private var photoLibraryCatPicker: some View {")
+        self.assertIn("$0.identifier == photoLibraryProfileIdentifier", row)
+        self.assertIn("CatProfileAddPhotosButton(", row)
         # The name, key photo and deleting are in この子のこと: the photo and
         # name at the top of the page, outside the folds; deleting is the
         # last row of 基本 (11/7).
@@ -2940,9 +2943,16 @@ class AppDrawingWasteTests(unittest.TestCase):
         heading = section(home, "@ViewBuilder private var detectedPhotosSection: some View {", '.id("photo-library-all-heading")')
         self.assertEqual(heading.count("monthDestinations"), 1)
         self.assertIn("monthJumpMenu(monthDestinations)", heading)
-        menu = section(home, "@ViewBuilder private func monthJumpMenu(", "private func moveToMonth(")
+        menu = section(home, "private func monthJumpMenu(", "private func moveToMonth(")
         self.assertNotIn("monthDestinations", menu)
-        self.assertIn('.accessibilityIdentifier("photo-library-month-jump")', menu)
+        self.assertIn("PhotoLibraryMonthJumpMenu(months: months, select: moveToMonth)", menu)
+        shared = section(home, "struct PhotoLibraryMonthJumpMenu: View {", "struct HomeView: View {")
+        self.assertNotIn("months(in:", shared)
+        self.assertIn('.accessibilityIdentifier("photo-library-month-jump")', shared)
+        # The 写真 tab's cat row works the months out once for its two layouts.
+        main = source("NekoWidget/Views/MainTabView.swift")
+        row = section(main, "private struct PhotoLibraryCatRow<", "private struct PhotoThemeTile: View {")
+        self.assertEqual(row.count("PhotoLibraryMonthDestination.months(in: photos)"), 1)
 
     def test_idle_auto_save_seconds_publish_nothing(self) -> None:
         persistence = source("NekoWidget/Services/AppRecordPersistence.swift")
@@ -7145,6 +7155,110 @@ class PresubmitFixes1110Tests(unittest.TestCase):
         self.assertIn('ContentUnavailableView("猫の写真が見つかると、おすすめを出します", systemImage: "photo")', failed)
         self.assertIn('Button("写真を選ぶ") { showsPreparation = true }', failed)
         self.assertNotIn('"おすすめで選べませんでした"', showcase)
+
+class DesignPolish1111Tests(unittest.TestCase):
+    """デザインと UI の点検 (11/11): what the fixes must keep."""
+
+    def test_widget_photo_stays_full_color_on_tinted_home_screens(self) -> None:
+        widget = source("NekoWidgetWidget/NekoWidgetView.swift")
+        photo = section(widget, "    private var photoContent: some View {", ".id(entry.cacheFilename)")
+        self.assertIn("Image(uiImage: image)", photo)
+        self.assertLess(photo.index("Image(uiImage: image)"), photo.index(".widgetFullColorPhoto()"))
+        self.assertLess(photo.index(".widgetFullColorPhoto()"), photo.index(".scaledToFill()"))
+        helper = section(widget, "@ViewBuilder func widgetFullColorPhoto() -> some View {", "\n    }\n")
+        self.assertIn("if #available(iOS 18.0, *) {", helper)
+        self.assertIn("self.widgetAccentedRenderingMode(.fullColor)", helper)
+        # Every photo drawn by a Widget goes through it.
+        for name in ("NekoWidgetView.swift", "ShowcaseWidget.swift"):
+            text = source(f"NekoWidgetWidget/{name}")
+            self.assertEqual(text.count("Image(uiImage:"), text.count(".widgetFullColorPhoto()"), name)
+        # 「もう一枚」 is not the app's 「読み込み直す」 symbol.
+        mark = section(widget, "private func dailyPersonalPhotoMark(isUsed: Bool) -> some View {", ".frame(width: 44, height: 44)")
+        self.assertIn('isUsed ? "checkmark" : "shuffle"', mark)
+        self.assertNotIn('"arrow.clockwise"', mark)
+
+    def test_group_photo_tile_keeps_the_photo_shape_within_three_four_and_four_three(self) -> None:
+        screen = source("NekoWidget/Views/GroupWindowView.swift")
+        tile = section(screen, "private struct GroupPhotoTile: View {", "    var body: some View {")
+        self.assertIn("GroupPhotoTileShape.clamped(image.size)", tile)
+        self.assertIn("GroupPhotoTileShape.remembered[entry.id] ?? GroupPhotoTileShape.wide", tile)
+        shape = section(screen, "enum GroupPhotoTileShape {", "private struct GroupPhotoTile: View {")
+        self.assertIn("static let wide: CGFloat = 4.0 / 3.0", shape)
+        self.assertIn("static let tall: CGFloat = 3.0 / 4.0", shape)
+        self.assertIn("return min(max(size.width / size.height, tall), wide)", shape)
+        body = section(screen, "private struct GroupPhotoTile: View {", "\n}\n")
+        self.assertIn(".aspectRatio(tileAspectRatio, contentMode: .fit)", body)
+        self.assertNotIn("aspectRatio(4 / 3", body)
+        # In memory only: the saved photo index is unchanged.
+        store = source("NekoWidget/Services/GroupWindowLocalPhotoStore.swift")
+        entry = section(store, "struct Entry: Codable", "\n    }\n")
+        self.assertNotIn("aspect", entry.lower())
+        self.assertNotIn("UserDefaults", shape)
+        # The list's heart is filled only for this iPhone's own heart.
+        self.assertIn('Image(systemName: mine ? "heart.fill" : "heart")', body)
+        self.assertNotIn("|| heartCount > 0 ? \"heart.fill\"", body)
+
+    def test_photo_tab_cards_keep_the_screen_margin(self) -> None:
+        home = source("NekoWidget/Views/HomeView.swift")
+        self.assertIn("private var cardMargin: CGFloat { isEmbedded ? NekoSpacing.screenMargin : 0 }", home)
+        tokens = source("NekoWidget/Views/DesignTokens.swift")
+        self.assertIn("static let screenMargin: CGFloat = 16", tokens)
+        body = section(home, "    var body: some View {", ".accessibilityIdentifier(\"photo-library-all-scroll\")")
+        for card in ("LimitedAccessBanner(chooseMorePhotos: chooseMorePhotos)", "photoSourceRecoveryLink",
+                     "widgetPlacementCard", "emptyPhotoState", "photoAccessCard"):
+            after = body[body.index(card):]
+            self.assertTrue(after.split("\n", 2)[1].strip() == ".padding(.horizontal, cardMargin)", card)
+        # The grid itself still runs edge to edge in the tab.
+        self.assertIn(".padding(.horizontal, isEmbedded ? 0 : 16)", body)
+        # The banner's button is at least 44pt tall.
+        banner = section(source("NekoWidget/Views/PhotoPermissionView.swift"), "struct LimitedAccessBanner: View {", "\n}\n")
+        self.assertIn('Button("写真を追加で選ぶ", action: chooseMorePhotos)\n                .font(.subheadline.weight(.semibold))\n                .frame(minHeight: 44)', banner)
+
+    def test_photo_tab_reaches_the_first_photo_sooner(self) -> None:
+        main = source("NekoWidget/Views/MainTabView.swift")
+        library = section(main, "private var photoLibrary: some View {", "private var albumRoot: some View {")
+        self.assertIn("photoLibraryCatRow", library)
+        row = section(main, "private struct PhotoLibraryCatRow<", "private struct PhotoThemeTile: View {")
+        for part in ("picker()", '.accessibilityIdentifier("photo-hub-detected-grid")', "PhotoLibraryMonthJumpMenu(", "addPhotos()"):
+            self.assertIn(part, row)
+        # The count and 日付 belong to すべて only.
+        self.assertIn("photoLibrarySelection.selection == .all && hasPhotoAccess ? photoLibraryCatPhotos : []",
+                      section(main, "private var photoLibraryCatRow: some View {", "private var photoLibraryCatPicker: some View {"))
+        self.assertIn("tabRowMonthJump: catProfilesPresentation.profiles.isEmpty ? nil : $photoLibraryMonthJump", main)
+        home = source("NekoWidget/Views/HomeView.swift")
+        self.assertIn("if tabRowMonthJump == nil {", section(home, "@ViewBuilder private var detectedPhotosSection: some View {",
+                                                             '.id("photo-library-all-heading")'))
+        # Themes: 64pt photos with the name on the photo, capped for large text.
+        tile = section(main, "private struct PhotoThemeTile: View {", "\n}\n")
+        self.assertIn(".frame(width: 64, height: 64)", tile)
+        self.assertIn(".dynamicTypeSize(...DynamicTypeSize.xLarge)", tile)
+        self.assertNotIn("frame(width: 88", main)
+        # MainTabView.body stays small: the row and tile are their own views.
+        self.assertNotIn("PhotoLibraryCatRow(", section(main, "    var body: some View {", "    private var photoLibrary: some View {"))
+
+    def test_grouped_cards_and_empty_states(self) -> None:
+        home = source("NekoWidget/Views/HomeView.swift")
+        self.assertNotIn("secondarySystemBackground", home)
+        empty = section(home, "private var emptyPhotoState: some View {", "\n    }\n\n}")
+        self.assertNotIn(".background(", empty)
+        for relative in ("NekoWidget/Views/ScanStatusView.swift",):
+            self.assertNotIn("Color(.secondarySystemBackground)", source(relative))
+        liked = source("NekoWidget/Views/LikedPhotosView.swift")
+        card = section(liked, "private struct CuratedAlbumCard: View {", "struct CuratedAlbumDetailView: View {")
+        self.assertIn(".background(NekoPalette.groupedCard)", card)
+        # Favorites answer like the まど heart, only when one is added.
+        quick = section(liked, "private func quickActions(_ photo: PhotoPresentation) -> some View {", 'quickAction("square.and.pencil"')
+        self.assertLess(quick.index("favoriteAddedTaps += 1"), quick.index("setMemorySaved(photo.localIdentifier, true)"))
+        self.assertIn(".symbolEffect(.bounce, value: favoriteAddedTaps)", liked)
+        self.assertIn(".sensoryFeedback(.impact(weight: .light), trigger: favoriteAddedTaps)", liked)
+
+    def test_accent_color_is_named_in_the_asset_catalog(self) -> None:
+        colorset = ROOT / "NekoWidget/Assets.xcassets/AccentColor.colorset/Contents.json"
+        self.assertTrue(colorset.exists())
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+        self.assertEqual(project.count("ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;"), 2)
+        self.assertIn("DesignTokens.swift in Sources", project)
+
 
 if __name__ == "__main__":
     unittest.main()
