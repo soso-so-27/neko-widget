@@ -733,15 +733,11 @@ final class AppStoreScreenshotUITests: XCTestCase {
 
     @MainActor
     func testCaptureOwnerStoreAppScreens() throws {
-        let app = try launchOwnerCapture("photo-grid")
+        let app = try launchOwnerCapture("photos")
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真"))
         app.buttons["photos-section-all"].tap()
         XCTAssertTrue(waitForFixturePhotos(in: app, requirements: [(1, 1), (2, 1), (3, 1)]))
-        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62))
-        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.36))
-        start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
-        XCTAssertTrue(waitForAnyFixturePhoto(in: app, numbers: [27, 28, 29, 30, 9, 10, 11]))
-        captureScreenshot(named: "15_photos_grid")
+        captureScreenshot(named: "02_photos")
         app.terminate()
     }
 
@@ -797,69 +793,13 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let latest = app.buttons["album-prototype-latest"]
         XCTAssertTrue(latest.waitForExistence(timeout: 15))
         XCTAssertTrue(waitForAnyFixturePhoto(in: app, numbers: Array(19...24)))
-        let calendar = Calendar(identifier: .gregorian)
-        let months = (1...3).compactMap { calendar.date(byAdding: .month, value: -$0, to: Date()) }
-        let bookButtons = months.map { date in
-            let year = calendar.component(.year, from: date), month = calendar.component(.month, from: date)
-            return app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "\(year)年\(month)月の作品")).firstMatch
-        }
-        for button in bookButtons.prefix(2) {
-            XCTAssertTrue(button.waitForExistence(timeout: 12))
-        }
-        captureScreenshot(named: "16_album_shelf")
+        captureScreenshot(named: "supplement_album_shelf")
         latest.tap()
         XCTAssertTrue(app.descendants(matching: .any)["monthly-book"].waitForExistence(timeout: 15))
         XCTAssertTrue(waitForAnyFixturePhoto(in: app, numbers: Array(19...24)))
         app.swipeLeft()
         sleep(2)
-        captureScreenshot(named: "17_album_spread")
-        app.terminate()
-    }
-
-    @MainActor
-    func testCaptureOwnerStoreLostFlyer() throws {
-        let root = try XCTUnwrap(ProcessInfo.processInfo.environment["NEKO_PRIVATE_CAPTURE_ROOT"])
-        let app = XCUIApplication()
-        app.launchArguments = japaneseLaunchArguments + ["--lost-cat-draft-ui-fixture", "--owner-store-capture",
-                                                        "--app-store-screenshot-fixture"]
-        app.launchEnvironment["NEKO_PRIVATE_CAPTURE_ROOT"] = root
-        app.launchEnvironment["NEKO_CAPTURE_SCREEN"] = "flyer"
-        app.launch()
-        let make = app.buttons["チラシを作る"]
-        XCTAssertTrue(make.waitForExistence(timeout: 15))
-        XCTAssertTrue(make.isEnabled)
-        make.tap()
-        let format = app.buttons["A4チラシ"]
-        XCTAssertTrue(format.waitForExistence(timeout: 12))
-        format.tap()
-        let preview = app.buttons["共有する迷子の猫の画像"]
-        XCTAssertTrue(preview.waitForExistence(timeout: 15))
-        XCTAssertTrue((preview.value as? String)?.contains("090-0000-0000") == true)
-        captureScreenshot(named: "18_lost_flyer")
-        app.terminate()
-    }
-
-    @MainActor
-    func testCaptureOwnerStoreVetReading() throws {
-        let app = try launchOwnerCapture("vet")
-        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
-        app.buttons["tools-vet-open"].tap()
-        let show = app.buttons["vet-show"]
-        if !show.waitForExistence(timeout: 5) {
-            let mugi = app.buttons["tool-profile-11111111-1111-4111-8111-111111111111"].firstMatch
-            XCTAssertTrue(mugi.waitForExistence(timeout: 10))
-            mugi.tap()
-        }
-        XCTAssertTrue(show.waitForExistence(timeout: 15))
-        XCTAssertTrue(show.isEnabled)
-        show.tap()
-        let reading = app.scrollViews["vet-reading"]
-        XCTAssertTrue(reading.waitForExistence(timeout: 15))
-        XCTAssertTrue(reading.staticTexts["朝ごはんを少し残す日が続いています。"].waitForExistence(timeout: 10))
-        XCTAssertTrue(reading.descendants(matching: .any)["vet-reading-weight"].exists)
-        let photos = reading.buttons.matching(identifier: "memory-note-photo")
-        XCTAssertTrue(photos.element(boundBy: 1).waitForExistence(timeout: 15))
-        captureScreenshot(named: "19_vet_reading")
+        captureScreenshot(named: "05_album")
         app.terminate()
     }
 

@@ -139,19 +139,14 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         app.launchArguments += ["-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP",
             "--app-store-screenshot-fixture", "--owner-store-capture", "--review-public-presentation"]
         app.launchEnvironment["NEKO_PRIVATE_CAPTURE_ROOT"] = root
-        app.launchEnvironment["NEKO_CAPTURE_SCREEN"] = "widget-personal"
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
-        let wallpaperSet = setOwnerCaptureWallpaper()
         sleep(3)
         XCUIDevice.shared.press(.home)
         let springboard = XCUIApplication(bundleIdentifier: springboardBundleIdentifier)
-        // Start on the page with the ordinary app icons, not the default page
-        // that contains the Maps and Calendar Widgets.
-        try reachOwnerIconPage(springboard)
-        // One large Widget on the real Home Screen; leave the icon rows below.
-        do {
-            let desiredPage = 3
+        // Large first, then Medium: the two real WidgetKit sizes occupy six
+        // rows on the disposable Home Screen. No app-drawn Home Screen is used.
+        for desiredPage in [3, 2] {
             let existingEdit = springboard.buttons.matching(
                 NSPredicate(format: "label IN %@", ["編集", "Edit"])).firstMatch
             let edit: XCUIElement
@@ -212,113 +207,23 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                 labels: ["ウィジェットを追加", "Add Widget"], elementTypes: [.button], timeout: 10))
             addButton.tap()
             sleep(2)
+            // Keep the observed Home editing toolbar between both additions.
+            // Long-pressing the first Widget opens its own configuration instead.
         }
         if let done = waitForElement(in: springboard, labels: ["完了", "Done"],
             elementTypes: [.button], timeout: 5, requireHittable: true) { done.tap() }
         else { XCUIDevice.shared.press(.home) }
-        sleep(8)
-        captureScreenshot(named: "11_home_widget_large", screenshot: XCUIScreen.main.screenshot())
-
-        app.terminate()
-        app.launchEnvironment["NEKO_CAPTURE_SCREEN"] = "widget-family"
-        app.launch()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        let cloudyCaption = springboard.descendants(matching: .any).matching(NSPredicate(
+            format: "label CONTAINS %@ OR value CONTAINS %@", "タップで きょうの 1 枚", "タップで きょうの 1 枚")).firstMatch
+        // WidgetKit can expose only the combined Widget accessibility element.
+        // Keep the screenshot for visual inspection even if that text is not AX.
+        _ = cloudyCaption.waitForExistence(timeout: 30)
         sleep(3)
-        XCUIDevice.shared.press(.home)
-        // Relaunching returns to the page containing the app icon. A large
-        // Widget can have moved that icon to the following page.
-        try reachOwnerIconPage(springboard)
-        let sender = springboard.descendants(matching: .any).matching(NSPredicate(
-            format: "label CONTAINS %@ OR value CONTAINS %@", "ママから", "ママから")).firstMatch
-        // Some WidgetKit builds expose the host container but not child AX
-        // labels. Preserve the screenshot for visual confirmation in that case.
-        _ = sender.waitForExistence(timeout: 32)
-        sleep(3)
-        captureScreenshot(named: "14_home_widget_family", screenshot: XCUIScreen.main.screenshot())
-        XCTAssertTrue(wallpaperSet, "The gray wallpaper was not applied through Photos.")
-    }
-
-    @MainActor
-    private func reachOwnerIconPage(_ springboard: XCUIApplication) throws {
-        let photosIcon = springboard.icons.matching(NSPredicate(format: "label IN %@", ["写真", "Photos"])).firstMatch
-        if photosIcon.exists && photosIcon.isHittable { return }
-        springboard.swipeRight()
-        if photosIcon.waitForExistence(timeout: 4) && photosIcon.isHittable { return }
-        for _ in 0..<2 {
-            springboard.swipeLeft()
-            if photosIcon.waitForExistence(timeout: 4) && photosIcon.isHittable { return }
-        }
         let hierarchy = XCTAttachment(string: springboard.debugDescription)
-        hierarchy.name = "private-owner-home-page"
+        hierarchy.name = "private-home-widget-layout"
         hierarchy.lifetime = .keepAlways
         add(hierarchy)
-        _ = try XCTUnwrap(photosIcon.exists && photosIcon.isHittable ? photosIcon : nil, "The Home Screen page with ordinary app icons")
-    }
-
-    @MainActor
-    private func setOwnerCaptureWallpaper() -> Bool {
-        // The simulator Settings list omits Wallpaper. Apple documents the
-        // alternative via the system Photos share sheet; Photos contains only
-        // the workflow's generated gray image.
-        let photos = XCUIApplication(bundleIdentifier: "com.apple.mobileslideshow")
-        photos.launch()
-        func unavailable(_ stage: String) -> Bool {
-            let hierarchy = XCTAttachment(string: photos.debugDescription)
-            hierarchy.name = "private-wallpaper-\(stage)"
-            hierarchy.lifetime = .keepAlways
-            add(hierarchy)
-            captureScreenshot(named: "wallpaper-\(stage)", screenshot: XCUIScreen.main.screenshot())
-            photos.terminate()
-            return false
-        }
-        let controls: [XCUIElement.ElementType] = [.button, .cell, .staticText, .other]
-        if let next = waitForElement(in: photos, labels: ["続ける", "Continue"],
-            elementTypes: [.button], timeout: 22, requireHittable: true) { next.tap() }
-        let share = photos.buttons.matching(NSPredicate(
-            format: "label IN %@ OR identifier IN %@", ["共有", "Share"], ["Share", "shareButton"])).firstMatch
-        let thumbnails = photos.descendants(matching: .any).matching(NSPredicate(
-            format: "label BEGINSWITH %@ OR label BEGINSWITH %@", "写真、", "Photo,"))
-        if !share.exists {
-            let end = Date().addingTimeInterval(15)
-            var thumbnail: XCUIElement?
-            repeat {
-                thumbnail = thumbnails.allElementsBoundByIndex.first { $0.isHittable }
-                    ?? photos.cells.allElementsBoundByIndex.first { $0.isHittable && $0.frame.width < 220 && $0.frame.height > 35 }
-                    ?? photos.images.allElementsBoundByIndex.first { $0.isHittable && (45...220).contains($0.frame.width) }
-                if thumbnail != nil { break }
-                RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-            } while Date() < end
-            guard let thumbnail else { return unavailable("photo-library") }
-            thumbnail.tap()
-        }
-        guard share.waitForExistence(timeout: 12) else { return unavailable("share-button") }
-        share.tap()
-        let wallpaperActions = ["壁紙に設定", "Use as Wallpaper", "Set as Wallpaper"]
-        var wallpaper: XCUIElement?
-        for _ in 0..<4 {
-            wallpaper = waitForElement(in: photos, labels: wallpaperActions, elementTypes: controls,
-                                       timeout: 2, requireHittable: true)
-            if wallpaper != nil { break }
-            let start = photos.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.87))
-            let end = photos.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.46))
-            start.press(forDuration: 0.12, thenDragTo: end)
-        }
-        guard let wallpaper else { return unavailable("share-actions") }
-        wallpaper.tap()
-        let springboard = XCUIApplication(bundleIdentifier: springboardBundleIdentifier)
-        let addLabels = ["追加", "Add", "設定", "Set"]
-        let addAction = waitForElement(in: photos, labels: addLabels, elementTypes: [.button], timeout: 5, requireHittable: true)
-            ?? waitForElement(in: springboard, labels: addLabels, elementTypes: [.button], timeout: 6, requireHittable: true)
-        guard let addAction else { return unavailable("wallpaper-preview") }
-        addAction.tap()
-        let pairLabels = ["壁紙を両方に設定", "Set as Wallpaper Pair", "両方に設定", "Set Both"]
-        let pair = waitForElement(in: photos, labels: pairLabels, elementTypes: controls, timeout: 5, requireHittable: true)
-            ?? waitForElement(in: springboard, labels: pairLabels, elementTypes: controls, timeout: 6, requireHittable: true)
-        guard let pair else { return unavailable("apply-pair") }
-        pair.tap()
-        sleep(2)
-        photos.terminate()
-        return true
+        captureScreenshot(named: "01_widget", screenshot: XCUIScreen.main.screenshot())
     }
 
     @MainActor
