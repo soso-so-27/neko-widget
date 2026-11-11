@@ -248,6 +248,11 @@ enum OnboardingPresentationVerifier {
             "legacy Widget installation steps changed"
         )
         try require(
+            OnboardingPresentationCopy.widgetChangeSourceStep
+                == "出す写真を変えるには、ウィジェットを長押しして「ウィジェットを編集」→「表示する写真」。まども選べます。",
+            "Widget guide stopped saying how to change what the Widget shows"
+        )
+        try require(
             OnboardingPresentationCopy.widgetReturnHint
                 == "追加してアプリへ戻ると、自動で確認します。",
             "Widget guide stopped explaining automatic confirmation"
