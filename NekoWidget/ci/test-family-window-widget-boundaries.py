@@ -2476,6 +2476,10 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("showsKeyPhotoPicker = true", heading)
         self.assertIn('"cat-profile-rename"', heading)
         self.assertIn("await profileActions.updateName(profile.identifier, draftName)", heading)
+        # 11/11: renamed in the system dialog, not in rows opened under the name.
+        self.assertIn('.alert("名前を変更", isPresented: $showsNameEditor)', heading)
+        self.assertIn('Button("キャンセル", role: .cancel) {}', heading)
+        self.assertNotIn("if showsNameEditor {", heading)
         self.assertIn("await profileActions.setKeyPhoto(profile.identifier, $0)", care)
         delete = section(care, "private func deleteSection(", "@State private var openParts")
         # 11/8: 「この子」, not 「プロフィール」.
