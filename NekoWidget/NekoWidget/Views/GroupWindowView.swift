@@ -364,16 +364,17 @@ final class GroupWindowScreenModel: ObservableObject {
         do {
             let incoming = try await client.fetchPhoto(photoID: photo.id, windowID: windowID)
             let verifiedMomentID = incoming.verified?.clientMomentID
-            if let verifiedMomentID, try await store.hasReceived(verifiedMomentID: verifiedMomentID, windowID: windowID) {
-                // This signed photo was already kept. A new relay ID does not
-                // make it a new photo or change the previously received copy.
-                try await client.keep(incoming, outgoingOperationID: outgoingOperationID) { _, _ in }
-                return nil
-            }
             let isOwn = incoming.photo.senderParticipantID == me
-            // A photo this iPhone sent was checked before sending.
+            let alreadyReceived: Bool
+            if let verifiedMomentID {
+                alreadyReceived = try await store.hasReceived(verifiedMomentID: verifiedMomentID, windowID: windowID)
+            } else {
+                alreadyReceived = false
+            }
+            // A sent photo was checked before sending. A replay is not shown
+            // or written again: the store rechecks its signed ID before saving.
             let verdict: GroupPhotoModeration.Verdict
-            if isOwn {
+            if isOwn || alreadyReceived {
                 verdict = .safe
             } else {
                 verdict = await GroupPhotoModeration.check(incoming.jpeg, with: moderation)
@@ -384,6 +385,14 @@ final class GroupWindowScreenModel: ObservableObject {
             let windowID = self.windowID
             let hidden = verdict == .hidden
             try await client.keep(incoming, outgoingOperationID: outgoingOperationID) { kept, jpeg in
+                if alreadyReceived {
+                    // Forgetting a window between the two checks must not
+                    // turn an acknowledged replay into an unchecked write.
+                    guard let verifiedMomentID,
+                          try await store.hasReceived(verifiedMomentID: verifiedMomentID, windowID: windowID)
+                    else { throw GroupClientError.invalidResponse }
+                    return
+                }
                 try await store.save(
                     .init(
                         id: kept.id,

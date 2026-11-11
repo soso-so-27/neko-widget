@@ -221,15 +221,12 @@ actor GroupWindowLocalPhotoStore {
     /// so an interrupted write never lists a photo that is not there.
     func save(_ entry: Entry, jpeg: Data?, windowID: String, verifiedMomentID: String? = nil) throws {
         var index = try loadIndex(windowID: windowID)
+        guard !index.entries.contains(where: { $0.id == entry.id }) else { return }
         if let id = verifiedMomentID {
             guard GroupCanonical.validID(id) else { throw CocoaError(.fileReadCorruptFile) }
             var received = index.receivedMomentIDs ?? []
             guard received.insert(id).inserted else { return }
             index.receivedMomentIDs = received
-        }
-        if index.entries.contains(where: { $0.id == entry.id }) {
-            if verifiedMomentID != nil { try write(JSONEncoder().encode(index), to: indexURL(windowID: windowID)) }
-            return
         }
         if !entry.isHidden {
             guard let jpeg else { throw CocoaError(.fileWriteUnknown) }
