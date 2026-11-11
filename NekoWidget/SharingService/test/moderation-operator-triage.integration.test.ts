@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { base64urlEncode } from "../src/encoding";
 import { deriveModerationOperatorCaseReference } from "../src/moderation-operator-case-reference";
 import { routeLocalModerationOperatorTriage, type LocalModerationTriageEnvironment } from "../src/moderation-operator-triage-local";
-import { runDurableModerationAdvisory } from "../src/moderation-ai-durable";
+import { runDurableModerationAdvisory } from "./fixtures/moderation-ai-durable";
 import { routeModerationOperatorRequest } from "../src/moderation-operator-worker";
 
 const db = (env as unknown as { DB: D1Database }).DB;

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { requestModerationAdvisory, MODERATION_ADVISORY_TRANSPORT_DEADLINE_MS } from "../src/moderation-ai-transport";
+import { requestModerationAdvisory, MODERATION_ADVISORY_TRANSPORT_DEADLINE_MS } from "./fixtures/moderation-ai-transport";
 import { MODERATION_ADVISORY_ENDPOINT, MODERATION_ADVISORY_MODEL, moderationAdvisoryCategories,
-  type ModerationAdvisoryCase, type ModerationAdvisoryInput } from "../src/moderation-ai-advisory";
+  type ModerationAdvisoryCase, type ModerationAdvisoryInput } from "./fixtures/moderation-ai-advisory";
 
 const binding = (): ModerationAdvisoryCase => ({caseReferenceHmacKeyVersion: 7, caseReferenceHmac: "a".repeat(64), evidenceVersion: 3, evidenceSHA256: "b".repeat(64)});
 const input = (): ModerationAdvisoryInput => ({case: binding(), safetyRoute: "general_review", text: "猫の通報を確認してください"});
