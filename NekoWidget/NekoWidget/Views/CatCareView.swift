@@ -1714,14 +1714,18 @@ struct ToolCatCareSection<Extra: View>: View {
     /// is not something to do there (11/8: a long read-only box sat among
     /// the steps and looked like more to write).
     let folded: Bool
+    /// A heading over the folded row and its extra rows (11/12: 病院で見せる's
+    /// 「この子の記録」); none when not given.
+    let foldedHeader: String?
     let extra: () -> Extra
 
     init(title: String, lines: [(String, String)], subject: CatCareSubject?, footer: String? = nil,
          identifier: String, editIdentifier: String, profiles: [CatProfilePresentation] = [],
-         showsLifeDates: Bool = true, folded: Bool = false, @ViewBuilder extra: @escaping () -> Extra) {
+         showsLifeDates: Bool = true, folded: Bool = false, foldedHeader: String? = nil,
+         @ViewBuilder extra: @escaping () -> Extra) {
         self.title = title; self.lines = lines; self.subject = subject; self.footer = footer
         self.identifier = identifier; self.editIdentifier = editIdentifier; self.profiles = profiles
-        self.showsLifeDates = showsLifeDates; self.folded = folded
+        self.showsLifeDates = showsLifeDates; self.folded = folded; self.foldedHeader = foldedHeader
         self.extra = extra
     }
 
@@ -1773,7 +1777,7 @@ struct ToolCatCareSection<Extra: View>: View {
                         .accessibilityIdentifier(editIdentifier)
                 }
             }
-        } header: { if !folded { Text(title) } }
+        } header: { if !folded { Text(title) } else if let foldedHeader { Text(foldedHeader) } }
           footer: { if let footer { Text(footer) } }
     }
 
@@ -1820,10 +1824,10 @@ struct ToolCatCareSection<Extra: View>: View {
 extension ToolCatCareSection where Extra == EmptyView {
     init(title: String, lines: [(String, String)], subject: CatCareSubject?, footer: String? = nil,
          identifier: String, editIdentifier: String, profiles: [CatProfilePresentation] = [],
-         showsLifeDates: Bool = true, folded: Bool = false) {
+         showsLifeDates: Bool = true, folded: Bool = false, foldedHeader: String? = nil) {
         self.init(title: title, lines: lines, subject: subject, footer: footer,
                   identifier: identifier, editIdentifier: editIdentifier, profiles: profiles,
-                  showsLifeDates: showsLifeDates, folded: folded) { EmptyView() }
+                  showsLifeDates: showsLifeDates, folded: folded, foldedHeader: foldedHeader) { EmptyView() }
     }
 }
 
@@ -1839,6 +1843,11 @@ extension ToolCatCareSection where Extra == EmptyView {
 //   5. at the bottom, ToolMakeBar: 「あと：…」 and the one button
 // One page with marked steps, not a wizard: 病院 and 預ける are repeated
 // tasks, and steps can be filled in any order.
+//
+// 11/12: 病院で見せる is the trial of another shape, a list of rows as in 設定
+// (a section heading, then rows with an icon, the name, what is written and a
+// chevron; each row opens its own page), with the cat chosen from a menu in
+// the bar instead of the row of faces. 迷子・預ける・避難 keep the shape above.
 
 /// Where a step stands: the first one not done is the one to do now.
 enum ToolStepState: Equatable {
