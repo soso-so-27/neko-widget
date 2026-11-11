@@ -41,16 +41,21 @@ struct VerifyCatCare {
         display.cats[0].conditions = .init(value: "family memo", editedAt: t1, editedBy: "family:sender")
         display.cats[0].vaccinations = [.init(id: received, kind: "family vaccine", givenOn: day,
                                              familyPhotoLink: link, editedAt: t1, editedBy: "family:sender")]
+        display.cats[0].meals = [.init(food: "family food", order: 0, editedAt: t1, editedBy: "family:sender")]
         let projected = try FamilyNotebookRecordOrigin.recording(CatCareDecoding.encode(display), over: old, tool: "CatCare", family: true)
         display.cats[0].vaccinations[0].proof = proof
         display.cats[0].vaccinations[0].editedAt = t1.addingTimeInterval(1)
         display.cats[0].vaccinations[0].editedBy = "phone"
+        display.cats[0].meals[0].amount = "owner amount"
+        display.cats[0].meals[0].editedBy = "phone" // Same encoded second as the receive.
         let edited = try FamilyNotebookRecordOrigin.recording(CatCareDecoding.encode(display), over: projected, tool: "CatCare", family: false)
         let bytes = try CatCareDecoding.personalBackup(edited)
         let portableText = String(decoding: bytes, as: UTF8.self)
         try check(!portableText.contains("family vaccine") && !portableText.contains("family memo") && !portableText.contains("local-library-id"), "family values and PhotoKit ID stay off backup")
         var restored = try CatCareDecoding.backupState(CatCareDecoding.portable(bytes, deviceID: "fresh"))
         try check(restored.cats[0].conditions?.value == "owner memo" && restored.cats[0].activeWeights.first?.grams == 4200, "private memo and weight survive clean restore")
+        try check(restored.cats[0].activeMeals.first?.amount == "owner amount" && restored.cats[0].activeMeals.first?.food == "",
+                  "a same-second local edit is readable without its shared sibling")
         try check(restored.cats[0].activeVaccinations.isEmpty && restored.cats[0].unmatchedVaccinationProofs.count == 1,
                   "private proof is listed without a fabricated vaccination")
         try check(try CatCareDecoding.backupPhotoNames(bytes) == [proof.fileName], "detached proof is in the actual backup file list")

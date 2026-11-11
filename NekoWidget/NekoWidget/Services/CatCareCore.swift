@@ -931,7 +931,9 @@ enum CatCareDecoding {
         state["cats"] = cats.map { input -> Object in
             var cat = fields(input, ["weights": [Object](), "medications": [Object](), "vaccinations": [Object](),
                                      "meals": [Object](), "sharedWindowIDs": [String]()])
-            stamped(&cat, "allergy", ["status": "unknown", "text": ""])
+            let allergyValue = (cat["allergy"] as? Object)?["value"] as? Object
+            let allergyStatus = (allergyValue?["text"] as? String)?.isEmpty == false ? "recorded" : "unknown"
+            stamped(&cat, "allergy", ["status": allergyStatus, "text": ""])
             stamped(&cat, "vetOverride", ["name": "", "phone": "", "note": ""])
             stamped(&cat, "microchipAnswer", ["status": "unknown"])
             stamped(&cat, "vaccinationAnswer", ["status": "unknown", "observedVaccinationIDs": [String]()])

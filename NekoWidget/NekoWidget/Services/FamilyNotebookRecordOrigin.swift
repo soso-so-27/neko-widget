@@ -4,7 +4,6 @@ import Foundation
 /// Only the personal projection goes into a portable backup.
 enum FamilyNotebookRecordOrigin {
     typealias Object = [String: Any]
-    static let tools: Set<String> = ["CatCare", "CareHandoff", "VeterinaryVisits"]
     private static let origin = "_familyNotebookPersonalV1"
     private static var invalid: CocoaError { CocoaError(.fileReadCorruptFile) }
 
@@ -127,6 +126,10 @@ enum FamilyNotebookRecordOrigin {
             // edit. Dates, names and unchanged sibling values remain masked.
             for key in ["id", "catID", "toolCatID"] where result[key] == nil { result[key] = b[key] }
             for key in clocks where !same(a[key], b[key]) { result[key] = b[key] }
+            // CatCare encodes dates to whole seconds. The owner's edit can
+            // share that second with a received edit, while the author changes.
+            if result["editedAt"] == nil, let author = b["editedBy"] as? String,
+               !author.hasPrefix("family:"), !same(a["editedBy"], author) { result["editedAt"] = b["editedAt"] }
             return result
         }
         if let a = Rows(before), let b = Rows(after) {
