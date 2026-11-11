@@ -213,14 +213,16 @@ private struct ShowcaseSession: Identifiable {
 /// 「もしも」 tools are warm, so colour itself means "in case".
 private enum ToolTint {
     static let everyday = Color.accentColor
-    static let everydayLight = Color(red: 0.36, green: 0.62, blue: 0.86)
+    // 11/11: every tile colour keeps its white symbol at 3:1 or more
+    // (the lightest blue and the two lightest oranges were 2.2 to 2.9:1).
+    static let everydayLight = Color(red: 0.30, green: 0.56, blue: 0.82)
     static let everydayDeep = Color(red: 0.22, green: 0.42, blue: 0.70)
     // もしも: one warm family in steps of depth (10/26: four unrelated colours
     // read as four different apps). Red is no longer used for a tool.
-    static let emergency = Color(red: 0.95, green: 0.58, blue: 0.24)
-    static let emergencyWarm = Color(red: 0.89, green: 0.50, blue: 0.22)
-    static let emergencyDeep = Color(red: 0.80, green: 0.42, blue: 0.20)
-    static let emergencyBrown = Color(red: 0.68, green: 0.36, blue: 0.19)
+    static let emergency = Color(red: 0.86, green: 0.46, blue: 0.14)
+    static let emergencyWarm = Color(red: 0.80, green: 0.41, blue: 0.17)
+    static let emergencyDeep = Color(red: 0.72, green: 0.37, blue: 0.18)
+    static let emergencyBrown = Color(red: 0.62, green: 0.33, blue: 0.18)
 }
 
 /// A cat in the row above the tools: round photo with a ring around it that
@@ -598,6 +600,8 @@ struct MainTabView: View {
     /// The page the pager rests on or is heading to.
     @State private var photoPage: PhotoLibrarySection?
     @State private var photoLibraryProfileIdentifier: String?
+    /// A month chosen in the cat row's 「日付」, handed to the すべて grid (11/11).
+    @State private var photoLibraryMonthJump: String?
     /// The theme row for the chosen cat, built when the cat or the photos change (11/7).
     @State private var photoThemeCatAlbums: (key: PhotoThemeCatKey, albums: [CuratedAlbumPresentation])?
     @StateObject private var showcaseStore = ShowcasePhotoStore.shared
@@ -1061,16 +1065,8 @@ struct MainTabView: View {
             // 11/7: the cat switch is one row over all three pages, so a cat
             // chosen in すべて is seen in お気に入り and メモ too.
             if !catProfilesPresentation.profiles.isEmpty {
-                HStack(spacing: 8) {
-                    photoLibraryCatPicker
-                    Spacer(minLength: 0)
-                    // 11/7: one cat chosen: adding its photos is here, not on the cat's page.
-                    if let profile = catProfilesPresentation.profiles.first(where: { $0.identifier == photoLibraryProfileIdentifier }) {
-                        CatProfileAddPhotosButton(profile: profile, allProfiles: catProfilesPresentation.profiles,
-                                                  actions: catProfilesActions)
-                    }
-                }
-                .padding(.horizontal, 16)
+                photoLibraryCatRow
+                    .padding(.horizontal, 16)
             }
             photoLibraryPager
         }
@@ -1687,6 +1683,23 @@ struct MainTabView: View {
         return saved.filter { includes($0) && !visible.contains($0) }.count
     }
 
+    /// 11/11: one row for the cat switch, 「○枚」 and 「日付」 (they were two
+    /// rows), so the first photo comes higher. 「○枚」 and 「日付」 belong to
+    /// すべて and show only on that page; the cat switch is over all three.
+    private var photoLibraryCatRow: some View {
+        let profile = catProfilesPresentation.profiles.first { $0.identifier == photoLibraryProfileIdentifier }
+        let photos = photoLibrarySelection.selection == .all && hasPhotoAccess ? photoLibraryCatPhotos : []
+        return PhotoLibraryCatRow(photos: photos, monthJump: $photoLibraryMonthJump) {
+            photoLibraryCatPicker
+        } addPhotos: {
+            // 11/7: one cat chosen: adding its photos is here, not on the cat's page.
+            if let profile {
+                CatProfileAddPhotosButton(profile: profile, allProfiles: catProfilesPresentation.profiles,
+                                          actions: catProfilesActions)
+            }
+        }
+    }
+
     private var photoLibraryCatPicker: some View {
         Menu {
             photoLibraryCatButton("すべての猫", identifier: nil)
@@ -1770,10 +1783,12 @@ struct MainTabView: View {
             isEmbedded: true,
             readingPositionKey: photoLibraryPositionKey(.all),
             showsCatProfileNavigation: false,
-            // The cat switch sits above the pages (11/7); only the count stays here.
+            // The cat switch sits above the pages (11/7), with the count and
+            // 日付 in the same row (11/11).
             headerAccessory: catProfilesPresentation.profiles.isEmpty ? nil : AnyView(EmptyView()),
             themeRow: Version1.isOn && hasPhotoAccess && !themes.isEmpty
-                ? AnyView(photoThemeRow(themes)) : nil
+                ? AnyView(photoThemeRow(themes)) : nil,
+            tabRowMonthJump: catProfilesPresentation.profiles.isEmpty ? nil : $photoLibraryMonthJump
         )
     }
 
@@ -1824,18 +1839,7 @@ struct MainTabView: View {
                         NavigationLink(value: photoLibraryProfileIdentifier.map {
                             AlbumRoute.catAlbum(profileIdentifier: $0, album: album.id)
                         } ?? AlbumRoute.album(album.id)) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                PhotoAssetImageView(localIdentifier: album.coverPhoto.localIdentifier,
-                                                    catBoundingBox: album.coverPhoto.catBoundingBox,
-                                                    targetPixelSize: CGSize(width: 240, height: 240))
-                                    .frame(width: 88, height: 88)
-                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                Text(album.cardTitle)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.primary)
-                                    .lineLimit(1)
-                                    .frame(width: 88, alignment: .leading)
-                            }
+                            PhotoThemeTile(album: album)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel(album.cardTitle)
@@ -3920,3 +3924,69 @@ private struct WidgetResumeOffer: View {
     }
 }
 
+/// The 写真 tab's one row over the pages: the cat switch, then on すべて the
+/// count and 「日付」, then the chosen cat's add button (11/11).
+private struct PhotoLibraryCatRow<CatPicker: View, AddPhotos: View>: View {
+    let photos: [PhotoPresentation]
+    @Binding var monthJump: String?
+    @ViewBuilder let picker: () -> CatPicker
+    @ViewBuilder let addPhotos: () -> AddPhotos
+
+    var body: some View {
+        // The add button keeps its words when they fit, else only its symbol.
+        let months = PhotoLibraryMonthDestination.months(in: photos)
+        ViewThatFits(in: .horizontal) {
+            row(compactAdd: false, months: months)
+            row(compactAdd: true, months: months)
+        }
+    }
+
+    private func row(compactAdd: Bool, months: [PhotoLibraryMonthDestination]) -> some View {
+        HStack(spacing: 10) {
+            picker()
+            if !photos.isEmpty {
+                Text("\(photos.count.formatted())枚")
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .accessibilityIdentifier("photo-hub-detected-grid")
+            }
+            Spacer(minLength: 0)
+            PhotoLibraryMonthJumpMenu(months: months) { monthJump = $0 }
+            if compactAdd {
+                addPhotos().labelStyle(.iconOnly)
+            } else {
+                addPhotos()
+            }
+        }
+    }
+}
+
+/// A theme in the 写真 tab: a 64pt photo with its name on it (11/11: was 88pt
+/// with the name under it). The name is capped so it never runs out of the tile.
+private struct PhotoThemeTile: View {
+    let album: CuratedAlbumPresentation
+
+    var body: some View {
+        PhotoAssetImageView(localIdentifier: album.coverPhoto.localIdentifier,
+                            catBoundingBox: album.coverPhoto.catBoundingBox,
+                            targetPixelSize: CGSize(width: 192, height: 192))
+            .frame(width: 64, height: 64)
+            .overlay(alignment: .bottomLeading) {
+                Text(album.cardTitle)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+                    .dynamicTypeSize(...DynamicTypeSize.xLarge)
+                    .padding(.horizontal, 5)
+                    .padding(.bottom, 4)
+                    .frame(width: 64, alignment: .leading)
+                    .background(alignment: .bottom) {
+                        LinearGradient(colors: [.clear, .black.opacity(0.6)], startPoint: .top, endPoint: .bottom)
+                    }
+            }
+            .clipShape(NekoRadius.shape(NekoRadius.photo))
+    }
+}

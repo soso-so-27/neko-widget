@@ -1183,6 +1183,20 @@ enum GroupPhotoDecoder {
     }
 }
 
+/// The shape of a tile in the window's list. Kept in memory only, for this
+/// launch: nothing is added to the saved photo index. Read and written on
+/// the main actor only (the tile's body and task).
+enum GroupPhotoTileShape {
+    static let wide: CGFloat = 4.0 / 3.0
+    static let tall: CGFloat = 3.0 / 4.0
+    static var remembered: [String: CGFloat] = [:]
+
+    static func clamped(_ size: CGSize) -> CGFloat {
+        guard size.width > 0, size.height > 0 else { return wide }
+        return min(max(size.width / size.height, tall), wide)
+    }
+}
+
 private struct GroupPhotoTile: View {
     @ObservedObject var model: GroupWindowScreenModel
     let entry: GroupWindowLocalPhotoStore.Entry
@@ -1194,10 +1208,19 @@ private struct GroupPhotoTile: View {
     private var reported: Bool { safety.hasReported(entry.id, in: model.windowID) }
     private var canHeart: Bool { !entry.isHidden && !reported && !entry.isOwn && !model.isFormer }
 
+    /// Width over height for the tile: the photo's own shape, kept between
+    /// 3:4 (tall) and 4:3 (wide). A tall cat photo is no longer cut to a
+    /// wide 4:3 (11/11). Until the photo is read, the shape seen last time
+    /// in this launch, else 4:3, so the list does not jump twice.
+    private var tileAspectRatio: CGFloat {
+        if let image { return GroupPhotoTileShape.clamped(image.size) }
+        return GroupPhotoTileShape.remembered[entry.id] ?? GroupPhotoTileShape.wide
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             Color(uiColor: .tertiarySystemFill)
-                .aspectRatio(4 / 3, contentMode: .fit)
+                .aspectRatio(tileAspectRatio, contentMode: .fit)
                 .overlay {
                     if reported {
                         Label("通報した写真", systemImage: "eye.slash")
@@ -1228,11 +1251,17 @@ private struct GroupPhotoTile: View {
                     guard canHeart else { return }
                     Task { await model.toggleHeart(entry.id) }
                 } label: {
-                    Label(heartCount > 0 ? heartCount.formatted() : "", systemImage: model.myHeartIsActive(entry.id) || heartCount > 0 ? "heart.fill" : "heart")
-                        .labelStyle(.titleAndIcon)
-                        .font(.subheadline.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(heartCount > 0 ? Color.red : Color.secondary)
-                        .frame(minWidth: 44, minHeight: 44)
+                    let mine = model.myHeartIsActive(entry.id)
+                    HStack(spacing: 4) {
+                        Image(systemName: mine ? "heart.fill" : "heart")
+                            .foregroundStyle(mine ? Color.red : Color.secondary)
+                        if heartCount > 0 {
+                            Text(heartCount.formatted())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                    .frame(minWidth: 44, minHeight: 44)
                 }
                 .buttonStyle(.plain)
                 .disabled(!canHeart)
@@ -1251,9 +1280,11 @@ private struct GroupPhotoTile: View {
         .accessibilityAction(named: Text("大きく見る"), open)
         .task(id: entry.id) {
             guard !entry.isHidden, let url = await model.imageURL(for: entry) else { return }
-            image = await Task.detached(priority: .userInitiated) {
+            let decoded = await Task.detached(priority: .userInitiated) {
                 GroupPhotoDecoder.image(at: url, maxPixel: 900)
             }.value
+            if let decoded { GroupPhotoTileShape.remembered[entry.id] = GroupPhotoTileShape.clamped(decoded.size) }
+            image = decoded
         }
         .onChange(of: reported) { _, covered in if covered { image = nil } }
     }

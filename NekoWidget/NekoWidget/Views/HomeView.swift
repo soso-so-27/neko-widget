@@ -370,10 +370,46 @@ private struct PhotoLibraryUserScrollDetector: ViewModifier {
     }
 }
 
-private struct PhotoLibraryMonthDestination: Identifiable {
+struct PhotoLibraryMonthDestination: Identifiable {
     let label: String
     let identifier: String
     var id: String { identifier }
+
+    /// The months of these photos, newest first, worked out once per drawing.
+    static func months(in photos: [PhotoPresentation]) -> [PhotoLibraryMonthDestination] {
+        var seen = Set<String>()
+        return photos.compactMap { photo in
+            guard let date = photo.creationDate else { return nil }
+            let components = Calendar.nekoGregorian.dateComponents([.year, .month], from: date)
+            guard let year = components.year, let month = components.month else { return nil }
+            let label = "\(year)年\(month)月"
+            guard seen.insert(label).inserted else { return nil }
+            return PhotoLibraryMonthDestination(label: label, identifier: photo.localIdentifier)
+        }
+    }
+}
+
+/// 「日付」: jump to a month of the grid. The months are handed in.
+struct PhotoLibraryMonthJumpMenu: View {
+    let months: [PhotoLibraryMonthDestination]
+    let select: (String) -> Void
+
+    var body: some View {
+        if !months.isEmpty {
+            Menu {
+                ForEach(months) { month in
+                    Button(month.label) { select(month.identifier) }
+                }
+            } label: {
+                Label("日付", systemImage: "calendar")
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                    .frame(minHeight: 44)
+            }
+            .accessibilityLabel("年月へ移動")
+            .accessibilityIdentifier("photo-library-month-jump")
+        }
+    }
 }
 
 struct HomeView: View {
@@ -404,6 +440,10 @@ struct HomeView: View {
     let headerAccessory: AnyView?
     /// Above the grid: themes and growth (新しいアルバム（試作）only).
     let themeRow: AnyView?
+    /// 11/11: set by the 写真 tab when its cat row carries 「○枚」 and 「日付」,
+    /// so the grid starts without a heading row of its own. A month chosen
+    /// there arrives here and is cleared once the grid has moved.
+    let tabRowMonthJump: Binding<String?>?
 
     /// Rows are built lazily, so a large batch costs little; fewer appends
     /// mean fewer layout passes while the grid is moving.
@@ -435,9 +475,11 @@ struct HomeView: View {
         readingPositionKey: String? = nil,
         showsCatProfileNavigation: Bool = true,
         headerAccessory: AnyView? = nil,
-        themeRow: AnyView? = nil
+        themeRow: AnyView? = nil,
+        tabRowMonthJump: Binding<String?>? = nil
     ) {
         self.themeRow = themeRow
+        self.tabRowMonthJump = tabRowMonthJump
         self.catPhotos = catPhotos
         self.scan = scan
         self.hasPhotoAccess = hasPhotoAccess
@@ -465,6 +507,10 @@ struct HomeView: View {
             ? PhotoLibraryReadingPosition.identifier(for: readingPositionKey ?? "all") : nil)
     }
 
+    /// Inside the 写真 tab the grid runs edge to edge (no side margin), so
+    /// each card and banner above it adds the screen's 16 itself (11/11).
+    private var cardMargin: CGFloat { isEmbedded ? NekoSpacing.screenMargin : 0 }
+
     private var widgetPlacementHint: String {
         if #available(iOS 18.0, *) {
             "長押し →「編集」→「ウィジェットを追加」"
@@ -480,6 +526,7 @@ struct HomeView: View {
                     VStack(spacing: 18) {
                         if isLimitedAccess {
                             LimitedAccessBanner(chooseMorePhotos: chooseMorePhotos)
+                                .padding(.horizontal, cardMargin)
                         }
 
                         if let themeRow { themeRow }
@@ -488,10 +535,12 @@ struct HomeView: View {
 
                         if case .unavailable = photoSourceStatus {
                             photoSourceRecoveryLink
+                                .padding(.horizontal, cardMargin)
                         }
 
                         if shouldOfferWidgetPlacementGuide, !catPhotos.isEmpty {
                             widgetPlacementCard
+                                .padding(.horizontal, cardMargin)
                         }
                     }
                     .padding(.bottom, 16)
@@ -509,9 +558,11 @@ struct HomeView: View {
                             headerAccessory
                         }
                         emptyPhotoState
+                            .padding(.horizontal, cardMargin)
                     }
                 } else {
                     photoAccessCard
+                        .padding(.horizontal, cardMargin)
                 }
                 supplementaryPhotos.padding(.top, 16)
                     .id("photo-library-all-archive")
@@ -520,6 +571,11 @@ struct HomeView: View {
             .padding(.vertical, 12)
         }
         .accessibilityIdentifier("photo-library-all-scroll")
+        .onChange(of: tabRowMonthJump?.wrappedValue) { _, identifier in
+            guard let identifier else { return }
+            moveToMonth(identifier)
+            tabRowMonthJump?.wrappedValue = nil
+        }
         .restoringPhotoLibraryPosition(section: isEmbedded ? (readingPositionKey ?? "all") : nil,
             firstRow: catPhotos.first?.localIdentifier,
             normalize: { PhotoLibraryGridRow.identifier(containing: $0, in: catPhotos) })
@@ -567,13 +623,13 @@ struct HomeView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Button("写真へのアクセスを許可", action: requestPhotoAccess)
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("home-photo-permission")
+            Button(action: requestPhotoAccess) {
+                Text("写真へのアクセスを許可").frame(maxWidth: .infinity)
+            }
+            .nekoPrimaryButton()
+            .accessibilityIdentifier("home-photo-permission")
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+        .nekoGroupedCard()
     }
 
     /// The first card on the tab until WidgetKit sees a Widget: a small
@@ -604,7 +660,7 @@ struct HomeView: View {
                     .foregroundStyle(.tertiary)
             }
             .padding(12)
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .background(NekoPalette.groupedCard, in: NekoRadius.shape(NekoRadius.card))
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("home-widget-placement-guide")
@@ -641,32 +697,12 @@ struct HomeView: View {
     }
 
     private var monthDestinations: [PhotoLibraryMonthDestination] {
-        var seen = Set<String>()
-        return catPhotos.compactMap { photo in
-            guard let date = photo.creationDate else { return nil }
-            let components = Calendar.nekoGregorian.dateComponents([.year, .month], from: date)
-            guard let year = components.year, let month = components.month else { return nil }
-            let label = "\(year)年\(month)月"
-            guard seen.insert(label).inserted else { return nil }
-            return PhotoLibraryMonthDestination(label: label, identifier: photo.localIdentifier)
-        }
+        PhotoLibraryMonthDestination.months(in: catPhotos)
     }
 
     /// The months are worked out once per drawing and handed in here.
-    @ViewBuilder private func monthJumpMenu(_ months: [PhotoLibraryMonthDestination]) -> some View {
-        if !months.isEmpty {
-            Menu {
-                ForEach(months) { month in
-                    Button(month.label) { moveToMonth(month.identifier) }
-                }
-            } label: {
-                Label("日付", systemImage: "calendar")
-                    .font(.subheadline.weight(.medium))
-                    .frame(minHeight: 44)
-            }
-            .accessibilityLabel("年月へ移動")
-            .accessibilityIdentifier("photo-library-month-jump")
-        }
+    private func monthJumpMenu(_ months: [PhotoLibraryMonthDestination]) -> some View {
+        PhotoLibraryMonthJumpMenu(months: months, select: moveToMonth)
     }
 
     private func moveToMonth(_ identifier: String) {
@@ -679,6 +715,9 @@ struct HomeView: View {
     }
 
     @ViewBuilder private var detectedPhotosSection: some View {
+            // 11/11: in the 写真 tab with cats, 「○枚」 and 「日付」 sit in the
+            // cat row above the pages, so the first photo comes one row sooner.
+            if tabRowMonthJump == nil {
             HStack(alignment: .center, spacing: 10) {
                 if let headerAccessory {
                     // The cat switch is the heading: 「ミケの写真 ▾」.
@@ -701,6 +740,7 @@ struct HomeView: View {
             .padding(.bottom, 8)
             .padding(.horizontal, isEmbedded ? 16 : 0)
             .id("photo-library-all-heading")
+            }
 
             ForEach(Array(PhotoLibraryGridRow.rows(Array(catPhotos.prefix(restoredDetectedPhotoCount))).enumerated()),
                     id: \.element.id) { index, row in
@@ -859,7 +899,6 @@ struct HomeView: View {
                     .buttonStyle(.bordered)
             }
             .frame(maxWidth: .infinity, minHeight: 320)
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 24))
         } else if scan.hasPreliminaryResult && scan.displayedCatCount == 0 {
             ContentUnavailableView {
                 Label("猫の写真を探しています", systemImage: "photo.on.rectangle")
@@ -867,7 +906,6 @@ struct HomeView: View {
                 Text("見つかるとここに表示します。")
             }
             .frame(maxWidth: .infinity, minHeight: 280)
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 24))
         } else {
             ContentUnavailableView {
                 Label("猫の写真を探しています", systemImage: "photo.on.rectangle")
@@ -877,7 +915,6 @@ struct HomeView: View {
                     : "見つかるとここに表示します。")
             }
             .frame(maxWidth: .infinity, minHeight: 280)
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 24))
         }
     }
 

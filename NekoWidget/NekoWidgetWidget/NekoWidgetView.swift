@@ -72,9 +72,12 @@ struct NekoWidgetView: View {
                         // Every photo fills the Widget, including a legacy cache
                         // briefly retained while the app and extension update.
                         // Keep the source ratio and crop only the overflow.
+                        // iOS 18 tinted and clear Home Screens: the photo keeps
+                        // its colours instead of becoming one flat tinted square.
                         Image(uiImage: image)
                             .resizable()
                             .interpolation(.high)
+                            .widgetFullColorPhoto()
                             .scaledToFill()
                             .frame(
                                 width: proxy.size.width,
@@ -487,7 +490,8 @@ struct NekoWidgetView: View {
     }
 
     private func dailyPersonalPhotoMark(isUsed: Bool) -> some View {
-        Image(systemName: isUsed ? "checkmark" : "arrow.clockwise")
+        // 「もう一枚」 is shuffle: arrow.clockwise means 「読み込み直す」 in the app.
+        Image(systemName: isUsed ? "checkmark" : "shuffle")
         .font(.footnote.weight(.medium))
         .invalidatableContent()
         .foregroundStyle(.white)
@@ -1099,5 +1103,18 @@ private struct CloudyFogPuffs: View {
         .frame(width: size.width, height: size.height)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+}
+
+extension Image {
+    /// A photo on the Home Screen stays in full colour in iOS 18's tinted and
+    /// clear modes. Without it the system keeps only the photo's shape and
+    /// fills it with the tint, so the cat disappears. iOS 17 has no such mode.
+    @ViewBuilder func widgetFullColorPhoto() -> some View {
+        if #available(iOS 18.0, *) {
+            self.widgetAccentedRenderingMode(.fullColor)
+        } else {
+            self
+        }
     }
 }
