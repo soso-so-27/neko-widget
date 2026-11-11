@@ -1042,12 +1042,14 @@ private struct EvacuationDisplayView: View {
             }.frame(maxWidth: .infinity, alignment: .leading).padding(20)
         }
         .navigationTitle("\(record.name)の避難メモ").navigationBarTitleDisplayMode(.inline)
+        // 11/11: the input pages' bar (full-width, large); each button keeps its own style.
         .safeAreaInset(edge: .bottom) {
-            ViewThatFits {
-                HStack(spacing: 12) { exportButtons }
-                VStack(spacing: 8) { exportButtons }
+            ToolMakeBar {
+                ViewThatFits {
+                    HStack(spacing: 12) { exportButtons }
+                    VStack(spacing: 8) { exportButtons }
+                }
             }
-            .padding().background(.regularMaterial)
         }
         // A container keeps the buttons' own identifiers; on a plain view the
         // screen's identifier replaced 「印刷用のPDF」 and 「画像で渡す」 (as c8880b79).

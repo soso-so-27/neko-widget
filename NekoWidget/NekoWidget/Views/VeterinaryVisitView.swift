@@ -1311,12 +1311,14 @@ private struct VeterinaryReadView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
             }
+            // 11/11: the input pages' bar (full-width, large); each button keeps its own style.
             .safeAreaInset(edge: .bottom) {
-                ViewThatFits {
-                    HStack(spacing: 12) { exportButtons }
-                    VStack(spacing: 8) { exportButtons }
+                ToolMakeBar {
+                    ViewThatFits {
+                        HStack(spacing: 12) { exportButtons }
+                        VStack(spacing: 8) { exportButtons }
+                    }
                 }
-                .padding().background(.regularMaterial)
             }
             .confirmationDialog("診察メモを渡しますか？", isPresented: Binding(
                 get: { pendingExportIsPDF != nil }, set: { if !$0 { pendingExportIsPDF = nil } }),
