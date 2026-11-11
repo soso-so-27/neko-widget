@@ -6390,8 +6390,11 @@ class ToolConsistency1108Tests(unittest.TestCase):
         self.assertIn("@State private var onlyThisCat = false", section_view)
         self.assertIn("let shown = onlyThisCat && canNarrow ? recent.filter { own.contains($0.localIdentifier) } : recent",
                       section_view)
-        self.assertIn("LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 3), spacing: 4)",
-                      section_view)
+        # Three photos per List row, so only the rows on screen are built. One
+        # grid inside a single row asked for every photo at once (11/11).
+        self.assertIn("ForEach(rows(shown), id: \.first?.localIdentifier) { row in", section_view)
+        self.assertIn("stride(from: 0, to: photos.count, by: 3)", section_view)
+        self.assertNotIn("LazyVGrid", self.recent)
         # Tiles are small copies from Photos, never a full decode.
         cell = self.recent[self.recent.index("    private func cell("):]
         self.assertIn("targetPixelSize: CGSize(width: 300, height: 300)", cell)
