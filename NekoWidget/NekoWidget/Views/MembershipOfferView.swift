@@ -35,8 +35,8 @@ struct MembershipOfferView: View {
 
     static let heading = "うちの子との毎日を、続ける"
     /// What Plus is, in the LP's words, plus saving (part of the 980 yen since 10/20).
+    /// The daily Widget photo is free since 11/11, so it is not listed.
     static let values = [
-        ("毎日、新しい1枚がホーム画面に", "photo"),
         ("月の作品、季節のムービー", "rectangle.stack"),
         ("写真に新しいメモを書く", "square.and.pencil"),
         ("まどを作って、家族と写真を届け合う", "person.2"),

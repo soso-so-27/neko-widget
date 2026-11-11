@@ -23,10 +23,10 @@ private struct MembershipAccessVerifier {
             .editExistingMemo, .deleteOwnedContent, .exportExistingContent,
             .receivePhotos, .reactToPhoto, .browseOfficialWindow, .browseAlbums,
             .presentCatPhotos, .createCareMemo, .createVeterinaryVisit,
-            .addSharedContent, .continueAcceptedDelivery
+            .addSharedContent, .continueAcceptedDelivery, .refreshPersonalWidget
         ]
         let personalOperations: [MembershipOperation] = [
-            .openGrowingSummary, .refreshPersonalWidget, .createPersonalMemo,
+            .openGrowingSummary, .createPersonalMemo,
             .createOwnWindow, .addContentToOwnWindow
         ]
         require(
@@ -196,9 +196,15 @@ private struct MembershipAccessVerifier {
             decision(.browseAlbums, personal: .inactive) == .allowed,
             "Album browsing must stay free"
         )
+        // 11/11: the personal Widget's daily photo is free.
+        require(
+            decision(.refreshPersonalWidget, personal: .inactive) == .allowed
+                && decision(.refreshPersonalWidget, personal: .inactive, at: past) == .allowed,
+            "The personal Widget's daily photo must stay free"
+        )
 
         require(
-            decision(.refreshPersonalWidget, personal: .verified(validUntil: future), at: invalid)
+            decision(.createPersonalMemo, personal: .verified(validUntil: future), at: invalid)
                 == .verificationRequired,
             "An invalid clock must not authorize new personal activity"
         )

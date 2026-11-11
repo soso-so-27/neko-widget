@@ -255,7 +255,6 @@ extension UsagePlusEntry {
     init(_ context: PlusOfferContext) {
         switch context {
         case .onboarding: self = .onboarding
-        case .widgetResume: self = .widgetResume
         case .monthlySummary: self = .monthlySummary
         case .newMemo: self = .newMemo
         case .createWindow: self = .createWindow

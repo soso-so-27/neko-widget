@@ -296,22 +296,37 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
             self.assertNotIn("ねこのまど Plus", ui)
             self.assertNotIn("¥980", ui)
 
-    def test_widget_resume_entry_is_only_on_the_widget_opened_photo(self) -> None:
-        # ADR-027 5章: the Widget that kept its last photo offers Plus where it
-        # is opened, and nowhere else; the sheet never opens by itself.
+    def test_personal_widget_daily_photo_is_free_and_not_a_plus_entry(self) -> None:
+        # 11/11: the daily photo on the personal Widget (with the cloudy
+        # window and 「もう一枚」) is free. Nothing in the app or the Widget
+        # stops it for membership or offers Plus for it.
+        policy = source("Shared/MembershipAccessPolicy.swift")
+        allowed = section(policy, "        switch operation {\n", "            return .allowed\n")
+        self.assertIn(".refreshPersonalWidget", allowed)
+        gated = section(policy, "            return .allowed\n        case ", "return .membershipRequired")
+        self.assertNotIn(".refreshPersonalWidget", gated)
         main = source("NekoWidget/Views/MainTabView.swift")
-        self.assertIn("decision(for: .refreshPersonalWidget) == .membershipRequired", main)
-        self.assertIn("showsWidgetTiming: openedFromWidget && !personalWidgetPaused", main)
-        self.assertIn("if openedFromWidget, personalWidgetPaused { WidgetResumeOffer() }", main)
-        offer = section(main, "private struct WidgetResumeOffer: View {", "\n}\n")
-        self.assertIn("MembershipOfferSheet(model: .live(), context: .widgetResume)", offer)
-        self.assertNotIn("presentsImmediately", offer)
-        self.assertNotIn("PlusOfferPrompt", offer)
+        self.assertNotIn("personalWidgetPaused", main)
+        self.assertIn("showsWidgetTiming: openedFromWidget,", main)
         for relative in (
-            "NekoWidget/Views/LikedPhotosView.swift",
-            "NekoWidget/App/AppRootView.swift",
+            "NekoWidgetWidget/NekoWidgetTimelineProvider.swift",
+            "NekoWidgetWidget/RevealCloudyWindowIntent.swift",
+            "NekoWidgetWidget/DailyPersonalPhotoIntent.swift",
         ):
-            self.assertNotIn(".widgetResume", source(relative))
+            widget = source(relative)
+            self.assertNotIn("PersonalWidgetMembershipStore", widget, relative)
+            self.assertNotIn("allowsSelection: allows", widget, relative)
+        swift_roots = ("NekoWidget", "Shared", "NekoWidgetWidget", "NekoWidgetShareExtension")
+        for root in swift_roots:
+            for path in (ROOT / root).rglob("*.swift"):
+                text = path.read_text(encoding="utf-8")
+                relative = str(path.relative_to(ROOT))
+                self.assertNotIn("widgetResume", text, relative)
+                self.assertNotIn("毎日新しくなるのはPlus", text, relative)
+                self.assertNotIn("毎日新しくするのは", text, relative)
+                self.assertNotIn("毎日、新しい1枚がホーム画面に", text, relative)
+        model = source("NekoWidget/Services/MembershipOfferModel.swift")
+        self.assertIn("case .onboarding: nil", model)
 
     def test_offer_observes_shared_authority_without_enabling_unknown_or_active_purchase(self) -> None:
         model = source("NekoWidget/Services/MembershipOfferModel.swift")
@@ -698,11 +713,11 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
                         actions.index('accessibilityIdentifier("membership-offer-price")'))
         self.assertLess(actions.index('accessibilityIdentifier("membership-offer-price")'),
                         actions.index('accessibilityIdentifier("membership-offer-renewal")'))
-        # The six rows are regular weight; only the heading is bold.
+        # The five rows are regular weight; only the heading is bold.
         rows = section(view, "    private var valueRows: some View {", "    private var purchaseBlock: some View {")
         self.assertIn("Text(value.0).font(.subheadline)", rows)
         self.assertNotIn(".headline", rows)
-        self.assertEqual(len(re.findall(r'^        \("', view, re.M)), 6)
+        self.assertEqual(len(re.findall(r'^        \("', view, re.M)), 5)
         # Guideline 3.1.2: the price once, under the button, with 自動更新, as a headline.
         model = source("NekoWidget/Services/MembershipOfferModel.swift")
         monthly = section(model, "static let startTitle", "enum MembershipRestoreFailure")

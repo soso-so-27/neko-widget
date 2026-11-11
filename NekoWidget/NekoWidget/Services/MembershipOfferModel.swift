@@ -9,14 +9,13 @@ import SwiftUI
 /// Photo access, invitations, receiving, hearts, and favorites have no case.
 ///
 /// Connected now: onboarding, Settings, a new memo, a monthly summary or
-/// seasonal movie, preservation, the personal Widget resume path, and the
-/// current group-window creation/continuation screens.
+/// seasonal movie, preservation, and the current group-window
+/// creation/continuation screens. The personal Widget's daily photo is free
+/// (11/11), so the Widget is not a Plus entry.
 enum PlusOfferContext: Equatable, Sendable {
     /// The first Plus offer (11/10): once, on a later opening after the
     /// Widget was placed (FirstPlusOfferPolicy), or a resumed first-run page.
     case onboarding
-    /// The app was opened from a personal Widget that kept its last photo.
-    case widgetResume
     /// A monthly summary (1...12) or a seasonal movie (`nil`).
     case monthlySummary(month: Int?)
     case newMemo
@@ -35,7 +34,6 @@ enum PlusOfferContext: Equatable, Sendable {
     var entryTitle: String {
         switch self {
         case .onboarding: "Plusについて見る"
-        case .widgetResume: "ウィジェットの写真を、毎日新しくする"
         case let .monthlySummary(month?) where (1...12).contains(month): "\(month)月の作品を見る"
         case .monthlySummary: "作品とムービーを見る"
         case .newMemo: "メモを書く"
@@ -51,10 +49,10 @@ enum PlusOfferContext: Equatable, Sendable {
     /// One line above the heading saying why the screen appeared here.
     var reason: String? {
         switch self {
-        // 11/10: the free Widget keeps its one photo; Plus makes it new daily.
-        case .onboarding: "ホーム画面の1枚は無料です。毎日新しくなるのはPlusです。"
+        // 11/11: the daily Widget photo is free, so the first offer has no
+        // reason line; the cat photo header alone opens it.
+        case .onboarding: nil
         case .settings: nil
-        case .widgetResume: "ホーム画面の写真を毎日新しくするのは、Plusの機能です。"
         case .monthlySummary: "月の作品と季節のムービーは、Plusで見られます。"
         case .newMemo: "メモを書くのはPlusの機能です。"
         case .createWindow: "まどを作るのは、Plusの機能です。"
@@ -76,7 +74,6 @@ enum PlusOfferContext: Equatable, Sendable {
     var identifier: String {
         switch self {
         case .onboarding: "onboarding"
-        case .widgetResume: "widget-resume"
         case .monthlySummary: "monthly-summary"
         case .newMemo: "new-memo"
         case .createWindow: "create-window"
@@ -1207,7 +1204,7 @@ struct MembershipOfferPreviewView: View {
 
     /// Every case, so a fixture run shows each entry opens the same screen.
     static let entryContexts: [PlusOfferContext] = [
-        .onboarding, .widgetResume, .monthlySummary(month: 10), .newMemo,
+        .onboarding, .monthlySummary(month: 10), .newMemo,
         .createWindow, .continueWindow, .createFamily, .continueFamily, .preservation, .settings,
     ]
 

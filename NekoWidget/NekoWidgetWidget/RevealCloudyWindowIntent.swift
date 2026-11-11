@@ -19,13 +19,10 @@ struct RevealCloudyWindowIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         defer { WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget") }
-        let enforced = PersonalWidgetMembershipStore.isEnforced
-        let membership = PersonalWidgetMembershipStore.read()
-        guard !enforced || membership != nil else { return .result() }
         // Old entries refresh only; they cannot reveal tomorrow's photo.
+        // The daily photo is free for everyone (11/11): no membership gate.
         _ = try? CloudyWindowStore.shared.reveal(selectionID: selectionID, scopeID: scopeID, photoID: photoID,
-            allowsSelection: PersonalWidgetMembershipStore.allowsSelection(),
-            selectionValidUntil: enforced ? membership?.validUntil : nil)
+            allowsSelection: true, selectionValidUntil: nil)
         return .result()
     }
 }

@@ -47,7 +47,7 @@ struct DailyPersonalPhotoIntent: AppIntent {
             do {
                 _ = try PersonalRediscoveryStore.shared.perform(token: token,
                     operationID: UUID().uuidString, operationCreatedAt: Date(),
-                    allowsSelection: { PersonalWidgetMembershipStore.allowsSelection() })
+                    allowsSelection: { true })  // Free for everyone (11/11).
             } catch {
                 // The failed transaction cannot claim success in the entry.
                 // Reload the canonical state, retaining the prior photo and

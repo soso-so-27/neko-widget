@@ -14,6 +14,7 @@ enum MembershipOperation: String, CaseIterable, Sendable {
     case browseAlbums
     /// 月のまとめ・季節のムービーを開く。「育つもの」なので会員。
     case openGrowingSummary
+    /// ホーム画面の写真が毎日新しくなる（くもりのまど・「もう一枚」を含む）。無料（11/11）。
     case refreshPersonalWidget
     case createPersonalMemo
     /// 自分のまどを作る（`maximumOwnWindowCount` まで）。購読中（App Store の
@@ -87,9 +88,9 @@ enum MembershipAccessPolicy {
              .editExistingMemo, .deleteOwnedContent, .exportExistingContent,
              .receivePhotos, .reactToPhoto, .browseOfficialWindow, .browseAlbums,
              .presentCatPhotos, .createCareMemo, .createVeterinaryVisit,
-             .addSharedContent, .continueAcceptedDelivery:
+             .addSharedContent, .continueAcceptedDelivery, .refreshPersonalWidget:
             return .allowed
-        case .openGrowingSummary, .refreshPersonalWidget, .createPersonalMemo,
+        case .openGrowingSummary, .createPersonalMemo,
              .createOwnWindow, .addContentToOwnWindow:
             guard now.timeIntervalSinceReferenceDate.isFinite else {
                 return .verificationRequired
