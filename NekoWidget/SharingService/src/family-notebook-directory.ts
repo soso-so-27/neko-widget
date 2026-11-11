@@ -35,11 +35,15 @@ export async function familyNotebookDirectory(request: Request, env: Env): Promi
     } else if (kind === 'requests') {
       statements.push(env.DB.prepare(`SELECT j.id AS requestId,j.person_id AS personId,j.device_id AS deviceId,
         j.invitation_id AS invitationId,j.encrypted_display_name AS encryptedDisplayName,j.expires_at AS expiresAt,
-        p.identity_public_key AS identityPublicKey,d.signing_public_key AS signingPublicKey,d.hpke_public_key AS hpkePublicKey
+        p.identity_public_key AS identityPublicKey,d.signing_public_key AS signingPublicKey,d.hpke_public_key AS hpkePublicKey,
+        e.join_proof_signature AS proofSignature
         FROM family_notebook_join_requests j JOIN family_notebook_invitations i ON i.id=j.invitation_id
         JOIN family_notebook_spaces f ON f.id=j.family_id
         JOIN group_people p ON p.id=j.person_id AND p.state='active'
         JOIN group_person_devices d ON d.id=j.device_id AND d.state='active'
+        LEFT JOIN family_notebook_admission_events e ON e.actor_device_id=j.device_id AND e.operation_id=j.id
+          AND e.operation='join' AND e.family_id=j.family_id AND e.invitation_id=j.invitation_id
+          AND e.join_id=j.id AND e.actor_person_id=j.person_id
         WHERE j.family_id=? AND j.state='pending' AND j.expires_at>unixepoch()
           AND (i.creator_person_id=? OR f.payer_person_id=?) ORDER BY j.created_at,j.id LIMIT 64`).bind(family, actor.personId, actor.personId));
     } else {
