@@ -2813,7 +2813,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         # A resumed first-run Plus page also shows the person's own cat.
         self.assertIn(".environment(\\.plusOfferPhoto, hasPhotoAccess ? viewModel.catAssets.first.map {", app_root)
         model = source("NekoWidget/Services/MembershipOfferModel.swift")
-        self.assertIn('case .onboarding: "ホーム画面の1枚は無料です。毎日新しくなるのはPlusです。"', model)
+        # 11/11: the daily Widget photo is free, so no reason line at all.
+        self.assertIn("case .onboarding: nil", model)
+        self.assertNotIn("毎日新しくなるのはPlus", model)
 
     def test_paired_consent_renewal_and_dynamic_build_identity_are_explicit(self) -> None:
 
@@ -7006,7 +7008,15 @@ class MemoCaptionOneWayTests(unittest.TestCase):
         self.assertIn("!$0.isOwn && $0.favoriteLocalIdentifier == localIdentifier", lookup)
         loader = section(self.browser, "struct GroupFavoriteSource: Equatable {", "struct GroupDeliveryRequest: Identifiable {")
         self.assertIn("GroupWindowLocalPhotoStore.shared.favoriteEntry(localIdentifier: localIdentifier)", loader)
-        self.assertIn('GroupDisplayName.withSan(entry.senderDisplayName) + "から"', loader)
+        self.assertIn("GroupDisplayName.from(entry.senderDisplayName)", loader)
+        # 11/11: names are self-chosen nicknames, so a まど photo's sender line
+        # is 「ママから」 everywhere (app, Widget, favorites, spoken labels).
+        cache = source("Shared/Sharing/GroupWidgetCache.swift")
+        self.assertIn('static func from(_ name: String) -> String { plain(name) + "から" }', cache)
+        for root in ("NekoWidget", "Shared", "NekoWidgetWidget"):
+            for path in (ROOT / root).rglob("*.swift"):
+                text = path.read_text(encoding="utf-8")
+                self.assertIsNone(re.search(r'withSan\([^)]*\)\)?\s*(\+\s*"から"|から(届いた|、|"))', text), str(path))
         # Hidden or reported (or reports that cannot be read): no words.
         self.assertIn(".contains(entry.id) ?? true", loader)
         self.assertIn("let shows = !entry.isHidden && !reported && !words.isEmpty", loader)
@@ -7018,7 +7028,7 @@ class MemoCaptionOneWayTests(unittest.TestCase):
         self.assertIn("if groupFavoriteSource?.localIdentifier == identifier { return }", task)
         self.assertIn("await GroupFavoriteSource.load(localIdentifier: identifier)", task)
         self.assertIn("guard !Task.isCancelled, identifier == selectedPhotoIdentifier else { return }", task)
-        # Shown under the photo: 「○○さんから」, then the ひとこと in secondary style. No button, no editing.
+        # Shown under the photo: 「○○から」, then the ひとこと in secondary style. No button, no editing.
         footer = section(self.browser, "    private var browserFooter: some View {", "    private func quickActions(")
         self.assertLess(footer.index("groupFavoriteSourceView(source)"), footer.index("quickActions(selectedPhoto)"))
         self.assertIn("source.localIdentifier == selectedPhoto.localIdentifier", footer)
@@ -7099,6 +7109,12 @@ class PresubmitFixes1110Tests(unittest.TestCase):
                 '("猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる", "icloud")']
         for row in rows:
             self.assertIn(row, values)
+        # 11/11: the daily Widget photo is free, so exactly these five rows.
+        self.assertEqual(
+            re.findall(r'\("([^"]+)", "[^"]+"\)', values),
+            ["月の作品、季節のムービー", "写真に新しいメモを書く",
+             "まどを作って、家族と写真を届け合う", "家族の手帳を、家族と一緒に書く",
+             "猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる"])
         self.assertLess(values.index(rows[0]), values.index(rows[1]))
         self.assertLess(values.index(rows[1]), values.index(rows[2]))
 

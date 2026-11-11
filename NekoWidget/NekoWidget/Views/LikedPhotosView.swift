@@ -2872,7 +2872,7 @@ struct PhotoBrowserView: View {
         .background(.ultraThinMaterial)
     }
 
-    /// 「○○さんから」 and, under it, the sender's ひとこと: read-only, never
+    /// 「○○から」 and, under it, the sender's ひとこと: read-only, never
     /// edited here and never copied into this iPhone's memo (11/9).
     private func groupFavoriteSourceView(_ source: GroupFavoriteSource) -> some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -3880,7 +3880,7 @@ struct DayPhotosView: View {
 }
 
 /// A まど photo kept with 「お気に入りに追加」, as the photo screen shows it:
-/// 「○○さんから」 and the sender's ひとこと. Read-only; the ひとこと stays the
+/// 「○○から」 and the sender's ひとこと. Read-only; the ひとこと stays the
 /// sender's words and is never copied into this iPhone's memo (11/9).
 struct GroupFavoriteSource: Equatable {
     let localIdentifier: String
@@ -3896,7 +3896,7 @@ struct GroupFavoriteSource: Equatable {
         guard let kept = await GroupWindowLocalPhotoStore.shared.favoriteEntry(localIdentifier: localIdentifier)
         else { return nil }
         let entry = kept.entry
-        let label = GroupDisplayName.withSan(entry.senderDisplayName) + "から"
+        let label = GroupDisplayName.from(entry.senderDisplayName)
         // A report that cannot be read counts as reported: no words shown.
         let service = GroupSafety.shared.service
         let reportedHere = (try? await service.locallyReportedPhotoIDs(windowID: kept.windowID))?

@@ -344,7 +344,7 @@ final class GroupWindowScreenModel: ObservableObject {
         do {
             try GroupWidgetCache.update(
                 windowID: windowID, windowName: windowName, photoID: newest?.id, jpeg: jpeg,
-                // No "さんから" line under a photo this iPhone sent.
+                // No "から" line under a photo this iPhone sent.
                 senderDisplayName: newest.flatMap { $0.isOwn ? nil : $0.senderDisplayName },
                 capturedAt: newest?.createdAt, isPaused: isPaused,
                 myHeartActive: newest.map { myHeartIsActive($0.id) } ?? false
@@ -504,7 +504,7 @@ final class GroupWindowScreenModel: ObservableObject {
     /// 「お気に入りに追加」: the same copy into the Photos app as the
     /// two-person window, then the ordinary favorite, so it can join albums.
     /// The ひとこと is never copied into the memo; the photo screen shows it
-    /// read-only beside 「○○さんから」 (11/9).
+    /// read-only beside 「○○から」 (11/9).
     func addToFavorites(_ entry: GroupWindowLocalPhotoStore.Entry) async {
         guard !entry.isOwn, !entry.isHidden else { return }
         addingFavoriteID = entry.id
@@ -1292,7 +1292,7 @@ private struct GroupPhotoTile: View {
 
 private extension GroupPhotoTile {
     var tileLabel: String {
-        var parts = [entry.isOwn ? "自分が届けた写真" : "\(GroupDisplayName.withSan(entry.senderDisplayName))から届いた写真"]
+        var parts = [entry.isOwn ? "自分が届けた写真" : "\(GroupDisplayName.from(entry.senderDisplayName))届いた写真"]
         if reported { parts.append("通報した写真") } else if entry.isHidden { parts.append("表示していない写真") }
         if !(model.hearts[entry.id]?.filter(\.active).isEmpty ?? true) { parts.append("ハートあり") }
         return parts.joined(separator: "、")
@@ -1798,12 +1798,12 @@ private struct GroupPhotoDetail: View {
         // One line: who and when. The hearts live on the ♥ button below; who
         // sent them is in its spoken value.
         return HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(entry.isOwn ? "あなた" : GroupDisplayName.withSan(entry.senderDisplayName))
+            Text(entry.isOwn ? "あなた" : GroupDisplayName.plain(entry.senderDisplayName))
                 .font(.subheadline.weight(.semibold))
             Text(day).font(.subheadline).foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel((entry.isOwn ? "あなたの写真、\(spokenDay)" : "\(GroupDisplayName.withSan(entry.senderDisplayName))から、\(spokenDay)")
+        .accessibilityLabel((entry.isOwn ? "あなたの写真、\(spokenDay)" : "\(GroupDisplayName.from(entry.senderDisplayName))、\(spokenDay)")
                             + (names.isEmpty ? "" : "。ハートを送った人：\(names.joined(separator: "、"))"))
     }
 
@@ -1894,7 +1894,7 @@ private struct GroupPhotoPage: View {
                     description: Text("センシティブな内容が含まれている可能性があります。右上の「…」から消せます。"))
             } else if let image {
                 Image(uiImage: image).resizable().scaledToFit()
-                    .accessibilityLabel(entry.isOwn ? "自分が届けた写真" : "\(GroupDisplayName.withSan(entry.senderDisplayName))から届いた写真")
+                    .accessibilityLabel(entry.isOwn ? "自分が届けた写真" : "\(GroupDisplayName.from(entry.senderDisplayName))届いた写真")
             } else {
                 ProgressView()
             }

@@ -13,7 +13,6 @@ import Foundation
 /// stable name. UsageCounter.swift maps every context case exhaustively.
 enum UsagePlusEntry: String, CaseIterable, Sendable {
     case onboarding
-    case widgetResume = "widget-resume"
     case monthlySummary = "monthly-summary"
     case newMemo = "new-memo"
     case createWindow = "create-window"
