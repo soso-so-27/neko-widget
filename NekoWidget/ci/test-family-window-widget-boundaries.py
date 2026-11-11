@@ -4518,6 +4518,28 @@ class CatCareMemoWeightTests(unittest.TestCase):
         self.assertIn("try memoWeights()", source("ci/verify-cat-care.swift"))
 
 
+class CatCareListRowWordingTests(unittest.TestCase):
+    """11/11: 「ごはん 3回」/「0回」 read as how many times the cat was fed."""
+
+    def test_meals_row_shows_times_and_empty_rows_say_unwritten(self) -> None:
+        view = source("NekoWidget/Views/CatCareView.swift")
+        self.assertIn('listRow(title: "ごはん", detail: CatCareFormat.meals(currentRecord?.activeMeals ?? []), kind: .meal)', view)
+        self.assertNotIn('activeMeals.count ?? 0)回"', view)
+        self.assertNotIn('activeMedications.count ?? 0)件"', view)
+        self.assertIn('return count == 0 ? "未記入" : "\\(count)件"', view)
+        row = section(view, "private func listRow(", "// MARK: Summaries")
+        self.assertIn(".lineLimit(1)", row)
+        self.assertIn(".accessibilityValue(detail)", row)
+        rule = section(source("NekoWidget/Services/CatCareOutputLines.swift"), "static func meals(", "// MARK: - What tools show")
+        self.assertIn('guard !labels.isEmpty else { return "未記入" }', rule)
+        self.assertIn('labels.prefix(3).joined(separator: "・")', rule)
+        self.assertIn('" ほか"', rule)
+        verify = source("ci/verify-tool-outputs.swift")
+        self.assertIn("try mealsRow()", verify)
+        self.assertIn('CatCareFormat.meals([]) == "未記入"', verify)
+        self.assertIn('== "朝7時・夜7時"', verify)
+
+
 class CatCareProofCameraTests(unittest.TestCase):
     def test_vaccination_proof_from_camera_stays_in_the_app(self) -> None:
         view = source("NekoWidget/Views/CatCareView.swift")
