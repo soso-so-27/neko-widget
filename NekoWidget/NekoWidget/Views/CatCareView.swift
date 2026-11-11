@@ -588,56 +588,58 @@ struct CatCareDetailView: View {
                         .multilineTextAlignment(.center)
                         .accessibilityIdentifier("cat-care-key-photo-empty")
                 }
-                HStack(spacing: 8) {
-                    Text(profile.displayName)
-                        .font(.title2.bold())
-                    if !showsNameEditor {
-                        Button {
-                            draftName = profile.name ?? ""
-                            nameSaveFailed = false
-                            showsNameEditor = true
-                        } label: {
-                            Image(systemName: "pencil.circle.fill")
-                                .font(.title3)
-                                .foregroundStyle(.secondary)
-                                .frame(minWidth: 44, minHeight: 44)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("名前を変更")
-                        .accessibilityIdentifier("cat-profile-rename")
+                // 11/11: the name is changed in the system's own small dialog
+                // (keyboard up at once, 保存 / キャンセル where iOS puts them).
+                // A field with two text buttons opened under the name, with
+                // the name still above it, and read as a broken row.
+                Button {
+                    draftName = profile.name ?? ""
+                    nameSaveFailed = false
+                    showsNameEditor = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(profile.displayName)
+                            .font(.title2.bold())
+                            .foregroundStyle(Color.primary)
+                        Image(systemName: "pencil.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
                     }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isSavingName)
+                .accessibilityLabel("\(profile.displayName)、名前を変更")
+                .accessibilityIdentifier("cat-profile-rename")
+                if nameSaveFailed {
+                    Text("名前を保存できませんでした。もう一度お試しください。")
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("cat-profile-name-failed")
                 }
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 6)
             .listRowBackground(Color.clear)
-
-            if showsNameEditor {
+            .alert("名前を変更", isPresented: $showsNameEditor) {
                 TextField("名前", text: $draftName)
-                    .disabled(isSavingName)
                     .accessibilityIdentifier("cat-profile-name-field")
-                if nameSaveFailed {
-                    Text("名前を保存できませんでした。もう一度お試しください。")
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                }
-                HStack {
-                    Button("キャンセル") { showsNameEditor = false }
-                    Spacer()
-                    Button(isSavingName ? "保存中…" : "保存") {
-                        isSavingName = true
-                        nameSaveFailed = false
-                        Task {
-                            let saved = await profileActions.updateName(profile.identifier, draftName)
-                            isSavingName = false
-                            if saved { showsNameEditor = false } else { nameSaveFailed = true }
-                        }
-                    }
-                    .disabled(draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                .buttonStyle(.borderless)
-                .disabled(isSavingName)
+                Button("保存") { saveName(profile) }
+                Button("キャンセル", role: .cancel) {}
             }
+        }
+    }
+
+    /// An empty name keeps the old one: the dialog cannot grey out 保存.
+    private func saveName(_ profile: CatProfilePresentation) {
+        guard !draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        isSavingName = true
+        nameSaveFailed = false
+        Task {
+            let saved = await profileActions.updateName(profile.identifier, draftName)
+            isSavingName = false
+            nameSaveFailed = !saved
         }
     }
 
