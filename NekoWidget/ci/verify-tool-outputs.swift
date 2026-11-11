@@ -20,6 +20,7 @@ struct ToolOutputVerifier {
 
     static func main() throws {
         try neuteredWords()
+        try mealsRow()
         try evacuationSheetLeavesOutUnwritten()
         try careMemoRequestIsWrittenInOnePlace()
         try careMemoRows()
@@ -110,6 +111,19 @@ struct ToolOutputVerifier {
         record.sex = stamp(.male); record.neutered = stamp(.yes)
         let rows = CatCareSummary.evacuationFields(record, today: nil)
         try check(has(rows, "性別・年齢・体重", "オス・去勢済み"), "the evacuation sheet uses the plain words")
+    }
+
+    /// 11/11: the ごはん row read 「3回」/「0回」, as if counting feedings.
+    static func mealsRow() throws {
+        func meal(_ time: String, _ food: String = "", _ amount: String = "", _ order: Int = 0) -> CatCareMeal {
+            CatCareMeal(time: time, food: food, amount: amount, order: order, editedAt: t0, editedBy: "verify")
+        }
+        try check(CatCareFormat.meals([]) == "未記入", "no meals reads 未記入, not 0回")
+        try check(CatCareFormat.meals([meal(" 朝7時 "), meal("夜7時")]) == "朝7時・夜7時", "meal times joined with ・")
+        try check(CatCareFormat.meals([meal("", "腎臓ケア"), meal("", "", "20g")]) == "腎臓ケア・20g",
+                  "no time falls back to food, then amount")
+        try check(CatCareFormat.meals([meal("朝7時"), meal("昼"), meal("夜7時"), meal("寝る前")]) == "朝7時・昼・夜7時 ほか",
+                  "more than 3 keeps the first 3 and adds ほか")
     }
 
     /// 347: the evacuation show screen printed 「未記入」 rows.

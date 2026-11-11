@@ -746,7 +746,7 @@ struct CatCareDetailView: View {
                     .familyNotebookNote(catID, .allergyText)
             }
             listRow(title: "体重", detail: weightSummary, kind: .weight)
-            listRow(title: "飲んでいる薬", detail: "\(currentRecord?.activeMedications.count ?? 0)件", kind: .medication)
+            listRow(title: "飲んでいる薬", detail: medicationSummary, kind: .medication)
             listRow(title: "ワクチン", detail: vaccinationSummary, kind: .vaccination)
             if currentRecord?.activeVaccinations.isEmpty ?? true {
                 // No history to list: 「受けていない」 is an answer too.
@@ -760,7 +760,7 @@ struct CatCareDetailView: View {
 
     private var livingSection: some View {
         Section {
-            listRow(title: "ごはん", detail: "\(currentRecord?.activeMeals.count ?? 0)回", kind: .meal)
+            listRow(title: "ごはん", detail: CatCareFormat.meals(currentRecord?.activeMeals ?? []), kind: .meal)
             CatCareTextField(label: "食事の注意", example: "例：療法食、ほかの猫と分けてあげる",
                              text: $draft.specialDiet, axis: .vertical, lines: 1...3)
                 .familyNotebookNote(catID, .specialDiet)
@@ -803,6 +803,8 @@ struct CatCareDetailView: View {
             CatCareListView(kind: kind, catID: catID, editing: $editing)
         } label: {
             LabeledContent(title, value: detail)
+                .lineLimit(1)
+                .accessibilityValue(detail)
         }
         .disabled(catID == nil)
     }
@@ -826,6 +828,11 @@ struct CatCareDetailView: View {
     private var weightSummary: String {
         guard let latest = currentRecord?.activeWeights.first else { return "未記入" }
         return CatCareFormat.weight(latest.grams) + "（\(CatCareFormat.day(latest.measuredOn))）"
+    }
+
+    private var medicationSummary: String {
+        let count = currentRecord?.activeMedications.count ?? 0
+        return count == 0 ? "未記入" : "\(count)件"
     }
 
     private var vaccinationSummary: String {

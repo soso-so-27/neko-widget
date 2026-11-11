@@ -24,6 +24,20 @@ enum CatCareFormat {
     static func weight(_ grams: Int) -> String {
         grams >= 1000 ? String(format: "%.2fkg", Double(grams) / 1000) : "\(grams)g"
     }
+
+    /// The ごはん row: 「朝7時・夜7時」 in list order (an entry without a time
+    /// uses its food, then its amount), at most 3 then 「 ほか」; 「未記入」 when
+    /// none. 「3回」/「0回」 read as how many times the cat was fed.
+    static func meals(_ meals: [CatCareMeal]) -> String {
+        let labels = meals.compactMap { meal in
+            [meal.time, meal.food, meal.amount]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first { !$0.isEmpty }
+        }
+        guard !labels.isEmpty else { return "未記入" }
+        let shown = labels.prefix(3).joined(separator: "・")
+        return labels.count > 3 ? shown + " ほか" : shown
+    }
 }
 
 // MARK: - What tools show from 「この子のこと」
