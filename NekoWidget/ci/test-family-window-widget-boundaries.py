@@ -2730,6 +2730,15 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("widgetLegacyPlacementSteps", guide)
         self.assertIn("if #available(iOS 18.0, *)", guide)
         self.assertIn('"widget-placement-steps"', guide)
+        # 11/12: opened from 設定 (closeTitle), one more last step says how to
+        # change what the Widget shows. Not at first launch, not for a window.
+        self.assertIn(
+            'static let widgetChangeSourceStep = "出す写真を変えるには、ウィジェットを長押しして「ウィジェットを編集」→「表示する写真」。まども選べます。"',
+            presentation,
+        )
+        self.assertIn("closeTitle != nil && windowName == nil", guide)
+        self.assertIn('[(image: "sf:hand.tap.fill", text: OnboardingPresentationCopy.widgetChangeSourceStep)]', guide)
+        self.assertIn("return placementSteps + cloudy + changeSource", guide)
         # 11/10: place first, then come back. The hint is on the screen and
         # the button says it was placed.
         self.assertIn('static let widgetAction = "置きました"', presentation)

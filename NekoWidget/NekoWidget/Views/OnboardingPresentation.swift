@@ -114,6 +114,9 @@ enum OnboardingPresentationCopy {
         "左上の「＋」をタップ",
         "「ねこのまど」を探し、好きな大きさで追加"
     ]
+    /// The last step when the guide is opened from 設定 (11/12): how to change
+    /// what the placed Widget shows.
+    static let widgetChangeSourceStep = "出す写真を変えるには、ウィジェットを長押しして「ウィジェットを編集」→「表示する写真」。まども選べます。"
     /// Said under the steps (11/10): place first, then come back.
     static let widgetReturnHint = "追加してアプリへ戻ると、自動で確認します。"
     static let widgetAction = "置きました"
