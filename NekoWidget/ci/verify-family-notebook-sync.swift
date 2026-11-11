@@ -188,6 +188,17 @@ private enum VerifyFamilyNotebookSync {
         let backup = try FamilyNotebookBackup.encode(.init(copies: [.init(id: UUID(), state: state)]))
         let restored = try FamilyNotebookBackup.decode(FamilyNotebookBackup.restored(backup))
         try check(restored.copies[0].state.opaqueOperations?.map(\.plaintext) == raws, "backup and private restore retain opaque bytes")
+        var ended = state
+        ended.schemaVersion = 3
+        ended.sharingEnded = true
+        let privateCopy = FamilyNotebookBackup.Copy(id: UUID(), state: ended)
+        let localBytes = try FamilyNotebookBackup.encode(.init(copies: [privateCopy]))
+        let combined = try FamilyNotebookBackup.restored(backup, keeping: localBytes)
+        let restoredCopies = try FamilyNotebookBackup.decode(combined).copies
+        try check(restoredCopies.count == 2 && restoredCopies.first(where: { $0.id == privateCopy.id })?.state == ended,
+                  "legacy restore preserves the on-device notebook and its contents")
+        try check(try Data(contentsOf: directory.appendingPathComponent("family-notebook.json")) == stateBytes,
+                  "filtering and restoration never change the on-device source")
 
         // Unknown semantic content still needs a valid common identity and signature.
         let bad = operation(20)

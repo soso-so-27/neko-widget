@@ -69,6 +69,7 @@ import CoreGraphics
         let suiteRoot = FileManager.default.temporaryDirectory.appendingPathComponent("vet-verify-\(UUID())")
         defer { try? FileManager.default.removeItem(at: suiteRoot) }
         try await verifyLedgerRecovery(root: suiteRoot.appendingPathComponent("ledger-recovery"))
+        try await verifiesFamilyPhotoRestore(root: suiteRoot.appendingPathComponent("family-photo"))
         let concurrentStore = VeterinaryVisitStore(directory: suiteRoot.appendingPathComponent("concurrent-edit"))
         let base = try await concurrentStore.current(catID: UUID(), catName: "同じ猫") { try $0() }
         var remote = base; remote.questions = "家族が書いた質問"
@@ -269,6 +270,43 @@ import CoreGraphics
 #else
         return Data([0xff, 0xd8, 0xff, 0xe0, 1, 0xff, 0xd9])
 #endif
+    }
+
+    private static func verifiesFamilyPhotoRestore(root: URL) async throws {
+        let sourceRoot = root.appendingPathComponent("source"), restoredRoot = root.appendingPathComponent("restored")
+        let store = VeterinaryVisitStore(directory: sourceRoot)
+        let link = String(repeating: "1", count: 64)
+        let cat = UUID()
+        var received = VeterinaryVisit(id: UUID(), catID: cat, catName: "shared cat", revision: UUID(),
+            startedOn: nil, observations: "shared memo", questions: "", entries: [], completedAt: nil,
+            familyRecordID: UUID(), familyPhotoLink: link)
+        let initial = received
+        try await store.receiveFamilyChanges { _ in [initial] }
+        let jpeg = try fixtureJPEG()
+        let note = PhotoMemoryNote(text: "", updatedAt: Date(), revision: UUID().uuidString,
+            context: .init(capturedAt: nil, cats: [.init(id: cat, name: "shared cat")]))
+        let source = PhotoMemoryNoteRecord(photoIdentifier: "synthetic-private-asset", note: note)
+        let added = try await store.add(source: source, jpeg: jpeg, to: received.id, expectedRevision: received.revision, confirmedTarget: true)
+        guard let file = added.entries.first?.photoFile else { throw Failure(message: "missing copied photo") }
+        let manifest = sourceRoot.appendingPathComponent("state.json")
+        let portable = try VeterinaryVisitStore.personalBackup(AppRecordJSON.read(manifest))
+        let json = String(decoding: portable, as: UTF8.self)
+        try require(!json.contains("shared memo") && !json.contains("shared cat") && !json.contains("synthetic-private-asset"), "shared visit values or source asset escaped")
+        try FileManager.default.createDirectory(at: restoredRoot, withIntermediateDirectories: true)
+        try portable.write(to: restoredRoot.appendingPathComponent("state.json"))
+        try jpeg.write(to: restoredRoot.appendingPathComponent(file))
+        let restored = VeterinaryVisitStore(directory: restoredRoot)
+        guard let photo = try await restored.detachedPhotos().first else { throw Failure(message: "missing restored detached photo") }
+        try require(try await restored.visits().isEmpty, "a blank visit was fabricated for the photo")
+        try require(try await restored.image(for: photo) == jpeg, "restored photo could not be opened")
+        received = .init(id: UUID(), catID: UUID(), catName: "shared cat", revision: UUID(), startedOn: nil,
+            observations: "shared memo", questions: "", entries: [], completedAt: nil,
+            familyRecordID: UUID(), familyPhotoLink: link)
+        let reinvited = received
+        try await restored.receiveFamilyChanges { _ in [reinvited] }
+        let visits = try await restored.visits()
+        try require(try await restored.detachedPhotos().isEmpty, "matched photo still shown detached")
+        try require(visits.first?.entries.first?.photoFile == file, "reinvite with fresh local IDs lost the private attachment")
     }
 
     /// 11/9: a video is an entry whose first frame is its photo copy; its

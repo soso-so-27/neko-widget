@@ -19,6 +19,8 @@ final class CareHandoffStore: ObservableObject {
     private let directory: URL
     private let allowsCandidateRefresh: Bool
 
+    var personalPlanForImport: CareHandoffPlan { (try? repository?.personalPlanForImport()) ?? .init() }
+
     init(directory: URL? = nil, allowsCandidateRefresh: Bool = true) {
         self.allowsCandidateRefresh = allowsCandidateRefresh
         self.directory = directory ?? AppRecordDataset.directory("CareHandoff")
@@ -54,10 +56,12 @@ final class CareHandoffStore: ObservableObject {
         guard saveError == nil, loadError == nil, let repository,
               directory.standardizedFileURL == AppRecordDataset.directory("CareHandoff").standardizedFileURL else { return }
         AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
-        let next = try FamilyNotebookToolSharing.handoffReceived(plan)
+        let projected = try FamilyNotebookToolSharing.handoffReceived(plan)
+        var next = projected
+        next.reconnectPhotos()
         guard next != plan else { return }
-        try repository.commit(next, familyProjection: true)
-        plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
+        try repository.commit(projected, familyProjection: true)
+        plan = repository.committed; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
     }
     @discardableResult
     func update(_ change: (inout CareHandoffPlan) -> Void) -> Bool {
@@ -199,6 +203,9 @@ final class CareHandoffStore: ObservableObject {
     func photoData(_ name: String) throws -> Data {
         guard loadError == nil, saveError == nil, let repository else { throw CareHandoffError.unreadable }
         return try Data(contentsOf: repository.photoURL(name))
+    }
+    func removeDetachedPhoto(_ photo: CareHandoffPlan.DetachedPhoto) {
+        update { $0.detachedPhotos?.removeAll { $0 == photo } }
     }
     func image(_ name: String?) -> UIImage? {
         guard let url = imageURL(name) else { return nil }

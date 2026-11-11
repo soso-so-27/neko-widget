@@ -77,7 +77,7 @@ final class CatCareStore: ObservableObject {
     var willSave: (@MainActor (CatCareState, CatCareState) throws -> Void)?
 
     @discardableResult
-    func update(_ change: (inout CatCareState) -> Void) -> Bool {
+    func update(familyProjection: Bool = false, _ change: (inout CatCareState) -> Void) -> Bool {
         guard loadedURL == fileURL else { reload(); return false }
         guard canSave, var next = state, let fileURL else { return false }
         let previous = next
@@ -89,8 +89,9 @@ final class CatCareStore: ObservableObject {
             AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
             try AppRecordDataset.requireWritable(fileURL)
             #endif
-            if FileManager.default.fileExists(atPath: fileURL.path) {
-                let onDisk = try CatCareDecoding.decode(AppRecordJSON.read(fileURL))
+            let previousBytes = FileManager.default.fileExists(atPath: fileURL.path) ? try AppRecordJSON.read(fileURL) : nil
+            if let previousBytes {
+                let onDisk = try CatCareDecoding.decode(previousBytes)
                 guard onDisk.state.mutationRevision == expected else {
                     reload()
                     return false
@@ -98,14 +99,24 @@ final class CatCareStore: ObservableObject {
             }
             next.mutationRevision = expected + 1
             next.updatedAt = Date()
+            var bytes = try FamilyNotebookRecordOrigin.recording(CatCareDecoding.encode(next), over: previousBytes,
+                                                                  tool: "CatCare", family: familyProjection)
+            if familyProjection {
+                let projected = next
+                next.reconnectVaccinationProofs()
+                if next != projected {
+                    bytes = try FamilyNotebookRecordOrigin.recording(CatCareDecoding.encode(next), over: bytes,
+                                                                      tool: "CatCare", family: false)
+                }
+            }
             try willSave?(previous, next)
             try FileManager.default.createDirectory(
                 at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 #if os(iOS)
-            try AppRecordJSON.write(CatCareDecoding.encode(next), to: fileURL,
+            try AppRecordJSON.write(bytes, to: fileURL,
                 options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
 #else
-            try CatCareDecoding.encode(next).write(to: fileURL, options: .atomic)
+            try bytes.write(to: fileURL, options: .atomic)
 #endif
             state = next
             #if os(iOS)
@@ -126,7 +137,7 @@ final class CatCareStore: ObservableObject {
     /// the first run unless a tool gained new information.
     func importFromTools() {
         // Read on the main actor; default arguments would be evaluated outside it.
-        importFromTools(care: CareHandoffStore.shared.plan, evacuation: EvacuationStore.shared.plan,
+        importFromTools(care: CareHandoffStore.shared.personalPlanForImport, evacuation: EvacuationStore.shared.plan,
                         preparedness: CatPreparednessStore.shared.records)
         adoptToolPhotos()
     }

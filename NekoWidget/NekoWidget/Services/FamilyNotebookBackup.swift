@@ -76,7 +76,7 @@ enum FamilyNotebookBackup {
     }
     /// A restore is a private retained copy. Keep the complete operation history
     /// and unsent text, while the terminal state prevents outbox transmission.
-    static func restored(_ data: Data) throws -> Data {
+    static func restored(_ data: Data, keeping local: Data? = nil) throws -> Data {
         let value = try decode(data)
         let copies = value.copies.map { copy -> Copy in
             var state = copy.state; state.schemaVersion = state.opaqueOperations?.isEmpty == false ? 3 : 2; state.sharingEnded = true
@@ -86,7 +86,9 @@ enum FamilyNotebookBackup {
                                  digest[8],digest[9],digest[10],digest[11],digest[12],digest[13],digest[14],digest[15]))
             return Copy(id: id, state: state, isRestored: true)
         }
-        return try encode(.init(copies: copies))
+        let existing = try local.map { try decode($0).copies } ?? []
+        let localIDs = Set(existing.map(\.id))
+        return try encode(.init(copies: existing + copies.filter { !localIDs.contains($0.id) }))
     }
     #if os(iOS)
     static var url: URL { AppRecordDataset.directory("FamilyNotebook").appendingPathComponent("state.json") }

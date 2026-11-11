@@ -285,6 +285,76 @@ private final class MomentLocalImageCache {
 }
 
 /// Zoom changes only the viewed pixels; closing never writes or crops a photo.
+/// One thumbnail row for a private attachment whose shared record isn't here.
+struct DetachedToolPhotoRow: View {
+    let title: String
+    let load: () async throws -> Data?
+    let remove: () -> Void
+    @State private var thumbnail: UIImage?
+    @State private var expanded = false
+    @State private var confirmsRemoval = false
+
+    var body: some View {
+        Button { expanded = true } label: {
+            HStack(spacing: 12) {
+                Group {
+                    if let thumbnail { Image(uiImage: thumbnail).resizable().scaledToFill() }
+                    else { Image(systemName: "photo").foregroundStyle(.secondary) }
+                }
+                .frame(width: 40, height: 40).clipShape(RoundedRectangle(cornerRadius: 6))
+                .accessibilityHidden(true)
+                Text(title).foregroundStyle(.primary)
+                Spacer(minLength: 0)
+            }
+            .frame(minHeight: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title == "証明の写真" ? "証明の写真。開くには2回タップ" : "写真。開くには2回タップ")
+        .contextMenu { Button("写真を外す", role: .destructive) { confirmsRemoval = true } }
+        .confirmationDialog("写真を外しますか？", isPresented: $confirmsRemoval, titleVisibility: .visible) {
+            Button("写真を外す", role: .destructive, action: remove)
+            Button("キャンセル", role: .cancel) { }
+        }
+        .task {
+            if let data = try? await load() {
+                thumbnail = await Task.detached(priority: .utility) { ToolPhotoThumbnail.decode(data, maxPixel: 160) }.value
+            }
+        }
+        .fullScreenCover(isPresented: $expanded) { ToolRecordFullPhoto(load: load) }
+    }
+}
+
+struct ToolRecordFullPhoto: View {
+    let load: () async throws -> Data?
+    @Environment(\.dismiss) private var dismiss
+    @State private var image: UIImage?
+    @State private var failed = false
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let image {
+                    MomentZoomablePhoto(image: image)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("写真")
+                        .accessibilityIdentifier("tool-record-photo-full")
+                }
+                else if failed { Label("写真を開けません", systemImage: "photo").foregroundStyle(.white) }
+                else { ProgressView().tint(.white) }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.black)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
+        }
+        .task {
+            guard let bytes = try? await load() else { failed = true; return }
+            let full = await Task.detached(priority: .userInitiated) { ToolPhotoThumbnail.decode(bytes, maxPixel: 4096) }.value
+            guard !Task.isCancelled else { return }
+            image = full; failed = full == nil
+        }
+    }
+}
+
 struct MomentZoomablePhoto: UIViewRepresentable {
     let image: UIImage
     func makeUIView(context: Context) -> PhotoScrollView { PhotoScrollView() }

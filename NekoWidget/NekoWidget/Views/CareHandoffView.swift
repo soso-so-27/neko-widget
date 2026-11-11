@@ -40,7 +40,10 @@ struct CareHandoffView: View {
                 } description: { Text(error) } actions: { Button("もう一度読み込む") { store.reload() } }
             } else if stripCats.isEmpty {
                 // No cat yet: add one here.
-                List { ToolCatPicker(profiles: profiles, select: { select(profileID: $0.identifier, name: $0.displayName) }, purpose: "猫を追加すると、預ける人に渡すメモを作れます。") {} }
+                List {
+                    ToolCatPicker(profiles: profiles, select: { select(profileID: $0.identifier, name: $0.displayName) }, purpose: "猫を追加すると、預ける人に渡すメモを作れます。") {}
+                    CareHandoffDetachedPhotos(store: store)
+                }
                     .safeAreaInset(edge: .bottom) { CareSaveNotice(store: store) }
             } else if let id = selectedCatID, store.plan.cats.contains(where: { $0.id == id }) {
                 // The chosen cat's memo, with the row of cats above it to switch in place.
@@ -63,6 +66,7 @@ struct CareHandoffView: View {
                             }
                         }
                     }
+                    CareHandoffDetachedPhotos(store: store)
                 }
                 .safeAreaInset(edge: .top, spacing: 0) {
                     ToolCatStrip(cats: stripCats, selectedID: nil) { select($0) }
@@ -351,6 +355,7 @@ private struct CareCatEditor: View {
                     Button("このお世話メモを削除", role: .destructive) { deleteRequested = true }
                 }
             }
+            CareHandoffDetachedPhotos(store: store)
         }
         .toolPageSpacing()
         .navigationTitle("預けるとき").navigationBarTitleDisplayMode(.inline)
@@ -417,6 +422,17 @@ private struct CareCatEditor: View {
             guard let index = state.cats.firstIndex(where: { $0.catID == record.catID }),
                   state.cats[index].facePhoto == nil else { return }
             state.cats[index].setIdentifyingPhoto(.face, ref, editedAt: Date(), editedBy: "import:Profile")
+        }
+    }
+}
+
+private struct CareHandoffDetachedPhotos: View {
+    @ObservedObject var store: CareHandoffStore
+
+    var body: some View {
+        ForEach(store.plan.detachedPhotos ?? []) { photo in
+            DetachedToolPhotoRow(title: "写真", load: { try store.photoData(photo.photoName) },
+                                 remove: { store.removeDetachedPhoto(photo) })
         }
     }
 }

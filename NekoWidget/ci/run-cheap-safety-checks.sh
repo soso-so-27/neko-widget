@@ -96,6 +96,7 @@ xcrun swiftc -parse-as-library \
 "$RUNNER_TEMP/verify-photo-memory-notes"
 xcrun swiftc -parse-as-library \
   NekoWidget/Services/PhotoMemoryNoteStore.swift \
+  NekoWidget/Services/FamilyNotebookRecordOrigin.swift \
   NekoWidget/Services/VeterinaryVisitStore.swift \
   ci/verify-veterinary-visits.swift -o "$RUNNER_TEMP/verify-veterinary-visits"
 "$RUNNER_TEMP/verify-veterinary-visits"

@@ -16,6 +16,15 @@ struct VeterinaryVisitEntry: Codable, Identifiable, Equatable, Sendable {
     let photoFile: String?
     var sourcePhotoIdentifier: String? = nil
     var familyRetained: Bool? = nil
+    var familyPhotoLink: String? = nil
+}
+
+struct VeterinaryDetachedPhoto: Codable, Identifiable, Equatable, Sendable {
+    var id: UUID { entry.id }
+    let visitID: UUID
+    let catID: UUID
+    let entry: VeterinaryVisitEntry
+    var familyPhotoLink: String? = nil
 }
 
 struct VeterinaryVisit: Codable, Identifiable, Equatable, Sendable {
@@ -30,6 +39,7 @@ struct VeterinaryVisit: Codable, Identifiable, Equatable, Sendable {
     var completedAt: Date?
     var familyRecordID: UUID? = nil
     var familyDetached: Bool? = nil
+    var familyPhotoLink: String? = nil
     /// After the consultation (11/8): what the vet said, the medicine given and
     /// the next visit day. Optional, so memos saved before them still read;
     /// the only fields that stay editable once the memo is 「診察済み」.
@@ -113,6 +123,7 @@ actor VeterinaryVisitStore {
         var schema = 1
         var visits: [VeterinaryVisit] = []
         var retiredPhotoFiles: [String]? = nil
+        var detachedPhotos: [VeterinaryDetachedPhoto]? = nil
         /// Videos (11/9): an entry's length in seconds, by entry ID. Beside the
         /// visits, not in them: an older version still reads the memo (the
         /// first frame shows as a photo), and a change received from the
@@ -133,6 +144,80 @@ actor VeterinaryVisitStore {
     func visits() throws -> [VeterinaryVisit] {
         Self.lock.lock(); defer { Self.lock.unlock() }
         return try load().visits
+    }
+
+    nonisolated static func personalBackup(_ data: Data) throws -> Data {
+        typealias Object = FamilyNotebookRecordOrigin.Object
+        var state = try FamilyNotebookRecordOrigin.personalObject(data, tool: "VeterinaryVisits")
+        let live = try FamilyNotebookRecordOrigin.decode(data)["visits"] as? [Object] ?? []
+        guard let visits = state["visits"] as? [Object] else { throw VeterinaryVisitError.corrupted }
+        var detached = state["detachedPhotos"] as? [Object] ?? []
+        state["visits"] = visits.compactMap { input -> Object? in
+            var visit = input
+            let liveVisit = live.first { $0["id"] as? String == input["id"] as? String }
+            let liveEntries = liveVisit?["entries"] as? [Object] ?? []
+            let isPartial = input["catName"] == nil
+            let catName = (input["catName"] as? String) ?? "猫"
+            visit.merge(["catName": catName, "observations": "", "questions": ""]) { value, _ in value }
+            if isPartial { visit["familyRecordID"] = input["id"] }
+            visit["entries"] = (input["entries"] as? [Object] ?? []).compactMap { inputEntry -> Object? in
+                var entry = inputEntry
+                entry["sourcePhotoIdentifier"] = nil
+                if entry["sourceNoteID"] == nil { entry["sourceNoteID"] = entry["id"] }
+                if entry["sourceRevision"] == nil { entry["sourceRevision"] = entry["id"] }
+                if entry["text"] == nil { entry["text"] = "" }
+                if var weight = entry["weight"] as? Object, weight["catName"] as? String != catName {
+                    weight["catName"] = nil; entry["weight"] = weight
+                }
+                let hasText = !((entry["text"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                if isPartial, !hasText, entry["weight"] == nil, entry["photoFile"] != nil,
+                   let id = entry["id"] as? String, let visitID = visit["id"], let catID = visit["catID"] {
+                    detached.removeAll { ($0["entry"] as? Object)?["id"] as? String == id }
+                    entry["familyPhotoLink"] = liveEntries.first { $0["id"] as? String == id }?["familyPhotoLink"]
+                    var photo: Object = ["visitID": visitID, "catID": catID, "entry": entry]
+                    photo["familyPhotoLink"] = liveVisit?["familyPhotoLink"]
+                    detached.append(photo); return nil
+                }
+                return entry
+            }
+            if isPartial, (visit["entries"] as? [Object])?.isEmpty == true,
+               Set(input.keys).isSubset(of: ["id", "catID", "revision", "updatedAt", "entries"]) { return nil }
+            return visit
+        }
+        detached = detached.map { input in
+            var copy = input
+            if var entry = copy["entry"] as? Object { entry["sourcePhotoIdentifier"] = nil; copy["entry"] = entry }
+            return copy
+        }
+        if !detached.isEmpty { state["detachedPhotos"] = detached }
+        let visible = (state["visits"] as? [Object] ?? []).flatMap { $0["entries"] as? [Object] ?? [] }
+        let all = visible + detached.compactMap { $0["entry"] as? Object }
+        let ids = Set(all.compactMap { $0["id"] as? String })
+        state["videoSeconds"] = (state["videoSeconds"] as? Object)?.filter { ids.contains($0.key) }
+        state["retiredPhotoFiles"] = nil
+        let bytes = try FamilyNotebookRecordOrigin.encode(state)
+        _ = try JSONDecoder().decode(State.self, from: bytes)
+        return bytes
+    }
+
+    func detachedPhotos() throws -> [VeterinaryDetachedPhoto] {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        return try load().detachedPhotos ?? []
+    }
+
+    func image(for photo: VeterinaryDetachedPhoto) throws -> Data? {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        guard try load().detachedPhotos?.contains(photo) == true else { throw VeterinaryVisitError.changed }
+        return try imageBytes(photo.entry.photoFile)
+    }
+
+    func removeDetachedPhoto(_ photo: VeterinaryDetachedPhoto) throws {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        var state = try load()
+        guard state.detachedPhotos?.contains(photo) == true, let file = photo.entry.photoFile else { throw VeterinaryVisitError.changed }
+        state.detachedPhotos?.removeAll { $0 == photo }
+        state.retiredPhotoFiles = (state.retiredPhotoFiles ?? []) + [file]
+        try commit(state); try? cleanup(&state)
     }
     /// Which entries are videos, and how long each is.
     func videoDurations() throws -> [UUID: Double] {
@@ -161,9 +246,42 @@ actor VeterinaryVisitStore {
         #endif
         var state = try load()
         let next = Self.keepingLocalResults(try project(state.visits), from: state.visits)
-        guard next != state.visits else { return }
-        for visit in next { try validate(visit) }
-        state.visits = next; try commit(state, familyProjection: true)
+        var connected = state
+        connected.visits = next
+        if let detached = state.detachedPhotos {
+            connected.detachedPhotos = detached.filter { photo in
+                let visits = connected.visits.indices.filter { index in
+                    let visit = connected.visits[index]
+                    guard visit.familyDetached != true else { return false }
+                    if let link = photo.familyPhotoLink { return visit.familyPhotoLink == link }
+                    return visit.id == photo.visitID && visit.catID == photo.catID && visit.familyRecordID != nil
+                }
+                guard visits.count == 1, let i = visits.first else { return true }
+                let entries = connected.visits[i].entries.indices.filter { index in
+                    let entry = connected.visits[i].entries[index]
+                    if let link = photo.entry.familyPhotoLink { return entry.familyPhotoLink == link }
+                    return entry.id == photo.entry.id
+                }
+                if entries.isEmpty, photo.entry.familyPhotoLink == nil, photo.familyPhotoLink != nil,
+                   connected.visits[i].entries.count < 20,
+                   !connected.visits[i].entries.contains(where: { $0.sourceNoteID == photo.entry.sourceNoteID }) {
+                    connected.visits[i].entries.append(photo.entry)
+                    return false
+                }
+                guard entries.count == 1, let j = entries.first, connected.visits[i].entries[j].familyRetained != true,
+                      connected.visits[i].entries[j].photoFile == nil else { return true }
+                let old = connected.visits[i].entries[j]
+                connected.visits[i].entries[j] = .init(id: old.id, sourceNoteID: old.sourceNoteID, sourceRevision: old.sourceRevision,
+                    text: old.text, capturedAt: old.capturedAt, writtenAt: old.writtenAt, weight: old.weight,
+                    photoFile: photo.entry.photoFile, sourcePhotoIdentifier: photo.entry.sourcePhotoIdentifier,
+                    familyPhotoLink: old.familyPhotoLink)
+                return false
+            }
+        }
+        guard connected.visits != state.visits || connected.detachedPhotos != state.detachedPhotos else { return }
+        for visit in connected.visits { try validate(visit) }
+        state.visits = next
+        try commit(connected, familyProjection: true, projectedBeforeReconnecting: state)
     }
 
     /// Keep device-local memo dates. Consultation results now come from the
@@ -323,7 +441,11 @@ actor VeterinaryVisitStore {
     func image(for entry: VeterinaryVisitEntry, visitID: UUID) throws -> Data? {
         Self.lock.lock(); defer { Self.lock.unlock() }
         guard try load().visits.first(where: { $0.id == visitID })?.entries.contains(entry) == true else { throw VeterinaryVisitError.changed }
-        guard let file = entry.photoFile else { return nil }
+        return try imageBytes(entry.photoFile)
+    }
+
+    private func imageBytes(_ file: String?) throws -> Data? {
+        guard let file else { return nil }
         do {
             let url = directory.appendingPathComponent(file)
             guard let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 6 * 1024 * 1024 else { throw VeterinaryVisitError.tooLarge }
@@ -390,11 +512,16 @@ actor VeterinaryVisitStore {
                 try validate(visit)
                 for file in visit.entries.compactMap(\.photoFile) { guard photoFiles.insert(file).inserted else { throw VeterinaryVisitError.corrupted } }
             }
+            let detached = state.detachedPhotos ?? []
+            guard detached.count <= 36_500, Set(detached.map(\.id)).count == detached.count else { throw VeterinaryVisitError.corrupted }
+            for photo in detached {
+                guard let file = photo.entry.photoFile, Self.validPhotoFile(file), photoFiles.insert(file).inserted else { throw VeterinaryVisitError.corrupted }
+            }
             let retired = state.retiredPhotoFiles ?? []
             guard retired.count <= 2000, Set(retired).count == retired.count,
                   retired.allSatisfy({ Self.validPhotoFile($0) && !photoFiles.contains($0) }) else { throw VeterinaryVisitError.corrupted }
             let videos = state.videoSeconds ?? [:]
-            guard videos.count <= state.visits.reduce(0, { $0 + $1.entries.count }),
+            guard videos.count <= state.visits.reduce(detached.count, { $0 + $1.entries.count }),
                   videos.allSatisfy({ UUID(uuidString: $0.key) != nil && VeterinaryVisitEntry.validVideoSeconds($0.value) }) else { throw VeterinaryVisitError.corrupted }
             return state
         } catch { throw VeterinaryVisitError.corrupted }
@@ -447,11 +574,11 @@ actor VeterinaryVisitStore {
                 kCGImageSourceThumbnailMaxPixelSize: 64] as CFDictionary) != nil else { throw VeterinaryVisitError.corrupted }
 #endif
     }
-    private func commit(_ state: State, familyProjection: Bool = false) throws {
+    private func commit(_ state: State, familyProjection: Bool = false, projectedBeforeReconnecting: State? = nil) throws {
         var state = state
         // Only entries still in a memo keep their video length.
         if let videos = state.videoSeconds {
-            let live = Set(state.visits.flatMap { $0.entries.map(\.id.uuidString) })
+            let live = Set(state.visits.flatMap { $0.entries.map(\.id.uuidString) } + (state.detachedPhotos ?? []).map(\.id.uuidString))
             let kept = videos.filter { live.contains($0.key) }
             state.videoSeconds = kept.isEmpty ? nil : kept
         }
@@ -461,15 +588,25 @@ actor VeterinaryVisitStore {
         try AppRecordDataset.requireWritable(directory.appendingPathComponent("state.json"))
         #endif
         let retired = state.retiredPhotoFiles ?? []
-        let live = Set(state.visits.flatMap { $0.entries.compactMap(\.photoFile) })
+        let live = Set(state.visits.flatMap { $0.entries.compactMap(\.photoFile) } + (state.detachedPhotos ?? []).compactMap(\.entry.photoFile))
         guard retired.count <= 2000, Set(retired).count == retired.count,
               retired.allSatisfy({ Self.validPhotoFile($0) && !live.contains($0) }) else { throw VeterinaryVisitError.storage }
-        let bytes = try JSONEncoder().encode(state)
+        let url = directory.appendingPathComponent("state.json")
+        let previous = FileManager.default.fileExists(atPath: url.path) ? try AppRecordJSON.read(url) : nil
+        let displayed = try JSONEncoder().encode(state)
+        let bytes: Data
+        if let projectedBeforeReconnecting {
+            let projected = try FamilyNotebookRecordOrigin.recording(JSONEncoder().encode(projectedBeforeReconnecting), over: previous,
+                tool: "VeterinaryVisits", family: true)
+            bytes = try FamilyNotebookRecordOrigin.recording(displayed, over: projected, tool: "VeterinaryVisits", family: false)
+        } else {
+            bytes = try FamilyNotebookRecordOrigin.recording(displayed, over: previous, tool: "VeterinaryVisits", family: familyProjection)
+        }
         guard bytes.count <= AppRecordJSON.maximumBytes else { throw VeterinaryVisitError.storage }
         #if os(iOS)
         if !familyProjection { try FamilyNotebookToolSharing.visitsChanged(before: load().visits, after: state.visits, directory: directory) }
         #endif
-        try write(bytes, to: directory.appendingPathComponent("state.json"))
+        try write(bytes, to: url)
         NotificationCenter.default.post(name: Notification.Name("neko.app-records.committed.v1"), object: directory)
     }
     private func write(_ data: Data, to url: URL) throws {
