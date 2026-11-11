@@ -381,7 +381,7 @@ private struct VeterinaryConsultationView: View {
     private var bottomBar: some View {
         ToolMakeBar(top: { saveStatus }) {
             Button { showing = true } label: {
-                Label("先生に見せる", systemImage: "stethoscope").frame(maxWidth: .infinity, minHeight: 44)
+                Label("先生に見せる", systemImage: "stethoscope").frame(maxWidth: .infinity)
             }
             .accessibilityIdentifier("vet-show").disabled(changes || busy)
         }
@@ -1312,8 +1312,9 @@ private struct VeterinaryReadView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
             }
             // 11/11: the input pages' bar (full-width, large); each button keeps its own style.
+            .toolBarFadeRoom()
             .safeAreaInset(edge: .bottom) {
-                ToolMakeBar {
+                ToolMakeBar(ground: NekoPalette.plainGround) {
                     ViewThatFits {
                         HStack(spacing: 12) { exportButtons }
                         VStack(spacing: 8) { exportButtons }
@@ -1355,7 +1356,7 @@ private struct VeterinaryReadView: View {
                     Label("PDFで渡す", systemImage: "doc")
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 44)
+            .frame(maxWidth: .infinity)
         }
         .buttonStyle(.borderedProminent).accessibilityIdentifier("vet-export-pdf")
         .disabled(exporting)
@@ -1367,7 +1368,7 @@ private struct VeterinaryReadView: View {
                     Label("画像で渡す", systemImage: "photo")
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 44)
+            .frame(maxWidth: .infinity)
         }
         .buttonStyle(.bordered).accessibilityIdentifier("vet-export-images")
         .disabled(exporting)

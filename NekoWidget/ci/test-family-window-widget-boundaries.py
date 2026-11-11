@@ -2909,7 +2909,8 @@ class AppDrawingWasteTests(unittest.TestCase):
             self.assertIn("NavigationLink {\n                        LazyToolDestination {\n                            " + page, tools)
         self.assertEqual(tools.count("LazyToolDestination {"), 4)
         lazy = section(main, "private struct LazyToolDestination<Content: View>: View {", "private struct PhotoThemeCatKey")
-        self.assertIn("var body: some View { content() }", lazy)
+        # 11/11: a tool is shown without the tab bar.
+        self.assertIn("var body: some View { content().toolChrome() }", lazy)
 
     def test_home_screen_photo_is_read_and_written_only_when_it_changes(self) -> None:
         screen = source("NekoWidget/Views/GroupWindowView.swift")
@@ -3417,8 +3418,9 @@ class LostCatToolReview1108Tests(unittest.TestCase):
         view = source("NekoWidget/Views/CatPreparednessView.swift")
         preview = section(view, "private struct LostCatPreviewView", "private struct LostCatActivitySheet")
         self.assertIn('.navigationTitle("できあがり")', preview)
-        # 11/11: the input pages' bottom bar, the button the full width.
-        self.assertIn("ToolMakeBar {", preview)
+        # 11/11: the input pages' bottom bar, the button the full width; the
+        # page is plain (not grouped), so the bar takes that colour.
+        self.assertIn("ToolMakeBar(ground: NekoPalette.plainGround) {", preview)
         self.assertIn('Label("保存・共有する", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity)', preview)
         self.assertIn("text: format.sharesPost ? draft.message : nil", preview)
         self.assertIn("var sharesPost: Bool { self == .social }", source("NekoWidget/Services/LostCatIncident.swift"))
@@ -4594,9 +4596,12 @@ class ToolFlowTests(unittest.TestCase):
         for text in (care, evacuation, vet):
             self.assertNotIn('Label("書き出す", systemImage: "square.and.arrow.up")', text)
         self.assertIn('shareButton("PDFで渡す", pdf: true)', care)
-        # 11/11: the output screens use the input pages' bottom bar.
+        # 11/11: the output screens use the input pages' bottom bar, in the
+        # page's colour (plain for the evacuation and vet memos, grouped for care).
+        self.assertRegex(care, r"\.safeAreaInset\(edge: \.bottom\) \{\s*ToolMakeBar \{\s*ViewThatFits \{")
+        for text in (evacuation, vet):
+            self.assertRegex(text, r"\.safeAreaInset\(edge: \.bottom\) \{\s*ToolMakeBar\(ground: NekoPalette\.plainGround\) \{\s*ViewThatFits \{")
         for text in (care, evacuation, vet):
-            self.assertRegex(text, r"\.safeAreaInset\(edge: \.bottom\) \{\s*ToolMakeBar \{\s*ViewThatFits \{")
             self.assertNotIn(".padding().background(.regularMaterial)", text)
         self.assertIn('"evacuation-share-pdf"', evacuation)
         self.assertIn('"vet-export-pdf"', vet)
@@ -7323,6 +7328,79 @@ class DesignPolish1111Tests(unittest.TestCase):
         project = source("NekoWidget.xcodeproj/project.pbxproj")
         self.assertEqual(project.count("ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;"), 2)
         self.assertIn("DesignTokens.swift in Sources", project)
+
+
+class ToolBottomChromeTests(unittest.TestCase):
+    """11/11: inside a tool the tab bar is hidden, the tool's bar is the page's
+    colour with the rows fading out above it, and its button is the app's one
+    primary button (not a taller capsule)."""
+
+    def setUp(self) -> None:
+        self.shared = source("NekoWidget/Views/CatCareView.swift")
+        self.bar = section(self.shared, "struct ToolMakeBar<Top: View, Action: View>: View {", "/// The frame around every tool page")
+
+    def test_tab_bar_is_hidden_on_every_tool_page(self) -> None:
+        chrome = section(self.shared, "func toolChrome() -> some View {", "\n    }\n")
+        self.assertIn("toolbar(.hidden, for: .tabBar)", chrome)
+        main = source("NekoWidget/Views/MainTabView.swift")
+        lazy = section(main, "private struct LazyToolDestination<Content: View>: View {", "private struct PhotoThemeCatKey")
+        self.assertIn("content().toolChrome()", lazy)
+        # The ツール list itself keeps the tab bar.
+        tools = section(main, "private var toolsView: some View {", "private var showcaseToolCard: some View {")
+        self.assertNotIn(".toolbar(.hidden, for: .tabBar)", tools)
+        self.assertNotIn(".toolChrome()", tools)
+        # A pushed page without it would bring the tab bar back, so each
+        # page a tool pushes sets it.
+        pages = {
+            "NekoWidget/Views/CareHandoffView.swift": ["private struct CareDisclosureView", "private struct CareDisplayView"],
+            "NekoWidget/Views/CatPreparednessView.swift": ["private struct LostCatPreviewView", "private struct LostCatFoundView"],
+            "NekoWidget/Views/EvacuationPreparationView.swift": [
+                "private struct EvacuationPackingView", "private struct EvacuationNowView",
+                "private struct EvacuationSuppliesEditor", "private struct EvacuationSupplyEditor",
+                "private struct EvacuationCatsView", "private struct EvacuationCatEditor",
+                "private struct EvacuationDisplayView", "private struct EvacuationDestinationsView",
+                "private struct EvacuationDestinationEditor"],
+        }
+        for path, names in pages.items():
+            text = source(path)
+            for name in names:
+                start = text.index(name)
+                following = text.find("\nprivate struct ", start + 1)
+                following = len(text) if following < 0 else following
+                self.assertIn(".toolChrome()", text[start:following], name)
+        # 「この子のこと」 opened from a tool keeps the tool's frame.
+        subject = section(self.shared, "struct CatCareSubjectView: View {", "private struct CatCareInsideCatPageKey")
+        self.assertIn(".toolChrome()", subject)
+
+    def test_bar_takes_the_page_colour_and_fades_above(self) -> None:
+        self.assertNotIn("regularMaterial", self.bar)
+        self.assertIn("ground: Color = NekoPalette.groupedGround", self.bar)
+        self.assertIn(".background(ground)", self.bar)
+        self.assertIn("LinearGradient(colors: [ground.opacity(0), ground], startPoint: .top, endPoint: .bottom)", self.bar)
+        self.assertIn(".offset(y: -ToolChrome.fade)", self.bar)
+        self.assertIn(".allowsHitTesting(false)", self.bar)
+        self.assertIn(".accessibilityHidden(true)", self.bar)
+        self.assertIn("static let fade: CGFloat = 28", self.shared)
+        tokens = source("NekoWidget/Views/DesignTokens.swift")
+        self.assertIn("static let groupedGround = Color(uiColor: .systemGroupedBackground)", tokens)
+        self.assertIn("static let plainGround = Color(uiColor: .systemBackground)", tokens)
+        # The last row can be scrolled clear of the fade.
+        room = section(self.shared, "func toolBarFadeRoom() -> some View {", "\n    }\n")
+        self.assertIn("contentMargins(.bottom, ToolChrome.fade, for: .scrollContent)", room)
+        bottom = section(self.shared, "private struct ToolBottomBar<Bar: View>: ViewModifier {", "/// A photo beside its text")
+        self.assertIn(".toolBarFadeRoom()", bottom)
+        for path, count in (("NekoWidget/Views/CareHandoffView.swift", 1), ("NekoWidget/Views/CatPreparednessView.swift", 2),
+                            ("NekoWidget/Views/EvacuationPreparationView.swift", 1), ("NekoWidget/Views/VeterinaryVisitView.swift", 1)):
+            self.assertEqual(source(path).count(".toolBarFadeRoom()"), count, path)
+
+    def test_button_is_the_shared_primary_button(self) -> None:
+        self.assertIn(".nekoPrimaryButton()", self.bar)
+        self.assertNotIn(".controlSize(.large)", self.bar)
+        self.assertNotIn(".buttonStyle(.borderedProminent)", self.bar)
+        for path in ("NekoWidget/Views/CareHandoffView.swift", "NekoWidget/Views/EvacuationPreparationView.swift",
+                     "NekoWidget/Views/VeterinaryVisitView.swift"):
+            self.assertNotIn(".frame(maxWidth: .infinity, minHeight: 44)\n        }", source(path), path)
+        self.assertIn('Label("先生に見せる", systemImage: "stethoscope").frame(maxWidth: .infinity)\n', source("NekoWidget/Views/VeterinaryVisitView.swift"))
 
 
 if __name__ == "__main__":

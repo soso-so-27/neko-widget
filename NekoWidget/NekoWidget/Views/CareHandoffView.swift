@@ -592,6 +592,7 @@ private struct CareDisclosureView: View {
             // 「この子のこと」 row; not listed again here (11/8).
             if let error { Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) } }
         }.navigationTitle("メモを作る").navigationBarTitleDisplayMode(.inline)
+        .toolChrome()
         .toolPageSpacing()
             .scrollDismissesKeyboard(.interactively)
             .announcesWhenShown(error)
@@ -665,7 +666,9 @@ private struct CareDisplayView: View {
             }.padding(16)
         }.background(Color(.systemGroupedBackground))
             .navigationTitle("できあがり").navigationBarTitleDisplayMode(.inline)
+            .toolChrome()
             // 11/11: the input pages' bar (full-width, large); each button keeps its own style.
+            .toolBarFadeRoom()
             .safeAreaInset(edge: .bottom) {
                 ToolMakeBar {
                     ViewThatFits {
@@ -698,7 +701,7 @@ private struct CareDisplayView: View {
                     Label(title, systemImage: pdf ? "doc" : "photo")
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 44)
+            .frame(maxWidth: .infinity)
         }
         .disabled(exporting)
         if pdf {
