@@ -363,7 +363,14 @@ final class GroupWindowScreenModel: ObservableObject {
                          outgoingOperationID: UUID? = nil) async -> GroupPhotoModeration.Verdict? {
         do {
             let incoming = try await client.fetchPhoto(photoID: photo.id, windowID: windowID)
-            let isOwn = photo.senderParticipantID == me
+            let verifiedMomentID = incoming.verified?.clientMomentID
+            if let verifiedMomentID, try await store.hasReceived(verifiedMomentID: verifiedMomentID, windowID: windowID) {
+                // This signed photo was already kept. A new relay ID does not
+                // make it a new photo or change the previously received copy.
+                try await client.keep(incoming, outgoingOperationID: outgoingOperationID) { _, _ in }
+                return nil
+            }
+            let isOwn = incoming.photo.senderParticipantID == me
             // A photo this iPhone sent was checked before sending.
             let verdict: GroupPhotoModeration.Verdict
             if isOwn {
@@ -387,7 +394,8 @@ final class GroupWindowScreenModel: ObservableObject {
                         isOwn: isOwn, caption: hidden ? nil : kept.caption
                     ),
                     jpeg: hidden ? nil : jpeg,
-                    windowID: windowID
+                    windowID: windowID,
+                    verifiedMomentID: verifiedMomentID
                 )
             }
         } catch {
