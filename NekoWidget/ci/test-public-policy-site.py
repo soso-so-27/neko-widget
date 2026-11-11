@@ -173,7 +173,7 @@ class PublicPolicySiteTests(unittest.TestCase):
         year, month, day = (int(part) for part in next(iter(revisions.values())).split("-"))
         visible_revision = f"最終更新日：{year}年{month}月{day}日"
         for page in PAGES[1:]:
-            expected = "最終更新日：2026年11月11日" if page.parent.name in ("support", "guide") else visible_revision
+            expected = "最終更新日：2026年11月11日" if page.parent.name in ("privacy", "support", "guide") else visible_revision
             self.assertIn(expected, "".join(self.parsed(page).text), page)
 
     def test_private_window_capability_boundary_is_consistent(self):
@@ -274,7 +274,7 @@ class PublicPolicySiteTests(unittest.TestCase):
                 '通知を許可していれば',
                 '届いたときに知らせます',
                 'それまでの記録は消えません',
-                '写真のコピー・メモ・この子のことが戻ります',
+                '自分の記録と写真が自動保存から戻ります',
                 'もう一度招待を受けて参加してください',
                 '鍵はiPhoneごとに作る',
                 '解約しても、写真・まど・メモは消えません',
