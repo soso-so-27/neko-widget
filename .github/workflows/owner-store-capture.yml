@@ -33,6 +33,10 @@ on:
         description: Synthetic compiler output with identical project inputs
         type: string
         default: ""
+      capture_build_358:
+        description: Capture only the five in-app screens using the pinned build 358 inputs
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -116,6 +120,7 @@ jobs:
         timeout-minutes: 6
         env:
           GH_TOKEN: ${{ github.token }}
+          CAPTURE_BUILD_358: ${{ inputs.capture_build_358 }}
         shell: bash
         working-directory: NekoWidget
         run: |
@@ -124,22 +129,30 @@ jobs:
           printf '%s' "$udid" > "$PRIVATE_ROOT/simulator-id"
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b > "$PRIVATE_ROOT/boot.log" 2>&1
-          xcrun simctl spawn "$udid" defaults write NSGlobalDomain AppleLanguages -array ja-JP
-          xcrun simctl spawn "$udid" defaults write NSGlobalDomain AppleLocale ja_JP
-          xcrun simctl shutdown "$udid"
-          xcrun simctl boot "$udid"
-          xcrun simctl bootstatus "$udid" -b >> "$PRIVATE_ROOT/boot.log" 2>&1
+          if [[ "$CAPTURE_BUILD_358" != 'true' ]]; then
+            xcrun simctl spawn "$udid" defaults write NSGlobalDomain AppleLanguages -array ja-JP
+            xcrun simctl spawn "$udid" defaults write NSGlobalDomain AppleLocale ja_JP
+            xcrun simctl shutdown "$udid"
+            xcrun simctl boot "$udid"
+            xcrun simctl bootstatus "$udid" -b >> "$PRIVATE_ROOT/boot.log" 2>&1
+          fi
           xcrun simctl ui "$udid" appearance light
           xcrun simctl status_bar "$udid" override --time 09:41 --batteryLevel 100 --batteryState charged --wifiBars 3 --cellularBars 4
       - name: Build before decrypting owner media
         timeout-minutes: 20
         env:
           GH_TOKEN: ${{ github.token }}
+          CAPTURE_BUILD_358: ${{ inputs.capture_build_358 }}
+          SYNTHETIC: ${{ inputs.synthetic }}
+          WIDGET_PROBE: ${{ inputs.widget_probe }}
         shell: bash
         working-directory: NekoWidget
         run: |
           set -Eeuo pipefail
           udid=$(cat "$PRIVATE_ROOT/simulator-id")
+          if [[ "$CAPTURE_BUILD_358" == 'true' ]]; then
+            [[ "$SYNTHETIC" == 'false' && "$WIDGET_PROBE" == 'false' && "$GITHUB_REF" == 'refs/heads/main' && "$BUILD_RUN_ID" == '42995201621' ]]
+          fi
           if [[ -n "$BUILD_RUN_ID" ]]; then
             [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
             build_sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID" \
@@ -154,7 +167,17 @@ jobs:
             # Match every project input from the repository root. Then verify
             # the packaged offline capture profile below before opening media.
             # These standalone CI selectors/validators are not project inputs.
-            (cd "$GITHUB_WORKSPACE"; git diff --quiet "$build_sha" "$GITHUB_SHA" -- NekoWidget ':(exclude)NekoWidget/ci/test-private-store-capture.py' ':(exclude)NekoWidget/ci/native-ui-inventory.py')
+            if [[ "$CAPTURE_BUILD_358" == 'true' ]]; then
+              # The fixed kit comes from db35f4b0 plus the capture fixtures.
+              # Its four app tests passed; the unrelated Widget test did not.
+              [[ "$build_sha" == '7fffd763a899fedd027832a4a58cb178212432f3' ]]
+              gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID/jobs" --jq '
+                [.jobs[] | select(.name == "synthetic" and .status == "completed") | .steps[]
+                | select(.conclusion == "success" and
+                  (.name == "Build before decrypting owner media" or .name == "Upload ciphertext only (including failures)"))] | length' | grep -Fxq 2
+            else
+              (cd "$GITHUB_WORKSPACE"; git diff --quiet "$build_sha" "$GITHUB_SHA" -- NekoWidget ':(exclude)NekoWidget/ci/test-private-store-capture.py' ':(exclude)NekoWidget/ci/native-ui-inventory.py')
+            fi
             mkdir "$PRIVATE_ROOT/reuse"
             gh run download "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" \
               --name "encrypted-owner-store-capture-$BUILD_RUN_ID" --dir "$PRIVATE_ROOT/reuse"
@@ -241,6 +264,8 @@ jobs:
           file.write_bytes(plistlib.dumps(data))
           PY
       - name: Capture actual app views and SpringBoard
+        env:
+          CAPTURE_BUILD_358: ${{ inputs.capture_build_358 }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -249,16 +274,25 @@ jobs:
           unset NEKO_CAPTURE_KEY
           udid=$(cat "$PRIVATE_ROOT/simulator-id")
           test_run=$(find "$PRIVATE_ROOT/DerivedData/Build/Products" -maxdepth 1 -name '*.xctestrun')
-          targets=(-only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureOwnerStoreHomeWidgets)
-          if [[ '${{ inputs.widget_probe }}' != 'true' ]]; then
-            targets+=(
+          if [[ "$CAPTURE_BUILD_358" == 'true' ]]; then
+            targets=(
               -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreAppScreens
-              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreWindow
-              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreTools
-              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreShowcase
               -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreAlbum
-              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreCare
+              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreLostFlyer
+              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreVetReading
             )
+          else
+            targets=(-only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureOwnerStoreHomeWidgets)
+            if [[ '${{ inputs.widget_probe }}' != 'true' ]]; then
+              targets+=(
+                -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreAppScreens
+                -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreWindow
+                -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreTools
+                -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreShowcase
+                -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreAlbum
+                -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreCare
+              )
+            fi
           fi
           if ! xcodebuild test-without-building -xctestrun "$test_run" \
             -destination "platform=iOS Simulator,id=$udid" -resultBundlePath "$PRIVATE_ROOT/Capture.xcresult" \
