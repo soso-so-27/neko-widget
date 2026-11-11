@@ -191,6 +191,10 @@ struct Fixture {
     }
 
     static func main() async throws {
+        try require(ToolBackupIndex.automaticSaveManifests["FamilyNotebook"] == nil
+            && ToolBackupIndex.automaticSaveManifests["CatCare"] == "state.json"
+            && ToolBackupIndex.manifests["FamilyNotebook"] == "state.json",
+            "automatic saves exclude family history while personal care and legacy restores keep their formats")
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("readable-export-check-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }

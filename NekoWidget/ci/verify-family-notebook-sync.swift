@@ -188,21 +188,15 @@ private enum VerifyFamilyNotebookSync {
         let backup = try FamilyNotebookBackup.encode(.init(copies: [.init(id: UUID(), state: state)]))
         let restored = try FamilyNotebookBackup.decode(FamilyNotebookBackup.restored(backup))
         try check(restored.copies[0].state.opaqueOperations?.map(\.plaintext) == raws, "backup and private restore retain opaque bytes")
-        try check(try FamilyNotebookBackup.automaticSaveData(backup) == nil, "active shared notebook stays off automatic preservation")
-        try check(try FamilyNotebookBackup.automaticSaveData(FamilyNotebookBackup.encode(restored)) == nil,
-                  "old shared records restored as private cannot be uploaded again")
         var ended = state
         ended.schemaVersion = 3
         ended.sharingEnded = true
         let privateCopy = FamilyNotebookBackup.Copy(id: UUID(), state: ended)
         let localBytes = try FamilyNotebookBackup.encode(.init(copies: [privateCopy]))
         let combined = try FamilyNotebookBackup.restored(backup, keeping: localBytes)
-        let filtered = try FamilyNotebookBackup.automaticSaveData(combined)
-        try check(try FamilyNotebookBackup.decode(combined).copies.count == 2, "legacy restore preserves the on-device private notebook")
-        try check(try FamilyNotebookBackup.decode(filtered!).copies.map(\.id) == [privateCopy.id],
-                  "automatic preservation keeps only the known private copy")
-        let privateRestore = try FamilyNotebookBackup.restored(localBytes)
-        try check(try FamilyNotebookBackup.automaticSaveData(privateRestore) != nil, "a verified private restore remains eligible")
+        let restoredCopies = try FamilyNotebookBackup.decode(combined).copies
+        try check(restoredCopies.count == 2 && restoredCopies.first(where: { $0.id == privateCopy.id })?.state == ended,
+                  "legacy restore preserves the on-device notebook and its contents")
         try check(try Data(contentsOf: directory.appendingPathComponent("family-notebook.json")) == stateBytes,
                   "filtering and restoration never change the on-device source")
 

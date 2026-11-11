@@ -2135,15 +2135,13 @@ enum AppRecordCapture {
         guard indexVersion >= (previous?.version ?? 3) else { throw ManagedPreservationError.servicePaused }
         try AppRecordEditingLease.whileIdle {
             try AppRecordDataset.requireScope(owner: owner, origin: origin)
-            try FamilyNotebookBackup.refresh()
         }
         let source = AppRecordDataset.control.appendingPathComponent("preparing/" + UUID().uuidString, isDirectory: true)
         try ToolBackupFiles.protect(source)
         defer { try? FileManager.default.removeItem(at: source) }
         let previouslyStoredPhotos = Set(previous?.files.filter { $0.path.hasSuffix(".jpg") }.map(\.path) ?? [])
         var preparedAny = false
-        var excludedNotebook = previous?.containsFamilyNotebook == true
-        for (tool, manifest) in ToolBackupIndex.manifests {
+        for (tool, manifest) in ToolBackupIndex.automaticSaveManifests {
             let record: (URL, Data)? = try AppRecordEditingLease.whileIdle {
                 try Task.checkCancellation()
                 let live = tool == "CatIdentity" ? AppRecordDataset.identityURL() : AppRecordDataset.directory(tool).appendingPathComponent(manifest)
@@ -2203,12 +2201,6 @@ enum AppRecordCapture {
                 bytes = try encoder.encode(state)
             } else if tool == "CatCare" {
                 bytes = try CatCareDecoding.portable(bytes)
-            } else if tool == "FamilyNotebook" {
-                guard let filtered = try FamilyNotebookBackup.automaticSaveData(bytes) else {
-                    excludedNotebook = true
-                    continue
-                }
-                bytes = filtered
             } else if tool == "ShowcasePhotos" {
                 let object = try JSONSerialization.jsonObject(with: bytes)
                 var state = object as? [String: Any] ?? ["entries": object, "scopes": [:]]
@@ -2228,12 +2220,12 @@ enum AppRecordCapture {
             }
             let destination = source.appendingPathComponent(tool + "/" + manifest)
             try ToolBackupFiles.protect(destination.deletingLastPathComponent())
-            if indexVersion == 4 && ["PhotoMemoryNotes", "VeterinaryVisits", "CatCare", "FamilyNotebook"].contains(tool) {
+            if indexVersion == 4 && ["PhotoMemoryNotes", "VeterinaryVisits", "CatCare"].contains(tool) {
                 try AppRecordJSON.write(bytes, to: destination, options: [.atomic, .completeFileProtection])
             } else { try ToolBackupFiles.write(bytes, to: destination) }
             preparedAny = true
         }
-        if !preparedAny && excludedNotebook {
+        if !preparedAny && previous?.containsFamilyNotebook == true {
             // Older snapshots can contain only a shared notebook. Publish an
             // empty manifest so its previous head can retire through the same CAS.
             let destination = source.appendingPathComponent("FamilyNotebook/state.json")

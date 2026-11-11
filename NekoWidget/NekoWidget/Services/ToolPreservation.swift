@@ -103,6 +103,9 @@ struct ToolBackupIndex: Codable, Equatable, Sendable {
         "LostCatDrafts": "drafts.json", "CatPreparedness": "records.json",
         "PhotoMemoryNotes": "state.json", "CatIdentity": "state.json",
         "CatCare": "state.json", "FamilyNotebook": "state.json"]
+    // The relay can mark a shared notebook as ended. Neither that status nor
+    // restoring an older copy permits sending its history under a different key.
+    static let automaticSaveManifests = manifests.filter { $0.key != "FamilyNotebook" }
     // Permanent wire bits; alphabetical insertion must never renumber old v4.
     static let toolBits = ["CareHandoff": 1, "CatIdentity": 2, "CatPreparedness": 4,
         "EvacuationPreparation": 8, "LostCatDrafts": 16, "PhotoMemoryNotes": 32,
