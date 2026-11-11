@@ -33,6 +33,10 @@ on:
         description: Synthetic compiler output with identical project inputs
         type: string
         default: ""
+      capture_build_358:
+        description: Use the fixed, offline capture compiler output for build 358
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -131,7 +135,7 @@ jobs:
           xcrun simctl bootstatus "$udid" -b >> "$PRIVATE_ROOT/boot.log" 2>&1
           xcrun simctl ui "$udid" appearance light
           xcrun simctl status_bar "$udid" override --time 09:41 --batteryLevel 100 --batteryState charged --wifiBars 3 --cellularBars 4
-          # Real SpringBoard wallpaper, set in iOS Settings by XCTest. This is
+          # Real SpringBoard wallpaper, set through the Photos app by XCTest. This is
           # a plain generated gray input; no owner photo enters Photos.app.
           python3 - "$PRIVATE_ROOT/wallpaper.png" <<'PY'
           import struct, sys, zlib
@@ -148,11 +152,16 @@ jobs:
         timeout-minutes: 20
         env:
           GH_TOKEN: ${{ github.token }}
+          CAPTURE_BUILD_358: ${{ inputs.capture_build_358 }}
+          SYNTHETIC: ${{ inputs.synthetic }}
         shell: bash
         working-directory: NekoWidget
         run: |
           set -Eeuo pipefail
           udid=$(cat "$PRIVATE_ROOT/simulator-id")
+          if [[ "$CAPTURE_BUILD_358" == 'true' ]]; then
+            [[ "$SYNTHETIC" == 'false' && "$GITHUB_REF" == 'refs/heads/main' && "$BUILD_RUN_ID" == '43000207604' ]]
+          fi
           if [[ -n "$BUILD_RUN_ID" ]]; then
             [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
             build_sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID" \
@@ -167,7 +176,14 @@ jobs:
             # Match every project input from the repository root. Then verify
             # the packaged offline capture profile below before opening media.
             # These standalone CI selectors/validators are not project inputs.
-            (cd "$GITHUB_WORKSPACE"; git diff --quiet "$build_sha" "$GITHUB_SHA" -- NekoWidget ':(exclude)NekoWidget/ci/test-private-store-capture.py' ':(exclude)NekoWidget/ci/native-ui-inventory.py')
+            if [[ "$CAPTURE_BUILD_358" == 'true' ]]; then
+              # This immutable synthetic source is based on the distributed
+              # build's db35f4b0 tree, with only the reviewed capture fixtures.
+              # Subsequent main product changes must not enter the screenshots.
+              [[ "$build_sha" == '24c46ff0e0ee3ba6e99eb82437dc2a47d6bbdeb9' ]]
+            else
+              (cd "$GITHUB_WORKSPACE"; git diff --quiet "$build_sha" "$GITHUB_SHA" -- NekoWidget ':(exclude)NekoWidget/ci/test-private-store-capture.py' ':(exclude)NekoWidget/ci/native-ui-inventory.py')
+            fi
             mkdir "$PRIVATE_ROOT/reuse"
             gh run download "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" \
               --name "encrypted-owner-store-capture-$BUILD_RUN_ID" --dir "$PRIVATE_ROOT/reuse"
