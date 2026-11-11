@@ -142,7 +142,7 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         app.launchEnvironment["NEKO_CAPTURE_SCREEN"] = "widget-personal"
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
-        try setOwnerCaptureWallpaper()
+        let wallpaperSet = setOwnerCaptureWallpaper()
         sleep(3)
         XCUIDevice.shared.press(.home)
         let springboard = XCUIApplication(bundleIdentifier: springboardBundleIdentifier)
@@ -229,42 +229,73 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         _ = sender.waitForExistence(timeout: 32)
         sleep(3)
         captureScreenshot(named: "14_home_widget_family", screenshot: XCUIScreen.main.screenshot())
+        XCTAssertTrue(wallpaperSet, "The gray wallpaper was not applied through Photos.")
     }
 
     @MainActor
-    private func setOwnerCaptureWallpaper() throws {
-        let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
-        settings.launch()
-        let controls: [XCUIElement.ElementType] = [.button, .cell, .staticText]
-        let names = ["壁紙", "Wallpaper"]
-        var wallpaper: XCUIElement?
-        for _ in 0..<7 {
-            wallpaper = waitForElement(in: settings, labels: names, elementTypes: controls,
-                                      timeout: 1, requireHittable: true)
-            if wallpaper != nil { break }
-            settings.swipeUp()
+    private func setOwnerCaptureWallpaper() -> Bool {
+        // The simulator Settings list omits Wallpaper. Apple documents the
+        // alternative via the system Photos share sheet; Photos contains only
+        // the workflow's generated gray image.
+        let photos = XCUIApplication(bundleIdentifier: "com.apple.mobileslideshow")
+        photos.launch()
+        func unavailable(_ stage: String) -> Bool {
+            let hierarchy = XCTAttachment(string: photos.debugDescription)
+            hierarchy.name = "private-wallpaper-\(stage)"
+            hierarchy.lifetime = .keepAlways
+            add(hierarchy)
+            captureScreenshot(named: "wallpaper-\(stage)", screenshot: XCUIScreen.main.screenshot())
+            photos.terminate()
+            return false
         }
-        try XCTUnwrap(wallpaper, "Wallpaper row in Settings").tap()
-        try XCTUnwrap(waitForElement(in: settings, labels: ["新しい壁紙を追加", "Add New Wallpaper"],
-            elementTypes: controls, timeout: 12, requireHittable: true), "Wallpaper gallery").tap()
-        let chooser = settings.descendants(matching: .any).matching(NSPredicate(format: "label IN %@", ["写真", "Photos"]))
-        XCTAssertTrue(chooser.firstMatch.waitForExistence(timeout: 15))
-        try XCTUnwrap(chooser.allElementsBoundByIndex.first(where: \.isHittable), "Photos category").tap()
-        // Only the workflow's plain, light-gray wallpaper has been imported.
-        let thumbnail = settings.cells.firstMatch
-        if thumbnail.waitForExistence(timeout: 8), thumbnail.isHittable {
+        let controls: [XCUIElement.ElementType] = [.button, .cell, .staticText, .other]
+        if let next = waitForElement(in: photos, labels: ["続ける", "Continue"],
+            elementTypes: [.button], timeout: 5, requireHittable: true) { next.tap() }
+        let share = photos.buttons.matching(NSPredicate(
+            format: "label IN %@ OR identifier IN %@", ["共有", "Share"], ["Share", "shareButton"])).firstMatch
+        let thumbnails = photos.descendants(matching: .any).matching(NSPredicate(
+            format: "label BEGINSWITH %@ OR label BEGINSWITH %@", "写真、", "Photo,"))
+        if !share.exists {
+            let end = Date().addingTimeInterval(15)
+            var thumbnail: XCUIElement?
+            repeat {
+                thumbnail = thumbnails.allElementsBoundByIndex.first { $0.isHittable }
+                    ?? photos.cells.allElementsBoundByIndex.first { $0.isHittable && $0.frame.width < 220 && $0.frame.height > 35 }
+                    ?? photos.images.allElementsBoundByIndex.first { $0.isHittable && (45...220).contains($0.frame.width) }
+                if thumbnail != nil { break }
+                RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+            } while Date() < end
+            guard let thumbnail else { return unavailable("photo-library") }
             thumbnail.tap()
-        } else {
-            let asset = settings.images.allElementsBoundByIndex.first { $0.isHittable && $0.frame.width > 64 }
-            try XCTUnwrap(asset, "Gray wallpaper thumbnail").tap()
         }
-        let add = settings.buttons.matching(NSPredicate(format: "label IN %@", ["追加", "Add"])).firstMatch
-        XCTAssertTrue(add.waitForExistence(timeout: 15))
-        add.tap()
-        try XCTUnwrap(waitForElement(in: settings, labels: ["壁紙を両方に設定", "Set as Wallpaper Pair"],
-            elementTypes: controls, timeout: 12, requireHittable: true), "Apply wallpaper pair").tap()
+        guard share.waitForExistence(timeout: 12) else { return unavailable("share-button") }
+        share.tap()
+        let wallpaperActions = ["壁紙に設定", "Use as Wallpaper", "Set as Wallpaper"]
+        var wallpaper: XCUIElement?
+        for _ in 0..<4 {
+            wallpaper = waitForElement(in: photos, labels: wallpaperActions, elementTypes: controls,
+                                       timeout: 2, requireHittable: true)
+            if wallpaper != nil { break }
+            let start = photos.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.87))
+            let end = photos.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.46))
+            start.press(forDuration: 0.12, thenDragTo: end)
+        }
+        guard let wallpaper else { return unavailable("share-actions") }
+        wallpaper.tap()
+        let springboard = XCUIApplication(bundleIdentifier: springboardBundleIdentifier)
+        let addLabels = ["追加", "Add", "設定", "Set"]
+        let addAction = waitForElement(in: photos, labels: addLabels, elementTypes: [.button], timeout: 5, requireHittable: true)
+            ?? waitForElement(in: springboard, labels: addLabels, elementTypes: [.button], timeout: 6, requireHittable: true)
+        guard let addAction else { return unavailable("wallpaper-preview") }
+        addAction.tap()
+        let pairLabels = ["壁紙を両方に設定", "Set as Wallpaper Pair", "両方に設定", "Set Both"]
+        let pair = waitForElement(in: photos, labels: pairLabels, elementTypes: controls, timeout: 5, requireHittable: true)
+            ?? waitForElement(in: springboard, labels: pairLabels, elementTypes: controls, timeout: 6, requireHittable: true)
+        guard let pair else { return unavailable("apply-pair") }
+        pair.tap()
         sleep(2)
-        settings.terminate()
+        photos.terminate()
+        return true
     }
 
     @MainActor

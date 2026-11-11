@@ -21,7 +21,7 @@ enum OwnerStoreCaptureFixture {
         25: "IMG_9393", 26: "EEMW5137", 31: "IMG_8862", 32: "IMG_8536",
     ]
 
-    @MainActor static func image(number: Int) -> UIImage? {
+    @MainActor static func image(number: Int, aspectRatio: CGFloat? = nil) -> UIImage? {
         guard isRequested, let name = filenames[number],
               let root = ProcessInfo.processInfo.environment["NEKO_PRIVATE_CAPTURE_ROOT"],
               let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: root)
@@ -31,6 +31,12 @@ enum OwnerStoreCaptureFixture {
                 kCGImageSourceCreateThumbnailWithTransform: true,
                 kCGImageSourceThumbnailMaxPixelSize: 1800,
               ] as CFDictionary) else { return nil }
+        if let ratio = aspectRatio ?? (screen == "photo-grid" ? 1 : nil) {
+            let w = CGFloat(cg.width), h = CGFloat(cg.height)
+            let width = min(w, h * ratio), height = min(h, w / ratio)
+            let rect = CGRect(x: (w - width) / 2, y: (h - height) / 2, width: width, height: height)
+            if let cropped = cg.cropping(to: rect.integral) { return UIImage(cgImage: cropped) }
+        }
         return UIImage(cgImage: cg)
     }
 
@@ -79,7 +85,7 @@ enum OwnerStoreCaptureFixture {
             visit = try await store.save(visit, expectedRevision: visit.revision)
             let cat = PhotoMemoryNoteCat(id: catID, name: "むぎ")
             for (index, number) in [10, 25].enumerated() {
-                guard let jpeg = image(number: number)?.jpegData(compressionQuality: 0.85) else {
+                guard let jpeg = image(number: number, aspectRatio: 2)?.jpegData(compressionQuality: 0.85) else {
                     assertionFailure("A veterinary capture photo is missing")
                     return
                 }
