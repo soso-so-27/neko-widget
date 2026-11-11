@@ -1455,6 +1455,19 @@ struct LostCatDraftFixtureView: View {
                     do { savedStores = try Self.prepareSavedInformation(key: fixtureKey, image: image) }
                     catch { fixtureError = true; return }
                 }
+                if OwnerStoreCaptureFixture.isRequested, OwnerStoreCaptureFixture.screen == "flyer" {
+                    do {
+                        var draft = LostCatDraft()
+                        draft.name = "むぎ"
+                        draft.features = "茶白。しっぽが長く、少しこわがりです。"
+                        draft.collar = "赤い首輪"
+                        draft.lastSeenNear = "みどり公園の近く"
+                        draft.contact = "090-0000-0000"
+                        guard let jpeg = OwnerStoreCaptureFixture.image(number: 25)?.jpegData(compressionQuality: 0.9)
+                        else { fixtureError = true; return }
+                        _ = try LostCatDraftStore.shared.replacePhoto(jpeg, role: .face, draft: draft, for: fixtureKey)
+                    } catch { fixtureError = true; return }
+                }
                 if ProcessInfo.processInfo.environment["NEKO_LOST_CAT_PREPARED_PHOTOS"] == "1",
                    LostCatDraftStore.shared.drafts[fixtureKey] == nil {
                     do {

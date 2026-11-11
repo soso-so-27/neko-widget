@@ -26,7 +26,7 @@ on:
         type: boolean
         default: false
       media_asset_id:
-        description: Encrypted owner input asset ID (synthetic always uses the fixed control asset)
+        description: Encrypted input asset ID (generated controls only for a synthetic run)
         type: string
         default: ""
       build_run_id:
@@ -64,7 +64,7 @@ jobs:
           umask 077
           [[ "$WIDGET_PROBE" != 'true' || "$SYNTHETIC" == 'true' ]]
           asset_id="$OWNER_ASSET_ID"
-          if [[ "$SYNTHETIC" == 'true' ]]; then asset_id=731575605; fi
+          if [[ "$SYNTHETIC" == 'true' && -z "$asset_id" ]]; then asset_id=731575605; fi
           [[ "$asset_id" =~ ^[0-9]+$ ]]
           mkdir -p "$RUNNER_TEMP/neko-capture-ingress"
           gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" -H 'Accept: application/octet-stream' > "$RUNNER_TEMP/neko-capture-ingress/input.nekoenc"
@@ -131,6 +131,19 @@ jobs:
           xcrun simctl bootstatus "$udid" -b >> "$PRIVATE_ROOT/boot.log" 2>&1
           xcrun simctl ui "$udid" appearance light
           xcrun simctl status_bar "$udid" override --time 09:41 --batteryLevel 100 --batteryState charged --wifiBars 3 --cellularBars 4
+          # Real SpringBoard wallpaper, set in iOS Settings by XCTest. This is
+          # a plain generated gray input; no owner photo enters Photos.app.
+          python3 - "$PRIVATE_ROOT/wallpaper.png" <<'PY'
+          import struct, sys, zlib
+          from pathlib import Path
+          def chunk(kind, data):
+              return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+          w, h = 1320, 2868
+          png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">2I5B", w, h, 8, 2, 0, 0, 0))
+          png += chunk(b"IDAT", zlib.compress((b"\0" + b"\xe4\xe4\xe4" * w) * h))
+          Path(sys.argv[1]).write_bytes(png + chunk(b"IEND", b""))
+          PY
+          xcrun simctl addmedia "$udid" "$PRIVATE_ROOT/wallpaper.png"
       - name: Build before decrypting owner media
         timeout-minutes: 20
         env:
@@ -253,11 +266,9 @@ jobs:
           if [[ '${{ inputs.widget_probe }}' != 'true' ]]; then
             targets+=(
               -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreAppScreens
-              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreWindow
-              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreTools
-              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreShowcase
               -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreAlbum
-              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreCare
+              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreLostFlyer
+              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreVetReading
             )
           fi
           if ! xcodebuild test-without-building -xctestrun "$test_run" \

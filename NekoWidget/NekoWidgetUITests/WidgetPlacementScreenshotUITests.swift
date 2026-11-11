@@ -139,14 +139,16 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         app.launchArguments += ["-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP",
             "--app-store-screenshot-fixture", "--owner-store-capture", "--review-public-presentation"]
         app.launchEnvironment["NEKO_PRIVATE_CAPTURE_ROOT"] = root
+        app.launchEnvironment["NEKO_CAPTURE_SCREEN"] = "widget-personal"
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        try setOwnerCaptureWallpaper()
         sleep(3)
         XCUIDevice.shared.press(.home)
         let springboard = XCUIApplication(bundleIdentifier: springboardBundleIdentifier)
-        // Large first, then Medium: the two real WidgetKit sizes occupy six
-        // rows on the disposable Home Screen. No app-drawn Home Screen is used.
-        for desiredPage in [3, 2] {
+        // One large Widget on the real Home Screen; leave the icon rows below.
+        do {
+            let desiredPage = 3
             let existingEdit = springboard.buttons.matching(
                 NSPredicate(format: "label IN %@", ["編集", "Edit"])).firstMatch
             let edit: XCUIElement
@@ -207,23 +209,62 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                 labels: ["ウィジェットを追加", "Add Widget"], elementTypes: [.button], timeout: 10))
             addButton.tap()
             sleep(2)
-            // Keep the observed Home editing toolbar between both additions.
-            // Long-pressing the first Widget opens its own configuration instead.
         }
         if let done = waitForElement(in: springboard, labels: ["完了", "Done"],
             elementTypes: [.button], timeout: 5, requireHittable: true) { done.tap() }
         else { XCUIDevice.shared.press(.home) }
-        let cloudyCaption = springboard.descendants(matching: .any).matching(NSPredicate(
-            format: "label CONTAINS %@ OR value CONTAINS %@", "タップで きょうの 1 枚", "タップで きょうの 1 枚")).firstMatch
-        // WidgetKit can expose only the combined Widget accessibility element.
-        // Keep the screenshot for visual inspection even if that text is not AX.
-        _ = cloudyCaption.waitForExistence(timeout: 30)
+        sleep(8)
+        captureScreenshot(named: "11_home_widget_large", screenshot: XCUIScreen.main.screenshot())
+
+        app.terminate()
+        app.launchEnvironment["NEKO_CAPTURE_SCREEN"] = "widget-family"
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
         sleep(3)
-        let hierarchy = XCTAttachment(string: springboard.debugDescription)
-        hierarchy.name = "private-home-widget-layout"
-        hierarchy.lifetime = .keepAlways
-        add(hierarchy)
-        captureScreenshot(named: "01_widget", screenshot: XCUIScreen.main.screenshot())
+        XCUIDevice.shared.press(.home)
+        let sender = springboard.descendants(matching: .any).matching(NSPredicate(
+            format: "label CONTAINS %@ OR value CONTAINS %@", "ママから", "ママから")).firstMatch
+        // Some WidgetKit builds expose the host container but not child AX
+        // labels. Preserve the screenshot for visual confirmation in that case.
+        _ = sender.waitForExistence(timeout: 32)
+        sleep(3)
+        captureScreenshot(named: "14_home_widget_family", screenshot: XCUIScreen.main.screenshot())
+    }
+
+    @MainActor
+    private func setOwnerCaptureWallpaper() throws {
+        let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+        settings.launch()
+        let controls: [XCUIElement.ElementType] = [.button, .cell, .staticText]
+        let names = ["壁紙", "Wallpaper"]
+        var wallpaper: XCUIElement?
+        for _ in 0..<7 {
+            wallpaper = waitForElement(in: settings, labels: names, elementTypes: controls,
+                                      timeout: 1, requireHittable: true)
+            if wallpaper != nil { break }
+            settings.swipeUp()
+        }
+        try XCTUnwrap(wallpaper, "Wallpaper row in Settings").tap()
+        try XCTUnwrap(waitForElement(in: settings, labels: ["新しい壁紙を追加", "Add New Wallpaper"],
+            elementTypes: controls, timeout: 12, requireHittable: true), "Wallpaper gallery").tap()
+        let chooser = settings.descendants(matching: .any).matching(NSPredicate(format: "label IN %@", ["写真", "Photos"]))
+        XCTAssertTrue(chooser.firstMatch.waitForExistence(timeout: 15))
+        try XCTUnwrap(chooser.allElementsBoundByIndex.first(where: \.isHittable), "Photos category").tap()
+        // Only the workflow's plain, light-gray wallpaper has been imported.
+        let thumbnail = settings.cells.firstMatch
+        if thumbnail.waitForExistence(timeout: 8), thumbnail.isHittable {
+            thumbnail.tap()
+        } else {
+            let asset = settings.images.allElementsBoundByIndex.first { $0.isHittable && $0.frame.width > 64 }
+            try XCTUnwrap(asset, "Gray wallpaper thumbnail").tap()
+        }
+        let add = settings.buttons.matching(NSPredicate(format: "label IN %@", ["追加", "Add"])).firstMatch
+        XCTAssertTrue(add.waitForExistence(timeout: 15))
+        add.tap()
+        try XCTUnwrap(waitForElement(in: settings, labels: ["壁紙を両方に設定", "Set as Wallpaper Pair"],
+            elementTypes: controls, timeout: 12, requireHittable: true), "Apply wallpaper pair").tap()
+        sleep(2)
+        settings.terminate()
     }
 
     @MainActor

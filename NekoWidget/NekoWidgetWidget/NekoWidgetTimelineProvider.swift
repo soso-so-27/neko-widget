@@ -26,6 +26,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         let now = Date()
         let variant = imageVariant(for: context.family)
 #if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE
+        if let entry = ownerCaptureGroupEntry(at: now, variant: variant) { return entry }
         return AppStoreWidgetPreviewFixture.entry(at: now, variant: variant)
 #endif
         let source = configuration.photoSource ?? .personalLibrary
@@ -128,6 +129,9 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         let now = Date()
         let variant = imageVariant(for: context.family)
 #if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE
+        if let entry = ownerCaptureGroupEntry(at: now, variant: variant) {
+            return Timeline(entries: [entry], policy: .never)
+        }
         return Timeline(
             entries: [AppStoreWidgetPreviewFixture.entry(at: now, variant: variant)],
             policy: .never
@@ -525,6 +529,18 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
 
     /// A group window's newest kept photo, with the sender as the one line.
     /// The heart is sent by the app in the background; there is no bookmark.
+#if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE
+    private func ownerCaptureGroupEntry(at date: Date, variant: WidgetImageVariant) -> NekoWidgetEntry? {
+        guard let marker = SharedContainer.containerURL?
+            .appendingPathComponent("owner-store-capture")
+            .appendingPathComponent("show-group-window"),
+            FileManager.default.fileExists(atPath: marker.path) else { return nil }
+        let window = "fixture-window"
+        return groupEntry(now: date, variant: variant,
+            sourceID: GroupWidgetCache.sourceID(windowID: window), windowID: window)
+    }
+#endif
+
     private func groupEntry(now: Date, variant: WidgetImageVariant, sourceID: String,
                             windowID: String) -> NekoWidgetEntry {
         guard let cached = GroupWidgetCache.entry(windowID: windowID) else {
