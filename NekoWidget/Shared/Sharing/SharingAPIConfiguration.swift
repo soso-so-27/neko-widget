@@ -8,6 +8,19 @@ struct AppPublicLinksConfiguration: Equatable, Sendable {
     let privacyURL: URL?
     let supportURL: URL?
 
+    /// Apple's standard EULA, the terms of use for the app and Plus. One place
+    /// for the Plus screen and 設定.
+    static let termsOfUseURL: URL? = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")
+
+    /// The 使い方 page sits beside the support page on the same public site
+    /// (…/support/ → …/guide/), so it needs no build setting of its own.
+    var guideURL: URL? {
+        guard let supportURL else { return nil }
+        let value = supportURL.absoluteString
+        guard value.hasSuffix("/support/") else { return nil }
+        return URL(string: String(value.dropLast("support/".count)) + "guide/")
+    }
+
     static var current: Self {
         let info = Bundle.main.infoDictionary ?? [:]
         return Self(
