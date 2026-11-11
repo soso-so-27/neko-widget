@@ -146,6 +146,9 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         sleep(3)
         XCUIDevice.shared.press(.home)
         let springboard = XCUIApplication(bundleIdentifier: springboardBundleIdentifier)
+        // Start on the page with the ordinary app icons, not the default page
+        // that contains the Maps and Calendar Widgets.
+        try reachOwnerIconPage(springboard)
         // One large Widget on the real Home Screen; leave the icon rows below.
         do {
             let desiredPage = 3
@@ -222,6 +225,9 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
         sleep(3)
         XCUIDevice.shared.press(.home)
+        // Relaunching returns to the page containing the app icon. A large
+        // Widget can have moved that icon to the following page.
+        try reachOwnerIconPage(springboard)
         let sender = springboard.descendants(matching: .any).matching(NSPredicate(
             format: "label CONTAINS %@ OR value CONTAINS %@", "ママから", "ママから")).firstMatch
         // Some WidgetKit builds expose the host container but not child AX
@@ -230,6 +236,23 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         sleep(3)
         captureScreenshot(named: "14_home_widget_family", screenshot: XCUIScreen.main.screenshot())
         XCTAssertTrue(wallpaperSet, "The gray wallpaper was not applied through Photos.")
+    }
+
+    @MainActor
+    private func reachOwnerIconPage(_ springboard: XCUIApplication) throws {
+        let photosIcon = springboard.icons.matching(NSPredicate(format: "label IN %@", ["写真", "Photos"])).firstMatch
+        if photosIcon.exists && photosIcon.isHittable { return }
+        springboard.swipeRight()
+        if photosIcon.waitForExistence(timeout: 4) && photosIcon.isHittable { return }
+        for _ in 0..<2 {
+            springboard.swipeLeft()
+            if photosIcon.waitForExistence(timeout: 4) && photosIcon.isHittable { return }
+        }
+        let hierarchy = XCTAttachment(string: springboard.debugDescription)
+        hierarchy.name = "private-owner-home-page"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
+        _ = try XCTUnwrap(photosIcon.exists && photosIcon.isHittable ? photosIcon : nil, "The Home Screen page with ordinary app icons")
     }
 
     @MainActor
@@ -250,7 +273,7 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         }
         let controls: [XCUIElement.ElementType] = [.button, .cell, .staticText, .other]
         if let next = waitForElement(in: photos, labels: ["続ける", "Continue"],
-            elementTypes: [.button], timeout: 5, requireHittable: true) { next.tap() }
+            elementTypes: [.button], timeout: 22, requireHittable: true) { next.tap() }
         let share = photos.buttons.matching(NSPredicate(
             format: "label IN %@ OR identifier IN %@", ["共有", "Share"], ["Share", "shareButton"])).firstMatch
         let thumbnails = photos.descendants(matching: .any).matching(NSPredicate(
