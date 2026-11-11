@@ -67,14 +67,12 @@ struct VeterinaryVisitsView: View {
     @State private var toolSources: [UUID: String] = [:]
     /// The memo on the page: the chosen cat's current one.
     @State private var current: VeterinaryVisit?
-    /// A past memo, opened over the page.
-    @State private var selected: VeterinaryVisit?
     @State private var error: String?
     @State private var ready = false
     @State private var countedOpen = false
     @Environment(\.membershipActions) private var actionAccess
 
-    /// The cats in the row: profiles, then cats known only from memos and tools.
+    /// The cats to choose from: profiles, then cats known only from memos and tools.
     private var stripCats: [ToolStripCat] {
         let known = Set(profiles.map(\.identifier))
         return profiles.map { ToolStripCat(id: $0.identifier, name: $0.displayName, profile: $0,
@@ -103,13 +101,14 @@ struct VeterinaryVisitsView: View {
                     detachedPhotoRows
                 }
             } else if let current {
-                // The chosen cat's memo, with the row of cats above it to switch in place.
+                // The chosen cat's memo; the cat menu in the bar switches it in
+                // place (11/12: no row of faces on this tool).
                 VStack(spacing: 0) {
                     noticeBar
                     VeterinaryConsultationView(initialVisit: current, photos: photos, noteStore: noteStore,
                         store: store, profiles: profiles,
                         pastVisits: Array(visits.filter { $0.id != current.id && $0.catID == current.catID }.reversed()),
-                        openPast: { selected = $0 },
+                        pastClosed: { Task { await reload() } },
                         onDeleted: {
                             let cat = PhotoMemoryNoteCat(id: current.catID, name: current.catName)
                             Task { await reload(); await open(cat) }
@@ -123,13 +122,14 @@ struct VeterinaryVisitsView: View {
                         removeDetachedPhoto: removeDetachedPhoto)
                         .id(current.id)
                 }
-                .safeAreaInset(edge: .top, spacing: 0) { strip }
             } else {
                 List { notices; detachedPhotoRows }
-                    .safeAreaInset(edge: .top, spacing: 0) { strip }
             }
         }
         .navigationTitle("病院で見せる").navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { catMenu }
+        }
         .familyNotebookToolSync()
         .onReceive(NotificationCenter.default.publisher(for: .appRecordsCommitted).receive(on: DispatchQueue.main)) { note in
             guard let url = note.object as? URL, url.path.contains("/VeterinaryVisits") else { return }
@@ -152,19 +152,43 @@ struct VeterinaryVisitsView: View {
                   let added = stripCats.first(where: { $0.profile != nil && !$0.isDeparted(farewellJSON) }) else { return }
             Task { await open(added) }
         }
-        .sheet(item: $selected, onDismiss: { Task { await reload() } }) { visit in
-            NavigationStack {
-                VeterinaryConsultationView(initialVisit: visit, photos: photos, noteStore: noteStore,
-                    store: store, profiles: profiles)
+    }
+
+    /// The cats the menu offers, as the row of faces did: a cat whose farewell
+    /// day is recorded only while its memo is the one open.
+    private var menuCats: [ToolStripCat] {
+        let openID = current?.catID.uuidString
+        return stripCats.filter { $0.id == openID || !$0.isDeparted(farewellJSON) }
+    }
+
+    /// 11/12: the cat switcher is a small menu in the bar (the row of faces
+    /// took the top of the page). With one cat there is nothing to choose.
+    @ViewBuilder private var catMenu: some View {
+        let cats = menuCats
+        if ready, cats.count > 1 {
+            Menu {
+                ForEach(cats) { cat in catMenuItem(cat) }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(menuName).lineLimit(1)
+                    Image(systemName: "chevron.down").font(.caption.weight(.semibold))
+                }
             }
-            .environment(\.dynamicTypeSize, typeSize)
+            .accessibilityIdentifier("vet-cat-menu")
         }
     }
 
-    private var strip: some View {
-        ToolCatStrip(cats: stripCats, selectedID: current?.catID.uuidString) { cat in
-            Task { await open(cat) }
+    private var menuName: String {
+        guard let current else { return "猫を選ぶ" }
+        return stripCats.first { $0.id == current.catID.uuidString }?.name ?? current.catName
+    }
+
+    private func catMenuItem(_ cat: ToolStripCat) -> some View {
+        let chosen = cat.id == current?.catID.uuidString
+        return Button { Task { await open(cat) } } label: {
+            if chosen { Label(cat.name, systemImage: "checkmark") } else { Text(cat.name) }
         }
+        .accessibilityIdentifier(cat.accessibilityIdentifier)
     }
 
     @ViewBuilder private var notices: some View {
@@ -254,16 +278,17 @@ private struct VeterinaryConsultationView: View {
     let noteStore: PhotoMemoryNoteStore
     let store: VeterinaryVisitStore
     var profiles: [CatProfilePresentation] = []
-    /// Set when the memo is the tool's page: this cat's past memos below,
-    /// no 「閉じる」 (the back button leaves and saves).
+    /// Set when the memo is the tool's page: this cat's past memos in their
+    /// own page, no 「閉じる」 (the back button leaves and saves). Called after
+    /// a past memo opened from there is closed.
     var pastVisits: [VeterinaryVisit] = []
-    var openPast: ((VeterinaryVisit) -> Void)? = nil
+    var pastClosed: (() -> Void)? = nil
     var onDeleted: (() -> Void)? = nil
     /// After 「診察を終える」 on the tool's page: open the next memo.
     var onFinished: (() -> Void)? = nil
     var detachedPhotos: [VeterinaryDetachedPhoto] = []
     var removeDetachedPhoto: ((VeterinaryDetachedPhoto) -> Void)? = nil
-    private var isPage: Bool { openPast != nil }
+    private var isPage: Bool { pastClosed != nil }
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var visit: VeterinaryVisit?
@@ -284,6 +309,8 @@ private struct VeterinaryConsultationView: View {
     @State private var busy = false
     @State private var autosaveTask: Task<Void, Never>?
     @State private var removingEntry: VeterinaryVisitEntry?
+    /// A past memo, opened over 「これまでの診察メモ」.
+    @State private var pastOpened: VeterinaryVisit?
     @ObservedObject private var catCareStore = CatCareStore.shared
     /// Which entries are videos, and how long each is (11/9).
     @State private var videos: [UUID: Double] = [:]
@@ -324,40 +351,13 @@ private struct VeterinaryConsultationView: View {
         formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd"
         return formatter.date(from: day)
     }
-    /// Where each of the four steps stands (11/8, one shape for every tool):
-    /// done when written, and the first not done is the one to do now. On a
-    /// finished memo only 「診察のあと」 can still be written; the steps before
-    /// it show done when they have something.
-    private func stepStates(_ visit: VeterinaryVisit) -> [ToolStepState] {
-        let results = Self.filled(doctorNote) || Self.filled(prescription)
-        let written = [Self.filled(observations), !visit.entries.isEmpty, Self.filled(questions), results]
-        guard visit.completedAt != nil else { return ToolStepState.states(written) }
-        var states: [ToolStepState] = written.prefix(3).map { $0 ? ToolStepState.done : ToolStepState.todo }
-        states.append(results ? .done : .current)
-        return states
-    }
     private static func filled(_ text: String) -> Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
-    /// Step 4: what came after the consultation, then 「診察を終える」. On a
-    /// finished memo it is the only part that can still be written (11/8).
-    private func resultsStep(_ visit: VeterinaryVisit, _ state: ToolStepState) -> some View {
-        Section {
-            VeterinaryLabeledField(title: "先生の話", example: "例：胃腸炎。2日ほどで治る見込み",
-                                   text: $doctorNote, lines: 2...8, identifier: "vet-doctor-note")
-            VeterinaryLabeledField(title: "出た薬", example: "例：吐き気止め 1日1回・3日分",
-                                   text: $prescription, lines: 1...6, identifier: "vet-prescription")
-            Toggle("次に行く日を記録", isOn: $hasNextVisit).accessibilityIdentifier("vet-next-visit-toggle")
-            if hasNextVisit { DatePicker("次に行く日", selection: $nextVisitDay, displayedComponents: .date) }
-            // Last in 「診察のあと」 (349): finishing is what comes after the
-            // consultation. While the question at the top is shown, it is the
-            // one place to finish.
-            if visit.completedAt == nil, !looksFinished(visit) {
-                finishButton("vet-finish")
-            }
-        } header: {
-            ToolStepHeader(number: 4, title: "診察のあと", state: state).accessibilityIdentifier("vet-step-results")
-        }
+    /// A row's value: the text's first words on one line.
+    private static func firstWords(_ text: String) -> String? {
+        guard filled(text) else { return nil }
+        return String(text.split(whereSeparator: \.isNewline).joined(separator: " ").prefix(60))
     }
     /// 「診察を終える」 as a button, not text in a row (11/12); not prominent:
     /// the page's one prominent button is 「先生に見せる」.
@@ -379,8 +379,21 @@ private struct VeterinaryConsultationView: View {
             if !isPage {
                 ToolbarItem(placement: .cancellationAction) { Button("閉じる") { close() }.disabled(busy) }
             }
+            ToolbarItem(placement: .topBarTrailing) { moreMenu }
         }
         .toolBottomBar { bottomBar }
+    }
+    /// 11/12: delete is not part of writing the memo; it sits in 「…」.
+    private var moreMenu: some View {
+        Menu {
+            Button("この診察メモを削除", role: .destructive) { deletesVisit = true }
+                .accessibilityIdentifier("vet-delete")
+        } label: {
+            Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44)
+        }
+        .accessibilityLabel("その他")
+        .accessibilityIdentifier("vet-more-menu")
+        .disabled(visit == nil)
     }
     /// The one way forward, in the same place as every tool (11/8): how the
     /// save stands, then 「先生に見せる」.
@@ -413,18 +426,18 @@ private struct VeterinaryConsultationView: View {
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
-    /// One shape for every tool's input page (11/8): what the page makes, the
-    /// numbered steps, 「この子のこと」 folded, past memos, then delete and the
-    /// note last, small (11/12).
+    /// 11/12, the trial of a list of rows (as in 設定) for one tool: what the
+    /// page makes, 「診察の前に」 and 「診察のあと」 as rows that each open their
+    /// own page, 「この子の記録」, then the note last, small. Delete is in 「…」.
     @ViewBuilder private var formContent: some View {
         if let visit {
             headerSections(visit)
-            stepSections(visit)
+            beforeSection(visit)
+            afterSection(visit)
         }
         errorSection
-        if let visit { catCareSection(visit) }
-        pastSection
-        if let visit { closingSections(visit) }
+        if let visit { recordSection(visit) }
+        noteSection
     }
     @ViewBuilder private var errorSection: some View {
         // 11/7: a failure in red with a mark, not small gray text.
@@ -436,49 +449,12 @@ private struct VeterinaryConsultationView: View {
             }
         }
     }
-    @ViewBuilder private var pastSection: some View {
-        if !pastVisits.isEmpty || !detachedPhotos.isEmpty {
-            Section("これまでの診察メモ") {
-                ForEach(pastVisits) { past in pastRow(past) }
-                ForEach(detachedPhotos) { photo in
-                    DetachedToolPhotoRow(title: "写真", load: { try await store.image(for: photo) },
-                                         remove: { removeDetachedPhoto?(photo) })
-                }
-            }
-        }
-    }
-    private func pastRow(_ past: VeterinaryVisit) -> some View {
-        // 11/7: the memo's first words and a chevron, so the
-        // rows can be told apart and read as ones that open.
-        // 11/8: the day, then the start of what the vet said.
-        Button { openPast?(past) } label: {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(pastTitle(past))
-                    if let summary = pastSummary(past) {
-                        Text(summary)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.right")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-                    .accessibilityHidden(true)
-            }
-            .contentShape(Rectangle())
-        }
-        .foregroundStyle(.primary)
-        .accessibilityIdentifier("vet-past-\(past.id.uuidString)")
-    }
     @ViewBuilder private func headerSections(_ visit: VeterinaryVisit) -> some View {
         // The cat's name, then what this page makes; its dates are in
         // この子のこと below (11/7).
         Section {
             VStack(alignment: .leading, spacing: 6) {
-                // With two or more cats the row of faces above already names it (347).
+                // With two or more cats the cat menu in the bar already names it (11/12).
                 if profiles.count < 2 {
                     Label(profiles.first(where: { $0.identifier == visit.catID.uuidString })?.displayName ?? visit.catName,
                           systemImage: "cat").font(.headline)
@@ -503,47 +479,75 @@ private struct VeterinaryConsultationView: View {
             }
         }
     }
-    /// 1 家で気付いたこと, 2 見せる写真・記録, 3 先生に聞きたいこと, 4 診察のあと.
-    @ViewBuilder private func stepSections(_ visit: VeterinaryVisit) -> some View {
-        let states = stepStates(visit)
-        noticedStep(visit, states[0])
-        recordsStep(visit, states[1])
-        questionsStep(visit, states[2])
-        resultsStep(visit, states[3])
+
+    // MARK: Rows (11/12)
+
+    /// A row for written text: its first words, 「未記入」, or, in red, that it
+    /// is too long to save, so the page to shorten it can be found.
+    private func textRow(_ title: String, _ systemImage: String, _ texts: [String]) -> VeterinaryRow {
+        let long = texts.contains { $0.count > 500 }
+        let words = texts.compactMap { Self.firstWords($0) }.first
+        return VeterinaryRow(title: title, systemImage: systemImage,
+                             value: long ? "500文字を超えています" : (words ?? "未記入"),
+                             filled: words != nil, problem: long)
     }
-    /// Shown in a step of a finished memo that had nothing written.
-    private var nothingWritten: some View {
-        Text("なし").foregroundStyle(.secondary)
-    }
-    private func noticedStep(_ visit: VeterinaryVisit, _ state: ToolStepState) -> some View {
+    /// 「診察の前に」: 家で気付いたこと, 体重, 見せる写真・記録, 先生に聞きたいこと.
+    private func beforeSection(_ visit: VeterinaryVisit) -> some View {
         Section {
-            if visit.completedAt == nil {
-                VeterinaryLabeledField(title: "家で気付いたこと", example: "例：1日2回吐く・食欲が半分",
-                                       text: $observations, lines: 3...8, identifier: "vet-observations", showsTitle: false)
-                Toggle("いつからかを記録", isOn: $hasStartedDay)
-                if hasStartedDay { DatePicker("気付いた日", selection: $startedDay, displayedComponents: .date) }
-                weightRow(visit)
-            } else {
-                // What was told: read only once the memo is finished.
-                if !visit.observations.isEmpty { Text(visit.observations) }
-                if let day = visit.startedOn { Text("気付いた日 \(DayText.japanese(day))") }
-                if visit.observations.isEmpty && visit.startedOn == nil { nothingWritten }
+            NavigationLink { noticedPage } label: {
+                textRow("家で気付いたこと", "square.and.pencil", [observations])
+            }
+            .accessibilityIdentifier("vet-step-noticed")
+            // Locked with the rest once the memo is finished, as before.
+            if visit.completedAt == nil { weightRow(visit) }
+            NavigationLink { recordsPage } label: { recordsLabel(visit) }
+                .accessibilityIdentifier("vet-step-records")
+            NavigationLink { questionsPage } label: {
+                textRow("先生に聞きたいこと", "questionmark.circle", [questions])
+            }
+            .accessibilityIdentifier("vet-step-questions")
+        } header: {
+            Text("診察の前に")
+        }
+    }
+    private func recordsLabel(_ visit: VeterinaryVisit) -> VeterinaryRow {
+        let count = visit.entries.count
+        return VeterinaryRow(title: "見せる写真・記録", systemImage: "photo.on.rectangle",
+                             value: count == 0 ? "なし" : "\(count)件", filled: count > 0)
+    }
+    /// 「診察のあと」: what came after the consultation, then 「診察を終える」.
+    /// On a finished memo it is the only part that can still be written (11/8).
+    private func afterSection(_ visit: VeterinaryVisit) -> some View {
+        Section {
+            NavigationLink { resultsPage } label: {
+                textRow("先生の話・出た薬", "stethoscope", [doctorNote, prescription])
+            }
+            .accessibilityIdentifier("vet-step-results")
+            NavigationLink { nextVisitPage } label: { nextVisitLabel }
+                .accessibilityIdentifier("vet-row-next-visit")
+            // Last in 「診察のあと」 (349): finishing is what comes after the
+            // consultation. While the question at the top is shown, it is the
+            // one place to finish.
+            if visit.completedAt == nil, !looksFinished(visit) {
+                finishButton("vet-finish")
             }
         } header: {
-            ToolStepHeader(number: 1, title: "家で気付いたこと", state: state).accessibilityIdentifier("vet-step-noticed")
+            Text("診察のあと")
         }
+    }
+    private var nextVisitLabel: VeterinaryRow {
+        VeterinaryRow(title: "次に行く日", systemImage: "calendar",
+                      value: hasNextVisit ? DayText.japanese(VeterinaryVisit.day(nextVisitDay)) : "未設定",
+                      filled: hasNextVisit)
     }
     /// その日の体重 (11/9). The weight has one place, 「この子のこと」: this row
     /// shows the newest one there and opens its own form to add today's.
     private func weightRow(_ visit: VeterinaryVisit) -> some View {
-        Button { weighing = true } label: {
-            HStack {
-                Text("体重").foregroundStyle(Color.primary)
-                Spacer(minLength: 8)
-                Text(VeterinaryDayWeight.of(visit).map(VeterinaryDayWeight.text) ?? "入れる")
-            }
+        let weight = VeterinaryDayWeight.of(visit).map(VeterinaryDayWeight.text)
+        return Button { weighing = true } label: {
+            VeterinaryRow(title: "体重", systemImage: "scalemass", value: weight ?? "未記入", filled: weight != nil)
         }
-        .accessibilityIdentifier("vet-weight")
+        .accessibilityIdentifier("vet-row-weight")
     }
     /// Written into 「この子のこと」, the record every tool reads; made for this
     /// cat when it has none yet, as 「この子のこと」 itself does.
@@ -560,17 +564,114 @@ private struct VeterinaryConsultationView: View {
             return
         }
     }
-    private func recordsStep(_ visit: VeterinaryVisit, _ state: ToolStepState) -> some View {
-        Section {
-            ForEach(visit.orderedEntries) { entry in entryRow(entry, visit: visit) }
-            if visit.completedAt == nil {
-                Button("写真を選ぶ", systemImage: "plus") { picking = true }
-                    .accessibilityIdentifier("vet-pick-records")
-            } else if visit.entries.isEmpty {
-                nothingWritten
+    /// 「この子の記録」: 「この子のこと」 folded to one row, then this cat's
+    /// past memos as one row that opens them.
+    private func recordSection(_ visit: VeterinaryVisit) -> some View {
+        ToolCatCareSection(
+            title: "この子のこと",
+            lines: CatCareSummary.veterinaryFields(
+                CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString),
+                household: catCareStore.state?.household),
+            subject: profiles.first(where: { $0.identifier == visit.catID.uuidString }).map(CatCareSubject.profile)
+                ?? .toolCat(id: visit.catID, name: visit.catName),
+            identifier: "vet-cat-care-fields", editIdentifier: "vet-open-cat-care", profiles: profiles,
+            folded: true, foldedHeader: "この子の記録") {
+            pastRow
+        }
+    }
+    @ViewBuilder private var pastRow: some View {
+        if !pastVisits.isEmpty || !detachedPhotos.isEmpty {
+            NavigationLink { pastPage } label: {
+                VeterinaryRow(title: "これまでの診察メモ", systemImage: "clock",
+                              value: "\(pastVisits.count + detachedPhotos.count)件", filled: true)
             }
-        } header: {
-            ToolStepHeader(number: 2, title: "見せる写真・記録（任意）", state: state).accessibilityIdentifier("vet-step-records")
+            .accessibilityIdentifier("vet-row-past")
+        }
+    }
+    /// The note, last: a quiet footnote on the page ground (11/12).
+    private var noteSection: some View {
+        Section {
+            ToolImportantInformation(text: "飼い主の記録をまとめたもので、医療の判断ではありません。様子がおかしいときは、迷わず動物病院に連絡してください。")
+                .quietRow()
+        }
+    }
+
+    // MARK: Pages each row opens (11/12)
+    //
+    // The same state, bindings and autosave as the page: each page is made
+    // here, from this view's own state. Leaving a page saves what is pending.
+
+    private func pushed<Content: View>(_ title: String, focuses: Bool = false,
+                                       @ViewBuilder content: @escaping (FocusState<Bool>.Binding) -> Content) -> some View {
+        VeterinaryPushedPage(title: title, focusesField: focuses, leave: { flushSave() }, content: content)
+            .disabled(busy)
+    }
+    /// Shown in a page of a finished memo that had nothing written.
+    private var nothingWritten: some View {
+        Text("なし").foregroundStyle(.secondary)
+    }
+    /// Under a field longer than 500 characters, so it is clear what to shorten;
+    /// then a failure, in red with a mark, here as on the page.
+    @ViewBuilder private func pageNotes(_ texts: [String]) -> some View {
+        if texts.contains(where: { $0.count > 500 }) {
+            Section {
+                Label("500文字を超えています", systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote).foregroundStyle(.red)
+            }
+        }
+        errorSection
+    }
+    private var noticedPage: some View {
+        pushed("家で気付いたこと", focuses: visit?.completedAt == nil) { focus in
+            noticedRows(focus)
+            pageNotes([observations])
+        }
+    }
+    @ViewBuilder private func noticedRows(_ focus: FocusState<Bool>.Binding) -> some View {
+        if let visit {
+            Section {
+                if visit.completedAt == nil {
+                    VeterinaryLabeledField(title: "家で気付いたこと", example: "例：1日2回吐く・食欲が半分",
+                                           text: $observations, lines: 3...8, identifier: "vet-observations",
+                                           showsTitle: false, focus: focus)
+                    Toggle("いつからかを記録", isOn: $hasStartedDay)
+                    if hasStartedDay { DatePicker("気付いた日", selection: $startedDay, displayedComponents: .date) }
+                } else {
+                    // What was told: read only once the memo is finished.
+                    if !visit.observations.isEmpty { Text(visit.observations) }
+                    if let day = visit.startedOn { Text("気付いた日 \(DayText.japanese(day))") }
+                    if visit.observations.isEmpty && visit.startedOn == nil { nothingWritten }
+                }
+            }
+        }
+    }
+    private var recordsPage: some View {
+        pushed("見せる写真・記録") { _ in
+            recordsRows
+            errorSection
+        }
+        // Opened from this page, so presented from it.
+        .sheet(isPresented: $picking) {
+            if let visit {
+                VeterinaryRecordPicker(visit: visit, photos: photos, profiles: profiles, noteStore: noteStore,
+                                       store: store) { self.visit = $0 }
+                    .environment(\.dynamicTypeSize, typeSize)
+            }
+        }
+        .confirmationDialog("診察メモから外しますか？", isPresented: removingEntryPresented, titleVisibility: .visible,
+                            presenting: removingEntry, actions: removalActions, message: removalMessage)
+    }
+    @ViewBuilder private var recordsRows: some View {
+        if let visit {
+            Section {
+                ForEach(visit.orderedEntries) { entry in entryRow(entry, visit: visit) }
+                if visit.completedAt == nil {
+                    Button("写真を選ぶ", systemImage: "plus") { picking = true }
+                        .accessibilityIdentifier("vet-pick-records")
+                } else if visit.entries.isEmpty {
+                    nothingWritten
+                }
+            }
         }
     }
     private func entryRow(_ entry: VeterinaryVisitEntry, visit: VeterinaryVisit) -> some View {
@@ -586,45 +687,94 @@ private struct VeterinaryConsultationView: View {
             }
         }.padding(.vertical, 6)
     }
-    private func questionsStep(_ visit: VeterinaryVisit, _ state: ToolStepState) -> some View {
-        Section {
-            if visit.completedAt == nil {
-                VeterinaryLabeledField(title: "先生に聞きたいこと", example: "例：ごはんを変えたほうがいいですか",
-                                       text: $questions, lines: 2...8, identifier: "vet-questions", showsTitle: false)
-            } else if !visit.questions.isEmpty {
-                Text(visit.questions)
-            } else {
-                nothingWritten
+    private var questionsPage: some View {
+        pushed("先生に聞きたいこと", focuses: visit?.completedAt == nil) { focus in
+            questionsRows(focus)
+            pageNotes([questions])
+        }
+    }
+    @ViewBuilder private func questionsRows(_ focus: FocusState<Bool>.Binding) -> some View {
+        if let visit {
+            Section {
+                if visit.completedAt == nil {
+                    VeterinaryLabeledField(title: "先生に聞きたいこと", example: "例：ごはんを変えたほうがいいですか",
+                                           text: $questions, lines: 2...8, identifier: "vet-questions",
+                                           showsTitle: false, focus: focus)
+                } else if !visit.questions.isEmpty {
+                    Text(visit.questions)
+                } else {
+                    nothingWritten
+                }
             }
-        } header: {
-            ToolStepHeader(number: 3, title: "先生に聞きたいこと（任意）", state: state).accessibilityIdentifier("vet-step-questions")
         }
     }
-    /// Read from 「この子のこと」, folded to one row right after the steps.
-    private func catCareSection(_ visit: VeterinaryVisit) -> some View {
-        ToolCatCareSection(
-            title: "この子のこと",
-            lines: CatCareSummary.veterinaryFields(
-                CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString),
-                household: catCareStore.state?.household),
-            subject: profiles.first(where: { $0.identifier == visit.catID.uuidString }).map(CatCareSubject.profile)
-                ?? .toolCat(id: visit.catID, name: visit.catName),
-            identifier: "vet-cat-care-fields", editIdentifier: "vet-open-cat-care", profiles: profiles,
-            folded: true)
+    /// What came after the consultation: written before or after the memo
+    /// is finished.
+    private var resultsPage: some View {
+        pushed("先生の話・出た薬", focuses: true) { focus in
+            Section {
+                VeterinaryLabeledField(title: "先生の話", example: "例：胃腸炎。2日ほどで治る見込み",
+                                       text: $doctorNote, lines: 2...8, identifier: "vet-doctor-note", focus: focus)
+                VeterinaryLabeledField(title: "出た薬", example: "例：吐き気止め 1日1回・3日分",
+                                       text: $prescription, lines: 1...6, identifier: "vet-prescription")
+            }
+            pageNotes([doctorNote, prescription])
+        }
     }
-    /// Not part of writing the memo: last, and small. Delete is a section of
-    /// its own, plain red text (349); the note is a quiet footnote under it,
-    /// the page's last line (11/12).
-    @ViewBuilder private func closingSections(_ visit: VeterinaryVisit) -> some View {
-        Section {
-            Button("この診察メモを削除", role: .destructive) { deletesVisit = true }
-                .accessibilityIdentifier("vet-delete")
+    private var nextVisitPage: some View {
+        pushed("次に行く日") { _ in
+            Section {
+                Toggle("次に行く日を記録", isOn: $hasNextVisit).accessibilityIdentifier("vet-next-visit-toggle")
+                if hasNextVisit { DatePicker("次に行く日", selection: $nextVisitDay, displayedComponents: .date) }
+            }
+            errorSection
         }
-        .font(.subheadline)
-        Section {
-            ToolImportantInformation(text: "飼い主の記録をまとめたもので、医療の判断ではありません。様子がおかしいときは、迷わず動物病院に連絡してください。")
-                .quietRow()
+    }
+    /// This cat's past memos, as the page listed them before (11/8): the
+    /// day, then the start of what the vet said; each opens over this page.
+    private var pastPage: some View {
+        pushed("これまでの診察メモ") { _ in
+            Section {
+                ForEach(pastVisits) { past in pastVisitRow(past) }
+                ForEach(detachedPhotos) { photo in
+                    DetachedToolPhotoRow(title: "写真", load: { try await store.image(for: photo) },
+                                         remove: { removeDetachedPhoto?(photo) })
+                }
+            }
         }
+        .sheet(item: $pastOpened, onDismiss: { pastClosed?() }) { past in
+            NavigationStack {
+                VeterinaryConsultationView(initialVisit: past, photos: photos, noteStore: noteStore,
+                    store: store, profiles: profiles)
+            }
+            .environment(\.dynamicTypeSize, typeSize)
+        }
+    }
+    private func pastVisitRow(_ past: VeterinaryVisit) -> some View {
+        // 11/7: the memo's first words and a chevron, so the
+        // rows can be told apart and read as ones that open.
+        // 11/8: the day, then the start of what the vet said.
+        Button { pastOpened = past } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(pastTitle(past))
+                    if let summary = pastSummary(past) {
+                        Text(summary)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
+            .contentShape(Rectangle())
+        }
+        .foregroundStyle(.primary)
+        .accessibilityIdentifier("vet-past-\(past.id.uuidString)")
     }
     private func lifecycle<Content: View>(_ content: Content) -> some View {
         content
@@ -645,8 +795,7 @@ private struct VeterinaryConsultationView: View {
         }
         .onDisappear {
             // Leaving another way than 「閉じる」 still saves what was written.
-            autosaveTask?.cancel()
-            if changes { Task { await save() } }
+            flushSave()
         }
         .disabled(busy)
         .interactiveDismissDisabled(changes || busy)
@@ -662,13 +811,6 @@ private struct VeterinaryConsultationView: View {
     }
     private func dialogs<Content: View>(_ content: Content) -> some View {
         content
-        .sheet(isPresented: $picking) {
-            if let visit {
-                VeterinaryRecordPicker(visit: visit, photos: photos, profiles: profiles, noteStore: noteStore,
-                                       store: store) { self.visit = $0 }
-                    .environment(\.dynamicTypeSize, typeSize)
-            }
-        }
         .fullScreenCover(isPresented: $showing) {
             if let visit { VeterinaryReadView(visit: visit, store: store, displayName: profiles.first(where: { $0.identifier == visit.catID.uuidString })?.displayName, videos: videos).environment(\.dynamicTypeSize, typeSize) }
         }
@@ -696,9 +838,12 @@ private struct VeterinaryConsultationView: View {
             Button("削除", role: .destructive) { Task { await deleteVisit() } }
             Button("キャンセル", role: .cancel) {}
         } message: { Text("この診察メモだけを削除します。") }
-        .confirmationDialog("診察メモから外しますか？", isPresented: removingEntryPresented, titleVisibility: .visible,
-                            presenting: removingEntry, actions: removalActions, message: removalMessage)
         .appRecordEditing(retainWhileHidden: changes || busy || picking || weighing)
+    }
+    /// Leaving the page, or a page a row opened, saves what is pending at once.
+    private func flushSave() {
+        autosaveTask?.cancel()
+        if changes { Task { await save() } }
     }
     private func scheduleSave() {
         autosaveTask?.cancel()
@@ -1133,19 +1278,81 @@ private struct VeterinaryLabeledField: View {
     @Binding var text: String
     let lines: ClosedRange<Int>
     let identifier: String
-    /// Off when the step's heading above already names the field (11/8);
+    /// Off when the page's title already names the field (11/8, 11/12);
     /// VoiceOver still reads the name.
     var showsTitle = true
+    /// Set for the field the page puts the cursor in when it opens (11/12).
+    var focus: FocusState<Bool>.Binding? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if showsTitle {
                 Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                     .accessibilityHidden(true)
             }
-            TextField(example, text: $text, axis: .vertical).lineLimit(lines)
+            input
                 .accessibilityLabel(title)
                 .accessibilityIdentifier(identifier)
         }
+    }
+    @ViewBuilder private var input: some View {
+        if let focus {
+            TextField(example, text: $text, axis: .vertical).lineLimit(lines).focused(focus)
+        } else {
+            TextField(example, text: $text, axis: .vertical).lineLimit(lines)
+        }
+    }
+}
+
+/// A row like 設定's (11/12, 病院で見せる as the trial of the shape): an
+/// icon, the name, and what is written now at the side, one line; a
+/// NavigationLink around it adds the chevron. At the largest text sizes
+/// LabeledContent puts the value under the name.
+private struct VeterinaryRow: View {
+    let title: String
+    let systemImage: String
+    let value: String
+    var filled = false
+    /// In red: the row whose page has something to fix.
+    var problem = false
+    var body: some View {
+        LabeledContent {
+            Text(value)
+                .foregroundStyle(problem ? Color.red : (filled ? Color.primary : Color.secondary))
+                .lineLimit(1)
+                .truncationMode(.tail)
+        } label: {
+            Label {
+                Text(title).foregroundStyle(Color.primary)
+            } icon: {
+                Image(systemName: systemImage).foregroundStyle(Color.accentColor)
+            }
+        }
+    }
+}
+
+/// A page a row of 病院で見せる opens (11/12): the row's name as its title,
+/// the controls that part of the page had, in the tool's frame. What is
+/// pending is saved when it is left; a page to write in puts the cursor in
+/// its field once it has slid in.
+private struct VeterinaryPushedPage<Content: View>: View {
+    let title: String
+    let focusesField: Bool
+    let leave: () -> Void
+    @ViewBuilder let content: (FocusState<Bool>.Binding) -> Content
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        Form { content($focused) }
+            .navigationTitle(title).navigationBarTitleDisplayMode(.inline)
+            // The same way to put the keyboard away as on the page.
+            .toolBottomBar { EmptyView() }
+            .toolChrome()
+            .task {
+                guard focusesField else { return }
+                try? await Task.sleep(for: .milliseconds(450))
+                focused = true
+            }
+            .onDisappear { leave() }
     }
 }
 

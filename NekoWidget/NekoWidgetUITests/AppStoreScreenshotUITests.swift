@@ -344,17 +344,31 @@ final class AppStoreScreenshotUITests: XCTestCase {
         }
         captureScreenshot(named: "PR4-tools")
         app.buttons["tools-vet-open"].tap()
+        // 11/12: with two cats, the cat is chosen from the menu in the bar.
+        let menu = app.buttons["vet-cat-menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10), app.debugDescription); menu.tap()
         let cat = app.buttons["tool-profile-11111111-1111-4111-8111-111111111111"]
         XCTAssertTrue(cat.waitForExistence(timeout: 10)); cat.tap()
+        XCTAssertTrue(cat.waitForNonExistence(timeout: 5))
+        // 家で気付いたこと is a row that opens its own page with the field.
+        let noticed = app.buttons["vet-step-noticed"]
+        XCTAssertTrue(noticed.waitForExistence(timeout: 10), app.debugDescription)
+        sleep(1)
+        noticed.tap()
+        let page = app.navigationBars["家で気付いたこと"]
+        XCTAssertTrue(page.waitForExistence(timeout: 10), app.debugDescription)
         let observations = app.descendants(matching: .any)["vet-observations"].firstMatch
         XCTAssertTrue(observations.waitForExistence(timeout: 10), app.debugDescription)
         observations.tap(); observations.typeText("いつもの様子")
-        // 11/8 (130f6436): a tool's bottom bar steps aside while the keyboard
-        // is up. Close it as a person would; the bar's button then shows
-        // whether the automatic save went through.
-        let closeKeyboard = app.buttons["キーボードを閉じる"]
+        // 11/8 (130f6436): a tool's page steps aside while the keyboard is up.
+        // Close it as a person would, then go back: leaving saves, and the
+        // bar's button shows whether the automatic save went through.
+        let closeKeyboard = app.buttons["キーボードを閉じる"].firstMatch
         XCTAssertTrue(closeKeyboard.waitForExistence(timeout: 5), app.debugDescription); closeKeyboard.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        page.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(page.waitForNonExistence(timeout: 5))
+        XCTAssertTrue((noticed.label + " " + (noticed.value as? String ?? "")).contains("いつもの様子"), noticed.debugDescription)
         let preview = app.buttons["vet-show"]
         XCTAssertTrue(preview.waitForExistence(timeout: 5), app.debugDescription)
         let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: preview)
