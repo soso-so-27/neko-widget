@@ -318,13 +318,12 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let edit = app.descendants(matching: .any)["care-cat-care-fields-folded"].firstMatch
         XCTAssertTrue(scrollUpUntilHittable(edit, application: app), app.debugDescription)
         XCTAssertTrue(edit.label.contains("この子のこと"), edit.label); edit.tap()
-        XCTAssertTrue(app.buttons["cat-care-part-basics"].waitForExistence(timeout: 10), app.debugDescription)
+        // The name and the key photo lead the page; 11/12: the parts are
+        // always open, and deleting is the page's last row.
+        XCTAssertTrue(app.buttons["cat-profile-rename"].waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertFalse(app.buttons["cat-profile-page-photos"].exists, "The cat's page has no 写真 tab")
-        // The name and the key photo are in 基本.
-        app.buttons["cat-care-part-basics"].tap()
-        XCTAssertTrue(app.buttons["cat-profile-rename"].waitForExistence(timeout: 5), app.debugDescription)
         let delete = app.buttons["cat-profile-delete"]
-        XCTAssertTrue(scrollUpUntilHittable(delete, application: app)); delete.tap()
+        XCTAssertTrue(scrollUpUntilHittable(delete, application: app, maximumSwipes: 14)); delete.tap()
         let confirmation = app.alerts.firstMatch
         XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
         confirmation.buttons["この子を削除"].tap()
@@ -661,24 +660,18 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(scrollUpUntilHittable(folded, application: app), app.debugDescription)
         folded.tap()
         XCTAssertTrue(app.buttons["cat-care-family-notebook"].waitForExistence(timeout: 10), app.debugDescription)
-        // Open 「暮らし」 so the shot shows what was written (接し方・ごはん・トイレ).
-        // 11/9 (#900): 「見分ける写真」 sits open above the parts, so 暮らし can
-        // start below the first screen; the list makes its row only near view.
-        let living = app.buttons["cat-care-part-living"]
-        XCTAssertTrue(app.buttons["cat-care-part-basics"].waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertTrue(scrollUpUntilHittable(living, application: app), app.debugDescription)
-        living.tap()
-        // 11/7: the cat's photo and name lead the page, so 接し方 (the last row
-        // of 暮らし) opens below the first screen; the list makes it only once
-        // it scrolls near. Bring it up so the shot shows what was written.
+        // 11/12: the four parts are always open, each a list of rows that
+        // show what is written (接し方・ごはん・トイレ in 暮らし).
+        // 「見分ける写真」 sits above the parts, so 暮らし can start below the
+        // first screen; the list makes its rows only near view.
+        // 接し方 is the last row of 暮らし; bring it up so the shot shows what was written.
         let temperamentText = "抱っこは少し苦手。名前を呼ぶと来ます。"
-        let temperament = app.descendants(matching: .any).matching(NSPredicate(format: "value == %@ OR label == %@",
-            temperamentText, temperamentText)).firstMatch
+        let temperament = app.descendants(matching: .any)["cat-care-temperament-row"].firstMatch
         XCTAssertTrue(scrollUpUntilHittable(temperament, application: app), app.debugDescription)
-        XCTAssertTrue(temperament.exists
-                      || app.staticTexts[temperamentText].waitForExistence(timeout: 10)
-                      || app.textViews[temperamentText].exists,
-                      app.debugDescription)
+        XCTAssertTrue(temperament.label.contains(temperamentText)
+                      || (temperament.value as? String)?.contains(temperamentText) == true
+                      || app.staticTexts[temperamentText].exists,
+                      temperament.debugDescription)
         sleep(1)
         captureScreenshot(named: "09-cat-care")
     }
@@ -842,11 +835,8 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let folded = app.descendants(matching: .any)["care-cat-care-fields-folded"].firstMatch
         XCTAssertTrue(scrollUpUntilHittable(folded, application: app)); folded.tap()
         XCTAssertTrue(app.buttons["cat-care-family-notebook"].waitForExistence(timeout: 10))
-        let living = app.buttons["cat-care-part-living"]
-        XCTAssertTrue(scrollUpUntilHittable(living, application: app)); living.tap()
-        let household = app.buttons["cat-care-part-household"]
-        XCTAssertTrue(scrollUpUntilHittable(household, application: app)); household.tap()
-        let vet = app.descendants(matching: .any).matching(NSPredicate(format: "value == %@ OR label == %@", "みどり動物病院", "みどり動物病院")).firstMatch
+        // 11/12: the parts are always open; the hospital's row shows its name.
+        let vet = app.descendants(matching: .any)["cat-care-vet-name-row"].firstMatch
         XCTAssertTrue(scrollUpUntilHittable(vet, application: app))
         sleep(1)
         captureScreenshot(named: "06_cat_care")

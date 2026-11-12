@@ -1104,15 +1104,12 @@ final class CatProfilePhotoFlowUITests: XCTestCase {
         app.buttons.matching(identifier: "cat-profile-open").element(boundBy: 1).tap()
         app.buttons["cat-profile-more"].tap()
         app.buttons["cat-profile-settings"].tap()
-        // 11/7: the cat's one page; deleting is the last row of its folded 基本.
-        let basics = app.buttons["cat-care-part-basics"]
-        XCTAssertTrue(basics.waitForExistence(timeout: 5), app.debugDescription)
-        for _ in 0..<4 where !basics.isHittable { app.swipeUp() }
-        XCTAssertTrue(basics.isHittable)
-        basics.tap()
+        // 11/7: the cat's one page; 11/12: its parts are always open and
+        // deleting is the page's last row.
+        XCTAssertTrue(app.buttons["cat-profile-rename"].waitForExistence(timeout: 5), app.debugDescription)
         // The page is a lazy form: the row exists once it scrolls near.
         let delete = app.buttons["cat-profile-delete"]
-        for _ in 0..<10 {
+        for _ in 0..<14 {
             if delete.exists && delete.isHittable { break }
             app.swipeUp()
         }
@@ -4441,9 +4438,9 @@ final class SoloMemoriesUITests: XCTestCase {
         let catName = firstCat.label.contains("ミケ") ? "ミケ" : "ソラ"
         firstCat.tap()
         XCTAssertTrue(app.navigationBars[catName].waitForExistence(timeout: 5))
-        // 11/7: the cat's one page; the name is changed in its 基本.
+        // 11/7: the cat's one page; the name is changed at its top (11/12:
+        // the parts are always open, nothing to unfold first).
         XCTAssertFalse(app.buttons["cat-profile-page-photos"].exists, "The cat's page has no 写真 tab")
-        app.buttons["cat-care-part-basics"].tap()
         XCTAssertTrue(app.buttons["名前を変更"].waitForExistence(timeout: 5),
                       "The tools must open the profile, without a photo-grid intermediary")
         XCTAssertFalse(app.navigationBars["\(catName)の写真"].exists)

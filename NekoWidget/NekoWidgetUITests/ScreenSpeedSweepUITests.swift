@@ -267,7 +267,7 @@ final class ScreenSpeedSweepUITests: XCTestCase {
         app.swipeDown()
         if catChip.waitForExistence(timeout: 10) {
             timeOpen("この子のこと", app, open: { catChip.tap() },
-                     until: [anyIdentifier(app, ["cat-care-part-basics", "cat-care-family-notebook"])],
+                     until: [anyIdentifier(app, ["cat-care-part-basics", "cat-care-next-hint", "cat-care-family-notebook"])],
                      close: { self.back(app) }, back: [catChip])
         } else {
             missing("この子のこと", app)
@@ -359,7 +359,7 @@ final class ScreenSpeedSweepUITests: XCTestCase {
         let chip = app.descendants(matching: .any)["tools-cat-11111111-1111-4111-8111-111111111111"].firstMatch
         guard chip.waitForExistence(timeout: 15) else { missing("スクロール:この子のこと", app); return }
         chip.tap()
-        guard anyIdentifier(app, ["cat-care-part-basics", "cat-care-family-notebook"]).waitForExistence(timeout: 15) else {
+        guard anyIdentifier(app, ["cat-care-part-basics", "cat-care-next-hint", "cat-care-family-notebook"]).waitForExistence(timeout: 15) else {
             missing("スクロール:この子のこと", app); return
         }
         measureScroll("この子のこと", app)
