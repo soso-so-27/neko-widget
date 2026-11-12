@@ -206,7 +206,7 @@ private struct OnboardingScanErrorPage: View {
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 28)
             .padding(.vertical, 12)
-            .background(.bar)
+            .background(Color(.systemBackground))
         }
     }
 }
@@ -216,28 +216,15 @@ private struct OnboardingScanErrorPage: View {
 private struct OnboardingPurposePage: View {
     let continueAction: () -> Void
 
+    /// 11/12 (iPhone SE): the windows shrink to the room left by the words,
+    /// so the promise is never under the button. Only when the words alone
+    /// do not fit (the largest text sizes) does the page scroll.
     var body: some View {
-        ScrollView {
-            VStack(spacing: 22) {
-                OnboardingWindowMosaic()
-                    .padding(.top, 8)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(OnboardingPresentationCopy.purposeTitle)
-                        .font(.title.bold())
-                        .accessibilityAddTraits(.isHeader)
-                    Text(OnboardingPresentationCopy.purposeBody)
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxWidth: 520)
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 20)
-            .padding(.bottom, 24)
+        ViewThatFits(in: .vertical) {
+            fittedPage
+            ScrollView { scrollingPage }
+                .scrollBounceBehavior(.basedOnSize)
         }
-        .scrollBounceBehavior(.basedOnSize)
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 10) {
                 // Most people start on their own: that is the main button.
@@ -262,8 +249,50 @@ private struct OnboardingPurposePage: View {
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
-            .background(.bar)
+            .background(Color(.systemBackground))
         }
+    }
+
+    private var fittedPage: some View {
+        VStack(spacing: 22) {
+            GeometryReader { proxy in
+                OnboardingWindowMosaic()
+                    .frame(width: OnboardingWindowMosaic.width(fitting: proxy.size))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            }
+            .frame(minHeight: 160)
+            purposeText
+        }
+        .frame(maxWidth: 520)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .padding(.bottom, 16)
+    }
+
+    private var scrollingPage: some View {
+        VStack(spacing: 22) {
+            OnboardingWindowMosaic()
+                .padding(.top, 8)
+            purposeText
+        }
+        .frame(maxWidth: 520)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 24)
+    }
+
+    private var purposeText: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(OnboardingPresentationCopy.purposeTitle)
+                .font(.title.bold())
+                .accessibilityAddTraits(.isHeader)
+            Text(OnboardingPresentationCopy.purposeBody)
+                .font(.body)
+                .foregroundStyle(.secondary)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -271,6 +300,13 @@ private struct OnboardingPurposePage: View {
 /// is hidden from VoiceOver and dims behind the Photos dialog.
 struct OnboardingWindowMosaic: View {
     var dimmed = false
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// Three columns, four rows, 6pt apart: the height is 4/3 of the width
+    /// plus 2. The widest mosaic that fits `size`.
+    static func width(fitting size: CGSize) -> CGFloat {
+        max(0, min(size.width, (size.height - 2) * 3 / 4))
+    }
 
     private static let poses: [Int: String] = [1: "peek", 6: "snug", 10: "hide"]
     private static let tints: [Color] = [
@@ -287,7 +323,8 @@ struct OnboardingWindowMosaic: View {
             ForEach(0 ..< 12, id: \.self) { index in
                 ZStack {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Self.tints[index % Self.tints.count].opacity(0.55))
+                        // 11/12: over black, 0.55 turned the tints grey-brown.
+                        .fill(Self.tints[index % Self.tints.count].opacity(colorScheme == .dark ? 0.72 : 0.55))
                     if let pose = Self.poses[index] {
                         Image("ToolCat-\(pose)")
                             .resizable()
@@ -368,14 +405,17 @@ private struct OnboardingPhotoPermissionPage: View {
                     )
                 }
 
+                // 「あとで」 is quiet grey text on every first-run page (11/12).
                 Button(OnboardingPresentationCopy.permissionSkipAction, action: skip)
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
+                    .buttonStyle(.plain)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(minHeight: 44)
                     .accessibilityIdentifier("onboarding-photo-permission-skip")
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
-            .background(.bar)
+            .background(Color(.systemBackground))
         }
         .onChange(of: isRequestReady, initial: true) { _, ready in
             // One request, as soon as the app can make it.
@@ -501,7 +541,7 @@ private struct OnboardingScanPage: View {
             .controlSize(.large)
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
-            .background(.bar)
+            .background(Color(.systemBackground))
         }
         .animation(.easeOut(duration: 0.25), value: scan.displayedCatCount)
     }
@@ -522,7 +562,7 @@ private struct OnboardingScanPage: View {
     private var countLabel: some View {
         VStack(alignment: .trailing, spacing: 2) {
             Text("\(scan.displayedCatCount.formatted())枚")
-                .font(.title3.monospacedDigit())
+                .font(.title2.monospacedDigit().weight(.semibold))
                 .foregroundStyle(.secondary)
                 .contentTransition(.numericText())
             if !scan.hasFinalResult {
@@ -539,6 +579,7 @@ private struct OnboardingScanPage: View {
     /// later are found by themselves, so there is nothing to retry here.
     private var zeroResult: some View {
         VStack(alignment: .leading, spacing: 14) {
+            nowaWindow
             Text(isLimitedAccess ? OnboardingPresentationCopy.scanZeroLimitedBody
                                  : OnboardingPresentationCopy.scanZeroBody)
                 .font(.subheadline)
@@ -558,6 +599,24 @@ private struct OnboardingScanPage: View {
         }
     }
 
+    /// のわ in a warm window (11/12: two lines on a blank page read as a
+    /// failure). The window keeps the black cat visible in dark mode too.
+    private var nowaWindow: some View {
+        NekoPalette.cream
+            .frame(maxWidth: .infinity)
+            .frame(height: 210)
+            .overlay(alignment: .bottom) {
+                Image("Nowa-sit-up")
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(height: 170)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: NekoRadius.hero, style: .continuous))
+            .padding(.vertical, 6)
+            .accessibilityHidden(true)
+    }
+
     /// Full access: 「はじめる」 is the main button. Limited: choosing photos
     /// above is, so the way on stays quiet. のわのまど, when the build has
     /// it, gives the Widget a cat to show meanwhile.
@@ -572,7 +631,8 @@ private struct OnboardingScanPage: View {
                 Text(OnboardingPresentationCopy.scanZeroNowaAction)
                     .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 5)
             }
-            .buttonStyle(.bordered)
+            // Still a button on black in dark mode (11/12).
+            .buttonStyle(GuideSecondaryButtonStyle())
             .accessibilityIdentifier("initial-scan-zero-nowa")
         }
         if isLimitedAccess {
@@ -580,38 +640,69 @@ private struct OnboardingScanPage: View {
         }
     }
 
+    private var shownPhotos: [PhotoPresentation] { Array(previewPhotos.prefix(9)) }
+
+    /// 11/12: the found cats fill the page. While the scan runs, three
+    /// columns with empty windows for the cats to come; once it is final,
+    /// a few photos are large (one alone, two or four in pairs, three as
+    /// one large and two under it) and five or more keep three columns.
+    @ViewBuilder
     private var photoGrid: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 3), spacing: 4) {
-            ForEach(Array(previewPhotos.prefix(9))) { photo in
-                Button { openPreviewPhoto(photo) } label: {
-                    PhotoAssetImageView(
-                        localIdentifier: photo.localIdentifier,
-                        catBoundingBox: photo.catBoundingBox,
-                        targetPixelSize: CGSize(width: 360, height: 360),
-                        networkAccessAllowed: false
-                    )
-                    .aspectRatio(1, contentMode: .fill)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        let photos = shownPhotos
+        Group {
+            if showsProgress || photos.count >= 5 {
+                LazyVGrid(columns: Self.columns(3), spacing: 4) {
+                    ForEach(photos) { photo in photoTile(photo, columns: 3) }
+                    // Empty windows for the cats still to come.
+                    if showsProgress {
+                        ForEach(0 ..< max(0, 9 - photos.count), id: \.self) { _ in
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Color(.secondarySystemBackground))
+                                .aspectRatio(1, contentMode: .fit)
+                                .accessibilityHidden(true)
+                        }
+                    }
                 }
-                .buttonStyle(.plain)
-                // Keep the image's loaded/loading/failed label: a fixed button
-                // label hides its failure state.
-                .accessibilityHint("写真を開きます")
-                .accessibilityIdentifier("initial-scan-photo-\(photo.localIdentifier)")
-                .transition(.opacity.combined(with: .scale(scale: 0.9)))
-            }
-            // Empty windows for the cats still to come.
-            if showsProgress {
-                ForEach(0 ..< max(0, 9 - min(previewPhotos.count, 9)), id: \.self) { _ in
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color(.secondarySystemBackground))
-                        .aspectRatio(1, contentMode: .fit)
-                        .accessibilityHidden(true)
+            } else if photos.count == 3 {
+                VStack(spacing: 4) {
+                    photoTile(photos[0], columns: 1)
+                    LazyVGrid(columns: Self.columns(2), spacing: 4) {
+                        ForEach(Array(photos.dropFirst())) { photo in photoTile(photo, columns: 2) }
+                    }
+                }
+            } else {
+                let count = photos.count == 1 ? 1 : 2
+                LazyVGrid(columns: Self.columns(count), spacing: 4) {
+                    ForEach(photos) { photo in photoTile(photo, columns: count) }
                 }
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("見つかった猫写真の一部")
+    }
+
+    private static func columns(_ count: Int) -> [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 4), count: count)
+    }
+
+    private func photoTile(_ photo: PhotoPresentation, columns: Int) -> some View {
+        let side: CGFloat = columns == 1 ? 1_080 : (columns == 2 ? 600 : 360)
+        return Button { openPreviewPhoto(photo) } label: {
+            PhotoAssetImageView(
+                localIdentifier: photo.localIdentifier,
+                catBoundingBox: photo.catBoundingBox,
+                targetPixelSize: CGSize(width: side, height: side),
+                networkAccessAllowed: false
+            )
+            .aspectRatio(1, contentMode: .fill)
+            .clipShape(RoundedRectangle(cornerRadius: columns == 3 ? 10 : 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        // Keep the image's loaded/loading/failed label: a fixed button
+        // label hides its failure state.
+        .accessibilityHint("写真を開きます")
+        .accessibilityIdentifier("initial-scan-photo-\(photo.localIdentifier)")
+        .transition(.opacity.combined(with: .scale(scale: 0.9)))
     }
 }
 
@@ -651,7 +742,7 @@ private struct OnboardingWidgetPlacedPage: View {
             .accessibilityIdentifier("onboarding-widget-placed-close")
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
-            .background(.bar)
+            .background(Color(.systemBackground))
         }
         .accessibilityIdentifier("onboarding-widget-placed")
     }
@@ -690,7 +781,7 @@ private struct OnboardingPlusOfferPage: View {
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 28)
             .padding(.vertical, 12)
-            .background(.bar)
+            .background(Color(.systemBackground))
         }
         .accessibilityIdentifier("onboarding-plus-offer")
     }
