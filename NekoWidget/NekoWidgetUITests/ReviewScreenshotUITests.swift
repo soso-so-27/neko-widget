@@ -61,25 +61,6 @@ final class ReviewScreenshotUITests: XCTestCase {
                     || app.navigationBars["メモ"].waitForExistence(timeout: 5) else { return "memo editor did not open" }
             return nil
         }
-        let closeMemo = app.buttons["photo-memory-note-close"]
-        if closeMemo.exists { closeMemo.tap() } else { closeTop(app) }
-        _ = memo.waitForExistence(timeout: 5)
-        shot("06_window_send", app) {
-            let deliver = app.buttons["photo-browser-deliver-group"]
-            guard deliver.waitForExistence(timeout: 10) else { return "「まどに届ける」 is not on the photo screen" }
-            deliver.tap()
-            // The sheet asks for Photos access over itself on a fresh
-            // Simulator; decline it so the sheet is what is captured.
-            declinePhotosPrompt(timeout: 8)
-            let sheet = anyIdentifier(app, ["group-library-delivery-send", "group-library-delivery-destination"])
-            let title = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "に届ける")).firstMatch
-            guard sheet.waitForExistence(timeout: 10) || title.waitForExistence(timeout: 5) else {
-                return "delivery sheet did not open"
-            }
-            declinePhotosPrompt(timeout: 2)
-            settle(1)
-            return nil
-        }
         app.terminate()
     }
 
@@ -108,6 +89,21 @@ final class ReviewScreenshotUITests: XCTestCase {
         shot("05_window_feed_bottom", app) {
             guard app.buttons["group-window-open-members"].exists else { return "window feed not shown" }
             scrollToEnd(app)
+            return nil
+        }
+        // Sending from the window: its photo chooser. (The confirmation step
+        // after it reads a real Photos asset, which synthetic photos are not.)
+        shot("06_window_send", app) {
+            let send = app.buttons["group-window-send-photo"].firstMatch
+            guard send.waitForExistence(timeout: 10), send.isHittable else { return "「写真を届ける」 not on the feed" }
+            send.tap()
+            declinePhotosPrompt(timeout: 5)
+            let chooser = app.descendants(matching: .any).matching(NSPredicate(
+                format: "identifier BEGINSWITH %@ OR identifier == %@",
+                "group-window-cat-photo-", "group-window-send-photo-library")).firstMatch
+            guard chooser.waitForExistence(timeout: 15) else { return "photo chooser did not open" }
+            _ = waitForAnyFixturePhoto(app, Array(1...8))
+            settle(1.5)
             return nil
         }
         app.terminate()
@@ -531,7 +527,8 @@ final class ReviewScreenshotUITests: XCTestCase {
             settle(1)
             return nil
         }
-        shot("28_onboarding_2", app) {
+        // Extra: the real page two, where iOS asks for Photos at once.
+        shot("28_onboarding_2b_photos_prompt", app) {
             guard start.exists else { return "first onboarding page not shown" }
             start.tap()
             let allow = app.buttons["onboarding-photo-permission-allow"]
@@ -547,6 +544,15 @@ final class ReviewScreenshotUITests: XCTestCase {
         func scan(_ scenario: String) -> XCUIApplication {
             launch(["--app-store-screenshot-fixture"], environment: ["NEKO_MAINLINE_ACCEPTANCE_CASE": scenario])
         }
+        let permission = scan("skip")
+        shot("28_onboarding_2", permission) {
+            guard anyIdentifier(permission, ["onboarding-photo-permission-skip", "onboarding-photo-permission-allow"])
+                    .waitForExistence(timeout: 20) else { return "Photos permission page did not appear" }
+            settle(1)
+            return nil
+        }
+        permission.terminate()
+
         let found = scan("three")
         shot("28_onboarding_3_scan_found", found) {
             guard found.buttons["initial-scan-continue"].waitForExistence(timeout: 20) else { return "scan page did not appear" }

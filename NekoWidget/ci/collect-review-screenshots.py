@@ -38,7 +38,7 @@ FULL_SCREENS = (
     "18_evac_top", "18_evac_bottom", "19_evac_now", "20_evac_packing", "21_evac_memo", "22_showcase",
     "23_plus_offer_top", "23_plus_offer_bottom", "23b_plus_offer_from_work", "23c_plus_offer_onboarding",
     "24_settings_top", "24_settings_bottom", "25_settings_photos", "26_autosave", "27_family_notebook",
-    "28_onboarding_1", "28_onboarding_2", "28_onboarding_3_scan_found", "28_onboarding_4_scan_zero",
+    "28_onboarding_1", "28_onboarding_2", "28_onboarding_2b_photos_prompt", "28_onboarding_3_scan_found", "28_onboarding_4_scan_zero",
     "28_onboarding_5_widget_guide",
     "29_widget_guide_1", "29_widget_guide_2", "29_widget_guide_3", "29_widget_guide_4", "29_widget_guide_5",
     "90_error_vet_field_page", "90_error_vet_row", "91_error_plus_product_unavailable",
