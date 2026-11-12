@@ -110,7 +110,7 @@ struct NekoWidgetView: View {
                             if selection.revealedAt == nil {
                                 // Says what you get, not the verb: 「晴らす」 alone was unclear.
                                 Button(intent: RevealCloudyWindowIntent(selection: selection)) {
-                                    Label(selection.albumPeriod == nil ? "タップで きょうの 1 枚" : "作品が届きました",
+                                    Label(selection.albumPeriod == nil ? "タップで、きょうの1枚" : "作品がとどきました",
                                           systemImage: "hand.tap.fill")
                                         .font(.caption.weight(.semibold))
                                         .foregroundStyle(.white)
@@ -122,7 +122,7 @@ struct NekoWidgetView: View {
                                 .buttonStyle(.plain)
                                 .padding(12)
                                 .accessibilityLabel(selection.albumPeriod == nil
-                                    ? "きょうのまどのくもりを晴らす" : "作品が届きました。くもりを晴らす")
+                                    ? "きょうのまどのくもりを晴らす" : "作品がとどきました。くもりを晴らす")
                                 .accessibilityIdentifier("cloudy-window-reveal")
                             }
                         } else if let photo = entry.officialPhoto {
@@ -610,12 +610,12 @@ struct NekoWidgetView: View {
 
     private var emptyStateTitle: String {
         if let windowID = PublicWindowDefinition.windowID(from: entry.photoSourceIdentifier) {
-            guard let definition = OfficialWindowConfiguration.definition(for: windowID) else { return "このまどは表示できません" }
+            guard let definition = OfficialWindowConfiguration.definition(for: windowID) else { return "このまどは終わりました" }
             if definition.endpoint == nil { return "公式のまどを準備中" }
             return OfficialWindowStore.forWindow(definition).snapshot().isSubscribed ? "いま届いている写真はありません" : definition.displayName
         }
         if effectiveEmptyStateReason == .sourceUnavailable {
-            return "このまどは表示できません"
+            return "このまどは終わりました"
         }
         if effectiveEmptyStateReason == .needsApp {
             if entry.photoSourceIdentifier.hasPrefix(CloudyWindowStore.profilePrefix) { return "くもりのまどを準備しています" }
@@ -639,11 +639,11 @@ struct NekoWidgetView: View {
     private var emptyStateSubtitle: String {
         if let windowID = PublicWindowDefinition.windowID(from: entry.photoSourceIdentifier) {
             // A retired official window says the same as its title (E2).
-            guard OfficialWindowConfiguration.definition(for: windowID) != nil else { return "ウィジェットを編集してください" }
+            guard OfficialWindowConfiguration.definition(for: windowID) != nil else { return "長押しして、別のまどを選んでください" }
             return "タップしてまどを開く"
         }
         if effectiveEmptyStateReason == .sourceUnavailable {
-            return "ウィジェットを編集してください"
+            return "長押しして、別のまどを選んでください"
         }
         if effectiveEmptyStateReason == .needsApp {
             if entry.photoSourceIdentifier.hasPrefix(CloudyWindowStore.profilePrefix) { return "アプリを一度開くと始まります" }

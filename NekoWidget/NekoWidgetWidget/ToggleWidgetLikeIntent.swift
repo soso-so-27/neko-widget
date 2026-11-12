@@ -191,7 +191,7 @@ struct SendFamilyWidgetHeartIntent: AppIntent {
         // Decode buttons already installed by older versions, without queueing
         // a send, loading a room key, or using a different active window.
         WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
-        return .result(dialog: "このまどは利用できなくなりました。まどタブから、みんなのまどを開いてください。")
+        return .result(dialog: "このまどは終わりました。「まど」タブから、ほかのまどを開けます。")
     }
 
 }

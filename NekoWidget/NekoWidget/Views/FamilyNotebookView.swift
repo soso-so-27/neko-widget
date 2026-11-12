@@ -969,7 +969,7 @@ struct FamilyNotebookView: View {
                 DisclosureGroup("テスト用") {
                     Button("家族が書いたときを試す") { model.tryFamilyWrite() }
                     Button("2 人が同時に直したときを試す") { model.tryConflict() }
-                    Button("家族（試し）が Plus を使っていて抜けたときを試す") {
+                    Button("家族（試し）がPlusを使っていて抜けたときを試す") {
                         prototype?.pretendPayerLeft(hasPlus: access.decision(for: .createPersonalMemo) == .allowed)
                         Task { await sharing.refresh() }
                     }
@@ -981,7 +981,7 @@ struct FamilyNotebookView: View {
         }
         .refreshable { if !sharing.isWorking { await sharing.refresh(reportsFailure: true) } }
         // The only place to leave (11/7: your own page no longer offers it).
-        .confirmationDialog("家族から抜けますか？", isPresented: $confirmsLeave, titleVisibility: .visible) {
+        .confirmationDialog("家族の手帳から抜けますか？", isPresented: $confirmsLeave, titleVisibility: .visible) {
             Button("抜ける", role: .destructive) {
                 Task { await sharing.perform { _ = try await sharing.service.leaveFamily(operationID: $0) } }
             }
@@ -1010,7 +1010,7 @@ struct FamilyNotebookView: View {
     }
     @ViewBuilder private func decliningActions(_ request: FamilyNotebookJoinRequest) -> some View {
         Button("受け入れない", role: .destructive) { running = "受け入れない:\(request.id)"; decide(request, approve: false) }
-        Button("戻る", role: .cancel) {}
+        Button("キャンセル", role: .cancel) {}
     }
 
     private func decide(_ request: FamilyNotebookJoinRequest, approve: Bool) {
@@ -1047,7 +1047,7 @@ extension FamilyNotebookView {
                     }
                 } else {
                     Button { showsPlusOffer = true } label: {
-                        Text("Plus を続けて再開する").font(.headline).frame(maxWidth: .infinity, minHeight: 44)
+                        Text("Plusを続けて再開する").font(.headline).frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("family-notebook-payer-renew")
@@ -1059,7 +1059,7 @@ extension FamilyNotebookView {
                         Task { await sharing.perform { try await sharing.service.claimPayer(operationID: $0) } }
                     } label: {
                         Group {
-                            if sharing.isWorking { ProgressView() } else { Text("わたしの Plus で再開する").font(.headline) }
+                            if sharing.isWorking { ProgressView() } else { Text("わたしのPlusで再開する").font(.headline) }
                         }
                         .frame(maxWidth: .infinity, minHeight: 44)
                     }
@@ -1076,13 +1076,13 @@ extension FamilyNotebookView {
                 } else {
                     Button { showsPlusOffer = true } label: {
                         HStack(spacing: 8) {
-                            Text("Plus を始めて再開する").font(.headline)
+                            Text("Plusを始めて再開する").font(.headline)
                             FamilyNotebookPlusMark()
                         }
                         .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.borderedProminent)
-                    .accessibilityLabel("Plus を始めて再開する")
+                    .accessibilityLabel("Plusを始めて再開する")
                     .accessibilityIdentifier("family-notebook-continue-plus")
                 }
             }
@@ -1309,7 +1309,7 @@ struct FamilyNotebookMemberView: View {
     private func title(_ action: Action) -> String {
         switch action {
         case .dissolve: "家族の共有をやめる"
-        case .remove: "家族から外す"
+        case .remove: "手帳から外す"
         }
     }
 
@@ -1323,7 +1323,7 @@ struct FamilyNotebookMemberView: View {
     private func question(_ action: Action) -> String {
         switch action {
         case .dissolve: "家族の共有をやめますか？"
-        case .remove: "\(member.displayName)を家族から外しますか？"
+        case .remove: "\(member.displayName)を家族の手帳から外しますか？"
         }
     }
 
@@ -1647,14 +1647,14 @@ struct FamilyNotebookNameView: View {
                 Section {
                     TextField("あなたの名前", text: $name)
                 } footer: { Text("書いた人の名前として、家族に表示されます。") }
-                Button("この名前で家族を作る") {
+                Button("この名前で手帳を作る") {
                     guard let valid = try? GroupWire.name(name) else { return }
                     GroupDisplayName.remember(valid); confirmed()
                 }.disabled((try? GroupWire.name(name)) == nil)
-                GroupWindowStandardsAgreement(action: "この名前で家族を作る", isFamilyNotebook: true)
+                GroupWindowStandardsAgreement(action: "この名前で手帳を作る", isFamilyNotebook: true)
             }
             .navigationTitle("家族で使う名前")
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } } }
         }
     }
 }
@@ -1687,7 +1687,7 @@ struct FamilyNotebookCatSelectionView: View {
             .navigationTitle("追加する猫を選ぶ")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() }.disabled(saving) }
+                ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() }.disabled(saving) }
                 // The action says what the title asks for (11/5: 「家族と共有する」
                 // under 「追加する猫を選ぶ」 read as a different step).
                 if shown?.isEmpty == false {
@@ -1859,7 +1859,7 @@ enum FamilyNotebookWords {
     static func pausedDetail(_ pause: FamilySharingPause) -> String {
         switch pause {
         case .noPayer:
-            return "Plus を使っていた人が家族から抜けたので、新しく書いたことは家族に届きません。だれか 1 人が Plus を始めると、また共有できます。"
+            return "Plusを使っていた人が家族の手帳から抜けたので、新しく書いたことは家族に届きません。だれか1人がPlusを始めると、また共有できます。"
         case .payerPlusUnverified(isPayer: true):
             return "あなたのPlusを確認できないため、共有が止まっています。Plusを続けると、家族みんなの共有が戻ります。"
         case .payerPlusUnverified(isPayer: false):

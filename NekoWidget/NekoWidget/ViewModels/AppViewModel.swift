@@ -1991,7 +1991,7 @@ final class AppViewModel: ObservableObject {
             )
         case .familyWindow:
             // Installed legacy Widget URLs must not activate a different window.
-            linkErrorMessage = "このまどは利用できなくなりました。まどタブから、みんなのまどを開いてください。"
+            linkErrorMessage = "このまどは終わりました。「まど」タブから、ほかのまどを開けます。"
             return
         }
         guard let readyRoute = candidatePhotoRouteGate.receive(
@@ -3444,7 +3444,7 @@ final class AppViewModel: ObservableObject {
         if let value = error as? NekoWidgetError {
             switch value {
             case .appGroupUnavailable:
-                return "データを保存できませんでした。アプリをアップデートして、もう一度お試しください。"
+                return "データを保存できませんでした。App Storeでアプリを最新にしてください。"
             case .photoAccessDenied:
                 return "写真へのアクセスが許可されていません。iPhoneの「設定」で、「ねこのまど」に写真へのアクセスを許可してください。"
             case .albumCreationFailed:
@@ -3465,12 +3465,12 @@ final class AppViewModel: ObservableObject {
         }
         if let value = error as? CatHouseholdIdentityStoreError {
             return value.errorDescription
-                ?? "猫のプロフィールを保存できませんでした。もう一度お試しください。"
+                ?? "猫の名前と日付を保存できませんでした。もう一度お試しください。"
         }
         if let value = error as? SharedLikeStoreError {
             switch value {
             case .appGroupUnavailable:
-                return "「お気に入り」を保存できませんでした。アプリをアップデートして、もう一度お試しください。"
+                return "「お気に入り」を保存できませんでした。App Storeでアプリを最新にしてください。"
             case .lockOpenFailed, .lockFailed:
                 return "「お気に入り」を保存できませんでした。少し待って、もう一度お試しください。"
             case .measurementNotInitialized:
