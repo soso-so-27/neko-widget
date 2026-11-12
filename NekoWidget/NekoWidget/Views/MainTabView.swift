@@ -961,7 +961,7 @@ struct MainTabView: View {
         .fullScreenCover(item: $arrivalStory) { letter in
             if Version1.isOn, hasPhotoAccess,
                let current = currentMonthlyWindowCollection?.letters.first(where: { $0.periodIdentifier == letter.periodIdentifier }) {
-                AlbumWorkGate(month: current.monthNumber, cover: current.coverPhoto) {
+                AlbumWorkGate(month: current.monthNumber, arrival: current.workArrivalDate, cover: current.coverPhoto) {
                     MonthlyStoryView(letter: current, catPhotos: catPhotos,
                         assignments: currentPhotoLibraryAssignments, profileNames: currentPhotoLibraryProfileNames)
                 }
@@ -2522,7 +2522,7 @@ struct MainTabView: View {
                 }
             }
             .growingSummaryFeature(.monthlySummary(month: snapshot.monthNumber),
-                                   hasContent: !refreshedMonthlyWindow(snapshot).photos.isEmpty)
+                                   hasContent: !refreshedMonthlyWindow(snapshot).photos.isEmpty, arrival: snapshot.workArrivalDate)
         }
     }
 
@@ -2604,7 +2604,7 @@ struct MainTabView: View {
                 }
             )
             .id(seasonalMovieArchiveAccessKey)
-            .growingSummaryFeature(.monthlySummary(month: nil), hasContent: !presentation.scenes.isEmpty)
+            .growingSummaryFeature(.monthlySummary(month: nil), hasContent: !presentation.scenes.isEmpty, arrival: presentation.quarterEnd)
         } else {
             ContentUnavailableView(
                 "この季節のムービーを開けません",
@@ -3933,9 +3933,11 @@ private struct GrowingSummaryGate: ViewModifier {
     @Environment(\.membershipAccess) private var access
     let context: PlusOfferContext
     let hasContent: Bool
+    let arrival: Date
+    @ObservedObject private var purchases = PlusPurchaseStore.productionShared
 
     func body(content: Content) -> some View {
-        let decision = access.decision(for: .openGrowingSummary)
+        let decision = access.workDecision(arrival: arrival, history: purchases.workHistory)
         if !hasContent || decision == .allowed {
             content
         } else {
@@ -3945,8 +3947,8 @@ private struct GrowingSummaryGate: ViewModifier {
 }
 
 private extension View {
-    func growingSummaryFeature(_ context: PlusOfferContext, hasContent: Bool) -> some View {
-        modifier(GrowingSummaryGate(context: context, hasContent: hasContent))
+    func growingSummaryFeature(_ context: PlusOfferContext, hasContent: Bool, arrival: Date) -> some View {
+        modifier(GrowingSummaryGate(context: context, hasContent: hasContent, arrival: arrival))
     }
 }
 

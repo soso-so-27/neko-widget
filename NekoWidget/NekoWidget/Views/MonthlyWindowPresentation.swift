@@ -5,6 +5,10 @@ import Foundation
 /// presentation values used by the automatic albums. No image bytes are read,
 /// copied, uploaded, or persisted while this value is built.
 struct MonthlyWindowPresentation: Identifiable, Hashable, Sendable {
+    var workArrivalDate: Date {
+        Calendar(identifier: .gregorian).date(byAdding: .month, value: 1, to: monthStart) ?? .distantFuture
+    }
+
     let monthStart: Date
     let yearNumber: Int
     let monthNumber: Int

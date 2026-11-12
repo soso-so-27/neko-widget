@@ -54,6 +54,17 @@ struct MembershipAccessContext: Equatable {
             personal: personal, window: window, now: now)
     }
 
+    /// Only viewing an arrived, personally owned work gets this exception.
+    /// Current members keep access to all past works; creation/server authority
+    /// and family notebook access continue using their existing policies.
+    func workDecision(arrival: Date, history: PlusWorkHistory?, now: Date = .now) -> MembershipAccessDecision {
+        let current = decision(for: .openGrowingSummary, now: now)
+        if current == .allowed { return .allowed }
+        if history?.contains(arrival: arrival, now: now) == true { return .allowed }
+        guard history?.complete == true else { return .verificationRequired }
+        return current
+    }
+
     /// This iPhone's own Plus is usable now (verified, or the bounded offline
     /// fallback). Only where Plus is enforced: a beta build is not a member.
     func hasPersonalPlus(now: Date = .now) -> Bool {

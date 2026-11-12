@@ -224,6 +224,8 @@ final class PlusPurchaseStore: ObservableObject {
     /// cancelled member sees until when Plus lasts. Never grants or withdraws
     /// access; nil when StoreKit has no current Plus subscription to describe.
     @Published private(set) var renewal: PlusRenewalSnapshot?
+    @Published private(set) var workHistory: PlusWorkHistory?
+    private var workHistoryGeneration: UInt64 = 0
     private var authorityExpiryTask: Task<Void, Never>?
 
     private struct EntitlementScan {
@@ -334,6 +336,7 @@ final class PlusPurchaseStore: ObservableObject {
 
         startTransactionUpdatesListener()
         startStorefrontUpdatesListener()
+        await refreshWorkHistory()
         await reconcileCurrentEntitlements()
         await refreshRenewal()
         await loadProducts()
@@ -368,6 +371,7 @@ final class PlusPurchaseStore: ObservableObject {
     }
 
     private func performRefresh() async {
+        await refreshWorkHistory()
         await reconcileCurrentEntitlements()
         await refreshRenewal()
         await loadProducts()
@@ -394,11 +398,47 @@ final class PlusPurchaseStore: ObservableObject {
                       isEligibleStoreKitTransaction(transaction),
                       case let .verified(renewalInfo) = status.renewalInfo else { continue }
                 snapshots.append(PlusRenewalSnapshot(willAutoRenew: renewalInfo.willAutoRenew,
-                                                     expirationDate: transaction.expirationDate))
+                    expirationDate: transaction.expirationDate,
+                    trialEndsAt: Self.isFreeTrial(transaction) ? transaction.expirationDate : nil,
+                    productID: transaction.productID))
             }
         }
         let latest = PlusRenewalSnapshot.combined(snapshots)
         if renewal != latest { renewal = latest }
+    }
+
+    private static func isFreeTrial(_ transaction: Transaction) -> Bool {
+        if #available(iOS 17.2, *) { return transaction.offer?.paymentMode == .freeTrial }
+        // This payload belongs to a transaction already verified by StoreKit.
+        // Unlike today's product offer, it describes this actual purchase.
+        let payload = try? JSONSerialization.jsonObject(with: transaction.jsonRepresentation) as? [String: Any]
+        return payload?["offerDiscountType"] as? String == "FREE_TRIAL"
+    }
+
+    private func refreshWorkHistory() async {
+        guard configuration.isConfigured else { workHistory = nil; return }
+        workHistoryGeneration &+= 1
+        let generation = workHistoryGeneration
+        var periods: [PlusWorkHistory.Period] = []
+        var complete = true
+        // StoreKit supplies its signed on-device history offline too. Scanning
+        // it again after reinstall/restore needs no app-local earned flags.
+        for await result in Transaction.all {
+            guard !Task.isCancelled, generation == workHistoryGeneration else { return }
+            switch result {
+            case let .verified(transaction):
+                guard configuration.plan(for: transaction.productID) != nil,
+                      transaction.productType == .autoRenewable,
+                      let end = transaction.expirationDate else { continue }
+                periods.append(.init(originalID: transaction.originalID,
+                    start: transaction.purchaseDate, end: end,
+                    purchased: transaction.ownershipType == .purchased,
+                    revoked: transaction.revocationDate != nil, upgraded: transaction.isUpgraded))
+            case .unverified: complete = false
+            }
+        }
+        guard !Task.isCancelled, generation == workHistoryGeneration else { return }
+        workHistory = PlusWorkHistory(periods: periods, complete: complete)
     }
 
     /// Fetch a fresh offer when its sheet is opened. This does not purchase,
@@ -422,6 +462,8 @@ final class PlusPurchaseStore: ObservableObject {
         products = []
         productStorefrontID = nil
         productCatalogRevision &+= 1
+        workHistoryGeneration &+= 1
+        workHistory = nil
         hasStarted = false
     }
 
@@ -488,6 +530,8 @@ final class PlusPurchaseStore: ObservableObject {
                         )
                         return .verificationFailed
                     }
+                    await refreshWorkHistory()
+                    await refreshRenewal()
                     do {
                         try await recordVerifiedTransactionEvent(
                             PlusVerifiedTransactionEvent(
@@ -562,7 +606,9 @@ final class PlusPurchaseStore: ObservableObject {
                 return .failed
             }
         }
+        await refreshWorkHistory()
         await reconcileCurrentEntitlements()
+        await refreshRenewal()
         switch entitlementState {
         case .serverConfirmed:
             return .entitlementFound
@@ -623,6 +669,9 @@ final class PlusPurchaseStore: ObservableObject {
         storefrontUpdatesTask = Task { @MainActor [weak self] in
             for await _ in Storefront.updates {
                 guard !Task.isCancelled else { return }
+                self?.workHistoryGeneration &+= 1
+                self?.workHistory = nil
+                await self?.refreshWorkHistory()
                 await self?.loadProducts()
             }
         }
@@ -633,6 +682,10 @@ final class PlusPurchaseStore: ObservableObject {
         transactionUpdatesTask = Task { @MainActor [weak self] in
             for await update in Transaction.updates {
                 guard !Task.isCancelled else { return }
+                // Withdraw stale historical rights before the server round trip.
+                self?.workHistoryGeneration &+= 1
+                self?.workHistory = nil
+                await self?.refreshWorkHistory()
                 await self?.handleTransactionUpdate(update)
                 await self?.refreshRenewal()
             }

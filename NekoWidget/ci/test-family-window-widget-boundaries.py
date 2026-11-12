@@ -8028,7 +8028,7 @@ class PlusMomentOfBuying1112Tests(unittest.TestCase):
         gate = section(album, "struct AlbumWorkGate<Content: View>: View {", "private extension View {")
         self.assertIn("reasonOverride: yearReason, onDeclined: { dismiss() })", gate)
         self.assertIn(".environment(\\.plusOfferPhoto, coverPhoto)", gate)
-        self.assertEqual(album.count("AlbumWorkGate(month: letter.monthNumber, cover: letter.coverPhoto) {"), 2)
+        self.assertEqual(album.count("AlbumWorkGate(month: letter.monthNumber, arrival: letter.workArrivalDate, cover: letter.coverPhoto) {"), 2)
 
     def test_memo_says_plus_and_opens_the_offer_once(self) -> None:
         photos = source("NekoWidget/Views/LikedPhotosView.swift")
