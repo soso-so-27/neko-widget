@@ -1811,6 +1811,9 @@ struct AppRecordSettingsView: View {
             }
         }
         .navigationTitle("自動保存")
+        // 11/12 (review 22): a page inside 設定, titled like its neighbours,
+        // so the title no longer sits on the first card.
+        .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $exporter.payload) { payload in
             RecordExportActivity(payload: payload) { exporter.finishSharing(payload, failed: $0) }
                 .onDisappear { exporter.finishSharing(payload) }
@@ -2002,7 +2005,13 @@ struct AppRecordSettingsView: View {
         if offersPlus && authentication.membership?.canSave != true {
             plusOfferButton
         } else {
-            Button("保存を始める") { start() }
+            // 11/12 (review 22): the one thing to do here, as the main button.
+            Button { start() } label: {
+                Text("保存を始める")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 36)
+            }
+                .buttonStyle(.borderedProminent)
                 .disabled(persistence.busy || authentication.isBusy)
                 .accessibilityIdentifier("app-record-enable")
         }

@@ -605,8 +605,9 @@ struct AlbumPrototypeView: View {
             }
             .overlay(alignment: .topTrailing) {
                 if workNeedsPlus {
-                    Text("Plus").font(.caption2.bold())
-                        .padding(.horizontal, 8).padding(.vertical, 4)
+                    // 11/12 (review 15): what a tap does, not only a label.
+                    Text("Plusでひらく").font(.caption.bold())
+                        .padding(.horizontal, 10).padding(.vertical, 5)
                         .background(.thinMaterial, in: Capsule())
                         .padding(12)
                         .accessibilityIdentifier("album-prototype-plus-mark")
@@ -618,7 +619,7 @@ struct AlbumPrototypeView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel((wrapped ? "\(accessibilityTitle)、とどきました" : accessibilityTitle)
-                            + (workNeedsPlus ? "、Plusで見られます" : ""))
+                            + (workNeedsPlus ? "、Plusでひらく" : ""))
     }
 }
 

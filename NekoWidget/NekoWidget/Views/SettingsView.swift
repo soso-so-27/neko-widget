@@ -1397,7 +1397,10 @@ struct ExternalLinkRow: View {
     }
 }
 
-/// An action inside a Form: a bordered button, never a row that looks like a page.
+/// An action inside a Form: a row on the same card as its neighbours, in
+/// the tint colour and without 「›」, so it reads as an action, not a page.
+/// 11/12 (review 22): the gray bordered capsule on the clear row looked
+/// switched off.
 struct SettingsActionRow: View {
     let title: String
     let systemImage: String
@@ -1412,11 +1415,9 @@ struct SettingsActionRow: View {
     var body: some View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
-                .frame(maxWidth: .infinity, minHeight: 36)
+                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                .contentShape(Rectangle())
         }
-        .buttonStyle(.bordered)
-        .listRowBackground(Color.clear)
-        .listRowInsets(EdgeInsets())
     }
 }
 
