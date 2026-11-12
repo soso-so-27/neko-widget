@@ -549,8 +549,9 @@ private struct CatHomeHero: View {
             .frame(width: metrics.width, height: metrics.heroHeight)
             .overlay {
                 // Keeps the white name readable on any photo, light or dark mode.
-                LinearGradient(stops: [.init(color: .black.opacity(0), location: 0.35),
-                                       .init(color: .black.opacity(0.55), location: 0.9)],
+                LinearGradient(stops: [.init(color: .black.opacity(0), location: 0.3),
+                                       .init(color: .black.opacity(0.45), location: 0.62),
+                                       .init(color: .black.opacity(0.72), location: 0.92)],
                                startPoint: .top, endPoint: .bottom)
             }
             .overlay(alignment: .bottom) {
@@ -609,7 +610,7 @@ private struct CatHomeHero: View {
                 .padding(.top, 4)
             }
         }
-        .shadow(color: .black.opacity(0.25), radius: 6, y: 1)
+        .shadow(color: .black.opacity(0.45), radius: 8, y: 1)
         .padding(.horizontal, 20)
         .padding(.bottom, Self.fade + 6)
     }
@@ -871,6 +872,9 @@ private struct CatHomeNoCatPage: View {
                         .resizable()
                         .scaledToFit()
                         .frame(height: max(min(metrics.heroHeight * 0.38, 150), 80))
+                        .padding(22)
+                        // のわ is black: a pale round keeps the shape in dark mode.
+                        .background(Color(red: 0.96, green: 0.94, blue: 0.90), in: Circle())
                         .accessibilityHidden(true)
                     Text("この子を追加すると、ここに出ます。")
                         .font(.body)
