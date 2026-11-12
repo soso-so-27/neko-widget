@@ -956,7 +956,7 @@ struct GroupWindowScreen: View {
                     if navigation.openedWindow?.windowID == model.windowID { navigation.returnToList() } else { dismiss() }
                 }
             }
-            Button("戻る", role: .cancel) {}
+            Button("キャンセル", role: .cancel) {}
         } message: {
             Text("写真アプリの写真は消えません。消したあとは元に戻せません。")
         }
@@ -1763,12 +1763,12 @@ private struct GroupPhotoDetail: View {
                 Button("お気に入りに追加") {
                     if let current { Task { await model.addToFavorites(current) } }
                 }
-                Button("戻る", role: .cancel) {}
+                Button("キャンセル", role: .cancel) {}
             } message: {
                 Text("写真アプリに保存して、お気に入りに入れます。届けた人には知らせません。")
             }
             .alert("いまは通報を受け付けられません", isPresented: $showsReportUnavailable) {
-                if let url = SharingAPIConfiguration.current.supportURL { Link("問い合わせる", destination: url) }
+                if let url = SharingAPIConfiguration.current.supportURL { Link("お問い合わせ", destination: url) }
                 Button("閉じる", role: .cancel) {}
             } message: {
                 Text(GroupReportUnavailableText.message)
@@ -1789,7 +1789,7 @@ private struct GroupPhotoDetail: View {
                         if let next { selection = next } else { dismiss() }
                     }
                 }
-                Button("戻る", role: .cancel) {}
+                Button("キャンセル", role: .cancel) {}
             } message: {
                 Text("写真アプリの写真と、ほかの人のまどには残ります。消したあとは元に戻せません。")
             }
@@ -2242,7 +2242,7 @@ struct GroupWindowStandardsAgreement: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(isFamilyNotebook
-                 ? "「\(action)」を押すと、コミュニティ基準に同意したことになります。人を傷つける言葉や写真、写っている人の同意がない写真は書けません。"
+                 ? "「\(action)」を押すと、コミュニティ基準に同意したことになります。人を傷つける言葉や、写っている人の同意がない写真は載せられません。"
                  : "「\(action)」を押すと、コミュニティ基準に同意したことになります。人を傷つける写真や、写っている人の同意がない写真は届けられません。")
             if let url = SharingAPIConfiguration.current.communityStandardsURL {
                 Link("コミュニティ基準を読む", destination: url)
@@ -2527,7 +2527,7 @@ struct GroupWindowListSection: View {
                 GroupWindowListNavigation.shared.openedWindow = GroupWindowRoute(windowID: requested, photoID: photoID)
             }
         }
-        .alert("このまどはもうありません", isPresented: $showsLeftWindowNotice) {
+        .alert("このまどは終わりました", isPresented: $showsLeftWindowNotice) {
             Button("閉じる", role: .cancel) {}
         }
         .accessibilityIdentifier("group-window-list")
@@ -2828,7 +2828,7 @@ struct GroupIdentityDeletionView: View {
             Section {
                 if let record, record.completedAt != nil {
                     Label("消しました", systemImage: "checkmark.circle")
-                    Text("この iPhone に届いた写真は「前のまど」に残ります。").foregroundStyle(.secondary)
+                    Text("このiPhoneに届いた写真は「前のまど」に残ります。").foregroundStyle(.secondary)
                 } else if let record, record.acceptedAt != nil {
                     Label("消しています", systemImage: "hourglass")
                     Text("終わるまで少しかかることがあります。").foregroundStyle(.secondary)
@@ -2860,10 +2860,10 @@ struct GroupIdentityDeletionView: View {
         }
         .confirmationDialog("まどと家族の手帳から抜けますか？", isPresented: $confirms, titleVisibility: .visible) {
             Button("抜ける", role: .destructive) { Task { await delete() } }
-            Button("戻る", role: .cancel) {}
+            Button("キャンセル", role: .cancel) {}
         } message: {
             // 11/7: say that this cannot be undone, as the auto-save deletion does.
-            Text("元に戻せません。あなたが作ったまども終わりになります。メンバーの iPhone に届いた写真は残ります。")
+            Text("元に戻せません。あなたが作ったまども終わりになります。メンバーのiPhoneに届いた写真は残ります。")
         }
         .navigationTitle("まどと家族の手帳から抜ける")
         .navigationBarTitleDisplayMode(.inline)
@@ -3263,7 +3263,7 @@ enum GroupReportUnavailableText {
             return "この内部版では通報の受付を停止しています。"
         }
 #endif
-        return "通信を確かめて、もう一度お試しください。急ぐときは問い合わせから連絡してください。"
+        return "通信を確かめて、もう一度お試しください。急ぐときは、設定の「お問い合わせ」からご連絡ください。"
     }
 }
 
@@ -3286,7 +3286,7 @@ private struct GroupPhotoSafetyDialogs: ViewModifier {
             // arrived stays; the other person is not told.
             .confirmationDialog(blockQuestion, isPresented: $showsBlockConfirmation, titleVisibility: .visible) {
                 Button("ブロックする", role: .destructive) { block() }
-                Button("戻る", role: .cancel) {}
+                Button("キャンセル", role: .cancel) {}
             } message: {
                 Text("このまどで、お互いの写真が届かなくなります。相手には知らせません。")
             }

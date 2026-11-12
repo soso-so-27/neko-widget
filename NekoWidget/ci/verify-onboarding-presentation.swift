@@ -326,11 +326,11 @@ enum OnboardingPresentationVerifier {
             OnboardingPresentationCopy.widgetAction == "ホーム画面で置いてきます",
             "Widget guide primary action changed (it checks nothing, so it must not say 「置きました」)"
         )
-        // 11/12: the Widget's tag reads 「タップで きょうの 1 枚」; the app uses
+        // 11/12: the Widget's tag reads 「タップで、きょうの1枚」; the app uses
         // those words, never 「札」.
         try require(
             OnboardingPresentationCopy.widgetCloudyStep
-                == "置いたら、そのままくもりのまどです。「タップで きょうの 1 枚」を押すと、きょうの写真が出ます。",
+                == "置いたら、そのままくもりのまどです。「タップで、きょうの1枚」を押すと、きょうの写真が出ます。",
             "the guide's last step changed"
         )
         try require(
@@ -340,7 +340,7 @@ enum OnboardingPresentationVerifier {
         try require(
             OnboardingPresentationCopy.widgetPlacedTitle == "置けました"
                 && OnboardingPresentationCopy.widgetPlacedBody
-                    == "ホーム画面の「タップで きょうの 1 枚」を押すと、きょうの写真が出ます。"
+                    == "ホーム画面の「タップで、きょうの1枚」を押すと、きょうの写真が出ます。"
                 && OnboardingPresentationCopy.widgetPlacedAction == "写真を見る",
             "the one 「置けました」 screen changed"
         )

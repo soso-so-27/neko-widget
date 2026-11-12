@@ -11,13 +11,13 @@ enum CatHouseholdIdentityStoreError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case let .unsupportedSchema(version):
-            "猫のプロフィールを読み込めません（形式 \(version)）。アプリをアップデートしてください。"
+        case .unsupportedSchema:
+            "猫の名前と日付を読み込めません。App Storeでアプリを最新にしてください。"
         case .missingState:
-            "猫のプロフィールがまだありません。"
+            "猫の名前と日付がまだありません。"
         case .lockUnavailable, .cannotCreateTemporaryFile, .atomicCommitFailed,
              .securityAttributesUnavailable:
-            "猫のプロフィールを保存できませんでした。もう一度お試しください。"
+            "猫の名前と日付を保存できませんでした。もう一度お試しください。"
         }
     }
 }

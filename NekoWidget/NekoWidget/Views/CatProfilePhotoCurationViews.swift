@@ -345,10 +345,10 @@ struct CatProfileConfirmedPhotosView: View {
                             .disabled(profile.manualCandidatePhotos.isEmpty)
                         }
                         if profileSettingsAlbumOptions != nil {
-                            Button("プロフィールを編集", systemImage: "cat") {
+                            Button("この子のことを開く", systemImage: "cat") {
                                 showsProfileSettings = true
                             }
-                            .accessibilityLabel("\(profile.displayName)のプロフィール設定")
+                            .accessibilityLabel("\(profile.displayName)のことを開く")
                             .accessibilityIdentifier("cat-profile-settings")
                         }
                     } label: {

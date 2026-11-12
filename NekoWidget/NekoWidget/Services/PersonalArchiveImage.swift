@@ -51,7 +51,7 @@ enum PersonalArchiveImage {
         var errorDescription: String? {
             switch self {
             case .unreadable: "写真を読み込めませんでした。もう一度選んでください。"
-            case .tooLarge: "この写真を保管用に準備できませんでした。別の写真でお試しください。"
+            case .tooLarge: "この写真を保存できませんでした。別の写真でお試しください。"
             }
         }
     }

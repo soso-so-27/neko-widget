@@ -96,13 +96,13 @@ enum BillingClientError: Error, Equatable, LocalizedError, Sendable {
         case .billingCredentialMissing:
             return "このiPhoneにはPlusの購入情報がありません。"
         case .installationChanged:
-            return "購入情報を、このiPhoneに引き継いでください。"
+            return "Plusを確かめられませんでした。「購入を復元」を押してください。"
         case .billingAccountRecoveryRequired:
-            return "購入情報を引き継いでから、もう一度お試しください。"
+            return "Plusを確かめられませんでした。「購入を復元」を押してください。"
         case .billingAccountRecoveryUnavailable:
             return "引き継げる購入情報を確認できませんでした。"
         case .billingAccountRecoveryEvidenceChanged:
-            return "購入情報が変わりました。引き継ぎを最初からやり直してください。"
+            return "Plusを確かめられませんでした。「購入を復元」を押してください。"
         case .windowSponsorshipAttemptPending:
             return "このまどのPlusを確認しています。少し待ってから、もう一度お試しください。"
         case .freshAccountAuthorizationExpired:

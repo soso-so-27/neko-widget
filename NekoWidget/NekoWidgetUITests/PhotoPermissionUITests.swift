@@ -3548,12 +3548,12 @@ final class SoloMemoriesUITests: XCTestCase {
         tap("preservation-account-delete")
         tap("preservation-account-delete-confirm")
         XCTAssertTrue(app.buttons["届いたか確かめる"].waitForExistence(timeout: 8))
-        XCTAssertFalse(app.staticTexts["保存用のアカウントを削除しました"].exists)
+        XCTAssertFalse(app.staticTexts["自動保存のアカウントを削除しました"].exists)
         capture("preservation-account-delete-response-lost")
         tap("届いたか確かめる")
         XCTAssertTrue(app.staticTexts["アカウントを削除しています"].waitForExistence(timeout: 8))
         tap("削除状況を確認")
-        XCTAssertTrue(app.staticTexts["保存用のアカウントを削除しました"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["自動保存のアカウントを削除しました"].waitForExistence(timeout: 8))
         XCTAssertFalse(app.buttons["preservation-account-delete"].exists)
         capture("preservation-account-delete-completed")
         app.terminate()
@@ -5456,7 +5456,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertFalse(readyApp.buttons["photo-browser-deliver"].exists)
         XCTAssertTrue(readyApp.staticTexts["2 / 5"].exists)
         XCTAssertTrue(readyApp.buttons["photo-browser-memory-saved-state"].exists)
-        readyApp.navigationBars["8月のまとめ"].buttons.element(boundBy: 0).tap()
+        readyApp.navigationBars["8月の作品"].buttons.element(boundBy: 0).tap()
         assertAlbumsRoot(in: readyApp)
         monthlyCard(in: readyApp).tap()
         XCTAssertTrue(readyApp.staticTexts["1 / 5"].waitForExistence(timeout: 5))
@@ -5465,7 +5465,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(readyApp.buttons["photo-browser-memory-saved-state"].waitForExistence(timeout: 5),
                       "The saved second photo must remain saved after leaving and reopening the month.")
         capture("albums-monthly-second-photo-saved-and-reopened")
-        readyApp.navigationBars["8月のまとめ"].buttons.element(boundBy: 0).tap()
+        readyApp.navigationBars["8月の作品"].buttons.element(boundBy: 0).tap()
         assertAlbumsRoot(in: readyApp)
         XCTAssertFalse(element("albums-highlights-all", in: readyApp).exists,
                        "The heading must not create a redundant overview destination.")
@@ -5496,13 +5496,13 @@ final class SoloMemoriesUITests: XCTestCase {
                 XCTAssertFalse(element("albums-cat-fixture-cat-0", in: app).exists)
                 // 10/20: months and movies share one list, 「これまでの月のまとめ・
                 // 季節のムービー」, under ふりかえり; open each from there.
-                let title = "月のまとめ・季節のムービー"
+                let title = "月の作品・季節のムービー"
                 for (route, cardID) in [
                     ("monthly:2025-08", "memories-monthly-window"),
                     ("seasonal:2025-Q3", "albums-seasonal-movie")
                 ] {
                     let entry = app.buttons.matching(NSPredicate(format: "label == %@",
-                        "これまでの月のまとめ・季節のムービー")).firstMatch
+                        "これまでの月の作品・季節のムービー")).firstMatch
                     reveal(entry, in: app)
                     entry.tap()
                     XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 10))
@@ -5809,13 +5809,13 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 15), .completed)
     }
 
-    private let reflectionsArchiveTitle = "月のまとめ・季節のムービー"
+    private let reflectionsArchiveTitle = "月の作品・季節のムービー"
 
     /// The one list of months and movies under ふりかえり (10/20).
     @MainActor
     private func reflectionsArchiveEntry(in app: XCUIApplication) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "label == %@",
-            "これまでの月のまとめ・季節のムービー")).firstMatch
+            "これまでの月の作品・季節のムービー")).firstMatch
     }
 
     @MainActor
@@ -5846,7 +5846,7 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(element("monthly-window-browser", in: app).waitForExistence(timeout: 10))
             // The month's photos are titled 「8月のまとめ」 (10/19), not 写真.
             let month = Int(expectedRoute.split(separator: "-").last ?? "") ?? 0
-            let title = "\(month)月のまとめ"
+            let title = "\(month)月の作品"
             XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5), app.debugDescription)
             XCTAssertTrue(app.images["photo-detail-zoom-surface"].waitForExistence(timeout: 10))
             let destination = element("solo-memories-monthly-destination", in: app)

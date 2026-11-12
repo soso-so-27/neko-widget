@@ -63,7 +63,7 @@ struct FamilyFarewellSharingState: Equatable, Sendable {
     let mayAlreadyHaveBeenShared: Bool
     var hasConsentForLocalDay: Bool { localDay != nil && localDay == consentedDay }
     var revocationExplanation: String {
-        "まだ送っていない日付は家族に届かなくなり、家族の手帳に出ているあなたの日付も消えます。このiPhoneの日付は残ります。すでに届いた日付や履歴は取り消せず、送っている途中だった日付は届いていることがあります。"
+        "家族の手帳から、あなたの日付を消します。このiPhoneの日付は残ります。すでに家族に届いた分は取り消せません。"
     }
 }
 
@@ -111,16 +111,16 @@ enum FamilySharingError: Error, Equatable, Sendable {
         case .invitationExpired: "この招待は期限が切れています。招待した人に、新しい招待リンクを送ってもらってください。"
         case .invitationRevoked: "この招待は取り消されています。"
         case .invitationUsed: "この招待はもう使われています。"
-        case .alreadyInFamily: "家族は 1 つまでです。いまの家族から抜けると参加できます。"
-        case .memberLimit: "この家族は、もう人数がいっぱいです。"
+        case .alreadyInFamily: "入れる家族の手帳は1つまでです。いまの手帳から抜けると参加できます。"
+        case .memberLimit: "この手帳は、もう人数がいっぱいです。"
         case .signInExpired: "もう一度サインインしてください。"
         case .notAllowed: "この操作はできません。"
-        case .plusRequired: "家族の手帳を作るには Plus が必要です。"
-        case .handoverPlusRequired: "引き継ぐには Plus が必要です。"
+        case .plusRequired: "家族の手帳を作るにはPlusが必要です。"
+        case .handoverPlusRequired: "引き継ぐにはPlusが必要です。"
         case .membershipChecking: "Plusを確認しています。少し待ってから、もう一度お試しください。"
         case .staleRoster: "家族のメンバーが変わりました。もう一度お試しください。"
-        case .removedOrDissolved: "この家族の共有は終わっています。"
-        case .payerAlreadyChosen: "ほかの家族の Plus で、先に共有が戻りました。あなたの Plus はそのまま使えます。"
+        case .removedOrDissolved: "この手帳の共有は終わっています。"
+        case .payerAlreadyChosen: "ほかの家族のPlusで、先に共有が戻りました。あなたのPlusはそのまま使えます。"
         case .offline: "インターネットにつながっていません。つながってから、もう一度お試しください。"
         case .rateLimited: "少し待ってから、もう一度お試しください。"
         case .serviceUnavailable: "いまは使えません。少し待ってから、もう一度お試しください。"

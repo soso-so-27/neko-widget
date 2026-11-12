@@ -14,7 +14,7 @@ import Foundation
             try state.checkResponse(status: 426, data: exact)
             preconditionFailure("Exact 426 must be terminal")
         } catch let error as ClientUpgradeRequiredError {
-            precondition(error.errorDescription == "新しいバージョンにアップデートしてください。")
+            precondition(error.errorDescription == "App Storeでアプリを最新にしてください。")
         }
         var dispatched = 0
         for _ in 0..<3 {

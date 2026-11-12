@@ -1141,7 +1141,7 @@ struct ShowcasePreparationView: View {
                     if store.canUndo {
                         Button("取り消す") {
                             do { try store.undo() }
-                            catch { errorMessage = "元に戻せませんでした。もう一度お試しください" }
+                            catch { errorMessage = "元に戻せませんでした。もう一度お試しください。" }
                         }
                     }
                     if let errorMessage {
@@ -1350,7 +1350,7 @@ struct ShowcasePreparationView: View {
             try action()
             previewEntry = nil
         } catch {
-            errorMessage = "写真を変更できませんでした。もう一度お試しください"
+            errorMessage = "写真を変更できませんでした。もう一度お試しください。"
         }
     }
 
@@ -1370,7 +1370,7 @@ struct ShowcasePreparationView: View {
             identifiers.insert(identifiers.remove(at: index), at: 0)
         }
         do { try await store.applyRecommendations(identifiers, boxes: boxes, to: targetScope) }
-        catch { errorMessage = "おすすめで選べませんでした。もう一度お試しください" }
+        catch { errorMessage = "おすすめで選べませんでした。もう一度お試しください。" }
     }
 }
 
@@ -1485,7 +1485,7 @@ private struct ShowcaseCandidatePicker: View {
                    isPresented: $saveFailed) {
                 Button("閉じる", role: .cancel) {}
             } message: {
-                Text("写真へのアクセスと空き容量を確かめてください")
+                Text("写真へのアクセスと空き容量を確かめてください。")
             }
             .safeAreaInset(edge: .bottom) {
                 Button {

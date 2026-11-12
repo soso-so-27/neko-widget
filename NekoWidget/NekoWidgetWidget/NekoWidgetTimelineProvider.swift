@@ -380,7 +380,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         guard let windowID = PublicWindowDefinition.windowID(from: sourceID),
               let definition = OfficialWindowConfiguration.definition(for: windowID) else {
             return .empty(at: now, imageVariant: variant, photoSourceIdentifier: sourceID,
-                          windowDisplayName: "使えなくなったまど", emptyStateReason: .sourceUnavailable)
+                          windowDisplayName: "終わったまど", emptyStateReason: .sourceUnavailable)
         }
         let store = OfficialWindowStore.forWindow(definition)
         let state = store.snapshot()
@@ -529,7 +529,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                             windowID: String) -> NekoWidgetEntry {
         guard let cached = GroupWidgetCache.entry(windowID: windowID) else {
             return .empty(at: now, imageVariant: variant, photoSourceIdentifier: sourceID,
-                          windowDisplayName: "使えなくなったまど", emptyStateReason: .sourceUnavailable)
+                          windowDisplayName: "終わったまど", emptyStateReason: .sourceUnavailable)
         }
         guard let fileName = cached.imageFileName, GroupWidgetCache.imageURL(for: cached) != nil else {
             return .empty(at: now, imageVariant: variant, photoSourceIdentifier: sourceID,

@@ -8,7 +8,7 @@ struct ClientUpgradeRequiredError: LocalizedError, Sendable {
 /// requests for this process. Never clears identity, pending work, or local data.
 final class ClientUpgradeRequirement: @unchecked Sendable {
     static let shared = ClientUpgradeRequirement()
-    static let message = "新しいバージョンにアップデートしてください。"
+    static let message = "App Storeでアプリを最新にしてください。"
     static let notification = Notification.Name("NekoClientUpgradeRequired")
     private let lock = NSLock()
     private var required = false

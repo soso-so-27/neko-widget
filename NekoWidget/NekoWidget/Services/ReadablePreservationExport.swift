@@ -249,7 +249,7 @@ enum ReadablePreservationExport {
             guard head != nil || !copies.isEmpty || !legacyTools.isEmpty else { throw PhotoMemoryNoteExportError.emptyRecords }
             summary.append("以前に1枚ずつ保存したコピー：\(copies.count)件")
             let date = ISO8601DateFormatter().string(from: writtenAt)
-            let readme = "ねこのまど — 保存したもの\n書き出した日時：\(date)（UTC）\n\n" + summary.joined(separator: "\n")
+            let readme = "ねこのまど — 保存したもの\n書き出した日時：\(date)（世界標準時。日本の時間は9時間あと）\n\n" + summary.joined(separator: "\n")
                 + "\n\n記録.txtはそのまま読めます。元の記録.jsonには、保存した内容が入っています。\n"
                 + "写真のコピーには、保存した写真だけが入っています。写真アプリのすべての写真ではありません。\n"
                 + "以前に保存したコピーは、今の記録とは別のフォルダにあります。\n"

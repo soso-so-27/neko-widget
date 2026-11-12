@@ -115,7 +115,7 @@ struct CatProfileTransferView: View {
                                 Task { @MainActor in
                                     switch await actions.importProfileDates(confirmed) {
                                     case let .success(changed):
-                                        pendingNotice = changed ? "猫のプロフィールと、選んだ写真がどの子かを引き継ぎました。" : "今の内容と同じだったので、変わったところはありません。"
+                                        pendingNotice = changed ? "猫の名前と日付、選んだ写真がどの子かを引き継ぎました。" : "今の内容と同じだったので、変わったところはありません。"
                                     case let .failure(error):
                                         pendingNotice = (error as? LocalizedError)?.errorDescription
                                             ?? "引き継ぎを完了できませんでした。ファイルを選び直してください。"

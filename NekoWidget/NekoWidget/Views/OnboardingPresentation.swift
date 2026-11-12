@@ -158,14 +158,14 @@ enum OnboardingPresentationCopy {
     /// the Home Screen, not that the Widget is placed.
     static let widgetAction = "ホーム画面で置いてきます"
     /// The last step of the guide, in the Widget's own words: its tag reads
-    /// 「タップで きょうの 1 枚」 (NekoWidgetView), never 「札」.
-    static let widgetCloudyStep = "置いたら、そのままくもりのまどです。「タップで きょうの 1 枚」を押すと、きょうの写真が出ます。"
+    /// 「タップで、きょうの1枚」 (NekoWidgetView), never 「札」.
+    static let widgetCloudyStep = "置いたら、そのままくもりのまどです。「タップで、きょうの1枚」を押すと、きょうの写真が出ます。"
     static let widgetLaterAction = "あとで"
 
     /// The first run's last screen once WidgetKit sees the Widget (11/10):
     /// one state, one sentence, one button. Plus is not offered here.
     static let widgetPlacedTitle = "置けました"
-    static let widgetPlacedBody = "ホーム画面の「タップで きょうの 1 枚」を押すと、きょうの写真が出ます。"
+    static let widgetPlacedBody = "ホーム画面の「タップで、きょうの1枚」を押すと、きょうの写真が出ます。"
     static let widgetPlacedAction = "写真を見る"
 
     /// Page two, when the app's own records could not be read: the Photos

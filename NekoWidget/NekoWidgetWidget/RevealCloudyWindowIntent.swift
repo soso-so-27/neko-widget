@@ -27,7 +27,7 @@ struct RevealCloudyWindowIntent: AppIntent {
     }
 }
 
-/// A tap on a cloudy window outside the 「タップで きょうの 1 枚」 capsule.
+/// A tap on a cloudy window outside the 「タップで、きょうの1枚」 capsule.
 /// Without it WidgetKit opens the app on the last screen (11/5). Only the
 /// capsule reveals (11/3), so this does nothing and never opens the app.
 struct CloudyWindowIdleTapIntent: AppIntent {

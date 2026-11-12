@@ -26,7 +26,7 @@ enum GroupWindowPresentation {
             case .staleNameRevision:
                 return "名前がすでに変わっていました。いまの名前を確かめて、もう一度お試しください。"
             case .closed:
-                return "このまどは閉じられています。"
+                return "このまどは終わりました。"
             case .stateRefreshRequired:
                 return "完了しました。画面に出るまで、少しお待ちください。"
             case .reconciliationRequired:
@@ -519,7 +519,7 @@ struct GroupWindowMembersView: View {
             presenting: removalTarget
         ) { member in
             Button("外す", role: .destructive) { running = "外す:\(member.id)"; Task { await model.remove(member) } }
-            Button("戻る", role: .cancel) {}
+            Button("キャンセル", role: .cancel) {}
         } message: { _ in
             Text("すでに届いた写真は、その人のiPhoneに残ります。")
         }
@@ -529,7 +529,7 @@ struct GroupWindowMembersView: View {
             titleVisibility: .visible
         ) {
             Button("招待を取り消す", role: .destructive) { running = "招待を取り消す"; Task { await model.revokeInvitation() } }
-            Button("戻る", role: .cancel) {}
+            Button("キャンセル", role: .cancel) {}
         } message: {
             Text("取り消すと、このリンクからは誰も参加できなくなります。")
         }
@@ -550,9 +550,9 @@ struct GroupWindowMembersView: View {
                     if let onLeft { onLeft() } else { dismiss() }
                 }
             }
-            Button("戻る", role: .cancel) {}
+            Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("終わりにすると、メンバー全員が写真を届けられなくなります。")
+            Text("メンバー全員が写真を届けられなくなり、元に戻せません。届いた写真は「前のまど」で見られます。")
         }
         .confirmationDialog(
             "このまどから抜けますか？",
@@ -566,9 +566,9 @@ struct GroupWindowMembersView: View {
                     if let onLeft { onLeft() } else { dismiss() }
                 }
             }
-            Button("戻る", role: .cancel) {}
+            Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("抜けると、これから届く写真は見られません。")
+            Text("これから届く写真は見られなくなります。届いた写真は「前のまど」で見られます。")
         }
         .confirmationDialog(rejectionTitle, isPresented: rejectionPresented, titleVisibility: .visible,
                             presenting: rejectionTarget, actions: rejectionActions)
@@ -785,7 +785,7 @@ struct GroupWindowMembersView: View {
     }
     @ViewBuilder private func rejectionActions(_ request: GroupJoinRequest) -> some View {
         Button("断る", role: .destructive) { running = "断る:\(request.id)"; Task { await model.reject(request) } }
-        Button("戻る", role: .cancel) {}
+        Button("キャンセル", role: .cancel) {}
     }
 
     private func requestRow(_ request: GroupJoinRequest, window: GroupWindow) -> some View {
@@ -980,7 +980,7 @@ private struct GroupHiddenMemberDialogs: ViewModifier {
             .confirmationDialog(question, isPresented: targetShown, titleVisibility: .visible,
                                 presenting: target) { member in
                 Button(member.blocked == true ? "ブロックを解除" : "表示する") { restore(member) }
-                Button("戻る", role: .cancel) {}
+                Button("キャンセル", role: .cancel) {}
             } message: { member in
                 Text(member.blocked == true
                      ? "このまどで、お互いの写真がまた届くようになります。"
@@ -1305,7 +1305,7 @@ struct GroupJoinView: View {
                 Label("いまのアプリでは参加できません", systemImage: "hourglass")
                     .font(.headline)
                     .accessibilityIdentifier("group-join-unavailable")
-                Text("アプリを最新にしてから、もう一度リンクを開いてください。")
+                Text("App Storeでアプリを最新にしてから、もう一度リンクを開いてください。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

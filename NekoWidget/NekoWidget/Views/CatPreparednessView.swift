@@ -323,7 +323,7 @@ struct LostCatDraftView: View {
         // value is on its row.
         ToolMakeBar(missing: issues.isEmpty ? requiredFields : []) {
             if !issues.isEmpty {
-                Text("直すところがあります。赤い文字の欄を見てください")
+                Text("直すところがあります。赤い文字の欄を見てください。")
                     .font(.footnote).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }

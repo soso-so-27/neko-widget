@@ -134,12 +134,12 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
         case .accessUnconfirmed: "Plusを確認できないため、まだ新しく保存できません。保存した記録はこれまでどおり使えます。"
         case .photoReplacement: "保存した写真は差し替えられません。別の写真は、新しく選んで保存してください。"
         case .rateLimited, .exportThrottled: "操作が続いたため、いまは使えません。少し待ってから、もう一度お試しください。"
-        case .integrityFailure: "保存した記録の内容を確認できませんでした。元の写真やメモは消さずに、サポートにお問い合わせください。"
+        case .integrityFailure: "保存した記録の内容を確認できませんでした。元の写真やメモは消さずに、設定の「お問い合わせ」からご連絡ください。"
         case .accountingUnavailable: "保存できる容量を確認できません。少し待ってから、もう一度お試しください。"
         case .membershipLinkConsent: "このアカウントにPlusを連携することに同意してください。"
-        case .membershipLinkConflict: "すでにほかのアカウントやPlusと連携されているため、変更できません。購入し直さずに、サポートにお問い合わせください。保存した記録はこれまでどおり使えます。"
+        case .membershipLinkConflict: "すでにほかのアカウントやPlusと連携されているため、変更できません。購入し直さずに、設定の「お問い合わせ」からご連絡ください。保存した記録はこれまでどおり使えます。"
         case .membershipLinkExpired: "時間がたったため、連携できませんでした。もう一度「Plusを連携する」を押してください。"
-        case .billingIdentityUnavailable: "このiPhoneのPlusの購入情報を確認できません。購入し直さずに、サポートにお問い合わせください（購入情報の引き継ぎが必要なことがあります）。保存した記録はこれまでどおり使えます。"
+        case .billingIdentityUnavailable: "このiPhoneのPlusの購入情報を確認できません。購入し直さずに、設定の「お問い合わせ」からご連絡ください。保存した記録はこれまでどおり使えます。"
         case .billingIdentityChanged: "購入情報が変わったため、途中で止まりました。「購入を復元」を押してから、やり直してください。"
         }
     }
