@@ -384,14 +384,10 @@ private struct VeterinaryConsultationView: View {
         .toolBottomBar { bottomBar }
     }
     /// 11/12: delete is not part of writing the memo; it sits in 「…」.
-    /// Round 2: 「新しい診察メモを始める」 too, above it (it was a row and a
-    /// footnote on the page); its question says what happens to this memo.
     private var moreMenu: some View {
         ToolMoreMenu(destructiveTitle: "この診察メモを削除", itemIdentifier: "vet-delete",
-                     menuIdentifier: "vet-more-menu", action: { deletesVisit = true }) {
-            if let visit, startsNewMemo(visit) { newMemoItem }
-        }
-        .disabled(visit == nil)
+                     menuIdentifier: "vet-more-menu") { deletesVisit = true }
+            .disabled(visit == nil)
     }
     /// The one way forward, in the same place as every tool (11/8): how the
     /// save stands, then 「先生に見せる」.
@@ -564,20 +560,24 @@ private struct VeterinaryConsultationView: View {
             return
         }
     }
-    /// 「診察メモ」 (11/12): this cat's past memos as one row that opens them.
-    /// Round 2: starting a new memo moved to 「…」 (`newMemoItem`); the
-    /// question it asks says where the memo on the page goes.
+    /// 「診察メモ」 (11/12): this cat's past memos as one row that opens them,
+    /// then starting a new memo, which files the one on the page there. The
+    /// footer says so; nothing else on the page talks about finishing.
     @ViewBuilder private func memoSection(_ visit: VeterinaryVisit) -> some View {
-        if hasPast {
+        let starts = startsNewMemo(visit)
+        if starts || hasPast {
             Section {
                 pastRow
+                if starts { newMemoRow }
             } header: {
                 Text("診察メモ")
+            } footer: {
+                if starts { Text("始めると、いまのメモは「これまでの診察メモ」に入ります。") }
             }
         }
     }
-    /// An action in 「…」, with the same conditions as before.
-    private var newMemoItem: some View {
+    /// An action, not a page: no chevron and no value; tinted as a button.
+    private var newMemoRow: some View {
         Button { finishing = true } label: {
             Label("新しい診察メモを始める", systemImage: "plus.circle")
         }
@@ -608,8 +608,7 @@ private struct VeterinaryConsultationView: View {
     /// The note, last: a quiet footnote on the page ground (11/12).
     private var noteSection: some View {
         Section {
-            // 11/12 (round 2): one line (it ran under the button on the first screen).
-            ToolImportantInformation(text: "医療の判断ではありません。")
+            ToolImportantInformation(text: "飼い主の記録をまとめたもので、医療の判断ではありません。様子がおかしいときは、迷わず動物病院に連絡してください。")
                 .quietRow()
         }
     }

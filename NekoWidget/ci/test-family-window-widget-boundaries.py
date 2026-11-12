@@ -4603,7 +4603,7 @@ class CareHandoffRoundTwoTests(unittest.TestCase):
                            ("EvacuationPreparationView.swift", "まず自分と家族の安全を守ってください。"),
                            ("EvacuationPreparationView.swift", "病歴・連絡先・ワクチンの証明・マイクロチップ番号は、必要な相手にだけ見せてください。"),
                            ("CatPreparednessView.swift", "チラシを貼るときは、その場所の管理者に確かめてください。"),
-                           ("VeterinaryVisitView.swift", "医療の判断ではありません。")):
+                           ("VeterinaryVisitView.swift", "飼い主の記録をまとめたもので、医療の判断ではありません。様子がおかしいときは、迷わず動物病院に連絡してください。")):
             swift = (views / name).read_text(encoding="utf-8")
             call = 'ToolImportantInformation(text: "' + text + '")\n'
             self.assertIn(call, swift, name)
@@ -6348,16 +6348,13 @@ class VeterinaryRoundOneTests(unittest.TestCase):
         # 11/12: 「診察メモ」: これまでの診察メモ (when there are any), then
         # 「新しい診察メモを始める」, an action row with the conditions
         # 「診察を終える」 had, and a footer only when it is there.
-        # 11/12 (round 2): 「新しい診察メモを始める」 is in 「…」, with the same
-        # conditions; its question says where the memo goes (no footnote).
         memo = section(view, "@ViewBuilder private func memoSection(", "/// 「この子のこと」 folded")
-        self.assertIn("if hasPast {", memo)
+        self.assertIn("let starts = startsNewMemo(visit)", memo)
+        self.assertIn("if starts || hasPast {", memo)
+        self.assertLess(memo.index("pastRow"), memo.index("if starts { newMemoRow }"))
         self.assertIn('Text("診察メモ")', memo)
-        self.assertNotIn("始めると、いまのメモは", view)
-        self.assertNotIn("newMemoRow", view)
-        more_menu = section(view, "private var moreMenu: some View {", "/// The one way forward")
-        self.assertIn("if let visit, startsNewMemo(visit) { newMemoItem }", more_menu)
-        new_row = section(memo, "private var newMemoItem: some View {", "private var hasPast")
+        self.assertIn('if starts { Text("始めると、いまのメモは「これまでの診察メモ」に入ります。") }', memo)
+        new_row = section(memo, "private var newMemoRow: some View {", "private var hasPast")
         self.assertIn('Label("新しい診察メモを始める", systemImage: "plus.circle")', new_row)
         self.assertIn('.disabled(changes).accessibilityIdentifier("vet-finish")', new_row)
         self.assertIn("Button { finishing = true } label:", new_row)
@@ -6375,7 +6372,8 @@ class VeterinaryRoundOneTests(unittest.TestCase):
         self.assertIn('"vet-row-past"', care)
         # The note last, a quiet footnote on the page ground (11/12).
         note = section(view, "private var noteSection: some View {", "// MARK: Pages each row opens")
-        self.assertIn('ToolImportantInformation(text: "医療の判断ではありません。")\n                .quietRow()', note)
+        self.assertIn('ToolImportantInformation(text: "飼い主の記録をまとめたもので、医療の判断ではありません。'
+                      '様子がおかしいときは、迷わず動物病院に連絡してください。")\n                .quietRow()', note)
         self.assertNotIn("Button", note)
         # Each page holds the controls that part had, with the same bindings.
         noticed = section(view, "private var noticedPage: some View {", "private var recordsPage: some View {")
@@ -6457,7 +6455,10 @@ class VeterinaryRoundOneTests(unittest.TestCase):
         # Delete sits in 「…」 in the bar, with the same confirmation; no red card.
         more = section(view, "private var moreMenu: some View {", "/// The one way forward")
         self.assertIn('ToolMoreMenu(destructiveTitle: "この診察メモを削除", itemIdentifier: "vet-delete",\n'
-                      '                     menuIdentifier: "vet-more-menu", action: { deletesVisit = true }) {', more)
+                      '                     menuIdentifier: "vet-more-menu") { deletesVisit = true }', more)
+        # The 「…」 menu keeps the delete item only (the owner wants the new
+        # memo's row on the page, where it shows where the memo goes).
+        self.assertNotIn("vet-finish", more)
         self.assertIn(".disabled(visit == nil)", more)
         shared_more = section(parts, "struct ToolMoreMenu<Extra: View>: View {", "\n}\n")
         self.assertIn("Button(destructiveTitle, role: .destructive) { action() }\n                .accessibilityIdentifier(itemIdentifier)", shared_more)
