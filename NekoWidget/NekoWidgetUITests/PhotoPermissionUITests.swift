@@ -1795,7 +1795,7 @@ final class SoloMemoriesUITests: XCTestCase {
         app.buttons["病院で見せる"].tap()
         // 11/8: a past memo row is named by its day; find it by its identifier.
         // 11/12: the past memos are a page of their own, opened from one row
-        // under 「この子の記録」, below the first screen; the Form makes it near view.
+        // under 「診察メモ」, below the first screen; the Form makes it near view.
         let previousVisit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-past-")).firstMatch
         XCTAssertTrue(app.buttons["vet-show"].waitForExistence(timeout: 5), app.debugDescription)
         let pastRow = app.buttons["vet-row-past"]
