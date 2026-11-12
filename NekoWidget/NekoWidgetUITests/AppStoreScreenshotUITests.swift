@@ -18,7 +18,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.buttons["upgrade-fixture-426"].tap()
         let message = app.staticTexts["client-upgrade-message"]
         XCTAssertTrue(message.waitForExistence(timeout: 5))
-        XCTAssertEqual(message.label, "新しいバージョンにアップデートしてください。")
+        XCTAssertEqual(message.label, "App Storeでアプリを最新にしてください。")
         XCTAssertFalse(app.links["client-upgrade-store"].exists)
         XCTAssertFalse(app.buttons["upgrade-fixture-426"].isHittable)
         captureScreenshot(named: "client-upgrade-required-over-settings")

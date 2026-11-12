@@ -214,7 +214,7 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
             elementTypes: [.button], timeout: 5, requireHittable: true) { done.tap() }
         else { XCUIDevice.shared.press(.home) }
         let cloudyCaption = springboard.descendants(matching: .any).matching(NSPredicate(
-            format: "label CONTAINS %@ OR value CONTAINS %@", "タップで きょうの 1 枚", "タップで きょうの 1 枚")).firstMatch
+            format: "label CONTAINS %@ OR value CONTAINS %@", "タップで、きょうの1枚", "タップで、きょうの1枚")).firstMatch
         // WidgetKit can expose only the combined Widget accessibility element.
         // Keep the screenshot for visual inspection even if that text is not AX.
         _ = cloudyCaption.waitForExistence(timeout: 30)

@@ -19,6 +19,98 @@ def section(value: str, start: str, end: str) -> str:
     return value[start_index:end_index]
 
 
+class WordingPass1112Tests(unittest.TestCase):
+    """11/12 wording pass: one word per thing on the screens this pass owns.
+
+    Each old variant below was removed; it must not come back as a string
+    shown to people. Identifiers, keys and stored values are not checked."""
+
+    OWNED = (
+        "NekoWidget/Views/FamilyNotebookView.swift",
+        "NekoWidget/Services/FamilyNotebookSharingContract.swift",
+        "NekoWidget/Views/LikedPhotosView.swift",
+        "NekoWidget/Views/MonthlyWindowView.swift",
+        "NekoWidget/Views/GroupWindowSetupView.swift",
+        "NekoWidget/Views/GroupWindowView.swift",
+        "NekoWidget/ViewModels/AppViewModel.swift",
+        "NekoWidget/Views/ManagedPreservationView.swift",
+        "NekoWidget/Services/AppRecordPersistence.swift",
+        "NekoWidget/Services/ManagedPreservationClient.swift",
+        "NekoWidget/Services/BillingClientCore.swift",
+        "NekoWidget/Services/CatCareStore.swift",
+        "NekoWidget/Services/CatCandidateCurationStore.swift",
+        "NekoWidget/Services/CatHouseholdIdentityStore.swift",
+        "NekoWidget/Services/PhotoMemoryNoteStore.swift",
+        "NekoWidget/Services/SeasonalMovieArchiveStore.swift",
+        "NekoWidget/Views/CatCareView.swift",
+        "NekoWidget/Views/MainTabView.swift",
+        "NekoWidget/Views/CatProfilePhotoCurationViews.swift",
+        "NekoWidget/Views/CatProfileTransferView.swift",
+        "Shared/Sharing/ClientUpgradeRequirement.swift",
+        "NekoWidgetWidget/NekoWidgetView.swift",
+        "NekoWidgetWidget/NekoWidgetConfigurationIntent.swift",
+        "NekoWidgetWidget/NekoWidgetTimelineProvider.swift",
+        "NekoWidgetWidget/WidgetManifestReader.swift",
+        "NekoWidgetWidget/ToggleWidgetLikeIntent.swift",
+    )
+
+    REMOVED = (
+        # 家族の手帳, not 家族
+        "家族から抜けますか", "家族から外す", "を家族から外しますか", "この名前で家族を作る",
+        "家族は 1 つまで", "この家族は、もう人数", "この家族の共有は終わ",
+        # 月の作品
+        "月のまとめ",
+        # このまどは終わりました／終わったまど
+        "このまどは閉じられています", "このまどはもうありません", "利用できなくなりました",
+        "使えなくなったまど", "このまどは表示できません", "ウィジェットを編集してください",
+        # 確認をやめるボタンは「キャンセル」
+        'Button("戻る", role: .cancel)', 'placement: .cancellationAction) { Button("やめる")',
+        # お問い合わせ
+        "サポートにお問い合わせ", 'Link("問い合わせる"', "問い合わせから連絡",
+        # アプリを最新にする
+        "アップデートして", "アプリを新しくして", "（形式 ",
+        # この子のこと／猫の名前と日付
+        "猫のプロフィールだけ移す", "猫のプロフィールが変わりました", "猫のプロフィールを",
+        "猫のプロフィールがまだ", '"プロフィールを編集"',
+        # 自動保存
+        "保存用のアカウント", "アカウントと保存したコピー", "書き出せる期限",
+        # 作品が「とどきました」
+        "作品が届きました",
+        # 半角のすき間
+        "Plus を", "の Plus", "ひと月に 5 枚", "この iPhone", "の iPhone", "タップで きょうの 1 枚",
+        # 中の事情
+        "以前の保存先と", "前のデータの片づけ", "ファイルを片づけられません", "購入情報を引き継いで", "購入情報を、このiPhoneに引き継いで",
+        "引き継ぎを最初からやり直して",
+    )
+
+    def test_removed_variants_do_not_come_back(self) -> None:
+        literal = re.compile(r'"(?:[^"\\\n]|\\.)*"')
+        for path in self.OWNED:
+            code_lines = [line for line in source(path).splitlines() if not line.lstrip().startswith("//")]
+            code = "\n".join(code_lines)
+            # Only what is inside string literals, so comments and names do not count.
+            shown = "\n".join("\n".join(literal.findall(line)) for line in code_lines)
+            for old in self.REMOVED:
+                is_code = old.startswith(("Button(", "placement", "Link(", '"'))
+                self.assertFalse(old in (code if is_code else shown), f"{path}: {old}")
+
+    def test_standard_words_are_used(self) -> None:
+        notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
+        self.assertIn('"家族の手帳から抜けますか？"', notebook)
+        self.assertIn('"この名前で手帳を作る"', notebook)
+        self.assertIn('"\\(member.displayName)を家族の手帳から外しますか？"', notebook)
+        self.assertIn('"\\(presentation.monthNumber)月の作品"', source("NekoWidget/Views/MonthlyWindowView.swift"))
+        self.assertIn('"これまでの月の作品・季節のムービー"', source("NekoWidget/Views/LikedPhotosView.swift"))
+        self.assertIn('return "このまどは終わりました。"', source("NekoWidget/Views/GroupWindowSetupView.swift"))
+        self.assertIn('"終わったまど"', source("NekoWidgetWidget/NekoWidgetConfigurationIntent.swift"))
+        self.assertIn('Text("Plusをやめたあとも、12か月のあいだは読み出しと書き出しができます。このiPhoneの記録は残ります。")',
+                      source("NekoWidget/Views/ManagedPreservationView.swift"))
+        self.assertIn('"App Storeでアプリを最新にしてください。"', source("Shared/Sharing/ClientUpgradeRequirement.swift"))
+        setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        self.assertIn('Text("メンバー全員が写真を届けられなくなり、元に戻せません。届いた写真は「前のまど」で見られます。")', setup)
+        self.assertIn('Text("これから届く写真は見られなくなります。届いた写真は「前のまど」で見られます。")', setup)
+
+
 class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == "darwin", "Requires macOS Foundation /private aliases")
     def test_sent_thumbnail_paths_accept_missing_private_alias_children(self) -> None:
@@ -501,11 +593,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "private var emptyStateTitle: String",
             "private var emptyStateMarkSize: CGFloat",
         )
-        self.assertIn('return "このまどは表示できません"', empty_title)
+        self.assertIn('return "このまどは終わりました"', empty_title)
         self.assertIn('return "写真を待っています"', empty_title)
         self.assertNotIn('return "まだ届いていません"', empty_title)
         self.assertIn('return "写真を準備しています"', empty_title)
-        self.assertIn('return "ウィジェットを編集してください"', empty_title)
+        self.assertIn('return "長押しして、別のまどを選んでください"', empty_title)
         self.assertIn("return entry.windowDisplayName", empty_title)
 
         mark_size = section(
@@ -620,7 +712,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "static func resolvedSource(id: String)",
             "static var availableSources",
         )
-        self.assertIn('name: "使えなくなったまど"', resolved)
+        self.assertIn('name: "終わったまど"', resolved)
         self.assertIn("static func familyWindowExists", resolved)
 
         self.assertIn(
@@ -1041,7 +1133,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('"memories-monthly-window"', album_root)
         self.assertIn('"albums-seasonal-movie"', album_root)
         # The album root opens one combined archive of months and movies (#397).
-        self.assertIn('NavigationLink("これまでの月のまとめ・季節のムービー", value: MemoriesRoute.reflectionsArchive)', album_root)
+        self.assertIn('NavigationLink("これまでの月の作品・季節のムービー", value: MemoriesRoute.reflectionsArchive)', album_root)
         self.assertIn("ForEach(months)", album_root)
         self.assertIn("ForEach(seasonalMovies)", album_root)
         self.assertIn("sections: albumSections", album_root)
@@ -1080,7 +1172,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("memories-section-jump-bar", memory_view)
         self.assertNotIn("Array(photos.prefix(6))", memory_view)
         self.assertNotIn("NavigationLink(value: MemoriesRoute.favorites)", memory_view)
-        self.assertIn('NavigationLink("これまでの月のまとめ・季節のムービー", value: MemoriesRoute.reflectionsArchive)', memory_view)
+        self.assertIn('NavigationLink("これまでの月の作品・季節のムービー", value: MemoriesRoute.reflectionsArchive)', memory_view)
         self.assertIn("albumsView().periodArchive(showsMovies: false)", main_tab)
         self.assertIn("albumsView().periodArchive(showsMovies: true)", main_tab)
         destinations = section(
@@ -1475,7 +1567,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         for section_title in (
             "写真とウィジェット",
             "家族とまど",
-            "保存",
+            "機種変更にそなえる",
             "困ったとき",
             "テスト用",
         ):
@@ -3265,7 +3357,7 @@ class GroupWidgetCacheTests(unittest.TestCase):
         intent = source("NekoWidgetWidget/NekoWidgetConfigurationIntent.swift")
         # A missing group window never becomes the personal-library default.
         resolve = section(intent, "if let groupWindowID = GroupWidgetCache.windowID(fromSourceID: id) {", "guard let localWindowID")
-        self.assertIn('"使えなくなったまど"', resolve)
+        self.assertIn('"終わったまど"', resolve)
 
         project = source("NekoWidget.xcodeproj/project.pbxproj")
         widget_sources = section(project, "A00000000000000000000025 /* Sources */ = {", "A00000000000000000000028 /* Sources */")
@@ -3547,7 +3639,7 @@ class LostCatToolReview1108Tests(unittest.TestCase):
         bar = section(form, "private func bottomBar(_ issues: [String: String]) -> some View {", "private var catMenu: some View {")
         self.assertIn('Button { openPreview() } label: { Label("チラシを作る", systemImage: "doc.richtext").frame(maxWidth: .infinity) }', bar)
         self.assertIn("ToolMakeBar(missing: issues.isEmpty ? requiredFields : []) {", bar)
-        self.assertIn('Text("直すところがあります。赤い文字の欄を見てください")', bar)
+        self.assertIn('Text("直すところがあります。赤い文字の欄を見てください。")', bar)
         self.assertIn(".disabled(!canPreview)", bar)
         self.assertNotIn("を入れると作れます", view)
         required = section(view, "private var requiredFields: [String] {", "private var canPreview")
@@ -5564,7 +5656,7 @@ class SettingsLayoutTests(unittest.TestCase):
         settings = source("NekoWidget/Views/SettingsView.swift")
         body = section(settings, "    var body: some View {\n        Form {", '.navigationTitle("設定")')
         # 11/8: Plus and 保存 first; one-row sections grouped; the app's own pages together.
-        order = ["PlusSettingsSection()", 'Text("保存")', 'Text("写真とウィジェット")',
+        order = ["PlusSettingsSection()", 'Text("機種変更にそなえる")', 'Text("写真とウィジェット")',
                  'Text("家族とまど")', '"settings-support-page"', '"settings-privacy-policy"',
                  '"settings-recommend-app"', 'Text("ねこのまどについて")', '"settings-app-version"',
                  '"settings-account-deletion"', 'Text("テスト用")']
@@ -6532,14 +6624,14 @@ class OnePlaceSettingsTests(unittest.TestCase):
         self.assertIn(".foregroundStyle(Color(uiColor: .tertiaryLabel))", family)
         self.assertNotIn('"settings-cat-profiles"', body)
         # 保存 is one row: 自動保存 holds the profile file; without 自動保存 the file row stands alone.
-        save = section(body, "if ManagedPreservationConfiguration.current.isEnabled {", 'Text("保存")')
+        save = section(body, "if ManagedPreservationConfiguration.current.isEnabled {", 'Text("機種変更にそなえる")')
         self.assertIn("AppRecordSettingsView(profileTransfer: (actions: catProfilesActions,", save)
         self.assertLess(save.index('"settings-managed-preservation"'), save.index("} else {"))
         self.assertGreater(save.index('"settings-cat-profile-transfer"'), save.index("} else {"))
         self.assertNotIn("プロフィールの引き継ぎはいりません", settings)
         saving = source("NekoWidget/Services/AppRecordPersistence.swift")
         transfer = section(saving, "if let profileTransfer {", '"app-record-cat-profile-transfer"')
-        self.assertIn('Label("Plusなしで猫のプロフィールだけ移す"', transfer)
+        self.assertIn('Label("Plusなしで猫の名前と日付だけ移す"', transfer)
         self.assertIn("CatProfileTransferView(actions: profileTransfer.actions, hasProfiles: profileTransfer.hasProfiles)", transfer)
 
     def test_account_deletion_is_one_row_one_tap_from_settings(self) -> None:
@@ -6571,7 +6663,7 @@ class OnePlaceSettingsTests(unittest.TestCase):
         # The delete button and its confirmation exist only on the deletion entry.
         view = source("NekoWidget/Views/ManagedPreservationView.swift")
         self.assertEqual(view.count('"preservation-account-delete"'), 1)
-        self.assertIn('Button("アカウントと保存したコピーを削除", role: .destructive) { coordinator.deleteServiceAccount() }', view)
+        self.assertIn('Button("アカウントと保存したものを削除", role: .destructive) { coordinator.deleteServiceAccount() }', view)
         # 11/8 (28): the deletion entry is one sentence and the button, not the account screen again.
         self.assertIn("if deletesAccount { deletionContent }", view)
         deletion = section(view, "@ViewBuilder private var deletionContent: some View {", "private func accountDeletionSection(")
@@ -7000,7 +7092,7 @@ class ScreenTextTrimTests(unittest.TestCase):
         self.assertIn('"途中の片づけを確かめられませんでしたが、記録は残っています。"',
                       source("NekoWidget/Services/ToolPreservation.swift"))
         archive = source("NekoWidget/Services/SeasonalMovieArchiveStore.swift")
-        self.assertIn('"これまでのムービーは新しい形式で保存されています。アプリをアップデートしてください。"', archive)
+        self.assertIn('"これまでのムービーは新しい形式で保存されています。App Storeでアプリを最新にしてください。"', archive)
 
     def test_photo_screens_say_less(self) -> None:
         for path in ("NekoWidget/Views/OnboardingView.swift", "NekoWidget/Views/ScanStatusView.swift"):
@@ -7017,8 +7109,8 @@ class ScreenTextTrimTests(unittest.TestCase):
 
     def test_album_words(self) -> None:
         album = source("NekoWidget/Views/AlbumPrototypeView.swift")
-        self.assertNotIn("作品がとどきました。", album)
-        self.assertEqual(album.count("作品が届きました。"), 3)
+        self.assertNotIn("作品が届きました。", album)
+        self.assertEqual(album.count("作品がとどきました。"), 3)
         self.assertNotIn('"1 年の作品"', album)
         # The test-only reset is compiled out of the product; the keys keep their names.
         guarded = album.split("#if DEBUG || INTERNAL_PRESENTATION\n    /// Test only: the newest finished month", 1)
