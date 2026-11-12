@@ -127,14 +127,14 @@ struct CatHomeFacts {
         case .female: "メス"
         case .unknown: nil
         }
-        let age = birthday.flatMap { age(from: $0, to: now, calendar: calendar) }
-        let days = adoption.flatMap { daysTogether(since: $0, now: now, calendar: calendar) }
+        let age: String? = birthday.flatMap { Self.age(from: $0, to: now, calendar: calendar) }
+        let days: Int? = adoption.flatMap { Self.daysTogether(since: $0, now: now, calendar: calendar) }
         let about = [sex, age].compactMap { $0 }.joined(separator: "・")
         let parts = [about.isEmpty ? nil : about, days.map { "うちに来て \($0.formatted())日" }].compactMap { $0 }
         let spoken = [cat.name, sex, age, days.map { "うちに来て\($0)日" }].compactMap { $0 }.joined(separator: "、")
         let share: CGFloat = progress.map { $0.total > 0 ? CGFloat($0.filled) / CGFloat($0.total) : 0 } ?? 0
         let progressText = progress.map { $0.filled >= $0.total ? "そろっています" : "あと\($0.total - $0.filled)つ" }
-        let birthdayIn = birthday.flatMap { daysUntilBirthday($0, now: now, calendar: calendar) }
+        let birthdayIn: String? = birthday.flatMap { Self.daysUntilBirthday($0, now: now, calendar: calendar) }
             .map { $0 == 0 ? "きょう" : "あと\($0)日" }
         return CatHomeFacts(line: parts.isEmpty ? nil : parts.joined(separator: "　／　"), spoken: spoken,
                             departed: false, progressText: progressText, progressShare: min(max(share, 0), 1),
