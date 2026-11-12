@@ -36,6 +36,9 @@ struct MembershipOfferView: View {
     /// 「購入を復元」 was pressed, so its spinner sits on that link, not on the
     /// purchase button (11/6). Cleared when the work ends.
     @State private var running: String?
+    /// A short screen (iPhone SE): the pinned block is tighter (11/12: it
+    /// took a third of the screen there).
+    @State private var isShortScreen = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// 11/12: 「続ける」 read as if the free days stop without Plus.
@@ -134,8 +137,9 @@ struct MembershipOfferView: View {
             .frame(maxWidth: 440)
             .padding(.horizontal, 24)
             .padding(.top, 8)
-            // Room for the fade above the pinned bar, so the last row reads in full.
-            .padding(.bottom, pinsPurchase ? 40 : 20)
+            // Room for the fade above the pinned bar, so the last row reads in
+            // full and no card ends under the bar's edge.
+            .padding(.bottom, pinsPurchase ? Self.fadeHeight + 20 : 20)
             .frame(maxWidth: .infinity)
         }
         // 11/11: the button, the price and the renewal sentence stay at the
@@ -144,6 +148,9 @@ struct MembershipOfferView: View {
             if pinsPurchase { pinnedPurchaseBar }
         }
         .background(Color(uiColor: .systemBackground))
+        // The whole screen under the title, so the pinned block's own size
+        // never feeds back into this.
+        .onGeometryChange(for: Bool.self) { $0.size.height < 640 } action: { isShortScreen = $0 }
         .navigationTitle("ねこのまど Plus")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -160,6 +167,10 @@ struct MembershipOfferView: View {
     }
 
     private var pinsPurchase: Bool { !dynamicTypeSize.isAccessibilitySize }
+
+    /// Rows fade out over this height just above the pinned bar, so a card
+    /// running under it fades instead of being sliced at the edge.
+    private static let fadeHeight: CGFloat = 36
 
     /// Only on the first offer that opened by itself (no reason line there).
     private var showsStaysFreeLine: Bool { context == .onboarding && showsClose && !isMember }
@@ -193,7 +204,7 @@ struct MembershipOfferView: View {
 
     /// The trial or member line, the button, the price and the renewal sentence.
     private var purchaseBlock: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: isShortScreen ? 4 : 8) {
             offerDetails
             actions
         }
@@ -203,8 +214,8 @@ struct MembershipOfferView: View {
         purchaseBlock
             .frame(maxWidth: 440)
             .padding(.horizontal, 24)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
+            .padding(.top, isShortScreen ? 6 : 12)
+            .padding(.bottom, isShortScreen ? 2 : 8)
             .frame(maxWidth: .infinity)
             // 11/11: in dark mode the bar and the page were the same grey and
             // the hairline could not be seen, so a card looked cut in half.
@@ -214,8 +225,8 @@ struct MembershipOfferView: View {
                 LinearGradient(colors: [Color(uiColor: .systemBackground).opacity(0),
                                         Color(uiColor: .systemBackground)],
                                startPoint: .top, endPoint: .bottom)
-                    .frame(height: 28)
-                    .offset(y: -28)
+                    .frame(height: Self.fadeHeight)
+                    .offset(y: -Self.fadeHeight)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
             }
@@ -243,11 +254,9 @@ struct MembershipOfferView: View {
                                         targetAspectRatio: 2.5)
                 }
             } else {
-                Image(systemName: "cat")
-                    .font(.system(size: 48, weight: .light))
-                    .foregroundStyle(.tint)
-                    .frame(height: 64)
-                    .accessibilityHidden(true)
+                // No photo of the person's cat: のわ, in a box like the photo's
+                // (11/12: a stock line drawing of a cat stood here).
+                Self.nowaBox
             }
 
             if let reason = reasonOverride ?? context.reason {
@@ -281,6 +290,23 @@ struct MembershipOfferView: View {
             .accessibilityIdentifier("membership-offer-photo")
     }
 
+    /// のわ looking in from the bottom of a warm window, the photo's size.
+    /// Decorative; the cream keeps the black cat visible in dark mode.
+    private static var nowaBox: some View {
+        NekoPalette.cream
+            .frame(maxWidth: .infinity)
+            .frame(height: 164)
+            .overlay(alignment: .bottom) {
+                Image("Nowa-peek")
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(height: 124)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .accessibilityHidden(true)
+    }
+
     private var offerDetails: some View {
         VStack(spacing: 6) {
             if isMember {
@@ -307,8 +333,11 @@ struct MembershipOfferView: View {
                 // after loading, the one message line says so (11/10) and
                 // this reads it again (11/12, review 8: App Review often
                 // meets a store that has not answered yet).
+                // A button, not small blue words (11/12: the grey disabled
+                // button below looked like the only thing to do).
                 Button("もう一度読み込む", action: reloadAction)
-                    .font(.footnote)
+                    .font(.subheadline.weight(.semibold))
+                    .buttonStyle(.bordered)
                     .accessibilityIdentifier("membership-offer-reload")
             }
         }
@@ -397,10 +426,17 @@ struct MembershipOfferView: View {
         .accessibilityIdentifier("membership-offer-reassurance")
     }
 
+    /// One row when it fits, else two rows of two (11/12: four rows on
+    /// iPhone SE). One link per row only at the accessibility text sizes.
     private var footerLinks: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 16) { footerLinkContent }
-            VStack(spacing: 12) { footerLinkContent }
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: 12) { footerLinkContent }
+            } else {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)],
+                          spacing: 0) { footerLinkContent }
+            }
         }
         .font(.footnote)
     }
