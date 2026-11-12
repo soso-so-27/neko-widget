@@ -1305,11 +1305,17 @@ enum AlbumArrivalNotice {
 
     /// From the album tab: ask once when a work is on its way, then set its
     /// notice. Nothing happens when nothing waits or the answer is known.
+    /// Never in the same launch as the first Plus offer (or the review
+    /// prompt): if one was shown, the request waits for a later launch (11/12).
     @MainActor
     static func askIfNeeded() async {
-        guard let waiting = waitingForPermission else { return }
+        guard let waiting = waitingForPermission,
+              !FirstPlusOfferPolicy.promptedThisLaunch else { return }
         let center = UNUserNotificationCenter.current()
-        guard await center.notificationSettings().authorizationStatus == .notDetermined else { return }
+        guard await center.notificationSettings().authorizationStatus == .notDetermined,
+              !FirstPlusOfferPolicy.promptedThisLaunch else { return }
+        // Claimed before the system alert, so the Plus offer waits too.
+        FirstPlusOfferPolicy.promptedThisLaunch = true
         _ = try? await center.requestAuthorization(options: [.alert])
         await schedule(month: waiting.month, year: waiting.year)
     }

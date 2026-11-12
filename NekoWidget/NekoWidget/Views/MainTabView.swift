@@ -2005,9 +2005,15 @@ struct MainTabView: View {
         let defaults = UserDefaults.standard
         // Cheap checks first; nothing is read from disk for most openings.
         guard Version1.isOn, PlusOfferAvailability.isConfigured, !membershipAccess.hasPersonalPlus(),
-              let dueSince = FirstPlusOfferPolicy.dueSince(defaults: defaults),
               !defaults.bool(forKey: FirstPlusOfferPolicy.shownKey),
               !FirstPlusOfferPolicy.promptedThisLaunch else { return }
+        // This view shows only once the first run has ended. A first run that
+        // ended before every path counted (11/12) counts from this opening,
+        // so the offer can come on a later one.
+        guard let dueSince = FirstPlusOfferPolicy.dueSince(defaults: defaults) else {
+            FirstPlusOfferPolicy.noteFirstRunEnded(defaults: defaults)
+            return
+        }
         // Let an opening from the Widget or a link settle first.
         try? await Task.sleep(for: .seconds(1.5))
         guard !Task.isCancelled, scenePhase == .active else { return }

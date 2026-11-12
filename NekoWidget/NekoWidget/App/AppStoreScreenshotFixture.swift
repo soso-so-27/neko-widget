@@ -796,13 +796,13 @@ private struct MainlineAcceptanceFixtureRootView: View {
                     openPhotoSettings: { action = "settings" },
                     chooseMorePhotos: { action = "choose" }, rescan: { action = "rescan" },
                     finishWithoutWidgetPhoto: { finished = true }, finish: { finished = true },
+                    // As the app (11/12): the photo opens over the scan page,
+                    // and the first run goes on after it is closed.
                     openPhoto: { photo in
                         guard page == .scanResult, !finished,
                               firstRunPhoto == nil else { return }
-                        finished = true
                         firstRunPhoto = photo
-                    },
-                    showsInvitationHint: scenario == "invite-entry"
+                    }
                 )
             }
         }
