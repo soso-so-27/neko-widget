@@ -3934,10 +3934,9 @@ private struct GrowingSummaryGate: ViewModifier {
     let context: PlusOfferContext
     let hasContent: Bool
     let arrival: Date
-    @ObservedObject private var purchases = PlusPurchaseStore.productionShared
 
     func body(content: Content) -> some View {
-        let decision = access.workDecision(arrival: arrival, history: purchases.workHistory)
+        let decision = access.workDecision(arrival: arrival)
         if !hasContent || decision == .allowed {
             content
         } else {

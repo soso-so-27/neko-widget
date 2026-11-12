@@ -3,6 +3,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Purchase-authority boundaries also run in ordinary PR CI, before compilation.
+python3 ci/test-plus-purchase-foundation.py
+python3 ci/test-billing-client-foundation.py
+
 # Exact 426 contract and retry stop, with no transport, identity, or stored data.
 xcrun --sdk macosx swiftc -parse-as-library Shared/Sharing/ClientUpgradeRequirement.swift \
   ci/verify-client-upgrade.swift -o "$RUNNER_TEMP/client-upgrade-tests"

@@ -9,18 +9,20 @@ final class OutputHarnessTests: XCTestCase {
         let arrival = now.addingTimeInterval(-100)
         let history = PlusWorkHistory(periods: [.init(originalID: 1,
             start: arrival.addingTimeInterval(-10), end: arrival.addingTimeInterval(10))])
-        let expired = MembershipAccessContext(enforcementEnabled: true, personal: .inactive)
-        XCTAssertEqual(expired.workDecision(arrival: arrival, history: history, now: now), .allowed)
-        XCTAssertEqual(expired.workDecision(arrival: now, history: history, now: now), .membershipRequired)
-        XCTAssertEqual(expired.workDecision(arrival: arrival, history: nil, now: now), .verificationRequired)
+        var expired = MembershipAccessContext(enforcementEnabled: true, personal: .inactive, workHistory: history)
+        XCTAssertEqual(expired.workDecision(arrival: arrival, now: now), .allowed)
+        XCTAssertEqual(expired.workDecision(arrival: now, now: now), .membershipRequired)
+        let unverified = MembershipAccessContext(enforcementEnabled: true, personal: .inactive)
+        XCTAssertEqual(unverified.workDecision(arrival: arrival, now: now), .verificationRequired)
         XCTAssertEqual(expired.decision(for: .createOwnWindow, now: now), .membershipRequired)
         XCTAssertEqual(expired.decision(for: .createPersonalMemo, now: now), .membershipRequired)
         let active = MembershipAccessContext(enforcementEnabled: true,
             personal: .verified(validUntil: now.addingTimeInterval(60)))
-        XCTAssertEqual(active.workDecision(arrival: arrival.addingTimeInterval(-1000), history: nil, now: now), .allowed)
+        XCTAssertEqual(active.workDecision(arrival: arrival.addingTimeInterval(-1000), now: now), .allowed)
         let revoked = PlusWorkHistory(periods: [.init(originalID: 1,
             start: arrival.addingTimeInterval(-10), end: now, revoked: true)])
-        XCTAssertEqual(expired.workDecision(arrival: arrival, history: revoked, now: now), .membershipRequired)
+        expired.workHistory = revoked
+        XCTAssertEqual(expired.workDecision(arrival: arrival, now: now), .membershipRequired)
     }
 
     @MainActor

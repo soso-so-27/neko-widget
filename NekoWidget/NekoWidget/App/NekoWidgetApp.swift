@@ -129,7 +129,8 @@ struct ProductionAppRootView: View {
         AppRootView(viewModel: viewModel)
             .environment(\.membershipActions, plusPurchases.membershipActions)
             .environment(\.membershipAccess,
-                MembershipAccessContext(entitlement: plusPurchases.entitlementState, now: membershipNow))
+                MembershipAccessContext(entitlement: plusPurchases.entitlementState, now: membershipNow,
+                    workHistory: plusPurchases.workHistory))
             .task(id: plusPurchases.entitlementState) {
                 membershipNow = .now
                 let access = MembershipAccessContext(entitlement: plusPurchases.entitlementState)
