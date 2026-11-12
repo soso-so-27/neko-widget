@@ -475,5 +475,130 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn("Content Rights", documentation)
 
 
+def load_review_collector():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "collect_review_screenshots", ROOT / "ci" / "collect-review-screenshots.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+class ReviewScreenshotWorkflowTests(unittest.TestCase):
+    """The design-review capture: synthetic, manual, short-lived, PNGs only."""
+
+    def setUp(self) -> None:
+        self.workflow = source(".github/workflows/review-screenshots.yml")
+        self.ui_test = source("NekoWidget/NekoWidgetUITests/ReviewScreenshotUITests.swift")
+        self.collector_source = source("NekoWidget/ci/collect-review-screenshots.py")
+        self.collector = load_review_collector()
+
+    def test_review_workflow_is_manual_read_only_and_never_publishes(self) -> None:
+        trigger = self.workflow.split("on:\n", 1)[1].split("\npermissions:", 1)[0]
+        self.assertIn("workflow_dispatch:", trigger)
+        for forbidden_trigger in ("push:", "pull_request:", "schedule:", "workflow_run:"):
+            self.assertNotIn(forbidden_trigger, trigger)
+        self.assertIn("permissions:\n  contents: read\n", self.workflow)
+        self.assertNotIn("write", self.workflow.split("\njobs:", 1)[0].split("permissions:", 1)[1])
+        lowered = self.workflow.lower()
+        for forbidden in ("secrets.", "gh api", "altool", "notarytool", "app-store-connect",
+                          "upload_to_testflight", "environment: testflight"):
+            self.assertNotIn(forbidden, lowered)
+        self.assertIn("persist-credentials: false", self.workflow)
+
+    def test_review_capture_is_synthetic_and_separate_from_owner_capture(self) -> None:
+        for text in (self.workflow, self.ui_test):
+            for forbidden in ("NEKO_PRIVATE_CAPTURE_ROOT", "--owner-store-capture", "NEKO_CAPTURE_KEY",
+                              "owner-store-capture", ".nekoenc", "simctl addmedia", "ci/fixtures/cats",
+                              "simctl privacy"):
+                self.assertNotIn(forbidden, text)
+        # The existing App Store capture does not run or know the review class.
+        self.assertNotIn("ReviewScreenshotUITests", source(".github/workflows/app-store-screenshots.yml"))
+        self.assertNotIn("ReviewScreenshotUITests", source(".github/workflows/owner-store-capture.yml"))
+        # No service, relay or billing endpoint in the capture build.
+        for setting in ("SHARING_API_BASE_URL= \\", "PLUS_BILLING_API_BASE_URL= \\",
+                        "OFFICIAL_WINDOW_FEED_URL= \\", "MANAGED_PRESERVATION_ORIGIN= \\",
+                        "SHARING_FEATURE_ENABLED=NO", "PLUS_BILLING_CLIENT_ENABLED=NO",
+                        "MANAGED_PRESERVATION_ENABLED=NO"):
+            self.assertIn(setting, self.workflow)
+        self.assertIn('raise SystemExit(f"Capture build unexpectedly configured {key}")', self.workflow)
+
+    def test_review_artifact_is_pngs_and_index_with_short_retention(self) -> None:
+        uploads = self.workflow.split("uses: actions/upload-artifact@")[1:]
+        self.assertEqual(len(uploads), 2)
+        retention = sorted(int(line.split(":", 1)[1]) for line in self.workflow.splitlines()
+                           if line.strip().startswith("retention-days:"))
+        self.assertEqual(retention, [1, 7])
+        for upload in uploads:
+            path = next(line.strip() for line in upload.splitlines() if line.strip().startswith("path:"))
+            self.assertIn(path, ("path: ${{ runner.temp }}/review/shots",
+                                 "path: ${{ runner.temp }}/review-screenshots"))
+            self.assertNotIn("xcresult", upload.split("- name:", 1)[0])
+            self.assertNotIn(".log", upload.split("- name:", 1)[0])
+        self.assertIn("name: review-screenshots-${{ github.run_id }}", self.workflow)
+        # The index step deletes everything that is not a PNG or index.txt.
+        self.assertIn('path.name != "index.txt" and path.suffix.lower() != ".png"', self.collector_source)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "light").mkdir()
+            (root / "light" / "01_photos_top.png").write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(16))
+            (root / "light" / "stray.log").write_text("runner output", encoding="utf-8")
+            (root / "index-light.txt").write_text(
+                "captured  light/01_photos_top.png  1x1\nMISSING   light/15_lost_preview  reason\n",
+                encoding="utf-8")
+            self.collector.build_index(root)
+            files = sorted(str(path.relative_to(root)).replace("\\", "/")
+                           for path in root.rglob("*") if path.is_file())
+            self.assertEqual(files, ["index.txt", "light/01_photos_top.png"])
+            index = (root / "index.txt").read_text(encoding="utf-8")
+            self.assertIn("captured: 1  MISSING: 1", index)
+            self.assertIn("MISSING   light/15_lost_preview", index)
+
+    def test_review_sets_devices_and_appearance(self) -> None:
+        self.assertIn('\'["light","dark","se"]\'', self.workflow)
+        self.assertIn("fail-fast: false", self.workflow)
+        self.assertIn('"iPhone SE (3rd generation)"', self.workflow)
+        self.assertIn('"iPhone 17 Pro Max"', self.workflow)
+        self.assertIn('xcrun simctl ui "$device" appearance "$appearance"', self.workflow)
+        self.assertIn("TEST_RUNNER_REVIEW_SET: ${{ matrix.set }}", self.workflow)
+        self.assertIn('"-app.appearance.v1", appearance', self.ui_test)
+        self.assertIn('xcrun simctl bootstatus "$device" -b', self.workflow)
+        # One retry, of the tests that did not pass, on a rebooted Simulator.
+        self.assertEqual(self.workflow.count("run_tests 1 "), 1)
+        self.assertEqual(self.workflow.count("run_tests 2 "), 1)
+        self.assertIn("-test-timeouts-enabled YES", self.workflow)
+        self.assertIn("app.wait(for: .runningForeground", self.ui_test)
+
+    def test_review_screen_names_match_the_collector_and_selected_methods(self) -> None:
+        import re
+
+        captured = set(re.findall(r'shot\("([A-Za-z0-9_]+)"', self.ui_test))
+        if 'shot("29_widget_guide_\\(page)"' in self.ui_test:
+            captured |= {f"29_widget_guide_{page}" for page in range(2, 6)}
+        self.assertEqual(captured, set(self.collector.FULL_SCREENS))
+        self.assertEqual(len(self.collector.FULL_SCREENS), len(set(self.collector.FULL_SCREENS)))
+        se_block = self.ui_test.split("static let seScreens: Set<String> = [", 1)[1].split("]", 1)[0]
+        self.assertEqual(set(re.findall(r'"([A-Za-z0-9_]+)"', se_block)), set(self.collector.SE_SCREENS))
+        self.assertTrue(set(self.collector.SE_SCREENS) <= captured)
+        methods = re.findall(r"\bfunc\s+(test\w+)\s*\(", self.ui_test)
+        self.assertEqual(len(methods), len(set(methods)))
+        full_run = self.workflow.split("else\n            methods=(", 1)[1].split(")", 1)[0].split()
+        self.assertEqual(sorted(full_run), sorted(methods))
+        se_run = self.workflow.split('if [[ "$REVIEW_SET" == se ]]; then\n            methods=(', 1)[1]
+        self.assertTrue(set(se_run.split(")", 1)[0].split()) <= set(methods))
+        # A miss is recorded and the walk goes on.
+        self.assertIn("continueAfterFailure = true", self.ui_test)
+        self.assertIn('attachment.name = "review-missing__\\(name)__end"', self.ui_test)
+        self.assertIn('attachment.name = "review-shot__\\(name)__end"', self.ui_test)
+
+    def test_review_test_is_in_the_ui_test_target(self) -> None:
+        project = source("NekoWidget/NekoWidget.xcodeproj/project.pbxproj")
+        self.assertEqual(project.count("ReviewScreenshotUITests.swift"), 6)
+        self.assertEqual(project.count("ReviewScreenshotUITests.swift in Sources"), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

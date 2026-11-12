@@ -1,0 +1,284 @@
+name: Capture design-review screenshots
+
+# Every main screen, on synthetic fixtures only (code-drawn cats, sample
+# names, no account, no Photos import), for a designer's review. The App Store
+# capture (app-store-screenshots.yml) and the owner's encrypted capture are
+# separate and untouched by this workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sets:
+        description: "撮るセット: all（light・dark・se）または light / dark / se のどれか1つ"
+        type: choice
+        default: all
+        options: [all, light, dark, se]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-screenshots-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    name: Capture ${{ matrix.set }}
+    runs-on: macos-15
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        set: ${{ fromJSON(inputs.sets == 'all' && '["light","dark","se"]' || format('["{0}"]', inputs.sets)) }}
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      REVIEW_SET: ${{ matrix.set }}
+      TEST_RUNNER_REVIEW_SET: ${{ matrix.set }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Create and boot a fresh Simulator for this set
+        timeout-minutes: 15
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          WORK="$RUNNER_TEMP/review"
+          mkdir -p "$WORK"
+          xcrun simctl list runtimes -j > "$WORK/runtimes.json"
+          xcrun simctl list devicetypes -j > "$WORK/devicetypes.json"
+          python3 - "$WORK" "$REVIEW_SET" <<'PY'
+          import json, sys
+          from pathlib import Path
+          work, review_set = Path(sys.argv[1]), sys.argv[2]
+          runtimes = json.loads((work / "runtimes.json").read_text())["runtimes"]
+          runtime = next(r["identifier"] for r in runtimes
+                         if r.get("isAvailable") and r.get("version") == "26.2" and ".iOS-" in r["identifier"])
+          kinds = {d["name"]: d["identifier"] for d in json.loads((work / "devicetypes.json").read_text())["devicetypes"]}
+          # light/dark: the 6.9-inch class the App Store set uses; se: iPhone SE (3rd generation).
+          names = (["iPhone SE (3rd generation)"] if review_set == "se"
+                   else ["iPhone 17 Pro Max", "iPhone 16 Pro Max", "iPhone 16 Plus"])
+          name = next(n for n in names if n in kinds)
+          (work / "device.tsv").write_text(f"{kinds[name]}\t{runtime}\t{name}\n")
+          print("Simulator:", name, runtime)
+          PY
+          IFS=$'\t' read -r device_type runtime device_name < "$WORK/device.tsv"
+          device=$(xcrun simctl create "NekoReview-$REVIEW_SET" "$device_type" "$runtime")
+          printf 'REVIEW_DEVICE=%s\n' "$device" >> "$GITHUB_ENV"
+          appearance=light
+          [[ "$REVIEW_SET" == dark ]] && appearance=dark
+          printf 'REVIEW_APPEARANCE=%s\n' "$appearance" >> "$GITHUB_ENV"
+          # Boot and wait explicitly; one more try after a failed boot.
+          boot() {
+            xcrun simctl boot "$device" 2>/dev/null || true
+            xcrun simctl bootstatus "$device" -b
+          }
+          if ! boot; then
+            xcrun simctl shutdown "$device" || true
+            boot
+          fi
+          xcrun simctl spawn "$device" defaults write NSGlobalDomain AppleLanguages -array ja-JP
+          xcrun simctl spawn "$device" defaults write NSGlobalDomain AppleLocale ja_JP
+          xcrun simctl shutdown "$device"
+          boot
+          xcrun simctl ui "$device" appearance "$appearance"
+          xcrun simctl status_bar "$device" override --time 09:41 --batteryLevel 100 \
+            --batteryState charged || true
+
+      - name: Build the local-only capture app for testing
+        timeout-minutes: 35
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          WORK="$RUNNER_TEMP/review"
+          xcodebuild \
+            -project NekoWidget.xcodeproj \
+            -scheme NekoWidget \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$REVIEW_DEVICE" \
+            -derivedDataPath "$WORK/DerivedData" \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_IDENTITY=- \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            ONLY_ACTIVE_ARCH=YES \
+            SHARING_RELEASE_MODE=production \
+            GROUP_WINDOWS_ENABLED=YES \
+            OFFICIAL_WINDOW_FEED_URL= \
+            MANAGED_PRESERVATION_ORIGIN= \
+            MANAGED_PRESERVATION_ENABLED=NO \
+            PLUS_BILLING_API_BASE_URL= \
+            PLUS_BILLING_CLIENT_ENABLED=NO \
+            PLUS_STOREFRONT_ENABLED=NO \
+            PERSONAL_ARCHIVE_ENABLED=NO \
+            SHARING_FEATURE_ENABLED=NO \
+            SHARING_MEDIA_ENABLED=NO \
+            SHARING_SHARE_EXTENSION_HANDOFF_ENABLED=NO \
+            SHARING_SHARE_EXTENSION_SEND_ENABLED=NO \
+            SHARING_REVIEW_PREVIEW_ENABLED=NO \
+            SHARING_API_BASE_URL= \
+            SHARING_MODERATION_KEY_ID= \
+            SHARING_MODERATION_PUBLIC_KEY= \
+            SHARING_PRIVACY_URL= \
+            SHARING_SUPPORT_URL= \
+            SHARING_COMMUNITY_STANDARDS_URL= \
+            APP_PRIVACY_URL= \
+            APP_SUPPORT_URL= \
+            SHARE_EXTENSION_INFOPLIST_FILE=NekoWidgetShareExtension/Info.Disabled.plist \
+            build-for-testing > "$WORK/build.log" 2>&1 || { tail -n 80 "$WORK/build.log"; exit 1; }
+          tail -n 5 "$WORK/build.log"
+          python3 - "$WORK/DerivedData/Build/Products/Debug-iphonesimulator/NekoWidget.app/Info.plist" <<'PY'
+          import plistlib, sys
+          with open(sys.argv[1], "rb") as file:
+              info = plistlib.load(file)
+          # Synthetic capture only: no service, account or relay is configured.
+          for key in ("SharingAPIBaseURL", "PlusBillingAPIBaseURL", "OfficialWindowFeedURL",
+                      "ManagedPreservationOrigin", "SharingModerationPublicKey"):
+              if info.get(key):
+                  raise SystemExit(f"Capture build unexpectedly configured {key}")
+          PY
+
+      - name: Walk every screen (failed tests retried once)
+        timeout-minutes: 75
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          WORK="$RUNNER_TEMP/review"
+          test_run=$(find "$WORK/DerivedData/Build/Products" -maxdepth 1 -name '*.xctestrun' -print)
+          [[ -n "$test_run" && $(printf '%s\n' "$test_run" | wc -l | tr -d ' ') == 1 ]]
+          # The set also travels in the test plan itself, not only TEST_RUNNER_.
+          python3 - "$test_run" "$REVIEW_SET" <<'PY'
+          import plistlib, sys
+          path, review_set = sys.argv[1], sys.argv[2]
+          with open(path, "rb") as file:
+              plan = plistlib.load(file)
+          def visit(node):
+              if isinstance(node, dict):
+                  if node.get("BlueprintName") == "NekoWidgetUITests":
+                      node.setdefault("EnvironmentVariables", {})["REVIEW_SET"] = review_set
+                      node.setdefault("TestingEnvironmentVariables", {})["REVIEW_SET"] = review_set
+                  for value in node.values():
+                      visit(value)
+              elif isinstance(node, list):
+                  for value in node:
+                      visit(value)
+          visit(plan)
+          with open(path, "wb") as file:
+              plistlib.dump(plan, file)
+          PY
+          class=NekoWidgetUITests/ReviewScreenshotUITests
+          if [[ "$REVIEW_SET" == se ]]; then
+            methods=(test04ToolsCatCareAndVet test05ToolsLostAndCare test08PlusOffer test09Settings test12Onboarding)
+          else
+            methods=(test01Photos test02Windows test03Albums test04ToolsCatCareAndVet test05ToolsLostAndCare
+                     test06ToolsEvacuationAndShowcase test07LostFlyer test08PlusOffer test09Settings
+                     test12Onboarding test13ValidationError)
+          fi
+          run_tests() {
+            local attempt="$1"; shift
+            local selection=()
+            for method in "$@"; do selection+=("-only-testing:$class/$method"); done
+            set +e
+            xcodebuild test-without-building -xctestrun "$test_run" \
+              -destination "platform=iOS Simulator,id=$REVIEW_DEVICE" \
+              -resultBundlePath "$WORK/review-$attempt.xcresult" \
+              "${selection[@]}" \
+              -parallel-testing-enabled NO \
+              -test-timeouts-enabled YES \
+              -default-test-execution-time-allowance 900 \
+              -maximum-test-execution-time-allowance 1200 \
+              -testLanguage ja -testRegion JP \
+              > "$WORK/test-$attempt.log" 2>&1
+            local status=$?
+            set -e
+            grep -E "Test Case '-\[|error:|Simulator device failed|timed out" "$WORK/test-$attempt.log" | tail -n 60 || true
+            echo "attempt $attempt exit $status"
+          }
+          run_tests 1 "${methods[@]}"
+          retry=()
+          for method in "${methods[@]}"; do
+            if ! grep -q "ReviewScreenshotUITests $method\]' passed" "$WORK/test-1.log"; then
+              retry+=("$method")
+            fi
+          done
+          if (( ${#retry[@]} > 0 )); then
+            echo "Retrying once: ${retry[*]}"
+            xcrun simctl shutdown "$REVIEW_DEVICE" || true
+            xcrun simctl boot "$REVIEW_DEVICE" || true
+            xcrun simctl bootstatus "$REVIEW_DEVICE" -b
+            xcrun simctl ui "$REVIEW_DEVICE" appearance "$REVIEW_APPEARANCE"
+            run_tests 2 "${retry[@]}"
+          fi
+
+      - name: Keep only the named PNGs and the index
+        if: always()
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          WORK="$RUNNER_TEMP/review"
+          bundles=()
+          for bundle in "$WORK"/review-*.xcresult; do [[ -d "$bundle" ]] && bundles+=("$bundle"); done
+          mkdir -p "$WORK/shots"
+          if (( ${#bundles[@]} > 0 )); then
+            python3 ci/collect-review-screenshots.py collect --set "$REVIEW_SET" \
+              --output "$WORK/shots" "${bundles[@]}"
+          else
+            printf 'MISSING   %s/*  no result bundle (the Simulator or build did not run)\n' \
+              "$REVIEW_SET" > "$WORK/shots/index-$REVIEW_SET.txt"
+          fi
+
+      - name: Upload this set
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: review-part-${{ matrix.set }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/review/shots
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Dispose of the Simulator
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${REVIEW_DEVICE:-}" ]]; then
+            xcrun simctl shutdown "$REVIEW_DEVICE" || true
+            xcrun simctl delete "$REVIEW_DEVICE" || true
+          fi
+
+  bundle:
+    name: One zip of PNGs and index.txt
+    needs: capture
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Download the sets
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aecb3f1b5 # v6.0.0
+        with:
+          pattern: review-part-*-${{ github.run_id }}
+          path: ${{ runner.temp }}/review-screenshots
+          merge-multiple: true
+      - name: Write index.txt
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/review-screenshots"
+          python3 NekoWidget/ci/collect-review-screenshots.py index "$RUNNER_TEMP/review-screenshots"
+      - name: Upload review screenshots
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: review-screenshots-${{ github.run_id }}
+          path: ${{ runner.temp }}/review-screenshots
+          if-no-files-found: error
+          retention-days: 7
