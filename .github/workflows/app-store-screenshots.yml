@@ -7,6 +7,10 @@ on:
         description: "対象のtestReviewメソッド。空欄は1.0のApp Store用8枚"
         type: string
         default: ""
+      mode:
+        description: "review で全画面のデザイン確認用（light・dark・SE、合成の写真のみ）。空欄はこれまでどおり"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -16,9 +20,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  review-screens:
+    name: Design-review screenshots of every screen
+    if: inputs.mode == 'review'
+    uses: ./.github/workflows/review-screenshots.yml
+    with:
+      sets: all
+
   capture-local-only-iphone:
     name: Capture offline Japanese 1.0 iPhone set
-    if: inputs.review_test == ''
+    if: inputs.review_test == '' && inputs.mode != 'review'
     runs-on: macos-15
     timeout-minutes: 40
     env:
@@ -316,7 +327,7 @@ jobs:
 
   capture-review:
     name: Capture changed screens
-    if: inputs.review_test != '' && inputs.review_test != 'testReviewPublicIPadCompatibility' && inputs.review_test != 'probePublicIPadSettings'
+    if: inputs.review_test != '' && inputs.review_test != 'testReviewPublicIPadCompatibility' && inputs.review_test != 'probePublicIPadSettings' && inputs.mode != 'review'
     runs-on: macos-15
     timeout-minutes: 25
     env:
@@ -375,7 +386,7 @@ jobs:
 
   capture-public-ipad:
     name: One public Release iPad compatibility walk-through
-    if: inputs.review_test == 'testReviewPublicIPadCompatibility'
+    if: inputs.review_test == 'testReviewPublicIPadCompatibility' && inputs.mode != 'review'
     runs-on: macos-15
     timeout-minutes: 40
     env:
@@ -515,7 +526,7 @@ jobs:
 
   probe-public-ipad:
     name: Read public Simulator build settings only (no compilation or UI)
-    if: inputs.review_test == 'probePublicIPadSettings'
+    if: inputs.review_test == 'probePublicIPadSettings' && inputs.mode != 'review'
     runs-on: macos-15
     timeout-minutes: 10
     env:
