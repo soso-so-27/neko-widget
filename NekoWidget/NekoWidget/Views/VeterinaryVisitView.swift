@@ -313,6 +313,13 @@ private struct VeterinaryConsultationView: View {
     private var tooLong: Bool {
         [observations, questions, doctorNote, prescription].contains { $0.count > 500 }
     }
+    /// The row whose text is too long, named in the bar (11/12, round 2).
+    private var longRowTitle: String? {
+        if observations.count > 500 { return "家で気付いたこと" }
+        if questions.count > 500 { return "先生に聞きたいこと" }
+        if doctorNote.count > 500 || prescription.count > 500 { return "先生の話・出た薬" }
+        return nil
+    }
     /// A memo with something in it, last edited a week or more ago: the
     /// consultation it was for has probably happened (11/8).
     private func looksFinished(_ visit: VeterinaryVisit) -> Bool {
@@ -399,8 +406,8 @@ private struct VeterinaryConsultationView: View {
         // 11/7: a save that cannot go through is red with a mark, and
         // says why 「先生に見せる」 cannot be pressed yet.
         if tooLong {
-            Label("500文字を超えている欄があります。短くすると保存され、先生に見せられます",
-                  systemImage: "exclamationmark.triangle.fill")
+            // 11/12 (round 2): one line, naming the row to shorten; the row is red.
+            Label("「\(longRowTitle ?? "")」を短くしてください", systemImage: "exclamationmark.triangle.fill")
                 .font(.caption).foregroundStyle(.red)
         } else if changes, error != nil {
             Label("保存できませんでした。保存できると、先生に見せられます",
@@ -474,12 +481,13 @@ private struct VeterinaryConsultationView: View {
     // MARK: Rows (11/12)
 
     /// A row for written text: its first words, 「未記入」, or, in red, that it
-    /// is too long to save, so the page to shorten it can be found.
+    /// is too long to save, so the page to shorten it can be found (11/12,
+    /// round 2: two short words in the value's place, not a second line).
     private func textRow(_ title: String, _ systemImage: String, _ texts: [String]) -> ToolValueRow {
         let long = texts.contains { $0.count > 500 }
         let words = texts.compactMap { Self.firstWords($0) }.first
         return ToolValueRow(title: title, systemImage: systemImage,
-                            value: long ? "500文字を超えています" : (words ?? "未記入"),
+                            value: long ? "長すぎます" : (words ?? ToolEmptyValue.unwritten),
                             filled: words != nil, problem: long)
     }
     /// 「診察の前に」: 家で気付いたこと, 体重, 見せる写真・記録, 先生に聞きたいこと.
@@ -504,7 +512,7 @@ private struct VeterinaryConsultationView: View {
     private func recordsLabel(_ visit: VeterinaryVisit) -> ToolValueRow {
         let count = visit.entries.count
         return ToolValueRow(title: "見せる写真・記録", systemImage: "photo.on.rectangle",
-                            value: count == 0 ? "なし" : "\(count)件", filled: count > 0)
+                            value: count == 0 ? ToolEmptyValue.none : "\(count)件", filled: count > 0)
     }
     /// 「診察のあと」: what came after the consultation. On a finished memo it
     /// is the only part that can still be written (11/8).
@@ -522,15 +530,18 @@ private struct VeterinaryConsultationView: View {
     }
     private var nextVisitLabel: ToolValueRow {
         ToolValueRow(title: "次に行く日", systemImage: "calendar",
-                     value: hasNextVisit ? DayText.japanese(VeterinaryVisit.day(nextVisitDay)) : "未設定",
+                     value: hasNextVisit ? DayText.japanese(VeterinaryVisit.day(nextVisitDay)) : ToolEmptyValue.unset,
                      filled: hasNextVisit)
     }
     /// その日の体重 (11/9). The weight has one place, 「この子のこと」: this row
     /// shows the newest one there and opens its own form to add today's.
+    /// 11/12 (round 2): with the same chevron as the other rows (it had none,
+    /// and looked as if it could not be changed).
     private func weightRow(_ visit: VeterinaryVisit) -> some View {
         let weight = VeterinaryDayWeight.of(visit).map(VeterinaryDayWeight.text)
-        return Button { weighing = true } label: {
-            ToolValueRow(title: "体重", systemImage: "scalemass", value: weight ?? "未記入", filled: weight != nil)
+        return ToolSheetRow(row: ToolValueRow(title: "体重", systemImage: "scalemass",
+                                              value: weight ?? ToolEmptyValue.unwritten, filled: weight != nil)) {
+            weighing = true
         }
         .accessibilityIdentifier("vet-row-weight")
     }
@@ -614,17 +625,12 @@ private struct VeterinaryConsultationView: View {
     }
     /// Shown in a page of a finished memo that had nothing written.
     private var nothingWritten: some View {
-        Text("なし").foregroundStyle(.secondary)
+        Text(ToolEmptyValue.unwritten).foregroundStyle(.secondary)
     }
-    /// Under a field longer than 500 characters, so it is clear what to shorten;
-    /// then a failure, in red with a mark, here as on the page.
+    /// A failure, in red with a mark, here as on the page. 11/12 (round 2):
+    /// a text too long is said by the counter right under its field, not in
+    /// a card of its own further down.
     @ViewBuilder private func pageNotes(_ texts: [String]) -> some View {
-        if texts.contains(where: { $0.count > 500 }) {
-            Section {
-                Label("500文字を超えています", systemImage: "exclamationmark.triangle.fill")
-                    .font(.footnote).foregroundStyle(.red)
-            }
-        }
         errorSection
     }
     private var noticedPage: some View {
@@ -639,7 +645,7 @@ private struct VeterinaryConsultationView: View {
                 if visit.completedAt == nil {
                     VeterinaryLabeledField(title: "家で気付いたこと", example: "例：1日2回吐く・食欲が半分",
                                            text: $observations, lines: 3...8, identifier: "vet-observations",
-                                           showsTitle: false, focus: focus)
+                                           showsTitle: false, focus: focus, counts: true)
                     Toggle("いつからかを記録", isOn: $hasStartedDay)
                     if hasStartedDay { DatePicker("気付いた日", selection: $startedDay, displayedComponents: .date) }
                 } else {
@@ -704,8 +710,8 @@ private struct VeterinaryConsultationView: View {
             Section {
                 if visit.completedAt == nil {
                     VeterinaryLabeledField(title: "先生に聞きたいこと", example: "例：ごはんを変えたほうがいいですか",
-                                           text: $questions, lines: 2...8, identifier: "vet-questions",
-                                           showsTitle: false, focus: focus)
+                                           text: $questions, lines: 3...8, identifier: "vet-questions",
+                                           showsTitle: false, focus: focus, counts: true)
                 } else if !visit.questions.isEmpty {
                     Text(visit.questions)
                 } else {
@@ -720,9 +726,10 @@ private struct VeterinaryConsultationView: View {
         pushed("先生の話・出た薬", focuses: true) { focus in
             Section {
                 VeterinaryLabeledField(title: "先生の話", example: "例：胃腸炎。2日ほどで治る見込み",
-                                       text: $doctorNote, lines: 2...8, identifier: "vet-doctor-note", focus: focus)
+                                       text: $doctorNote, lines: 3...8, identifier: "vet-doctor-note", focus: focus,
+                                       counts: true)
                 VeterinaryLabeledField(title: "出た薬", example: "例：吐き気止め 1日1回・3日分",
-                                       text: $prescription, lines: 1...6, identifier: "vet-prescription")
+                                       text: $prescription, lines: 2...6, identifier: "vet-prescription", counts: true)
             }
             pageNotes([doctorNote, prescription])
         }
@@ -1289,6 +1296,8 @@ private struct VeterinaryLabeledField: View {
     var showsTitle = true
     /// Set for the field the page puts the cursor in when it opens (11/12).
     var focus: FocusState<Bool>.Binding? = nil
+    /// 11/12 (round 2): how long the text is, right under the field; red over 500.
+    var counts = false
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if showsTitle {
@@ -1298,6 +1307,9 @@ private struct VeterinaryLabeledField: View {
             input
                 .accessibilityLabel(title)
                 .accessibilityIdentifier(identifier)
+            if counts {
+                ToolFieldCounter(count: text.count, limit: 500)
+            }
         }
     }
     @ViewBuilder private var input: some View {

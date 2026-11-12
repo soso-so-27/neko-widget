@@ -171,7 +171,10 @@ private struct LostCatCropRequest: Identifiable {
 
 struct LostCatDraftView: View {
     private enum Field: Hashable { case name, features, collar, place, contact, advice }
-    private enum Collar: String, CaseIterable { case unknown = "不明", none = "なし", present = "あり" }
+    /// 11/12 (round 2): not chosen yet reads 「未設定」 like every choice in the
+    /// tools (it read 「不明」, which looked like an answer); a stored 「不明」
+    /// from before is still read as not chosen.
+    private enum Collar: String, CaseIterable { case unknown = "未設定", none = "なし", present = "あり" }
     let initialKey: String
     let initialName: String
     let profiles: [CatProfilePresentation]
@@ -400,7 +403,7 @@ struct LostCatDraftView: View {
     private func textRow(_ title: String, _ systemImage: String, _ text: String, issue: String?) -> ToolValueRow {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let words = trimmed.isEmpty ? nil : String(trimmed.split(whereSeparator: \.isNewline).joined(separator: " ").prefix(60))
-        return ToolValueRow(title: title, systemImage: systemImage, value: issue ?? words ?? "未記入",
+        return ToolValueRow(title: title, systemImage: systemImage, value: issue ?? words ?? ToolEmptyValue.unwritten,
                             filled: words != nil, problem: issue != nil)
     }
 
@@ -446,7 +449,7 @@ struct LostCatDraftView: View {
     /// 「顔・全身」, 「顔だけ」 or 「なし」: what the flyer will show; red while
     /// a photo could not be read.
     private var photoLabel: ToolValueRow {
-        let value = faceImage == nil ? "なし" : (bodyImage == nil ? "顔だけ" : "顔・全身")
+        let value = faceImage == nil ? ToolEmptyValue.none : (bodyImage == nil ? "顔だけ" : "顔・全身")
         return ToolValueRow(title: "写真", systemImage: "photo", value: value,
                             filled: faceImage != nil, problem: photoError != nil)
     }
@@ -458,12 +461,14 @@ struct LostCatDraftView: View {
                             filled: choice != .unknown, problem: issues["collar"] != nil)
     }
     /// Opens the date sheet at once, as 体重 does in 病院で見せる: one control,
-    /// no page of its own.
+    /// no page of its own. 11/12 (round 2): with the chevron every row that
+    /// opens something has, and 「未設定」 until a day is chosen (「不明」).
     private var dateRow: some View {
-        Button { pendingDate = draft.lastSeenAt ?? Date(); showsDatePicker = true } label: {
-            ToolValueRow(title: "日時", systemImage: "clock",
-                         value: draft.lastSeenAt.map(LostCatPublicDraft.lastSeenText) ?? "不明",
-                         filled: draft.lastSeenAt != nil)
+        ToolSheetRow(row: ToolValueRow(title: "日時", systemImage: "clock",
+                                       value: draft.lastSeenAt.map(LostCatPublicDraft.lastSeenText) ?? ToolEmptyValue.unset,
+                                       filled: draft.lastSeenAt != nil)) {
+            pendingDate = draft.lastSeenAt ?? Date()
+            showsDatePicker = true
         }
         .accessibilityIdentifier("lost-cat-row-date")
     }
@@ -532,9 +537,10 @@ struct LostCatDraftView: View {
         let tiles = dynamicTypeSize.isAccessibilitySize
             ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
         return tiles {
-            photoTile("顔・毛柄の写真", role: .face, image: faceImage,
+            // 11/12 (round 2): the same names as in 「この子のこと」.
+            photoTile("顔の写真", role: .face, image: faceImage,
                       file: faceImage == nil ? nil : tileFile(draft.faceFileName, draft.bodyFileName))
-            photoTile("全身の写真（任意）", role: .body, image: bodyImage,
+            photoTile("全身の写真", role: .body, image: bodyImage,
                       file: bodyImage == nil || draft.faceFileName == nil ? nil : tileFile(draft.bodyFileName))
         }
         .padding(.vertical, 4)
@@ -941,8 +947,10 @@ struct LostCatDraftView: View {
                     Button("全身の写真を外す", systemImage: "minus.circle", role: .destructive) { removeSecondPhoto() }
                 }
             }
+            // 11/12 (round 2): the photo fills its square, as in 「この子のこと」.
+            .filledSquare()
             if role == .body && faceImage == nil {
-                Text("先に「顔・毛柄」の写真を選んでください").font(.caption).foregroundStyle(.secondary)
+                Text("先に「顔の写真」を選んでください").font(.caption).foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity)
@@ -1399,7 +1407,7 @@ private struct LostCatPreviewView: View {
             }
         }
         .navigationTitle("できあがり")
-        .toolChrome()
+        .toolChrome(ground: Color(.systemBackground))
         // 11/11: the same bottom bar as the input pages (full-width, large).
         .toolBarFadeRoom()
         .safeAreaInset(edge: .bottom) {

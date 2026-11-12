@@ -36,6 +36,67 @@ struct ToolValueRow: View {
     }
 }
 
+/// The three words a row shows when nothing is there yet (11/12, round 2),
+/// the same in every tool and in 「この子のこと」:
+/// - 「未記入」: something the owner writes (a text, a record, a list of places);
+/// - 「未設定」: a date or a choice that is set rather than written;
+/// - 「なし」: a count of things added (photos, records) and an explicit
+///   「none」 answer (持病なし, 首輪なし).
+/// An answer the owner chose (「なし」, 「わからない」) is in the text colour;
+/// the three words above are gray.
+enum ToolEmptyValue {
+    static let unwritten = "未記入"
+    static let unset = "未設定"
+    static let none = "なし"
+}
+
+/// The chevron of a row that opens something: a NavigationLink draws its
+/// own; a row that is a Button (it opens a sheet) adds this one, so every
+/// row that can be tapped shows the same mark (11/12, round 2).
+struct ToolChevron: View {
+    var body: some View {
+        Image(systemName: "chevron.right")
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.tertiary)
+            .accessibilityHidden(true)
+    }
+}
+
+/// A ToolValueRow that opens a sheet or a form instead of a page: the same
+/// row, with the same chevron as a NavigationLink row.
+struct ToolSheetRow: View {
+    let row: ToolValueRow
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                row
+                ToolChevron()
+            }
+            .contentShape(Rectangle())
+        }
+        .foregroundStyle(.primary)
+    }
+}
+
+/// How long a written text is, under its field at the trailing side, the
+/// same on every page that has one (11/12, round 2). Over the limit it turns
+/// red and says so in two words; the row on the page turns red too.
+struct ToolFieldCounter: View {
+    let count: Int
+    let limit: Int
+
+    var body: some View {
+        let over = count > limit
+        Text(verbatim: over ? "長すぎます　\(count) / \(limit)" : "\(count) / \(limit)")
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(over ? Color.red : Color.secondary)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .accessibilityLabel(over ? "\(limit)文字を超えています、\(count)文字" : "\(count)文字、\(limit)文字まで")
+    }
+}
+
 /// The page a row opens, used by every tool page made as a list of rows:
 /// the row's name as its title, the controls for that one topic, in the
 /// tool's frame, with the same way to put the keyboard away. A page to
@@ -124,24 +185,28 @@ struct ToolCatMenu: View {
 }
 
 /// 「…」 in the navigation bar, used by every tool page made as a list of
-/// rows: what is not part of writing the page, such as deleting it, sits
-/// here as one destructive item, out of the way.
-struct ToolMoreMenu: View {
+/// rows and by 「この子のこと」: what is not part of writing the page, such as
+/// deleting it, sits here as one destructive item, out of the way; a page
+/// may put one more action above it (`extra`, 病院's 「新しい診察メモを始める」).
+struct ToolMoreMenu<Extra: View>: View {
     let destructiveTitle: String
     let itemIdentifier: String
     let menuIdentifier: String
     let action: () -> Void
+    let extra: Extra
 
     init(destructiveTitle: String, itemIdentifier: String, menuIdentifier: String,
-         action: @escaping () -> Void) {
+         action: @escaping () -> Void, @ViewBuilder extra: () -> Extra) {
         self.destructiveTitle = destructiveTitle
         self.itemIdentifier = itemIdentifier
         self.menuIdentifier = menuIdentifier
         self.action = action
+        self.extra = extra()
     }
 
     var body: some View {
         Menu {
+            extra
             Button(destructiveTitle, role: .destructive) { action() }
                 .accessibilityIdentifier(itemIdentifier)
         } label: {
@@ -149,5 +214,13 @@ struct ToolMoreMenu: View {
         }
         .accessibilityLabel("その他")
         .accessibilityIdentifier(menuIdentifier)
+    }
+}
+
+extension ToolMoreMenu where Extra == EmptyView {
+    init(destructiveTitle: String, itemIdentifier: String, menuIdentifier: String,
+         action: @escaping () -> Void) {
+        self.init(destructiveTitle: destructiveTitle, itemIdentifier: itemIdentifier,
+                  menuIdentifier: menuIdentifier, action: action) { EmptyView() }
     }
 }

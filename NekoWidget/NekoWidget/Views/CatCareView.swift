@@ -229,10 +229,28 @@ struct CatCareDetailView: View {
         return familyNotebook.familyCats.contains { $0.toolID == catID }
     }
 
-    var body: some View {
+    /// The rows and the delete question, apart from `body` so the type
+    /// checker stays fast.
+    private var form: some View {
         Form { formContent }
+            // 11/12 (round 2): the parts close together, as on the tools, so the
+            // first rows show on the first screen of a small iPhone.
+            .toolPageSpacing()
+            .alert(deleteTitle, isPresented: $showsDeleteConfirmation) { deleteActions } message: {
+                // 11/7: what goes (removeProfile drops the profile and which
+                // photos are this cat), what stays, and that it is final.
+                Text("名前・誕生日と、この子に分けた写真の記録が消えます。写真アプリの写真とツールの記録は残ります。元に戻せません。")
+            }
+    }
+
+    var body: some View {
+        form
         .disabled(isDeleting)
         .navigationBarBackButtonHidden(isDeleting || isSavingName)
+        // 11/12 (round 2): a pushed page like the tools, so the tab bar is
+        // hidden here too, wherever the page opens from (the cat's face on
+        // ツール included); the ツール list shows it again.
+        .toolChrome()
         .onChange(of: draft) { _, _ in
             autosave?.cancel()
             autosave = Task {
@@ -251,6 +269,11 @@ struct CatCareDetailView: View {
         .familyNotebookToolSync(enabled: sharedWithFamily)
         .onChange(of: familyNotebook.familyWritesToCatCare) { _, _ in takeFamilyWrites() }
         .toolbar {
+            // 11/12 (round 2): deleting the cat sits in 「…」, as deleting does
+            // in every tool (it was the page's last red row).
+            if isProfile {
+                ToolbarItem(placement: .topBarTrailing) { moreMenu }
+            }
             // The family, at the top right like sharing in Notes, so it is
             // out of the way for anyone who keeps to themselves.
             // The same page opens from ツール and from the family notebook. A
@@ -362,10 +385,6 @@ struct CatCareDetailView: View {
         healthSection
         livingSection
         householdSection
-        // 11/12: deleting is the page's last row, after every part.
-        if case let .profile(profile) = subject {
-            deleteSection(profile)
-        }
     }
 
     @ViewBuilder private var statusSections: some View {
@@ -376,6 +395,13 @@ struct CatCareDetailView: View {
                 Label("開けない記録があるので、いまは保存できません。App Storeでアプリを最新にしてください。",
                       systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
+            }
+        }
+        if deleteFailed {
+            Section {
+                Text("削除できませんでした。もう一度お試しください。")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
             }
         }
         if autosaveFailed {
@@ -397,10 +423,12 @@ struct CatCareDetailView: View {
                 HStack(spacing: 12) {
                     CatCareRing(progress: progress, lineWidth: 4)
                         .frame(width: 30, height: 30)
+                    // 11/12 (round 2): in the text colour, a size up: it was
+                    // gray and small, and easy to miss.
                     Text(progress.filled >= progress.total ? "すべてそろっています"
                          : progress.nextHint ?? "あと\(progress.total - progress.filled)つでそろいます")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("cat-care-next-hint")
@@ -417,11 +445,12 @@ struct CatCareDetailView: View {
     }
 
     /// 見分ける写真: the face and the whole body, the photos 迷子・避難・預ける use.
-    /// 11/12: two equal squares the photos fill (no gray bars), smaller than
-    /// the old wide tiles, with their names and 「⋯」 under them.
+    /// 11/12: two equal squares the photos fill (no gray bars), with their
+    /// names under them and 「⋯」 on the photo. Round 2: the two squares share
+    /// the card's whole width (a third square's room was left empty).
     private var identifyingPhotosSection: some View {
         Section {
-            HStack(alignment: .top, spacing: 16) {
+            HStack(alignment: .top, spacing: 12) {
                 ForEach(CatCarePhotoRole.allCases) { role in
                     let title = Self.photoTitle(role)
                     let file = photoFile(role)
@@ -438,10 +467,9 @@ struct CatCareDetailView: View {
                         }
                     }
                     .filledSquare()
-                    .frame(maxWidth: 140)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
             if photoFailed {
                 Text("写真を保存できませんでした。もう一度お試しください。")
@@ -511,11 +539,16 @@ struct CatCareDetailView: View {
     /// the same count as the ring (「基本　3 / 7」).
     private func partHeader(_ title: String, _ count: (Int, Int), key: String) -> some View {
         let full = count.0 >= count.1
+        // 11/12 (round 2): the count, or one green check once full (words and
+        // numbers were mixed down the page's headers).
         return HStack {
             Text(title)
             Spacer()
-            Text(verbatim: full ? "そろっています" : "\(count.0) / \(count.1)")
-                .foregroundStyle(full ? Color.green : Color.secondary)
+            if full {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.green)
+            } else {
+                Text(verbatim: "\(count.0) / \(count.1)").foregroundStyle(Color.secondary)
+            }
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title)、\(count.0) / \(count.1)")
@@ -549,7 +582,7 @@ struct CatCareDetailView: View {
         let words = Self.firstWords(draft[keyPath: item.path])
         let problem = item.isMicrochip && microchipInvalid
         return NavigationLink { textPage(item) } label: {
-            noted(ToolValueRow(title: item.title, systemImage: item.systemImage, value: words ?? "未記入",
+            noted(ToolValueRow(title: item.title, systemImage: item.systemImage, value: words ?? ToolEmptyValue.unwritten,
                                filled: words != nil, problem: problem), item.note)
         }
         .accessibilityIdentifier(item.identifier + "-row")
@@ -566,6 +599,9 @@ struct CatCareDetailView: View {
                 if item.isMicrochip && microchipInvalid {
                     Label("15桁の数字にすると保存されます。", systemImage: "exclamationmark.circle")
                         .foregroundStyle(.orange)
+                } else if !item.isMicrochip {
+                    // 11/12 (round 2): the same counter as every page to write in.
+                    ToolFieldCounter(count: draft[keyPath: item.path].count, limit: CatCareLimits.textCharacters)
                 }
             }
         }
@@ -575,15 +611,9 @@ struct CatCareDetailView: View {
     /// A row that opens a sheet (the dates): the same look, with a chevron.
     private func sheetRow(_ title: String, _ systemImage: String, value: String, filled: Bool,
                           identifier: String, open: @escaping () -> Void) -> some View {
-        Button(action: open) {
-            HStack {
-                ToolValueRow(title: title, systemImage: systemImage, value: value, filled: filled)
-                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-            }
-            .contentShape(Rectangle())
-        }
-        .foregroundStyle(.primary)
-        .accessibilityIdentifier(identifier)
+        ToolSheetRow(row: ToolValueRow(title: title, systemImage: systemImage, value: value, filled: filled),
+                     action: open)
+            .accessibilityIdentifier(identifier)
     }
 
     // MARK: 基本
@@ -630,7 +660,7 @@ struct CatCareDetailView: View {
 
     private var sexPicker: some View {
         Picker(selection: $draft.sex) {
-            Text("未記入").tag(CatCareSex.unknown)
+            Text(ToolEmptyValue.unset).tag(CatCareSex.unknown)
             Text("オス").tag(CatCareSex.male)
             Text("メス").tag(CatCareSex.female)
         } label: { Self.rowLabel("性別", "pawprint") }
@@ -641,7 +671,7 @@ struct CatCareDetailView: View {
 
     private var neuteredPicker: some View {
         Picker(selection: $draft.neutered) {
-            Text("未記入").tag(CatCareTriState.unknown)
+            Text(ToolEmptyValue.unset).tag(CatCareTriState.unknown)
             Text("済み").tag(CatCareTriState.yes)
             Text("まだ").tag(CatCareTriState.no)
         } label: { Self.rowLabel("去勢・避妊", "checkmark.seal") }
@@ -652,7 +682,7 @@ struct CatCareDetailView: View {
 
     private var indoorPicker: some View {
         Picker(selection: $draft.indoorOnly) {
-            Text("未記入").tag(CatCareTriState.unknown)
+            Text(ToolEmptyValue.unset).tag(CatCareTriState.unknown)
             Text("室内だけ").tag(CatCareTriState.yes)
             Text("外にも出る").tag(CatCareTriState.no)
         } label: { Self.rowLabel("室内飼い", "house") }
@@ -663,7 +693,7 @@ struct CatCareDetailView: View {
 
     private var microchipPicker: some View {
         Picker(selection: $draft.microchipStatus) {
-            Text("未記入").tag(CatCareMicrochipStatus.unknown)
+            Text(ToolEmptyValue.unset).tag(CatCareMicrochipStatus.unknown)
             Text("入っている").tag(CatCareMicrochipStatus.recorded)
             Text("入っていない").tag(CatCareMicrochipStatus.none)
         } label: { Self.rowLabel("マイクロチップ", "memorychip") }
@@ -672,23 +702,26 @@ struct CatCareDetailView: View {
         .accessibilityIdentifier("cat-care-microchip-status")
     }
 
-    /// The key photo (tap to change) and the name with its pencil, at the top
+    /// The key photo (tap to change) and the name (tap to rename), at the top
     /// of the page (11/7: moved from the page's old 写真 tab, then out of 基本).
+    /// 11/12 (round 2): the photo two thirds the size and the gaps halved, so
+    /// the first rows show on a small iPhone; one pencil, on the photo; the
+    /// name once (the bar says 「この子のこと」).
     private func profileHeading(_ profile: CatProfilePresentation) -> some View {
         Section {
-            VStack(spacing: 8) {
+            VStack(spacing: 4) {
                 let hasPhotos = !profile.confirmedPhotos.isEmpty
                 Button {
                     showsKeyPhotoPicker = true
                 } label: {
                     CatProfileThumbnail(photo: profile.coverPhoto)
-                        .frame(width: 96, height: 96)
+                        .frame(width: 64, height: 64)
                         .clipShape(Circle())
                         // 11/7: a small badge says the photo can be changed.
                         .overlay(alignment: .bottomTrailing) {
                             if hasPhotos {
                                 Image(systemName: "pencil.circle.fill")
-                                    .font(.title2)
+                                    .font(.title3)
                                     .symbolRenderingMode(.palette)
                                     .foregroundStyle(Color.white, Color.accentColor)
                                     .background(Circle().fill(Color(.systemGroupedBackground)).padding(-2))
@@ -725,8 +758,8 @@ struct CatCareDetailView: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
             .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
             .alert("名前を変更", isPresented: $showsNameEditor) {
                 TextField("名前", text: $draftName)
                     .accessibilityIdentifier("cat-profile-name-field")
@@ -740,22 +773,20 @@ struct CatCareDetailView: View {
     /// (keyboard up at once, 保存 / キャンセル where iOS puts them).
     /// A field with two text buttons opened under the name, with
     /// the name still above it, and read as a broken row.
+    /// 11/12 (round 2): the name alone is the button (its second pencil is
+    /// gone: one pencil on the page, on the photo).
     private func nameButton(_ profile: CatProfilePresentation) -> some View {
         Button {
             draftName = profile.name ?? ""
             nameSaveFailed = false
             showsNameEditor = true
         } label: {
-            HStack(spacing: 8) {
-                Text(profile.displayName)
-                    .font(.title2.bold())
-                    .foregroundStyle(Color.primary)
-                Image(systemName: "pencil.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
+            Text(profile.displayName)
+                .font(.title2.bold())
+                .foregroundStyle(Color.primary)
+                .multilineTextAlignment(.center)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(isSavingName)
@@ -775,43 +806,46 @@ struct CatCareDetailView: View {
         }
     }
 
-    /// Deleting the cat, the page's last row (11/12; was the last of 基本). The confirmation also
-    /// offers to record the day instead, as before (11/7: moved from 写真).
-    private func deleteSection(_ profile: CatProfilePresentation) -> some View {
-        Section {
-            Button("この子を削除", role: .destructive) {
-                deleteFailed = false
-                showsDeleteConfirmation = true
+    private var isProfile: Bool {
+        if case .profile = subject { return true }
+        return false
+    }
+
+    /// Deleting the cat, in 「…」 at the top right (11/12, round 2; it was the
+    /// page's last row). The confirmation also offers to record the day
+    /// instead, as before (11/7: moved from 写真).
+    private var moreMenu: some View {
+        ToolMoreMenu(destructiveTitle: "この子を削除", itemIdentifier: "cat-profile-delete",
+                     menuIdentifier: "cat-care-more-menu") {
+            deleteFailed = false
+            showsDeleteConfirmation = true
+        }
+        .disabled(isDeleting)
+    }
+
+    private var deleteTitle: String { "\(subject.displayName)を削除しますか？" }
+
+    @ViewBuilder private var deleteActions: some View {
+        if case let .profile(profile) = subject {
+            Button("この子を削除", role: .destructive) { delete(profile) }
+            // When a cat has died, deleting is usually where people go. Offer
+            // to record the day instead; the button says what it opens.
+            if farewell == nil, Version1.isOn {
+                Button("旅立った日を記録する") { showsFarewellEditor = true }
             }
-            .accessibilityIdentifier("cat-profile-delete")
-            .alert("\(profile.displayName)を削除しますか？", isPresented: $showsDeleteConfirmation) {
-                Button("この子を削除", role: .destructive) {
-                    isDeleting = true
-                    deleteFailed = false
-                    Task {
-                        let deleted = await profileActions.deleteProfile(profile.identifier)
-                        isDeleting = false
-                        if deleted {
-                            dismiss()
-                        } else { deleteFailed = true }
-                    }
-                }
-                // When a cat has died, deleting is usually where people go. Offer
-                // to record the day instead; the button says what it opens.
-                if farewell == nil, Version1.isOn {
-                    Button("旅立った日を記録する") { showsFarewellEditor = true }
-                }
-                Button("キャンセル", role: .cancel) {}
-            } message: {
-                // 11/7: what goes (removeProfile drops the profile and which
-                // photos are this cat), what stays, and that it is final.
-                Text("名前・誕生日と、この子に分けた写真の記録が消えます。写真アプリの写真とツールの記録は残ります。元に戻せません。")
-            }
-            if deleteFailed {
-                Text("削除できませんでした。もう一度お試しください。")
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-            }
+        }
+        Button("キャンセル", role: .cancel) {}
+    }
+
+    private func delete(_ profile: CatProfilePresentation) {
+        isDeleting = true
+        deleteFailed = false
+        Task {
+            let deleted = await profileActions.deleteProfile(profile.identifier)
+            isDeleting = false
+            if deleted {
+                dismiss()
+            } else { deleteFailed = true }
         }
     }
 
@@ -839,7 +873,7 @@ struct CatCareDetailView: View {
     /// Like アレルギー: 「なし」 is an answer too, so a healthy cat's page can be all filled in.
     private var conditionsPicker: some View {
         Picker(selection: $draft.conditionsStatus) {
-            Text("未記入").tag(CatCareConditionsStatus.unknown)
+            Text(ToolEmptyValue.unset).tag(CatCareConditionsStatus.unknown)
             Text("なし").tag(CatCareConditionsStatus.none)
             Text("あり").tag(CatCareConditionsStatus.recorded)
         } label: { Self.rowLabel("持病", "heart.text.square") }
@@ -850,7 +884,7 @@ struct CatCareDetailView: View {
 
     private var allergyPicker: some View {
         Picker(selection: $draft.allergyStatus) {
-            Text("未確認").tag(CatCareAllergy.Status.unknown)
+            Text(ToolEmptyValue.unset).tag(CatCareAllergy.Status.unknown)
             Text("なし").tag(CatCareAllergy.Status.none)
             Text("あり").tag(CatCareAllergy.Status.recorded)
         } label: { Self.rowLabel("アレルギー", "allergens") }
@@ -908,7 +942,7 @@ struct CatCareDetailView: View {
 
     private var vetPicker: some View {
         Picker(selection: $draft.vetStatus) {
-            Text("未記入").tag(CatCareVetStatus.unknown)
+            Text(ToolEmptyValue.unset).tag(CatCareVetStatus.unknown)
             Text("決まっている").tag(CatCareVetStatus.recorded)
             Text("まだない").tag(CatCareVetStatus.none)
         } label: { Self.rowLabel("かかりつけ", "cross.case") }
@@ -923,7 +957,7 @@ struct CatCareDetailView: View {
         NavigationLink {
             CatCareListView(kind: kind, catID: catID, editing: $editing)
         } label: {
-            ToolValueRow(title: title, systemImage: systemImage, value: detail, filled: detail != "未記入")
+            ToolValueRow(title: title, systemImage: systemImage, value: detail, filled: detail != ToolEmptyValue.unwritten)
                 .accessibilityValue(detail)
         }
         .disabled(catID == nil)
@@ -947,18 +981,18 @@ struct CatCareDetailView: View {
     private var currentRecord: CatCareRecord? { catID.flatMap { store.state?.record(catID: $0) } }
 
     private var weightSummary: String {
-        guard let latest = currentRecord?.activeWeights.first else { return "未記入" }
+        guard let latest = currentRecord?.activeWeights.first else { return ToolEmptyValue.unwritten }
         return CatCareFormat.weight(latest.grams) + "（\(CatCareFormat.day(latest.measuredOn))）"
     }
 
     private var medicationSummary: String {
         let count = currentRecord?.activeMedications.count ?? 0
-        return count == 0 ? "未記入" : "\(count)件"
+        return count == 0 ? ToolEmptyValue.unwritten : "\(count)件"
     }
 
     private var vaccinationSummary: String {
         guard let latest = currentRecord?.activeVaccinations.first else {
-            return draft.vaccinationStatus == CatCareVaccinationStatus.none ? CatCareVaccinationStatus.noneText : "未記入"
+            return draft.vaccinationStatus == CatCareVaccinationStatus.none ? CatCareVaccinationStatus.noneText : ToolEmptyValue.unwritten
         }
         return "\(latest.kind)（\(CatCareFormat.day(latest.givenOn))）"
     }
@@ -1040,7 +1074,9 @@ struct CatCareDetailView: View {
 
 /// A written item of 「この子のこと」 (11/12): its row shows the first words and
 /// opens a page with this one field. The example is the field's placeholder,
-/// as before; the keyboard and the 15-digit check stay the same.
+/// as before; the keyboard and the 15-digit check stay the same. Round 2: a
+/// text of a sentence or more has a field of two lines or more, so its page
+/// does not look empty; numbers and names keep one line.
 private struct CatCareTextItem {
     let title: String
     let systemImage: String
@@ -1058,7 +1094,7 @@ private struct CatCareTextItem {
     // 基本
     static var coat: Self {
         Self(title: "毛色・柄", systemImage: "paintpalette", example: "例：キジトラ", path: \.coat,
-             identifier: "cat-care-coat", note: .coat)
+             identifier: "cat-care-coat", note: .coat, lines: 2...6)
     }
     static var marks: Self {
         Self(title: "見分ける特徴", systemImage: "eye", example: "例：しっぽが短い、右耳に切れ込み", path: \.marks,
@@ -1075,7 +1111,7 @@ private struct CatCareTextItem {
     }
     static var allergyText: Self {
         Self(title: "アレルギーの内容", systemImage: "list.bullet.clipboard", example: "例：鶏肉", path: \.allergyText,
-             identifier: "cat-care-allergy-text", note: .allergyText)
+             identifier: "cat-care-allergy-text", note: .allergyText, lines: 2...6)
     }
     // 暮らし
     static var specialDiet: Self {
@@ -1084,11 +1120,11 @@ private struct CatCareTextItem {
     }
     static var water: Self {
         Self(title: "水", systemImage: "drop", example: "例：1日2回とりかえる", path: \.water,
-             identifier: "cat-care-water", note: .water)
+             identifier: "cat-care-water", note: .water, lines: 2...6)
     }
     static var litter: Self {
         Self(title: "トイレ", systemImage: "tray", example: "例：システムトイレ・1日2回そうじ", path: \.litter,
-             identifier: "cat-care-litter", note: .litter)
+             identifier: "cat-care-litter", note: .litter, lines: 2...6)
     }
     static var temperament: Self {
         Self(title: "接し方・苦手なこと", systemImage: "hand.raised", example: "例：抱っこが苦手",
@@ -1101,7 +1137,8 @@ private struct CatCareTextItem {
     }
     static var backupContact: Self {
         Self(title: "つながらないときの連絡先", systemImage: "person.crop.circle.badge.questionmark",
-             example: "例：家族の名前と電話番号", path: \.backupContact, identifier: "cat-care-backup-contact")
+             example: "例：家族の名前と電話番号", path: \.backupContact, identifier: "cat-care-backup-contact",
+             lines: 2...6)
     }
     static var vetName: Self {
         Self(title: "かかりつけ病院の名前", systemImage: "building.2", example: "例：みどり動物病院", path: \.vetName,
@@ -1182,13 +1219,21 @@ struct CatCareProgress {
 struct CatCareRing: View {
     let progress: CatCareProgress
     let lineWidth: CGFloat
+    /// The ring's colour once everything is in (11/12, round 2: green on the
+    /// ツール tab); nil keeps the accent colour.
+    var fullTint: Color? = nil
+
+    private var tint: Color {
+        guard let fullTint, progress.total > 0, progress.filled >= progress.total else { return Color.accentColor }
+        return fullTint
+    }
 
     var body: some View {
         ZStack {
             Circle().stroke(Color(.tertiarySystemFill), lineWidth: lineWidth)
             Circle()
                 .trim(from: 0, to: progress.total == 0 ? 0 : CGFloat(progress.filled) / CGFloat(progress.total))
-                .stroke(Color.accentColor, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .stroke(tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
                 .animation(.easeOut(duration: 0.5), value: progress.filled)
         }
@@ -1970,23 +2015,16 @@ struct ToolCatCareSection<Extra: View>: View {
           footer: { if let footer { Text(footer) } }
     }
 
-    /// The folded row: 「この子のこと」, then what is used (up to four names),
-    /// then, short, what is not written yet.
+    /// The folded row (11/12, round 2): the same row as every other row of
+    /// the tool, an icon, 「この子のこと」 and, at the side, how many of the
+    /// things this tool reads are not written yet, or 「そろっています」.
+    /// VoiceOver also hears which ones.
     private func foldedLabel(filled: [(String, String)], missing: [String], dated: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title).foregroundStyle(Color.primary)
-            let summary = filled.prefix(4).map(\.0).joined(separator: "・") + (filled.count > 4 ? " など" : "")
-            if !summary.isEmpty {
-                Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
-            if !missing.isEmpty {
-                Text("まだ：" + missing.prefix(4).joined(separator: "・") + (missing.count > 4 ? " など" : ""))
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
-            if summary.isEmpty && missing.isEmpty && !dated {
-                Text("まだ何も書いていません。").font(.caption).foregroundStyle(.secondary)
-            }
-        }
+        ToolValueRow(title: title, systemImage: "pawprint",
+                     value: missing.isEmpty ? "そろっています" : "あと\(missing.count)つ",
+                     filled: missing.isEmpty)
+            .accessibilityElement(children: .combine)
+            .accessibilityHint(missing.isEmpty ? "" : "まだ：" + missing.joined(separator: "・"))
     }
 
     @ViewBuilder
@@ -2038,6 +2076,8 @@ extension ToolCatCareSection where Extra == EmptyView {
 // chevron; each row opens its own page), with the cat chosen from a menu in
 // the bar instead of the row of faces (ToolRowParts.swift). 預けるとき and
 // 迷子のとき were then made the same way; 避難に備える keeps the shape above.
+// 11/12 (round 2): 避難に備える's main page has the same rows too; its cat's
+// page (猫の情報) keeps the row of faces and the numbered parts.
 
 /// Where a step stands: the first one not done is the one to do now.
 enum ToolStepState: Equatable {
@@ -2122,9 +2162,14 @@ struct ToolMakeBar<Top: View, Action: View>: View {
             }
             action
                 .nekoPrimaryButton()
+                // A thin edge, seen only through a gray button that cannot be
+                // pressed yet (dark mode: it nearly disappeared into the
+                // page); a filled button covers it.
+                .background(RoundedRectangle(cornerRadius: NekoRadius.button)
+                    .strokeBorder(Color(.separator), lineWidth: 1))
         }
         .frame(maxWidth: .infinity)
-        .padding(.horizontal)
+        .padding(.horizontal, ToolChrome.sideMargin)
         .padding(.vertical, 10)
         .background(ground)
         .overlay(alignment: .top) {
@@ -2141,21 +2186,49 @@ struct ToolMakeBar<Top: View, Action: View>: View {
 enum ToolChrome {
     /// How far the rows fade out above ToolMakeBar.
     static let fade: CGFloat = 28
+    /// The side margin of a list's cards, so the bottom button is exactly as
+    /// wide as the cards above it (11/12, round 2: it stood out by a few
+    /// points on the larger iPhones): 20 points from 390 points wide, 16 below.
+    @MainActor static var sideMargin: CGFloat { UIScreen.main.bounds.width >= 390 ? 20 : 16 }
 }
 
 extension View {
     /// 11/11: inside a tool the app's tab bar is hidden, so the tool's bar sits
     /// at the very bottom instead of on top of the tab bar. Set on every page a
-    /// tool pushes: a pushed page without it brings the tab bar back. Popping
-    /// back to the ツール list shows the tab bar again.
-    func toolChrome() -> some View {
+    /// tool pushes and on 「この子のこと」: a pushed page without it brings the
+    /// tab bar back. Popping back to the ツール list shows the tab bar again.
+    /// 11/12 (round 2): the one place for the top bar too. Rows scrolled under
+    /// the title used to show through it, blurred (iOS 26); the bar now has
+    /// the page's own colour under it, so rows end cleanly at its edge.
+    func toolChrome(ground: Color = NekoPalette.groupedGround) -> some View {
         toolbar(.hidden, for: .tabBar)
+            .modifier(ToolChromeTopBar(ground: ground))
     }
 
     /// Room under the last row for the fade above ToolMakeBar, so the last row
     /// can be scrolled fully clear of it.
     func toolBarFadeRoom() -> some View {
         contentMargins(.bottom, ToolChrome.fade, for: .scrollContent)
+    }
+}
+
+/// The top bar of every tool page (toolChrome): the page's colour under the
+/// title. iOS 26 draws a soft, see-through edge by default; there the bar is
+/// filled at all times and the edge is the hard one. Before iOS 26 the colour
+/// shows only once the rows scroll under the bar, as the system bar does.
+private struct ToolChromeTopBar: ViewModifier {
+    let ground: Color
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+                .toolbarBackground(ground, for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
+                .scrollEdgeEffectStyle(.hard, for: .top)
+        } else {
+            content
+                .toolbarBackground(ground, for: .navigationBar)
+        }
     }
 }
 
@@ -2217,7 +2290,31 @@ struct ToolPhotoSlot<Actions: View>: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 10))
+            // 11/12 (round 2): an empty slot has a dashed edge, so it shows on
+            // a card of almost the same gray (dark mode).
+            .overlay {
+                if !hasPhoto {
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(Color.secondary.opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                }
+            }
             .contentShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    /// 「⋯」 on the photo's top corner, on a round ground, so it is easy to
+    /// find and to press (11/12, round 2: three small dots beside the name).
+    private var actionsMenu: some View {
+        Menu { actions } label: {
+            Image(systemName: "ellipsis")
+                .font(.footnote.weight(.bold))
+                .foregroundStyle(Color.primary)
+                .frame(width: 30, height: 30)
+                .background(.regularMaterial, in: Circle())
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel("\(title)の操作")
+        .accessibilityIdentifier(actionsIdentifier)
     }
 
     /// A square the photo fills, cut at the edges (11/12, 「この子のこと」's
@@ -2236,24 +2333,21 @@ struct ToolPhotoSlot<Actions: View>: View {
                     .accessibilityLabel(title + (hasPhoto ? "" : "、まだありません"))
                     .accessibilityIdentifier(identifier)
             } else {
-                Button(action: choose) { tile }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(chooseOnly && !hasPhoto ? title + "、まだありません" : title)
-                    .accessibilityIdentifier(identifier)
-                    .disabled(disabled)
-            }
-            HStack {
-                Text(title).font(.caption)
-                    .foregroundStyle(dimmedTitle ? Color.secondary : Color.primary)
-                Spacer(minLength: 0)
-                if hasPhoto && !readOnly && !chooseOnly {
-                    Menu { actions } label: {
-                        Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                ZStack(alignment: .topTrailing) {
+                    Button(action: choose) { tile }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(chooseOnly && !hasPhoto ? title + "、まだありません" : title)
+                        .accessibilityIdentifier(identifier)
+                        .disabled(disabled)
+                    if hasPhoto && !chooseOnly {
+                        actionsMenu
                     }
-                    .accessibilityLabel("\(title)の操作")
-                    .accessibilityIdentifier(actionsIdentifier)
                 }
             }
+            // 11/12 (round 2): the name a size larger (it was hard to read).
+            Text(title).font(.footnote)
+                .foregroundStyle(dimmedTitle ? Color.secondary : Color.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity)
         .task(id: file) { thumbnail = await ToolPhotoThumbnail.load(file) }
@@ -2304,9 +2398,10 @@ struct ToolIdentifyingPhotos: View {
                                        showsBody: showsBody, identifier: identifier)
         } else {
             ToolPhotoGrid {
-                ToolPhotoSlot(readOnly: "顔の写真", file: faceFile, identifier: identifier + "-face")
+                // 11/12 (round 2): the photos fill their squares, as in 「この子のこと」.
+                ToolPhotoSlot(readOnly: "顔の写真", file: faceFile, identifier: identifier + "-face").filledSquare()
                 if showsBody {
-                    ToolPhotoSlot(readOnly: "全身の写真", file: bodyFile, identifier: identifier + "-body")
+                    ToolPhotoSlot(readOnly: "全身の写真", file: bodyFile, identifier: identifier + "-body").filledSquare()
                 }
             }
         }
@@ -2353,6 +2448,7 @@ private struct ToolIdentifyingPhotoChoice: View {
     private func slot(_ role: CatCarePhotoRole, file: URL?, identifier: String) -> some View {
         ToolPhotoSlot(choosing: CatCareDetailView.photoTitle(role), file: file, disabled: !store.canSave,
                       identifier: identifier, choose: { photoRole = role })
+            .filledSquare()
     }
 }
 

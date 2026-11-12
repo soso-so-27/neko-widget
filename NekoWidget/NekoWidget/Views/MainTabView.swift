@@ -227,27 +227,38 @@ private enum ToolTint {
 }
 
 /// A cat in the row above the tools: round photo with a ring around it that
-/// fills as この子のこと is written in; no numbers. A cat that has passed
-/// away keeps the photo and name only: nothing asks to be filled in.
+/// fills as この子のこと is written in. A cat that has passed away keeps the
+/// photo and name only: nothing asks to be filled in.
+/// 11/12 (round 2): what the ring is, without a sentence: under the name, a
+/// tiny 「あと3つ」 while something is missing; the ring turns green once full.
 private struct CatChip: View {
     let profile: CatProfilePresentation
     let progress: CatCareProgress
     let departed: Bool
 
+    private var left: Int { max(progress.total - progress.filled, 0) }
+
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 2) {
             ZStack {
-                if !departed { CatCareRing(progress: progress, lineWidth: 3.5) }
+                if !departed { CatCareRing(progress: progress, lineWidth: 3.5, fullTint: .green) }
                 CatProfileThumbnail(photo: profile.coverPhoto)
                     .frame(width: 52, height: 52)
                     .clipShape(Circle())
             }
             .frame(width: 64, height: 64)
+            .padding(.bottom, 4)
             .accessibilityHidden(true)
             Text(profile.displayName)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
+            if !departed && left > 0 {
+                Text("あと\(left)つ")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
         .frame(width: 72)
         .contentShape(Rectangle())
@@ -259,14 +270,24 @@ private struct CatChip: View {
 
 /// A tool is a card you can see is a button: a big coloured symbol, the
 /// name, one line of what it makes. No cat art, no small icons.
+/// 11/12 (round 2): as tall as what is on it (a third of each card was
+/// empty); `wide`, a card across the whole row, symbol beside the name, for
+/// the first of three tools, so no card is left alone on its row.
 private struct ToolTile: View {
     let title: String
     let systemImage: String
     let subtitle: String
     let tint: Color
+    var wide = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        // At the largest text sizes the wide card stacks too, so the name wraps
+        // under the symbol instead of being squeezed beside it.
+        let layout = wide && !dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(HStackLayout(alignment: .center, spacing: 12))
+            : AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
+        layout {
             Image(systemName: systemImage)
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(.white)
@@ -284,7 +305,7 @@ private struct ToolTile: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .padding(14)
         .background(Color(.secondarySystemGroupedBackground),
                     in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -1242,10 +1263,18 @@ struct MainTabView: View {
             VStack(alignment: .leading, spacing: 22) {
                 // The cats are the door, but small: a row of faces above the
                 // tools, each opening the cat's page. The tools stay tools.
-                catStrip
+                // 11/12 (round 2): the row of cats under the same small heading
+                // as the tools, so it reads as 「この子のこと」 of each cat.
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("この子のこと")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    catStrip
+                }
                 // 11/8: the vet memo is for check-ups and vaccines too, so it is everyday.
-                toolSection("ふだん") {
-                    showcaseToolCard
+                // 11/12 (round 2): three tools: 写真を見せる across the row, the
+                // other two under it, so none is left alone with a hole beside it.
+                toolSection("ふだん", lead: { showcaseToolCard }) {
                     NavigationLink {
                         LazyToolDestination {
                             VeterinaryVisitsView(profiles: catProfilesPresentation.profiles,
@@ -1300,6 +1329,9 @@ struct MainTabView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
         }
+        // 11/12 (round 2): room under the last cards, so on iPhone SE they
+        // scroll fully clear of the tab bar.
+        .contentMargins(.bottom, 24, for: .scrollContent)
         .background(Color(.systemGroupedBackground))
         .navigationTitle("ツール")
         .navigationBarTitleDisplayMode(.inline)
@@ -1320,7 +1352,7 @@ struct MainTabView: View {
             } else { openPreparedShowcase(scopeID: scope) }
         } label: {
             ToolTile(title: "写真を見せる", systemImage: "square.grid.3x3.fill",
-                     subtitle: "自慢の9枚", tint: ToolTint.everydayLight)
+                     subtitle: "自慢の9枚", tint: ToolTint.everydayLight, wide: true)
         }
         .buttonStyle(ToolCardButtonStyle())
         .accessibilityIdentifier("tools-showcase-open")
@@ -1467,10 +1499,19 @@ struct MainTabView: View {
 
     private func toolSection<Content: View>(_ title: String,
                                              @ViewBuilder content: () -> Content) -> some View {
+        toolSection(title, lead: { EmptyView() }, content: content)
+    }
+
+    /// A group of tools: its heading, a card across the whole row when given
+    /// (`lead`), then the cards two to a row.
+    private func toolSection<Lead: View, Content: View>(_ title: String,
+                                                        @ViewBuilder lead: () -> Lead,
+                                                        @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
+            lead()
             LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize
                         ? [GridItem(.flexible())]
                         : [GridItem(.flexible(), spacing: 10, alignment: .top), GridItem(.flexible(), spacing: 10, alignment: .top)],

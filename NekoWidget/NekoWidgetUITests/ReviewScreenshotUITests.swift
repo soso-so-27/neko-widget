@@ -194,7 +194,8 @@ final class ReviewScreenshotUITests: XCTestCase {
         _ = catPage.waitForExistence(timeout: 5)
         shot("11_cat_care_bottom", app) {
             guard catPage.exists else { return "「この子のこと」 not shown" }
-            scrollToEnd(app, until: app.buttons["cat-profile-delete"], maximumSwipes: 16)
+            // 11/12 (round 2): deleting moved to 「…」; 家の情報 is the last part.
+            scrollToEnd(app, until: app.descendants(matching: .any)["cat-care-vet-status"].firstMatch, maximumSwipes: 16)
             return nil
         }
         shot("11b_cat_care_text_page", app) {
