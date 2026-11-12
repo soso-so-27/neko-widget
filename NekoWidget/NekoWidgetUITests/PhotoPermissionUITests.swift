@@ -3714,6 +3714,8 @@ final class SoloMemoriesUITests: XCTestCase {
         // A new memo opens the one Plus screen directly (no intermediate notice).
         XCTAssertTrue(app.staticTexts["membership-offer-heading"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["membership-offer-reason"].label.contains("メモを書くのはPlusの機能です"))
+        // 11/12: the free days are the button's words, not the reason's.
+        XCTAssertFalse(app.staticTexts["membership-offer-reason"].label.contains("無料"))
         XCTAssertFalse(editor.exists)
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "membership-new-memo-boundary"
@@ -3725,7 +3727,19 @@ final class SoloMemoriesUITests: XCTestCase {
         closeOffer.tap()
         XCTAssertTrue(app.buttons["plus-offer-entry-new-memo"].waitForExistence(timeout: 5),
                       "Closing the Plus screen leaves the place's own button")
+        XCTAssertEqual(app.buttons["plus-offer-entry-new-memo"].label, "Plusについて見る")
         XCTAssertFalse(editor.exists)
+        app.buttons["photo-memory-note-close"].tap()
+        // 11/12 (review 6): only the first new memo opens the Plus screen by
+        // itself; the next one shows the line and its button.
+        app.buttons["membership-new"].tap()
+        XCTAssertTrue(app.buttons["plus-offer-entry-new-memo"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["membership-offer-heading"].waitForExistence(timeout: 2),
+                       "A second new memo must not open the Plus screen by itself")
+        app.buttons["plus-offer-entry-new-memo"].tap()
+        XCTAssertTrue(app.staticTexts["membership-offer-heading"].waitForExistence(timeout: 5))
+        app.buttons["membership-offer-close"].tap()
+        XCTAssertTrue(app.buttons["plus-offer-entry-new-memo"].waitForExistence(timeout: 5))
         app.buttons["photo-memory-note-close"].tap()
         app.buttons["membership-unknown"].tap()
         app.buttons["membership-new"].tap()
@@ -3906,7 +3920,7 @@ final class SoloMemoriesUITests: XCTestCase {
             app.buttons["membership-preview-open"].tap()
             let heading = app.staticTexts["membership-offer-heading"]
             XCTAssertTrue(heading.waitForExistence(timeout: 5))
-            XCTAssertEqual(heading.label, "うちの子との毎日を、続ける")
+            XCTAssertEqual(heading.label, "うちの子との毎日を、もっと残す")
             let overview = XCTAttachment(screenshot: app.screenshot())
             overview.name = "membership-overview-\(largeText ? "largest" : "standard")"
             overview.lifetime = .keepAlways
@@ -3934,7 +3948,7 @@ final class SoloMemoriesUITests: XCTestCase {
             let values = app.descendants(matching: .any)["membership-offer-values"].firstMatch
             XCTAssertFalse(values.label.contains("毎日、新しい1枚がホーム画面に"), "The daily photo is free")
             for line in ["月の作品、季節のムービー", "写真に新しいメモを書く",
-                         "まどを作って、家族と写真を届け合う", "家族の手帳を、家族と一緒に書く",
+                         "まどを作って、家族と写真を届け合う", "家族の手帳を作って、家族と一緒に書く",
                          "猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる"] {
                 XCTAssertTrue(values.label.contains(line), "Missing value: \(line)")
             }
@@ -3988,10 +4002,41 @@ final class SoloMemoriesUITests: XCTestCase {
             }
             for _ in 0..<3 where !purchase.isHittable { app.swipeUp() }
             purchase.tap()
+            if !cancelled {
+                // 11/12: bought from Settings, where nothing was waiting: one
+                // line and the one next step, in the same sheet.
+                let started = app.staticTexts["membership-offer-started"]
+                XCTAssertTrue(started.waitForExistence(timeout: 5))
+                XCTAssertEqual(started.label, "Plusが始まりました。")
+                XCTAssertFalse(app.alerts["自動保存も始めますか？"].exists,
+                               "Auto-save is never asked over the purchase")
+                let next = app.buttons["membership-offer-next-step"]
+                XCTAssertEqual(next.label, "10月の作品を開く")
+                let startedCapture = XCTAttachment(screenshot: app.screenshot())
+                startedCapture.name = "membership-offer-started"
+                startedCapture.lifetime = .keepAlways
+                add(startedCapture)
+                next.tap()
+            }
             let result = app.staticTexts["membership-preview-result"]
             XCTAssertTrue(result.waitForExistence(timeout: 5))
             XCTAssertTrue(result.label.contains(cancelled ? "取り消して" : "契約は変更していません"))
             XCTAssertTrue(app.buttons["membership-preview-open"].isHittable)
+            if !cancelled {
+                // A place with something waiting (a new memo) goes straight
+                // back to it: no 「Plusが始まりました。」, no question.
+                let memo = app.buttons["membership-preview-open-new-memo"]
+                for _ in 0..<10 { if memo.isHittable { break }; app.swipeUp() }
+                memo.tap()
+                let memoPurchase = app.buttons["membership-offer-purchase"]
+                XCTAssertTrue(memoPurchase.waitForExistence(timeout: 5))
+                for _ in 0..<3 where !memoPurchase.isHittable { app.swipeUp() }
+                memoPurchase.tap()
+                XCTAssertTrue(memo.waitForExistence(timeout: 5))
+                XCTAssertFalse(app.staticTexts["membership-offer-started"].exists)
+                XCTAssertFalse(app.alerts["自動保存も始めますか？"].exists)
+                XCTAssertTrue(app.staticTexts["membership-preview-result"].label.contains("契約は変更していません"))
+            }
             app.terminate()
         }
         checkBillingOwnerEnrollmentPreparesOnceWithoutPurchase()
@@ -4006,14 +4051,17 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launchArguments = ["--membership-offer-ui-fixture",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
+        // 11/12 (review 5): what the person gets there, not a rule.
         let reasons: [(String, String?)] = [
             ("onboarding", nil),
-            ("monthly-summary", "月の作品"), ("new-memo", "メモを書くのは"),
-            ("create-window", "まどを作る"), ("continue-window", "作った人のPlus"),
-            ("create-family", "家族の手帳を作る"), ("continue-family", "家族の誰か1人のPlus"), ("preservation", "保存"), ("settings", nil),
+            ("monthly-summary", "10月の作品ができています。Plusで開けます。"),
+            ("new-memo", "この写真に、その日のことを書き残せます。"),
+            ("create-window", "Plusがいるのは作る人だけです。"), ("continue-window", "作った人のPlus"),
+            ("create-family", "家族で一緒に書けます。"), ("continue-family", "家族の誰か1人のPlus"),
+            ("preservation", "新しいiPhoneに戻せます。"), ("settings", nil),
         ]
         XCTAssertTrue(app.buttons["membership-preview-open"].waitForExistence(timeout: 10))
-        XCTAssertEqual(app.buttons["membership-preview-open-monthly-summary"].label, "10月の作品を見る")
+        XCTAssertEqual(app.buttons["membership-preview-open-monthly-summary"].label, "Plusで10月の作品を見る")
         for (identifier, reason) in reasons {
             let open = app.buttons["membership-preview-open-" + identifier]
             for _ in 0..<10 { if open.isHittable { break }; app.swipeUp() }
@@ -4021,13 +4069,22 @@ final class SoloMemoriesUITests: XCTestCase {
             open.tap()
             let heading = app.staticTexts["membership-offer-heading"]
             XCTAssertTrue(heading.waitForExistence(timeout: 5), identifier)
-            XCTAssertEqual(heading.label, "うちの子との毎日を、続ける")
+            XCTAssertEqual(heading.label, "うちの子との毎日を、もっと残す")
             XCTAssertEqual(app.buttons["membership-offer-purchase"].label, "14日間無料で試す")
             let reasonText = app.staticTexts["membership-offer-reason"]
             if let reason {
                 XCTAssertTrue(reasonText.label.contains(reason), identifier)
+                XCTAssertFalse(reasonText.label.contains("写真やメモの保存"), identifier)
             } else {
                 XCTAssertFalse(reasonText.exists, identifier)
+            }
+            // Only the first offer, which opens by itself, says Plus is optional.
+            let staysFree = app.staticTexts["membership-offer-stays-free"]
+            if identifier == "onboarding" {
+                for _ in 0..<10 { if staysFree.isHittable { break }; app.swipeUp() }
+                XCTAssertEqual(staysFree.label, "Plusにしなくても、このまま無料で使えます。")
+            } else {
+                XCTAssertFalse(staysFree.exists, identifier)
             }
             app.buttons["membership-offer-close"].tap()
             XCTAssertTrue(open.waitForExistence(timeout: 5))
@@ -4054,12 +4111,39 @@ final class SoloMemoriesUITests: XCTestCase {
         capture.name = "membership-offer-without-trial"
         capture.lifetime = .keepAlways
         add(capture)
-        // A completed purchase closes the sheet without a completion page.
+        // From Settings a completed purchase ends on one line and one button
+        // (11/12); the button closes the sheet.
         for _ in 0..<5 where !purchase.isHittable { noTrial.swipeUp() }
         purchase.tap()
-        XCTAssertTrue(noTrial.staticTexts["membership-preview-result"].waitForExistence(timeout: 5))
+        XCTAssertTrue(noTrial.staticTexts["membership-offer-started"].waitForExistence(timeout: 5))
         XCTAssertFalse(noTrial.staticTexts["membership-offer-heading"].exists)
+        noTrial.buttons["membership-offer-next-step"].tap()
+        XCTAssertTrue(noTrial.staticTexts["membership-preview-result"].waitForExistence(timeout: 5))
+        XCTAssertFalse(noTrial.staticTexts["membership-offer-started"].exists)
         noTrial.terminate()
+
+        // 11/12 (review 8): no price could be read; 「もう一度読み込む」 is
+        // there, and it brings the price and the button back.
+        let failing = XCUIApplication()
+        failing.launchArguments = ["--membership-offer-ui-fixture", "--membership-offer-load-fails-once",
+                                   "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        failing.launch()
+        XCTAssertTrue(failing.buttons["membership-preview-open"].waitForExistence(timeout: 10))
+        failing.buttons["membership-preview-open"].tap()
+        let reload = failing.buttons["membership-offer-reload"]
+        XCTAssertTrue(reload.waitForExistence(timeout: 5), "A failed price read must offer a retry")
+        XCTAssertFalse(failing.buttons["membership-offer-purchase"].isEnabled)
+        XCTAssertFalse(failing.buttons["membership-offer-manage"].exists)
+        let unavailable = XCTAttachment(screenshot: failing.screenshot())
+        unavailable.name = "membership-offer-price-unavailable"
+        unavailable.lifetime = .keepAlways
+        add(unavailable)
+        reload.tap()
+        XCTAssertTrue(failing.staticTexts["membership-offer-price"].waitForExistence(timeout: 5))
+        XCTAssertEqual(failing.staticTexts["membership-offer-price"].label, "その後 月額¥980（自動更新）")
+        XCTAssertTrue(failing.buttons["membership-offer-purchase"].isEnabled)
+        XCTAssertFalse(reload.exists)
+        failing.terminate()
     }
 
     @MainActor

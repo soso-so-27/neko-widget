@@ -830,6 +830,49 @@ struct MainTabView: View {
         .environment(\.plusOfferPhoto, bestShowcaseCandidate.map {
             PlusOfferPhoto(localIdentifier: $0.localIdentifier, catBoundingBox: $0.catBoundingBox)
         })
+        // 11/12: bought from Settings or the first offer, the one next step.
+        .environment(\.plusStartedNextStep, plusStartedNextStepSource)
+    }
+
+    private var plusStartedNextStepSource: PlusStartedNextStepSource {
+        PlusStartedNextStepSource(resolve: plusStartedNextStep)
+    }
+
+    /// After Plus starts with nothing waiting: the newest monthly work if
+    /// there is one, else 「まどを作る」 on the まど tab. Read only when a
+    /// purchase ends, never while drawing.
+    @MainActor
+    private func plusStartedNextStep() -> PlusStartedNextStep? {
+        if Version1.isOn, hasPhotoAccess, photoPresentationVersion.canPresent,
+           let latest = currentMonthlyWindowCollection?.letters.first, !latest.photos.isEmpty {
+            return PlusStartedNextStep(title: "\(latest.monthNumber)月の作品を開く") {
+                afterSettingsCloses {
+                    selectedTab = .memories
+                    arrivalStory = latest
+                }
+            }
+        }
+        guard GroupWindowClientProvider.ui != nil else { return nil }
+        return PlusStartedNextStep(title: "まどを作る") {
+            afterSettingsCloses {
+                groupWindowOpenInbox.showCreateFromShare()
+                groupShareNavigationGeneration = UUID()
+                selectedTab = .windows
+            }
+        }
+    }
+
+    /// Settings is a sheet: it goes first, so the next screen is not
+    /// presented under it.
+    @MainActor
+    private func afterSettingsCloses(_ next: @escaping @MainActor () -> Void) {
+        didApplyInitialTab = true
+        guard showsSettings else { next(); return }
+        showsSettings = false
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(600))
+            next()
+        }
     }
 
     private var routedTabContent: some View {
@@ -918,7 +961,7 @@ struct MainTabView: View {
         .fullScreenCover(item: $arrivalStory) { letter in
             if Version1.isOn, hasPhotoAccess,
                let current = currentMonthlyWindowCollection?.letters.first(where: { $0.periodIdentifier == letter.periodIdentifier }) {
-                AlbumWorkGate(month: current.monthNumber) {
+                AlbumWorkGate(month: current.monthNumber, cover: current.coverPhoto) {
                     MonthlyStoryView(letter: current, catPhotos: catPhotos,
                         assignments: currentPhotoLibraryAssignments, profileNames: currentPhotoLibraryProfileNames)
                 }

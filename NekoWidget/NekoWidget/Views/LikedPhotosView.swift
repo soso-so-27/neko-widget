@@ -2607,6 +2607,7 @@ struct PhotoBrowserView: View {
     @Environment(\.showcaseAddTargets) private var showcaseAddTargets
     @Environment(\.showcaseAddPhoto) private var showcaseAddPhoto
     @Environment(\.receivedPhotoIdentifiers) private var receivedPhotoIdentifiers
+    @Environment(\.membershipAccess) private var membershipAccess
     @State private var pendingReceivedRemoval: String?
     /// Counts only taps that add a favorite, so paging to a photo that is
     /// already a favorite neither bounces nor vibrates (11/11).
@@ -2918,10 +2919,11 @@ struct PhotoBrowserView: View {
             .sensoryFeedback(.impact(weight: .light), trigger: favoriteAddedTaps)
 
             quickAction("square.and.pencil", "メモ", tinted: personalNote.note(for: photo.localIdentifier) != nil,
-                        identifier: "photo-memory-note-open") {
+                        identifier: "photo-memory-note-open", plusMark: newMemoNeedsPlus(photo)) {
                 personalNotePhoto = photo
             }
-            .accessibilityLabel(noteState.actionTitle(hasNote: personalNote.note(for: photo.localIdentifier) != nil))
+            .accessibilityLabel(noteState.actionTitle(hasNote: personalNote.note(for: photo.localIdentifier) != nil)
+                                + (newMemoNeedsPlus(photo) ? "、Plusで書けます" : ""))
             .accessibilityHint("自分だけのメモです。相手には送られません")
             .disabled(isExportingMemoryPhoto || noteState.isLoading)
 
@@ -2951,12 +2953,24 @@ struct PhotoBrowserView: View {
         .accessibilityElement(children: .contain)
     }
 
+    /// 11/12 (review 6): a new memo is Plus, so 「メモ」 says so before a tap,
+    /// as the works do. A memo already written stays free to open and edit.
+    private func newMemoNeedsPlus(_ photo: PhotoPresentation) -> Bool {
+        personalNote.state(for: photo.localIdentifier) == .loaded
+            && personalNote.note(for: photo.localIdentifier) == nil
+            && membershipAccess.decision(for: .createPersonalMemo) == .membershipRequired
+    }
+
     private func quickAction(_ systemImage: String, _ title: String, tinted: Bool,
-                             identifier: String, action: @escaping () -> Void) -> some View {
+                             identifier: String, plusMark: Bool = false,
+                             action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 3) {
                 Image(systemName: systemImage).font(.title3)
-                Text(title).font(.footnote)
+                HStack(spacing: 4) {
+                    Text(title).font(.footnote)
+                    if plusMark { AlbumPlusMark(compact: true, inline: true) }
+                }
             }
             .frame(maxWidth: .infinity, minHeight: 50)
             // 11/7: readable size and full contrast on black; the accent still marks "on".

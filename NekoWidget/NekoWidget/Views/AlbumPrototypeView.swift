@@ -333,14 +333,14 @@ struct AlbumPrototypeView: View {
             _ = await MonthlyStoryView.prepare(key)
         }
         .fullScreenCover(item: $story) { letter in
-            AlbumWorkGate(month: letter.monthNumber) {
+            AlbumWorkGate(month: letter.monthNumber, cover: letter.coverPhoto) {
                 MonthlyStoryView(letter: letter, catPhotos: catPhotos,
                                  assignments: assignments, profileNames: profileNames)
             }
             .zoomTransition(storySource, in: zoom)
         }
         .fullScreenCover(item: $yearStory) { story in
-            AlbumWorkGate(month: nil) {
+            AlbumWorkGate(month: nil, year: story.year) {
                 YearStoryView(year: story.year, catPhotos: catPhotos,
                               assignments: assignments, profileNames: profileNames)
             }
@@ -623,25 +623,44 @@ struct AlbumPrototypeView: View {
 /// movies, so every cover that opens with Plus says so before a tap.
 struct AlbumPlusMark: View {
     var compact = false
+    /// Beside a label, not over a cover: no margin of its own (the photo's
+    /// 「メモ」 button, 11/12).
+    var inline = false
 
     var body: some View {
         Text("Plus").font(.caption2.bold())
             .padding(.horizontal, compact ? 6 : 8).padding(.vertical, compact ? 2 : 4)
             .background(.thinMaterial, in: Capsule())
-            .padding(compact ? 5 : 12)
+            .padding(inline ? 0 : compact ? 5 : 12)
             .accessibilityHidden(true)
     }
 }
 
 /// Opening a month's or the year's work is Plus; the shelf and the covers
 /// stay free (ADR-027: lists free, opening a summary or movie is Plus). In
-/// place of the work: the one Plus screen for that month, or the notice when
-/// the purchase state cannot be confirmed. After joining, the work opens.
+/// place of the work: the one Plus screen for that month, over that month's
+/// cover, or the notice when the purchase state cannot be confirmed. After
+/// joining, the work opens. Closing the Plus screen without Plus closes this
+/// too, so one × goes back to the album (11/12, review 7).
 struct AlbumWorkGate<Content: View>: View {
     let month: Int?
+    /// The year's work (month nil): its own line, not the seasonal movie's.
+    var year: Int? = nil
+    /// The work's cover, shown at the top of the Plus screen.
+    var cover: PhotoPresentation? = nil
     @ViewBuilder let content: () -> Content
     @Environment(\.membershipAccess) private var access
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.plusOfferPhoto) private var placePhoto
+
+    private var coverPhoto: PlusOfferPhoto? {
+        cover.map { PlusOfferPhoto(localIdentifier: $0.localIdentifier, catBoundingBox: $0.catBoundingBox) }
+            ?? placePhoto
+    }
+
+    private var yearReason: String? {
+        year.map { "\(String($0))年の作品ができています。Plusで開けます。" }
+    }
 
     var body: some View {
         let decision = access.decision(for: .openGrowingSummary)
@@ -649,7 +668,9 @@ struct AlbumWorkGate<Content: View>: View {
             content()
         } else {
             NavigationStack {
-                PlusOfferPrompt(context: .monthlySummary(month: month), decision: decision)
+                PlusOfferPrompt(context: .monthlySummary(month: month), decision: decision,
+                                reasonOverride: yearReason, onDeclined: { dismiss() })
+                    .environment(\.plusOfferPhoto, coverPhoto)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .toolbar {
                         // A sheet that is only read closes with the × at the
@@ -763,14 +784,14 @@ struct PastWorksView: View {
         .navigationTitle("これまでの作品")
         .navigationBarTitleDisplayMode(.inline)
         .fullScreenCover(item: $story) { letter in
-            AlbumWorkGate(month: letter.monthNumber) {
+            AlbumWorkGate(month: letter.monthNumber, cover: letter.coverPhoto) {
                 MonthlyStoryView(letter: letter, catPhotos: catPhotos,
                                  assignments: assignments, profileNames: profileNames)
             }
             .zoomTransition(letter.periodIdentifier, in: zoom)
         }
         .fullScreenCover(item: $yearStory) { story in
-            AlbumWorkGate(month: nil) {
+            AlbumWorkGate(month: nil, year: story.year) {
                 YearStoryView(year: story.year, catPhotos: catPhotos,
                               assignments: assignments, profileNames: profileNames)
             }
