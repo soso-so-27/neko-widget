@@ -234,7 +234,23 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertNotIn("expirationDate > Date.now", self.store)
         self.assertNotIn("expirationDate.map", self.store)
         self.assertNotIn(".distantFuture", self.store)
-        self.assertNotIn("jsonRepresentation", self.store)
+        # 1112e: iOS 17.1 needs the signed payload's free-trial metadata
+        # for display. It must stay inside the verified display-only helper;
+        # it is still forbidden everywhere that builds current authority.
+        trial_metadata = section(self.store, "    private static func isFreeTrial(",
+                                 "    private func refreshWorkHistory()")
+        self.assertEqual(self.store.count("jsonRepresentation"), 1)
+        self.assertNotIn("jsonRepresentation", self.store.replace(trial_metadata, ""))
+        self.assertIn('payload?["offerDiscountType"] as? String == "FREE_TRIAL"', trial_metadata)
+        for forbidden in ("entitlementState", "workHistory", "serverConfirmed", "UserDefaults", "expirationDate"):
+            self.assertNotIn(forbidden, trial_metadata)
+        renewal = section(self.store, "    private func refreshRenewal() async {",
+                          "    private static func isFreeTrial(")
+        self.assertIn("guard case let .verified(transaction) = status.transaction,", renewal)
+        self.assertLess(renewal.index("guard case let .verified(transaction)"),
+                        renewal.index("Self.isFreeTrial(transaction)"))
+        self.assertIn("trialEndsAt: Self.isFreeTrial(transaction) ? transaction.expirationDate : nil,", renewal)
+        self.assertEqual(self.store.count("Self.isFreeTrial(transaction)"), 1)
         self.assertNotIn("UserDefaults", self.store)
         self.assertNotIn("@AppStorage", self.store)
         self.assertNotIn("PairingCredential", self.store)
@@ -263,7 +279,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertIn("recordVerifiedTransactionEvent == nil", initializer)
         self.assertIn("fetchAuthoritativeEntitlement == nil", initializer)
 
-    def test_storekit_is_app_target_only_and_has_no_current_ui_or_gate(self) -> None:
+    def test_storekit_is_app_target_only_and_views_use_injected_membership(self) -> None:
         project = source("NekoWidget.xcodeproj/project.pbxproj")
         app_sources = section(
             project,
@@ -293,12 +309,37 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
             "NekoWidget/Views/MainTabView.swift",
             "NekoWidget/Views/SettingsView.swift",
             "NekoWidget/Views/LikedPhotosView.swift",
+            "NekoWidget/Views/AlbumPrototypeView.swift",
         ):
             ui = source(relative)
             self.assertNotIn("PlusPurchaseStore", ui)
             self.assertNotIn("PlusStorefrontEnabled", ui)
             self.assertNotIn("ねこのまど Plus", ui)
             self.assertNotIn("¥980", ui)
+
+    def test_retained_work_history_is_injected_and_not_current_authority(self) -> None:
+        app = source("NekoWidget/App/NekoWidgetApp.swift")
+        self.assertIn("workHistory: plusPurchases.workHistory", app)
+        context = source("NekoWidget/Services/MembershipAccessContext.swift")
+        self.assertIn("var workHistory: PlusWorkHistory? = nil", context)
+        current = section(context, "    func decision(for operation:", "    /// Only viewing")
+        self.assertNotIn("workHistory", current)
+        work = section(context, "    func workDecision(", "    /// This iPhone")
+        self.assertIn("if current == .allowed { return .allowed }", work)
+        self.assertIn("workHistory?.contains(arrival: arrival, now: now)", work)
+        self.assertNotIn("PlusPurchaseStore", context)
+        for relative in ("NekoWidget/Views/AlbumPrototypeView.swift", "NekoWidget/Views/MainTabView.swift",
+                         "NekoWidget/Views/LikedPhotosView.swift"):
+            view = source(relative)
+            self.assertIn(".workDecision(arrival:", view)
+            # StoreKit also supplies the existing requestReview UI. Ban
+            # purchase/history APIs here, not that unrelated review import.
+            for forbidden in ("Transaction.all", "Transaction.currentEntitlements", "Transaction.updates",
+                              "Product.products(", "AppStore.sync(", "jsonRepresentation"):
+                self.assertNotIn(forbidden, view, relative)
+        quick = source("ci/run-cheap-safety-checks.sh")
+        for test in ("test-plus-purchase-foundation.py", "test-billing-client-foundation.py"):
+            self.assertLess(quick.index(test), quick.index("xcrun"))
 
     def test_personal_widget_daily_photo_is_free_and_not_a_plus_entry(self) -> None:
         # 11/11: the daily photo on the personal Widget (with the cloudy

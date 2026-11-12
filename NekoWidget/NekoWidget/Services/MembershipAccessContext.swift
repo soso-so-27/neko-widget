@@ -10,6 +10,8 @@ struct MembershipAccessContext: Equatable {
     var enforcementEnabled = false
     var personal: MembershipPersonalState = .checking
     var window: MembershipWindowState = .checking
+    /// Verified historical periods for viewing retained works only.
+    var workHistory: PlusWorkHistory? = nil
 
     static let beta = MembershipAccessContext()
 
@@ -21,13 +23,16 @@ struct MembershipAccessContext: Equatable {
 
     init(enforcementEnabled: Bool = false,
          personal: MembershipPersonalState = .checking,
-         window: MembershipWindowState = .checking) {
+         window: MembershipWindowState = .checking,
+         workHistory: PlusWorkHistory? = nil) {
         self.enforcementEnabled = enforcementEnabled
         self.personal = personal
         self.window = window
+        self.workHistory = workHistory
     }
 
-    init(entitlement: PlusEntitlementState, now: Date = .now) {
+    init(entitlement: PlusEntitlementState, now: Date = .now, workHistory: PlusWorkHistory? = nil) {
+        self.workHistory = workHistory
         enforcementEnabled = Self.enforcementConfigured
         window = .checking
         switch entitlement {
@@ -57,11 +62,11 @@ struct MembershipAccessContext: Equatable {
     /// Only viewing an arrived, personally owned work gets this exception.
     /// Current members keep access to all past works; creation/server authority
     /// and family notebook access continue using their existing policies.
-    func workDecision(arrival: Date, history: PlusWorkHistory?, now: Date = .now) -> MembershipAccessDecision {
+    func workDecision(arrival: Date, now: Date = .now) -> MembershipAccessDecision {
         let current = decision(for: .openGrowingSummary, now: now)
         if current == .allowed { return .allowed }
-        if history?.contains(arrival: arrival, now: now) == true { return .allowed }
-        guard history?.complete == true else { return .verificationRequired }
+        if workHistory?.contains(arrival: arrival, now: now) == true { return .allowed }
+        guard workHistory?.complete == true else { return .verificationRequired }
         return current
     }
 

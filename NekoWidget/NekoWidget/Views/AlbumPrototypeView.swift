@@ -247,9 +247,8 @@ struct AlbumPrototypeView: View {
     struct YearStory: Identifiable { let year: Int; var id: Int { year } }
 
     /// The works open with Plus; the card says so before a tap (ADR-027).
-    @ObservedObject private var purchases = PlusPurchaseStore.productionShared
     private func workNeedsPlus(_ arrival: Date) -> Bool {
-        membershipAccess.workDecision(arrival: arrival, history: purchases.workHistory) == .membershipRequired
+        membershipAccess.workDecision(arrival: arrival) == .membershipRequired
     }
 
     private var arrivedYears: [Int] {
@@ -649,7 +648,6 @@ struct AlbumPlusMark: View {
 struct AlbumWorkGate<Content: View>: View {
     let month: Int?
     let arrival: Date
-    @ObservedObject private var purchases = PlusPurchaseStore.productionShared
     /// The year's work (month nil): its own line, not the seasonal movie's.
     var year: Int? = nil
     /// The work's cover, shown at the top of the Plus screen.
@@ -669,7 +667,7 @@ struct AlbumWorkGate<Content: View>: View {
     }
 
     var body: some View {
-        let decision = access.workDecision(arrival: arrival, history: purchases.workHistory)
+        let decision = access.workDecision(arrival: arrival)
         if decision == .allowed {
             content()
         } else {
@@ -721,9 +719,8 @@ struct PastWorksView: View {
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
 
     /// Same condition as the album's lead card (11/7).
-    @ObservedObject private var purchases = PlusPurchaseStore.productionShared
     private func workNeedsPlus(_ arrival: Date) -> Bool {
-        membershipAccess.workDecision(arrival: arrival, history: purchases.workHistory) == .membershipRequired
+        membershipAccess.workDecision(arrival: arrival) == .membershipRequired
     }
 
     private func plusSuffix(_ arrival: Date) -> String { workNeedsPlus(arrival) ? "、Plusで見られます" : "" }

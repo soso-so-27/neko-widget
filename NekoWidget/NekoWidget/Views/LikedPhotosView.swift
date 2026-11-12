@@ -1023,9 +1023,8 @@ struct LikedPhotosView: View {
     @Environment(\.membershipAccess) private var membershipAccess
     /// The monthly summary and movie open with Plus; their cards say so before a tap.
     private var summaryNeedsPlus: Bool { membershipAccess.decision(for: .openGrowingSummary) == .membershipRequired }
-    @ObservedObject private var workPurchases = PlusPurchaseStore.productionShared
     private func summaryNeedsPlus(arrival: Date) -> Bool {
-        membershipAccess.workDecision(arrival: arrival, history: workPurchases.workHistory) == .membershipRequired
+        membershipAccess.workDecision(arrival: arrival) == .membershipRequired
     }
 
     private var showsReflectionPlaceholder: Bool {
