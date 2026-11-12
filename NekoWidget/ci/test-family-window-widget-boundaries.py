@@ -3536,7 +3536,8 @@ class VeterinaryCatCareTests(unittest.TestCase):
         # Export: PDF or images in the screen's order (11/8), with a caution line,
         # in the same temporary folder the 預けるとき cleanup removes.
         export = section(view, "private func makeExport(pdf: Bool) async {", "private struct VeterinaryCatCareFields")
-        self.assertIn("VeterinaryMemoExporter.create(name: displayName ?? visit.catName, blocks: blocks, pdf: pdf)", export)
+        self.assertIn("VeterinaryMemoExporter.create(name: displayName ?? visit.catName, blocks: blocks, pdf: pdf,\n"
+                      "                                                         face: face)", export)
         self.assertIn("医療の判断ではありません", export)
         self.assertIn("CareHandoffExporter.remove(retainedDirectory)", view)
         exporter = section(view, "private enum VeterinaryMemoExporter {", "\n}\n")
@@ -3580,8 +3581,11 @@ class LostCatToolReview1108Tests(unittest.TestCase):
         self.assertIn("private static let storySize = LostCatOutput.story.canvas", renderer)
         self.assertIn("if !compact { return layout(draft, format: format, compact: true) }", renderer)
         # A4 contact is 32pt or larger and above the name; the title is white on a red band.
-        self.assertIn("maxSize: paper ? (compact ? 32 : 36) : 48, minSize: paper ? 32 : 37", renderer)
-        self.assertIn('id: "name", maxSize: paper ? (compact ? 23 : 30) : 53', renderer)
+        # 11/12: the place and the contact are the largest after the title; the
+        # compact sizes are the earlier ones, so what fitted before still fits.
+        self.assertIn("maxSize: paper ? (compact ? 32 : 40) : (compact ? 48 : 58), minSize: paper ? 32 : 37", renderer)
+        self.assertIn('id: "name", maxSize: paper ? (compact ? 23 : 30) : (compact ? 53 : 52)', renderer)
+        self.assertIn("maxSize: paper ? (compact ? 17 : 32) : (compact ? 43 : 54), minSize: paper ? 17 : 34", renderer)
         self.assertIn("height: titleHeight, color: .white, centered: true", renderer)
         self.assertIn("context.fill(plan.titleBand)", store)
 
@@ -3870,7 +3874,13 @@ class EvacuationCatCareTests(unittest.TestCase):
         # The show screen is named for what it makes, one tap from the entry.
         self.assertIn('Label("避難メモを見せる"', view)
         self.assertNotIn("見せる画面を開く", view)
-        self.assertIn('.navigationTitle("\\(record.name)の避難メモ")', view)
+        # 11/12: the shown memo is 「できあがり」, as the other tools' memos; the
+        # cat's name is on the sheet, and nothing is said there without a photo.
+        display = section(view, "private struct EvacuationDisplayView: View {", "private struct EvacuationActivitySheet")
+        self.assertIn('.navigationTitle("できあがり")', display)
+        self.assertIn('ToolMemoSheet(kind: "避難メモ", name: record.name, date: made)', display)
+        self.assertNotIn("見分けるための写真はまだありません", view)
+        self.assertNotIn("見分けるための写真はまだありません", source("NekoWidget/Services/EvacuationExporter.swift"))
         for old in ("できあがりを見る", '"プレビュー"', "1冊のPDFにまとめる", "新しい持ち物"):
             self.assertNotIn(old, view)
         self.assertIn('"evacuation-show-\\(cat.id.uuidString)"', view)
@@ -4411,7 +4421,8 @@ class CareHandoffReviewTests(unittest.TestCase):
     def test_pdf_with_several_cats_says_shared_things_once(self) -> None:
         self.assertIn("let sharedFirstPage = record.cats.count > 1", self.exporter)
         self.assertIn("(sharedFirstPage ? [] : record.commonFields) + cat.fields", self.exporter)
-        self.assertIn('page.catIndex.map { "\\(record.heading) · \\(record.cats[$0].name)" } ?? record.heading', self.exporter)
+        self.assertIn('ToolMemoPage.drawHeader(kind: record.heading,', self.exporter)
+        self.assertIn('name: page.catIndex.map { record.cats[$0].name } ?? record.cats.map(\\.name).joined(separator: "・")', self.exporter)
         self.assertNotIn("append(cat.name", self.exporter)
 
 
@@ -5041,10 +5052,9 @@ class ToolFlowTests(unittest.TestCase):
             self.assertNotIn('Label("書き出す", systemImage: "square.and.arrow.up")', text)
         self.assertIn('shareButton("PDFで渡す", pdf: true)', care)
         # 11/11: the output screens use the input pages' bottom bar, in the
-        # page's colour (plain for the evacuation and vet memos, grouped for care).
-        self.assertRegex(care, r"\.safeAreaInset\(edge: \.bottom\) \{\s*ToolMakeBar \{\s*ViewThatFits \{")
-        for text in (evacuation, vet):
-            self.assertRegex(text, r"\.safeAreaInset\(edge: \.bottom\) \{\s*ToolMakeBar\(ground: NekoPalette\.plainGround\) \{\s*ViewThatFits \{")
+        # page's colour. 11/12: the three memos sit on the grouped ground.
+        for text in (care, evacuation, vet):
+            self.assertRegex(text, r"\.safeAreaInset\(edge: \.bottom\) \{\s*ToolMakeBar \{\s*ViewThatFits \{")
         for text in (care, evacuation, vet):
             self.assertNotIn(".padding().background(.regularMaterial)", text)
         self.assertIn('"evacuation-share-pdf"', evacuation)
@@ -6026,9 +6036,11 @@ class CatCareOnePlaceTests(unittest.TestCase):
         vet = source("NekoWidget/Views/VeterinaryVisitView.swift")
         # 11/8: one name, 「診察メモ」, on the screen, the question and every page.
         exporter = section(vet, "private enum VeterinaryMemoExporter {", "\n}\n")
-        self.assertIn('("診察メモ · \\(name)" as NSString).draw(in:', exporter)
+        self.assertIn('ToolMemoPage.drawHeader(kind: "診察メモ", name: name, date: made, face: face,', exporter)
         self.assertIn('confirmationDialog("診察メモを渡しますか？"', vet)
-        self.assertIn('.navigationTitle("診察メモ")', vet)
+        # 11/12: the three memos share one sheet; the screen is 「できあがり」.
+        self.assertIn('ToolMemoSheet(kind: "診察メモ", name: displayName ?? visit.catName, date: Date(), face: face)', vet)
+        self.assertIn('.navigationTitle("できあがり")', vet)
         for old in ("病院で見せるメモ", "病院に渡すメモ", "診察の記録", "通院"):
             self.assertNotIn(old, vet)
         exporter = source("NekoWidget/Services/CareHandoffExporter.swift")
@@ -6115,7 +6127,10 @@ class VeterinaryRoundOneTests(unittest.TestCase):
         self.assertIn('Label("先生に見せる", systemImage: "stethoscope")', self.view)
         self.assertIn("短くすると保存され、先生に見せられます", self.view)
         self.assertIn("保存できると、先生に見せられます", self.view)
-        self.assertNotIn("できあがり", self.view)
+        # 11/12: only the shown memo is 「できあがり」, as the other tools' memos.
+        self.assertEqual(self.view.count("できあがり"), 1)
+        self.assertIn('.navigationTitle("できあがり")', section(self.view, "private struct VeterinaryReadView: View {",
+                                                              "@ViewBuilder private var exportButtons"))
         self.assertIn('title: "家で気付いたこと", example: "例：1日2回吐く・食欲が半分"', self.view)
         self.assertIn('title: "先生に聞きたいこと", example: "例：ごはんを変えたほうがいいですか"', self.view)
         field = section(self.view, "private struct VeterinaryLabeledField: View {", "\n}\n")
@@ -6609,8 +6624,9 @@ class VeterinaryRoundTwoTests(unittest.TestCase):
         self.assertIn("VeterinaryVisitWeight.latest(weights, onOrBefore: VeterinaryVisit.day(visit.completedAt ?? Date()))", weight)
         # Near the top of the show screen and the paper, before what was noticed.
         read = section(self.view, "private struct VeterinaryReadView: View {", "@ViewBuilder private var exportButtons")
-        self.assertLess(read.index("Text(displayName ?? visit.catName)"), read.index('Text("体重").font(.headline)'))
-        self.assertLess(read.index('Text("体重").font(.headline)'), read.index('Text("家で気付いたこと")'))
+        self.assertLess(read.index("ToolMemoSheet(kind: \"診察メモ\", name: displayName ?? visit.catName"),
+                        read.index('Text("体重").toolMemoLabel()'))
+        self.assertLess(read.index('Text("体重").toolMemoLabel()'), read.index('Text("家で気付いたこと")'))
         export = section(self.view, "private func makeExport(pdf: Bool) async {", "private enum VeterinaryCareOrder")
         self.assertLess(export.index('noticed.append(("体重"'), export.index('("家で気付いたこと"'))
 
@@ -7233,7 +7249,7 @@ class LostCatRoundTwoTests(unittest.TestCase):
     def setUp(self) -> None:
         self.model = source("NekoWidget/Services/LostCatIncident.swift")
         self.store = source("NekoWidget/Services/CatPreparednessStore.swift")
-        self.renderer = section(self.store, "enum LostCatFlyerRenderer {", "/// Evaluate both arrangements")
+        self.renderer = section(self.store, "enum LostCatFlyerRenderer {", "/// 11/12: the gap between the two photos.")
         self.view = source("NekoWidget/Views/CatPreparednessView.swift")
         self.form = section(self.view, "struct LostCatDraftView: View {", "    // MARK: Rows (11/12)")
         self.editor = section(self.view, "struct LostCatDraftView: View {", "private struct LostCatPhotoChoiceView")
@@ -7384,7 +7400,7 @@ class LostCatRoundTwoTests(unittest.TestCase):
             self.assertIn(field, small)
         for left_out in ("features", "collar", "approachAdvice", "bodyImage"):
             self.assertNotIn(left_out, small)
-        self.assertIn('id: "contact", maxSize: compact ? 18 : 20, minSize: 16,', small)
+        self.assertIn('id: "contact", maxSize: compact ? 18 : 22, minSize: 16,', small)
         self.assertIn("if !compact { return smallLayout(draft, compact: true) }", small)
         self.assertIn('"\\(LostCatOutput.smallPaper.issueName)に入りきりません。\\(label)を短くしてください。"', small)
         self.assertIn('if contactValue.isEmpty { issues["contact"] =', small)
@@ -8144,6 +8160,125 @@ class PlusMomentOfBuying1112Tests(unittest.TestCase):
         issue = section(settings, "case .notMember where billingIssue:", "case .notMember:")
         self.assertIn('SettingsActionRow("サブスクリプションを管理"', issue)
         self.assertIn("showsManagement = true", issue)
+
+
+class HandoverOutputsLook1112Tests(unittest.TestCase):
+    """11/12: what a cat owner hands to others. The lost-cat flyer fills its
+    sheet (equal photo tiles, filled; larger type before white space), and the
+    three memos (診察・お世話・避難) share one light paper sheet."""
+
+    def setUp(self) -> None:
+        self.sheet = source("NekoWidget/Views/ToolMemoSheet.swift")
+        self.store = source("NekoWidget/Services/CatPreparednessStore.swift")
+        self.renderer = section(self.store, "enum LostCatFlyerRenderer {", "\n}\n")
+        self.lost = source("NekoWidget/Views/CatPreparednessView.swift")
+        self.care = source("NekoWidget/Views/CareHandoffView.swift")
+        self.vet = source("NekoWidget/Views/VeterinaryVisitView.swift")
+        self.evacuation = source("NekoWidget/Views/EvacuationPreparationView.swift")
+
+    def test_memo_sheet_is_registered_like_the_row_parts(self) -> None:
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+        self.assertEqual(project.count("/* ToolMemoSheet.swift in Sources */"), 2)
+        self.assertEqual(project.count("path = ToolMemoSheet.swift;"), 1)
+        self.assertIn("\t\t7A11121C0000000000000001 /* ToolMemoSheet.swift in Sources */ = {isa = PBXBuildFile; "
+                      "fileRef = 7A11121C0000000000000002 /* ToolMemoSheet.swift */; };", project)
+        self.assertIn("\t\t7A11121C0000000000000002 /* ToolMemoSheet.swift */ = {isa = PBXFileReference; "
+                      "lastKnownFileType = sourcecode.swift; path = ToolMemoSheet.swift; sourceTree = \"<group>\"; };", project)
+        self.assertIn("\t\t\t\t7A11121C0000000000000002 /* ToolMemoSheet.swift */,\n", project)
+        self.assertIn("\t\t\t\t7A11121C0000000000000001 /* ToolMemoSheet.swift in Sources */,\n", project)
+        self.assertEqual(project.count("7A11121C0000000000000001"), 2)
+        self.assertEqual(project.count("7A11121C0000000000000002"), 3)
+
+    def test_the_sheet_is_paper_in_both_modes(self) -> None:
+        sheet = section(self.sheet, "struct ToolMemoSheet<Content: View>: View {", "struct ToolMemoField: View {")
+        self.assertIn(".environment(\\.colorScheme, .light)", sheet)
+        self.assertIn(".background(ToolMemoPaper.paper, in: RoundedRectangle(cornerRadius: 14, style: .continuous))", sheet)
+        self.assertIn(".strokeBorder(ToolMemoPaper.edge, lineWidth: 0.5)", sheet)
+        self.assertIn(".shadow(", sheet)
+        self.assertIn("static let paper = Color.white", self.sheet)
+        # The header: the memo's name small, the cat's large, the day, the face.
+        self.assertLess(sheet.index("Text(kind)"), sheet.index("Text(name)"))
+        self.assertLess(sheet.index("Text(name)"), sheet.index("Text(ToolMemoDate.text(date))"))
+        self.assertIn("if let face {", sheet)
+        self.assertIn("Calendar.nekoGregorian.dateComponents([.year, .month, .day], from: date)", self.sheet)
+        self.assertIn('return "\\(parts.year ?? 0)年\\(parts.month ?? 0)月\\(parts.day ?? 0)日"', self.sheet)
+        # Photos fill their frame with rounded corners and keep their labels.
+        photo = section(self.sheet, "struct ToolMemoPhoto: View {", "struct ToolMemoNotice: View {")
+        self.assertIn("Image(uiImage: image).resizable().scaledToFill()", photo)
+        self.assertIn(".accessibilityLabel(label)", photo)
+
+    def test_three_memos_use_the_sheet_and_the_same_chrome(self) -> None:
+        care = section(self.care, "private struct CareDisplayView: View {", "private struct CareActivitySheet")
+        vet = section(self.vet, "private struct VeterinaryReadView: View {", "private enum VeterinaryDayWeight {")
+        evacuation = section(self.evacuation, "private struct EvacuationDisplayView: View {", "private struct EvacuationActivitySheet")
+        self.assertIn("ToolMemoSheet(kind: record.heading, name: record.cats.map(\\.name).joined(separator: \"・\"),", care)
+        self.assertIn('ToolMemoSheet(kind: "診察メモ", name: displayName ?? visit.catName, date: Date(), face: face)', vet)
+        self.assertIn('ToolMemoSheet(kind: "避難メモ", name: record.name, date: made)', evacuation)
+        for page in (care, vet, evacuation):
+            self.assertIn('.navigationTitle("できあがり")', page)
+            self.assertIn(".background(NekoPalette.groupedGround)", page)
+            self.assertIn("ToolMakeBar {", page)
+        # Pushed pages keep the back chevron; the vet memo, a sheet, keeps 「閉じる」.
+        self.assertIn('ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }', vet)
+        self.assertNotIn("toolbar {", care)
+        # Notices stay above the sheet as quiet footnotes.
+        self.assertLess(care.index('ToolMemoNotice(text: "薬・持病・アレルギーは載せていません")'), care.index("ToolMemoSheet("))
+        self.assertLess(care.index('ToolMemoNotice(text: "連絡先・動物病院は載せていません")'), care.index("ToolMemoSheet("))
+        # Identifiers and labels are kept.
+        for kept in ('"care-share-pdf"', '"care-share-images"', 'faceLabel: "渡す猫の写真"'):
+            self.assertIn(kept, care)
+        for kept in ('"vet-reading"', '"vet-reading-weight"', '"vet-export-pdf"', '"vet-export-images"'):
+            self.assertIn(kept, vet)
+        for kept in ('"evacuation-share-preview"', '"evacuation-share-pdf"', '"evacuation-share-images"',
+                     'label: "載せる写真"', ".accessibilityLabel(attachment.0)"):
+            self.assertIn(kept, evacuation)
+        # No sentence on the sheet when there is no photo.
+        self.assertNotIn("見分けるための写真はまだありません", evacuation)
+
+    def test_exported_memos_draw_the_same_header(self) -> None:
+        page = section(self.sheet, "enum ToolMemoPage {", "\n}\n")
+        self.assertIn("static func drawHeader(kind: String, name: String, date: Date, face: UIImage?,", page)
+        self.assertIn("ToolMemoDate.text(date)", page)
+        care = source("NekoWidget/Services/CareHandoffExporter.swift")
+        evacuation = source("NekoWidget/Services/EvacuationExporter.swift")
+        vet = section(self.vet, "private enum VeterinaryMemoExporter {", "\n}\n")
+        for exporter in (care, evacuation, vet):
+            self.assertIn("ToolMemoPage.drawHeader(", exporter)
+            self.assertIn("ToolMemoPage.headerHeight(pdf:", exporter)
+            self.assertIn(".foregroundColor: ToolMemoPage.labelColor", exporter)
+        # Page sizes and file names stay as they were.
+        for exporter in (care, vet):
+            self.assertIn("CGSize(width: 595.28, height: 841.89) : CGSize(width: 390, height: 900)", exporter)
+        self.assertIn("printCopy ? CGSize(width: 595.28, height: 841.89) : CGSize(width: 390, height: 900)", evacuation)
+        self.assertIn('"診察メモ.pdf"', vet)
+        self.assertIn('"cat-care.pdf"', care)
+        # The evacuation photos fill rounded tiles; papers stay whole.
+        self.assertIn("ToolMemoPage.drawFilled(image, in: tile, radius: 10)", evacuation)
+        self.assertIn("draw(image, in: CGRect(x: margin, y: top,", evacuation)
+
+    def test_flyer_photos_fill_equal_tiles_and_the_sheet_has_an_edge(self) -> None:
+        tiles = section(self.renderer, "private static func photoTiles(", "/// The tallest the photo block")
+        self.assertIn("let tile = (bounds.width - gap) / 2", tiles)
+        draw = section(self.renderer, "private static func drawPhoto(", "private static func text(")
+        self.assertIn("let scale = max(rect.width / image.size.width, rect.height / image.size.height)", draw)
+        self.assertIn("context.clip(to: rect)", draw)
+        self.assertNotIn("photoFrames", self.renderer)
+        # What is drawn is filled: larger type first, then the space shared out.
+        self.assertIn("let plan = filledLayout(draft, format: format)", self.renderer)
+        self.assertIn("for boost: CGFloat in [1.35, 1.25, 1.15, 1.08] {", self.renderer)
+        self.assertIn("return spread(plan, cap: cap, gap: format.isPDF ? 9 : 16)", self.renderer)
+        self.assertIn("let plan = spread(small, cap: small.photoRect.width * 1.1, gap: 6)", self.renderer)
+        # Issues are judged by layout(), never by the filled one.
+        issues = section(self.renderer, "static func issues(_ draft: LostCatPublicDraft, output: LostCatOutput)", "static func inputIssue(")
+        self.assertIn("return layout(draft, format: output).1", issues)
+        self.assertNotIn("filledLayout", issues)
+        # The made image on the screen shows its edge; the file has none.
+        preview = section(self.lost, "private struct LostCatPreviewView", "private struct LostCatActivitySheet")
+        self.assertIn(".lostCatSheetEdge()", preview)
+        self.assertIn('.accessibilityLabel("共有する迷子の猫の画像")', preview)
+        edge = section(self.lost, "func lostCatSheetEdge() -> some View {", "\n    }\n")
+        self.assertIn("strokeBorder(Color.black.opacity(0.14), lineWidth: 0.5)", edge)
+        self.assertNotIn("shadow", section(self.renderer, "private static func draw(", "/// The largest size"))
 
 
 if __name__ == "__main__":
