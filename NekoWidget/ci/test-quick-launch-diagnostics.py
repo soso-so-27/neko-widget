@@ -142,7 +142,10 @@ class QuickLaunchDiagnosticsTests(unittest.TestCase):
 
     def test_build_precedes_fresh_device_and_time_limits_remain(self):
         script = (ROOT / "ci/run-quick-ios-checks.sh").read_text()
-        self.assertLess(script.index('ci/production_candidate.py build --synthetic'), script.index('simctl create NekoQuickLaunch'))
+        self.assertNotIn('simctl create', script)
+        self.assertIn('public-build', script)
+        script = (ROOT / 'ci/run-quick-launch.sh').read_text()
+        self.assertNotIn('xcodebuild', script)
         self.assertIn('bounded 90 xcrun simctl launch', script)
         self.assertIn('sleep 5', script)
         unit = (ROOT / "ci/run-native-test-layer.sh").read_text()
@@ -184,7 +187,7 @@ xcodebuild() {
                     self.assertEqual(trace.count("test-without-building"), 1)
 
     def test_real_shell_failure_path_preserves_status_retry_limit_and_cleanup_order(self):
-        script = (ROOT / "ci/run-quick-ios-checks.sh").read_text(encoding="utf-8")
+        script = (ROOT / "ci/run-quick-launch.sh").read_text(encoding="utf-8")
         setup = script.split("quick_launch_active=false", 1)[1].split('bounded 60 xcrun simctl boot "$device"', 1)[0]
         setup = "quick_launch_active=false" + setup
         launch = script.split("reboot_simulator() {", 1)[1].split('mkdir -p "$RUNNER_TEMP/ci-screenshots"', 1)[0]
