@@ -42,7 +42,9 @@ struct CatProfileDetailView: View {
             .environment(\.catCareInsideCatPage, true)
             // The page renames, changes the photo and deletes with these (11/7).
             .environment(\.toolProfileActions, actions)
-            .navigationTitle(profile.displayName)
+            // 11/12 (round 2): the bar names the page; the cat's name is said
+            // once, large, under its photo (it was in the bar too).
+            .navigationTitle("この子のこと")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let familyNames, insideFamilyNotebook {
