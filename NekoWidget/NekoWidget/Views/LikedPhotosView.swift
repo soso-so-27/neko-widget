@@ -2742,8 +2742,12 @@ struct PhotoBrowserView: View {
         PhotoDetailLayout {
             VStack(spacing: 8) {
                 if let selectedPhoto {
-                    photoDate(selectedPhoto).frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16)
+                    // 11/12 (review 16): a plain photo's date is the title; other
+                    // titles (「この1枚」…) keep the date under them.
+                    if !showsDateAsTitle {
+                        photoDate(selectedPhoto).frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                    }
                     if navigationTitleText == "この1枚", let age = cloudyPhotoAge(selectedPhoto) {
                         Text(age).font(.subheadline).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
@@ -2796,7 +2800,8 @@ struct PhotoBrowserView: View {
                 .accessibilityHint("届け先のまどを選んでから、写真とひとことを確認します")
                 .accessibilityIdentifier("photo-browser-deliver-group")
                 .padding(.horizontal, 16).padding(.vertical, 10)
-                .background(.bar)
+                // 11/12 (review 16): one band with the actions above it, no step between.
+                .background(Self.controlsBand)
                 .task(id: groupDelivery == nil) {
                     knowsAnyWindow = !(await GroupWindowLocalPhotoStore.shared.knownWindows().isEmpty)
                 }
@@ -2876,7 +2881,41 @@ struct PhotoBrowserView: View {
         }
         .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 8 : 16)
         .padding(.vertical, 8)
-        .background(.ultraThinMaterial)
+        .background(Self.controlsBand)
+    }
+
+    /// The one colour under the photo, for the actions and the deliver button
+    /// (the viewer is always dark: this resolves to the dark gray).
+    private static let controlsBand = Color(uiColor: .secondarySystemBackground)
+
+    /// The plain viewer's title is the photo's date (「写真」 said nothing).
+    private var showsDateAsTitle: Bool { navigationTitleText == "写真" }
+
+    /// The date in the title's place, and 「1 / 8」 under it. Keeps the
+    /// identifier and spoken date the row under the bar had.
+    @ViewBuilder
+    private func titleDate(_ photo: PhotoPresentation) -> some View {
+        let spokenDate = photo.creationDate?.formatted(.dateTime.year().month().day()) ?? "撮影日不明"
+        let context = PhotoRediscoveryContext.yearsAgo(for: photo.creationDate)
+        let detail = [context, browserPhotos.count > 1 ? pagePositionText : nil].compactMap { $0 }
+        VStack(spacing: 0) {
+            Text(spokenDate)
+                .font(.headline)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            if !detail.isEmpty {
+                Text(detail.joined(separator: "・"))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spokenDate)
+        .accessibilityValue(spokenDate)
+        .accessibilityHint(context ?? "")
+        .accessibilityIdentifier("photo-browser-date")
     }
 
     /// 「○○から」 and, under it, the sender's ひとこと: read-only, never
@@ -3062,6 +3101,11 @@ struct PhotoBrowserView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
+            if showsDateAsTitle, let selectedPhoto {
+                // The bar keeps 「写真」 as its name (back buttons, VoiceOver
+                // rotor); the date is what is drawn in its place.
+                ToolbarItem(placement: .principal) { titleDate(selectedPhoto) }
+            }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 // お気に入り・メモ・共有 are under the photo. 「…」 holds the rest.
                 Menu {
@@ -3946,7 +3990,9 @@ private struct DeliverButtonEmphasis: ViewModifier {
         if prominent {
             content.buttonStyle(.borderedProminent)
         } else {
-            content.buttonStyle(.bordered)
+            // 11/12 (review 16): a lighter gray with words in the text colour,
+            // so on the black viewer it does not read as switched off.
+            content.buttonStyle(.bordered).tint(Color.primary)
         }
     }
 }

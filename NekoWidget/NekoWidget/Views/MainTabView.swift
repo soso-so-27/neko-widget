@@ -1926,7 +1926,7 @@ struct MainTabView: View {
                 .accessibilityAddTraits(.isHeader)
                 .padding(.horizontal, 16)
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
+                HStack(alignment: .top, spacing: 10) {
                     ForEach(albums) { album in
                         NavigationLink(value: photoLibraryProfileIdentifier.map {
                             AlbumRoute.catAlbum(profileIdentifier: $0, album: album.id)
@@ -4031,30 +4031,28 @@ private struct PhotoLibraryCatRow<CatPicker: View, AddPhotos: View>: View {
     }
 }
 
-/// A theme in the 写真 tab: a 64pt photo with its name on it (11/11: was 88pt
-/// with the name under it). The name is capped so it never runs out of the tile.
+/// A theme in the 写真 tab: a 64pt photo with its name under it (11/12,
+/// review 18: words on the photo covered the cat's face). The name is capped
+/// at two short lines so the row stays low at large text.
 private struct PhotoThemeTile: View {
     let album: CuratedAlbumPresentation
 
     var body: some View {
-        PhotoAssetImageView(localIdentifier: album.coverPhoto.localIdentifier,
-                            catBoundingBox: album.coverPhoto.catBoundingBox,
-                            targetPixelSize: CGSize(width: 192, height: 192))
-            .frame(width: 64, height: 64)
-            .overlay(alignment: .bottomLeading) {
-                Text(album.cardTitle)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.8)
-                    .dynamicTypeSize(...DynamicTypeSize.xLarge)
-                    .padding(.horizontal, 5)
-                    .padding(.bottom, 4)
-                    .frame(width: 64, alignment: .leading)
-                    .background(alignment: .bottom) {
-                        LinearGradient(colors: [.clear, .black.opacity(0.6)], startPoint: .top, endPoint: .bottom)
-                    }
-            }
-            .clipShape(NekoRadius.shape(NekoRadius.photo))
+        VStack(alignment: .leading, spacing: 4) {
+            PhotoAssetImageView(localIdentifier: album.coverPhoto.localIdentifier,
+                                catBoundingBox: album.coverPhoto.catBoundingBox,
+                                targetPixelSize: CGSize(width: 192, height: 192))
+                .frame(width: 64, height: 64)
+                .clipShape(NekoRadius.shape(NekoRadius.photo))
+            Text(album.cardTitle)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
+                .dynamicTypeSize(...DynamicTypeSize.xLarge)
+                .frame(width: 64, alignment: .topLeading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(width: 64, alignment: .top)
     }
 }
