@@ -36,7 +36,7 @@ APP_POLICY_SETTINGS = {
     "APP_PRIVACY_URL": "https://soso-so-27.github.io/neko-widget/app/privacy/",
     "APP_SUPPORT_URL": "https://soso-so-27.github.io/neko-widget/app/support/",
 }
-LOCAL_PHOTO_DESCRIPTION_TERMS = ("猫", "端末内", "アルバム", "ウィジェット")
+LOCAL_PHOTO_DESCRIPTION_TERMS = ("猫", "iPhoneの中", "アルバム", "ウィジェット")
 LOCAL_PHOTO_DESCRIPTION_FORBIDDEN_TERMS = (
     "共有",
     "招待",

@@ -18,6 +18,8 @@ enum OnboardingPresentationVerifier {
         try verifiesPartialScanFailureRetainsResultAndStopsProgress()
         try verifiesScanCountStartsWithTheFirstCat()
         try verifiesFirstPlusOfferComesLaterOnce()
+        try verifiesEveryWayOutOfTheFirstRunCountsForTheFirstOffer()
+        try verifiesFirstRunRemembersThePhotosTab()
         print("Onboarding presentation verifier passed")
     }
 
@@ -71,7 +73,7 @@ enum OnboardingPresentationVerifier {
         try require(!due(cleared: false), "Plus came the same day before the window was ever cleared")
         try require(due(activeSince: nextDay, now: nextDay, cleared: false), "Plus did not come from the next day")
         try require(!due(shown: true), "the first Plus offer came twice")
-        try require(!due(dueSince: nil), "Plus was offered without the first run ending through the Widget guide")
+        try require(!due(dueSince: nil), "Plus was offered before the first run ended")
         try require(!due(placed: false), "Plus was offered while no Widget is placed")
         try require(!due(offered: false), "Plus was offered to a member or an unconfigured build")
         try require(!due(prompted: true), "Plus shared a launch with the review prompt")
@@ -94,6 +96,54 @@ enum OnboardingPresentationVerifier {
         FirstPlusOfferPolicy.noteFirstRunEnded(now: ended, defaults: resumed)
         try require(FirstPlusOfferPolicy.dueSince(defaults: resumed) == nil,
                     "a person who saw the first run's Plus page was offered it again")
+    }
+
+    /// 11/12: the first Plus offer does not depend on how the first run
+    /// ended. The Widget guide, 「あとで」 on the scan page (a found photo no
+    /// longer ends it), skipping Photos access, and joining from a link all
+    /// end it the same way; a Settings replay never does.
+    private static func verifiesEveryWayOutOfTheFirstRunCountsForTheFirstOffer() throws {
+        func ends(_ state: OnboardingPresentationState) -> Bool {
+            OnboardingPresentationPersistence.endsFirstRun(from: 0, to: state.completedVersion)
+        }
+        var guide = OnboardingPresentationState(persistedResumePageIndex: 3)
+        guide.advance()
+        var guideLater = OnboardingPresentationState(persistedResumePageIndex: 3)
+        guideLater.skipWidgetGuide()
+        var scanLater = OnboardingPresentationState(persistedResumePageIndex: 2)
+        scanLater.completeWithoutWidgetPhoto()
+        var noAccess = OnboardingPresentationState(persistedResumePageIndex: 1)
+        noAccess.skipPhotoPermission()
+        var invited = OnboardingPresentationState(persistedResumePageIndex: 0)
+        invited.finishForInvitation()
+        for (name, state) in [("the Widget guide", guide), ("the guide's later", guideLater),
+                              ("the scan page's later", scanLater), ("no Photos access", noAccess),
+                              ("an invitation", invited)] {
+            try require(ends(state), "ending through \(name) did not count for the first Plus offer")
+        }
+        var scanning = OnboardingPresentationState(persistedResumePageIndex: 2)
+        try require(!ends(scanning), "the scan page counted as the end before anything was chosen")
+        scanning.advance()
+        try require(!ends(scanning), "opening the Widget guide counted as the end of the first run")
+        var replay = OnboardingPresentationState.widgetGuideReplay(
+            persistedResumePageIndex: 3, persistedCompletedVersion: 1)
+        replay.advance()
+        try require(!OnboardingPresentationPersistence.endsFirstRun(from: 1, to: replay.completedVersion),
+                    "a Settings replay ended the first run again")
+    }
+
+    /// 11/12: the second opening starts in the 写真 tab, not アルバム. The key
+    /// is the one MainTabView reads (MainTabStartupPolicy maps "photos").
+    private static func verifiesFirstRunRemembersThePhotosTab() throws {
+        try require(FirstRunTabMemory.lastTabKey == "navigation.lastTab.v1"
+                    && FirstRunTabMemory.photosTab == "photos", "the remembered tab no longer matches MainTabView")
+        let suite = "first-run-tab-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("memories", forKey: FirstRunTabMemory.lastTabKey)
+        FirstRunTabMemory.rememberPhotosTab(defaults: defaults)
+        try require(defaults.string(forKey: FirstRunTabMemory.lastTabKey) == "photos",
+                    "ending the first run did not remember the 写真 tab")
     }
 
     private static func verifiesPagesInTheApprovedOrder() throws {
@@ -202,8 +252,23 @@ enum OnboardingPresentationVerifier {
         try require(
             OnboardingPresentationCopy.scanTitle == "猫を探しています"
                 && OnboardingPresentationCopy.scanFoundTitle == "猫の写真が見つかりました"
-                && OnboardingPresentationCopy.scanCountLead == "いま",
+                && OnboardingPresentationCopy.scanStillSearching == "まだ探しています",
             "scan title changed"
+        )
+        // 11/12: no cat is said plainly, with one next step; never 「アクセスを確かめて」.
+        try require(
+            OnboardingPresentationCopy.scanZeroTitle == "猫の写真は見つかりませんでした"
+                && OnboardingPresentationCopy.scanZeroBody == "猫の写真を撮ると、ここに出ます。"
+                && OnboardingPresentationCopy.scanZeroLimitedBody == "猫の写真を追加で選ぶと、ここに出ます。"
+                && OnboardingPresentationCopy.scanZeroLimitedAction == "写真を追加で選ぶ"
+                && OnboardingPresentationCopy.scanZeroStartAction == "はじめる"
+                && OnboardingPresentationCopy.scanZeroNowaAction == "のわのまどを見る",
+            "the no-cat result changed"
+        )
+        try require(
+            !(OnboardingPresentationCopy.scanZeroBody + OnboardingPresentationCopy.scanZeroLimitedBody)
+                .contains("アクセス"),
+            "the no-cat result blamed Photos access again"
         )
         try require(
             OnboardingPresentationCopy.scanWidgetAction == "ウィジェットを置く",
@@ -258,12 +323,24 @@ enum OnboardingPresentationVerifier {
             "Widget guide stopped explaining automatic confirmation"
         )
         try require(
-            OnboardingPresentationCopy.widgetAction == "置きました",
-            "Widget guide primary action changed"
+            OnboardingPresentationCopy.widgetAction == "ホーム画面で置いてきます",
+            "Widget guide primary action changed (it checks nothing, so it must not say 「置きました」)"
+        )
+        // 11/12: the Widget's tag reads 「タップで きょうの 1 枚」; the app uses
+        // those words, never 「札」.
+        try require(
+            OnboardingPresentationCopy.widgetCloudyStep
+                == "置いたら、そのままくもりのまどです。「タップで きょうの 1 枚」を押すと、きょうの写真が出ます。",
+            "the guide's last step changed"
+        )
+        try require(
+            !(OnboardingPresentationCopy.widgetCloudyStep + OnboardingPresentationCopy.widgetPlacedBody).contains("札"),
+            "the app said 「札」, a word the Widget never shows"
         )
         try require(
             OnboardingPresentationCopy.widgetPlacedTitle == "置けました"
-                && OnboardingPresentationCopy.widgetPlacedBody == "ホーム画面で札を押すと、きょうの1枚が出ます。"
+                && OnboardingPresentationCopy.widgetPlacedBody
+                    == "ホーム画面の「タップで きょうの 1 枚」を押すと、きょうの写真が出ます。"
                 && OnboardingPresentationCopy.widgetPlacedAction == "写真を見る",
             "the one 「置けました」 screen changed"
         )

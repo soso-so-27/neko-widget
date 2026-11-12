@@ -1384,11 +1384,12 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("SeasonalMovieExportService.swift in Sources", project)
         self.assertEqual(project.count("SeasonalMovieArchiveStore.swift in Sources"), 2)
         self.assertEqual(project.count("SeasonalMovieExportService.swift in Sources"), 2)
-        # 11/8: one sentence that keeps what is accessed, why, and the promise.
-        self.assertIn("猫の写真や動画を端末内で見つけ", config)
-        self.assertIn("「うちの子」アルバム・ウィジェット・季節のムービーに使うため", config)
-        self.assertIn("元の写真や動画は変えずに", config)
-        self.assertIn("写真ライブラリへのアクセスを許可してください。\n", config)
+        # 11/12: one plain, true sentence: what is found, where it shows, and
+        # that the finding happens on the iPhone. The 「うちの子」 album left
+        # the app (10/31) and the seasonal movie is Plus, so neither is named.
+        self.assertIn("PHOTO_LIBRARY_USAGE_DESCRIPTION = 猫の写真をiPhoneの中で見つけて、アルバムとホーム画面のウィジェットに出すために使います。\n", config)
+        for term in ("うちの子", "季節のムービー", "写真ライブラリ", "端末内"):
+            self.assertNotIn(term, section(config, "PHOTO_LIBRARY_USAGE_DESCRIPTION = ", "\n"))
         self.assertNotIn("元の写真や動画を変更・削除しません", config)
 
     def test_received_family_widget_uses_cat_focused_full_bleed_canvases(self) -> None:
@@ -2740,9 +2741,18 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("closeTitle != nil && windowName == nil", guide)
         self.assertIn('[(image: "sf:hand.tap.fill", text: OnboardingPresentationCopy.widgetChangeSourceStep)]', guide)
         self.assertIn("return placementSteps + cloudy + changeSource", guide)
-        # 11/10: place first, then come back. The hint is on the screen and
-        # the button says it was placed.
-        self.assertIn('static let widgetAction = "置きました"', presentation)
+        # 11/10: place first, then come back. The hint is on the screen. 11/12:
+        # the button checks nothing, so it says the person goes out to place
+        # it, not that it was placed.
+        self.assertIn('static let widgetAction = "ホーム画面で置いてきます"', presentation)
+        self.assertNotIn('"置きました"', presentation)
+        # 11/12: the guide's last step uses the Widget's own words.
+        self.assertIn('[(image: "sf:cloud.fill", text: OnboardingPresentationCopy.widgetCloudyStep)]', guide)
+        widget_view = source("NekoWidgetWidget/NekoWidgetView.swift")
+        self.assertIn('"タップで きょうの 1 枚"', widget_view)
+        self.assertIn("「タップで きょうの 1 枚」を押すと", presentation)
+        for text in (guide, presentation):
+            self.assertNotIn("札を押すと", text)
         self.assertIn('"追加してアプリへ戻ると、自動で確認します。"', presentation)
         self.assertIn("Text(OnboardingPresentationCopy.widgetReturnHint)", guide)
         self.assertNotIn("猫を登録すると", guide)
@@ -2784,8 +2794,84 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("showsWidgetPlacementGuide = false", completion)
         self.assertIn("guard state.currentPage == .widgetGuide else { return }", completion)
         self.assertIn("state.advance()", completion)
-        self.assertIn("FirstPlusOfferPolicy.noteFirstRunEnded()", completion)
+        self.assertIn("persistOnboardingState(state, entersPhotos: entersPhotos)", completion)
         self.assertIn("WidgetCenter.shared.getCurrentConfigurations", checker)
+
+    def test_first_three_minutes_review_rules(self) -> None:
+        """11/12 review of the first three minutes."""
+        app_root = source("NekoWidget/App/AppRootView.swift")
+        presentation = source("NekoWidget/Views/OnboardingPresentation.swift")
+        main = source("NekoWidget/Views/MainTabView.swift")
+        onboarding = source("NekoWidget/Views/OnboardingView.swift")
+        album = source("NekoWidget/Views/AlbumPrototypeView.swift")
+        home = source("NekoWidget/Views/HomeView.swift")
+        # A found photo opens over the scan page; the first run goes on, so
+        # 「ウィジェットを置く」 is still there when the photo is closed.
+        open_photo = section(app_root, "openPhoto: { photo in", "openNowaWindow: openNowaWindowFromOnboarding")
+        self.assertIn("guard onboardingState.currentPage == .scanResult,", open_photo)
+        self.assertIn("firstRunPhoto = photo", open_photo)
+        self.assertNotIn("completeOnboarding", open_photo)
+        self.assertNotIn("persistOnboardingState", open_photo)
+        self.assertIn(".sheet(item: $firstRunPhoto)", app_root)
+        fixture = source("NekoWidget/App/AppStoreScreenshotFixture.swift")
+        fixture_photo = section(fixture, "openPhoto: { photo in", "firstRunPhoto = photo")
+        self.assertNotIn("finished = true", fixture_photo)
+        # The first Plus offer is due however the first run ended: one place,
+        # on the step that ends it, and nowhere tied to the Widget guide.
+        persist = section(app_root, "private func persistOnboardingState(", "private func dismissWidgetPlacementGuide()")
+        self.assertIn("OnboardingPresentationPersistence.endsFirstRun(from: onboardingCompletedVersion,", persist)
+        self.assertIn("FirstPlusOfferPolicy.noteFirstRunEnded()", persist)
+        self.assertEqual(app_root.count("FirstPlusOfferPolicy.noteFirstRunEnded("), 1)
+        self.assertNotIn("if page == .widgetGuide {", app_root)
+        # Every other guard stays: once, not for members, not in the opening
+        # that ended the first run, a Widget placed, cleared or the next day.
+        offer = section(main, "private func offerFirstPlusIfDue() async {", "/// A sheet, cover, alert")
+        self.assertIn("!membershipAccess.hasPersonalPlus()", offer)
+        self.assertIn("!defaults.bool(forKey: FirstPlusOfferPolicy.shownKey)", offer)
+        self.assertIn("try? await Task.sleep(for: .seconds(1.5))", offer)
+        self.assertIn("FirstPlusOfferPolicy.noteFirstRunEnded(defaults: defaults)", offer)
+        self.assertLess(offer.index("FirstPlusOfferPolicy.noteFirstRunEnded(defaults: defaults)"),
+                        offer.index("try? await Task.sleep"))
+        policy = section(presentation, "enum FirstPlusOfferPolicy {", "extension Notification.Name {")
+        self.assertIn("guard let dueSince, !shown, plusIsOffered, widgetPlaced, !promptedThisLaunch,", policy)
+        self.assertIn("activeSince > dueSince", policy)
+        # The 写真 tab is remembered when the first run ends into it, under
+        # the key MainTabView reads.
+        self.assertIn('static let lastTabKey = "navigation.lastTab.v1"', presentation)
+        self.assertIn('@AppStorage("navigation.lastTab.v1") private var lastViewedTab', main)
+        self.assertIn("if entersPhotos { FirstRunTabMemory.rememberPhotosTab() }", persist)
+        for name, end in (("private func completeOnboarding() {", "/// One tap past a resumed Plus page."),
+                          ("private func skipOnboardingPlusOffer() {", "private func completeOnboardingWithoutPhotoAccess()"),
+                          ("private func completeOnboardingWithoutPhotoAccess() {", "/// Joined a まど"),
+                          ("private func completeOnboardingWithoutWidgetPhoto() {", "/// `entersPhotos`"),
+                          ("private func completeWidgetPlacementGuideIfNeeded() {", "@MainActor\nprivate final class")):
+            self.assertIn("persistOnboardingState(state, entersPhotos: ", section(app_root, name, end), name)
+        invitation = section(app_root, "private func completeOnboardingForInvitation() {", "/// 「あとで」 (or 「はじめる」")
+        self.assertNotIn("entersPhotos: true", invitation)
+        # The automatic Plus offer and the notification request for album
+        # works never share a launch: whichever comes first, the other waits.
+        ask = section(album, "static func askIfNeeded() async {", "#if DEBUG || INTERNAL_PRESENTATION")
+        self.assertIn("!FirstPlusOfferPolicy.promptedThisLaunch", ask)
+        self.assertLess(ask.index("FirstPlusOfferPolicy.promptedThisLaunch = true"),
+                        ask.index("center.requestAuthorization(options: [.alert])"))
+        self.assertIn("promptedThisLaunch: FirstPlusOfferPolicy.promptedThisLaunch", offer)
+        # No cat: said plainly, one next step that fits, and のわのまど through
+        # the existing official-window sheet. Never 「アクセスを確かめて」.
+        self.assertNotIn("写真へのアクセスを確かめて、もう一度探してください。", onboarding)
+        self.assertNotIn('Text("写真へのアクセスを確かめてください。")', home)
+        self.assertIn("OnboardingPresentationCopy.scanZeroLimitedBody", home)
+        zero = section(onboarding, "private var zeroResult: some View {", "private var photoGrid: some View {")
+        self.assertIn("isLimitedAccess ? OnboardingPresentationCopy.scanZeroLimitedBody", zero)
+        self.assertIn('"initial-scan-zero-nowa"', zero)
+        self.assertIn("labeledContinueButton(OnboardingPresentationCopy.scanZeroStartAction)", zero)
+        nowa = section(app_root, "private var openNowaWindowFromOnboarding: (() -> Void)? {", "@ViewBuilder")
+        self.assertIn("officialWindowRoute = OfficialWindowRoute(windowID: Self.nowaWindowID)", nowa)
+        self.assertIn('private static let nowaWindowID = "black-cats"', app_root)
+        # The title says 「見つかりました」 from the first cat; the count keeps
+        # 「まだ探しています」 until the scan is final.
+        self.assertIn("return scan.displayedCatCount > 0 || scan.hasFinalResult", onboarding)
+        self.assertIn("if !scan.hasFinalResult {\n                Text(OnboardingPresentationCopy.scanStillSearching)", onboarding)
+        self.assertNotIn("scanCountLead", onboarding + presentation)
 
     def test_first_run_lands_on_photos_and_plus_comes_later_once(self) -> None:
         app_root = source("NekoWidget/App/AppRootView.swift")
@@ -5623,13 +5709,15 @@ class FirstLaunchInvitationTests(unittest.TestCase):
         self.assertIn("state.finishForInvitation()", root_view)
         family = section(root_view, ".sheet(item: $familyLink, onDismiss: {", "FamilyNotebookJoinView(link:")
         self.assertIn("completeOnboardingForInvitation()", family)
-        # 11/7: the first screen says how to join in one line; no help sheet.
-        self.assertIn("showsInvitationHint: SharingAPIConfiguration.current.isReviewVisible", root_view)
+        # 11/12: the first screen has no line for invited people (it stopped
+        # everyone else); the link itself opens the join screen. No help sheet.
+        self.assertNotIn("showsInvitationHint", root_view)
         self.assertNotIn("OnboardingInvitationHelpView", root_view)
         onboarding = source("NekoWidget/Views/OnboardingView.swift")
+        self.assertNotIn("showsInvitationHint", onboarding)
         purpose = section(onboarding, "private struct OnboardingPurposePage: View", "struct OnboardingWindowMosaic: View")
-        self.assertIn('Text("届いた招待リンクをタップしてください。")', purpose)
-        self.assertIn('"onboarding-purpose-join-hint"', purpose)
+        self.assertNotIn("届いた招待リンク", purpose)
+        self.assertNotIn('"onboarding-purpose-join-hint"', purpose)
         self.assertNotIn('"onboarding-purpose-join"', purpose)
         self.assertNotIn("struct OnboardingInvitationHelpView: View", onboarding)
         tab = source("NekoWidget/Views/MainTabView.swift")

@@ -33,17 +33,18 @@ struct OnboardingView: View {
     let finish: () -> Void
     /// "あとで" on the optional Plus page. Defaults to `finish`.
     var skipPlusOffer: (() -> Void)? = nil
+    /// Opens a found photo over the scan page; closing it returns there, and
+    /// 「ウィジェットを置く」 is still below (11/12).
     let openPhoto: (PhotoPresentation) -> Void
-    /// Builds that join windows by link say how, in one line (11/7: a button
-    /// that opened only this sentence).
-    var showsInvitationHint = false
+    /// のわのまど over the scan page when no cat was found (11/12). nil when
+    /// the build has no official window.
+    var openNowaWindow: (() -> Void)? = nil
 
     var body: some View {
         Group {
             switch page {
             case .purpose:
-                OnboardingPurposePage(continueAction: { page = .photoPermission },
-                                      showsInvitationHint: showsInvitationHint)
+                OnboardingPurposePage(continueAction: { page = .photoPermission })
 
             case .photoPermission:
                 photoPermissionPage
@@ -138,6 +139,7 @@ struct OnboardingView: View {
                 chooseMorePhotos: chooseMorePhotos,
                 rescan: rescan,
                 openPreviewPhoto: openPhoto,
+                openNowaWindow: openNowaWindow,
                 placeWidget: { page = .widgetGuide },
                 // 「あとで」 goes straight to the 写真 tab; the photos are right there.
                 continueToApp: finishWithoutWidgetPhoto
@@ -213,7 +215,6 @@ private struct OnboardingScanErrorPage: View {
 /// so the windows hold the app's own cat.
 private struct OnboardingPurposePage: View {
     let continueAction: () -> Void
-    var showsInvitationHint = false
 
     var body: some View {
         ScrollView {
@@ -247,14 +248,9 @@ private struct OnboardingPurposePage: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("onboarding-purpose-start")
-                // Invited people tap the link they got; nothing to press here (11/7).
-                if showsInvitationHint {
-                    Text("届いた招待リンクをタップしてください。")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .accessibilityIdentifier("onboarding-purpose-join-hint")
-                }
+                // 11/12: no line for invited people. They arrive by tapping
+                // their link, which opens the join screen by itself; the line
+                // stopped everyone else ("what link?").
                 if !OnboardingPresentationCopy.purposeFootnote.isEmpty {
                     Text(OnboardingPresentationCopy.purposeFootnote)
                         .font(.footnote)
@@ -402,8 +398,17 @@ private struct OnboardingScanPage: View {
     let chooseMorePhotos: () -> Void
     let rescan: () -> Void
     let openPreviewPhoto: (PhotoPresentation) -> Void
+    var openNowaWindow: (() -> Void)? = nil
     let placeWidget: () -> Void
     let continueToApp: () -> Void
+
+    /// From the first cat on, the title says it was found (11/12).
+    private var title: String {
+        if isFinalZero { return OnboardingPresentationCopy.scanZeroTitle }
+        return scan.displayedCatCount > 0 || scan.hasFinalResult
+            ? OnboardingPresentationCopy.scanFoundTitle
+            : OnboardingPresentationCopy.scanTitle
+    }
 
     private var isFinalZero: Bool {
         scan.hasFinalResult && scan.displayedCatCount == 0 && !scan.isScanning
@@ -420,39 +425,20 @@ private struct OnboardingScanPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(isFinalZero ? "猫の写真は見つかりませんでした"
-                         : scan.hasFinalResult ? OnboardingPresentationCopy.scanFoundTitle
-                         : OnboardingPresentationCopy.scanTitle)
+                    Text(title)
                         .font(.title2.bold())
                         .accessibilityAddTraits(.isHeader)
                     Spacer(minLength: 8)
                     if OnboardingPartialScanRecovery.showsCount(
                         hasPreliminaryResult: scan.hasPreliminaryResult,
                         displayedCount: scan.displayedCatCount), !isFinalZero {
-                        Text(scan.hasFinalResult
-                             ? "\(scan.displayedCatCount.formatted())枚"
-                             : "\(OnboardingPresentationCopy.scanCountLead) \(scan.displayedCatCount.formatted())枚")
-                            .font(.title3.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .contentTransition(.numericText())
+                        countLabel
                     }
                 }
                 .padding(.top, 28)
 
                 if isFinalZero {
-                    Text("写真へのアクセスを確かめて、もう一度探してください。")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    VStack(spacing: 10) {
-                        if isLimitedAccess {
-                            Button("写真を追加で選ぶ", systemImage: "photo.badge.plus", action: chooseMorePhotos)
-                                .buttonStyle(.borderedProminent)
-                        }
-                        Button("もう一度探す", systemImage: "arrow.clockwise", action: rescan)
-                            .buttonStyle(.bordered)
-                    }
-                    .controlSize(.large)
-                    .frame(maxWidth: .infinity)
+                    zeroResult
                 } else {
                     // Only the chosen photos are searched: said here too, with
                     // the 写真 tab's own banner (11/10).
@@ -506,6 +492,8 @@ private struct OnboardingScanPage: View {
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("initial-scan-widget-guide")
                     continueButton.buttonStyle(.plain).foregroundStyle(.secondary).font(.subheadline)
+                } else if isFinalZero {
+                    zeroBottomActions
                 } else {
                     continueButton.buttonStyle(.borderedProminent)
                 }
@@ -519,11 +507,77 @@ private struct OnboardingScanPage: View {
     }
 
     private var continueButton: some View {
+        labeledContinueButton(OnboardingPresentationCopy.scanContinueAction)
+    }
+
+    private func labeledContinueButton(_ title: String) -> some View {
         Button(action: continueToApp) {
-            Text(OnboardingPresentationCopy.scanContinueAction)
+            Text(title)
                 .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 5)
         }
         .accessibilityIdentifier("initial-scan-continue")
+    }
+
+    /// 「32枚」, with 「まだ探しています」 under it until the scan is final.
+    private var countLabel: some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            Text("\(scan.displayedCatCount.formatted())枚")
+                .font(.title3.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .contentTransition(.numericText())
+            if !scan.hasFinalResult {
+                Text(OnboardingPresentationCopy.scanStillSearching)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// No cat found (11/12): one sentence for the state and its one next
+    /// step. Limited access: choose more photos. Full access: cats taken
+    /// later are found by themselves, so there is nothing to retry here.
+    private var zeroResult: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(isLimitedAccess ? OnboardingPresentationCopy.scanZeroLimitedBody
+                                 : OnboardingPresentationCopy.scanZeroBody)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("onboarding-scan-zero-body")
+            if isLimitedAccess {
+                VStack(spacing: 10) {
+                    Button(OnboardingPresentationCopy.scanZeroLimitedAction,
+                           systemImage: "photo.badge.plus", action: chooseMorePhotos)
+                        .buttonStyle(.borderedProminent)
+                    Button("もう一度探す", systemImage: "arrow.clockwise", action: rescan)
+                        .buttonStyle(.bordered)
+                }
+                .controlSize(.large)
+                .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    /// Full access: 「はじめる」 is the main button. Limited: choosing photos
+    /// above is, so the way on stays quiet. のわのまど, when the build has
+    /// it, gives the Widget a cat to show meanwhile.
+    @ViewBuilder
+    private var zeroBottomActions: some View {
+        if !isLimitedAccess {
+            labeledContinueButton(OnboardingPresentationCopy.scanZeroStartAction)
+                .buttonStyle(.borderedProminent)
+        }
+        if let openNowaWindow {
+            Button(action: openNowaWindow) {
+                Text(OnboardingPresentationCopy.scanZeroNowaAction)
+                    .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 5)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("initial-scan-zero-nowa")
+        }
+        if isLimitedAccess {
+            continueButton.buttonStyle(.plain).foregroundStyle(.secondary).font(.subheadline)
+        }
     }
 
     private var photoGrid: some View {

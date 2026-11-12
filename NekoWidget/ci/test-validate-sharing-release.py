@@ -42,9 +42,7 @@ COMMUNITY_URL = "https://nekonomado.jp/community"
 LOCAL_APP_PRIVACY_URL = "https://soso-so-27.github.io/neko-widget/app/privacy/"
 LOCAL_APP_SUPPORT_URL = "https://soso-so-27.github.io/neko-widget/app/support/"
 LOCAL_PHOTO_DESCRIPTION = (
-    "猫の写真を端末内で見つけて整理し、「うちの子」アルバムとウィジェットへ反映するため、"
-    "写真ライブラリへのアクセスを許可してください。写真の解析とウィジェット用画像の作成は"
-    "端末内で行います。"
+    "猫の写真をiPhoneの中で見つけて、アルバムとホーム画面のウィジェットに出すために使います。"
 )
 MEDIA_PHOTO_DESCRIPTION = (
     "共有シートで選んだ1枚を最大2,048pxへ縮小し、位置情報を除いて"
@@ -536,7 +534,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
         self.assertIn("misleadingly describes a sharing path", result.stderr)
 
         app = info("NO", "NO")
-        app["NSPhotoLibraryUsageDescription"] = "猫の写真を端末内で解析します。"
+        app["NSPhotoLibraryUsageDescription"] = "猫の写真をiPhoneの中で解析します。"
         result = self.run_preflight(app, privacy(), "NO")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("missing: アルバム, ウィジェット", result.stderr)
