@@ -8783,7 +8783,7 @@ class CatHomeTab1112Tests(unittest.TestCase):
         self.assertIn("catBoundingBox: Self.faceBiased(photo.catBoundingBox),", hero)
         self.assertIn("y: box.maxY - box.height / 3", hero)
         # A scrim for the white name in both colour schemes, then a fade into the page.
-        self.assertIn(".init(color: .black.opacity(0.55), location: 0.9)", hero)
+        self.assertIn(".init(color: .black.opacity(0.72), location: 0.92)", hero)
         self.assertIn("Color(.systemGroupedBackground).opacity(0)", hero)
         # The name: large and heavy, scaling with a cap, two lines at accessibility sizes.
         self.assertIn("@ScaledMetric(relativeTo: .largeTitle) private var nameSize: CGFloat = 56", hero)
