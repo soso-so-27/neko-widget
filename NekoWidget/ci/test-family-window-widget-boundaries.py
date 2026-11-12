@@ -3187,10 +3187,11 @@ class AppDrawingWasteTests(unittest.TestCase):
         for page in ("VeterinaryVisitsView(", "LostCatEmergencyEntryView(", "CareHandoffView(", "EvacuationPreparationView("):
             self.assertIn("AnyView(LazyToolDestination {\n                    " + page, tools)
         self.assertEqual(tools.count("LazyToolDestination {"), 4)
-        # The page builds each NavigationLink's destination only as this wrapper.
+        # The page pushes the tools by value; each is built only when pushed.
         home = source("NekoWidget/Views/CatHomeView.swift")
-        self.assertIn("NavigationLink { destination(tool, cat: cat) } label: { content }", home)
-        self.assertIn("NavigationLink { tools.evacuation() } label: { content }", home)
+        self.assertIn("NavigationLink(value: CatHomeRoute(tool: tool, catID: cat.id)) { content }", home)
+        self.assertIn("NavigationLink(value: CatHomeRoute(tool: tool, catID: nil)) { content }", home)
+        self.assertIn(".navigationDestination(for: CatHomeRoute.self) { route in toolPage(route) }", home)
         lazy = section(main, "private struct LazyToolDestination<Content: View>: View {", "private struct PhotoThemeCatKey")
         # 11/11: a tool is shown without the tab bar.
         self.assertIn("var body: some View { content().toolChrome() }", lazy)
@@ -8925,7 +8926,7 @@ class CatHomeTab1112Tests(unittest.TestCase):
     def test_tools_open_for_the_page_cat_without_their_own_menu(self) -> None:
         tools = section(self.tab, "private var catHomeTools: CatHomeTools {", "private func openShowcaseTool(")
         self.assertEqual(tools.count("fixedCatKey: key)"), 3)
-        self.assertIn("showcase: { profileID in openShowcaseTool(scopeID: profileID ?? showcaseCardScopeID) }", tools)
+        self.assertIn("openShowcaseTool(scopeID: profileID.flatMap { canOpenShowcase($0) ? $0 : nil } ?? showcaseCardScopeID)", tools)
         # Each tool defaults to today's behaviour (restored tools, links, tests).
         for text in (self.vet, self.care, self.lost):
             self.assertIn("var fixedCatKey: String? = nil", text)
@@ -8940,7 +8941,8 @@ class CatHomeTab1112Tests(unittest.TestCase):
         self.assertIn('$0.id.uppercased() == "GUEST-TOOL-" + key', self.lost)
         # 写真を見せる opens on the page's cat; 避難に備える is the same from every page.
         self.assertIn("Button { tools.showcase(cat?.profile?.identifier) } label: { content }", self.home)
-        self.assertIn("NavigationLink { tools.evacuation() } label: { content }", self.home)
+        self.assertIn("guard let catID = route.catID else { return tools.evacuation() }", self.home)
+        self.assertIn("case .care: return tools.care(catID)", self.home)
 
 
 if __name__ == "__main__":

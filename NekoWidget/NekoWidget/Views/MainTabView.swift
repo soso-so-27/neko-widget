@@ -1183,12 +1183,16 @@ struct MainTabView: View {
                                               unregisteredPhotos: unregisteredCatPhotos)
                 })
             },
-            showcase: { profileID in openShowcaseTool(scopeID: profileID ?? showcaseCardScopeID) }
+            showcase: { profileID in
+                // The page's cat when it has photos to show, else the set chosen last time.
+                openShowcaseTool(scopeID: profileID.flatMap { canOpenShowcase($0) ? $0 : nil } ?? showcaseCardScopeID)
+            }
         )
     }
 
     /// 写真を見せる from the この子 tab: the page's cat (or the set chosen last
-    /// time when the page has no profile); without photos, the alert above.
+    /// time when the page has no profile or nothing to show); without photos,
+    /// the alert above.
     private func openShowcaseTool(scopeID scope: String) {
         if showcaseStore.availableEntries(in: scope).isEmpty && (!hasPhotoAccess || showcaseCandidates.isEmpty) {
             showsShowcaseNoPhotos = true

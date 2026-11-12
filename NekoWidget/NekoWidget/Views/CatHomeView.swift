@@ -272,6 +272,7 @@ struct CatHomeView: View {
                 profilePage(profile)
             }
         }
+        .navigationDestination(for: CatHomeRoute.self) { route in toolPage(route) }
         .onAppear { Task { await states.refresh() } }
         // Kept once the pages rest, never while they move.
         .task(id: pageID) {
@@ -392,6 +393,17 @@ struct CatHomeView: View {
                     .navigationTitle(cat.name.isEmpty ? "この子のこと" : cat.name)
                     .navigationBarTitleDisplayMode(.inline)
             }
+        }
+    }
+
+    /// Exactly what the tiles opened; the per-cat tools for the page's cat.
+    private func toolPage(_ route: CatHomeRoute) -> AnyView {
+        guard let catID = route.catID else { return tools.evacuation() }
+        switch route.tool {
+        case .vet: return tools.vet(catID)
+        case .care: return tools.care(catID)
+        case .lost: return tools.lost(catID)
+        case .evacuation, .showcase: return tools.evacuation()
         }
     }
 
@@ -678,25 +690,25 @@ private struct CatHomeToolBar: View {
                 .buttonStyle(CatHomePressStyle())
                 .accessibilityIdentifier(tool.identifier)
         case .evacuation:
-            NavigationLink { tools.evacuation() } label: { content }
+            NavigationLink(value: CatHomeRoute(tool: tool, catID: nil)) { content }
                 .buttonStyle(CatHomePressStyle())
                 .accessibilityIdentifier(tool.identifier)
         case .vet, .care, .lost:
             if let cat {
-                NavigationLink { destination(tool, cat: cat) } label: { content }
+                NavigationLink(value: CatHomeRoute(tool: tool, catID: cat.id)) { content }
                     .buttonStyle(CatHomePressStyle())
                     .accessibilityIdentifier(tool.identifier)
             }
         }
     }
+}
 
-    private func destination(_ tool: CatHomeTool, cat: CatHomeCat) -> AnyView {
-        switch tool {
-        case .vet: tools.vet(cat.id)
-        case .care: tools.care(cat.id)
-        default: tools.lost(cat.id)
-        }
-    }
+/// A tool pushed from a page, by value: the open tool stays when its page
+/// goes (a cat deleted from inside the tool), as it did from the old tiles.
+struct CatHomeRoute: Hashable {
+    let tool: CatHomeTool
+    /// The page's cat; nil for 避難に備える (the same for the whole home).
+    let catID: String?
 }
 
 /// A round button: a line icon in a circle, a dot for a state, a short name.

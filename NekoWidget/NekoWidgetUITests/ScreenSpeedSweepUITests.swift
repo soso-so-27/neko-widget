@@ -94,7 +94,7 @@ final class ScreenSpeedSweepUITests: XCTestCase {
         let tabs: [(String, String, String, () -> [XCUIElement])] = [
             ("写真", "main-tab-photos", "写真", { [app.buttons["photos-section-all"]] }),
             ("まど", "main-tab-windows", "まど", { [app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "実家のまど")).firstMatch] }),
-            ("ツール", "main-tab-tools", "ツール", { [app.buttons["tools-care-open"]] }),
+            ("この子", "main-tab-tools", "この子", { [app.buttons["tools-care-open"]] }),
             ("アルバム", "main-tab-memories", "アルバム", { [app.buttons["album-prototype-past"]] }),
         ]
         var first: [String: Double] = [:]
@@ -170,7 +170,7 @@ final class ScreenSpeedSweepUITests: XCTestCase {
     @MainActor
     func testSpeed06SettingsScreens() {
         let app = launchFixture()
-        guard tapTab(app, "main-tab-tools", "ツール") else { missing("設定", app); return }
+        guard tapTab(app, "main-tab-tools", "この子") else { missing("設定", app); return }
         let gear = app.buttons["tools-settings-button"]
         _ = gear.waitForExistence(timeout: 15)
         timeOpen("設定", app, open: { gear.tap() }, until: [app.navigationBars["設定"]],
@@ -199,7 +199,7 @@ final class ScreenSpeedSweepUITests: XCTestCase {
     @MainActor
     func testSpeed07ToolScreens() {
         let app = launchFixture()
-        guard tapTab(app, "main-tab-tools", "ツール") else { missing("ツール", app); return }
+        guard tapTab(app, "main-tab-tools", "この子") else { missing("この子", app); return }
         let care = app.buttons["tools-care-open"]
         _ = care.waitForExistence(timeout: 15)
         let profile = app.buttons["tool-profile-11111111-1111-4111-8111-111111111111"]
@@ -262,9 +262,10 @@ final class ScreenSpeedSweepUITests: XCTestCase {
             missing("避難に備える", app)
         }
 
-        // この子のこと: ツールの上の猫の顔から、その子のページ。
+        // この子のこと: この子 tab, the cat's page, its 「この子のこと」 card.
         let catChip = app.descendants(matching: .any)["tools-cat-11111111-1111-4111-8111-111111111111"].firstMatch
         app.swipeDown()
+        chooseHomeCat(app, "11111111-1111-4111-8111-111111111111")
         if catChip.waitForExistence(timeout: 10) {
             timeOpen("この子のこと", app, open: { catChip.tap() },
                      until: [anyIdentifier(app, ["cat-care-part-basics", "cat-care-next-hint", "cat-care-family-notebook"])],
@@ -335,7 +336,7 @@ final class ScreenSpeedSweepUITests: XCTestCase {
     @MainActor
     func testScroll04Settings() {
         let app = launchFixture()
-        guard tapTab(app, "main-tab-tools", "ツール") else { missing("スクロール:設定", app); return }
+        guard tapTab(app, "main-tab-tools", "この子") else { missing("スクロール:設定", app); return }
         let gear = app.buttons["tools-settings-button"]
         guard gear.waitForExistence(timeout: 15) else { missing("スクロール:設定", app); return }
         gear.tap()
@@ -344,7 +345,7 @@ final class ScreenSpeedSweepUITests: XCTestCase {
         app.terminate()
     }
 
-    @MainActor func testScroll05ToolsHub() { scrollTool(name: "ツール一覧", tile: nil, profile: false, until: ["tools-care-open"]) }
+    @MainActor func testScroll05ToolsHub() { scrollTool(name: "この子", tile: nil, profile: false, until: ["tools-care-open"]) }
     @MainActor func testScroll06ToolShowcase() { scrollTool(name: "写真を見せる", tile: "tools-showcase-open", profile: false, until: [], prefix: "showcase-") }
     @MainActor func testScroll07ToolVet() { scrollTool(name: "病院で見せる", tile: "tools-vet-open", profile: false, until: ["vet-step-noticed"]) }
     @MainActor func testScroll08ToolCare() { scrollTool(name: "預けるとき", tile: "tools-care-open", profile: false, until: ["care-row-photo", "care-preview-open"]) }
@@ -355,7 +356,8 @@ final class ScreenSpeedSweepUITests: XCTestCase {
     @MainActor
     func testScroll12CatCare() {
         let app = launchFixture()
-        guard tapTab(app, "main-tab-tools", "ツール") else { missing("スクロール:この子のこと", app); return }
+        guard tapTab(app, "main-tab-tools", "この子") else { missing("スクロール:この子のこと", app); return }
+        chooseHomeCat(app, "11111111-1111-4111-8111-111111111111")
         let chip = app.descendants(matching: .any)["tools-cat-11111111-1111-4111-8111-111111111111"].firstMatch
         guard chip.waitForExistence(timeout: 15) else { missing("スクロール:この子のこと", app); return }
         chip.tap()
@@ -400,12 +402,25 @@ final class ScreenSpeedSweepUITests: XCTestCase {
         return app
     }
 
+    /// The cat's page on この子, from the menu over the photo (the tools open
+    /// for the page's cat). Leaves the page as it is when the menu is missing.
+    @MainActor
+    private func chooseHomeCat(_ app: XCUIApplication, _ identifier: String) {
+        let menu = app.buttons["tools-cat-menu"]
+        guard menu.waitForExistence(timeout: 10) else { return }
+        menu.tap()
+        let item = app.buttons["tools-cat-menu-" + identifier]
+        guard item.waitForExistence(timeout: 5) else { return }
+        item.tap()
+        _ = item.waitForNonExistence(timeout: 5)
+    }
+
     @MainActor
     private func scrollTool(name: String, tile: String?, profile: Bool, until: [String], prefix: String? = nil,
                             then: String? = nil, thenTitle: String? = nil) {
         let app = launchFixture()
         let label = "スクロール:" + name
-        guard tapTab(app, "main-tab-tools", "ツール") else { missing(label, app); return }
+        guard tapTab(app, "main-tab-tools", "この子") else { missing(label, app); return }
         _ = app.buttons["tools-care-open"].waitForExistence(timeout: 15)
         if let tile {
             let button = app.buttons[tile]

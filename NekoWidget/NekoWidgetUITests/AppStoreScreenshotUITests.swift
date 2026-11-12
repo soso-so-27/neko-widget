@@ -96,7 +96,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let unavailableVisible = unavailable.waitForExistence(timeout: 15)
         capture("05-windows-unavailable-synthetic-url")
         XCTAssertTrue(unavailableVisible, app.debugDescription)
-        guard tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール") else {
+        guard tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "この子") else {
             capture("missing-tools"); XCTFail("Tools tab missing"); return
         }
         guard tap("tools-settings-button") else { return }
@@ -122,7 +122,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture", "--review-public-presentation"]
         app.launch()
-        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "この子"))
         app.buttons["tools-settings-button"].tap()
         XCTAssertTrue(app.navigationBars["設定"].waitForExistence(timeout: 10))
         app.swipeUp()
@@ -146,7 +146,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         // deliberately not used as the discriminator in shipping code.
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
         app.launch()
-        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "この子"))
         app.buttons["tools-settings-button"].tap()
         XCTAssertTrue(app.navigationBars["設定"].waitForExistence(timeout: 10))
         app.swipeUp()
@@ -272,7 +272,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(app.buttons["photos-section-all"].waitForExistence(timeout: 15), app.debugDescription)
         XCTAssertTrue(app.navigationBars["写真"].exists)
         captureScreenshot(named: "startup-restored-photos")
-        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "この子"))
         XCTAssertTrue(app.buttons["tools-care-open"].waitForExistence(timeout: 10))
         captureScreenshot(named: "startup-last-tools")
         app.terminate()
@@ -296,16 +296,20 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.launchEnvironment.removeValue(forKey: "NEKO_TOOL_PROFILE_DATA_CHECK")
         app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "tool-profiles"
         app.launch()
-        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
-        app.buttons["tools-care-open"].tap()
-        // 11/12: the cats are the items of the menu in the bar.
-        let menu = app.buttons["care-cat-menu"]
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "この子"))
+        // 11/12 (この子): the cat is chosen on its page, from the menu over the
+        // photo; the tool then opens for it, without a cat menu of its own.
+        let menu = app.buttons["tools-cat-menu"]
         XCTAssertTrue(menu.waitForExistence(timeout: 10), app.debugDescription); menu.tap()
-        let profile = app.buttons["tool-profile-11111111-1111-4111-8111-111111111111"]
+        let profile = app.buttons["tools-cat-menu-11111111-1111-4111-8111-111111111111"]
         XCTAssertTrue(profile.waitForExistence(timeout: 10))
         captureScreenshot(named: "PR5-cat-picker")
         profile.tap()
         XCTAssertTrue(profile.waitForNonExistence(timeout: 5))
+        let careButton = app.buttons["tools-care-open"]
+        XCTAssertTrue(careButton.waitForExistence(timeout: 10), app.debugDescription); careButton.tap()
+        XCTAssertTrue(app.buttons["care-preview-open"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(app.buttons["care-cat-menu"].exists, "Opened from the cat's page: no cat menu in the tool")
         // 「この子のこと」 is the row under the rows of this memo, so it can
         // start below the first screen of the memo.
         XCTAssertTrue(app.buttons["care-preview-open"].waitForExistence(timeout: 10), app.debugDescription)
@@ -352,18 +356,17 @@ final class AppStoreScreenshotUITests: XCTestCase {
         // The vet memo starts from a cat profile (the name prompt is gone).
         app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "tool-profiles"
         app.launch()
-        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "この子"))
         for identifier in ["tools-showcase-open", "tools-care-open", "tools-vet-open", "tools-lost-cat-open", "tools-evacuation-open"] {
             XCTAssertTrue(app.buttons[identifier].waitForExistence(timeout: 10))
         }
         captureScreenshot(named: "PR4-tools")
+        // 11/12 (この子): with two cats, the cat is chosen on its page; the
+        // memo opens for that cat with no cat menu in its bar.
+        chooseHomeCat("11111111-1111-4111-8111-111111111111", application: app)
         app.buttons["tools-vet-open"].tap()
-        // 11/12: with two cats, the cat is chosen from the menu in the bar.
-        let menu = app.buttons["vet-cat-menu"]
-        XCTAssertTrue(menu.waitForExistence(timeout: 10), app.debugDescription); menu.tap()
-        let cat = app.buttons["tool-profile-11111111-1111-4111-8111-111111111111"]
-        XCTAssertTrue(cat.waitForExistence(timeout: 10)); cat.tap()
-        XCTAssertTrue(cat.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["vet-step-noticed"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(app.buttons["vet-cat-menu"].exists, "Opened from the cat's page: no cat menu in the tool")
         // 家で気付いたこと is a row that opens its own page with the field.
         let noticed = app.buttons["vet-step-noticed"]
         XCTAssertTrue(noticed.waitForExistence(timeout: 10), app.debugDescription)
@@ -651,9 +654,10 @@ final class AppStoreScreenshotUITests: XCTestCase {
                 app.terminate()
             }
         }
-        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"), app.debugDescription)
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "この子"), app.debugDescription)
         let care = app.buttons["tools-care-open"]
         XCTAssertTrue(care.waitForExistence(timeout: 10), app.debugDescription)
+        chooseHomeCat("11111111-1111-4111-8111-111111111111", application: app)
         care.tap()
         chooseCareCat("tool-profile-11111111-1111-4111-8111-111111111111", application: app)
         // 「預けるとき」 opens first; its link to 「この子のこと」 is further down
@@ -702,7 +706,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         if publicPresentation {
             let tabs = app.tabBars.buttons
             XCTAssertEqual(tabs.count, 4, app.debugDescription)
-            for label in ["写真", "まど", "アルバム", "ツール"] {
+            for label in ["写真", "まど", "アルバム", "この子"] {
                 XCTAssertTrue(tabs[label].exists, "Missing tab: " + label)
             }
         }
@@ -786,7 +790,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
     @MainActor
     func testCaptureOwnerStoreTools() throws {
         let app = try launchOwnerCapture("tools")
-        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "この子"))
         for identifier in ["tools-showcase-open", "tools-care-open", "tools-vet-open", "tools-lost-cat-open", "tools-evacuation-open"] {
             XCTAssertTrue(app.buttons[identifier].waitForExistence(timeout: 10))
         }
@@ -798,7 +802,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
     @MainActor
     func testCaptureOwnerStoreShowcase() throws {
         let app = try launchOwnerCapture("showcase")
-        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "この子"))
         app.buttons["tools-showcase-open"].tap()
         XCTAssertTrue(app.buttons["showcase-slideshow-open"].waitForExistence(timeout: 15))
         if app.buttons["showcase-gallery-scope"].exists {
@@ -832,7 +836,8 @@ final class AppStoreScreenshotUITests: XCTestCase {
     @MainActor
     func testCaptureOwnerStoreCare() throws {
         let app = try launchOwnerCapture("care")
-        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "この子"))
+        chooseHomeCat("11111111-1111-4111-8111-111111111111", application: app)
         app.buttons["tools-care-open"].tap()
         chooseCareCat("tool-profile-11111111-1111-4111-8111-111111111111", application: app)
         let folded = app.descendants(matching: .any)["care-cat-care-fields-folded"].firstMatch
@@ -879,9 +884,24 @@ final class AppStoreScreenshotUITests: XCTestCase {
         return XCTWaiter.wait(for: [ready], timeout: timeout) == .completed
     }
 
+    /// 11/12 (この子): a cat's page is chosen from the menu over the photo;
+    /// the tools opened from the page open for that cat. With one cat the
+    /// menu still lists it (and 「この子を追加」).
+    @MainActor
+    private func chooseHomeCat(_ identifier: String, application app: XCUIApplication) {
+        let menu = app.buttons["tools-cat-menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10), app.debugDescription)
+        menu.tap()
+        let item = app.buttons["tools-cat-menu-" + identifier]
+        XCTAssertTrue(item.waitForExistence(timeout: 10), app.debugDescription)
+        item.tap()
+        XCTAssertTrue(item.waitForNonExistence(timeout: 5), app.debugDescription)
+    }
+
     /// 11/12: 預けるとき's cats are the items of the menu in the bar. The tool
     /// opens a cat's page by itself; with one cat there is no menu, and that
-    /// cat's page is the one open.
+    /// cat's page is the one open. Opened from a cat's page on この子 there is
+    /// no menu either: the page chose the cat.
     @MainActor
     private func chooseCareCat(_ identifier: String, application app: XCUIApplication) {
         XCTAssertTrue(app.buttons["care-preview-open"].waitForExistence(timeout: 10), app.debugDescription)

@@ -1,10 +1,10 @@
 import XCTest
 
-/// Settings has one door since 10/22: the gear on the ツール tab.
+/// Settings has one door since 10/22: the gear on the この子 tab (was ツール).
 @MainActor
 fileprivate func openSettings(in app: XCUIApplication) {
     let tools = app.buttons["main-tab-tools"]
-    if tools.waitForExistence(timeout: 10) { tools.tap() } else { app.tabBars.buttons["ツール"].tap() }
+    if tools.waitForExistence(timeout: 10) { tools.tap() } else { app.tabBars.buttons["この子"].tap() }
     let gear = app.buttons["tools-settings-button"]
     XCTAssertTrue(gear.waitForExistence(timeout: 10))
     gear.tap()
@@ -3186,80 +3186,47 @@ final class SoloMemoriesUITests: XCTestCase {
             app.launch()
             XCTAssertFalse(app.buttons["albums-showcase-open"].exists)
             let identified = app.buttons["main-tab-tools"]
-            let tab = identified.exists ? identified : app.tabBars.buttons["ツール"]
+            let tab = identified.exists ? identified : app.tabBars.buttons["この子"]
             XCTAssertTrue(tab.waitForExistence(timeout: 10))
             tab.tap()
+            // 11/12 (この子): this harness has no cat, so the page is のわ,
+            // 「この子を追加」 and the two tools for the whole home; the
+            // per-cat tools open from a cat's page once a cat is added.
+            XCTAssertTrue(app.buttons["cat-home-add"].waitForExistence(timeout: 5), app.debugDescription)
             let showcase = app.buttons["tools-showcase-open"]
-            let lost = app.buttons["tools-lost-cat-open"]
+            let evacuation = app.buttons["tools-evacuation-open"]
             XCTAssertTrue(showcase.waitForExistence(timeout: 5))
             XCTAssertTrue(showcase.isHittable)
             XCTAssertTrue(showcase.label.contains("写真を見せる"))
             XCTAssertFalse(app.buttons["tools-showcase-edit"].exists)
-            XCTAssertTrue(showcase.label.contains("自慢の9枚"))
-            let care = app.buttons["tools-care-open"]
-            // 11/8: 「病院で見せる」 is an everyday tool, beside 「写真を見せる」 in 「ふだん」.
-            let vet = app.buttons["tools-vet-open"]
-            XCTAssertEqual(showcase.frame.width, care.frame.width, accuracy: 1)
-            XCTAssertEqual(showcase.frame.width, vet.frame.width, accuracy: 1)
-            if largeText {
-                XCTAssertGreaterThan(vet.frame.minY, showcase.frame.minY)
-                XCTAssertGreaterThan(care.frame.minY, vet.frame.minY)
-            } else {
-                XCTAssertEqual(showcase.frame.minY, vet.frame.minY, accuracy: 1)
-                XCTAssertGreaterThan(vet.frame.minX, showcase.frame.minX)
-                XCTAssertGreaterThan(care.frame.minY, vet.frame.minY)
+            for id in ["tools-care-open", "tools-vet-open", "tools-lost-cat-open"] {
+                XCTAssertFalse(app.buttons[id].exists, "No per-cat tool without a cat: " + id)
             }
-            if !largeText {
-                let visibleTop = app.navigationBars["ツール"].frame.maxY
+            XCTAssertTrue(app.buttons["tools-settings-button"].exists)
+            if largeText {
+                // The accessibility sizes list the tools as rows, one under the other.
+                XCTAssertGreaterThan(showcase.frame.minY, evacuation.frame.minY)
+                XCTAssertEqual(showcase.frame.width, evacuation.frame.width, accuracy: 1)
+            } else {
+                // Round buttons of one size, side by side.
+                XCTAssertEqual(showcase.frame.width, evacuation.frame.width, accuracy: 1)
+                XCTAssertEqual(showcase.frame.minY, evacuation.frame.minY, accuracy: 1)
+                XCTAssertGreaterThan(showcase.frame.minX, evacuation.frame.minX)
                 let visibleBottom = app.tabBars.firstMatch.frame.minY
-                for id in ["tools-showcase-open", "tools-care-open", "tools-vet-open",
-                           "tools-lost-cat-open", "tools-evacuation-open"] {
-                    let entrance = app.buttons[id]
+                for entrance in [showcase, evacuation] {
                     XCTAssertTrue(entrance.isHittable, "Every standard-size entrance starts visible")
-                    XCTAssertGreaterThanOrEqual(entrance.frame.minY, visibleTop - 1)
                     XCTAssertLessThanOrEqual(entrance.frame.maxY, visibleBottom + 1,
                         "Partial visibility is insufficient for an entrance")
                 }
             }
             capture("tools-hub-\(appearance)")
-            for _ in 0..<5 where !care.isHittable { app.swipeUp() }
-            XCTAssertTrue(care.isHittable)
-            care.tap()
-            XCTAssertTrue(app.navigationBars["預けるとき"].waitForExistence(timeout: 5))
-            let addCare = app.buttons["tool-profile-add"]
-            for _ in 0..<5 where !addCare.isHittable { app.swipeUp(velocity: .slow) }
-            XCTAssertTrue(addCare.isHittable)
-            capture("tools-care-entry-\(appearance)")
-            app.navigationBars.buttons.element(boundBy: 0).tap()
-            // The lower row is intentionally offscreen in the largest text size.
-            for _ in 0..<5 where !lost.isHittable { app.swipeUp() }
-            XCTAssertTrue(lost.isHittable)
-            lost.tap()
-            // This harness has no registered cats; the real entry opens the editor directly.
-            XCTAssertTrue(app.navigationBars["迷子のとき"].waitForExistence(timeout: 5))
-            capture("tools-lost-cat-entry-\(appearance)")
-            app.navigationBars.buttons.element(boundBy: 0).tap()
-            let evacuation = app.buttons["tools-evacuation-open"]
             for _ in 0..<5 where !evacuation.isHittable { app.swipeUp() }
             XCTAssertTrue(evacuation.isHittable)
             evacuation.tap()
             XCTAssertTrue(app.buttons["evacuation-packing-open"].waitForExistence(timeout: 5))
             capture("tools-entry-\(appearance)")
             app.navigationBars.buttons.element(boundBy: 0).tap()
-            let preview = app.buttons["tools-vet-open"]
-            for _ in 0..<6 where !preview.isHittable { app.swipeDown(velocity: .slow) }
-            XCTAssertTrue(preview.isHittable)
-            XCTAssertFalse(preview.label.contains("準備中"))
-            capture("tools-hub-veterinary-\(appearance)")
-            preview.tap()
-            XCTAssertTrue(app.navigationBars["病院で見せる"].waitForExistence(timeout: 5))
-            let close = app.navigationBars.buttons.element(boundBy: 0)
-            XCTAssertTrue(close.isHittable)
-            // The visits load before the page shows its cats (or 「猫を追加」).
-            XCTAssertTrue(app.buttons["tool-profile-add"].waitForExistence(timeout: 5))
-            capture("tools-vet-entry-\(appearance)")
-            close.tap()
-            XCTAssertTrue(preview.waitForExistence(timeout: 5))
+            XCTAssertTrue(evacuation.waitForExistence(timeout: 5))
             app.terminate()
         }
     }
@@ -3273,7 +3240,7 @@ final class SoloMemoriesUITests: XCTestCase {
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
         app.launch()
-        let toolsTab = app.tabBars.buttons["ツール"]
+        let toolsTab = app.tabBars.buttons["この子"]
         XCTAssertTrue(toolsTab.waitForExistence(timeout: 10))
         toolsTab.tap()
         let showcase = app.buttons["tools-showcase-open"]
@@ -3331,7 +3298,7 @@ final class SoloMemoriesUITests: XCTestCase {
                                    "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
                 + (largeText ? ["--ux-large-text"] : [])
             app.launch()
-            let tools = app.tabBars.buttons["ツール"]
+            let tools = app.tabBars.buttons["この子"]
             XCTAssertTrue(tools.waitForExistence(timeout: 10))
             tools.tap()
             app.buttons["tools-showcase-open"].tap()
@@ -3371,7 +3338,7 @@ final class SoloMemoriesUITests: XCTestCase {
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
         app.launch()
-        let tools = app.tabBars.buttons["ツール"]
+        let tools = app.tabBars.buttons["この子"]
         XCTAssertTrue(tools.waitForExistence(timeout: 10))
         tools.tap()
         let showcase = app.buttons["tools-showcase-open"]
@@ -3643,7 +3610,7 @@ final class SoloMemoriesUITests: XCTestCase {
             predicate: NSPredicate(format: "value == %@", "ready"), object: probe)], timeout: 5), .completed)
         // iOS 26 may drop the tab label's identifier; the tab itself must be there.
         XCTAssertTrue(app.buttons["main-tab-tools"].waitForExistence(timeout: 5)
-                      || app.tabBars.buttons["ツール"].waitForExistence(timeout: 5))
+                      || app.tabBars.buttons["この子"].waitForExistence(timeout: 5))
         return app
     }
 
@@ -3850,6 +3817,8 @@ final class SoloMemoriesUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--membership-access-ui-fixture", "--photo-window-ui-fixture",
             "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        // 11/12 (この子): 迷子のとき opens from a cat's page, so the tools list has cats.
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "tool-profiles"
         app.launch()
         let tools = app.buttons["membership-tools"]
         XCTAssertTrue(tools.waitForExistence(timeout: 10)); tools.tap()
@@ -4517,14 +4486,16 @@ final class SoloMemoriesUITests: XCTestCase {
             assertPhotoLibraryCat(name, in: app)
             XCTAssertEqual(photos.count, 1)
         }
-        // 11/7: a cat's page opens from the ツール tab's faces only; 設定 has
-        // no 猫のプロフィール row.
+        // 11/7: a cat's page opens from the この子 tab (was ツール) only; 設定
+        // has no 猫のプロフィール row. 11/12: the 「この子のこと」 card of the
+        // cat on screen (not the cat menu or its items).
         let toolsTab = app.buttons["main-tab-tools"]
-        if toolsTab.waitForExistence(timeout: 10) { toolsTab.tap() } else { app.tabBars.buttons["ツール"].tap() }
+        if toolsTab.waitForExistence(timeout: 10) { toolsTab.tap() } else { app.tabBars.buttons["この子"].tap() }
         let firstCat = app.buttons.matching(NSPredicate(
-            format: "identifier BEGINSWITH %@ AND identifier != %@", "tools-cat-", "tools-cat-profiles")).firstMatch
+            format: "identifier BEGINSWITH %@ AND NOT (identifier BEGINSWITH %@) AND identifier != %@",
+            "tools-cat-", "tools-cat-menu", "tools-cat-profiles")).firstMatch
         XCTAssertTrue(firstCat.waitForExistence(timeout: 5))
-        let catName = firstCat.label.contains("ミケ") ? "ミケ" : "ソラ"
+        let catName = (app.buttons["tools-cat-menu"].value as? String) == "ソラ" ? "ソラ" : "ミケ"
         firstCat.tap()
         // 11/12 (round 2): the bar names the page; the name is under the photo.
         XCTAssertTrue(app.navigationBars["この子のこと"].waitForExistence(timeout: 5))
