@@ -77,7 +77,7 @@ class WordingPass1112Tests(unittest.TestCase):
         # 作品が「とどきました」
         "作品が届きました",
         # 半角のすき間
-        "Plus を", "の Plus", "ひと月に 5 枚", "この iPhone", "の iPhone", "タップで きょうの 1 枚",
+        "Plus を", "の Plus", "ひと月に 5 枚", "この iPhone", "の iPhone", "タップで、きょうの1枚",
         # 中の事情
         "以前の保存先と", "前のデータの片づけ", "ファイルを片づけられません", "購入情報を引き継いで", "購入情報を、このiPhoneに引き継いで",
         "引き継ぎを最初からやり直して",
@@ -2841,8 +2841,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         # 11/12: the guide's last step uses the Widget's own words.
         self.assertIn('[(image: "sf:cloud.fill", text: OnboardingPresentationCopy.widgetCloudyStep)]', guide)
         widget_view = source("NekoWidgetWidget/NekoWidgetView.swift")
-        self.assertIn('"タップで きょうの 1 枚"', widget_view)
-        self.assertIn("「タップで きょうの 1 枚」を押すと", presentation)
+        self.assertIn('"タップで、きょうの1枚"', widget_view)
+        self.assertIn("「タップで、きょうの1枚」を押すと", presentation)
         for text in (guide, presentation):
             self.assertNotIn("札を押すと", text)
         self.assertIn('"追加してアプリへ戻ると、自動で確認します。"', presentation)
