@@ -224,6 +224,9 @@ private struct CareField: View {
     var showsLabel = true
     /// The pushed page's field, given the cursor once the page has slid in (11/12).
     var focus: FocusState<Bool>.Binding? = nil
+    /// The field's height in lines: a page of one long text starts at three,
+    /// so it does not look empty (11/12, round 2).
+    var lines: ClosedRange<Int> = 1...8
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if showsLabel || isPrefilled {
@@ -237,7 +240,7 @@ private struct CareField: View {
     }
     @ViewBuilder private var input: some View {
         let field = TextField(example, text: Binding(get: { text }, set: { text = String($0.prefix(limit)) }), axis: .vertical)
-            .lineLimit(1...8).frame(minHeight: 36)
+            .lineLimit(lines).frame(minHeight: 36)
             .foregroundStyle(Color.primary)
             .accessibilityLabel(label).accessibilityIdentifier(identifier)
         if let focus { field.focused(focus) } else { field }
@@ -436,7 +439,8 @@ extension CareCatEditor {
     }
     private func textRow(_ title: String, _ systemImage: String, _ texts: [String]) -> ToolValueRow {
         let words = Self.firstWords(texts)
-        return ToolValueRow(title: title, systemImage: systemImage, value: words ?? "未記入", filled: words != nil)
+        return ToolValueRow(title: title, systemImage: systemImage, value: words ?? ToolEmptyValue.unwritten,
+                            filled: words != nil)
     }
 
     /// 「この子について」: the name (a cat without a profile), the photo, what
@@ -464,8 +468,8 @@ extension CareCatEditor {
     /// 「載せる」 with the photo, 「載せない」 after 「このメモには載せない」,
     /// 「なし」 when 「この子のこと」 has no face photo yet.
     private func photoLabel(_ cat: CareCat) -> ToolValueRow {
-        let value = cat.photoRemoved == true ? "載せない" : (memoPhoto(cat) != nil ? "載せる" : "なし")
-        return ToolValueRow(title: "写真", systemImage: "photo", value: value, filled: value != "なし")
+        let value = cat.photoRemoved == true ? "載せない" : (memoPhoto(cat) != nil ? "載せる" : ToolEmptyValue.none)
+        return ToolValueRow(title: "写真", systemImage: "photo", value: value, filled: value != ToolEmptyValue.none)
     }
 
     /// 「今回のお願い」: what this trip needs, once for every cat.
@@ -493,9 +497,12 @@ extension CareCatEditor {
     private var houseLabel: ToolValueRow {
         textRow("家の中のこと", "house", CareHandoffDisclosure.houseFields(plan: store.plan).map(\.1))
     }
+    /// 11/12 (round 2): every chosen cat by name, 「ミケ・ソラ」, so the row
+    /// reads as the cats this memo is for (several at once), not as a second
+    /// way to switch the cat the page shows (the menu in the bar does that).
     private var catsLabel: ToolValueRow {
         let chosen = store.plan.cats.filter { disclosure.catIDs.contains($0.id) }
-        let value = chosen.count == 1 ? chosen[0].displayName : (chosen.isEmpty ? "なし" : "\(chosen.count)匹")
+        let value = chosen.isEmpty ? ToolEmptyValue.none : chosen.map(\.displayName).joined(separator: "・")
         return ToolValueRow(title: "お願いする猫", systemImage: "cat", value: value, filled: !chosen.isEmpty)
     }
     private var includeLabel: ToolValueRow {
@@ -559,7 +566,7 @@ extension CareCatEditor {
         pushed("まず伝えたいこと", focuses: true) { focus in
             Section {
                 CareField(label: "まず伝えたいこと", example: "例：玄関を開ける前に、猫が別の部屋にいるか確認", identifier: "care-important", text: text(\.important),
-                          showsLabel: false, focus: focus)
+                          showsLabel: false, focus: focus, lines: 3...8)
             }
         }
     }
@@ -571,7 +578,7 @@ extension CareCatEditor {
                           identifier: "care-call-when",
                           text: Binding(get: { self.cat?.callWhen ?? "" }, set: { new in
                               store.editCat(id) { $0.callWhen = new.isEmpty ? nil : new }
-                          }), showsLabel: false, focus: focus)
+                          }), showsLabel: false, focus: focus, lines: 3...8)
                 callWhenChips
             }
         }

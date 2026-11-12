@@ -60,22 +60,25 @@ struct EvacuationPreparationView: View {
                         .accessibilityIdentifier("evacuation-review-reminder")
                     }
                     ToolPurpose(text: "災害のときに持ち出すものと、猫の避難メモを用意します。")
-                    // The three steps, numbered, with a check once done (11/8 型).
-                    // Each row says one thing: what is missing, or how far it is.
-                    let states = ToolStepState.states(stepsDone)
+                    // 11/12 (round 2): the same rows as every other tool (an icon,
+                    // the name, what is there now at the side, a chevron), in
+                    // place of numbered two-line steps that looked grayed out.
                     Section {
                         NavigationLink { EvacuationPackingView(store: store) } label: {
-                            step(1, "持ち出すもの", detail: packingState, state: states[0])
+                            ToolValueRow(title: "持ち出すもの", systemImage: "backpack", value: packingState.value,
+                                         filled: packingState.filled, problem: packingState.problem)
                         }
                         .accessibilityIdentifier("evacuation-packing-open")
                         NavigationLink {
                             EvacuationCatsView(profiles: profiles, otherPhotos: allPhotos, store: store, reuseStore: reuseStore)
                         } label: {
-                            step(2, "猫の情報", detail: catsState, state: states[1])
+                            ToolValueRow(title: "猫の情報", systemImage: "cat", value: catsState,
+                                         filled: !store.plan.cats.isEmpty)
                         }
                         .accessibilityIdentifier("evacuation-cats-open")
                         NavigationLink { EvacuationDestinationsView(profiles: profiles, store: store) } label: {
-                            step(3, "行き先と連絡先", detail: "行き先 \(store.plan.destinations.count)件", state: states[2])
+                            ToolValueRow(title: "行き先と連絡先", systemImage: "mappin.and.ellipse", value: destinationsState,
+                                         filled: !store.plan.destinations.isEmpty)
                         }
                         .accessibilityIdentifier("evacuation-destinations-open")
                     }
@@ -191,45 +194,37 @@ struct EvacuationPreparationView: View {
         profiles.first(where: { $0.identifier == cat.profileID })?.displayName ?? cat.displayName
     }
 
-    private var packingState: String {
+    /// 「持ち出すもの」's value (11/12, round 2): how many are ready, 「3 / 12」;
+    /// the nearest 期限 first (red once past) when one is near (round 2,
+    /// 「フードの期限まであと12日」); 「なし」 with no item on the list.
+    private var packingState: (value: String, filled: Bool, problem: Bool) {
         let needed = store.plan.supplies.filter(\.isNeeded)
-        if needed.isEmpty { return "持ち物 0個" }
-        // Round 2: the nearest 期限 first, 「フードの期限まであと12日」.
-        if let expiry = store.plan.expiryState() { return expiry }
-        let noPlace = needed.filter { $0.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
-        if noPlace > 0 { return "\(needed.count)個中 \(noPlace)個は置き場所が未記入" }
+        if needed.isEmpty { return (ToolEmptyValue.none, false, false) }
+        if let expiry = store.plan.expiryState() { return (expiry, true, expiry.contains("期限切れ")) }
         let ready = needed.filter { store.plan.carriedIDs.contains($0.id) }.count
-        return "そろっているもの \(ready) / \(needed.count)"
+        return ("\(ready) / \(needed.count)", true, false)
     }
 
+    /// 「猫の情報」's value: 「未記入」, a cat with no photo to tell it apart, or the names.
     private var catsState: String {
         let cats = store.plan.cats
-        if cats.isEmpty { return "まだありません" }
+        if cats.isEmpty { return ToolEmptyValue.unwritten }
         let noPhoto = cats.filter { $0.identificationPhoto(store: store) == nil }.map { name(of: $0) }
         if !noPhoto.isEmpty { return "写真なし：" + noPhoto.joined(separator: "、") }
         return cats.map { name(of: $0) }.joined(separator: "、")
     }
 
-    /// 持ち出すもの: every item on the list has its place written.
-    /// 猫の情報: every cat has a photo to tell it apart. 行き先と連絡先: one place.
-    private var stepsDone: [Bool] {
-        let needed = store.plan.supplies.filter(\.isNeeded)
-        let cats = store.plan.cats
-        return [
-            !needed.isEmpty && needed.allSatisfy { !$0.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty },
-            !cats.isEmpty && cats.allSatisfy { $0.identificationPhoto(store: store) != nil },
-            !store.plan.destinations.isEmpty,
-        ]
+    /// 「行き先と連絡先」's value: 「未記入」 or how many places are written.
+    private var destinationsState: String {
+        let count = store.plan.destinations.count
+        return count == 0 ? ToolEmptyValue.unwritten : "\(count)件"
     }
 
-    /// Something to put on paper: a cat, a place, or where an item is.
-    private var hasContent: Bool {
-        !store.plan.cats.isEmpty || !store.plan.destinations.isEmpty || !store.plan.carriedIDs.isEmpty
-            || store.plan.supplies.contains { !$0.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    }
-
-    @ViewBuilder private var bookButton: some View {
-        let button = Button { confirmBook = true } label: {
+    /// 11/12 (round 2): filled like every tool's bottom button whenever it can
+    /// be pressed (it was gray with blue words, which read as 「cannot be
+    /// pressed」, the way a disabled button looks); gray only while it cannot.
+    private var bookButton: some View {
+        Button { confirmBook = true } label: {
             Group {
                 if makingBook {
                     WorkingLabel(title: "印刷用のPDFを作る", workingTitle: "作っています…", working: true)
@@ -239,18 +234,6 @@ struct EvacuationPreparationView: View {
             }
                 .frame(maxWidth: .infinity)
         }
-        // 11/7: the tool's last step, filled like the other tools' last buttons;
-        // 11/8: not filled while there is nothing written to print.
-        if hasContent { button.buttonStyle(.borderedProminent) } else { button.buttonStyle(.bordered) }
-    }
-
-    /// A step row: its number or check, then the one-line state under it.
-    private func step(_ number: Int, _ title: String, detail: String, state: ToolStepState) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ToolStepHeader(number: number, title: title, state: state)
-            Text(detail).font(.subheadline).foregroundStyle(.secondary)
-                .padding(.leading, 30)
-        }.padding(.vertical, 8)
     }
 
     private var allPhotos: [CatProfilePhotoPresentation] {
@@ -320,9 +303,12 @@ private struct EvacuationPackingView: View {
                                 if let cat = store.plan.cats.first(where: { $0.id == item.catID }) {
                                     Text(cat.displayName).font(.caption).foregroundStyle(.secondary)
                                 }
-                                Text([item.quantity, item.location.isEmpty ? "置き場所は未記入" : item.location]
-                                    .filter { !$0.isEmpty }.joined(separator: "・"))
-                                    .font(.subheadline).foregroundStyle(.secondary)
+                                // 11/12 (round 2): the amount and the place, only what is
+                                // written (the same gray sentence was on every item).
+                                let detail = [item.quantity, item.location].filter { !$0.isEmpty }.joined(separator: "・")
+                                if !detail.isEmpty {
+                                    Text(detail).font(.subheadline).foregroundStyle(.secondary)
+                                }
                                 EvacuationExpiryLine(item: item)
                             }
                         }.frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
@@ -823,7 +809,7 @@ private struct EvacuationCatView: View {
                             otherPhotos: otherPhotos, store: store, reuseStore: reuseStore, profiles: profiles)
                     } label: {
                         LabeledContent(isGuest ? "名前と飼い主と一緒の写真" : "飼い主と一緒の写真",
-                                       value: cat.photos["withOwner"] == nil ? "なし" : "あり")
+                                       value: cat.photos["withOwner"] == nil ? ToolEmptyValue.none : "あり")
                     }
                         .accessibilityIdentifier("evacuation-cat-edit")
                 } header: { ToolStepHeader(number: 1, title: "見分ける写真", state: states[0]) }
