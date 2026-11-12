@@ -62,7 +62,6 @@ jobs:
     timeout-minutes: 10
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
-      QUICK_APP_PATH: ${{ runner.temp }}/QuickLaunch/NekoWidget.app
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -74,6 +73,7 @@ jobs:
       - name: Extract the app from this run and launch on a fresh runner
         run: |
           tar -xzf "$RUNNER_TEMP/QuickLaunch/quick-launch-app.tar.gz" -C "$RUNNER_TEMP/QuickLaunch"
+          export QUICK_APP_PATH="$RUNNER_TEMP/QuickLaunch/NekoWidget.app"
           bash NekoWidget/ci/run-quick-launch.sh
       - name: Attach launch screenshot
         if: always()

@@ -1250,6 +1250,8 @@ final class UnrelatedUITests: XCTestCase {
             self.assertIn("bash NekoWidget/ci/" + runner + "\n", body)
             if identifier == "quick-launch":
                 self.assertIn("    needs: quick-check\n", body)
+                self.assertNotIn("runner.", body.split("    steps:", 1)[0])
+                self.assertIn('export QUICK_APP_PATH="$RUNNER_TEMP/QuickLaunch/NekoWidget.app"', body)
             else:
                 self.assertNotRegex(body, r"(?m)^    needs:")
             self.assertNotIn("continue-on-error", body)
