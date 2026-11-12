@@ -1104,16 +1104,14 @@ final class CatProfilePhotoFlowUITests: XCTestCase {
         app.buttons.matching(identifier: "cat-profile-open").element(boundBy: 1).tap()
         app.buttons["cat-profile-more"].tap()
         app.buttons["cat-profile-settings"].tap()
-        // 11/7: the cat's one page; 11/12: its parts are always open and
-        // deleting is the page's last row.
+        // 11/7: the cat's one page; 11/12: its parts are always open.
+        // 11/12 (round 2): deleting is in 「…」 at the top right.
         XCTAssertTrue(app.buttons["cat-profile-rename"].waitForExistence(timeout: 5), app.debugDescription)
-        // The page is a lazy form: the row exists once it scrolls near.
+        let more = app.buttons["cat-care-more-menu"]
+        XCTAssertTrue(more.waitForExistence(timeout: 5), app.debugDescription)
+        more.tap()
         let delete = app.buttons["cat-profile-delete"]
-        for _ in 0..<14 {
-            if delete.exists && delete.isHittable { break }
-            app.swipeUp()
-        }
-        XCTAssertTrue(delete.isHittable, app.debugDescription)
+        XCTAssertTrue(delete.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertEqual(delete.label, "この子を削除")
         delete.tap()
         let confirmation = app.alerts["テスト猫Bを削除しますか？"]
@@ -3289,9 +3287,16 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(scope.label.contains("ミケ"))
         // Choosing a cat may fill its set by recommendation; let that settle.
         _ = app.buttons.matching(identifier: "showcase-gallery-photo").firstMatch.waitForExistence(timeout: 5)
+        // 11/12 (round 2): 「編集」 shows once photos are chosen; before that,
+        // the empty screen's 「写真を選ぶ」 opens the same sheet.
         let edit = app.buttons["showcase-gallery-edit"]
-        XCTAssertTrue(edit.waitForExistence(timeout: 5))
-        edit.tap()
+        if edit.waitForExistence(timeout: 5) {
+            edit.tap()
+        } else {
+            let select = app.buttons["showcase-gallery-select"]
+            XCTAssertTrue(select.waitForExistence(timeout: 5), app.debugDescription)
+            select.tap()
+        }
         XCTAssertTrue(app.staticTexts["showcase-preparation-cat"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["showcase-preparation-cat"].label.contains("ミケ"))
         XCTAssertFalse(app.buttons["showcase-scope-picker"].exists)
@@ -4521,7 +4526,8 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(firstCat.waitForExistence(timeout: 5))
         let catName = firstCat.label.contains("ミケ") ? "ミケ" : "ソラ"
         firstCat.tap()
-        XCTAssertTrue(app.navigationBars[catName].waitForExistence(timeout: 5))
+        // 11/12 (round 2): the bar names the page; the name is under the photo.
+        XCTAssertTrue(app.navigationBars["この子のこと"].waitForExistence(timeout: 5))
         // 11/7: the cat's one page; the name is changed at its top (11/12:
         // the parts are always open, nothing to unfold first).
         XCTAssertFalse(app.buttons["cat-profile-page-photos"].exists, "The cat's page has no 写真 tab")
@@ -4529,7 +4535,8 @@ final class SoloMemoriesUITests: XCTestCase {
                       "The tools must open the profile, without a photo-grid intermediary")
         XCTAssertFalse(app.navigationBars["\(catName)の写真"].exists)
         capture("cat-settings-direct")
-        app.navigationBars[catName].buttons.element(boundBy: 0).tap()
+        // The tab bar is hidden on the cat's page; going back brings it again.
+        app.navigationBars["この子のこと"].buttons.element(boundBy: 0).tap()
         openSettings(in: app)
         XCTAssertFalse(app.buttons["settings-cat-profiles"].exists)
 

@@ -320,11 +320,13 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(scrollUpUntilHittable(edit, application: app), app.debugDescription)
         XCTAssertTrue(edit.label.contains("この子のこと"), edit.label); edit.tap()
         // The name and the key photo lead the page; 11/12: the parts are
-        // always open, and deleting is the page's last row.
+        // always open. Round 2: deleting is in 「…」 at the top right.
         XCTAssertTrue(app.buttons["cat-profile-rename"].waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertFalse(app.buttons["cat-profile-page-photos"].exists, "The cat's page has no 写真 tab")
+        let more = app.buttons["cat-care-more-menu"]
+        XCTAssertTrue(more.waitForExistence(timeout: 5), app.debugDescription); more.tap()
         let delete = app.buttons["cat-profile-delete"]
-        XCTAssertTrue(scrollUpUntilHittable(delete, application: app, maximumSwipes: 14)); delete.tap()
+        XCTAssertTrue(delete.waitForExistence(timeout: 5), app.debugDescription); delete.tap()
         let confirmation = app.alerts.firstMatch
         XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
         confirmation.buttons["この子を削除"].tap()
