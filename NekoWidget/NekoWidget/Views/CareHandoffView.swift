@@ -818,24 +818,23 @@ private struct CareDisplayView: View {
     @State private var error: String?
     /// True while the memo is being made (11/6).
     @State private var exporting = false
+    /// One cat: its name and face photo in the sheet's header. Two or more:
+    /// every name in the header, each cat's own part below with its photo.
+    private var single: CareHandoffShareRecord.Cat? { record.cats.count == 1 ? record.cats.first : nil }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                Text("お世話メモ").font(.largeTitle.bold())
-                if !record.includesHealth { Label("薬・持病・アレルギーは載せていません", systemImage: "info.circle").font(.subheadline) }
-                if !record.includesContacts { Label("連絡先・動物病院は載せていません", systemImage: "info.circle").font(.subheadline) }
-                fields(record.commonFields)
-                ForEach(Array(record.cats.enumerated()), id: \.offset) { _, cat in
-                    VStack(alignment: .leading, spacing: 18) {
-                        Text(cat.name).font(.title.bold())
-                        if let photo = cat.photo { Image(uiImage: photo).resizable().scaledToFit().frame(maxHeight: 260).accessibilityLabel("渡す猫の写真") }
-                        fields(cat.fields)
-                    }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+            VStack(alignment: .leading, spacing: 12) {
+                // 11/12: what is left out is said above the sheet, not on it.
+                if !record.includesHealth { ToolMemoNotice(text: "薬・持病・アレルギーは載せていません") }
+                if !record.includesContacts { ToolMemoNotice(text: "連絡先・動物病院は載せていません") }
+                ToolMemoSheet(kind: record.heading, name: record.cats.map(\.name).joined(separator: "・"),
+                              date: record.createdAt, face: single?.photo, faceLabel: "渡す猫の写真") {
+                    sheetBody
                 }
                 if let error { Text(error).foregroundStyle(.red) }
             }.padding(16)
-        }.background(Color(.systemGroupedBackground))
+        }.background(NekoPalette.groupedGround)
             .navigationTitle("できあがり").navigationBarTitleDisplayMode(.inline)
             .toolChrome()
             // 11/11: the input pages' bar (full-width, large); each button keeps its own style.
@@ -853,12 +852,34 @@ private struct CareDisplayView: View {
                 retainedDirectory = nil
             }) { CareActivitySheet(items: $0.files, text: record.plainText) }
     }
+    @ViewBuilder private var sheetBody: some View {
+        if !record.commonFields.isEmpty {
+            VStack(alignment: .leading, spacing: 16) { fields(record.commonFields) }
+        }
+        if single != nil {
+            VStack(alignment: .leading, spacing: 16) { fields(record.cats[0].fields) }
+        } else {
+            ForEach(Array(record.cats.enumerated()), id: \.offset) { offset, cat in
+                catPart(cat, rule: offset > 0 || !record.commonFields.isEmpty)
+            }
+        }
+    }
+    private func catPart(_ cat: CareHandoffShareRecord.Cat, rule: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if rule { Rectangle().fill(ToolMemoPaper.rule).frame(height: 1) }
+            HStack(alignment: .center, spacing: 12) {
+                Text(cat.name).font(.title2.bold())
+                Spacer(minLength: 0)
+                if let photo = cat.photo {
+                    ToolMemoPhoto(image: photo, label: "渡す猫の写真", aspect: 1).frame(width: 60, height: 60)
+                }
+            }
+            fields(cat.fields)
+        }
+    }
     private func fields(_ values: [(String, String)]) -> some View {
         ForEach(Array(values.enumerated()), id: \.offset) { _, value in
-            VStack(alignment: .leading, spacing: 6) {
-                Text(value.0).font(.subheadline).foregroundStyle(.secondary)
-                Text(value.1).font(.body).textSelection(.enabled)
-            }
+            ToolMemoField(label: value.0, value: value.1)
         }
     }
     /// PDF is the main way out; the image is the second.

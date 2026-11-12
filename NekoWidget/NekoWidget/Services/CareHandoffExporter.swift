@@ -42,7 +42,6 @@ enum CareHandoffExporter {
         let size = pdf ? CGSize(width: 595.28, height: 841.89) : CGSize(width: 390, height: 900)
         let margin: CGFloat = pdf ? 36 : 24
         let font: CGFloat = pdf ? 15 : 18
-        let photoHeight: CGFloat = pdf ? 145 : 185
         struct Page {
             /// Nil for the first page of a memo for two or more cats: what is
             /// common to every cat (contacts, the request, the date), once.
@@ -51,8 +50,10 @@ enum CareHandoffExporter {
             let framesetter: CTFramesetter
             let range: CFRange
         }
-        func rect(first: Bool, photo: Bool) -> CGRect {
-            let top = margin + 44 + (first && photo ? photoHeight + 12 : 0)
+        // 11/12: the memo sheet's header (ToolMemoPage) on every page, the
+        // cat's face photo in it; the text starts under its rule.
+        func rect() -> CGRect {
+            let top = margin + ToolMemoPage.headerHeight(pdf: pdf)
             return CGRect(x: margin, y: top, width: size.width - margin * 2,
                           height: size.height - top - margin - 26)
         }
@@ -62,15 +63,23 @@ enum CareHandoffExporter {
         func body(_ fields: [(String, String)], closing: Bool) -> NSAttributedString {
             let body = NSMutableAttributedString(string: "")
             let paragraph = NSMutableParagraphStyle()
-            paragraph.paragraphSpacing = 11; paragraph.lineSpacing = 3
+            paragraph.paragraphSpacing = 13; paragraph.lineSpacing = 3
+            let labelParagraph = ToolMemoPage.labelParagraph(paragraph)
             func append(_ text: String, size: CGFloat, bold: Bool = false) {
                 body.append(NSAttributedString(string: text + "\n", attributes: [
                     .font: bold ? UIFont.boldSystemFont(ofSize: size) : UIFont.systemFont(ofSize: size),
                     .foregroundColor: UIColor.black, .paragraphStyle: paragraph
                 ]))
             }
+            // A small grey label over its value, as on the screen.
+            func label(_ text: String) {
+                body.append(NSAttributedString(string: text + "\n", attributes: [
+                    .font: UIFont.systemFont(ofSize: font - 3), .foregroundColor: ToolMemoPage.labelColor,
+                    .paragraphStyle: labelParagraph
+                ]))
+            }
             for (title, text) in fields {
-                append(title, size: font - 2, bold: true); append(text, size: font)
+                label(title); append(text, size: font)
             }
             guard closing else { return body }
             if record.isCareMemo {
@@ -102,7 +111,7 @@ enum CareHandoffExporter {
                     break
                 }
                 let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: offset, length: 0),
-                    CGPath(rect: CGRect(origin: .zero, size: rect(first: offset == 0, photo: catPhoto(catIndex) != nil).size), transform: nil), nil)
+                    CGPath(rect: CGRect(origin: .zero, size: rect().size), transform: nil), nil)
                 let visible = CTFrameGetVisibleStringRange(frame)
                 guard visible.length > 0 else { throw CareHandoffError.tooLarge }
                 pages.append(Page(catIndex: catIndex, first: offset == 0, framesetter: framesetter,
@@ -221,15 +230,12 @@ enum CareHandoffExporter {
         func draw(_ context: CGContext, index: Int) {
             let page = pages[index]
             UIColor.white.setFill(); context.fill(CGRect(origin: .zero, size: size))
-            drawHeading(page.catIndex.map { "\(record.heading) · \(record.cats[$0].name)" } ?? record.heading)
-            if page.first, let photo = catPhoto(page.catIndex) {
-                let width = size.width - margin * 2
-                let scale = min(width / photo.size.width, photoHeight / photo.size.height)
-                let fitted = CGSize(width: photo.size.width * scale, height: photo.size.height * scale)
-                photo.draw(in: CGRect(x: margin + (width - fitted.width) / 2, y: margin + 44,
-                                      width: fitted.width, height: fitted.height))
-            }
-            let bounds = rect(first: page.first, photo: catPhoto(page.catIndex) != nil)
+            // The cat's page carries its name and face; the shared first page every name.
+            ToolMemoPage.drawHeader(kind: record.heading,
+                                    name: page.catIndex.map { record.cats[$0].name } ?? record.cats.map(\.name).joined(separator: "・"),
+                                    date: record.createdAt, face: catPhoto(page.catIndex),
+                                    origin: CGPoint(x: margin, y: margin), width: size.width - margin * 2, pdf: pdf)
+            let bounds = rect()
             context.saveGState(); context.textMatrix = .identity
             context.translateBy(x: 0, y: size.height); context.scaleBy(x: 1, y: -1)
             let path = CGPath(rect: CGRect(x: bounds.minX, y: size.height - bounds.maxY,

@@ -1402,6 +1402,8 @@ private struct VeterinaryReadView: View {
     @State private var lastExportIsPDF = true
     /// True while the memo for the desk is being made (11/6).
     @State private var exporting = false
+    /// 11/12: the face photo of 「この子のこと」, in the sheet's header and the file's.
+    @State private var face: UIImage?
 
     /// その日の体重 (11/9), from 「この子のこと」.
     private var dayWeight: (day: String, grams: Int)? { VeterinaryDayWeight.of(visit) }
@@ -1431,66 +1433,29 @@ private struct VeterinaryReadView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                // 11/8: what is happening now first; the cat's standing facts last.
-                VStack(alignment: .leading, spacing: 24) {
-                    Text(displayName ?? visit.catName).font(.largeTitle.bold())
-                    if let weight = dayWeight {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("体重").font(.headline)
-                            Text(VeterinaryDayWeight.text(weight))
-                        }
-                        .accessibilityElement(children: .combine)
-                        .accessibilityIdentifier("vet-reading-weight")
-                    }
-                    if !visit.observations.isEmpty || visit.startedOn != nil {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("家で気付いたこと").font(.headline)
-                            if !visit.observations.isEmpty { Text(visit.observations) }
-                            if let day = visit.startedOn { Label("気付いた日 \(DayText.japanese(day))", systemImage: "calendar") }
-                        }
-                    }
-                    ForEach(Array(results.enumerated()), id: \.offset) { _, field in
-                        VStack(alignment: .leading, spacing: 8) { Text(field.0).font(.headline); Text(field.1) }
-                    }
-                    ForEach(visit.orderedEntries) { entry in
-                        VStack(alignment: .leading, spacing: 12) {
-                            VeterinaryEntryPhoto(entry: entry, visitID: visit.id, store: store, videoSeconds: videos[entry.id])
-                            if !entry.text.isEmpty { Text(entry.text) }
-                            if let weight = entry.weight { PhotoMemoWeightLabel(weight: weight) }
-                            VeterinaryEntryDates(entry: entry)
-                        }
-                        Divider()
-                    }
-                    if !visit.questions.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) { Text("先生に聞きたいこと").font(.headline); Text(visit.questions) }
-                    }
-                    let care = careFields
-                    if !care.medical.isEmpty { VeterinaryCatCareFields(fields: care.medical) }
-                    if !care.other.isEmpty {
-                        Text("そのほか").font(.headline)
-                        VeterinaryCatCareFields(fields: care.other)
-                    }
-                    if visit.entries.isEmpty && visit.observations.isEmpty && visit.questions.isEmpty && results.isEmpty
-                        && care.medical.isEmpty && care.other.isEmpty && dayWeight == nil {
-                        Text("まだ見せる内容がありません。").foregroundStyle(.secondary)
-                    }
-                }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
+                // 11/12: the memo sheet shared with お世話メモ and 避難メモ.
+                ToolMemoSheet(kind: "診察メモ", name: displayName ?? visit.catName, date: Date(), face: face) {
+                    sheetBody
+                }
+                .padding(16)
             }
+            .background(NekoPalette.groupedGround)
             .accessibilityIdentifier("vet-reading")
-            .navigationTitle("診察メモ").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("できあがり").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
             }
             // 11/11: the input pages' bar (full-width, large); each button keeps its own style.
             .toolBarFadeRoom()
             .safeAreaInset(edge: .bottom) {
-                ToolMakeBar(ground: NekoPalette.plainGround) {
+                ToolMakeBar {
                     ViewThatFits {
                         HStack(spacing: 12) { exportButtons }
                         VStack(spacing: 8) { exportButtons }
                     }
                 }
             }
+            .onAppear { if face == nil { face = Self.facePhoto(visit) } }
             .confirmationDialog("診察メモを渡しますか？", isPresented: Binding(
                 get: { pendingExportIsPDF != nil }, set: { if !$0 { pendingExportIsPDF = nil } }),
                 titleVisibility: .visible) {
@@ -1515,6 +1480,66 @@ private struct VeterinaryReadView: View {
                 VeterinaryActivitySheet(items: made.files)
             }
         }
+    }
+
+    /// 11/8: what is happening now first; the cat's standing facts last.
+    @ViewBuilder private var sheetBody: some View {
+        if let weight = dayWeight {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("体重").toolMemoLabel()
+                Text(VeterinaryDayWeight.text(weight))
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("vet-reading-weight")
+        }
+        if !visit.observations.isEmpty || visit.startedOn != nil {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("家で気付いたこと").toolMemoLabel()
+                if !visit.observations.isEmpty { Text(visit.observations) }
+                if let day = visit.startedOn {
+                    Label("気付いた日 \(DayText.japanese(day))", systemImage: "calendar")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+        }
+        ForEach(Array(results.enumerated()), id: \.offset) { _, field in
+            ToolMemoField(label: field.0, value: field.1)
+        }
+        ForEach(visit.orderedEntries) { entry in
+            VStack(alignment: .leading, spacing: 12) {
+                VeterinaryEntryPhoto(entry: entry, visitID: visit.id, store: store, videoSeconds: videos[entry.id])
+                if !entry.text.isEmpty { Text(entry.text) }
+                if let weight = entry.weight { PhotoMemoWeightLabel(weight: weight) }
+                VeterinaryEntryDates(entry: entry)
+            }
+            Divider()
+        }
+        if !visit.questions.isEmpty {
+            VStack(alignment: .leading, spacing: 4) { Text("先生に聞きたいこと").toolMemoLabel(); Text(visit.questions) }
+        }
+        careSection
+    }
+
+    @ViewBuilder private var careSection: some View {
+        let care = careFields
+        if !care.medical.isEmpty { VeterinaryCatCareFields(fields: care.medical) }
+        if !care.other.isEmpty {
+            Text("そのほか").toolMemoSection()
+            VeterinaryCatCareFields(fields: care.other)
+        }
+        if visit.entries.isEmpty && visit.observations.isEmpty && visit.questions.isEmpty && results.isEmpty
+            && care.medical.isEmpty && care.other.isEmpty && dayWeight == nil {
+            Text("まだ見せる内容がありません。").foregroundStyle(.secondary)
+        }
+    }
+
+    /// The face photo of 「この子のこと」, made small; nil when none is set.
+    @MainActor
+    private static func facePhoto(_ visit: VeterinaryVisit) -> UIImage? {
+        let record = CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString)
+        guard let url = CatCareSummary.identifyingPhotoURL(record, .face, legacy: nil),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return VeterinaryMemoExporter.image(data)
     }
 
     @ViewBuilder private var exportButtons: some View {
@@ -1590,7 +1615,8 @@ private struct VeterinaryReadView: View {
         if !care.other.isEmpty { blocks.append(.heading("そのほか")); blocks.append(.fields(care.other)) }
         blocks.append(.fields([("ご注意", "飼い主の記録をまとめたものです。医療の判断ではありません。")]))
         do {
-            let made = try VeterinaryMemoExporter.create(name: displayName ?? visit.catName, blocks: blocks, pdf: pdf)
+            let made = try VeterinaryMemoExporter.create(name: displayName ?? visit.catName, blocks: blocks, pdf: pdf,
+                                                         face: face)
             retainedDirectory = made.directory; export = made
         }
         catch { exportError = "空き容量やメモの長さを確かめてください。" }
@@ -1678,11 +1704,14 @@ private enum VeterinaryMemoExporter {
         case photo(UIImage, Int, CGRect)
     }
 
-    static func create(name: String, blocks: [Block], pdf: Bool) throws -> CareHandoffExporter.Export {
+    static func create(name: String, blocks: [Block], pdf: Bool,
+                       face: UIImage? = nil) throws -> CareHandoffExporter.Export {
         let size = pdf ? CGSize(width: 595.28, height: 841.89) : CGSize(width: 390, height: 900)
         let margin: CGFloat = pdf ? 36 : 24
         let font: CGFloat = pdf ? 15 : 18
-        let top = margin + 44, bottom = size.height - margin - 26, width = size.width - margin * 2
+        let made = Date()
+        // 11/12: the memo sheet's header (ToolMemoPage) on every page; the text starts under its rule.
+        let top = margin + ToolMemoPage.headerHeight(pdf: pdf), bottom = size.height - margin - 26, width = size.width - margin * 2
         var pages: [[Item]] = [[]]
         var y = top
         func newPage() throws {
@@ -1690,11 +1719,19 @@ private enum VeterinaryMemoExporter {
             pages.append([]); y = top
         }
         let paragraph = NSMutableParagraphStyle()
-        paragraph.paragraphSpacing = 11; paragraph.lineSpacing = 3
+        paragraph.paragraphSpacing = 13; paragraph.lineSpacing = 3
+        let labelParagraph = ToolMemoPage.labelParagraph(paragraph)
         func line(_ text: String, size: CGFloat, bold: Bool = false) -> NSAttributedString {
             NSAttributedString(string: text + "\n", attributes: [
                 .font: bold ? UIFont.boldSystemFont(ofSize: size) : UIFont.systemFont(ofSize: size),
                 .foregroundColor: UIColor.black, .paragraphStyle: paragraph
+            ])
+        }
+        // A small grey label over its value, as on the screen.
+        func label(_ text: String) -> NSAttributedString {
+            NSAttributedString(string: text + "\n", attributes: [
+                .font: UIFont.systemFont(ofSize: font - 3), .foregroundColor: ToolMemoPage.labelColor,
+                .paragraphStyle: labelParagraph
             ])
         }
         // Text flows down the page and onto the next one where it does not fit.
@@ -1725,12 +1762,12 @@ private enum VeterinaryMemoExporter {
             guard body.length > 0 else { return }
             try place(body); body = NSMutableAttributedString()
         }
-        body.append(line(name, size: font + 5, bold: true))
+        // The name is the header's, on every page.
         for block in blocks {
             switch block {
             case .fields(let fields):
                 for (title, text) in fields {
-                    body.append(line(title, size: font - 2, bold: true)); body.append(line(text, size: font))
+                    body.append(label(title)); body.append(line(text, size: font))
                 }
             case .heading(let title):
                 body.append(line(title, size: font + 1, bold: true))
@@ -1758,12 +1795,8 @@ private enum VeterinaryMemoExporter {
 
         func draw(_ context: CGContext, index: Int) {
             UIColor.white.setFill(); context.fill(CGRect(origin: .zero, size: size))
-            let headingStyle = NSMutableParagraphStyle(); headingStyle.lineBreakMode = .byTruncatingTail
-            ("診察メモ · \(name)" as NSString).draw(in:
-                CGRect(x: margin, y: margin, width: size.width - margin * 2, height: 26), withAttributes: [
-                    .font: UIFont.boldSystemFont(ofSize: 16), .foregroundColor: UIColor.black,
-                    .paragraphStyle: headingStyle
-                ])
+            ToolMemoPage.drawHeader(kind: "診察メモ", name: name, date: made, face: face,
+                                    origin: CGPoint(x: margin, y: margin), width: width, pdf: pdf)
             for item in pages[index] {
                 switch item {
                 case let .text(framesetter, range, bounds):
