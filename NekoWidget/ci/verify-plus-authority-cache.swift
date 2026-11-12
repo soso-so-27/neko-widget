@@ -70,11 +70,64 @@ private func check(_ condition: Bool, _ message: String) throws {
             cachedAuthority: memory) == .identityChanged, "known identity change overrides valid memory and disk")
         try check(PlusAuthorityRestoreDecision.resolve(memoryIsUsable: memory.isUsable(at: now.addingTimeInterval(1800)),
             identityChanged: false, cachedAuthority: nil) == .checking, "expired memory cannot bridge a missing cache")
+        try verifyRetainedWorksAndTrialDates()
         try verifyRenewalWords()
         try verifyOfferSteadiness()
         print("Plus foreground: valid memory survives missing cache; identity changes and expiry still withdraw access")
         print("Plus cache: expiry, clock rollback, identity, environment, reinstall and exact-ACK boundaries passed")
         print("Plus transport policy: unchanged acknowledged transaction 1 POST + 1 GET -> 0 POST + 1 GET; device latency unmeasured")
+    }
+
+    static func verifyRetainedWorksAndTrialDates() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        func date(_ y: Int, _ m: Int, _ d: Int) -> Date {
+            calendar.date(from: DateComponents(year: y, month: m, day: d))!
+        }
+        let start = date(2026, 10, 25), end = date(2026, 11, 8), now = date(2026, 12, 10)
+        let signedPeriods = [PlusWorkHistory.Period(originalID: 1, start: start, end: end)]
+        let firstInstall = PlusWorkHistory(periods: signedPeriods)
+        let reinstalled = PlusWorkHistory(periods: signedPeriods)
+        for history in [firstInstall, reinstalled] {
+            try check(history.contains(arrival: date(2026, 11, 1), now: now), "expired trial retains arrived October work")
+            try check(!history.contains(arrival: date(2026, 10, 1), now: now), "pre-subscription work not retained")
+            try check(!history.contains(arrival: date(2026, 12, 1), now: now), "post-subscription work not retained")
+            try check(history.contains(arrival: start, now: now), "inclusive purchase boundary")
+            try check(!history.contains(arrival: end, now: now), "exclusive expiration boundary")
+            try check(!history.contains(arrival: start, now: start.addingTimeInterval(-1)), "future work excluded")
+        }
+        try check(!PlusWorkHistory(periods: []).contains(arrival: start, now: now), "never joined")
+        for period in [PlusWorkHistory.Period(originalID: 1, start: start, end: end, purchased: false),
+                       .init(originalID: 1, start: start, end: end, revoked: true),
+                       .init(originalID: 1, start: start, end: end, upgraded: true)] {
+            try check(!PlusWorkHistory(periods: [period]).contains(arrival: start, now: now), "family/refund/unresolved upgrade excluded")
+        }
+        let upgrade = date(2026, 11, 1)
+        let replaced = PlusWorkHistory(periods: [
+            .init(originalID: 1, start: start, end: end, upgraded: true),
+            .init(originalID: 1, start: upgrade, end: now, revoked: true)])
+        try check(replaced.contains(arrival: start, now: now), "valid pre-upgrade interval retained")
+        try check(!replaced.contains(arrival: upgrade, now: now), "revoked successor cannot extend replaced interval")
+        for (from, expected) in [(date(2026, 10, 25), date(2026, 11, 8)),
+                                  (date(2026, 12, 25), date(2027, 1, 8))] {
+            try check(PlusRenewalPresentation.trialEnd(from: from, component: .day, value: 7,
+                count: 2, calendar: calendar) == expected, "StoreKit period count crosses month/year")
+        }
+        try check(PlusRenewalPresentation.trialEnd(from: date(2026, 1, 31), component: .month,
+            value: 1, count: 1, calendar: calendar) == date(2026, 2, 28), "calendar month rather than fixed days")
+        try check(PlusRenewalPresentation.trialEnd(from: start, component: .day,
+            value: Int.max, count: 2, calendar: calendar) == nil, "overflow refused")
+        let trialNow = date(2026, 11, 1)
+        try check(PlusRenewalPresentation.settingsHeader(willAutoRenew: true, expiration: end,
+            now: trialNow, calendar: calendar, trialEndsAt: end, displayPrice: "¥980")
+            == "Plus（お試し中・11月8日から月額¥980）", "active trial header uses actual expiry/price")
+        try check(PlusRenewalPresentation.settingsHeader(willAutoRenew: false, expiration: end,
+            now: trialNow, calendar: calendar, trialEndsAt: end, displayPrice: "¥980")
+            == "Plus（11月8日まで）", "cancelled trial keeps until header")
+        try check(PlusRenewalPresentation.settingsHeader(willAutoRenew: true, expiration: now,
+            now: end, calendar: calendar, trialEndsAt: end, displayPrice: "¥980")
+            == "Plus（利用中）", "finished trial no longer advertised")
+        print("PASS retained works: expired/trial/reinstall/refund/family/upgrade/date boundaries; trial dates and headers")
     }
 
     /// 11/9: a cancelled member sees the end date; a renewing one sees 利用中.

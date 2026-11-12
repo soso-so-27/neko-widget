@@ -1023,6 +1023,11 @@ struct LikedPhotosView: View {
     @Environment(\.membershipAccess) private var membershipAccess
     /// The monthly summary and movie open with Plus; their cards say so before a tap.
     private var summaryNeedsPlus: Bool { membershipAccess.decision(for: .openGrowingSummary) == .membershipRequired }
+    @ObservedObject private var workPurchases = PlusPurchaseStore.productionShared
+    private func summaryNeedsPlus(arrival: Date) -> Bool {
+        membershipAccess.workDecision(arrival: arrival, history: workPurchases.workHistory) == .membershipRequired
+    }
+
     private var showsReflectionPlaceholder: Bool {
         hasPhotoAccess && !isCatDetail && albumScope.wrappedValue == .everyone && !hasPeriodCollections
     }
@@ -1305,12 +1310,13 @@ struct LikedPhotosView: View {
             Text("ふりかえり").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
             if let month = months.first {
                 monthLink(month, isLatest: true, isWide: true)
-                    .overlay(alignment: .topLeading) { if summaryNeedsPlus { plusMark.padding(10) } }
+                    .overlay(alignment: .topLeading) { if summaryNeedsPlus(arrival: month.workArrivalDate) { plusMark.padding(10) } }
             } else {
                 Label("猫の写真がひと月に5枚ほどたまると、その月のまとめができます。", systemImage: "calendar")
                     .font(.subheadline).foregroundStyle(.secondary)
             }
             if let movie = seasonalMovies.first {
+                let summaryNeedsPlus = self.summaryNeedsPlus(arrival: movie.effectivePresentation.quarterEnd)
                 NavigationLink(value: MemoriesRoute.seasonalMovie(movie.periodID)) {
                     // Stacked at very large text, so the title is not squeezed.
                     ToolAdaptiveStack(spacing: 12) {
@@ -1485,7 +1491,8 @@ struct LikedPhotosView: View {
         .accessibilityIdentifier(featured ? "albums-highlight-featured" : "albums-highlight-\(highlight.id)")
     }
     private func monthLink(_ month: MonthlyWindowPresentation, isLatest: Bool, showsCover: Bool = true, isWide: Bool = false) -> some View {
-        NavigationLink(value: MemoriesRoute.monthlyWindow(month)) {
+        let summaryNeedsPlus = self.summaryNeedsPlus(arrival: month.workArrivalDate)
+        return NavigationLink(value: MemoriesRoute.monthlyWindow(month)) {
             if showsCover {
                 AlbumOverviewCard(identifier: month.coverPhoto?.localIdentifier, catBoundingBox: month.coverPhoto?.catBoundingBox,
                     title: "\(month.monthNumber)月のまとめ", subtitle: "\(month.yearNumber)年 · \(month.photos.count.formatted())枚",

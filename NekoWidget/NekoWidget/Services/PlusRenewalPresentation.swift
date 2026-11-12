@@ -5,6 +5,8 @@ import Foundation
 struct PlusRenewalSnapshot: Equatable, Sendable {
     let willAutoRenew: Bool
     let expirationDate: Date?
+    var trialEndsAt: Date? = nil
+    var productID: String? = nil
 
     /// Several current subscriptions (e.g. monthly and annual): any renewing
     /// one means Plus continues; otherwise the latest end date is the end.
@@ -36,9 +38,23 @@ enum PlusRenewalPresentation {
     }
 
     static func settingsHeader(willAutoRenew: Bool?, expiration: Date?, now: Date,
-                               calendar: Calendar) -> String {
-        endDateText(willAutoRenew: willAutoRenew, expiration: expiration, now: now, calendar: calendar)
+                               calendar: Calendar, trialEndsAt: Date? = nil, displayPrice: String? = nil) -> String {
+        if willAutoRenew == true, let trialEndsAt, trialEndsAt > now, let displayPrice {
+            return "Plus（お試し中・\(monthDay(trialEndsAt, calendar: calendar))から月額\(displayPrice)）"
+        }
+        return endDateText(willAutoRenew: willAutoRenew, expiration: expiration, now: now, calendar: calendar)
             .map { "Plus（\($0)まで）" } ?? renewingSettingsHeader
+    }
+
+    static func monthDay(_ date: Date, calendar: Calendar) -> String {
+        "\(calendar.component(.month, from: date))月\(calendar.component(.day, from: date))日"
+    }
+
+    static func trialEnd(from date: Date, component: Calendar.Component, value: Int,
+                         count: Int, calendar: Calendar) -> Date? {
+        let (amount, overflow) = value.multipliedReportingOverflow(by: count)
+        guard !overflow, value > 0, count > 0 else { return nil }
+        return calendar.date(byAdding: component, value: amount, to: calendar.startOfDay(for: date))
     }
 
     /// The one line on the Plus screen when it will not renew; nil otherwise.
@@ -46,6 +62,38 @@ enum PlusRenewalPresentation {
                              calendar: Calendar) -> String? {
         endDateText(willAutoRenew: willAutoRenew, expiration: expiration, now: now, calendar: calendar)
             .map { "\($0)まで使えます" }
+    }
+}
+
+/// Rebuilt from StoreKit's verified transaction history, including expired
+/// renewals. No opened-work stamp or locally persisted grant is an input.
+struct PlusWorkHistory: Equatable, Sendable {
+    struct Period: Equatable, Sendable {
+        let originalID: UInt64
+        let start: Date
+        let end: Date
+        var purchased = true
+        var revoked = false
+        var upgraded = false
+    }
+    let periods: [Period]
+    var complete = true
+
+    func contains(arrival: Date, now: Date) -> Bool {
+        guard arrival <= now, arrival.timeIntervalSinceReferenceDate.isFinite else { return false }
+        return periods.contains { period in
+            guard period.purchased, !period.revoked, period.start <= arrival,
+                  period.start < period.end else { return false }
+            var end = period.end
+            if period.upgraded {
+                // An upgrade replaces the old period early. Without the signed
+                // successor there is no trustworthy end, so do not grant it.
+                guard let successor = periods.filter({ $0.originalID == period.originalID && $0.start > period.start })
+                    .map(\.start).min() else { return false }
+                end = min(end, successor)
+            }
+            return arrival < end
+        }
     }
 }
 

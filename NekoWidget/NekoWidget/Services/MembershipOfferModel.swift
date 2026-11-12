@@ -147,7 +147,7 @@ enum PlusOfferAvailability {
 }
 
 /// Every price and trial string comes from StoreKit (`displayPrice`,
-/// `introductoryOffer`). The app never counts trial days itself.
+/// `introductoryOffer`). The trial end uses that period in the app calendar.
 struct MembershipOfferPresentation: Equatable {
     /// "月額¥980" — the billed amount, always shown.
     let priceText: String
@@ -170,7 +170,7 @@ struct MembershipOfferPresentation: Equatable {
 
     /// One formatting path for the live offer and its previews.
     /// `displayPrice` and `trialPeriod` are StoreKit's values as given.
-    static func monthly(displayPrice: String, trialPeriod: String?, isPreview: Bool) -> Self {
+    static func monthly(displayPrice: String, trialPeriod: String?, isPreview: Bool, trialEnd: Date? = nil) -> Self {
         let price = "月額\(displayPrice)"
         guard let trialPeriod else {
             return Self(priceText: price, renewalText: "1か月ごとに自動で更新されます。次の更新日の24時間前までに解約すれば、次の料金はかかりません。",
@@ -178,7 +178,7 @@ struct MembershipOfferPresentation: Equatable {
                         afterTrialText: nil, isPreview: isPreview)
         }
         return Self(priceText: price,
-                    renewalText: "無料期間が終わると、1か月ごとに自動で更新されます。無料期間が終わる24時間前までに解約すれば、料金はかかりません。",
+                    renewalText: trialEnd.map { "\(PlusRenewalPresentation.monthDay($0, calendar: .nekoGregorian))まで無料。そのあと 月額\(displayPrice)で、1か月ごとに自動で更新されます。次の更新日の24時間前までに解約すれば、次の料金はかかりません。" } ?? "無料期間が終わると、1か月ごとに自動で更新されます。無料期間が終わる24時間前までに解約すれば、料金はかかりません。",
                     trialText: "\(trialPeriod)無料", purchaseTitle: "\(trialPeriod)無料で試す",
                     afterTrialText: "その後 \(price)（自動更新）", isPreview: isPreview,
                     trialPeriod: trialPeriod)
@@ -775,16 +775,28 @@ private final class MembershipStoreKitClient {
         // Eligibility (one introductory offer per Apple ID) and the trial
         // length both come from StoreKit. No local day count exists.
         var trialPeriod: String?
+        var trialEnd: Date?
         if await subscription.isEligibleForIntroOffer,
            let introductory = subscription.introductoryOffer,
            introductory.paymentMode == .freeTrial,
            let period = Self.periodText(introductory.period, count: introductory.periodCount) {
+            let component: Calendar.Component
+            switch introductory.period.unit {
+            case .day: component = .day
+            case .week: component = .weekOfYear
+            case .month: component = .month
+            case .year: component = .year
+            @unknown default: return nil
+            }
+            guard let end = PlusRenewalPresentation.trialEnd(from: .now, component: component,
+                value: introductory.period.value, count: introductory.periodCount, calendar: .nekoGregorian) else { return nil }
             trialPeriod = period
+            trialEnd = end
         }
         guard purchases.productCatalogRevision == revision,
               purchases.productAvailability == .available else { return nil }
         return MembershipOfferPresentation.monthly(
-            displayPrice: product.displayPrice, trialPeriod: trialPeriod, isPreview: false)
+            displayPrice: product.displayPrice, trialPeriod: trialPeriod, isPreview: false, trialEnd: trialEnd)
     }
 
     func purchase(presentedOffer: MembershipOfferPresentation) async -> MembershipOfferActionResult {
@@ -1289,7 +1301,9 @@ struct PlusSettingsSection: View {
     /// it worked; 「Plus（利用中）」 while it renews (11/9).
     private var memberHeader: String {
         PlusRenewalPresentation.settingsHeader(willAutoRenew: purchases.renewal?.willAutoRenew,
-            expiration: purchases.renewal?.expirationDate, now: .now, calendar: .nekoGregorian)
+            expiration: purchases.renewal?.expirationDate, now: .now, calendar: .nekoGregorian,
+            trialEndsAt: purchases.renewal?.trialEndsAt,
+            displayPrice: purchases.products.first { $0.id == purchases.renewal?.productID }?.displayPrice)
     }
 
     private func refreshMembership() {
