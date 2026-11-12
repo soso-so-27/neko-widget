@@ -1382,9 +1382,10 @@ private struct LostCatPreviewView: View {
                 } else if let image = previews[format] {
                     Button { expanded = true } label: {
                         Image(uiImage: image).resizable().scaledToFit()
+                            .lostCatSheetEdge()
                             .accessibilityLabel("共有する迷子の猫の画像")
                             .accessibilityValue(draft.message)
-                    }.buttonStyle(.plain).padding(.horizontal)
+                    }.buttonStyle(.plain).padding(.horizontal).padding(.vertical, 4)
                 } else { ProgressView().padding() }
                 if format.sharesPost {
                     Button(copied ? "文章をコピーしました" : "投稿する文章をコピー", systemImage: "doc.on.doc") {
@@ -1445,6 +1446,15 @@ private struct LostCatPreviewView: View {
     }
 }
 
+extension View {
+    /// 11/12: the made image on the screen shows its edge on a white or a
+    /// dark page: a hairline and a soft shadow. The file itself has neither.
+    func lostCatSheetEdge() -> some View {
+        overlay { Rectangle().strokeBorder(Color.black.opacity(0.14), lineWidth: 0.5) }
+            .shadow(color: .black.opacity(0.12), radius: 8, x: 0, y: 2)
+    }
+}
+
 private struct LostCatActivitySheet: UIViewControllerRepresentable {
     let items: [Any]
     /// Told whether the sheet finished with a share or a save.
@@ -1494,6 +1504,7 @@ private struct LostCatFoundView: View {
                     Group {
                         if let preview {
                             Image(uiImage: preview).resizable().scaledToFit()
+                                .lostCatSheetEdge()
                                 .accessibilityLabel("共有する「見つかりました」の画像")
                                 .accessibilityValue(found.post)
                         } else { ProgressView().frame(maxWidth: .infinity, minHeight: 120) }

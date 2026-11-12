@@ -756,8 +756,13 @@ enum LostCatFlyerRenderer {
             includingPropertiesForKeys: nil)) ?? [] { removeExportDirectory(item) }
     }
 
+    /// 11/12: `boost` above 1 makes the owner's lines larger when the photo
+    /// block would be taller than it needs (bigger type before any white
+    /// space, see filledLayout); 0.85 is the step between the large letters
+    /// and the compact ones when the photo would be too small.
     private static func layout(_ draft: LostCatPublicDraft,
-                               format: Format, compact: Bool = false) -> (Layout, [String: String]) {
+                               format: Format, compact: Bool = false,
+                               boost: CGFloat = 1) -> (Layout, [String: String]) {
         let paper = format.isPDF
         // Every size is fixed: the SNS image stays 4:5, the story 9:16 and the flyer one A4 page.
         let canvas = paper ? paperSize : (format == .story ? storySize : socialSize)
@@ -777,7 +782,11 @@ enum LostCatFlyerRenderer {
             // Flow prose for the flyer; retain original line breaks in the draft and copied post.
             let value = original.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
             guard !value.isEmpty else { return nil }
-            var size = maxSize
+            // Made larger, but never as large as the title; a step smaller (boost
+            // under 1) before the compact sizes, never under the smallest size.
+            let scaled = floor(maxSize * boost)
+            var size = compact ? maxSize
+                : (boost < 1 ? max(minSize, scaled) : max(maxSize, min(scaled, paper ? 40 : 70)))
             while size > minSize {
                 let height = measuredHeight(value, width: measuredWidth, size: size, weight: weight)
                 let limit = ceil(UIFont.systemFont(ofSize: size, weight: weight).lineHeight * lines)
@@ -813,7 +822,7 @@ enum LostCatFlyerRenderer {
         var top = titleBand.maxY + gap
         // On A4 the name stays below the contact: the number is read second.
         if let name = field(draft.name.trimmingCharacters(in: .whitespacesAndNewlines),
-                            id: "name", maxSize: paper ? (compact ? 23 : 30) : 53,
+                            id: "name", maxSize: paper ? (compact ? 23 : 30) : (compact ? 53 : 52),
                             minSize: paper ? 23 : 40, lines: 2,
                             weight: .bold, measuredWidth: width) {
             texts.append(PositionedText(block: name,
@@ -827,7 +836,7 @@ enum LostCatFlyerRenderer {
         if contactValue.isEmpty { issues["contact"] = "画像とチラシに載せる連絡先を入れてください。" }
         // A4: 32pt or larger, the second largest letters after the title.
         let contact = field("連絡先  \(contactValue)", id: "contact",
-                            maxSize: paper ? (compact ? 32 : 36) : 48, minSize: paper ? 32 : 37,
+                            maxSize: paper ? (compact ? 32 : 40) : (compact ? 48 : 58), minSize: paper ? 32 : 37,
                             lines: 3, weight: .bold,
                             measuredWidth: width - 2 * pad)!
         bottom -= contact.height + 2 * pad
@@ -850,36 +859,43 @@ enum LostCatFlyerRenderer {
         }
 
         prepend(field(draft.approachAdvice.trimmingCharacters(in: .whitespacesAndNewlines),
-                      id: "advice", maxSize: paper ? (compact ? 14 : 19) : 33,
+                      id: "advice", maxSize: paper ? (compact ? 14 : 20) : (compact ? 33 : 36),
                       minSize: paper ? 14 : 27, lines: 4,
                       weight: .regular, measuredWidth: width))
         prepend(field(draft.collar.isEmpty ? "" : "首輪：\(draft.collar)",
-                      id: "collar", maxSize: paper ? (compact ? 14 : 19) : 33,
+                      id: "collar", maxSize: paper ? (compact ? 14 : 22) : (compact ? 33 : 40),
                       minSize: paper ? 14 : 29, lines: 3,
                       weight: .regular, measuredWidth: width))
         prepend(field(draft.features.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                       ? "" : "特徴：\(draft.features)",
-                      id: "features", maxSize: paper ? (compact ? 14 : 21) : 36,
+                      id: "features", maxSize: paper ? (compact ? 14 : 22) : (compact ? 36 : 40),
                       minSize: paper ? 14 : 29, lines: 8,
                       weight: .regular, measuredWidth: width))
         // An unknown day is left out, never printed as 「不明」.
         if let lastSeen = draft.lastSeenDescription {
             prepend(field("最後に見かけた日時：\(lastSeen)", id: "date",
-                          maxSize: paper ? 18 : 33, minSize: paper ? 18 : 33,
+                          maxSize: paper ? (compact ? 18 : 20) : (compact ? 33 : 36), minSize: paper ? 18 : 33,
                           lines: 1, weight: .regular, measuredWidth: width))
         }
         let placeValue = draft.lastSeenNear.trimmingCharacters(in: .whitespacesAndNewlines)
         if placeValue.isEmpty { issues["place"] = "最後に見かけた場所を入力してください。" }
         prepend(field("最後に見かけた場所：\(placeValue)", id: "place",
-                      maxSize: paper ? (compact ? 17 : 24) : 43, minSize: paper ? 17 : 34,
+                      maxSize: paper ? (compact ? 17 : 32) : (compact ? 43 : 54), minSize: paper ? 17 : 34,
                       lines: 3, weight: .bold, measuredWidth: width))
 
         let photoHeight = bottom - top
         // The story's extra height goes to the photo.
         let minimumPhoto: CGFloat = paper ? (compact ? 250 : 315)
             : (compact ? 300 : 455) + (format == .story ? 200 : 0)
-        if photoHeight < minimumPhoto {
-            // First make the letters smaller to keep the size and the cat.
+        // A larger or a smaller try is only taken when its photo is still large
+        // enough: it never names a field itself.
+        if photoHeight < minimumPhoto, boost == 1 {
+            // First make the letters smaller to keep the size and the cat:
+            // a step down from the large letters, then the compact ones.
+            if !compact {
+                let smaller = layout(draft, format: format, boost: 0.85)
+                if smaller.0.photoRect.height >= minimumPhoto { return smaller }
+            }
             if !compact { return layout(draft, format: format, compact: true) }
             // Still too long: name the field to shorten, beside that field.
             let labels = ["features": "特徴", "advice": "「見かけた方へ」", "place": "場所",
@@ -901,7 +917,7 @@ enum LostCatFlyerRenderer {
     private static func draw(_ draft: LostCatPublicDraft, format: Format,
                              context: CGContext) {
         if format == .smallPaper { drawSmall(draft, context: context); return }
-        let plan = layout(draft, format: format).0
+        let plan = filledLayout(draft, format: format)
         UIGraphicsPushContext(context)
         defer { UIGraphicsPopContext() }
         UIColor.white.setFill()
@@ -910,10 +926,8 @@ enum LostCatFlyerRenderer {
         context.fill(plan.titleBand)
         UIColor(white: 0.93, alpha: 1).setFill()
         context.fill(plan.contactBackground)
-        let photoGap: CGFloat = format == .paper ? 10 : 18
         if let body = draft.bodyImage {
-            let frames = photoFrames(first: draft.faceImage, second: body,
-                                     in: plan.photoRect, gap: photoGap)
+            let frames = photoTiles(plan.photoRect, gap: photoGap(format))
             drawPhoto(draft.faceImage, in: frames.0)
             drawPhoto(body, in: frames.1)
         } else {
@@ -973,7 +987,7 @@ enum LostCatFlyerRenderer {
                                                  width: width, height: titleHeight)))
         var top = titleBand.maxY + gap
         if let name = field(draft.name.trimmingCharacters(in: .whitespacesAndNewlines), id: "name",
-                            maxSize: compact ? 15 : 17, minSize: 13, lines: 2, weight: .bold, measuredWidth: width) {
+                            maxSize: compact ? 15 : 16, minSize: 13, lines: 2, weight: .bold, measuredWidth: width) {
             texts.append(PositionedText(block: name, rect: CGRect(x: margin, y: top, width: width, height: name.height)))
             top += name.height + gap
         }
@@ -982,7 +996,7 @@ enum LostCatFlyerRenderer {
         let contactValue = draft.contact.trimmingCharacters(in: .whitespacesAndNewlines)
         if contactValue.isEmpty { issues["contact"] = "画像とチラシに載せる連絡先を入れてください。" }
         // The contact is the largest letters after the title.
-        let contact = field("連絡先  \(contactValue)", id: "contact", maxSize: compact ? 18 : 20, minSize: 16,
+        let contact = field("連絡先  \(contactValue)", id: "contact", maxSize: compact ? 18 : 22, minSize: 16,
                             lines: 2, weight: .bold, measuredWidth: width - 2 * pad)!
         bottom -= contact.height + 2 * pad
         let contactBackground = CGRect(x: margin, y: bottom, width: width, height: contact.height + 2 * pad)
@@ -997,12 +1011,12 @@ enum LostCatFlyerRenderer {
         }
         // An unknown day is left out, as on the A4 flyer.
         if let lastSeen = draft.lastSeenDescription {
-            prepend(field("最後に見かけた日時：\(lastSeen)", id: "date", maxSize: 10, minSize: 9, lines: 2,
+            prepend(field("最後に見かけた日時：\(lastSeen)", id: "date", maxSize: compact ? 10 : 11, minSize: 9, lines: 2,
                           weight: .regular, measuredWidth: width))
         }
         let placeValue = draft.lastSeenNear.trimmingCharacters(in: .whitespacesAndNewlines)
         if placeValue.isEmpty { issues["place"] = "最後に見かけた場所を入力してください。" }
-        prepend(field("最後に見かけた場所：\(placeValue)", id: "place", maxSize: compact ? 11 : 12, minSize: 9,
+        prepend(field("最後に見かけた場所：\(placeValue)", id: "place", maxSize: compact ? 11 : 16, minSize: 9,
                       lines: 3, weight: .bold, measuredWidth: width))
 
         let photoHeight = bottom - top
@@ -1024,7 +1038,9 @@ enum LostCatFlyerRenderer {
 
     /// Four copies on the A4 page, with light dashed lines to cut along.
     private static func drawSmall(_ draft: LostCatPublicDraft, context: CGContext) {
-        let plan = smallLayout(draft).0
+        let small = smallLayout(draft).0
+        // One photo: a tall cell keeps it at most square, the rest spread between the lines.
+        let plan = spread(small, cap: small.photoRect.width * 1.1, gap: 6)
         UIGraphicsPushContext(context)
         defer { UIGraphicsPopContext() }
         UIColor.white.setFill()
@@ -1118,76 +1134,77 @@ enum LostCatFlyerRenderer {
         }
     }
 
-    /// Evaluate both arrangements using the visible, aspect-fit image area.
-    /// A 30–70% split ensures neither photo gets only a decorative sliver.
-    private static func photoFrames(first: UIImage, second: UIImage,
-                                    in bounds: CGRect, gap: CGFloat) -> (CGRect, CGRect) {
-        var balanced = (bounds, bounds)
-        var balancedArea: CGFloat = -1
-        var balancedSmaller: CGFloat = -1
-        var fallback = (bounds, bounds)
-        var fallbackSmaller: CGFloat = -1
-        var fallbackArea: CGFloat = -1
-        for stacked in [false, true] {
-            for percent in 30...70 {
-                let share = CGFloat(percent) / 100
-                let available = (stacked ? bounds.height : bounds.width) - gap
-                let firstSpan = available * share
-                let secondSpan = available - firstSpan
-                let a: CGRect
-                let b: CGRect
-                if stacked {
-                    a = CGRect(x: bounds.minX, y: bounds.minY,
-                               width: bounds.width, height: firstSpan)
-                    b = CGRect(x: bounds.minX, y: a.maxY + gap,
-                               width: bounds.width, height: secondSpan)
-                } else {
-                    a = CGRect(x: bounds.minX, y: bounds.minY,
-                               width: firstSpan, height: bounds.height)
-                    b = CGRect(x: a.maxX + gap, y: bounds.minY,
-                               width: secondSpan, height: bounds.height)
-                }
-                let firstArea = fittedPhotoArea(first, in: a)
-                let secondArea = fittedPhotoArea(second, in: b)
-                let total = firstArea + secondArea
-                let smaller = min(firstArea, secondArea)
-                // Prefer arrangements where both actual visible images remain
-                // substantial, then maximize their combined displayed area.
-                if smaller >= max(firstArea, secondArea) * 0.55
-                    && (total > balancedArea + 0.001
-                        || (abs(total - balancedArea) <= 0.001
-                            && smaller > balancedSmaller)) {
-                    balanced = (a, b)
-                    balancedArea = total
-                    balancedSmaller = smaller
-                }
-                if smaller > fallbackSmaller + 0.001
-                    || (abs(smaller - fallbackSmaller) <= 0.001
-                        && total > fallbackArea) {
-                    fallback = (a, b)
-                    fallbackSmaller = smaller
-                    fallbackArea = total
-                }
+    /// 11/12: the gap between the two photos.
+    private static func photoGap(_ format: Format) -> CGFloat { format.isPDF ? 10 : 18 }
+
+    /// Two photos: side by side, the same size, each filling its half.
+    private static func photoTiles(_ bounds: CGRect, gap: CGFloat) -> (CGRect, CGRect) {
+        let tile = (bounds.width - gap) / 2
+        return (CGRect(x: bounds.minX, y: bounds.minY, width: tile, height: bounds.height),
+                CGRect(x: bounds.maxX - tile, y: bounds.minY, width: tile, height: bounds.height))
+    }
+
+    /// The tallest the photo block needs to be: one photo up to a square, two
+    /// tiles up to 2:3 each. Taller than this, the letters grow instead.
+    private static func photoCap(_ draft: LostCatPublicDraft, width: CGFloat, format: Format) -> CGFloat {
+        draft.bodyImage == nil ? width : (width - photoGap(format)) / 2 * 1.5
+    }
+
+    /// The layout that is drawn: the measured one, with the letters made
+    /// larger while the photo block stays at its cap, then any space left
+    /// shared between the lines under the photo (never one band of white).
+    private static func filledLayout(_ draft: LostCatPublicDraft, format: Format) -> Layout {
+        let measured = layout(draft, format: format)
+        var plan = measured.0
+        let cap = photoCap(draft, width: plan.photoRect.width, format: format)
+        if measured.1.isEmpty, plan.photoRect.height > cap {
+            for boost: CGFloat in [1.35, 1.25, 1.15, 1.08] {
+                let larger = layout(draft, format: format, boost: boost)
+                if larger.1.isEmpty, larger.0.photoRect.height >= cap { plan = larger.0; break }
             }
         }
-        return balancedArea >= 0 ? balanced : fallback
+        return spread(plan, cap: cap, gap: format.isPDF ? 9 : 16)
     }
 
-    private static func fittedPhotoArea(_ image: UIImage, in rect: CGRect) -> CGFloat {
-        guard image.size.width > 0, image.size.height > 0 else { return 0 }
-        let scale = min(rect.width / image.size.width, rect.height / image.size.height)
-        return image.size.width * scale * image.size.height * scale
+    /// Makes a photo block taller than `cap` that height and moves the lines
+    /// under it up, adding the same space between each (at most three gaps'
+    /// worth); what is still left goes back to the photo. The contact stays
+    /// at the bottom.
+    private static func spread(_ plan: Layout, cap: CGFloat, gap: CGFloat) -> Layout {
+        let surplus = plan.photoRect.height - cap
+        let below = plan.texts.enumerated()
+            .filter { $0.element.rect.minY >= plan.photoRect.maxY - 0.5 }
+            .sorted { $0.element.rect.minY < $1.element.rect.minY }
+        guard surplus > 0, !below.isEmpty else { return plan }
+        let each = min(surplus / CGFloat(below.count), gap * 3)
+        let photoHeight = plan.photoRect.height - each * CGFloat(below.count)
+        var texts = plan.texts
+        for (order, item) in below.enumerated() {
+            // The first line moves up the most; the last one (the contact) not at all.
+            let shift = each * CGFloat(below.count - 1 - order)
+            texts[item.offset] = PositionedText(block: item.element.block,
+                                                rect: item.element.rect.offsetBy(dx: 0, dy: -shift))
+        }
+        let photoRect = CGRect(x: plan.photoRect.minX, y: plan.photoRect.minY,
+                               width: plan.photoRect.width, height: photoHeight)
+        return Layout(size: plan.size, titleBand: plan.titleBand, photoRect: photoRect,
+                      contactBackground: plan.contactBackground, texts: texts)
     }
 
-    /// The whole photo, never cropped (marks and coat must show), at the top
-    /// of its space on the white page: no gray bars around it (347, 11/8).
+    /// 11/12: the photo fills its block, as a poster's does: scaled to cover,
+    /// the centre kept across and the upper part kept down (where the face
+    /// usually is), never letterboxed or set on bars.
     private static func drawPhoto(_ image: UIImage, in rect: CGRect) {
-        guard image.size.width > 0, image.size.height > 0 else { return }
-        let scale = min(rect.width / image.size.width, rect.height / image.size.height)
-        let fitted = CGRect(x: rect.midX - image.size.width * scale / 2,
-                            y: rect.minY,
-                            width: image.size.width * scale, height: image.size.height * scale)
-        image.draw(in: fitted)
+        guard image.size.width > 0, image.size.height > 0, rect.width > 0, rect.height > 0,
+              let context = UIGraphicsGetCurrentContext() else { return }
+        let scale = max(rect.width / image.size.width, rect.height / image.size.height)
+        let drawn = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        context.saveGState()
+        context.clip(to: rect)
+        image.draw(in: CGRect(x: rect.midX - drawn.width / 2,
+                              y: rect.minY - (drawn.height - rect.height) * 0.3,
+                              width: drawn.width, height: drawn.height))
+        context.restoreGState()
     }
 
     private static func text(_ value: String, _ rect: CGRect, size: CGFloat,
