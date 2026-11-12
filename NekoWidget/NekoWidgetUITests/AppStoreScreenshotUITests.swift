@@ -297,13 +297,17 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
         app.buttons["tools-care-open"].tap()
+        // 11/12: the cats are the items of the menu in the bar.
+        let menu = app.buttons["care-cat-menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10), app.debugDescription); menu.tap()
         let profile = app.buttons["tool-profile-11111111-1111-4111-8111-111111111111"]
         XCTAssertTrue(profile.waitForExistence(timeout: 10))
         captureScreenshot(named: "PR5-cat-picker")
         profile.tap()
-        // 11/8: 「この子のこと」 is the section under the three numbered steps,
-        // so its heading can start below the first screen of the memo.
-        XCTAssertTrue(app.buttons["care-disclosure-open"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(profile.waitForNonExistence(timeout: 5))
+        // 「この子のこと」 is the row under the rows of this memo, so it can
+        // start below the first screen of the memo.
+        XCTAssertTrue(app.buttons["care-preview-open"].waitForExistence(timeout: 10), app.debugDescription)
         let catCareHeading = app.staticTexts["この子のこと"]
         XCTAssertTrue(scrollUpUntilHittable(catCareHeading, application: app)
                       || catCareHeading.waitForExistence(timeout: 10), app.debugDescription)
@@ -323,7 +327,15 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let confirmation = app.alerts.firstMatch
         XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
         confirmation.buttons["この子を削除"].tap()
-        // The profile disappears but the tool's original record remains editable.
+        // The profile disappears but the tool's original record remains
+        // editable: its name is the page of the row 「名前」 now.
+        let nameRow = app.buttons["care-row-name"]
+        XCTAssertTrue(nameRow.waitForExistence(timeout: 10), app.debugDescription)
+        // The rows are at the top of the page; the folded row was below them.
+        for _ in 0..<6 where !nameRow.isHittable { app.swipeDown(velocity: .slow) }
+        XCTAssertTrue(nameRow.isHittable, app.debugDescription)
+        nameRow.tap()
+        XCTAssertTrue(app.navigationBars["名前"].waitForExistence(timeout: 10), app.debugDescription)
         let retainedName = app.descendants(matching: .any)["care-cat-name"].firstMatch
         XCTAssertTrue(retainedName.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertEqual(retainedName.value as? String, "ミケ")
@@ -640,9 +652,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let care = app.buttons["tools-care-open"]
         XCTAssertTrue(care.waitForExistence(timeout: 10), app.debugDescription)
         care.tap()
-        let profile = app.buttons["tool-profile-11111111-1111-4111-8111-111111111111"]
-        XCTAssertTrue(profile.waitForExistence(timeout: 10), app.debugDescription)
-        profile.tap()
+        chooseCareCat("tool-profile-11111111-1111-4111-8111-111111111111", application: app)
         // 「預けるとき」 opens first; its link to 「この子のこと」 is further down
         // the list, which makes the row only once it scrolls near. 349: it is
         // one row below the steps, and a tap opens the cat's page.
@@ -821,8 +831,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let app = try launchOwnerCapture("care")
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
         app.buttons["tools-care-open"].tap()
-        let cat = app.buttons["tool-profile-11111111-1111-4111-8111-111111111111"]
-        XCTAssertTrue(cat.waitForExistence(timeout: 10)); cat.tap()
+        chooseCareCat("tool-profile-11111111-1111-4111-8111-111111111111", application: app)
         let folded = app.descendants(matching: .any)["care-cat-care-fields-folded"].firstMatch
         XCTAssertTrue(scrollUpUntilHittable(folded, application: app)); folded.tap()
         XCTAssertTrue(app.buttons["cat-care-family-notebook"].waitForExistence(timeout: 10))
@@ -865,6 +874,21 @@ final class AppStoreScreenshotUITests: XCTestCase {
             object: element
         )
         return XCTWaiter.wait(for: [ready], timeout: timeout) == .completed
+    }
+
+    /// 11/12: 預けるとき's cats are the items of the menu in the bar. The tool
+    /// opens a cat's page by itself; with one cat there is no menu, and that
+    /// cat's page is the one open.
+    @MainActor
+    private func chooseCareCat(_ identifier: String, application app: XCUIApplication) {
+        XCTAssertTrue(app.buttons["care-preview-open"].waitForExistence(timeout: 10), app.debugDescription)
+        let menu = app.buttons["care-cat-menu"]
+        guard menu.exists else { return }
+        menu.tap()
+        let item = app.buttons[identifier]
+        XCTAssertTrue(item.waitForExistence(timeout: 10), app.debugDescription)
+        item.tap()
+        XCTAssertTrue(item.waitForNonExistence(timeout: 5), app.debugDescription)
     }
 
     @MainActor
