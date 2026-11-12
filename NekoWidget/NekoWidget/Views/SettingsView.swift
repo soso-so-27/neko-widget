@@ -263,7 +263,7 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings-cat-profile-transfer")
                 }
             } header: {
-                Text("機種変更にそなえる")
+                Text("保存")
             }
 
             Section {

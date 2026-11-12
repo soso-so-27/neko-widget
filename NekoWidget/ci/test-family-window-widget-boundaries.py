@@ -1567,7 +1567,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         for section_title in (
             "写真とウィジェット",
             "家族とまど",
-            "機種変更にそなえる",
+            "保存",
             "困ったとき",
             "テスト用",
         ):
@@ -5656,7 +5656,7 @@ class SettingsLayoutTests(unittest.TestCase):
         settings = source("NekoWidget/Views/SettingsView.swift")
         body = section(settings, "    var body: some View {\n        Form {", '.navigationTitle("設定")')
         # 11/8: Plus and 保存 first; one-row sections grouped; the app's own pages together.
-        order = ["PlusSettingsSection()", 'Text("機種変更にそなえる")', 'Text("写真とウィジェット")',
+        order = ["PlusSettingsSection()", 'Text("保存")', 'Text("写真とウィジェット")',
                  'Text("家族とまど")', '"settings-support-page"', '"settings-privacy-policy"',
                  '"settings-recommend-app"', 'Text("ねこのまどについて")', '"settings-app-version"',
                  '"settings-account-deletion"', 'Text("テスト用")']
@@ -6624,7 +6624,7 @@ class OnePlaceSettingsTests(unittest.TestCase):
         self.assertIn(".foregroundStyle(Color(uiColor: .tertiaryLabel))", family)
         self.assertNotIn('"settings-cat-profiles"', body)
         # 保存 is one row: 自動保存 holds the profile file; without 自動保存 the file row stands alone.
-        save = section(body, "if ManagedPreservationConfiguration.current.isEnabled {", 'Text("機種変更にそなえる")')
+        save = section(body, "if ManagedPreservationConfiguration.current.isEnabled {", 'Text("保存")')
         self.assertIn("AppRecordSettingsView(profileTransfer: (actions: catProfilesActions,", save)
         self.assertLess(save.index('"settings-managed-preservation"'), save.index("} else {"))
         self.assertGreater(save.index('"settings-cat-profile-transfer"'), save.index("} else {"))
