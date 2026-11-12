@@ -1384,11 +1384,12 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("SeasonalMovieExportService.swift in Sources", project)
         self.assertEqual(project.count("SeasonalMovieArchiveStore.swift in Sources"), 2)
         self.assertEqual(project.count("SeasonalMovieExportService.swift in Sources"), 2)
-        # 11/8: one sentence that keeps what is accessed, why, and the promise.
-        self.assertIn("猫の写真や動画を端末内で見つけ", config)
-        self.assertIn("「うちの子」アルバム・ウィジェット・季節のムービーに使うため", config)
-        self.assertIn("元の写真や動画は変えずに", config)
-        self.assertIn("写真ライブラリへのアクセスを許可してください。\n", config)
+        # 11/12: one plain, true sentence: what is found, where it shows, and
+        # that the finding happens on the iPhone. The 「うちの子」 album left
+        # the app (10/31) and the seasonal movie is Plus, so neither is named.
+        self.assertIn("PHOTO_LIBRARY_USAGE_DESCRIPTION = 猫の写真をiPhoneの中で見つけて、アルバムとホーム画面のウィジェットに出すために使います。\n", config)
+        for term in ("うちの子", "季節のムービー", "写真ライブラリ", "端末内"):
+            self.assertNotIn(term, section(config, "PHOTO_LIBRARY_USAGE_DESCRIPTION = ", "\n"))
         self.assertNotIn("元の写真や動画を変更・削除しません", config)
 
     def test_received_family_widget_uses_cat_focused_full_bleed_canvases(self) -> None:
