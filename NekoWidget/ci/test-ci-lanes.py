@@ -1230,7 +1230,8 @@ final class UnrelatedUITests: XCTestCase {
     def test_actual_workflow_keeps_app_ui_in_first_five_without_losing_evidence(self):
         jobs = workflow_jobs()
         normal_jobs = {
-            "quick-check": ("Build, unit tests, and launch", "run-quick-ios-checks.sh public", 25),
+            "quick-check": ("Build and unit tests", "run-quick-ios-checks.sh public-build", 25),
+            "quick-launch": ("Fresh runner launch", "run-quick-launch.sh", 10),
             "owner-products": ("Build and inspect owner-only products", "run-quick-ios-checks.sh owner", 25),
             "safety-check": ("Privacy, saved data, and sharing checks", "run-cheap-safety-checks.sh", 20),
         }
@@ -1242,13 +1243,19 @@ final class UnrelatedUITests: XCTestCase {
         for identifier, (name, runner, timeout) in normal_jobs.items():
             body = jobs[identifier]
             self.assertIn("    name: " + name + "\n", body)
-            self.assertIn("    if: " + normal_condition + "\n", body)
+            if identifier != "quick-launch":
+                self.assertIn("    if: " + normal_condition + "\n", body)
             self.assertIn("    runs-on: macos-15\n", body)
             self.assertIn("    timeout-minutes: " + str(timeout) + "\n", body)
-            self.assertIn("run: bash NekoWidget/ci/" + runner + "\n", body)
-            self.assertNotRegex(body, r"(?m)^    needs:")
+            self.assertIn("bash NekoWidget/ci/" + runner + "\n", body)
+            if identifier == "quick-launch":
+                self.assertIn("    needs: quick-check\n", body)
+                self.assertNotIn("runner.", body.split("    steps:", 1)[0])
+                self.assertIn('export QUICK_APP_PATH="$RUNNER_TEMP/QuickLaunch/NekoWidget.app"', body)
+            else:
+                self.assertNotRegex(body, r"(?m)^    needs:")
             self.assertNotIn("continue-on-error", body)
-        self.assertIn("    needs: [quick-check, safety-check, owner-products]\n", jobs["plan"])
+        self.assertIn("    needs: [quick-check, quick-launch, safety-check, owner-products]\n", jobs["plan"])
         self.assertIn("    if: always() && github.event_name == 'workflow_dispatch' && inputs.extended_checks\n", jobs["plan"])
         # Normal and extended Mac jobs are separate phases, including failures.
         normal_running = len(normal_jobs)
@@ -1363,7 +1370,7 @@ final class UnrelatedUITests: XCTestCase {
     def test_extended_plan_waits_for_normal_results_without_hiding_evidence(self):
         jobs = workflow_jobs()
         plan = jobs["plan"]
-        self.assertIn("    needs: [quick-check, safety-check, owner-products]\n", plan)
+        self.assertIn("    needs: [quick-check, quick-launch, safety-check, owner-products]\n", plan)
         condition = re.search(r"^    if: (.+)$", plan, re.M)[1]
         self.assertEqual(condition, "always() && github.event_name == 'workflow_dispatch' && inputs.extended_checks")
         terminal = ("success", "failure", "cancelled", "skipped")
@@ -1373,12 +1380,12 @@ final class UnrelatedUITests: XCTestCase {
             expression = condition.replace("always()", "True").replace("&&", "and")
             expression = expression.replace("github.event_name", repr(event)).replace("inputs.extended_checks", repr(extended))
             enabled = 0
-            for quick, safety, owner in itertools.product(states, repeat=3):
-                ready = quick in terminal and safety in terminal and owner in terminal
+            for quick, launch, safety, owner in itertools.product(states, repeat=4):
+                ready = quick in terminal and launch in terminal and safety in terminal and owner in terminal
                 runs = ready and eval(expression, {"__builtins__": {}}, {})
                 self.assertEqual(runs, ready and event == "workflow_dispatch" and extended)
                 enabled += runs
-            self.assertEqual(enabled, 64 if event == "workflow_dispatch" and extended else 0)
+            self.assertEqual(enabled, 256 if event == "workflow_dispatch" and extended else 0)
         # Explicit status checks prevent a failed normal ancestor from making
         # independent extended evidence disappear. A failed plan still blocks it.
         for identifier, output in (("build-without-signing", "build"),

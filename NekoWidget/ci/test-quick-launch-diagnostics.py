@@ -111,8 +111,83 @@ class QuickLaunchDiagnosticsTests(unittest.TestCase):
         self.assertEqual([r["process"] for r in rows], ["SpringBoard", "com.apple.CoreSimulator.CoreSimulatorService"])
         self.assertNotIn("/", json.dumps(rows))
 
+    def test_app_pid_is_scoped_to_exact_disposable_device_and_executable(self):
+        path = f"/Users/runner/Library/Developer/CoreSimulator/Devices/{DEVICE}/data/Containers/Bundle/Application/{DEVICE}/NekoWidget.app/NekoWidget"
+        rows = diagnostic.app_processes(f"12 S {path}\n13 S {path}-other\n14 S /Applications/NekoWidget.app/NekoWidget\n15 S {path.replace(DEVICE, 'FFFFFFFF-BBBB-CCCC-DDDD-EEEEEEEEEEEE', 1)}", DEVICE)
+        self.assertEqual(rows, [{"pid": 12, "state": "S", "process": "NekoWidget"}])
+
+    def test_failure_observation_samples_app_without_simctl_and_classifies_runningboard(self):
+        path = f"/Library/Developer/CoreSimulator/Devices/{DEVICE}/data/Containers/Bundle/Application/{DEVICE}/NekoWidget.app/NekoWidget"
+        def run(args, **kwargs):
+            if args[0] == "ps": return f"12 S {path}", "ok"
+            if args[0] == "sample":
+                self.assertEqual(args[1:4], ["12", "1", "1"])
+                return "Path: /private/SECRET\nBinary Images: SECRET\n  + 3 mach_msg2_trap (in libsystem_kernel.dylib) + 8 [0x123abc]\n  3 helper (in NekoWidget) /private/SECRET.swift\n", "ok"
+            return json.dumps([{"processImagePath": "/usr/libexec/runningboardd", "eventMessage": "jp.nekowidget.app NotFound RBSRequestErrorDomain Code=3 SECRET"}]), "ok"
+        with patch.object(diagnostic, "command", side_effect=run):
+            diagnostic.observe(self.root, DEVICE)
+        value = json.loads((self.root / "app-state.json").read_text())
+        self.assertEqual(value["appPresence"], "present")
+        self.assertIn("mach_msg2_trap", str(value))
+        self.assertNotIn("SECRET", str(value))
+        events = json.loads((self.root / "lifecycle.json").read_text())["events"]
+        self.assertEqual(events[0]["process"], "runningboardd")
+        self.assertIn("notfound", events[0]["terms"])
+        self.assertEqual(events[0]["errorCodes"], ["3"])
+
+    def test_unavailable_process_query_is_unknown_not_absent(self):
+        with patch.object(diagnostic, "command", return_value=(None, "diagnostic-timeout")):
+            diagnostic.observe(self.root, DEVICE)
+        self.assertEqual(json.loads((self.root / "app-state.json").read_text())["appPresence"], "unknown")
+
+    def test_build_precedes_fresh_device_and_time_limits_remain(self):
+        script = (ROOT / "ci/run-quick-ios-checks.sh").read_text()
+        self.assertNotIn('simctl create', script)
+        self.assertIn('public-build', script)
+        script = (ROOT / 'ci/run-quick-launch.sh').read_text()
+        self.assertNotIn('xcodebuild', script)
+        self.assertIn('bounded 90 xcrun simctl launch', script)
+        self.assertIn('sleep 5', script)
+        unit = (ROOT / "ci/run-native-test-layer.sh").read_text()
+        self.assertLess(unit.index('build-for-testing'), unit.index('simctl create'))
+        self.assertIn('timeout=120', unit)
+        self.assertIn('xcodebuild test-without-building', unit)
+
+    def test_unit_shell_compiles_before_boot_and_preserves_failed_test_status(self):
+        script = (ROOT / "ci/run-native-test-layer.sh").read_text()
+        script = script.replace('cd "$(dirname "$0")/.."', ':')
+        bash = "C:/Program Files/Git/bin/bash.exe" if Path("C:/Program Files/Git/bin/bash.exe").exists() else shutil.which("bash")
+        for scenario, code in (("success", 0), ("test-failure", 37), ("boot-failure", 124)):
+            with self.subTest(scenario=scenario):
+                directory = self.root / scenario; directory.mkdir()
+                preamble = r'''
+RUNNER_TEMP="$PWD"
+xcrun() { echo "xcrun $*" >> trace; if [[ "$*" == *"create"* ]]; then echo AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE; fi; }
+python3() {
+  echo "python3 $*" >> trace
+  if [[ "$1" == -c ]]; then echo com.apple.CoreSimulator.SimRuntime.iOS-26-2
+  elif [[ "$1" == - && "$scenario" == boot-failure ]]; then return 124; fi
+}
+xcodebuild() {
+  echo "xcodebuild $*" >> trace
+  if [[ "$*" == *build-for-testing* ]]; then mkdir -p "$RUNNER_TEMP/Native-unit-0/Build/Products"; touch "$RUNNER_TEMP/Native-unit-0/Build/Products/tests.xctestrun"; fi
+  if [[ "$*" == *test-without-building* && "$scenario" == test-failure ]]; then return 37; fi
+}
+'''
+                (directory / "case.sh").write_text(preamble + f"\nscenario={scenario}\n" + script, encoding="utf-8", newline="\n")
+                result = subprocess.run([bash, "case.sh", "unit"], cwd=directory, capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, code, result.stderr)
+                trace = (directory / "trace").read_text()
+                self.assertLess(trace.index("build-for-testing"), trace.index("simctl create"))
+                self.assertIn("simctl delete", trace)
+                if code:
+                    self.assertLess(trace.index(" observe "), trace.index("simctl shutdown"))
+                if scenario != "boot-failure":
+                    self.assertIn("-only-testing:NekoWidgetTests", trace)
+                    self.assertEqual(trace.count("test-without-building"), 1)
+
     def test_real_shell_failure_path_preserves_status_retry_limit_and_cleanup_order(self):
-        script = (ROOT / "ci/run-quick-ios-checks.sh").read_text(encoding="utf-8")
+        script = (ROOT / "ci/run-quick-launch.sh").read_text(encoding="utf-8")
         setup = script.split("quick_launch_active=false", 1)[1].split('bounded 60 xcrun simctl boot "$device"', 1)[0]
         setup = "quick_launch_active=false" + setup
         launch = script.split("reboot_simulator() {", 1)[1].split('mkdir -p "$RUNNER_TEMP/ci-screenshots"', 1)[0]
@@ -155,6 +230,8 @@ bounded() {
                     self.assertLess(trace.index(" collect "), trace.index("xcrun simctl delete"))
                 else:
                     self.assertNotIn(" collect ", trace)
+                if scenario in ("timeout", "recovered"):
+                    self.assertLess(trace.index("first-launch-failure"), trace.index("bounded 30 xcrun simctl shutdown"))
 
 
 if __name__ == "__main__":

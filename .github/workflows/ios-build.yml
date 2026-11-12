@@ -30,7 +30,7 @@ concurrency:
 
 jobs:
   quick-check:
-    name: Build, unit tests, and launch
+    name: Build and unit tests
     # Same-repository push already validates the PR head; forks use PR CI.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: macos-15
@@ -44,8 +44,37 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-      - name: Build, run unit tests, and launch once
-        run: bash NekoWidget/ci/run-quick-ios-checks.sh public
+      - name: Build and run unit checks without booting a Simulator
+        run: bash NekoWidget/ci/run-quick-ios-checks.sh public-build
+      - name: Transfer the validated synthetic Simulator app
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: quick-launch-app
+          path: ${{ runner.temp }}/quick-launch-app.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  quick-launch:
+    name: Fresh runner launch
+    needs: quick-check
+    runs-on: macos-15
+    timeout-minutes: 10
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: quick-launch-app
+          path: ${{ runner.temp }}/QuickLaunch
+      - name: Extract the app from this run and launch on a fresh runner
+        run: |
+          tar -xzf "$RUNNER_TEMP/QuickLaunch/quick-launch-app.tar.gz" -C "$RUNNER_TEMP/QuickLaunch"
+          export QUICK_APP_PATH="$RUNNER_TEMP/QuickLaunch/NekoWidget.app"
+          bash NekoWidget/ci/run-quick-launch.sh
       - name: Attach launch screenshot
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -55,7 +84,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - name: Attach minimal synthetic launch failure diagnostics
-        if: failure()
+        # Also retain the first timeout when the existing single retry recovers.
+        # A clean run creates no failure directory and uploads nothing.
+        if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: synthetic-launch-failure-${{ github.run_id }}-${{ github.run_attempt }}
@@ -104,9 +135,9 @@ jobs:
 
   plan:
     name: Select iOS checks and verify reusable evidence
-    # Finish all three normal Mac jobs before admitting the extended Mac lanes.
+    # Finish build, fresh launch, safety and owner checks before extended lanes.
     # Their failure must remain visible without suppressing independent evidence.
-    needs: [quick-check, safety-check, owner-products]
+    needs: [quick-check, quick-launch, safety-check, owner-products]
     if: always() && github.event_name == 'workflow_dispatch' && inputs.extended_checks
     runs-on: ubuntu-24.04
     timeout-minutes: 5
