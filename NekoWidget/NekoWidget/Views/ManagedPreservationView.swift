@@ -134,9 +134,9 @@ struct ManagedPreservationView: View {
         } message: {
             Text("途中まで保存した内容を削除します。ツールの記録と、復元した記録は残ります。あとで、いまの内容で保存し直せます。")
         }
-        .confirmationDialog("保存用のアカウントを削除しますか？",
+        .confirmationDialog("自動保存のアカウントを削除しますか？",
                             isPresented: $confirmsAccountDeletion, titleVisibility: .visible) {
-            Button("アカウントと保存したコピーを削除", role: .destructive) { coordinator.deleteServiceAccount() }
+            Button("アカウントと保存したものを削除", role: .destructive) { coordinator.deleteServiceAccount() }
                 .accessibilityIdentifier("preservation-account-delete-confirm")
             Button("キャンセル", role: .cancel) { }
         } message: {
@@ -277,7 +277,7 @@ struct ManagedPreservationView: View {
                     .font(.footnote).foregroundStyle(.secondary)
                 Button("削除状況を確認") { coordinator.checkAccountDeletion() }
             case .completed:
-                Label("保存用のアカウントを削除しました", systemImage: "checkmark.circle")
+                Label("自動保存のアカウントを削除しました", systemImage: "checkmark.circle")
                 Button("閉じる") { returnsWhenDone = isAccountEntry; coordinator.dismissCompletedDeletion() }
             case .requestedElsewhere:
                 Text("ほかのiPhoneでアカウントを削除しています")
@@ -562,7 +562,7 @@ struct ManagedPreservationView: View {
                 .font(.footnote).foregroundStyle(.secondary)
         }
         if usage.tier == "trial" {
-            Text("お試し中は \(Self.capacity(storage.limitBytes)) までです。Plus を続けると \(Self.capacity(policy.plus.limitBytes)) になります。")
+            Text("お試し中は\(Self.capacity(storage.limitBytes))までです。Plusを続けると\(Self.capacity(policy.plus.limitBytes))になります。")
                 .font(.footnote).foregroundStyle(.secondary)
         }
     }
@@ -639,13 +639,13 @@ struct ManagedPreservationView: View {
                     Text("保存されています。")
                 case .expired:
                     if let dueAt = retention.dueAt {
-                        LabeledContent(retention.finalNoticeDeliveredAt == nil ? "書き出せる期限の目安" : "書き出せる期限",
+                        LabeledContent(retention.finalNoticeDeliveredAt == nil ? "保存したものが消える日の目安" : "保存したものが消える日",
                                        value: Self.deadline(dueAt))
                     }
                 case .unknown:
                     Text("Plusを確認できません。保存した記録はそのまま残っています。")
                 case .unlinked:
-                    Text("Plusが連携されていないため、書き出せる期間はまだ表示できません。")
+                    Text("このアカウントでは、まだPlusを使えません。")
                 }
             }
             // 11/8 (23): the button says what it checks; no second line saying it.
@@ -653,7 +653,7 @@ struct ManagedPreservationView: View {
                 .accessibilityIdentifier("preservation-retention-check")
         } header: { Text("Plusが終わったあと") }
         footer: {
-            Text("期限があるのは書き出しだけで、このiPhoneの記録は残ります。")
+            Text("Plusをやめたあとも、12か月のあいだは読み出しと書き出しができます。このiPhoneの記録は残ります。")
         }
     }
 
@@ -940,10 +940,10 @@ enum PreservationExportWording {
         case .missingOrDamaged: "保存したものの一部を読めなかったため、書き出しを止めました。少し待ってから、もう一度お試しください。"
         case .insufficientSpace: "iPhoneの空き容量が足りないため、書き出せませんでした。空きを作ってから、もう一度お試しください。"
         case .cancelled: "書き出しをやめました。"
-        case .contentsChanged: "書き出している間に保存が進んだため、止めました。少し待ってから、もう一度お試しください。"
+        case .contentsChanged: "書き出しを止めました。少し待ってから、もう一度お試しください。"
         case .empty: "書き出せるものは、まだ保存されていません。"
-        case .unsupported: "このバージョンでは書き出せません。アプリを新しくしてから、もう一度お試しください。"
-        case .cleanup: "書き出しに使ったファイルを片づけられませんでした。アプリを開き直すと、もう一度片づけます。"
+        case .unsupported: "このバージョンでは書き出せません。App Storeでアプリを最新にしてください。"
+        case .cleanup: "アプリを開き直してください。"
         case .unavailable: "書き出せませんでした。少し待ってから、もう一度お試しください。"
         }
     }

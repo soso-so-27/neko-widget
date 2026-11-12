@@ -64,11 +64,11 @@ enum AppRecordBindingError: String, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .destination:
-            "以前の保存先と、この版の保存先が異なります。このiPhoneの記録と、以前の保存データは残っています（P01）。"
+            "自動保存を始められませんでした。記録は消えていません。設定の「お問い合わせ」から、P01とお伝えください。"
         case .rebinding, .busy:
-            "保存を始められませんでした。このiPhoneの記録は残っています。もう一度試してください（\(rawValue)）。"
+            "自動保存を始められませんでした。記録は消えていません。続くときは、設定の「お問い合わせ」から\(rawValue)とお伝えください。"
         case .format, .consent:
-            "自動保存の設定を確認できません。このiPhoneの記録と、保存したデータは残っています（\(rawValue)）。"
+            "自動保存の設定を確かめられませんでした。記録は消えていません。設定の「お問い合わせ」から、\(rawValue)とお伝えください。"
         }
     }
 }
@@ -841,7 +841,7 @@ final class AppRecordPersistence: ObservableObject {
         } else {
             report(error)
             if cleanup, error is ToolBackupError || error is ToolBackupJournalError {
-                detail = "前のデータの片づけを確かめられないため、保存を待っています。"
+                detail = "保存を待っています。少しすると自動で続けます。"
             }
         }
     }
@@ -1913,13 +1913,13 @@ struct AppRecordSettingsView: View {
             } else if plusEnded {
                 Label("止まっています", systemImage: "icloud.slash")
                     .accessibilityIdentifier("app-record-save-status")
-                Text("Plusが終わったため、新しい保存は止まっています。")
+                Text("Plusが終わったため、新しい保存は止まっています。保存したものは12か月のあいだ書き出せます。")
                 if offersPlus { plusOfferButton }
             } else {
                 Label(persistence.shownTitle, systemImage: statusSymbol)
                     .accessibilityIdentifier("app-record-save-status")
                 if let detail = persistence.shownDetail { Text(detail).font(.footnote) }
-                else if !persistence.enabled { Text("猫のこと、メモ、ツールの記録を自動で保存して、新しいiPhoneに戻せます。") }
+                else if !persistence.enabled { Text("この子のこと、メモ、ツールの記録を自動で保存して、新しいiPhoneに戻せます。") }
                 // The one thing to do now sits with the status it changes.
                 if authentication.isSignedIn && authentication.accountDeletionState == nil {
                     if !persistence.enabled { startAction } else { savingActions }
@@ -1978,7 +1978,7 @@ struct AppRecordSettingsView: View {
                 NavigationLink {
                     CatProfileTransferView(actions: profileTransfer.actions, hasProfiles: profileTransfer.hasProfiles)
                 } label: {
-                    Label("Plusなしで猫のプロフィールだけ移す", systemImage: "arrow.triangle.2.circlepath")
+                    Label("Plusなしで猫の名前と日付だけ移す", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .accessibilityIdentifier("app-record-cat-profile-transfer")
             }

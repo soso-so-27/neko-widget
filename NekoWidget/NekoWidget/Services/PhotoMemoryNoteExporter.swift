@@ -427,7 +427,7 @@ enum PhotoMemoryNoteExporter {
         let readable = "ねこのまど — 保管したメモ\n書式バージョン: \(document.formatVersion)\n"
             + (jpegData == nil ? "メモのみの書き出しです。写真は含まれません。\n"
                : "保管した写真コピー: photo.jpg（写真アプリの原本ではありません）\n")
-            + "日時はUTC（Z）です。\n書いた日: \(document.writtenAt ?? "不明")\n"
+            + "日時は世界標準時です（日本の時間は9時間あと）。\n書いた日: \(document.writtenAt ?? "不明")\n"
             + "更新日: \(document.updatedAt ?? "不明")\n撮影日: \(document.capturedAt ?? "不明")\n"
             + "猫: \(catNames.isEmpty ? "未指定" : catNames.joined(separator: "、"))\n" + weightText(weight) + "\n\(text)\n"
         let txt = Data(readable.utf8)
@@ -553,7 +553,7 @@ enum PhotoMemoryNoteExporter {
 
     private static func readableText(_ records: [PortableRecord]) throws -> String {
         var result = "ねこのまど — 思い出のメモ\n書式バージョン: \(records.contains { $0.weight != nil } ? 2 : 1)\n"
-            + "メモと日時・猫名の書き出しです。写真は含まれません。日時はUTC（Z）です。\n"
+            + "メモと日時・猫名の書き出しです。写真は含まれません。日時は世界標準時です（日本の時間は9時間あと）。\n"
         for (index, record) in records.enumerated() {
             try Task.checkCancellation()
             result += "\n--- \(index + 1) ---\n書き出しID: \(record.exportID.uuidString)\n"

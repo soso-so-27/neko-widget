@@ -312,7 +312,7 @@ struct PhotoMemoryNotesListView: View {
                 Menu {
                     Button("迷子のとき", systemImage: "magnifyingglass", action: openCatPreparedness)
                 } label: { Image(systemName: "ellipsis") }
-                .accessibilityLabel(isEmbedded ? "写真のその他の操作" : "保管の操作")
+                .accessibilityLabel(isEmbedded ? "写真のその他の操作" : "その他の操作")
                 .accessibilityIdentifier(isEmbedded ? "photos-more" : "memory-notes-menu")
             }
         }
