@@ -8718,5 +8718,230 @@ class MainTabsLook1112Tests(unittest.TestCase):
             for text in (self.window, self.browser, album):
                 self.assertNotIn(banned, text)
 
+
+class CatHomeTab1112Tests(unittest.TestCase):
+    """11/12 (案D 「写真が主役」): the ツール tab is now 「この子」, one page per
+    cat: the key photo with the name and one line, a row of five round tool
+    buttons, then 「この子のこと」. Tools opened from a page open for its cat."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.home = source("NekoWidget/Views/CatHomeView.swift")
+        cls.tab = source("NekoWidget/Views/MainTabView.swift")
+        cls.vet = source("NekoWidget/Views/VeterinaryVisitView.swift")
+        cls.care = source("NekoWidget/Views/CareHandoffView.swift")
+        cls.lost = source("NekoWidget/Views/CatPreparednessView.swift")
+
+    def test_tab_is_called_kono_ko_and_keeps_its_identifiers(self) -> None:
+        tools_tab = section(self.tab, "    private var toolsTab: some View {", "    private var presentedTabContent: some View {")
+        self.assertIn('Label("この子", systemImage: "pawprint")', tools_tab)
+        self.assertIn('.accessibilityIdentifier("main-tab-tools")', tools_tab)
+        self.assertIn(".tag(AppTab.tools)", tools_tab)
+        self.assertNotIn('Label("ツール"', self.tab)
+        self.assertNotIn('.navigationTitle("ツール")', self.tab)
+        # In-app sentences name the tab by its new name.
+        self.assertIn("「この子」右上の設定", source("NekoWidget/Views/LikedPhotosView.swift"))
+        self.assertIn("「この子」タブの「この子を追加」で猫を増やすと", source("NekoWidget/Views/FamilyNotebookView.swift"))
+        self.assertNotIn("ツールの「＋」で猫を増やすと", source("NekoWidget/Views/FamilyNotebookView.swift"))
+
+    def test_main_tab_only_swaps_in_the_page(self) -> None:
+        view = section(self.tab, "    private var toolsView: some View {", "    private var catHomeTools: CatHomeTools {")
+        self.assertIn("CatHomeView(presentation: catProfilesPresentation, actions: catProfilesActions,", view)
+        self.assertIn("tools: catHomeTools, openSettings: { showsSettings = true })", view)
+        # What the page replaced is gone.
+        for gone in ("struct CatChip", "struct ToolTile", "enum ToolTint", "ToolCardButtonStyle", "toolSection(",
+                     "private var catStrip", "showcaseToolCard", '"ふだん"', '"もしものとき"', "addsCatFromTools",
+                     "private var familyOnlyCats", "func careProgress("):
+            self.assertNotIn(gone, self.tab, gone)
+        self.assertNotIn("fullTint", source("NekoWidget/Views/CatCareView.swift"))
+
+    def test_new_file_is_in_the_app_target(self) -> None:
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+        self.assertEqual(project.count("/* CatHomeView.swift in Sources */"), 2)
+        self.assertEqual(project.count("path = CatHomeView.swift;"), 1)
+        self.assertIn("\t\t7A11120D0000000000000001 /* CatHomeView.swift in Sources */ = {isa = PBXBuildFile; "
+                      "fileRef = 7A11120D0000000000000002 /* CatHomeView.swift */; };", project)
+        self.assertIn("\t\t7A11120D0000000000000002 /* CatHomeView.swift */ = {isa = PBXFileReference; "
+                      "lastKnownFileType = sourcecode.swift; path = CatHomeView.swift; sourceTree = \"<group>\"; };", project)
+        self.assertIn("\t\t\t\t7A11120C0000000000000002 /* ToolRowParts.swift */,\n"
+                      "\t\t\t\t7A11120D0000000000000002 /* CatHomeView.swift */,\n", project)
+        self.assertIn("\t\t\t\t7A11120C0000000000000001 /* ToolRowParts.swift in Sources */,\n"
+                      "\t\t\t\t7A11120D0000000000000001 /* CatHomeView.swift in Sources */,\n", project)
+
+    def test_hero_is_the_key_photo_at_screen_size_from_the_top(self) -> None:
+        hero = section(self.home, "private struct CatHomeHero: View {", "/// The tools under the photo:")
+        self.assertIn("if let photo = cat.profile?.coverPhoto {", hero)
+        self.assertIn("PhotoAssetImageView(", hero)
+        self.assertIn("targetPixelSize: pixelSize,", hero)
+        self.assertNotIn("showsFullImage: true", hero)
+        # As many pixels as the screen shows across, never the original; a
+        # rounded shape so the shared cache finds the same image again.
+        self.assertIn("min((metrics.width * displayScale).rounded(), 1_290)", hero)
+        self.assertIn("(metrics.width / metrics.heroHeight * 100).rounded() / 100", hero)
+        # Faces: the crop centres on the top third of the cat.
+        self.assertIn("catBoundingBox: Self.faceBiased(photo.catBoundingBox),", hero)
+        self.assertIn("y: box.maxY - box.height / 3", hero)
+        # A scrim for the white name in both colour schemes, then a fade into the page.
+        self.assertIn(".init(color: .black.opacity(0.55), location: 0.9)", hero)
+        self.assertIn("Color(.systemGroupedBackground).opacity(0)", hero)
+        # The name: large and heavy, scaling with a cap, two lines at accessibility sizes.
+        self.assertIn("@ScaledMetric(relativeTo: .largeTitle) private var nameSize: CGFloat = 56", hero)
+        self.assertIn(".font(.system(size: min(nameSize, 84), weight: .heavy))", hero)
+        self.assertIn(".lineLimit(typeSize.isAccessibilitySize ? 2 : 1)", hero)
+        self.assertIn(".minimumScaleFactor(0.5)", hero)
+        self.assertIn(".accessibilityLabel(facts.spoken)", hero)
+        # About 46% of the screen, less on short screens (iPhone SE).
+        metrics = section(self.home, "struct CatHomeMetrics {", "/// One cat's page:")
+        self.assertIn("heroHeight = (screen * (screen < 700 ? 0.40 : 0.46)).rounded()", metrics)
+        # The photo runs under the status bar; no title; the tab bar stays.
+        self.assertIn(".toolbar(.hidden, for: .navigationBar)", self.home)
+        self.assertGreaterEqual(self.home.count(".ignoresSafeArea(.container, edges: .top)"), 3)
+        self.assertNotIn(".toolbar(.hidden, for: .tabBar)", self.home)
+
+    def test_name_line_says_only_what_is_known(self) -> None:
+        facts = section(self.home, "struct CatHomeFacts {", "/// The five tools, in the order of the page.")
+        self.assertIn('case .male: "オス"', facts)
+        self.assertIn('case .female: "メス"', facts)
+        self.assertIn('[sex, age].compactMap { $0 }.joined(separator: "・")', facts)
+        self.assertIn('days.map { "うちに来て \\($0.formatted())日" }', facts)
+        self.assertIn('parts.joined(separator: "　／　")', facts)
+        # No line when nothing is known; never a count of days without the day.
+        self.assertIn("line: parts.isEmpty ? nil : parts.joined", facts)
+        self.assertIn("let adoption: Date? = profile?.lifeDates.adoptionDay?.date", facts)
+        self.assertIn('"\\(years)歳\\(months)か月"', facts)
+        # VoiceOver: 「むぎ、オス、4歳2か月、うちに来て1204日」.
+        self.assertIn('[cat.name, sex, age, days.map { "うちに来て\\($0)日" }].compactMap { $0 }.joined(separator: "、")', facts)
+        # A departed cat: the existing 旅立った日 wording as its one line.
+        self.assertIn('line: "旅立った日　" + day', facts)
+        self.assertIn("CatFarewell.text(farewell)", facts)
+
+    def test_cat_menu_lists_every_cat_and_adds_one(self) -> None:
+        menu = section(self.home, "    private func catMenu(", "    private func show(")
+        self.assertIn("ForEach(cats) { cat in", menu)
+        self.assertIn('.accessibilityIdentifier("tools-cat-menu-\\(cat.id)")', menu)
+        self.assertIn('Button { addsCat = true } label: { Label("この子を追加", systemImage: "plus") }', menu)
+        self.assertIn('.accessibilityIdentifier("tools-cat-profiles")', menu)
+        self.assertIn('.accessibilityLabel("猫を切り替える")', menu)
+        self.assertIn(".accessibilityValue(current.name)", menu)
+        self.assertIn('.accessibilityIdentifier("tools-cat-menu")', menu)
+        # Profiles, family cats without a profile here, then cats known only from the tools.
+        cats = section(self.home, "    private var cats: [CatHomeCat] {", "    private func currentCat(")
+        self.assertLess(cats.index("presentation.profiles.map"), cats.index("for cat in familyOnlyCats"))
+        self.assertLess(cats.index("for cat in familyOnlyCats"), cats.index("for cat in states.toolCats"))
+        self.assertIn("SavedToolCatChoices.cats(care: .shared, evacuation: .shared)", self.home)
+        # 設定 top right, as before.
+        bar = section(self.home, "    private func topBar(", "    private func catMenu(")
+        self.assertIn("SettingsGearIcon()", bar)
+        self.assertIn('.accessibilityIdentifier("tools-settings-button")', bar)
+        self.assertIn("Button(action: openSettings)", bar)
+
+    def test_pages_swipe_and_remember_the_cat_once_they_rest(self) -> None:
+        pager = section(self.home, "    private func pager(", "    /// The page 「この子のこと」 opens")
+        self.assertIn(".scrollTargetBehavior(.paging)", pager)
+        self.assertIn(".scrollPosition(id: $pageID)", pager)
+        self.assertIn(".scrollDisabled(cats.count < 2)", pager)
+        self.assertIn(".accessibilityHidden(cat.id != current.id)", pager)
+        self.assertEqual(self.home.count("@AppStorage(\"catHome.selectedCat.v1\")"), 1)
+        # Written after the pages rest, never mid-swipe.
+        task = section(self.home, ".task(id: pageID) {", "    // MARK: Cats")
+        self.assertLess(task.index("try? await Task.sleep(for: .milliseconds(700))"), task.index("storedCatID = pageID"))
+        hero = section(self.home, "private struct CatHomeHero: View {", "/// The tools under the photo:")
+        self.assertIn("if pageCount > 1 {", hero)
+
+    def test_about_card_shows_progress_weight_and_birthday(self) -> None:
+        card = section(self.home, "private struct CatHomeAboutCard: View {", "/// A name and its value on one line")
+        self.assertIn('CatHomeLine(title: "この子のこと", value: facts.progressText, emphasized: true)', card)
+        self.assertIn(".scaleEffect(x: facts.progressShare, y: 1, anchor: .leading)", card)
+        self.assertIn('CatHomeLine(title: "体重", value: weight)', card)
+        self.assertIn('CatHomeLine(title: "誕生日まで", value: birthdayIn)', card)
+        self.assertIn("NavigationLink { destination } label: {", card)
+        facts = section(self.home, "struct CatHomeFacts {", "/// The five tools, in the order of the page.")
+        self.assertIn('.map { $0 == 0 ? "きょう" : "あと\\($0)日" }', facts)
+        self.assertIn('CatCareFormat.weight(latest.grams) + "（\\(date)）"', facts)
+        self.assertIn("matchingPolicy: .nextTime", facts)
+        # The share is the count the ring used.
+        self.assertIn("CGFloat($0.filled) / CGFloat($0.total)", facts)
+
+    def test_five_round_buttons_with_short_names_and_state_dots(self) -> None:
+        tool = section(self.home, "enum CatHomeTool: CaseIterable {", "struct CatHomeView: View {")
+        self.assertIn("case vet, care, lost, evacuation, showcase", tool)
+        short = section(tool, "var shortTitle: String {", "var title: String {")
+        names = ['"病院"', '"預ける"', '"迷子"', '"避難"', '"見せる"']
+        self.assertEqual([short.index(name) for name in names], sorted(short.index(name) for name in names))
+        for symbol in ('"cross.case"', '"hand.raised"', '"magnifyingglass"', '"backpack"', '"square.grid.3x3"'):
+            self.assertIn(symbol, tool)
+        for identifier in ("tools-vet-open", "tools-care-open", "tools-lost-cat-open",
+                           "tools-evacuation-open", "tools-showcase-open"):
+            self.assertIn(f'"{identifier}"', tool)
+        button = section(self.home, "private struct CatHomeToolButton: View {", "/// The accessibility-size form of a tool")
+        self.assertIn(".background(Color(.secondarySystemGroupedBackground), in: Circle())", button)
+        self.assertIn("Circle().strokeBorder(Color(.separator), lineWidth: 1 / max(displayScale, 1))", button)
+        self.assertIn(".fill(state.color)", button)
+        self.assertIn(".lineLimit(1)", button)
+        self.assertIn(".minimumScaleFactor(0.7)", button)
+        self.assertIn('.accessibilityLabel(state.map { "\\(tool.title)、\\($0.text)" } ?? tool.title)', button)
+        bar = section(self.home, "private struct CatHomeToolBar: View {", "/// A round button:")
+        self.assertIn('if tool == .vet && vetUnfinished { return (text: "書きかけ", color: Color.orange) }', bar)
+        self.assertIn('if tool == .lost && searching { return (text: "探しています", color: Color.red) }', bar)
+        # Accessibility sizes: the rows with the full name and the state.
+        self.assertIn("if typeSize.isAccessibilitySize {", bar)
+        self.assertIn("CatHomeToolRow(tool: tool, state: state(tool))", bar)
+        self.assertIn(".accessibilityIdentifier(tool.identifier)", bar)
+        # The page passes all five, in order, under the photo.
+        page = section(self.home, "private struct CatHomePage: View {", "/// The cat's key photo from the very top")
+        self.assertIn("CatHomeToolBar(cat: cat, toolsShown: CatHomeTool.allCases,", page)
+
+    def test_tool_states_are_read_after_drawing(self) -> None:
+        states = section(self.home, "final class CatHomeToolStates: ObservableObject {", "/// What the page says about a cat")
+        self.assertIn("await Task.yield()", states)
+        self.assertIn("try? await VeterinaryVisitStore.shared.visits()", states)
+        self.assertIn("visit.completedAt == nil", states)
+        self.assertIn("LostCatDraftStore.shared.drafts.filter { $0.value.hasIncident }", states)
+        self.assertIn('searchingKeys.contains("guest-tool-" + cat.id)', states)
+        self.assertIn(".onAppear { Task { await states.refresh() } }", self.home)
+
+    def test_the_four_states(self) -> None:
+        # No cat: のわ, one sentence, one button; the two household tools only.
+        empty = section(self.home, "private struct CatHomeNoCatPage: View {", "private struct CatHomePressStyle")
+        self.assertIn('Image("Nowa-sit-up")', empty)
+        self.assertIn('Text("この子を追加すると、ここに出ます。")', empty)
+        self.assertIn('Text("この子を追加")', empty)
+        self.assertIn(".nekoPrimaryButton()", empty)
+        self.assertIn("toolsShown: CatHomeTool.household", empty)
+        self.assertIn("static let household: [CatHomeTool] = [.evacuation, .showcase]", self.home)
+        self.assertIn("CatHomeNoCatPage(metrics: metrics, tools: tools) { addsCat = true }", self.home)
+        # No key photo: a calm gradient, no placeholder icon.
+        hero = section(self.home, "private struct CatHomeHero: View {", "/// The tools under the photo:")
+        self.assertIn("LinearGradient(colors: [Color(red: 0.56, green: 0.57, blue: 0.60)", hero)
+        self.assertNotIn("cat.fill", hero)
+        # Departed: name and the farewell line, この子のこと, no tools.
+        page = section(self.home, "private struct CatHomePage: View {", "/// The cat's key photo from the very top")
+        self.assertIn("if !facts.departed {", page)
+        self.assertLess(page.index("if !facts.departed {"), page.index("CatHomeToolBar("))
+        self.assertIn("CatHomeAboutCard(cat: cat, facts: facts, destination: carePage)", page)
+        # A cat without a profile: a page under its name, its この子のこと by its household ID.
+        self.assertIn("CatCareDetailView(toolCatID: toolID, name: cat.name)", self.home)
+
+    def test_tools_open_for_the_page_cat_without_their_own_menu(self) -> None:
+        tools = section(self.tab, "private var catHomeTools: CatHomeTools {", "private func openShowcaseTool(")
+        self.assertEqual(tools.count("fixedCatKey: key)"), 3)
+        self.assertIn("showcase: { profileID in openShowcaseTool(scopeID: profileID ?? showcaseCardScopeID) }", tools)
+        # Each tool defaults to today's behaviour (restored tools, links, tests).
+        for text in (self.vet, self.care, self.lost):
+            self.assertIn("var fixedCatKey: String? = nil", text)
+        self.assertIn("let first = fixedStripCat ?? openable.first(where: { $0.id == lastCatID }) ?? openable.first", self.vet)
+        self.assertIn("if ready, fixedStripCat == nil {", self.vet)
+        self.assertIn("if store.loadError == nil, !stripCats.isEmpty, fixedStripCat == nil {", self.care)
+        self.assertIn("if let fixed = fixedStripCat { select(fixed) } else { openFirst() }", self.care)
+        self.assertIn("if fixedStripCat != nil { return true }", self.care)
+        # 預けるとき keeps お願いする猫 (several cats for one memo).
+        self.assertIn("profilesWithoutMemo", self.care)
+        self.assertIn('editor(fixed.id, fixed.profile?.displayName ?? "", cats: [])', self.lost)
+        self.assertIn('$0.id.uppercased() == "GUEST-TOOL-" + key', self.lost)
+        # 写真を見せる opens on the page's cat; 避難に備える is the same from every page.
+        self.assertIn("Button { tools.showcase(cat?.profile?.identifier) } label: { content }", self.home)
+        self.assertIn("NavigationLink { tools.evacuation() } label: { content }", self.home)
+
+
 if __name__ == "__main__":
     unittest.main()
