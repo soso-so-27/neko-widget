@@ -594,6 +594,20 @@ class ReviewScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn('attachment.name = "review-missing__\\(name)__end"', self.ui_test)
         self.assertIn('attachment.name = "review-shot__\\(name)__end"', self.ui_test)
 
+    def test_store_workflow_only_hands_review_mode_to_the_review_workflow(self) -> None:
+        store = source(".github/workflows/app-store-screenshots.yml")
+        jobs = store.split("\njobs:\n", 1)[1]
+        review = jobs.split("\n  capture-local-only-iphone:", 1)[0]
+        self.assertIn("if: inputs.mode == 'review'", review)
+        self.assertIn("uses: ./.github/workflows/review-screenshots.yml", review)
+        self.assertNotIn("secrets:", review)
+        # Every App Store job stays off in review mode and as before otherwise.
+        conditions = [line.strip() for line in jobs.splitlines() if line.startswith("    if: ")]
+        self.assertEqual(len(conditions), 5)
+        for condition in conditions[1:]:
+            self.assertTrue(condition.endswith(" && inputs.mode != 'review'"), condition)
+        self.assertIn("workflow_call:", self.workflow.split("\npermissions:", 1)[0])
+
     def test_review_test_is_in_the_ui_test_target(self) -> None:
         project = source("NekoWidget/NekoWidget.xcodeproj/project.pbxproj")
         self.assertEqual(project.count("ReviewScreenshotUITests.swift"), 6)

@@ -13,6 +13,13 @@ on:
         type: choice
         default: all
         options: [all, light, dark, se]
+  # Also reachable as app-store-screenshots.yml with mode=review, which is
+  # already on the default branch and so can be dispatched on any branch.
+  workflow_call:
+    inputs:
+      sets:
+        type: string
+        default: all
 
 permissions:
   contents: read
