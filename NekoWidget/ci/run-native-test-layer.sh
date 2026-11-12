@@ -34,10 +34,27 @@ if [[ "$route" == ipad ]]; then
   device_type=$(xcrun simctl list devicetypes -j | python3 -c 'import json,sys; ds=[d for d in json.load(sys.stdin)["devicetypes"] if d["name"].startswith("iPad")]; print(next((d for d in ds if d["name"]=="iPad (A16)"),ds[0])["identifier"])')
 fi
 runtime=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x.get("isAvailable") and ".iOS-" in x["identifier"]]; print(max(r,key=lambda x:tuple(map(int,x["version"].split("."))))["identifier"])')
+# Keep test compilation out of the lifetime of the unit-test Simulator.
+# No test is skipped or retried: execute the same xctestrun on a fresh device.
+if [[ "$layer" == unit ]]; then
+  xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidgetTests \
+    -configuration Debug -sdk iphonesimulator -destination "generic/platform=iOS Simulator" \
+    -derivedDataPath "$RUNNER_TEMP/Native-$layer-$shard" \
+    CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES \
+    ONLY_ACTIVE_ARCH=YES ARCHS="$(uname -m)" ENABLE_TESTABILITY=YES \
+    build-for-testing 2>&1 | tee "$out/build.log"
+fi
 device=$(xcrun simctl create "NekoTests-$layer-$shard" "$device_type" "$runtime")
 cleanup() {
+  local original_status=$?
+  trap - EXIT
+  set +e
+  if [[ "$original_status" -ne 0 ]]; then
+    python3 ci/quick_launch_diagnostics.py observe --device "$device" --output "$out/launch-failure"
+  fi
   xcrun simctl shutdown "$device" >/dev/null 2>&1 || true
   xcrun simctl delete "$device" >/dev/null 2>&1 || true
+  exit "$original_status"
 }
 trap cleanup EXIT
 xcrun simctl boot "$device"
@@ -55,7 +72,14 @@ if [[ "$layer" == ui ]]; then
   if [[ "$route" != empty ]]; then xcrun simctl addmedia "$device" ci/fixtures/cats/*.png; fi
 fi
 status=0
-if [[ "$route" == ipad ]]; then
+if [[ "$layer" == unit ]]; then
+  runs=("$RUNNER_TEMP/Native-$layer-$shard/Build/Products/"*.xctestrun)
+  [[ ${#runs[@]} == 1 && -f "${runs[0]}" ]]
+  xcodebuild test-without-building -xctestrun "${runs[0]}" \
+    -destination "platform=iOS Simulator,id=$device" -resultBundlePath "$out/Tests.xcresult" \
+    "${selection[@]}" -parallel-testing-enabled NO -testLanguage ja -testRegion JP \
+    2>&1 | tee "$out/xcodebuild.log" || status=$?
+elif [[ "$route" == ipad ]]; then
   python3 ci/production_candidate.py fixture --synthetic --contract "$out/contract.json"
   python3 ci/production_candidate.py build --synthetic --contract "$out/contract.json" -- \
     build-for-testing -sdk iphonesimulator -destination "platform=iOS Simulator,id=$device" \

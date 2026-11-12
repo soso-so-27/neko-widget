@@ -55,7 +55,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - name: Attach minimal synthetic launch failure diagnostics
-        if: failure()
+        # Also retain the first timeout when the existing single retry recovers.
+        # A clean run creates no failure directory and uploads nothing.
+        if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: synthetic-launch-failure-${{ github.run_id }}-${{ github.run_attempt }}

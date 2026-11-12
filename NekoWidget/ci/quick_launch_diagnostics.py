@@ -19,9 +19,10 @@ ERROR_DOMAINS = ("FBSOpenApplicationServiceErrorDomain", "FBSOpenApplicationErro
                  "RBSRequestErrorDomain", "RBSServiceErrorDomain", "NSPOSIXErrorDomain",
                  "NSCocoaErrorDomain", "NSMachErrorDomain")
 TERMS = ("launch", "timeout", "timed out", "failed", "error", "denied", "terminated",
-         "running", "foreground", "background", "scene", "assertion", "connection", "bootstrap")
+         "running", "foreground", "background", "scene", "assertion", "connection", "bootstrap",
+         "notfound", "not found", "not running", "process does not exist", "exited", "watchdog")
 PROCESS_NAMES = {"CoreSimulatorService", "com.apple.CoreSimulator.CoreSimulatorService",
-                 "Simulator", "SpringBoard", "launchd_sim", "simdiskimaged"}
+                 "Simulator", "SpringBoard", "runningboardd", "launchd_sim", "simdiskimaged"}
 
 
 def command(args, timeout=5):
@@ -75,12 +76,12 @@ def springboard_events(payload):
             continue
         message = str(row.get("eventMessage", ""))
         process = str(row.get("processImagePath", "")).rsplit("/", 1)[-1]
-        if process != "SpringBoard" or "jp.nekowidget.app" not in message:
+        if process not in ("SpringBoard", "runningboardd") or "jp.nekowidget.app" not in message:
             continue
         timestamp = str(row.get("timestamp", ""))
         timestamp = timestamp if re.fullmatch(r"[0-9T :.+Z-]{19,40}", timestamp) else "unavailable"
         kind = row.get("messageType")
-        result.append({"timestamp": timestamp, "process": "SpringBoard",
+        result.append({"timestamp": timestamp, "process": process,
                        "messageType": kind if kind in ("Default", "Error", "Fault", "Info", "Debug") else "unknown",
                        "terms": [term for term in TERMS if term in message.lower()],
                        "errorDomains": [domain for domain in ERROR_DOMAINS if domain in message],
@@ -95,6 +96,63 @@ def process_states(raw):
         if match and match[3].rsplit("/", 1)[-1] in PROCESS_NAMES:
             result.append({"pid": int(match[1]), "state": match[2], "process": match[3].rsplit("/", 1)[-1]})
     return result
+
+
+def app_processes(raw, device):
+    """Match the executable in this disposable Simulator, not any host app."""
+    suffix = re.compile(r"/CoreSimulator/Devices/" + re.escape(device)
+                        + r"/data/Containers/Bundle/Application/[A-Fa-f0-9-]{36}/NekoWidget\.app/NekoWidget$")
+    rows = []
+    for line in raw.splitlines():
+        match = re.fullmatch(r"\s*([0-9]+)\s+([A-Za-z+<>-]+)\s+(.+)", line)
+        if match and suffix.search(match[3]):
+            rows.append({"pid": int(match[1]), "state": match[2], "process": "NekoWidget"})
+    return rows
+
+
+def sample_frames(raw):
+    """Only stack frames; omit headers, binary images, paths and thread labels."""
+    frames = []
+    for line in raw.splitlines():
+        if re.match(r"^[\s+!:|]*\d+\s+Thread_", line):
+            frames.append("main-thread" if "com.apple.main-thread" in line else "thread")
+            continue
+        if not re.match(r"^[\s+!:|]*\d+\s+\S", line) or " (in " not in line:
+            continue
+        line = re.sub(r"https?://\S+", "[URL]", line)
+        line = re.sub(r"(?:[A-Za-z]:)?/[^\s)]+", "[path]", line)
+        line = re.sub(r"0x[0-9a-fA-F]+", "[address]", line)
+        frames.append(line[:500])
+    return frames[:1200]
+
+
+def observe(output, device):
+    """Capture the failing state BEFORE reboot/deletion, even when simctl hangs.
+
+    Only callers creating disposable synthetic CI devices may invoke this.
+    Host ps is intentionally independent of the stalled simctl service.
+    """
+    output.mkdir(parents=True, exist_ok=True)
+    raw, status = command(["ps", "-axo", "pid=,stat=,comm="])
+    rows = app_processes(raw, device) if raw is not None else []
+    value = {"status": status, "appPresence": ("present" if rows else "absent") if raw is not None else "unknown",
+             "processes": rows, "simulatorProcesses": process_states(raw) if raw is not None else [], "samples": []}
+    for row in rows[:1]:
+        sample, sample_status = command(["sample", str(row["pid"]), "1", "1", "-file", "/dev/stdout"], timeout=5)
+        value["samples"].append({"pid": row["pid"], "status": sample_status,
+                                 "frames": sample_frames(sample) if sample is not None else []})
+    (output / "app-state.json").write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+    snapshot(output, device, "after-launch")
+    predicate = '(process == "SpringBoard" OR process == "runningboardd") AND eventMessage CONTAINS "jp.nekowidget.app"'
+    raw, status = command(["xcrun", "simctl", "spawn", device, "log", "show", "--last", "3m",
+                           "--style", "json", "--predicate", predicate], timeout=12)
+    events = []
+    if raw is not None:
+        try:
+            events = springboard_events(json.loads(raw))
+        except (ValueError, TypeError):
+            status = "invalid-log-json"
+    (output / "lifecycle.json").write_text(json.dumps({"status": status, "events": events}, indent=2) + "\n", encoding="utf-8")
 
 
 def archive_candidate(app, contract, destination):
@@ -136,7 +194,7 @@ def collect(output, snapshots, device, app, contract, exit_status):
             clean = {"status": status, **simulator_state(payload, device)}
             (output / path.name).write_text(json.dumps(clean, indent=2) + "\n", encoding="utf-8")
     archive_candidate(app, contract, output / "synthetic-simulator-app.tar.gz")
-    predicate = 'process == "SpringBoard" AND eventMessage CONTAINS "jp.nekowidget.app"'
+    predicate = '(process == "SpringBoard" OR process == "runningboardd") AND eventMessage CONTAINS "jp.nekowidget.app"'
     raw, status = command(["xcrun", "simctl", "spawn", device, "log", "show", "--last", "3m",
                            "--style", "json", "--predicate", predicate], timeout=12)
     statuses.append("SpringBoard structured lifecycle log: " + status)
@@ -163,7 +221,7 @@ def collect(output, snapshots, device, app, contract, exit_status):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("snapshot", "collect"))
+    parser.add_argument("command", choices=("snapshot", "collect", "observe"))
     parser.add_argument("--device", required=True)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--phase", choices=PHASES)
@@ -173,7 +231,9 @@ def main():
     parser.add_argument("--exit-status", type=int)
     args = parser.parse_args()
     require(re.fullmatch(r"[A-Fa-f0-9-]{36}", args.device), "Expected a Simulator UDID")
-    if args.command == "snapshot":
+    if args.command == "observe":
+        observe(args.output, args.device)
+    elif args.command == "snapshot":
         snapshot(args.output, args.device, args.phase)
     else:
         collect(args.output, args.snapshots, args.device, args.app,

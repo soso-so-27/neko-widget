@@ -279,6 +279,16 @@ items=[r for r in json.load(sys.stdin)["runtimes"] if r.get("isAvailable") and "
 assert items, "No available iOS Simulator runtime"
 print(next((r for r in items if r["version"] == "26.2"), items[0])["identifier"])
 ')
+# Compile before creating/booting the smoke-test device. A device left booted
+# throughout compilation is not the fresh-runtime condition of the launch probe.
+python3 ci/production_candidate.py fixture --synthetic --contract "$RUNNER_TEMP/synthetic-production.json"
+python3 ci/production_candidate.py build --synthetic --contract "$RUNNER_TEMP/synthetic-production.json" -- \
+  -sdk iphonesimulator -destination "generic/platform=iOS Simulator" ONLY_ACTIVE_ARCH=YES ARCHS="$(uname -m)" \
+  -derivedDataPath "$RUNNER_TEMP/QuickBuild" \
+  SWIFT_OPTIMIZATION_LEVEL=-Onone SWIFT_COMPILATION_MODE=singlefile \
+  CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES build
+app="$RUNNER_TEMP/QuickBuild/Build/Products/Release-iphonesimulator/NekoWidget.app"
+python3 ci/production_candidate.py products --synthetic --contract "$RUNNER_TEMP/synthetic-production.json" --path "$app"
 device=$(xcrun simctl create NekoQuickLaunch com.apple.CoreSimulator.SimDeviceType.iPhone-16 "$runtime")
 quick_launch_active=false
 quick_launch_after_phase=after-launch
@@ -287,11 +297,16 @@ quick_snapshot() {
   python3 ci/quick_launch_diagnostics.py snapshot --device "$device" \
     --output "$quick_snapshots" --phase "$1" || true
 }
+quick_observe() {
+  bounded 30 python3 ci/quick_launch_diagnostics.py observe --device "$device" \
+    --output "$RUNNER_TEMP/quick-launch-failure/$1" || true
+}
 quick_cleanup() {
   local original_status=$?
   trap - EXIT
   set +e
   if [[ "$quick_launch_active" == true && "$original_status" -ne 0 ]]; then
+    quick_observe final-failure
     quick_snapshot "$quick_launch_after_phase"
     bounded 35 python3 ci/quick_launch_diagnostics.py collect \
       --device "$device" --app "$app" \
@@ -305,23 +320,9 @@ quick_cleanup() {
   exit "$original_status"
 }
 trap quick_cleanup EXIT
-bounded 60 xcrun simctl boot "$device"
-bounded 300 xcrun simctl bootstatus "$device" -b &
-boot_pid=$!
-
-# Synthetic, complete public configuration: reserved .test endpoints, no real
-# recipient, no upload. Inspect generated products before launch. Screenshots
-# show only the first screen; the six 1.0 presentation items still need review.
-python3 ci/production_candidate.py fixture --synthetic --contract "$RUNNER_TEMP/synthetic-production.json"
-python3 ci/production_candidate.py build --synthetic --contract "$RUNNER_TEMP/synthetic-production.json" -- \
-  -sdk iphonesimulator -destination "platform=iOS Simulator,id=$device" ONLY_ACTIVE_ARCH=YES \
-  -derivedDataPath "$RUNNER_TEMP/QuickBuild" \
-  SWIFT_OPTIMIZATION_LEVEL=-Onone SWIFT_COMPILATION_MODE=singlefile \
-  CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES build
-app="$RUNNER_TEMP/QuickBuild/Build/Products/Release-iphonesimulator/NekoWidget.app"
 quick_launch_active=true
-wait "$boot_pid"
-python3 ci/production_candidate.py products --synthetic --contract "$RUNNER_TEMP/synthetic-production.json" --path "$app"
+bounded 60 xcrun simctl boot "$device"
+bounded 300 xcrun simctl bootstatus "$device" -b
 bundle=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")
 reboot_simulator() {
   bounded 30 xcrun simctl shutdown "$device"
@@ -332,6 +333,7 @@ if bounded 90 xcrun simctl install "$device" "$app"; then
   :
 else
   install_status=$?
+  quick_observe install-failure
   # Retry only a timeout, never a build, signing, or application error. Reuse
   # the successful build on this runner; do not repeat compilation or tests.
   if [ "$install_status" -ne 124 ]; then exit "$install_status"; fi
@@ -345,6 +347,7 @@ if launch=$(bounded 90 xcrun simctl launch "$device" "$bundle"); then
 else
   launch_status=$?
   quick_snapshot after-launch
+  quick_observe first-launch-failure
   # 40982324015 and 40996306345 stalled here after install succeeded.
   # A non-timeout application/launch error still fails immediately. Reset the
   # simulator once for a timeout; the same artifact must launch and stay alive.
