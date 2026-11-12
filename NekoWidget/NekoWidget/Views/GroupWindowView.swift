@@ -727,9 +727,12 @@ private struct GroupCatPhotoPickerSheet: View {
                     Label("写真アプリから選ぶ", systemImage: "photo.on.rectangle")
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }
+                // 11/12 (review, dark): a gray button with words in the text
+                // colour, on the sheet's own colour, so it does not vanish.
                 .buttonStyle(.bordered)
+                .tint(Color.primary)
                 .padding(.horizontal, 16).padding(.vertical, 10)
-                .background(.bar)
+                .background(Color(uiColor: .systemBackground))
                 .accessibilityIdentifier("group-window-send-photo-library")
             }
             .onChange(of: pickedItem) { _, item in
@@ -904,6 +907,10 @@ struct GroupWindowScreen: View {
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle(model.shownName ?? "まど")
         .navigationBarTitleDisplayMode(.inline)
+        // 11/12 (review 13): the name stays readable over a light photo, as
+        // on the official window's page.
+        .toolbarBackground(Color(uiColor: .systemGroupedBackground), for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .sheet(isPresented: $showsFormerReports) {
             NavigationStack {
                 GroupReportsView(windowID: model.windowID)
@@ -1119,7 +1126,7 @@ struct GroupWindowScreen: View {
                 PhotosPicker(selection: $pickedItem, matching: .images, photoLibrary: .shared()) {
                     Label(model.isSending ? "届けています…" : "写真を届ける", systemImage: "paperplane")
                         .font(.headline)
-                        .frame(maxWidth: .infinity, minHeight: 50)
+                        .frame(maxWidth: .infinity, minHeight: 32)
                 }
                 // While a photo waits to be sent again, the retry is the main button:
                 // this one turns plain, not faded (11/7: it looked off but worked).
@@ -1133,7 +1140,7 @@ struct GroupWindowScreen: View {
                 } label: {
                     Label(model.isSending ? "届けています…" : "写真を届ける", systemImage: "paperplane")
                         .font(.headline)
-                        .frame(maxWidth: .infinity, minHeight: 50)
+                        .frame(maxWidth: .infinity, minHeight: 32)
                 }
                 .modifier(SendButtonEmphasis(prominent: model.failedDelivery == nil))
                 .disabled(!model.canSend)
@@ -1141,8 +1148,10 @@ struct GroupWindowScreen: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.bar)
+        .padding(.vertical, 8)
+        // 11/12 (review 11): the page's own colour, so no line or brown band
+        // shows between the photos and the bar.
+        .background(Color(uiColor: .systemGroupedBackground))
     }
 }
 
@@ -1214,6 +1223,20 @@ enum GroupPhotoTileShape {
     }
 }
 
+/// The day under a まど photo: 「今日」「3日前」 within a week, else 「10月19日」.
+/// Worked out once per tile drawing; nothing runs while scrolling.
+enum GroupPhotoTileDate {
+    static func text(_ date: Date, now: Date = .now) -> String {
+        let calendar = Calendar.nekoGregorian
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date),
+                                           to: calendar.startOfDay(for: now)).day ?? 0
+        if days == 0 { return "今日" }
+        if days == 1 { return "昨日" }
+        if days > 1 && days < 7 { return "\(days)日前" }
+        return date.formatted(.dateTime.month().day())
+    }
+}
+
 private struct GroupPhotoTile: View {
     @ObservedObject var model: GroupWindowScreenModel
     let entry: GroupWindowLocalPhotoStore.Entry
@@ -1255,23 +1278,29 @@ private struct GroupPhotoTile: View {
                     Task { await model.toggleHeart(entry.id) }
                 }
                 .onTapGesture(count: 1, perform: open)
-            HStack(spacing: 8) {
-                GroupMemberAvatar(name: entry.isOwn ? "あなた" : entry.senderDisplayName, size: 24)
+            // 11/12 (review 12): who sent it is the gift, so the name is a
+            // size up and the circle carries its first letter; the day reads
+            // as 「3日前」 for the first week.
+            HStack(spacing: 10) {
+                GroupMemberAvatar(name: entry.isOwn ? "あなた" : entry.senderDisplayName, size: 30)
                 Text(entry.isOwn ? "あなた" : entry.senderDisplayName)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.body.weight(.semibold))
                     .lineLimit(1)
-                Text(entry.createdAt.formatted(.dateTime.month().day()))
+                Text(GroupPhotoTileDate.text(entry.createdAt))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 Spacer(minLength: 8)
                 Button {
                     guard canHeart else { return }
                     Task { await model.toggleHeart(entry.id) }
                 } label: {
                     let mine = model.myHeartIsActive(entry.id)
-                    HStack(spacing: 4) {
+                    HStack(spacing: 5) {
                         Image(systemName: mine ? "heart.fill" : "heart")
+                            .font(.title3.weight(.semibold))
                             .foregroundStyle(mine ? Color.red : Color.secondary)
+                            .symbolEffect(.bounce, value: mine)
                         if heartCount > 0 {
                             Text(heartCount.formatted())
                                 .foregroundStyle(.secondary)
@@ -1279,6 +1308,7 @@ private struct GroupPhotoTile: View {
                     }
                     .font(.subheadline.weight(.semibold).monospacedDigit())
                     .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .disabled(!canHeart)
@@ -1286,8 +1316,8 @@ private struct GroupPhotoTile: View {
                 .accessibilityHint(canHeart ? "ハートを送ります" : "")
                 .accessibilityIdentifier("group-photo-tile-heart")
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
         }
         .background(Color(uiColor: .secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -2598,10 +2628,7 @@ private struct GroupWindowCard: View {
                     if let cover {
                         Image(uiImage: cover).resizable().scaledToFill()
                     } else {
-                        Image("ToolCat-snug").resizable().interpolation(.high).scaledToFit()
-                            .frame(width: 72, height: 72)
-                            .clipShape(RoundedRectangle(cornerRadius: 14))
-                            .opacity(0.9)
+                        WindowCardEmptyCover()
                     }
                 }
             .clipped()
@@ -2618,7 +2645,7 @@ private struct GroupWindowCard: View {
                     Text(paused ? "止まっています" : "\(window.memberCount)人")
                         .font(.footnote)
                 }
-                .foregroundStyle(cover != nil ? Color.white : paused ? Color.orange : Color.primary)
+                .foregroundStyle(cover != nil ? Color.white : paused ? Color.orange : NekoPalette.ink)
                 .shadow(color: cover != nil ? .black.opacity(0.5) : .clear, radius: 4, y: 1)
                 Spacer(minLength: 0)
             }
@@ -2671,6 +2698,25 @@ private struct GroupWindowCard: View {
     }
 }
 
+/// A window with no photo kept on this iPhone yet (11/12 review 10): のわ
+/// looking in from the corner of a warm window, never a small icon on an
+/// empty card. The cream keeps the black cat visible in dark mode, so the
+/// name over it is drawn in ink. Decorative.
+private struct WindowCardEmptyCover: View {
+    var body: some View {
+        NekoPalette.cream
+            .overlay(alignment: .bottomTrailing) {
+                Image("Nowa-peek")
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(height: 76)
+                    .padding(.trailing, 18)
+            }
+            .accessibilityHidden(true)
+    }
+}
+
 /// A window this iPhone knows from last time, drawn like a loaded one so the
 /// tab does not change shape when the relay answers.
 private struct KnownWindowCard: View {
@@ -2693,10 +2739,7 @@ private struct KnownWindowCard: View {
                     if let cover {
                         Image(uiImage: cover).resizable().scaledToFill()
                     } else {
-                        Image("ToolCat-snug").resizable().interpolation(.high).scaledToFit()
-                            .frame(width: 72, height: 72)
-                            .clipShape(RoundedRectangle(cornerRadius: 14))
-                            .opacity(0.9)
+                        WindowCardEmptyCover()
                     }
                 }
                 .clipped()
@@ -2710,7 +2753,7 @@ private struct KnownWindowCard: View {
                 Text(entry.windowName).font(.title3.bold())
                 if !detail.isEmpty { Text(detail).font(.footnote) }
             }
-            .foregroundStyle(cover != nil ? Color.white : entry.isPaused ? Color.orange : Color.primary)
+            .foregroundStyle(cover != nil ? Color.white : entry.isPaused ? Color.orange : NekoPalette.ink)
             .shadow(color: cover != nil ? .black.opacity(0.5) : .clear, radius: 4, y: 1)
             .padding(14)
         }
