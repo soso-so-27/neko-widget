@@ -1095,13 +1095,28 @@ struct GroupMemberAvatar: View {
         return Self.palette[key % Self.palette.count]
     }
 
+    /// 11/12 (review 12): the name's first letter, as in Messages; the
+    /// person symbol only when there is no name to take it from.
+    private var initial: String? {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).first.map { String($0) }
+    }
+
     var body: some View {
-        Image(systemName: "person.fill")
-            .font(.system(size: size * 0.46, weight: .semibold))
-            .foregroundStyle(.white)
-            .frame(width: size, height: size)
-            .background(color, in: Circle())
-            .accessibilityHidden(true)
+        Group {
+            if let initial {
+                Text(verbatim: initial)
+                    .font(.system(size: size * 0.48, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+            } else {
+                Image(systemName: "person.fill")
+                    .font(.system(size: size * 0.46, weight: .semibold))
+            }
+        }
+        .foregroundStyle(.white)
+        .frame(width: size, height: size)
+        .background(color, in: Circle())
+        .accessibilityHidden(true)
     }
 }
 

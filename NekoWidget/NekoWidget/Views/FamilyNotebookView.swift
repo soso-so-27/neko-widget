@@ -1394,9 +1394,19 @@ struct FamilyNotebookIntroView: View {
     var body: some View {
         VStack(spacing: 16) {
             Spacer()
-            Image(systemName: "person.2.fill")
-                .font(.system(size: 44))
-                .foregroundStyle(.secondary)
+            // 11/12 (review 22): のわ looking in from a warm window, not the
+            // gray people symbol. The cream keeps the black cat visible in dark mode.
+            NekoPalette.cream
+                .frame(width: 168, height: 112)
+                .overlay(alignment: .bottom) {
+                    Image("Nowa-peek")
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFit()
+                        .frame(height: 82)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .accessibilityHidden(true)
             Text("家族の手帳").font(.title2.bold())
             Text("この子のこと・病院・預けるときを、\n一緒にお世話する人と共有できます。")
                 .multilineTextAlignment(.center)

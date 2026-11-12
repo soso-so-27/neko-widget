@@ -8058,10 +8058,11 @@ class DesignPolish1111Tests(unittest.TestCase):
         home = source("NekoWidget/Views/HomeView.swift")
         self.assertIn("if tabRowMonthJump == nil {", section(home, "@ViewBuilder private var detectedPhotosSection: some View {",
                                                              '.id("photo-library-all-heading")'))
-        # Themes: 64pt photos with the name on the photo, capped for large text.
+        # Themes: 64pt photos with the name under the photo (11/12), capped for large text.
         tile = section(main, "private struct PhotoThemeTile: View {", "\n}\n")
         self.assertIn(".frame(width: 64, height: 64)", tile)
         self.assertIn(".dynamicTypeSize(...DynamicTypeSize.xLarge)", tile)
+        self.assertNotIn(".overlay(alignment: .bottomLeading)", tile)
         self.assertNotIn("frame(width: 88", main)
         # MainTabView.body stays small: the row and tile are their own views.
         self.assertNotIn("PhotoLibraryCatRow(", section(main, "    var body: some View {", "    private var photoLibrary: some View {"))
@@ -8582,6 +8583,123 @@ class ToolsLookRoundTwo1112Tests(unittest.TestCase):
         self.assertIn(".nekoPrimaryButton()", empty)
         self.assertIn('.accessibilityIdentifier("showcase-gallery-select")', empty)
 
+
+
+class MainTabsLook1112Tests(unittest.TestCase):
+    """11/12: the 写真, まど, アルバム and 設定 tabs after the designer's review.
+    A received まど photo reads as a small gift, cards never look empty, the
+    photo viewer's bottom is one band, and buttons do not vanish in the dark."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.window = source("NekoWidget/Views/GroupWindowView.swift")
+        cls.browser = source("NekoWidget/Views/LikedPhotosView.swift")
+        cls.tab = source("NekoWidget/Views/MainTabView.swift")
+        cls.settings = source("NekoWidget/Views/SettingsView.swift")
+
+    def test_empty_window_card_shows_nowa_not_a_small_icon(self) -> None:
+        cover = section(self.window, "private struct WindowCardEmptyCover: View {", "\n}\n")
+        self.assertIn("NekoPalette.cream", cover)
+        self.assertIn('Image("Nowa-peek")', cover)
+        self.assertIn(".accessibilityHidden(true)", cover)
+        self.assertNotIn('"ToolCat-snug"', self.window)
+        for name, end in (("private struct GroupWindowCard: View {", "private struct WindowCardEmptyCover: View {"),
+                          ("private struct KnownWindowCard: View {", "struct GroupHiddenMembersView: View {")):
+            card = section(self.window, name, end)
+            self.assertIn("WindowCardEmptyCover()", card)
+            # The name over the cream is ink, in light and dark.
+            self.assertIn("NekoPalette.ink)", card)
+            # Nothing is fetched for the cover: only what this iPhone keeps.
+            self.assertNotIn("fetchPhoto", card)
+
+    def test_received_photo_row_is_a_gift(self) -> None:
+        tile = section(self.window, "private struct GroupPhotoTile: View {", "\n}\n")
+        self.assertIn('GroupMemberAvatar(name: entry.isOwn ? "あなた" : entry.senderDisplayName, size: 30)', tile)
+        self.assertIn(".font(.body.weight(.semibold))", tile)
+        self.assertIn("GroupPhotoTileDate.text(entry.createdAt)", tile)
+        self.assertIn(".font(.title3.weight(.semibold))", tile)
+        self.assertIn(".frame(minWidth: 44, minHeight: 44)", tile)
+        self.assertIn('.accessibilityIdentifier("group-photo-tile-heart")', tile)
+        date = section(self.window, "enum GroupPhotoTileDate {", "\n}\n")
+        for part in ('"今日"', '"昨日"', '"\\(days)日前"', "Calendar.nekoGregorian",
+                     "date.formatted(.dateTime.month().day())"):
+            self.assertIn(part, date)
+        self.assertNotIn("UserDefaults", date)
+        avatar = section(source("NekoWidget/Views/GroupWindowSetupView.swift"),
+                         "struct GroupMemberAvatar: View {", "\n}\n")
+        self.assertIn("Text(verbatim: initial)", avatar)
+        self.assertIn('Image(systemName: "person.fill")', avatar)
+        self.assertIn(".accessibilityHidden(true)", avatar)
+
+    def test_window_page_bars_match_the_page(self) -> None:
+        screen = section(self.window, "struct GroupWindowScreen: View {", "private struct GroupWindowContinueSheets")
+        self.assertIn(".toolbarBackground(Color(uiColor: .systemGroupedBackground), for: .navigationBar)", screen)
+        self.assertIn(".toolbarBackground(.visible, for: .navigationBar)", screen)
+        bar = section(screen, "    private var sendBar: some View {", "\n    }\n}")
+        self.assertNotIn(".background(.bar)", bar)
+        self.assertIn(".background(Color(uiColor: .systemGroupedBackground))", bar)
+        self.assertNotIn("minHeight: 50", bar)
+        self.assertEqual(bar.count('.accessibilityIdentifier("group-window-send-photo")'), 2)
+        picker = section(self.window, "private struct GroupCatPhotoPickerSheet: View {",
+                         "private struct GroupLibraryDeliveryRequest")
+        self.assertIn(".tint(Color.primary)", picker)
+        self.assertNotIn(".background(.bar)", picker)
+
+    def test_photo_viewer_title_is_the_date_and_bottom_is_one_band(self) -> None:
+        self.assertIn('private var showsDateAsTitle: Bool { navigationTitleText == "写真" }', self.browser)
+        title = section(self.browser, "private func titleDate(_ photo: PhotoPresentation) -> some View {", "\n    }\n")
+        self.assertIn('.accessibilityIdentifier("photo-browser-date")', title)
+        self.assertIn(".accessibilityValue(spokenDate)", title)
+        self.assertIn("ToolbarItem(placement: .principal) { titleDate(selectedPhoto) }", self.browser)
+        # The bar keeps 「写真」 as its name for back buttons and UI tests.
+        self.assertIn(".navigationTitle(navigationTitleText)", self.browser)
+        viewer = section(self.browser, "    private var browserContent: some View {", "    /// 「○○から」 and, under it")
+        self.assertEqual(viewer.count(".background(Self.controlsBand)"), 2)
+        self.assertNotIn(".background(.bar)", viewer)
+        self.assertNotIn(".background(.ultraThinMaterial)", viewer)
+        deliver = section(self.browser, "private struct DeliverButtonEmphasis: ViewModifier {", "\n}\n")
+        self.assertIn("content.buttonStyle(.bordered).tint(Color.primary)", deliver)
+
+    def test_memo_hint_sits_where_writing_starts(self) -> None:
+        note = source("NekoWidget/Views/PhotoNoteInput.swift")
+        body = section(note, "struct PhotoNoteInput: View {", "#if DEBUG")
+        self.assertLess(body.index("TextEditor(text: $text)"), body.index('Text("このあと、どうなった？")'))
+        self.assertIn(".overlay(alignment: .topLeading) {", body)
+        self.assertIn(".allowsHitTesting(false)", body)
+        self.assertLess(body.index('Text("このあと、どうなった？")'), body.index("Text(audience)"))
+        self.assertLess(body.index("Text(audience)"), body.index('文字")'))
+        # The CI photo fixtures are still filled into this file.
+        for name in ("GRAY", "ORANGE", "TUXEDO"):
+            self.assertEqual(note.count(f"__MOMENT_EXPERIENCE_{name}_PNG_BASE64__"), 1)
+
+    def test_settings_actions_are_rows_and_autosave_starts_with_a_button(self) -> None:
+        row = section(self.settings, "struct SettingsActionRow: View {", "\n}\n")
+        self.assertNotIn(".buttonStyle(.bordered)", row)
+        self.assertNotIn(".listRowBackground(Color.clear)", row)
+        records = source("NekoWidget/Services/AppRecordPersistence.swift")
+        start = section(records, "@ViewBuilder private var startAction: some View {",
+                        "@ViewBuilder private var signedOutSections")
+        self.assertIn('Text("保存を始める")', start)
+        self.assertIn(".buttonStyle(.borderedProminent)", start)
+        self.assertIn('.accessibilityIdentifier("app-record-enable")', start)
+        view = section(records, "struct AppRecordSettingsView: View {", "@ViewBuilder private var settingsSections")
+        self.assertIn('.navigationTitle("自動保存")\n        // 11/12', view)
+        self.assertIn(".navigationBarTitleDisplayMode(.inline)", view)
+
+    def test_nowa_on_the_family_notebook_and_album_plus_mark_says_what_it_does(self) -> None:
+        intro = section(source("NekoWidget/Views/FamilyNotebookView.swift"),
+                        "struct FamilyNotebookIntroView: View {", "struct FamilyNotebookPlusMark: View {")
+        self.assertIn('Image("Nowa-peek")', intro)
+        self.assertIn("NekoPalette.cream", intro)
+        self.assertNotIn('Image(systemName: "person.2.fill")', intro)
+        album = source("NekoWidget/Views/AlbumPrototypeView.swift")
+        card = section(album, "private func arrivalCard(", "struct AlbumPlusMark: View {")
+        self.assertIn('Text("Plusでひらく")', card)
+        self.assertIn('"、Plusでひらく"', card)
+        self.assertIn('.accessibilityIdentifier("album-prototype-plus-mark")', card)
+        for banned in ("ずっと無料", "永久に"):
+            for text in (self.window, self.browser, album):
+                self.assertNotIn(banned, text)
 
 if __name__ == "__main__":
     unittest.main()

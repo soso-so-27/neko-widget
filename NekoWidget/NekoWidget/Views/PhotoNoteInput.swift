@@ -12,22 +12,33 @@ struct PhotoNoteInput: View {
     var minimumHeight: CGFloat = 140
 
     var body: some View {
+        // 11/12 (review 17): the question sits where writing starts, faint,
+        // and who sees it goes under the box beside the count.
         VStack(alignment: .leading, spacing: 8) {
-            Text(audience)
-                .font(.caption).foregroundStyle(.secondary)
             TextEditor(text: $text)
                 .frame(minHeight: minimumHeight)
                 .focused(focus)
                 .accessibilityLabel("メモ")
                 .accessibilityIdentifier(identifier)
-            if text.isEmpty {
-                Text("このあと、どうなった？")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .accessibilityIdentifier("photo-note-writing-hint")
+                .overlay(alignment: .topLeading) {
+                    if text.isEmpty {
+                        Text("このあと、どうなった？")
+                            .foregroundStyle(.tertiary)
+                            // TextEditor's own inset, so the hint sits on the first line.
+                            .padding(.top, 8)
+                            .padding(.leading, 5)
+                            .allowsHitTesting(false)
+                            .accessibilityIdentifier("photo-note-writing-hint")
+                    }
+                }
+            HStack(spacing: 8) {
+                Text(audience)
+                Spacer(minLength: 8)
+                Text("\(text.count) / \(maximumCharacters)文字")
+                    .foregroundStyle(text.count > maximumCharacters ? Color.red : Color.secondary)
             }
-            Text("\(text.count) / \(maximumCharacters)文字")
-                .font(.caption)
-                .foregroundStyle(text.count > maximumCharacters ? Color.red : Color.secondary)
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 }
