@@ -336,6 +336,7 @@ final class PlusPurchaseStore: ObservableObject {
 
         startTransactionUpdatesListener()
         startStorefrontUpdatesListener()
+        await refreshWorkHistory()
         await reconcileCurrentEntitlements()
         await refreshRenewal()
         await loadProducts()
@@ -370,6 +371,7 @@ final class PlusPurchaseStore: ObservableObject {
     }
 
     private func performRefresh() async {
+        await refreshWorkHistory()
         await reconcileCurrentEntitlements()
         await refreshRenewal()
         await loadProducts()
@@ -380,7 +382,6 @@ final class PlusPurchaseStore: ObservableObject {
     /// includes returning from Apple's subscription management sheet.
     /// A failed read keeps the last answer; it never changes entitlementState.
     private func refreshRenewal() async {
-        await refreshWorkHistory()
         guard configuration.isConfigured else { renewal = nil; return }
         var groupIDs = Set<String>()
         for await result in Transaction.currentEntitlements {
@@ -461,6 +462,8 @@ final class PlusPurchaseStore: ObservableObject {
         products = []
         productStorefrontID = nil
         productCatalogRevision &+= 1
+        workHistoryGeneration &+= 1
+        workHistory = nil
         hasStarted = false
     }
 
@@ -527,6 +530,8 @@ final class PlusPurchaseStore: ObservableObject {
                         )
                         return .verificationFailed
                     }
+                    await refreshWorkHistory()
+                    await refreshRenewal()
                     do {
                         try await recordVerifiedTransactionEvent(
                             PlusVerifiedTransactionEvent(
@@ -664,6 +669,9 @@ final class PlusPurchaseStore: ObservableObject {
         storefrontUpdatesTask = Task { @MainActor [weak self] in
             for await _ in Storefront.updates {
                 guard !Task.isCancelled else { return }
+                self?.workHistoryGeneration &+= 1
+                self?.workHistory = nil
+                await self?.refreshWorkHistory()
                 await self?.loadProducts()
             }
         }
