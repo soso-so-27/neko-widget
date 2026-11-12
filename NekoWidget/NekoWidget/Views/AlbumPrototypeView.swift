@@ -112,7 +112,7 @@ enum AlbumPrototype {
         guard thisMonthPhotoCount >= MonthlyWindowBuilder.minimumSceneCount,
               let start = gregorian.dateInterval(of: .month, for: now)?.start,
               let next = gregorian.date(byAdding: .month, value: 1, to: start) else {
-            return "猫の写真がひと月に 5 枚ほどたまると、その月の作品がとどきます。"
+            return "猫の写真がひと月に5枚ほどたまると、その月の作品がとどきます。"
         }
         let month = gregorian.component(.month, from: start)
         let nextMonth = gregorian.component(.month, from: next)
@@ -354,7 +354,7 @@ struct AlbumPrototypeView: View {
     private var noWorkYet: some View {
         if catPhotos.isEmpty {
             ContentUnavailableView("まだ作品はありません", systemImage: "photo.stack",
-                                   description: Text("猫の写真がひと月に 5 枚ほどたまると、その月の作品がとどきます。"))
+                                   description: Text("猫の写真がひと月に5枚ほどたまると、その月の作品がとどきます。"))
         } else {
             Text(AlbumPrototype.noWorkLine(thisMonthPhotoCount: nextDelivery?.photoCount ?? 0))
                 .font(.subheadline)
@@ -1296,10 +1296,10 @@ enum AlbumArrivalNotice {
         guard await isAllowed(center) else { return }
         if let month {
             let number = Calendar.nekoGregorian.component(.month, from: month.start)
-            await add(monthID, "\(number)月の作品が届きました。", trigger: calendarTrigger(month.at))
+            await add(monthID, "\(number)月の作品がとどきました。", trigger: calendarTrigger(month.at))
         }
         if let year {
-            await add(yearID, "\(year.year)年の作品が届きました。", trigger: calendarTrigger(year.at))
+            await add(yearID, "\(year.year)年の作品がとどきました。", trigger: calendarTrigger(year.at))
         }
     }
 
@@ -1325,7 +1325,7 @@ enum AlbumArrivalNotice {
         guard await isAllowed(center) else { return false }
         let calendar = Calendar.nekoGregorian
         let last = calendar.date(byAdding: .month, value: -1, to: Date()) ?? Date()
-        await add(tryID, "\(calendar.component(.month, from: last))月の作品が届きました。",
+        await add(tryID, "\(calendar.component(.month, from: last))月の作品がとどきました。",
                   trigger: UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false))
         return true
     }

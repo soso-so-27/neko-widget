@@ -1926,7 +1926,7 @@ struct MainTabView: View {
                 Label("この写真は開けません", systemImage: "photo")
                     .accessibilityIdentifier("unavailable-widget-photo")
             } description: {
-                Text("いまの設定では表示しない写真です。")
+                Text("設定の「写真の表示と整理」で、出す写真を確かめてください。")
             } actions: {
                 Button {
                     photosPath = NavigationPath()
@@ -1961,7 +1961,7 @@ struct MainTabView: View {
                             openRelatedAlbumOverride: openRelatedAlbum)
             } else {
                 ContentUnavailableView("この写真は開けません", systemImage: "photo",
-                                       description: Text("いまの設定では表示しない写真か、写真へのアクセスが許可されていません。"))
+                                       description: Text("写真へのアクセスと、設定の「写真の表示と整理」を確かめてください。"))
                     .accessibilityIdentifier("unavailable-widget-photo")
             }
         }
@@ -1979,7 +1979,7 @@ struct MainTabView: View {
                             mayAskForReview: false, openRelatedAlbumOverride: openRelatedAlbum)
             } else {
                 ContentUnavailableView("この写真は開けません", systemImage: "photo",
-                                       description: Text("いまの設定では表示しない写真か、写真へのアクセスが許可されていません。"))
+                                       description: Text("写真へのアクセスと、設定の「写真の表示と整理」を確かめてください。"))
                     .accessibilityIdentifier("unavailable-first-run-photo")
             }
         }
@@ -2483,7 +2483,7 @@ struct MainTabView: View {
             albumsView(scope: .profile(identifier), showsHighlightArchive: showsHighlightArchive)
         } else {
             ContentUnavailableView("この猫のアルバムを開けません", systemImage: "cat",
-                description: Text("猫のプロフィールが変わりました。アルバムから選び直してください。"))
+                description: Text("猫の名前や写真が変わりました。アルバムから選び直してください。"))
         }
     }
 

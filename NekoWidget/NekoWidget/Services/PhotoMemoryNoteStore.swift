@@ -337,7 +337,7 @@ enum PhotoMemoryNoteStoreError: Error, LocalizedError, Equatable {
         case .invalidContext:
             "撮影日や写っている猫を保存できませんでした。写真を開き直してから、もう一度お試しください。"
         case .unsupportedSchema:
-            "このメモは新しいバージョンのアプリで書かれています。アプリをアップデートしてください。"
+            "このメモは新しいバージョンのアプリで書かれています。App Storeでアプリを最新にしてください。"
         case .corruptedState:
             "メモを読み込めませんでした。書いたメモは消えていません。"
         case .storageUnavailable:

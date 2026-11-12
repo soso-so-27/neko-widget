@@ -63,7 +63,7 @@ final class CatCareStore: ObservableObject {
             loadError = nil
         } catch {
             state = nil
-            loadError = "「この子のこと」を開けませんでした。アプリを最新にしてください（書いた内容は消えていません）。"
+            loadError = "「この子のこと」を開けませんでした。App Storeでアプリを最新にしてください。書いた内容は消えていません。"
         }
     }
 

@@ -450,7 +450,7 @@ struct AlbumView: View {
             ContentUnavailableView(
                 "アルバムを表示できません",
                 systemImage: "exclamationmark.triangle",
-                description: Text("写真を探し終えられませんでした。「ツール」右上の設定→「写真の表示と整理」→「最初から探し直す」で、もう一度探してください。")
+                description: Text("写真を探し終えられませんでした。「ツール」右上の設定→「写真の表示と整理」→「写真を最初から探し直す」で、もう一度探してください。")
             )
             .frame(maxWidth: .infinity, minHeight: isEmbedded ? 160 : 320)
         } else if scan.isPreparingGroupedAlbums || scan.isScanning {
@@ -1188,7 +1188,7 @@ struct LikedPhotosView: View {
                         ContentUnavailableView {
                             Label("猫の写真を自動でまとめます", systemImage: "photo.stack")
                         } description: {
-                            Text("写真を見られるようにすると、月のまとめや成長がここにできます。")
+                            Text("写真を見られるようにすると、月の作品や成長がここにできます。")
                         } actions: {
                             Button(action: openPhotos) {
                                 Label("「写真」タブで許可する", systemImage: "arrow.right")
@@ -1213,7 +1213,7 @@ struct LikedPhotosView: View {
         .membershipFeature(.browseAlbums, hasContent: hasPhotoAccess && !isPreparingAlbums
             && (!months.isEmpty || !seasonalMovies.isEmpty || albumSections.contains(where: { $0.id != .all })))
         }
-        .navigationTitle(showsHighlightArchive ? "おすすめ" : showsReflectionArchive ? "月のまとめ・季節のムービー" : navigationTitleOverride ?? "アルバム")
+        .navigationTitle(showsHighlightArchive ? "おすすめ" : showsReflectionArchive ? "月の作品・季節のムービー" : navigationTitleOverride ?? "アルバム")
         // The same small title as every other tab.
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
@@ -1307,7 +1307,7 @@ struct LikedPhotosView: View {
                 monthLink(month, isLatest: true, isWide: true)
                     .overlay(alignment: .topLeading) { if summaryNeedsPlus { plusMark.padding(10) } }
             } else {
-                Label("猫の写真がひと月に5枚ほどたまると、その月のまとめができます。", systemImage: "calendar")
+                Label("猫の写真がひと月に5枚ほどたまると、その月の作品がとどきます。", systemImage: "calendar")
                     .font(.subheadline).foregroundStyle(.secondary)
             }
             if let movie = seasonalMovies.first {
@@ -1345,7 +1345,7 @@ struct LikedPhotosView: View {
                 Label("季節のムービーは、いろいろな日の写真が2か月分たまるとできます。", systemImage: "film")
                     .font(.subheadline).foregroundStyle(.secondary)
             }
-            NavigationLink("これまでの月のまとめ・季節のムービー", value: MemoriesRoute.reflectionsArchive)
+            NavigationLink("これまでの月の作品・季節のムービー", value: MemoriesRoute.reflectionsArchive)
                 .font(.subheadline).frame(minHeight: 44)
         }
         .accessibilityIdentifier("memories-summaries-section")
@@ -1357,14 +1357,14 @@ struct LikedPhotosView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("ふりかえり").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
             VStack(alignment: .leading, spacing: 10) {
-                Text("猫の写真がひと月に5枚ほどたまると、その月のまとめができます。")
+                Text("猫の写真がひと月に5枚ほどたまると、その月の作品がとどきます。")
                     .font(.subheadline).foregroundStyle(.secondary)
                 Text("いろいろな日の写真が2か月分たまると、季節のムービーができます。")
                     .font(.subheadline).foregroundStyle(.secondary)
                 if summaryNeedsPlus {
                     HStack(spacing: 6) {
                         plusMark
-                        Text("月のまとめと季節のムービーは、Plusで見られます。")
+                        Text("月の作品と季節のムービーは、Plusで見られます。")
                     }
                 }
             }
@@ -1394,7 +1394,7 @@ struct LikedPhotosView: View {
                 }
             }.padding(16)
         }
-        .navigationTitle(showsMovies ? "ムービー" : "月のまとめ")
+        .navigationTitle(showsMovies ? "ムービー" : "月の作品")
         .navigationBarTitleDisplayMode(.inline)
     }
     private var featuredPhotoRecommendation: AlbumRecommendationItem? {
@@ -1453,7 +1453,7 @@ struct LikedPhotosView: View {
     }
     private var reflectionArchive: some View {
         LazyVStack(alignment: .leading, spacing: 12) {
-            if !hasPeriodCollections { ContentUnavailableView("月のまとめ・ムービーはありません", systemImage: "photo.stack") }
+            if !hasPeriodCollections { ContentUnavailableView("月の作品・ムービーはありません", systemImage: "photo.stack") }
             if hasPeriodCollections {
                 ForEach(months) { monthLink($0, isLatest: $0.id == months.first?.id, showsCover: false) }
                 ForEach(seasonalMovies) { movieLink($0, isLatest: $0.id == seasonalMovies.first?.id, showsCover: false) }
@@ -1488,7 +1488,7 @@ struct LikedPhotosView: View {
         NavigationLink(value: MemoriesRoute.monthlyWindow(month)) {
             if showsCover {
                 AlbumOverviewCard(identifier: month.coverPhoto?.localIdentifier, catBoundingBox: month.coverPhoto?.catBoundingBox,
-                    title: "\(month.monthNumber)月のまとめ", subtitle: "\(month.yearNumber)年 · \(month.photos.count.formatted())枚",
+                    title: "\(month.monthNumber)月の作品", subtitle: "\(month.yearNumber)年 · \(month.photos.count.formatted())枚",
                     isMovie: false, isNew: isLatest && latestMonthlyWindowIsUnread && !summaryNeedsPlus,
                     networkAccessAllowed: true, previewPhotos: Array(month.photos.prefix(3)), isCompact: false, isWide: isWide)
             } else {
@@ -3225,7 +3225,7 @@ struct PhotoBrowserView: View {
                 if let identifier = pendingReceivedRemoval { setMemorySaved(identifier, false) }
                 pendingReceivedRemoval = nil
             }
-            Button("戻る", role: .cancel) { pendingReceivedRemoval = nil }
+            Button("キャンセル", role: .cancel) { pendingReceivedRemoval = nil }
         } message: {
             Text("写真アプリへコピーした写真は残ります。")
         }

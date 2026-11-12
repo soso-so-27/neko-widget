@@ -13,7 +13,7 @@ enum SeasonalMovieArchiveError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unsupportedCatalogVersion:
-            return "これまでのムービーは新しい形式で保存されています。アプリをアップデートしてください。"
+            return "これまでのムービーは新しい形式で保存されています。App Storeでアプリを最新にしてください。"
         case .invalidRecord:
             return "これまでのムービーを読み込めませんでした。"
         case .periodNotFound:

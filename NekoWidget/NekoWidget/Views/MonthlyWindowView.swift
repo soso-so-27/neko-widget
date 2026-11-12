@@ -30,7 +30,7 @@ struct MonthlyWindowView: View {
                     profiles: profiles,
                     assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
                     replaceProfileAssignments: replaceProfileAssignments,
-                    navigationTitle: "\(presentation.monthNumber)月のまとめ"
+                    navigationTitle: "\(presentation.monthNumber)月の作品"
                 )
             } else {
                 ContentUnavailableView(

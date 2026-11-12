@@ -92,7 +92,7 @@ struct CatFarewellEditor: View {
             .navigationTitle(name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("記録する") { save(CatCareDay(date: date)); dismiss() }
                         .accessibilityIdentifier("cat-farewell-save")
@@ -373,7 +373,7 @@ struct CatCareDetailView: View {
             Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
         } else if store.unreadableCatCount > 0 {
             Section {
-                Label("開けない記録があるので、いまは保存できません。アプリを最新にしてください。",
+                Label("開けない記録があるので、いまは保存できません。App Storeでアプリを最新にしてください。",
                       systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
             }
