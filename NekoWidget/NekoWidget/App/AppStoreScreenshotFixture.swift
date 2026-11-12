@@ -477,11 +477,15 @@ struct AppStoreScreenshotFixtureRootView: View {
                 return photo
             }
             let assigned = Set(confirmed.map(\.localIdentifier))
+            // `NEKO_CAT_HOME_NO_PHOTO=1`: the cats have no key photo (the
+            // この子 tab's neutral photo area, review captures only).
+            let keyPhoto: CatProfilePhotoPresentation? = OwnerStoreCaptureFixture.isRequested
+                ? CatProfilePhotoPresentation(localIdentifier: "app-store-screenshot-fixture-\(index == 0 ? 25 : 26)", creationDate: nil)
+                : confirmed[0]
+            let noKeyPhoto = ProcessInfo.processInfo.environment["NEKO_CAT_HOME_NO_PHOTO"] == "1"
             return CatProfilePresentation(
                 identifier: identifier, name: OwnerStoreCaptureFixture.isRequested ? (index == 0 ? "むぎ" : "あめ") : (index == 0 ? "ミケ" : "ソラ"),
-                coverPhoto: OwnerStoreCaptureFixture.isRequested
-                    ? CatProfilePhotoPresentation(localIdentifier: "app-store-screenshot-fixture-\(index == 0 ? 25 : 26)", creationDate: nil)
-                    : confirmed[0], confirmedPhotos: confirmed,
+                coverPhoto: noKeyPhoto ? nil : keyPhoto, confirmedPhotos: confirmed,
                 manualCandidatePhotos: all.filter { !assigned.contains($0.localIdentifier) }
             )
         }

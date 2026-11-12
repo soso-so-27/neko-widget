@@ -209,119 +209,6 @@ private struct ShowcaseSession: Identifiable {
     let scopeID: String
 }
 
-/// The app's one accent is blue: 「いつも」 tools take its shades. Only the
-/// 「もしも」 tools are warm, so colour itself means "in case".
-private enum ToolTint {
-    static let everyday = Color.accentColor
-    // 11/11: every tile colour keeps its white symbol at 3:1 or more
-    // (the lightest blue and the two lightest oranges were 2.2 to 2.9:1).
-    static let everydayLight = Color(red: 0.30, green: 0.56, blue: 0.82)
-    static let everydayDeep = Color(red: 0.22, green: 0.42, blue: 0.70)
-    // 11/11: 預けるとき moved to ふだん; a blue between the light and deep ones.
-    static let everydayMid = Color(red: 0.26, green: 0.49, blue: 0.76)
-    // もしも: one warm family in steps of depth (10/26: four unrelated colours
-    // read as four different apps). Red is no longer used for a tool.
-    static let emergency = Color(red: 0.86, green: 0.46, blue: 0.14)
-    static let emergencyDeep = Color(red: 0.72, green: 0.37, blue: 0.18)
-    static let emergencyBrown = Color(red: 0.62, green: 0.33, blue: 0.18)
-}
-
-/// A cat in the row above the tools: round photo with a ring around it that
-/// fills as この子のこと is written in. A cat that has passed away keeps the
-/// photo and name only: nothing asks to be filled in.
-/// 11/12 (round 2): what the ring is, without a sentence: under the name, a
-/// tiny 「あと3つ」 while something is missing; the ring turns green once full.
-private struct CatChip: View {
-    let profile: CatProfilePresentation
-    let progress: CatCareProgress
-    let departed: Bool
-
-    private var left: Int { max(progress.total - progress.filled, 0) }
-
-    var body: some View {
-        VStack(spacing: 2) {
-            ZStack {
-                if !departed { CatCareRing(progress: progress, lineWidth: 3.5, fullTint: .green) }
-                CatProfileThumbnail(photo: profile.coverPhoto)
-                    .frame(width: 52, height: 52)
-                    .clipShape(Circle())
-            }
-            .frame(width: 64, height: 64)
-            .padding(.bottom, 4)
-            .accessibilityHidden(true)
-            Text(profile.displayName)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-            if !departed && left > 0 {
-                Text("あと\(left)つ")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-        }
-        .frame(width: 72)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(departed ? profile.displayName
-                            : "\(profile.displayName)、この子のこと \(progress.total)項目中\(progress.filled)項目")
-    }
-}
-
-/// A tool is a card you can see is a button: a big coloured symbol, the
-/// name, one line of what it makes. No cat art, no small icons.
-/// 11/12 (round 2): as tall as what is on it (a third of each card was
-/// empty); `wide`, a card across the whole row, symbol beside the name, for
-/// the first of three tools, so no card is left alone on its row.
-private struct ToolTile: View {
-    let title: String
-    let systemImage: String
-    let subtitle: String
-    let tint: Color
-    var wide = false
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
-    var body: some View {
-        // At the largest text sizes the wide card stacks too, so the name wraps
-        // under the symbol instead of being squeezed beside it.
-        let layout = wide && !dynamicTypeSize.isAccessibilitySize
-            ? AnyLayout(HStackLayout(alignment: .center, spacing: 12))
-            : AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
-        layout {
-            Image(systemName: systemImage)
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 46, height: 46)
-                .background(tint, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .padding(14)
-        .background(Color(.secondarySystemGroupedBackground),
-                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
-        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title)、\(subtitle)")
-    }
-}
-
-private struct ToolCardButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.opacity(configuration.isPressed ? 0.65 : 1)
-    }
-}
-
 enum MemoriesRoute: Hashable {
     case favorites
     case memoryNotes
@@ -429,7 +316,6 @@ struct MainTabView: View {
     @Environment(\.requestReview) private var requestReview
     /// Only the first cat photo of a launch may bring the review prompt.
     @MainActor private static var reviewPhotoOpenedThisSession = false
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.photoMemoStore) private var memoStore
 
     let currentPhoto: PhotoPresentation?
@@ -489,11 +375,6 @@ struct MainTabView: View {
     @State private var groupShareNavigationGeneration = UUID()
     @Environment(\.membershipAccess) private var membershipAccess
     @ObservedObject private var groupWindowOpenInbox = GroupWindowOpenInbox.shared
-    @ObservedObject private var careStore = CatCareStore.shared
-    /// Shared cats with no profile on this iPhone (an invited family) sit in
-    /// the ツール row too, so 「この子のこと」 has one place for everyone (11/7).
-    @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
-    @AppStorage(CatFarewell.key) private var farewellJSON = ""
     @State private var didApplyInitialTab = false
     /// Written only when a person taps a tab.
     @AppStorage("navigation.lastTab.v1") private var lastViewedTab = AppTab.memories.rawValue
@@ -634,9 +515,6 @@ struct MainTabView: View {
     @State private var failedShowcaseScopes = Set<String>()
     @State private var showcasePreparationError = false
     @State private var showsShowcaseNoPhotos = false
-    /// 「＋」 in the cat row: adding a cat, then the page of the one added.
-    @State private var addsCatFromTools = false
-    @State private var addedCatFromTools: String?
     @State private var photoLibraryRevision = 0
     @State private var photosPath = NavigationPath()
     @State private var memoriesPath = NavigationPath()
@@ -685,7 +563,7 @@ struct MainTabView: View {
             if lastViewedTab != tab.rawValue { lastViewedTab = tab.rawValue }
             selectedTab = tab
         })) {
-            // 1.0: 写真・まど・アルバム・ツール.
+            // 1.0: 写真・まど・アルバム・この子 (the tools tab, renamed 11/12).
             photosTab
             windowsTab
             albumTab
@@ -761,7 +639,7 @@ struct MainTabView: View {
         }
     }
 
-    /// One photo screen for a cat's photo, from the 写真 tab and ツール alike.
+    /// One photo screen for a cat's photo, from the 写真 tab and この子 alike.
     private var catProfilePhotoDestination: CatProfilePhotoDestination {
         { profileID, photoID in
             AnyView(albumPhotoDetail(for: .allCatPhotos,
@@ -779,7 +657,8 @@ struct MainTabView: View {
         .environment(\.openPhotoRelatedAlbum, { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 })
         .environment(\.catProfilePhotoDestination, catProfilePhotoDestination)
         .tabItem {
-            Label("ツール", systemImage: "wrench.and.screwdriver")
+            // 11/12: 「この子」, one page per cat; the identifiers stay.
+            Label("この子", systemImage: "pawprint")
                 .accessibilityIdentifier("main-tab-tools")
         }
         .tag(AppTab.tools)
@@ -1145,7 +1024,7 @@ struct MainTabView: View {
                 photoLibraryProfileIdentifier = nil
             }
         }
-        // Settings lives in one place (the ツール tab), as in Apple's own apps.
+        // Settings lives in one place (the この子 tab), as in Apple's own apps.
 
     }
 
@@ -1258,265 +1137,66 @@ struct MainTabView: View {
         return best
     }
 
+    /// The この子 tab (11/12, 案D): one page per cat with its photo, the five
+    /// tools as round buttons, and 「この子のこと」 (CatHomeView.swift).
     private var toolsView: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                // The cats are the door, but small: a row of faces above the
-                // tools, each opening the cat's page. The tools stay tools.
-                // 11/12 (round 2): the row of cats under the same small heading
-                // as the tools, so it reads as 「この子のこと」 of each cat.
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("この子のこと")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    catStrip
+        CatHomeView(presentation: catProfilesPresentation, actions: catProfilesActions,
+                    tools: catHomeTools, openSettings: { showsSettings = true })
+            .alert(hasPhotoAccess ? "まだ猫の写真がありません" : "写真へのアクセスが必要です", isPresented: $showsShowcaseNoPhotos) {
+                Button(hasPhotoAccess ? "「写真」タブを開く" : "写真へのアクセスを許可") {
+                    selectedTab = .photos
+                    photoLibrarySelection.select(.all)
+                    if !hasPhotoAccess { requestPhotoAccess() }
                 }
-                // 11/8: the vet memo is for check-ups and vaccines too, so it is everyday.
-                // 11/12 (round 2): three tools: 写真を見せる across the row, the
-                // other two under it, so none is left alone with a hole beside it.
-                toolSection("ふだん", lead: { showcaseToolCard }) {
-                    NavigationLink {
-                        LazyToolDestination {
-                            VeterinaryVisitsView(profiles: catProfilesPresentation.profiles,
-                                photos: memoryNotePhotos, noteStore: memoStore)
-                        }
-                    } label: {
-                        ToolTile(title: "病院で見せる", systemImage: "cross.case.fill",
-                                 subtitle: "診察メモ", tint: ToolTint.everydayDeep)
-                    }
-                    .buttonStyle(ToolCardButtonStyle())
-                    .accessibilityIdentifier("tools-vet-open")
-                    // 11/11: handing a cat over is planned (travel), not an emergency.
-                    NavigationLink {
-                        LazyToolDestination {
-                            CareHandoffView(profiles: catProfilesPresentation.profiles,
-                                            unregisteredPhotos: unregisteredCatPhotos)
-                        }
-                    } label: {
-                        ToolTile(title: "預けるとき", systemImage: "hand.raised.fill",
-                                 subtitle: "お世話のメモを渡す", tint: ToolTint.everydayMid)
-                    }
-                    .buttonStyle(ToolCardButtonStyle())
-                    .accessibilityIdentifier("tools-care-open")
-                }
-                toolSection("もしものとき") {
-                    NavigationLink {
-                        LazyToolDestination {
-                            LostCatEmergencyEntryView(
-                                profiles: catProfilesPresentation.profiles,
-                                unregisteredPhotos: unregisteredCatPhotos
-                            )
-                        }
-                    } label: {
-                        ToolTile(title: "迷子のとき", systemImage: "magnifyingglass",
-                                 subtitle: "チラシを作る", tint: ToolTint.emergency)
-                    }
-                    .buttonStyle(ToolCardButtonStyle())
-                    .accessibilityIdentifier("tools-lost-cat-open")
-                    NavigationLink {
-                        LazyToolDestination {
-                            EvacuationPreparationView(profiles: catProfilesPresentation.profiles,
-                                                      unregisteredPhotos: unregisteredCatPhotos)
-                        }
-                    } label: {
-                        ToolTile(title: "避難に備える", systemImage: "backpack.fill",
-                                 subtitle: "持ち物と行き先", tint: ToolTint.emergencyBrown)
-                    }
-                    .buttonStyle(ToolCardButtonStyle())
-                    .accessibilityIdentifier("tools-evacuation-open")
-                }
+                Button("閉じる", role: .cancel) {}
+            } message: {
+                Text(scan.isScanning ? "猫の写真を探しています。見つかると使えるようになります。" : "「写真」タブで、猫の写真と写真へのアクセスを確かめてください。")
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-        }
-        // 11/12 (round 2): room under the last cards, so on iPhone SE they
-        // scroll fully clear of the tab bar.
-        .contentMargins(.bottom, 24, for: .scrollContent)
-        .background(Color(.systemGroupedBackground))
-        .navigationTitle("ツール")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { showsSettings = true } label: { SettingsGearIcon() }
-                    .accessibilityLabel("設定")
-                    .accessibilityIdentifier("tools-settings-button")
+    }
+
+    /// The tool pages the この子 tab opens. Each is built only when shown; the
+    /// per-cat tools open for the page's cat (`fixedCatKey`) without their own
+    /// cat menu, and 写真を見せる opens on the page's cat.
+    private var catHomeTools: CatHomeTools {
+        CatHomeTools(
+            vet: { key in
+                AnyView(LazyToolDestination {
+                    VeterinaryVisitsView(profiles: catProfilesPresentation.profiles,
+                        photos: memoryNotePhotos, noteStore: memoStore, fixedCatKey: key)
+                })
+            },
+            care: { key in
+                AnyView(LazyToolDestination {
+                    CareHandoffView(profiles: catProfilesPresentation.profiles,
+                                    unregisteredPhotos: unregisteredCatPhotos, fixedCatKey: key)
+                })
+            },
+            lost: { key in
+                AnyView(LazyToolDestination {
+                    LostCatEmergencyEntryView(profiles: catProfilesPresentation.profiles,
+                                              unregisteredPhotos: unregisteredCatPhotos, fixedCatKey: key)
+                })
+            },
+            evacuation: {
+                AnyView(LazyToolDestination {
+                    EvacuationPreparationView(profiles: catProfilesPresentation.profiles,
+                                              unregisteredPhotos: unregisteredCatPhotos)
+                })
+            },
+            showcase: { profileID in
+                // The page's cat when it has photos to show, else the set chosen last time.
+                openShowcaseTool(scopeID: profileID.flatMap { canOpenShowcase($0) ? $0 : nil } ?? showcaseCardScopeID)
             }
-        }
+        )
     }
 
-    private var showcaseToolCard: some View {
-        Button {
-            let scope = showcaseCardScopeID
-            if showcaseStore.availableEntries(in: scope).isEmpty && (!hasPhotoAccess || showcaseCandidates.isEmpty) {
-                showsShowcaseNoPhotos = true
-            } else { openPreparedShowcase(scopeID: scope) }
-        } label: {
-            ToolTile(title: "写真を見せる", systemImage: "square.grid.3x3.fill",
-                     subtitle: "自慢の9枚", tint: ToolTint.everydayLight, wide: true)
-        }
-        .buttonStyle(ToolCardButtonStyle())
-        .accessibilityIdentifier("tools-showcase-open")
-        .alert(hasPhotoAccess ? "まだ猫の写真がありません" : "写真へのアクセスが必要です", isPresented: $showsShowcaseNoPhotos) {
-            Button(hasPhotoAccess ? "「写真」タブを開く" : "写真へのアクセスを許可") {
-                selectedTab = .photos
-                photoLibrarySelection.select(.all)
-                if !hasPhotoAccess { requestPhotoAccess() }
-            }
-            Button("閉じる", role: .cancel) {}
-        } message: {
-            Text(scan.isScanning ? "猫の写真を探しています。見つかると使えるようになります。" : "「写真」タブで、猫の写真と写真へのアクセスを確かめてください。")
-        }
-    }
-
-    /// A row of the cats (face and name) and 「＋」. One tap opens the cat's page.
-    private var catStrip: some View {
-        // Large type: the same chips, one under the other, so names stay on a line.
-        let layout = dynamicTypeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 14))
-            : AnyLayout(HStackLayout(alignment: .top, spacing: 14))
-        return ScrollView(dynamicTypeSize.isAccessibilitySize ? .vertical : .horizontal, showsIndicators: false) {
-            layout {
-                ForEach(catProfilesPresentation.profiles) { profile in
-                    NavigationLink {
-                        CatProfileDetailView(
-                            profile: profile,
-                            allProfiles: catProfilesPresentation.profiles,
-                            manualCandidatePhotos: profile.manualCandidatePhotos,
-                            photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
-                            actions: catProfilesActions
-                        )
-                    } label: {
-                        CatChip(profile: profile, progress: careProgress(for: profile),
-                                departed: farewellDays[profile.identifier] != nil)
-                    }
-                    .buttonStyle(ToolCardButtonStyle())
-                    .accessibilityIdentifier("tools-cat-\(profile.identifier)")
-                }
-                ForEach(familyOnlyCats) { cat in
-                    NavigationLink {
-                        familyCatCarePage(toolID: cat.toolID, name: cat.name)
-                    } label: {
-                        CatChip(profile: CatProfilePresentation(identifier: cat.toolID.uuidString, name: cat.name,
-                                                                coverPhoto: nil, confirmedPhotos: [], lifeReference: nil),
-                                progress: careProgress(toolCatID: cat.toolID), departed: false)
-                    }
-                    .buttonStyle(ToolCardButtonStyle())
-                    .accessibilityIdentifier("tools-family-cat-\(cat.toolID.uuidString)")
-                }
-                // 「＋」 adds a cat right away, then opens its page (11/7: it
-                // opened a list where 「＋」 had to be pressed again).
-                Button { addsCatFromTools = true } label: {
-                    // 「＋」 alone: adding a cat needs no caption.
-                    Image(systemName: "plus")
-                        .font(.title2.weight(.semibold))
-                        .foregroundStyle(Color.accentColor)
-                        .frame(width: 64, height: 64)
-                        .background(Color(.secondarySystemGroupedBackground), in: Circle())
-                        .overlay(Circle().stroke(Color.accentColor.opacity(0.35), lineWidth: 1))
-                        .frame(width: 72, alignment: .top)
-                }
-                .buttonStyle(ToolCardButtonStyle())
-                .accessibilityLabel("猫を追加")
-                .accessibilityIdentifier("tools-cat-profiles")
-            }
-            .padding(.horizontal, 2)
-            .padding(.vertical, 4)
-        }
-        .accessibilityIdentifier("tools-cat-strip")
-        .addingCatProfile(isStarted: $addsCatFromTools, presentation: catProfilesPresentation,
-                          actions: catProfilesActions) { addedCatFromTools = $0 }
-        .navigationDestination(item: $addedCatFromTools) { identifier in
-            if let profile = catProfilesPresentation.profiles.first(where: { $0.identifier == identifier }) {
-                CatProfileDetailView(
-                    profile: profile,
-                    allProfiles: catProfilesPresentation.profiles,
-                    manualCandidatePhotos: profile.manualCandidatePhotos,
-                    photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
-                    actions: catProfilesActions
-                )
-            }
-        }
-    }
-
-    /// Shared cats without a profile, plus restored personal proofs that must
-    /// open even before their cat reappears through a new invitation.
-    private var familyOnlyCats: [FamilyNotebookPrototype.FamilyCat] {
-        let profileIDs = Set(catProfilesPresentation.profiles.map(\.identifier))
-        let shared = familyNotebook.familyCats.filter { cat in
-            guard let profileID = careStore.state?.cats
-                .first(where: { $0.catID == cat.toolID && $0.deletedAt == nil })?.profileID else { return true }
-            return !profileIDs.contains(profileID.uuidString)
-        }
-        let listed = Set(shared.map(\.toolID))
-        let restored = (careStore.state?.cats ?? []).compactMap { record -> FamilyNotebookPrototype.FamilyCat? in
-            guard record.deletedAt == nil, !record.unmatchedVaccinationProofs.isEmpty, !listed.contains(record.catID),
-                  record.profileID.map({ !profileIDs.contains($0.uuidString) }) ?? true else { return nil }
-            let name = record.name?.value.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return .init(id: record.catID, toolID: record.catID, name: name.isEmpty ? "名前未設定の猫" : name)
-        }
-        return shared + restored
-    }
-
-    /// The one page of a shared cat: its own page when its profile is here,
-    /// else its 「この子のこと」 under its name.
-    @ViewBuilder
-    private func familyCatCarePage(toolID: UUID, name: String) -> some View {
-        let profileID = careStore.state?.cats.first { $0.catID == toolID && $0.deletedAt == nil }?.profileID
-        if let profile = catProfilesPresentation.profiles.first(where: { $0.identifier == profileID?.uuidString }) {
-            CatProfileDetailView(
-                profile: profile,
-                allProfiles: catProfilesPresentation.profiles,
-                manualCandidatePhotos: profile.manualCandidatePhotos,
-                photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
-                actions: catProfilesActions
-            )
-        } else {
-            CatCareDetailView(toolCatID: toolID, name: name)
-                .navigationTitle(name.isEmpty ? "この子のこと" : name)
-                .navigationBarTitleDisplayMode(.inline)
-        }
-    }
-
-    private func careProgress(toolCatID: UUID) -> CatCareProgress {
-        let record = careStore.state?.cats.first { $0.catID == toolCatID && $0.deletedAt == nil }
-        let draft = record.map { CatCareDraft(record: $0, household: careStore.state?.household ?? CatCareHousehold()) }
-            ?? CatCareDraft()
-        return CatCareProgress(draft: draft, record: record, hasLifeDates: nil)
-    }
-
-    /// How far this cat's この子のこと is, for the ring around the chip.
-    private func careProgress(for profile: CatProfilePresentation) -> CatCareProgress {
-        let record = careStore.state?.cats.first { $0.profileID?.uuidString == profile.identifier }
-        let draft = record.map { CatCareDraft(record: $0, household: careStore.state?.household ?? CatCareHousehold()) }
-            ?? CatCareDraft()
-        return CatCareProgress(draft: draft, record: record, hasLifeDates: profile.lifeReference != nil)
-    }
-
-    /// Cats whose farewell day is recorded (1.0 only, as in この子のこと).
-    private var farewellDays: [String: CatCareDay] {
-        Version1.isOn ? CatFarewell.days(farewellJSON) : [:]
-    }
-
-    private func toolSection<Content: View>(_ title: String,
-                                             @ViewBuilder content: () -> Content) -> some View {
-        toolSection(title, lead: { EmptyView() }, content: content)
-    }
-
-    /// A group of tools: its heading, a card across the whole row when given
-    /// (`lead`), then the cards two to a row.
-    private func toolSection<Lead: View, Content: View>(_ title: String,
-                                                        @ViewBuilder lead: () -> Lead,
-                                                        @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-            lead()
-            LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize
-                        ? [GridItem(.flexible())]
-                        : [GridItem(.flexible(), spacing: 10, alignment: .top), GridItem(.flexible(), spacing: 10, alignment: .top)],
-                      spacing: 10, content: content)
-        }
+    /// 写真を見せる from the この子 tab: the page's cat (or the set chosen last
+    /// time when the page has no profile or nothing to show); without photos,
+    /// the alert above.
+    private func openShowcaseTool(scopeID scope: String) {
+        if showcaseStore.availableEntries(in: scope).isEmpty && (!hasPhotoAccess || showcaseCandidates.isEmpty) {
+            showsShowcaseNoPhotos = true
+        } else { openPreparedShowcase(scopeID: scope) }
     }
 
     private func consumeShowcaseLaunchRequest() {

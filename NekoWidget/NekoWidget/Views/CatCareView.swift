@@ -417,7 +417,7 @@ struct CatCareDetailView: View {
 
     @ViewBuilder private var progressSection: some View {
         if farewell == nil {
-            // The same ring as on the ツール tab, so writing here visibly fills it.
+            // The same count as the line on the この子 tab, so writing here visibly fills it.
             // One line beside it, not a dashboard: what the next entry is for.
             Section {
                 HStack(spacing: 12) {
@@ -1219,21 +1219,13 @@ struct CatCareProgress {
 struct CatCareRing: View {
     let progress: CatCareProgress
     let lineWidth: CGFloat
-    /// The ring's colour once everything is in (11/12, round 2: green on the
-    /// ツール tab); nil keeps the accent colour.
-    var fullTint: Color? = nil
-
-    private var tint: Color {
-        guard let fullTint, progress.total > 0, progress.filled >= progress.total else { return Color.accentColor }
-        return fullTint
-    }
 
     var body: some View {
         ZStack {
             Circle().stroke(Color(.tertiarySystemFill), lineWidth: lineWidth)
             Circle()
                 .trim(from: 0, to: progress.total == 0 ? 0 : CGFloat(progress.filled) / CGFloat(progress.total))
-                .stroke(tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .stroke(Color.accentColor, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
                 .animation(.easeOut(duration: 0.5), value: progress.filled)
         }

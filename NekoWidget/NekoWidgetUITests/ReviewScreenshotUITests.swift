@@ -12,10 +12,11 @@ import XCTest
 final class ReviewScreenshotUITests: XCTestCase {
     /// Layout-critical screens also captured on the small iPhone SE.
     static let seScreens: Set<String> = [
-        "10_tools_tab", "11_cat_care_top", "12_vet_bottom", "14_lost_bottom", "16_care_bottom",
+        "10_cat_home", "10b_cat_home_second_cat", "10c_cat_home_no_cat", "10d_cat_home_no_photo", "11_cat_care_top", "12_vet_bottom", "14_lost_bottom", "16_care_bottom",
         "23_plus_offer_top", "23_plus_offer_bottom", "24_settings_top", "28_onboarding_1",
     ]
     private static let mike = "11111111-1111-4111-8111-111111111111"
+    private static let sora = "22222222-2222-4222-8222-222222222222"
 
     private var reviewSet: String {
         ProcessInfo.processInfo.environment["REVIEW_SET"] ?? "light"
@@ -161,23 +162,32 @@ final class ReviewScreenshotUITests: XCTestCase {
         member.terminate()
     }
 
-    // MARK: - ツール: この子のこと・病院
+    // MARK: - この子: the page, この子のこと・病院
 
     @MainActor
     func test04ToolsCatCareAndVet() {
         let app = launch(fixture + ["--app-store-screenshot-cat-care"], tools: true)
-        shot("10_tools_tab", app) {
-            guard tapTab(app, "main-tab-tools", "ツール") else { return "tools tab not found" }
-            guard app.buttons["tools-care-open"].waitForExistence(timeout: 15) else { return "tools did not appear" }
-            settle(1)
+        shot("10_cat_home", app) {
+            guard tapTab(app, "main-tab-tools", "この子") else { return "この子 tab not found" }
+            guard chooseHomeCat(app, Self.mike) else { return "cat menu on この子 not found" }
+            guard app.buttons["tools-care-open"].waitForExistence(timeout: 15) else { return "tool buttons did not appear" }
+            settle(2)
             return nil
         }
-        let catChip = app.descendants(matching: .any)["tools-cat-" + Self.mike].firstMatch
+        shot("10b_cat_home_second_cat", app) {
+            guard chooseHomeCat(app, Self.sora) else { return "second cat not in the cat menu" }
+            guard app.descendants(matching: .any)["tools-cat-" + Self.sora].firstMatch.waitForExistence(timeout: 10) else {
+                return "second cat's page did not appear"
+            }
+            settle(2)
+            return nil
+        }
+        let catCard = app.descendants(matching: .any)["tools-cat-" + Self.mike].firstMatch
         let catPage = anyIdentifier(app, ["cat-profile-rename", "cat-care-family-notebook", "cat-care-part-basics"])
         shot("11_cat_care_top", app) {
-            app.swipeDown()
-            guard catChip.waitForExistence(timeout: 10) else { return "cat chip on tools not found" }
-            catChip.tap()
+            _ = chooseHomeCat(app, Self.mike)
+            guard catCard.waitForExistence(timeout: 10), reveal(catCard, app) else { return "「この子のこと」 card not found" }
+            catCard.tap()
             guard catPage.waitForExistence(timeout: 15) else { return "「この子のこと」 did not open" }
             settle(1)
             return nil
@@ -211,8 +221,7 @@ final class ReviewScreenshotUITests: XCTestCase {
         let vet = launch(fixture + ["--app-store-screenshot-cat-care"], tools: true)
         let noticed = vet.buttons["vet-step-noticed"]
         shot("12_vet_top", vet) {
-            guard openTool(vet, "tools-vet-open") else { return "病院 tile not found" }
-            chooseCat(vet, menu: "vet-cat-menu")
+            guard openTool(vet, "tools-vet-open") else { return "病院 button not found" }
             guard noticed.waitForExistence(timeout: 15) else { return "病院 did not open" }
             settle(1)
             return nil
@@ -250,16 +259,38 @@ final class ReviewScreenshotUITests: XCTestCase {
             return nil
         }
         vet.terminate()
+
+        // No cat yet: のわ, the sentence, 「この子を追加」 and the two household tools.
+        let empty = launch(fixture)
+        shot("10c_cat_home_no_cat", empty) {
+            guard tapTab(empty, "main-tab-tools", "この子") else { return "この子 tab not found" }
+            guard empty.buttons["cat-home-add"].waitForExistence(timeout: 15) else { return "no-cat page did not appear" }
+            settle(1)
+            return nil
+        }
+        empty.terminate()
+
+        // Cats without a key photo: the neutral photo area with the name.
+        let plain = launch(fixture + ["--app-store-screenshot-cat-care"],
+                           environment: ["NEKO_CAT_HOME_NO_PHOTO": "1"], tools: true)
+        shot("10d_cat_home_no_photo", plain) {
+            guard tapTab(plain, "main-tab-tools", "この子") else { return "この子 tab not found" }
+            guard chooseHomeCat(plain, Self.mike) else { return "cat menu on この子 not found" }
+            guard plain.buttons["tools-care-open"].waitForExistence(timeout: 15) else { return "tool buttons did not appear" }
+            settle(1)
+            return nil
+        }
+        plain.terminate()
     }
 
-    // MARK: - ツール: 迷子・預けるとき
+    // MARK: - この子: 迷子・預けるとき
 
     @MainActor
     func test05ToolsLostAndCare() {
         let app = launch(fixture + ["--app-store-screenshot-cat-care"], tools: true)
         let guide = anyIdentifier(app, ["lost-cat-row-guide", "lost-cat-row-photo"])
         shot("14_lost_top", app) {
-            guard openTool(app, "tools-lost-cat-open") else { return "迷子 tile not found" }
+            guard openTool(app, "tools-lost-cat-open") else { return "迷子 button not found" }
             guard guide.waitForExistence(timeout: 15) else { return "迷子 did not open" }
             settle(1)
             return nil
@@ -274,9 +305,8 @@ final class ReviewScreenshotUITests: XCTestCase {
         let care = launch(fixture + ["--app-store-screenshot-cat-care"], tools: true)
         let preview = care.buttons["care-preview-open"]
         shot("16_care_top", care) {
-            guard openTool(care, "tools-care-open") else { return "預けるとき tile not found" }
+            guard openTool(care, "tools-care-open") else { return "預けるとき button not found" }
             guard preview.waitForExistence(timeout: 15) else { return "預けるとき did not open" }
-            chooseCat(care, menu: "care-cat-menu")
             settle(1)
             return nil
         }
@@ -297,14 +327,14 @@ final class ReviewScreenshotUITests: XCTestCase {
         care.terminate()
     }
 
-    // MARK: - ツール: 避難・見せる
+    // MARK: - この子: 避難・見せる
 
     @MainActor
     func test06ToolsEvacuationAndShowcase() {
         let app = launch(fixture + ["--app-store-screenshot-cat-care"], tools: true)
         let now = app.buttons["evacuation-now-open"]
         shot("18_evac_top", app) {
-            guard openTool(app, "tools-evacuation-open") else { return "避難 tile not found" }
+            guard openTool(app, "tools-evacuation-open") else { return "避難 button not found" }
             guard now.waitForExistence(timeout: 15) else { return "避難 did not open" }
             settle(1)
             return nil
@@ -353,7 +383,7 @@ final class ReviewScreenshotUITests: XCTestCase {
 
         let showcase = launch(fixture, tools: true)
         shot("22_showcase", showcase) {
-            guard openTool(showcase, "tools-showcase-open") else { return "見せる tile not found" }
+            guard openTool(showcase, "tools-showcase-open", cat: nil) else { return "見せる button not found" }
             guard anyIdentifier(showcase, ["showcase-gallery", "showcase-back"]).waitForExistence(timeout: 15) else {
                 return "showcase did not open"
             }
@@ -459,7 +489,7 @@ final class ReviewScreenshotUITests: XCTestCase {
         let app = launch(fixture, tools: true)
         let title = app.navigationBars["設定"]
         shot("24_settings_top", app) {
-            guard tapTab(app, "main-tab-tools", "ツール") else { return "tools tab not found" }
+            guard tapTab(app, "main-tab-tools", "この子") else { return "この子 tab not found" }
             let button = app.buttons["tools-settings-button"]
             guard button.waitForExistence(timeout: 15) else { return "settings button not found" }
             button.tap()
@@ -593,8 +623,7 @@ final class ReviewScreenshotUITests: XCTestCase {
         let noticed = app.buttons["vet-step-noticed"]
         let page = app.navigationBars["家で気付いたこと"]
         shot("90_error_vet_field_page", app) {
-            guard openTool(app, "tools-vet-open") else { return "病院 tile not found" }
-            chooseCat(app, menu: "vet-cat-menu")
+            guard openTool(app, "tools-vet-open") else { return "病院 button not found" }
             guard noticed.waitForExistence(timeout: 15), reveal(noticed, app) else { return "病院 did not open" }
             noticed.tap()
             guard page.waitForExistence(timeout: 10) else { return "row page did not open" }
@@ -704,29 +733,31 @@ final class ReviewScreenshotUITests: XCTestCase {
         return false
     }
 
-    /// From a fresh launch: the ツール tab, then one tool's tile.
+    /// From a fresh launch: the この子 tab, ミケ's page (the tools open for
+    /// the page's cat), then one tool's button.
     @MainActor
-    private func openTool(_ app: XCUIApplication, _ tile: String) -> Bool {
-        guard tapTab(app, "main-tab-tools", "ツール") else { return false }
+    private func openTool(_ app: XCUIApplication, _ tile: String, cat: String? = ReviewScreenshotUITests.mike) -> Bool {
+        guard tapTab(app, "main-tab-tools", "この子") else { return false }
+        if let cat { _ = chooseHomeCat(app, cat) }
         let button = app.buttons[tile]
         guard button.waitForExistence(timeout: 15), reveal(button, app) else { return false }
         button.tap()
         return true
     }
 
-    /// With two cats, pick ミケ from the tool's cat menu when there is one.
+    /// Shows a cat's page from the cat menu over the photo (the one place
+    /// a cat is chosen; the tools no longer have their own menu from here).
     @MainActor
-    private func chooseCat(_ app: XCUIApplication, menu identifier: String) {
-        let menu = app.buttons[identifier]
-        guard menu.waitForExistence(timeout: 5) else { return }
+    private func chooseHomeCat(_ app: XCUIApplication, _ identifier: String) -> Bool {
+        let menu = app.buttons["tools-cat-menu"]
+        guard menu.waitForExistence(timeout: 15) else { return false }
         menu.tap()
-        let item = app.buttons["tool-profile-" + Self.mike]
-        if item.waitForExistence(timeout: 5) {
-            item.tap()
-            _ = item.waitForNonExistence(timeout: 5)
-        } else {
-            closeTop(app)
-        }
+        let item = app.buttons["tools-cat-menu-" + identifier]
+        guard item.waitForExistence(timeout: 5) else { closeTop(app); return false }
+        item.tap()
+        _ = item.waitForNonExistence(timeout: 5)
+        settle(0.8)
+        return true
     }
 
     @MainActor

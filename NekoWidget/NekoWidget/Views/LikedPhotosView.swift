@@ -450,7 +450,7 @@ struct AlbumView: View {
             ContentUnavailableView(
                 "アルバムを表示できません",
                 systemImage: "exclamationmark.triangle",
-                description: Text("写真を探し終えられませんでした。「ツール」右上の設定→「写真の表示と整理」→「写真を最初から探し直す」で、もう一度探してください。")
+                description: Text("写真を探し終えられませんでした。「この子」右上の設定→「写真の表示と整理」→「写真を最初から探し直す」で、もう一度探してください。")
             )
             .frame(maxWidth: .infinity, minHeight: isEmbedded ? 160 : 320)
         } else if scan.isPreparingGroupedAlbums || scan.isScanning {
