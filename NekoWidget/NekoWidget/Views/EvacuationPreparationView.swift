@@ -1022,40 +1022,27 @@ private struct EvacuationDisplayView: View {
     @State private var error: String?
     @State private var busy = false
 
+    /// The day the memo is shown, as the file's 「作った日」.
+    @State private var made = Date()
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                Text(record.name).font(.largeTitle.bold())
-                ForEach(Array(record.photos.enumerated()), id: \.offset) { _, photo in
-                    Image(uiImage: photo).resizable().scaledToFit().accessibilityLabel("載せる写真")
-                }
-                if record.photos.isEmpty { Label("見分けるための写真はまだありません", systemImage: "photo").foregroundStyle(.secondary) }
-                ForEach(Array(record.fields.enumerated()), id: \.offset) { _, field in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(field.0).font(.subheadline).foregroundStyle(.secondary)
-                        Text(field.1).font(.title3).textSelection(.enabled)
-                    }
-                }
-                ForEach(Array(record.attachments.enumerated()), id: \.offset) { _, attachment in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(attachment.0).font(.subheadline).foregroundStyle(.secondary)
-                        Image(uiImage: attachment.1).resizable().scaledToFit().accessibilityLabel(attachment.0)
-                    }
-                }
-                if let reviewed = record.reviewedAt {
-                    Text("最後に見直した日：" + reviewed.formatted(date: .numeric, time: .omitted))
-                        .font(.footnote).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 12) {
+                // 11/12: the memo sheet shared with 診察メモ and お世話メモ. The face
+                // is among the photos below, shown large, so the header has none.
+                ToolMemoSheet(kind: "避難メモ", name: record.name, date: made) {
+                    sheetBody
                 }
                 if let error { Text(error).foregroundStyle(.red) }
-
-            }.frame(maxWidth: .infinity, alignment: .leading).padding(20)
+            }.padding(16)
         }
-        .navigationTitle("\(record.name)の避難メモ").navigationBarTitleDisplayMode(.inline)
+        .background(NekoPalette.groupedGround)
+        .navigationTitle("できあがり").navigationBarTitleDisplayMode(.inline)
         .toolChrome()
         // 11/11: the input pages' bar (full-width, large); each button keeps its own style.
         .toolBarFadeRoom()
         .safeAreaInset(edge: .bottom) {
-            ToolMakeBar(ground: NekoPalette.plainGround) {
+            ToolMakeBar {
                 ViewThatFits {
                     HStack(spacing: 12) { exportButtons }
                     VStack(spacing: 8) { exportButtons }
@@ -1078,6 +1065,33 @@ private struct EvacuationDisplayView: View {
             if let retainedDirectory { EvacuationExporter.remove(retainedDirectory) }
             retainedDirectory = nil
         }) { EvacuationActivitySheet(items: $0.files) }
+    }
+    private var singlePhoto: Bool { record.photos.count == 1 }
+    /// The photos to tell the cat apart, filled two to a row; nothing when there are none.
+    @ViewBuilder private var sheetBody: some View {
+        if !record.photos.isEmpty {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: singlePhoto ? 1 : 2),
+                      alignment: .leading, spacing: 10) {
+                ForEach(Array(record.photos.enumerated()), id: \.offset) { _, photo in
+                    ToolMemoPhoto(image: photo, label: "載せる写真", aspect: singlePhoto ? 4.0 / 3.0 : 1)
+                }
+            }
+        }
+        ForEach(Array(record.fields.enumerated()), id: \.offset) { _, field in
+            ToolMemoField(label: field.0, value: field.1)
+        }
+        ForEach(Array(record.attachments.enumerated()), id: \.offset) { _, attachment in
+            VStack(alignment: .leading, spacing: 4) {
+                Text(attachment.0).toolMemoLabel()
+                Image(uiImage: attachment.1).resizable().scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .accessibilityLabel(attachment.0)
+            }
+        }
+        if let reviewed = record.reviewedAt {
+            Text("最後に見直した日：" + reviewed.formatted(date: .numeric, time: .omitted))
+                .font(.footnote).foregroundStyle(.secondary)
+        }
     }
     @ViewBuilder private var exportButtons: some View {
         Button { wantsPrint = true; confirmShare = true } label: {

@@ -48,21 +48,38 @@ enum EvacuationExporter {
         let size = pageSize(printCopy: printCopy)
         let margin: CGFloat = printCopy ? 36 : 24
         let fontSize: CGFloat = printCopy ? 16 : 19
-        let photoHeight: CGFloat = printCopy ? 150 : 215
+        let made = Date()
+        // 11/12: the memo sheet's header (ToolMemoPage) on every page: the
+        // heading small, the name large, the day. The face is among the photos.
+        let headerBottom = margin + ToolMemoPage.headerHeight(pdf: printCopy)
+        let width = size.width - margin * 2
+        // The photos to tell the cat apart, filled two to a row (one alone: 4:3).
+        let columns = record.photos.count == 1 ? 1 : 2
+        let photoGap: CGFloat = 12
+        let singleHeight: CGFloat = printCopy ? 260 : 240
+        let pairWidth: CGFloat = min((width - photoGap) / 2, printCopy ? 220 : 200)
+        let tileWidth: CGFloat = columns == 1 ? min(width, singleHeight * 4 / 3) : pairWidth
+        let tileHeight: CGFloat = columns == 1 ? tileWidth * 3 / 4 : min(pairWidth, printCopy ? 200 : 165)
+        let photoRows = (record.photos.count + columns - 1) / columns
+        let photoBlock: CGFloat = photoRows == 0 ? 0 : CGFloat(photoRows) * (tileHeight + photoGap)
         let body = NSMutableAttributedString(string: "")
         let paragraph = NSMutableParagraphStyle()
         paragraph.paragraphSpacing = 16
         paragraph.lineSpacing = 4
+        let labelParagraph = ToolMemoPage.labelParagraph(paragraph)
         func append(_ text: String, size: CGFloat, bold: Bool = false) {
             body.append(NSAttributedString(string: text + "\n", attributes: [
                 .font: bold ? UIFont.boldSystemFont(ofSize: size) : UIFont.systemFont(ofSize: size),
                 .foregroundColor: UIColor.black, .paragraphStyle: paragraph
             ]))
         }
-        append(record.name, size: fontSize + 5, bold: true)
-        if record.photos.isEmpty { append("見分けるための写真はまだありません", size: fontSize - 2) }
+        // The name is the header's; no line when there is no photo.
         for (label, value) in record.fields {
-            append(label, size: fontSize - 3, bold: true)
+            // A small grey label over its value, as on the screen.
+            body.append(NSAttributedString(string: label + "\n", attributes: [
+                .font: UIFont.systemFont(ofSize: fontSize - 3), .foregroundColor: ToolMemoPage.labelColor,
+                .paragraphStyle: labelParagraph
+            ]))
             append(value, size: fontSize)
         }
         if record.showsReviewDate {
@@ -73,8 +90,8 @@ enum EvacuationExporter {
         append("作った日：" + Date().nekoExportText(), size: fontSize - 3)
         let framesetter = CTFramesetterCreateWithAttributedString(body)
         func bodyRect(first: Bool) -> CGRect {
-            let top = margin + 35 + (first ? CGFloat(record.photos.count) * (photoHeight + 12) : 0)
-            return CGRect(x: margin, y: top, width: size.width - margin * 2,
+            let top = headerBottom + (first ? photoBlock : 0)
+            return CGRect(x: margin, y: top, width: width,
                           height: size.height - top - margin - 20)
         }
         var ranges: [CFRange] = []
@@ -92,9 +109,8 @@ enum EvacuationExporter {
         func frame(_ context: CGContext, footer: String) {
             UIColor.white.setFill()
             context.fill(CGRect(origin: .zero, size: size))
-            (record.heading as NSString).draw(at: CGPoint(x: margin, y: margin), withAttributes: [
-                .font: UIFont.boldSystemFont(ofSize: 16), .foregroundColor: UIColor.black
-            ])
+            ToolMemoPage.drawHeader(kind: record.heading, name: record.name, date: made, face: nil,
+                                    origin: CGPoint(x: margin, y: margin), width: width, pdf: printCopy)
             (footer as NSString).draw(at: CGPoint(x: margin, y: size.height - margin), withAttributes: [
                 .font: UIFont.systemFont(ofSize: 11), .foregroundColor: UIColor.darkGray
             ])
@@ -109,10 +125,11 @@ enum EvacuationExporter {
             { context, footer in
                 frame(context, footer: footer)
                 if index == 0 {
-                    var y = margin + 35
-                    for image in record.photos {
-                        draw(image, in: CGRect(x: margin, y: y, width: size.width - margin * 2, height: photoHeight))
-                        y += photoHeight + 12
+                    for (offset, image) in record.photos.enumerated() {
+                        let tile = CGRect(x: margin + CGFloat(offset % columns) * (tileWidth + photoGap),
+                                          y: headerBottom + CGFloat(offset / columns) * (tileHeight + photoGap),
+                                          width: tileWidth, height: tileHeight)
+                        ToolMemoPage.drawFilled(image, in: tile, radius: 10)
                     }
                 }
                 let rect = bodyRect(first: index == 0)
@@ -129,10 +146,10 @@ enum EvacuationExporter {
         for (label, image) in record.attachments {
             result.append { context, footer in
                 frame(context, footer: footer)
-                ("\(record.name)・\(label)" as NSString).draw(at: CGPoint(x: margin, y: margin + 30), withAttributes: [
+                ("\(record.name)・\(label)" as NSString).draw(at: CGPoint(x: margin, y: headerBottom), withAttributes: [
                     .font: UIFont.boldSystemFont(ofSize: fontSize), .foregroundColor: UIColor.black
                 ])
-                let top = margin + 64
+                let top = headerBottom + 34
                 draw(image, in: CGRect(x: margin, y: top, width: size.width - margin * 2,
                                        height: size.height - top - margin - 24))
             }
