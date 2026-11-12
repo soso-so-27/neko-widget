@@ -230,66 +230,7 @@ struct CatCareDetailView: View {
     }
 
     var body: some View {
-        Form {
-            // 11/7: the photo and name lead the page, outside the folds, so
-            // whose page it is shows before anything is opened.
-            if case let .profile(profile) = subject {
-                profileHeading(profile)
-            }
-            if otherProfiles.count > 1 {
-                Section {
-                    Picker("猫", selection: $selectedProfileID) {
-                        ForEach(otherProfiles) { other in
-                            Text(other.displayName).tag(Optional(other.identifier))
-                        }
-                    }
-                    .accessibilityIdentifier("cat-care-cat-picker")
-                }
-            }
-            if let message = store.loadError {
-                Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
-            } else if store.unreadableCatCount > 0 {
-                Section {
-                    Label("開けない記録があるので、いまは保存できません。アプリを最新にしてください。",
-                          systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                }
-            }
-            if autosaveFailed {
-                Section {
-                    Label("保存できませんでした。", systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                        .accessibilityIdentifier("cat-care-save-failed")
-                    Button("もう一度") { save() }
-                        .accessibilityIdentifier("cat-care-save-retry")
-                }
-            }
-            if farewell == nil {
-                // The same ring as on the ツール tab, so writing here visibly fills it.
-                // One line beside it, not a dashboard: what the next entry is for.
-                Section {
-                    HStack(spacing: 12) {
-                        CatCareRing(progress: progress, lineWidth: 4)
-                            .frame(width: 30, height: 30)
-                        Text(progress.filled >= progress.total ? "すべてそろっています"
-                             : progress.nextHint ?? "あと\(progress.total - progress.filled)つでそろいます")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier("cat-care-next-hint")
-                }
-            }
-            // 11/9: the photos every tool shows, open on the page, so a tool's
-            // 「この子のこと」を開く lands right on them.
-            identifyingPhotosSection
-            // Folded by default: four short rows that say how full each part is.
-            // Open one to write in it; nothing is hidden, only folded.
-            folded("basics", "基本", progress.basics) { basicsSection }
-            folded("health", "健康", progress.health) { healthSection }
-            folded("living", "暮らし", progress.living) { livingSection }
-            folded("household", "家の情報", progress.household) { householdSection }
-        }
+        Form { formContent }
         .disabled(isDeleting)
         .navigationBarBackButtonHidden(isDeleting || isSavingName)
         .onChange(of: draft) { _, _ in
@@ -392,6 +333,81 @@ struct CatCareDetailView: View {
 
     // MARK: Sections
 
+    /// The page, as 設定 (11/12): the photo and name, the ring, 見分ける写真,
+    /// then the four parts, always open, each a list of rows that show what
+    /// is written. Split in parts so the type checker stays fast.
+    @ViewBuilder private var formContent: some View {
+        // 11/7: the photo and name lead the page, so whose page it is shows first.
+        if case let .profile(profile) = subject {
+            profileHeading(profile)
+        }
+        if otherProfiles.count > 1 {
+            Section {
+                Picker("猫", selection: $selectedProfileID) {
+                    ForEach(otherProfiles) { other in
+                        Text(other.displayName).tag(Optional(other.identifier))
+                    }
+                }
+                .accessibilityIdentifier("cat-care-cat-picker")
+            }
+        }
+        statusSections
+        progressSection
+        // 11/9: the photos every tool shows, open on the page, so a tool's
+        // 「この子のこと」を開く lands right on them.
+        identifyingPhotosSection
+        // 11/12: the four parts are always open, each with how full it is in
+        // its header; a row shows what is written and opens it.
+        basicsSection
+        healthSection
+        livingSection
+        householdSection
+        // 11/12: deleting is the page's last row, after every part.
+        if case let .profile(profile) = subject {
+            deleteSection(profile)
+        }
+    }
+
+    @ViewBuilder private var statusSections: some View {
+        if let message = store.loadError {
+            Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
+        } else if store.unreadableCatCount > 0 {
+            Section {
+                Label("開けない記録があるので、いまは保存できません。アプリを最新にしてください。",
+                      systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+            }
+        }
+        if autosaveFailed {
+            Section {
+                Label("保存できませんでした。", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("cat-care-save-failed")
+                Button("もう一度") { save() }
+                    .accessibilityIdentifier("cat-care-save-retry")
+            }
+        }
+    }
+
+    @ViewBuilder private var progressSection: some View {
+        if farewell == nil {
+            // The same ring as on the ツール tab, so writing here visibly fills it.
+            // One line beside it, not a dashboard: what the next entry is for.
+            Section {
+                HStack(spacing: 12) {
+                    CatCareRing(progress: progress, lineWidth: 4)
+                        .frame(width: 30, height: 30)
+                    Text(progress.filled >= progress.total ? "すべてそろっています"
+                         : progress.nextHint ?? "あと\(progress.total - progress.filled)つでそろいます")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("cat-care-next-hint")
+            }
+        }
+    }
+
     static func photoTitle(_ role: CatCarePhotoRole) -> String { role == .face ? "顔の写真" : "全身の写真" }
 
     private func photoFile(_ role: CatCarePhotoRole) -> URL? {
@@ -401,9 +417,11 @@ struct CatCareDetailView: View {
     }
 
     /// 見分ける写真: the face and the whole body, the photos 迷子・避難・預ける use.
+    /// 11/12: two equal squares the photos fill (no gray bars), smaller than
+    /// the old wide tiles, with their names and 「⋯」 under them.
     private var identifyingPhotosSection: some View {
         Section {
-            ToolPhotoGrid {
+            HStack(alignment: .top, spacing: 16) {
                 ForEach(CatCarePhotoRole.allCases) { role in
                     let title = Self.photoTitle(role)
                     let file = photoFile(role)
@@ -419,8 +437,12 @@ struct CatCareDetailView: View {
                             setPhoto(nil, role)
                         }
                     }
+                    .filledSquare()
+                    .frame(maxWidth: 140)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 4)
             if photoFailed {
                 Text("写真を保存できませんでした。もう一度お試しください。")
                     .font(.footnote).foregroundStyle(.red)
@@ -466,94 +488,188 @@ struct CatCareDetailView: View {
         return line
     }
 
-    @ViewBuilder private var basicsSection: some View {
+    /// The heading's one quiet line, from what is written (11/12): 「オス・4歳」.
+    /// Unknown parts are left out; nothing known, no line. The age stops at a
+    /// recorded farewell day, worded as the 基本 footer words it (「4歳まで」).
+    private var summaryLine: String? {
+        var parts: [String] = []
+        switch draft.sex {
+        case .male: parts.append("オス")
+        case .female: parts.append("メス")
+        case .unknown: break
+        }
+        if let birthday = currentRecord?.birthday?.value ?? nil,
+           let age = CatCareLostCat.age(birthday, today: farewell ?? CatCareDay(date: Date())) {
+            parts.append(farewell == nil ? age : age + "まで")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "・")
+    }
+
+    // MARK: Rows (11/12, as 設定 and 病院で見せる)
+
+    /// A part's header: its name, and how full it is at the trailing side,
+    /// the same count as the ring (「基本　3 / 7」).
+    private func partHeader(_ title: String, _ count: (Int, Int), key: String) -> some View {
+        let full = count.0 >= count.1
+        return HStack {
+            Text(title)
+            Spacer()
+            Text(verbatim: full ? "そろっています" : "\(count.0) / \(count.1)")
+                .foregroundStyle(full ? Color.green : Color.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title)、\(count.0) / \(count.1)")
+        .accessibilityIdentifier("cat-care-part-\(key)")
+    }
+
+    /// A choice's name with its icon, the same as a ToolValueRow's.
+    private static func rowLabel(_ title: String, _ systemImage: String) -> some View {
+        Label {
+            Text(title).foregroundStyle(Color.primary)
+        } icon: {
+            Image(systemName: systemImage).foregroundStyle(Color.accentColor)
+        }
+    }
+
+    /// Who in the family wrote it, under the row, as under the old fields.
+    @ViewBuilder private func noted<Row: View>(_ row: Row, _ field: FamilyNotebookField?) -> some View {
+        if let field { row.familyNotebookNote(catID, field) } else { row }
+    }
+
+    /// The first words of a written text, on one line; nil when empty.
+    private static func firstWords(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return String(trimmed.split(whereSeparator: \.isNewline).joined(separator: " ").prefix(60))
+    }
+
+    /// A written item: its first words or 「未記入」; it opens a page with its
+    /// one field. The field keeps its identifier there; the row adds 「-row」.
+    private func textRow(_ item: CatCareTextItem) -> some View {
+        let words = Self.firstWords(draft[keyPath: item.path])
+        let problem = item.isMicrochip && microchipInvalid
+        return NavigationLink { textPage(item) } label: {
+            noted(ToolValueRow(title: item.title, systemImage: item.systemImage, value: words ?? "未記入",
+                               filled: words != nil, problem: problem), item.note)
+        }
+        .accessibilityIdentifier(item.identifier + "-row")
+    }
+
+    /// The page a written item opens: its one field, the same value in the
+    /// draft (so the autosave and its checks are the page's own), the cursor
+    /// in it; leaving saves what is pending.
+    private func textPage(_ item: CatCareTextItem) -> some View {
+        ToolPushedPage(title: item.title, focusesField: true, leave: { autosave?.cancel(); save() }) { focus in
+            Section {
+                CatCareTextField(item: item, text: $draft[dynamicMember: item.path], focus: focus)
+            } footer: {
+                if item.isMicrochip && microchipInvalid {
+                    Label("15桁の数字にすると保存されます。", systemImage: "exclamationmark.circle")
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+        .disabled(isDeleting)
+    }
+
+    /// A row that opens a sheet (the dates): the same look, with a chevron.
+    private func sheetRow(_ title: String, _ systemImage: String, value: String, filled: Bool,
+                          identifier: String, open: @escaping () -> Void) -> some View {
+        Button(action: open) {
+            HStack {
+                ToolValueRow(title: title, systemImage: systemImage, value: value, filled: filled)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .foregroundStyle(.primary)
+        .accessibilityIdentifier(identifier)
+    }
+
+    // MARK: 基本
+
+    private var basicsSection: some View {
         Section {
-            // The dates are facts about the cat, so they live here with the
-            // rest; the album reads them from here.
-            if case let .profile(profile) = subject {
-                Button { showsLifeDatesEditor = true } label: {
-                    HStack {
-                        LabeledContent("誕生日・迎えた日", value: profile.lifeDatesSummary)
-                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .foregroundStyle(.primary)
-                .accessibilityIdentifier("cat-care-life-dates")
-            }
-            if let farewell {
-                Button { showsFarewellEditor = true } label: {
-                    HStack {
-                        LabeledContent("旅立った日", value: CatFarewell.text(farewell))
-                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .foregroundStyle(.primary)
-                .accessibilityIdentifier("cat-care-farewell")
-            }
-            if let farewellSharing, farewell != nil || farewellSharing.sharedDay != nil {
-                Button { showsFarewellSharing = true } label: {
-                    HStack {
-                        LabeledContent(farewell == nil ? "家族が記録した旅立った日" : "家族の手帳",
-                                       value: FamilyNotebookWords.farewellStatus(farewellSharing))
-                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .foregroundStyle(.primary)
-                .accessibilityIdentifier("cat-care-farewell-family")
-            }
-            Picker("性別", selection: $draft.sex) {
-                Text("未記入").tag(CatCareSex.unknown)
-                Text("オス").tag(CatCareSex.male)
-                Text("メス").tag(CatCareSex.female)
-            }
-            .familyNotebookNote(catID, .sex)
-            Picker("去勢・避妊", selection: $draft.neutered) {
-                Text("未記入").tag(CatCareTriState.unknown)
-                Text("済み").tag(CatCareTriState.yes)
-                Text("まだ").tag(CatCareTriState.no)
-            }
-            .familyNotebookNote(catID, .neutered)
-            Picker("室内飼い", selection: $draft.indoorOnly) {
-                Text("未記入").tag(CatCareTriState.unknown)
-                Text("室内だけ").tag(CatCareTriState.yes)
-                Text("外にも出る").tag(CatCareTriState.no)
-            }
-            .familyNotebookNote(catID, .indoorOnly)
-            CatCareTextField(label: "毛色・柄", example: "例：キジトラ", text: $draft.coat)
-                .familyNotebookNote(catID, .coat)
-            CatCareTextField(label: "見分ける特徴", example: "例：しっぽが短い、右耳に切れ込み",
-                             text: $draft.marks, axis: .vertical, lines: 2...4)
-                .familyNotebookNote(catID, .marks)
-            Picker("マイクロチップ", selection: $draft.microchipStatus) {
-                Text("未記入").tag(CatCareMicrochipStatus.unknown)
-                Text("入っている").tag(CatCareMicrochipStatus.recorded)
-                Text("入っていない").tag(CatCareMicrochipStatus.none)
-            }
-            .familyNotebookNote(catID, .microchip)
-            .accessibilityIdentifier("cat-care-microchip-status")
+            lifeDateRows
+            sexPicker
+            neuteredPicker
+            indoorPicker
+            textRow(.coat)
+            textRow(.marks)
+            microchipPicker
             if draft.microchipStatus == .recorded {
-                VStack(alignment: .leading, spacing: 4) {
-                    CatCareTextField(label: "マイクロチップ番号", example: "15桁の数字", text: $draft.microchip,
-                                     identifier: "cat-care-microchip")
-                        .keyboardType(.numberPad)
-                        .font(.body.monospacedDigit())
-                    if microchipInvalid {
-                        Label("15桁の数字にすると保存されます。", systemImage: "exclamationmark.circle")
-                            .font(.caption).foregroundStyle(.orange)
-                    }
-                }
+                textRow(.microchip)
             }
+        } header: {
+            partHeader("基本", progress.basics, key: "basics")
         } footer: {
             Text(basicsFooter)
                 .accessibilityIdentifier("cat-care-basics")
         }
-        // 11/7: deleting is the last row of 基本, not the page's loudest line.
+    }
+
+    /// The dates are facts about the cat, so they live here with the rest;
+    /// the album reads them from here.
+    @ViewBuilder private var lifeDateRows: some View {
         if case let .profile(profile) = subject {
-            deleteSection(profile)
+            sheetRow("誕生日・迎えた日", "birthday.cake", value: profile.lifeDatesSummary,
+                     filled: profile.lifeReference != nil || profile.lifeDates.birthday != nil
+                        || profile.lifeDates.adoptionDay != nil,
+                     identifier: "cat-care-life-dates") { showsLifeDatesEditor = true }
         }
+        if let farewell {
+            sheetRow("旅立った日", "star", value: CatFarewell.text(farewell), filled: true,
+                     identifier: "cat-care-farewell") { showsFarewellEditor = true }
+        }
+        if let farewellSharing, farewell != nil || farewellSharing.sharedDay != nil {
+            sheetRow(farewell == nil ? "家族が記録した旅立った日" : "家族の手帳", "person.2",
+                     value: FamilyNotebookWords.farewellStatus(farewellSharing), filled: true,
+                     identifier: "cat-care-farewell-family") { showsFarewellSharing = true }
+        }
+    }
+
+    private var sexPicker: some View {
+        Picker(selection: $draft.sex) {
+            Text("未記入").tag(CatCareSex.unknown)
+            Text("オス").tag(CatCareSex.male)
+            Text("メス").tag(CatCareSex.female)
+        } label: { Self.rowLabel("性別", "pawprint") }
+        .pickerStyle(.menu)
+        .familyNotebookNote(catID, .sex)
+        .accessibilityIdentifier("cat-care-sex")
+    }
+
+    private var neuteredPicker: some View {
+        Picker(selection: $draft.neutered) {
+            Text("未記入").tag(CatCareTriState.unknown)
+            Text("済み").tag(CatCareTriState.yes)
+            Text("まだ").tag(CatCareTriState.no)
+        } label: { Self.rowLabel("去勢・避妊", "checkmark.seal") }
+        .pickerStyle(.menu)
+        .familyNotebookNote(catID, .neutered)
+        .accessibilityIdentifier("cat-care-neutered")
+    }
+
+    private var indoorPicker: some View {
+        Picker(selection: $draft.indoorOnly) {
+            Text("未記入").tag(CatCareTriState.unknown)
+            Text("室内だけ").tag(CatCareTriState.yes)
+            Text("外にも出る").tag(CatCareTriState.no)
+        } label: { Self.rowLabel("室内飼い", "house") }
+        .pickerStyle(.menu)
+        .familyNotebookNote(catID, .indoorOnly)
+        .accessibilityIdentifier("cat-care-indoor")
+    }
+
+    private var microchipPicker: some View {
+        Picker(selection: $draft.microchipStatus) {
+            Text("未記入").tag(CatCareMicrochipStatus.unknown)
+            Text("入っている").tag(CatCareMicrochipStatus.recorded)
+            Text("入っていない").tag(CatCareMicrochipStatus.none)
+        } label: { Self.rowLabel("マイクロチップ", "memorychip") }
+        .pickerStyle(.menu)
+        .familyNotebookNote(catID, .microchip)
+        .accessibilityIdentifier("cat-care-microchip-status")
     }
 
     /// The key photo (tap to change) and the name with its pencil, at the top
@@ -592,30 +708,15 @@ struct CatCareDetailView: View {
                         .multilineTextAlignment(.center)
                         .accessibilityIdentifier("cat-care-key-photo-empty")
                 }
-                // 11/11: the name is changed in the system's own small dialog
-                // (keyboard up at once, 保存 / キャンセル where iOS puts them).
-                // A field with two text buttons opened under the name, with
-                // the name still above it, and read as a broken row.
-                Button {
-                    draftName = profile.name ?? ""
-                    nameSaveFailed = false
-                    showsNameEditor = true
-                } label: {
-                    HStack(spacing: 8) {
-                        Text(profile.displayName)
-                            .font(.title2.bold())
-                            .foregroundStyle(Color.primary)
-                        Image(systemName: "pencil.circle.fill")
-                            .font(.title3)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
+                nameButton(profile)
+                if let summaryLine {
+                    // 11/12: one quiet line of what is known (「オス・4歳」).
+                    Text(summaryLine)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .accessibilityIdentifier("cat-care-summary")
                 }
-                .buttonStyle(.plain)
-                .disabled(isSavingName)
-                .accessibilityLabel("\(profile.displayName)、名前を変更")
-                .accessibilityIdentifier("cat-profile-rename")
                 if nameSaveFailed {
                     Text("名前を保存できませんでした。もう一度お試しください。")
                         .font(.footnote)
@@ -635,6 +736,33 @@ struct CatCareDetailView: View {
         }
     }
 
+    /// 11/11: the name is changed in the system's own small dialog
+    /// (keyboard up at once, 保存 / キャンセル where iOS puts them).
+    /// A field with two text buttons opened under the name, with
+    /// the name still above it, and read as a broken row.
+    private func nameButton(_ profile: CatProfilePresentation) -> some View {
+        Button {
+            draftName = profile.name ?? ""
+            nameSaveFailed = false
+            showsNameEditor = true
+        } label: {
+            HStack(spacing: 8) {
+                Text(profile.displayName)
+                    .font(.title2.bold())
+                    .foregroundStyle(Color.primary)
+                Image(systemName: "pencil.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isSavingName)
+        .accessibilityLabel("\(profile.displayName)、名前を変更")
+        .accessibilityIdentifier("cat-profile-rename")
+    }
+
     /// An empty name keeps the old one: the dialog cannot grey out 保存.
     private func saveName(_ profile: CatProfilePresentation) {
         guard !draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -647,7 +775,7 @@ struct CatCareDetailView: View {
         }
     }
 
-    /// Deleting the cat, the last row of 基本. The confirmation also
+    /// Deleting the cat, the page's last row (11/12; was the last of 基本). The confirmation also
     /// offers to record the day instead, as before (11/7: moved from 写真).
     private func deleteSection(_ profile: CatProfilePresentation) -> some View {
         Section {
@@ -687,126 +815,119 @@ struct CatCareDetailView: View {
         }
     }
 
-    @State private var openParts: Set<String> = []
-
-    /// A part of この子のこと: one row while folded (「健康　2 / 4」), the whole
-    /// section when opened. Tapping the row again folds it. The row is the
-    /// part's title, so the opened sections carry no header of their own.
-    @ViewBuilder private func folded<Content: View>(_ key: String, _ title: String, _ count: (Int, Int),
-                                                    @ViewBuilder content: () -> Content) -> some View {
-        let isOpen = openParts.contains(key)
-        Section {
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    if isOpen { openParts.remove(key) } else { openParts.insert(key) }
-                }
-            } label: {
-                HStack {
-                    Text(title).font(.headline).foregroundStyle(.primary)
-                    Spacer()
-                    Text(verbatim: count.0 >= count.1 ? "そろっています" : "\(count.0) / \(count.1)")
-                        .font(.subheadline)
-                        .foregroundStyle(count.0 >= count.1 ? Color.green : Color.secondary)
-                    Image(systemName: "chevron.down")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(isOpen ? 180 : 0))
-                }
-                .contentShape(Rectangle())
-            }
-            .accessibilityLabel("\(title)、\(count.0) / \(count.1)")
-            .accessibilityHint(isOpen ? "たたむ" : "開いて書く")
-            .accessibilityIdentifier("cat-care-part-\(key)")
-        }
-        if isOpen { content() }
-    }
+    // MARK: 健康
 
     private var healthSection: some View {
         Section {
-            // Like アレルギー: 「なし」 is an answer too, so a healthy cat's page can be all filled in.
-            Picker("持病", selection: $draft.conditionsStatus) {
-                Text("未記入").tag(CatCareConditionsStatus.unknown)
-                Text("なし").tag(CatCareConditionsStatus.none)
-                Text("あり").tag(CatCareConditionsStatus.recorded)
-            }
-            .familyNotebookNote(catID, .conditions)
-            .accessibilityIdentifier("cat-care-conditions-status")
+            conditionsPicker
             if draft.conditionsStatus == .recorded {
-                CatCareTextField(label: "持病の内容", example: "例：腎臓の療法食中", text: $draft.conditions,
-                                 axis: .vertical, lines: 1...4, identifier: "cat-care-conditions-text")
+                textRow(.conditions)
             }
-            Picker("アレルギー", selection: $draft.allergyStatus) {
-                Text("未確認").tag(CatCareAllergy.Status.unknown)
-                Text("なし").tag(CatCareAllergy.Status.none)
-                Text("あり").tag(CatCareAllergy.Status.recorded)
-            }
-            .familyNotebookNote(catID, .allergyStatus)
+            allergyPicker
             if draft.allergyStatus == .recorded {
-                CatCareTextField(label: "アレルギーの内容", example: "例：鶏肉", text: $draft.allergyText)
-                    .familyNotebookNote(catID, .allergyText)
+                textRow(.allergyText)
             }
-            listRow(title: "体重", detail: weightSummary, kind: .weight)
-            listRow(title: "飲んでいる薬", detail: medicationSummary, kind: .medication)
-            listRow(title: "ワクチン", detail: vaccinationSummary, kind: .vaccination)
-            if currentRecord?.activeVaccinations.isEmpty ?? true {
-                // No history to list: 「受けていない」 is an answer too.
-                Toggle("ワクチンは受けていない", isOn: Binding(
-                    get: { draft.vaccinationStatus == CatCareVaccinationStatus.none },
-                    set: { draft.vaccinationStatus = $0 ? CatCareVaccinationStatus.none : .unknown }))
-                    .accessibilityIdentifier("cat-care-vaccination-none")
-            }
+            listRow(title: "体重", systemImage: "scalemass", detail: weightSummary, kind: .weight)
+            listRow(title: "飲んでいる薬", systemImage: "pills", detail: medicationSummary, kind: .medication)
+            listRow(title: "ワクチン", systemImage: "syringe", detail: vaccinationSummary, kind: .vaccination)
+            vaccinationNoneToggle
+        } header: {
+            partHeader("健康", progress.health, key: "health")
         }
     }
+
+    /// Like アレルギー: 「なし」 is an answer too, so a healthy cat's page can be all filled in.
+    private var conditionsPicker: some View {
+        Picker(selection: $draft.conditionsStatus) {
+            Text("未記入").tag(CatCareConditionsStatus.unknown)
+            Text("なし").tag(CatCareConditionsStatus.none)
+            Text("あり").tag(CatCareConditionsStatus.recorded)
+        } label: { Self.rowLabel("持病", "heart.text.square") }
+        .pickerStyle(.menu)
+        .familyNotebookNote(catID, .conditions)
+        .accessibilityIdentifier("cat-care-conditions-status")
+    }
+
+    private var allergyPicker: some View {
+        Picker(selection: $draft.allergyStatus) {
+            Text("未確認").tag(CatCareAllergy.Status.unknown)
+            Text("なし").tag(CatCareAllergy.Status.none)
+            Text("あり").tag(CatCareAllergy.Status.recorded)
+        } label: { Self.rowLabel("アレルギー", "allergens") }
+        .pickerStyle(.menu)
+        .familyNotebookNote(catID, .allergyStatus)
+        .accessibilityIdentifier("cat-care-allergy-status")
+    }
+
+    /// No history to list: 「受けていない」 is an answer too.
+    @ViewBuilder private var vaccinationNoneToggle: some View {
+        if currentRecord?.activeVaccinations.isEmpty ?? true {
+            Toggle(isOn: Binding(
+                get: { draft.vaccinationStatus == CatCareVaccinationStatus.none },
+                set: { draft.vaccinationStatus = $0 ? CatCareVaccinationStatus.none : .unknown })) {
+                Self.rowLabel("ワクチンは受けていない", "minus.circle")
+            }
+            .accessibilityIdentifier("cat-care-vaccination-none")
+        }
+    }
+
+    // MARK: 暮らし
 
     private var livingSection: some View {
         Section {
-            listRow(title: "ごはん", detail: CatCareFormat.meals(currentRecord?.activeMeals ?? []), kind: .meal)
-            CatCareTextField(label: "食事の注意", example: "例：療法食、ほかの猫と分けてあげる",
-                             text: $draft.specialDiet, axis: .vertical, lines: 1...3)
-                .familyNotebookNote(catID, .specialDiet)
-            CatCareTextField(label: "水", example: "例：1日2回とりかえる", text: $draft.water)
-                .familyNotebookNote(catID, .water)
-            CatCareTextField(label: "トイレ", example: "例：システムトイレ・1日2回そうじ", text: $draft.litter)
-                .familyNotebookNote(catID, .litter)
-            CatCareTextField(label: "接し方・苦手なこと", example: "例：抱っこが苦手",
-                             text: $draft.temperament, axis: .vertical, lines: 1...4)
-                .familyNotebookNote(catID, .temperament)
+            listRow(title: "ごはん", systemImage: "fork.knife",
+                    detail: CatCareFormat.meals(currentRecord?.activeMeals ?? []), kind: .meal)
+            textRow(.specialDiet)
+            textRow(.water)
+            textRow(.litter)
+            textRow(.temperament)
+        } header: {
+            partHeader("暮らし", progress.living, key: "living")
         }
     }
 
+    // MARK: 家の情報
+
     private var householdSection: some View {
         Section {
-            CatCareTextField(label: "飼い主の連絡先", example: "例：090-1234-5678", text: $draft.ownerContact)
-            CatCareTextField(label: "つながらないときの連絡先", example: "例：家族の名前と電話番号", text: $draft.backupContact)
-            Picker("かかりつけ", selection: $draft.vetStatus) {
-                Text("未記入").tag(CatCareVetStatus.unknown)
-                Text("決まっている").tag(CatCareVetStatus.recorded)
-                Text("まだない").tag(CatCareVetStatus.none)
-            }
-            .familyNotebookNote(catID, .vetName)
-            .accessibilityIdentifier("cat-care-vet-status")
+            textRow(.ownerContact)
+            textRow(.backupContact)
+            vetPicker
             if draft.vetStatus == .recorded {
-                CatCareTextField(label: "かかりつけ病院の名前", example: "例：みどり動物病院", text: $draft.vetName)
-                CatCareTextField(label: "かかりつけ病院の電話", example: "例：03-1234-5678", text: $draft.vetPhone)
-                    .keyboardType(.phonePad)
-                    .familyNotebookNote(catID, .vetPhone)
+                textRow(.vetName)
+                textRow(.vetPhone)
             }
             // 11/7: the family's meeting place is written only in 避難に備える
             // (one place); the stored value is kept and read there.
+        } header: {
+            partHeader("家の情報", progress.household, key: "household")
         } footer: {
             Text("ほかの猫とも共通です。")
         }
     }
 
-    private func listRow(title: String, detail: String, kind: CatCareListEditor.Kind) -> some View {
+    private var vetPicker: some View {
+        Picker(selection: $draft.vetStatus) {
+            Text("未記入").tag(CatCareVetStatus.unknown)
+            Text("決まっている").tag(CatCareVetStatus.recorded)
+            Text("まだない").tag(CatCareVetStatus.none)
+        } label: { Self.rowLabel("かかりつけ", "cross.case") }
+        .pickerStyle(.menu)
+        .familyNotebookNote(catID, .vetName)
+        .accessibilityIdentifier("cat-care-vet-status")
+    }
+
+    /// A list (体重・薬・ワクチン・ごはん): the same row look, opening its list.
+    private func listRow(title: String, systemImage: String, detail: String,
+                         kind: CatCareListEditor.Kind) -> some View {
         NavigationLink {
             CatCareListView(kind: kind, catID: catID, editing: $editing)
         } label: {
-            LabeledContent(title, value: detail)
-                .lineLimit(1)
+            ToolValueRow(title: title, systemImage: systemImage, value: detail, filled: detail != "未記入")
                 .accessibilityValue(detail)
         }
         .disabled(catID == nil)
+        .accessibilityIdentifier("cat-care-list-\(kind.rawValue)")
     }
 
     // MARK: Summaries
@@ -917,28 +1038,96 @@ struct CatCareDetailView: View {
     }
 }
 
-/// A field with its name always shown above it, like 預けるとき's fields
-/// (11/7: the name was only the placeholder, so once typed, the two
-/// contacts looked alike). The placeholder is an example.
-private struct CatCareTextField: View {
-    let label: String
+/// A written item of 「この子のこと」 (11/12): its row shows the first words and
+/// opens a page with this one field. The example is the field's placeholder,
+/// as before; the keyboard and the 15-digit check stay the same.
+private struct CatCareTextItem {
+    let title: String
+    let systemImage: String
     let example: String
+    let path: WritableKeyPath<CatCareDraft, String>
+    /// The field's identifier, on the page; the row's is this plus 「-row」.
+    let identifier: String
+    /// Who in the family wrote it, shown under the row.
+    var note: FamilyNotebookField? = nil
+    /// Several lines; nil: one line.
+    var lines: ClosedRange<Int>? = nil
+    var keyboard: UIKeyboardType = .default
+    var isMicrochip = false
+
+    // 基本
+    static var coat: Self {
+        Self(title: "毛色・柄", systemImage: "paintpalette", example: "例：キジトラ", path: \.coat,
+             identifier: "cat-care-coat", note: .coat)
+    }
+    static var marks: Self {
+        Self(title: "見分ける特徴", systemImage: "eye", example: "例：しっぽが短い、右耳に切れ込み", path: \.marks,
+             identifier: "cat-care-marks", note: .marks, lines: 3...8)
+    }
+    static var microchip: Self {
+        Self(title: "マイクロチップ番号", systemImage: "number", example: "15桁の数字", path: \.microchip,
+             identifier: "cat-care-microchip", keyboard: .numberPad, isMicrochip: true)
+    }
+    // 健康
+    static var conditions: Self {
+        Self(title: "持病の内容", systemImage: "list.bullet.clipboard", example: "例：腎臓の療法食中",
+             path: \.conditions, identifier: "cat-care-conditions-text", lines: 3...8)
+    }
+    static var allergyText: Self {
+        Self(title: "アレルギーの内容", systemImage: "list.bullet.clipboard", example: "例：鶏肉", path: \.allergyText,
+             identifier: "cat-care-allergy-text", note: .allergyText)
+    }
+    // 暮らし
+    static var specialDiet: Self {
+        Self(title: "食事の注意", systemImage: "leaf", example: "例：療法食、ほかの猫と分けてあげる",
+             path: \.specialDiet, identifier: "cat-care-special-diet", note: .specialDiet, lines: 3...8)
+    }
+    static var water: Self {
+        Self(title: "水", systemImage: "drop", example: "例：1日2回とりかえる", path: \.water,
+             identifier: "cat-care-water", note: .water)
+    }
+    static var litter: Self {
+        Self(title: "トイレ", systemImage: "tray", example: "例：システムトイレ・1日2回そうじ", path: \.litter,
+             identifier: "cat-care-litter", note: .litter)
+    }
+    static var temperament: Self {
+        Self(title: "接し方・苦手なこと", systemImage: "hand.raised", example: "例：抱っこが苦手",
+             path: \.temperament, identifier: "cat-care-temperament", note: .temperament, lines: 3...8)
+    }
+    // 家の情報
+    static var ownerContact: Self {
+        Self(title: "飼い主の連絡先", systemImage: "phone", example: "例：090-1234-5678", path: \.ownerContact,
+             identifier: "cat-care-owner-contact")
+    }
+    static var backupContact: Self {
+        Self(title: "つながらないときの連絡先", systemImage: "person.crop.circle.badge.questionmark",
+             example: "例：家族の名前と電話番号", path: \.backupContact, identifier: "cat-care-backup-contact")
+    }
+    static var vetName: Self {
+        Self(title: "かかりつけ病院の名前", systemImage: "building.2", example: "例：みどり動物病院", path: \.vetName,
+             identifier: "cat-care-vet-name")
+    }
+    static var vetPhone: Self {
+        Self(title: "かかりつけ病院の電話", systemImage: "phone.circle", example: "例：03-1234-5678", path: \.vetPhone,
+             identifier: "cat-care-vet-phone", note: .vetPhone, keyboard: .phonePad)
+    }
+}
+
+/// The one field on a written item's page. Its name is the page's title, so
+/// the field shows only the example; VoiceOver reads the name.
+private struct CatCareTextField: View {
+    let item: CatCareTextItem
     @Binding var text: String
-    var axis: Axis = .horizontal
-    var lines: ClosedRange<Int> = 1...1
-    var identifier = ""
+    let focus: FocusState<Bool>.Binding
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(.subheadline.weight(.medium))
-                .accessibilityHidden(true)
-            TextField(example, text: $text, axis: axis)
-                .lineLimit(lines)
-                .accessibilityLabel(label)
-                .accessibilityIdentifier(identifier)
-        }
-        .padding(.vertical, 2)
+        TextField(item.example, text: $text, axis: item.lines == nil ? .horizontal : .vertical)
+            .lineLimit(item.lines ?? (1...1))
+            .keyboardType(item.keyboard)
+            .font(item.isMicrochip ? Font.body.monospacedDigit() : Font.body)
+            .focused(focus)
+            .accessibilityLabel(item.title)
+            .accessibilityIdentifier(item.identifier)
     }
 }
 
@@ -1996,6 +2185,8 @@ struct ToolPhotoSlot<Actions: View>: View {
     /// Tap to choose, no menu (11/11): a tool's 見分ける写真, chosen into
     /// 「この子のこと」; taking off and cropping stay there.
     var chooseOnly = false
+    /// A square the photo fills (`filledSquare()`); off: the whole photo, 4:3.
+    var fillsSquare = false
     let identifier: String
     let actionsIdentifier: String
     let choose: () -> Void
@@ -2016,14 +2207,24 @@ struct ToolPhotoSlot<Actions: View>: View {
 
     private var tile: some View {
         Color(.tertiarySystemGroupedBackground)
-            .aspectRatio(4.0 / 3.0, contentMode: .fit)
+            .aspectRatio(fillsSquare ? 1 : 4.0 / 3.0, contentMode: .fit)
             .overlay {
-                if let shown { Image(uiImage: shown).resizable().scaledToFit() }
+                if fillsSquare, let shown { Image(uiImage: shown).resizable().scaledToFill() }
+                else if let shown { Image(uiImage: shown).resizable().scaledToFit() }
                 else if !hasPhoto {
                     Image(systemName: readOnly ? "photo" : "photo.badge.plus").font(.title2).foregroundStyle(.secondary)
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 10))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    /// A square the photo fills, cut at the edges (11/12, 「この子のこと」's
+    /// 見分ける写真); every other screen keeps the whole photo in a wide tile.
+    func filledSquare() -> Self {
+        var slot = self
+        slot.fillsSquare = true
+        return slot
     }
 
     var body: some View {
