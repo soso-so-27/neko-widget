@@ -19,6 +19,89 @@ def section(value: str, start: str, end: str) -> str:
     return value[start_index:end_index]
 
 
+class FirstLaunchAndPlusLook1112Tests(unittest.TestCase):
+    """11/12 見た目の点検: the first-run screens, the Widget guide and Plus."""
+
+    GUIDE_IMAGES = ("onboarding-widget-step-1", "onboarding-widget-step-2-ios18",
+                    "onboarding-widget-step-2-legacy", "onboarding-widget-step-3",
+                    "onboarding-widget-cloudy", "onboarding-widget-change-source")
+
+    @staticmethod
+    def png_size(path: Path) -> tuple:
+        import struct
+        data = path.read_bytes()[:24]
+        assert data[:8] == b"\x89PNG\r\n\x1a\n", path
+        return struct.unpack(">II", data[16:24])
+
+    def test_guide_pictures_are_drawn_screens_in_the_catalog(self) -> None:
+        import json
+        guide = source("NekoWidget/Views/WidgetPlacementGuideView.swift")
+        assets = ROOT / "NekoWidget/Assets.xcassets"
+        for name in self.GUIDE_IMAGES:
+            self.assertIn(f'"{name}"', guide, name)
+            folder = assets / f"{name}.imageset"
+            contents = json.loads((folder / "Contents.json").read_text(encoding="utf-8"))
+            files = [image["filename"] for image in contents["images"] if "filename" in image]
+            self.assertEqual(files, [f"{name}.png"], name)
+            # One iPhone screen at 3x, like the captures they replace.
+            self.assertEqual(self.png_size(folder / f"{name}.png"), (1206, 2622), name)
+        # Every step is a picture: no symbol stands in for one.
+        self.assertNotIn('"sf:', guide)
+        self.assertNotIn("Image(systemName:", guide)
+        # The page dots keep a finger's room from the step's last line.
+        self.assertIn(".padding(.bottom, 56)", guide)
+
+    def test_nowa_art_is_small_and_decorative(self) -> None:
+        assets = ROOT / "NekoWidget/Assets.xcassets"
+        for name in ("Nowa-peek", "Nowa-sit-up"):
+            width, height = self.png_size(assets / f"{name}.imageset/{name}.png")
+            self.assertLessEqual(max(width, height), 600, name)
+        offer = source("NekoWidget/Views/MembershipOfferView.swift")
+        nowa = section(offer, "private static var nowaBox: some View {", "    private var offerDetails: some View {")
+        self.assertIn('Image("Nowa-peek")', nowa)
+        self.assertIn(".frame(height: 164)", nowa)
+        self.assertIn(".accessibilityHidden(true)", nowa)
+        self.assertNotIn('Image(systemName: "cat")', offer)
+        onboarding = source("NekoWidget/Views/OnboardingView.swift")
+        zero = section(onboarding, "private var nowaWindow: some View {", "/// Full access:")
+        self.assertIn('Image("Nowa-sit-up")', zero)
+        self.assertIn(".accessibilityHidden(true)", zero)
+        result = section(onboarding, "private var zeroResult: some View {", "private var nowaWindow: some View {")
+        self.assertLess(result.index("nowaWindow"), result.index('"onboarding-scan-zero-body"'))
+
+    def test_first_page_fits_and_bars_match_the_page(self) -> None:
+        onboarding = source("NekoWidget/Views/OnboardingView.swift")
+        purpose = section(onboarding, "private struct OnboardingPurposePage: View", "struct OnboardingWindowMosaic: View")
+        # The windows shrink first; the page scrolls only when the words alone do not fit.
+        self.assertIn("ViewThatFits(in: .vertical) {\n            fittedPage", purpose)
+        self.assertIn(".frame(width: OnboardingWindowMosaic.width(fitting: proxy.size))", purpose)
+        self.assertIn("max(0, min(size.width, (size.height - 2) * 3 / 4))", onboarding)
+        guide = source("NekoWidget/Views/WidgetPlacementGuideView.swift")
+        for text in (onboarding, guide):
+            self.assertNotIn(".background(.bar)", text)
+        self.assertIn(".buttonStyle(GuideSecondaryButtonStyle())", guide)
+        self.assertIn("Color(uiColor: .secondarySystemFill)", guide)
+
+    def test_found_cats_fill_the_page(self) -> None:
+        onboarding = source("NekoWidget/Views/OnboardingView.swift")
+        grid = section(onboarding, "    private var photoGrid: some View {", "    private func photoTile(")
+        self.assertIn("if showsProgress || photos.count >= 5 {", grid)
+        self.assertIn("} else if photos.count == 3 {", grid)
+        self.assertIn("let count = photos.count == 1 ? 1 : 2", grid)
+        self.assertIn('.accessibilityLabel("見つかった猫写真の一部")', grid)
+        self.assertIn('.accessibilityIdentifier("initial-scan-photo-\\(photo.localIdentifier)")', onboarding)
+
+    def test_plus_purchase_block_is_tight_on_small_screens(self) -> None:
+        offer = source("NekoWidget/Views/MembershipOfferView.swift")
+        self.assertIn(".onGeometryChange(for: Bool.self) { $0.size.height < 640 } action: { isShortScreen = $0 }", offer)
+        self.assertIn("VStack(spacing: isShortScreen ? 4 : 8) {", offer)
+        self.assertIn(".padding(.bottom, pinsPurchase ? Self.fadeHeight + 20 : 20)", offer)
+        links = section(offer, "    private var footerLinks: some View {", "@ViewBuilder private var footerLinkContent")
+        self.assertIn("HStack(spacing: 16) { footerLinkContent }", links)
+        self.assertIn("LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)],", links)
+        self.assertIn("if dynamicTypeSize.isAccessibilitySize {", links)
+
+
 class WordingPass1112Tests(unittest.TestCase):
     """11/12 wording pass: one word per thing on the screens this pass owns.
 
@@ -2831,7 +2914,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             presentation,
         )
         self.assertIn("closeTitle != nil && windowName == nil", guide)
-        self.assertIn('[(image: "sf:hand.tap.fill", text: OnboardingPresentationCopy.widgetChangeSourceStep)]', guide)
+        self.assertIn('[(image: "onboarding-widget-change-source", text: OnboardingPresentationCopy.widgetChangeSourceStep)]', guide)
         self.assertIn("return placementSteps + cloudy + changeSource", guide)
         # 11/10: place first, then come back. The hint is on the screen. 11/12:
         # the button checks nothing, so it says the person goes out to place
@@ -2839,7 +2922,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('static let widgetAction = "ホーム画面で置いてきます"', presentation)
         self.assertNotIn('"置きました"', presentation)
         # 11/12: the guide's last step uses the Widget's own words.
-        self.assertIn('[(image: "sf:cloud.fill", text: OnboardingPresentationCopy.widgetCloudyStep)]', guide)
+        self.assertIn('[(image: "onboarding-widget-cloudy", text: OnboardingPresentationCopy.widgetCloudyStep)]', guide)
         widget_view = source("NekoWidgetWidget/NekoWidgetView.swift")
         self.assertIn('"タップで、きょうの1枚"', widget_view)
         self.assertIn("「タップで、きょうの1枚」を押すと", presentation)
@@ -5265,7 +5348,7 @@ class OnboardingEndingTests(unittest.TestCase):
         model = source("NekoWidget/ViewModels/AppViewModel.swift")
         self.assertIn('linkErrorMessage = "この招待リンクは開けませんでした。', model)
         steps = source("NekoWidget/Views/WidgetPlacementGuideView.swift")
-        self.assertIn('["onboarding-widget-step-1", "", "onboarding-widget-step-3"]', steps)
+        self.assertIn('["onboarding-widget-step-1", "onboarding-widget-step-2-legacy", "onboarding-widget-step-3"]', steps)
 
 
 class WidgetHygieneTests(unittest.TestCase):

@@ -17,13 +17,14 @@ struct WidgetPlacementGuideView: View {
 
     /// One picture per step: the iOS screens the person will see, in order.
     /// 11/7: the clouded window and its tag are the last step (it was a small
-    /// grey note under the pages). An image name starting with "sf:" is a symbol.
+    /// grey note under the pages). 11/12: every step is a drawn Home Screen
+    /// (the screenshots showed a test app, a keyboard and a black wallpaper).
     private var steps: [(image: String, text: String)] {
         let cloudy: [(image: String, text: String)] = windowName == nil
-            ? [(image: "sf:cloud.fill", text: OnboardingPresentationCopy.widgetCloudyStep)] : []
+            ? [(image: "onboarding-widget-cloudy", text: OnboardingPresentationCopy.widgetCloudyStep)] : []
         // 11/12: from 設定, the last step says how to change what it shows.
         let changeSource: [(image: String, text: String)] = closeTitle != nil && windowName == nil
-            ? [(image: "sf:hand.tap.fill", text: OnboardingPresentationCopy.widgetChangeSourceStep)] : []
+            ? [(image: "onboarding-widget-change-source", text: OnboardingPresentationCopy.widgetChangeSourceStep)] : []
         return placementSteps + cloudy + changeSource
     }
 
@@ -32,9 +33,9 @@ struct WidgetPlacementGuideView: View {
             Array(zip(["onboarding-widget-step-1", "onboarding-widget-step-2-ios18", "onboarding-widget-step-3"],
                       OnboardingPresentationCopy.widgetModernPlacementSteps))
         } else {
-            // No screenshot of iOS 17's 「＋」: a symbol there, and the search
-            // screen for the last step (11/6: the pictures were one step off).
-            Array(zip(["onboarding-widget-step-1", "", "onboarding-widget-step-3"],
+            // iOS 17's own 「＋」, and the search screen for the last step
+            // (11/6: the pictures were one step off).
+            Array(zip(["onboarding-widget-step-1", "onboarding-widget-step-2-legacy", "onboarding-widget-step-3"],
                       OnboardingPresentationCopy.widgetLegacyPlacementSteps))
         }
     }
@@ -50,28 +51,15 @@ struct WidgetPlacementGuideView: View {
             // The pictures do the explaining; one line under each.
             TabView(selection: $page) {
                 ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
-                    VStack(spacing: 12) {
-                        Group {
-                            if step.image.isEmpty {
-                                Image(systemName: "plus.square.fill")
-                                    .font(.system(size: 96))
-                                    .foregroundStyle(.tint)
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            } else if step.image.hasPrefix("sf:") {
-                                Image(systemName: String(step.image.dropFirst(3)))
-                                    .font(.system(size: 96))
-                                    .foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            } else {
-                                Image(step.image)
-                                    .resizable()
-                                    .scaledToFit()
-                                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                        .stroke(Color(.separator), lineWidth: 0.5))
-                            }
-                        }
-                        .accessibilityHidden(true)
+                    VStack(spacing: 14) {
+                        Image(step.image)
+                            .resizable()
+                            .scaledToFit()
+                            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .stroke(Color(.separator), lineWidth: 0.5))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .accessibilityHidden(true)
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
                             Text((index + 1).formatted())
                                 .font(.subheadline.bold())
@@ -87,7 +75,9 @@ struct WidgetPlacementGuideView: View {
                         .accessibilityLabel("手順\(index + 1)。\(step.text)")
                     }
                     .padding(.horizontal, 24)
-                    .padding(.bottom, 36)
+                    // Room for the page dots under the step's last line (11/12:
+                    // they touched it).
+                    .padding(.bottom, 56)
                     .tag(index)
                 }
             }
@@ -126,8 +116,7 @@ struct WidgetPlacementGuideView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 5)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
+                    .buttonStyle(GuideSecondaryButtonStyle())
                     .accessibilityIdentifier("widget-placement-close")
                 } else {
                     Button(action: onComplete) {
@@ -140,15 +129,34 @@ struct WidgetPlacementGuideView: View {
                     .controlSize(.large)
                     .accessibilityIdentifier("widget-placement-complete")
 
+                    // 「あとで」 is quiet grey text on every first-run page (11/12).
                     Button(OnboardingPresentationCopy.widgetLaterAction, action: onSkip)
-                        .buttonStyle(.bordered)
-                        .controlSize(.large)
+                        .buttonStyle(.plain)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(minHeight: 44)
                         .accessibilityIdentifier("widget-placement-skip")
                 }
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
-            .background(.bar)
+            // The page's own colour: `.bar` drew a second band with a line.
+            .background(Color(.systemBackground))
         }
+    }
+}
+
+/// A secondary button that still reads as a button on a black ground
+/// (11/12: `.bordered` was a black pill on black in dark mode).
+struct GuideSecondaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.headline)
+            .foregroundStyle(.tint)
+            .frame(maxWidth: .infinity, minHeight: 50)
+            .background(Color(uiColor: .secondarySystemFill),
+                        in: RoundedRectangle(cornerRadius: NekoRadius.button, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: NekoRadius.button, style: .continuous))
+            .opacity(configuration.isPressed ? 0.6 : 1)
     }
 }
