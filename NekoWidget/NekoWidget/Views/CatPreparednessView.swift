@@ -176,7 +176,7 @@ struct LostCatDraftView: View {
     let initialName: String
     let profiles: [CatProfilePresentation]
     let allPhotos: [CatProfilePhotoPresentation]
-    /// The row of cats above the form; empty when the form stands alone.
+    /// The cats in the bar's cat menu; empty when the form stands alone.
     var stripCats: [ToolStripCat] = []
     var initialPhotoImage: UIImage? = nil
     @ObservedObject var evacuationStore = EvacuationStore.shared
@@ -210,97 +210,280 @@ struct LostCatDraftView: View {
     /// 「まとめてコピー」 was pressed: the button says so until the guide is opened again.
     @State private var reportCopied = false
     @AppStorage("lostCat.lastKey.v1") private var lastKey = ""
+    @AppStorage(CatFarewell.key) private var farewellJSON = ""
+    /// 「この子のこと」 is read from the other tools once per opening (11/12).
+    @State private var importedCatCare = false
     @State private var showsDatePicker = false
     @State private var pendingDate = Date()
     @State private var cropRequest: LostCatCropRequest?
     @FocusState private var focus: Field?
 
+    // The body is split in parts so the type checker stays fast.
     var body: some View {
         // The flyer layout is measured once per drawing, not once per field.
         let issues = flyerIssues
-        Form {
-            // The tool's one shape (11/8): purpose, guide, numbered steps, then
-            // errors last; the one way forward is the bar below.
-            ToolPurpose(text: "探すためのチラシを作ります。")
-            Section {
-                // Round 2: the offices contacted and the next day to check, in one line.
-                let state = loaded ? draft.incident?.stateLine(now: Date()) : nil
-                Button { showsGuide = true } label: {
-                    HStack {
-                        Label {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("先にすること：探す・届け出る")
-                                if let state {
-                                    Text(state).font(.footnote).foregroundStyle(.secondary)
-                                }
+        return lifecycle(destinations(page(issues)))
+    }
+
+    /// 11/12: a list of rows, as in 設定 (the shape 病院で見せる has): what the
+    /// page makes, 「先にすること」, 「チラシに載せること」 as rows that each open
+    /// their own page, 「見つかりました」, then errors; the one way forward is
+    /// the bar below. Each row's page is built only when it is opened.
+    private func page(_ issues: [String: String]) -> some View {
+        Form { formContent(issues) }
+            .toolPageSpacing()
+            .navigationTitle("迷子のとき")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { catMenu }
+            }
+            .announcesWhenShown(photoError)
+            .toolBottomBar { bottomBar(issues) }
+    }
+
+    @ViewBuilder private func formContent(_ issues: [String: String]) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 6) {
+                // With two or more cats the cat menu in the bar already names it.
+                if menuHidden, let profile = profiles.first(where: { $0.identifier == key }) {
+                    Label(profile.displayName, systemImage: "cat").font(.headline)
+                }
+                ToolPurpose(text: "探すためのチラシを作ります。")
+            }
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
+        }
+        guideSection
+        flyerSection(issues).disabled(!loaded)
+        foundSection
+        saveErrorSection
+    }
+
+    /// 「先にすること」, its own first section; opens the guide as before.
+    private var guideSection: some View {
+        Section {
+            // Round 2: the offices contacted and the next day to check, in one line.
+            let state = loaded ? draft.incident?.stateLine(now: Date()) : nil
+            Button { showsGuide = true } label: {
+                HStack {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("先にすること：探す・届け出る")
+                            if let state {
+                                Text(state).font(.footnote).foregroundStyle(.secondary)
                             }
-                        } icon: { Image(systemName: "info.circle") }
-                        Spacer(minLength: 8)
-                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-                    }
-                    .contentShape(Rectangle())
+                        }
+                    } icon: { Image(systemName: "info.circle") }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
                 }
-                .foregroundStyle(.primary)
-                .accessibilityLabel("先にすること：探す・届け出る")
-                .accessibilityValue(state ?? "")
+                .contentShape(Rectangle())
             }
-            catSection(issues).disabled(!loaded)
-            incidentSection(issues).disabled(!loaded)
-            contactSection(issues).disabled(!loaded)
-            // そのほか: quiet, at the bottom, only once something has happened.
-            if loaded, draft.hasIncident {
-                Section {
-                    Button { openFound() } label: {
-                        Label(LostCatText.foundTitle, systemImage: "house").frame(maxWidth: .infinity)
-                    }
-                    .accessibilityIdentifier("lost-cat-found")
+            .foregroundStyle(.primary)
+            .accessibilityLabel("先にすること：探す・届け出る")
+            .accessibilityValue(state ?? "")
+            .accessibilityIdentifier("lost-cat-row-guide")
+        }
+    }
+
+    /// そのほか: quiet, at the bottom, only once something has happened. An
+    /// action, not a page: no value.
+    @ViewBuilder private var foundSection: some View {
+        if loaded, draft.hasIncident {
+            Section {
+                Button { openFound() } label: {
+                    Label(LostCatText.foundTitle, systemImage: "house")
                 }
-            }
-            if saveError {
-                Section {
-                    Label("保存できませんでした", systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.red)
-                    Button {
-                        if loaded { saveNow() }
-                        else { load(initialKey, name: initialName) }
-                    } label: {
-                        Text("もう一度保存する")
-                            .frame(maxWidth: .infinity, minHeight: 36)
-                    }
-                    .buttonStyle(.bordered)
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets())
-                }
+                .accessibilityIdentifier("lost-cat-found")
             }
         }
-        .toolPageSpacing()
-        .navigationTitle("迷子のとき")
-        .navigationBarTitleDisplayMode(.inline)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            ToolCatStrip(cats: stripCats, selectedID: key) { switchTo($0.id, name: $0.profile?.displayName ?? "") }
-        }
-        .announcesWhenShown(photoError)
-        .toolBottomBar {
-            // A text that does not fit is said instead of 「あと：…」; the red
-            // line is beside its field.
-            ToolMakeBar(missing: issues.isEmpty ? requiredFields : []) {
-                if !issues.isEmpty {
-                    Text("直すところがあります。赤い文字の欄を見てください")
-                        .font(.footnote).foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
+    }
+
+    @ViewBuilder private var saveErrorSection: some View {
+        if saveError {
+            Section {
+                Label("保存できませんでした", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
+                Button {
+                    if loaded { saveNow() }
+                    else { load(initialKey, name: initialName) }
+                } label: {
+                    Text("もう一度保存する")
+                        .frame(maxWidth: .infinity, minHeight: 36)
                 }
-            } action: {
-                Button { openPreview() } label: { Label("チラシを作る", systemImage: "doc.richtext").frame(maxWidth: .infinity) }
-                    .disabled(!canPreview)
+                .buttonStyle(.bordered)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
             }
         }
-        .navigationDestination(isPresented: $showsPreview) {
-            if let value = previewDraft { LostCatPreviewView(draft: value) }
+    }
+
+    private func bottomBar(_ issues: [String: String]) -> some View {
+        // A text that does not fit is said instead of 「あと：…」; the red
+        // value is on its row.
+        ToolMakeBar(missing: issues.isEmpty ? requiredFields : []) {
+            if !issues.isEmpty {
+                Text("直すところがあります。赤い文字の欄を見てください")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+        } action: {
+            Button { openPreview() } label: { Label("チラシを作る", systemImage: "doc.richtext").frame(maxWidth: .infinity) }
+                .disabled(!canPreview)
         }
-        .navigationDestination(isPresented: $showsFound) {
-            LostCatFoundView(name: publicName, faceImage: faceImage,
-                             message: $draft.foundMessage, end: endIncident)
+    }
+
+    /// 11/12: the cat switcher is the small menu in the bar every row-list
+    /// tool uses. It stays away with one cat, and on the form opened alone.
+    private var catMenu: some View {
+        ToolCatMenu(cats: stripCats, selectedID: key, title: menuName, identifier: "lost-cat-menu") {
+            switchTo($0.id, name: $0.profile?.displayName ?? "")
         }
+    }
+    private var menuName: String {
+        stripCats.first { $0.id == key }?.name ?? publicName
+    }
+    /// True when the bar shows no cat menu, so the page names the cat itself.
+    private var menuHidden: Bool {
+        stripCats.filter { $0.id == key || !$0.isDeparted(farewellJSON) }.count < 2
+    }
+
+    private func destinations<Content: View>(_ content: Content) -> some View {
+        content
+            .navigationDestination(isPresented: $showsPreview) {
+                if let value = previewDraft { LostCatPreviewView(draft: value) }
+            }
+            .navigationDestination(isPresented: $showsFound) {
+                LostCatFoundView(name: publicName, faceImage: faceImage,
+                                 message: $draft.foundMessage, end: endIncident)
+            }
+            // Reporting is in one place: step 2 of the guide (11/8).
+            .sheet(isPresented: $showsGuide, onDismiss: { reportCopied = false }) {
+                LostCatGuideView(log: $draft.incidentLog, editable: loaded) { reportSection }
+            }
+            .sheet(isPresented: $showsDatePicker) { dateSheet }
+    }
+
+    private func lifecycle<Content: View>(_ content: Content) -> some View {
+        content
+            .task {
+                // Once per opening: coming back from a row's page reads nothing again (11/12).
+                if !importedCatCare {
+                    importedCatCare = true
+                    catCareStore.importFromTools()
+                    catCareStore.importBirthdays(profiles)
+                }
+                if !loaded { UsageCounter.shared.count(.toolLostCat); load(initialKey, name: initialName) }  // Usage (11/7): once per opening
+            }
+            .onChange(of: draft) { _, _ in
+                guard loaded, draft != savedDraft else { return }
+                saveTask?.cancel()
+                saveTask = Task {
+                    try? await Task.sleep(for: .milliseconds(350))
+                    guard !Task.isCancelled else { return }
+                    saveNow()
+                }
+            }
+            .onDisappear { saveTask?.cancel(); cancelPhotoLoad(); saveNow() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase != .active { saveNow() }
+            }
+            .onChange(of: catCarePhotoKey) { _, _ in readCatCarePhotos() }
+            // The 「見つかりました」 screen still edits this draft.
+            .appRecordEditing(retainWhileHidden: saveError || photoBusy || cropRequest != nil || showsDatePicker || showsFound)
+    }
+
+    // MARK: Rows (11/12)
+
+    /// A row for written text: its first words, 「未記入」, or, in red, what to
+    /// fix for the flyer, so the page to fix it can be found.
+    private func textRow(_ title: String, _ systemImage: String, _ text: String, issue: String?) -> ToolValueRow {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let words = trimmed.isEmpty ? nil : String(trimmed.split(whereSeparator: \.isNewline).joined(separator: " ").prefix(60))
+        return ToolValueRow(title: title, systemImage: systemImage, value: issue ?? words ?? "未記入",
+                            filled: words != nil, problem: issue != nil)
+    }
+
+    /// 「チラシに載せること」: everything the flyer prints, one row each.
+    private func flyerSection(_ issues: [String: String]) -> some View {
+        Section {
+            NavigationLink { photoPage } label: { photoLabel }
+                .accessibilityIdentifier("lost-cat-row-photo")
+            if !profiles.contains(where: { $0.identifier == key }) {
+                NavigationLink { namePage(issues) } label: {
+                    textRow("名前", "textformat", draft.name, issue: issues["name"])
+                }
+                .accessibilityIdentifier("lost-cat-row-name")
+            }
+            NavigationLink { featuresPage(issues) } label: {
+                textRow("見分ける特徴", "eye", draft.features, issue: issues["features"])
+            }
+            .accessibilityIdentifier("lost-cat-row-features")
+            NavigationLink { collarPage(issues) } label: { collarLabel(issues) }
+                .accessibilityIdentifier("lost-cat-row-collar")
+            NavigationLink { placePage(issues) } label: {
+                textRow("最後に見かけた場所", "mappin.and.ellipse", draft.lastSeenNear, issue: issues["place"])
+            }
+            .accessibilityIdentifier("lost-cat-row-place")
+            dateRow
+            NavigationLink { contactPage(issues) } label: {
+                textRow("連絡先", "phone", draft.contact, issue: issues["contact"])
+            }
+            .accessibilityIdentifier("lost-cat-row-contact")
+            NavigationLink { advicePage(issues) } label: {
+                textRow("見かけた方へ", "hand.raised", draft.approachAdvice, issue: issues["advice"])
+            }
+            .accessibilityIdentifier("lost-cat-row-advice")
+        } header: {
+            Text("チラシに載せること")
+        } footer: {
+            if !(draft.prefilledFields ?? []).isEmpty {
+                Text("前に書いた内容を入れておきました。いまの姿に合わせて直してください。")
+                    .accessibilityIdentifier("lost-cat-prefill-note")
+            }
+        }
+    }
+    /// 「顔・全身」, 「顔だけ」 or 「なし」: what the flyer will show; red while
+    /// a photo could not be read.
+    private var photoLabel: ToolValueRow {
+        let value = faceImage == nil ? "なし" : (bodyImage == nil ? "顔だけ" : "顔・全身")
+        return ToolValueRow(title: "写真", systemImage: "photo", value: value,
+                            filled: faceImage != nil, problem: photoError != nil)
+    }
+    private func collarLabel(_ issues: [String: String]) -> ToolValueRow {
+        let choice = collarChoice.wrappedValue
+        let detail = collarDetail.wrappedValue
+        let value = choice == .present && !detail.isEmpty ? detail : choice.rawValue
+        return ToolValueRow(title: "首輪", systemImage: "circle.dashed", value: issues["collar"] ?? value,
+                            filled: choice != .unknown, problem: issues["collar"] != nil)
+    }
+    /// Opens the date sheet at once, as 体重 does in 病院で見せる: one control,
+    /// no page of its own.
+    private var dateRow: some View {
+        Button { pendingDate = draft.lastSeenAt ?? Date(); showsDatePicker = true } label: {
+            ToolValueRow(title: "日時", systemImage: "clock",
+                         value: draft.lastSeenAt.map(LostCatPublicDraft.lastSeenText) ?? "不明",
+                         filled: draft.lastSeenAt != nil)
+        }
+        .accessibilityIdentifier("lost-cat-row-date")
+    }
+
+    // MARK: Pages each row opens (11/12)
+    //
+    // The same bindings, limits and counters as before; the draft saves as it
+    // is typed, and leaving a page saves what is pending.
+
+    private func pushed<Content: View>(_ title: String, focuses: Bool = false,
+                                       @ViewBuilder content: @escaping (FocusState<Bool>.Binding) -> Content) -> some View {
+        ToolPushedPage(title: title, focusesField: focuses, leave: { saveNow() }, content: content)
+            .disabled(!loaded)
+    }
+
+    private var photoPage: some View {
+        pushed("写真") { _ in
+            Section { photoRows }
+        }
+        // Opened from this page, so presented from it.
         .sheet(item: $selectedRole, onDismiss: cancelPhotoLoad) { role in
             NavigationStack {
                 LostCatPhotoChoiceView(
@@ -313,34 +496,7 @@ struct LostCatDraftView: View {
                 )
             }
         }
-        .onChange(of: pendingPhotoItem) { _, item in
-            guard let item, let role = selectedRole else { return }
-            cancelPhotoLoad()
-            let request = UUID()
-            let owner = key
-            photoRequest = request
-            photoBusy = true
-            photoError = nil
-            photoTask = Task {
-                do {
-                    guard let data = try await item.loadTransferable(type: Data.self) else {
-                        throw CocoaError(.fileReadCorruptFile)
-                    }
-                    guard !Task.isCancelled, photoRequest == request, key == owner else { return }
-                    try commitPhoto(data, role: role)
-                    selectedRole = nil
-                } catch {
-                    guard !Task.isCancelled, photoRequest == request, key == owner else { return }
-                    photoError = "写真を読み込めませんでした。別の写真を選ぶか、もう一度お試しください。"
-                }
-                if photoRequest == request { photoBusy = false; pendingPhotoItem = nil }
-            }
-        }
-        // Reporting is in one place: step 2 of the guide (11/8).
-        .sheet(isPresented: $showsGuide, onDismiss: { reportCopied = false }) {
-            LostCatGuideView(log: $draft.incidentLog, editable: loaded) { reportSection }
-        }
-        .sheet(isPresented: $showsDatePicker) { dateSheet }
+        .onChange(of: pendingPhotoItem) { _, item in loadPicked(item) }
         .sheet(item: $cropRequest) { request in
             LostCatPhotoCropView(image: request.image) { data in
                 do {
@@ -350,157 +506,168 @@ struct LostCatDraftView: View {
                 } catch { return false }
             }
         }
-        .task {
-            catCareStore.importFromTools()
-            catCareStore.importBirthdays(profiles)
-            if !loaded { UsageCounter.shared.count(.toolLostCat); load(initialKey, name: initialName) }  // Usage (11/7): once per opening
-        }
-        .onChange(of: draft) { _, _ in
-            guard loaded, draft != savedDraft else { return }
-            saveTask?.cancel()
-            saveTask = Task {
-                try? await Task.sleep(for: .milliseconds(350))
-                guard !Task.isCancelled else { return }
-                saveNow()
-            }
-        }
-        .onDisappear { saveTask?.cancel(); cancelPhotoLoad(); saveNow() }
-        .onChange(of: scenePhase) { _, phase in
-            if phase != .active { saveNow() }
-        }
-        .onChange(of: catCarePhotoKey) { _, _ in readCatCarePhotos() }
-        // The 「見つかりました」 screen still edits this draft.
-        .appRecordEditing(retainWhileHidden: saveError || photoBusy || cropRequest != nil || showsDatePicker || showsFound)
     }
-
-    private func catSection(_ issues: [String: String]) -> some View {
-        Group {
-        Section {
-            if let profile = profiles.first(where: { $0.identifier == key }) {
-                // The dates are with 「この子のこと」 in 届け出の情報 (11/7).
-                LabeledContent("名前", value: profile.displayName)
-            } else {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("名前（任意）").font(.subheadline).foregroundStyle(.secondary)
-                TextField("猫の名前（任意）", text: textBinding(\.name, field: "name"), prompt: Text("例：むぎ"))
-                    .foregroundStyle(Color.primary)
-                    .accessibilityIdentifier("lost-cat-name")
-                    .accessibilityLabel("猫の名前（任意）")
-                    .focused($focus, equals: .name)
-            }
-            fieldIssue("name", issues)
-            }
-            if let catCareSubject, let files = catCarePhotoFiles {
-                // 11/9: chosen in 「この子のこと」 only; the flyer uses them.
-                ToolIdentifyingPhotos(faceFile: files.face, bodyFile: files.body, subject: catCareSubject,
-                                      profiles: profiles, identifier: "lost-cat-identifying-photos")
-            } else {
+    @ViewBuilder private var photoRows: some View {
+        if let catCareSubject, let files = catCarePhotoFiles {
+            // 11/9: chosen in 「この子のこと」 only; the flyer uses them.
+            ToolIdentifyingPhotos(faceFile: files.face, bodyFile: files.body, subject: catCareSubject,
+                                  profiles: profiles, identifier: "lost-cat-identifying-photos")
+        } else {
             // A cat with no 「この子のこと」 (an unregistered cat) keeps its own photos here.
-            let tiles = dynamicTypeSize.isAccessibilitySize
-                ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
-            tiles {
-                photoTile("顔・毛柄の写真", role: .face, image: faceImage,
-                          file: faceImage == nil ? nil : tileFile(draft.faceFileName, draft.bodyFileName))
-                photoTile("全身の写真（任意）", role: .body, image: bodyImage,
-                          file: bodyImage == nil || draft.faceFileName == nil ? nil : tileFile(draft.bodyFileName))
-            }
-            .padding(.vertical, 4)
-            }
-            if let photoError {
-                Text(photoError).font(.footnote).foregroundStyle(.red)
-                if faceImage != nil {
-                    Button("いまの写真のままにする") { self.photoError = nil }
-                }
-            }
-            if catCareSubject == nil, faceImage == nil, catCarePhotoURL(.face) != nil {
-                Button("「この子のこと」の写真を使う") { useCatCarePhotos() }
-                    .disabled(photoBusy)
-                    .accessibilityIdentifier("lost-cat-use-cat-care-photos")
-            }
-            textEntry("見分ける特徴（任意）", text: textBinding(\.features, field: "features"), field: .features,
-                      limit: LostCatFlyerRenderer.featuresLimit,
-                      example: "例：茶白。胸と足先が白く、しっぽは長い。左耳の先に切れ込み。", issues: issues)
-            if let line = CatCareLostCat.publicLine(catCareRecord), !draft.features.contains(line) {
-                Button("「\(line)」を特徴に足す", systemImage: "plus") {
-                    let current = draft.features.trimmingCharacters(in: .whitespacesAndNewlines)
-                    textBinding(\.features, field: "features").wrappedValue = current.isEmpty ? line : line + "。" + current
-                }
-                .accessibilityIdentifier("lost-cat-add-cat-care-line")
-            }
-            Picker("首輪", selection: collarChoice) {
-                ForEach(Collar.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }
-            .accessibilityIdentifier("lost-cat-collar-choice")
-            if collarChoice.wrappedValue == .present {
-                textEntry("首輪の色・模様", text: collarDetail, field: .collar,
-                          limit: LostCatFlyerRenderer.collarLimit,
-                          example: "例：赤い布製、鈴付き", minimumLines: 1, issues: issues)
-            }
-        } header: {
-            ToolStepHeader(number: 1, title: "写真と特徴", state: stepStates[0])
-        } footer: {
-            if !(draft.prefilledFields ?? []).isEmpty {
-                Text("前に書いた内容を入れておきました。いまの姿に合わせて直してください。")
-                    .accessibilityIdentifier("lost-cat-prefill-note")
+            ownPhotoTiles
+        }
+        if let photoError {
+            Text(photoError).font(.footnote).foregroundStyle(.red)
+            if faceImage != nil {
+                Button("いまの写真のままにする") { self.photoError = nil }
             }
         }
+        if catCareSubject == nil, faceImage == nil, catCarePhotoURL(.face) != nil {
+            Button("「この子のこと」の写真を使う") { useCatCarePhotos() }
+                .disabled(photoBusy)
+                .accessibilityIdentifier("lost-cat-use-cat-care-photos")
+        }
+    }
+    private var ownPhotoTiles: some View {
+        let tiles = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
+        return tiles {
+            photoTile("顔・毛柄の写真", role: .face, image: faceImage,
+                      file: faceImage == nil ? nil : tileFile(draft.faceFileName, draft.bodyFileName))
+            photoTile("全身の写真（任意）", role: .body, image: bodyImage,
+                      file: bodyImage == nil || draft.faceFileName == nil ? nil : tileFile(draft.bodyFileName))
+        }
+        .padding(.vertical, 4)
+    }
+    private func loadPicked(_ item: PhotosPickerItem?) {
+        guard let item, let role = selectedRole else { return }
+        cancelPhotoLoad()
+        let request = UUID()
+        let owner = key
+        photoRequest = request
+        photoBusy = true
+        photoError = nil
+        photoTask = Task {
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self) else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                guard !Task.isCancelled, photoRequest == request, key == owner else { return }
+                try commitPhoto(data, role: role)
+                selectedRole = nil
+            } catch {
+                guard !Task.isCancelled, photoRequest == request, key == owner else { return }
+                photoError = "写真を読み込めませんでした。別の写真を選ぶか、もう一度お試しください。"
+            }
+            if photoRequest == request { photoBusy = false; pendingPhotoItem = nil }
         }
     }
 
-    private func incidentSection(_ issues: [String: String]) -> some View {
-        Section {
-            VStack(alignment: .leading, spacing: 4) {
+    private func namePage(_ issues: [String: String]) -> some View {
+        pushed("名前", focuses: true) { focus in
+            Section {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("場所").font(.subheadline).foregroundStyle(.secondary)
-                    TextField("例：○○町2丁目・○○公園の近く", text: $draft.lastSeenNear)
-                        .accessibilityIdentifier("lost-cat-place")
-                        .accessibilityLabel("最後に見かけた場所")
-                        .focused($focus, equals: .place)
+                    Text("名前（任意）").font(.subheadline).foregroundStyle(.secondary)
+                    TextField("猫の名前（任意）", text: textBinding(\.name, field: "name"), prompt: Text("例：むぎ"))
+                        .foregroundStyle(Color.primary)
+                        .accessibilityIdentifier("lost-cat-name")
+                        .accessibilityLabel("猫の名前（任意）")
+                        .focused(focus)
                 }
-                fieldIssue("place", issues)
+                fieldIssue("name", issues)
             }
-            Button { pendingDate = draft.lastSeenAt ?? Date(); showsDatePicker = true } label: {
-                HStack {
-                    Text("日時（任意）")
-                    Spacer()
-                    Text(draft.lastSeenAt.map(LostCatPublicDraft.lastSeenText) ?? "不明").foregroundStyle(.secondary)
-                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-                }
-                .contentShape(Rectangle())
-            }
-            // Like the rows around it, not a tinted action (347 showed it blue).
-            .foregroundStyle(.primary)
-        } header: { ToolStepHeader(number: 2, title: "いなくなった場所と日時", state: stepStates[1]) }
+        }
     }
 
-    private func contactSection(_ issues: [String: String]) -> some View {
-        Section {
-            VStack(alignment: .leading, spacing: 4) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("連絡先").font(.subheadline).foregroundStyle(.secondary)
-                    TextField("電話・メール・SNSアカウントなど", text: $draft.contact,
-                              prompt: Text("例：電話番号・メール・SNS"))
-                        .accessibilityIdentifier("lost-cat-contact")
-                        .accessibilityLabel("電話・メール・SNSアカウントなど")
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .focused($focus, equals: .contact)
-                }
-                fieldIssue("contact", issues)
-                if draft.contact.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                   let owner = catCareStore.state?.household.ownerContact?.value
-                    .trimmingCharacters(in: .whitespacesAndNewlines), !owner.isEmpty {
-                    Button("「この子のこと」の連絡先を使う") { draft.contact = owner }
-                        .buttonStyle(.borderless)
-                        .accessibilityIdentifier("lost-cat-use-cat-care-contact")
+    private func featuresPage(_ issues: [String: String]) -> some View {
+        pushed("見分ける特徴", focuses: true) { focus in
+            Section {
+                textEntry("見分ける特徴（任意）", text: textBinding(\.features, field: "features"), field: .features,
+                          limit: LostCatFlyerRenderer.featuresLimit,
+                          example: "例：茶白。胸と足先が白く、しっぽは長い。左耳の先に切れ込み。", issues: issues, focus: focus)
+                if let line = CatCareLostCat.publicLine(catCareRecord), !draft.features.contains(line) {
+                    Button("「\(line)」を特徴に足す", systemImage: "plus") {
+                        let current = draft.features.trimmingCharacters(in: .whitespacesAndNewlines)
+                        textBinding(\.features, field: "features").wrappedValue = current.isEmpty ? line : line + "。" + current
+                    }
+                    .accessibilityIdentifier("lost-cat-add-cat-care-line")
                 }
             }
-            textEntry("見かけた方へ（任意）", text: $draft.approachAdvice, field: .advice,
-                      limit: LostCatFlyerRenderer.adviceLimit,
-                      example: "例：追いかけず、見かけた場所をお知らせください。お礼をいたします", minimumLines: 2,
-                      issues: issues)
-        } header: { ToolStepHeader(number: 3, title: "見かけた人からの連絡先", state: stepStates[2]) }
-          footer: {
-            Text("この連絡先は画像とチラシに載り、だれでも見られます。")
+        }
+    }
+
+    private func collarPage(_ issues: [String: String]) -> some View {
+        pushed("首輪") { focus in
+            Section {
+                Picker("首輪", selection: collarChoice) {
+                    ForEach(Collar.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }
+                .accessibilityIdentifier("lost-cat-collar-choice")
+                if collarChoice.wrappedValue == .present {
+                    textEntry("首輪の色・模様", text: collarDetail, field: .collar,
+                              limit: LostCatFlyerRenderer.collarLimit,
+                              example: "例：赤い布製、鈴付き", minimumLines: 1, issues: issues, focus: focus)
+                }
+            }
+        }
+    }
+
+    private func placePage(_ issues: [String: String]) -> some View {
+        pushed("最後に見かけた場所", focuses: true) { focus in
+            Section {
+                VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("場所").font(.subheadline).foregroundStyle(.secondary)
+                        TextField("例：○○町2丁目・○○公園の近く", text: $draft.lastSeenNear)
+                            .accessibilityIdentifier("lost-cat-place")
+                            .accessibilityLabel("最後に見かけた場所")
+                            .focused(focus)
+                    }
+                    fieldIssue("place", issues)
+                }
+            }
+        }
+    }
+
+    private func contactPage(_ issues: [String: String]) -> some View {
+        pushed("連絡先", focuses: true) { focus in
+            Section {
+                VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("連絡先").font(.subheadline).foregroundStyle(.secondary)
+                        TextField("電話・メール・SNSアカウントなど", text: $draft.contact,
+                                  prompt: Text("例：電話番号・メール・SNS"))
+                            .accessibilityIdentifier("lost-cat-contact")
+                            .accessibilityLabel("電話・メール・SNSアカウントなど")
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .focused(focus)
+                    }
+                    fieldIssue("contact", issues)
+                    ownerContactButton
+                }
+            } footer: {
+                Text("この連絡先は画像とチラシに載り、だれでも見られます。")
+            }
+        }
+    }
+    @ViewBuilder private var ownerContactButton: some View {
+        if draft.contact.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let owner = catCareStore.state?.household.ownerContact?.value
+            .trimmingCharacters(in: .whitespacesAndNewlines), !owner.isEmpty {
+            Button("「この子のこと」の連絡先を使う") { draft.contact = owner }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("lost-cat-use-cat-care-contact")
+        }
+    }
+
+    private func advicePage(_ issues: [String: String]) -> some View {
+        pushed("見かけた方へ", focuses: true) { focus in
+            Section {
+                textEntry("見かけた方へ（任意）", text: $draft.approachAdvice, field: .advice,
+                          limit: LostCatFlyerRenderer.adviceLimit,
+                          example: "例：追いかけず、見かけた場所をお知らせください。お礼をいたします", minimumLines: 2,
+                          issues: issues, focus: focus)
+            }
         }
     }
 
@@ -626,16 +793,15 @@ struct LostCatDraftView: View {
 
     private func textEntry(_ title: String, text: Binding<String>, field: Field,
                            limit: Int, example: String, minimumLines: Int = 3,
-                           issues: [String: String]) -> some View {
+                           issues: [String: String], focus: FocusState<Bool>.Binding? = nil) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.subheadline).foregroundStyle(.secondary)
-            TextField(example, text: text, axis: .vertical)
+            entryField(TextField(example, text: text, axis: .vertical)
                 .foregroundStyle(Color.primary)
                 .lineLimit(minimumLines...8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityLabel(title)
-                .accessibilityIdentifier("lost-cat-\(field)")
-                .focused($focus, equals: field)
+                .accessibilityIdentifier("lost-cat-\(field)"), focus: focus)
             Text("\(text.wrappedValue.count) / \(limit)文字"
                  + (text.wrappedValue.count > limit ? "（\(text.wrappedValue.count - limit)文字多い）" : ""))
                 .font(.caption).monospacedDigit()
@@ -643,6 +809,11 @@ struct LostCatDraftView: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
             fieldIssue(String(describing: field), issues)
         }
+    }
+
+    /// The field a row's page puts the cursor in once it has slid in.
+    @ViewBuilder private func entryField<Input: View>(_ field: Input, focus: FocusState<Bool>.Binding?) -> some View {
+        if let focus { field.focused(focus) } else { field }
     }
 
     // Existing free-text collar values remain intact; no draft schema migration.
@@ -742,15 +913,6 @@ struct LostCatDraftView: View {
         if draft.lastSeenNear.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { values.append("場所") }
         if draft.contact.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { values.append("連絡先") }
         return values
-    }
-    /// 1 is done with the face photo, 2 with the place, 3 with the contact:
-    /// the three things the flyer cannot be made without.
-    private var stepStates: [ToolStepState] {
-        ToolStepState.states([
-            faceImage != nil,
-            !draft.lastSeenNear.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            !draft.contact.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-        ])
     }
     private var canPreview: Bool {
         loaded && !saveError && !photoBusy && photoError == nil && requiredFields.isEmpty

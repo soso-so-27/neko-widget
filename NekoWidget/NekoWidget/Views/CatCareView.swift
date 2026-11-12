@@ -1847,7 +1847,8 @@ extension ToolCatCareSection where Extra == EmptyView {
 // 11/12: 病院で見せる is the trial of another shape, a list of rows as in 設定
 // (a section heading, then rows with an icon, the name, what is written and a
 // chevron; each row opens its own page), with the cat chosen from a menu in
-// the bar instead of the row of faces. 迷子・預ける・避難 keep the shape above.
+// the bar instead of the row of faces (ToolRowParts.swift). 預けるとき and
+// 迷子のとき were then made the same way; 避難に備える keeps the shape above.
 
 /// Where a step stands: the first one not done is the one to do now.
 enum ToolStepState: Equatable {
