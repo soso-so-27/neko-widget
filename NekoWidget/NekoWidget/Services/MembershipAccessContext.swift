@@ -389,6 +389,11 @@ struct MembershipAccessFixture: View {
         }
         .environment(\.membershipAccess, context)
         .environment(\.membershipActions, actions)
+        .onAppear {
+            // Each run starts as a first visit: a new memo opens the Plus
+            // screen by itself once, then only from its button (11/12).
+            UserDefaults.standard.removeObject(forKey: PlusOfferPrompt.newMemoAutoOpenedKey)
+        }
         .task {
             guard record == nil else { return }
             if care.plan.cats.isEmpty {

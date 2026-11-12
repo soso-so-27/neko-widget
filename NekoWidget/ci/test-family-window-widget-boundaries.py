@@ -6718,18 +6718,17 @@ class OnePlaceSettingsTests(unittest.TestCase):
         self.assertIn('"group-window-empty-create"', window)
 
     def test_auto_save_is_offered_after_buying_plus_anywhere(self) -> None:
+        # 11/12: still offered after a purchase from every entry, but later and
+        # once, from the app's root (PlusMomentOfBuying1112Tests).
         offer = source("NekoWidget/Services/MembershipOfferModel.swift")
         sheet = section(offer, "struct MembershipOfferSheet: View {", "struct PlusOfferPrompt: View {")
-        purchase = section(sheet, "onPurchase: {", "onRestore: {")
-        self.assertIn("AutoSaveAfterPurchase.applies(after: context)", purchase)
-        self.assertIn("AutoSaveAfterPurchase.shared.waitsForOnboardingEnd = true", purchase)
-        self.assertIn("asksAutoSave = true", purchase)
-        self.assertIn("AppRecordSettingsView(startsOnOpen: true)", sheet)
-        self.assertIn("later: { onFinish(.completed) }", sheet)
-        self.assertIn(".interactiveDismissDisabled(model.isWorking || asksAutoSave || showsAutoSave)", sheet)
-        prompt = section(offer, "final class AutoSaveAfterPurchase", "@MainActor\n/// The one Plus screen.")
+        purchase = section(sheet, "    private func purchase() {", "    private func openNextStep()")
+        self.assertIn("AutoSaveAfterPurchase.noteBought(from: context)", purchase)
+        self.assertIn(".interactiveDismissDisabled(model.isWorking)", sheet)
+        prompt = section(offer, "enum AutoSaveAfterPurchase {", "@MainActor\n/// The one Plus screen.")
         self.assertIn("context != .preservation && ManagedPreservationConfiguration.current.isEnabled", prompt)
         self.assertIn("!AppRecordPersistence.shared.enabled", prompt)
+        self.assertIn("AppRecordSettingsView(startsOnOpen: true)", prompt)
         self.assertEqual(offer.count('"自動保存も始めますか？"'), 1, "one prompt for every entry")
         root = source("NekoWidget/App/AppRootView.swift")
         self.assertIn(".autoSaveOfferAfterOnboarding(ended: !OnboardingPresentationPersistence.requiresPresentation(", root)
@@ -7690,7 +7689,7 @@ class PresubmitFixes1110Tests(unittest.TestCase):
         offer = source("NekoWidget/Views/MembershipOfferView.swift")
         values = section(offer, "static let values = [", "    ]\n")
         rows = ['("まどを作って、家族と写真を届け合う", "person.2")',
-                '("家族の手帳を、家族と一緒に書く", "book.closed")',
+                '("家族の手帳を作って、家族と一緒に書く", "book.closed")',
                 '("猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる", "icloud")']
         for row in rows:
             self.assertIn(row, values)
@@ -7698,26 +7697,26 @@ class PresubmitFixes1110Tests(unittest.TestCase):
         self.assertEqual(
             re.findall(r'\("([^"]+)", "[^"]+"\)', values),
             ["月の作品、季節のムービー", "写真に新しいメモを書く",
-             "まどを作って、家族と写真を届け合う", "家族の手帳を、家族と一緒に書く",
+             "まどを作って、家族と写真を届け合う", "家族の手帳を作って、家族と一緒に書く",
              "猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる"])
         self.assertLess(values.index(rows[0]), values.index(rows[1]))
         self.assertLess(values.index(rows[1]), values.index(rows[2]))
 
     def test_new_memo_reason_promises_free_days_only_from_storekit(self) -> None:
         model = source("NekoWidget/Services/MembershipOfferModel.swift")
-        self.assertIn('case .newMemo: "メモを書くのはPlusの機能です。"', model)
+        # 11/12 (review 5): the benefit first; the free days are the button's
+        # words only (StoreKit's), never repeated in the reason.
+        self.assertIn('case .newMemo: "この写真に、その日のことを書き残せます。メモを書くのはPlusの機能です。"', model)
         self.assertNotIn("新しいメモはPlusで書けます", model)
-        reason = section(model, "func reason(trialPeriod: String?) -> String? {", "\n    }\n")
-        self.assertIn("guard case .newMemo = self, let trialPeriod, let base = reason else { return reason }", reason)
-        self.assertIn('return base + "\\(trialPeriod)は無料です。"', reason)
-        self.assertNotIn("14", reason)
+        self.assertNotIn("func reason(trialPeriod:", model)
+        self.assertNotIn("は無料です。", model)
         monthly = section(model, "static func monthly(", "enum MembershipRestoreFailure")
         no_trial = section(monthly, "guard let trialPeriod else {", "\n        }\n")
         self.assertNotIn("trialPeriod:", no_trial)
         self.assertIn("trialPeriod: trialPeriod)", monthly)
         offer = source("NekoWidget/Views/MembershipOfferView.swift")
-        self.assertIn("if let reason = context.reason(trialPeriod: offer?.trialPeriod) {", offer)
-        self.assertNotIn("context.reason {", offer)
+        self.assertIn("if let reason = reasonOverride ?? context.reason {", offer)
+        self.assertNotIn("trialPeriod", section(offer, "    private var photoHeader: some View {", "    private static func photoBox"))
         note = source("NekoWidget/Views/PhotoMemoryNoteView.swift")
         self.assertIn('saveError = "メモを書くのはPlusの機能です。"', note)
 
@@ -7940,6 +7939,123 @@ class ToolBottomChromeTests(unittest.TestCase):
                      "NekoWidget/Views/VeterinaryVisitView.swift"):
             self.assertNotIn(".frame(maxWidth: .infinity, minHeight: 44)\n        }", source(path), path)
         self.assertIn('Label("先生に見せる", systemImage: "stethoscope").frame(maxWidth: .infinity)\n', source("NekoWidget/Views/VeterinaryVisitView.swift"))
+
+
+class PlusMomentOfBuying1112Tests(unittest.TestCase):
+    """11/12 点検「買う瞬間」: what the person bought Plus for comes first."""
+
+    def setUp(self) -> None:
+        self.model = source("NekoWidget/Services/MembershipOfferModel.swift")
+        self.view = source("NekoWidget/Views/MembershipOfferView.swift")
+        self.sheet = section(self.model, "struct MembershipOfferSheet: View {", "struct PlusOfferPrompt: View {")
+
+    def test_purchase_resumes_the_pending_action_at_once(self) -> None:
+        purchase = section(self.sheet, "    private func purchase() {", "    private func openNextStep()")
+        resumes = section(purchase, "if context.hasPendingAction(showsClose: showsClose) {", "} else {")
+        self.assertIn("onFinish(result)", resumes)
+        self.assertNotIn("asksAutoSave", self.sheet)
+        self.assertNotIn("AutoSaveOfferAlert", self.sheet)
+        self.assertNotIn("AppRecordSettingsView", self.sheet)
+        pending = section(self.model, "func hasPendingAction(showsClose: Bool) -> Bool {", "\n    }\n")
+        self.assertIn("case .settings: false", pending)
+        self.assertIn("case .onboarding: !showsClose", pending)
+        self.assertIn("default: true", pending)
+        # Nothing waiting: one line and one button, inside the same sheet.
+        started = section(purchase, "} else {", "\n        }\n")
+        self.assertIn("nextStep = nextStepSource?.resolve()", started)
+        self.assertIn("showsStarted = true", started)
+        self.assertIn("if showsStarted {", self.sheet)
+        self.assertIn('static let line = "Plusが始まりました。"', self.view)
+        self.assertIn('.accessibilityIdentifier("membership-offer-next-step")', self.view)
+        tab = source("NekoWidget/Views/MainTabView.swift")
+        step = section(tab, "private func plusStartedNextStep() -> PlusStartedNextStep? {", "private func afterSettingsCloses(")
+        self.assertIn('"\\(latest.monthNumber)月の作品を開く"', step)
+        self.assertIn('PlusStartedNextStep(title: "まどを作る")', step)
+        self.assertLess(step.index("月の作品を開く"), step.index('"まどを作る"'))
+        self.assertIn(".environment(\\.plusStartedNextStep, plusStartedNextStepSource)", tab)
+        # The album's work opens once Plus is confirmed: a purchase never closes the gate.
+        prompt = section(self.model, "struct PlusOfferPrompt: View {", "struct PlusSettingsSection: View {")
+        self.assertIn("finishedWithPlus = result == .completed", prompt)
+        self.assertIn("if !finishedWithPlus { onDeclined?() }", prompt)
+
+    def test_auto_save_question_is_deferred_and_asked_once(self) -> None:
+        purchase = section(self.sheet, "    private func purchase() {", "    private func openNextStep()")
+        self.assertIn("AutoSaveAfterPurchase.noteBought(from: context)", purchase)
+        later = section(self.model, "enum AutoSaveAfterPurchase {", "private struct AutoSaveOfferAlert")
+        self.assertIn('static let askedKey = "plusAutoSaveQuestionAsked"', later)
+        self.assertIn("guard applies(after: context), !defaults.bool(forKey: askedKey) else { return }", later)
+        self.assertIn("defaults.bool(forKey: pendingKey) && !defaults.bool(forKey: askedKey) && !boughtThisActivation", later)
+        self.assertIn("context != .preservation && ManagedPreservationConfiguration.current.isEnabled", later)
+        self.assertIn("!AppRecordPersistence.shared.enabled", later)
+        root = section(self.model, "private struct AutoSaveOfferLater: ViewModifier {", "extension View {")
+        self.assertIn("if phase == .background { AutoSaveAfterPurchase.boughtThisActivation = false }", root)
+        self.assertLess(root.index("AutoSaveAfterPurchase.noteAsked()"), root.index("asks = true"))
+        self.assertIn("!AutoSaveAfterPurchase.isPresentingOverApp", root)
+        self.assertIn("if AutoSaveAfterPurchase.applies(after: .settings) { asks = true }", root)
+        self.assertEqual(self.model.count('"自動保存も始めますか？"'), 1, "one question for every entry")
+        self.assertIn('Button("保存を始める", action: start)', self.model)
+        self.assertIn('Button("あとで", role: .cancel, action: later)', self.model)
+
+    def test_price_read_failure_offers_a_retry(self) -> None:
+        details = section(self.view, "    private var offerDetails: some View {", "    private var actions: some View {")
+        self.assertIn('Button("もう一度読み込む", action: reloadAction)', details)
+        self.assertIn("if canReloadOffer, let onReloadOffer { return onReloadOffer }", details)
+        reload = section(self.model, "var canReloadOffer: Bool {", "func refresh() async {")
+        self.assertIn("displayedOffer == nil && offerLoadFinishedWithoutOffer", reload)
+        self.assertIn("await prepareOfferAction()", reload)
+        self.assertNotIn("purchaseAction", reload)
+        self.assertNotIn("restoreAction", reload)
+        self.assertIn("onReloadOffer: { Task { await model.reloadOffer() } },", self.sheet)
+        # 「サブスクリプションを管理」 stays with the member and the unknown states only.
+        self.assertIn("if let onManageSubscription, isMember || canRefresh {", self.view)
+
+    def test_headline_reasons_and_links(self) -> None:
+        self.assertIn('static let heading = "うちの子との毎日を、もっと残す"', self.view)
+        for path in sorted((ROOT / "NekoWidget").rglob("*.swift")):
+            self.assertNotIn("うちの子との毎日を、続ける", path.read_text(encoding="utf-8"), str(path))
+        self.assertIn('static let staysFreeLine = "Plusにしなくても、このまま無料で使えます。"', self.view)
+        self.assertIn("context == .onboarding && showsClose && !isMember", self.view)
+        reasons = section(self.model, "    var reason: String? {", "func hasPendingAction(")
+        for line in ('"\\(month)月の作品ができています。Plusで開けます。"',
+                     '"季節のムービーができています。Plusで見られます。"',
+                     '"この写真に、その日のことを書き残せます。メモを書くのはPlusの機能です。"',
+                     '"まどを作ると、家族のホーム画面に写真を届けられます。Plusがいるのは作る人だけです。"',
+                     '"お世話の記録を、家族で一緒に書けます。Plusがいるのは作る人だけです。"',
+                     '"猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せます。"'):
+            self.assertIn(line, reasons)
+        for gone in ("写真やメモの保存", "は無料です", "trialPeriod"):
+            self.assertNotIn(gone, reasons)
+        self.assertIn('Link("プライバシーポリシー", destination: privacyURL)', self.view)
+        self.assertIn('.accessibilityIdentifier("membership-offer-privacy")', self.view)
+        # The work's own cover on the Plus screen, and one × back to the album.
+        album = source("NekoWidget/Views/AlbumPrototypeView.swift")
+        gate = section(album, "struct AlbumWorkGate<Content: View>: View {", "private extension View {")
+        self.assertIn("reasonOverride: yearReason, onDeclined: { dismiss() })", gate)
+        self.assertIn(".environment(\\.plusOfferPhoto, coverPhoto)", gate)
+        self.assertEqual(album.count("AlbumWorkGate(month: letter.monthNumber, cover: letter.coverPhoto) {"), 2)
+
+    def test_memo_says_plus_and_opens_the_offer_once(self) -> None:
+        photos = source("NekoWidget/Views/LikedPhotosView.swift")
+        needs = section(photos, "private func newMemoNeedsPlus(_ photo: PhotoPresentation) -> Bool {", "\n    }\n")
+        self.assertIn("personalNote.note(for: photo.localIdentifier) == nil", needs)
+        self.assertIn("membershipAccess.decision(for: .createPersonalMemo) == .membershipRequired", needs)
+        self.assertIn('identifier: "photo-memory-note-open", plusMark: newMemoNeedsPlus(photo)) {', photos)
+        self.assertIn("if plusMark { AlbumPlusMark(compact: true, inline: true) }", photos)
+        self.assertIn('(newMemoNeedsPlus(photo) ? "、Plusで書けます" : "")', photos)
+        prompt = section(self.model, "struct PlusOfferPrompt: View {", "struct PlusSettingsSection: View {")
+        once = section(prompt, "private func openByItselfIfDue() {", "\n    }\n")
+        self.assertIn("guard !defaults.bool(forKey: Self.newMemoAutoOpenedKey) else { return }", once)
+        self.assertLess(once.index("defaults.set(true, forKey: Self.newMemoAutoOpenedKey)"), once.index("showsOffer = true"))
+        self.assertIn('case .newMemo: "Plusについて見る"', self.model)
+        self.assertIn('"Plusで\\(month)月の作品を見る"', self.model)
+
+    def test_billing_issue_has_its_own_settings_state(self) -> None:
+        settings = section(self.model, "struct PlusSettingsSection: View {", "#if DEBUG || INTERNAL_PRESENTATION")
+        self.assertIn("private var billingIssue: Bool { status == .notMember && purchases.hasBillingIssue }", settings)
+        self.assertIn('billingIssue ? "Plus（お支払いの確認が必要です）" : "Plus"', settings)
+        issue = section(settings, "case .notMember where billingIssue:", "case .notMember:")
+        self.assertIn('SettingsActionRow("サブスクリプションを管理"', issue)
+        self.assertIn("showsManagement = true", issue)
 
 
 if __name__ == "__main__":

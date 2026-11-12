@@ -21,6 +21,9 @@ struct MembershipOfferView: View {
     let purchaseTitle: String?
     let canRefresh: Bool
     let onRefresh: (() -> Void)?
+    /// No price could be read: 「もう一度読み込む」 reads it again (11/12, review 8).
+    let canReloadOffer: Bool
+    let onReloadOffer: (() -> Void)?
     let onManageSubscription: (() -> Void)?
     let onPurchase: () -> Void
     let onRestore: () -> Void
@@ -28,19 +31,25 @@ struct MembershipOfferView: View {
     /// The first run's last page is this screen itself, with its own
     /// 「あとで」: no close button there (11/7).
     let showsClose: Bool
+    /// In place of the context's own reason line (the year's work, 11/12).
+    let reasonOverride: String?
     /// 「購入を復元」 was pressed, so its spinner sits on that link, not on the
     /// purchase button (11/6). Cleared when the work ends.
     @State private var running: String?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    static let heading = "うちの子との毎日を、続ける"
+    /// 11/12: 「続ける」 read as if the free days stop without Plus.
+    static let heading = "うちの子との毎日を、もっと残す"
+    /// Under the reassurances on the first offer, which opened by itself; the
+    /// first run's own Plus page says the same under its 「あとで」.
+    static let staysFreeLine = "Plusにしなくても、このまま無料で使えます。"
     /// What Plus is, in the LP's words, plus saving (part of the 980 yen since 10/20).
     /// The daily Widget photo is free since 11/11, so it is not listed.
     static let values = [
         ("月の作品、季節のムービー", "rectangle.stack"),
         ("写真に新しいメモを書く", "square.and.pencil"),
         ("まどを作って、家族と写真を届け合う", "person.2"),
-        ("家族の手帳を、家族と一緒に書く", "book.closed"),
+        ("家族の手帳を作って、家族と一緒に書く", "book.closed"),
         ("猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる", "icloud"),
     ]
     static let reassurances = [
@@ -78,11 +87,14 @@ struct MembershipOfferView: View {
         purchaseTitle: String? = nil,
         canRefresh: Bool = false,
         onRefresh: (() -> Void)? = nil,
+        canReloadOffer: Bool = false,
+        onReloadOffer: (() -> Void)? = nil,
         onManageSubscription: (() -> Void)? = nil,
         onPurchase: @escaping () -> Void,
         onRestore: @escaping () -> Void,
         onClose: @escaping () -> Void,
-        showsClose: Bool = true
+        showsClose: Bool = true,
+        reasonOverride: String? = nil
     ) {
         self.context = context
         self.photo = photo
@@ -97,11 +109,14 @@ struct MembershipOfferView: View {
         self.purchaseTitle = purchaseTitle
         self.canRefresh = canRefresh
         self.onRefresh = onRefresh
+        self.canReloadOffer = canReloadOffer
+        self.onReloadOffer = onReloadOffer
         self.onManageSubscription = onManageSubscription
         self.onPurchase = onPurchase
         self.onRestore = onRestore
         self.onClose = onClose
         self.showsClose = showsClose
+        self.reasonOverride = reasonOverride
     }
 
     var body: some View {
@@ -113,6 +128,7 @@ struct MembershipOfferView: View {
                 // the screen, so the purchase block scrolls with the rows there.
                 if !pinsPurchase { purchaseBlock }
                 reassurance
+                if showsStaysFreeLine { staysFree }
                 footerLinks
             }
             .frame(maxWidth: 440)
@@ -144,6 +160,19 @@ struct MembershipOfferView: View {
     }
 
     private var pinsPurchase: Bool { !dynamicTypeSize.isAccessibilitySize }
+
+    /// Only on the first offer that opened by itself (no reason line there).
+    private var showsStaysFreeLine: Bool { context == .onboarding && showsClose && !isMember }
+
+    private var staysFree: some View {
+        Text(Self.staysFreeLine)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity)
+            .accessibilityIdentifier("membership-offer-stays-free")
+    }
 
     /// What Plus does: six rows, regular weight; only the heading is bold.
     private var valueRows: some View {
@@ -221,7 +250,7 @@ struct MembershipOfferView: View {
                     .accessibilityHidden(true)
             }
 
-            if let reason = context.reason(trialPeriod: offer?.trialPeriod) {
+            if let reason = reasonOverride ?? context.reason {
                 Text(reason)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -273,18 +302,26 @@ struct MembershipOfferView: View {
                         .font(.footnote.weight(.semibold))
                         .accessibilityIdentifier("membership-offer-preview-notice")
                 }
-            } else if !isWorking, let onRefresh, canRefresh {
+            } else if !isWorking, let reloadAction {
                 // While loading, the button shows the spinner; with no product
-                // after loading, the one message line says so (11/10).
-                // refresh() is a no-op unless the model can refresh; only
-                // then is a reload button honest.
-                Button("もう一度読み込む", action: onRefresh)
+                // after loading, the one message line says so (11/10) and
+                // this reads it again (11/12, review 8: App Review often
+                // meets a store that has not answered yet).
+                Button("もう一度読み込む", action: reloadAction)
                     .font(.footnote)
                     .accessibilityIdentifier("membership-offer-reload")
             }
         }
         .multilineTextAlignment(.center)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// refresh() is a no-op unless the model can refresh, and reloadOffer()
+    /// unless no price was found; only then is a reload button honest.
+    private var reloadAction: (() -> Void)? {
+        if canRefresh, let onRefresh { return onRefresh }
+        if canReloadOffer, let onReloadOffer { return onReloadOffer }
+        return nil
     }
 
     private var actions: some View {
@@ -389,9 +426,51 @@ struct MembershipOfferView: View {
                 .accessibilityIdentifier("membership-offer-terms")
         }
         if let privacyURL = Self.privacyURL {
-            Link("プライバシー", destination: privacyURL)
+            Link("プライバシーポリシー", destination: privacyURL)
                 .frame(minHeight: 44)
                 .accessibilityIdentifier("membership-offer-privacy")
+        }
+    }
+}
+
+/// 11/12 (review 1): bought where nothing was waiting (Settings, the first
+/// offer). One line and the one next step, inside the same sheet.
+struct PlusStartedView: View {
+    let nextTitle: String?
+    let onNext: () -> Void
+    let onClose: () -> Void
+
+    static let line = "Plusが始まりました。"
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Text(Self.line)
+                .font(.title2.weight(.bold))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("membership-offer-started")
+                // The purchase screen was replaced in place: say so once.
+                .onAppear { AccessibilityNotification.Announcement(Self.line).post() }
+            Button(action: onNext) {
+                Text(nextTitle ?? "閉じる")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 36)
+            }
+            .nekoPrimaryButton()
+            .accessibilityIdentifier("membership-offer-next-step")
+        }
+        .frame(maxWidth: 440)
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(uiColor: .systemBackground))
+        .navigationTitle("ねこのまど Plus")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                SheetCloseButton(action: onClose)
+                    .accessibilityIdentifier("membership-offer-close")
+            }
         }
     }
 }

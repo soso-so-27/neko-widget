@@ -30,13 +30,15 @@ enum PlusOfferContext: Equatable, Sendable {
     case preservation
     case settings
 
-    /// The label of the control that opens the sheet at this place.
+    /// The label of the control that opens the sheet at this place. Where the
+    /// sheet opened by itself, this button is what stays after closing it, so
+    /// it says Plus (11/12, review 6).
     var entryTitle: String {
         switch self {
         case .onboarding: "Plusについて見る"
-        case let .monthlySummary(month?) where (1...12).contains(month): "\(month)月の作品を見る"
-        case .monthlySummary: "作品とムービーを見る"
-        case .newMemo: "メモを書く"
+        case let .monthlySummary(month?) where (1...12).contains(month): "Plusで\(month)月の作品を見る"
+        case .monthlySummary: "Plusで作品とムービーを見る"
+        case .newMemo: "Plusについて見る"
         case .createWindow: "まどを作る"
         case .continueWindow: "このまどを続ける"
         case .createFamily: "家族の手帳を作る"
@@ -46,28 +48,36 @@ enum PlusOfferContext: Equatable, Sendable {
         }
     }
 
-    /// One line above the heading saying why the screen appeared here.
+    /// One line above the heading: what the person gets here, not a rule
+    /// (11/12, review 5). The free days are the button's own words, so no
+    /// line repeats them. Saving names records only, never photos (review 9).
     var reason: String? {
         switch self {
         // 11/11: the daily Widget photo is free, so the first offer has no
         // reason line; the cat photo header alone opens it.
         case .onboarding: nil
         case .settings: nil
-        case .monthlySummary: "月の作品と季節のムービーは、Plusで見られます。"
-        case .newMemo: "メモを書くのはPlusの機能です。"
-        case .createWindow: "まどを作るのは、Plusの機能です。"
+        case let .monthlySummary(month?) where (1...12).contains(month): "\(month)月の作品ができています。Plusで開けます。"
+        case .monthlySummary: "季節のムービーができています。Plusで見られます。"
+        case .newMemo: "この写真に、その日のことを書き残せます。メモを書くのはPlusの機能です。"
+        case .createWindow: "まどを作ると、家族のホーム画面に写真を届けられます。Plusがいるのは作る人だけです。"
         case .continueWindow: "このまどは、作った人のPlusで続きます。"
-        case .createFamily: "家族の手帳を作るのは、Plusの機能です。"
+        case .createFamily: "お世話の記録を、家族で一緒に書けます。Plusがいるのは作る人だけです。"
         case .continueFamily: "家族の手帳は、家族の誰か1人のPlusで続きます。"
-        case .preservation: "写真やメモの保存は、Plusの機能です。"
+        case .preservation: "猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せます。"
         }
     }
 
-    /// The reason on the Plus screen, where StoreKit's offer is known: a new
-    /// memo also says the free days, only when this person can have them (11/10).
-    func reason(trialPeriod: String?) -> String? {
-        guard case .newMemo = self, let trialPeriod, let base = reason else { return reason }
-        return base + "\(trialPeriod)は無料です。"
+    /// Nothing waits behind the screen (Settings, the first offer that opened
+    /// by itself): a purchase ends on 「Plusが始まりました。」 and one next step.
+    /// Everywhere else the place's own action goes on at once (11/12).
+    func hasPendingAction(showsClose: Bool) -> Bool {
+        switch self {
+        case .settings: false
+        // The first run's last page (no ×) goes on into the app by itself.
+        case .onboarding: !showsClose
+        default: true
+        }
     }
 
     /// Stable suffix for accessibility identifiers and UI fixtures.
@@ -103,6 +113,28 @@ extension EnvironmentValues {
         get { self[PlusOfferPhotoKey.self] }
         set { self[PlusOfferPhotoKey.self] = newValue }
     }
+    var plusStartedNextStep: PlusStartedNextStepSource? {
+        get { self[PlusStartedNextStepKey.self] }
+        set { self[PlusStartedNextStepKey.self] = newValue }
+    }
+}
+
+/// After Plus starts with nothing waiting behind the screen (11/12): the one
+/// most useful next step, 「10月の作品を開く」 or 「まどを作る」.
+struct PlusStartedNextStep {
+    let title: String
+    /// Runs after the Plus screen has closed.
+    let open: @MainActor () -> Void
+}
+
+/// Asked only when a purchase ends, so the newest work is read then, not
+/// on every redraw of the screen that provides it.
+struct PlusStartedNextStepSource {
+    let resolve: @MainActor () -> PlusStartedNextStep?
+}
+
+private struct PlusStartedNextStepKey: EnvironmentKey {
+    static var defaultValue: PlusStartedNextStepSource? { nil }
 }
 
 /// The live sheet is offered only when the product and billing client are
@@ -463,6 +495,24 @@ final class MembershipOfferModel: ObservableObject {
         }
     }
 
+    /// No price could be read (11/12, review 8): 「もう一度読み込む」 reads the
+    /// products and the offer again. It never purchases or restores.
+    var canReloadOffer: Bool {
+        presentsOffer && hasLoaded && !isWorking && !isMember && !isWaiting
+            && displayedOffer == nil && offerLoadFinishedWithoutOffer
+    }
+
+    func reloadOffer() async {
+        guard canReloadOffer else { return }
+        actionResult = nil
+        isWorking = true
+        await prepareOfferAction()
+        await reloadOfferForCurrentCatalog()
+        isWorking = false
+        updateMembershipState()
+        applyOfferUnavailableMessage()
+    }
+
     func refresh() async {
         guard canRefresh else { return }
         actionResult = nil
@@ -631,6 +681,20 @@ final class MembershipOfferModel: ObservableObject {
         return model
     }
 
+    /// The first price read finds no product (as in airplane mode or App
+    /// Review's sandbox); 「もう一度読み込む」 then finds it (11/12, review 8).
+    static func offerLoadFailsOncePreview() -> MembershipOfferModel {
+        var reads = 0
+        return MembershipOfferModel(isPreview: true,
+            load: {
+                reads += 1
+                return reads == 1 ? nil
+                    : MembershipOfferPresentation.monthly(displayPrice: "¥980", trialPeriod: "14日間", isPreview: true)
+            },
+            purchase: { _ in .completed },
+            restore: { .nothingToRestore })
+    }
+
     /// Deterministic rendering regression for a quote changing between display
     /// and an explicit tap. No StoreKit, identity, or network is involved.
     static func catalogRefreshPreview() -> MembershipOfferModel {
@@ -786,20 +850,49 @@ private final class MembershipStoreKitClient {
     }
 }
 
-/// 「自動保存も始めますか？」 after buying Plus, from every entry (11/7: only
-/// Settings asked). Saving is what Plus pays for, so it is asked once, right
-/// after the purchase, unless saving is already on.
+/// 「自動保存も始めますか？」 after buying Plus, from every entry but the
+/// auto-save screens. 11/12 (review 1): never right after the purchase, which
+/// is the moment for what the person bought Plus for. It is asked once, the
+/// next time the app comes to the front after leaving it (or the next launch),
+/// unless saving is on by then. Both marks live in UserDefaults.
 @MainActor
-final class AutoSaveAfterPurchase: ObservableObject {
-    static let shared = AutoSaveAfterPurchase()
-    /// Bought on the first run's last page: asked once the guide has ended,
-    /// not over the guide's own 「あとで」 (11/7).
-    @Published var waitsForOnboardingEnd = false
+enum AutoSaveAfterPurchase {
+    /// A purchase is waiting for the question.
+    static let pendingKey = "plusAutoSaveQuestionPending"
+    /// The question was shown once; it is never shown again.
+    static let askedKey = "plusAutoSaveQuestionAsked"
+    /// Bought while the app has been in front: not asked until it has left.
+    static var boughtThisActivation = false
 
     /// Not from the auto-save screens themselves: their own button is right there.
     static func applies(after context: PlusOfferContext) -> Bool {
         context != .preservation && ManagedPreservationConfiguration.current.isEnabled
             && !AppRecordPersistence.shared.enabled
+    }
+
+    /// Called when a purchase completes: remembered, not asked.
+    static func noteBought(from context: PlusOfferContext, defaults: UserDefaults = .standard) {
+        guard applies(after: context), !defaults.bool(forKey: askedKey) else { return }
+        defaults.set(true, forKey: pendingKey)
+        boughtThisActivation = true
+    }
+
+    /// Waiting, never asked, saving still off, and not in the opening that bought.
+    static func isDue(defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: pendingKey) && !defaults.bool(forKey: askedKey) && !boughtThisActivation
+    }
+
+    static func noteAsked(defaults: UserDefaults = .standard) {
+        defaults.set(true, forKey: askedKey)
+        defaults.removeObject(forKey: pendingKey)
+    }
+
+    /// A sheet or cover is up: the question waits for a later opening.
+    static var isPresentingOverApp: Bool {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .contains { $0.isKeyWindow && $0.rootViewController?.presentedViewController != nil }
     }
 }
 
@@ -819,14 +912,16 @@ private struct AutoSaveOfferAlert: ViewModifier {
     }
 }
 
-/// The first run's Plus page has no sheet over it: the question comes once
-/// the guide has ended and the app is showing (11/7).
+/// The one place 「自動保存も始めますか？」 is asked (11/12): at the app's
+/// root, on a later opening than the one that bought Plus, once the first
+/// run has ended and nothing else is over the app.
 @MainActor
-private struct AutoSaveOfferAfterOnboarding: ViewModifier {
+private struct AutoSaveOfferLater: ViewModifier {
     let onboardingEnded: Bool
-    @ObservedObject private var waiting = AutoSaveAfterPurchase.shared
+    @Environment(\.scenePhase) private var scenePhase
     @State private var asks = false
     @State private var showsAutoSave = false
+    @State private var attempt: Task<Void, Never>?
 
     func body(content: Content) -> some View {
         content
@@ -839,42 +934,58 @@ private struct AutoSaveOfferAfterOnboarding: ViewModifier {
                         }
                 }
             }
-            .onChange(of: onboardingEnded, initial: true) { _, _ in askIfWaiting() }
-            .onChange(of: waiting.waitsForOnboardingEnd) { _, _ in askIfWaiting() }
+            .onChange(of: scenePhase, initial: true) { _, phase in
+                // Leaving the app ends the opening that bought Plus.
+                if phase == .background { AutoSaveAfterPurchase.boughtThisActivation = false }
+                scheduleAsk(active: phase == .active)
+            }
+            .onChange(of: onboardingEnded) { _, _ in scheduleAsk(active: scenePhase == .active) }
     }
 
-    private func askIfWaiting() {
-        guard onboardingEnded, waiting.waitsForOnboardingEnd else { return }
-        waiting.waitsForOnboardingEnd = false
-        if AutoSaveAfterPurchase.applies(after: .onboarding) { asks = true }
+    private func scheduleAsk(active: Bool) {
+        attempt?.cancel()
+        attempt = nil
+        guard active, onboardingEnded, AutoSaveAfterPurchase.isDue() else { return }
+        attempt = Task { @MainActor in
+            // Let an opening from the Widget or a link settle first.
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled, UIApplication.shared.applicationState == .active,
+                  AutoSaveAfterPurchase.isDue(), !AutoSaveAfterPurchase.isPresentingOverApp else { return }
+            AutoSaveAfterPurchase.noteAsked()
+            // Saving was turned on meanwhile: nothing to ask, ever.
+            if AutoSaveAfterPurchase.applies(after: .settings) { asks = true }
+        }
     }
 }
 
 extension View {
-    /// Put once at the app's root: asks 「自動保存も始めますか？」 after a
-    /// purchase made on the first run's last page.
+    /// Put once at the app's root: asks 「自動保存も始めますか？」 once, on a
+    /// later opening after Plus was bought anywhere (11/12). The name is kept
+    /// from 11/7, when only the first run's page waited for the guide to end.
     @MainActor
     func autoSaveOfferAfterOnboarding(ended: Bool) -> some View {
-        modifier(AutoSaveOfferAfterOnboarding(onboardingEnded: ended))
+        modifier(AutoSaveOfferLater(onboardingEnded: ended))
     }
 }
 
 @MainActor
 /// The one Plus screen. Every entry passes its `PlusOfferContext`; the only
 /// difference between entries is the one-line reason above the heading.
-/// A completed purchase or restore closes the sheet at once, without a
-/// completion page, so the caller's screen continues where it was.
+/// A completed purchase or restore closes the sheet at once, so the caller's
+/// own action goes on (the work opens, the memo editor opens, 「作る」 goes
+/// on). Only where nothing waits behind it (Settings, the first offer) does a
+/// purchase end on 「Plusが始まりました。」 and one next step (11/12, review 1).
 struct MembershipOfferSheet: View {
     @StateObject private var model: MembershipOfferModel
     @State private var showsSubscriptionManagement = false
-    /// Bought just now: 「自動保存も始めますか？」 is asked here, and the
-    /// caller hears about the purchase once it is answered (11/7).
-    @State private var asksAutoSave = false
-    @State private var showsAutoSave = false
+    /// Bought here with nothing waiting: the one line and the one button.
+    @State private var showsStarted = false
+    @State private var nextStep: PlusStartedNextStep?
 #if DEBUG || INTERNAL_PRESENTATION
     @State private var showsManagementPreview = false
 #endif
     @Environment(\.plusOfferPhoto) private var placePhoto
+    @Environment(\.plusStartedNextStep) private var nextStepSource
     /// The cat photo the screen opened with, kept while it is open: a new
     /// best candidate behind the sheet must not reload the header (11/10).
     @State private var heldPhoto: PlusOfferPhoto?
@@ -882,83 +993,32 @@ struct MembershipOfferSheet: View {
     let photo: UIImage?
     /// False only where the screen is a page with its own 「あとで」 (onboarding, 11/7).
     let showsClose: Bool
+    /// In place of the context's own line (the year's work, 11/12).
+    let reasonOverride: String?
     let onFinish: (MembershipOfferActionResult) -> Void
 
     init(model: MembershipOfferModel, context: PlusOfferContext, photo: UIImage? = nil,
-         showsClose: Bool = true,
+         showsClose: Bool = true, reasonOverride: String? = nil,
          onFinish: @escaping (MembershipOfferActionResult) -> Void) {
         _model = StateObject(wrappedValue: model)
         self.context = context
         self.photo = photo
         self.showsClose = showsClose
+        self.reasonOverride = reasonOverride
         self.onFinish = onFinish
     }
 
     var body: some View {
         NavigationStack {
-            if showsAutoSave {
-                // In this sheet, not a second one over it; 「閉じる」 goes back
-                // to where Plus was bought.
-                AppRecordSettingsView(startsOnOpen: true)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) { Button("閉じる") { onFinish(.completed) } }
-                    }
+            if showsStarted {
+                PlusStartedView(nextTitle: nextStep?.title, onNext: openNextStep,
+                                onClose: { onFinish(.completed) })
             } else {
-                MembershipOfferView(
-                    context: context,
-                    photo: photo, photoAsset: heldPhoto ?? placePhoto, offer: model.displayedOffer,
-                    isWorking: model.isWorking,
-                    canPurchase: model.canPurchase, canRestore: model.canRestore,
-                    message: model.message,
-                    isMember: model.isMember, memberEndLine: model.memberEndLine,
-                    purchaseTitle: model.purchaseTitle,
-                    canRefresh: model.canRefresh,
-                    onRefresh: { Task { await model.refresh() } },
-                    onManageSubscription: {
-    #if DEBUG || INTERNAL_PRESENTATION
-                        if model.isPreview {
-                            showsManagementPreview = true
-                        } else {
-                            showsSubscriptionManagement = true
-                        }
-    #else
-                        showsSubscriptionManagement = true
-    #endif
-                    },
-                    onPurchase: {
-                        Task {
-                            let result = await model.purchase()
-                            if result == .completed, !model.isPreview { UsageCounter.shared.count(.plusPurchased(.init(context))) }  // Usage (11/7)
-                            // No completion page: a purchase closes the sheet and the
-                            // caller re-reads membership through its dismissal.
-                            if result == .completed, !model.isPreview, AutoSaveAfterPurchase.applies(after: context) {
-                                // The first run asks after its guide; every other entry asks here.
-                                if context == .onboarding {
-                                    AutoSaveAfterPurchase.shared.waitsForOnboardingEnd = true
-                                    onFinish(result)
-                                } else {
-                                    asksAutoSave = true
-                                }
-                                return
-                            }
-                            if result == .completed || (model.isPreview && result == .cancelled) { onFinish(result) }
-                        }
-                    },
-                    onRestore: {
-                        Task {
-                            let result = await model.restore()
-                            if result == .completed { onFinish(result) }
-                        }
-                    },
-                    onClose: { onFinish(model.isMember ? .completed : .cancelled) },
-                    showsClose: showsClose
-                )
+                offerScreen
             }
         }
-        .modifier(AutoSaveOfferAlert(isPresented: $asksAutoSave, start: { showsAutoSave = true },
-                                     later: { onFinish(.completed) }))
-        // While asking, a swipe must not drop the purchase the caller waits for.
-        .interactiveDismissDisabled(model.isWorking || asksAutoSave || showsAutoSave)
+        // While buying, a swipe must not drop the purchase the caller waits for.
+        .interactiveDismissDisabled(model.isWorking)
         // Usage (11/7): each time the one Plus screen is shown, by its entry place.
         .onAppear {
             if heldPhoto == nil { heldPhoto = placePhoto }
@@ -979,19 +1039,101 @@ struct MembershipOfferSheet: View {
 #endif
         .task { await model.load() }
     }
+
+    private var offerScreen: some View {
+        MembershipOfferView(
+            context: context,
+            photo: photo, photoAsset: heldPhoto ?? placePhoto, offer: model.displayedOffer,
+            isWorking: model.isWorking,
+            canPurchase: model.canPurchase, canRestore: model.canRestore,
+            message: model.message,
+            isMember: model.isMember, memberEndLine: model.memberEndLine,
+            purchaseTitle: model.purchaseTitle,
+            canRefresh: model.canRefresh,
+            onRefresh: { Task { await model.refresh() } },
+            canReloadOffer: model.canReloadOffer,
+            onReloadOffer: { Task { await model.reloadOffer() } },
+            onManageSubscription: manageSubscription,
+            onPurchase: purchase,
+            onRestore: {
+                Task {
+                    let result = await model.restore()
+                    if result == .completed { onFinish(result) }
+                }
+            },
+            onClose: { onFinish(model.isMember ? .completed : .cancelled) },
+            showsClose: showsClose,
+            reasonOverride: reasonOverride
+        )
+    }
+
+    private func manageSubscription() {
+#if DEBUG || INTERNAL_PRESENTATION
+        if model.isPreview {
+            showsManagementPreview = true
+            return
+        }
+#endif
+        showsSubscriptionManagement = true
+    }
+
+    private func purchase() {
+        Task {
+            let result = await model.purchase()
+            guard result == .completed else {
+                if model.isPreview && result == .cancelled { onFinish(result) }
+                return
+            }
+            if !model.isPreview {
+                UsageCounter.shared.count(.plusPurchased(.init(context)))  // Usage (11/7)
+                // 11/12: 「自動保存も始めますか？」 is asked later, once, at the
+                // app's root (AutoSaveOfferLater), never over what was bought.
+                AutoSaveAfterPurchase.noteBought(from: context)
+            }
+            if context.hasPendingAction(showsClose: showsClose) {
+                // The caller re-reads membership through the dismissal and
+                // goes on with what the person asked for.
+                onFinish(result)
+            } else {
+                nextStep = nextStepSource?.resolve()
+                showsStarted = true
+            }
+        }
+    }
+
+    /// Closes the sheet first; the next screen opens once it has gone.
+    private func openNextStep() {
+        let step = nextStep
+        onFinish(.completed)
+        guard let step else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(600))
+            step.open()
+        }
+    }
 }
 
 /// Shown in place of a Plus feature at one of the entry places. A confirmed
-/// "not a member" opens the one Plus screen directly (once per appearance);
-/// closing it leaves this short line with the place's own button. An unknown
-/// state never offers a purchase: it shows the restore-only notice instead.
+/// "not a member" opens the one Plus screen directly (once per appearance;
+/// for a new memo only the very first time, 11/12 review 6); closing it
+/// leaves this short line with the place's own button. An unknown state
+/// never offers a purchase: it shows the restore-only notice instead.
 @MainActor
 struct PlusOfferPrompt: View {
     let context: PlusOfferContext
     let decision: MembershipAccessDecision
     var presentsImmediately = true
+    /// In place of the context's own line (the year's work, 11/12).
+    var reasonOverride: String? = nil
+    /// Closing the Plus screen without Plus also closes the place itself, so
+    /// one × goes back (the album's work, 11/12 review 7).
+    var onDeclined: (() -> Void)? = nil
     @State private var showsOffer = false
     @State private var didPresent = false
+    @State private var finishedWithPlus = false
+
+    /// Set once a new memo has opened the Plus screen by itself.
+    static let newMemoAutoOpenedKey = "plusOfferNewMemoAutoOpened"
 
     var body: some View {
         // The sheet hangs on the prompt as a whole, not on one branch: buying
@@ -1000,7 +1142,7 @@ struct PlusOfferPrompt: View {
         Group {
         if decision == .membershipRequired {
             VStack(spacing: 14) {
-                if let reason = context.reason {
+                if let reason = reasonOverride ?? context.reason {
                     Text(reason)
                         .font(.subheadline).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1014,20 +1156,32 @@ struct PlusOfferPrompt: View {
             // A container keeps the button's own identifier (11/8).
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("plus-offer-prompt")
-            .onAppear {
-                guard presentsImmediately, !didPresent else { return }
-                didPresent = true
-                showsOffer = true
-            }
+            .onAppear(perform: openByItselfIfDue)
         } else {
             MembershipAccessNotice(decision: decision)
         }
         }
         .sheet(isPresented: $showsOffer, onDismiss: {
             NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
+            if !finishedWithPlus { onDeclined?() }
+            finishedWithPlus = false
         }) {
-            MembershipOfferSheet(model: .live(), context: context) { _ in showsOffer = false }
+            MembershipOfferSheet(model: .live(), context: context, reasonOverride: reasonOverride) { result in
+                finishedWithPlus = result == .completed
+                showsOffer = false
+            }
         }
+    }
+
+    private func openByItselfIfDue() {
+        guard presentsImmediately, !didPresent else { return }
+        didPresent = true
+        if context == .newMemo {
+            let defaults = UserDefaults.standard
+            guard !defaults.bool(forKey: Self.newMemoAutoOpenedKey) else { return }
+            defaults.set(true, forKey: Self.newMemoAutoOpenedKey)
+        }
+        showsOffer = true
     }
 }
 
@@ -1064,6 +1218,11 @@ struct PlusSettingsSection: View {
     var body: some View {
         Section {
             switch status {
+            case .notMember where billingIssue:
+                // 11/12 (review 11): Apple could not take the payment. The way
+                // to fix it, not an offer to buy again.
+                SettingsActionRow("サブスクリプションを管理", systemImage: "creditcard") { showsManagement = true }
+                    .accessibilityIdentifier("settings-membership-billing-manage")
             case .notMember:
                 Button {
                     showsOffer = true
@@ -1098,9 +1257,11 @@ struct PlusSettingsSection: View {
         } header: {
             // Presenters live on the header, which stays while the rows switch
             // between states (a list Section would copy them onto every row).
-            Text(status == .member ? memberHeader : status == .unknown ? "Plus（購入状況を確認できません）" : "Plus")
+            Text(status == .member ? memberHeader : status == .unknown ? "Plus（購入状況を確認できません）"
+                 : billingIssue ? "Plus（お支払いの確認が必要です）" : "Plus")
                 .accessibilityIdentifier(status == .member ? "settings-membership-active"
-                                         : status == .unknown ? "settings-membership-unknown" : "settings-membership-header")
+                                         : status == .unknown ? "settings-membership-unknown"
+                                         : billingIssue ? "settings-membership-billing-issue" : "settings-membership-header")
                 .sheet(isPresented: $showsOffer, onDismiss: {
                     refreshMembership()
                 }) {
@@ -1119,6 +1280,10 @@ struct PlusSettingsSection: View {
                 }
         }
     }
+
+    /// Not a member because Apple could not take the payment (the store's
+    /// own `hasBillingIssue`; nothing here decides it).
+    private var billingIssue: Bool { status == .notMember && purchases.hasBillingIssue }
 
     /// 「Plus（11月9日まで）」 once auto-renewal is off, so a cancellation shows
     /// it worked; 「Plus（利用中）」 while it renews (11/9).
@@ -1191,6 +1356,13 @@ struct MembershipOfferPreviewView: View {
 #endif
             }
         }
+        // Outside the sheet, so the sheet sees it: stands in for the app's
+        // newest work after a purchase from Settings (11/12).
+        .environment(\.plusStartedNextStep, Self.sampleNextStep)
+    }
+
+    private static var sampleNextStep: PlusStartedNextStepSource {
+        PlusStartedNextStepSource { PlusStartedNextStep(title: "10月の作品を開く") {} }
     }
 
     private func offerSheet(_ offerContext: PlusOfferContext) -> some View {
@@ -1214,6 +1386,7 @@ struct MembershipOfferPreviewView: View {
             return .restoreFailsOncePreview(presentsOffer: true)
         }
         if CommandLine.arguments.contains("--membership-catalog-refresh") { return .catalogRefreshPreview() }
+        if CommandLine.arguments.contains("--membership-offer-load-fails-once") { return .offerLoadFailsOncePreview() }
 #endif
         return membershipState.map { .preview(state: $0, expiresAfter: expiresAfter) }
             ?? .preview(purchaseResult: purchaseResult,

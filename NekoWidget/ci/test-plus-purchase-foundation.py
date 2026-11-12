@@ -31,8 +31,12 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertNotIn("980", live)
         self.assertNotIn("7日", live)
         self.assertIn("case .pending, .awaitingServerConfirmation: return .waiting", live)
-        # A completed purchase closes the sheet without a completion page.
-        self.assertIn("if result == .completed || (model.isPreview && result == .cancelled)", model)
+        # A completed purchase closes the sheet and the caller's action goes on;
+        # only where nothing waits does it end on 「Plusが始まりました。」 (11/12).
+        purchase = section(model, "    private func purchase() {", "    private func openNextStep()")
+        self.assertIn("guard result == .completed else {", purchase)
+        self.assertIn("if model.isPreview && result == .cancelled { onFinish(result) }", purchase)
+        self.assertIn("if context.hasPendingAction(showsClose: showsClose) {", purchase)
         self.assertIn("init(model: MembershipOfferModel, context: PlusOfferContext", model)
         self.assertNotIn("検討中", model)
         self.assertIn("onClose: { onFinish(model.isMember ? .completed : .cancelled) }", model)
