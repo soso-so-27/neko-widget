@@ -204,10 +204,11 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
         app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "invite-entry"
         app.launch()
-        // 11/7: one button and one line for invited people; the line is not a button.
-        let hint = app.staticTexts["onboarding-purpose-join-hint"]
-        XCTAssertTrue(hint.waitForExistence(timeout: 15))
-        XCTAssertEqual(hint.label, "届いた招待リンクをタップしてください。")
+        // 11/12: one button and no line for invited people; their link opens
+        // the join screen by itself.
+        XCTAssertTrue(app.buttons["onboarding-purpose-start"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.staticTexts["onboarding-purpose-join-hint"].exists)
+        XCTAssertFalse(app.staticTexts["届いた招待リンクをタップしてください。"].exists)
         XCTAssertFalse(app.buttons["onboarding-purpose-join"].exists)
         // The one main button starts on one's own: 「猫を探す」 (OnboardingPresentationCopy.purposeAction,
         // pinned by ci/verify-onboarding-presentation.swift and the public guide page).

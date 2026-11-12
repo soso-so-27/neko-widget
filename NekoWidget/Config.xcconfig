@@ -99,7 +99,7 @@ SHARING_COMMUNITY_STANDARDS_URL =
 // Purpose-string and Share Extension plist defaults for non-Release local
 // development. Release configurations use Config.Disabled.xcconfig, while the
 // protected TestFlight workflow supplies explicit per-mode overrides.
-PHOTO_LIBRARY_USAGE_DESCRIPTION = 猫の写真や動画を端末内で見つけ、元の写真や動画は変えずに写真アプリの「うちの子」アルバム・ウィジェット・季節のムービーに使うため、写真ライブラリへのアクセスを許可してください。
+PHOTO_LIBRARY_USAGE_DESCRIPTION = 猫の写真をiPhoneの中で見つけて、アルバムとホーム画面のウィジェットに出すために使います。
 SHARE_EXTENSION_INFOPLIST_FILE = NekoWidgetShareExtension/Info.plist
 
 // Public official-window catalog. Empty until approved photos and hosting are

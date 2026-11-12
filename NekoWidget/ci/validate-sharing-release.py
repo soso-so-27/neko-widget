@@ -31,7 +31,7 @@ MEDIA_INTERACTION_COLLECTIONS = {
 }
 APP_FUNCTIONALITY = "NSPrivacyCollectedDataTypePurposeAppFunctionality"
 PHOTO_DESCRIPTION_TERMS = ("選んだ1枚", "2,048", "位置情報", "暗号化", "原本")
-LOCAL_PHOTO_DESCRIPTION_TERMS = ("猫", "端末内", "アルバム", "ウィジェット")
+LOCAL_PHOTO_DESCRIPTION_TERMS = ("猫", "iPhoneの中", "アルバム", "ウィジェット")
 LOCAL_PHOTO_DESCRIPTION_FORBIDDEN_TERMS = (
     "共有",
     "招待",

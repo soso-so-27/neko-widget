@@ -380,8 +380,12 @@ class PublicPolicySiteTests(unittest.TestCase):
         # carries this sentence. The public privacy page still describes the
         # album and is updated separately with the owner's approval.
         self.assertIn("NSPhotoLibraryAddUsageDescription", info)
-        self.assertIn("「自分のお気に入りに追加」を選んだ届いた写真", info)
+        self.assertIn("届いた写真で「自分のお気に入りに追加」を選んだとき", info)
         self.assertIn("写真を自動で追加することはありません", info)
+        # 11/12: the app writes no album to Photos, so the add purpose names none.
+        add_text = info.split("<key>NSPhotoLibraryAddUsageDescription</key>", 1)[1].split("</string>", 1)[0]
+        for term in ("うちの子", "アルバム", "写真ライブラリ"):
+            self.assertNotIn(term, add_text)
 
     def test_explicit_export_disclosure_stays_aligned_with_implementation(self):
         liked_photos = LIKED_PHOTOS_VIEW.read_text(encoding="utf-8")

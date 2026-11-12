@@ -14,7 +14,7 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).with_name("validate-disabled-release-build-settings.py")
 LOCAL_DESCRIPTION = (
-    "猫の写真を端末内で見つけて整理し、「うちの子」アルバムとウィジェットへ反映します。"
+    "猫の写真をiPhoneの中で見つけて、アルバムとホーム画面のウィジェットに出すために使います。"
 )
 TARGETS = {
     "NekoWidget": "NekoWidget/Info.plist",

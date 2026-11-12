@@ -39,6 +39,12 @@ xcrun swiftc -frontend -parse "${internal_boundary_sources[@]}"
 xcrun swiftc -frontend -parse -D INTERNAL_PRESENTATION "${internal_boundary_sources[@]}"
 xcrun swiftc -frontend -parse -D DEBUG "${internal_boundary_sources[@]}"
 
+xcrun --sdk macosx swiftc -parse-as-library \
+  NekoWidget/Services/PlusAuthorityCache.swift NekoWidget/Services/PlusRenewalPresentation.swift \
+  ci/verify-plus-authority-cache.swift \
+  -o "$RUNNER_TEMP/plus-cache-tests"
+"$RUNNER_TEMP/plus-cache-tests"
+
 # Cheap executor / intent observations precede either expensive product build.
 python3 ci/prepare-autosave-background-probe.py "$RUNNER_TEMP/autosave-background.swift"
 xcrun --sdk macosx swiftc -parse-as-library "$RUNNER_TEMP/autosave-background.swift" -o "$RUNNER_TEMP/autosave-background"
@@ -256,11 +262,7 @@ xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0
   ci/verify-tool-outputs.swift -o "$RUNNER_TEMP/tool-output-tests"
 "$RUNNER_TEMP/tool-output-tests"
 
-xcrun --sdk macosx swiftc -parse-as-library \
-  NekoWidget/Services/PlusAuthorityCache.swift NekoWidget/Services/PlusRenewalPresentation.swift \
-  ci/verify-plus-authority-cache.swift \
-  -o "$RUNNER_TEMP/plus-cache-tests"
-"$RUNNER_TEMP/plus-cache-tests"
+
 
 settings_paths=()
 for target in NekoWidget NekoWidgetWidgetExtension NekoWidgetShareExtension; do

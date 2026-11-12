@@ -49,6 +49,27 @@ enum OnboardingPresentationPersistence {
     static func requiresPresentation(completedVersion: Int) -> Bool {
         completedVersion < currentCompletedVersion
     }
+
+    /// The step that ends the first run, whichever way it ends: the Widget
+    /// guide, a found photo's 「あとで」, no Photos access, or a link (11/12:
+    /// only the Widget guide counted, so most people never got the first
+    /// Plus offer).
+    static func endsFirstRun(from previousCompletedVersion: Int, to completedVersion: Int) -> Bool {
+        requiresPresentation(completedVersion: previousCompletedVersion)
+            && !requiresPresentation(completedVersion: completedVersion)
+    }
+}
+
+/// The 写真 tab is remembered as the last tab when the first run ends, so the
+/// second opening returns to the photos the person just met instead of the
+/// アルバム tab (11/12). `MainTabView` reads the same key with @AppStorage.
+enum FirstRunTabMemory {
+    static let lastTabKey = "navigation.lastTab.v1"
+    static let photosTab = "photos"
+
+    static func rememberPhotosTab(defaults: UserDefaults = .standard) {
+        defaults.set(photosTab, forKey: lastTabKey)
+    }
 }
 
 /// WidgetKit lookup results are intentionally modeled separately from the
@@ -86,18 +107,32 @@ enum OnboardingPresentationCopy {
     static let permissionSkipAction = "あとで"
 
     /// Page three shows the cats as they are found: a grid that fills, a count,
-    /// and the one next step (place the Widget). The count reads 「いま 32枚」
-    /// while the scan runs and 「128枚」 once it is final. Before the first
-    /// cat it shows no count: 「いま 0枚」 read as a failure (11/10).
+    /// and the one next step (place the Widget). From the first cat the title
+    /// says 「見つかりました」 and the count reads 「32枚」 with 「まだ探しています」
+    /// under it until the scan is final (11/12: most people left before the
+    /// title ever changed). Before the first cat it shows no count: 「いま 0枚」
+    /// read as a failure (11/10).
     static let scanTitle = "猫を探しています"
     static let scanFoundTitle = "猫の写真が見つかりました"
     static let scanBodyLines = [
         "アプリを開いている間、新しい写真から順に探します。"
     ]
-    static let scanCountLead = "いま"
+    /// Said under the count until the scan is final, once a cat was found
+    /// and the title already says so (11/12).
+    static let scanStillSearching = "まだ探しています"
     static let scanWidgetAction = "ウィジェットを置く"
     /// The quiet way past the Widget: straight into the 写真 tab.
     static let scanContinueAction = "あとで"
+
+    /// No cat in the photos (11/12): said plainly, with the one next step
+    /// that fits. It never blames access the person already gave.
+    static let scanZeroTitle = "猫の写真は見つかりませんでした"
+    static let scanZeroBody = "猫の写真を撮ると、ここに出ます。"
+    static let scanZeroLimitedBody = "猫の写真を追加で選ぶと、ここに出ます。"
+    static let scanZeroLimitedAction = "写真を追加で選ぶ"
+    static let scanZeroStartAction = "はじめる"
+    /// The official window, so the Widget has a cat to show meanwhile.
+    static let scanZeroNowaAction = "のわのまどを見る"
 
     static let widgetTitleLines = [
         "ホーム画面に、",
@@ -119,13 +154,18 @@ enum OnboardingPresentationCopy {
     static let widgetChangeSourceStep = "出す写真を変えるには、ウィジェットを長押しして「ウィジェットを編集」→「表示する写真」。まども選べます。"
     /// Said under the steps (11/10): place first, then come back.
     static let widgetReturnHint = "追加してアプリへ戻ると、自動で確認します。"
-    static let widgetAction = "置きました"
+    /// 11/12: the button checks nothing, so it says the person goes out to
+    /// the Home Screen, not that the Widget is placed.
+    static let widgetAction = "ホーム画面で置いてきます"
+    /// The last step of the guide, in the Widget's own words: its tag reads
+    /// 「タップで きょうの 1 枚」 (NekoWidgetView), never 「札」.
+    static let widgetCloudyStep = "置いたら、そのままくもりのまどです。「タップで きょうの 1 枚」を押すと、きょうの写真が出ます。"
     static let widgetLaterAction = "あとで"
 
     /// The first run's last screen once WidgetKit sees the Widget (11/10):
     /// one state, one sentence, one button. Plus is not offered here.
     static let widgetPlacedTitle = "置けました"
-    static let widgetPlacedBody = "ホーム画面で札を押すと、きょうの1枚が出ます。"
+    static let widgetPlacedBody = "ホーム画面の「タップで きょうの 1 枚」を押すと、きょうの写真が出ます。"
     static let widgetPlacedAction = "写真を見る"
 
     /// Page two, when the app's own records could not be read: the Photos
@@ -298,11 +338,12 @@ struct OnboardingPresentationState: Equatable, Sendable {
 /// person first meets their cat on the Home Screen. The offer comes once, on a
 /// later opening of the app, after a cloudy window was cleared at least once
 /// or from the next day, with a Widget placed and over the person's own cat.
-/// It never shares a launch with the review prompt, and waits while any other
-/// screen is presented.
+/// How the first run ended does not matter (11/12). It never shares a launch
+/// with the review prompt or the notification request, and waits while any
+/// other screen is presented.
 enum FirstPlusOfferPolicy {
-    /// When the first run ended through the Widget guide (seconds since 1970).
-    /// Written once, when the first run ends; never while scrolling.
+    /// When the first run ended, by any path (seconds since 1970). Written
+    /// once, when the first run ends; never while scrolling.
     static let dueSinceKey = "plusOffer.first.dueSince.v1"
     /// Set once the offer was shown (or the first run's own Plus page was).
     static let shownKey = "plusOffer.first.shown.v1"
@@ -310,7 +351,8 @@ enum FirstPlusOfferPolicy {
     /// When the app last became active, in memory only. The opening that
     /// ended the first run started before `dueSince`, so it never qualifies.
     @MainActor static var activeSince: Date?
-    /// One prompt per launch: this offer or the review prompt, never both.
+    /// One prompt per launch: this offer, the review prompt, or the
+    /// notification request for album works, never two of them (11/12).
     @MainActor static var promptedThisLaunch = false
 
     static func isDue(dueSince: Date?, shown: Bool, activeSince: Date?, now: Date,
@@ -323,8 +365,8 @@ enum FirstPlusOfferPolicy {
         return hasClearedCloudyWindow || !calendar.isDate(now, inSameDayAs: dueSince)
     }
 
-    /// The first run ended through the Widget guide: the offer becomes due.
-    /// An earlier value is kept, so ending twice never moves it later.
+    /// The first run ended (any path, 11/12): the offer becomes due. An
+    /// earlier value is kept, so ending twice never moves it later.
     static func noteFirstRunEnded(now: Date = Date(), defaults: UserDefaults = .standard) {
         guard defaults.object(forKey: dueSinceKey) == nil, !defaults.bool(forKey: shownKey) else { return }
         defaults.set(now.timeIntervalSince1970, forKey: dueSinceKey)

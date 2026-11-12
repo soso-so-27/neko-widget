@@ -20,7 +20,7 @@ struct WidgetPlacementGuideView: View {
     /// grey note under the pages). An image name starting with "sf:" is a symbol.
     private var steps: [(image: String, text: String)] {
         let cloudy: [(image: String, text: String)] = windowName == nil
-            ? [(image: "sf:cloud.fill", text: "置いたら、そのままくもりのまどです。札を押すと、きょうの1枚が出ます。")] : []
+            ? [(image: "sf:cloud.fill", text: OnboardingPresentationCopy.widgetCloudyStep)] : []
         // 11/12: from 設定, the last step says how to change what it shows.
         let changeSource: [(image: String, text: String)] = closeTitle != nil && windowName == nil
             ? [(image: "sf:hand.tap.fill", text: OnboardingPresentationCopy.widgetChangeSourceStep)] : []

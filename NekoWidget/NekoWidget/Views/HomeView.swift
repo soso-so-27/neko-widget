@@ -890,9 +890,12 @@ struct HomeView: View {
                 .accessibilityIdentifier("photo-library-scoped-empty")
         } else if scan.hasFinalResult && scan.displayedCatCount == 0 && !scan.isScanning {
             ContentUnavailableView {
-                Label("猫の写真は見つかりませんでした", systemImage: "photo.on.rectangle")
+                Label(OnboardingPresentationCopy.scanZeroTitle, systemImage: "photo.on.rectangle")
             } description: {
-                Text("写真へのアクセスを確かめてください。")
+                // 11/12: the same one sentence as the first run's scan page,
+                // never 「アクセスを確かめて」 to someone who allowed it all.
+                Text(isLimitedAccess ? OnboardingPresentationCopy.scanZeroLimitedBody
+                                     : OnboardingPresentationCopy.scanZeroBody)
             } actions: {
                 // 「写真を追加で選ぶ」 is the banner above (11/8: one door).
                 Button("もう一度探す", systemImage: "arrow.clockwise", action: rescan)

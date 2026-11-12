@@ -247,8 +247,9 @@ struct AlbumPrototypeView: View {
     struct YearStory: Identifiable { let year: Int; var id: Int { year } }
 
     /// The works open with Plus; the card says so before a tap (ADR-027).
-    private var workNeedsPlus: Bool {
-        membershipAccess.decision(for: .openGrowingSummary) == .membershipRequired
+    @ObservedObject private var purchases = PlusPurchaseStore.productionShared
+    private func workNeedsPlus(_ arrival: Date) -> Bool {
+        membershipAccess.workDecision(arrival: arrival, history: purchases.workHistory) == .membershipRequired
     }
 
     private var arrivedYears: [Int] {
@@ -333,14 +334,14 @@ struct AlbumPrototypeView: View {
             _ = await MonthlyStoryView.prepare(key)
         }
         .fullScreenCover(item: $story) { letter in
-            AlbumWorkGate(month: letter.monthNumber, cover: letter.coverPhoto) {
+            AlbumWorkGate(month: letter.monthNumber, arrival: letter.workArrivalDate, cover: letter.coverPhoto) {
                 MonthlyStoryView(letter: letter, catPhotos: catPhotos,
                                  assignments: assignments, profileNames: profileNames)
             }
             .zoomTransition(storySource, in: zoom)
         }
         .fullScreenCover(item: $yearStory) { story in
-            AlbumWorkGate(month: nil, year: story.year) {
+            AlbumWorkGate(month: nil, arrival: AlbumPrototype.yearArrivalDate(story.year) ?? .distantFuture, year: story.year) {
                 YearStoryView(year: story.year, catPhotos: catPhotos,
                               assignments: assignments, profileNames: profileNames)
             }
@@ -427,6 +428,7 @@ struct AlbumPrototypeView: View {
                            next: (month: Int, start: Date, arrives: Date, photoCount: Int)?) -> some View {
         let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
         if let book {
+            let workNeedsPlus = self.workNeedsPlus(book.workArrivalDate)
             let source = "shelf-" + book.periodIdentifier
             Button { open(book, from: source) } label: {
                 Color.clear
@@ -506,7 +508,7 @@ struct AlbumPrototypeView: View {
     private func yearCard(_ year: Int) -> some View {
         let id = YearStoryView.periodIdentifier(year)
         let photos = AlbumPrototype.photos(inYear: year, from: catPhotos)
-        return arrivalCard(id: id, wrapped: !opened.contains(id), cover: AlbumPrototype.pickYear(photos).first,
+        return arrivalCard(arrival: AlbumPrototype.yearArrivalDate(year) ?? .distantFuture, id: id, wrapped: !opened.contains(id), cover: AlbumPrototype.pickYear(photos).first,
                            caption: nil, title: "\(String(year))年", titleSize: 34,
                            names: AlbumPrototype.names(for: photos, assignments: assignments, profileNames: profileNames),
                            accessibilityTitle: "\(String(year))年の作品") { yearStory = YearStory(year: year) }
@@ -516,6 +518,7 @@ struct AlbumPrototypeView: View {
     /// A new season's movie: one row with its first scene, opened as from これまでの作品.
     private func newMovieCard(_ record: SeasonalMovieArchiveRecord) -> some View {
         let movie = record.effectivePresentation
+        let workNeedsPlus = self.workNeedsPlus(movie.quarterEnd)
         return Button { openMovie(record.periodID) } label: {
             HStack(spacing: 12) {
                 Color.clear.frame(width: 56, height: 56)
@@ -557,7 +560,7 @@ struct AlbumPrototypeView: View {
     }
 
     private func latestCard(_ letter: MonthlyWindowPresentation) -> some View {
-        arrivalCard(id: letter.periodIdentifier, wrapped: isWrapped(letter),
+        arrivalCard(arrival: letter.workArrivalDate, id: letter.periodIdentifier, wrapped: isWrapped(letter),
                     cover: Self.cover(of: letter, from: catPhotos), caption: nil,
                     title: "\(letter.monthNumber)月", titleSize: 34,
                     names: AlbumPrototype.names(for: AlbumPrototype.photos(in: letter.monthStart, from: catPhotos),
@@ -568,10 +571,11 @@ struct AlbumPrototypeView: View {
 
     /// The newest work as its cover. Just arrived: 「とどきました」 over it.
     /// A tap opens it (out of the card, and back into it, on iOS 18).
-    private func arrivalCard(id: String, wrapped: Bool, cover: PhotoPresentation?, caption: String?,
+    private func arrivalCard(arrival: Date, id: String, wrapped: Bool, cover: PhotoPresentation?, caption: String?,
                              title: String, titleSize: CGFloat, names: String, accessibilityTitle: String,
                              open: @escaping () -> Void) -> some View {
-        Button(action: open) {
+        let workNeedsPlus = self.workNeedsPlus(arrival)
+        return Button(action: open) {
             Color.clear
             .aspectRatio(0.82, contentMode: .fit)
             .overlay {
@@ -644,6 +648,8 @@ struct AlbumPlusMark: View {
 /// too, so one × goes back to the album (11/12, review 7).
 struct AlbumWorkGate<Content: View>: View {
     let month: Int?
+    let arrival: Date
+    @ObservedObject private var purchases = PlusPurchaseStore.productionShared
     /// The year's work (month nil): its own line, not the seasonal movie's.
     var year: Int? = nil
     /// The work's cover, shown at the top of the Plus screen.
@@ -663,7 +669,7 @@ struct AlbumWorkGate<Content: View>: View {
     }
 
     var body: some View {
-        let decision = access.decision(for: .openGrowingSummary)
+        let decision = access.workDecision(arrival: arrival, history: purchases.workHistory)
         if decision == .allowed {
             content()
         } else {
@@ -715,11 +721,12 @@ struct PastWorksView: View {
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
 
     /// Same condition as the album's lead card (11/7).
-    private var workNeedsPlus: Bool {
-        membershipAccess.decision(for: .openGrowingSummary) == .membershipRequired
+    @ObservedObject private var purchases = PlusPurchaseStore.productionShared
+    private func workNeedsPlus(_ arrival: Date) -> Bool {
+        membershipAccess.workDecision(arrival: arrival, history: purchases.workHistory) == .membershipRequired
     }
 
-    private var plusSuffix: String { workNeedsPlus ? "、Plusで見られます" : "" }
+    private func plusSuffix(_ arrival: Date) -> String { workNeedsPlus(arrival) ? "、Plusで見られます" : "" }
 
     private var shelves: [Int] {
         Array(Set(letters.map(\.yearNumber)).union(years)).sorted(by: >)
@@ -741,7 +748,7 @@ struct PastWorksView: View {
                                 .zoomSource(YearStoryView.periodIdentifier(year), in: zoom)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(Text(verbatim: "\(year)年の作品" + plusSuffix))
+                        .accessibilityLabel(Text(verbatim: "\(year)年の作品" + plusSuffix(AlbumPrototype.yearArrivalDate(year) ?? .distantFuture)))
                     }
                     // Twelve places, January first: months still to come and the
                     // ones without a book stay as empty places on the shelf.
@@ -749,11 +756,11 @@ struct PastWorksView: View {
                         ForEach(1...12, id: \.self) { month in
                             if let letter = books.first(where: { $0.monthNumber == month }) {
                                 Button { story = letter } label: {
-                                    cover(AlbumPrototypeView.cover(of: letter, from: catPhotos), title: "\(month)月")
+                                    cover(AlbumPrototypeView.cover(of: letter, from: catPhotos), title: "\(month)月", arrival: letter.workArrivalDate)
                                         .zoomSource(letter.periodIdentifier, in: zoom)
                                 }
                                 .buttonStyle(.plain)
-                                .accessibilityLabel(letter.accessibilityTitle + plusSuffix)
+                                .accessibilityLabel(letter.accessibilityTitle + plusSuffix(letter.workArrivalDate))
                             } else {
                                 emptyPlace(month, isAhead: isAhead(year: year, month: month))
                             }
@@ -770,10 +777,10 @@ struct PastWorksView: View {
                             Button { openMovie(record.periodID) } label: {
                                 cover(movie.scenes.first.map {
                                     PhotoPresentation(localIdentifier: $0.localIdentifier, catBoundingBox: $0.catBoundingBox)
-                                }, title: movie.periodTitle, isMovie: true)
+                                }, title: movie.periodTitle, arrival: movie.quarterEnd, isMovie: true)
                             }
                             .buttonStyle(.plain)
-                            .accessibilityLabel("\(movie.periodTitle)の季節のムービー" + plusSuffix)
+                            .accessibilityLabel("\(movie.periodTitle)の季節のムービー" + plusSuffix(movie.quarterEnd))
                         }
                     }
                 }
@@ -784,14 +791,14 @@ struct PastWorksView: View {
         .navigationTitle("これまでの作品")
         .navigationBarTitleDisplayMode(.inline)
         .fullScreenCover(item: $story) { letter in
-            AlbumWorkGate(month: letter.monthNumber, cover: letter.coverPhoto) {
+            AlbumWorkGate(month: letter.monthNumber, arrival: letter.workArrivalDate, cover: letter.coverPhoto) {
                 MonthlyStoryView(letter: letter, catPhotos: catPhotos,
                                  assignments: assignments, profileNames: profileNames)
             }
             .zoomTransition(letter.periodIdentifier, in: zoom)
         }
         .fullScreenCover(item: $yearStory) { story in
-            AlbumWorkGate(month: nil, year: story.year) {
+            AlbumWorkGate(month: nil, arrival: AlbumPrototype.yearArrivalDate(story.year) ?? .distantFuture, year: story.year) {
                 YearStoryView(year: story.year, catPhotos: catPhotos,
                               assignments: assignments, profileNames: profileNames)
             }
@@ -823,7 +830,8 @@ struct PastWorksView: View {
 
     /// The year's work above its shelf: one row, not a thirteenth book.
     private func yearRow(_ year: Int) -> some View {
-        HStack(spacing: 12) {
+        let workNeedsPlus = self.workNeedsPlus(AlbumPrototype.yearArrivalDate(year) ?? .distantFuture)
+        return HStack(spacing: 12) {
             Color.clear.frame(width: 44, height: 44)
                 .overlay {
                     if let photo = AlbumPrototype.pickYear(AlbumPrototype.photos(inYear: year, from: catPhotos)).first {
@@ -841,8 +849,8 @@ struct PastWorksView: View {
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    private func cover(_ photo: PhotoPresentation?, title: String, isMovie: Bool = false) -> some View {
-        shelfCover(photo, title: title, isMovie: isMovie)
+    private func cover(_ photo: PhotoPresentation?, title: String, arrival: Date, isMovie: Bool = false) -> some View {
+        shelfCover(photo, title: title, arrival: arrival, isMovie: isMovie)
             .scrollTransition(.animated(.smooth)) { content, phase in
                 content
                     .opacity(phase.isIdentity ? 1 : 0.55)
@@ -850,8 +858,9 @@ struct PastWorksView: View {
             }
     }
 
-    private func shelfCover(_ photo: PhotoPresentation?, title: String, isMovie: Bool) -> some View {
-        Color.clear
+    private func shelfCover(_ photo: PhotoPresentation?, title: String, arrival: Date, isMovie: Bool) -> some View {
+        let workNeedsPlus = self.workNeedsPlus(arrival)
+        return Color.clear
             .aspectRatio(0.75, contentMode: .fit)
             .overlay {
                 if let photo {
@@ -1326,11 +1335,17 @@ enum AlbumArrivalNotice {
 
     /// From the album tab: ask once when a work is on its way, then set its
     /// notice. Nothing happens when nothing waits or the answer is known.
+    /// Never in the same launch as the first Plus offer (or the review
+    /// prompt): if one was shown, the request waits for a later launch (11/12).
     @MainActor
     static func askIfNeeded() async {
-        guard let waiting = waitingForPermission else { return }
+        guard let waiting = waitingForPermission,
+              !FirstPlusOfferPolicy.promptedThisLaunch else { return }
         let center = UNUserNotificationCenter.current()
-        guard await center.notificationSettings().authorizationStatus == .notDetermined else { return }
+        guard await center.notificationSettings().authorizationStatus == .notDetermined,
+              !FirstPlusOfferPolicy.promptedThisLaunch else { return }
+        // Claimed before the system alert, so the Plus offer waits too.
+        FirstPlusOfferPolicy.promptedThisLaunch = true
         _ = try? await center.requestAuthorization(options: [.alert])
         await schedule(month: waiting.month, year: waiting.year)
     }

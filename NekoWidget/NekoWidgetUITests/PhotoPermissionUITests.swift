@@ -4929,7 +4929,10 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["photo-memory-note-open"].exists)
         capture("initial-scan-unavailable-opened-photo")
         close.tap()
-        XCTAssertTrue(app.staticTexts["mainline-fixture-finished"].waitForExistence(timeout: 5))
+        // 11/12: closing the photo returns to the scan page; the first run
+        // goes on, so its next step is still there.
+        XCTAssertTrue(app.buttons["initial-scan-continue"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["mainline-fixture-finished"].exists)
         app.terminate()
     }
 

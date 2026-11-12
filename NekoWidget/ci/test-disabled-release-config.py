@@ -21,7 +21,7 @@ APP_PRIVACY_XCCONFIG = "https:/$()/soso-so-27.github.io/neko-widget/app/privacy/
 APP_SUPPORT_XCCONFIG = "https:/$()/soso-so-27.github.io/neko-widget/app/support/"
 APP_PRIVACY_URL = "https://soso-so-27.github.io/neko-widget/app/privacy/"
 APP_SUPPORT_URL = "https://soso-so-27.github.io/neko-widget/app/support/"
-LOCAL_PHOTO_DESCRIPTION_TERMS = ("猫", "端末内", "アルバム", "ウィジェット")
+LOCAL_PHOTO_DESCRIPTION_TERMS = ("猫", "iPhoneの中", "アルバム", "ウィジェット")
 LOCAL_PHOTO_DESCRIPTION_FORBIDDEN_TERMS = (
     "共有",
     "招待",
@@ -87,7 +87,11 @@ class DisabledReleaseConfigTests(unittest.TestCase):
         # 11/8: one sentence that says what is accessed and why.
         self.assertEqual(description.count("。"), 1)
         self.assertTrue(description.endswith("。"))
-        self.assertIn("写真ライブラリ", description)
+        # 11/12: plain words, true today. No 「うちの子」 album (left the app
+        # 10/31), no Plus movie, and not 「端末内」「写真ライブラリ」.
+        self.assertEqual(description, "猫の写真をiPhoneの中で見つけて、アルバムとホーム画面のウィジェットに出すために使います。")
+        for term in ("写真ライブラリ", "端末内", "うちの子", "ムービー", "Plus"):
+            self.assertNotIn(term, description)
         for term in LOCAL_PHOTO_DESCRIPTION_FORBIDDEN_TERMS:
             self.assertNotIn(term, description)
         self.assertEqual(

@@ -394,12 +394,12 @@ struct AppRootView: View {
                 // A repeated tap must not replace the photo already presented.
                 guard onboardingState.currentPage == .scanResult,
                       firstRunPhoto == nil else { return }
-                // Enter the app before presenting the ordinary photo browser.
-                // Widget placement remains available in Settings and Home.
-                completeOnboardingWithoutWidgetPhoto()
+                // 11/12: the photo opens over the scan page and closing it
+                // returns there. The first run goes on, so 「ウィジェットを置く」
+                // is still the next step (it was skipped by this tap).
                 firstRunPhoto = photo
             },
-            showsInvitationHint: SharingAPIConfiguration.current.isReviewVisible
+            openNowaWindow: openNowaWindowFromOnboarding
         )
         // A first run saved on the Plus page resumes it over the person's own
         // cat, as everywhere else, never the cat symbol (11/10).
@@ -407,6 +407,19 @@ struct AppRootView: View {
             PlusOfferPhoto(localIdentifier: $0.localIdentifier, catBoundingBox: $0.cat.boundingBox?.cgRect)
         } : nil)
     }
+
+    /// No cat found on the scan page (11/12): のわのまど opens over it, through
+    /// the same sheet as a のわのまど link, so the Widget has a cat to show.
+    private var openNowaWindowFromOnboarding: (() -> Void)? {
+        guard Version1.isOn,
+              OfficialWindowConfiguration.definition(for: Self.nowaWindowID) != nil else { return nil }
+        return {
+            officialWindowPresentationID = UUID()
+            officialWindowRoute = OfficialWindowRoute(windowID: Self.nowaWindowID)
+        }
+    }
+
+    private static let nowaWindowID = "black-cats"
 
     @ViewBuilder
     private var authorizedContent: some View {
@@ -1310,21 +1323,20 @@ struct AppRootView: View {
         )
     }
 
-    /// 「置きました」 or 「あとで」 on the Widget guide (or a purchase on a
-    /// resumed Plus page). The first run ends in the 写真 tab, where the
-    /// found cats are (11/10); Plus is offered later, once.
+    /// 「ホーム画面で置いてきます」 or 「あとで」 on the Widget guide (or a
+    /// purchase on a resumed Plus page). The first run ends in the 写真 tab,
+    /// where the found cats are (11/10); Plus is offered later, once.
     private func completeOnboarding() {
         let page = onboardingState.currentPage
-        startsInPhotosAfterOnboarding = hasPhotoAccess
+        let entersPhotos = hasPhotoAccess
+        startsInPhotosAfterOnboarding = entersPhotos
         var state = onboardingState
         state.advance()
-        persistOnboardingState(state)
+        persistOnboardingState(state, entersPhotos: entersPhotos)
         // Keep the former first-run flag current so a rollback cannot show the
         // legacy scan-result gate after the four-page flow has completed.
         hasSeenInitialScanResult = true
-        if page == .widgetGuide {
-            FirstPlusOfferPolicy.noteFirstRunEnded()
-        } else if page == .plusOffer {
+        if page == .plusOffer {
             FirstPlusOfferPolicy.noteShown()
         }
         widgetInstallationChecker.refresh()
@@ -1332,10 +1344,11 @@ struct AppRootView: View {
 
     /// One tap past a resumed Plus page. Nothing is purchased.
     private func skipOnboardingPlusOffer() {
-        startsInPhotosAfterOnboarding = hasPhotoAccess
+        let entersPhotos = hasPhotoAccess
+        startsInPhotosAfterOnboarding = entersPhotos
         var state = onboardingState
         state.skipPlusOffer()
-        persistOnboardingState(state)
+        persistOnboardingState(state, entersPhotos: entersPhotos)
         // As 「完了」 does: the guide ending must not leave the legacy scan
         // result screen to show on every launch (11/6).
         hasSeenInitialScanResult = true
@@ -1348,7 +1361,7 @@ struct AppRootView: View {
         startsInPhotosAfterOnboarding = true
         var state = onboardingState
         state.skipPhotoPermission()
-        persistOnboardingState(state)
+        persistOnboardingState(state, entersPhotos: true)
         // "あとで" means entering the app without Photos access. Do not send
         // the user through a Widget guide they cannot verify yet.
         // Home remains the recovery point and explains how to grant access.
@@ -1371,24 +1384,32 @@ struct AppRootView: View {
         widgetInstallationChecker.refresh()
     }
 
+    /// 「あとで」 (or 「はじめる」 with no cat) on the scan page. Completion does
+    /// not mark a Widget as installed. A found photo no longer ends the first
+    /// run (11/12): it opens over the scan page.
     private func completeOnboardingWithoutWidgetPhoto() {
-        startsInPhotosAfterOnboarding = hasPhotoAccess
-        // Also used when the person chooses to see a photo first and defers
-        // placement. Completion does not mark a Widget as installed.
+        let entersPhotos = hasPhotoAccess
+        startsInPhotosAfterOnboarding = entersPhotos
         var state = onboardingState
         state.completeWithoutWidgetPhoto()
-        persistOnboardingState(state)
+        persistOnboardingState(state, entersPhotos: entersPhotos)
         hasSeenInitialScanResult = true
         onboardingScanErrorMessage = nil
         viewModel.clearError()
         widgetInstallationChecker.refresh()
     }
 
-    private func persistOnboardingState(_ state: OnboardingPresentationState) {
-        // Usage (11/7): once, on the step that finishes the first run.
-        if OnboardingPresentationPersistence.requiresPresentation(completedVersion: onboardingCompletedVersion),
-           !OnboardingPresentationPersistence.requiresPresentation(completedVersion: state.completedVersion) {
+    /// `entersPhotos`: this step lands in the 写真 tab (not a joined まど).
+    private func persistOnboardingState(_ state: OnboardingPresentationState, entersPhotos: Bool = false) {
+        if OnboardingPresentationPersistence.endsFirstRun(from: onboardingCompletedVersion,
+                                                          to: state.completedVersion) {
+            // Usage (11/7): once, on the step that finishes the first run.
             UsageCounter.shared.count(.onboardingCompleted)
+            // 11/12: every way out of the first run counts for the first Plus
+            // offer, not only the Widget guide, and the second opening
+            // returns to the 写真 tab instead of アルバム.
+            FirstPlusOfferPolicy.noteFirstRunEnded()
+            if entersPhotos { FirstRunTabMemory.rememberPhotosTab() }
         }
         onboardingResumePageIndex = state.resumePageIndex
         onboardingCompletedVersion = state.completedVersion
@@ -1408,11 +1429,12 @@ struct AppRootView: View {
 
         var state = onboardingState
         guard state.currentPage == .widgetGuide else { return }
-        startsInPhotosAfterOnboarding = hasPhotoAccess
+        let entersPhotos = hasPhotoAccess
+        startsInPhotosAfterOnboarding = entersPhotos
         state.advance()
-        persistOnboardingState(state)
+        // The first Plus offer becomes due in persistOnboardingState.
+        persistOnboardingState(state, entersPhotos: entersPhotos)
         hasSeenInitialScanResult = true
-        FirstPlusOfferPolicy.noteFirstRunEnded()
     }
 }
 
