@@ -58,6 +58,9 @@ struct VeterinaryVisitsView: View {
     var store: VeterinaryVisitStore = .shared
     @ObservedObject var careStore: CareHandoffStore = .shared
     @ObservedObject var evacuationStore: EvacuationStore = .shared
+    /// Opened from a cat's page on the 「この子」 tab: that cat's memo, with
+    /// no cat menu in the bar. Nil (restored tools, links, tests): the last cat.
+    var fixedCatKey: String? = nil
     @Environment(\.dynamicTypeSize) private var typeSize
     @AppStorage("vet.lastCat.v1") private var lastCatID = ""
     @AppStorage(CatFarewell.key) private var farewellJSON = ""
@@ -80,6 +83,12 @@ struct VeterinaryVisitsView: View {
             + cats.filter { !known.contains($0.id.uuidString) }
                 .map { ToolStripCat(id: $0.id.uuidString, name: $0.name, profile: nil,
                                     accessibilityIdentifier: "vet-cat-\($0.id.uuidString)") }
+    }
+
+    /// The page's cat when it is one of this tool's cats.
+    private var fixedStripCat: ToolStripCat? {
+        guard let fixedCatKey else { return nil }
+        return stripCats.first { $0.id.uppercased() == fixedCatKey.uppercased() }
     }
 
     var body: some View {
@@ -109,6 +118,7 @@ struct VeterinaryVisitsView: View {
                         store: store, profiles: profiles,
                         pastVisits: Array(visits.filter { $0.id != current.id && $0.catID == current.catID }.reversed()),
                         pastClosed: { Task { await reload() } },
+                        showsCatName: fixedStripCat != nil ? true : nil,
                         onDeleted: {
                             let cat = PhotoMemoryNoteCat(id: current.catID, name: current.catName)
                             Task { await reload(); await open(cat) }
@@ -143,7 +153,7 @@ struct VeterinaryVisitsView: View {
             // opening makes a new memo (11/7).
             let openable = stripCats.filter { !$0.isDeparted(farewellJSON) }
             guard current == nil,
-                  let first = openable.first(where: { $0.id == lastCatID }) ?? openable.first else { return }
+                  let first = fixedStripCat ?? openable.first(where: { $0.id == lastCatID }) ?? openable.first else { return }
             await open(first)
         }
         // The first cat, added from 「猫を追加」, opens at once (11/7).
@@ -159,7 +169,8 @@ struct VeterinaryVisitsView: View {
     /// leaves out a departed cat unless its memo is the one open, and stays
     /// away with one cat.
     @ViewBuilder private var catMenu: some View {
-        if ready {
+        // Opened for one cat from its page: the cat is chosen there.
+        if ready, fixedStripCat == nil {
             ToolCatMenu(cats: stripCats, selectedID: current?.catID.uuidString, title: menuName,
                         identifier: "vet-cat-menu") { cat in
                 Task { await open(cat) }
@@ -269,6 +280,9 @@ private struct VeterinaryConsultationView: View {
     /// a past memo opened from there is closed.
     var pastVisits: [VeterinaryVisit] = []
     var pastClosed: (() -> Void)? = nil
+    /// True when the bar has no cat menu because the memo was opened for one
+    /// cat; nil: named only with fewer than two cats.
+    var showsCatName: Bool? = nil
     var onDeleted: (() -> Void)? = nil
     /// After 「新しい診察メモを始める」 on the tool's page: open the next memo.
     var onFinished: (() -> Void)? = nil
@@ -453,7 +467,7 @@ private struct VeterinaryConsultationView: View {
         Section {
             VStack(alignment: .leading, spacing: 6) {
                 // With two or more cats the cat menu in the bar already names it (11/12).
-                if profiles.count < 2 {
+                if showsCatName ?? (profiles.count < 2) {
                     Label(profiles.first(where: { $0.identifier == visit.catID.uuidString })?.displayName ?? visit.catName,
                           systemImage: "cat").font(.headline)
                 }

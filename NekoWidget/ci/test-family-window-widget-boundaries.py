@@ -2378,10 +2378,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
         onboarding = source("NekoWidget/Views/OnboardingPresentation.swift")
         permission = source("NekoWidget/Views/PhotoPermissionView.swift")
         scan = source("NekoWidget/Views/ScanStatusView.swift")
-        # 11/7: cats are opened from the ツール tab's faces only, not from 設定.
+        # 11/7: cats are opened from the この子 tab (was ツール) only, not from 設定.
         self.assertNotIn('"settings-cat-profiles"', settings)
         self.assertNotIn("CatProfilesView(", settings)
-        self.assertIn('.accessibilityIdentifier("tools-cat-\\(profile.identifier)")', source("NekoWidget/Views/MainTabView.swift"))
+        self.assertIn('.accessibilityIdentifier(cat.profile != nil ? "tools-cat-\\(cat.id)" : "tools-family-cat-\\(cat.id)")',
+                      source("NekoWidget/Views/CatHomeView.swift"))
         self.assertIn('.navigationTitle(opensProfileSettings ? "猫のプロフィール" : "猫ごとの写真")', profiles)
         # 11/10: page two has no title of its own (it repeated page one), and
         # Photos turned off says one state and one sentence, no features.
@@ -3129,7 +3130,11 @@ class AppDrawingWasteTests(unittest.TestCase):
         # Still made at launch, so the first run's 「この子のこと」 reaches it.
         self.assertIn("private let familyNotebook = FamilyNotebookPrototype.shared", root)
         main = source("NekoWidget/Views/MainTabView.swift")
-        self.assertIn("@ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared", main)
+        # 11/12: the この子 tab's page observes it; the whole tab view no longer does.
+        self.assertNotIn("@ObservedObject private var familyNotebook", main)
+        self.assertNotIn("@ObservedObject private var careStore", main)
+        home = source("NekoWidget/Views/CatHomeView.swift")
+        self.assertIn("@ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared", home)
 
     def test_seasonal_movie_video_digest_is_remembered_between_drawings(self) -> None:
         main = source("NekoWidget/Views/MainTabView.swift")
@@ -3178,10 +3183,14 @@ class AppDrawingWasteTests(unittest.TestCase):
 
     def test_tool_pages_are_built_only_when_shown(self) -> None:
         main = source("NekoWidget/Views/MainTabView.swift")
-        tools = section(main, "private var toolsView: some View {", "private var showcaseToolCard: some View {")
+        tools = section(main, "private var catHomeTools: CatHomeTools {", "private func openShowcaseTool(")
         for page in ("VeterinaryVisitsView(", "LostCatEmergencyEntryView(", "CareHandoffView(", "EvacuationPreparationView("):
-            self.assertIn("NavigationLink {\n                        LazyToolDestination {\n                            " + page, tools)
+            self.assertIn("AnyView(LazyToolDestination {\n                    " + page, tools)
         self.assertEqual(tools.count("LazyToolDestination {"), 4)
+        # The page builds each NavigationLink's destination only as this wrapper.
+        home = source("NekoWidget/Views/CatHomeView.swift")
+        self.assertIn("NavigationLink { destination(tool, cat: cat) } label: { content }", home)
+        self.assertIn("NavigationLink { tools.evacuation() } label: { content }", home)
         lazy = section(main, "private struct LazyToolDestination<Content: View>: View {", "private struct PhotoThemeCatKey")
         # 11/11: a tool is shown without the tab bar.
         self.assertIn("var body: some View { content().toolChrome() }", lazy)
@@ -3590,11 +3599,13 @@ class CatCareTests(unittest.TestCase):
         self.assertIn("markDeleted", view)
         self.assertNotIn(".remove(at:", view)
         tab = source("NekoWidget/Views/MainTabView.swift")
-        # 10/22: the cat's card on the ツール tab opens the cat's page, whose
-        # title switch leads to この子のこと (CatCareDetailView).
-        self.assertIn("CatChip(profile: profile, progress: careProgress(for: profile),", tab)
-        # 11/1: a cat whose farewell day is recorded shows no ring.
-        self.assertIn("departed: farewellDays[profile.identifier] != nil)", tab)
+        # 10/22: the cat's 「この子のこと」 card on the この子 tab opens the
+        # cat's page, which is この子のこと (CatCareDetailView).
+        home = source("NekoWidget/Views/CatHomeView.swift")
+        self.assertIn("CatHomeAboutCard(cat: cat, facts: facts, destination: carePage)", home)
+        self.assertIn("case let .profile(profile):\n            profilePage(profile)", home)
+        # 11/1: a cat whose farewell day is recorded shows no progress.
+        self.assertIn("progress: farewell == nil ? progress(for: cat, record: record) : nil,", home)
         detail = source("NekoWidget/Views/CatProfilePhotoCurationViews.swift")
         # 11/7: the cat's page is この子のこと only, with no tabs.
         page = section(detail, "struct CatProfileDetailView: View", "struct CatProfileAddPhotosButton: View")
@@ -4763,7 +4774,8 @@ class ShowcaseCatCareTests(unittest.TestCase):
         for part in ("MagnifyGesture()", ".onTapGesture(count: 2)", "moved.height > 110", "page(1)", "page(-1)"):
             self.assertIn(part, detail)
         # Names match the tool, the Control Center and Siri.
-        self.assertIn('subtitle: "自慢の9枚", tint: ToolTint.everydayLight, wide: true)', tab)
+        home = source("NekoWidget/Views/CatHomeView.swift")
+        self.assertIn('case .showcase: "写真を見せる"', home)
         control = source("NekoWidgetWidget/ShowcaseControl.swift")
         shortcut = source("NekoWidget/App/ShowcaseAppShortcuts.swift")
         self.assertIn('.displayName("写真を見せる")', control)
@@ -4862,21 +4874,17 @@ class ShowcaseCatCareTests(unittest.TestCase):
         self.assertIn("E02611090000000000000001 /* ShowcaseWidget.swift in Sources */,", widget_sources)
 
     def test_vet_memo_is_an_everyday_tool(self) -> None:
+        # 11/12 (案D): no ふだん/もしも groups any more; one row of buttons in
+        # this order: the everyday tools (病院, 預ける) first, then 迷子, 避難, 見せる.
         tab = source("NekoWidget/Views/MainTabView.swift")
-        everyday = section(tab, 'toolSection("ふだん", lead: { showcaseToolCard }) {', 'toolSection("もしものとき") {')
-        everyday = "showcaseToolCard\n" + everyday
-        emergency = section(tab, 'toolSection("もしものとき") {', "private var showcaseToolCard: some View {")
-        self.assertLess(everyday.index("showcaseToolCard"), everyday.index('.accessibilityIdentifier("tools-vet-open")'))
-        self.assertIn("ToolTint.everydayDeep", everyday)
-        self.assertNotIn("tools-vet-open", emergency)
-        # 11/11: 預けるとき is planned (travel), so it is everyday too, after the vet memo.
-        self.assertLess(everyday.index('.accessibilityIdentifier("tools-vet-open")'),
-                        everyday.index('.accessibilityIdentifier("tools-care-open")'))
-        self.assertIn("ToolTint.everydayMid", everyday)
-        self.assertNotIn("tools-care-open", emergency)
+        home = source("NekoWidget/Views/CatHomeView.swift")
+        self.assertIn("case vet, care, lost, evacuation, showcase", home)
+        identifiers = section(home, "    var identifier: String {", "/// 避難に備える and 写真を見せる")
+        order = ['"tools-vet-open"', '"tools-care-open"', '"tools-lost-cat-open"', '"tools-evacuation-open"', '"tools-showcase-open"']
+        self.assertEqual([identifiers.index(name) for name in order], sorted(identifiers.index(name) for name in order))
+        self.assertNotIn("toolSection(", tab)
+        self.assertNotIn("ToolTint", tab)
         self.assertNotIn("emergencyWarm", tab)
-        for identifier in ("tools-lost-cat-open", "tools-evacuation-open"):
-            self.assertIn(identifier, emergency)
 
 
 class CatCareMemoWeightTests(unittest.TestCase):
@@ -5944,7 +5952,7 @@ class FirstLaunchInvitationTests(unittest.TestCase):
         self.assertNotIn("struct OnboardingInvitationHelpView: View", onboarding)
         tab = source("NekoWidget/Views/MainTabView.swift")
         # Widget and showcase entries to the 写真 tab start on すべて, not the last segment.
-        self.assertGreaterEqual(tab.count("selectedTab = .photos\n                photoLibrarySelection.select(.all)"), 2)
+        self.assertGreaterEqual(len(re.findall(r"selectedTab = \.photos\n {16,20}photoLibrarySelection\.select\(\.all\)", tab)), 2)
         self.assertIn("selectedTab = .photos\n            photoLibrarySelection.select(.all)", tab)
 
 
@@ -6476,7 +6484,8 @@ class VeterinaryRoundOneTests(unittest.TestCase):
         self.assertNotIn("safeAreaInset(edge: .top", visits)
         self.assertIn("ToolbarItem(placement: .topBarTrailing) { catMenu }", visits)
         menu = section(visits, "@ViewBuilder private var catMenu: some View {", "private var menuName: String {")
-        self.assertIn("if ready {", menu)
+        # 11/12: opened from a cat's page on この子, the cat is chosen there.
+        self.assertIn("if ready, fixedStripCat == nil {", menu)
         self.assertIn('ToolCatMenu(cats: stripCats, selectedID: current?.catID.uuidString, title: menuName,\n'
                       '                        identifier: "vet-cat-menu") { cat in\n                Task { await open(cat) }', menu)
         shared_menu = section(parts, "struct ToolCatMenu: View {", "\n}\n")
@@ -6813,14 +6822,14 @@ class NavigationAfterActionTests(unittest.TestCase):
         notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
         run = section(notebook, "private func run(_ action: Action) {", "var body: some View {")
         self.assertLess(run.index("dismiss()"), run.index("sharing.perform"))
-        # 11/7: one place to write 「この子のこと」 — the cat's page in ツール.
+        # 11/7: one place to write 「この子のこと」 — the cat's page in この子 (was ツール).
         # The notebook lists the shared cats and leads nowhere else.
         self.assertNotIn("CatCareDetailView(", notebook)
         self.assertNotIn("NavigationLink(cat.name)", notebook)
         row = source("NekoWidget/Views/FamilyNotebookSharedCatRow.swift")
         self.assertNotIn("NavigationLink", row)
-        tab = source("NekoWidget/Views/MainTabView.swift")
-        self.assertIn("ForEach(familyOnlyCats) { cat in", tab)
+        home = source("NekoWidget/Views/CatHomeView.swift")
+        self.assertIn("for cat in familyOnlyCats where seen.insert(cat.toolID.uuidString.uppercased()).inserted {", home)
         self.assertNotIn("CatCareDetailView(toolCatID: cat.toolID, name: cat.name)", notebook)
         self.assertIn("if joined == .joined { onJoined?(); dismiss() }", notebook)
         care = source("NekoWidget/Views/CatCareView.swift")
@@ -7278,10 +7287,13 @@ class ToolConsistency1108Tests(unittest.TestCase):
         self.assertNotIn('Label(profile.displayName, systemImage: "cat")', self.showcase)
         # The make button looks the same in every tool.
         self.assertIn('Label("チラシを作る", systemImage: "doc.richtext")', self.lost)
-        # 11/8: the tile says the same word as the screen.
+        # 11/8: the tool says the same word as the screen (11/12: the button
+        # on the この子 tab names the tool; the screen says チラシを作る).
         main_tab = source("NekoWidget/Views/MainTabView.swift")
-        self.assertIn('subtitle: "チラシを作る", tint: ToolTint.emergency)', main_tab)
+        home = source("NekoWidget/Views/CatHomeView.swift")
+        self.assertIn('case .lost: "迷子のとき"', home)
         self.assertNotIn("探すための画像を作る", main_tab)
+        self.assertNotIn("探すための画像を作る", home)
         self.assertIn('Label("お世話メモを作る", systemImage: "doc.text")', self.care)
         self.assertIn('Label("避難メモを見せる", systemImage:', self.evacuation)
 
@@ -8106,10 +8118,12 @@ class ToolBottomChromeTests(unittest.TestCase):
         main = source("NekoWidget/Views/MainTabView.swift")
         lazy = section(main, "private struct LazyToolDestination<Content: View>: View {", "private struct PhotoThemeCatKey")
         self.assertIn("content().toolChrome()", lazy)
-        # The ツール list itself keeps the tab bar.
-        tools = section(main, "private var toolsView: some View {", "private var showcaseToolCard: some View {")
-        self.assertNotIn(".toolbar(.hidden, for: .tabBar)", tools)
-        self.assertNotIn(".toolChrome()", tools)
+        # The この子 page itself keeps the tab bar.
+        tools = section(main, "private var toolsView: some View {", "private var catHomeTools: CatHomeTools {")
+        home = source("NekoWidget/Views/CatHomeView.swift")
+        for text in (tools, home):
+            self.assertNotIn(".toolbar(.hidden, for: .tabBar)", text)
+            self.assertNotIn(".toolChrome()", text)
         # A pushed page without it would bring the tab bar back, so each
         # page a tool pushes sets it.
         pages = {
@@ -8450,14 +8464,15 @@ class ToolsLookRoundTwo1112Tests(unittest.TestCase):
         detail = section(self.care, "struct CatCareDetailView: View {", "/// A written item of 「この子のこと」")
         body = section(detail, "    var body: some View {", ".onChange(of: draft)")
         self.assertIn(".toolChrome()", body)
-        # Wherever it opens: the cat's face on ツール opens CatProfileDetailView,
-        # which shows this same CatCareDetailView.
+        # Wherever it opens: 「この子のこと」 on the この子 tab opens
+        # CatProfileDetailView, which shows this same CatCareDetailView.
         page = section(source("NekoWidget/Views/CatProfilePhotoCurationViews.swift"),
                        "struct CatProfileDetailView: View {", "struct CatProfileAddPhotosButton: View {")
         self.assertIn("CatCareDetailView(profile: profile,", page)
         self.assertIn('.navigationTitle("この子のこと")', page)
         self.assertNotIn(".navigationTitle(profile.displayName)", page)
-        strip = section(self.tab, "private var catStrip: some View {", "private var familyOnlyCats:")
+        home = source("NekoWidget/Views/CatHomeView.swift")
+        strip = section(home, "    private func profilePage(_ profile: CatProfilePresentation) -> some View {", "// MARK: Over the photo")
         self.assertIn("CatProfileDetailView(", strip)
         # One name, large, under a smaller photo; one pencil, on the photo.
         heading = section(detail, "private func profileHeading(", "/// An empty name keeps the old one")
@@ -8564,16 +8579,18 @@ class ToolsLookRoundTwo1112Tests(unittest.TestCase):
         self.assertIn("lines: 3...8)", self.handoff)
 
     def test_tools_tab_tiles_fit_their_content(self) -> None:
-        tile = section(self.tab, "private struct ToolTile: View {", "private struct ToolCardButtonStyle")
-        self.assertNotIn("minHeight: 120", tile)
-        self.assertIn("var wide = false", tile)
-        self.assertIn('toolSection("ふだん", lead: { showcaseToolCard }) {', self.tab)
-        self.assertIn("tint: ToolTint.everydayLight, wide: true)", self.tab)
-        tools = section(self.tab, "private var toolsView: some View {", "private var showcaseToolCard: some View {")
-        self.assertIn(".contentMargins(.bottom, 24, for: .scrollContent)", tools)
-        chip = section(self.tab, "private struct CatChip: View {", "private struct ToolTile: View {")
-        self.assertIn('CatCareRing(progress: progress, lineWidth: 3.5, fullTint: .green)', chip)
-        self.assertIn('Text("あと\\(left)つ")', chip)
+        # 11/12 (案D): the tiles became round buttons as tall as their content;
+        # the page leaves room under the last card above the tab bar.
+        home = source("NekoWidget/Views/CatHomeView.swift")
+        button = section(home, "private struct CatHomeToolButton: View {", "/// The accessibility-size form of a tool")
+        self.assertNotIn("minHeight: 120", button)
+        self.assertIn(".frame(width: circle, height: circle)", button)
+        page = section(home, "private struct CatHomePage: View {", "/// The cat's key photo from the very top")
+        self.assertIn(".padding(.bottom, 24)", page)
+        # What is left to write in この子のこと, as the chip said it, or 「そろっています」.
+        facts = section(home, "struct CatHomeFacts {", "/// The five tools, in the order of the page.")
+        self.assertIn('"あと\\($0.total - $0.filled)つ"', facts)
+        self.assertIn('"そろっています"', facts)
         # The bottom button is as wide as the cards above it.
         self.assertIn(".padding(.horizontal, ToolChrome.sideMargin)",
                       section(self.care, "struct ToolMakeBar<Top: View, Action: View>: View {", "/// The frame around every tool page"))

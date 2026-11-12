@@ -76,6 +76,9 @@ struct LostCatEmergencyEntryView: View {
     @ObservedObject var draftStore = LostCatDraftStore.shared
     @ObservedObject var evacuationStore = EvacuationStore.shared
     @ObservedObject var careStore = CareHandoffStore.shared
+    /// Opened from a cat's page on the 「この子」 tab: that cat's page, with
+    /// no cat menu in the bar. Nil (restored tools, links, tests): the last cat.
+    var fixedCatKey: String? = nil
     private var savedCats: [LostCatSavedCat] {
         LostCatSavedCat.candidates(evacuation: evacuationStore, care: careStore)
             .filter { candidate in candidate.profileID == nil || !profiles.contains { $0.identifier == candidate.profileID } }
@@ -114,10 +117,21 @@ struct LostCatEmergencyEntryView: View {
                                                 accessibilityIdentifier: "lost-cat-saved-\($0)") }
     }
 
+    /// The page's cat as this tool lists it: a profile, or a cat known from
+    /// the other tools (「guest-tool-」 and its household cat ID).
+    private var fixedStripCat: ToolStripCat? {
+        guard let key = fixedCatKey?.uppercased() else { return nil }
+        return stripCats.first { $0.id.uppercased() == key || $0.id.uppercased() == "GUEST-TOOL-" + key }
+    }
+
     var body: some View {
         // A cat whose farewell day is recorded is not opened by itself (11/7).
         let openable = stripCats.filter { !$0.isDeparted(farewellJSON) }
-        if let current = openable.first(where: { $0.id == lastKey }) ?? openable.first {
+        if let fixed = fixedStripCat {
+            // Opened for one cat from its page: the cat is chosen there, so
+            // the form stands alone (no cat menu, the name on the page).
+            editor(fixed.id, fixed.profile?.displayName ?? "", cats: [])
+        } else if let current = openable.first(where: { $0.id == lastKey }) ?? openable.first {
             // The cat's page at once; the row of cats above it switches in place.
             editor(current.id, current.profile?.displayName ?? "")
         } else {
@@ -134,9 +148,9 @@ struct LostCatEmergencyEntryView: View {
         .navigationTitle("迷子のとき").navigationBarTitleDisplayMode(.inline)
     }
 
-    private func editor(_ key: String, _ name: String) -> some View {
+    private func editor(_ key: String, _ name: String, cats: [ToolStripCat]? = nil) -> some View {
         LostCatDraftView(initialKey: key, initialName: name,
-                         profiles: profiles, allPhotos: allPhotos, stripCats: stripCats,
+                         profiles: profiles, allPhotos: allPhotos, stripCats: cats ?? stripCats,
                          evacuationStore: evacuationStore, careStore: careStore, store: draftStore)
     }
 

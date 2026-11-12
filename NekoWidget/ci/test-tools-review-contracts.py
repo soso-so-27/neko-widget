@@ -7,28 +7,33 @@ def source(name):
     return next((ROOT / "NekoWidget").rglob(name)).read_text(encoding="utf-8")
 
 class ToolsReviewContracts(unittest.TestCase):
-    def assert_tools_grid_columns(self, text):
-        grid=text.split('LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize',1)[1].split('spacing: 10, content: content)',1)[0]
-        self.assertIn('? [GridItem(.flexible())]',grid)
-        two_columns=': [GridItem(.flexible(), spacing: 10, alignment: .top), GridItem(.flexible(), spacing: 10, alignment: .top)],'
-        self.assertIn(two_columns,grid)
-        self.assertEqual(grid.count('GridItem('),3)
-        self.assertEqual(grid.count('alignment: .top'),2)
-        self.assertIn('spacing: 10, content: content)',text)
+    # 11/12 (案D): the tools are one row of five equal round buttons; at the
+    # accessibility text sizes they become one column of rows (it was a
+    # two-column grid of tiles with one column at those sizes).
+    def assert_tools_bar_columns(self, text):
+        bar=text.split('private struct CatHomeToolBar: View {',1)[1].split('/// A round button:',1)[0]
+        body=bar.split('    var body: some View {',1)[1].split('    /// 「書きかけ」 in orange',1)[0]
+        rows,buttons=body.split('} else {',1)
+        self.assertIn('if typeSize.isAccessibilitySize {',rows)
+        self.assertIn('CatHomeToolRow(tool: tool, state: state(tool))',rows)
+        self.assertNotIn('HStack',rows)
+        self.assertIn('let column = (width - 32) / 5',buttons)
+        self.assertIn('let circle = min(66, max(column - 8, 44))',buttons)
+        self.assertIn('.frame(width: column)',buttons)
+        self.assertIn('CatHomeToolButton(tool: tool, state: state(tool), circle: circle)',buttons)
 
-    def test_tools_grid_keeps_two_top_columns_and_accessibility_single_column(self):
-        self.assert_tools_grid_columns(source('MainTabView.swift'))
+    def test_tools_bar_keeps_five_equal_columns_and_accessibility_rows(self):
+        self.assert_tools_bar_columns(source('CatHomeView.swift'))
 
-    def test_default_center_alignment_regression_is_rejected_for_either_column(self):
-        text=source('MainTabView.swift')
-        column='GridItem(.flexible(), spacing: 10, alignment: .top)'
-        self.assertEqual(text.count(column),2)
-        for occurrence in (0,1):
-            with self.subTest(column=occurrence):
-                parts=text.split(column)
-                broken=parts[0]+(column if occurrence!=0 else 'GridItem(.flexible(), spacing: 10)')+parts[1]+(column if occurrence!=1 else 'GridItem(.flexible(), spacing: 10)')+parts[2]
+    def test_unequal_or_unscaled_columns_are_rejected(self):
+        text=source('CatHomeView.swift')
+        for good,bad in (('let column = (width - 32) / 5','let column = (width - 32) / 4'),
+                         ('let circle = min(66, max(column - 8, 44))','let circle = CGFloat(66)'),
+                         ('.frame(width: column)','.frame(maxWidth: .infinity)')):
+            with self.subTest(part=good):
+                self.assertEqual(text.count(good),1)
                 with self.assertRaises(AssertionError):
-                    self.assert_tools_grid_columns(broken)
+                    self.assert_tools_bar_columns(text.replace(good,bad))
 
     def test_picker_keeps_saving_sheet_and_selection_stable(self):
         picker = source("ShowcasePhotoView.swift").split("private struct ShowcaseCandidatePicker", 1)[1]

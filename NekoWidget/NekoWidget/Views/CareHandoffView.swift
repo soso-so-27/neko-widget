@@ -7,6 +7,10 @@ struct CareHandoffView: View {
     var unregisteredPhotos: [PhotoPresentation]
     @ObservedObject var store: CareHandoffStore = .shared
     @ObservedObject var reuseStore: EvacuationStore = .shared
+    /// Opened from a cat's page on the 「この子」 tab: that cat's memo, with
+    /// no cat menu in the bar (お願いする猫 still adds others to the memo).
+    /// Nil (restored tools, links, tests): the last cat, as before.
+    var fixedCatKey: String? = nil
     @AppStorage("careHandoff.lastCat.v1") private var lastCatID = ""
     @AppStorage(CatFarewell.key) private var farewellJSON = ""
     @State private var selectedCatID: UUID?
@@ -24,6 +28,22 @@ struct CareHandoffView: View {
                                         accessibilityIdentifier: "care-cat-\($0.id.uuidString)") }
             + availableSavedCats.map { ToolStripCat(id: "saved-" + $0.id.uuidString, name: $0.displayName, profile: nil,
                                                     accessibilityIdentifier: "care-saved-\($0.id.uuidString)") }
+    }
+
+    /// The page's cat as this tool lists it: a profile, a memo of a cat
+    /// without one (same household cat), or one written in 避難に備える.
+    private var fixedStripCat: ToolStripCat? {
+        guard let key = fixedCatKey?.uppercased() else { return nil }
+        if let cat = stripCats.first(where: { $0.id.uppercased() == key }) { return cat }
+        func identity(_ profileID: String?, _ tool: UUID?, _ id: UUID) -> String {
+            (profileID ?? (tool ?? id).uuidString).uppercased()
+        }
+        if let memo = store.plan.cats.first(where: { identity($0.profileID, $0.toolCatID, $0.id) == key }),
+           let cat = stripCats.first(where: { $0.id == memo.id.uuidString }) { return cat }
+        if let saved = availableSavedCats.first(where: { identity($0.profileID, $0.toolCatID, $0.id) == key }) {
+            return stripCats.first { $0.id == "saved-" + saved.id.uuidString }
+        }
+        return nil
     }
 
     private var selectedStripID: String? {
@@ -80,7 +100,7 @@ struct CareHandoffView: View {
             if !countedOpen { countedOpen = true; UsageCounter.shared.count(.toolCareHandoff) }
             store.retryPhotoCleanup()
             guard selectedCatID == nil, store.loadError == nil else { return }
-            openFirst()
+            if let fixed = fixedStripCat { select(fixed) } else { openFirst() }
         }
         // The first cat, added from 「猫を追加」, opens at once (11/7).
         .onChange(of: profiles.map(\.identifier)) { old, _ in
@@ -93,7 +113,8 @@ struct CareHandoffView: View {
     /// 11/12: the cat switcher is the small menu in the bar every row-list
     /// tool uses, here too while no memo is open. It stays away with one cat.
     @ViewBuilder private var catMenu: some View {
-        if store.loadError == nil, !stripCats.isEmpty {
+        // Opened for one cat from its page: the cat is chosen there.
+        if store.loadError == nil, !stripCats.isEmpty, fixedStripCat == nil {
             ToolCatMenu(cats: stripCats, selectedID: selectedStripID, title: menuName,
                         identifier: "care-cat-menu") { select($0) }
         }
@@ -106,6 +127,7 @@ struct CareHandoffView: View {
     /// True when the bar has no cat menu (one cat to choose from), so the
     /// page names the cat itself, as 病院で見せる does.
     private var menuHidden: Bool {
+        if fixedStripCat != nil { return true }
         let selected = selectedStripID
         return stripCats.filter { $0.id == selected || !$0.isDeparted(farewellJSON) }.count < 2
     }
