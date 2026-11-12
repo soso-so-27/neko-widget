@@ -271,7 +271,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download the sets
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aecb3f1b5 # v6.0.0
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           pattern: review-part-*-${{ github.run_id }}
           path: ${{ runner.temp }}/review-screenshots

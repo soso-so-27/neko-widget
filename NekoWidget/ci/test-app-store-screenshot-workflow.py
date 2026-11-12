@@ -539,6 +539,8 @@ class ReviewScreenshotWorkflowTests(unittest.TestCase):
             self.assertNotIn("xcresult", upload.split("- name:", 1)[0])
             self.assertNotIn(".log", upload.split("- name:", 1)[0])
         self.assertIn("name: review-screenshots-${{ github.run_id }}", self.workflow)
+        # The real v6.0.0 commit (a wrong pin fails the bundle job at setup).
+        self.assertIn("actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0", self.workflow)
         # The index step deletes everything that is not a PNG or index.txt.
         self.assertIn('path.name != "index.txt" and path.suffix.lower() != ".png"', self.collector_source)
         with tempfile.TemporaryDirectory() as temporary:

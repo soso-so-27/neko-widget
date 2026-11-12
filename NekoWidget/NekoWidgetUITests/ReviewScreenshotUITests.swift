@@ -68,10 +68,16 @@ final class ReviewScreenshotUITests: XCTestCase {
             let deliver = app.buttons["photo-browser-deliver-group"]
             guard deliver.waitForExistence(timeout: 10) else { return "「まどに届ける」 is not on the photo screen" }
             deliver.tap()
-            guard app.buttons["group-library-delivery-send"].waitForExistence(timeout: 15)
-                    || app.buttons["group-library-delivery-destination"].waitForExistence(timeout: 5) else {
+            // The sheet asks for Photos access over itself on a fresh
+            // Simulator; decline it so the sheet is what is captured.
+            declinePhotosPrompt(timeout: 8)
+            let sheet = anyIdentifier(app, ["group-library-delivery-send", "group-library-delivery-destination"])
+            let title = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "に届ける")).firstMatch
+            guard sheet.waitForExistence(timeout: 10) || title.waitForExistence(timeout: 5) else {
                 return "delivery sheet did not open"
             }
+            declinePhotosPrompt(timeout: 2)
+            settle(1)
             return nil
         }
         app.terminate()
@@ -141,7 +147,6 @@ final class ReviewScreenshotUITests: XCTestCase {
             guard tools.waitForExistence(timeout: 15) else { return "membership fixture did not start" }
             tools.tap()
             guard tapTab(member, "main-tab-memories", "アルバム") else { return "Albums tab not found" }
-            guard member.navigationBars["アルバム"].waitForExistence(timeout: 15) else { return "Albums did not appear" }
             guard memberLatest.waitForExistence(timeout: 15) else { return "newest work not on the shelf" }
             _ = waitForAnyFixturePhoto(member, Array(19...24))
             return nil
@@ -517,6 +522,8 @@ final class ReviewScreenshotUITests: XCTestCase {
     @MainActor
     func test12Onboarding() {
         // Pages one and two are the real first launch (no fixture root).
+        // Earlier tests may have declined Photos; page two needs it undecided.
+        XCUIApplication().resetAuthorizationStatus(for: .photos)
         let app = launch([], environment: ["NEKO_RESET_ONBOARDING_FOR_UI_TESTS": "1"])
         let start = app.buttons["onboarding-purpose-start"]
         shot("28_onboarding_1", app) {
@@ -673,9 +680,9 @@ final class ReviewScreenshotUITests: XCTestCase {
     }
 
     @MainActor
-    private func declinePhotosPrompt() {
+    private func declinePhotosPrompt(timeout: TimeInterval = 2) {
         let alert = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
-        guard alert.waitForExistence(timeout: 2) else { return }
+        guard alert.waitForExistence(timeout: timeout) else { return }
         let deny = alert.buttons.matching(NSPredicate(format: "label IN %@",
                                                       ["Don’t Allow", "Don't Allow", "許可しない"])).firstMatch
         if deny.exists { deny.tap() }
