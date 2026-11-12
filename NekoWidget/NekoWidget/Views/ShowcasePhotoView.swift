@@ -335,7 +335,9 @@ struct ShowcasePhotoView: View {
                 Text(visibleTitle).font(.headline).lineLimit(1)
             }
             Spacer(minLength: 8)
-            if detailIndex == nil && initialScopeID != nil {
+            if detailIndex == nil && initialScopeID != nil && !visibleItems.isEmpty {
+                // 11/12 (round 2): only once there are photos; before that the
+                // empty screen's 「写真を選ぶ」 opens the same sheet.
                 editButton { showsPreparation = true }
                     .accessibilityIdentifier("showcase-gallery-edit")
             } else if detailIndex == nil, let onManage {
@@ -553,10 +555,10 @@ struct ShowcasePhotoView: View {
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("showcase-gallery-select")
             } else {
-                ContentUnavailableView("まだ写真を選んでいません", systemImage: "photo")
-                Button("写真を選ぶ") { showsPreparation = true }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("showcase-gallery-select")
+                // 11/12 (round 2): the black cat peeking in, the sentence, and
+                // the button right under it at the tools' size (it was a small
+                // capsule at the very bottom, far from the sentence).
+                ShowcaseNothingChosen { showsPreparation = true }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1592,5 +1594,33 @@ struct ShowcaseToolCatPicker: View {
                     Button("削除", role: .destructive) { remove?(scope); removing = nil }
                 } message: { _ in Text("写真アプリの写真は消えません。") }
         }
+    }
+}
+
+/// 「まだ写真を選んでいません」 (11/12, round 2): のわ peeking in, as a quiet
+/// light silhouette on the black screen, the one sentence, then the one button
+/// at the same size as the tools' bottom buttons.
+private struct ShowcaseNothingChosen: View {
+    let choose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image("Nowa-peek")
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .frame(height: 64)
+                .foregroundStyle(Color.white.opacity(0.35))
+                .accessibilityHidden(true)
+            Text("まだ写真を選んでいません")
+                .font(.title3.bold())
+                .multilineTextAlignment(.center)
+            Button(action: choose) {
+                Text("写真を選ぶ").frame(maxWidth: .infinity)
+            }
+            .nekoPrimaryButton()
+            .accessibilityIdentifier("showcase-gallery-select")
+        }
+        .padding(.horizontal, 32)
     }
 }
