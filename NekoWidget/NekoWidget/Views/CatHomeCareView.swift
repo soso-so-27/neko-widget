@@ -44,19 +44,16 @@ struct CatHomeCareLinks {
     let saveLifeDates: (String, CatProfileLifeDatesPresentation) async -> Bool
 }
 
-/// 「これからのこと」: the heading, then the card of rows.
+/// The care card: four rows, no heading.
 struct CatHomeCareCard: View {
     let rows: CatHomeCareRows
     let links: CatHomeCareLinks
     @State private var editsDates = false
 
     var body: some View {
+        // No heading (11/14): with real data most rows read 「前回…」, so
+        // 「これからのこと」 said something the card did not.
         VStack(alignment: .leading, spacing: 8) {
-            Text("これからのこと")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .accessibilityAddTraits(.isHeader)
-                .padding(.leading, 4)
             VStack(spacing: 0) {
                 let shown = entries
                 ForEach(Array(shown.enumerated()), id: \.element.id) { index, entry in

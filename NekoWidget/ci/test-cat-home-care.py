@@ -85,7 +85,9 @@ class Card(unittest.TestCase):
                  'id: "vet", title: "病院"', 'id: "weight", title: "体重"']
         self.assertEqual([entries.index(item) for item in order], sorted(entries.index(item) for item in order))
         card = block(VIEW, "struct CatHomeCareCard: View {")
-        self.assertIn('Text("これからのこと")', card)
+        # 11/14: no heading. With real data most rows read 「前回…」.
+        self.assertNotIn('Text("これからのこと")', card)
+        self.assertNotIn('.isHeader', card)
         self.assertIn('.accessibilityIdentifier("cat-home-care")', card)
         self.assertIn('.accessibilityIdentifier("cat-home-care-" + entry.id)', card)
 
