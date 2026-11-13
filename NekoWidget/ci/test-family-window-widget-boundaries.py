@@ -2761,7 +2761,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
     def test_photo_browser_delivery_keeps_the_existing_admission_and_photo_boundaries(self) -> None:
         browser = source("NekoWidget/Views/LikedPhotosView.swift")
         exporter = source("NekoWidget/Services/PhotoBookPDFExporter.swift")
-        self.assertIn("groupDelivery = GroupDeliveryRequest(localIdentifier: selectedPhoto.localIdentifier,", browser)
+        self.assertIn("groupDelivery = GroupDeliveryRequest(localIdentifier: selectedPhoto.localIdentifier)", browser)
         self.assertIn(".sheet(item: $groupDelivery", browser)
         memory = section(exporter, "struct MemoryPhotoJPEGExporter", "struct PhotoLibraryJPEGExporter")
         self.assertLess(memory.index("MemoryPhotoExportPolicy.selection"),
@@ -6008,7 +6008,7 @@ class LibraryGroupDeliveryTests(unittest.TestCase):
         self.assertIn('"photo-browser-deliver-group"', browser)
         # The deliver button is pinned at the bottom, visible without scrolling the footer.
         self.assertIn("// The one main action, always in view (not below the fold).", browser)
-        self.assertIn("GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier,", browser)
+        self.assertIn("GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier)", browser)
         window = source("NekoWidget/Views/GroupWindowView.swift")
         sheet = section(window, "struct GroupLibraryDeliverySheet: View {", "/// Shown after a photo is picked")
         # One window: no choosing step. Sending only from the confirmation's button.
@@ -7786,47 +7786,13 @@ class MemoCaptionOneWayTests(unittest.TestCase):
         editor = section(source("NekoWidget/Views/PhotoMemoryNoteView.swift"), "struct PhotoMemoryNoteEditor", "\n}\n")
         self.assertNotIn("まどに届ける", editor)
         self.assertNotIn("GroupLibraryDeliverySheet", editor)
-        # The sheet starts from the given words.
+        # The sheet starts from the given words; the photo screen gives none.
         sheet = section(self.screen, "struct GroupLibraryDeliverySheet: View {", "enum GroupLibraryDeliveryMemory {")
         self.assertIn('init(client: any GroupWindowMediaClient, localIdentifier: String, initialCaption: String = "") {', sheet)
         self.assertIn("_memo = State(initialValue: initialCaption)", sheet)
+        self.assertIn("GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier)\n", self.browser)
+        self.assertNotIn("initialCaption:", self.browser)
         self.assertIn('var initialCaption = ""', section(self.browser, "struct GroupDeliveryRequest: Identifiable {", "\n}\n"))
-
-    def test_the_photo_screen_starts_the_caption_with_its_memo_in_plain_sight(self) -> None:
-        # 11/13: 「まどに届ける」 on a photo with a memo starts the ひとこと with the
-        # memo's words, cut by the same rule as the memo page. Without a memo, empty.
-        button = section(self.browser, "let memo = personalNote.note(for: selectedPhoto.localIdentifier)",
-                         '.accessibilityIdentifier("photo-browser-deliver-group")')
-        self.assertIn("groupDelivery = GroupDeliveryRequest(localIdentifier: selectedPhoto.localIdentifier,\n"
-                      '                        initialCaption: memo.map { GroupPhotoCaption.draft(fromMemo: $0.text) } ?? "")',
-                      button)
-        self.assertIn('"メモの文をひとことに入れて、届ける前に確かめます"', button)
-        self.assertNotIn("store.save(", button)
-        self.assertEqual(self.browser.count("GroupDeliveryRequest(localIdentifier:"), 1)
-        self.assertNotIn("GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier)\n", self.browser)
-        self.assertIn("GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier,\n"
-                      "                                          initialCaption: request.initialCaption)", self.browser)
-        # Shown in the editable field and sent only by 「届ける」: the words go
-        # to GroupCaptionField's binding, never straight to sendPhoto.
-        self.assertNotIn("initialCaption", section(self.screen, "    func deliver(_ prepared: PreparedPhoto, memo: String) async {",
-                                                   "/// After a failed send:"))
-        step = section(self.screen, "private struct GroupLibraryDeliveryStep: View {", "/// A window chosen from the list")
-        self.assertIn("GroupCaptionField(text: $memo)", step)
-        self.assertEqual(step.count("model.deliver("), 1)
-        self.assertIn('.accessibilityIdentifier("group-library-delivery-send")', step)
-        # The UI test pins it end to end: pre-filled, editable, cancel sends
-        # nothing, cleared sends no words, the memo unchanged.
-        ui = source("NekoWidgetUITests/PhotoPermissionUITests.swift")
-        test = section(ui, "func testPersonalMemoryNoteSurvivesReopenStaysWithPhotoAndNeverBecomesCaption()",
-                       "private func tapReceivedDetailControl(")
-        self.assertIn('"--group-window-screens-fixture"', test)
-        self.assertIn("XCTAssertEqual(caption.value as? String, note,", test)
-        self.assertIn('app.navigationBars.buttons["キャンセル"].firstMatch.tap()', test)
-        self.assertIn('"届けた数 1・最後のひとこと なし"', test)
-        self.assertIn('"Delivering never changes the memo."', test)
-        # The fixture's record of sends exists only in DEBUG builds.
-        self.assertIn("    static var fixtureSentCaptions: [String?] = []", self.screen)
-        self.assertIn("if GroupWindowUIFixture.showsScreens { Self.fixtureSentCaptions.append(sent.caption) }", self.screen)
         # The cut keeps the ひとこと limits.
         draft = section(self.core, "static func draft(fromMemo memo: String) -> String {", "static func normalized(")
         self.assertIn("maximumCharacters", draft)
