@@ -3474,12 +3474,11 @@ private struct WindowListView: View {
     private func addButton(_ source: PublicWindowPresentationSource) -> some View {
         // One word for starting an official window, here and in the window (11/7).
         // 11/7: a real button beside the row (44pt), not a capsule over its chevron.
+        // 11/13: a small filled accent capsule, not a grey blob.
         Button { add(source) } label: {
             Text("受け取る")
-                .font(.subheadline.weight(.semibold))
-                .frame(minHeight: 44)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.officialWindowReceive)
         .disabled(addingPublicWindowID != nil)
         .accessibilityIdentifier("public-window-add-\(source.id)")
     }
