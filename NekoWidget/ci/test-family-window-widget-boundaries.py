@@ -3606,10 +3606,11 @@ class CatCareTests(unittest.TestCase):
         # 10/22: the cat's 「この子のこと」 card on the この子 tab opens the
         # cat's page, which is この子のこと (CatCareDetailView).
         home = source("NekoWidget/Views/CatHomeView.swift")
-        self.assertIn("CatHomeAboutCard(cat: cat, facts: facts, destination: carePage)", home)
+        self.assertIn("CatHomeAboutCard(cat: cat, destination: carePage)", home)
         self.assertIn("case let .profile(profile):\n            profilePage(profile)", home)
-        # 11/1: a cat whose farewell day is recorded shows no progress.
-        self.assertIn("progress: farewell == nil ? progress(for: cat, record: record) : nil,", home)
+        # 11/1: a cat whose farewell day is recorded shows no progress; 11/14:
+        # nor 「これからのこと」 (no count on the page at all).
+        self.assertIn("guard !facts.departed else { return nil }", home)
         detail = source("NekoWidget/Views/CatProfilePhotoCurationViews.swift")
         # 11/7: the cat's page is この子のこと only, with no tabs.
         page = section(detail, "struct CatProfileDetailView: View", "struct CatProfileAddPhotosButton: View")
@@ -8607,10 +8608,10 @@ class ToolsLookRoundTwo1112Tests(unittest.TestCase):
         page = section(home, "private struct CatHomePage: View {", "/// The cat's key photo from the very top")
         # 11/13: 32 (was 24), so the last row clears the floating tab bar.
         self.assertIn(".padding(.bottom, 32)", page)
-        # What is left to write in この子のこと, as the chip said it, or 「そろっています」.
+        # 11/14: no 「あと○つ」/「そろっています」 on the page; the count stays
+        # inside この子のこと (pinned in ci/test-cat-home-care.py).
         facts = section(home, "struct CatHomeFacts {", "/// The five tools, in the order of the page.")
-        self.assertIn('"あと\\($0.total - $0.filled)つ"', facts)
-        self.assertIn('"そろっています"', facts)
+        self.assertNotIn('"そろっています"', facts)
         # The bottom button is as wide as the cards above it.
         self.assertIn(".padding(.horizontal, ToolChrome.sideMargin)",
                       section(self.care, "struct ToolMakeBar<Top: View, Action: View>: View {", "/// The frame around every tool page"))
@@ -8874,22 +8875,21 @@ class CatHomeTab1112Tests(unittest.TestCase):
         self.assertIn("if pageCount > 1 {", hero)
 
     def test_about_card_shows_progress_weight_and_birthday(self) -> None:
-        # 11/13 (「記録が並ぶ」): the card is one row at the bottom: the name,
-        # 「あと○つ」/「そろっています」 and a chevron. Replaces the pins on the
-        # progress line, the 体重 line and the 誕生日まで line: the weight is
-        # in the records and the birthday in its own card (CatHomeRecords*).
+        # 11/14 (「猫を大切にできるページ」): the card is one row at the
+        # bottom, the name and a chevron, no count. The birthday and the
+        # weight are rows of 「これからのこと」 (CatHomeCare*), pinned in
+        # ci/test-cat-home-care.py.
         card = section(self.home, "private struct CatHomeAboutCard: View {", "/// A name and its value on one line")
-        self.assertIn('CatHomeLine(title: "この子のこと", value: facts.progressText, emphasized: true)', card)
+        self.assertIn('CatHomeLine(title: "この子のこと", value: nil, emphasized: true)', card)
         self.assertIn("NavigationLink { destination } label: {", card)
-        for gone in (".scaleEffect(x: facts.progressShare", 'CatHomeLine(title: "体重"', 'title: "誕生日まで"', "Divider()"):
+        for gone in (".scaleEffect(x: facts.progressShare", 'CatHomeLine(title: "体重"', 'title: "誕生日まで"', "Divider()",
+                     "progressText"):
             self.assertNotIn(gone, card)
         self.assertNotIn("progressShare", self.home)
         self.assertNotIn("static func weightText(", self.home)
-        facts = section(self.home, "struct CatHomeFacts {", "/// The five tools, in the order of the page.")
-        self.assertIn('.map { $0 == 0 ? "きょう" : "あと\\($0)日" }', facts)
-        self.assertIn("matchingPolicy: .nextTime", facts)
-        records = source("NekoWidget/Views/CatHomeRecordsCore.swift")
-        self.assertIn('birthdayIn == "きょう" ? "きょうは誕生日" : "誕生日まで " + birthdayIn', records)
+        core = source("NekoWidget/Views/CatHomeCareCore.swift")
+        self.assertIn('if days == 0 { return Value(text: "きょう", tone: .soon) }', core)
+        self.assertIn('"\\(birthday.month)月\\(birthday.day)日（あと\\(days)日）"', core)
 
     def test_five_round_buttons_with_short_names_and_state_dots(self) -> None:
         tool = section(self.home, "enum CatHomeTool: CaseIterable {", "struct CatHomeView: View {")
@@ -8905,7 +8905,8 @@ class CatHomeTab1112Tests(unittest.TestCase):
         button = section(self.home, "private struct CatHomeToolButton: View {", "/// The accessibility-size form of a tool")
         self.assertIn(".background(Color(.secondarySystemGroupedBackground), in: Circle())", button)
         self.assertIn("Circle().strokeBorder(Color(.separator), lineWidth: 1 / max(displayScale, 1))", button)
-        self.assertIn(".fill(state.color)", button)
+        # 11/14: no dot; 「書きかけ」 is on the 病院 row of 「これからのこと」.
+        self.assertNotIn(".fill(state.color)", button)
         self.assertIn(".lineLimit(1)", button)
         self.assertIn(".minimumScaleFactor(0.7)", button)
         self.assertIn('.accessibilityLabel(state.map { "\\(tool.title)、\\($0.text)" } ?? tool.title)', button)
@@ -8924,7 +8925,8 @@ class CatHomeTab1112Tests(unittest.TestCase):
         states = section(self.home, "final class CatHomeToolStates: ObservableObject {", "/// What the page says about a cat")
         self.assertIn("await Task.yield()", states)
         self.assertIn("try? await VeterinaryVisitStore.shared.visits()", states)
-        self.assertIn("visit.completedAt == nil", states)
+        self.assertIn(".mapValues { $0.map { CatHomeCareCore.VetMemo($0) } }", states)
+        self.assertIn("completedAt == nil && hasContent", source("NekoWidget/Views/CatHomeCareCore.swift"))
         self.assertIn("LostCatDraftStore.shared.drafts.filter { $0.value.isSearching }", states)
         self.assertIn('searchingKeys.contains("guest-tool-" + cat.id)', states)
         self.assertIn(".onAppear { Task { await states.refresh() } }", self.home)
@@ -8949,7 +8951,7 @@ class CatHomeTab1112Tests(unittest.TestCase):
         page = section(self.home, "private struct CatHomePage: View {", "/// The cat's key photo from the very top")
         self.assertIn("if !facts.departed {", page)
         self.assertLess(page.index("if !facts.departed {"), page.index("CatHomeToolBar("))
-        self.assertIn("CatHomeAboutCard(cat: cat, facts: facts, destination: carePage)", page)
+        self.assertIn("CatHomeAboutCard(cat: cat, destination: carePage)", page)
         # A cat without a profile: a page under its name, its この子のこと by its household ID.
         self.assertIn("CatCareDetailView(toolCatID: toolID, name: cat.name)", self.home)
 
@@ -9015,24 +9017,22 @@ class CatHomePolish1113Tests(unittest.TestCase):
         self.assertNotIn("Color.black.opacity(0.32)", self.home)
 
     def test_birthday_line_only_within_thirty_days(self) -> None:
+        # 11/14: the birthday card left the page; the birthday is always the
+        # first row of 「これからのこと」, in the text colour within 7 days,
+        # and on the day the hero's line says 「きょうで5歳」.
         facts = section(self.home, "struct CatHomeFacts {", "/// The five tools, in the order of the page.")
-        self.assertIn("static let birthdaySoonDays = 30", facts)
-        near = ".flatMap { $0 <= Self.birthdaySoonDays ? $0 : nil }"
-        self.assertIn(near, facts)
-        self.assertLess(facts.index(near), facts.index('.map { $0 == 0 ? "きょう" : "あと\\($0)日" }'))
-        # 11/13: a card of its own above the records, not a line of the
-        # この子のこと card (replaces the two card pins).
-        section_view = source("NekoWidget/Views/CatHomeRecordsView.swift")
-        self.assertIn("if let birthdayIn { CatHomeBirthdayCard(text: CatHomeRecordsCore.birthdayLine(birthdayIn)) }",
-                      section_view)
-        self.assertIn("CatHomeRecordsSection(cat: cat, record: record, photos: photos, birthdayIn: facts.birthdayIn,",
-                      self.home)
+        self.assertNotIn("birthdaySoonDays", facts)
+        self.assertIn("CatHomeCareCore.heroDayLine(", facts)
+        core = source("NekoWidget/Views/CatHomeCareCore.swift")
+        self.assertIn("static let soonDays = 7", core)
+        self.assertIn("tone: days <= soonDays ? .soon : .quiet", core)
+        self.assertNotIn("CatHomeBirthdayCard", source("NekoWidget/Views/CatHomeCareView.swift"))
 
     def test_searching_is_a_line_not_a_red_dot(self) -> None:
         button = section(self.home, "private struct CatHomeToolButton: View {", "/// The accessibility-size form of a tool")
-        # The dot stays for the unfinished vet memo, not for 迷子.
-        self.assertIn("if let state, tool != .lost {", button)
-        self.assertIn(".fill(state.color)", button)
+        # 11/14: no dot at all; 迷子 is this line, 「書きかけ」 the 病院 row.
+        self.assertNotIn("if let state, tool != .lost {", button)
+        self.assertNotIn(".fill(state.color)", button)
         # VoiceOver on the button still says 「迷子のとき、探しています」.
         self.assertIn('.accessibilityLabel(state.map { "\\(tool.title)、\\($0.text)" } ?? tool.title)', button)
         bar = section(self.home, "private struct CatHomeToolBar: View {", "/// A round button:")
@@ -9141,7 +9141,7 @@ class CatIdentityMeasure1113Tests(unittest.TestCase):
         # 11/13: SingleCatPhotosTests (C15C0A7E…) and AlbumLinkFollowupsTests
         # (C1A1BF10…) joined the same test target, then CatThresholdTests
         # (C1CA7050…, the 0.5 cat line and its migration), then
-        # CatHomeRecordsTests (C1E0A7E0…, the この子 page's records).
+        # CatHomeCareTests (C1E0A7E0…, the この子 page's 「これからのこと」).
         self.assertIn("children = (C1108C000000000000000002,C1D3A9110000000000000006,"
                       "C15C0A7E0000000000000002,C1A1BF100000000000000002,C1CA70500000000000000002,"
                       "C1E0A7E00000000000000002,); path = NekoWidgetTests;", self.project)

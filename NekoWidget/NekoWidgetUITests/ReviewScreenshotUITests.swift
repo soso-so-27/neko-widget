@@ -13,7 +13,7 @@ final class ReviewScreenshotUITests: XCTestCase {
     /// Layout-critical screens also captured on the small iPhone SE.
     static let seScreens: Set<String> = [
         "10_cat_home", "10b_cat_home_second_cat", "10c_cat_home_no_cat", "10d_cat_home_no_photo",
-        "10e_cat_home_records", "11_cat_care_top", "12_vet_bottom", "14_lost_bottom", "16_care_bottom",
+        "11_cat_care_top", "12_vet_bottom", "14_lost_bottom", "16_care_bottom",
         "23_plus_offer_top", "23_plus_offer_bottom", "24_settings_top", "28_onboarding_1",
     ]
     private static let mike = "11111111-1111-4111-8111-111111111111"
@@ -167,13 +167,17 @@ final class ReviewScreenshotUITests: XCTestCase {
 
     @MainActor
     func test04ToolsCatCareAndVet() {
-        // 11/13: the first cat has memos, weights, a finished vet memo, a
-        // vaccination and a memo from a year ago (the page's records).
-        let app = launch(fixture + ["--app-store-screenshot-cat-care", "--cat-home-records-fixture"], tools: true)
+        // 11/14: the first cat's 「これからのこと」 has all four rows filled
+        // (birthday, a vaccination due soon, a vet memo with its next visit,
+        // a weight); the second cat's read 未設定・未記入・なし.
+        let app = launch(fixture + ["--app-store-screenshot-cat-care", "--cat-home-care-fixture"], tools: true)
         shot("10_cat_home", app) {
             guard tapTab(app, "main-tab-tools", "この子") else { return "この子 tab not found" }
             guard chooseHomeCat(app, Self.mike) else { return "cat menu on この子 not found" }
             guard app.buttons["tools-care-open"].waitForExistence(timeout: 15) else { return "tool buttons did not appear" }
+            guard app.descendants(matching: .any)["cat-home-care-vet"].firstMatch.waitForExistence(timeout: 10) else {
+                return "「これからのこと」 did not appear"
+            }
             settle(2)
             return nil
         }
@@ -183,26 +187,6 @@ final class ReviewScreenshotUITests: XCTestCase {
                 return "second cat's page did not appear"
             }
             settle(2)
-            return nil
-        }
-        // The page scrolled to 「1年前のきょう」, 「さいきんの写真」 and the records.
-        shot("10e_cat_home_records", app) {
-            guard chooseHomeCat(app, Self.mike) else { return "cat menu on この子 not found" }
-            let yearsAgo = app.descendants(matching: .any)["cat-home-years-ago"].firstMatch
-            let firstRecord = app.descendants(matching: .any)["cat-home-record-0"].firstMatch
-            guard yearsAgo.waitForExistence(timeout: 15) else { return "「1年前のきょう」 did not appear" }
-            guard firstRecord.waitForExistence(timeout: 10) else { return "the records did not appear" }
-            // Up in short drags until the whole records card is above the tab
-            // bar, on the large phones as on SE (a swipe left it unscrolled there).
-            let records = app.descendants(matching: .any)["cat-home-records"].firstMatch
-            let bar = app.tabBars.firstMatch
-            let barTop = bar.exists && bar.frame.height > 0 ? bar.frame.minY : app.frame.maxY - 90
-            for _ in 0..<8 where !records.exists || records.frame.maxY > barTop - 8 {
-                app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
-                    .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
-            }
-            guard records.frame.maxY <= barTop - 8 else { return "the records card stayed under the tab bar" }
-            settle(1.5)
             return nil
         }
         let catCard = app.descendants(matching: .any)["tools-cat-" + Self.mike].firstMatch
