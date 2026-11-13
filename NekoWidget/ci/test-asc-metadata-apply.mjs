@@ -16,6 +16,15 @@ test('1111d permits only the daily-photo copy changes in the Japanese descriptio
   assert.throws(()=>dailyPlusDescriptionChange('別の説明'),/STOP_SCOPE/u);
 });
 import {readFileSync} from 'node:fs';
+test('1113d removes only the paid photo-memo bullet',()=>{
+  const desired=JSON.parse(readFileSync(new URL('./asc-metadata-1109d/version/1.0/ja.json',import.meta.url),'utf8')).description;
+  const before=desired.replace('■ ねこのまど Plus\n','■ ねこのまど Plus\n・写真に新しいメモを書く\n');
+  assert.notEqual(before,desired);
+  assert.equal(approvedDescriptionUpdate(before,desired),true);
+  assert.equal(approvedDescriptionUpdate(before,desired.replace('980 円','990 円')),false);
+  assert.equal(approvedDescriptionUpdate(before+'\n別の追記',desired),false);
+  assert.equal(approvedDescriptionUpdate(before.replace('・写真に新しいメモを書く\n','・写真に新しいメモを書く\n・写真に新しいメモを書く\n'),desired),false);
+});
 const allowed=[{scope:'app-info',locale:'ja',field:'subtitle',value:'approved'}];
 const change={scope:'app-info',locale:'ja',field:'subtitle',to:'approved'};
 
