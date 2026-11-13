@@ -1,0 +1,54 @@
+name: Launch warmup probe (diagnostic only)
+on:
+  push:
+    branches: [diagnostic/1113d-warmup]
+    paths: [.github/workflows/launch-warmup-probe.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  probe:
+    runs-on: macos-15
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        warmup: [false, true]
+        repeat: [1, 2]
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Reuse validated synthetic app and preserve launch checks
+        env:
+          WARMUP: ${{ matrix.warmup }}
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/${{ github.repository }}/actions/runs/43361637297 --jq .head_sha)" = 5e88dd8ac0a8856b4e1a242a2294c721502e8609
+          mkdir -p "$RUNNER_TEMP/app"
+          gh run download 43361637297 -R "${{ github.repository }}" -n quick-launch-app -D "$RUNNER_TEMP/app"
+          tar -xzf "$RUNNER_TEMP/app/quick-launch-app.tar.gz" -C "$RUNNER_TEMP/app"
+          if [ "$WARMUP" = true ]; then
+            python3 - <<'PY'
+          from pathlib import Path
+          p=Path('NekoWidget/ci/run-quick-launch.sh')
+          text=p.read_text()
+          marker='bounded 300 xcrun simctl bootstatus "$device" -b\n'
+          assert text.count(marker)==1
+          text=text.replace(marker,marker+'echo "WARMUP START"\nbounded 90 xcrun simctl launch "$device" com.apple.Preferences\nbounded 30 xcrun simctl terminate "$device" com.apple.Preferences\necho "WARMUP END"\n')
+          p.write_text(text)
+          PY
+          fi
+          export QUICK_APP_PATH="$RUNNER_TEMP/app/NekoWidget.app"
+          time bash NekoWidget/ci/run-quick-launch.sh
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: warmup-${{ matrix.warmup }}-${{ matrix.repeat }}
+          path: |
+            ${{ runner.temp }}/quick-launch-failure/
+            ${{ runner.temp }}/ci-screenshots/
+          retention-days: 5
