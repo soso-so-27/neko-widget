@@ -2892,30 +2892,36 @@ struct PhotoBrowserView: View {
     private var showsDateAsTitle: Bool { navigationTitleText == "写真" }
 
     /// The date in the title's place, and 「1 / 8」 under it. Keeps the
-    /// identifier and spoken date the row under the bar had.
+    /// identifier and spoken date the row under the bar had; 「1 / 8」 is
+    /// read as its own element, as the row's position was.
     @ViewBuilder
     private func titleDate(_ photo: PhotoPresentation) -> some View {
         let spokenDate = photo.creationDate?.formatted(.dateTime.year().month().day()) ?? "撮影日不明"
         let context = PhotoRediscoveryContext.yearsAgo(for: photo.creationDate)
-        let detail = [context, browserPhotos.count > 1 ? pagePositionText : nil].compactMap { $0 }
+        let position = browserPhotos.count > 1 ? pagePositionText : nil
+        let detail = [context, position].compactMap { $0 }
         VStack(spacing: 0) {
             Text(spokenDate)
                 .font(.headline)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
+                .accessibilityLabel(spokenDate)
+                .accessibilityValue(spokenDate)
+                .accessibilityHint(context ?? "")
+                .accessibilityIdentifier("photo-browser-date")
             if !detail.isEmpty {
+                // The years-ago context is the date's hint; this line is read as the position.
                 Text(detail.joined(separator: "・"))
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .accessibilityLabel(position ?? "")
+                    .accessibilityHidden(position == nil)
+                    .accessibilityIdentifier("photo-browser-position")
             }
         }
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(spokenDate)
-        .accessibilityValue(spokenDate)
-        .accessibilityHint(context ?? "")
-        .accessibilityIdentifier("photo-browser-date")
+        .accessibilityElement(children: .contain)
     }
 
     /// 「○○から」 and, under it, the sender's ひとこと: read-only, never
