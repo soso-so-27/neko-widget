@@ -269,6 +269,25 @@ struct VeterinaryVisitsView: View {
     }
 }
 
+/// One finished memo opened from a cat's records on the 「この子」 tab
+/// (11/13): the same view 「これまでの診察メモ」 opens over its list.
+struct VeterinaryPastVisitSheet: View {
+    let visit: VeterinaryVisit
+    let photos: [PhotoPresentation]
+    var profiles: [CatProfilePresentation] = []
+    var noteStore: PhotoMemoryNoteStore = .shared
+    var store: VeterinaryVisitStore = .shared
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        NavigationStack {
+            VeterinaryConsultationView(initialVisit: visit, photos: photos, noteStore: noteStore,
+                store: store, profiles: profiles)
+        }
+        .environment(\.dynamicTypeSize, typeSize)
+    }
+}
+
 private struct VeterinaryConsultationView: View {
     let initialVisit: VeterinaryVisit
     let photos: [PhotoPresentation]

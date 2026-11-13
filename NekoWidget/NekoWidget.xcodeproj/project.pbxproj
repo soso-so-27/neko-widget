@@ -15,9 +15,11 @@
 		C1A1BF100000000000000001 /* AlbumLinkFollowupsTests.swift in Sources */ = { isa = PBXBuildFile; fileRef = C1A1BF100000000000000002; };
 		C1CA70500000000000000002 /* CatThresholdTests.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatThresholdTests.swift; sourceTree = "<group>"; };
 		C1CA70500000000000000001 /* CatThresholdTests.swift in Sources */ = { isa = PBXBuildFile; fileRef = C1CA70500000000000000002; };
+		C1E0A7E00000000000000002 /* CatHomeRecordsTests.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatHomeRecordsTests.swift; sourceTree = "<group>"; };
+		C1E0A7E00000000000000001 /* CatHomeRecordsTests.swift in Sources */ = { isa = PBXBuildFile; fileRef = C1E0A7E00000000000000002; };
 		C1108C000000000000000005 = { isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = NekoWidgetTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		C1108C000000000000000004 = { isa = PBXGroup; children = (C1108C000000000000000002,C1D3A9110000000000000006,C15C0A7E0000000000000002,C1A1BF100000000000000002,C1CA70500000000000000002,); path = NekoWidgetTests; sourceTree = "<group>"; };
-		C1108C000000000000000006 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (C1108C000000000000000003,C1D3A9110000000000000005,C15C0A7E0000000000000001,C1A1BF100000000000000001,C1CA70500000000000000001,); runOnlyForDeploymentPostprocessing = 0; };
+		C1108C000000000000000004 = { isa = PBXGroup; children = (C1108C000000000000000002,C1D3A9110000000000000006,C15C0A7E0000000000000002,C1A1BF100000000000000002,C1CA70500000000000000002,C1E0A7E00000000000000002,); path = NekoWidgetTests; sourceTree = "<group>"; };
+		C1108C000000000000000006 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (C1108C000000000000000003,C1D3A9110000000000000005,C15C0A7E0000000000000001,C1A1BF100000000000000001,C1CA70500000000000000001,C1E0A7E00000000000000001,); runOnlyForDeploymentPostprocessing = 0; };
 		C1108C000000000000000007 = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		C1108C000000000000000008 = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		C1108C00000000000000000A = { isa = XCBuildConfiguration; baseConfigurationReference = F00000000000000000000001; buildSettings = {
@@ -58,6 +60,8 @@
 		7A11080F0000000000000001 /* ToolRecentPhotos.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A11080F0000000000000002 /* ToolRecentPhotos.swift */; };
 		7A11120C0000000000000001 /* ToolRowParts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A11120C0000000000000002 /* ToolRowParts.swift */; };
 		7A11120D0000000000000001 /* CatHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A11120D0000000000000002 /* CatHomeView.swift */; };
+		7A11120E0000000000000001 /* CatHomeRecordsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A11120E0000000000000002 /* CatHomeRecordsView.swift */; };
+		7A11120F0000000000000001 /* CatHomeRecordsCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A11120F0000000000000002 /* CatHomeRecordsCore.swift */; };
 		7A11121C0000000000000001 /* ToolMemoSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A11121C0000000000000002 /* ToolMemoSheet.swift */; };
 		C1D3C0E70000000000000001 /* CatPhotoCoverageMeasurement.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1D3C0E70000000000000002 /* CatPhotoCoverageMeasurement.swift */; };
 		C1D3A9110000000000000001 /* CatIdentityMeasurement.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1D3A9110000000000000002 /* CatIdentityMeasurement.swift */; };
@@ -405,6 +409,8 @@
 		7A11080F0000000000000002 /* ToolRecentPhotos.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRecentPhotos.swift; sourceTree = "<group>"; };
 		7A11120C0000000000000002 /* ToolRowParts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRowParts.swift; sourceTree = "<group>"; };
 		7A11120D0000000000000002 /* CatHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatHomeView.swift; sourceTree = "<group>"; };
+		7A11120E0000000000000002 /* CatHomeRecordsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatHomeRecordsView.swift; sourceTree = "<group>"; };
+		7A11120F0000000000000002 /* CatHomeRecordsCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatHomeRecordsCore.swift; sourceTree = "<group>"; };
 		7A11121C0000000000000002 /* ToolMemoSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolMemoSheet.swift; sourceTree = "<group>"; };
 		C1D3C0E70000000000000002 /* CatPhotoCoverageMeasurement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatPhotoCoverageMeasurement.swift; sourceTree = "<group>"; };
 		C1D3A9110000000000000002 /* CatIdentityMeasurement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatIdentityMeasurement.swift; sourceTree = "<group>"; };
@@ -1014,6 +1020,8 @@
 				7A11080F0000000000000002 /* ToolRecentPhotos.swift */,
 				7A11120C0000000000000002 /* ToolRowParts.swift */,
 				7A11120D0000000000000002 /* CatHomeView.swift */,
+				7A11120E0000000000000002 /* CatHomeRecordsView.swift */,
+				7A11120F0000000000000002 /* CatHomeRecordsCore.swift */,
 				7A11121C0000000000000002 /* ToolMemoSheet.swift */,
 				C1D3A9110000000000000004 /* CatIdentityMeasureView.swift */,
                 D02609300000000000000004 /* VeterinaryVisitView.swift */,
@@ -1410,6 +1418,8 @@
 				7A11080F0000000000000001 /* ToolRecentPhotos.swift in Sources */,
 				7A11120C0000000000000001 /* ToolRowParts.swift in Sources */,
 				7A11120D0000000000000001 /* CatHomeView.swift in Sources */,
+				7A11120E0000000000000001 /* CatHomeRecordsView.swift in Sources */,
+				7A11120F0000000000000001 /* CatHomeRecordsCore.swift in Sources */,
 				7A11121C0000000000000001 /* ToolMemoSheet.swift in Sources */,
 				C1D3C0E70000000000000001 /* CatPhotoCoverageMeasurement.swift in Sources */,
 				C1D3A9110000000000000001 /* CatIdentityMeasurement.swift in Sources */,

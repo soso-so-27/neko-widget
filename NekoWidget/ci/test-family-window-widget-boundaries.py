@@ -8605,7 +8605,8 @@ class ToolsLookRoundTwo1112Tests(unittest.TestCase):
         self.assertNotIn("minHeight: 120", button)
         self.assertIn(".frame(width: circle, height: circle)", button)
         page = section(home, "private struct CatHomePage: View {", "/// The cat's key photo from the very top")
-        self.assertIn(".padding(.bottom, 24)", page)
+        # 11/13: 32 (was 24), so the last row clears the floating tab bar.
+        self.assertIn(".padding(.bottom, 32)", page)
         # What is left to write in この子のこと, as the chip said it, or 「そろっています」.
         facts = section(home, "struct CatHomeFacts {", "/// The five tools, in the order of the page.")
         self.assertIn('"あと\\($0.total - $0.filled)つ"', facts)
@@ -8873,18 +8874,22 @@ class CatHomeTab1112Tests(unittest.TestCase):
         self.assertIn("if pageCount > 1 {", hero)
 
     def test_about_card_shows_progress_weight_and_birthday(self) -> None:
+        # 11/13 (「記録が並ぶ」): the card is one row at the bottom: the name,
+        # 「あと○つ」/「そろっています」 and a chevron. Replaces the pins on the
+        # progress line, the 体重 line and the 誕生日まで line: the weight is
+        # in the records and the birthday in its own card (CatHomeRecords*).
         card = section(self.home, "private struct CatHomeAboutCard: View {", "/// A name and its value on one line")
         self.assertIn('CatHomeLine(title: "この子のこと", value: facts.progressText, emphasized: true)', card)
-        self.assertIn(".scaleEffect(x: facts.progressShare, y: 1, anchor: .leading)", card)
-        self.assertIn('CatHomeLine(title: "体重", value: weight)', card)
-        self.assertIn('CatHomeLine(title: "誕生日まで", value: birthdayIn)', card)
         self.assertIn("NavigationLink { destination } label: {", card)
+        for gone in (".scaleEffect(x: facts.progressShare", 'CatHomeLine(title: "体重"', 'title: "誕生日まで"', "Divider()"):
+            self.assertNotIn(gone, card)
+        self.assertNotIn("progressShare", self.home)
+        self.assertNotIn("static func weightText(", self.home)
         facts = section(self.home, "struct CatHomeFacts {", "/// The five tools, in the order of the page.")
         self.assertIn('.map { $0 == 0 ? "きょう" : "あと\\($0)日" }', facts)
-        self.assertIn('CatCareFormat.weight(latest.grams) + "（\\(date)）"', facts)
         self.assertIn("matchingPolicy: .nextTime", facts)
-        # The share is the count the ring used.
-        self.assertIn("CGFloat($0.filled) / CGFloat($0.total)", facts)
+        records = source("NekoWidget/Views/CatHomeRecordsCore.swift")
+        self.assertIn('birthdayIn == "きょう" ? "きょうは誕生日" : "誕生日まで " + birthdayIn', records)
 
     def test_five_round_buttons_with_short_names_and_state_dots(self) -> None:
         tool = section(self.home, "enum CatHomeTool: CaseIterable {", "struct CatHomeView: View {")
@@ -9013,9 +9018,13 @@ class CatHomePolish1113Tests(unittest.TestCase):
         near = ".flatMap { $0 <= Self.birthdaySoonDays ? $0 : nil }"
         self.assertIn(near, facts)
         self.assertLess(facts.index(near), facts.index('.map { $0 == 0 ? "きょう" : "あと\\($0)日" }'))
-        card = section(self.home, "private struct CatHomeAboutCard: View {", "/// A name and its value on one line")
-        self.assertIn("if let birthdayIn = facts.birthdayIn {", card)
-        self.assertIn('CatHomeLine(title: "誕生日まで", value: birthdayIn)', card)
+        # 11/13: a card of its own above the records, not a line of the
+        # この子のこと card (replaces the two card pins).
+        section_view = source("NekoWidget/Views/CatHomeRecordsView.swift")
+        self.assertIn("if let birthdayIn { CatHomeBirthdayCard(text: CatHomeRecordsCore.birthdayLine(birthdayIn)) }",
+                      section_view)
+        self.assertIn("CatHomeRecordsSection(cat: cat, record: record, photos: photos, birthdayIn: facts.birthdayIn,",
+                      self.home)
 
     def test_searching_is_a_line_not_a_red_dot(self) -> None:
         button = section(self.home, "private struct CatHomeToolButton: View {", "/// The accessibility-size form of a tool")
@@ -9129,12 +9138,14 @@ class CatIdentityMeasure1113Tests(unittest.TestCase):
         self.assertIn("path = CatIdentityMeasurementTests.swift;", self.project)
         # 11/13: SingleCatPhotosTests (C15C0A7E…) and AlbumLinkFollowupsTests
         # (C1A1BF10…) joined the same test target, then CatThresholdTests
-        # (C1CA7050…, the 0.5 cat line and its migration).
+        # (C1CA7050…, the 0.5 cat line and its migration), then
+        # CatHomeRecordsTests (C1E0A7E0…, the この子 page's records).
         self.assertIn("children = (C1108C000000000000000002,C1D3A9110000000000000006,"
-                      "C15C0A7E0000000000000002,C1A1BF100000000000000002,C1CA70500000000000000002,);"
-                      " path = NekoWidgetTests;", self.project)
+                      "C15C0A7E0000000000000002,C1A1BF100000000000000002,C1CA70500000000000000002,"
+                      "C1E0A7E00000000000000002,); path = NekoWidgetTests;", self.project)
         self.assertIn("files = (C1108C000000000000000003,C1D3A9110000000000000005,"
-                      "C15C0A7E0000000000000001,C1A1BF100000000000000001,C1CA70500000000000000001,);", self.project)
+                      "C15C0A7E0000000000000001,C1A1BF100000000000000001,C1CA70500000000000000001,"
+                      "C1E0A7E00000000000000001,);", self.project)
         self.assertEqual(len(set(re.findall(r"C1D3A911000000000000000\d", self.project))), 6)
 
     def test_store_product_compiles_none_of_it(self) -> None:
