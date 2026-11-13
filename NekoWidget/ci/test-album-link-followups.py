@@ -37,6 +37,8 @@ STORE = read("NekoWidget/Services/ShowcasePhotoStore.swift")
 LOST = read("NekoWidget/Services/LostCatIncident.swift")
 LOST_VIEW = read("NekoWidget/Views/CatPreparednessView.swift")
 HOME = read("NekoWidget/Views/CatHomeView.swift")
+PHOTO_GRID = read("NekoWidget/Views/HomeView.swift")
+PHOTO_IMAGE = read("NekoWidget/Views/PhotoAssetImageView.swift")
 READABLE = read("NekoWidget/Services/ReadablePreservationExport.swift")
 
 
@@ -133,6 +135,24 @@ class KeyPhotoGrid(unittest.TestCase):
         self.assertIn(".clipped()", cell)
         self.assertIn('"\\(photo.detectedCatCount)匹"', cell)
         self.assertIn("LazyVGrid(columns: columns, spacing: 3)", grid)
+
+
+class PhotosTabCatGrid(unittest.TestCase):
+    """11/13: a linked album's photo with no cat box arrives uncropped; it
+    must not size its cell, or a cat's grid in the 写真 tab has uneven rows."""
+
+    def test_grid_row_cells_are_clipped_squares(self):
+        row = block(PHOTO_GRID, "struct PhotoLibraryGridRowView<Cell: View>: View")
+        self.assertIn("Color.clear.aspectRatio(1, contentMode: .fit)\n"
+                      "                    .overlay { cell(photo) }\n"
+                      "                    .clipped()", row)
+
+    def test_a_thumbnail_fills_its_frame_instead_of_sizing_it(self):
+        body = block(PHOTO_IMAGE, "struct PhotoAssetImageView: View")
+        thumbnail = body[body.index("// Every thumbnail fills"):body.index("case .failed:")]
+        self.assertLess(thumbnail.index("Color.clear\n                        .overlay {"),
+                        thumbnail.index(".scaledToFill()"))
+        self.assertIn(".clipped()\n                        .contentShape(Rectangle())", thumbnail)
 
 
 class LostCatSearching(unittest.TestCase):
