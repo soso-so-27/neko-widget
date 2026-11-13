@@ -3357,14 +3357,28 @@ final class SoloMemoriesUITests: XCTestCase {
             tools.tap()
         }
         XCTAssertTrue(showcase.waitForExistence(timeout: 10))
+        // 11/13: 写真を見せる opens for the この子 page's cat (the one place the
+        // cat is chosen). The page is chosen here, so the stored page from an
+        // earlier test does not decide the result.
+        func choosePage(_ identifier: String) {
+            let menu = app.buttons["tools-cat-menu"]
+            XCTAssertTrue(menu.waitForExistence(timeout: 10), app.debugDescription)
+            menu.tap()
+            let item = app.buttons["tools-cat-menu-" + identifier]
+            XCTAssertTrue(item.waitForExistence(timeout: 5), app.debugDescription)
+            item.tap()
+            XCTAssertTrue(item.waitForNonExistence(timeout: 5))
+            let value = NSPredicate(format: "value CONTAINS %@", identifier == "fixture-cat-1" ? "ソラ" : "ミケ")
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: value, object: menu)], timeout: 5),
+                           .completed)
+        }
+        choosePage("fixture-cat-1")
         showcase.tap()
         let scope = app.buttons["showcase-gallery-scope"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
-        // 11/8: a cat, never すべての猫, before anything is chosen.
+        // 11/8: a cat, never すべての猫; here the page's cat.
         XCTAssertFalse(scope.label.contains("すべての猫"))
-        scope.tap()
-        app.buttons["ソラ"].tap()
-        XCTAssertTrue(scope.label.contains("ソラ"))
+        XCTAssertTrue(scope.label.contains("ソラ"), scope.label)
         app.buttons.matching(identifier: "showcase-gallery-photo").firstMatch.tap()
         app.buttons["写真の一覧に戻る"].tap()
         XCTAssertTrue(scope.label.contains("ソラ"))
@@ -3382,10 +3396,16 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(scope.label.contains("ソラ"))
         XCTAssertEqual(app.buttons.matching(identifier: "showcase-gallery-scope").count, 1)
         app.buttons["閉じる"].tap()
+        // Another page, another cat: the page decides, not the set shown last.
+        choosePage("fixture-cat-0")
         app.buttons["tools-showcase-open"].tap()
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
-        // 11/7: the card opens on the cat chosen last time.
-        XCTAssertTrue(scope.label.contains("ソラ"))
+        XCTAssertTrue(scope.label.contains("ミケ"), scope.label)
+        app.buttons["閉じる"].tap()
+        choosePage("fixture-cat-1")
+        app.buttons["tools-showcase-open"].tap()
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        XCTAssertTrue(scope.label.contains("ソラ"), scope.label)
     }
 
     @MainActor

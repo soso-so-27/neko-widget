@@ -8668,6 +8668,10 @@ class MainTabsLook1112Tests(unittest.TestCase):
         title = section(self.browser, "private func titleDate(_ photo: PhotoPresentation) -> some View {", "\n    }\n")
         self.assertIn('.accessibilityIdentifier("photo-browser-date")', title)
         self.assertIn(".accessibilityValue(spokenDate)", title)
+        # 「2 / 8」 stays readable on its own (VoiceOver and UI tests), as the row's was.
+        self.assertIn('.accessibilityLabel(position ?? "")', title)
+        self.assertIn('.accessibilityIdentifier("photo-browser-position")', title)
+        self.assertIn(".accessibilityElement(children: .contain)", title)
         self.assertIn("ToolbarItem(placement: .principal) { titleDate(selectedPhoto) }", self.browser)
         # The bar keeps 「写真」 as its name for back buttons and UI tests.
         self.assertIn(".navigationTitle(navigationTitleText)", self.browser)
