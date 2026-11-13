@@ -1466,8 +1466,12 @@ struct MainTabView: View {
         } addPhotos: {
             // 11/7: one cat chosen: adding its photos is here, not on the cat's page.
             if let profile {
-                CatProfileAddPhotosButton(profile: profile, allProfiles: catProfilesPresentation.profiles,
-                                          actions: catProfilesActions)
+                // 11/13: with one cat every cat photo is already its own; adding
+                // shows only while something is left to add. The album link stays.
+                if profile.offersAddingPhotos {
+                    CatProfileAddPhotosButton(profile: profile, allProfiles: catProfilesPresentation.profiles,
+                                              actions: catProfilesActions)
+                }
                 // 11/13: the album link's one entry, beside adding photos.
                 CatProfilePhotoAlbumLinkButton(profile: profile, albums: catProfilesPresentation.photoAlbumOptions,
                                                actions: catProfilesActions)

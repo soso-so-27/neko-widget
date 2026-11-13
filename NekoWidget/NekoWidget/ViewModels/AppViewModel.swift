@@ -174,9 +174,71 @@ final class AppViewModel: ObservableObject {
     var isComplete: Bool { scanState.isComplete }
 
     func catAssets(profileID: UUID) -> [AssetRecord] {
-        guard let identity = catHouseholdIdentity else { return [] }
-        let included = identity.confirmedAssetIdentifiers(for: profileID)
+        guard let included = catProfilePhotoIdentifiers[profileID] else { return [] }
         return catAssets.filter { included.contains($0.localIdentifier) }
+    }
+
+    /// Detected cat photos the single-cat rule (11/13) may count as the only
+    /// cat's photos. A photo received from someone else's window is never
+    /// derived as the own cat (the same line as ReceivedPhotoAlbumPolicy).
+    var singleCatDetectedPhotoIdentifiers: Set<String> {
+        catProfilePhotoSets.detected
+    }
+
+    /// Every cat profile's photos: explicit includes ∪ linked album, and for
+    /// the household's only cat also every detected cat photo, minus that
+    /// cat's 「この子ではない」 and household-wide exclusions. The one place
+    /// per-cat photo lists, the cat filter and the per-cat 「くもりのまど」
+    /// read from (CatHouseholdIdentityState.effectiveAssetIdentifiers).
+    var catProfilePhotoIdentifiers: [UUID: Set<String>] {
+        catProfilePhotoSets.sets
+    }
+
+    /// Only the part the single-cat rule adds for the household's only cat
+    /// (empty with zero or several profiles), for the 写真 tab's cat filter.
+    var singleCatDerivedPhotoIdentifiers: Set<String> {
+        catProfilePhotoSets.singleCatDerived
+    }
+
+    private var catProfilePhotoSets: (
+        detected: Set<String>,
+        sets: [UUID: Set<String>],
+        singleCatDerived: Set<String>
+    ) {
+        let version = presentationVersion
+        let received = receivedPhotoIdentifiers
+        if let cached = cachedCatProfilePhotoSets,
+           cached.version == version, cached.received == received {
+            return (cached.detected, cached.sets, cached.singleCatDerived)
+        }
+        let detected = Self.singleCatDetectedPhotoIdentifiers(
+            catAssets: presentationSnapshot.catAssets,
+            received: received
+        )
+        let sets = catHouseholdIdentity?.effectiveAssetIdentifiersByProfile(
+            detectedCatAssetIdentifiers: detected
+        ) ?? [:]
+        let singleCatDerived = catHouseholdIdentity.flatMap { identity in
+            identity.singleCatProfileID.map {
+                identity.singleCatDerivedAssetIdentifiers(
+                    for: $0,
+                    detectedCatAssetIdentifiers: detected
+                )
+            }
+        } ?? []
+        cachedCatProfilePhotoSets = (version, received, detected, sets, singleCatDerived)
+        return (detected, sets, singleCatDerived)
+    }
+
+    private static func singleCatDetectedPhotoIdentifiers(
+        catAssets: [AssetRecord],
+        received: Set<String>
+    ) -> Set<String> {
+        var detected = Set<String>(minimumCapacity: catAssets.count)
+        for asset in catAssets where !received.contains(asset.localIdentifier) {
+            detected.insert(asset.localIdentifier)
+        }
+        return detected
     }
 
     func profileMemberships(for localIdentifier: String) -> [CatAssetProfileMembership] {
@@ -244,6 +306,15 @@ final class AppViewModel: ObservableObject {
     private var cachedPresentationSnapshot: (
         version: LibraryPresentationVersion,
         snapshot: LibrarySnapshot
+    )?
+    /// 11/13 single-cat rule: built once per presentation version (identity
+    /// revision included) and received-photo change, never per row or render.
+    private var cachedCatProfilePhotoSets: (
+        version: LibraryPresentationVersion,
+        received: Set<String>,
+        detected: Set<String>,
+        sets: [UUID: Set<String>],
+        singleCatDerived: Set<String>
     )?
     /// Serializes the one-way legacy-to-profiled transition with household
     /// exclusion mutations. Without this queue, an exclusion can commit to
@@ -1561,6 +1632,10 @@ final class AppViewModel: ObservableObject {
             lifeReference: lifeReference,
             lifeReferenceIsApproximate: lifeReferenceIsApproximate
         )
+        // 11/13: the only cat's derived photos stop counting once this second
+        // profile exists. Keep the photo its page shows now (one explicit
+        // include); every other derived photo is left as it is, not migrated.
+        let shownSingleCatPhoto = singleCatShownPhotoIdentifier()
         do {
             let committed = try await mutateCatHouseholdIdentity { state in
                 // Profile creation is the one-way boundary where identity
@@ -1571,6 +1646,11 @@ final class AppViewModel: ObservableObject {
                     lifeReference: legacyLifeReference,
                     curation: latestLegacyCuration
                 )
+                if shownSingleCatPhoto?.profileID == state.singleCatProfileID {
+                    state.pinSingleCatPhotoBeforeAnotherProfile(
+                        shownPhotoIdentifier: shownSingleCatPhoto?.photo
+                    )
+                }
                 state.upsertProfile(profile)
                 if let referenceAssetIdentifier {
                     state.setManualMembership(
@@ -1606,6 +1686,7 @@ final class AppViewModel: ObservableObject {
                     "hasLifeReference": "\(lifeReference != nil)"
                 ]
             )
+            synchronizeCloudyWindowProfilesAfterCountChange()
             return profile.id
         } catch {
             Self.logError(error, category: "cat-identity", operation: "create_profile")
@@ -1664,8 +1745,27 @@ final class AppViewModel: ObservableObject {
         guard candidateAuthorityIsReady(operation: "set_profile_key_photo") else {
             return false
         }
+        let detected = singleCatDetectedPhotoIdentifiers
         do {
             let committed = try await mutateCatHouseholdIdentity { state in
+                // 11/13: a derived photo of the only cat is this cat's photo,
+                // but the model keeps the key photo explicit (it must survive
+                // a second profile), so it is included first in the same save.
+                if state.isSingleCatDerivedAsset(
+                    localIdentifier,
+                    profileID: profileID,
+                    isDetectedCatPhoto: detected.contains(localIdentifier)
+                ), !state.confirmsAsset(localIdentifier, for: profileID) {
+                    state.setManualMembership(
+                        assetLocalIdentifier: localIdentifier,
+                        profileID: profileID,
+                        decision: .included,
+                        subjectBoundingBox: self.preferredSubjectBoundingBox(
+                            assetLocalIdentifier: localIdentifier,
+                            existing: nil
+                        )
+                    )
+                }
                 state.setProfileKeyPhoto(
                     profileID: profileID,
                     assetLocalIdentifier: localIdentifier
@@ -1761,7 +1861,9 @@ final class AppViewModel: ObservableObject {
             let committed = try await mutateCatHouseholdIdentity { state in
                 state.removeProfile(id: profileID)
             }
-            return !committed.profiles.contains(where: { $0.id == profileID })
+            let removed = !committed.profiles.contains(where: { $0.id == profileID })
+            if removed { synchronizeCloudyWindowProfilesAfterCountChange() }
+            return removed
         } catch {
             Self.logError(error, category: "cat-identity", operation: "delete_profile")
             setError(error)
@@ -1782,6 +1884,7 @@ final class AppViewModel: ObservableObject {
         }
         let requested = profileIDsByLocalIdentifier.filter { !$0.key.isEmpty }
         guard !requested.isEmpty else { return false }
+        let detected = singleCatDetectedPhotoIdentifiers
         do {
             let committed = try await mutateCatHouseholdIdentity { state in
                 let validProfiles = Set(state.profiles.map(\.id))
@@ -1797,10 +1900,14 @@ final class AppViewModel: ObservableObject {
                             for: identifier,
                             profileID: profileID
                         )
+                        // 11/13: for the only cat a detected photo is already
+                        // its photo, like a linked album photo: keeping it writes
+                        // nothing and unselecting it writes 「この子ではない」.
                         let isLinkedAlbumPhoto = state.linkedPhotoAlbumContains(
                             identifier,
                             profileID: profileID
-                        )
+                        ) || (profileID == state.singleCatProfileID
+                            && detected.contains(identifier))
                         // Saving an unchanged album-derived assignment must not
                         // materialize it as a manual positive; otherwise unlinking
                         // the album would incorrectly retain every linked photo.
@@ -1826,7 +1933,10 @@ final class AppViewModel: ObservableObject {
                 }
             }
             return requested.allSatisfy { identifier, selected in
-                committed.confirmedProfileIDs(for: identifier) == selected
+                committed.effectiveProfileIDs(
+                    for: identifier,
+                    isDetectedCatPhoto: detected.contains(identifier)
+                ) == selected
             }
         } catch {
             Self.logError(error, category: "cat-identity", operation: "replace_assignments")
@@ -3387,13 +3497,67 @@ final class AppViewModel: ObservableObject {
         return revision
     }
 
+    /// 11/13: adding the first or a second cat profile (or deleting back to
+    /// one) changes which photos count for a cat. The per-cat 「くもりのまど」
+    /// reads only the profile IDs written here, so write them now rather
+    /// than waiting for the next Widget rebuild.
+    private func synchronizeCloudyWindowProfilesAfterCountChange() {
+        guard catIdentityLoadState == .ready, canReadPhotos else { return }
+        do {
+            try synchronizeCloudyWindowMetadata()
+            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+        } catch {
+            Self.logError(error, category: "widget-cache", operation: "cloudy_profile_count")
+        }
+    }
+
+    /// The photo the only cat's page shows now when it has no key photo: the
+    /// newest of its photos, ordered as the page orders them (nil dates last,
+    /// then identifier). nil unless the household has exactly one profile.
+    private func singleCatShownPhotoIdentifier() -> (profileID: UUID, photo: String?)? {
+        guard let profileID = catHouseholdIdentity?.singleCatProfileID else { return nil }
+        let photos = catProfilePhotoIdentifiers[profileID] ?? []
+        var datesByIdentifier: [String: Date] = [:]
+        for asset in readableSourceSnapshot.assets where photos.contains(asset.localIdentifier) {
+            if let date = asset.creationDate { datesByIdentifier[asset.localIdentifier] = date }
+        }
+        let newest = photos.min { lhs, rhs in
+            let left = datesByIdentifier[lhs] ?? profilePhotoAlbumAssetDates[lhs]
+            let right = datesByIdentifier[rhs] ?? profilePhotoAlbumAssetDates[rhs]
+            switch (left, right) {
+            case let (left?, right?) where left != right: return left > right
+            case (_?, nil): return true
+            case (nil, _?): return false
+            default: return lhs < rhs
+            }
+        }
+        return (profileID, newest)
+    }
+
     private func synchronizeCloudyWindowMetadata(input: LibrarySnapshot? = nil) throws {
         guard CloudyWindowAvailability.isAvailable else { return }
-        let records = (input ?? candidateSnapshot(snapshot)).assets
+        let source = input ?? candidateSnapshot(snapshot)
+        let records = source.assets
         let received = receivedPhotoIdentifiers
+        // 11/13: the Widget extension only sees these profile IDs, so the app
+        // writes the single-cat rule into them (the same derived set as the
+        // cat's page). Nothing is added to the identity ledger.
+        let singleCatID = catHouseholdIdentity?.singleCatProfileID
+        let singleCatPhotos: Set<String> = singleCatID.flatMap { id in
+            catHouseholdIdentity?.singleCatDerivedAssetIdentifiers(
+                for: id,
+                detectedCatAssetIdentifiers: Self.singleCatDetectedPhotoIdentifiers(
+                    catAssets: source.catAssets,
+                    received: received
+                )
+            )
+        } ?? []
         var metadata: [String: CloudyWindowPhotoMetadata] = [:]
         for record in records where !received.contains(record.localIdentifier) {
-            let profiles = catHouseholdIdentity?.confirmedProfileIDs(for: record.localIdentifier) ?? []
+            var profiles = catHouseholdIdentity?.confirmedProfileIDs(for: record.localIdentifier) ?? []
+            if let singleCatID, singleCatPhotos.contains(record.localIdentifier) {
+                profiles.insert(singleCatID)
+            }
             metadata[record.localIdentifier] = .init(creationDate: record.creationDate,
                 burstIdentifier: record.burstIdentifier,
                 profileIDs: Set(profiles.map { $0.uuidString.lowercased() }),

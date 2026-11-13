@@ -160,8 +160,18 @@ struct CatProfilePresentation: Identifiable, Equatable {
     /// Photos the user said are not this cat (「この子ではない」). The key
     /// photo picker leaves them out of 「ほかの猫の写真」.
     var excludedPhotoIdentifiers: Set<String> = []
+    /// 11/13: the household's only cat profile, so every detected cat photo
+    /// already counts as this cat's photo (CatHouseholdIdentityState
+    /// .effectiveAssetIdentifiers). Its pages do not ask to sort photos.
+    var countsEveryDetectedCatPhoto = false
 
     var id: String { identifier }
+
+    /// 「この子の写真を追加」 is shown unless the single-cat rule already
+    /// counts every detected cat photo and nothing is left to add.
+    var offersAddingPhotos: Bool {
+        !countsEveryDetectedCatPhoto || !otherKeyPhotoCandidates.isEmpty
+    }
 
     /// The key photo picker's 「ほかの猫の写真」: every other detected cat
     /// photo, newest first, without the ones excluded for this cat

@@ -9112,8 +9112,11 @@ class CatIdentityMeasure1113Tests(unittest.TestCase):
         services = self.project.index("C1D3A9110000000000000002 /* CatIdentityMeasurement.swift */,\n")
         self.assertLess(self.project.index("path = Services;", services) - services, 120)
         self.assertIn("path = CatIdentityMeasurementTests.swift;", self.project)
-        self.assertIn("children = (C1108C000000000000000002,C1D3A9110000000000000006,); path = NekoWidgetTests;", self.project)
-        self.assertIn("files = (C1108C000000000000000003,C1D3A9110000000000000005,);", self.project)
+        # 11/13: SingleCatPhotosTests (C15C0A7E…) joined the same test target.
+        self.assertIn("children = (C1108C000000000000000002,C1D3A9110000000000000006,"
+                      "C15C0A7E0000000000000002,); path = NekoWidgetTests;", self.project)
+        self.assertIn("files = (C1108C000000000000000003,C1D3A9110000000000000005,"
+                      "C15C0A7E0000000000000001,);", self.project)
         self.assertEqual(len(set(re.findall(r"C1D3A911000000000000000\d", self.project))), 6)
 
     def test_store_product_compiles_none_of_it(self) -> None:
