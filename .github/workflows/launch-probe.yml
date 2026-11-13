@@ -10,13 +10,14 @@ permissions:
   actions: read
 jobs:
   probe:
-    name: Probe runner ${{ matrix.runner }}
+    name: Quick launch ${{ matrix.app }} ${{ matrix.rep }}
     runs-on: macos-15
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        runner: [1]
+        app: [pr979, main]
+        rep: [1, 2]
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       GH_TOKEN: ${{ github.token }}
@@ -24,6 +25,11 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          ref: e4b50714eaf85dae15d7448fc0482f1dbdff9b88
+          path: pr
       - name: Fetch existing validated synthetic apps
         run: |
           set -euo pipefail
@@ -35,14 +41,15 @@ jobs:
           }
           fetch pr979 43459293614 e4b50714eaf85dae15d7448fc0482f1dbdff9b88
           fetch main 43429005956 e5084aa9c03cade9b160631e31e044b0f9782eb7
-      - name: Launch main (control) then PR 979 with console and crash reports
-        env:
-          PROBE_OUT: ${{ runner.temp }}/launch-probe
+      - name: The real Fresh runner launch script on this app
         run: |
-          bash NekoWidget/ci/launch-probe.sh main="$RUNNER_TEMP/apps/main/NekoWidget.app" pr979="$RUNNER_TEMP/apps/pr979/NekoWidget.app"
+          export QUICK_APP_PATH="$RUNNER_TEMP/apps/${{ matrix.app }}/NekoWidget.app"
+          bash pr/NekoWidget/ci/run-quick-launch.sh
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()
         with:
-          name: launch-probe-${{ matrix.runner }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/launch-probe/
+          name: quick-${{ matrix.app }}-${{ matrix.rep }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/quick-launch-failure/
+            ${{ runner.temp }}/ci-screenshots/
           retention-days: 5
