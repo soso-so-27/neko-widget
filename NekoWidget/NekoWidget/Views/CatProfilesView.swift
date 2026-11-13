@@ -42,6 +42,9 @@ struct CatProfilesViewActions {
     var excludeFromHousehold: (_ photoIdentifiers: [String]) async -> Void
     var restoreLegacyExclusions: (_ photoIdentifiers: [String]) async -> Void
     var deleteProfile: (_ profileIdentifier: String) async -> Bool
+    /// The message the last failed action left (e.g. why an album cannot be
+    /// linked), so a sheet can say it instead of failing silently.
+    var currentErrorMessage: () -> String? = { nil }
 
     static let noOp = CatProfilesViewActions(
         exportProfileDates: { throw CatProfileTransferError.notReady },

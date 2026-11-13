@@ -839,7 +839,12 @@ struct AppRootView: View {
                     adoptionDay: Self.profileLifeDate(profile, kind: .adoptionDay),
                     primaryKind: lifeReference?.kind
                 ),
-                keyPhotoIdentifier: profile.keyPhotoLocalIdentifier
+                keyPhotoIdentifier: profile.keyPhotoLocalIdentifier,
+                excludedPhotoIdentifiers: Set(
+                    (projection.membershipByProfile[profile.id] ?? [:]).values
+                        .filter { $0.decision == .excluded }
+                        .map(\.assetLocalIdentifier)
+                )
             )
         }
 
@@ -993,7 +998,8 @@ struct AppRootView: View {
             deleteProfile: { identifier in
                 guard let profileID = UUID(uuidString: identifier) else { return false }
                 return await viewModel.deleteCatProfile(profileID: profileID)
-            }
+            },
+            currentErrorMessage: { viewModel.errorMessage }
         )
     }
 

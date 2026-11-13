@@ -104,8 +104,11 @@ struct CatHomeFacts {
     var progressShare: CGFloat
     /// 「3.90kg（10月21日）」
     var weight: String?
-    /// 「あと23日」 / 「きょう」
+    /// 「あと23日」 / 「きょう」; nil unless the birthday is within `birthdaySoonDays`.
     var birthdayIn: String?
+
+    /// 「誕生日まで」 shows from this many days before the birthday.
+    static let birthdaySoonDays = 30
 
     static func make(cat: CatHomeCat, record: CatCareRecord?, progress: CatCareProgress?,
                      farewell: CatCareDay?, now: Date = Date(),
@@ -134,7 +137,9 @@ struct CatHomeFacts {
         let spoken = [cat.name, sex, age, days.map { "うちに来て\($0)日" }].compactMap { $0 }.joined(separator: "、")
         let share: CGFloat = progress.map { $0.total > 0 ? CGFloat($0.filled) / CGFloat($0.total) : 0 } ?? 0
         let progressText = progress.map { $0.filled >= $0.total ? "そろっています" : "あと\($0.total - $0.filled)つ" }
+        // 11/13: only when it is near; 「あと239日」 every day said nothing.
         let birthdayIn: String? = birthday.flatMap { Self.daysUntilBirthday($0, now: now, calendar: calendar) }
+            .flatMap { $0 <= Self.birthdaySoonDays ? $0 : nil }
             .map { $0 == 0 ? "きょう" : "あと\($0)日" }
         return CatHomeFacts(line: parts.isEmpty ? nil : parts.joined(separator: "　／　"), spoken: spoken,
                             departed: false, progressText: progressText, progressShare: min(max(share, 0), 1),
@@ -425,12 +430,13 @@ struct CatHomeView: View {
             if let current { catMenu(cats, current: current) }
             Spacer(minLength: 12)
             Button(action: openSettings) {
+                // 11/13: the same material as the cat menu, so both read as
+                // live controls on any photo (a dark tint looked disabled).
                 SettingsGearIcon()
                     .font(.body.weight(.semibold))
-                    .foregroundStyle(current == nil ? Color.primary : Color.white)
+                    .foregroundStyle(Color.primary)
                     .frame(width: 40, height: 40)
-                    .background(current == nil ? AnyShapeStyle(.regularMaterial) : AnyShapeStyle(Color.black.opacity(0.32)),
-                                in: Circle())
+                    .background(.ultraThinMaterial, in: Circle())
                     .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
@@ -460,11 +466,11 @@ struct CatHomeView: View {
                 Text(current.name).lineLimit(1)
                 Image(systemName: "chevron.down").font(.caption.weight(.bold))
             }
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.white)
+            .font(.subheadline.weight(.bold))
+            .foregroundStyle(Color.primary)
             .padding(.horizontal, 14)
             .frame(minHeight: 36)
-            .background(Color.black.opacity(0.32), in: Capsule())
+            .background(.ultraThinMaterial, in: Capsule())
             .frame(maxWidth: 220, alignment: .leading)
             .frame(minHeight: 44)
             .contentShape(Rectangle())
@@ -516,6 +522,8 @@ private struct CatHomePage: View {
                     if !facts.departed {
                         CatHomeToolBar(cat: cat, toolsShown: CatHomeTool.allCases, width: metrics.width,
                                        vetUnfinished: vetUnfinished, searching: searching, tools: tools)
+                        // Until 「この迷子の記録を終える」 clears the place, day and log.
+                        if searching { CatHomeSearchingLine(cat: cat) }
                     }
                     CatHomeAboutCard(cat: cat, facts: facts, destination: carePage)
                 }
@@ -548,10 +556,11 @@ private struct CatHomeHero: View {
         backdrop
             .frame(width: metrics.width, height: metrics.heroHeight)
             .overlay {
-                // Keeps the white name readable on any photo, light or dark mode.
-                LinearGradient(stops: [.init(color: .black.opacity(0), location: 0.3),
-                                       .init(color: .black.opacity(0.45), location: 0.62),
-                                       .init(color: .black.opacity(0.72), location: 0.92)],
+                // Only as much as the white name needs (11/13): nothing over the
+                // upper half, so a dim photo keeps its own light there.
+                LinearGradient(stops: [.init(color: .black.opacity(0), location: 0.5),
+                                       .init(color: .black.opacity(0.3), location: 0.72),
+                                       .init(color: .black.opacity(0.6), location: 1)],
                                startPoint: .top, endPoint: .bottom)
             }
             .overlay(alignment: .bottom) {
@@ -712,6 +721,36 @@ struct CatHomeRoute: Hashable {
     let catID: String?
 }
 
+/// 「むぎを探しています」: the 迷子 state in words between the buttons and
+/// 「この子のこと」; opens the same 迷子のとき for this cat.
+private struct CatHomeSearchingLine: View {
+    let cat: CatHomeCat
+
+    var body: some View {
+        NavigationLink(value: CatHomeRoute(tool: .lost, catID: cat.id)) {
+            HStack(spacing: 10) {
+                Image(systemName: CatHomeTool.lost.systemImage)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Color.red)
+                    .accessibilityHidden(true)
+                Text("\(cat.name)を探しています")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Color.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                ToolChevron()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .background(Color(.secondarySystemGroupedBackground),
+                        in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(CatHomePressStyle())
+        .accessibilityLabel("\(cat.name)を探しています")
+        .accessibilityIdentifier("cat-home-searching")
+    }
+}
+
 /// A round button: a line icon in a circle, a dot for a state, a short name.
 private struct CatHomeToolButton: View {
     let tool: CatHomeTool
@@ -728,7 +767,10 @@ private struct CatHomeToolButton: View {
                 .background(Color(.secondarySystemGroupedBackground), in: Circle())
                 .overlay(Circle().strokeBorder(Color(.separator), lineWidth: 1 / max(displayScale, 1)))
                 .overlay(alignment: .topTrailing) {
-                    if let state {
+                    // 11/13: 迷子 is said in words under the buttons
+                    // (CatHomeSearchingLine), not as a red dot; VoiceOver still
+                    // hears it on the button.
+                    if let state, tool != .lost {
                         Circle()
                             .fill(state.color)
                             .frame(width: 11, height: 11)
