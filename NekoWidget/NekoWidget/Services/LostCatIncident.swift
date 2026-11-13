@@ -24,6 +24,21 @@ struct LostCatDraft: Codable, Equatable {
     /// Round 2 (11/8): offices contacted, the next day to check and the
     /// 「見つかりました」 message. Optional, so drafts saved before still decode.
     var incident: LostCatIncidentLog? = nil
+    /// 11/13: when a flyer, an image or the post's text was last made for
+    /// this cat (保存・共有する or 「投稿する文章をコピー」). Optional, so drafts
+    /// and backups saved before still decode; cleared by `endingIncident()`.
+    var flyerMadeAt: Date? = nil
+
+    /// The cat is being searched for (11/13): a flyer, image or post was
+    /// made, or an office was contacted, and no 「見つかりました」 message is
+    /// written. A place or a day typed alone (trying the flyer) is not a
+    /// search. The 「この子」 page's 「○○を探しています」 reads this.
+    var isSearching: Bool {
+        guard (incident?.foundMessage ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+        return flyerMadeAt != nil || !(incident?.contactedOffices ?? []).isEmpty
+    }
 
     /// Something has happened: a place, a day or a contacted office. Only
     /// then is 「見つかりました」 offered.
@@ -50,6 +65,7 @@ struct LostCatDraft: Codable, Equatable {
         next.lastSeenNear = ""
         next.lastSeenAt = nil
         next.incident = nil
+        next.flyerMadeAt = nil
         return next
     }
 }

@@ -478,23 +478,11 @@ struct AppRootView: View {
             likedPhotos: photoProjection.likedPhotos,
             catPhotos: photoProjection.catPhotos,
             libraryPhotos: photoProjection.libraryPhotos,
-            photoLibraryAssignments: viewModel.catHouseholdIdentity.map { value in
-                let registered = Set(value.profiles.map(\.id))
-                var assignments: [String: Set<String>] = [:]
-                for membership in value.memberships where membership.decision == .included
-                    && registered.contains(membership.profileID)
-                    && !value.isGloballyExcluded(membership.assetLocalIdentifier) {
-                    assignments[membership.assetLocalIdentifier, default: []].insert(membership.profileID.uuidString)
-                }
-                // 11/13: with one cat profile, every detected cat photo is that
-                // cat's (the cat filter, memo lists and own-cat albums agree).
-                if let single = value.singleCatProfileID {
-                    for identifier in viewModel.singleCatDerivedPhotoIdentifiers {
-                        assignments[identifier, default: []].insert(single.uuidString)
-                    }
-                }
-                return assignments
-            } ?? [:],
+            // 11/13: every cat's whole set (explicit includes, the linked
+            // album, the single-cat rule, minus exclusions), cached per
+            // presentation version in the view model, not built per render.
+            photoLibraryAssignments: viewModel.catHouseholdIdentity == nil
+                ? [:] : viewModel.catProfilePhotoAssignments,
             photoLibraryProfileNames: viewModel.catHouseholdIdentity.map { value in
                 Dictionary(uniqueKeysWithValues: value.profiles.map { profile in
                     (profile.id.uuidString, profile.displayName)
@@ -1136,7 +1124,8 @@ struct AppRootView: View {
         var confirmedByProfile: [UUID: Set<String>] = [:]
         var membershipByProfile: [UUID: [String: CatAssetProfileMembership]] = [:]
         var linkedByProfile: [UUID: Set<String>] = [:]
-        var assignedByAsset: [String: Set<String>] = [:]
+        // The 写真 tab's index, built with the sets once per version.
+        let assignedByAsset = viewModel.catProfilePhotoAssignments
 
         for membership in identity.memberships {
             membershipByProfile[membership.profileID, default: [:]][
@@ -1154,11 +1143,6 @@ struct AppRootView: View {
             linkedByProfile[profile.id] = Set(
                 profile.photoAlbumLink?.lastKnownAssetLocalIdentifiers ?? []
             )
-            for identifier in confirmed {
-                assignedByAsset[identifier, default: []].insert(
-                    profile.id.uuidString
-                )
-            }
         }
         return ProfileIdentityProjection(
             confirmedByProfile: confirmedByProfile,

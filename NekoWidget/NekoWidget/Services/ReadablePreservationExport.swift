@@ -323,13 +323,15 @@ enum ReadablePreservationText {
         // Round 2 (11/8): 迷子のときの連絡したところと「見つかりました」.
         "incident": "迷子の記録", "contactedOffices": "連絡したところ", "office": "窓口",
         "contactedAt": "連絡した日", "nextCheckAt": "次に確かめる日", "foundMessage": "見つかったときのひとこと",
+        // 11/13: when the lost-cat flyer or post was last made.
+        "flyerMadeAt": "チラシを作った日",
         // Round 2 (11/9): 避難に備えるの持ち物の期限.
         "expiresAt": "期限"]
     private static let bookkeeping: Set<String> = ["schemaVersion", "version", "revision", "id", "catID", "familyID", "deviceID", "ownerID", "generation", "deletedAt",
         "profileID", "toolCatID", "sourceNoteID", "sourceRevision", "familyRecordID", "familyDetached", "prefilledFields", "prefilledUsualFood",
         "mutationRevision", "memberships", "globalExcludedAssets", "legacyUnscoped", "mode", "photoAlbumLink", "keyPhotoLocalIdentifier",
         "archiveBindings", "sharedWindowIDs", "editedBy", "editedAt", "sourceAssetID", "origin", "sourcePhotoIdentifier", "source", "order", "status",
-        "photoRemoved", "pendingPhotoCleanup"]
+        "recommendedFromCount", "photoRemoved", "pendingPhotoCleanup"]
     /// Stored codes shown as words (11/8: 「shelter」 read as English).
     private static let valueWords: [String: [String: String]] = [
         "kindValue": ["shelter": "避難所", "family": "親戚・知人", "hotel": "ペットホテル・病院"],
@@ -364,7 +366,7 @@ enum ReadablePreservationText {
             } else if value is NSNull { lines.append(indentation + "未記入") }
             else if let number = value as? NSNumber {
                 if CFGetTypeID(number) == CFBooleanGetTypeID() { lines.append(indentation + (number.boolValue ? "はい" : "いいえ")) }
-                else if let key, ["createdAt", "updatedAt", "writtenAt", "capturedAt", "date", "completedAt", "reviewedAt", "checkedAt", "confirmedAt", "lastSeenAt",
+                else if let key, ["createdAt", "updatedAt", "writtenAt", "capturedAt", "date", "completedAt", "reviewedAt", "checkedAt", "confirmedAt", "lastSeenAt", "flyerMadeAt",
                                         "lastMadeAt", "expiresAt", "checkStartedAt", "lastCheckedAt", "contactedAt", "nextCheckAt"].contains(key) {
                     lines.append(indentation + ISO8601DateFormatter().string(from: Date(timeIntervalSinceReferenceDate: number.doubleValue)))
                 } else { lines.append(indentation + number.stringValue) }

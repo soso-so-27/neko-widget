@@ -71,7 +71,8 @@ class SingleCatRule(unittest.TestCase):
     def test_cat_pages_and_the_cat_filter_read_the_seam(self):
         projection = block(ROOT_VIEW, "private func profileIdentityProjection(")
         self.assertIn("viewModel.catProfilePhotoIdentifiers", projection)
-        self.assertIn("for identifier in viewModel.singleCatDerivedPhotoIdentifiers", ROOT_VIEW)
+        # 11/13 follow-up: the cat filter reads the whole cached sets.
+        self.assertIn("? [:] : viewModel.catProfilePhotoAssignments,", ROOT_VIEW)
         self.assertIn("countsEveryDetectedCatPhoto: identity.singleCatProfileID == profile.id",
                       ROOT_VIEW)
 
