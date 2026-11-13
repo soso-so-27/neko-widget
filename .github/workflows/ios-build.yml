@@ -59,7 +59,10 @@ jobs:
     name: Fresh runner launch
     needs: quick-check
     runs-on: macos-15
-    timeout-minutes: 10
+    # Existing per-command bounds and both timeout retries total about 20 min;
+    # leave room for checkout, observations, artifact upload and cleanup.
+    # This outer budget must not interrupt the bounded recovery path.
+    timeout-minutes: 30
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:

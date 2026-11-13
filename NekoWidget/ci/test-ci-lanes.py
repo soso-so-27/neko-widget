@@ -1231,7 +1231,7 @@ final class UnrelatedUITests: XCTestCase {
         jobs = workflow_jobs()
         normal_jobs = {
             "quick-check": ("Build and unit tests", "run-quick-ios-checks.sh public-build", 25),
-            "quick-launch": ("Fresh runner launch", "run-quick-launch.sh", 10),
+            "quick-launch": ("Fresh runner launch", "run-quick-launch.sh", 30),
             "owner-products": ("Build and inspect owner-only products", "run-quick-ios-checks.sh owner", 25),
             "safety-check": ("Privacy, saved data, and sharing checks", "run-cheap-safety-checks.sh", 20),
         }
