@@ -372,6 +372,7 @@ struct MainTabView: View {
     var startsInPhotos = false
 
     @State private var selectedTab: AppTab = .memories
+    @State private var toolsTabOpened = false
     @State private var groupShareNavigationGeneration = UUID()
     @Environment(\.membershipAccess) private var membershipAccess
     @ObservedObject private var groupWindowOpenInbox = GroupWindowOpenInbox.shared
@@ -649,7 +650,15 @@ struct MainTabView: View {
 
     private var toolsTab: some View {
         NavigationStack {
-            toolsView
+            // EXPERIMENT: nothing of the この子 page until the tab is first chosen.
+            if toolsTabOpened || selectedTab == .tools {
+                toolsView
+            } else {
+                Color(.systemGroupedBackground)
+            }
+        }
+        .onChange(of: selectedTab, initial: true) { _, tab in
+            if tab == .tools && !toolsTabOpened { toolsTabOpened = true }
         }
         // 11/7: 「この子の写真を見る」 opens the same photo screen as the 写真 tab
         // (お気に入り・メモ・まどに届ける), not the bare preview.
