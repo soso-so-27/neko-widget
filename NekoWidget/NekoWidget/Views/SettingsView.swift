@@ -437,6 +437,8 @@ struct SettingsView: View {
                                     .font(.footnote).foregroundStyle(.secondary)
                             }
                         }
+                        NavigationLink("猫の見分けを測る（テスト用）") { CatIdentityMeasureView() }
+                            .accessibilityIdentifier("settings-cat-identity-measure")
                         NavigationLink {
                             advancedDiagnosticsView
                         } label: {

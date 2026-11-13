@@ -67,7 +67,10 @@ class InternalPresentationBoundaryTests(unittest.TestCase):
                      'SharingReviewPreviewView', 'settings-cloudy-again', 'preservation-quota-trial',
                      '--membership-offer-no-trial', 'opensAsSlideshow', 'YearStoryContentView',
                      'storyBody', 'struct LogView', 'LogViewModel', 'album-arrival.try',
-                     'debug.albumPrototype.yearNow', 'debug.albumPrototype.slideshow')
+                     'debug.albumPrototype.yearNow', 'debug.albumPrototype.slideshow',
+                     # 11/13: the cat-identity measurement (owner test builds only).
+                     'CatIdentityMeasureView', 'CatIdentityMeasurementCore', 'CatIdentityMeasurementRunner',
+                     'CatIdentityFeatureExtractor', 'settings-cat-identity-measure', '猫の見分けを測る')
         for path, source in self.sources().items():
             for token in forbidden:
                 with self.subTest(path=path, token=token):
@@ -78,7 +81,8 @@ class InternalPresentationBoundaryTests(unittest.TestCase):
             combined = '\n'.join(self.sources(defines).values())
             for token in ('MembershipOfferPreviewView', 'BillingSandboxOwnerEnrollmentView', 'QuotaTrial',
                           'BookDemandPreviewView', 'GroupReportingPrototype', 'GroupListTrace',
-                          'settings-cloudy-again', '--membership-offer-no-trial'):
+                          'settings-cloudy-again', '--membership-offer-no-trial',
+                          'CatIdentityMeasureView', 'settings-cat-identity-measure'):
                 with self.subTest(defines=defines, token=token):
                     self.assertIn(token, combined)
 
