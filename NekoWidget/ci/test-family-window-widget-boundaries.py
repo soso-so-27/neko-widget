@@ -8949,5 +8949,108 @@ class CatHomeTab1112Tests(unittest.TestCase):
         self.assertIn("case .care: return tools.care(catID)", self.home)
 
 
+class CatIdentityMeasure1113Tests(unittest.TestCase):
+    """11/13: measuring how well cheap on-device signals tell two cats apart.
+    Owner test builds only; nothing leaves the phone; the copy is numbers only."""
+
+    SERVICE = "NekoWidget/Services/CatIdentityMeasurement.swift"
+    VIEW = "NekoWidget/Views/CatIdentityMeasureView.swift"
+    TEST = "NekoWidgetTests/CatIdentityMeasurementTests.swift"
+    GATE = "#if DEBUG || INTERNAL_PRESENTATION\n"
+
+    def setUp(self) -> None:
+        self.service = source(self.SERVICE)
+        self.view = source(self.VIEW)
+        self.project = source("NekoWidget.xcodeproj/project.pbxproj")
+
+    def test_new_files_are_registered_once(self) -> None:
+        for name, number in (("CatIdentityMeasurement.swift", "1"), ("CatIdentityMeasureView.swift", "3")):
+            file_id = "C1D3A911000000000000000" + str(int(number) + 1)
+            build_id = "C1D3A911000000000000000" + number
+            self.assertEqual(self.project.count(f"path = {name};"), 1, name)
+            self.assertEqual(self.project.count(f"/* {name} in Sources */"), 2, name)
+            self.assertIn(f"\t\t{build_id} /* {name} in Sources */ = {{isa = PBXBuildFile; "
+                          f"fileRef = {file_id} /* {name} */; }};", self.project)
+            self.assertEqual(self.project.count(f"\t\t\t\t{file_id} /* {name} */,\n"), 1, name)
+        app = self.project.index("A00000000000000000000021 /* Sources */ = {")
+        app_sources = self.project[app:self.project.index("};", self.project.index("files = (", app))]
+        self.assertIn("/* CatIdentityMeasurement.swift in Sources */", app_sources)
+        self.assertIn("/* CatIdentityMeasureView.swift in Sources */", app_sources)
+        services = self.project.index("C1D3A9110000000000000002 /* CatIdentityMeasurement.swift */,\n")
+        self.assertLess(self.project.index("path = Services;", services) - services, 120)
+        self.assertIn("path = CatIdentityMeasurementTests.swift;", self.project)
+        self.assertIn("children = (C1108C000000000000000002,C1D3A9110000000000000006,); path = NekoWidgetTests;", self.project)
+        self.assertIn("files = (C1108C000000000000000003,C1D3A9110000000000000005,);", self.project)
+        self.assertEqual(len(set(re.findall(r"C1D3A911000000000000000\d", self.project))), 6)
+
+    def test_store_product_compiles_none_of_it(self) -> None:
+        for relative in (self.SERVICE, self.VIEW, self.TEST):
+            text = source(relative)
+            self.assertTrue(text.startswith(self.GATE) or text.split("\n", 1)[0] == self.GATE.strip(), relative)
+            self.assertTrue(text.rstrip().endswith("#endif"), relative)
+            self.assertEqual(text.count("#if "), 1, relative)
+        # The one entry: a row inside 設定 → テスト用, only where test tools show.
+        settings = source("NekoWidget/Views/SettingsView.swift")
+        row = 'NavigationLink("猫の見分けを測る（テスト用）") { CatIdentityMeasureView() }'
+        self.assertEqual(settings.count("CatIdentityMeasureView"), 1)
+        gate = settings.rindex("#if DEBUG || INTERNAL_PRESENTATION", 0, settings.index(row))
+        self.assertLess(settings.index("if InternalBuildPresentationAvailability.isAvailable {", gate), settings.index(row))
+        self.assertLess(settings.index(row), settings.index("#endif", gate))
+        for folder in ("NekoWidget", "Shared", "NekoWidgetWidget", "NekoWidgetShareExtension"):
+            for path in (ROOT / folder).rglob("*.swift"):
+                if path.name in ("CatIdentityMeasurement.swift", "CatIdentityMeasureView.swift", "SettingsView.swift"):
+                    continue
+                self.assertNotIn("CatIdentityMeasure", path.read_text(encoding="utf-8"), str(path))
+        # The App Store candidate refuses both compile conditions outright.
+        candidate = source("ci/production_candidate.py")
+        self.assertIn('forbidden = {"DEBUG", "INTERNAL_PRESENTATION", "WIDGET_SCREENSHOT_FIXTURE"}', candidate)
+        self.assertIn('"INTERNAL_PRESENTATION_CONDITION": ""', candidate)
+
+    def test_photos_stay_on_the_phone(self) -> None:
+        self.assertIn("options.isNetworkAccessAllowed = false", self.service)
+        self.assertNotIn("isNetworkAccessAllowed = true", self.service)
+        for gone in ("URLSession", "URLRequest", "SharedLog", "print(", "Logger", "os_log", "NSLog",
+                     "jpegData", "pngData", "heicData", "UserDefaults", "PHAssetChangeRequest",
+                     "PHAssetCollectionChangeRequest", "systemUptime", "mach_absolute_time"):
+            self.assertNotIn(gone, self.service, gone)
+            self.assertNotIn(gone, self.view, gone)
+        # Read only: the stores are loaded, never saved.
+        self.assertIn("try await LibraryStore().load().assets", self.service)
+        self.assertIn("try await CatHouseholdIdentityStore().load()", self.service)
+        # The only file written is the result text, in this app's caches.
+        self.assertEqual(self.service.count(".write(to:"), 1)
+        self.assertIn("try? Data(text.utf8).write(to: url, options: .atomic)", self.service)
+        self.assertIn(".cachesDirectory", self.service)
+        self.assertIn("UIApplication.shared.isIdleTimerDisabled = false", self.view)
+        self.assertIn("if phase == .background {", self.view)
+        self.assertIn("static let concurrentPhotos = 2", self.service)
+
+    def test_copied_text_has_no_identifiers_names_or_dates(self) -> None:
+        summary = section(self.service, "    static func summaryText(", "    /// One sentence for the empty / blocked state.")
+        for gone in ("localIdentifier", "displayName", "name:", "creationDate", "Date()", "URL", "path",
+                     "profile.id", "uuid", "UUID", "box"):
+            self.assertNotIn(gone, summary, gone)
+        facts = section(self.service, "struct CatIdentityRunFacts", "enum CatIdentityMeasurementCore {")
+        self.assertNotIn("String]", facts)
+        self.assertEqual(facts.count(": String") + facts.count(' = ""'), 2)  # model and OS only
+        self.assertIn("plainToken(facts.deviceModel)", summary)
+        self.assertIn("plainToken(facts.systemVersion)", summary)
+        self.assertIn('"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789,._"', self.service)
+        self.assertIn("UIPasteboard.general.string = resultText", self.view)
+        self.assertIn('"結果をコピー"', self.view)
+
+    def test_protocol_is_fixed(self) -> None:
+        for pinned in ("static let referenceCounts = [3, 10, 30, 100]", "static let repeats = 3",
+                       "static let testCapPerCat = 300", "static let minimumTruthPerCat = 40",
+                       "static let neighbourCount = 5", "static let cropPadding = 0.10",
+                       "static let requestPixels = 512",
+                       "request.revision = VNGenerateImageFeaturePrintRequestRevision2"):
+            self.assertIn(pinned, self.service)
+        truth = section(self.service, "    static func select(records:", "// MARK: - On-device run")
+        self.assertIn("identity.confirmedAssetIdentifiers(for: $0.id)", truth)
+        self.assertIn("guard profiles.count == 1", truth)
+        self.assertIn("guard boxes.count == 1, record.cat.catCount <= 1", truth)
+
+
 if __name__ == "__main__":
     unittest.main()
