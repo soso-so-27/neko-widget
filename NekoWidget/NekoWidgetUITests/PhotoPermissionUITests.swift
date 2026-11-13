@@ -3196,6 +3196,11 @@ final class SoloMemoriesUITests: XCTestCase {
             let showcase = app.buttons["tools-showcase-open"]
             let evacuation = app.buttons["tools-evacuation-open"]
             XCTAssertTrue(showcase.waitForExistence(timeout: 5))
+            if largeText {
+                // At the accessibility sizes のわ, the sentence and the button
+                // fill the first screen; the rows are under it, one swipe down.
+                for _ in 0..<3 where !showcase.isHittable { app.swipeUp() }
+            }
             XCTAssertTrue(showcase.isHittable)
             XCTAssertTrue(showcase.label.contains("写真を見せる"))
             XCTAssertFalse(app.buttons["tools-showcase-edit"].exists)
@@ -3220,7 +3225,10 @@ final class SoloMemoriesUITests: XCTestCase {
                 }
             }
             capture("tools-hub-\(appearance)")
-            for _ in 0..<5 where !evacuation.isHittable { app.swipeUp() }
+            // 避難 is the row above 見せる: back down if the swipe took it past the top.
+            for _ in 0..<5 where !evacuation.isHittable {
+                if evacuation.frame.midY < app.frame.midY { app.swipeDown() } else { app.swipeUp() }
+            }
             XCTAssertTrue(evacuation.isHittable)
             evacuation.tap()
             XCTAssertTrue(app.buttons["evacuation-packing-open"].waitForExistence(timeout: 5))

@@ -273,7 +273,9 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["写真"].exists)
         captureScreenshot(named: "startup-restored-photos")
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "この子"))
-        XCTAssertTrue(app.buttons["tools-care-open"].waitForExistence(timeout: 10))
+        // 11/12 (この子): 避難 is on the page with or without a cat; 預ける
+        // only once this fixture has one.
+        XCTAssertTrue(app.buttons["tools-evacuation-open"].waitForExistence(timeout: 10))
         captureScreenshot(named: "startup-last-tools")
         app.terminate()
         app.launch()
