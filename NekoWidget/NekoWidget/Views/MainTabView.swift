@@ -1243,11 +1243,18 @@ struct MainTabView: View {
         if openAfter {
             showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil, scopeID: scopeID)
         }
-        // A saved set opens as-is; recommendation runs only before this scope's first set.
-        guard !hasSet, !showcaseStore.hasInitialized(scopeID) else { return }
+        // Recommendation runs before this scope's first set. 11/13: a cat's
+        // set made only by おすすめ (nothing added, moved or kept by hand) is
+        // chosen again when the cat's photos grew, e.g. a linked album; the
+        // old set shows until the new one is ready.
+        let refreshes = hasSet && !scopeID.isEmpty && showcaseStore.isRecommendationOnly(scopeID)
+        guard refreshes || (!hasSet && !showcaseStore.hasInitialized(scopeID)) else { return }
+        let candidates = showcaseCandidatesForScope(scopeID)
+        if refreshes {
+            guard showcaseStore.recommendationHasGrown(scopeID, candidateCount: candidates.count) else { return }
+        }
         guard preparingShowcaseScopes.insert(scopeID).inserted else { return }
         failedShowcaseScopes.remove(scopeID)
-        let candidates = showcaseCandidatesForScope(scopeID)
         let boxes = Dictionary(candidates.compactMap { photo in
             photo.catBoundingBox.map { (photo.localIdentifier, $0) }
         }, uniquingKeysWith: { first, _ in first })
@@ -1257,9 +1264,12 @@ struct MainTabView: View {
                 excluding: showcaseStore.excludedIdentifiers(in: scopeID)
             )
             do {
-                try await showcaseStore.applyRecommendations(identifiers, boxes: boxes, to: scopeID)
+                try await showcaseStore.applyRecommendations(
+                    identifiers, boxes: boxes, to: scopeID,
+                    candidateCount: candidates.count, undoable: !refreshes)
             } catch {
-                failedShowcaseScopes.insert(scopeID)
+                // A failed refresh keeps the set it had; only a first set says so.
+                if !refreshes { failedShowcaseScopes.insert(scopeID) }
             }
             preparingShowcaseScopes.remove(scopeID)
         }
@@ -1438,6 +1448,13 @@ struct MainTabView: View {
     }
 
     private var photoLibraryCatPhotos: [PhotoPresentation] {
+        // 11/13: one cat chosen shows its whole set, as its page does: a
+        // linked album's photos the scan did not find (or did not reach)
+        // are listed and counted too, so 「○枚」 is what the grid shows.
+        if let identifier = photoLibraryProfileIdentifier, identifier != "unassigned",
+           let photos = profileAlbumPhotos[identifier] {
+            return photos
+        }
         let includes = photoLibraryIncludesFilter()
         return catPhotos.filter { includes($0.localIdentifier) }
     }

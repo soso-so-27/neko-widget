@@ -61,7 +61,7 @@ final class CatHomeToolStates: ObservableObject {
     @Published private(set) var toolCats: [ToolCat] = []
     /// Cats (upper-cased IDs) with an unfinished vet memo that has something in it.
     @Published private(set) var unfinishedVetCats: Set<String> = []
-    /// 迷子のとき drafts with something happened (a place, a day, an office).
+    /// 迷子のとき drafts being searched with (`LostCatDraft.isSearching`).
     @Published private(set) var searchingKeys: Set<String> = []
     private var refreshing = false
 
@@ -73,7 +73,8 @@ final class CatHomeToolStates: ObservableObject {
         let cats = SavedToolCatChoices.cats(care: .shared, evacuation: .shared)
             .map { ToolCat(id: $0.id, name: $0.name) }
         if cats != toolCats { toolCats = cats }
-        let searching = Set(LostCatDraftStore.shared.drafts.filter { $0.value.hasIncident }.map(\.key))
+        // 11/13: searching, not a draft with a place typed in to try the flyer.
+        let searching = Set(LostCatDraftStore.shared.drafts.filter { $0.value.isSearching }.map(\.key))
         if searching != searchingKeys { searchingKeys = searching }
         guard let visits = try? await VeterinaryVisitStore.shared.visits() else { return }
         let unfinished = Set(visits.filter { visit in

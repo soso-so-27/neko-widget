@@ -4711,9 +4711,9 @@ class ShowcaseCatCareTests(unittest.TestCase):
         self.assertIn("catBoundingBox: catBoundingBox.flatMap(Self.validBox)", store)
         for call in ("try await store.addPhotos(identifiers, boxes: boxes, to: targetScope)",
                      "try await store.replace(old, with: identifier, catBoundingBox: boxes[identifier])",
-                     "try await store.applyRecommendations(identifiers, boxes: boxes, to: targetScope)"):
+                     "try await store.applyRecommendations(identifiers, boxes: boxes, to: targetScope,"):
             self.assertIn(call, view)
-        self.assertIn("try await showcaseStore.applyRecommendations(identifiers, boxes: boxes, to: scopeID)", tab)
+        self.assertIn("identifiers, boxes: boxes, to: scopeID,\n                    candidateCount: candidates.count", tab)
         self.assertIn("PhotoThumbnailCropPolicy.cropRect(", section(view, "enum ShowcaseImageLoader {",
                                                                     "struct ShowcasePhotoView: View {"))
         self.assertIn("ShowcaseImageLoader.load(url, box: entry.catBoundingBox, side: side, square: true)", main)
@@ -7216,13 +7216,13 @@ class ToolConsistency1108Tests(unittest.TestCase):
         # One name for the system picker in every place a photo is chosen.
         for view in (source("NekoWidget/Views/CatCareView.swift"), self.lost, self.evacuation):
             self.assertIn('"写真アプリから選ぶ"', view)
-        # 写真を見せる: the same 「最近の写真」 and switch, off at first.
+        # 写真を見せる (11/13): a cat's own photos first, then 「ほかの猫の
+        # 写真」, as in the key photo picker; 「最近の写真」 for すべての猫.
+        # Pinned in ci/test-album-link-followups.py.
         picker = section(self.showcase, "private struct ShowcaseCandidatePicker: View {", "struct ShowcaseToolCatPicker: View {")
-        self.assertIn('Text("最近の写真")', picker)
-        self.assertIn('Toggle("この子の写真だけ", isOn: $onlyThisCat)', picker)
-        self.assertIn("@State private var onlyThisCat = false", picker)
+        self.assertIn('heading("最近の写真")', picker)
+        self.assertNotIn("この子の写真だけ", picker)
         self.assertIn("candidates.sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }", picker)
-        self.assertIn("let ordered = recent.map(\\.localIdentifier).filter { selected.contains($0) }", picker)
         self.assertNotIn('"ほかの写真"', picker)
         self.assertNotIn("leadingTitle", self.showcase)
         self.assertIn("own: knownIdentifiers,", self.showcase)
@@ -8908,7 +8908,7 @@ class CatHomeTab1112Tests(unittest.TestCase):
         self.assertIn("await Task.yield()", states)
         self.assertIn("try? await VeterinaryVisitStore.shared.visits()", states)
         self.assertIn("visit.completedAt == nil", states)
-        self.assertIn("LostCatDraftStore.shared.drafts.filter { $0.value.hasIncident }", states)
+        self.assertIn("LostCatDraftStore.shared.drafts.filter { $0.value.isSearching }", states)
         self.assertIn('searchingKeys.contains("guest-tool-" + cat.id)', states)
         self.assertIn(".onAppear { Task { await states.refresh() } }", self.home)
 
@@ -9115,11 +9115,12 @@ class CatIdentityMeasure1113Tests(unittest.TestCase):
         services = self.project.index("C1D3A9110000000000000002 /* CatIdentityMeasurement.swift */,\n")
         self.assertLess(self.project.index("path = Services;", services) - services, 120)
         self.assertIn("path = CatIdentityMeasurementTests.swift;", self.project)
-        # 11/13: SingleCatPhotosTests (C15C0A7E…) joined the same test target.
+        # 11/13: SingleCatPhotosTests (C15C0A7E…) and AlbumLinkFollowupsTests
+        # (C1A1BF10…) joined the same test target.
         self.assertIn("children = (C1108C000000000000000002,C1D3A9110000000000000006,"
-                      "C15C0A7E0000000000000002,); path = NekoWidgetTests;", self.project)
+                      "C15C0A7E0000000000000002,C1A1BF100000000000000002,); path = NekoWidgetTests;", self.project)
         self.assertIn("files = (C1108C000000000000000003,C1D3A9110000000000000005,"
-                      "C15C0A7E0000000000000001,);", self.project)
+                      "C15C0A7E0000000000000001,C1A1BF100000000000000001,);", self.project)
         self.assertEqual(len(set(re.findall(r"C1D3A911000000000000000\d", self.project))), 6)
 
     def test_store_product_compiles_none_of_it(self) -> None:

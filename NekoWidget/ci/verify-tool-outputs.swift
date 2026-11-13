@@ -33,6 +33,7 @@ struct ToolOutputVerifier {
         try lostCatContactedOffices()
         try lostCatFoundPost()
         try lostCatEndingKeepsTheCat()
+        try lostCatSearchingNeedsAFlyerOrAnOffice()
         try lostCatOutputSizes()
         try identifyingPhotosMoveToCatCare()
         print("Tool outputs: care memo, evacuation sheet, lost-cat outputs and shared lines checked")
@@ -355,6 +356,26 @@ struct ToolOutputVerifier {
     }
 
     /// 「この迷子の記録を終える」 clears the incident and keeps the cat.
+    /// 11/13: 「○○を探しています」 only once a flyer was made or an office
+    /// contacted, until 「見つかりました」 is written or the record is ended.
+    static func lostCatSearchingNeedsAFlyerOrAnOffice() throws {
+        var draft = LostCatDraft()
+        draft.lastSeenNear = "公園"; draft.lastSeenAt = t0
+        try check(draft.hasIncident && !draft.isSearching, "a place typed in to try the flyer is not a search")
+        draft.flyerMadeAt = t0
+        try check(draft.isSearching, "a made flyer is a search")
+        draft.foundMessage = "見つかりました"
+        try check(!draft.isSearching, "a written 「見つかりました」 ends the search")
+        var office = LostCatDraft()
+        office.incidentLog.setContacted(.police, on: t0, now: t0)
+        try check(office.isSearching, "a contacted office is a search")
+        draft.foundMessage = ""
+        try check(!draft.endingIncident().isSearching && draft.endingIncident().flyerMadeAt == nil, "ending clears it")
+        let old = Data(#"{"schemaVersion":1,"name":"むぎ","features":"","collar":"","approachAdvice":"","contact":"","lastSeenNear":"公園","updatedAt":0}"#.utf8)
+        let decoded = try JSONDecoder().decode(LostCatDraft.self, from: old)
+        try check(decoded.flyerMadeAt == nil && !decoded.isSearching, "an old draft decodes, not searching")
+    }
+
     static func lostCatEndingKeepsTheCat() throws {
         var draft = LostCatDraft()
         draft.faceFileName = "face.jpg"; draft.bodyFileName = "body.jpg"

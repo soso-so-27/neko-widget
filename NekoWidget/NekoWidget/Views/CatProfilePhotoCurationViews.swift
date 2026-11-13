@@ -144,11 +144,6 @@ private struct CatProfilePhotoAlbumLinkSheet: View {
 
     var body: some View {
         List {
-            Section {
-                Text("このアルバムの写真を、\(profile.displayName)の写真として扱います。")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
             if let failure {
                 Section {
                     Text(failure)
@@ -157,7 +152,7 @@ private struct CatProfilePhotoAlbumLinkSheet: View {
                 }
             }
             Section {
-                ForEach(Array(albums.enumerated()), id: \.element.id) { index, album in
+                ForEach(Array(shownAlbums.enumerated()), id: \.element.id) { index, album in
                     let linked = profile.photoAlbumLink?.identifier == album.identifier
                     Button {
                         link(album.identifier)
@@ -167,9 +162,10 @@ private struct CatProfilePhotoAlbumLinkSheet: View {
                                 .foregroundStyle(Color.primary)
                                 .lineLimit(2)
                             Spacer(minLength: 8)
+                            // A count, not a link: plain grey, never the button's tint.
                             Text("\(album.accessiblePhotoCount.formatted())枚")
                                 .font(.subheadline.monospacedDigit())
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Color(.secondaryLabel))
                             if linked {
                                 Image(systemName: "checkmark")
                                     .foregroundStyle(.tint)
@@ -181,6 +177,12 @@ private struct CatProfilePhotoAlbumLinkSheet: View {
                     .accessibilityAddTraits(linked ? .isSelected : [])
                     .accessibilityIdentifier("cat-photo-album-link-row-\(index)")
                 }
+            } header: {
+                // 11/13: a caption over the albums, not a box that reads as a field.
+                Text("このアルバムの写真を、\(profile.displayName)の写真として扱います。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .textCase(nil)
             }
             if profile.photoAlbumLink != nil {
                 Section {
@@ -208,6 +210,12 @@ private struct CatProfilePhotoAlbumLinkSheet: View {
         }
     }
 
+    /// 11/13: albums with photos, most photos first; the linked one leads.
+    /// Empty albums are left out (the linked one stays, even when empty).
+    private var shownAlbums: [CatProfilePhotoAlbumOptionPresentation] {
+        CatProfilePhotoAlbumLinkOrder.shown(albums, linkedIdentifier: profile.photoAlbumLink?.identifier)
+    }
+
     private func link(_ albumIdentifier: String?) {
         guard !saving else { return }
         saving = true
@@ -222,6 +230,27 @@ private struct CatProfilePhotoAlbumLinkSheet: View {
                     ?? CatProfilePhotoAlbumError.unavailable.errorDescription
             }
         }
+    }
+}
+
+/// The album link sheet's order (11/13), apart from the view so it is tested.
+enum CatProfilePhotoAlbumLinkOrder {
+    static func shown(
+        _ albums: [CatProfilePhotoAlbumOptionPresentation],
+        linkedIdentifier: String?
+    ) -> [CatProfilePhotoAlbumOptionPresentation] {
+        albums.filter { $0.accessiblePhotoCount > 0 || $0.identifier == linkedIdentifier }
+            .enumerated()
+            .sorted { first, second in
+                let firstLinked = first.element.identifier == linkedIdentifier
+                let secondLinked = second.element.identifier == linkedIdentifier
+                if firstLinked != secondLinked { return firstLinked }
+                if first.element.accessiblePhotoCount != second.element.accessiblePhotoCount {
+                    return first.element.accessiblePhotoCount > second.element.accessiblePhotoCount
+                }
+                return first.offset < second.offset
+            }
+            .map { $0.element }
     }
 }
 
@@ -1043,13 +1072,21 @@ private struct CatSelectablePhotoGrid: View {
                 toggle(photo.localIdentifier)
             }
         } label: {
-            PhotoAssetImageView(
-                localIdentifier: photo.localIdentifier,
-                catBoundingBox: photo.catBoundingBox,
-                targetPixelSize: CGSize(width: 360, height: 360),
-                targetAspectRatio: 1
-            )
+            // 11/13: the square comes first and the photo fills it, so a
+            // portrait photo's own height never sizes the row (the columns'
+            // tops were staggered); every row lines up, as in the 写真 tab.
+            Color.clear
             .aspectRatio(1, contentMode: .fit)
+            .overlay {
+                PhotoAssetImageView(
+                    localIdentifier: photo.localIdentifier,
+                    catBoundingBox: photo.catBoundingBox,
+                    targetPixelSize: CGSize(width: 360, height: 360),
+                    targetAspectRatio: 1
+                )
+            }
+            .clipped()
+            .contentShape(Rectangle())
             .overlay(alignment: .topTrailing) {
                 if showsSelectionMarks {
                     selectionMark(for: photo.localIdentifier)

@@ -35,6 +35,9 @@ final class ShowcasePhotoStore: ObservableObject {
     private struct ScopeState: Codable {
         var initialized = false
         var excluded = Set<String>()
+        /// How many photos the last おすすめ drew from (11/13). Older
+        /// manifests have none; see `recommendationHasGrown`.
+        var recommendedFromCount: Int? = nil
     }
 
     private struct FileState: Codable {
@@ -130,6 +133,23 @@ final class ShowcasePhotoStore: ObservableObject {
         state.scopes[scopeID]?.initialized == true || entries.contains { $0.scopeID == scopeID }
     }
 
+    /// Every photo in this set came from おすすめ: none was added, put in
+    /// place of another, moved or kept by hand (those are pinned), so a
+    /// newer recommendation replaces nothing the owner chose (11/13).
+    func isRecommendationOnly(_ scopeID: String) -> Bool {
+        let current = allEntries(in: scopeID)
+        return !current.isEmpty && current.allSatisfy { !$0.pinned }
+    }
+
+    /// The cat's photos grew since the last おすすめ (a linked album, newly
+    /// sorted photos). Without a recorded count (a set made before 11/13),
+    /// the set's own size stands in: a set smaller than its cat's photos
+    /// was drawn from fewer.
+    func recommendationHasGrown(_ scopeID: String, candidateCount: Int) -> Bool {
+        let before = state.scopes[scopeID]?.recommendedFromCount ?? allEntries(in: scopeID).count
+        return candidateCount > before
+    }
+
     func excludedIdentifiers(in scopeID: String) -> Set<String> {
         state.scopes[scopeID]?.excluded ?? []
     }
@@ -142,8 +162,12 @@ final class ShowcasePhotoStore: ObservableObject {
     }
 
     /// All new JPEGs are written before the new manifest becomes visible.
+    /// `candidateCount`: how many photos the recommendation drew from, kept
+    /// for `recommendationHasGrown`. `undoable: false` for the quiet refresh
+    /// when the showcase opens (nothing of the owner's is replaced).
     func applyRecommendations(_ identifiers: [String], boxes: [String: CGRect] = [:],
-                              to scopeID: String) async throws {
+                              to scopeID: String, candidateCount: Int? = nil,
+                              undoable: Bool = true) async throws {
         guard !hasCorruptManifest else { throw Error.corruptManifest }
         guard busyScopes.insert(scopeID).inserted else { throw Error.changedDuringPreparation }
         defer { busyScopes.remove(scopeID) }
@@ -196,8 +220,9 @@ final class ShowcasePhotoStore: ObservableObject {
         next.entries = before.entries.filter { $0.scopeID != scopeID } + ordered
         var scope = next.scopes[scopeID] ?? ScopeState()
         scope.initialized = true
+        if let candidateCount { scope.recommendedFromCount = candidateCount }
         next.scopes[scopeID] = scope
-        try commit(next, undoable: !current.isEmpty)
+        try commit(next, undoable: undoable && !current.isEmpty)
         committed = true
     }
 
