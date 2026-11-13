@@ -2652,7 +2652,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         basics = section(care, "private var basicsSection: some View {", "private var sexPicker: some View {")
         self.assertNotIn("profileHeading(profile)", basics)
         self.assertNotIn("deleteSection(profile)", basics)
-        self.assertIn('Text("写真タブでこの子の写真を追加すると選べます")', care)
+        # 11/13: the key photo can be any cat photo; see CatHomePolish1113Tests.
+        self.assertIn('.accessibilityIdentifier("cat-care-key-photo-empty")', care)
         heading = section(care, "private func profileHeading(", "private var isProfile: Bool {")
         self.assertIn("showsKeyPhotoPicker = true", heading)
         self.assertIn('"cat-profile-rename"', heading)
@@ -2661,7 +2662,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('.alert("名前を変更", isPresented: $showsNameEditor)', heading)
         self.assertIn('Button("キャンセル", role: .cancel) {}', heading)
         self.assertNotIn("if showsNameEditor {", heading)
-        self.assertIn("await profileActions.setKeyPhoto(profile.identifier, $0)", care)
+        self.assertIn("return await profileActions.setKeyPhoto(profile.identifier, identifier)", care)
         # 11/12 (round 2): deleting is in 「…」; the same question and choices.
         delete = section(care, "private var isProfile: Bool {", "// MARK: 健康")
         # 11/8: 「この子」, not 「プロフィール」.
@@ -2674,8 +2675,10 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("openParts", care)
         self.assertIn('sheetRow("誕生日・迎えた日", "birthday.cake", value: profile.lifeDatesSummary,', care)
         self.assertIn('"cat-care-life-dates"', care)
-        # The album link is not offered on the profile; 「うちの子」 lives in 設定 → 写真.
-        self.assertNotIn('"写真アプリのアルバムをつなぐ"', detail)
+        # The album link is not offered on the cat's page (この子のこと). 11/13: its
+        # one entry is in the 写真 tab beside 「この子の写真を追加」 (CatHomePolish1113Tests).
+        self.assertNotIn('"写真アプリのアルバムをつなぐ"', page)
+        self.assertNotIn('"写真アプリのアルバムをつなぐ"', care)
         # 11/7: the album no longer opens the cat's page (one entry: ツール).
         self.assertNotIn("CatProfileDetailView(", source("NekoWidget/Views/LikedPhotosView.swift"))
 
@@ -8783,7 +8786,8 @@ class CatHomeTab1112Tests(unittest.TestCase):
         self.assertIn("catBoundingBox: Self.faceBiased(photo.catBoundingBox),", hero)
         self.assertIn("y: box.maxY - box.height / 3", hero)
         # A scrim for the white name in both colour schemes, then a fade into the page.
-        self.assertIn(".init(color: .black.opacity(0.72), location: 0.92)", hero)
+        # 11/13: the scrim's stops are pinned in CatHomePolish1113Tests (lighter).
+        self.assertIn("LinearGradient(stops: [.init(color: .black.opacity(0), location: 0.5),", hero)
         self.assertIn("Color(.systemGroupedBackground).opacity(0)", hero)
         # The name: large and heavy, scaling with a cap, two lines at accessibility sizes.
         self.assertIn("@ScaledMetric(relativeTo: .largeTitle) private var nameSize: CGFloat = 56", hero)
@@ -8943,6 +8947,135 @@ class CatHomeTab1112Tests(unittest.TestCase):
         self.assertIn("Button { tools.showcase(cat?.profile?.identifier) } label: { content }", self.home)
         self.assertIn("guard let catID = route.catID else { return tools.evacuation() }", self.home)
         self.assertIn("case .care: return tools.care(catID)", self.home)
+
+
+class CatHomePolish1113Tests(unittest.TestCase):
+    """11/13, after the owner's look on device: a lighter scrim, live-looking
+    controls over the photo, 「誕生日まで」 only when near, 迷子 in words, and
+    a key photo from any cat photo (added to the cat first)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.home = source("NekoWidget/Views/CatHomeView.swift")
+        cls.care = source("NekoWidget/Views/CatCareView.swift")
+        cls.curation = source("NekoWidget/Views/CatProfilePhotoCurationViews.swift")
+        cls.presentation = source("NekoWidget/Views/CatProfilesPresentation.swift")
+        cls.root = source("NekoWidget/App/AppRootView.swift")
+
+    def test_scrim_leaves_the_upper_half_untouched(self) -> None:
+        hero = section(self.home, "private struct CatHomeHero: View {", "/// The tools under the photo:")
+        # Replaces the 0.3 -> 0.72 pin: nothing above half, about 0.6 at the bottom.
+        self.assertIn(".init(color: .black.opacity(0), location: 0.5),", hero)
+        self.assertIn(".init(color: .black.opacity(0.6), location: 1)]", hero)
+        self.assertNotIn("opacity(0.72)", hero)
+        self.assertNotIn("location: 0.3)", hero)
+        # The fade into the page and the text shadow stay.
+        self.assertIn("Color(.systemGroupedBackground).opacity(0)", hero)
+        self.assertIn(".shadow(color: .black.opacity(0.45), radius: 8, y: 1)", hero)
+
+    def test_cat_menu_and_settings_read_as_live_controls(self) -> None:
+        menu = section(self.home, "    private func catMenu(", "    private func show(")
+        self.assertIn(".background(.ultraThinMaterial, in: Capsule())", menu)
+        self.assertIn(".font(.subheadline.weight(.bold))", menu)
+        self.assertIn(".foregroundStyle(Color.primary)", menu)
+        self.assertIn(".frame(minHeight: 36)", menu)
+        self.assertIn(".frame(minHeight: 44)", menu)
+        self.assertIn('.accessibilityIdentifier("tools-cat-menu")', menu)
+        bar = section(self.home, "    private func topBar(", "    private func catMenu(")
+        self.assertIn(".background(.ultraThinMaterial, in: Circle())", bar)
+        self.assertIn(".frame(width: 40, height: 40)", bar)
+        self.assertIn(".frame(minWidth: 44, minHeight: 44)", bar)
+        self.assertIn('.accessibilityIdentifier("tools-settings-button")', bar)
+        self.assertNotIn("Color.black.opacity(0.32)", self.home)
+
+    def test_birthday_line_only_within_thirty_days(self) -> None:
+        facts = section(self.home, "struct CatHomeFacts {", "/// The five tools, in the order of the page.")
+        self.assertIn("static let birthdaySoonDays = 30", facts)
+        near = ".flatMap { $0 <= Self.birthdaySoonDays ? $0 : nil }"
+        self.assertIn(near, facts)
+        self.assertLess(facts.index(near), facts.index('.map { $0 == 0 ? "きょう" : "あと\\($0)日" }'))
+        card = section(self.home, "private struct CatHomeAboutCard: View {", "/// A name and its value on one line")
+        self.assertIn("if let birthdayIn = facts.birthdayIn {", card)
+        self.assertIn('CatHomeLine(title: "誕生日まで", value: birthdayIn)', card)
+
+    def test_searching_is_a_line_not_a_red_dot(self) -> None:
+        button = section(self.home, "private struct CatHomeToolButton: View {", "/// The accessibility-size form of a tool")
+        # The dot stays for the unfinished vet memo, not for 迷子.
+        self.assertIn("if let state, tool != .lost {", button)
+        self.assertIn(".fill(state.color)", button)
+        # VoiceOver on the button still says 「迷子のとき、探しています」.
+        self.assertIn('.accessibilityLabel(state.map { "\\(tool.title)、\\($0.text)" } ?? tool.title)', button)
+        bar = section(self.home, "private struct CatHomeToolBar: View {", "/// A round button:")
+        self.assertIn('if tool == .lost && searching { return (text: "探しています", color: Color.red) }', bar)
+        line = section(self.home, "private struct CatHomeSearchingLine: View {", "/// A round button:")
+        self.assertIn("NavigationLink(value: CatHomeRoute(tool: .lost, catID: cat.id)) {", line)
+        self.assertIn('Text("\\(cat.name)を探しています")', line)
+        self.assertIn("ToolChevron()", line)
+        self.assertIn('.accessibilityIdentifier("cat-home-searching")', line)
+        page = section(self.home, "private struct CatHomePage: View {", "/// The cat's key photo from the very top")
+        self.assertIn("if searching { CatHomeSearchingLine(cat: cat) }", page)
+        self.assertLess(page.index("CatHomeToolBar("), page.index("CatHomeSearchingLine(cat: cat)"))
+        self.assertLess(page.index("CatHomeSearchingLine(cat: cat)"), page.index("CatHomeAboutCard("))
+        # It ends with 「この迷子の記録を終える」: hasIncident goes false.
+        incident = source("NekoWidget/Services/LostCatIncident.swift")
+        ending = section(incident, "func endingIncident() -> LostCatDraft {", "/// The offices step 2")
+        for cleared in ('next.lastSeenNear = ""', "next.lastSeenAt = nil", "next.incident = nil"):
+            self.assertIn(cleared, ending)
+        self.assertIn(".onAppear { Task { await states.refresh() } }", self.home)
+
+    def test_key_photo_from_any_cat_photo_is_added_first(self) -> None:
+        # Replaces the 「写真タブでこの子の写真を追加すると選べます」 pin.
+        self.assertNotIn("写真タブでこの子の写真を追加すると選べます", self.care)
+        heading = section(self.care, "private func profileHeading(", "private var isProfile: Bool {")
+        self.assertIn("let hasPhotos = profile.hasKeyPhotoChoices", heading)
+        self.assertIn(".disabled(!hasPhotos)", heading)
+        self.assertIn('Text("猫の写真が見つかると選べます")', heading)
+        sheet = section(self.care, ".sheet(isPresented: $showsKeyPhotoPicker) {", ".task(id: subject.key) {")
+        self.assertIn("photos: profile.confirmedPhotos,", sheet)
+        self.assertIn("choose: { await chooseKeyPhoto($0, for: profile) },", sheet)
+        self.assertIn("otherPhotos: profile.otherKeyPhotoCandidates,", sheet)
+        self.assertIn('otherHeading: "ほかの猫の写真"', sheet)
+        choose = section(self.care, "private func chooseKeyPhoto(", "private var isProfile: Bool {")
+        self.assertIn("guard await profileActions.confirmProfileMembership(profile.identifier, [identifier]) else { return false }",
+                      choose)
+        self.assertLess(choose.index("confirmProfileMembership"), choose.index("setKeyPhoto"))
+        # The model rule stays: a key photo must be this cat's photo.
+        model = source("Shared/Models/CatHouseholdIdentity.swift")
+        self.assertIn("confirmsAsset(assetLocalIdentifier, for: profileID) else { return }", model)
+        # Excluded for this cat stays out; household exclusions are never candidates.
+        self.assertIn("var excludedPhotoIdentifiers: Set<String> = []", self.presentation)
+        self.assertIn("manualCandidatePhotos.filter { !excludedPhotoIdentifiers.contains($0.localIdentifier) }",
+                      self.presentation)
+        self.assertIn(".filter { $0.decision == .excluded }", self.root)
+        # One lazy grid for both parts.
+        grid = section(self.curation, "private struct CatSelectablePhotoGrid: View {", "private func toggle(")
+        self.assertIn("LazyVGrid(columns: columns, spacing: 3) {", grid)
+        self.assertIn("ForEach(otherPhotos) { photo in cell(photo) }", grid)
+        picker = section(self.curation, "struct CatProfilePhotoPicker: View {", "private struct CatSelectablePhotoGrid")
+        self.assertIn("if photos.isEmpty && otherPhotos.isEmpty {", picker)
+        self.assertIn("otherPhotos: otherPhotos,", picker)
+
+    def test_album_link_has_one_entry_beside_adding_photos(self) -> None:
+        main = source("NekoWidget/Views/MainTabView.swift")
+        row = section(main, "private var photoLibraryCatRow: some View {", "private var photoLibraryCatPicker: some View {")
+        self.assertIn("CatProfilePhotoAlbumLinkButton(profile: profile, albums: catProfilesPresentation.photoAlbumOptions,", row)
+        self.assertLess(row.index("CatProfileAddPhotosButton("), row.index("CatProfilePhotoAlbumLinkButton("))
+        button = section(self.curation, "struct CatProfilePhotoAlbumLinkButton: View {",
+                         "private struct CatProfilePhotoAlbumLinkSheet: View {")
+        self.assertIn('Label(profile.photoAlbumLink?.displayTitle ?? "写真アプリのアルバムをつなぐ",', button)
+        self.assertIn('.accessibilityIdentifier("cat-photo-album-link")', button)
+        sheet = section(self.curation, "private struct CatProfilePhotoAlbumLinkSheet: View {", "extension CatProfilePresentation {")
+        self.assertIn('Text("このアルバムの写真を、\\(profile.displayName)の写真として扱います。")', sheet)
+        self.assertIn('.accessibilityIdentifier("cat-photo-album-link-row-\\(index)")', sheet)
+        self.assertIn('Button("つなぐのをやめる", role: .destructive) { link(nil) }', sheet)
+        self.assertIn('.accessibilityIdentifier("cat-photo-album-unlink")', sheet)
+        self.assertIn("await actions.refreshPhotoAlbums()", sheet)
+        self.assertIn("let saved = await actions.setProfilePhotoAlbum(profile.identifier, albumIdentifier)", sheet)
+        # A refusal (the app's own source album included) is said, not swallowed.
+        self.assertIn("failure = actions.currentErrorMessage()", sheet)
+        self.assertIn("currentErrorMessage: { viewModel.errorMessage }", self.root)
+        model = source("NekoWidget/ViewModels/AppViewModel.swift")
+        self.assertIn("guard localIdentifier != snapshot.albumLocalIdentifier,", model)
 
 
 if __name__ == "__main__":

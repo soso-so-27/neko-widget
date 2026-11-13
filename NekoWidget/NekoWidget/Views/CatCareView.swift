@@ -335,10 +335,15 @@ struct CatCareDetailView: View {
         .sheet(isPresented: $showsKeyPhotoPicker) {
             if case let .profile(profile) = subject {
                 NavigationStack {
+                    // 11/13: this cat's photos first, then every other cat
+                    // photo; one of those is added to this cat, then made
+                    // its key photo, in one tap.
                     CatProfilePhotoPicker(
                         photos: profile.confirmedPhotos,
                         selectedIdentifier: profile.keyPhotoIdentifier,
-                        choose: { await profileActions.setKeyPhoto(profile.identifier, $0) }
+                        choose: { await chooseKeyPhoto($0, for: profile) },
+                        otherPhotos: profile.otherKeyPhotoCandidates,
+                        otherHeading: "ほかの猫の写真"
                     )
                 }
             }
@@ -710,7 +715,9 @@ struct CatCareDetailView: View {
     private func profileHeading(_ profile: CatProfilePresentation) -> some View {
         Section {
             VStack(spacing: 4) {
-                let hasPhotos = !profile.confirmedPhotos.isEmpty
+                // 11/13: any detected cat photo can be the key photo (it is
+                // added to this cat first), so only an empty library stops it.
+                let hasPhotos = profile.hasKeyPhotoChoices
                 Button {
                     showsKeyPhotoPicker = true
                 } label: {
@@ -734,8 +741,8 @@ struct CatCareDetailView: View {
                 .accessibilityLabel("\(profile.displayName)の代表写真を変更")
                 .accessibilityIdentifier("cat-care-key-photo")
                 if !hasPhotos {
-                    // 11/7: why the photo cannot be chosen yet, in one line.
-                    Text("写真タブでこの子の写真を追加すると選べます")
+                    // No cat photo found at all yet: an honest one line.
+                    Text("猫の写真が見つかると選べます")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -804,6 +811,17 @@ struct CatCareDetailView: View {
             isSavingName = false
             nameSaveFailed = !saved
         }
+    }
+
+    /// The key photo must be one of this cat's photos (the model's rule), so
+    /// a photo not added yet is added first, the same as 「この子の写真を
+    /// 追加」 (an explicit 「この子」), then set; one tap either way.
+    private func chooseKeyPhoto(_ identifier: String, for profile: CatProfilePresentation) async -> Bool {
+        let assigned = profile.confirmedPhotos.contains { $0.localIdentifier == identifier }
+        if !assigned {
+            guard await profileActions.confirmProfileMembership(profile.identifier, [identifier]) else { return false }
+        }
+        return await profileActions.setKeyPhoto(profile.identifier, identifier)
     }
 
     private var isProfile: Bool {

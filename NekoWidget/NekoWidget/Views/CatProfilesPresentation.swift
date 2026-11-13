@@ -157,8 +157,26 @@ struct CatProfilePresentation: Identifiable, Equatable {
     var photoAlbumLink: CatProfilePhotoAlbumLinkPresentation? = nil
     var lifeDates: CatProfileLifeDatesPresentation = .init()
     var keyPhotoIdentifier: String? = nil
+    /// Photos the user said are not this cat (「この子ではない」). The key
+    /// photo picker leaves them out of 「ほかの猫の写真」.
+    var excludedPhotoIdentifiers: Set<String> = []
 
     var id: String { identifier }
+
+    /// The key photo picker's 「ほかの猫の写真」: every other detected cat
+    /// photo, newest first, without the ones excluded for this cat
+    /// (household-wide exclusions are never candidates).
+    var otherKeyPhotoCandidates: [CatProfilePhotoPresentation] {
+        guard !excludedPhotoIdentifiers.isEmpty else { return manualCandidatePhotos }
+        return manualCandidatePhotos.filter { !excludedPhotoIdentifiers.contains($0.localIdentifier) }
+    }
+
+    /// Whether the key photo can be chosen at all: any photo of this cat or
+    /// any other detected cat photo.
+    var hasKeyPhotoChoices: Bool {
+        !confirmedPhotos.isEmpty
+            || manualCandidatePhotos.contains { !excludedPhotoIdentifiers.contains($0.localIdentifier) }
+    }
 
     var displayName: String {
         guard let normalized = name?.trimmingCharacters(in: .whitespacesAndNewlines),

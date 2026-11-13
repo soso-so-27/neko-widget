@@ -100,6 +100,131 @@ struct CatProfileAddPhotosButton: View {
     }
 }
 
+/// 写真 tab with one cat chosen, next to 「この子の写真を追加」 (11/13): a
+/// 写真アプリ album whose photos count as this cat's photos. Linked, it
+/// shows the album's name.
+struct CatProfilePhotoAlbumLinkButton: View {
+    let profile: CatProfilePresentation
+    let albums: [CatProfilePhotoAlbumOptionPresentation]
+    let actions: CatProfilesViewActions
+    @State private var showsAlbums = false
+
+    var body: some View {
+        Button {
+            showsAlbums = true
+        } label: {
+            Label(profile.photoAlbumLink?.displayTitle ?? "写真アプリのアルバムをつなぐ",
+                  systemImage: "rectangle.stack")
+                .font(.subheadline.weight(.medium))
+                .lineLimit(1)
+                .frame(minHeight: 44)
+        }
+        .accessibilityLabel("写真アプリのアルバムをつなぐ")
+        .accessibilityValue(profile.photoAlbumLink?.displayTitle ?? "")
+        .accessibilityIdentifier("cat-photo-album-link")
+        .sheet(isPresented: $showsAlbums) {
+            NavigationStack {
+                CatProfilePhotoAlbumLinkSheet(profile: profile, albums: albums, actions: actions)
+            }
+        }
+    }
+}
+
+/// The user's 写真アプリ albums, one row each (title and count); choosing one
+/// links it, 「つなぐのをやめる」 unlinks. A refusal (the app's own photo
+/// source album, an album that cannot be read) is said here.
+private struct CatProfilePhotoAlbumLinkSheet: View {
+    let profile: CatProfilePresentation
+    let albums: [CatProfilePhotoAlbumOptionPresentation]
+    let actions: CatProfilesViewActions
+    @Environment(\.dismiss) private var dismiss
+    @State private var loading = true
+    @State private var saving = false
+    @State private var failure: String?
+
+    var body: some View {
+        List {
+            Section {
+                Text("このアルバムの写真を、\(profile.displayName)の写真として扱います。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            if let failure {
+                Section {
+                    Text(failure)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+            }
+            Section {
+                ForEach(Array(albums.enumerated()), id: \.element.id) { index, album in
+                    let linked = profile.photoAlbumLink?.identifier == album.identifier
+                    Button {
+                        link(album.identifier)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text(album.title)
+                                .foregroundStyle(Color.primary)
+                                .lineLimit(2)
+                            Spacer(minLength: 8)
+                            Text("\(album.accessiblePhotoCount.formatted())枚")
+                                .font(.subheadline.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                            if linked {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(.tint)
+                                    .accessibilityHidden(true)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .accessibilityAddTraits(linked ? .isSelected : [])
+                    .accessibilityIdentifier("cat-photo-album-link-row-\(index)")
+                }
+            }
+            if profile.photoAlbumLink != nil {
+                Section {
+                    Button("つなぐのをやめる", role: .destructive) { link(nil) }
+                        .accessibilityIdentifier("cat-photo-album-unlink")
+                }
+            }
+        }
+        .overlay {
+            if loading && albums.isEmpty { ProgressView() }
+        }
+        .disabled(saving)
+        .navigationTitle("写真アプリのアルバムをつなぐ")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("キャンセル") { dismiss() }
+                    .disabled(saving)
+            }
+        }
+        .interactiveDismissDisabled(saving)
+        .task {
+            await actions.refreshPhotoAlbums()
+            loading = false
+        }
+    }
+
+    private func link(_ albumIdentifier: String?) {
+        guard !saving else { return }
+        saving = true
+        failure = nil
+        Task {
+            let saved = await actions.setProfilePhotoAlbum(profile.identifier, albumIdentifier)
+            saving = false
+            if saved {
+                dismiss()
+            } else {
+                failure = actions.currentErrorMessage()
+                    ?? CatProfilePhotoAlbumError.unavailable.errorDescription
+            }
+        }
+    }
+}
+
 extension CatProfilePresentation {
     /// 「推定の誕生日 2020/5/1」「両方設定済み」「未設定」: the 誕生日・迎えた日 row.
     var lifeDatesSummary: String {
@@ -798,6 +923,10 @@ struct CatProfilePhotoPicker: View {
     let choose: (String) async -> Bool
     var progressTitle = "保存中…"
     var failureMessage = "選択を保存できませんでした。もう一度お試しください。"
+    /// Offered after `photos` under `otherHeading` (the key photo: the other
+    /// cat photos, which `choose` first adds to this cat).
+    var otherPhotos: [CatProfilePhotoPresentation] = []
+    var otherHeading: String? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var savingIdentifier: String?
@@ -805,7 +934,7 @@ struct CatProfilePhotoPicker: View {
 
     var body: some View {
         Group {
-            if photos.isEmpty {
+            if photos.isEmpty && otherPhotos.isEmpty {
                 ContentUnavailableView("選べる写真はありません", systemImage: "photo")
             } else {
                 CatSelectablePhotoGrid(
@@ -820,7 +949,9 @@ struct CatProfilePhotoPicker: View {
                             savingIdentifier = nil
                             if saved { dismiss() } else { saveFailed = true }
                         }
-                    }
+                    },
+                    otherPhotos: otherPhotos,
+                    otherHeading: otherHeading
                 )
                 .disabled(savingIdentifier != nil)
             }
@@ -860,6 +991,11 @@ private struct CatSelectablePhotoGrid: View {
     var gridAccessibilityIdentifier = "cat-profile-photo-grid"
     var onChoose: ((String) -> Void)? = nil
     var showsSelectionMarks = true
+    /// A second part under a small heading (the key photo picker's
+    /// 「ほかの猫の写真」), in the same lazy grid so ~1,000 photos load as
+    /// they scroll in.
+    var otherPhotos: [CatProfilePhotoPresentation] = []
+    var otherHeading: String? = nil
 
     private let columns = [
         GridItem(.adaptive(minimum: 104), spacing: 3)
@@ -868,53 +1004,71 @@ private struct CatSelectablePhotoGrid: View {
     var body: some View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 3) {
-                ForEach(photos) { photo in
-                    Button {
-                        if let onChoose {
-                            onChoose(photo.localIdentifier)
-                        } else {
-                            toggle(photo.localIdentifier)
-                        }
-                    } label: {
-                        PhotoAssetImageView(
-                            localIdentifier: photo.localIdentifier,
-                            catBoundingBox: photo.catBoundingBox,
-                            targetPixelSize: CGSize(width: 360, height: 360),
-                            targetAspectRatio: 1
-                        )
-                        .aspectRatio(1, contentMode: .fit)
-                        .overlay(alignment: .topTrailing) {
-                            if showsSelectionMarks {
-                                selectionMark(for: photo.localIdentifier)
-                            }
-                        }
-                        .overlay(alignment: .bottomLeading) {
-                            if photo.detectedCatCount > 1 {
-                                Label(
-                                    "\(photo.detectedCatCount)匹",
-                                    systemImage: "pawprint.fill"
-                                )
-                                .font(.caption2.bold())
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 4)
-                                .foregroundStyle(.white)
-                                .background(.black.opacity(0.58), in: Capsule())
-                                .padding(5)
-                            }
+                ForEach(photos) { photo in cell(photo) }
+                if !otherPhotos.isEmpty {
+                    Section {
+                        ForEach(otherPhotos) { photo in cell(photo) }
+                    } header: {
+                        if let otherHeading {
+                            Text(otherHeading)
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 13)
+                                .padding(.top, photos.isEmpty ? 8 : 20)
+                                .padding(.bottom, 6)
+                                .accessibilityAddTraits(.isHeader)
                         }
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("cat-profile-photo")
-                    .accessibilityLabel(accessibilityLabel(for: photo))
-                    .accessibilityAddTraits(
-                        selection.contains(photo.localIdentifier) ? .isSelected : []
-                    )
                 }
             }
             .padding(3)
         }
         .accessibilityIdentifier(gridAccessibilityIdentifier)
         .background(Color(.systemGroupedBackground))
+    }
+
+    private func cell(_ photo: CatProfilePhotoPresentation) -> some View {
+        Button {
+            if let onChoose {
+                onChoose(photo.localIdentifier)
+            } else {
+                toggle(photo.localIdentifier)
+            }
+        } label: {
+            PhotoAssetImageView(
+                localIdentifier: photo.localIdentifier,
+                catBoundingBox: photo.catBoundingBox,
+                targetPixelSize: CGSize(width: 360, height: 360),
+                targetAspectRatio: 1
+            )
+            .aspectRatio(1, contentMode: .fit)
+            .overlay(alignment: .topTrailing) {
+                if showsSelectionMarks {
+                    selectionMark(for: photo.localIdentifier)
+                }
+            }
+            .overlay(alignment: .bottomLeading) {
+                if photo.detectedCatCount > 1 {
+                    Label(
+                        "\(photo.detectedCatCount)匹",
+                        systemImage: "pawprint.fill"
+                    )
+                    .font(.caption2.bold())
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .foregroundStyle(.white)
+                    .background(.black.opacity(0.58), in: Capsule())
+                    .padding(5)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("cat-profile-photo")
+        .accessibilityLabel(accessibilityLabel(for: photo))
+        .accessibilityAddTraits(
+            selection.contains(photo.localIdentifier) ? .isSelected : []
+        )
     }
 
     private func toggle(_ identifier: String) {

@@ -1468,6 +1468,9 @@ struct MainTabView: View {
             if let profile {
                 CatProfileAddPhotosButton(profile: profile, allProfiles: catProfilesPresentation.profiles,
                                           actions: catProfilesActions)
+                // 11/13: the album link's one entry, beside adding photos.
+                CatProfilePhotoAlbumLinkButton(profile: profile, albums: catProfilesPresentation.photoAlbumOptions,
+                                               actions: catProfilesActions)
             }
         }
     }
