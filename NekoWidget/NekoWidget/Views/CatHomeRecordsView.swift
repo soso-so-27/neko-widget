@@ -200,7 +200,7 @@ private struct CatHomeYearsAgoCard: View {
         HStack(alignment: .center, spacing: 14) {
             CatHomeThumbnail(identifier: item.photoIdentifier, side: 84, radius: 14)
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.label)
+                Text(item.shownLabel)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 if let text = item.text {
@@ -216,7 +216,7 @@ private struct CatHomeYearsAgoCard: View {
         .padding(12)
         .catHomeCard()
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel([item.label, item.text].compactMap { $0 }.joined(separator: "、"))
+        .accessibilityLabel(item.spoken)
     }
 }
 

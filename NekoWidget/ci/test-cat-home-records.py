@@ -166,6 +166,34 @@ class Blocks(unittest.TestCase):
         self.assertNotIn("editedBy", block(CORE, "static func weightRows("))
         self.assertNotIn("members", CORE)
 
+    def test_memo_says_only_this_person_sees_it(self):
+        # 11/13: memos stay on this iPhone, unlike the family notebook's
+        # weights, vet memos and vaccinations listed with them.
+        self.assertIn('static let privateMark = "自分だけ"', CORE)
+        memo = block(CORE, "static func memoRow(")
+        self.assertIn('caption: "メモ・" + privateMark', memo)
+        self.assertIn('spoken: [date, "メモ", privateMark, text', memo)
+        self.assertNotIn('caption: "メモ",', CORE)
+        for name in ("static func weightRows(", "static func vetRow(", "static func vaccinationRow("):
+            self.assertNotIn("privateMark", block(CORE, name))
+        # 「1年前のきょう」: the mark after the label for a memo only, and read aloud.
+        self.assertIn("if case .memo = source { return CatHomeRecordsCore.privateMark }", CORE)
+        self.assertIn('var shownLabel: String { privateMark.map { label + "・" + $0 } ?? label }', CORE)
+        self.assertIn("var spoken: String { [label, privateMark, text].compactMap { $0 }.joined(separator: \"、\") }", CORE)
+        card = block(VIEW, "private struct CatHomeYearsAgoCard: View {")
+        self.assertIn("Text(item.shownLabel)", card)
+        self.assertIn(".accessibilityLabel(item.spoken)", card)
+        self.assertNotIn("Text(item.label)", card)
+
+    def test_photo_screen_memo_says_so_only_beside_shared_words(self):
+        # The photo screen's memo excerpt: the same small mark, only when the
+        # sender's ひとこと (seen by the まど) is shown with it.
+        browser = read("NekoWidget/Views/LikedPhotosView.swift")
+        self.assertIn("let besideShared = groupFavoriteSource?.localIdentifier == selectedPhoto.localIdentifier", browser)
+        self.assertIn("if besideShared {\n                                Text(CatHomeRecordsCore.privateMark)", browser)
+        self.assertIn('.accessibilityLabel(besideShared ? "メモ、" + CatHomeRecordsCore.privateMark : "メモ")', browser)
+        self.assertEqual(browser.count("CatHomeRecordsCore.privateMark"), 2)
+
 
 class Opening(unittest.TestCase):
     def test_tools_bring_the_screens_the_photo_tab_opens(self):

@@ -63,8 +63,9 @@ final class CatHomeRecordsTests: XCTestCase {
         XCTAssertEqual(rows.map(\.title), ["あごの下をかくと、目を細める。", "体重 5.50kg", "病院　体重は順調です。",
                                            "体重 5.40kg", "ワクチン　3種混合"])
         XCTAssertEqual(rows.map(\.dateText), ["11月9日", "10月21日", "9月14日", "8月1日", "2025年9月14日"])
-        XCTAssertEqual(rows.map(\.caption), ["メモ", "前回より +0.10kg", "次は12月3日", nil, "次は2026年9月ごろ"])
-        XCTAssertEqual(rows[0].spoken, "11月9日、メモ、あごの下をかくと、目を細める。")
+        // Only the memo is this person's alone; the others go to the family notebook.
+        XCTAssertEqual(rows.map(\.caption), ["メモ・自分だけ", "前回より +0.10kg", "次は12月3日", nil, "次は2026年9月ごろ"])
+        XCTAssertEqual(rows[0].spoken, "11月9日、メモ、自分だけ、あごの下をかくと、目を細める。")
         XCTAssertEqual(rows[1].spoken, "10月21日、体重、5.50kg、前回より +0.10kg")
         XCTAssertEqual(rows[2].spoken, "9月14日、病院、体重は順調です。、次は12月3日")
         if case .vet = rows[2].kind {} else { XCTFail("a finished vet memo") }
@@ -136,6 +137,9 @@ final class CatHomeRecordsTests: XCTestCase {
         XCTAssertEqual(pick, CatHomeYearsAgo(source: .memo(recordID: pick?.sourceMemoID ?? UUID()),
                                              photoIdentifier: "one", years: 1, text: "1年前"))
         XCTAssertEqual(pick?.label, "1年前のきょう")
+        // A memo is this person's alone: the card says so, and VoiceOver reads it.
+        XCTAssertEqual(pick?.shownLabel, "1年前のきょう・自分だけ")
+        XCTAssertEqual(pick?.spoken, "1年前のきょう、自分だけ、1年前")
     }
 
     func testFallsBackToThePhotoOfTheMostRecentYear() {
@@ -148,6 +152,10 @@ final class CatHomeRecordsTests: XCTestCase {
             calendar: calendar())
         XCTAssertEqual(pick, CatHomeYearsAgo(source: .photo, photoIdentifier: "two", years: 2, text: nil))
         XCTAssertEqual(pick?.label, "2年前のきょう")
+        // A photo is not a memo: no 「自分だけ」.
+        XCTAssertNil(pick?.privateMark)
+        XCTAssertEqual(pick?.shownLabel, "2年前のきょう")
+        XCTAssertEqual(pick?.spoken, "2年前のきょう")
         XCTAssertNil(CatHomeRecordsCore.yearsAgo(today: day(2026, 11, 13), memos: [],
                                                  photos: [.init(identifier: "x", creationDate: date(2025, 11, 14))],
                                                  calendar: calendar()))

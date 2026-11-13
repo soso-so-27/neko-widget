@@ -29,7 +29,7 @@ struct CatHomeRecordRow: Identifiable, Equatable, Sendable {
     let dateText: String
     /// 「体重 5.50kg」 / 「病院　…」 / 「ワクチン　…」 / the memo's text.
     let title: String
-    /// 「メモ」 / 「前回より +0.10kg」 / 「次は12月3日」 / 「次は2027年9月ごろ」.
+    /// 「メモ・自分だけ」 / 「前回より +0.10kg」 / 「次は12月3日」 / 「次は2027年9月ごろ」.
     let caption: String?
     /// What VoiceOver reads: date, kind, text.
     let spoken: String
@@ -50,6 +50,16 @@ struct CatHomeYearsAgo: Equatable, Sendable {
     let text: String?
 
     var label: String { "\(years)年前のきょう" }
+    /// 「自分だけ」 when the card shows a memo: a memo stays on this iPhone,
+    /// unlike the family notebook's records on the same page (11/13).
+    var privateMark: String? {
+        if case .memo = source { return CatHomeRecordsCore.privateMark }
+        return nil
+    }
+    /// 「1年前のきょう・自分だけ」 for a memo; the label alone for a photo.
+    var shownLabel: String { privateMark.map { label + "・" + $0 } ?? label }
+    /// What VoiceOver reads: label, 「自分だけ」 for a memo, the memo's words.
+    var spoken: String { [label, privateMark, text].compactMap { $0 }.joined(separator: "、") }
 }
 
 struct CatHomeRecordsSnapshot: Equatable, Sendable {
@@ -64,6 +74,9 @@ enum CatHomeRecordsCore {
     /// Rows shown at first, and how many more each 「もっと見る」 shows.
     static let firstRows = 5
     static let moreRows = 20
+    /// After 「メモ」 and on the 「1年前のきょう」 memo: only this person sees a
+    /// memo; weights, vet memos and vaccinations go to the family notebook.
+    static let privateMark = "自分だけ"
 
     /// A photo of the cat: only what the pick needs.
     struct Photo: Equatable, Sendable {
@@ -125,8 +138,8 @@ enum CatHomeRecordsCore {
         let date = dayText(day, today: today)
         return CatHomeRecordRow(id: "memo-" + record.note.id.uuidString,
                                 kind: .memo(recordID: record.note.id, photoIdentifier: record.photoIdentifier),
-                                day: day, at: at, dateText: date, title: text, caption: "メモ",
-                                spoken: [date, "メモ", text.replacingOccurrences(of: "\n", with: " ")].joined(separator: "、"))
+                                day: day, at: at, dateText: date, title: text, caption: "メモ・" + privateMark,
+                                spoken: [date, "メモ", privateMark, text.replacingOccurrences(of: "\n", with: " ")].joined(separator: "、"))
     }
 
     // MARK: Weights
