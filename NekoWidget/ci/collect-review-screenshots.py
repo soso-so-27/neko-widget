@@ -32,6 +32,7 @@ FULL_SCREENS = (
     "04_windows_list", "05_window_feed_top", "05_window_feed_bottom", "06_window_send",
     "07_album_shelf_plus", "08_album_nonmember", "08b_album_nonmember_work_gate", "09_album_work_open",
     "10_cat_home", "10b_cat_home_second_cat", "10c_cat_home_no_cat", "10d_cat_home_no_photo",
+    "10e_cat_home_records",
     "11_cat_care_top", "11_cat_care_bottom", "11b_cat_care_text_page",
     "12_vet_top", "12_vet_bottom", "12b_vet_row_page", "13_vet_read",
     "14_lost_top", "14_lost_bottom", "14b_lost_photo_page", "15_lost_preview",
@@ -46,6 +47,7 @@ FULL_SCREENS = (
 )
 SE_SCREENS = (
     "10_cat_home", "10b_cat_home_second_cat", "10c_cat_home_no_cat", "10d_cat_home_no_photo",
+    "10e_cat_home_records",
     "11_cat_care_top", "12_vet_bottom", "14_lost_bottom", "16_care_bottom",
     "23_plus_offer_top", "23_plus_offer_bottom", "24_settings_top", "28_onboarding_1",
 )

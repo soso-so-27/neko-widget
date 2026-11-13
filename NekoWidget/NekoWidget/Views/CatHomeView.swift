@@ -18,6 +18,15 @@ struct CatHomeTools {
     let evacuation: () -> AnyView
     /// The profile's identifier, or nil (no cat, or a cat without a profile).
     let showcase: (String?) -> Void
+    /// Each cat profile's photos, newest first: the 写真 tab's set for the
+    /// cat (linked album and the single-cat rule included). Empty without access.
+    var profilePhotos: [String: [PhotoPresentation]] = [:]
+    /// The 写真 tab with this cat (the profile's identifier) chosen in its cat filter.
+    var showPhotos: (String) -> Void = { _ in }
+    /// A memo's photo with the memo, as the 写真 tab's memo list opens it.
+    var memoPhoto: (UUID) -> AnyView = { _ in AnyView(EmptyView()) }
+    /// A finished vet memo, as 「これまでの診察メモ」 opens it.
+    var vetMemo: (VeterinaryVisit) -> AnyView = { _ in AnyView(EmptyView()) }
 }
 
 /// A cat with a page: a profile, or a cat of 「この子のこと」 without one
@@ -100,11 +109,9 @@ struct CatHomeFacts {
     /// What VoiceOver reads for the photo: 「むぎ、オス、4歳2か月、うちに来て1204日」.
     var spoken: String
     var departed: Bool
-    /// 「あと6つ」 / 「そろっています」 and the share filled; nil for a departed cat.
+    /// 「あと6つ」 / 「そろっています」; nil for a departed cat. (11/13: the
+    /// progress line and the weight left the page; weights are in the records.)
     var progressText: String?
-    var progressShare: CGFloat
-    /// 「3.90kg（10月21日）」
-    var weight: String?
     /// 「あと23日」 / 「きょう」; nil unless the birthday is within `birthdaySoonDays`.
     var birthdayIn: String?
 
@@ -118,8 +125,7 @@ struct CatHomeFacts {
         if let farewell {
             let day = CatFarewell.text(farewell)
             return CatHomeFacts(line: "旅立った日　" + day, spoken: "\(cat.name)、旅立った日、\(day)", departed: true,
-                                progressText: nil, progressShare: 0,
-                                weight: weightText(record, now: now, calendar: calendar), birthdayIn: nil)
+                                progressText: nil, birthdayIn: nil)
         }
         let birthday: Date? = profile?.lifeDates.birthday?.date
             ?? (profile?.lifeReference?.kind == .birthday ? profile?.lifeReference?.date : nil)
@@ -136,15 +142,13 @@ struct CatHomeFacts {
         let about = [sex, age].compactMap { $0 }.joined(separator: "・")
         let parts = [about.isEmpty ? nil : about, days.map { "うちに来て \($0.formatted())日" }].compactMap { $0 }
         let spoken = [cat.name, sex, age, days.map { "うちに来て\($0)日" }].compactMap { $0 }.joined(separator: "、")
-        let share: CGFloat = progress.map { $0.total > 0 ? CGFloat($0.filled) / CGFloat($0.total) : 0 } ?? 0
         let progressText = progress.map { $0.filled >= $0.total ? "そろっています" : "あと\($0.total - $0.filled)つ" }
         // 11/13: only when it is near; 「あと239日」 every day said nothing.
         let birthdayIn: String? = birthday.flatMap { Self.daysUntilBirthday($0, now: now, calendar: calendar) }
             .flatMap { $0 <= Self.birthdaySoonDays ? $0 : nil }
             .map { $0 == 0 ? "きょう" : "あと\($0)日" }
         return CatHomeFacts(line: parts.isEmpty ? nil : parts.joined(separator: "　／　"), spoken: spoken,
-                            departed: false, progressText: progressText, progressShare: min(max(share, 0), 1),
-                            weight: weightText(record, now: now, calendar: calendar), birthdayIn: birthdayIn)
+                            departed: false, progressText: progressText, birthdayIn: birthdayIn)
     }
 
     /// 「3歳2か月」, 「3歳」, or 「5か月」 under one year. Nil for a birthday ahead.
@@ -170,15 +174,6 @@ struct CatHomeFacts {
         guard let next = calendar.nextDate(after: today.addingTimeInterval(-1), matching: parts,
                                            matchingPolicy: .nextTime) else { return nil }
         return calendar.dateComponents([.day], from: today, to: calendar.startOfDay(for: next)).day
-    }
-
-    /// The latest weight with its day: 「3.90kg（10月21日）」, the year too when not this year.
-    static func weightText(_ record: CatCareRecord?, now: Date, calendar: Calendar) -> String? {
-        guard let latest = record?.activeWeights.first else { return nil }
-        let day = latest.measuredOn
-        let thisYear = CatCareDay(date: now, calendar: calendar)?.year
-        let date = day.year == thisYear ? "\(day.month)月\(day.day)日" : "\(day.year)年\(day.month)月\(day.day)日"
-        return CatCareFormat.weight(latest.grams) + "（\(date)）"
     }
 }
 
@@ -242,6 +237,8 @@ struct CatHomeView: View {
     /// page too, so 「この子のこと」 has one place for everyone (11/7).
     @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
     @StateObject private var states = CatHomeToolStates()
+    /// Each cat's records under the buttons (CatHomeRecordsView.swift).
+    @StateObject private var records = CatHomeRecordsModel()
     @AppStorage(CatFarewell.key) private var farewellJSON = ""
     /// The cat whose page is shown, and the cat the tools open for.
     @AppStorage("catHome.selectedCat.v1") private var storedCatID = ""
@@ -259,13 +256,16 @@ struct CatHomeView: View {
                 if let current {
                     pager(cats, current: current, metrics: metrics)
                 } else {
-                    CatHomeNoCatPage(metrics: metrics, tools: tools) { addsCat = true }
+                    CatHomeNoCatPage(metrics: metrics, tools: tools, topBar: AnyView(topBar(cats, current: nil))) {
+                        addsCat = true
+                    }
                 }
             }
             .ignoresSafeArea(.container, edges: .top)
         }
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
-        .overlay(alignment: .top) { topBar(cats, current: current) }
+        // 11/13: the cat menu and 設定 are part of each page's content (on top
+        // of the photo, scrolling away with it), not pinned over the page.
         // No title on this page: the photo runs under the status bar.
         .toolbar(.hidden, for: .navigationBar)
         .addingCatProfile(isStarted: $addsCat, presentation: presentation, actions: actions) { identifier in
@@ -280,6 +280,7 @@ struct CatHomeView: View {
         }
         .navigationDestination(for: CatHomeRoute.self) { route in toolPage(route) }
         .onAppear { Task { await states.refresh() } }
+        .onAppear { records.refresh() }
         // Kept once the pages rest, never while they move.
         .task(id: pageID) {
             guard let pageID, pageID != storedCatID else { return }
@@ -348,6 +349,11 @@ struct CatHomeView: View {
                                hasLifeDates: cat.profile.map { $0.lifeReference != nil })
     }
 
+    /// The cat's photos for 「さいきんの写真」 and 「1年前のきょう」; none without a profile.
+    private func photos(for cat: CatHomeCat) -> [PhotoPresentation] {
+        cat.profile.flatMap { tools.profilePhotos[$0.identifier] } ?? []
+    }
+
     private func facts(for cat: CatHomeCat) -> CatHomeFacts {
         let record = self.record(for: cat)
         // Cats whose farewell day is recorded (1.0 only, as in この子のこと).
@@ -367,7 +373,9 @@ struct CatHomeView: View {
                     CatHomePage(cat: cat, facts: facts(for: cat), metrics: metrics,
                                 pageIndex: index, pageCount: cats.count,
                                 vetUnfinished: states.vetUnfinished(cat), searching: states.searching(cat),
-                                tools: tools, carePage: AnyView(carePage(cat)))
+                                tools: tools, carePage: AnyView(carePage(cat)),
+                                record: record(for: cat), photos: photos(for: cat), records: records,
+                                topBar: AnyView(topBar(cats, current: cat)))
                         // Only the page on screen is read and found by tests.
                         .accessibilityHidden(cat.id != current.id)
                         .containerRelativeFrame(.horizontal)
@@ -502,7 +510,8 @@ struct CatHomeMetrics {
     }
 }
 
-/// One cat's page: the photo with the name, the tools, 「この子のこと」.
+/// One cat's page: the photo with the name, the tools, the cat's records
+/// (11/13), then 「この子のこと」 as one row.
 private struct CatHomePage: View {
     let cat: CatHomeCat
     let facts: CatHomeFacts
@@ -513,6 +522,11 @@ private struct CatHomePage: View {
     let searching: Bool
     let tools: CatHomeTools
     let carePage: AnyView
+    let record: CatCareRecord?
+    let photos: [PhotoPresentation]
+    let records: CatHomeRecordsModel
+    /// The cat menu and 設定, at the top of the photo; they scroll with it.
+    let topBar: AnyView
 
     var body: some View {
         ScrollView(.vertical) {
@@ -526,16 +540,23 @@ private struct CatHomePage: View {
                         // Until 「この迷子の記録を終える」 clears the place, day and log.
                         if searching { CatHomeSearchingLine(cat: cat) }
                     }
+                    // Kept for a departed cat: its photos and records stay to look back on.
+                    CatHomeRecordsSection(cat: cat, record: record, photos: photos, birthdayIn: facts.birthdayIn,
+                                          tools: tools, model: records)
                     CatHomeAboutCard(cat: cat, facts: facts, destination: carePage)
                 }
                 .padding(.horizontal, 16)
                 // Up into the photo's fade.
                 .padding(.top, facts.departed ? 4 : -18)
-                .padding(.bottom, 24)
+                // Clear of the floating tab bar.
+                .padding(.bottom, 32)
             }
+            // Where the pinned bar rested: just under the status bar.
+            .overlay(alignment: .top) { topBar.padding(.top, metrics.topInset) }
         }
         .scrollIndicators(.hidden)
         .ignoresSafeArea(.container, edges: .top)
+        .catHomeRecordsLoading(records, cat: cat, record: record, photos: photos)
     }
 }
 
@@ -820,9 +841,9 @@ private struct CatHomeToolRow: View {
     }
 }
 
-/// 「この子のこと」: how much is written, a thin line for it, then the
-/// latest weight and the days to the birthday when they are known. The
-/// whole card opens the cat's page.
+/// 「この子のこと」 as one row at the bottom (11/13): how much is written and
+/// a chevron. The weight is in the records and the birthday in its own card
+/// above them. The row opens the cat's page, with the same identifiers.
 private struct CatHomeAboutCard: View {
     let cat: CatHomeCat
     let facts: CatHomeFacts
@@ -830,39 +851,13 @@ private struct CatHomeAboutCard: View {
 
     var body: some View {
         NavigationLink { destination } label: {
-            VStack(alignment: .leading, spacing: 0) {
-                VStack(alignment: .leading, spacing: 10) {
-                    CatHomeLine(title: "この子のこと", value: facts.progressText, emphasized: true)
-                    if facts.progressText != nil {
-                        Capsule()
-                            .fill(Color.primary.opacity(0.12))
-                            .frame(height: 3)
-                            .overlay(alignment: .leading) {
-                                Capsule()
-                                    .fill(Color.primary)
-                                    .frame(height: 3)
-                                    .scaleEffect(x: facts.progressShare, y: 1, anchor: .leading)
-                            }
-                            .accessibilityHidden(true)
-                    }
-                }
+            CatHomeLine(title: "この子のこと", value: facts.progressText, emphasized: true)
                 .padding(.horizontal, 16)
-                .padding(.vertical, 14)
-                if let weight = facts.weight {
-                    Divider().padding(.leading, 16)
-                    CatHomeLine(title: "体重", value: weight)
-                        .padding(.horizontal, 16).padding(.vertical, 14)
-                }
-                if let birthdayIn = facts.birthdayIn {
-                    Divider().padding(.leading, 16)
-                    CatHomeLine(title: "誕生日まで", value: birthdayIn)
-                        .padding(.horizontal, 16).padding(.vertical, 14)
-                }
-            }
-            .background(Color(.secondarySystemGroupedBackground),
-                        in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .accessibilityElement(children: .combine)
+                .padding(.vertical, 16)
+                .background(Color(.secondarySystemGroupedBackground),
+                            in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .accessibilityElement(children: .combine)
         }
         .buttonStyle(CatHomePressStyle())
         .accessibilityIdentifier(cat.profile != nil ? "tools-cat-\(cat.id)" : "tools-family-cat-\(cat.id)")
@@ -905,6 +900,8 @@ private struct CatHomeLine: View {
 private struct CatHomeNoCatPage: View {
     let metrics: CatHomeMetrics
     let tools: CatHomeTools
+    /// 設定 (no cat menu without a cat), scrolling with the page.
+    let topBar: AnyView
     let add: () -> Void
 
     var body: some View {
@@ -940,6 +937,7 @@ private struct CatHomeNoCatPage: View {
                     .padding(.horizontal, 16)
             }
             .padding(.bottom, 24)
+            .overlay(alignment: .top) { topBar.padding(.top, metrics.topInset) }
         }
         .scrollIndicators(.hidden)
         .ignoresSafeArea(.container, edges: .top)

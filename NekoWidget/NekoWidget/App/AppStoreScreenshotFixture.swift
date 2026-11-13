@@ -288,6 +288,60 @@ enum AppStoreScreenshotFixture {
         }
     }
 
+    /// `--cat-home-records-fixture` (review captures, with the cat-care
+    /// fixture): the first cat's records on the この子 page. The App Store
+    /// captures never pass it, so their screens stay as they are.
+    static var showsCatHomeRecords: Bool {
+        showsProductionFamilyEntry && CommandLine.arguments.contains("--cat-home-records-fixture")
+    }
+
+    /// 11/13: the first cat's memos and a finished vet memo for the この子
+    /// page's records: two memos, one on today's day a year ago (「1年前の
+    /// きょう」), and a vet memo finished two months ago. Synthetic text on
+    /// the code-drawn photos; written once, never over what is there.
+    static func seedCatHomeRecordsIfRequested() async {
+        guard showsCatHomeRecords,
+              let catID = UUID(uuidString: "11111111-1111-4111-8111-111111111111") else { return }
+        let cat = PhotoMemoryNoteCat(id: catID, name: OwnerStoreCaptureFixture.isRequested ? "むぎ" : "ミケ")
+        let calendar = Calendar.nekoGregorian, now = Date()
+        // Two more weights (three in all) and a vaccination, once.
+        CatCareStore.shared.update { state in
+            guard let index = state.cats.firstIndex(where: { $0.profileID == catID && $0.deletedAt == nil }),
+                  state.cats[index].vaccinations.isEmpty else { return }
+            let by = state.deviceID
+            for (month, day, grams) in [(8, 30, 4_150), (6, 2, 4_050)] {
+                if let measured = CatCareDay(year: 2026, month: month, day: day) {
+                    state.cats[index].weights.append(CatCareWeight(measuredOn: measured, grams: grams,
+                                                                   editedAt: now, editedBy: by))
+                }
+            }
+            if let given = CatCareDay(year: 2026, month: 9, day: 14) {
+                state.cats[index].vaccinations = [CatCareVaccination(kind: "3種混合", givenOn: given,
+                    nextDueOn: CatCareDay(year: 2027, month: 9, day: 1), editedAt: now, editedBy: by)]
+            }
+        }
+        let memos: [(photo: String, text: String, days: Int, years: Int)] = [
+            ("app-store-screenshot-fixture-3", "あごの下をかくと、目を細める。", -4, 0),
+            ("app-store-screenshot-fixture-4", "窓の外の鳥に夢中。しっぽだけ動いている。", -45, 0),
+            ("app-store-screenshot-fixture-5", "ふたりで布団を占領。どいてくれない。", 0, -1),
+        ]
+        for memo in memos {
+            var captured = calendar.date(byAdding: .day, value: memo.days, to: now)
+            if memo.years != 0, let day = captured { captured = calendar.date(byAdding: .year, value: memo.years, to: day) }
+            _ = try? await PhotoMemoryNoteStore.shared.save(text: memo.text, for: memo.photo, expectedRevision: nil,
+                context: PhotoMemoryNoteContext(capturedAt: captured, cats: [cat]))
+        }
+        let store = VeterinaryVisitStore.shared
+        guard let visits = try? await store.visits(), !visits.contains(where: { $0.catID == catID }),
+              let open = try? await store.current(catID: catID, catName: cat.name, create: { commit in try commit() })
+        else { return }
+        var finished = open
+        finished.doctorNote = "体重は順調です。歯石が少しあるので様子を見ます。"
+        finished.nextVisitOn = VeterinaryVisit.day(calendar.date(byAdding: .month, value: 3, to: now) ?? now)
+        finished.completedAt = calendar.date(byAdding: .day, value: -60, to: now)
+        _ = try? await store.save(finished, expectedRevision: open.revision)
+    }
+
     private static func makeCatIllustration(variant: Int,
                                             palette custom: (UIColor, UIColor, UIColor, UIColor)? = nil,
                                             muzzle: UIColor? = nil) -> UIImage {
@@ -605,6 +659,7 @@ struct AppStoreScreenshotFixtureRootView: View {
         .task {
             AppStoreScreenshotFixture.seedCatCareIfRequested()
             OwnerStoreCaptureFixture.prepareWidgets()
+            await AppStoreScreenshotFixture.seedCatHomeRecordsIfRequested()
         }
         .onReceive(NotificationCenter.default.publisher(for: PhotoLibraryReadingPosition.diagnosticNotification)) { _ in
             guard widgetRecoveryCase == "paging",
