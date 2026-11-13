@@ -19,6 +19,9 @@ function expected(files,fields){
 export function approvedDescriptionUpdate(current,desired){
   if(typeof current!=='string'||typeof desired!=='string')return false;
   if(current===desired)return true;
+  // 1113d: remove exactly the former paid photo-memo bullet, and nothing else.
+  const memo='・写真に新しいメモを書く\n';
+  if(current.split(memo).length===2 && current.replace(memo,'')===desired)return true;
   const paragraph='季節のムービーもあります。',storage='（3GB・記録 3,000 件まで）';
   if(current.split(paragraph).length!==2||current.split(storage).length!==2)return false;
   return current.replace(paragraph,paragraph+'作品を開くのは Plus です（14 日間無料）。')
