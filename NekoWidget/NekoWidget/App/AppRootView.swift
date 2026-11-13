@@ -486,6 +486,13 @@ struct AppRootView: View {
                     && !value.isGloballyExcluded(membership.assetLocalIdentifier) {
                     assignments[membership.assetLocalIdentifier, default: []].insert(membership.profileID.uuidString)
                 }
+                // 11/13: with one cat profile, every detected cat photo is that
+                // cat's (the cat filter, memo lists and own-cat albums agree).
+                if let single = value.singleCatProfileID {
+                    for identifier in viewModel.singleCatDerivedPhotoIdentifiers {
+                        assignments[identifier, default: []].insert(single.uuidString)
+                    }
+                }
                 return assignments
             } ?? [:],
             photoLibraryProfileNames: viewModel.catHouseholdIdentity.map { value in
@@ -844,7 +851,8 @@ struct AppRootView: View {
                     (projection.membershipByProfile[profile.id] ?? [:]).values
                         .filter { $0.decision == .excluded }
                         .map(\.assetLocalIdentifier)
-                )
+                ),
+                countsEveryDetectedCatPhoto: identity.singleCatProfileID == profile.id
             )
         }
 
@@ -1135,8 +1143,13 @@ struct AppRootView: View {
                 membership.assetLocalIdentifier
             ] = membership
         }
+        // 11/13: the view model's per-cat sets (built once per presentation
+        // version) carry the single-cat rule: with one cat profile, every
+        // detected cat photo counts as its photo, minus its exclusions.
+        let effective = viewModel.catProfilePhotoIdentifiers
         for profile in identity.profiles {
-            let confirmed = identity.confirmedAssetIdentifiers(for: profile.id)
+            let confirmed = effective[profile.id]
+                ?? identity.confirmedAssetIdentifiers(for: profile.id)
             confirmedByProfile[profile.id] = confirmed
             linkedByProfile[profile.id] = Set(
                 profile.photoAlbumLink?.lastKnownAssetLocalIdentifiers ?? []

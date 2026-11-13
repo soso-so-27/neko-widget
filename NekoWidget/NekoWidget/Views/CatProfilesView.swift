@@ -118,7 +118,11 @@ struct CatProfilesView: View {
                     Section {
                         Text("写真を選んで、写っている猫にまとめられます。")
                     } footer: {
-                        Text(CatIndividualRecognitionCopy.unavailable)
+                        // 11/13: with one cat every cat photo is its own, so
+                        // telling cats apart does not come up.
+                        if presentation.profiles.count != 1 {
+                            Text(CatIndividualRecognitionCopy.unavailable)
+                        }
                     }
                 }
                 .navigationTitle("猫ごとの写真について")

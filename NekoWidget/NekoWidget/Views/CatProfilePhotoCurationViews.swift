@@ -423,9 +423,14 @@ struct CatProfileConfirmedPhotosView: View {
                 ContentUnavailableView {
                     Label("\(profile.displayName)の写真", systemImage: "photo.on.rectangle")
                 } description: {
-                    Text("この子が写っている写真を追加すると、ここで見返せます。")
+                    // 11/13: with one cat, every cat photo is already its own.
+                    Text(profile.countsEveryDetectedCatPhoto
+                        ? "猫の写真が見つかると、ここで見返せます。"
+                        : "この子が写っている写真を追加すると、ここで見返せます。")
                 } actions: {
-                    addPhotosButton
+                    if profile.offersAddingPhotos {
+                        addPhotosButton
+                    }
                 }
             } else if isSelecting {
                 CatSelectablePhotoGrid(photos: profile.confirmedPhotos, selection: $selection)
@@ -465,11 +470,13 @@ struct CatProfileConfirmedPhotosView: View {
                             }
                             .accessibilityIdentifier("cat-profile-select")
 
-                            Button("この子の写真を追加", systemImage: "photo.badge.plus") {
-                                showsAddPhotos = true
+                            if profile.offersAddingPhotos {
+                                Button("この子の写真を追加", systemImage: "photo.badge.plus") {
+                                    showsAddPhotos = true
+                                }
+                                .accessibilityIdentifier("cat-profile-add-photos")
+                                .disabled(profile.manualCandidatePhotos.isEmpty)
                             }
-                            .accessibilityIdentifier("cat-profile-add-photos")
-                            .disabled(profile.manualCandidatePhotos.isEmpty)
                         }
                         if profileSettingsAlbumOptions != nil {
                             Button("この子のことを開く", systemImage: "cat") {

@@ -533,6 +533,123 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
             .subtracting(globallyExcluded)
     }
 
+    // MARK: Single-cat rule (11/13)
+
+    /// The household's only own cat profile (a departed cat still counts),
+    /// or nil with zero or several. Family-notebook guests and tool-only cats
+    /// never live in `profiles`, so they do not count.
+    var singleCatProfileID: UUID? {
+        profiles.count == 1 ? profiles.first?.id : nil
+    }
+
+    /// 11/13: while the household has exactly one cat profile, every detected
+    /// cat photo counts as that cat's photo. Nothing is persisted: the set is
+    /// derived at read time, so it stops applying the moment a second profile
+    /// exists and nothing has to be undone. A 「この子ではない」 (`excluded`)
+    /// and a household-wide exclusion still win. With zero or several
+    /// profiles this is `confirmedAssetIdentifiers(for:)` unchanged.
+    func effectiveAssetIdentifiers(
+        for profileID: UUID,
+        detectedCatAssetIdentifiers: Set<String>
+    ) -> Set<String> {
+        confirmedAssetIdentifiers(for: profileID).union(
+            singleCatDerivedAssetIdentifiers(
+                for: profileID,
+                detectedCatAssetIdentifiers: detectedCatAssetIdentifiers
+            )
+        )
+    }
+
+    /// The profiles one photo effectively belongs to: `confirmedProfileIDs`
+    /// plus, for a detected cat photo, the only cat unless it is excluded.
+    func effectiveProfileIDs(
+        for assetLocalIdentifier: String,
+        isDetectedCatPhoto: Bool
+    ) -> Set<UUID> {
+        var result = confirmedProfileIDs(for: assetLocalIdentifier)
+        if let singleCatProfileID,
+           isDetectedCatPhoto,
+           !isGloballyExcluded(assetLocalIdentifier),
+           membershipDecision(
+            for: assetLocalIdentifier,
+            profileID: singleCatProfileID
+           ) != .excluded {
+            result.insert(singleCatProfileID)
+        }
+        return result
+    }
+
+    /// Every profile's effective photo set, computed once per call.
+    func effectiveAssetIdentifiersByProfile(
+        detectedCatAssetIdentifiers: Set<String>
+    ) -> [UUID: Set<String>] {
+        Dictionary(uniqueKeysWithValues: profiles.map { profile in
+            (profile.id, effectiveAssetIdentifiers(
+                for: profile.id,
+                detectedCatAssetIdentifiers: detectedCatAssetIdentifiers
+            ))
+        })
+    }
+
+    /// Only the derived part of the single-cat rule: detected cat photos
+    /// minus this cat's exclusions and household-wide exclusions. Empty
+    /// unless `profileID` is the household's only cat profile.
+    func singleCatDerivedAssetIdentifiers(
+        for profileID: UUID,
+        detectedCatAssetIdentifiers: Set<String>
+    ) -> Set<String> {
+        guard profileID == singleCatProfileID,
+              !detectedCatAssetIdentifiers.isEmpty else { return [] }
+        let excludedForProfile = Set(memberships.lazy.filter {
+            $0.profileID == profileID && $0.decision == .excluded
+        }.map(\.assetLocalIdentifier))
+        let globallyExcluded = Set(globalExcludedAssets.map(\.localIdentifier))
+        return detectedCatAssetIdentifiers
+            .subtracting(excludedForProfile)
+            .subtracting(globallyExcluded)
+    }
+
+    /// 11/13: call just before a second profile is added. Derived photos stop
+    /// counting for the first cat then, so its page keeps the photo it shows:
+    /// its key photo or, without one, `shownPhotoIdentifier` (the newest
+    /// photo its page shows now) becomes one explicit include. Being the
+    /// newest, it stays the page's photo. Nothing else is written; a photo
+    /// excluded for this cat is never re-included.
+    mutating func pinSingleCatPhotoBeforeAnotherProfile(
+        shownPhotoIdentifier: String?,
+        at date: Date = .now
+    ) {
+        guard let profileID = singleCatProfileID,
+              let profile = profiles.first(where: { $0.id == profileID }),
+              let photo = profile.keyPhotoLocalIdentifier ?? shownPhotoIdentifier,
+              !confirmsAsset(photo, for: profileID),
+              membershipDecision(for: photo, profileID: profileID) != .excluded else {
+            return
+        }
+        setManualMembership(
+            assetLocalIdentifier: photo,
+            profileID: profileID,
+            decision: .included,
+            at: date
+        )
+    }
+
+    /// Whether the single-cat rule alone makes `assetLocalIdentifier` this
+    /// cat's photo (no explicit include, album link, or exclusion decides it).
+    func isSingleCatDerivedAsset(
+        _ assetLocalIdentifier: String,
+        profileID: UUID,
+        isDetectedCatPhoto: Bool
+    ) -> Bool {
+        guard isDetectedCatPhoto,
+              profileID == singleCatProfileID,
+              !isGloballyExcluded(assetLocalIdentifier) else { return false }
+        return membershipDecision(
+            for: assetLocalIdentifier,
+            profileID: profileID
+        ) == .unknown
+    }
+
     func linkedPhotoAlbumContains(
         _ assetLocalIdentifier: String,
         profileID: UUID
