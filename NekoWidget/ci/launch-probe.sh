@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# DIAGNOSTIC ONLY (branch claude/launch-time-probe, never merged).
-# Launch several already-validated synthetic apps in ONE booted Simulator,
-# interleaved, several times each, so Simulator/runner speed is shared and
-# only the app differs. Usage: launch-probe.sh label=/path/NekoWidget.app ...
+# DIAGNOSTIC ONLY (branch diagnostic/cat-home-care-launch-*, never merged).
+# Launch already-built synthetic apps (this PR's and main's as control) in one
+# fresh Simulator and keep what the normal job scrubs: the console output of
+# `simctl launch --console-pty`, the app's own log lines and launch-related
+# system lines, and any crash report naming NekoWidget. Synthetic builds only.
+# Usage: launch-probe.sh label=/path/NekoWidget.app ...
 set -uo pipefail
 out="${PROBE_OUT:-$RUNNER_TEMP/launch-probe}"
-mkdir -p "$out/logs" "$out/shots"
-summary="$out/summary.tsv"
-printf 'round\tvariant\tmode\ti\tlaunch_s\tfirst_app_log_s\tapp_logs_before_return\talive\n' > "$summary"
+mkdir -p "$out"
+bundle=jp.nekowidget.app
 
 runtime=$(xcrun simctl list runtimes -j | python3 -c '
 import json,sys
@@ -16,75 +17,51 @@ print(next((r for r in items if r["version"] == "26.2"), items[0])["identifier"]
 ')
 device=$(xcrun simctl create NekoLaunchProbe com.apple.CoreSimulator.SimDeviceType.iPhone-16 "$runtime")
 trap 'xcrun simctl shutdown "$device" >/dev/null 2>&1; xcrun simctl delete "$device" >/dev/null 2>&1' EXIT
-t=$(python3 -c 'import time;print(time.time())')
 xcrun simctl boot "$device"
 xcrun simctl bootstatus "$device" -b >/dev/null
-echo "BOOT+bootstatus $(python3 -c "import time;print(round(time.time()-$t,1))")s"
+echo "booted $device"
 
-now() { python3 -c 'import time;print(f"{time.time():.3f}")'; }
-stamp() { python3 -c "import datetime,sys;print(datetime.datetime.fromtimestamp(float(sys.argv[1])).strftime('%Y-%m-%d %H:%M:%S'))" "$1"; }
-
-one_launch() { # round variant mode i
-  local bundle=jp.nekowidget.app tag="$1-$2-$3-$4"
-  xcrun simctl terminate "$device" "$bundle" >/dev/null 2>&1 || true
-  sleep 2
-  local t0 t1 res pid alive
-  t0=$(now)
-  res=$(python3 -c 'import subprocess,sys
+bounded() { # seconds command...
+  python3 - "$@" <<'PY'
+import subprocess, sys
 try:
- r=subprocess.run(sys.argv[1:],capture_output=True,text=True,timeout=90); print(r.stdout+r.stderr,end=""); sys.exit(r.returncode)
-except subprocess.TimeoutExpired: sys.exit(124)' xcrun simctl launch "$device" "$bundle"); local st=$?
-  t1=$(now)
-  pid=${res##*: }
-  sleep 6
-  if xcrun simctl spawn "$device" launchctl list | awk -v pid="$pid" '$1 == pid { a=1 } END { exit !a }'; then alive=yes; else alive="no($st)"; fi
-  # Everything the app process logged, and the system's lines about it.
-  xcrun simctl spawn "$device" log show --start "$(stamp "$(python3 -c "print($t0-1)")")" \
-    --info --debug --style compact \
-    --predicate 'process == "NekoWidget" OR eventMessage CONTAINS "jp.nekowidget.app"' \
-    > "$out/logs/$tag.log" 2>/dev/null || true
-  python3 - "$out/logs/$tag.log" "$t0" "$t1" "$1" "$2" "$3" "$4" "$alive" >> "$summary" <<'PY'
-import sys, datetime, re
-path, t0, t1 = sys.argv[1], float(sys.argv[2]), float(sys.argv[3])
-first = None; before = 0
-for line in open(path, errors="replace"):
-    m = re.match(r"(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+)\s+\S+\s+(\S+)\[", line)
-    if not m or not m.group(2).startswith("NekoWidget"): continue
-    ts = datetime.datetime.strptime(m.group(1)[:26], "%Y-%m-%d %H:%M:%S.%f").timestamp()
-    if ts < t0 - 0.5: continue
-    if first is None: first = ts
-    if ts <= t1: before += 1
-fa = f"{first - t0:.2f}" if first else "-"
-print("\t".join([sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7], f"{t1-t0:.2f}", fa, str(before), sys.argv[8]]))
+    sys.exit(subprocess.run(sys.argv[2:], timeout=int(sys.argv[1])).returncode)
+except subprocess.TimeoutExpired:
+    print(f"TIMEOUT after {sys.argv[1]}s: {' '.join(sys.argv[2:4])}", flush=True)
+    sys.exit(124)
 PY
-  tail -1 "$summary"
 }
 
-set_pref() { # key type value
-  local c; c=$(xcrun simctl get_app_container "$device" jp.nekowidget.app data)
-  xcrun simctl spawn "$device" defaults write "$c/Library/Preferences/jp.nekowidget.app" "$1" "$2" "$3"
-}
+reports_before=$(ls ~/Library/Logs/DiagnosticReports 2>/dev/null | sort)
 
-rounds="${PROBE_ROUNDS:-2}"
-for round in $(seq 1 "$rounds"); do
-  specs=("$@")
-  if (( round % 2 == 0 )); then specs=($(printf '%s\n' "$@" | tail -r)); fi
-  for spec in "${specs[@]}"; do
-    variant=${spec%%=*}; app=${spec#*=}
-    xcrun simctl uninstall "$device" jp.nekowidget.app >/dev/null 2>&1 || true
-    t=$(now); xcrun simctl install "$device" "$app"; echo "install $variant $(python3 -c "print(round($(now)-$t,1))")s"
-    for i in 1 2 3; do one_launch "$round" "$variant" fresh "$i"; done
-    xcrun simctl io "$device" screenshot "$out/shots/$round-$variant-fresh.png" >/dev/null 2>&1 || true
-    xcrun simctl terminate "$device" jp.nekowidget.app >/dev/null 2>&1 || true
-    set_pref onboarding.completedVersion -int 1
-    set_pref navigation.lastTab.v1 -string memories
-    for i in 1 2 3; do one_launch "$round" "$variant" tabs-memories "$i"; done
-    xcrun simctl io "$device" screenshot "$out/shots/$round-$variant-memories.png" >/dev/null 2>&1 || true
-    xcrun simctl terminate "$device" jp.nekowidget.app >/dev/null 2>&1 || true
-    set_pref navigation.lastTab.v1 -string tools
-    for i in 1 2 3; do one_launch "$round" "$variant" tabs-tools "$i"; done
-    xcrun simctl io "$device" screenshot "$out/shots/$round-$variant-tools.png" >/dev/null 2>&1 || true
+for spec in "$@"; do
+  label=${spec%%=*}; app=${spec#*=}
+  dir="$out/$label"; mkdir -p "$dir"
+  xcrun simctl uninstall "$device" "$bundle" >/dev/null 2>&1 || true
+  start=$(date -u '+%Y-%m-%d %H:%M:%S')
+  bounded 120 xcrun simctl install "$device" "$app" > "$dir/install.txt" 2>&1; echo "install $label: $?"
+  # --console-pty stays attached to the app's stdout/stderr; stop it after 60 s.
+  bounded 60 xcrun simctl launch --console-pty --terminate-running-process "$device" "$bundle" \
+    > "$dir/console.txt" 2>&1; echo "launch $label: $?" | tee "$dir/launch-status.txt"
+  sleep 3
+  xcrun simctl spawn "$device" launchctl list 2>/dev/null | grep -i nekowidget > "$dir/launchctl.txt" || true
+  xcrun simctl io "$device" screenshot "$dir/screen.png" >/dev/null 2>&1 || true
+  bounded 60 xcrun simctl spawn "$device" log show --start "$start" --info --debug --style compact \
+    --predicate 'process == "NekoWidget" OR (eventMessage CONTAINS[c] "nekowidget" AND (process == "runningboardd" OR process == "SpringBoard" OR process == "launchd" OR process == "ReportCrash" OR process == "dyld" OR process == "kernel" OR process == "amfid" OR process == "installcoordinationd"))' \
+    > "$dir/log.txt" 2>&1 || true
+  bounded 30 xcrun simctl terminate "$device" "$bundle" >/dev/null 2>&1 || true
+  # Crash reports written since the start that name the app.
+  mkdir -p "$dir/reports"
+  for f in ~/Library/Logs/DiagnosticReports/*; do
+    [ -f "$f" ] || continue
+    name=$(basename "$f")
+    if ! grep -qxF "$name" <<<"$reports_before" && grep -q -i nekowidget "$f" 2>/dev/null; then
+      cp "$f" "$dir/reports/"
+    fi
   done
+  reports_before=$(ls ~/Library/Logs/DiagnosticReports 2>/dev/null | sort)
+  echo "== $label console (head)"; head -60 "$dir/console.txt"
+  echo "== $label reports"; ls "$dir/reports"
+  for f in "$dir"/reports/*; do [ -f "$f" ] && head -c 6000 "$f"; done
+  echo "== $label log (errors/faults/launch)"; grep -i -E "fault|error|crash|terminat|exception|fatal|launch|dyld|assert" "$dir/log.txt" | head -80
 done
-echo "==== SUMMARY ===="
-column -t -s $'\t' "$summary"
