@@ -256,7 +256,6 @@ extension UsagePlusEntry {
         switch context {
         case .onboarding: self = .onboarding
         case .monthlySummary: self = .monthlySummary
-        case .newMemo: self = .newMemo
         case .createWindow: self = .createWindow
         case .continueWindow: self = .continueWindow
         case .createFamily: self = .createFamily

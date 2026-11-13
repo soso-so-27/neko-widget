@@ -970,7 +970,7 @@ struct FamilyNotebookView: View {
                     Button("家族が書いたときを試す") { model.tryFamilyWrite() }
                     Button("2 人が同時に直したときを試す") { model.tryConflict() }
                     Button("家族（試し）がPlusを使っていて抜けたときを試す") {
-                        prototype?.pretendPayerLeft(hasPlus: access.decision(for: .createPersonalMemo) == .allowed)
+                        prototype?.pretendPayerLeft(hasPlus: access.decision(for: .openGrowingSummary) == .allowed)
                         Task { await sharing.refresh() }
                     }
                 }

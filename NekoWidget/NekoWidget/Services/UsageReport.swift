@@ -14,7 +14,6 @@ import Foundation
 enum UsagePlusEntry: String, CaseIterable, Sendable {
     case onboarding
     case monthlySummary = "monthly-summary"
-    case newMemo = "new-memo"
     case createWindow = "create-window"
     case continueWindow = "continue-window"
     case createFamily = "create-family"

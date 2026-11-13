@@ -73,7 +73,7 @@ struct MembershipAccessContext: Equatable {
     /// This iPhone's own Plus is usable now (verified, or the bounded offline
     /// fallback). Only where Plus is enforced: a beta build is not a member.
     func hasPersonalPlus(now: Date = .now) -> Bool {
-        enforcementEnabled && decision(for: .createPersonalMemo, now: now) == .allowed
+        enforcementEnabled && decision(for: .openGrowingSummary, now: now) == .allowed
     }
 
     /// Call only with this window's participant-scoped, validated state.
@@ -329,7 +329,7 @@ struct MembershipRestoreButton: View {
 /// Exercises the real editor against an isolated local store. No purchase,
 /// CloudKit enrollment, or photo-library mutation is part of this fixture.
 /// ADR-027: ツール（預ける・病院・見せる）は無料なので、`inactive` でも
-/// 新しい記録を作れることをこの fixture で確認する。新しいメモは会員。
+/// 新しい記録を作れることをこの fixture で確認する。新しいメモも無料（11/13）。
 @MainActor
 struct MembershipAccessFixture: View {
     private let store = PhotoMemoryNoteStore(fileURL: FileManager.default.temporaryDirectory
@@ -410,11 +410,6 @@ struct MembershipAccessFixture: View {
         }
         .environment(\.membershipAccess, context)
         .environment(\.membershipActions, actions)
-        .onAppear {
-            // Each run starts as a first visit: a new memo opens the Plus
-            // screen by itself once, then only from its button (11/12).
-            UserDefaults.standard.removeObject(forKey: PlusOfferPrompt.newMemoAutoOpenedKey)
-        }
         .task {
             guard record == nil else { return }
             if care.plan.cats.isEmpty {

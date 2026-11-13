@@ -23,11 +23,12 @@ private struct MembershipAccessVerifier {
             .editExistingMemo, .deleteOwnedContent, .exportExistingContent,
             .receivePhotos, .reactToPhoto, .browseOfficialWindow, .browseAlbums,
             .presentCatPhotos, .createCareMemo, .createVeterinaryVisit,
-            .addSharedContent, .continueAcceptedDelivery, .refreshPersonalWidget
+            .addSharedContent, .continueAcceptedDelivery, .refreshPersonalWidget,
+            // 11/13: writing a new memo on a photo is free.
+            .createPersonalMemo
         ]
         let personalOperations: [MembershipOperation] = [
-            .openGrowingSummary, .createPersonalMemo,
-            .createOwnWindow, .addContentToOwnWindow
+            .openGrowingSummary, .createOwnWindow, .addContentToOwnWindow
         ]
         require(
             Set(free + personalOperations) == Set(MembershipOperation.allCases)
@@ -117,10 +118,10 @@ private struct MembershipAccessVerifier {
         // denial must not run a creation/commit callback.
         let live = MembershipActionAccess(enforcementEnabled: true,
             personal: .verified(validUntil: Date.now.addingTimeInterval(60)))
-        require(live.decision(for: .createPersonalMemo) == .allowed, "Live grant not observed")
+        require(live.decision(for: .openGrowingSummary) == .allowed, "Live grant not observed")
         live.update(enforcementEnabled: true, personal: .inactive)
         var commits = 0
-        for operation in [MembershipOperation.createPersonalMemo, .createOwnWindow, .addContentToOwnWindow] {
+        for operation in [MembershipOperation.openGrowingSummary, .createOwnWindow, .addContentToOwnWindow] {
             do {
                 try live.perform(for: operation) { commits += 1 }
                 fatalError("Revocation admitted \(operation)")
@@ -137,7 +138,7 @@ private struct MembershipAccessVerifier {
         try! live.perform(for: .createCareMemo) { commits += 1 }
         require(commits == 4, "Free tools blocked by membership state")
         live.update(enforcementEnabled: false, personal: .checking)
-        try! live.perform(for: .createPersonalMemo) { commits += 1 }
+        try! live.perform(for: .openGrowingSummary) { commits += 1 }
         require(commits == 5, "Beta commit blocked")
 
         // 招待されたまどでの送信は、個人・まどのどの状態でも許可（入る人は
@@ -204,10 +205,16 @@ private struct MembershipAccessVerifier {
         )
 
         require(
-            decision(.createPersonalMemo, personal: .verified(validUntil: future), at: invalid)
+            decision(.createOwnWindow, personal: .verified(validUntil: future), at: invalid)
                 == .verificationRequired,
             "An invalid clock must not authorize new personal activity"
         )
+        // 11/13: a new memo is free in every membership state.
+        for state: MembershipPersonalState in [.inactive, .checking, .verified(validUntil: past),
+                                               .indeterminate(lastVerifiedUntil: nil)] {
+            require(decision(.createPersonalMemo, personal: state) == .allowed,
+                    "A new memo must not need Plus")
+        }
         require(
             decision(.openGrowingSummary, personal: .verified(validUntil: future), at: invalid)
                 == .verificationRequired,

@@ -359,13 +359,8 @@ struct PhotoMemoryNoteEditor: View {
             Section {
                 Text("元の写真が見つかりません。写真へのアクセスを確かめて、写真を選び直してください。")
             }
-        } else if isLoaded && createsNewMemo && membershipAccess.decision(for: .createPersonalMemo) != .allowed {
-            Section {
-                // A new memo opens the one Plus screen; existing memos stay
-                // editable for free and typed text is never discarded here.
-                PlusOfferPrompt(context: .newMemo, decision: membershipAccess.decision(for: .createPersonalMemo))
-            }
         } else if isLoaded {
+            // 11/13: writing a memo (and its weight) is free for everyone.
             Section {
                 PhotoNoteInput(text: $text, focus: $isWriting,
                     maximumCharacters: PhotoMemoryNoteStore.maximumCharacters,
@@ -509,11 +504,6 @@ struct PhotoMemoryNoteEditor: View {
 
     private func save(_ value: String) async {
         guard isLoaded, !isSaving else { return }
-        guard !createsNewMemo || (value.isEmpty && !weightEnabled)
-                || membershipAccess.decision(for: .createPersonalMemo) == .allowed else {
-            saveError = "メモを書くのはPlusの機能です。"
-            return
-        }
         isSaving = true
         defer { isSaving = false }
         do {

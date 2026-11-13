@@ -21,7 +21,8 @@ private struct UsageReportVerifier {
             "family_created", "family_invite_shared", "family_joined", "app_recommended",
             "plus_restored", "autosave_started",
         ]
-        let entries = ["onboarding", "monthly-summary", "new-memo", "create-window",
+        // 11/13: a new memo is free, so it is no Plus entry.
+        let entries = ["onboarding", "monthly-summary", "create-window",
                        "continue-window", "create-family", "continue-family", "preservation", "settings"]
         require(Set(UsagePlusEntry.allCases.map(\.rawValue)) == Set(entries), "Plus entry names")
         let expected = fixed.union(entries.map { "plus_offer_shown." + $0 }).union(entries.map { "plus_purchased." + $0 })
