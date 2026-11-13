@@ -1188,26 +1188,8 @@ struct MainTabView: View {
             showcase: { profileID in
                 // The page's cat when it has photos to show, else the set chosen last time.
                 openShowcaseTool(scopeID: profileID.flatMap { canOpenShowcase($0) ? $0 : nil } ?? showcaseCardScopeID)
-            },
-            // 11/13: the cat's records under the buttons. The same photo set
-            // as the 写真 tab's cat filter, and the same screens it opens.
-            profilePhotos: hasPhotoAccess ? profileAlbumPhotos : [:],
-            showPhotos: { profileID in openPhotoLibrary(for: profileID) },
-            memoPhoto: { recordID in AnyView(memoriesDestination(for: .memoryNotePhoto(recordID))) },
-            vetMemo: { visit in
-                AnyView(VeterinaryPastVisitSheet(visit: visit, photos: memoryNotePhotos,
-                                                 profiles: catProfilesPresentation.profiles, noteStore: memoStore))
             }
         )
-    }
-
-    /// 「○枚」 on a cat's page: the 写真 tab's すべて with that cat chosen in
-    /// its cat filter, from the top of the tab.
-    private func openPhotoLibrary(for profileID: String) {
-        if !photosPath.isEmpty { photosPath = NavigationPath() }
-        photoLibrarySelection.select(.all)
-        photoLibraryProfileIdentifier = profileID
-        selectedTab = .photos
     }
 
     /// 写真を見せる from the この子 tab: the page's cat (or the set chosen last

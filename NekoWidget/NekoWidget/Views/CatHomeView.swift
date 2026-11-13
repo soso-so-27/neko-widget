@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 // MARK: - The 「この子」 tab (11/12, 案D 「写真が主役」)
@@ -18,15 +19,6 @@ struct CatHomeTools {
     let evacuation: () -> AnyView
     /// The profile's identifier, or nil (no cat, or a cat without a profile).
     let showcase: (String?) -> Void
-    /// Each cat profile's photos, newest first: the 写真 tab's set for the
-    /// cat (linked album and the single-cat rule included). Empty without access.
-    var profilePhotos: [String: [PhotoPresentation]] = [:]
-    /// The 写真 tab with this cat (the profile's identifier) chosen in its cat filter.
-    var showPhotos: (String) -> Void = { _ in }
-    /// A memo's photo with the memo, as the 写真 tab's memo list opens it.
-    var memoPhoto: (UUID) -> AnyView = { _ in AnyView(EmptyView()) }
-    /// A finished vet memo, as 「これまでの診察メモ」 opens it.
-    var vetMemo: (VeterinaryVisit) -> AnyView = { _ in AnyView(EmptyView()) }
 }
 
 /// A cat with a page: a profile, or a cat of 「この子のこと」 without one
@@ -58,7 +50,8 @@ struct CatHomeCat: Identifiable, Equatable {
 
 /// What the tools have for each cat, read after the page is drawn: the
 /// stores below read their files on first use, and the vet memos are read
-/// off the main thread. Nothing is shown until it is known.
+/// off the main thread. Nothing is shown until it is known. Read again when
+/// the tab appears and when a vet memo is saved.
 @MainActor
 final class CatHomeToolStates: ObservableObject {
     struct ToolCat: Equatable {
@@ -68,11 +61,21 @@ final class CatHomeToolStates: ObservableObject {
 
     /// Cats written only in 預けるとき・避難に備える (the cats 病院で見せる offers too).
     @Published private(set) var toolCats: [ToolCat] = []
-    /// Cats (upper-cased IDs) with an unfinished vet memo that has something in it.
-    @Published private(set) var unfinishedVetCats: Set<String> = []
+    /// Each cat's vet memos (upper-cased cat IDs), only what 「これからのこと」
+    /// and the 病院 button need.
+    @Published private(set) var memosByCat: [String: [CatHomeCareCore.VetMemo]] = [:]
     /// 迷子のとき drafts being searched with (`LostCatDraft.isSearching`).
     @Published private(set) var searchingKeys: Set<String> = []
     private var refreshing = false
+    private var observer: AnyCancellable?
+
+    init() {
+        observer = NotificationCenter.default.publisher(for: .appRecordsCommitted)
+            .compactMap { ($0.object as? URL)?.path }
+            .filter { $0.contains("/VeterinaryVisits") }
+            .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in Task { await self?.refresh() } }
+    }
 
     func refresh() async {
         guard !refreshing else { return }
@@ -86,15 +89,15 @@ final class CatHomeToolStates: ObservableObject {
         let searching = Set(LostCatDraftStore.shared.drafts.filter { $0.value.isSearching }.map(\.key))
         if searching != searchingKeys { searchingKeys = searching }
         guard let visits = try? await VeterinaryVisitStore.shared.visits() else { return }
-        let unfinished = Set(visits.filter { visit in
-            visit.completedAt == nil
-                && (!visit.observations.isEmpty || !visit.questions.isEmpty || !visit.entries.isEmpty || visit.hasResults)
-        }.map { $0.catID.uuidString.uppercased() })
-        if unfinished != unfinishedVetCats { unfinishedVetCats = unfinished }
+        let memos = Dictionary(grouping: visits) { $0.catID.uuidString.uppercased() }
+            .mapValues { $0.map { CatHomeCareCore.VetMemo($0) } }
+        if memos != memosByCat { memosByCat = memos }
     }
 
-    func vetUnfinished(_ cat: CatHomeCat) -> Bool {
-        unfinishedVetCats.contains(cat.id.uppercased())
+    /// The vet memos of the page's cat, under its own ID and its 「この子のこと」 ID.
+    func vetMemos(for cat: CatHomeCat, record: CatCareRecord?) -> [CatHomeCareCore.VetMemo] {
+        let keys = Set([cat.id.uppercased(), record?.catID.uuidString.uppercased()].compactMap { $0 })
+        return keys.flatMap { memosByCat[$0] ?? [] }
     }
 
     func searching(_ cat: CatHomeCat) -> Bool {
@@ -104,28 +107,23 @@ final class CatHomeToolStates: ObservableObject {
 
 /// What the page says about a cat, worked out once per drawing.
 struct CatHomeFacts {
-    /// 「メス・3歳2か月　／　うちに来て 1,204日」, or the 旅立った日 line.
+    /// 「メス・3歳2か月　／　うちに来て 1,204日」, or the 旅立った日 line. On
+    /// the birthday 「きょうで5歳」 and on the day the cat came home
+    /// 「うちに来て 4年」 take its place (11/14).
     var line: String?
     /// What VoiceOver reads for the photo: 「むぎ、オス、4歳2か月、うちに来て1204日」.
     var spoken: String
     var departed: Bool
-    /// 「あと6つ」 / 「そろっています」; nil for a departed cat. (11/13: the
-    /// progress line and the weight left the page; weights are in the records.)
-    var progressText: String?
-    /// 「あと23日」 / 「きょう」; nil unless the birthday is within `birthdaySoonDays`.
-    var birthdayIn: String?
+    /// The birthday 「これからのこと」 counts to (the same day the age is from).
+    var birthday: CatCareDay?
 
-    /// 「誕生日まで」 shows from this many days before the birthday.
-    static let birthdaySoonDays = 30
-
-    static func make(cat: CatHomeCat, record: CatCareRecord?, progress: CatCareProgress?,
-                     farewell: CatCareDay?, now: Date = Date(),
+    static func make(cat: CatHomeCat, record: CatCareRecord?, farewell: CatCareDay?, now: Date = Date(),
                      calendar: Calendar = .nekoGregorian) -> CatHomeFacts {
         let profile = cat.profile
         if let farewell {
             let day = CatFarewell.text(farewell)
             return CatHomeFacts(line: "旅立った日　" + day, spoken: "\(cat.name)、旅立った日、\(day)", departed: true,
-                                progressText: nil, birthdayIn: nil)
+                                birthday: nil)
         }
         let birthday: Date? = profile?.lifeDates.birthday?.date
             ?? (profile?.lifeReference?.kind == .birthday ? profile?.lifeReference?.date : nil)
@@ -142,13 +140,21 @@ struct CatHomeFacts {
         let about = [sex, age].compactMap { $0 }.joined(separator: "・")
         let parts = [about.isEmpty ? nil : about, days.map { "うちに来て \($0.formatted())日" }].compactMap { $0 }
         let spoken = [cat.name, sex, age, days.map { "うちに来て\($0)日" }].compactMap { $0 }.joined(separator: "、")
-        let progressText = progress.map { $0.filled >= $0.total ? "そろっています" : "あと\($0.total - $0.filled)つ" }
-        // 11/13: only when it is near; 「あと239日」 every day said nothing.
-        let birthdayIn: String? = birthday.flatMap { Self.daysUntilBirthday($0, now: now, calendar: calendar) }
-            .flatMap { $0 <= Self.birthdaySoonDays ? $0 : nil }
-            .map { $0 == 0 ? "きょう" : "あと\($0)日" }
+        // 「だいたいの日付」: the day is kept, the age it gives is not said.
+        let birthdayApproximate = profile?.lifeDates.birthday?.isApproximate
+            ?? (profile?.lifeReference?.kind == .birthday ? profile?.lifeReference?.isApproximate : nil)
+            ?? false
+        let birthdayDay = birthday.flatMap { CatCareDay(date: $0, calendar: calendar) }
+        let dayLine: String? = CatCareDay(date: now, calendar: calendar).flatMap { today in
+            CatHomeCareCore.heroDayLine(birthday: birthdayDay, birthdayYearKnown: !birthdayApproximate,
+                                        adoption: adoption.flatMap { CatCareDay(date: $0, calendar: calendar) },
+                                        today: today)
+        }
+        if let dayLine {
+            return CatHomeFacts(line: dayLine, spoken: "\(cat.name)、\(dayLine)", departed: false, birthday: birthdayDay)
+        }
         return CatHomeFacts(line: parts.isEmpty ? nil : parts.joined(separator: "　／　"), spoken: spoken,
-                            departed: false, progressText: progressText, birthdayIn: birthdayIn)
+                            departed: false, birthday: birthdayDay)
     }
 
     /// 「3歳2か月」, 「3歳」, or 「5か月」 under one year. Nil for a birthday ahead.
@@ -165,15 +171,6 @@ struct CatHomeFacts {
         let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: adoption),
                                            to: calendar.startOfDay(for: now)).day
         return days.flatMap { $0 >= 0 ? $0 : nil }
-    }
-
-    /// Days to the next birthday; 0 on the day. 2/29 counts on 3/1 in other years.
-    static func daysUntilBirthday(_ birthday: Date, now: Date, calendar: Calendar) -> Int? {
-        let parts = calendar.dateComponents([.month, .day], from: birthday)
-        let today = calendar.startOfDay(for: now)
-        guard let next = calendar.nextDate(after: today.addingTimeInterval(-1), matching: parts,
-                                           matchingPolicy: .nextTime) else { return nil }
-        return calendar.dateComponents([.day], from: today, to: calendar.startOfDay(for: next)).day
     }
 }
 
@@ -237,8 +234,6 @@ struct CatHomeView: View {
     /// page too, so 「この子のこと」 has one place for everyone (11/7).
     @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
     @StateObject private var states = CatHomeToolStates()
-    /// Each cat's records under the buttons (CatHomeRecordsView.swift).
-    @StateObject private var records = CatHomeRecordsModel()
     @AppStorage(CatFarewell.key) private var farewellJSON = ""
     /// The cat whose page is shown, and the cat the tools open for.
     @AppStorage("catHome.selectedCat.v1") private var storedCatID = ""
@@ -280,7 +275,6 @@ struct CatHomeView: View {
         }
         .navigationDestination(for: CatHomeRoute.self) { route in toolPage(route) }
         .onAppear { Task { await states.refresh() } }
-        .onAppear { records.refresh() }
         // Kept once the pages rest, never while they move.
         .task(id: pageID) {
             guard let pageID, pageID != storedCatID else { return }
@@ -341,26 +335,17 @@ struct CatHomeView: View {
         }
     }
 
-    /// How far this cat's この子のこと is (the count the ring used).
-    private func progress(for cat: CatHomeCat, record: CatCareRecord?) -> CatCareProgress {
-        let draft = record.map { CatCareDraft(record: $0, household: careStore.state?.household ?? CatCareHousehold()) }
-            ?? CatCareDraft()
-        return CatCareProgress(draft: draft, record: record,
-                               hasLifeDates: cat.profile.map { $0.lifeReference != nil })
-    }
-
-    /// The cat's photos for 「さいきんの写真」 and 「1年前のきょう」; none without a profile.
-    private func photos(for cat: CatHomeCat) -> [PhotoPresentation] {
-        cat.profile.flatMap { tools.profilePhotos[$0.identifier] } ?? []
-    }
-
-    private func facts(for cat: CatHomeCat) -> CatHomeFacts {
-        let record = self.record(for: cat)
+    private func facts(for cat: CatHomeCat, record: CatCareRecord?) -> CatHomeFacts {
         // Cats whose farewell day is recorded (1.0 only, as in この子のこと).
         let farewell = Version1.isOn ? CatFarewell.days(farewellJSON)[cat.farewellKey] : nil
-        return CatHomeFacts.make(cat: cat, record: record,
-                                 progress: farewell == nil ? progress(for: cat, record: record) : nil,
-                                 farewell: farewell)
+        return CatHomeFacts.make(cat: cat, record: record, farewell: farewell)
+    }
+
+    /// 「これからのこと」 for a living cat: what exists for it (CatHomeCareView.swift).
+    private func care(for cat: CatHomeCat, record: CatCareRecord?, facts: CatHomeFacts) -> CatHomeCareRows? {
+        guard !facts.departed else { return nil }
+        return CatHomeCareRows.make(hasProfile: cat.profile != nil, record: record, birthday: facts.birthday,
+                                    vetMemos: states.vetMemos(for: cat, record: record))
     }
 
     // MARK: Pages
@@ -370,12 +355,7 @@ struct CatHomeView: View {
         ScrollView(.horizontal) {
             LazyHStack(spacing: 0) {
                 ForEach(Array(cats.enumerated()), id: \.element.id) { index, cat in
-                    CatHomePage(cat: cat, facts: facts(for: cat), metrics: metrics,
-                                pageIndex: index, pageCount: cats.count,
-                                vetUnfinished: states.vetUnfinished(cat), searching: states.searching(cat),
-                                tools: tools, carePage: AnyView(carePage(cat)),
-                                record: record(for: cat), photos: photos(for: cat), records: records,
-                                topBar: AnyView(topBar(cats, current: cat)))
+                    page(cat, index: index, cats: cats, metrics: metrics)
                         // Only the page on screen is read and found by tests.
                         .accessibilityHidden(cat.id != current.id)
                         .containerRelativeFrame(.horizontal)
@@ -389,6 +369,21 @@ struct CatHomeView: View {
         .scrollIndicators(.hidden)
         .scrollDisabled(cats.count < 2)
         .onAppear { if pageID == nil { pageID = current.id } }
+    }
+
+    private func page(_ cat: CatHomeCat, index: Int, cats: [CatHomeCat], metrics: CatHomeMetrics) -> CatHomePage {
+        let record = self.record(for: cat)
+        let facts = self.facts(for: cat, record: record)
+        let carePage = AnyView(self.carePage(cat))
+        return CatHomePage(cat: cat, facts: facts, metrics: metrics,
+                           pageIndex: index, pageCount: cats.count,
+                           vetUnfinished: states.vetMemos(for: cat, record: record).contains(where: \.isUnfinished),
+                           searching: states.searching(cat),
+                           tools: tools, carePage: carePage,
+                           care: care(for: cat, record: record, facts: facts),
+                           careLinks: CatHomeCareLinks(cat: cat, catID: record?.catID, carePage: carePage,
+                                                       saveLifeDates: actions.updateLifeDates),
+                           topBar: AnyView(topBar(cats, current: cat)))
     }
 
     /// The page 「この子のこと」 opens: the cat's own page (CatProfileDetailView)
@@ -510,8 +505,9 @@ struct CatHomeMetrics {
     }
 }
 
-/// One cat's page: the photo with the name, the tools, the cat's records
-/// (11/13), then 「この子のこと」 as one row.
+/// One cat's page: the photo with the name, the tools, 「これからのこと」
+/// (11/14), then 「この子のこと」 as one row. Only what helps take care of
+/// the cat: its photos and past records live in their own tabs.
 private struct CatHomePage: View {
     let cat: CatHomeCat
     let facts: CatHomeFacts
@@ -522,9 +518,9 @@ private struct CatHomePage: View {
     let searching: Bool
     let tools: CatHomeTools
     let carePage: AnyView
-    let record: CatCareRecord?
-    let photos: [PhotoPresentation]
-    let records: CatHomeRecordsModel
+    /// nil: a departed cat, or nothing to show for the four rows.
+    let care: CatHomeCareRows?
+    let careLinks: CatHomeCareLinks
     /// The cat menu and 設定, at the top of the photo; they scroll with it.
     let topBar: AnyView
 
@@ -532,7 +528,8 @@ private struct CatHomePage: View {
         ScrollView(.vertical) {
             VStack(spacing: 0) {
                 CatHomeHero(cat: cat, facts: facts, metrics: metrics, pageIndex: pageIndex, pageCount: pageCount)
-                VStack(spacing: 22) {
+                // 18 (was 22): the page fits one screen on a standard iPhone (11/14).
+                VStack(spacing: 18) {
                     // A cat whose farewell day is recorded is not offered in the tools.
                     if !facts.departed {
                         CatHomeToolBar(cat: cat, toolsShown: CatHomeTool.allCases, width: metrics.width,
@@ -540,10 +537,8 @@ private struct CatHomePage: View {
                         // Until 「この迷子の記録を終える」 clears the place, day and log.
                         if searching { CatHomeSearchingLine(cat: cat) }
                     }
-                    // Kept for a departed cat: its photos and records stay to look back on.
-                    CatHomeRecordsSection(cat: cat, record: record, photos: photos, birthdayIn: facts.birthdayIn,
-                                          tools: tools, model: records)
-                    CatHomeAboutCard(cat: cat, facts: facts, destination: carePage)
+                    if let care { CatHomeCareCard(rows: care, links: careLinks) }
+                    CatHomeAboutCard(cat: cat, destination: carePage)
                 }
                 .padding(.horizontal, 16)
                 // Up into the photo's fade.
@@ -556,7 +551,6 @@ private struct CatHomePage: View {
         }
         .scrollIndicators(.hidden)
         .ignoresSafeArea(.container, edges: .top)
-        .catHomeRecordsLoading(records, cat: cat, record: record, photos: photos)
     }
 }
 
@@ -773,7 +767,8 @@ private struct CatHomeSearchingLine: View {
     }
 }
 
-/// A round button: a line icon in a circle, a dot for a state, a short name.
+/// A round button: a line icon in a circle and a short name; its state is
+/// only in what VoiceOver reads.
 private struct CatHomeToolButton: View {
     let tool: CatHomeTool
     let state: (text: String, color: Color)?
@@ -788,18 +783,10 @@ private struct CatHomeToolButton: View {
                 .frame(width: circle, height: circle)
                 .background(Color(.secondarySystemGroupedBackground), in: Circle())
                 .overlay(Circle().strokeBorder(Color(.separator), lineWidth: 1 / max(displayScale, 1)))
-                .overlay(alignment: .topTrailing) {
-                    // 11/13: 迷子 is said in words under the buttons
-                    // (CatHomeSearchingLine), not as a red dot; VoiceOver still
-                    // hears it on the button.
-                    if let state, tool != .lost {
-                        Circle()
-                            .fill(state.color)
-                            .frame(width: 11, height: 11)
-                            .overlay(Circle().stroke(Color(.systemGroupedBackground), lineWidth: 2))
-                            .offset(x: -1, y: 1)
-                    }
-                }
+                // No dot (11/14): 迷子 is said in words under the buttons
+                // (CatHomeSearchingLine) and 「書きかけ」 on the 病院 row of
+                // 「これからのこと」, one place for a state; VoiceOver still
+                // hears it on the button.
             Text(tool.shortTitle)
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(.primary)
@@ -841,17 +828,16 @@ private struct CatHomeToolRow: View {
     }
 }
 
-/// 「この子のこと」 as one row at the bottom (11/13): how much is written and
-/// a chevron. The weight is in the records and the birthday in its own card
-/// above them. The row opens the cat's page, with the same identifiers.
+/// 「この子のこと」 as one row at the bottom: the name and a chevron (11/14:
+/// no 「あと○つ」 here; the count stays inside この子のこと). The row opens
+/// the cat's page, with the same identifiers.
 private struct CatHomeAboutCard: View {
     let cat: CatHomeCat
-    let facts: CatHomeFacts
     let destination: AnyView
 
     var body: some View {
         NavigationLink { destination } label: {
-            CatHomeLine(title: "この子のこと", value: facts.progressText, emphasized: true)
+            CatHomeLine(title: "この子のこと", value: nil, emphasized: true)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 16)
                 .background(Color(.secondarySystemGroupedBackground),
