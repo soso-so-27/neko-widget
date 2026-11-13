@@ -509,8 +509,11 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         # The executable operation matrix covers all three requested entry points,
         # bounded paid-offline access, and expired -> membershipRequired.
         matrix = source("ci/verify-membership-access.swift")
-        for operation in (".createOwnWindow", ".createPersonalMemo", ".openGrowingSummary"):
+        for operation in (".createOwnWindow", ".openGrowingSummary"):
             self.assertIn(operation, matrix)
+        # 11/13: a new memo is free, so the matrix lists it with the free operations.
+        free = section(matrix, "let free: [MembershipOperation] = [", "        ]")
+        self.assertIn(".createPersonalMemo", free)
         self.assertIn('("offline within prior authority",', matrix)
         self.assertIn('("expired", .verified(validUntil: past), .membershipRequired)', matrix)
 
@@ -761,11 +764,11 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
                         actions.index('accessibilityIdentifier("membership-offer-price")'))
         self.assertLess(actions.index('accessibilityIdentifier("membership-offer-price")'),
                         actions.index('accessibilityIdentifier("membership-offer-renewal")'))
-        # The five rows are regular weight; only the heading is bold.
+        # The four rows (a new memo is free since 11/13) are regular weight; only the heading is bold.
         rows = section(view, "    private var valueRows: some View {", "    private var purchaseBlock: some View {")
         self.assertIn("Text(value.0).font(.subheadline)", rows)
         self.assertNotIn(".headline", rows)
-        self.assertEqual(len(re.findall(r'^        \("', view, re.M)), 5)
+        self.assertEqual(len(re.findall(r'^        \("', view, re.M)), 4)
         # Guideline 3.1.2: the price once, under the button, with 自動更新, as a headline.
         model = source("NekoWidget/Services/MembershipOfferModel.swift")
         monthly = section(model, "static let startTitle", "enum MembershipRestoreFailure")
@@ -793,6 +796,49 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertIn("XCTAssertGreaterThanOrEqual(element.frame.minX - margin.minX, 16, element.identifier)", ui)
         self.assertIn('XCTAssertTrue(price.isHittable, "The price is pinned on the first screen")', ui)
         self.assertNotIn("無料で始める", ui)
+
+    def test_new_memo_is_free_and_not_a_plus_value_or_entry(self) -> None:
+        # 11/13: writing a new memo on a photo is free for everyone. Plus keeps
+        # the works and movies, making a まど, making a family notebook and saving.
+        policy = source("Shared/MembershipAccessPolicy.swift")
+        decision = section(policy, "switch operation {", "    private static func verifiedDecision(")
+        allowed, gated = decision.split("return .allowed", 1)
+        self.assertIn(".createPersonalMemo", allowed)
+        self.assertNotIn(".createPersonalMemo", gated)
+        for operation in (".openGrowingSummary", ".createOwnWindow", ".addContentToOwnWindow"):
+            self.assertIn(operation, gated)
+        context = source("NekoWidget/Services/MembershipAccessContext.swift")
+        self.assertIn("enforcementEnabled && decision(for: .openGrowingSummary, now: now) == .allowed", context)
+        # The memo editor and the photo's 「メモ」 button no longer check Plus.
+        for path in ("NekoWidget/Views/PhotoMemoryNoteView.swift", "NekoWidget/Views/LikedPhotosView.swift"):
+            text = source(path)
+            self.assertNotIn(".createPersonalMemo", text, path)
+            self.assertNotIn("Plusで書けます", text, path)
+            self.assertNotIn("メモを書くのはPlus", text, path)
+        # The offer lists four values, in this order, without the memo line.
+        view = source("NekoWidget/Views/MembershipOfferView.swift")
+        values = section(view, "static let values = [", "    ]\n")
+        self.assertEqual(re.findall(r'\("([^"]+)", "[^"]+"\)', values), [
+            "月の作品、季節のムービー",
+            "まどを作って、家族と写真を届け合う",
+            "家族の手帳を作って、家族と一緒に書く",
+            "猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる",
+        ])
+        self.assertIn('"解約しても、写真・まど・メモは消えません",', view)
+        # No memo-originated Plus entry remains (offer, usage name, auto-open key).
+        model = source("NekoWidget/Services/MembershipOfferModel.swift")
+        contexts = section(model, "enum PlusOfferContext: Equatable, Sendable {", "    var entryTitle: String {")
+        self.assertNotIn("newMemo", contexts)
+        self.assertNotIn("newMemo", model)
+        self.assertNotIn("new-memo", source("NekoWidget/Services/UsageReport.swift"))
+        self.assertNotIn("newMemo", source("NekoWidget/Services/UsageCounter.swift"))
+        self.assertNotIn('"new-memo"', source("ci/verify-usage-report.swift"))
+        ui = source("NekoWidgetUITests/PhotoPermissionUITests.swift")
+        self.assertNotIn("plus-offer-entry-new-memo", ui)
+        self.assertNotIn("membership-preview-open-new-memo", ui)
+        self.assertIn('"A new memo must open without Plus"', ui)
+        tests = source("NekoWidgetTests/OutputHarnessTests.swift")
+        self.assertIn("XCTAssertEqual(expired.decision(for: .createPersonalMemo, now: now), .allowed)", tests)
 
 if __name__ == "__main__":
     unittest.main()

@@ -627,15 +627,12 @@ struct AlbumPrototypeView: View {
 /// movies, so every cover that opens with Plus says so before a tap.
 struct AlbumPlusMark: View {
     var compact = false
-    /// Beside a label, not over a cover: no margin of its own (the photo's
-    /// 「メモ」 button, 11/12).
-    var inline = false
 
     var body: some View {
         Text("Plus").font(.caption2.bold())
             .padding(.horizontal, compact ? 6 : 8).padding(.vertical, compact ? 2 : 4)
             .background(.thinMaterial, in: Capsule())
-            .padding(inline ? 0 : compact ? 5 : 12)
+            .padding(compact ? 5 : 12)
             .accessibilityHidden(true)
     }
 }

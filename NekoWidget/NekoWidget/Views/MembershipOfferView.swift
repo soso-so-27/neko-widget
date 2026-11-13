@@ -47,10 +47,10 @@ struct MembershipOfferView: View {
     /// first run's own Plus page says the same under its 「あとで」.
     static let staysFreeLine = "Plusにしなくても、このまま無料で使えます。"
     /// What Plus is, in the LP's words, plus saving (part of the 980 yen since 10/20).
-    /// The daily Widget photo is free since 11/11, so it is not listed.
+    /// The daily Widget photo is free since 11/11 and a new memo since 11/13,
+    /// so neither is listed.
     static let values = [
         ("月の作品、季節のムービー", "rectangle.stack"),
-        ("写真に新しいメモを書く", "square.and.pencil"),
         ("まどを作って、家族と写真を届け合う", "person.2"),
         ("家族の手帳を作って、家族と一緒に書く", "book.closed"),
         ("猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる", "icloud"),

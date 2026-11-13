@@ -8,17 +8,17 @@ import SwiftUI
 /// here and in `ci/run-cheap-safety-checks.sh`, never an accidental reuse.
 /// Photo access, invitations, receiving, hearts, and favorites have no case.
 ///
-/// Connected now: onboarding, Settings, a new memo, a monthly summary or
+/// Connected now: onboarding, Settings, a monthly summary or
 /// seasonal movie, preservation, and the current group-window
 /// creation/continuation screens. The personal Widget's daily photo is free
-/// (11/11), so the Widget is not a Plus entry.
+/// (11/11), so the Widget is not a Plus entry; neither is a new memo (free,
+/// 11/13).
 enum PlusOfferContext: Equatable, Sendable {
     /// The first Plus offer (11/10): once, on a later opening after the
     /// Widget was placed (FirstPlusOfferPolicy), or a resumed first-run page.
     case onboarding
     /// A monthly summary (1...12) or a seasonal movie (`nil`).
     case monthlySummary(month: Int?)
-    case newMemo
     case createWindow
     /// The person who made a window opened it after it stopped.
     case continueWindow
@@ -38,7 +38,6 @@ enum PlusOfferContext: Equatable, Sendable {
         case .onboarding: "Plusについて見る"
         case let .monthlySummary(month?) where (1...12).contains(month): "Plusで\(month)月の作品を見る"
         case .monthlySummary: "Plusで作品とムービーを見る"
-        case .newMemo: "Plusについて見る"
         case .createWindow: "まどを作る"
         case .continueWindow: "このまどを続ける"
         case .createFamily: "家族の手帳を作る"
@@ -59,7 +58,6 @@ enum PlusOfferContext: Equatable, Sendable {
         case .settings: nil
         case let .monthlySummary(month?) where (1...12).contains(month): "\(month)月の作品ができています。Plusで開けます。"
         case .monthlySummary: "季節のムービーができています。Plusで見られます。"
-        case .newMemo: "この写真に、その日のことを書き残せます。メモを書くのはPlusの機能です。"
         case .createWindow: "まどを作ると、家族のホーム画面に写真を届けられます。Plusがいるのは作る人だけです。"
         case .continueWindow: "このまどは、作った人のPlusで続きます。"
         case .createFamily: "お世話の記録を、家族で一緒に書けます。Plusがいるのは作る人だけです。"
@@ -85,7 +83,6 @@ enum PlusOfferContext: Equatable, Sendable {
         switch self {
         case .onboarding: "onboarding"
         case .monthlySummary: "monthly-summary"
-        case .newMemo: "new-memo"
         case .createWindow: "create-window"
         case .continueWindow: "continue-window"
         case .createFamily: "create-family"
@@ -1144,9 +1141,6 @@ struct PlusOfferPrompt: View {
     @State private var didPresent = false
     @State private var finishedWithPlus = false
 
-    /// Set once a new memo has opened the Plus screen by itself.
-    static let newMemoAutoOpenedKey = "plusOfferNewMemoAutoOpened"
-
     var body: some View {
         // The sheet hangs on the prompt as a whole, not on one branch: buying
         // flips the state to 「確認中」 for a moment, and the sheet must not
@@ -1188,11 +1182,6 @@ struct PlusOfferPrompt: View {
     private func openByItselfIfDue() {
         guard presentsImmediately, !didPresent else { return }
         didPresent = true
-        if context == .newMemo {
-            let defaults = UserDefaults.standard
-            guard !defaults.bool(forKey: Self.newMemoAutoOpenedKey) else { return }
-            defaults.set(true, forKey: Self.newMemoAutoOpenedKey)
-        }
         showsOffer = true
     }
 }
@@ -1390,7 +1379,7 @@ struct MembershipOfferPreviewView: View {
 
     /// Every case, so a fixture run shows each entry opens the same screen.
     static let entryContexts: [PlusOfferContext] = [
-        .onboarding, .monthlySummary(month: 10), .newMemo,
+        .onboarding, .monthlySummary(month: 10),
         .createWindow, .continueWindow, .createFamily, .continueFamily, .preservation, .settings,
     ]
 

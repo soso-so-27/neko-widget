@@ -7939,10 +7939,10 @@ class PresubmitFixes1110Tests(unittest.TestCase):
                 '("猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる", "icloud")']
         for row in rows:
             self.assertIn(row, values)
-        # 11/11: the daily Widget photo is free, so exactly these five rows.
+        # 11/11: the daily Widget photo is free; 11/13: a new memo too. Exactly these four rows.
         self.assertEqual(
             re.findall(r'\("([^"]+)", "[^"]+"\)', values),
-            ["月の作品、季節のムービー", "写真に新しいメモを書く",
+            ["月の作品、季節のムービー",
              "まどを作って、家族と写真を届け合う", "家族の手帳を作って、家族と一緒に書く",
              "猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる"])
         self.assertLess(values.index(rows[0]), values.index(rows[1]))
@@ -7952,7 +7952,9 @@ class PresubmitFixes1110Tests(unittest.TestCase):
         model = source("NekoWidget/Services/MembershipOfferModel.swift")
         # 11/12 (review 5): the benefit first; the free days are the button's
         # words only (StoreKit's), never repeated in the reason.
-        self.assertIn('case .newMemo: "この写真に、その日のことを書き残せます。メモを書くのはPlusの機能です。"', model)
+        # 11/13: a new memo is free, so no Plus reason names it.
+        self.assertNotIn("case .newMemo", model)
+        self.assertNotIn("メモを書くのはPlus", model)
         self.assertNotIn("新しいメモはPlusで書けます", model)
         self.assertNotIn("func reason(trialPeriod:", model)
         self.assertNotIn("は無料です。", model)
@@ -7964,7 +7966,9 @@ class PresubmitFixes1110Tests(unittest.TestCase):
         self.assertIn("if let reason = reasonOverride ?? context.reason {", offer)
         self.assertNotIn("trialPeriod", section(offer, "    private var photoHeader: some View {", "    private static func photoBox"))
         note = source("NekoWidget/Views/PhotoMemoryNoteView.swift")
-        self.assertIn('saveError = "メモを書くのはPlusの機能です。"', note)
+        self.assertNotIn("メモを書くのはPlusの機能です", note)
+        self.assertNotIn(".createPersonalMemo", note)
+        self.assertNotIn("PlusOfferPrompt", note)
 
     def test_family_notebook_test_tools_are_compiled_out(self) -> None:
         notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
@@ -8268,12 +8272,11 @@ class PlusMomentOfBuying1112Tests(unittest.TestCase):
         reasons = section(self.model, "    var reason: String? {", "func hasPendingAction(")
         for line in ('"\\(month)月の作品ができています。Plusで開けます。"',
                      '"季節のムービーができています。Plusで見られます。"',
-                     '"この写真に、その日のことを書き残せます。メモを書くのはPlusの機能です。"',
                      '"まどを作ると、家族のホーム画面に写真を届けられます。Plusがいるのは作る人だけです。"',
                      '"お世話の記録を、家族で一緒に書けます。Plusがいるのは作る人だけです。"',
                      '"猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せます。"'):
             self.assertIn(line, reasons)
-        for gone in ("写真やメモの保存", "は無料です", "trialPeriod"):
+        for gone in ("写真やメモの保存", "は無料です", "trialPeriod", "メモを書くのはPlus"):
             self.assertNotIn(gone, reasons)
         self.assertIn('Link("プライバシーポリシー", destination: privacyURL)', self.view)
         self.assertIn('.accessibilityIdentifier("membership-offer-privacy")', self.view)
@@ -8284,19 +8287,19 @@ class PlusMomentOfBuying1112Tests(unittest.TestCase):
         self.assertIn(".environment(\\.plusOfferPhoto, coverPhoto)", gate)
         self.assertEqual(album.count("AlbumWorkGate(month: letter.monthNumber, arrival: letter.workArrivalDate, cover: letter.coverPhoto) {"), 2)
 
-    def test_memo_says_plus_and_opens_the_offer_once(self) -> None:
+    def test_memo_is_free_with_no_plus_mark_or_offer(self) -> None:
+        # 11/13: a new memo is free, so the 「メモ」 button carries no Plus mark
+        # or 「Plusで書けます」, and no memo-originated Plus offer remains.
         photos = source("NekoWidget/Views/LikedPhotosView.swift")
-        needs = section(photos, "private func newMemoNeedsPlus(_ photo: PhotoPresentation) -> Bool {", "\n    }\n")
-        self.assertIn("personalNote.note(for: photo.localIdentifier) == nil", needs)
-        self.assertIn("membershipAccess.decision(for: .createPersonalMemo) == .membershipRequired", needs)
-        self.assertIn('identifier: "photo-memory-note-open", plusMark: newMemoNeedsPlus(photo)) {', photos)
-        self.assertIn("if plusMark { AlbumPlusMark(compact: true, inline: true) }", photos)
-        self.assertIn('(newMemoNeedsPlus(photo) ? "、Plusで書けます" : "")', photos)
+        self.assertNotIn("newMemoNeedsPlus", photos)
+        self.assertNotIn("Plusで書けます", photos)
+        self.assertNotIn(".createPersonalMemo", photos)
+        self.assertIn('identifier: "photo-memory-note-open") {', photos)
         prompt = section(self.model, "struct PlusOfferPrompt: View {", "struct PlusSettingsSection: View {")
         once = section(prompt, "private func openByItselfIfDue() {", "\n    }\n")
-        self.assertIn("guard !defaults.bool(forKey: Self.newMemoAutoOpenedKey) else { return }", once)
-        self.assertLess(once.index("defaults.set(true, forKey: Self.newMemoAutoOpenedKey)"), once.index("showsOffer = true"))
-        self.assertIn('case .newMemo: "Plusについて見る"', self.model)
+        self.assertNotIn("newMemoAutoOpenedKey", self.model)
+        self.assertIn("showsOffer = true", once)
+        self.assertNotIn("case newMemo", self.model)
         self.assertIn('"Plusで\\(month)月の作品を見る"', self.model)
 
     def test_billing_issue_has_its_own_settings_state(self) -> None:

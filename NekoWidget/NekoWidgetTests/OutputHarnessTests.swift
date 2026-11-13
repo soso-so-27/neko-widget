@@ -15,7 +15,9 @@ final class OutputHarnessTests: XCTestCase {
         let unverified = MembershipAccessContext(enforcementEnabled: true, personal: .inactive)
         XCTAssertEqual(unverified.workDecision(arrival: arrival, now: now), .verificationRequired)
         XCTAssertEqual(expired.decision(for: .createOwnWindow, now: now), .membershipRequired)
-        XCTAssertEqual(expired.decision(for: .createPersonalMemo, now: now), .membershipRequired)
+        XCTAssertEqual(expired.decision(for: .openGrowingSummary, now: now), .membershipRequired)
+        // 11/13: a new memo is free, with or without Plus.
+        XCTAssertEqual(expired.decision(for: .createPersonalMemo, now: now), .allowed)
         let active = MembershipAccessContext(enforcementEnabled: true,
             personal: .verified(validUntil: now.addingTimeInterval(60)))
         XCTAssertEqual(active.workDecision(arrival: arrival.addingTimeInterval(-1000), now: now), .allowed)
