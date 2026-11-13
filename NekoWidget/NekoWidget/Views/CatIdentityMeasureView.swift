@@ -79,7 +79,7 @@ final class CatIdentityMeasureModel: ObservableObject {
     }
 
     /// e.g. "iPhone16,2" (the hardware model only).
-    private static func machine() -> String {
+    fileprivate static func machine() -> String {
         var system = utsname()
         uname(&system)
         return withUnsafeBytes(of: &system.machine) { buffer in
@@ -88,8 +88,77 @@ final class CatIdentityMeasureModel: ObservableObject {
     }
 }
 
+/// 「出てこない写真を数える」: a separate run, its own result and cache.
+@MainActor
+final class CatPhotoCoverageModel: ObservableObject {
+    @Published private(set) var phase: CatIdentityMeasureModel.Phase = .idle
+    @Published private(set) var resultText: String?
+    @Published private(set) var copied = false
+    private var task: Task<Void, Never>?
+
+    init() {
+        resultText = CatPhotoCoverageResultCache.load()
+    }
+
+    var isRunning: Bool { task != nil }
+
+    func start() {
+        guard task == nil else { return }
+        copied = false
+        phase = .running(done: 0, total: 0)
+        UIApplication.shared.isIdleTimerDisabled = true
+        let device = CatPhotoCoverageRunner.Device(
+            model: CatIdentityMeasureModel.machine(),
+            systemVersion: UIDevice.current.systemVersion
+        )
+        let report: @Sendable (Int, Int) -> Void = { [weak self] done, total in
+            Task { @MainActor in self?.progress(done: done, total: total) }
+        }
+        task = Task { [weak self] in
+            let outcome = await CatPhotoCoverageRunner.measure(device: device, progress: report)
+            self?.finish(outcome)
+        }
+    }
+
+    func stop(_ message: String) {
+        guard let task else { return }
+        task.cancel()
+        self.task = nil
+        UIApplication.shared.isIdleTimerDisabled = false
+        phase = .stopped(message)
+    }
+
+    func copy() {
+        guard let resultText else { return }
+        UIPasteboard.general.string = resultText
+        copied = true
+    }
+
+    private func progress(done: Int, total: Int) {
+        guard task != nil, case .running = phase else { return }
+        phase = .running(done: done, total: total)
+    }
+
+    private func finish(_ outcome: CatPhotoCoverageOutcome) {
+        guard task != nil else { return }  // already stopped
+        task = nil
+        UIApplication.shared.isIdleTimerDisabled = false
+        switch outcome {
+        case let .blocked(message):
+            phase = .blocked(message)
+        case let .finished(text):
+            resultText = text
+            CatPhotoCoverageResultCache.save(text)
+            phase = .finished
+        case .cancelled:
+            phase = .stopped("止めました。")
+        }
+    }
+}
+
 struct CatIdentityMeasureView: View {
     @StateObject private var model = CatIdentityMeasureModel()
+    @StateObject private var coverage = CatPhotoCoverageModel()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -101,6 +170,7 @@ struct CatIdentityMeasureView: View {
                         .accessibilityIdentifier("cat-identity-measure-stop")
                 } else {
                     Button("測る") { model.start() }
+                        .disabled(coverage.isRunning)
                         .accessibilityIdentifier("cat-identity-measure-start")
                 }
             } footer: {
@@ -118,15 +188,46 @@ struct CatIdentityMeasureView: View {
                         .accessibilityIdentifier("cat-identity-measure-copy")
                 }
             }
+            Section {
+                coverageStatus
+                if coverage.isRunning {
+                    Button("止める", role: .destructive) { coverage.stop("止めました。") }
+                        .accessibilityIdentifier("cat-photo-coverage-stop")
+                } else {
+                    Button("出てこない写真を数える") { coverage.start() }
+                        .disabled(model.isRunning)
+                        .accessibilityIdentifier("cat-photo-coverage-start")
+                }
+            } header: {
+                Text("出てこない写真の内訳")
+            } footer: {
+                Text("写真はiPhoneの外に出ません。")
+            }
+            if let text = coverage.resultText {
+                Section("内訳の結果") {
+                    ScrollView(.horizontal) {
+                        Text(text)
+                            .font(.system(.caption2, design: .monospaced))
+                            .fixedSize()
+                            .textSelection(.enabled)
+                    }
+                    Button(coverage.copied ? "コピーしました" : "結果をコピー") { coverage.copy() }
+                        .accessibilityIdentifier("cat-photo-coverage-copy")
+                }
+            }
         }
         .navigationTitle("猫の見分けを測る")
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
                 model.stop("アプリが裏に回ったので止めました。もう一度「測る」を押してください。")
+                coverage.stop("アプリが裏に回ったので止めました。もう一度押してください。")
             }
         }
-        .onDisappear { model.stop("止めました。") }
+        .onDisappear {
+            model.stop("止めました。")
+            coverage.stop("止めました。")
+        }
     }
 
     @ViewBuilder
@@ -144,6 +245,26 @@ struct CatIdentityMeasureView: View {
             }
         case .finished:
             Text("測り終えました。")
+        case let .blocked(message), let .stopped(message):
+            Text(message)
+        }
+    }
+
+    @ViewBuilder
+    private var coverageStatus: some View {
+        switch coverage.phase {
+        case .idle:
+            Text("猫につないだアルバムの写真が、アプリの猫の写真に出ない理由を数えます。")
+        case let .running(done, total):
+            VStack(alignment: .leading, spacing: 8) {
+                if total > 0 {
+                    ProgressView(value: Double(done), total: Double(total))
+                }
+                Text(total == 0 ? "準備しています" : "写真を調べ直しています \(done) / \(total) 枚")
+                    .monospacedDigit()
+            }
+        case .finished:
+            Text("数え終えました。")
         case let .blocked(message), let .stopped(message):
             Text(message)
         }

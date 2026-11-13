@@ -128,4 +128,117 @@ final class CatIdentityMeasurementTests: XCTestCase {
         XCTAssertTrue(text.unicodeScalars.allSatisfy { $0.isASCII })
     }
 }
+
+/// 「出てこない写真の内訳」: bucketing and histograms from synthetic facts only.
+final class CatPhotoCoverageMeasurementTests: XCTestCase {
+    private func facts(_ change: (inout CatPhotoCoverageFacts) -> Void) -> CatPhotoCoverageFacts {
+        var value = CatPhotoCoverageFacts()
+        change(&value)
+        return value
+    }
+
+    func testShownNeedsCurrentSettingsNoExclusionAndSourceMembership() {
+        XCTAssertEqual(CatPhotoCoverageCore.bucket(facts { $0.record = .cat }), .shown)
+        XCTAssertEqual(CatPhotoCoverageCore.bucket(facts { $0.record = .cat; $0.recordUsesCurrentSettings = false }), .olderSettings)
+        XCTAssertEqual(CatPhotoCoverageCore.bucket(facts { $0.record = .cat; $0.householdExcluded = true }), .householdExcluded)
+        XCTAssertEqual(CatPhotoCoverageCore.bucket(facts {
+            $0.record = .cat; $0.usesSelectedSource = true; $0.inScanFetch = false
+        }), .hiddenBySourceAlbum)
+        // Whole library: a stored cat is shown even when the fetch moved on.
+        XCTAssertEqual(CatPhotoCoverageCore.bucket(facts { $0.record = .cat; $0.inScanFetch = false }), .shown)
+    }
+
+    func testRecordStatusesMapToTheirBuckets() {
+        XCTAssertEqual(CatPhotoCoverageCore.bucket(facts { $0.record = .noCat }), .judgedNotCat)
+        XCTAssertEqual(CatPhotoCoverageCore.bucket(facts { $0.record = .onlyInCloud }), .onlyInCloud)
+        XCTAssertEqual(CatPhotoCoverageCore.bucket(facts { $0.record = .failed }), .loadFailed)
+        XCTAssertEqual(CatPhotoCoverageCore.bucket(facts { $0.record = .screenshot }), .screenshot)
+        XCTAssertEqual(CatPhotoCoverageCore.bucket(facts { $0.record = .burstDuplicate }), .burstDuplicate)
+        // An excluded "no cat" is still a recogniser miss, not a user removal.
+        XCTAssertEqual(CatPhotoCoverageCore.bucket(facts { $0.record = .noCat; $0.householdExcluded = true }), .judgedNotCat)
+    }
+
+    func testUnscannedPhotosNameTheFirstFetchRule() {
+        XCTAssertEqual(CatPhotoCoverageCore.bucket(facts { $0.foundInPhotoKit = false; $0.record = .cat }), .notInPhotoKit)
+        XCTAssertEqual(CatPhotoCoverageCore.bucket(facts { $0.kind = .video; $0.inScanFetch = false }), .notImage)
+        XCTAssertEqual(CatPhotoCoverageCore.bucket(facts { $0.isHidden = true; $0.inScanFetch = false }), .hiddenInPhotos)
+        XCTAssertEqual(CatPhotoCoverageCore.bucket(facts { $0.isBurstNotPick = true; $0.inScanFetch = false }), .burstNotPick)
+        XCTAssertEqual(CatPhotoCoverageCore.bucket(facts { $0.inScanFetch = false; $0.usesSelectedSource = true }), .outsideScanSource)
+        XCTAssertEqual(CatPhotoCoverageCore.bucket(facts { $0.inScanFetch = false }), .notInScanFetchOther)
+        XCTAssertEqual(CatPhotoCoverageCore.bucket(facts { $0.isScreenshot = true }), .screenshot)
+        XCTAssertEqual(CatPhotoCoverageCore.bucket(CatPhotoCoverageFacts()), .notYetScanned)
+    }
+
+    func testEveryPhotoIsCountedOnce() {
+        let input = [
+            facts { $0.record = .cat },
+            facts { $0.record = .noCat },
+            facts { $0.record = .noCat },
+            facts { $0.kind = .video; $0.inScanFetch = false },
+            CatPhotoCoverageFacts(),
+            facts { $0.record = .onlyInCloud },
+        ]
+        let counts = CatPhotoCoverageCore.count(input)
+        XCTAssertEqual(counts.values.reduce(0, +), input.count)
+        XCTAssertEqual(counts[.judgedNotCat], 2)
+        XCTAssertEqual(CatPhotoCoverageBucket.allCases.map(\.group).sorted().first, 1)
+        XCTAssertEqual(Set(CatPhotoCoverageBucket.allCases.map(\.group)), [1, 2, 3, 4, 5])
+    }
+
+    func testRecheckGroups() {
+        XCTAssertEqual(CatPhotoCoverageCore.recheckGroup(.judgedNotCat), 0)
+        XCTAssertEqual(CatPhotoCoverageCore.recheckGroup(.notYetScanned), 1)
+        XCTAssertEqual(CatPhotoCoverageCore.recheckGroup(.onlyInCloud), 2)
+        XCTAssertEqual(CatPhotoCoverageCore.recheckGroup(.loadFailed), 2)
+        XCTAssertNil(CatPhotoCoverageCore.recheckGroup(.shown))
+        XCTAssertNil(CatPhotoCoverageCore.recheckGroup(.notImage))
+    }
+
+    func testHistogramBinsThresholdsDogsAndAreas() {
+        var histogram = CatPhotoRecognitionHistogram()
+        histogram.add(CatPhotoRecognitionSample())
+        histogram.add(CatPhotoRecognitionSample(bestCatConfidence: 0.1, bestCatArea: 0.01))
+        histogram.add(CatPhotoRecognitionSample(bestCatConfidence: 0.3, bestCatArea: 0.02))
+        histogram.add(CatPhotoRecognitionSample(bestCatConfidence: 0.5, bestCatArea: 0.05, hasDogAtLeastHalf: true))
+        histogram.add(CatPhotoRecognitionSample(bestCatConfidence: 0.69, bestCatArea: 0.2))
+        histogram.add(CatPhotoRecognitionSample(bestCatConfidence: 0.7, bestCatArea: 0.5))
+        histogram.add(CatPhotoRecognitionSample(bestCatConfidence: nil, bestCatArea: nil, hasDogAtLeastHalf: true))
+        XCTAssertEqual(histogram.total, 7)
+        XCTAssertEqual(histogram.confidence, [2, 1, 1, 2, 1])
+        XCTAssertEqual(histogram.passAtHalf, 3)
+        XCTAssertEqual(histogram.passAtPointThree, 4)
+        XCTAssertEqual(histogram.dogAtLeastHalf, 2)
+        XCTAssertEqual(histogram.area, [1, 2, 2])
+    }
+
+    func testRecheckCountsLoadsEvenWithoutAnImage() {
+        var recheck = CatPhotoCoverageRecheck()
+        recheck.add(load: .inCloud, sample: nil)
+        recheck.add(load: .local1024, sample: CatPhotoRecognitionSample(bestCatConfidence: 0.8, bestCatArea: 0.1))
+        recheck.add(load: .local512Only, sample: CatPhotoRecognitionSample())
+        XCTAssertEqual(recheck.loads, [1, 1, 1, 0])
+        XCTAssertEqual(recheck.histogram.total, 2)
+    }
+
+    func testSummaryIsNumbersAndBucketNamesOnly() {
+        var run = CatPhotoCoverageRunFacts()
+        run.deviceModel = "iPhone16,2 /Users/x"
+        run.systemVersion = "18.1"
+        run.linkedPhotos = 3
+        run.buckets = [.shown: 1, .judgedNotCat: 1, .notYetScanned: 1]
+        run.library.hoursSinceLastScan = 5
+        run.rechecks[0].add(load: .local1024, sample: CatPhotoRecognitionSample(bestCatConfidence: 0.55, bestCatArea: 0.03))
+        let text = CatPhotoCoverageCore.summaryText(facts: run)
+        XCTAssertTrue(text.hasPrefix("cat-photo-coverage v1\n"))
+        XCTAssertTrue(text.contains("device iPhone16,2Usersx iOS 18.1"))
+        XCTAssertTrue(text.contains("all 3"))
+        XCTAssertTrue(text.contains("last scan 5 h ago"))
+        XCTAssertTrue(text.contains("pass at 0.5 1, at 0.3 1"))
+        for bucket in CatPhotoCoverageBucket.allCases {
+            XCTAssertTrue(text.contains(bucket.rawValue), bucket.rawValue)
+        }
+        XCTAssertFalse(text.contains("/Users"))
+        XCTAssertTrue(text.unicodeScalars.allSatisfy { $0.isASCII })
+    }
+}
 #endif
