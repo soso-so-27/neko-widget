@@ -1,0 +1,46 @@
+name: Synthetic Simulator readiness probe
+on:
+  push:
+    branches: [diagnostic/launch-1113b]
+    paths: [.github/workflows/launch-readiness-probe.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  probe:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+        with:
+          name: quick-launch-app
+          run-id: 43250619409
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/QuickLaunch
+      - name: Measure no-op before installing the same candidate
+        run: |
+          tar -xzf "$RUNNER_TEMP/QuickLaunch/quick-launch-app.tar.gz" -C "$RUNNER_TEMP/QuickLaunch"
+          export QUICK_APP_PATH="$RUNNER_TEMP/QuickLaunch/NekoWidget.app"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('NekoWidget/ci/run-quick-launch.sh')
+          s = p.read_text()
+          for seconds in (300, 120):
+              old = f'bounded {seconds} xcrun simctl bootstatus "$device" -b'
+              assert s.count(old) == 1
+              s = s.replace(old, old + '\nbounded 60 python3 ci/simulator_ready.py "$device"')
+          p.write_text(s)
+          PY
+          bash NekoWidget/ci/run-quick-launch.sh
+      - if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: readiness-failure-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/quick-launch-failure/
+          if-no-files-found: ignore
+          retention-days: 3
