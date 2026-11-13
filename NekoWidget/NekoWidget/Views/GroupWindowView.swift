@@ -449,6 +449,9 @@ final class GroupWindowScreenModel: ObservableObject {
             let sent = try await client.sendPhoto(normalizedJPEG: prepared.jpeg, caption: memo,
                                                   windowID: windowID, operationID: operationID)
             await receive(sent, me: me, outgoingOperationID: operationID)
+#if DEBUG
+            if GroupWindowUIFixture.showsScreens { Self.fixtureSentCaptions.append(sent.caption) }
+#endif
             sendCompleted = true
             UsageCounter.shared.count(.madoPhotoSent)  // Usage (11/7)
             message = nil
@@ -507,6 +510,14 @@ final class GroupWindowScreenModel: ObservableObject {
     }
 
 #if DEBUG
+    /// Screen fixture only: the ひとこと of each photo sent in this app run
+    /// (nil: none), so a UI test sees what left, and that nothing else did.
+    static var fixtureSentCaptions: [String?] = []
+    static var fixtureSentSummary: String {
+        "届けた数 \(fixtureSentCaptions.count)・最後のひとこと "
+            + ((fixtureSentCaptions.last ?? nil) ?? "なし")
+    }
+
     /// Screen check only: shows the 「もう一度届ける」 row with a fixture photo.
     func showFixtureFailedDelivery() {
         guard let jpeg = AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-4")?
@@ -614,11 +625,11 @@ final class GroupWindowScreenModel: ObservableObject {
         defer { try? FileManager.default.removeItem(at: file) }
         let jpeg: Data
         do {
-            let exported = try await PhotoLibraryJPEGExporter().export(localIdentifier: localIdentifier)
+            let exported = try await Self.sourceJPEG(localIdentifier: localIdentifier)
 #if os(iOS)
-            try exported.jpeg.write(to: file, options: [.atomic, .completeFileProtection])
+            try exported.write(to: file, options: [.atomic, .completeFileProtection])
 #else
-            try exported.jpeg.write(to: file, options: .atomic)
+            try exported.write(to: file, options: .atomic)
 #endif
             jpeg = try MomentShareIngressService().prepare(fromFileURL: file).canonicalJPEG
         } catch {
@@ -632,6 +643,18 @@ final class GroupWindowScreenModel: ObservableObject {
         }
         message = nil
         return PreparedPhoto(jpeg: jpeg)
+    }
+
+    /// The photo's full-quality JPEG from Photos. On the screen fixture, its
+    /// code-drawn picture (not in Photos); either way canonicalized and checked.
+    private static func sourceJPEG(localIdentifier: String) async throws -> Data {
+#if DEBUG
+        if GroupWindowUIFixture.showsScreens,
+           let fixture = AppStoreScreenshotFixture.image(for: localIdentifier)?.jpegData(compressionQuality: 0.85) {
+            return fixture
+        }
+#endif
+        return try await PhotoLibraryJPEGExporter().export(localIdentifier: localIdentifier).jpeg
     }
 
     func toggleHeart(_ photoID: String) async {
@@ -1363,8 +1386,9 @@ struct GroupLibraryDeliverySheet: View {
     /// The window last chosen from this sheet, shown first as the highlight.
     @State private var highlightedWindowID: String?
 
-    /// `initialCaption`: the memo page's words, cut to the ひとこと limits
-    /// (still editable). Empty from the photo screen.
+    /// `initialCaption`: the photo's memo words (memo page or photo screen),
+    /// cut to the ひとこと limits, shown in the field and still editable.
+    /// Empty for a photo without a memo.
     init(client: any GroupWindowMediaClient, localIdentifier: String, initialCaption: String = "") {
         self.client = client
         self.localIdentifier = localIdentifier
@@ -1522,6 +1546,13 @@ private struct GroupLibraryDeliveryStep: View {
                     Text(model.window.map { "「\($0.name)」のメンバーに届きました。" } ?? "")
                 } actions: {
                     Button("閉じる", action: close).buttonStyle(.borderedProminent)
+#if DEBUG
+                    if GroupWindowUIFixture.showsScreens {
+                        Text(GroupWindowScreenModel.fixtureSentSummary)
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("group-library-delivery-fixture-sent")
+                    }
+#endif
                 }
                 .accessibilityIdentifier("group-library-delivery-done")
             } else if let prepared {
@@ -1673,7 +1704,9 @@ private struct GroupSendConfirmSheet: View {
 
 /// ひとこと on the send confirmation: what the window will read. Empty sends
 /// the photo alone. Who sees it is said right at the field (11/9). The photo's
-/// own memo is separate: the ひとこと never comes from it or goes into it.
+/// own memo is separate: it may start this field (11/9 memo page, 11/13 photo
+/// screen), visible and editable before 「届ける」, but the ひとこと never goes
+/// into the memo.
 private struct GroupCaptionField: View {
     @Binding var text: String
 

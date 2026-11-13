@@ -2785,8 +2785,13 @@ struct PhotoBrowserView: View {
         .safeAreaInset(edge: .bottom) {
             // The one main action, always in view (not below the fold).
             if let selectedPhoto, GroupWindowClientProvider.ui != nil {
+                // 11/13: a photo with a memo starts the ひとこと with the memo's
+                // words, as the memo page does. Shown in the field, editable,
+                // and sent only by 「届ける」; the memo itself never changes.
+                let memo = personalNote.note(for: selectedPhoto.localIdentifier)
                 Button {
-                    groupDelivery = GroupDeliveryRequest(localIdentifier: selectedPhoto.localIdentifier)
+                    groupDelivery = GroupDeliveryRequest(localIdentifier: selectedPhoto.localIdentifier,
+                        initialCaption: memo.map { GroupPhotoCaption.draft(fromMemo: $0.text) } ?? "")
                 } label: {
                     Label("まどに届ける", systemImage: "paperplane.fill")
                         .font(.headline)
@@ -2796,7 +2801,8 @@ struct PhotoBrowserView: View {
                 // big main action (the sheet then offers to make one).
                 .modifier(DeliverButtonEmphasis(prominent: knowsAnyWindow))
                 .disabled(isExportingMemoryPhoto)
-                .accessibilityHint("届け先のまどを選んでから、写真とひとことを確認します")
+                .accessibilityHint(memo == nil ? "届け先のまどを選んでから、写真とひとことを確認します"
+                                   : "メモの文をひとことに入れて、届ける前に確かめます")
                 .accessibilityIdentifier("photo-browser-deliver-group")
                 .padding(.horizontal, 16).padding(.vertical, 10)
                 // 11/12 (review 16): one band with the actions above it, no step between.
@@ -2822,6 +2828,9 @@ struct PhotoBrowserView: View {
                         .accessibilityIdentifier("cloudy-photo-same-day")
                 }
                 if let note = personalNote.note(for: selectedPhoto.localIdentifier) {
+                    // 11/13: beside the sender's ひとこと (seen by the まど),
+                    // the memo says it is this person's alone.
+                    let besideShared = groupFavoriteSource?.localIdentifier == selectedPhoto.localIdentifier
                     Button {
                         personalNotePhoto = selectedPhoto
                     } label: {
@@ -2832,6 +2841,12 @@ struct PhotoBrowserView: View {
                             Text(note.text)
                                 .lineLimit(2)
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                            if besideShared {
+                                Text(CatHomeRecordsCore.privateMark)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                    .accessibilityHidden(true)
+                            }
                             Image(systemName: "chevron.right")
                                 .font(.footnote.weight(.semibold))
                                 .foregroundStyle(.tertiary)
@@ -2843,7 +2858,7 @@ struct PhotoBrowserView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("メモ")
+                    .accessibilityLabel(besideShared ? "メモ、" + CatHomeRecordsCore.privateMark : "メモ")
                     .accessibilityValue(note.text)
                     .accessibilityHint("メモを開いて読み、編集できます")
                     .accessibilityIdentifier("photo-memory-note-excerpt")
@@ -3302,7 +3317,8 @@ struct PhotoBrowserView: View {
         }
         .sheet(item: $groupDelivery) { request in
             if let client = GroupWindowClientProvider.ui {
-                GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier)
+                GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier,
+                                          initialCaption: request.initialCaption)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .confirmedMemorySavedStateChanged)) { notification in
@@ -3971,7 +3987,8 @@ struct GroupFavoriteSource: Equatable {
 struct GroupDeliveryRequest: Identifiable {
     let id = UUID()
     let localIdentifier: String
-    /// The ひとこと the sheet starts with: a memo page's words, else empty.
+    /// The ひとこと the sheet starts with: the photo's memo words (from the memo
+    /// page or the photo screen), cut to the ひとこと limits; else empty.
     var initialCaption = ""
 }
 

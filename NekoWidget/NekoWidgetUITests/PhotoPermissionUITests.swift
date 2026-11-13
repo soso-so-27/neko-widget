@@ -6262,7 +6262,10 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     @MainActor
     func testPersonalMemoryNoteSurvivesReopenStaysWithPhotoAndNeverBecomesCaption() {
         let app = XCUIApplication()
+        // The まど screen fixture: 「まどに届ける」 is on the photo as shipped,
+        // and the fixture tells what each send carried.
         app.launchArguments = ["--photo-window-ui-fixture", "--memo-local-account-change-fixture",
+                               "--group-window-screens-fixture",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launchEnvironment["NEKO_PHOTO_MEMORY_UI_SESSION"] = UUID().uuidString
         app.launch()
@@ -6308,6 +6311,41 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         end.press(forDuration: 0.05, thenDragTo: start)
         XCTAssertTrue(excerpt.waitForExistence(timeout: 5))
         XCTAssertEqual(excerpt.value as? String, note)
+
+        // 11/13: the memo never becomes a ひとこと by itself. 「まどに届ける」 on
+        // a photo with a memo starts the ひとこと with its words, in plain sight
+        // and editable; only 「届ける」 sends, and the memo never changes.
+        let deliver = app.buttons["photo-browser-deliver-group"]
+        XCTAssertTrue(deliver.waitForExistence(timeout: 5), app.debugDescription)
+        deliver.tap()
+        let caption = app.descendants(matching: .any)["group-window-send-caption"].firstMatch
+        XCTAssertTrue(caption.waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertEqual(caption.value as? String, note, "The memo's words start the ひとこと, shown before sending.")
+        let send = app.buttons["group-library-delivery-send"]
+        XCTAssertTrue(send.waitForExistence(timeout: 10))
+        attach(app, name: "personal-memory-note-deliver-prefilled")
+        // Cancelling sends nothing and leaves the memo as it was.
+        app.navigationBars.buttons["キャンセル"].firstMatch.tap()
+        XCTAssertTrue(excerpt.waitForExistence(timeout: 5))
+        XCTAssertEqual(excerpt.value as? String, note)
+        // Again; clearing the field sends the photo without any words.
+        deliver.tap()
+        XCTAssertTrue(caption.waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertEqual(caption.value as? String, note)
+        caption.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        caption.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: note.count + 5))
+        XCTAssertTrue(["", "例：おなかを見せて寝ていた"].contains(caption.value as? String ?? ""),
+                      "The pre-filled words are editable: cleared, nothing of the memo is left.")
+        XCTAssertTrue(send.isEnabled)
+        send.tap()
+        let sent = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "届けた数")).firstMatch
+        XCTAssertTrue(sent.waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertEqual(sent.label, "届けた数 1・最後のひとこと なし",
+                       "Only the one confirmed send left (the cancelled one sent nothing), with no words.")
+        attach(app, name: "personal-memory-note-delivered-without-words")
+        app.buttons["閉じる"].firstMatch.tap()
+        XCTAssertTrue(excerpt.waitForExistence(timeout: 5))
+        XCTAssertEqual(excerpt.value as? String, note, "Delivering never changes the memo.")
 
         XCTAssertFalse(app.buttons["photo-browser-deliver"].exists,
                        "The retired two-person sender must not be reachable from a private memo.")
