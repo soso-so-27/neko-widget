@@ -893,6 +893,8 @@ final class AppStoreScreenshotUITests: XCTestCase {
     private func chooseHomeCat(_ identifier: String, application app: XCUIApplication) {
         let menu = app.buttons["tools-cat-menu"]
         XCTAssertTrue(menu.waitForExistence(timeout: 10), app.debugDescription)
+        // 11/13: the menu scrolls with the page; back to the top first.
+        for _ in 0..<8 where !menu.isHittable { app.swipeDown() }
         menu.tap()
         let item = app.buttons["tools-cat-menu-" + identifier]
         XCTAssertTrue(item.waitForExistence(timeout: 10), app.debugDescription)

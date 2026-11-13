@@ -76,6 +76,21 @@ class PageOrder(unittest.TestCase):
         self.assertIn('CatHomeLine(title: "この子のこと", value: facts.progressText, emphasized: true)', card)
 
 
+class TopControls(unittest.TestCase):
+    def test_cat_menu_and_settings_scroll_with_the_page(self):
+        # Not pinned over the page: on each page's content, at the top of the
+        # photo, where the pinned bar rested (just under the status bar).
+        self.assertNotIn(".overlay(alignment: .top) { topBar(cats, current: current) }", HOME)
+        page = block(HOME, "private struct CatHomePage: View {")
+        self.assertIn(".overlay(alignment: .top) { topBar.padding(.top, metrics.topInset) }", page)
+        self.assertIn("topBar: AnyView(topBar(cats, current: cat)))", HOME)
+        empty = block(HOME, "private struct CatHomeNoCatPage: View {")
+        self.assertIn(".overlay(alignment: .top) { topBar.padding(.top, metrics.topInset) }", empty)
+        self.assertIn("topBar: AnyView(topBar(cats, current: nil))", HOME)
+        # UI tests go back to the top before tapping them.
+        self.assertIn("for _ in 0..<8 where !menu.isHittable { app.swipeDown() }", REVIEW)
+
+
 class Blocks(unittest.TestCase):
     def test_birthday_card_only_within_thirty_days(self):
         card = block(VIEW, "private struct CatHomeBirthdayCard: View {")

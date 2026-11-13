@@ -256,13 +256,16 @@ struct CatHomeView: View {
                 if let current {
                     pager(cats, current: current, metrics: metrics)
                 } else {
-                    CatHomeNoCatPage(metrics: metrics, tools: tools) { addsCat = true }
+                    CatHomeNoCatPage(metrics: metrics, tools: tools, topBar: AnyView(topBar(cats, current: nil))) {
+                        addsCat = true
+                    }
                 }
             }
             .ignoresSafeArea(.container, edges: .top)
         }
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
-        .overlay(alignment: .top) { topBar(cats, current: current) }
+        // 11/13: the cat menu and 設定 are part of each page's content (on top
+        // of the photo, scrolling away with it), not pinned over the page.
         // No title on this page: the photo runs under the status bar.
         .toolbar(.hidden, for: .navigationBar)
         .addingCatProfile(isStarted: $addsCat, presentation: presentation, actions: actions) { identifier in
@@ -371,7 +374,8 @@ struct CatHomeView: View {
                                 pageIndex: index, pageCount: cats.count,
                                 vetUnfinished: states.vetUnfinished(cat), searching: states.searching(cat),
                                 tools: tools, carePage: AnyView(carePage(cat)),
-                                record: record(for: cat), photos: photos(for: cat), records: records)
+                                record: record(for: cat), photos: photos(for: cat), records: records,
+                                topBar: AnyView(topBar(cats, current: cat)))
                         // Only the page on screen is read and found by tests.
                         .accessibilityHidden(cat.id != current.id)
                         .containerRelativeFrame(.horizontal)
@@ -521,6 +525,8 @@ private struct CatHomePage: View {
     let record: CatCareRecord?
     let photos: [PhotoPresentation]
     let records: CatHomeRecordsModel
+    /// The cat menu and 設定, at the top of the photo; they scroll with it.
+    let topBar: AnyView
 
     var body: some View {
         ScrollView(.vertical) {
@@ -545,6 +551,8 @@ private struct CatHomePage: View {
                 // Clear of the floating tab bar.
                 .padding(.bottom, 32)
             }
+            // Where the pinned bar rested: just under the status bar.
+            .overlay(alignment: .top) { topBar.padding(.top, metrics.topInset) }
         }
         .scrollIndicators(.hidden)
         .ignoresSafeArea(.container, edges: .top)
@@ -892,6 +900,8 @@ private struct CatHomeLine: View {
 private struct CatHomeNoCatPage: View {
     let metrics: CatHomeMetrics
     let tools: CatHomeTools
+    /// 設定 (no cat menu without a cat), scrolling with the page.
+    let topBar: AnyView
     let add: () -> Void
 
     var body: some View {
@@ -927,6 +937,7 @@ private struct CatHomeNoCatPage: View {
                     .padding(.horizontal, 16)
             }
             .padding(.bottom, 24)
+            .overlay(alignment: .top) { topBar.padding(.top, metrics.topInset) }
         }
         .scrollIndicators(.hidden)
         .ignoresSafeArea(.container, edges: .top)

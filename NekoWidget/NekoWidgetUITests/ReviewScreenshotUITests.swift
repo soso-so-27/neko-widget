@@ -192,7 +192,16 @@ final class ReviewScreenshotUITests: XCTestCase {
             let firstRecord = app.descendants(matching: .any)["cat-home-record-0"].firstMatch
             guard yearsAgo.waitForExistence(timeout: 15) else { return "「1年前のきょう」 did not appear" }
             guard firstRecord.waitForExistence(timeout: 10) else { return "the records did not appear" }
-            for _ in 0..<3 where !firstRecord.isHittable { app.swipeUp(velocity: .slow) }
+            // Up in short drags until the whole records card is above the tab
+            // bar, on the large phones as on SE (a swipe left it unscrolled there).
+            let records = app.descendants(matching: .any)["cat-home-records"].firstMatch
+            let bar = app.tabBars.firstMatch
+            let barTop = bar.exists && bar.frame.height > 0 ? bar.frame.minY : app.frame.maxY - 90
+            for _ in 0..<8 where !records.exists || records.frame.maxY > barTop - 8 {
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
+                    .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
+            }
+            guard records.frame.maxY <= barTop - 8 else { return "the records card stayed under the tab bar" }
             settle(1.5)
             return nil
         }
@@ -765,6 +774,8 @@ final class ReviewScreenshotUITests: XCTestCase {
     private func chooseHomeCat(_ app: XCUIApplication, _ identifier: String) -> Bool {
         let menu = app.buttons["tools-cat-menu"]
         guard menu.waitForExistence(timeout: 15) else { return false }
+        // 11/13: the menu scrolls with the page; back to the top first.
+        for _ in 0..<8 where !menu.isHittable { app.swipeDown() }
         menu.tap()
         let item = app.buttons["tools-cat-menu-" + identifier]
         guard item.waitForExistence(timeout: 5) else { closeTop(app); return false }

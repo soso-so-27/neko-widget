@@ -8938,7 +8938,9 @@ class CatHomeTab1112Tests(unittest.TestCase):
         self.assertIn(".nekoPrimaryButton()", empty)
         self.assertIn("toolsShown: CatHomeTool.household", empty)
         self.assertIn("static let household: [CatHomeTool] = [.evacuation, .showcase]", self.home)
-        self.assertIn("CatHomeNoCatPage(metrics: metrics, tools: tools) { addsCat = true }", self.home)
+        # 11/13: 設定 scrolls with the no-cat page too (was a bar pinned over it).
+        self.assertIn("CatHomeNoCatPage(metrics: metrics, tools: tools, topBar: AnyView(topBar(cats, current: nil))) {\n"
+                      "                        addsCat = true", self.home)
         # No key photo: a calm gradient, no placeholder icon.
         hero = section(self.home, "private struct CatHomeHero: View {", "/// The tools under the photo:")
         self.assertIn("LinearGradient(colors: [Color(red: 0.56, green: 0.57, blue: 0.60)", hero)

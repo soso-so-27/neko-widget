@@ -408,6 +408,8 @@ final class ScreenSpeedSweepUITests: XCTestCase {
     private func chooseHomeCat(_ app: XCUIApplication, _ identifier: String) {
         let menu = app.buttons["tools-cat-menu"]
         guard menu.waitForExistence(timeout: 10) else { return }
+        // 11/13: the menu scrolls with the page; back to the top first.
+        for _ in 0..<8 where !menu.isHittable { app.swipeDown() }
         menu.tap()
         let item = app.buttons["tools-cat-menu-" + identifier]
         guard item.waitForExistence(timeout: 5) else { return }

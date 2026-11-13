@@ -7,6 +7,8 @@ fileprivate func openSettings(in app: XCUIApplication) {
     if tools.waitForExistence(timeout: 10) { tools.tap() } else { app.tabBars.buttons["この子"].tap() }
     let gear = app.buttons["tools-settings-button"]
     XCTAssertTrue(gear.waitForExistence(timeout: 10))
+    // 11/13: 設定 scrolls with the page; back to the top first.
+    for _ in 0..<8 where !gear.isHittable { app.swipeDown() }
     gear.tap()
 }
 
@@ -3363,6 +3365,8 @@ final class SoloMemoriesUITests: XCTestCase {
         func choosePage(_ identifier: String) {
             let menu = app.buttons["tools-cat-menu"]
             XCTAssertTrue(menu.waitForExistence(timeout: 10), app.debugDescription)
+            // 11/13: the menu scrolls with the page; back to the top first.
+            for _ in 0..<8 where !menu.isHittable { app.swipeDown() }
             menu.tap()
             let item = app.buttons["tools-cat-menu-" + identifier]
             XCTAssertTrue(item.waitForExistence(timeout: 5), app.debugDescription)
