@@ -157,10 +157,20 @@ struct PhotoAssetImageView: View {
                     // wider than the frame, the best centred crop is preferred
                     // over letterboxing; the detail browser still shows all of
                     // the original photo.
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .accessibilityLabel("猫の写真")
+                    // 11/13: the frame comes first and the photo fills it. A
+                    // photo with no cat box (a linked album's photo the scan
+                    // did not find) arrives uncropped, and a bare scaledToFill
+                    // image made this view as tall as the photo, so a cat's
+                    // grid in the 写真 tab had uneven cells and rows.
+                    Color.clear
+                        .overlay {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFill()
+                                .accessibilityLabel("猫の写真")
+                        }
+                        .clipped()
+                        .contentShape(Rectangle())
                 }
 
             case .failed:

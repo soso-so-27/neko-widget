@@ -116,8 +116,11 @@ struct PhotoLibraryGridRowView<Cell: View>: View {
     var body: some View {
         HStack(spacing: spacing) {
             ForEach(row.photos) { photo in
+                // 11/13: the square comes first and the cell is clipped to it,
+                // so no photo can draw past its square into the next row.
                 Color.clear.aspectRatio(1, contentMode: .fit)
                     .overlay { cell(photo) }
+                    .clipped()
             }
             ForEach(row.photos.count..<3, id: \.self) { _ in
                 Color.clear.aspectRatio(1, contentMode: .fit)
