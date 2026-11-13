@@ -339,6 +339,7 @@ struct MembershipAccessFixture: View {
     @State private var editingNew = false
     @State private var state: MembershipPersonalState = .inactive
     @State private var beta = false
+    @State private var showsTools = false
     private let actions = MembershipActionAccess(enforcementEnabled: true, personal: .inactive)
     private let care = CareHandoffStore(directory: FileManager.default.temporaryDirectory
         .appendingPathComponent("membership-care-\(UUID().uuidString)"))
@@ -369,7 +370,10 @@ struct MembershipAccessFixture: View {
                     VeterinaryVisitsView(profiles: toolProfiles, photos: [], noteStore: store, store: veterinary,
                         careStore: care, evacuationStore: evacuation)
                 }.accessibilityIdentifier("membership-veterinary")
-                NavigationLink("ツール一覧の確認") { AppStoreScreenshotFixtureRootView() }
+                // The app's root over this list, not pushed into it: the tabs
+                // have their own NavigationStacks, and a stack inside this one
+                // drops the この子 page's value links (its tools never opened).
+                Button("ツール一覧の確認") { showsTools = true }
                     .accessibilityIdentifier("membership-tools")
                 Button("既存メモを編集") { editingExisting = true }
                     .disabled(record == nil).accessibilityIdentifier("membership-existing")
@@ -402,6 +406,7 @@ struct MembershipAccessFixture: View {
                         PhotoMemoryNoteEditor(photo: photo, store: store) {}
                     }
                 }
+                .fullScreenCover(isPresented: $showsTools) { AppStoreScreenshotFixtureRootView() }
         }
         .environment(\.membershipAccess, context)
         .environment(\.membershipActions, actions)
