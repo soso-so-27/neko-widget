@@ -155,6 +155,7 @@ xcrun --sdk macosx swiftc -parse-as-library \
 python3 ci/test-family-window-widget-boundaries.py
 python3 ci/test-single-cat-photos.py
 python3 ci/test-album-link-followups.py
+python3 ci/test-cat-threshold.py
 
 xcrun --sdk macosx swiftc -D DEBUG -parse-as-library \
   -target "$(uname -m)-apple-macos14.0" \

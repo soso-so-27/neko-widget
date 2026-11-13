@@ -78,18 +78,49 @@ struct AppSettings: Codable, Equatable, Sendable {
     var analysisRevision: Int
     /// Changing this only regroups dates; it must not invalidate Vision work.
     var catLifeReference: CatLifeReference? = nil
+    /// Marks the one-time move of the stored default line (0.7 -> 0.5, 11/13).
+    /// Optional, so older builds still decode the settings (they ignore it).
+    var detectorPolicyVersion: Int? = nil
+
+    static let currentDetectorPolicyVersion = 2
+
+    /// 11/13 on-device measurement: of the photos Apple's Photos app groups
+    /// as the owner's two cats, 402 had been judged "not a cat". Run again at
+    /// 1024px, 269 had a best cat label of 0.5-0.7 and 245 a cat box larger
+    /// than 5% of the image, so the 0.7 line dropped about 38% of real cat
+    /// photos the recogniser did see as cats. The line is now 0.5.
+    static let defaultConfidenceThreshold: Float = 0.5
+    /// The line used until 11/13. Read only by the one-time migration.
+    static let legacyDefaultConfidenceThreshold: Float = 0.7
 
     static let `default` = AppSettings(
         dateRange: .all,
         albumMaximum: 300,
-        confidenceThreshold: 0.7,
+        confidenceThreshold: defaultConfidenceThreshold,
         minimumCatAreaRatio: 0.08,
         albumName: "うちの子",
         quickScanLimit: 500,
         widgetEntryCount: 20,
         widgetEntryIntervalMinutes: 20,
-        analysisRevision: 1
+        analysisRevision: 1,
+        detectorPolicyVersion: currentDetectorPolicyVersion
     )
+
+    /// Settings saved before 11/13 carry the old default line (0.7). Move it to
+    /// 0.5 once; a line chosen on purpose in an internal build is kept. The
+    /// analysis revision is not touched, so positive records migrate in place
+    /// (AssetRecord.migratedToLowerConfidenceThreshold) and nothing restarts.
+    func migratedToCurrentDetectorPolicy() -> AppSettings {
+        guard (detectorPolicyVersion ?? 1) < Self.currentDetectorPolicyVersion else {
+            return self
+        }
+        var value = self
+        if value.confidenceThreshold == Self.legacyDefaultConfidenceThreshold {
+            value.confidenceThreshold = Self.defaultConfidenceThreshold
+        }
+        value.detectorPolicyVersion = Self.currentDetectorPolicyVersion
+        return value
+    }
 
     func normalized() -> AppSettings {
         var value = self

@@ -169,6 +169,18 @@ struct CatPhotoCoverageLibraryFacts: Equatable, Sendable {
     var requiresFullRescan = false
     /// Whole hours since the last scan ended; nil = never.
     var hoursSinceLastScan: Int?
+    /// Records by the best cat confidence the scan stored (bands in
+    /// `storedConfidenceLabels`), for photos in a linked album and the rest.
+    /// Only cat records keep a confidence; every other record is "none".
+    var storedConfidenceLinked = [0, 0, 0]
+    var storedConfidenceElsewhere = [0, 0, 0]
+
+    static let storedConfidenceLabels = ["none", "0.5-0.7", ">=0.7"]
+
+    static func storedConfidenceBand(_ record: AssetRecord) -> Int {
+        guard record.isCatCandidate else { return 0 }
+        return record.cat.confidence < 0.7 ? 1 : 2
+    }
 }
 
 struct CatPhotoCoverageRunFacts: Equatable, Sendable {
@@ -256,7 +268,7 @@ enum CatPhotoCoverageCore {
     static func summaryText(facts: CatPhotoCoverageRunFacts) -> String {
         let library = facts.library
         var lines: [String] = []
-        lines.append("cat-photo-coverage v1")
+        lines.append("cat-photo-coverage v2")
         lines.append("device \(plainToken(facts.deviceModel)) iOS \(plainToken(facts.systemVersion))")
         lines.append("photo access \(library.limitedAccess ? "limited" : "full"), source \(library.usesSelectedSource ? "one album" : "whole library")")
         lines.append("library: photos in scan scope \(library.assetsInScope), records \(library.records), scanned \(library.scannedAssets)/\(library.totalAssets), cats shown \(library.catsShownCurrentSettings)")
@@ -264,6 +276,9 @@ enum CatPhotoCoverageCore {
         lines.append("records: cat \(status[0]), no cat \(status[1]), iCloud only \(status[2]), failed \(status[3]), screenshot \(status[4]), burst duplicate \(status[5])")
         let age = library.hoursSinceLastScan.map { "\($0) h ago" } ?? "never"
         lines.append("scan: phase \(library.phase), result \(library.resultKind), full rescan pending \(library.requiresFullRescan ? "yes" : "no"), last scan \(age)")
+        let bands = CatPhotoCoverageLibraryFacts.storedConfidenceLabels
+        lines.append("stored best cat, in linked albums: " + zip(bands, library.storedConfidenceLinked).map { "\($0) \($1)" }.joined(separator: ", "))
+        lines.append("stored best cat, elsewhere: " + zip(bands, library.storedConfidenceElsewhere).map { "\($0) \($1)" }.joined(separator: ", "))
         lines.append("linked albums: cats \(facts.catsWithAlbum), photos \(facts.linkedPhotos) (deduplicated), in 2+ albums \(facts.linkedInSeveralAlbums)")
         lines.append("")
         lines.append("each linked photo in exactly one bucket")
@@ -387,6 +402,12 @@ enum CatPhotoCoverageRunner {
         library.totalAssets = snapshot.scanState.totalAssets
         for record in snapshot.assets {
             library.statusCounts[CatPhotoCoverageCore.statusIndex(CatPhotoCoverageRecordStatus(record))] += 1
+            let band = CatPhotoCoverageLibraryFacts.storedConfidenceBand(record)
+            if ownerCount[record.localIdentifier] != nil {
+                library.storedConfidenceLinked[band] += 1
+            } else {
+                library.storedConfidenceElsewhere[band] += 1
+            }
             if record.isCatCandidate, record.analysisFingerprint == fingerprint,
                !excluded.contains(record.localIdentifier),
                !curation.usesSelectedAlbum || scanIdentifiers.contains(record.localIdentifier) {

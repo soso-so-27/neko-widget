@@ -36,6 +36,7 @@ actor LibraryStore {
                 synthesizingMissingTraits: snapshot.schemaVersion
                     >= Self.groupedAlbumSnapshotSchemaVersion
             ).migratedToAreaIndependentDetection(settings: activeSettings)
+                .migratedToLowerConfidenceThreshold(settings: activeSettings)
         }
         if value.albumUsage == nil {
             value.albumUsage = .empty
@@ -115,11 +116,22 @@ actor LibraryStore {
             }
         }
 
+        // 11/13: the stored 0.7 default line moves to 0.5 once. Cat records
+        // keep showing (their fingerprint moves with it below); "no cat"
+        // records stay stale, so the normal background scan re-analyses
+        // them newest first and resumes from its checkpoints.
+        let migratedSettings = value.settings.migratedToCurrentDetectorPolicy()
+        if migratedSettings != value.settings {
+            value.settings = migratedSettings
+            didChange = true
+        }
+
         let activeSettings = value.settings
         let migratedAssets = value.assets.map {
             $0.migratedToBoundingBoxPostureAnalysis(
                 synthesizingMissingTraits: !isGroupedAlbumSchemaUpgrade
             ).migratedToAreaIndependentDetection(settings: activeSettings)
+                .migratedToLowerConfidenceThreshold(settings: activeSettings)
         }
         if migratedAssets != value.assets {
             value.assets = migratedAssets

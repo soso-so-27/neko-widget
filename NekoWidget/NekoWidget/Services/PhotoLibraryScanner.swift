@@ -778,6 +778,7 @@ actor PhotoLibraryScanner {
         settings: AppSettings
     ) -> Bool {
         record.migratedToAreaIndependentDetection(settings: settings)
+            .migratedToLowerConfidenceThreshold(settings: settings)
             .analysisFingerprint == settings.analysisFingerprint
     }
 
@@ -1218,13 +1219,15 @@ actor PhotoLibraryScanner {
             )
             try handler.perform([request])
             let cats: [(CGRect, Float)] = (request.results ?? []).compactMap { observation in
-                guard let label = observation.labels
-                    .filter({ $0.identifier.caseInsensitiveCompare("cat") == .orderedSame })
-                    .max(by: { $0.confidence < $1.confidence }),
-                      label.confidence >= confidenceThreshold else {
+                guard let confidence = CatRecognitionRule.catConfidence(
+                    labels: observation.labels.map {
+                        (identifier: $0.identifier, confidence: $0.confidence)
+                    },
+                    threshold: confidenceThreshold
+                ) else {
                     return nil
                 }
-                return (observation.boundingBox, label.confidence)
+                return (observation.boundingBox, confidence)
             }
             let boxes = cats.map(\.0)
             return CatRecognitionResult(

@@ -194,6 +194,36 @@ struct AssetRecord: Codable, Identifiable, Equatable, Sendable {
         return value
     }
 
+    /// 11/13: lowering the cat line keeps every positive made at a higher
+    /// line (a cat at >= 0.7 is a cat at >= 0.5), so those photos stay shown
+    /// with no image request. "No cat" records are deliberately left on their
+    /// old fingerprint: the scanner re-analyses them, newest first, in the
+    /// normal background scan, and the ones now over the line appear.
+    func migratedToLowerConfidenceThreshold(
+        settings: AppSettings
+    ) -> AssetRecord {
+        guard isCatCandidate,
+              analysisFingerprint != settings.analysisFingerprint else {
+            return self
+        }
+        let parts = analysisFingerprint.split(
+            separator: ":",
+            omittingEmptySubsequences: false
+        )
+        guard parts.count == 3,
+              parts[0] == "cat-v3",
+              let bits = UInt32(parts[1]),
+              Float(bitPattern: bits) >= settings.confidenceThreshold,
+              parts[2] == Substring(String(settings.analysisRevision)),
+              "cat-v3:\(settings.confidenceThreshold.bitPattern):\(settings.analysisRevision)"
+                  == settings.analysisFingerprint else {
+            return self
+        }
+        var value = self
+        value.analysisFingerprint = settings.analysisFingerprint
+        return value
+    }
+
     /// Migrates Build 12-15 posture storage without touching PhotoKit or
     /// running Vision. Existing per-cat posture-instance boxes are copied into
     /// the primary detection; only a one-cat union can be used as fallback.
