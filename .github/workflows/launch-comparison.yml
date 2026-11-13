@@ -1,0 +1,62 @@
+name: Synthetic launch comparison
+on:
+  push:
+    branches: [diagnostic/launch-1113b]
+    paths: [.github/workflows/launch-comparison.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  compare:
+    name: Launch ${{ matrix.label }} / ${{ matrix.repeat }}
+    runs-on: macos-15
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        repeat: [1, 2]
+        include: []
+        label: [before, after]
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - name: Select existing validated synthetic app
+        id: source
+        env:
+          LABEL: ${{ matrix.label }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$LABEL" == before ]]; then
+            run=43228373994
+            sha=d6c8925db3ad084a528118677ad77a9e710a2501
+          else
+            run=43250619409
+            sha=266e162be1df5302434794139eec6f0c86c68107
+          fi
+          test "$(gh api repos/${{ github.repository }}/actions/runs/$run --jq .head_sha)" = "$sha"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+        with:
+          name: quick-launch-app
+          run-id: ${{ steps.source.outputs.run }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/QuickLaunch
+      - name: Same fresh-runner launch without rebuilding
+        run: |
+          tar -xzf "$RUNNER_TEMP/QuickLaunch/quick-launch-app.tar.gz" -C "$RUNNER_TEMP/QuickLaunch"
+          export QUICK_APP_PATH="$RUNNER_TEMP/QuickLaunch/NekoWidget.app"
+          bash NekoWidget/ci/run-quick-launch.sh
+      - name: Preserve failure observation
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: launch-comparison-${{ matrix.label }}-${{ matrix.repeat }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/quick-launch-failure/
+          if-no-files-found: ignore
+          retention-days: 3
