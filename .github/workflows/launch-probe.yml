@@ -1,0 +1,50 @@
+name: Launch time probe (diagnostic)
+# DIAGNOSTIC ONLY on claude/launch-time-probe; never merged.
+on:
+  push:
+    branches: [claude/launch-time-probe]
+    paths: [.github/workflows/launch-probe.yml, NekoWidget/ci/launch-probe.sh]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  probe:
+    name: Probe runner ${{ matrix.runner }}
+    runs-on: macos-15
+    timeout-minutes: 80
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [1, 2]
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Fetch existing validated synthetic apps
+        run: |
+          set -euo pipefail
+          fetch() { # label run sha
+            test "$(gh api repos/${{ github.repository }}/actions/runs/$2 --jq .head_sha)" = "$3"
+            mkdir -p "$RUNNER_TEMP/apps/$1"
+            gh run download "$2" -R "${{ github.repository }}" -n quick-launch-app -D "$RUNNER_TEMP/apps/$1"
+            tar -xzf "$RUNNER_TEMP/apps/$1/quick-launch-app.tar.gz" -C "$RUNNER_TEMP/apps/$1"
+          }
+          fetch before 43228373994 d6c8925db3ad084a528118677ad77a9e710a2501
+          fetch main 43361637297 5e88dd8ac0a8856b4e1a242a2294c721502e8609
+      - name: Interleaved launches in one Simulator
+        env:
+          PROBE_OUT: ${{ runner.temp }}/launch-probe
+        run: |
+          specs=(before="$RUNNER_TEMP/apps/before/NekoWidget.app" main="$RUNNER_TEMP/apps/main/NekoWidget.app")
+          if [ -d "$RUNNER_TEMP/apps/deferred/NekoWidget.app" ]; then specs+=(deferred="$RUNNER_TEMP/apps/deferred/NekoWidget.app"); fi
+          bash NekoWidget/ci/launch-probe.sh "${specs[@]}"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: launch-probe-${{ matrix.runner }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/launch-probe/
+          retention-days: 5
