@@ -9128,11 +9128,13 @@ class CatIdentityMeasure1113Tests(unittest.TestCase):
         self.assertLess(self.project.index("path = Services;", services) - services, 120)
         self.assertIn("path = CatIdentityMeasurementTests.swift;", self.project)
         # 11/13: SingleCatPhotosTests (C15C0A7E…) and AlbumLinkFollowupsTests
-        # (C1A1BF10…) joined the same test target.
+        # (C1A1BF10…) joined the same test target, then CatThresholdTests
+        # (C1CA7050…, the 0.5 cat line and its migration).
         self.assertIn("children = (C1108C000000000000000002,C1D3A9110000000000000006,"
-                      "C15C0A7E0000000000000002,C1A1BF100000000000000002,); path = NekoWidgetTests;", self.project)
+                      "C15C0A7E0000000000000002,C1A1BF100000000000000002,C1CA70500000000000000002,);"
+                      " path = NekoWidgetTests;", self.project)
         self.assertIn("files = (C1108C000000000000000003,C1D3A9110000000000000005,"
-                      "C15C0A7E0000000000000001,C1A1BF100000000000000001,);", self.project)
+                      "C15C0A7E0000000000000001,C1A1BF100000000000000001,C1CA70500000000000000001,);", self.project)
         self.assertEqual(len(set(re.findall(r"C1D3A911000000000000000\d", self.project))), 6)
 
     def test_store_product_compiles_none_of_it(self) -> None:
@@ -9277,7 +9279,11 @@ class CatPhotoCoverage1113Tests(unittest.TestCase):
         for gone in ("localIdentifier", "displayName", "name", "creationDate", "Date()", "URL", "path",
                      "profile", "uuid", "UUID", "title", "identifier"):
             self.assertNotIn(gone, summary, gone)
-        self.assertIn('lines.append("cat-photo-coverage v1")', summary)
+        # 11/13 v2: two numbers-only lines on the stored best cat confidence.
+        self.assertIn('lines.append("cat-photo-coverage v2")', summary)
+        self.assertNotIn('"cat-photo-coverage v1"', summary)
+        self.assertIn('lines.append("stored best cat, in linked albums: "', summary)
+        self.assertIn('lines.append("stored best cat, elsewhere: "', summary)
         self.assertIn("plainToken(facts.deviceModel)", summary)
         self.assertIn("plainToken(facts.systemVersion)", summary)
         for struct in ("struct CatPhotoCoverageRunFacts", "struct CatPhotoCoverageLibraryFacts",

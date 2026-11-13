@@ -370,6 +370,8 @@ struct MainTabView: View {
     let refreshPhotoSourceAlbums: () async -> Void
     let exportJSON: () async -> URL?
     var startsInPhotos = false
+    /// Continues a stopped search (「続きを探す」); nil falls back to `rescan`.
+    var resumeScan: (() async -> Void)? = nil
 
     @State private var selectedTab: AppTab = .memories
     @State private var groupShareNavigationGeneration = UUID()
@@ -1571,6 +1573,9 @@ struct MainTabView: View {
             requestPhotoAccess: requestPhotoAccess, chooseMorePhotos: chooseMorePhotos,
             showWidgetPlacementGuide: showWidgetPlacementGuide,
             showSettings: { showsSettings = true }, rescan: { Task { await rescan() } },
+            resumeScan: resumeScan.map { resume -> () -> Void in
+                { Task { await resume() } }
+            },
             catPhotos: photoLibraryCatPhotos, excludedCatPhotos: excludedCatPhotos,
             photoSourceAlbums: photoSourceAlbums, photoSourceStatus: photoSourceStatus,
             restoreCatCandidates: restoreCatCandidates, selectPhotoSourceAlbum: selectPhotoSourceAlbum,

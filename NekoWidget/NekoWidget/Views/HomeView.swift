@@ -424,6 +424,8 @@ struct HomeView: View {
     let showWidgetPlacementGuide: () -> Void
     let showSettings: () -> Void
     let rescan: () -> Void
+    /// Continues a stopped search; nil (previews, fixtures) falls back to `rescan`.
+    let resumeScan: (() -> Void)?
     let excludedCatPhotos: [ExcludedCatPhotoPresentation]
     let photoSourceAlbums: [PhotoSourceAlbumOption]
     let photoSourceStatus: PhotoSourceAlbumStatus
@@ -461,6 +463,7 @@ struct HomeView: View {
         showWidgetPlacementGuide: @escaping () -> Void,
         showSettings: @escaping () -> Void,
         rescan: @escaping () -> Void,
+        resumeScan: (() -> Void)? = nil,
         catPhotos: [PhotoPresentation] = [],
         excludedCatPhotos: [ExcludedCatPhotoPresentation] = [],
         photoSourceAlbums: [PhotoSourceAlbumOption] = [],
@@ -490,6 +493,7 @@ struct HomeView: View {
         self.showWidgetPlacementGuide = showWidgetPlacementGuide
         self.showSettings = showSettings
         self.rescan = rescan
+        self.resumeScan = resumeScan
         self.excludedCatPhotos = excludedCatPhotos
         self.photoSourceAlbums = photoSourceAlbums
         self.photoSourceStatus = photoSourceStatus
@@ -682,7 +686,14 @@ struct HomeView: View {
                       : scan.isPaused ? "写真を探すのを一時停止しています" : "猫の写真を探しています",
                       systemImage: scan.hasFailed ? "exclamationmark.triangle" : "photo.badge.clock")
                     .font(.subheadline)
-                if scan.hasFailed || scan.hasDeferredAssets || scan.isPaused {
+                if scan.hasFailed || scan.isPaused {
+                    // Continues from where it stopped (photos already looked
+                    // at are reused); only 「読み込めなかった写真」 below needs
+                    // the search from the start that tries those again.
+                    Button(scan.isPaused ? "続きを探す" : "もう一度探す", action: resumeScan ?? rescan)
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("photo-library-partial-retry")
+                } else if scan.hasDeferredAssets {
                     Button("もう一度探す", action: rescan)
                         .frame(minHeight: 44)
                         .accessibilityIdentifier("photo-library-partial-retry")

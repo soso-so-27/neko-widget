@@ -860,6 +860,24 @@ final class AppViewModel: ObservableObject {
         await launchScan(forceFullAnalysis: true)
     }
 
+    /// Continues a stopped or failed search where it left off. Unlike
+    /// `rescan()`, the analysis revision is kept, so every photo already
+    /// analysed under the current settings is reused and nothing shown goes.
+    func resumeScan() async {
+        guard catIdentityLoadState == .ready else {
+            logCandidateAuthorityUnavailable(operation: "resume_scan")
+            return
+        }
+        guard canReadPhotos else {
+            setError(NekoWidgetError.photoAccessDenied)
+            return
+        }
+        guard !isScanning, photoSourceStatus != .unavailable else { return }
+        errorMessage = nil
+        SharedLog.app.info("scan", "Scan resume requested by user")
+        await launchScan(forceFullAnalysis: scanState.requiresFullRescan)
+    }
+
     func suspendScan() {
 #if DEBUG
         if isUIFixture { return }

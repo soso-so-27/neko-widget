@@ -187,6 +187,32 @@ struct CatDetection: Codable, Equatable, Sendable {
     )
 }
 
+/// When one `VNRecognizeAnimalsRequest` box counts as a cat. Pure, so the
+/// rule is unit-tested without Vision. The line itself is
+/// `AppSettings.confidenceThreshold` (default 0.5 since 11/13).
+enum CatRecognitionRule {
+    /// The box's best cat confidence when it counts as a cat, otherwise nil.
+    /// A box whose dog label is more confident than its cat label is a dog,
+    /// whatever the line. A dog in a separate box does not affect a cat box.
+    static func catConfidence(
+        labels: [(identifier: String, confidence: Float)],
+        threshold: Float
+    ) -> Float? {
+        var cat: Float?
+        var dog: Float?
+        for label in labels {
+            if label.identifier.caseInsensitiveCompare("cat") == .orderedSame {
+                cat = max(cat ?? label.confidence, label.confidence)
+            } else if label.identifier.caseInsensitiveCompare("dog") == .orderedSame {
+                dog = max(dog ?? label.confidence, label.confidence)
+            }
+        }
+        guard let cat, cat >= threshold else { return nil }
+        if let dog, dog > cat { return nil }
+        return cat
+    }
+}
+
 /// Active normalized bounding-box posture policy (width / height v1).
 /// Normalized Vision coordinates are used exactly as stored; pixel dimensions
 /// and the photo's source aspect ratio are deliberately not folded into it.

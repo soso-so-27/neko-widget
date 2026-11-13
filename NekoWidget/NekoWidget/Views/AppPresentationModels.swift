@@ -704,7 +704,7 @@ enum PhotoRangePresentation: String, CaseIterable, Identifiable {
 struct SettingsPresentation: Equatable {
     var range: PhotoRangePresentation = .all
     var albumLimit = 300
-    var confidenceThreshold = 0.7
+    var confidenceThreshold = Double(AppSettings.defaultConfidenceThreshold)
     var minimumAreaRatio = 0.08
     var catLifeReference: CatLifeReference?
 }

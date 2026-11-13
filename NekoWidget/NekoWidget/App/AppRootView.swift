@@ -590,7 +590,10 @@ struct AppRootView: View {
             exportJSON: {
                 await viewModel.exportJSON()
             },
-            startsInPhotos: startsInPhotosAfterOnboarding
+            startsInPhotos: startsInPhotosAfterOnboarding,
+            resumeScan: {
+                await viewModel.resumeScan()
+            }
         )
     }
 

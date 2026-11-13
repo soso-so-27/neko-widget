@@ -211,6 +211,23 @@ final class CatPhotoCoverageMeasurementTests: XCTestCase {
         XCTAssertEqual(histogram.area, [1, 2, 2])
     }
 
+    func testStoredConfidenceBandsOnlyCountCatRecords() {
+        func record(_ status: AssetAnalysisStatus, _ confidence: Float) -> AssetRecord {
+            AssetRecord(
+                localIdentifier: "x", creationDate: nil, isFavorite: false, isScreenshot: false,
+                burstIdentifier: nil,
+                cat: CatDetection(detected: status == .detected, confidence: confidence,
+                                  boundingBox: nil, areaRatio: 0.1, catCount: 1),
+                analysisStatus: status, analysisFingerprint: AppSettings.default.analysisFingerprint
+            )
+        }
+        XCTAssertEqual(CatPhotoCoverageLibraryFacts.storedConfidenceBand(record(.noCat, 0)), 0)
+        XCTAssertEqual(CatPhotoCoverageLibraryFacts.storedConfidenceBand(record(.detected, 0.5)), 1)
+        XCTAssertEqual(CatPhotoCoverageLibraryFacts.storedConfidenceBand(record(.detected, 0.69)), 1)
+        XCTAssertEqual(CatPhotoCoverageLibraryFacts.storedConfidenceBand(record(.detected, 0.7)), 2)
+        XCTAssertEqual(CatPhotoCoverageLibraryFacts.storedConfidenceBand(record(.unavailableLocally, 0)), 0)
+    }
+
     func testRecheckCountsLoadsEvenWithoutAnImage() {
         var recheck = CatPhotoCoverageRecheck()
         recheck.add(load: .inCloud, sample: nil)
@@ -228,8 +245,12 @@ final class CatPhotoCoverageMeasurementTests: XCTestCase {
         run.buckets = [.shown: 1, .judgedNotCat: 1, .notYetScanned: 1]
         run.library.hoursSinceLastScan = 5
         run.rechecks[0].add(load: .local1024, sample: CatPhotoRecognitionSample(bestCatConfidence: 0.55, bestCatArea: 0.03))
+        run.library.storedConfidenceLinked = [4, 2, 1]
+        run.library.storedConfidenceElsewhere = [90, 3, 7]
         let text = CatPhotoCoverageCore.summaryText(facts: run)
-        XCTAssertTrue(text.hasPrefix("cat-photo-coverage v1\n"))
+        XCTAssertTrue(text.hasPrefix("cat-photo-coverage v2\n"))
+        XCTAssertTrue(text.contains("stored best cat, in linked albums: none 4, 0.5-0.7 2, >=0.7 1\n"))
+        XCTAssertTrue(text.contains("stored best cat, elsewhere: none 90, 0.5-0.7 3, >=0.7 7\n"))
         XCTAssertTrue(text.contains("device iPhone16,2Usersx iOS 18.1"))
         XCTAssertTrue(text.contains("all 3"))
         XCTAssertTrue(text.contains("last scan 5 h ago"))
