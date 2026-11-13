@@ -194,22 +194,24 @@ final class AppViewModel: ObservableObject {
         catProfilePhotoSets.sets
     }
 
-    /// Only the part the single-cat rule adds for the household's only cat
-    /// (empty with zero or several profiles), for the 写真 tab's cat filter.
-    var singleCatDerivedPhotoIdentifiers: Set<String> {
-        catProfilePhotoSets.singleCatDerived
+    /// 写真 tab: each photo's cats (profile UUID strings), the inverse of
+    /// `catProfilePhotoIdentifiers`, so the cat filter, its count, the theme
+    /// row and the favourite and memo filters count a linked album's photos
+    /// as the cat's page does (11/13). Built with the sets, not per render.
+    var catProfilePhotoAssignments: [String: Set<String>] {
+        catProfilePhotoSets.assignments
     }
 
     private var catProfilePhotoSets: (
         detected: Set<String>,
         sets: [UUID: Set<String>],
-        singleCatDerived: Set<String>
+        assignments: [String: Set<String>]
     ) {
         let version = presentationVersion
         let received = receivedPhotoIdentifiers
         if let cached = cachedCatProfilePhotoSets,
            cached.version == version, cached.received == received {
-            return (cached.detected, cached.sets, cached.singleCatDerived)
+            return (cached.detected, cached.sets, cached.assignments)
         }
         let detected = Self.singleCatDetectedPhotoIdentifiers(
             catAssets: presentationSnapshot.catAssets,
@@ -218,16 +220,9 @@ final class AppViewModel: ObservableObject {
         let sets = catHouseholdIdentity?.effectiveAssetIdentifiersByProfile(
             detectedCatAssetIdentifiers: detected
         ) ?? [:]
-        let singleCatDerived = catHouseholdIdentity.flatMap { identity in
-            identity.singleCatProfileID.map {
-                identity.singleCatDerivedAssetIdentifiers(
-                    for: $0,
-                    detectedCatAssetIdentifiers: detected
-                )
-            }
-        } ?? []
-        cachedCatProfilePhotoSets = (version, received, detected, sets, singleCatDerived)
-        return (detected, sets, singleCatDerived)
+        let assignments = CatHouseholdIdentityState.profileIdentifiersByAsset(sets)
+        cachedCatProfilePhotoSets = (version, received, detected, sets, assignments)
+        return (detected, sets, assignments)
     }
 
     private static func singleCatDetectedPhotoIdentifiers(
@@ -314,7 +309,7 @@ final class AppViewModel: ObservableObject {
         received: Set<String>,
         detected: Set<String>,
         sets: [UUID: Set<String>],
-        singleCatDerived: Set<String>
+        assignments: [String: Set<String>]
     )?
     /// Serializes the one-way legacy-to-profiled transition with household
     /// exclusion mutations. Without this queue, an exclusion can commit to

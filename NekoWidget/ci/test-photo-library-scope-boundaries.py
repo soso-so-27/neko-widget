@@ -20,7 +20,9 @@ class ScopeBoundaries(unittest.TestCase):
             self.assertNotIn('selectedTab == .photos',section)
     def test_cat_metadata_survives_photo_permission_revocation(self):
         root=(ROOT/"NekoWidget/App/AppRootView.swift").read_text(encoding="utf-8")
-        self.assertIn('photoLibraryAssignments: viewModel.catHouseholdIdentity.map',root)
+        # 11/13: the whole cached sets, still read from the identity, not the access-gated copy.
+        self.assertIn('photoLibraryAssignments: viewModel.catHouseholdIdentity == nil',root)
+        self.assertIn('? [:] : viewModel.catProfilePhotoAssignments,',root)
         self.assertIn('photoLibraryProfileNames: viewModel.catHouseholdIdentity.map',root)
         self.assertIn('registeredProfileIdentifiers: photoLibraryRegisteredIdentifiers',MAIN)
     def test_unassigned_cannot_expand_related_navigation(self):

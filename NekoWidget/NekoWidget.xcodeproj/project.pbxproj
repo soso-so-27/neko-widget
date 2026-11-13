@@ -11,9 +11,11 @@
 		C1D3A9110000000000000005 /* CatIdentityMeasurementTests.swift in Sources */ = { isa = PBXBuildFile; fileRef = C1D3A9110000000000000006; };
 		C15C0A7E0000000000000002 /* SingleCatPhotosTests.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SingleCatPhotosTests.swift; sourceTree = "<group>"; };
 		C15C0A7E0000000000000001 /* SingleCatPhotosTests.swift in Sources */ = { isa = PBXBuildFile; fileRef = C15C0A7E0000000000000002; };
+		C1A1BF100000000000000002 /* AlbumLinkFollowupsTests.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumLinkFollowupsTests.swift; sourceTree = "<group>"; };
+		C1A1BF100000000000000001 /* AlbumLinkFollowupsTests.swift in Sources */ = { isa = PBXBuildFile; fileRef = C1A1BF100000000000000002; };
 		C1108C000000000000000005 = { isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = NekoWidgetTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		C1108C000000000000000004 = { isa = PBXGroup; children = (C1108C000000000000000002,C1D3A9110000000000000006,C15C0A7E0000000000000002,); path = NekoWidgetTests; sourceTree = "<group>"; };
-		C1108C000000000000000006 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (C1108C000000000000000003,C1D3A9110000000000000005,C15C0A7E0000000000000001,); runOnlyForDeploymentPostprocessing = 0; };
+		C1108C000000000000000004 = { isa = PBXGroup; children = (C1108C000000000000000002,C1D3A9110000000000000006,C15C0A7E0000000000000002,C1A1BF100000000000000002,); path = NekoWidgetTests; sourceTree = "<group>"; };
+		C1108C000000000000000006 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (C1108C000000000000000003,C1D3A9110000000000000005,C15C0A7E0000000000000001,C1A1BF100000000000000001,); runOnlyForDeploymentPostprocessing = 0; };
 		C1108C000000000000000007 = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		C1108C000000000000000008 = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		C1108C00000000000000000A = { isa = XCBuildConfiguration; baseConfigurationReference = F00000000000000000000001; buildSettings = {

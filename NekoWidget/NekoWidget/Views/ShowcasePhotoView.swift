@@ -1362,8 +1362,9 @@ struct ShowcasePreparationView: View {
         let boxes = catBoxes
         isPreparing = true
         defer { isPreparing = false }
+        let candidates = recommendationCandidates
         var identifiers = await ShowcaseRecommender.identifiers(
-            from: recommendationCandidates,
+            from: candidates,
             excluding: store.excludedIdentifiers(in: targetScope)
         )
         // The face the owner chose in 「この子のこと」 leads, if it is one of this cat's photos.
@@ -1371,7 +1372,10 @@ struct ShowcasePreparationView: View {
            let index = identifiers.firstIndex(of: face) {
             identifiers.insert(identifiers.remove(at: index), at: 0)
         }
-        do { try await store.applyRecommendations(identifiers, boxes: boxes, to: targetScope) }
+        do {
+            try await store.applyRecommendations(identifiers, boxes: boxes, to: targetScope,
+                                                 candidateCount: candidates.count)
+        }
         catch { errorMessage = "おすすめで選べませんでした。もう一度お試しください。" }
     }
 }
@@ -1406,13 +1410,14 @@ private struct ShowcaseReorderDrop: DropDelegate {
 private struct ShowcaseCandidatePicker: View {
     @Environment(\.dismiss) private var dismiss
     let candidates: [PhotoPresentation]
-    /// This cat's photos: 「この子の写真だけ」 narrows to them; off at first (11/8,
-    /// as in the other tools: a photo whose cat is not assigned is not hidden).
+    /// This cat's photos (its whole set, a linked album's included). For a
+    /// cat they come first and every other cat photo follows under
+    /// 「ほかの猫の写真」, as in the key photo picker (11/13: was a
+    /// switch that narrowed one list).
     var own: Set<String> = []
     let maximumSelection: Int
     let onSelect: ([String]) async -> Bool
     @State private var selected = Set<String>()
-    @State private var onlyThisCat = false
     @State private var isSaving = false
     @State private var saveFailed = false
     private let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8),
@@ -1420,14 +1425,16 @@ private struct ShowcaseCandidatePicker: View {
 
     private var isReplacing: Bool { maximumSelection == 1 }
 
-    /// 「最近の写真」: every offered photo, newest first.
-    private var recent: [PhotoPresentation] {
-        candidates.sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
-    }
-
-    /// The switch shows only when it would change the grid.
-    private var canNarrow: Bool {
-        candidates.contains { own.contains($0.localIdentifier) } && candidates.contains { !own.contains($0.localIdentifier) }
+    /// This cat's photos, then the others, each newest first; one list (all
+    /// newest first) for すべての猫. Worked out once per drawing.
+    private var parts: (own: [PhotoPresentation], others: [PhotoPresentation]) {
+        let recent = candidates.sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
+        guard !own.isEmpty else { return (recent, []) }
+        var mine = [PhotoPresentation](), others = [PhotoPresentation]()
+        for photo in recent {
+            if own.contains(photo.localIdentifier) { mine.append(photo) } else { others.append(photo) }
+        }
+        return (mine, others)
     }
 
     private func candidateLabel(_ photo: PhotoPresentation, index: Int) -> String {
@@ -1449,18 +1456,18 @@ private struct ShowcaseCandidatePicker: View {
                 if candidates.isEmpty {
                     ContentUnavailableView("追加できる猫の写真はありません", systemImage: "photo")
                 } else {
-                    let shown = onlyThisCat && canNarrow ? recent.filter { own.contains($0.localIdentifier) } : recent
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("最近の写真")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        if canNarrow {
-                            Toggle("この子の写真だけ", isOn: $onlyThisCat)
-                                .accessibilityIdentifier("showcase-only-this-cat")
-                        }
-                        LazyVGrid(columns: columns, spacing: 8) {
-                            ForEach(Array(shown.enumerated()), id: \.element.localIdentifier) { index, photo in
-                                candidateCell(photo, index: index)
+                    let split = parts
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+                        if own.isEmpty {
+                            Section { cells(split.own, from: 0) } header: { heading("最近の写真") }
+                        } else {
+                            Section { cells(split.own, from: 0) }
+                            if !split.others.isEmpty {
+                                Section { cells(split.others, from: split.own.count) } header: {
+                                    heading("ほかの猫の写真")
+                                        .padding(.top, split.own.isEmpty ? 0 : 12)
+                                        .accessibilityIdentifier("showcase-other-cats")
+                                }
                             }
                         }
                     }
@@ -1493,7 +1500,8 @@ private struct ShowcaseCandidatePicker: View {
                 Button {
                     isSaving = true
                     Task {
-                        let ordered = recent.map(\.localIdentifier).filter { selected.contains($0) }
+                        let split = parts
+                        let ordered = (split.own + split.others).map(\.localIdentifier).filter { selected.contains($0) }
                         let saved = await onSelect(ordered)
                         isSaving = false
                         if saved { dismiss() }
@@ -1513,6 +1521,21 @@ private struct ShowcaseCandidatePicker: View {
             }
         }
         .appRecordEditing(retainWhileHidden: !selected.isEmpty || isSaving)
+    }
+
+    private func heading(_ title: String) -> some View {
+        Text(title)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    @ViewBuilder
+    private func cells(_ photos: [PhotoPresentation], from start: Int) -> some View {
+        ForEach(Array(photos.enumerated()), id: \.element.localIdentifier) { offset, photo in
+            candidateCell(photo, index: start + offset)
+        }
     }
 
     private func candidateCell(_ photo: PhotoPresentation, index: Int) -> some View {

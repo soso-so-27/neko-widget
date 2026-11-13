@@ -154,6 +154,7 @@ xcrun --sdk macosx swiftc -parse-as-library \
 "$RUNNER_TEMP/moment-sharing-presentation-tests"
 python3 ci/test-family-window-widget-boundaries.py
 python3 ci/test-single-cat-photos.py
+python3 ci/test-album-link-followups.py
 
 xcrun --sdk macosx swiftc -D DEBUG -parse-as-library \
   -target "$(uname -m)-apple-macos14.0" \

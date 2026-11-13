@@ -368,7 +368,7 @@ struct LostCatDraftView: View {
     private func destinations<Content: View>(_ content: Content) -> some View {
         content
             .navigationDestination(isPresented: $showsPreview) {
-                if let value = previewDraft { LostCatPreviewView(draft: value) }
+                if let value = previewDraft { LostCatPreviewView(draft: value, onMade: markFlyerMade) }
             }
             .navigationDestination(isPresented: $showsFound) {
                 LostCatFoundView(name: publicName, faceImage: faceImage,
@@ -1069,6 +1069,13 @@ struct LostCatDraftView: View {
         saveNow()
         showsFound = false
     }
+    /// 11/13: a flyer, image or the post's text was made, so the 「この子」
+    /// page says the cat is being searched for (`LostCatDraft.isSearching`).
+    private func markFlyerMade() {
+        guard loaded else { return }
+        draft.flyerMadeAt = .now
+        saveNow()
+    }
     private func openPreview() {
         focus = nil
         saveNow()
@@ -1368,6 +1375,8 @@ private extension EnvironmentValues {
 
 private struct LostCatPreviewView: View {
     let draft: LostCatPublicDraft
+    /// Told when an image or file is made or the post is copied (11/13).
+    var onMade: () -> Void = {}
     #if DEBUG
     @Environment(\.lostCatFixtureVerification) private var fixtureVerification
     #endif
@@ -1411,7 +1420,7 @@ private struct LostCatPreviewView: View {
                 } else { ProgressView().padding() }
                 if format.sharesPost {
                     Button(copied ? "文章をコピーしました" : "投稿する文章をコピー", systemImage: "doc.on.doc") {
-                        UIPasteboard.general.string = draft.message; copied = true
+                        UIPasteboard.general.string = draft.message; copied = true; onMade()
                     }.font(.subheadline).padding()
                 }
             }
@@ -1440,6 +1449,7 @@ private struct LostCatPreviewView: View {
                         #endif
                         // The SNS image and its post go out together; the others are the file alone.
                         payload = LostCatSharePayload(url: url, text: format.sharesPost ? draft.message : nil); exportError = false
+                        onMade()
                     } catch { exportError = true }
                 } label: {
                     Label("保存・共有する", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity)

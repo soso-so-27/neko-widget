@@ -591,6 +591,23 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
         })
     }
 
+    /// The inverse of `effectiveAssetIdentifiersByProfile`: each photo's
+    /// profiles as UUID strings (the 写真 tab's cat filter). A linked album's
+    /// photos count like explicit includes; photos with no cat are absent.
+    static func profileIdentifiersByAsset(
+        _ setsByProfile: [UUID: Set<String>]
+    ) -> [String: Set<String>] {
+        var result: [String: Set<String>] = [:]
+        result.reserveCapacity(setsByProfile.values.reduce(0) { $0 + $1.count })
+        for (profileID, identifiers) in setsByProfile {
+            let key = profileID.uuidString
+            for identifier in identifiers {
+                result[identifier, default: []].insert(key)
+            }
+        }
+        return result
+    }
+
     /// Only the derived part of the single-cat rule: detected cat photos
     /// minus this cat's exclusions and household-wide exclusions. Empty
     /// unless `profileID` is the household's only cat profile.
