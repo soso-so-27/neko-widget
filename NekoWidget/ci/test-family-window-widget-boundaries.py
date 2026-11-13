@@ -6046,6 +6046,18 @@ class WindowListOrderTests(unittest.TestCase):
             before = tab[:tab.index(".accessibilityIdentifier(" + container + ")")].rstrip()
             self.assertTrue(before.endswith(".accessibilityElement(children: .contain)"), container)
         self.assertIn(r'.accessibilityIdentifier("public-window-add-\(source.id)")', tab)
+        # 11/13: 「受け取る」 is a small filled accent capsule (32pt seen, 44pt hit),
+        # not the grey bordered blob; the row icon is a 48pt soft tile.
+        add = section(tab, "private func addButton(", "private func add(")
+        self.assertIn(".buttonStyle(.officialWindowReceive)", add)
+        self.assertNotIn(".buttonStyle(.bordered)", add)
+        official = source("NekoWidget/Views/OfficialWindowView.swift")
+        receive = section(official, "struct OfficialWindowReceiveButtonStyle: ButtonStyle {", "\n}\n")
+        for part in (".background(Color.accentColor, in: Capsule())", ".foregroundStyle(.white)",
+                     ".frame(minHeight: 32)", ".frame(minHeight: 44)", ".contentShape(Rectangle())"):
+            self.assertIn(part, receive)
+        self.assertIn(".frame(width: 48, height: 48)", official)
+        self.assertIn(".colorMultiply(Self.rowTileCream)", official)
         self.assertIn('.accessibilityIdentifier("window-list-widget-guide")', tab)
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
         self.assertNotIn("退出", setup)

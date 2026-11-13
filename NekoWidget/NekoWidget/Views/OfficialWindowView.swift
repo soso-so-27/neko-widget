@@ -205,6 +205,9 @@ struct OfficialWindowEntryCard: View {
     /// 11/7: the same 「新着」 mark as a family window card.
     let showsNewMark: Bool
     @StateObject private var preview: OfficialWindowPreviewModel
+    @Environment(\.colorScheme) private var colorScheme
+    /// The pale cream behind のわ on the cat page.
+    private static let rowTileCream = Color(red: 0.96, green: 0.94, blue: 0.90)
 
     init(state: OfficialWindowState? = nil,
          store: OfficialWindowStore = .shared,
@@ -302,12 +305,20 @@ struct OfficialWindowEntryCard: View {
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             } else if presentation == .row {
-                HStack(spacing: 14) {
+                // 11/13: a 48pt soft tile, not a hard white square; the row
+                // stays as tall as a two-line row (about 72pt).
+                HStack(spacing: 12) {
                     cover(photo: photo, status: status)
-                        .frame(width: 76, height: 76)
+                        .frame(width: 48, height: 48)
                         .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                    VStack(alignment: .leading, spacing: 5) {
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay {
+                            if colorScheme == .light {
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+                            }
+                        }
+                    VStack(alignment: .leading, spacing: 3) {
                         Text(store.displayName).font(.headline)
                         Text(store.definition.subtitle).font(.caption).foregroundStyle(.secondary)
                     }
@@ -317,7 +328,7 @@ struct OfficialWindowEntryCard: View {
                         Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
                     }
                 }
-                .padding(.vertical, 14)
+                .padding(.vertical, 12)
                 .padding(.leading, 14)
                 .padding(.trailing, rowAccessory == nil ? 14 : 0)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -377,9 +388,15 @@ struct OfficialWindowEntryCard: View {
                 if refreshFailed || preview.failed {
                     Image(systemName: "photo.badge.exclamationmark")
                         .font(compact ? .title2 : .largeTitle).foregroundStyle(.secondary)
+                } else if compact {
+                    // The mark fills the tile; its own pale ground is tinted to
+                    // のわ's cream so the tile stays soft in dark mode.
+                    Image("ToolCat-hide").resizable().scaledToFill()
+                        .colorMultiply(Self.rowTileCream)
+                        .accessibilityHidden(true)
                 } else {
                     Image("ToolCat-hide").resizable().scaledToFit()
-                        .frame(width: compact ? 44 : 58, height: compact ? 44 : 58).accessibilityHidden(true)
+                        .frame(width: 58, height: 58).accessibilityHidden(true)
                 }
                 if !compact {
                     Text(status.title)
@@ -391,6 +408,32 @@ struct OfficialWindowEntryCard: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
+}
+
+/// 「受け取る」 on an official window row (11/13): a small filled capsule in
+/// the accent, the same in light and dark. The pill is about 32pt; the hit
+/// area is 44pt tall without growing what is seen.
+struct OfficialWindowReceiveButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .frame(minHeight: 32)
+            .background(Color.accentColor, in: Capsule())
+            .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.45)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+    }
+}
+
+extension ButtonStyle where Self == OfficialWindowReceiveButtonStyle {
+    static var officialWindowReceive: OfficialWindowReceiveButtonStyle { .init() }
 }
 
 extension Notification.Name {
