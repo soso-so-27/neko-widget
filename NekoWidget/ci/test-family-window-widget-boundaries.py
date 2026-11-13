@@ -9192,5 +9192,104 @@ class CatIdentityMeasure1113Tests(unittest.TestCase):
         self.assertIn("guard boxes.count == 1, record.cat.catCount <= 1", truth)
 
 
+class CatPhotoCoverage1113Tests(unittest.TestCase):
+    """11/13: 「出てこない写真の内訳」 on the same internal screen. Every photo in
+    the linked albums lands in one bucket; misses are rechecked on the phone
+    only; the copy is numbers and bucket names only."""
+
+    SERVICE = "NekoWidget/Services/CatPhotoCoverageMeasurement.swift"
+    VIEW = "NekoWidget/Views/CatIdentityMeasureView.swift"
+    TEST = "NekoWidgetTests/CatIdentityMeasurementTests.swift"
+    GATE = "#if DEBUG || INTERNAL_PRESENTATION\n"
+
+    def setUp(self) -> None:
+        self.service = source(self.SERVICE)
+        self.view = source(self.VIEW)
+        self.project = source("NekoWidget.xcodeproj/project.pbxproj")
+
+    def test_file_is_registered_once_in_the_app_target(self) -> None:
+        name = "CatPhotoCoverageMeasurement.swift"
+        self.assertEqual(self.project.count(f"path = {name};"), 1)
+        self.assertIn(f"\t\tC1D3C0E70000000000000001 /* {name} in Sources */ = {{isa = PBXBuildFile; "
+                      f"fileRef = C1D3C0E70000000000000002 /* {name} */; }};", self.project)
+        self.assertEqual(self.project.count(f"\t\t\t\tC1D3C0E70000000000000002 /* {name} */,\n"), 1)
+        app = self.project.index("A00000000000000000000021 /* Sources */ = {")
+        app_sources = self.project[app:self.project.index("};", self.project.index("files = (", app))]
+        self.assertIn(f"/* {name} in Sources */", app_sources)
+        self.assertEqual(len(set(re.findall(r"C1D3C0E7\d{16}", self.project))), 2)
+        # Tests live beside the identity tests (no new test file to register).
+        self.assertIn("final class CatPhotoCoverageMeasurementTests: XCTestCase {", source(self.TEST))
+
+    def test_store_product_compiles_none_of_it(self) -> None:
+        self.assertTrue(self.service.startswith(self.GATE))
+        self.assertTrue(self.service.rstrip().endswith("#endif"))
+        self.assertEqual(self.service.count("#if "), 2)  # the gate + the simulator CPU switch
+        self.assertIn("#if targetEnvironment(simulator)", self.service)
+        for folder in ("NekoWidget", "Shared", "NekoWidgetWidget", "NekoWidgetShareExtension"):
+            for path in (ROOT / folder).rglob("*.swift"):
+                if path.name in ("CatPhotoCoverageMeasurement.swift", "CatIdentityMeasureView.swift"):
+                    continue
+                self.assertNotIn("CatPhotoCoverage", path.read_text(encoding="utf-8"), str(path))
+
+    def test_photos_stay_on_the_phone(self) -> None:
+        self.assertEqual(self.service.count("options.isNetworkAccessAllowed = false"), 1)
+        self.assertNotIn("isNetworkAccessAllowed = true", self.service)
+        for gone in ("URLSession", "URLRequest", "SharedLog", "print(", "Logger", "os_log", "NSLog",
+                     "jpegData", "pngData", "heicData", "UserDefaults", "PHAssetChangeRequest",
+                     "PHAssetCollectionChangeRequest", ".save(", "AtomicJSON.write"):
+            if gone == ".save(":
+                self.assertEqual(self.service.count(gone), 0, gone)
+                continue
+            self.assertNotIn(gone, self.service, gone)
+        # Read only: stores are loaded, the curation file is decoded directly.
+        self.assertIn("snapshot = try await LibraryStore().load()", self.service)
+        self.assertIn("try await CatHouseholdIdentityStore().load()", self.service)
+        self.assertIn("try AtomicJSON.read(CatCandidateCurationState.self, from: url)", self.service)
+        self.assertNotIn("CatCandidateCurationStore()", self.service)
+        self.assertEqual(self.service.count(".write(to:"), 1)
+        self.assertIn("try? Data(text.utf8).write(to: url, options: .atomic)", self.service)
+        self.assertIn('"cat-photo-coverage-last.txt"', self.service)
+        self.assertIn("static let concurrentPhotos = 2", self.service)
+        self.assertIn("static let requestPixels = 1_024", self.service)
+        # Same fetch as the scanner, so "not in the scan fetch" is exact.
+        self.assertIn("PhotoSourceAlbumCatalog.fetchImageAssets(", self.service)
+        model = section(self.view, "final class CatPhotoCoverageModel", "struct CatIdentityMeasureView: View {")
+        self.assertIn("UIApplication.shared.isIdleTimerDisabled = true", model)
+        self.assertIn("UIApplication.shared.isIdleTimerDisabled = false", model)
+        self.assertIn('coverage.stop("アプリが裏に回ったので止めました。もう一度押してください。")', self.view)
+        self.assertIn('Button("出てこない写真を数える") { coverage.start() }', self.view)
+        self.assertIn("CatPhotoCoverageResultCache.load()", model)
+
+    def test_copied_text_has_no_identifiers_names_or_dates(self) -> None:
+        summary = section(self.service, "    static func summaryText(", "// MARK: - On-device run")
+        for gone in ("localIdentifier", "displayName", "name", "creationDate", "Date()", "URL", "path",
+                     "profile", "uuid", "UUID", "title", "identifier"):
+            self.assertNotIn(gone, summary, gone)
+        self.assertIn('lines.append("cat-photo-coverage v1")', summary)
+        self.assertIn("plainToken(facts.deviceModel)", summary)
+        self.assertIn("plainToken(facts.systemVersion)", summary)
+        for struct in ("struct CatPhotoCoverageRunFacts", "struct CatPhotoCoverageLibraryFacts",
+                       "struct CatPhotoCoverageFacts", "struct CatPhotoRecognitionSample"):
+            body = section(self.service, struct, "\n}\n")
+            self.assertNotIn("[String", body, struct)
+            self.assertNotIn("Date", body, struct)
+        facts = section(self.service, "struct CatPhotoCoverageRunFacts", "\n}\n")
+        self.assertEqual(facts.count(' = ""'), 2)  # model and OS only
+        self.assertIn("UIPasteboard.general.string = resultText", self.view)
+
+    def test_each_photo_lands_in_one_bucket(self) -> None:
+        core = section(self.service, "    static func bucket(", "    /// Index into")
+        self.assertIn("guard facts.foundInPhotoKit else { return .notInPhotoKit }", core)
+        for bucket in ("shown", "judgedNotCat", "notImage", "hiddenInPhotos", "burstNotPick", "burstDuplicate",
+                       "screenshot", "outsideScanSource", "notInScanFetchOther", "notYetScanned", "onlyInCloud",
+                       "loadFailed", "householdExcluded", "hiddenBySourceAlbum", "olderSettings"):
+            self.assertIn(f".{bucket}", core, bucket)
+        # Linked albums only; household exclusions stay in so they can be counted.
+        self.assertIn("profile.photoAlbumLink", self.service)
+        self.assertNotIn("confirmedAssetIdentifiers", self.service)
+        self.assertIn("fetchOptions.includeHiddenAssets = true", self.service)
+        self.assertIn("fetchOptions.includeAllBurstAssets = true", self.service)
+
+
 if __name__ == "__main__":
     unittest.main()
