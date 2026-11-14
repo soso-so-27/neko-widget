@@ -47,6 +47,8 @@ final class CatHomePageActions {
     var openSettings: () -> Void = {}
     var choose: (String) -> Void = { _ in }
     var add: () -> Void = {}
+    /// VoiceOver's 「次の子」「前の子」: from a page (its index) by -1 or 1.
+    var turn: (_ from: Int, _ by: Int) -> Void = { _, _ in }
     var saveLifeDates: (String, CatProfileLifeDatesPresentation) async -> Bool = { _, _ in false }
 }
 
@@ -356,6 +358,7 @@ struct CatHomeView: View {
         pageActions.saveLifeDates = actions.updateLifeDates
         pageActions.choose = { id in show(id) }
         pageActions.add = { addsCat = true }
+        pageActions.turn = { index, by in turn(from: index, by: by) }
     }
 
     // MARK: Cats
@@ -454,7 +457,8 @@ struct CatHomeView: View {
                     .id(cat.id)
             }
             CatHomeNoCatPage(metrics: metrics, tools: tools, openSettings: { pageActions.openSettings() },
-                             sentence: "猫を増やすときは、ここから。", householdTools: false) { pageActions.add() }
+                             sentence: "猫を増やすときは、ここから。", householdTools: false,
+                             previous: { pageActions.turn(cats.count, -1) }) { pageActions.add() }
                 .containerRelativeFrame(.horizontal)
                 .accessibilityHidden(!onAddPage)
                 .id(Self.addPageID)
@@ -543,6 +547,18 @@ struct CatHomeView: View {
     private func show(_ id: String) {
         withAnimation(reduceMotion ? nil : .snappy) { pageID = id }
         storedCatID = id
+    }
+
+    /// VoiceOver's 「次の子」「前の子」 (11/14): the same move as a swipe;
+    /// past the last cat, the add page (never kept as the remembered page).
+    private func turn(from index: Int, by: Int) {
+        let cats = self.cats
+        guard let target = CatHomePageAccess.target(from: index, by: by, catCount: cats.count) else { return }
+        if target == cats.count {
+            withAnimation(reduceMotion ? nil : .snappy) { pageID = Self.addPageID }
+        } else {
+            show(cats[target].id)
+        }
     }
 }
 
@@ -727,7 +743,8 @@ private struct CatHomePage: View {
         ScrollView(.vertical) {
             VStack(spacing: 0) {
                 CatHomeHero(cat: cat, facts: facts, metrics: metrics, pageIndex: pageIndex, pageCount: pageCount,
-                            menuCats: menuCats, choose: { actions.choose($0) })
+                            menuCats: menuCats, choose: { actions.choose($0) },
+                            turn: { [pageIndex] by in actions.turn(pageIndex, by) })
                 // 18 (was 22): the page fits one screen on a standard iPhone (11/14).
                 VStack(spacing: 18) {
                     // A cat whose farewell day is recorded is not offered in the tools.
@@ -792,6 +809,8 @@ private struct CatHomeHero: View {
     /// The cat menu's cats; nil: the name alone, no button.
     let menuCats: [CatHomeMenuCat]?
     let choose: (String) -> Void
+    /// VoiceOver's 「次の子」「前の子」 (pages by -1 or 1).
+    let turn: (Int) -> Void
     @Environment(\.displayScale) private var displayScale
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.colorScheme) private var colorScheme
@@ -806,10 +825,17 @@ private struct CatHomeHero: View {
         ZStack(alignment: .bottomLeading) {
             // VoiceOver: the photo is one header read once (name, sex, age,
             // days); the name over it is the cat menu, reached on its own.
+            // 11/14: with more cats it also says which one (「3匹中1匹目」)
+            // and offers 「次の子」「前の子」, as a swipe does.
             photoLayer
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(facts.spoken)
+                .accessibilityLabel(CatHomePageAccess.spoken(facts.spoken, index: pageIndex, catCount: pageCount - 1))
                 .accessibilityAddTraits(.isHeader)
+                .accessibilityActions {
+                    ForEach(CatHomePageAccess.actions(index: pageIndex, catCount: pageCount - 1), id: \.self) { action in
+                        Button(action.name) { turn(action.by) }
+                    }
+                }
                 .accessibilityIdentifier("cat-home-hero")
             words
         }
@@ -902,10 +928,13 @@ private struct CatHomeHero: View {
         // text size: at the accessibility sizes a larger name pushed the
         // name above the top of the photo (capture 45_home_text_ax3, se).
         let scale = metrics.heroHeight < CatHomeHeroLayout.shortHero ? min(nameSize / 56, 1) : nameSize / 56
-        return CatHomeHeroLayout.nameFit(scale: Double(scale), maxWidth: Double(maxWidth)) { size in
+        return CatHomeHeroLayout.nameFit(scale: Double(scale), maxWidth: Double(maxWidth), width: { size in
             let font = UIFont.systemFont(ofSize: CGFloat(size), weight: .heavy)
             return Double(ceil(name.size(withAttributes: [.font: font]).width))
-        }
+        }, lines: { size in
+            // Broken as nameLines breaks them (11/14: a 20-character name).
+            lineFragments(size: CGFloat(size), maxWidth: maxWidth).count
+        })
     }
 
     /// The name as plain text, then (from five cats) the cat menu: a
@@ -956,6 +985,17 @@ private struct CatHomeHero: View {
     /// narrower, so the drawn text never wraps again), and how wide its last
     /// line is: the full width when more than two lines are cut short.
     private func nameLines(size: CGFloat, maxWidth: CGFloat) -> (text: String, lastWidth: CGFloat) {
+        let lines = lineFragments(size: size, maxWidth: maxWidth)
+        guard lines.count >= 2 else { return (cat.name, min(ceil(lines.first?.width ?? maxWidth), maxWidth)) }
+        let name = cat.name as NSString
+        let first = name.substring(with: lines[0].range).trimmingCharacters(in: .whitespaces)
+        let rest = name.substring(from: NSMaxRange(lines[0].range)).trimmingCharacters(in: .whitespaces)
+        let last = lines.count == 2 ? min(ceil(lines[1].width), maxWidth) : maxWidth
+        return (first + "\n" + rest, last)
+    }
+
+    /// The name's lines as TextKit breaks it in `maxWidth` (a little narrower).
+    private func lineFragments(size: CGFloat, maxWidth: CGFloat) -> [(range: NSRange, width: CGFloat)] {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakStrategy = .standard
         let storage = NSTextStorage(string: cat.name, attributes: [
@@ -970,12 +1010,7 @@ private struct CatHomeHero: View {
         layout.enumerateLineFragments(forGlyphRange: layout.glyphRange(for: container)) { _, used, _, glyphs, _ in
             lines.append((layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil), used.width))
         }
-        guard lines.count >= 2 else { return (cat.name, min(ceil(lines.first?.width ?? maxWidth), maxWidth)) }
-        let name = cat.name as NSString
-        let first = name.substring(with: lines[0].range).trimmingCharacters(in: .whitespaces)
-        let rest = name.substring(from: NSMaxRange(lines[0].range)).trimmingCharacters(in: .whitespaces)
-        let last = lines.count == 2 ? min(ceil(lines[1].width), maxWidth) : maxWidth
-        return (first + "\n" + rest, last)
+        return lines
     }
 
     @ViewBuilder
@@ -1212,6 +1247,8 @@ private struct CatHomeToolButton: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(state.map { "\(tool.title)、\($0.text)" } ?? tool.title)
+        // Voice Control: the word on the button (「病院」) as well as its name.
+        .accessibilityInputLabels([Text(tool.shortTitle), Text(tool.title)])
     }
 }
 
@@ -1254,6 +1291,8 @@ private struct CatHomeNoCatPage: View {
     var sentence = "この子を追加すると、ここに出ます。"
     /// 避難に備える and 写真を見せる; only with no cat.
     var householdTools = true
+    /// The add page after the cats: VoiceOver's 「前の子」 back to the last cat.
+    var previous: (() -> Void)? = nil
     let add: () -> Void
 
     var body: some View {
@@ -1273,10 +1312,12 @@ private struct CatHomeNoCatPage: View {
                         .foregroundStyle(.primary)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityActions { backAction }
                     Button(action: add) {
                         Text("この子を追加").frame(minWidth: 180)
                     }
                     .nekoPrimaryButton()
+                    .accessibilityActions { backAction }
                     .accessibilityIdentifier("cat-home-add")
                 }
                 .padding(.horizontal, 24)
@@ -1299,6 +1340,10 @@ private struct CatHomeNoCatPage: View {
         // taller page (iPhone SE, large text, 迷子) still scrolls.
         .scrollBounceBehavior(.basedOnSize, axes: .vertical)
         .ignoresSafeArea(.container, edges: .top)
+    }
+
+    @ViewBuilder private var backAction: some View {
+        if let previous { Button(CatHomePageAccess.previous, action: previous) }
     }
 }
 

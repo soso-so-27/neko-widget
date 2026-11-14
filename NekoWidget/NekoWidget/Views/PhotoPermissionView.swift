@@ -9,12 +9,23 @@ struct PhotoPermissionView: View {
     let openSettings: () -> Void
 
     var body: some View {
+        // 11/14: as it was when it fits; at the largest text sizes it scrolls
+        // instead of running off the screen.
+        ViewThatFits(in: .vertical) {
+            page
+            ScrollView { page }
+        }
+        .background(Color(.systemBackground))
+    }
+
+    private var page: some View {
         VStack(spacing: 24) {
             Spacer()
 
             Image(systemName: status == .restricted ? "lock.fill" : "photo.on.rectangle.angled")
                 .font(.system(size: 52, weight: .light))
                 .foregroundStyle(.tint)
+                .accessibilityHidden(true)
 
             VStack(spacing: 10) {
                 Text(title)
@@ -41,7 +52,6 @@ struct PhotoPermissionView: View {
             Spacer()
         }
         .padding(28)
-        .background(Color(.systemBackground))
     }
 
     private var title: String {
@@ -62,6 +72,7 @@ struct LimitedAccessBanner: View {
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: "photo.badge.checkmark")
                 .foregroundStyle(.tint)
+                .accessibilityHidden(true)
 
             Text("選んだ写真だけを探しています")
                 .font(.subheadline.weight(.semibold))

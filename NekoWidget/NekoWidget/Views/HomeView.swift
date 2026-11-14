@@ -955,8 +955,8 @@ struct HomeView: View {
     }
 
     private func detectedPhotoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
-        guard let creationDate = photo.creationDate else { return "撮影日不明の猫写真" }
-        return "\(creationDate.formatted(.dateTime.year().month().day()))の猫写真"
+        guard let creationDate = photo.creationDate else { return "撮影日不明の猫の写真" }
+        return "\(creationDate.formatted(.dateTime.year().month().day()))の猫の写真"
     }
 
     @ViewBuilder

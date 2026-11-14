@@ -795,12 +795,15 @@ struct GroupWindowMembersView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(member.displayName)、\(GroupWindowPresentation.memberDetail(member, in: window))"
                             + (hidden.map { $0.blocked == true ? "、ブロック中" : "、表示しない" } ?? ""))
-        .accessibilityAction(named: Text("外す")) {
-            guard canRemove, !model.isWorking else { return }
-            removalTarget = member
-            showsRemoval = true
-        }
         .accessibilityActions {
+            // 11/14: only for someone who can be removed (it did nothing for the others).
+            if canRemove {
+                Button("外す") {
+                    guard !model.isWorking else { return }
+                    removalTarget = member
+                    showsRemoval = true
+                }
+            }
             if let hidden {
                 Button(hidden.blocked == true ? "ブロックを解除" : "表示する") { restoreTarget = hidden }
             }
