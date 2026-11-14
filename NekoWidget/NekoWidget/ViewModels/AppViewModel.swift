@@ -776,6 +776,7 @@ final class AppViewModel: ObservableObject {
         // conditional rebuilding cannot distinguish that crash gap from an
         // already-current empty curation state.
         await refreshCandidateOutputsAfterCurationChange(reportErrors: false)
+        LaunchWork.count("startOutputsReady")
         libraryObserver.start()
         await synchronizeOnActive(refreshLimitedAccess: false, refreshesWidgetsWhenUnchanged: false)
     }
@@ -876,6 +877,7 @@ final class AppViewModel: ObservableObject {
         }
         lastActivationSyncAt = .now
         libraryChangePending = false
+        LaunchWork.count("activationCheck")
         let forceFullAnalysis = scanState.requiresFullRescan
         // 11/14: no pass when Photos has changed nothing the scan keeps since
         // the last completed one (see LibraryVerificationPolicy). The linked
@@ -890,8 +892,11 @@ final class AppViewModel: ObservableObject {
         let isVerification = !forceFullAnalysis && scanState.phase == .completed
             && scanState.lastScannedAt != nil
         if isVerification {
-            do { try await Task.sleep(for: .milliseconds(1_500)) } catch { return }
+            // Not cancellable: a cancelled caller (a view's task) must not
+            // drop the pass, which before this wait never depended on it.
+            try? await Task.sleep(for: .milliseconds(1_500))
             guard UIApplication.shared.applicationState == .active else {
+                LaunchWork.count("verificationDeferred")
                 libraryChangePending = true
                 return
             }

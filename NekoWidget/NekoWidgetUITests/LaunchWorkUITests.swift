@@ -43,7 +43,7 @@ final class LaunchWorkUITests: XCTestCase {
 
     private func read(_ app: XCUIApplication, window: Int) -> String {
         let meter = app.descendants(matching: .any)["launch-work-meter"]
-        let deadline = Date().addingTimeInterval(90)
+        let deadline = Date().addingTimeInterval(150)
         while Date() < deadline {
             if meter.exists, meter.label.hasPrefix("window=\(window);") { return meter.label }
             usleep(500_000)

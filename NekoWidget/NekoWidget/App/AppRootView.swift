@@ -474,6 +474,7 @@ struct AppRootView: View {
             care: CatCareStore.shared.state, lifeReference: viewModel.settings.catLifeReference,
             excluded: viewModel.excludedCatAssets)
         let profileValues = profilePresentationCache.values(for: profileKey) {
+            LaunchWork.count("profilePresentationsBuilt")
             let identityProjection = identity.map { profileIdentityProjection($0) }
             let postureDiagnostics = postureDiagnosticsPresentation(records: visibleCatAssets)
             return ProfilePresentationCache.Values(
