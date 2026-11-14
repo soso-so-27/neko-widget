@@ -1,8 +1,8 @@
 name: Launch time probe (diagnostic)
-# DIAGNOSTIC ONLY on diagnostic/cat-home-care-launch-*; never merged.
+# DIAGNOSTIC ONLY on diagnostic/cat-home-swipe-launch-*; never merged.
 on:
   push:
-    branches: ['diagnostic/cat-home-care-launch-*']
+    branches: ['diagnostic/cat-home-swipe-launch-*']
     paths: [.github/workflows/launch-probe.yml, NekoWidget/ci/launch-probe.sh]
   workflow_dispatch:
 permissions:
@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [pr979, main]
+        app: [pr984, main]
         rep: [1, 2]
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
-          ref: e4b50714eaf85dae15d7448fc0482f1dbdff9b88
+          ref: 285642088a00b30b4d3b67c47e7a6b0a94398772
           path: pr
       - name: Fetch existing validated synthetic apps
         run: |
@@ -39,8 +39,8 @@ jobs:
             gh run download "$2" -R "${{ github.repository }}" -n quick-launch-app -D "$RUNNER_TEMP/apps/$1"
             tar -xzf "$RUNNER_TEMP/apps/$1/quick-launch-app.tar.gz" -C "$RUNNER_TEMP/apps/$1"
           }
-          fetch pr979 43459293614 e4b50714eaf85dae15d7448fc0482f1dbdff9b88
-          fetch main 43429005956 e5084aa9c03cade9b160631e31e044b0f9782eb7
+          fetch pr984 43577049259 285642088a00b30b4d3b67c47e7a6b0a94398772
+          fetch main 43576763116 65e1a6e771ce0668cf9474d71b160c9e45383aba
       - name: The real Fresh runner launch script on this app
         run: |
           export QUICK_APP_PATH="$RUNNER_TEMP/apps/${{ matrix.app }}/NekoWidget.app"
@@ -52,4 +52,36 @@ jobs:
           path: |
             ${{ runner.temp }}/quick-launch-failure/
             ${{ runner.temp }}/ci-screenshots/
+          retention-days: 5
+  console:
+    name: Console probe pr984
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Fetch existing validated synthetic apps
+        run: |
+          set -euo pipefail
+          fetch() { # label run sha
+            test "$(gh api repos/${{ github.repository }}/actions/runs/$2 --jq .head_sha)" = "$3"
+            mkdir -p "$RUNNER_TEMP/apps/$1"
+            gh run download "$2" -R "${{ github.repository }}" -n quick-launch-app -D "$RUNNER_TEMP/apps/$1"
+            tar -xzf "$RUNNER_TEMP/apps/$1/quick-launch-app.tar.gz" -C "$RUNNER_TEMP/apps/$1"
+          }
+          fetch pr984 43577049259 285642088a00b30b4d3b67c47e7a6b0a94398772
+          fetch main 43576763116 65e1a6e771ce0668cf9474d71b160c9e45383aba
+      - name: Launch PR 984 with console, app log and crash reports
+        env:
+          PROBE_OUT: ${{ runner.temp }}/launch-probe
+        run: bash NekoWidget/ci/launch-probe.sh pr984="$RUNNER_TEMP/apps/pr984/NekoWidget.app"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: console-pr984-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/launch-probe/
           retention-days: 5
