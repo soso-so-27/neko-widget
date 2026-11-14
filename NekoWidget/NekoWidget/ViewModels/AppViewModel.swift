@@ -71,6 +71,7 @@ struct LibraryPresentationVersion: Hashable {
 final class AppViewModel: ObservableObject {
     @Published private(set) var authorizationStatus: PHAuthorizationStatus {
         didSet {
+            publishWidgetLibraryStatus()
             guard oldValue != authorizationStatus else { return }
             updatePhotoReadAuthority()
         }
@@ -3296,7 +3297,9 @@ final class AppViewModel: ObservableObject {
         await enqueueManagedOutputMutation { model in
             // The 「うちの子」 album left the app (10/31): nothing new is written
             // to Photos, and an album made before stays as the person left it.
-            if model.hasEligibleDisplayCandidates(in: model.snapshot) {
+            let hasCatPhotos = model.hasEligibleDisplayCandidates(in: model.snapshot)
+            model.publishWidgetLibraryStatus(hasCatPhotos: hasCatPhotos)
+            if hasCatPhotos {
                 await model.performRebuildWidgetCache(reportErrors: reportErrors)
             } else {
                 await model.performClearWidgetOutput(reportErrors: reportErrors)
@@ -3308,10 +3311,10 @@ final class AppViewModel: ObservableObject {
         let selected = albumSelector.select(from: candidateSnapshot(snapshot))
         guard !selected.isEmpty else {
             await performClearManagedAlbum(reportErrors: false)
+            // No cat photos is a state the screens show, never an alert (11/14).
             albumStatus = .failed(
                 message: Self.userFacingMessage(for: NekoWidgetError.noCatPhotos)
             )
-            if reportErrors { setError(NekoWidgetError.noCatPhotos) }
             return
         }
 
@@ -3685,20 +3688,44 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    /// What the personal Widget says when it has no photo (11/14, A1): only
+    /// a cause known here. `hasCatPhotos` is passed where outputs are rebuilt;
+    /// "no cat photos" is written only after a finished look.
+    private func publishWidgetLibraryStatus(hasCatPhotos: Bool? = nil) {
+        let defaults = UserDefaults(suiteName: SharedContainer.appGroupIdentifier)
+        let value: WidgetLibraryStatus?
+        switch authorizationStatus {
+        case .authorized, .limited:
+            if let hasCatPhotos {
+                value = !hasCatPhotos && scanState.isComplete ? .noCatPhotos : nil
+            } else {
+                let current = WidgetLibraryStatus.read(from: defaults)
+                value = current == .photoAccessNeeded ? nil : current
+            }
+        default:
+            value = .photoAccessNeeded
+        }
+        if WidgetLibraryStatus.write(value, to: defaults) {
+            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+        }
+    }
+
     private func setError(_ error: Error) {
         errorMessage = Self.userFacingMessage(for: error)
         Self.logError(error, category: "error", operation: "present_to_user")
     }
 
-    private static func userFacingMessage(for error: Error) -> String {
+    /// One sentence for the alert. A cause is named only when the error type
+    /// knows it; anything else gets the plain fallback (11/14, A3).
+    static func userFacingMessage(for error: Error) -> String {
         if let value = error as? NekoWidgetError {
             switch value {
             case .appGroupUnavailable:
-                return "データを保存できませんでした。App Storeでアプリを最新にしてください。"
+                return "データを保存できませんでした。アプリを開き直しても変わらないときは、設定の「お問い合わせ」からお知らせください。"
             case .photoAccessDenied:
                 return "写真へのアクセスが許可されていません。iPhoneの「設定」で、「ねこのまど」に写真へのアクセスを許可してください。"
             case .albumCreationFailed:
-                return "写真アルバムを更新できませんでした。写真へのアクセスと空き容量を確認してください。"
+                return "写真アルバムを更新できませんでした。もう一度お試しください。"
             case .noCatPhotos:
                 return "表示できる猫の写真がまだありません。"
             case .exportFailed:
@@ -3711,7 +3738,7 @@ final class AppViewModel: ObservableObject {
         }
         if let value = error as? CatProfilePhotoAlbumError {
             return value.errorDescription
-                ?? "選んだアルバムが見つかりません。写真へのアクセスを確かめてください。"
+                ?? "選んだアルバムを開けませんでした。もう一度お試しください。"
         }
         if let value = error as? CatHouseholdIdentityStoreError {
             return value.errorDescription
@@ -3720,7 +3747,7 @@ final class AppViewModel: ObservableObject {
         if let value = error as? SharedLikeStoreError {
             switch value {
             case .appGroupUnavailable:
-                return "「お気に入り」を保存できませんでした。App Storeでアプリを最新にしてください。"
+                return "「お気に入り」を保存できませんでした。アプリを開き直しても変わらないときは、設定の「お問い合わせ」からお知らせください。"
             case .lockOpenFailed, .lockFailed:
                 return "「お気に入り」を保存できませんでした。少し待って、もう一度お試しください。"
             case .measurementNotInitialized:
@@ -3730,7 +3757,7 @@ final class AppViewModel: ObservableObject {
         if error is URLError {
             return "インターネットにつながりませんでした。通信環境を確かめて、もう一度お試しください。"
         }
-        return "うまくいきませんでした。写真へのアクセスとiPhoneの空き容量を確かめて、もう一度お試しください。"
+        return "うまくいきませんでした。もう一度お試しください。"
     }
 
     private func logCandidateAuthorityUnavailable(operation: String) {

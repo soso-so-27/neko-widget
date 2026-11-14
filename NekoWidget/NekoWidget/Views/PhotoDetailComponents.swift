@@ -314,6 +314,9 @@ struct DetachedToolPhotoRow: View {
         .confirmationDialog("写真を外しますか？", isPresented: $confirmsRemoval, titleVisibility: .visible) {
             Button("写真を外す", role: .destructive, action: remove)
             Button("キャンセル", role: .cancel) { }
+        } message: {
+            // The record kept its own copy; removing it cannot be undone (11/14).
+            Text("元に戻せません。")
         }
         .task {
             if let data = try? await load() {

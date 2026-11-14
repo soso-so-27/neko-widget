@@ -450,7 +450,7 @@ struct PhotoMemoryNoteEditor: View {
                 Button("削除", role: .destructive) { Task { await save("") } }
                 Button("キャンセル", role: .cancel) {}
             } message: {
-                Text("写真は残り、メモの文章・体重・測定日が削除されます。")
+                Text("写真は残り、メモの文章・体重・測定日が削除されます。元に戻せません。")
             }
             .alert("メモを保存できませんでした", isPresented: Binding(
                 get: { saveError != nil }, set: { if !$0 { saveError = nil } }

@@ -679,7 +679,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('return "このまどは終わりました"', empty_title)
         self.assertIn('return "写真を待っています"', empty_title)
         self.assertNotIn('return "まだ届いていません"', empty_title)
-        self.assertIn('return "写真を準備しています"', empty_title)
+        # 11/14: the personal words come from WidgetStuckState (Shared).
+        self.assertIn("return WidgetStuckState.preparing.title", empty_title)
+        self.assertIn('case .preparing: return "写真を準備しています"', source("Shared/Models/WidgetManifest.swift"))
         self.assertIn('return "長押しして、別のまどを選んでください"', empty_title)
         self.assertIn("return entry.windowDisplayName", empty_title)
 
@@ -776,9 +778,12 @@ try MomentSharingStateStore.verifyPrivateAlias()
 
         view = source("NekoWidgetWidget/NekoWidgetView.swift")
         # 11/10: right after placing, the personal Widget is "being prepared",
-        # not an error that tells the person to update.
-        self.assertIn('return "写真を準備しています"', view)
-        self.assertIn('return "アプリを開くと始まります"', view)
+        # not an error that tells the person to update (11/14: the words live
+        # in WidgetStuckState, with one state per known cause).
+        stuck = source("Shared/Models/WidgetManifest.swift")
+        self.assertIn('case .preparing: return "写真を準備しています"', stuck)
+        self.assertIn('case .preparing: return "アプリを開くと始まります"', stuck)
+        self.assertIn("return WidgetStuckState.preparing.subtitle", view)
         self.assertNotIn('return "写真を表示できません"', view)
         self.assertNotIn('return "アプリを開いて更新"', view)
         self.assertIn("let image = WidgetCacheImageLoader.image(", view)
@@ -3475,7 +3480,7 @@ class GroupWindowScreenTests(unittest.TestCase):
         # and only inside keep(), which the production adapter runs through storeAndAcknowledge (so ACK follows the write).
         receive = section(screen, "private func receive(", "func prepare(_ item: PhotosPickerItem) async")
         self.assertIn("GroupPhotoModeration.check(incoming.jpeg, with: moderation)", receive)
-        self.assertIn("guard verdict != .retryLater, verdict != .checkOff else { return verdict }", receive)
+        self.assertIn("guard verdict != .retryLater else { return verdict }", receive)
         self.assertIn("client.keep(incoming, outgoingOperationID: outgoingOperationID)", receive)
         self.assertLess(receive.index("GroupPhotoModeration.check"), receive.index("client.keep("))
         self.assertIn("try await store.save(", receive)
@@ -5897,10 +5902,9 @@ class SettingsLayoutTests(unittest.TestCase):
                  '"settings-account-deletion"', 'Text("テスト用")']
         positions = [body.index(item) for item in order]
         self.assertEqual(positions, sorted(positions))
-        # 11/8: the version only; no build number, OS requirement or full-access note.
-        self.assertIn('Text("ねこのまど バージョン \\(appVersion)")', settings)
+        # 11/14: the version and the build number; no OS requirement or full-access note.
+        self.assertIn('Text("ねこのまど バージョン \\(appVersion)（\\(appBuild)）")', settings)
         self.assertNotIn("iOS 17.1以上", settings)
-        self.assertNotIn('"CFBundleVersion"', settings)
         self.assertNotIn("すべての写真を使えます。", settings)
         for gone in ('Text("プライバシー")', 'Text("サポート")'):
             self.assertNotIn(gone, body)
@@ -6083,7 +6087,10 @@ class GroupWindowAuditFixTests(unittest.TestCase):
 
     def test_waiting_photos_and_failed_sends_are_explained(self) -> None:
         window = source("NekoWidget/Views/GroupWindowView.swift")
-        self.assertIn("catch MomentSharingError.moderationDisabled {\n            return .checkOff", window)
+        # 11/14: the check never stops for the system warning being off, so
+        # no screen asks to turn 「センシティブな内容の警告」 on.
+        self.assertNotIn(".checkOff", window)
+        self.assertNotIn("センシティブな内容の警告", window)
         self.assertIn("receiveNotice = waiting.map(GroupPhotoModeration.receiveMessage)", window)
         deliver = section(window, "    func deliver(_ prepared: PreparedPhoto", "func retryFailedDelivery()")
         self.assertIn("let operationID = prepared.operationID", deliver)
@@ -9162,13 +9169,14 @@ class CatIdentityMeasure1113Tests(unittest.TestCase):
         # (C1A1BF10…) joined the same test target, then CatThresholdTests
         # (C1CA7050…, the 0.5 cat line and its migration), then
         # CatHomeCareTests (C1E0A7E0…, the この子 page's 「これからのこと」),
-        # then AppLimitsTests (C1A11A17…, the 11/14 limits).
+        # then AppLimitsTests (C1A11A17…, the 11/14 limits), then
+        # WhenStuckTests (C1A51C14…, the 11/14 「困ったとき」 words).
         self.assertIn("children = (C1108C000000000000000002,C1D3A9110000000000000006,"
                       "C15C0A7E0000000000000002,C1A1BF100000000000000002,C1CA70500000000000000002,"
-                      "C1E0A7E00000000000000002,C1A11A170000000000000002,); path = NekoWidgetTests;", self.project)
+                      "C1E0A7E00000000000000002,C1A11A170000000000000002,C1A51C140000000000000002,); path = NekoWidgetTests;", self.project)
         self.assertIn("files = (C1108C000000000000000003,C1D3A9110000000000000005,"
                       "C15C0A7E0000000000000001,C1A1BF100000000000000001,C1CA70500000000000000001,"
-                      "C1E0A7E00000000000000001,C1A11A170000000000000001,);", self.project)
+                      "C1E0A7E00000000000000001,C1A11A170000000000000001,C1A51C140000000000000001,);", self.project)
         self.assertEqual(len(set(re.findall(r"C1D3A911000000000000000\d", self.project))), 6)
 
     def test_store_product_compiles_none_of_it(self) -> None:

@@ -157,6 +157,11 @@ struct ProductionAppRootView: View {
             // and the file is written only on going to the background.
             .task(id: scenePhase) {
                 guard scenePhase == .active else { return }
+                // A cloudy window that said 「晴らせませんでした」 is cloudy again,
+                // with its tag, once the app is open (11/14, A2).
+                if CloudyWindowRevealFailure.clear(in: UserDefaults(suiteName: SharedContainer.appGroupIdentifier)) {
+                    WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+                }
                 // In memory only: the first Plus offer waits for an opening
                 // later than the one that ended the first run (11/10).
                 FirstPlusOfferPolicy.activeSince = .now
