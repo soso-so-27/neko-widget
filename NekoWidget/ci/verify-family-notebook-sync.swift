@@ -145,12 +145,19 @@ private enum VerifyFamilyNotebookSync {
         } else { f = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: fixtureURL)) }
         let identity = f.identity, device = try identity.deviceID, family = f.family
         let author = FamilyNotebookAuthor(personID: identity.personID, displayName: "合成")
-        let member = FamilyNotebookCryptoMember(personID: identity.personID, identityPublicKey: identity.personPublicKey,
-            devices: [try identity.certificate(windowID: family.uuidString.lowercased())])
         let key = Data(repeating: 17, count: 32)
-        let roster = FamilyNotebookCryptoRoster(familyID: family, epoch: 1, previousHash: Data(repeating: 0, count: 32), keyCommitment: GroupCanonical.hash(key), members: [member])
-        let signed = try FamilyNotebookRosterCrypto.sign(roster, deviceID: device, signingKey: identity.signingKey)
-        let current = try FamilyNotebookRosterCrypto.restore(signed, trustedPin: .init(familyID: family, epoch: 1, hash: GroupCanonical.hash(roster.canonicalBytes())))
+        let rosterURL = root.appendingPathComponent("roster.json")
+        let signed: SignedFamilyNotebookRoster
+        if phase == "new-receive" {
+            let member = FamilyNotebookCryptoMember(personID: identity.personID, identityPublicKey: identity.personPublicKey,
+                devices: [try identity.certificate(windowID: family.uuidString.lowercased())])
+            let roster = FamilyNotebookCryptoRoster(familyID: family, epoch: 1, previousHash: Data(repeating: 0, count: 32), keyCommitment: GroupCanonical.hash(key), members: [member])
+            signed = try FamilyNotebookRosterCrypto.sign(roster, deviceID: device, signingKey: identity.signingKey)
+            try JSONEncoder().encode(signed).write(to: rosterURL)
+        } else {
+            signed = try JSONDecoder().decode(SignedFamilyNotebookRoster.self, from: Data(contentsOf: rosterURL))
+        }
+        let current = try FamilyNotebookRosterCrypto.restore(signed, trustedPin: .init(familyID: family, epoch: 1, hash: GroupCanonical.hash(signed.roster.canonicalBytes())))
         let packetsURL = root.appendingPathComponent("packets.json")
         var packets: [EncryptedFamilyNotebookOperation] = []
         if phase == "new-receive" {

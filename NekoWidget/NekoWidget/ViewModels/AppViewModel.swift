@@ -539,7 +539,7 @@ final class AppViewModel: ObservableObject {
         }
         adoptionDayObserver = NotificationCenter.default.addObserver(forName: .appRecordsCommitted, object: nil, queue: .main) { [weak self] note in
             guard let url = note.object as? URL, url.deletingLastPathComponent().lastPathComponent == "CatCare" else { return }
-            Task { @MainActor [weak self] in await self?.projectSharedAdoptionDays() }
+            Task { @MainActor [weak self] in self?.objectWillChange.send() }
         }
         todayDayChangeObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.significantTimeChangeNotification,
@@ -1714,16 +1714,6 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func projectSharedAdoptionDays() async {
-        guard catIdentityLoadState == .ready else { return }
-        do {
-            _ = try await mutateCatHouseholdIdentity { state in
-                guard let care = CatCareStore.shared.state else { return }
-                state = FamilyNotebookCatCareBridge.projectingAdoptionDays(care, into: state)
-            }
-        } catch { Self.logError(error, category: "cat-identity", operation: "project_adoption_day") }
-    }
-
     func updateCatProfileLifeDates(
         profileID: UUID,
         dates: CatProfileLifeDates,
@@ -1734,8 +1724,11 @@ final class AppViewModel: ObservableObject {
         }
         do {
             guard let old = catHouseholdIdentity?.profiles.first(where: { $0.id == profileID }) else { return false }
-            let before = old.resolvedLifeDates, after = dates.normalized()
-            if before.adoptionDay != after.adoptionDay || before.adoptionDayIsApproximate != after.adoptionDayIsApproximate {
+            let display = catHouseholdIdentity.map { FamilyNotebookCatCareBridge.projectingAdoptionDays(CatCareStore.shared.state ?? CatCareState(), into: $0) }
+            let before = display?.profiles.first(where: { $0.id == profileID })?.resolvedLifeDates ?? old.resolvedLifeDates
+            let after = dates.normalized()
+            let adoptionChanged = before.adoptionDay != after.adoptionDay || before.adoptionDayIsApproximate != after.adoptionDayIsApproximate
+            if adoptionChanged {
                 _ = FamilyNotebookPrototype.shared
                 guard CatCareStore.shared.setAdoptionDay(profileID: profileID, name: old.displayName, dates: after) else {
                     throw FamilyNotebookError.storageUnavailable
@@ -1745,11 +1738,18 @@ final class AppViewModel: ObservableObject {
                 guard var profile = state.profiles.first(where: { $0.id == profileID }) else {
                     return
                 }
-                profile.setLifeDates(dates, preferredPrimaryKind: preferredPrimaryKind)
+                var personalDates = dates
+                if !adoptionChanged {
+                    // Merely editing the birthday must not put a received
+                    // family date into the owner's private profile backup.
+                    personalDates.adoptionDay = profile.resolvedLifeDates.adoptionDay
+                    personalDates.adoptionDayIsApproximate = profile.resolvedLifeDates.adoptionDayIsApproximate
+                }
+                profile.setLifeDates(personalDates, preferredPrimaryKind: preferredPrimaryKind)
                 state.upsertProfile(profile)
             }
-            return committed.profiles.first(where: { $0.id == profileID })?
-                .resolvedLifeDates == dates.normalized()
+            let displayed = FamilyNotebookCatCareBridge.projectingAdoptionDays(CatCareStore.shared.state ?? CatCareState(), into: committed)
+            return displayed.profiles.first(where: { $0.id == profileID })?.resolvedLifeDates == dates.normalized()
         } catch {
             Self.logError(error, category: "cat-identity", operation: "update_profile_date")
             setError(error)
@@ -2326,7 +2326,6 @@ final class AppViewModel: ObservableObject {
                 let initial = FamilyNotebookCatCareBridge.importingAdoptionDays(loaded.profiles, into: care, at: Date())
                 if initial != care { _ = CatCareStore.shared.update { $0 = initial } }
             }
-            await projectSharedAdoptionDays()
             SharedLog.app.info(
                 "cat-identity",
                 "Cat household identity state loaded",

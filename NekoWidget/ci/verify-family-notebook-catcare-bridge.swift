@@ -86,6 +86,12 @@ enum FamilyNotebookCatCareBridgeVerifier {
         try check(plan.entries.filter { $0.target.field == .adoptionDay }.count == 1, "only explicitly populated adoption migrates")
         try store.applyImport(plan, author: FamilyNotebookMigrationVerifier.author)
         let changed = try store.edit(target: .init(familyCatID: f.familyA, field: .adoptionDay), value: .text("2021-03-01|0"), author: FamilyNotebookMigrationVerifier.author)
+        let offline = FamilyNotebookOperation(familyID: f.family, target: changed.target, value: .text("2022-04-02|1"),
+            version: .init(clock: changed.version.clock + 1, deviceID: "other", operationID: UUID()),
+            author: FamilyNotebookMigrationVerifier.author, editedAt: FamilyNotebookMigrationVerifier.now)
+        let forward = FamilyNotebookCore.resolve(target: changed.target, operations: [changed, offline])
+        let backward = FamilyNotebookCore.resolve(target: changed.target, operations: [offline, changed])
+        try check(forward == backward && forward?.operation == offline && forward?.history.count == 1, "same version ordering as birthday; losing value retained")
         let projected = try FamilyNotebookCatCareBridge.apply(store.snapshot(), to: care)
         try check(projected.cats[0].adoptionDay?.value?.day.year == 2021 && projected.cats[0].adoptionDay?.value?.isApproximate == false, "date and precision change together")
         let identity = CatHouseholdIdentityState(mode: .profiled, profiles: [profile, empty], memberships: [], globalExcludedAssets: [], legacyUnscoped: nil)

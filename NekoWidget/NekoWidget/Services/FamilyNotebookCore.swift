@@ -417,16 +417,7 @@ enum FamilyNotebookCore {
                         outboxIDs: Set<UUID> = [], acknowledgements: [FamilyNotebookAcknowledgement] = []) -> FamilyNotebookFieldState? {
         let candidates = operations.filter { $0.target == target || $0.target.removes(target) }
         let tombstones = candidates.filter { $0.target.field == nil || $0.target.field == .sharingEnded }
-        var eligible = tombstones.isEmpty ? candidates : tombstones
-        if target.field == .adoptionDay && tombstones.isEmpty {
-            let explicit = candidates.filter { $0.importedSourceEditedAt == nil }
-            if !explicit.isEmpty { eligible = explicit }
-            else if let earliest = candidates.min(by: { ($0.editedAt, $0.version) < ($1.editedAt, $1.version) }) {
-                // Offline initial imports do not replace an already shared date.
-                eligible = [earliest]
-            }
-        }
-        guard let winner = eligible.max(by: { $0.version < $1.version }) else { return nil }
+        guard let winner = (tombstones.isEmpty ? candidates : tombstones).max(by: { $0.version < $1.version }) else { return nil }
         let byID = Dictionary(operations.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var seen = Set<UUID>(), remaining = winner.observedOperationIDs
         while let id = remaining.popLast() {
