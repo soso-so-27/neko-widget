@@ -6943,7 +6943,7 @@ class OnePlaceSettingsTests(unittest.TestCase):
         self.assertIn("Plusは、ここで消しても解約されません。", choices)
         self.assertNotIn("サブスクリプション", source("NekoWidget/Views/GroupWindowView.swift"))
         # 11/8 (2): no ID or server in the words.
-        self.assertIn('Label("まどと家族の手帳から抜ける"', choices)
+        self.assertIn('Label("まどと家族の手帳のデータを消す"', choices)
         for word in ("のID", "とID", "サーバー"):
             self.assertNotIn(word, choices)
         self.assertIn("GroupWindowClientProvider.production != nil || ManagedPreservationConfiguration.current.isEnabled", choices)

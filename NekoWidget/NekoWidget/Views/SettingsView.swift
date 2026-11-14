@@ -21,7 +21,7 @@ struct AccountDeletionChoicesView: View {
             if let client = GroupWindowClientProvider.production {
                 Section {
                     NavigationLink { GroupIdentityDeletionView(client: client) } label: {
-                        Label("まどと家族の手帳から抜ける", systemImage: "person.2.slash")
+                        Label("まどと家族の手帳のデータを消す", systemImage: "person.2.slash")
                     }
                     .accessibilityIdentifier("account-deletion-group-identity")
                 } footer: {

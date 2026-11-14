@@ -824,7 +824,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
             "家族の手帳を作って、家族と一緒に書く",
             "猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる",
         ])
-        self.assertIn('"解約しても、写真・まど・メモは消えません",', view)
+        self.assertIn('"解約しても、このiPhoneの写真・メモ・まどの写真は消えません",', view)
         # No memo-originated Plus entry remains (offer, usage name, auto-open key).
         model = source("NekoWidget/Services/MembershipOfferModel.swift")
         contexts = section(model, "enum PlusOfferContext: Equatable, Sendable {", "    var entryTitle: String {")

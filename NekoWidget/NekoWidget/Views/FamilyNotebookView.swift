@@ -749,6 +749,8 @@ struct FamilyNotebookView: View {
 
     private var presentsSheet: Bool { invites || triesInvitation || showsPlusOffer || showsName || showsCats }
     @State private var decliningRequest: FamilyNotebookJoinRequest?
+    /// 「運営に知らせる」 on someone else's entry was pressed (11/14).
+    @State private var reportsEntry = false
     @Environment(\.scenePhase) private var scenePhase
     /// The pressed 受け入れる/受け入れない, so only it says it is working (11/6).
     @State private var running: String?
@@ -964,6 +966,11 @@ struct FamilyNotebookView: View {
                         .contextMenu {
                             // Hiding is local to this iPhone; nobody is told.
                             Button("この書き込みを表示しない", systemImage: "eye.slash") { hide(operation) }
+                            // Review (11/14, 1.2): a way to tell us, through the same
+                            // contact page as Settings. Nothing about the entry is sent.
+                            if AppPublicLinksConfiguration.current.supportURL != nil {
+                                Button("運営に知らせる", systemImage: "exclamationmark.bubble") { reportsEntry = true }
+                            }
                         }
                     }
                     // Undo, in the same form as まど's 「表示しない・ブロックした人」.
@@ -1004,6 +1011,12 @@ struct FamilyNotebookView: View {
 #endif
         }
         .refreshable { if !sharing.isWorking { await sharing.refresh(reportsFailure: true) } }
+        .alert("運営に知らせる", isPresented: $reportsEntry) {
+            if let url = AppPublicLinksConfiguration.current.supportURL { Link("お問い合わせ", destination: url) }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text(FamilyNotebookWords.reportEntry)
+        }
         // The only place to leave (11/7: your own page no longer offers it).
         .confirmationDialog("家族の手帳から抜けますか？", isPresented: $confirmsLeave, titleVisibility: .visible) {
             Button("抜ける", role: .destructive) {
@@ -1942,6 +1955,10 @@ extension View {
 
 /// How the notebook's items read on screen.
 enum FamilyNotebookWords {
+    /// After 「運営に知らせる」 on a family entry (11/14). The contact page asks
+    /// people not to send photos or others' names, so only this one sentence.
+    static let reportEntry = "お問い合わせから、気になった書き込みのことを知らせてください。"
+
     /// Under 「家族の手帳から抜ける」 at the bottom of the notebook.
     static func leaveDetail(payer: Bool) -> String {
         payer ? "抜けると、ほかの家族がPlusを始めるまで、家族みんなの共有が止まります。"
