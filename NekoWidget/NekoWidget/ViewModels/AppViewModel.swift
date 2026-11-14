@@ -910,7 +910,9 @@ final class AppViewModel: ObservableObject {
             // Not cancellable: a cancelled caller (a view's task) must not
             // drop the pass, which before this wait never depended on it.
             try? await Task.sleep(for: .milliseconds(1_500))
-            guard UIApplication.shared.applicationState == .active else {
+            // Only leaving for the background postpones it (a system alert
+            // or Control Center makes the app inactive, not gone).
+            guard UIApplication.shared.applicationState != .background else {
                 LaunchWork.count("verificationDeferred")
                 libraryChangePending = true
                 return

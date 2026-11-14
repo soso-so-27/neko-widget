@@ -26,17 +26,19 @@ final class LaunchWorkUITests: XCTestCase {
         allowPhotosIfAsked()
         report("初回", read(app, window: 1))
         // Let the first pass finish before closing, as a person would.
-        sleep(20)
+        sleep(40)
         app.terminate()
 
         // 2. Opening again, nothing changed in Photos.
         app.launch()
+        allowPhotosIfAsked()
         report("再起動（写真は同じ）", read(app, window: 1))
 
         // 3. Home, then back to the app.
         XCUIDevice.shared.press(.home)
         sleep(3)
         app.activate()
+        allowPhotosIfAsked()
         report("前面に戻る", read(app, window: 2))
         app.terminate()
     }
@@ -63,7 +65,8 @@ final class LaunchWorkUITests: XCTestCase {
     private func allowPhotosIfAsked() {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let alert = springboard.alerts.firstMatch
-        guard alert.waitForExistence(timeout: 3) else { return }
+        guard alert.waitForExistence(timeout: 6) else { return }
+        print("LAUNCHWORK|alert|\(alert.label)")
         for label in ["フルアクセスを許可", "すべての写真へのアクセスを許可", "Allow Full Access", "許可", "OK"] {
             let button = alert.buttons[label]
             if button.exists { button.tap(); return }
