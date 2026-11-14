@@ -719,7 +719,11 @@ private struct CatHomeHero: View {
     /// three full-width characters) stays at 56.
     private func nameFit(maxWidth: CGFloat) -> CatHomeHeroLayout.NameFit {
         let name = cat.name as NSString
-        return CatHomeHeroLayout.nameFit(scale: Double(nameSize / 56), maxWidth: Double(maxWidth)) { size in
+        // On a short photo (iPhone SE) the ladder does not grow with the
+        // text size: at the accessibility sizes a larger name pushed the
+        // name above the top of the photo (capture 45_home_text_ax3, se).
+        let scale = metrics.heroHeight < CatHomeHeroLayout.shortHero ? min(nameSize / 56, 1) : nameSize / 56
+        return CatHomeHeroLayout.nameFit(scale: Double(scale), maxWidth: Double(maxWidth)) { size in
             let font = UIFont.systemFont(ofSize: CGFloat(size), weight: .heavy)
             return Double(ceil(name.size(withAttributes: [.font: font]).width))
         }

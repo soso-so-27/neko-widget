@@ -233,7 +233,10 @@ class NameIsTheCatMenu(unittest.TestCase):
         self.assertIn("(metrics.width * CGFloat(CatHomeHeroLayout.nameWidthShare)).rounded(.down)", words)
         self.assertIn("let fit = nameFit(maxWidth: nameWidth)", words)
         fit = block(hero, "private func nameFit(maxWidth: CGFloat) -> CatHomeHeroLayout.NameFit {")
-        self.assertIn("CatHomeHeroLayout.nameFit(scale: Double(nameSize / 56), maxWidth: Double(maxWidth))", fit)
+        self.assertIn("CatHomeHeroLayout.nameFit(scale: Double(scale), maxWidth: Double(maxWidth))", fit)
+        # iPhone SE: the ladder does not grow with the text size (45_home_text_ax3).
+        self.assertIn("metrics.heroHeight < CatHomeHeroLayout.shortHero ? min(nameSize / 56, 1) : nameSize / 56", fit)
+        self.assertIn("static let shortHero: CGFloat = 320", CORE)
         self.assertIn("UIFont.systemFont(ofSize: CGFloat(size), weight: .heavy)", fit)
         name = block(hero, "private func nameText(_ fit: CatHomeHeroLayout.NameFit, maxWidth: CGFloat) -> some View {")
         self.assertIn("text.lineLimit(1).fixedSize()", name)

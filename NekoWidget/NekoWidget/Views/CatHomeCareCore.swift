@@ -195,6 +195,9 @@ enum CatHomeHeroLayout {
     /// The middle of the name's glyphs above its baseline, as a share of
     /// its size (kana, kanji and capitals alike); the menu button sits there.
     static let glyphCentre = 0.36
+    /// A photo shorter than this (iPhone SE, 40% of a short screen) keeps
+    /// the ladder at its default sizes at every text size.
+    static let shortHero: CGFloat = 320
 
     struct NameFit: Equatable {
         var size: Double
