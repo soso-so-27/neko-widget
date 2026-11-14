@@ -70,11 +70,13 @@ describe('group-only push registration and just-before-send eligibility',()=>{
     await db.prepare('UPDATE group_notification_events SET created_at=? WHERE moment_id=?').bind(Math.floor(now/120)*120-360,latest).run();
     const companion=await photo(owner,w,settings);
     await db.prepare('UPDATE group_notification_events SET created_at=? WHERE moment_id=?').bind(Math.floor(now/120)*120-360,companion).run();
+    // Read the drain clock after enqueue; available_at may cross a second boundary.
+    const retryNow=Math.floor(Date.now()/1000);
     let failedCalls=0;
-    const retry=await drainGroupNotifications(settings,now,async()=>{failedCalls++;return new Response(null,{status:503});});
+    const retry=await drainGroupNotifications(settings,retryNow,async()=>{failedCalls++;return new Response(null,{status:503});});
     expect(retry.retried).toBe(1);
     expect(failedCalls).toBe(1);
-    const changed=await drainGroupNotifications(settings,now+31,noNetwork,{beforeSend:()=>apnsGate(false)});
+    const changed=await drainGroupNotifications(settings,retryNow+31,noNetwork,{beforeSend:()=>apnsGate(false)});
     expect(changed.skipped).toBe(2);await apnsGate(true);
   });
   it('encrypts physical tokens and sends only a generic payload plus an opaque window route',async()=>{
