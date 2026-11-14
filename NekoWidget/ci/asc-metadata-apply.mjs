@@ -19,6 +19,10 @@ function expected(files,fields){
 export function approvedDescriptionUpdate(current,desired){
   if(typeof current!=='string'||typeof desired!=='string')return false;
   if(current===desired)return true;
+  // 1115c: owner approved exactly the three #1007 description edits.
+  const reviewEdits=[["・写真とひとことは、まどの人だけが開ける鍵で暗号化して届けます。運営者は中身を読めません。", "・写真とひとことは、まどの人だけが開ける鍵で暗号化して届けます。運営者は中身を読めません。通報された写真だけは、確認用の画像を運営者が確かめます。"], ["・届ける前と表示する前に、iPhone の中で不適切な内容でないかを確かめます。困ったときは、通報やブロックができます。", "・iPhone の「センシティブな内容の警告」がオンのときは、届ける前と表示する前に、iPhone の中で確かめます。困ったときは、通報やブロックができます。"], ["Plus は 14 日間無料で試せます。お試しが終わると、月額 980 円（税込）で自動で更新されます。更新の 24 時間前までに解約すれば、料金はかかりません。解約は iPhone の「設定」→ Apple アカウント →「サブスクリプション」からできます。やめても、写真・まど・メモ・手帳の記録は消えません。Apple のファミリー共有には対応していません。", "Plus は 14 日間無料で試せます。お試しが終わると、月額 980 円（税込）で自動で更新されます。更新の 24 時間前までに解約すれば、料金はかかりません。解約は iPhone の「設定」→ Apple アカウント →「サブスクリプション」からできます。やめても、この iPhone の写真・メモ・まどの写真・手帳の記録は消えません。自動保存のコピーは、やめてから 12 か月後に消えます。Apple のファミリー共有には対応していません。"]];
+  if(reviewEdits.every(([before])=>current.split(before).length===2)
+      && reviewEdits.reduce((text,[before,after])=>text.replace(before,after),current)===desired)return true;
   // 1113d: remove exactly the former paid photo-memo bullet, and nothing else.
   const memo='・写真に新しいメモを書く\n';
   if(current.split(memo).length===2 && current.replace(memo,'')===desired)return true;
