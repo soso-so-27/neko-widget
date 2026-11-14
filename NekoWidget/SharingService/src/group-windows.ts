@@ -120,6 +120,8 @@ export async function createGroupInvitation(env:Env,actor:GroupActor,windowId:st
   const proofPublicKey=binaryField(body,"proofPublicKey",32),invitationId=randomBase64url(16),expiresAt=actor.now+86400;
   const response={operationId,invitationId,expiresAt,revision,serverNow:actor.now};
   await env.DB.batch([...groupAuthorizationStatements(env,actor,scope),
+    env.DB.prepare("UPDATE group_join_requests SET state='cancelled' WHERE state='pending' AND invitation_id IN (SELECT id FROM group_invitations WHERE space_id=? AND revoked_at IS NULL)").bind(windowId),
+    env.DB.prepare("UPDATE group_invitations SET revoked_at=? WHERE space_id=? AND revoked_at IS NULL").bind(actor.now,windowId),
     env.DB.prepare("INSERT INTO group_invitations VALUES (?,?,?,?,?,?,NULL)").bind(invitationId,windowId,proofPublicKey,actor.deviceId,actor.now,expiresAt),
     groupMutationStatement(env,actor,operationId,response)]);
   return jsonResponse(response,201);
