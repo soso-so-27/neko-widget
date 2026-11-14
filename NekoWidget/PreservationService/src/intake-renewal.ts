@@ -22,15 +22,17 @@ export async function renewIntake(db: D1Database, now: () => number,
   if (generation === undefined) return 'not-due';
   const before = result[2]?.results[0] as Row | undefined;
   let forecast: number | null = null, warning = false;
-  let failure = 'closed';
+  let failure = 'cost-unavailable';
   try {
-    if (!before || !Object.entries(p.limits).every(([k, v]) => before[k] === v)) throw Error('Unapproved limits');
+    if (!before || !Object.entries(p.limits).every(([k, v]) => before[k] === v)) {
+      failure = 'limits'; throw Error('Unapproved limits');
+    }
     const observation = await collect(), observedAt = now();
     forecast = forecastYen(observation, observedAt);
     warning = measuredCostYen(observation, observedAt) >= p.warningYen;
     const finished = now();
     if (finished < start || finished >= start + p.leaseMs) { failure = 'expired'; throw Error('Expired'); }
-    if (forecast >= p.stopYen) throw Error('Over budget');
+    if (forecast >= p.stopYen) { failure = 'budget'; throw Error('Over budget'); }
     const validUntil = finished + p.lifetimeMs;
     // Match every observed field, including live counters and operator edits.
     // Any concurrent admission/control change leaves the already-closed row closed.

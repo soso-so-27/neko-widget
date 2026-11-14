@@ -1,4 +1,4 @@
-import { sendOperatorMail, type GroupReportMailEnv, type OperatorMailKind } from '../../SharingService/src/group-report-mail';
+import { sendOperatorMail, type GroupReportMailEnv, type OperatorMailKind, type IntakeClosureReason } from '../../SharingService/src/group-report-mail';
 type Kind = Exclude<OperatorMailKind, 'received' | 'undecided'> | 'normal';
 export interface NotificationEnv extends GroupReportMailEnv { DB: D1Database; }
 /** No personal data, credentials, provider response or report identifier in logs/mail.
@@ -13,7 +13,7 @@ export async function notifyIntakeState(env: NotificationEnv, now = Date.now(),
   const kind: Kind = row.last_result === 'credentials' ? 'credentials' :
     row.last_result === 'expired' || (row.approved_until > 0 && row.approved_until <= now) ||
     (row.enabled === 1 && row.valid_until <= now) ? 'expired' :
-    row.last_result === 'closed' || (row.enabled === 0 && row.approved_until > 0) ? 'closed' :
+    ['closed', 'cost-unavailable', 'limits', 'budget'].includes(row.last_result) || (row.enabled === 0 && row.approved_until > 0) ? 'closed' :
     row.warning === 1 ? 'warning' : 'normal';
   const changed = await env.DB.prepare(`UPDATE pa_intake_notification SET observed_kind=?
     WHERE singleton=1 AND observed_kind<>? RETURNING singleton`).bind(kind,kind).first();
@@ -30,7 +30,10 @@ export async function notifyIntakeState(env: NotificationEnv, now = Date.now(),
     .bind(token,now+60000,now+21600000,kind,kind,now,now).first();
   if (!claimed) return;
   try {
-    await send(env,kind);
+    const reason: IntakeClosureReason = row.last_result === 'cost-unavailable' ? 'cost-unavailable' :
+      row.last_result === 'limits' ? 'limits' : row.last_result === 'budget' ? 'budget' :
+      row.last_result === 'closed' ? 'unknown' : 'stopped';
+    await send(env,kind,reason);
     await env.DB.prepare(`UPDATE pa_intake_notification SET delivered_kind=?,lease_token=NULL,lease_until=0
       WHERE singleton=1 AND lease_token=? AND observed_kind=?`).bind(kind,token,kind).run();
     log({event:'preservation_intake_mail',kind,result:'submitted',at:now});

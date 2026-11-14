@@ -26,6 +26,7 @@ it('provider failure closes new writes before IO and does not touch owner record
   const ownersBefore = (await db.prepare('SELECT * FROM pa_owners').all()).results;
   expect(await renewIntake(db,()=>base,async()=>{expect((await state()).enabled).toBe(0);throw Error('offline');})).toBe('closed');
   expect(await state()).toMatchObject({enabled:0,monthly_attempts:3,monthly_bytes:123});
+  expect(await db.prepare('SELECT last_result FROM pa_intake_renewal').first()).toEqual({last_result:'cost-unavailable'});
   await expect(new IntakeControl(db,()=>base).admit(1)).rejects.toMatchObject({code:'PRESERVATION_INTAKE_PAUSED'});
   expect((await db.prepare('SELECT * FROM pa_owners').all()).results).toEqual(ownersBefore);
 });
@@ -65,6 +66,7 @@ it('expired authorization and malformed limits consume no paid calls', async () 
   await db.prepare('UPDATE pa_intake_renewal SET approved_until=?').bind(base+86400000).run();
   await db.prepare('UPDATE pa_intake_control SET maximum_owners=101').run();
   expect(await renewIntake(db,()=>base,async()=>{calls++;return evidence();})).toBe('closed');expect(calls).toBe(0);
+  expect(await db.prepare('SELECT last_result FROM pa_intake_renewal').first()).toEqual({last_result:'limits'});
 });
 it('cannot grant time past authorization or reset an exhausted counter', async () => {
   await db.prepare('UPDATE pa_intake_renewal SET approved_until=?').bind(base+1000).run();
@@ -95,6 +97,7 @@ it('forecast at or above 10000 closes even while measured cost is less', async (
   expect(forecastYen(o,base)).toBeGreaterThanOrEqual(10000);
   expect(await renewIntake(db,()=>base,async()=>o)).toBe('closed');
   expect((await state()).enabled).toBe(0);
+  expect(await db.prepare('SELECT last_result FROM pa_intake_renewal').first()).toEqual({last_result:'budget'});
 });
 
 it('future cost API budget is not actual warning spending and stop forecast stays unchanged',async()=>{

@@ -62,3 +62,27 @@ it('a concurrent collector still checking does not emit a false closure',async()
  await DB.prepare("UPDATE pa_intake_renewal SET last_result='checking',approved_until=?,lease_until=?").bind(now+86400000,now+60000).run();
  let calls=0;const logs:object[]=[];await notifyIntakeState(config,now,async()=>{calls++;},x=>logs.push(x));expect(calls).toBe(0);expect(logs).toEqual([]);
 });
+
+it('closure mail explains the recorded reason, preservation and next action without changing admission',async()=>{
+ const messages:any[]=[];
+ const mail={...config,GROUP_REPORT_EMAIL_TO:'owner@example.invalid',GROUP_REPORT_EMAIL_FROM:'notices@example.invalid',
+  GROUP_REPORT_EMAIL:{send:async(x:any)=>{messages.push(x);}} as unknown as SendEmail};
+ for(const [result,phrase] of [['cost-unavailable','費用を安全に確認できなかった'],['budget','費用の見込みが停止額に達した'],
+  ['limits','上限設定が承認済みの設定と一致しなかった'],['closed','詳しい理由を特定できません']]){
+  await DB.prepare("UPDATE pa_intake_notification SET observed_kind='normal',delivered_kind='normal',next_attempt=0").run();
+  await DB.prepare('UPDATE pa_intake_renewal SET last_result=?').bind(result).run();
+  const before=await DB.prepare('SELECT * FROM pa_intake_control').first();
+  await notifyIntakeState(mail,now,sendOperatorMail,()=>{});
+  const message=messages.at(-1);
+  expect(message.subject).toBe('新しい保存の受付を閉じました');
+  expect(message.text.split('\n')).toHaveLength(3);
+  expect(message.text).toContain(phrase);
+  expect(message.text).toContain('保存済みの記録は消えず、戻せます');
+  expect(message.text).toContain('持ち主の承認後');
+  expect(message.text).toContain('続けない場合は、そのままで構いません');
+  expect(await DB.prepare('SELECT * FROM pa_intake_control').first()).toEqual(before);
+ }
+ expect(messages).toHaveLength(4);
+ await expect(sendOperatorMail(mail,'closed','secret account id' as any)).rejects.toThrow('invalid_reason');
+ expect(messages).toHaveLength(4);
+});
