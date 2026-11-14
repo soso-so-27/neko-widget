@@ -100,7 +100,10 @@ enum GroupNameCrypto {
               try Curve25519.Signing.PublicKey(rawRepresentation: signer.device.signingPublicKey)
                 .isValidSignature(value.signature, for: GroupCanonical.fields([GroupCanonical.text("NW3.NAME.SIGN"), aad, Data(value.name.utf8)]))
         else { throw GroupProtocolError.invalidSignature }
-        return try GroupWire.name(value.name)
+        // Authentication above is mandatory. Only an authenticated but invalid
+        // display label is isolated; it must not prevent other names/photos
+        // from loading or relax any roster/signature/key validation.
+        return (try? GroupWire.name(value.name)) ?? "名前を表示できません"
     }
 
     struct JoinBox: Codable { let ownerDeviceID: String; let encapsulatedKey: Data; let ciphertext: Data }
