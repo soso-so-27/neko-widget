@@ -48,10 +48,23 @@ struct NekoWidgetView: View {
         .containerBackground(for: .widget) {
             Color(red: 0.12, green: 0.10, blue: 0.09)
         }
-        // The fog clears inside the window: puffs drift to the edges while the
-        // photo's blur dissolves. WidgetKit animates only transitions, so each
-        // puff leaves with its own removal transition.
-        .animation(reduceMotion ? nil : .easeOut(duration: 1.6), value: entry.cloudyWindowSelection?.revealedAt)
+        // The fog clears inside the window: the capsule answers the tap first,
+        // the puffs thin out where they are, centre first, and the photo comes
+        // into focus. WidgetKit animates only transitions (two seconds at most),
+        // so each part leaves with its own removal transition and its own
+        // timing; the whole reveal settles within 1.4 seconds.
+        .animation(reduceMotion ? nil : CloudyRevealMotion.photo, value: entry.cloudyWindowSelection?.revealedAt)
+    }
+
+    /// A cloudy window's clear photo settles from slightly near into place as
+    /// its blur dissolves, like a lens finding focus. Every other photo change
+    /// keeps the plain blur replace.
+    private var photoTransition: AnyTransition {
+        if reduceMotion { return .opacity }
+        if entry.cloudyWindowSelection != nil {
+            return AnyTransition(.blurReplace).combined(with: .scale(scale: 1.05))
+        }
+        return AnyTransition(.blurReplace)
     }
 
     private var photoContent: some View {
@@ -85,7 +98,7 @@ struct NekoWidgetView: View {
                             )
                             .clipped()
                             .id(entry.cacheFilename)
-                            .transition(reduceMotion ? AnyTransition.opacity : AnyTransition(.blurReplace))
+                            .transition(photoTransition)
 
                         if entry.cloudyWindowSelection != nil {
                             CloudyFogPuffs(isCloudy: entry.cloudyWindowSelection?.revealedAt == nil,
@@ -107,24 +120,31 @@ struct NekoWidgetView: View {
                     .accessibilityLabel(loadedPhotoAccessibilityLabel)
                     .overlay(alignment: .bottom) {
                         if let selection = entry.cloudyWindowSelection {
-                            if selection.revealedAt == nil {
-                                // Says what you get, not the verb: 「晴らす」 alone was unclear.
-                                Button(intent: RevealCloudyWindowIntent(selection: selection)) {
-                                    Label(selection.albumPeriod == nil ? "タップで、きょうの1枚" : "作品がとどきました",
-                                          systemImage: "hand.tap.fill")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(.white)
-                                        .padding(.horizontal, 12).padding(.vertical, 7)
-                                        .background(.black.opacity(0.35), in: Capsule())
-                                        .frame(minHeight: 44)
-                                        .contentShape(Rectangle())
+                            ZStack {
+                                if selection.revealedAt == nil {
+                                    // Says what you get, not the verb: 「晴らす」 alone was unclear.
+                                    Button(intent: RevealCloudyWindowIntent(selection: selection)) {
+                                        Label(selection.albumPeriod == nil ? "タップで、きょうの1枚" : "作品がとどきました",
+                                              systemImage: "hand.tap.fill")
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(.white)
+                                            .padding(.horizontal, 12).padding(.vertical, 7)
+                                            .background(.black.opacity(0.35), in: Capsule())
+                                            .frame(minHeight: 44)
+                                            .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .padding(12)
+                                    .accessibilityLabel(selection.albumPeriod == nil
+                                        ? "きょうのまどのくもりを晴らす" : "作品がとどきました。くもりを晴らす")
+                                    .accessibilityIdentifier("cloudy-window-reveal")
+                                    // Answers the tap: a short shrink and fade, ahead of the fog.
+                                    .transition(reduceMotion ? AnyTransition.opacity
+                                        : .scale(scale: 0.82).combined(with: .opacity))
                                 }
-                                .buttonStyle(.plain)
-                                .padding(12)
-                                .accessibilityLabel(selection.albumPeriod == nil
-                                    ? "きょうのまどのくもりを晴らす" : "作品がとどきました。くもりを晴らす")
-                                .accessibilityIdentifier("cloudy-window-reveal")
                             }
+                            .animation(reduceMotion ? nil : CloudyRevealMotion.capsule,
+                                       value: selection.revealedAt)
                         } else if let photo = entry.officialPhoto {
                             // Same type, colour, inset and alignment as a window's
                             // name (left in Small, centred in Medium and Large), so
@@ -1085,8 +1105,23 @@ enum AppStoreWidgetPreviewFixture {
 }
 #endif
 
-/// Soft white puffs over the cloudy window. Each one leaves toward its own
-/// edge when the window clears, so the fog drifts away inside the Widget.
+/// Timing of the cloudy window's reveal. Built-in transitions and curves
+/// only: those are what WidgetKit documents for widgets (two seconds at most).
+/// The ease-out-cubic curve lands softly without a bounce.
+private enum CloudyRevealMotion {
+    private static func soft(_ duration: Double) -> Animation {
+        .timingCurve(0.33, 1, 0.68, 1, duration: duration)
+    }
+
+    static let capsule = Animation.easeOut(duration: 0.25)
+    static let photo = soft(1.4)
+    /// Centre first, then the upper pair, then the lower pair.
+    static func puff(delay: Double) -> Animation { soft(1.0).delay(delay) }
+}
+
+/// Soft white puffs over the cloudy window. When the window clears, each
+/// one spreads a little and thins out where it is, from the centre outward,
+/// so the fog lifts instead of sliding away.
 private struct CloudyFogPuffs: View {
     let isCloudy: Bool
     let size: CGSize
@@ -1096,30 +1131,40 @@ private struct CloudyFogPuffs: View {
         let id: Int
         let x: CGFloat, y: CGFloat, w: CGFloat, h: CGFloat
         let dx: CGFloat, dy: CGFloat
+        let delay: Double
     }
 
     private let puffs: [Puff] = [
-        Puff(id: 0, x: 0.22, y: 0.28, w: 0.95, h: 0.55, dx: -1.1, dy: -0.4),
-        Puff(id: 1, x: 0.80, y: 0.24, w: 0.85, h: 0.50, dx: 1.1, dy: -0.5),
-        Puff(id: 2, x: 0.50, y: 0.55, w: 1.10, h: 0.60, dx: 0.2, dy: 1.1),
-        Puff(id: 3, x: 0.15, y: 0.78, w: 0.80, h: 0.50, dx: -1.1, dy: 0.5),
-        Puff(id: 4, x: 0.86, y: 0.80, w: 0.85, h: 0.50, dx: 1.1, dy: 0.6),
+        Puff(id: 0, x: 0.22, y: 0.28, w: 0.95, h: 0.55, dx: -1, dy: -0.4, delay: 0.12),
+        Puff(id: 1, x: 0.80, y: 0.24, w: 0.85, h: 0.50, dx: 1, dy: -0.5, delay: 0.12),
+        Puff(id: 2, x: 0.50, y: 0.55, w: 1.10, h: 0.60, dx: 0, dy: 0.3, delay: 0),
+        Puff(id: 3, x: 0.15, y: 0.78, w: 0.80, h: 0.50, dx: -1, dy: 0.5, delay: 0.24),
+        Puff(id: 4, x: 0.86, y: 0.80, w: 0.85, h: 0.50, dx: 1, dy: 0.6, delay: 0.24),
     ]
 
     var body: some View {
         ZStack {
             ForEach(puffs) { puff in
-                if isCloudy {
-                    Ellipse()
-                        .fill(Color.white.opacity(0.42))
-                        .frame(width: size.width * puff.w, height: size.height * puff.h)
-                        .blur(radius: min(size.width, size.height) * 0.12)
-                        .position(x: size.width * puff.x, y: size.height * puff.y)
-                        .transition(reduceMotion ? .opacity : .asymmetric(
-                            insertion: .opacity,
-                            removal: .offset(x: puff.dx * size.width, y: puff.dy * size.height)
-                                .combined(with: .opacity)))
+                // Each puff has its own container so its removal can carry its
+                // own delay; the container stays while the puff leaves.
+                ZStack {
+                    if isCloudy {
+                        Ellipse()
+                            .fill(Color.white.opacity(0.42))
+                            .frame(width: size.width * puff.w, height: size.height * puff.h)
+                            .blur(radius: min(size.width, size.height) * 0.12)
+                            .position(x: size.width * puff.x, y: size.height * puff.y)
+                            .transition(reduceMotion ? .opacity : .asymmetric(
+                                insertion: .opacity,
+                                removal: .scale(scale: 1.3, anchor: UnitPoint(x: puff.x, y: puff.y))
+                                    .combined(with: .offset(x: puff.dx * size.width * 0.06,
+                                                            y: puff.dy * size.height * 0.06))
+                                    .combined(with: .opacity)))
+                    }
                 }
+                .frame(width: size.width, height: size.height)
+                .animation(reduceMotion ? nil : CloudyRevealMotion.puff(delay: puff.delay),
+                           value: isCloudy)
             }
         }
         .frame(width: size.width, height: size.height)
