@@ -366,7 +366,8 @@ final class ScreenSpeedSweepUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = japanese + ["--app-store-screenshot-fixture", "--cat-home-stress",
                                           "--cat-home-stress-scenario", "60",
-                                          "--cat-home-stress-names", "むぎ|ソラ|ちゃちゃ"] + extra
+                                          "--cat-home-stress-names", "むぎ|ソラ|ちゃちゃ",
+                                          "--cat-home-frame-probe"] + extra
         app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] = "ScreenSpeedSweepPager.\(UUID().uuidString)"
         app.launch()
         _ = app.tabBars.firstMatch.waitForExistence(timeout: 30)
@@ -391,6 +392,15 @@ final class ScreenSpeedSweepUITests: XCTestCase {
             app.swipeRight()
         }
         print("SPEED|\(label)|scroll_end|-")
+        // The app's own count of late main-thread frames while the pager
+        // moved (the simulator gives XCTest no hitch metrics).
+        Thread.sleep(forTimeInterval: 1)
+        let probe = app.descendants(matching: .any)["cat-home-frame-probe"].firstMatch
+        if probe.waitForExistence(timeout: 5) {
+            print("SPEED|\(label)|frames|\(probe.label)")
+        } else {
+            print("SPEED|\(label)|frames|missing")
+        }
         app.terminate()
     }
 
