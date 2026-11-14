@@ -156,6 +156,14 @@ class LaunchWork(unittest.TestCase):
         self.assertIn("deferredAssets: viewModel.isScanning ? viewModel.deferredAssetsBeforePass : state.deferredAssets",
                       read("NekoWidget/App/AppRootView.swift"))
 
+    def test_root_keeps_per_cat_presentations_between_drawings(self):
+        root = read("NekoWidget/App/AppRootView.swift")
+        content = block(root, "private func makeMainTabContent()")
+        self.assertIn("profilePresentationCache.values(for: profileKey)", content)
+        self.assertIn("readablePhotoIdentifiers: profileValues.readableIdentifiers,", content)
+        self.assertNotIn("readablePhotoIdentifiers: Set(", content)
+        self.assertIn("private final class ProfilePresentationCache: ObservableObject {", root)
+
     def test_meter_and_fixture_are_debug_only(self):
         debug, release = METER.split("#else", 1)
         self.assertTrue(debug.lstrip().startswith("import Foundation") and "#if DEBUG" in debug)

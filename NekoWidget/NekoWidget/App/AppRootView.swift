@@ -31,6 +31,7 @@ struct AppRootView: View {
     private var onboardingResumePageIndex = 0
     @StateObject private var widgetInstallationChecker = WidgetInstallationChecker()
     @StateObject private var photoPresentationCache = PhotoPresentationCache()
+    @StateObject private var profilePresentationCache = ProfilePresentationCache()
     @StateObject private var momentNotificationTapMailbox = MomentNotificationTapMailbox.shared
     @State private var presentedError: PresentedError?
     @State private var showsWidgetPlacementGuide = false
@@ -461,22 +462,37 @@ struct AppRootView: View {
         let visibleCatAssets = photoProjection.catAssets
         let assetsByIdentifier = photoProjection.assetsByIdentifier
         let identity = hasPhotoAccess ? viewModel.catHouseholdIdentity : nil
-        let identityProjection = identity.map { profileIdentityProjection($0) }
-        let postureDiagnostics = postureDiagnosticsPresentation(
-            records: visibleCatAssets
-        )
-        let profilesPresentation = makeCatProfilesPresentation(
-            identity: identity,
-            projection: identityProjection,
-            assetsByIdentifier: assetsByIdentifier,
-            candidateAssets: visibleCatAssets,
-            postureDiagnostics: postureDiagnostics
-        )
-        let profilePhotos = makeProfileAlbumPhotos(
-            identity: identity,
-            projection: identityProjection,
-            assetsByIdentifier: assetsByIdentifier
-        )
+        // 11/14: the per-cat pages (sorting every cat's photos) and the
+        // readable set were rebuilt on every drawing of the root, ~130 ms each
+        // on a large library. Rebuilt only when one of their inputs changes.
+        let profileKey = ProfilePresentationCache.Key(
+            version: viewModel.presentationVersion, hasPhotoAccess: hasPhotoAccess,
+            identity: identity, received: viewModel.receivedPhotoIdentifiers,
+            sourceAlbums: viewModel.photoSourceAlbums,
+            unavailableAlbums: viewModel.unavailableProfilePhotoAlbumIdentifiers,
+            albumDates: viewModel.profilePhotoAlbumAssetDates,
+            care: CatCareStore.shared.state, lifeReference: viewModel.settings.catLifeReference,
+            excluded: viewModel.excludedCatAssets)
+        let profileValues = profilePresentationCache.values(for: profileKey) {
+            let identityProjection = identity.map { profileIdentityProjection($0) }
+            let postureDiagnostics = postureDiagnosticsPresentation(records: visibleCatAssets)
+            return ProfilePresentationCache.Values(
+                profiles: makeCatProfilesPresentation(
+                    identity: identity,
+                    projection: identityProjection,
+                    assetsByIdentifier: assetsByIdentifier,
+                    candidateAssets: visibleCatAssets,
+                    postureDiagnostics: postureDiagnostics
+                ),
+                albumPhotos: makeProfileAlbumPhotos(
+                    identity: identity,
+                    projection: identityProjection,
+                    assetsByIdentifier: assetsByIdentifier
+                ),
+                readableIdentifiers: Set(readableSnapshot.assets.map(\.localIdentifier)))
+        }
+        let profilesPresentation = profileValues.profiles
+        let profilePhotos = profileValues.albumPhotos
 
         return MainTabView(
             currentPhoto: hasPhotoAccess
@@ -498,7 +514,7 @@ struct AppRootView: View {
             receivedPhotoIdentifiers: viewModel.receivedPhotoIdentifiers,
             savedPhotoIdentifiers: viewModel.savedPhotoIdentifiers,
             savedPhotoStateReadFailed: viewModel.savedPhotoStateReadFailed,
-            readablePhotoIdentifiers: Set(readableSnapshot.assets.map(\.localIdentifier)),
+            readablePhotoIdentifiers: profileValues.readableIdentifiers,
             photoLibraryLoadSucceeded: viewModel.widgetPhotoLibraryLoadSucceeded,
             photoPresentationVersion: viewModel.presentationVersion,
             scan: hasPhotoAccess
@@ -1461,6 +1477,39 @@ struct AppRootView: View {
         // The first Plus offer becomes due in persistOnboardingState.
         persistOnboardingState(state, entersPhotos: entersPhotos)
         hasSeenInitialScanResult = true
+    }
+}
+
+@MainActor
+/// The per-cat presentations of `mainTabContent` (11/14), kept while every
+/// input in `Key` is unchanged. Not published: reading never re-draws.
+private final class ProfilePresentationCache: ObservableObject {
+    struct Key: Equatable {
+        var version: LibraryPresentationVersion
+        var hasPhotoAccess: Bool
+        var identity: CatHouseholdIdentityState?
+        var received: Set<String>
+        var sourceAlbums: [PhotoSourceAlbumOption]
+        var unavailableAlbums: Set<String>
+        var albumDates: [String: Date]
+        var care: CatCareState?
+        var lifeReference: CatLifeReference?
+        var excluded: [ExcludedCatAsset]
+    }
+
+    struct Values {
+        var profiles: CatProfilesPresentation
+        var albumPhotos: [String: [PhotoPresentation]]
+        var readableIdentifiers: Set<String>
+    }
+
+    private var cached: (key: Key, values: Values)?
+
+    func values(for key: Key, make: () -> Values) -> Values {
+        if let cached, cached.key == key { return cached.values }
+        let values = make()
+        cached = (key, values)
+        return values
     }
 }
 
