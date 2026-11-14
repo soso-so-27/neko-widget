@@ -30,7 +30,7 @@ from pathlib import Path
 STRESS_SCREENS = (
     "40_home_name_1", "40_home_name_2", "40_home_name_4", "40_home_name_6",
     "40_home_name_9", "40_home_name_14", "40_home_name_30", "41_home_menu_open",
-    "41b_home_menu_open_1cat", "42_home_cats_1", "42_home_cats_3", "42_home_cats_8",
+    "41b_home_add_page", "42_home_cats_1", "42_home_cats_3", "42_home_cats_8",
     "43_home_photo_bright", "43_home_photo_dark", "43_home_photo_face_low", "43_home_photo_portrait_small",
     "44_home_rows_none", "44_home_rows_all", "44_home_rows_long_values", "44_home_searching",
     "44_home_departed", "45_home_text_xl", "45_home_text_ax3", "46_home_mid_swipe",

@@ -3608,8 +3608,8 @@ class CatCareTests(unittest.TestCase):
         # 10/22: the cat's 「この子のこと」 card on the この子 tab opens the
         # cat's page, which is この子のこと (CatCareDetailView).
         home = source("NekoWidget/Views/CatHomeView.swift")
-        self.assertIn("carePage: AnyView(carePage(cat))", home)
-        self.assertIn("NavigationLink { links.carePage } label: { CatHomeCareRow(title: \"この子のこと\", value: nil) }",
+        self.assertIn("if let cat = self.cats.first(where: { $0.id == route.catID }) { carePage(cat) }", home)
+        self.assertIn("NavigationLink(value: links.about) { CatHomeCareRow(title: \"この子のこと\", value: nil) }",
                       source("NekoWidget/Views/CatHomeCareView.swift"))
         self.assertIn("case let .profile(profile):\n            profilePage(profile)", home)
         # 11/1: a cat whose farewell day is recorded shows no progress; 11/14:
@@ -8499,7 +8499,7 @@ class ToolsLookRoundTwo1112Tests(unittest.TestCase):
         self.assertIn('.navigationTitle("この子のこと")', page)
         self.assertNotIn(".navigationTitle(profile.displayName)", page)
         home = source("NekoWidget/Views/CatHomeView.swift")
-        strip = section(home, "    private func profilePage(_ profile: CatProfilePresentation) -> some View {", "// MARK: Over the photo")
+        strip = section(home, "    private func profilePage(_ profile: CatProfilePresentation) -> some View {", "    private func show(")
         self.assertIn("CatProfileDetailView(", strip)
         # One name, large, under a smaller photo; one pencil, on the photo.
         heading = section(detail, "private func profileHeading(", "/// An empty name keeps the old one")
@@ -8852,11 +8852,13 @@ class CatHomeTab1112Tests(unittest.TestCase):
         self.assertIn("CatFarewell.text(farewell)", facts)
 
     def test_cat_menu_lists_every_cat_and_adds_one(self) -> None:
-        menu = section(self.home, "    private func catMenuItems(", "    private func show(")
-        self.assertIn("ForEach(cats) { cat in", menu)
-        self.assertIn('.accessibilityIdentifier("tools-cat-menu-\\(cat.id)")', menu)
-        self.assertIn('Button { addsCat = true } label: { Label("この子を追加", systemImage: "plus") }', menu)
-        self.assertIn('.accessibilityIdentifier("tools-cat-profiles")', menu)
+        menu = section(self.home, "    private func menuButton(_ cats: [CatHomeMenuCat]) -> some View {",
+                       "    /// The frame's shape")
+        self.assertIn("ForEach(cats) { item in", menu)
+        self.assertIn('.accessibilityIdentifier("tools-cat-menu-\\(item.id)")', menu)
+        # 11/14: the cats only; a cat is added on the page after the last cat.
+        self.assertNotIn("この子を追加", menu)
+        self.assertNotIn("tools-cat-profiles", self.home)
         # 11/14: the name on the photo opens these items.
         hero = section(self.home, "private struct CatHomeHero: View {", "/// The tools under the photo:")
         self.assertIn('.accessibilityLabel("猫を切り替える")', hero)
@@ -8868,17 +8870,17 @@ class CatHomeTab1112Tests(unittest.TestCase):
         self.assertLess(cats.index("for cat in familyOnlyCats"), cats.index("for cat in states.toolCats"))
         self.assertIn("SavedToolCatChoices.cats(care: .shared, evacuation: .shared)", self.home)
         # 設定 top right, as before.
-        bar = section(self.home, "    private var topBar: some View {", "    private func catMenuItems(")
+        bar = section(self.home, "private struct CatHomeSettingsBar: View {", "enum CatHomeGlass {")
         self.assertIn("SettingsGearIcon()", bar)
         self.assertIn('.accessibilityIdentifier("tools-settings-button")', bar)
-        self.assertIn("Button(action: openSettings)", bar)
+        self.assertIn("Button(action: open)", bar)
 
     def test_pages_swipe_and_remember_the_cat_once_they_rest(self) -> None:
         pager = section(self.home, "    private func pager(", "    /// The page 「この子のこと」 opens")
         self.assertIn(".scrollTargetBehavior(.paging)", pager)
         self.assertIn(".scrollPosition(id: $pageID)", pager)
-        self.assertIn(".scrollDisabled(cats.count < 2)", pager)
-        self.assertIn(".accessibilityHidden(cat.id != current.id)", pager)
+        self.assertNotIn(".scrollDisabled(", pager)
+        self.assertIn(".accessibilityHidden(onAddPage || cat.id != current.id)", pager)
         self.assertEqual(self.home.count("@AppStorage(\"catHome.selectedCat.v1\")"), 1)
         # Written after the pages rest, never mid-swipe.
         task = section(self.home, ".task(id: pageID) {", "    // MARK: Cats")
@@ -8894,7 +8896,7 @@ class CatHomeTab1112Tests(unittest.TestCase):
         card = section(source("NekoWidget/Views/CatHomeCareView.swift"), "struct CatHomeCareCard: View {",
                        "    private struct Entry {")
         self.assertIn('CatHomeCareRow(title: "この子のこと", value: nil)', card)
-        self.assertIn("NavigationLink { links.carePage } label: {", card)
+        self.assertIn("NavigationLink(value: links.about) {", card)
         self.assertNotIn("CatHomeAboutCard", self.home)
         for gone in (".scaleEffect(x: facts.progressShare", 'CatHomeLine(title: "体重"', 'title: "誕生日まで"',
                      "progressText"):
@@ -8949,13 +8951,14 @@ class CatHomeTab1112Tests(unittest.TestCase):
         # No cat: のわ, one sentence, one button; the two household tools only.
         empty = section(self.home, "private struct CatHomeNoCatPage: View {", "private struct CatHomePressStyle")
         self.assertIn('Image("Nowa-sit-up")', empty)
-        self.assertIn('Text("この子を追加すると、ここに出ます。")', empty)
+        self.assertIn('var sentence = "この子を追加すると、ここに出ます。"', empty)
+        self.assertIn("Text(sentence)", empty)
         self.assertIn('Text("この子を追加")', empty)
         self.assertIn(".nekoPrimaryButton()", empty)
         self.assertIn("toolsShown: CatHomeTool.household", empty)
         self.assertIn("static let household: [CatHomeTool] = [.evacuation, .showcase]", self.home)
         # 11/13: 設定 scrolls with the no-cat page too (was a bar pinned over it).
-        self.assertIn("CatHomeNoCatPage(metrics: metrics, tools: tools, topBar: AnyView(topBar)) {\n"
+        self.assertIn("CatHomeNoCatPage(metrics: metrics, tools: tools, openSettings: openSettings) {\n"
                       "                        addsCat = true", self.home)
         # No key photo: a calm gradient, no placeholder icon.
         hero = section(self.home, "private struct CatHomeHero: View {", "/// The tools under the photo:")
@@ -8987,7 +8990,8 @@ class CatHomeTab1112Tests(unittest.TestCase):
         self.assertIn('editor(fixed.id, fixed.profile?.displayName ?? "", cats: [])', self.lost)
         self.assertIn('$0.id.uppercased() == "GUEST-TOOL-" + key', self.lost)
         # 写真を見せる opens on the page's cat; 避難に備える is the same from every page.
-        self.assertIn("Button { tools.showcase(cat?.profile?.identifier) } label: { content }", self.home)
+        self.assertIn("Button { showcase(cat?.profile?.identifier) } label: { content }", self.home)
+        self.assertIn("pageActions.showcase = tools.showcase", self.home)
         self.assertIn("guard let catID = route.catID else { return tools.evacuation() }", self.home)
         self.assertIn("case .care: return tools.care(catID)", self.home)
 
@@ -9024,8 +9028,9 @@ class CatHomePolish1113Tests(unittest.TestCase):
         # 11/14: the menu is a round button after the name, 44 points to tap.
         self.assertIn("let target = max(circle, 44)", hero)
         self.assertIn('.accessibilityIdentifier("tools-cat-menu")', hero)
-        bar = section(self.home, "    private var topBar: some View {", "    private func catMenuItems(")
-        self.assertIn(".background(.ultraThinMaterial, in: Circle())", bar)
+        bar = section(self.home, "private struct CatHomeSettingsBar: View {", "enum CatHomeGlass {")
+        # 11/14: a fixed see-through fill (a material re-blurs the moving photo).
+        self.assertIn(".background(CatHomeGlass.light, in: Circle())", bar)
         self.assertIn(".frame(width: 40, height: 40)", bar)
         self.assertIn(".frame(minWidth: 44, minHeight: 44)", bar)
         self.assertIn('.accessibilityIdentifier("tools-settings-button")', bar)

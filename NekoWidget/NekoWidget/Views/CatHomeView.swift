@@ -22,6 +22,46 @@ struct CatHomeTools {
     let showcase: (String?) -> Void
 }
 
+/// 11/14: DEBUG-only launch arguments that bring back one earlier way of
+/// drawing the pager, so the speed sweep (ScreenSpeedSweepUITests,
+/// testScroll2x) compares one cause at a time on the same runner. Always
+/// off in Release.
+enum CatHomeSpeedSwitch {
+#if DEBUG
+    /// Material circles behind the two round buttons.
+    static let oldMaterials = CommandLine.arguments.contains("--cat-home-speed-old-materials")
+    /// Every page drawn again whenever the pager's state changes.
+    static let rebuildsPages = CommandLine.arguments.contains("--cat-home-speed-rebuild-pages")
+#else
+    static let oldMaterials = false
+    static let rebuildsPages = false
+#endif
+}
+
+/// What a page does, one object for the tab's life. Each drawing of
+/// CatHomeView puts its latest closures in, so a page that is not drawn
+/// again (CatHomePage is Equatable, 11/14) still calls the current ones.
+@MainActor
+final class CatHomePageActions {
+    var showcase: (String?) -> Void = { _ in }
+    var openSettings: () -> Void = {}
+    var choose: (String) -> Void = { _ in }
+    var add: () -> Void = {}
+    var saveLifeDates: (String, CatProfileLifeDatesPresentation) async -> Bool = { _, _ in false }
+}
+
+/// A cat in the cat menu after the name.
+struct CatHomeMenuCat: Identifiable, Equatable {
+    let id: String
+    let name: String
+}
+
+/// 「この子のこと」 of the page's cat, opened by value so a page holds no
+/// view of it (11/14: the pages are compared, not rebuilt, while moving).
+struct CatHomeAboutRoute: Hashable {
+    let catID: String
+}
+
 /// A cat with a page: a profile, or a cat of 「この子のこと」 without one
 /// here (a family cat, or one known only from the tools).
 struct CatHomeCat: Identifiable, Equatable {
@@ -247,18 +287,31 @@ struct CatHomeView: View {
     @State private var pageID: String?
     @State private var addsCat = false
     @State private var addedCat: String?
+    /// The page the pager last came to rest on (the tick is for this).
+    @State private var settledPageID: String?
+    @State private var pageActions = CatHomePageActions()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Up to this many cats, every page is built up front (CatHomeView.pager).
+    static let eagerPages = 12
+    /// The page after the last cat, where a cat is added (11/14: the one
+    /// place). Never kept as the remembered page.
+    static let addPageID = "cat-home-add-page"
+    /// The round cat menu after the name shows from this many cats; with
+    /// fewer, the cats are switched by swiping (11/14).
+    static let menuMinimumCats = 5
 
     var body: some View {
         let cats = self.cats
         let current = currentCat(in: cats)
+        let _ = updatePageActions()
         GeometryReader { proxy in
             let metrics = CatHomeMetrics(proxy)
             Group {
                 if let current {
                     pager(cats, current: current, metrics: metrics)
                 } else {
-                    CatHomeNoCatPage(metrics: metrics, tools: tools, topBar: AnyView(topBar)) {
+                    CatHomeNoCatPage(metrics: metrics, tools: tools, openSettings: openSettings) {
                         addsCat = true
                     }
                 }
@@ -282,14 +335,26 @@ struct CatHomeView: View {
             }
         }
         .navigationDestination(for: CatHomeRoute.self) { route in toolPage(route) }
+        .navigationDestination(for: CatHomeAboutRoute.self) { route in
+            if let cat = self.cats.first(where: { $0.id == route.catID }) { carePage(cat) }
+        }
         .onAppear { Task { await states.refresh() } }
         // Kept once the pages rest, never while they move.
         .task(id: pageID) {
-            guard let pageID, pageID != storedCatID else { return }
+            guard let pageID, pageID != Self.addPageID, pageID != storedCatID else { return }
             try? await Task.sleep(for: .milliseconds(700))
             guard !Task.isCancelled else { return }
             storedCatID = pageID
         }
+    }
+
+    /// The latest closures for the pages (CatHomePageActions).
+    private func updatePageActions() {
+        pageActions.showcase = tools.showcase
+        pageActions.openSettings = openSettings
+        pageActions.saveLifeDates = actions.updateLifeDates
+        pageActions.choose = { id in show(id) }
+        pageActions.add = { addsCat = true }
     }
 
     // MARK: Cats
@@ -312,6 +377,8 @@ struct CatHomeView: View {
 
     private func currentCat(in cats: [CatHomeCat]) -> CatHomeCat? {
         let chosen = pageID ?? storedCatID
+        // On the add page the tools stay with the last cat.
+        if chosen == Self.addPageID { return cats.last }
         return cats.first { $0.id == chosen } ?? cats.first
     }
 
@@ -359,38 +426,58 @@ struct CatHomeView: View {
     // MARK: Pages
 
     /// The cats side by side, one page each; a swipe switches the cat.
-    /// 11/14: at rest a page is exactly as before (full bleed, no corners);
-    /// while it moves each page becomes a card, a little smaller with
-    /// rounded corners, the page background showing between the two (the
-    /// WWDC23 「Beyond scroll views」 scrollTransition pattern). Reduce
-    /// Motion: plain paging.
+    /// 11/14: plain paging, the page moves exactly with the finger (the
+    /// card look, smaller pages with rounded corners while moving, made the
+    /// content drift from the finger and cost frames; it is gone).
+    ///
+    /// 11/14: each page is Equatable, so a change of `pageID` mid-swipe
+    /// re-draws only what depends on it (which page VoiceOver reads), not
+    /// the pages.
+    ///
+    /// 11/14: up to `eagerPages` cats every page is built with the pager, so
+    /// the next cat's photo is already drawn when a swipe starts (a lazy
+    /// stack built it, and began loading its photo, only as it scrolled in).
+    /// More cats than that: lazy, so a big home does not hold every photo.
+    ///
+    /// 11/14: after the last cat, one more page adds a cat (the one place a
+    /// cat is added); its dot is a small 「＋」.
     private func pager(_ cats: [CatHomeCat], current: CatHomeCat, metrics: CatHomeMetrics) -> some View {
-        let reduceMotion = self.reduceMotion
-        let shrink = CatHomeCardWhileMoving.shrink
-        return ScrollView(.horizontal) {
-            LazyHStack(spacing: 0) {
-                ForEach(Array(cats.enumerated()), id: \.element.id) { index, cat in
-                    page(cat, index: index, cats: cats, metrics: metrics)
-                        .modifier(CatHomeCardWhileMoving(enabled: !reduceMotion && cats.count > 1))
-                        .scrollTransition(.interactive, axis: .horizontal) { content, phase in
-                            content.scaleEffect(phase.isIdentity || reduceMotion
-                                                ? 1 : 1 - shrink * CGFloat(min(abs(phase.value), 1)))
-                        }
-                        // Only the page on screen is read and found by tests.
-                        .accessibilityHidden(cat.id != current.id)
-                        .containerRelativeFrame(.horizontal)
-                        .id(cat.id)
-                }
+        let onAddPage = pageID == Self.addPageID
+        let pageActions = self.pageActions
+        @ViewBuilder func pages() -> some View {
+            ForEach(Array(cats.enumerated()), id: \.element.id) { index, cat in
+                page(cat, index: index, cats: cats, metrics: metrics).equatable()
+                    .containerRelativeFrame(.horizontal)
+                    // Only the page on screen is read and found by tests.
+                    .accessibilityHidden(onAddPage || cat.id != current.id)
+                    .id(cat.id)
             }
-            .scrollTargetLayout()
+            CatHomeNoCatPage(metrics: metrics, tools: tools, openSettings: { pageActions.openSettings() },
+                             sentence: "猫を増やすときは、ここから。", householdTools: false) { pageActions.add() }
+                .containerRelativeFrame(.horizontal)
+                .accessibilityHidden(!onAddPage)
+                .id(Self.addPageID)
+        }
+        return ScrollView(.horizontal) {
+            if cats.count <= Self.eagerPages {
+                HStack(spacing: 0) { pages() }
+                    .scrollTargetLayout()
+            } else {
+                LazyHStack(spacing: 0) { pages() }
+                    .scrollTargetLayout()
+            }
         }
         .scrollTargetBehavior(.paging)
         .scrollPosition(id: $pageID)
         .scrollIndicators(.hidden)
-        .scrollDisabled(cats.count < 2)
-        // A light tick when another cat's page is reached; never on the
-        // first appearance (pageID is set from nil there).
-        .sensoryFeedback(.selection, trigger: pageID) { old, new in
+#if DEBUG
+        .modifier(CatHomeFrameProbeModifier())
+#endif
+        // A light tick once the pages rest on another page (11/14: not when
+        // pageID changes mid-swipe; iOS 17 has no scroll phase and ticks on
+        // pageID as before); never on the first appearance.
+        .modifier(CatHomeSettledPage(pageID: pageID, settled: $settledPageID))
+        .sensoryFeedback(.selection, trigger: settledPageID) { old, new in
             old != nil && new != nil && old != new
         }
         .onAppear { if pageID == nil { pageID = current.id } }
@@ -399,16 +486,17 @@ struct CatHomeView: View {
     private func page(_ cat: CatHomeCat, index: Int, cats: [CatHomeCat], metrics: CatHomeMetrics) -> CatHomePage {
         let record = self.record(for: cat)
         let facts = self.facts(for: cat, record: record)
+        let pageActions = self.pageActions
         return CatHomePage(cat: cat, facts: facts, metrics: metrics,
-                           pageIndex: index, pageCount: cats.count,
+                           pageIndex: index, pageCount: cats.count + 1,
                            vetUnfinished: states.vetMemos(for: cat, record: record).contains(where: \.isUnfinished),
                            searching: states.searching(cat),
-                           tools: tools,
                            care: care(for: cat, record: record, facts: facts),
-                           careLinks: CatHomeCareLinks(cat: cat, catID: record?.catID, carePage: AnyView(carePage(cat)),
-                                                       saveLifeDates: actions.updateLifeDates),
-                           catMenu: AnyView(catMenuItems(cats, current: cat)),
-                           topBar: AnyView(topBar))
+                           careLinks: CatHomeCareLinks(cat: cat, catID: record?.catID,
+                                                       saveLifeDates: { await pageActions.saveLifeDates($0, $1) }),
+                           menuCats: cats.count >= Self.menuMinimumCats
+                               ? cats.map { CatHomeMenuCat(id: $0.id, name: $0.name) } : nil,
+                           actions: pageActions)
     }
 
     /// The page 「この子のこと」 opens: the cat's own page (CatProfileDetailView)
@@ -451,21 +539,53 @@ struct CatHomeView: View {
         )
     }
 
-    // MARK: Over the photo
+    private func show(_ id: String) {
+        withAnimation(reduceMotion ? nil : .snappy) { pageID = id }
+        storedCatID = id
+    }
+}
 
-    /// 設定 (top right), over the photo. 11/14: no cat menu here; the name
-    /// on the photo is the cat menu (CatHomeHero), so the name shows once.
-    private var topBar: some View {
+/// The tick's page: on iOS 18 the page the pager rests on once its scroll
+/// phase is idle (also after a jump from the cat menu); iOS 17 has no
+/// scroll phase, so there it follows `pageID` as before.
+private struct CatHomeSettledPage: ViewModifier {
+    let pageID: String?
+    @Binding var settled: String?
+    @State private var moving = false
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18, *) {
+            content
+                .onScrollPhaseChange { _, phase in
+                    moving = phase != .idle
+                    if !moving, settled != pageID { settled = pageID }
+                }
+                .onChange(of: pageID, initial: true) { _, id in
+                    if !moving, settled != id { settled = id }
+                }
+        } else {
+            content.onChange(of: pageID, initial: true) { _, id in
+                if settled != id { settled = id }
+            }
+        }
+    }
+}
+
+/// The settings button, top right over the photo; it scrolls with the page.
+/// 11/14: a fixed translucent fill that looks like the material at rest; a
+/// material blurs the moving photo under it again on every frame.
+private struct CatHomeSettingsBar: View {
+    let open: () -> Void
+
+    var body: some View {
         HStack(alignment: .center) {
             Spacer(minLength: 12)
-            Button(action: openSettings) {
-                // 11/13: a material, so it reads as a live control on any
-                // photo (a dark tint looked disabled).
+            Button(action: open) {
                 SettingsGearIcon()
                     .font(.body.weight(.semibold))
                     .foregroundStyle(Color.primary)
                     .frame(width: 40, height: 40)
-                    .background(.ultraThinMaterial, in: Circle())
+                    .background(CatHomeGlass.light, in: Circle())
                     .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
@@ -476,79 +596,95 @@ struct CatHomeView: View {
         .padding(.horizontal, 12)
         .padding(.top, 2)
     }
+}
 
-    /// The items of the cat menu (the name on the photo): every cat this tab
-    /// knows, and 「この子を追加」. Always there, even with one cat, since it
-    /// is also where a cat is added.
-    @ViewBuilder
-    private func catMenuItems(_ cats: [CatHomeCat], current: CatHomeCat) -> some View {
-        ForEach(cats) { cat in
-            Button { show(cat.id) } label: {
-                if cat.id == current.id { Label(cat.name, systemImage: "checkmark") } else { Text(cat.name) }
-            }
-            .accessibilityIdentifier("tools-cat-menu-\(cat.id)")
-        }
-        Divider()
-        Button { addsCat = true } label: { Label("この子を追加", systemImage: "plus") }
-            .accessibilityIdentifier("tools-cat-profiles")
+/// The two round buttons' fills over the photo (11/14: no material while
+/// moving; the DEBUG switch --cat-home-speed-old-materials brings it back).
+enum CatHomeGlass {
+    /// The settings button: the page's own background, see-through.
+    static var light: AnyShapeStyle {
+        CatHomeSpeedSwitch.oldMaterials ? AnyShapeStyle(.ultraThinMaterial)
+            : AnyShapeStyle(Color(.systemBackground).opacity(0.72))
     }
-
-    private func show(_ id: String) {
-        withAnimation(.snappy) { pageID = id }
-        storedCatID = id
+    /// The cat menu after the name (dark, under white).
+    static var dark: AnyShapeStyle {
+        CatHomeSpeedSwitch.oldMaterials ? AnyShapeStyle(.ultraThinMaterial)
+            : AnyShapeStyle(Color.black.opacity(0.34))
     }
 }
 
-/// While the pages move, each page is a card with continuous rounded corners
-/// (0 at rest, `radius` a full page away); its scale comes from the pager's
-/// scrollTransition. The corners are painted in the page background (the
-/// colour that shows between the two cards) rather than clipped: at rest
-/// the paint is an empty path, so nothing is clipped or composited offscreen
-/// and the photo under the status bar draws exactly as before, also while the
-/// page scrolls up and down. A ViewModifier, so the moving offset re-draws
-/// only the corners, never the page's own body.
-private struct CatHomeCardWhileMoving: ViewModifier {
-    /// How much smaller a page is a full page away (0.92 at most).
-    static let shrink: CGFloat = 0.08
-    static let radius: CGFloat = 32
+#if DEBUG
+/// 11/14: DEBUG-only frame probe for the speed sweep (--cat-home-frame-probe).
+/// The simulator gives XCTest no hitch metrics, so a display link counts,
+/// while the pager scrolls (iOS 18 scroll phase), how many frames came late
+/// on the main thread and by how much. The totals are put on a hidden text
+/// (identifier cat-home-frame-probe) only when the pager rests.
+@MainActor
+final class CatHomeFrameProbe: NSObject, ObservableObject {
+    static let isOn = CommandLine.arguments.contains("--cat-home-frame-probe")
+    @Published private(set) var summary = "frames=0 late=0 late_ms=0 max_ms=0"
+    private var link: CADisplayLink?
+    private var last: CFTimeInterval = 0
+    private var frames = 0
+    private var late = 0
+    private var lateSeconds: CFTimeInterval = 0
+    private var maxGap: CFTimeInterval = 0
 
-    let enabled: Bool
-    /// 0 at rest, 1 a full page away; kept in hundredths.
-    @State private var progress: CGFloat = 0
+    func setMoving(_ moving: Bool) {
+        if moving {
+            guard link == nil else { return }
+            last = 0
+            let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
+            link.add(to: .main, forMode: .common)
+            self.link = link
+        } else {
+            link?.invalidate()
+            link = nil
+            summary = String(format: "frames=%d late=%d late_ms=%.0f max_ms=%.0f",
+                             frames, late, lateSeconds * 1000, maxGap * 1000)
+        }
+    }
+
+    @objc private func tick(_ link: CADisplayLink) {
+        defer { last = link.timestamp }
+        guard last > 0 else { return }
+        let gap = link.timestamp - last
+        let expected = max(link.duration, 1.0 / 120)
+        frames += 1
+        maxGap = max(maxGap, gap)
+        if gap > expected * 1.5 {
+            late += 1
+            lateSeconds += gap - expected
+        }
+    }
+}
+
+private struct CatHomeFrameProbeModifier: ViewModifier {
+    @StateObject private var probe = CatHomeFrameProbe()
 
     func body(content: Content) -> some View {
-        content
-            .overlay {
-                CatHomeCardCorners(radius: Self.radius * progress)
-                    .fill(Color(.systemGroupedBackground), style: FillStyle(eoFill: true))
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
+        if #available(iOS 18, *) {
+            if CatHomeFrameProbe.isOn {
+                content
+                    .onScrollPhaseChange { _, phase in probe.setMoving(phase != .idle) }
+                    .overlay(alignment: .topLeading) {
+                        Text(probe.summary)
+                            .font(.system(size: 1))
+                            .foregroundStyle(Color.clear)
+                            .frame(width: 1, height: 1)
+                            .allowsHitTesting(false)
+                            .accessibilityLabel(probe.summary)
+                            .accessibilityIdentifier("cat-home-frame-probe")
+                    }
+            } else {
+                content
             }
-            .onGeometryChange(for: CGFloat.self) { proxy in
-                let width = proxy.size.width
-                guard width > 0 else { return 0 }
-                let moved = min(abs(proxy.frame(in: .scrollView(axis: .horizontal)).minX) / width, 1)
-                // A settled page reads exactly 0 (no corner, no clip).
-                return moved < 0.01 ? 0 : (moved * 100).rounded() / 100
-            } action: { value in
-                let next = enabled ? value : 0
-                if next != progress { progress = next }
-            }
+        } else {
+            content
+        }
     }
 }
-
-/// What lies outside a rounded rectangle in the rectangle (even-odd); an
-/// empty path when the radius is 0.
-private struct CatHomeCardCorners: Shape {
-    var radius: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        guard radius > 0 else { return Path() }
-        var path = Path(rect)
-        path.addRoundedRect(in: rect, cornerSize: CGSize(width: radius, height: radius), style: .continuous)
-        return path
-    }
-}
+#endif
 
 /// Sizes taken once from the screen: the photo is about 46% of its height
 /// (40% on short screens, so the first buttons show on iPhone SE).
@@ -576,27 +712,28 @@ private struct CatHomePage: View {
     let pageCount: Int
     let vetUnfinished: Bool
     let searching: Bool
-    let tools: CatHomeTools
     /// nil: a departed cat, or nothing to show for the four rows; the card
     /// is then 「この子のこと」 alone.
     let care: CatHomeCareRows?
     let careLinks: CatHomeCareLinks
-    /// The items of the cat menu, which is the name on the photo.
-    let catMenu: AnyView
-    /// 設定, at the top of the photo; it scrolls with it.
-    let topBar: AnyView
+    /// The cats of the cat menu after the name; nil with fewer than
+    /// `CatHomeView.menuMinimumCats` cats (no button, swipe instead).
+    let menuCats: [CatHomeMenuCat]?
+    /// 設定, 写真を見せる, the cat menu and the birthday editor's save.
+    let actions: CatHomePageActions
 
     var body: some View {
         ScrollView(.vertical) {
             VStack(spacing: 0) {
                 CatHomeHero(cat: cat, facts: facts, metrics: metrics, pageIndex: pageIndex, pageCount: pageCount,
-                            menu: catMenu)
+                            menuCats: menuCats, choose: { actions.choose($0) })
                 // 18 (was 22): the page fits one screen on a standard iPhone (11/14).
                 VStack(spacing: 18) {
                     // A cat whose farewell day is recorded is not offered in the tools.
                     if !facts.departed {
                         CatHomeToolBar(cat: cat, toolsShown: CatHomeTool.allCases, width: metrics.width,
-                                       vetUnfinished: vetUnfinished, searching: searching, tools: tools)
+                                       vetUnfinished: vetUnfinished, searching: searching,
+                                       showcase: { actions.showcase($0) })
                         // Until 「この迷子の記録を終える」 clears the place, day and log.
                         if searching { CatHomeSearchingLine(cat: cat) }
                     }
@@ -611,12 +748,36 @@ private struct CatHomePage: View {
                 .padding(.bottom, 32)
             }
             // Where the pinned bar rested: just under the status bar.
-            .overlay(alignment: .top) { topBar.padding(.top, metrics.topInset) }
+            .overlay(alignment: .top) {
+                CatHomeSettingsBar { actions.openSettings() }.padding(.top, metrics.topInset)
+            }
         }
         .scrollIndicators(.hidden)
+        // 11/14: a page that fits the screen does not move up and down at
+        // all, so a slightly slanted swipe between cats stays sideways; a
+        // taller page (iPhone SE, large text, 迷子) still scrolls.
+        .scrollBounceBehavior(.basedOnSize, axes: .vertical)
         .ignoresSafeArea(.container, edges: .top)
     }
 }
+
+/// 11/14: the pages are compared, not rebuilt, when the pager's state
+/// changes mid-swipe (`.equatable()` in CatHomeView.pager).
+extension CatHomePage: Equatable {
+    /// Values only: the actions are one object whose closures are kept
+    /// current, so a page is drawn again only when what it shows changes.
+    static func == (lhs: CatHomePage, rhs: CatHomePage) -> Bool {
+        if CatHomeSpeedSwitch.rebuildsPages { return false }
+        return lhs.cat == rhs.cat && lhs.facts == rhs.facts && lhs.metrics == rhs.metrics
+            && lhs.pageIndex == rhs.pageIndex && lhs.pageCount == rhs.pageCount
+            && lhs.vetUnfinished == rhs.vetUnfinished && lhs.searching == rhs.searching
+            && lhs.care == rhs.care && lhs.careLinks.catID == rhs.careLinks.catID
+            && lhs.menuCats == rhs.menuCats && lhs.actions === rhs.actions
+    }
+}
+
+extension CatHomeFacts: Equatable {}
+extension CatHomeMetrics: Equatable {}
 
 /// The cat's key photo from the very top, its name and one line on it.
 /// 11/14: the name is the cat menu (a small chevron after it), so the name
@@ -627,8 +788,9 @@ private struct CatHomeHero: View {
     let metrics: CatHomeMetrics
     let pageIndex: Int
     let pageCount: Int
-    /// The cat menu's items (every cat, 「この子を追加」).
-    let menu: AnyView
+    /// The cat menu's cats; nil: the name alone, no button.
+    let menuCats: [CatHomeMenuCat]?
+    let choose: (String) -> Void
     @Environment(\.displayScale) private var displayScale
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.colorScheme) private var colorScheme
@@ -745,8 +907,8 @@ private struct CatHomeHero: View {
         }
     }
 
-    /// The name as plain text, then the cat menu: a chevron in a small
-    /// round button just after it, centred on the name's glyphs (on its last
+    /// The name as plain text, then (from five cats) the cat menu: a
+    /// chevron in a small round button just after it, centred on the name's glyphs (on its last
     /// line when it takes two).
     ///
     /// 11/14: a Menu shows the system's lifted highlight around its whole
@@ -762,9 +924,9 @@ private struct CatHomeHero: View {
         if fit.lines == 1 {
             HStack(alignment: .lastTextBaseline, spacing: gap) {
                 nameText(cat.name, fit: fit, maxWidth: maxWidth)
-                centred(menuButton, size: size)
+                if let menuCats { centred(menuButton(menuCats), size: size) }
             }
-        } else {
+        } else if let menuCats {
             // Two lines: broken where TextKit breaks them, so the button
             // sits just after the end of the last line as drawn (11/14: the
             // first capture put it after the first line's full width, and
@@ -772,9 +934,12 @@ private struct CatHomeHero: View {
             let lines = nameLines(size: size, maxWidth: maxWidth)
             ZStack(alignment: Alignment(horizontal: .leading, vertical: .lastTextBaseline)) {
                 nameText(lines.text, fit: fit, maxWidth: maxWidth)
-                centred(menuButton, size: size)
+                centred(menuButton(menuCats), size: size)
                     .alignmentGuide(.leading) { _ in -(lines.lastWidth + gap) }
             }
+        } else {
+            // Fewer than five cats: the name alone (11/14).
+            nameText(cat.name, fit: fit, maxWidth: maxWidth)
         }
     }
 
@@ -828,16 +993,24 @@ private struct CatHomeHero: View {
         }
     }
 
-    /// The cat menu (every cat, a check on this one, 「この子を追加」).
-    private var menuButton: some View {
+    /// The cat menu (every cat, a check on this one; 11/14: no
+    /// 「この子を追加」, the last page adds a cat).
+    private func menuButton(_ cats: [CatHomeMenuCat]) -> some View {
         let circle = min(menuCircle, 40)
         let target = max(circle, 44)
-        return Menu { menu } label: {
+        return Menu {
+            ForEach(cats) { item in
+                Button { choose(item.id) } label: {
+                    if item.id == cat.id { Label(item.name, systemImage: "checkmark") } else { Text(item.name) }
+                }
+                .accessibilityIdentifier("tools-cat-menu-\(item.id)")
+            }
+        } label: {
             Image(systemName: "chevron.down")
                 .font(.system(size: (circle * 0.42).rounded(), weight: .bold))
                 .foregroundStyle(.white)
                 .frame(width: circle, height: circle)
-                .background(.ultraThinMaterial, in: Circle())
+                .background(CatHomeGlass.dark, in: Circle())
                 .environment(\.colorScheme, .dark)
                 .frame(width: target, height: target)
                 .contentShape(Circle())
@@ -874,9 +1047,10 @@ private struct CatHomeHero: View {
     }
 }
 
-/// Which page this is, on the photo: one dot per cat, at most seven; with
+/// Which page this is, on the photo: one dot per page, at most seven; with
 /// more cats the seven around this page show and the ends shrink, as the
-/// system page control does (CatHomeHeroLayout.dots).
+/// system page control does (CatHomeHeroLayout.dots). The last page adds a
+/// cat: its dot is a small 「＋」 with the same size and opacity rules.
 private struct CatHomePageDots: View {
     let count: Int
     let current: Int
@@ -884,9 +1058,18 @@ private struct CatHomePageDots: View {
     var body: some View {
         HStack(spacing: 6) {
             ForEach(CatHomeHeroLayout.dots(count: count, current: current), id: \.index) { dot in
-                Circle()
-                    .fill(Color.white.opacity(dot.index == current ? 1 : 0.45))
-                    .frame(width: 6 * CGFloat(dot.scale), height: 6 * CGFloat(dot.scale))
+                let side = 6 * CGFloat(dot.scale)
+                let tone = Color.white.opacity(dot.index == current ? 1 : 0.45)
+                if dot.index == count - 1 {
+                    Image(systemName: "plus")
+                        .font(.system(size: (side * 1.4).rounded(), weight: .heavy))
+                        .foregroundStyle(tone)
+                        .frame(width: side, height: side)
+                } else {
+                    Circle()
+                        .fill(tone)
+                        .frame(width: side, height: side)
+                }
             }
         }
         .frame(height: 6)
@@ -902,7 +1085,8 @@ private struct CatHomeToolBar: View {
     let width: CGFloat
     let vetUnfinished: Bool
     let searching: Bool
-    let tools: CatHomeTools
+    /// 写真を見せる for the profile's identifier (nil: no cat, or no profile).
+    let showcase: (String?) -> Void
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
@@ -942,7 +1126,7 @@ private struct CatHomeToolBar: View {
         let content = label()
         switch tool {
         case .showcase:
-            Button { tools.showcase(cat?.profile?.identifier) } label: { content }
+            Button { showcase(cat?.profile?.identifier) } label: { content }
                 .buttonStyle(CatHomePressStyle())
                 .accessibilityIdentifier(tool.identifier)
         case .evacuation:
@@ -1059,12 +1243,16 @@ private struct CatHomeToolRow: View {
 }
 
 /// No cat yet: のわ in a soft field, one sentence, one button; under it the
-/// two tools for the whole home.
+/// two tools for the whole home. 11/14: the same page, without the tools and
+/// with its own sentence, is the last page after the cats (adding a cat).
 private struct CatHomeNoCatPage: View {
     let metrics: CatHomeMetrics
     let tools: CatHomeTools
     /// 設定 (no cat menu without a cat), scrolling with the page.
-    let topBar: AnyView
+    let openSettings: () -> Void
+    var sentence = "この子を追加すると、ここに出ます。"
+    /// 避難に備える and 写真を見せる; only with no cat.
+    var householdTools = true
     let add: () -> Void
 
     var body: some View {
@@ -1079,7 +1267,7 @@ private struct CatHomeNoCatPage: View {
                         // のわ is black: a pale round keeps the shape in dark mode.
                         .background(Color(red: 0.96, green: 0.94, blue: 0.90), in: Circle())
                         .accessibilityHidden(true)
-                    Text("この子を追加すると、ここに出ます。")
+                    Text(sentence)
                         .font(.body)
                         .foregroundStyle(.primary)
                         .multilineTextAlignment(.center)
@@ -1095,14 +1283,20 @@ private struct CatHomeNoCatPage: View {
                 .padding(.bottom, 24)
                 .frame(maxWidth: .infinity, minHeight: metrics.heroHeight)
                 .background(Color(.secondarySystemGroupedBackground))
-                CatHomeToolBar(cat: nil, toolsShown: CatHomeTool.household, width: metrics.width,
-                               vetUnfinished: false, searching: false, tools: tools)
-                    .padding(.horizontal, 16)
+                if householdTools {
+                    CatHomeToolBar(cat: nil, toolsShown: CatHomeTool.household, width: metrics.width,
+                                   vetUnfinished: false, searching: false, showcase: tools.showcase)
+                        .padding(.horizontal, 16)
+                }
             }
             .padding(.bottom, 24)
-            .overlay(alignment: .top) { topBar.padding(.top, metrics.topInset) }
+            .overlay(alignment: .top) { CatHomeSettingsBar(open: openSettings).padding(.top, metrics.topInset) }
         }
         .scrollIndicators(.hidden)
+        // 11/14: a page that fits the screen does not move up and down at
+        // all, so a slightly slanted swipe between cats stays sideways; a
+        // taller page (iPhone SE, large text, 迷子) still scrolls.
+        .scrollBounceBehavior(.basedOnSize, axes: .vertical)
         .ignoresSafeArea(.container, edges: .top)
     }
 }

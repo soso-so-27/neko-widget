@@ -353,6 +353,72 @@ final class ScreenSpeedSweepUITests: XCTestCase {
     @MainActor func testScroll10ToolEvacuation() { scrollTool(name: "避難に備える", tile: "tools-evacuation-open", profile: false, until: ["evacuation-now-open"]) }
     @MainActor func testScroll11ToolEvacuationNow() { scrollTool(name: "いま避難する", tile: "tools-evacuation-open", profile: false, until: ["evacuation-now-open"], then: "evacuation-now-open", thenTitle: "いま避難する") }
 
+    // MARK: - この子のページ送り
+
+    /// 11/14: この子の猫のページを横に送る（猫 3 匹、写真あり）。1 回の計測で
+    /// 左へ 2 回送り、測り終えてから右へ 2 回戻す（5 回で 10 回分）。
+    /// scrollDragging（指で動かしている間）と scrollingAndDeceleration
+    /// （止まるまで）の hitch を測る。
+    /// 最初の 1 本はシミュレータの立ち上がりの重さを含むので、数に入れない。
+    @MainActor func testScroll19CatHomePagerWarmUp() { measureCatHomePager("慣らし", []) }
+    @MainActor func testScroll20CatHomePager() { measureCatHomePager("標準", []) }
+    /// 変える前の描き方に 1 つだけ戻して比べる（DEBUG の起動引数、CatHomeSpeedSwitch）。
+    @MainActor func testScroll22CatHomePagerOldMaterials() {
+        measureCatHomePager("すりガラス（前）", ["--cat-home-speed-old-materials"])
+    }
+    @MainActor func testScroll23CatHomePagerRebuildsPages() {
+        measureCatHomePager("ページを毎回作り直す（前）", ["--cat-home-speed-rebuild-pages"])
+    }
+    /// 前の描き方を全部（すりガラス・作り直し）。
+    @MainActor func testScroll26CatHomePagerAllOld() {
+        measureCatHomePager("前の描き方すべて", ["--cat-home-speed-old-materials", "--cat-home-speed-rebuild-pages"])
+    }
+    /// 標準をもう一度（同じ実行の中のばらつきを見る）。
+    @MainActor func testScroll27CatHomePagerAgain() { measureCatHomePager("標準（2回目）", []) }
+
+    @MainActor
+    private func measureCatHomePager(_ name: String, _ extra: [String]) {
+        let app = XCUIApplication()
+        app.launchArguments = japanese + ["--app-store-screenshot-fixture", "--cat-home-stress",
+                                          "--cat-home-stress-scenario", "60",
+                                          "--cat-home-stress-names", "むぎ|ソラ|ちゃちゃ",
+                                          "--cat-home-frame-probe"] + extra
+        app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] = "ScreenSpeedSweepPager.\(UUID().uuidString)"
+        app.launch()
+        _ = app.tabBars.firstMatch.waitForExistence(timeout: 30)
+        dismissSystemAlert()
+        let label = "ページ送り:" + name
+        guard tapTab(app, "main-tab-tools", "この子") else { missing(label, app); return }
+        guard app.descendants(matching: .any)["cat-home-hero"].firstMatch.waitForExistence(timeout: 20) else {
+            missing(label, app); return
+        }
+        // The photos are drawn before the first swipe.
+        Thread.sleep(forTimeInterval: 2)
+        print("SPEED|\(label)|scroll_begin|-")
+        let options = XCTMeasureOptions()
+        options.iterationCount = 5
+        options.invocationOptions = [.manuallyStop]
+        measure(metrics: [XCTOSSignpostMetric.scrollDraggingMetric,
+                          XCTOSSignpostMetric.scrollingAndDecelerationMetric], options: options) {
+            app.swipeLeft()
+            app.swipeLeft()
+            stopMeasuring()
+            app.swipeRight()
+            app.swipeRight()
+        }
+        print("SPEED|\(label)|scroll_end|-")
+        // The app's own count of late main-thread frames while the pager
+        // moved (the simulator gives XCTest no hitch metrics).
+        Thread.sleep(forTimeInterval: 1)
+        let probe = app.descendants(matching: .any)["cat-home-frame-probe"].firstMatch
+        if probe.waitForExistence(timeout: 5) {
+            print("SPEED|\(label)|frames|\(probe.label)")
+        } else {
+            print("SPEED|\(label)|frames|missing")
+        }
+        app.terminate()
+    }
+
     @MainActor
     func testScroll12CatCare() {
         let app = launchFixture()
@@ -402,19 +468,32 @@ final class ScreenSpeedSweepUITests: XCTestCase {
         return app
     }
 
-    /// The cat's page on この子, from the menu over the photo (the tools open
-    /// for the page's cat). Leaves the page as it is when the menu is missing.
+    /// 11/14: a cat's page on この子 is reached by swiping (the round cat
+    /// menu shows only from five cats). The cat's 「この子のこと」 row is found
+    /// only on the page on screen. Swipes toward the add page first, then
+    /// back; at most 13 pages each way.
+    /// Leaves the page as it is when the cat is not found.
     @MainActor
     private func chooseHomeCat(_ app: XCUIApplication, _ identifier: String) {
-        let menu = app.buttons["tools-cat-menu"]
-        guard menu.waitForExistence(timeout: 10) else { return }
-        // 11/13: the menu scrolls with the page; back to the top first.
-        for _ in 0..<8 where !menu.isHittable { app.swipeDown() }
-        menu.tap()
-        let item = app.buttons["tools-cat-menu-" + identifier]
-        guard item.waitForExistence(timeout: 5) else { return }
-        item.tap()
-        _ = item.waitForNonExistence(timeout: 5)
+        _ = swipeToHomeCat(app, identifier)
+    }
+
+    @MainActor
+    private func swipeToHomeCat(_ app: XCUIApplication, _ identifier: String) -> Bool {
+        let row = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier IN %@", ["tools-cat-" + identifier, "tools-family-cat-" + identifier])).firstMatch
+        _ = app.descendants(matching: .any)["cat-home-hero"].firstMatch.waitForExistence(timeout: 10)
+        if row.waitForExistence(timeout: 2) { return true }
+        let add = app.buttons["cat-home-add"]
+        for _ in 0..<13 where !add.exists {
+            app.swipeLeft()
+            if row.waitForExistence(timeout: 2) { return true }
+        }
+        for _ in 0..<13 {
+            app.swipeRight()
+            if row.waitForExistence(timeout: 2) { return true }
+        }
+        return false
     }
 
     @MainActor

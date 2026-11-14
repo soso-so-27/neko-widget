@@ -299,15 +299,11 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "tool-profiles"
         app.launch()
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "この子"))
-        // 11/12 (この子): the cat is chosen on its page, from the menu over the
-        // photo; the tool then opens for it, without a cat menu of its own.
-        let menu = app.buttons["tools-cat-menu"]
-        XCTAssertTrue(menu.waitForExistence(timeout: 10), app.debugDescription); menu.tap()
-        let profile = app.buttons["tools-cat-menu-11111111-1111-4111-8111-111111111111"]
-        XCTAssertTrue(profile.waitForExistence(timeout: 10))
+        // 11/12 (この子): the cat is chosen on its page (11/14: by swiping;
+        // the round menu shows only from five cats); the tool then opens for
+        // it, without a cat menu of its own.
+        chooseHomeCat("11111111-1111-4111-8111-111111111111", application: app)
         captureScreenshot(named: "PR5-cat-picker")
-        profile.tap()
-        XCTAssertTrue(profile.waitForNonExistence(timeout: 5))
         let careButton = app.buttons["tools-care-open"]
         XCTAssertTrue(careButton.waitForExistence(timeout: 10), app.debugDescription); careButton.tap()
         XCTAssertTrue(app.buttons["care-preview-open"].waitForExistence(timeout: 10), app.debugDescription)
@@ -886,20 +882,32 @@ final class AppStoreScreenshotUITests: XCTestCase {
         return XCTWaiter.wait(for: [ready], timeout: timeout) == .completed
     }
 
-    /// 11/12 (この子): a cat's page is chosen from the menu over the photo;
-    /// the tools opened from the page open for that cat. With one cat the
-    /// menu still lists it (and 「この子を追加」).
+    /// 11/14: a cat's page on この子 is reached by swiping (the round cat
+    /// menu shows only from five cats). The cat's 「この子のこと」 row is found
+    /// only on the page on screen. Swipes toward the add page first, then
+    /// back; at most 13 pages each way.
+    /// The tools opened from the page open for that cat.
     @MainActor
     private func chooseHomeCat(_ identifier: String, application app: XCUIApplication) {
-        let menu = app.buttons["tools-cat-menu"]
-        XCTAssertTrue(menu.waitForExistence(timeout: 10), app.debugDescription)
-        // 11/13: the menu scrolls with the page; back to the top first.
-        for _ in 0..<8 where !menu.isHittable { app.swipeDown() }
-        menu.tap()
-        let item = app.buttons["tools-cat-menu-" + identifier]
-        XCTAssertTrue(item.waitForExistence(timeout: 10), app.debugDescription)
-        item.tap()
-        XCTAssertTrue(item.waitForNonExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(swipeToHomeCat(app, identifier), app.debugDescription)
+    }
+
+    @MainActor
+    private func swipeToHomeCat(_ app: XCUIApplication, _ identifier: String) -> Bool {
+        let row = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier IN %@", ["tools-cat-" + identifier, "tools-family-cat-" + identifier])).firstMatch
+        _ = app.descendants(matching: .any)["cat-home-hero"].firstMatch.waitForExistence(timeout: 10)
+        if row.waitForExistence(timeout: 2) { return true }
+        let add = app.buttons["cat-home-add"]
+        for _ in 0..<13 where !add.exists {
+            app.swipeLeft()
+            if row.waitForExistence(timeout: 2) { return true }
+        }
+        for _ in 0..<13 {
+            app.swipeRight()
+            if row.waitForExistence(timeout: 2) { return true }
+        }
+        return false
     }
 
     /// 11/12: 預けるとき's cats are the items of the menu in the bar. The tool

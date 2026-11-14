@@ -59,11 +59,11 @@ class PageOrder(unittest.TestCase):
         # every cat (a departed cat's card is 「この子のこと」 alone).
         self.assertNotIn("CatHomeAboutCard", HOME)
         self.assertNotIn("if let care { CatHomeCareCard(", page)
-        self.assertIn("carePage: AnyView(carePage(cat))", HOME)
+        self.assertIn("if let cat = self.cats.first(where: { $0.id == route.catID }) { carePage(cat) }", HOME)
         self.assertLess(page.index("if !facts.departed {"), page.index("CatHomeToolBar("))
         self.assertIn(".padding(.bottom, 32)", page)
         # The top controls still scroll with the hero.
-        self.assertIn(".overlay(alignment: .top) { topBar.padding(.top, metrics.topInset) }", page)
+        self.assertIn("CatHomeSettingsBar { actions.openSettings() }.padding(.top, metrics.topInset)", page)
 
     def test_departed_cats_have_no_card(self):
         care = block(HOME, "private func care(for cat: CatHomeCat, record: CatCareRecord?, facts: CatHomeFacts)")
@@ -102,7 +102,7 @@ class Card(unittest.TestCase):
         for row in ("birthday", "vaccination", "vet", "weight"):
             self.assertIn(f"if let value = rows.{row} {{", entries)
         # この子のこと always, after the rows.
-        about = 'NavigationLink { links.carePage } label: { CatHomeCareRow(title: "この子のこと", value: nil) }'
+        about = 'NavigationLink(value: links.about) { CatHomeCareRow(title: "この子のこと", value: nil) }'
         self.assertLess(card.index("ForEach(Array(shown.enumerated())"), card.index(about))
 
     def test_no_empty_wording_on_the_page(self):
@@ -131,10 +131,15 @@ class Card(unittest.TestCase):
         self.assertIn("Button { editsDates = true } label: { row }", link)
         self.assertIn("NavigationLink(value: CatHomeRoute(tool: .vet, catID: links.cat.id)) { row }", link)
         self.assertIn('CatHomeCareListPage(kind: entry.id == "weight" ? .weight : .vaccination, catID: catID)', link)
-        self.assertIn("NavigationLink { links.carePage } label: { row }", link)
+        self.assertIn("NavigationLink(value: links.about) { row }", link)
         card = block(VIEW, "struct CatHomeCareCard: View {")
         self.assertIn("CatProfileLifeReferenceEditor(profile: profile, save: links.saveLifeDates)", card)
-        self.assertIn("saveLifeDates: actions.updateLifeDates", HOME)
+        self.assertIn("pageActions.saveLifeDates = actions.updateLifeDates", HOME)
+        self.assertIn("saveLifeDates: { await pageActions.saveLifeDates($0, $1) }", HOME)
+        # 11/14: 「この子のこと」 opens by value, built from the current state.
+        self.assertIn("var about: CatHomeAboutRoute { CatHomeAboutRoute(catID: cat.id) }", VIEW)
+        self.assertIn(".navigationDestination(for: CatHomeAboutRoute.self) { route in", HOME)
+        self.assertNotIn("carePage: AnyView", HOME + VIEW)
 
     def test_which_cats_get_which_rows(self):
         make = block(VIEW, "static func make(hasProfile: Bool, record: CatCareRecord?, birthday: CatCareDay?,")
@@ -150,7 +155,7 @@ class Card(unittest.TestCase):
 
     def test_about_row_is_the_cards_last_row_with_no_count(self):
         card = block(VIEW, "struct CatHomeCareCard: View {")
-        about = 'NavigationLink { links.carePage } label: { CatHomeCareRow(title: "この子のこと", value: nil) }'
+        about = 'NavigationLink(value: links.about) { CatHomeCareRow(title: "この子のこと", value: nil) }'
         self.assertIn(about, card)
         # After the four rows, a divider only when there are rows above it.
         self.assertLess(card.index("ForEach(Array(shown.enumerated())"), card.index(about))
@@ -169,7 +174,7 @@ class NameIsTheCatMenu(unittest.TestCase):
     """11/14: the big name on the photo opens the cat menu; no capsule."""
 
     def test_the_top_bar_is_settings_only(self):
-        bar = block(HOME, "private var topBar: some View {")
+        bar = block(HOME, "private struct CatHomeSettingsBar: View {")
         self.assertNotIn("Menu", bar)
         self.assertNotIn("Capsule", HOME)
         self.assertIn('.accessibilityIdentifier("tools-settings-button")', bar)
@@ -181,16 +186,18 @@ class NameIsTheCatMenu(unittest.TestCase):
         # plain text and the menu is a small round chevron button after it,
         # so the system highlight is a small circle.
         hero = block(HOME, "private struct CatHomeHero: View {")
-        menu = block(hero, "private var menuButton: some View {")
-        self.assertIn("Menu { menu } label: {", menu)
+        menu = block(hero, "private func menuButton(_ cats: [CatHomeMenuCat]) -> some View {")
+        self.assertIn("return Menu {", menu)
+        self.assertIn("} label: {", menu)
         self.assertIn('Image(systemName: "chevron.down")', menu)
         self.assertIn("let circle = min(menuCircle, 40)", menu)
         self.assertIn("let target = max(circle, 44)", menu)
-        self.assertIn(".background(.ultraThinMaterial, in: Circle())", menu)
+        self.assertIn(".background(CatHomeGlass.dark, in: Circle())", menu)
         self.assertIn(".contentShape(Circle())", menu)
         self.assertIn(".contentShape(.contextMenuPreview, Circle().inset(by: (target - circle) / 2))", menu)
         self.assertNotIn("Rectangle()", menu)
         self.assertNotIn("Text(cat.name)", menu)
+        self.assertNotIn("Text(item.name)\n", menu.split("} label: {")[-1])
         self.assertIn(".menuStyle(.button)", menu)
         self.assertIn(".buttonStyle(.plain)", menu)
         self.assertIn(".menuIndicator(.hidden)", menu)
@@ -218,7 +225,11 @@ class NameIsTheCatMenu(unittest.TestCase):
         self.assertIn("let lines = nameLines(size: size, maxWidth: maxWidth)", row)
         self.assertIn("nameText(lines.text, fit: fit, maxWidth: maxWidth)", row)
         self.assertIn(".alignmentGuide(.leading) { _ in -(lines.lastWidth + gap) }", row)
-        self.assertEqual(row.count("centred(menuButton, size: size)"), 2)
+        self.assertEqual(row.count("centred(menuButton(menuCats), size: size)"), 2)
+        # 11/14: fewer than five cats: the name alone, no button.
+        self.assertIn("if let menuCats { centred(menuButton(menuCats), size: size) }", row)
+        self.assertIn("} else if let menuCats {", row)
+        self.assertEqual(row.count("nameText(cat.name, fit: fit, maxWidth: maxWidth)"), 2)
         centred = block(hero, "private func centred<Content: View>(_ content: Content, size: CGFloat) -> some View {")
         self.assertIn(".alignmentGuide(.lastTextBaseline) { dimensions in", centred)
         self.assertIn("dimensions[VerticalAlignment.center] + size * CGFloat(CatHomeHeroLayout.glyphCentre)", centred)
@@ -269,37 +280,113 @@ class NameIsTheCatMenu(unittest.TestCase):
         self.assertIn("ForEach(CatHomeHeroLayout.dots(count: count, current: current), id: \\.index) { dot in", HOME)
         self.assertIn("func testPageDotsCapAtSevenWithShrinkingEnds()", TESTS)
 
-    def test_pages_are_cards_only_while_they_move(self):
-        # 11/14: at rest exactly as before; while moving, each page scales to
-        # 0.92 at most with continuous corners up to 32 painted in the page
-        # background (no clip, no opacity, no blur); Reduce Motion: none.
+    def test_pages_move_exactly_with_the_finger(self):
+        # 11/14 (owner: 「指についてくる感じが弱い」): plain paging. No scale,
+        # corners, opacity or offset while moving, so the page under the
+        # finger moves exactly with it; Reduce Motion also drops the menu's
+        # animated jump.
         pager = block(HOME, "private func pager(_ cats: [CatHomeCat], current: CatHomeCat, metrics: CatHomeMetrics) -> some View {")
-        self.assertIn(".modifier(CatHomeCardWhileMoving(enabled: !reduceMotion && cats.count > 1))", pager)
-        self.assertIn(".scrollTransition(.interactive, axis: .horizontal) { content, phase in", pager)
-        self.assertIn("content.scaleEffect(phase.isIdentity || reduceMotion", pager)
-        self.assertIn("? 1 : 1 - shrink * CGFloat(min(abs(phase.value), 1)))", pager)
-        for gone in (".opacity(", ".blur(", ".offset(", "rotation"):
-            self.assertNotIn(gone, pager)
+        for gone in (".scrollTransition", ".scaleEffect", ".opacity(", ".blur(", ".offset(", "rotation", ".modifier("):
+            self.assertNotIn(gone, pager.replace(".modifier(CatHomeSettledPage", "").replace(".modifier(CatHomeFrameProbeModifier", ""))
+        for gone in ("CatHomeCardWhileMoving", "CatHomeCardCorners", "CatHomeOldCorners", "shrink:", "noCard", "oldCorners"):
+            self.assertNotIn(gone, HOME)
+        self.assertEqual(pager.count(".containerRelativeFrame(.horizontal)"), 2)
         self.assertIn(".scrollTargetBehavior(.paging)", pager)
         self.assertIn(".scrollPosition(id: $pageID)", pager)
-        self.assertIn(".scrollDisabled(cats.count < 2)", pager)
-        card = block(HOME, "private struct CatHomeCardWhileMoving: ViewModifier {")
-        self.assertIn("static let shrink: CGFloat = 0.08", card)
-        self.assertIn("static let radius: CGFloat = 32", card)
-        self.assertIn("CatHomeCardCorners(radius: Self.radius * progress)", card)
-        self.assertIn(".fill(Color(.systemGroupedBackground), style: FillStyle(eoFill: true))", card)
-        self.assertIn(".allowsHitTesting(false)", card)
-        self.assertIn("return moved < 0.01 ? 0 : (moved * 100).rounded() / 100", card)
-        self.assertNotIn(".mask", card)
-        self.assertNotIn(".clipShape", card)
-        corners = block(HOME, "private struct CatHomeCardCorners: Shape {")
-        self.assertIn("guard radius > 0 else { return Path() }", corners)
-        self.assertIn("style: .continuous", corners)
-        self.assertIn("@Environment(\\.accessibilityReduceMotion) private var reduceMotion", HOME)
+        # 11/14: with a cat there are always two pages (the add page).
+        self.assertNotIn(".scrollDisabled(", pager)
+        self.assertIn("@Environment(\.accessibilityReduceMotion) private var reduceMotion", HOME)
+        self.assertIn("withAnimation(reduceMotion ? nil : .snappy) { pageID = id }", HOME)
+
+    def test_swipe_moves_only_sideways_with_neighbours_ready(self):
+        # 11/14 (build 373: swiping between cats felt rough). A page that fits
+        # the screen does not bounce up and down, so a slanted swipe stays
+        # sideways; up to 12 cats every page is built up front, so the next
+        # cat's photo is drawn before the swipe; more cats stay lazy.
+        for marker in ("private struct CatHomePage: View {", "private struct CatHomeNoCatPage: View {"):
+            page = block(HOME, marker)
+            self.assertIn(".scrollBounceBehavior(.basedOnSize, axes: .vertical)", page)
+        pager = block(HOME, "private func pager(_ cats: [CatHomeCat], current: CatHomeCat, metrics: CatHomeMetrics) -> some View {")
+        self.assertIn("static let eagerPages = 12", HOME)
+        self.assertIn("if cats.count <= Self.eagerPages {", pager)
+        self.assertIn("HStack(spacing: 0) { pages() }", pager)
+        self.assertIn("LazyHStack(spacing: 0) { pages() }", pager)
+        self.assertEqual(pager.count(".scrollTargetLayout()"), 2)
+        self.assertLess(pager.index("if cats.count <= Self.eagerPages {"), pager.index("LazyHStack("))
+        # Off-screen pages stay out of VoiceOver and UI tests; no per-page
+        # refresh (the tools refresh once, when the tab appears).
+        self.assertIn(".accessibilityHidden(onAddPage || cat.id != current.id)", pager)
+        self.assertIn(".accessibilityHidden(!onAddPage)", pager)
+        self.assertNotIn(".task", pager)
+        self.assertNotIn(".onAppear", block(HOME, "private struct CatHomePage: View {"))
+        self.assertEqual(HOME.count(".onAppear { Task { await states.refresh() } }"), 1)
+
+    def test_moving_pages_do_no_work_per_frame(self):
+        # 11/14 (owner: 「カクカクする」「指についてくる感じが弱い」). The pages
+        # are Equatable values (no AnyView, no fresh closures to compare), so
+        # a pageID change mid-swipe does not draw them again; the round
+        # buttons have a fixed fill, not a material.
+        pager = block(HOME, "private func pager(_ cats: [CatHomeCat], current: CatHomeCat, metrics: CatHomeMetrics) -> some View {")
+        self.assertIn("page(cat, index: index, cats: cats, metrics: metrics).equatable()", pager)
+        page = block(HOME, "private struct CatHomePage: View {")
+        self.assertNotIn("AnyView", page)
+        self.assertIn("let actions: CatHomePageActions", page)
+        eq = block(HOME, "extension CatHomePage: Equatable {")
+        self.assertIn("if CatHomeSpeedSwitch.rebuildsPages { return false }", eq)
+        self.assertIn("lhs.actions === rhs.actions", eq)
+        self.assertIn("extension CatHomeFacts: Equatable {}", HOME)
+        self.assertIn("extension CatHomeMetrics: Equatable {}", HOME)
+        self.assertIn("final class CatHomePageActions {", HOME)
+        self.assertIn("let _ = updatePageActions()", HOME)
+        self.assertEqual(HOME.count(".ultraThinMaterial"), 2)
+        glass = block(HOME, "enum CatHomeGlass {")
+        self.assertIn("CatHomeSpeedSwitch.oldMaterials ? AnyShapeStyle(.ultraThinMaterial)", glass)
+        # The name's shadow stays live: rasterising it measured no better in
+        # the speed sweep (11/14) and risked the name's baseline.
+        self.assertNotIn(".drawingGroup()", HOME)
+        # Nothing holds the drag back.
+        for gesture in ("DragGesture", "simultaneousGesture", "highPriorityGesture", "onTapGesture"):
+            self.assertNotIn(gesture, HOME)
+        # The DEBUG switches are off in Release.
+        switch = block(HOME, "enum CatHomeSpeedSwitch {")
+        self.assertIn("#else", switch)
+        self.assertEqual(switch.count("= false"), 2)
+
+    def test_a_cat_is_added_on_the_last_page_only(self):
+        # 11/14 (owner): one place to add a cat, a page after the last cat:
+        # the no-cat page's のわ and button with its own sentence, without the
+        # household tools; 設定 stays. Its dot is a small 「＋」.
+        pager = block(HOME, "private func pager(_ cats: [CatHomeCat], current: CatHomeCat, metrics: CatHomeMetrics) -> some View {")
+        self.assertIn('static let addPageID = "cat-home-add-page"', HOME)
+        self.assertLess(pager.index("ForEach(Array(cats.enumerated())"), pager.index(".id(Self.addPageID)"))
+        self.assertIn('sentence: "猫を増やすときは、ここから。", householdTools: false) { pageActions.add() }', pager)
+        self.assertIn("openSettings: { pageActions.openSettings() }", pager)
+        empty = block(HOME, "private struct CatHomeNoCatPage: View {")
+        self.assertIn('var sentence = "この子を追加すると、ここに出ます。"', empty)
+        self.assertIn("var householdTools = true", empty)
+        self.assertIn("if householdTools {", empty)
+        self.assertIn('.accessibilityIdentifier("cat-home-add")', empty)
+        self.assertIn("pageActions.add = { addsCat = true }", HOME)
+        self.assertEqual(HOME.count("addsCat = true"), 2)
+        self.assertIn("pageCount: cats.count + 1,", HOME)
+        dots = block(HOME, "private struct CatHomePageDots: View {")
+        self.assertIn("if dot.index == count - 1 {", dots)
+        self.assertIn('Image(systemName: "plus")', dots)
+        # Never remembered; on the add page the tools stay with the last cat.
+        task = HOME.split(".task(id: pageID) {", 1)[1].split("// MARK: Cats", 1)[0]
+        self.assertIn("guard let pageID, pageID != Self.addPageID, pageID != storedCatID else { return }", task)
+        current = block(HOME, "private func currentCat(in cats: [CatHomeCat]) -> CatHomeCat? {")
+        self.assertIn("if chosen == Self.addPageID { return cats.last }", current)
 
     def test_a_settled_page_change_ticks_once(self):
         pager = block(HOME, "private func pager(_ cats: [CatHomeCat], current: CatHomeCat, metrics: CatHomeMetrics) -> some View {")
-        self.assertIn(".sensoryFeedback(.selection, trigger: pageID) { old, new in", pager)
+        # 11/14: once the pages rest (iOS 18 scroll phase), not mid-swipe.
+        self.assertIn(".sensoryFeedback(.selection, trigger: settledPageID) { old, new in", pager)
+        self.assertIn(".modifier(CatHomeSettledPage(pageID: pageID, settled: $settledPageID))", pager)
+        settled = block(HOME, "private struct CatHomeSettledPage: ViewModifier {")
+        self.assertIn("if #available(iOS 18, *) {", settled)
+        self.assertIn("moving = phase != .idle", settled)
+        self.assertIn("if !moving, settled != pageID { settled = pageID }", settled)
         self.assertIn("old != nil && new != nil && old != new", pager)
         # The page is still kept once the pages rest.
         self.assertIn("try? await Task.sleep(for: .milliseconds(700))", HOME)
@@ -317,12 +404,20 @@ class NameIsTheCatMenu(unittest.TestCase):
         self.assertEqual(words.count(".accessibilityHidden(true)"), 2)
 
     def test_the_items_are_the_same(self):
-        items = block(HOME, "private func catMenuItems(_ cats: [CatHomeCat], current: CatHomeCat) -> some View {")
-        self.assertIn("ForEach(cats) { cat in", items)
-        self.assertIn('.accessibilityIdentifier("tools-cat-menu-\\(cat.id)")', items)
-        self.assertIn('Button { addsCat = true } label: { Label("この子を追加", systemImage: "plus") }', items)
-        self.assertIn('.accessibilityIdentifier("tools-cat-profiles")', items)
-        self.assertIn("catMenu: AnyView(catMenuItems(cats, current: cat)),", HOME)
+        items = block(HOME, "private func menuButton(_ cats: [CatHomeMenuCat]) -> some View {")
+        self.assertIn("ForEach(cats) { item in", items)
+        self.assertIn("Button { choose(item.id) } label: {", items)
+        self.assertIn('.accessibilityIdentifier("tools-cat-menu-\\(item.id)")', items)
+        self.assertIn('Label(item.name, systemImage: "checkmark")', items)
+        # 11/14: the cats only; a cat is added on the last page.
+        for gone in ("addsCat", "この子を追加", "tools-cat-profiles", "Divider()"):
+            self.assertNotIn(gone, items)
+        self.assertNotIn("tools-cat-profiles", HOME)
+        # The button only from five cats.
+        self.assertIn("static let menuMinimumCats = 5", HOME)
+        self.assertIn("menuCats: cats.count >= Self.menuMinimumCats\n"
+                      "                               ? cats.map { CatHomeMenuCat(id: $0.id, name: $0.name) } : nil,", HOME)
+        self.assertEqual(HOME.count("let menuCats: [CatHomeMenuCat]?"), 2)
 
 
 class Words(unittest.TestCase):
@@ -401,7 +496,7 @@ class Captures(unittest.TestCase):
     def test_stress_captures_are_synthetic_and_debug_only(self):
         # 11/14: the この子 page under stress for the designer, light, dark and SE.
         test = block(REVIEW, "func test14CatHomeStress() {")
-        for name in ("40_home_name_1", "40_home_name_30", "41_home_menu_open", "41b_home_menu_open_1cat",
+        for name in ("40_home_name_1", "40_home_name_30", "41_home_menu_open", "41b_home_add_page",
                      "42_home_cats_8", "43_home_photo_bright", "43_home_photo_portrait_small",
                      "44_home_rows_long_values", "44_home_searching", "44_home_departed",
                      "45_home_text_ax3", "46_home_mid_swipe"):
