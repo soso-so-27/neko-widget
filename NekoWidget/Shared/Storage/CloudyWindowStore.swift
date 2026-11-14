@@ -667,12 +667,12 @@ struct CloudyWindowStore: Sendable {
         }
         let confidentCats = Set(candidates.filter { !isProbable($0) }
             .flatMap { state.metadata[$0.photoID]?.profileIDs ?? [] })
-        let preferred = candidates.filter { photo in
+        let surest = candidates.filter { photo in
             guard isProbable(photo) else { return true }
             let cats = state.metadata[photo.photoID]?.profileIDs ?? []
             return profile == nil && !cats.isEmpty && cats.isDisjoint(with: confidentCats)
         }
-        if !preferred.isEmpty { candidates = preferred }
+        if !surest.isEmpty { candidates = surest }
         if candidates.count > 1, let last = previous.first {
             candidates.removeAll { $0.photoID == last.photoID }
         }
