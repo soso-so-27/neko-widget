@@ -32,6 +32,11 @@ struct CloudyWindowPhotoMetadata: Codable, Equatable, Sendable {
     var burstIdentifier: String?
     var profileIDs: Set<String>
     var previouslyShown: Bool
+    /// 11/14 たぶん猫 (stored best cat confidence under 0.7, not vouched for
+    /// by the user). The window picks one only when the household or the cat
+    /// has no 確かな猫 to show. Optional: nil (older app builds) is 確かな猫,
+    /// and older Widget builds ignore the key.
+    var isProbableCat: Bool? = nil
 }
 
 struct CloudyWindowPreparedPhoto: Codable, Equatable, Sendable {
@@ -654,6 +659,20 @@ struct CloudyWindowStore: Sendable {
             unique.append(photo)
         }
         candidates = unique
+        // 11/14: たぶん猫 only where nothing better exists. In this cat's
+        // window, only when the cat has no 確かな猫; in the household window a
+        // cat whose photos are all たぶん猫 keeps them, so it still gets turns.
+        let isProbable = { (photo: CloudyWindowPreparedPhoto) in
+            state.metadata[photo.photoID]?.isProbableCat == true
+        }
+        let confidentCats = Set(candidates.filter { !isProbable($0) }
+            .flatMap { state.metadata[$0.photoID]?.profileIDs ?? [] })
+        let preferred = candidates.filter { photo in
+            guard isProbable(photo) else { return true }
+            let cats = state.metadata[photo.photoID]?.profileIDs ?? []
+            return profile == nil && !cats.isEmpty && cats.isDisjoint(with: confidentCats)
+        }
+        if !preferred.isEmpty { candidates = preferred }
         if candidates.count > 1, let last = previous.first {
             candidates.removeAll { $0.photoID == last.photoID }
         }

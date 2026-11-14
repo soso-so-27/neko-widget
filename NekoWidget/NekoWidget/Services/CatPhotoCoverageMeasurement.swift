@@ -110,7 +110,7 @@ struct CatPhotoRecognitionHistogram: Equatable, Sendable {
         guard let value else { return 0 }
         if value < 0.3 { return 1 }
         if value < 0.5 { return 2 }
-        if value < 0.7 { return 3 }
+        if value < AppSettings.confidentCatThreshold { return 3 }
         return 4
     }
 
@@ -177,9 +177,11 @@ struct CatPhotoCoverageLibraryFacts: Equatable, Sendable {
 
     static let storedConfidenceLabels = ["none", "0.5-0.7", ">=0.7"]
 
+    /// 11/14: band 1 is たぶん猫 and band 2 確かな猫 by the stored confidence
+    /// alone (CatPickTier, the same line the app's own picks use).
     static func storedConfidenceBand(_ record: AssetRecord) -> Int {
         guard record.isCatCandidate else { return 0 }
-        return record.cat.confidence < 0.7 ? 1 : 2
+        return record.cat.isConfidentCat ? 2 : 1
     }
 }
 

@@ -200,7 +200,38 @@ private enum PersonalRediscoveryVerifier {
         try publicationStopsAfterThreeConflicts()
         try publicationCallbackFailureIsNotRetried()
         try readAndPublicationPreserveMissingOrCorruptState()
+        try probableCatsGoLast()
         print("Personal rediscovery passed: calendar-day photos, same-day hold after turning/refill/restart, legacy cadence migration, shared slots, bounded pool, cycles, leases, failures, quota, midnight/DST, stale requests, 48h history, source and authority isolation, atomic legacy bootstrap, frozen last photo across pool replacement/30 days/cleanup, frozen release on resume and source deletion, cross-process quota race, snapshot without flock, publication CAS with quota/revocation/three-conflict bounds, single callback including failure, missing/corrupt state preserved.")
+    }
+
+    /// 11/14: たぶん猫 move behind every 確かな猫 in later daily slots;
+    /// today's photo stays, and candidates without the key are 確かな猫.
+    private static func probableCatsGoLast() throws {
+        let fixture = try Fixture(8)
+        defer { fixture.cleanup() }
+        try require(try fixture.store.snapshot(now: baseline)!.candidates.allSatisfy { $0.isProbableCat == nil },
+                    "older candidates carry no tier")
+        guard let today = try fixture.store.currentEntry(now: baseline, timeZone: utc)?.item?.localIdentifier else {
+            throw CheckFailure.failed("missing today's photo")
+        }
+        let others = fixture.candidates.map { $0.item.localIdentifier }.filter { $0 != today }
+        let probable = Set(others.prefix(3))
+        try fixture.store.updateCatTiers(probablePhotoIDs: probable.union([today]), now: baseline)
+        try require(try fixture.store.currentEntry(now: baseline, timeZone: utc)?.item?.localIdentifier == today,
+                    "today's photo is kept even when it is たぶん猫")
+        let tiers = try fixture.store.snapshot(now: baseline)!.candidates
+        try require(tiers.filter { $0.isProbableCat == true }.count == 4
+            && tiers.filter { $0.isProbableCat == false }.count == 4, "tiers stored on candidates")
+        var later: [String] = []
+        for offset in 1..<8 {
+            guard let id = try fixture.store.currentEntry(now: baseline.addingTimeInterval(Double(offset) * interval),
+                                                          timeZone: utc)?.item?.localIdentifier else {
+                throw CheckFailure.failed("missing later photo")
+            }
+            later.append(id)
+        }
+        try require(Set(later.prefix(4)).isDisjoint(with: probable) && Set(later.suffix(3)) == probable,
+                    "確かな猫 first, たぶん猫 last in the later slots")
     }
 
     private static func membershipSelectionBoundary() throws {

@@ -305,6 +305,24 @@ struct SeasonalMovieBuilder {
         ))
     }
 
+    /// 11/14: the app chooses a movie's scenes, so it first builds from
+    /// 確かな猫 alone (videos are only ever accepted at the confident line)
+    /// and uses たぶん猫 photos only when that is not enough for a movie.
+    func buildMostRecent(
+        from inputCandidates: [SeasonalMovieCandidate],
+        through referenceDate: Date,
+        probableCatIdentifiers: Set<String>
+    ) -> SeasonalMovieBuildResult {
+        if !probableCatIdentifiers.isEmpty {
+            let confident = inputCandidates.filter {
+                !probableCatIdentifiers.contains($0.localIdentifier)
+            }
+            let result = buildMostRecent(from: confident, through: referenceDate)
+            if case .ready = result { return result }
+        }
+        return buildMostRecent(from: inputCandidates, through: referenceDate)
+    }
+
     /// If the current quarter is in progress, the previous calendar quarter is
     /// the newest one that can be called finished.
     /// Shared by candidate discovery and selection so both phases use the

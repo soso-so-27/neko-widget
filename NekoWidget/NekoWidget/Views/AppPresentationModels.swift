@@ -24,6 +24,11 @@ struct PhotoPresentation: Identifiable, Hashable, Sendable {
     /// albums may because they make no individual-subject claim.
     let isGrowthEligible: Bool
     let hasCurrentAlbumAnalysis: Bool
+    /// 11/14 確かな猫 (CatPickTier): the stored best cat confidence reaches
+    /// 0.7, or the user vouched for the photo (saved it, included it for a
+    /// cat, chose it as a key photo, or it is in a linked album). False is
+    /// たぶん猫: shown in lists, chosen by the app only when nothing else fits.
+    let isConfidentCat: Bool
 
     var id: String { localIdentifier }
 
@@ -40,7 +45,8 @@ struct PhotoPresentation: Identifiable, Hashable, Sendable {
         detectedCatCount: Int = 1,
         largestCatAreaRatio: Double? = nil,
         isGrowthEligible: Bool = true,
-        hasCurrentAlbumAnalysis: Bool = false
+        hasCurrentAlbumAnalysis: Bool = false,
+        isConfidentCat: Bool = true
     ) {
         self.localIdentifier = localIdentifier
         self.creationDate = creationDate
@@ -55,6 +61,7 @@ struct PhotoPresentation: Identifiable, Hashable, Sendable {
         self.largestCatAreaRatio = largestCatAreaRatio
         self.isGrowthEligible = isGrowthEligible
         self.hasCurrentAlbumAnalysis = hasCurrentAlbumAnalysis
+        self.isConfidentCat = isConfidentCat
     }
 }
 
@@ -166,7 +173,11 @@ struct CuratedAlbumPresentation: Identifiable, Hashable, Sendable {
 
     var title: String { id.title }
     var cardTitle: String { title }
-    var coverPhoto: PhotoPresentation { photos[0] }
+    /// 11/14: the app picks the cover, so it is a 確かな猫 whenever the album
+    /// has one; the photo order inside is the album's own.
+    var coverPhoto: PhotoPresentation {
+        photos.first(where: \.isConfidentCat) ?? photos[0]
+    }
     var countLabel: String {
         id.isGrowthComparison
             ? "\(photos.count.formatted())年分"
@@ -593,12 +604,18 @@ struct CuratedAlbumBuilder {
         }
     }
 
+    /// Theme and period albums (年ごと, 大きく写った猫, 人といっしょ, ...): 確かな猫
+    /// newest first, then たぶん猫 newest first, so the cover and the first
+    /// photos are ones the app is sure of. Membership and counts are unchanged.
     private func album(
         _ id: CuratedAlbumID,
         group: CuratedAlbumGroup,
         photos: [PhotoPresentation]
     ) -> CuratedAlbumPresentation? {
-        let ordered = photos.sorted(by: newestFirst)
+        let ordered = CatPickTier.confidentFirst(
+            photos.sorted(by: newestFirst),
+            isConfident: \.isConfidentCat
+        )
         guard !ordered.isEmpty else { return nil }
         return CuratedAlbumPresentation(id: id, group: group, photos: ordered)
     }
@@ -646,7 +663,8 @@ extension PhotoPresentation {
             detectedCatCount: detectedCatCount,
             largestCatAreaRatio: largestCatAreaRatio,
             isGrowthEligible: true,
-            hasCurrentAlbumAnalysis: hasCurrentAlbumAnalysis
+            hasCurrentAlbumAnalysis: hasCurrentAlbumAnalysis,
+            isConfidentCat: isConfidentCat
         )
     }
 }
@@ -748,7 +766,9 @@ struct AlbumHighlightPresentation: Identifiable, Hashable, Sendable {
     let sourceAlbumID: CuratedAlbumID
 
     var subtitle: String { "\(photos.count.formatted())枚" }
-    var coverPhoto: PhotoPresentation { photos[0] }
+    var coverPhoto: PhotoPresentation {
+        photos.first(where: \.isConfidentCat) ?? photos[0]
+    }
 }
 
 struct AlbumHighlightBuilder {
@@ -808,7 +828,12 @@ struct AlbumHighlightBuilder {
                 months[Month(year: year, month: month), default: []].append(photo)
             }
             for (month, photos) in months {
-                let scenes = sceneRepresentatives(from: photos)
+                // 11/14: the app picks these scenes, so 確かな猫 alone when
+                // they make enough scenes; otherwise every photo as before.
+                let confidentScenes = sceneRepresentatives(from: photos.filter(\.isConfidentCat))
+                let scenes = confidentScenes.count >= Self.minimumSceneCount
+                    ? confidentScenes
+                    : sceneRepresentatives(from: photos)
                 guard scenes.count >= Self.minimumSceneCount else { continue }
                 highlights.append(AlbumHighlightPresentation(
                     id: "highlight-\(month.key)-\(themeID.logKey)",

@@ -363,8 +363,11 @@ struct AppRootView: View {
             isStartupLoadFailed: viewModel.startupLoadFailed,
             retryStartupLoad: { Task { await viewModel.retryStartup() } },
             scan: scanPresentation(records: viewModel.catAssets),
+            // 11/14: the first look at "found cats" shows 確かな猫 first.
             resultPhotos: hasPhotoAccess
-                ? viewModel.catAssets.prefix(9).map(photoPresentation)
+                ? CatPickTier.confidentFirst(viewModel.catAssets,
+                                             isConfident: viewModel.isConfidentCatForPicks)
+                    .prefix(9).map(photoPresentation)
                 : [],
             scanErrorMessage: onboardingScanErrorMessage,
             isLimitedAccess: viewModel.isLimitedAccess,
@@ -823,9 +826,11 @@ struct AppRootView: View {
             return CatProfilePresentation(
                 identifier: profile.id.uuidString,
                 name: profile.displayName,
+                // 11/14: without a key photo the app picks the newest
+                // 確かな猫, then the newest photo.
                 coverPhoto: confirmed.first(where: {
                     $0.localIdentifier == profile.keyPhotoLocalIdentifier
-                }) ?? confirmed.first,
+                }) ?? confirmed.first(where: \.isConfidentCat) ?? confirmed.first,
                 confirmedPhotos: confirmed,
                 manualCandidatePhotos: allCandidatePhotos.filter {
                     !confirmedIdentifiers.contains($0.localIdentifier)
@@ -1069,7 +1074,11 @@ struct AppRootView: View {
                 || (isLinkedAlbumPhoto && asset.cat.catCount <= 1),
             hasCurrentAlbumAnalysis: asset.albumAnalysisVersion
                 == CatAlbumTraits.currentAnalysisVersion
-                && traits?.analysisVersion == CatAlbumTraits.currentAnalysisVersion
+                && traits?.analysisVersion == CatAlbumTraits.currentAnalysisVersion,
+            // 11/14: a linked album or an explicit include is the user's word.
+            isConfidentCat: isLinkedAlbumPhoto
+                || membership?.decision == .included
+                || viewModel.isConfidentCatForPicks(asset)
         )
     }
 
@@ -1100,7 +1109,9 @@ struct AppRootView: View {
             creationDate: creationDate,
             catBoundingBox: (currentBox ?? asset.cat.boundingBox)?.cgRect,
             assignedProfileIdentifiers: assignedProfileIdentifiers,
-            detectedCatCount: asset.cat.catCount
+            detectedCatCount: asset.cat.catCount,
+            isConfidentCat: membership?.decision == .included
+                || viewModel.isConfidentCatForPicks(asset)
         )
     }
 
@@ -1230,7 +1241,8 @@ struct AppRootView: View {
                 ?? (asset.cat.catCount <= 1 ? asset.cat.areaRatio : nil),
             hasCurrentAlbumAnalysis: asset.albumAnalysisVersion
                 == CatAlbumTraits.currentAnalysisVersion
-                && traits?.analysisVersion == CatAlbumTraits.currentAnalysisVersion
+                && traits?.analysisVersion == CatAlbumTraits.currentAnalysisVersion,
+            isConfidentCat: viewModel.isConfidentCatForPicks(asset)
         )
     }
 

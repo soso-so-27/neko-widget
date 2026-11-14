@@ -198,7 +198,8 @@ enum TodayPhotoSelectionPolicy {
         previousState: TodayPhotoSelectionState?,
         selector: WeightedPhotoSelector,
         now: Date = .now,
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        isConfident: (AssetRecord) -> Bool = { $0.isConfidentCat }
     ) -> TodayPhotoSelectionResolution {
         let eligible = selector.eligibleCandidates(
             from: assets,
@@ -225,8 +226,11 @@ enum TodayPhotoSelectionPolicy {
             )
         }
 
+        // 11/14: a new day's photo is a 確かな猫 whenever one exists; the
+        // photo kept for today above is never replaced because of its tier.
+        let confident = eligible.filter(isConfident)
         guard let selected = selector.selectOne(
-            from: eligible,
+            from: confident.isEmpty ? eligible : confident,
             settings: settings,
             now: now
         ) else {
