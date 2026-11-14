@@ -1122,6 +1122,29 @@ struct MembershipOfferSheet: View {
     }
 }
 
+/// 11/14 (family journey A3): what a place does once its Plus sheet has
+/// closed. Only a purchase or restore that ended with Plus goes on to the
+/// person's own action; cancelled, failed, pending (Ask to Buy) and the rest
+/// leave the place as it was.
+enum PlusPurchaseContinuation {
+    static func continues(after result: MembershipOfferActionResult) -> Bool {
+        result == .completed
+    }
+
+    /// 「まどを作る」: the names already typed are still there and valid, and
+    /// nothing is being made or was made already.
+    static func createsWindow(name: String, ownerName: String, namesFit: Bool,
+                              isWorking: Bool, alreadyCreated: Bool) -> Bool {
+        !name.isEmpty && !ownerName.isEmpty && namesFit && !isWorking && !alreadyCreated
+    }
+
+    /// 「Plusを始めて再開する」 in a family notebook nobody pays for: once
+    /// bought, take it over with this Plus when the family now allows it.
+    static func claimsFamilyPayer(bought: Bool, canClaim: Bool, handoverPending: Bool) -> Bool {
+        bought && canClaim && !handoverPending
+    }
+}
+
 /// Shown in place of a Plus feature at one of the entry places. A confirmed
 /// "not a member" opens the one Plus screen directly (once per appearance;
 /// for a new memo only the very first time, 11/12 review 6); closing it
@@ -1137,6 +1160,11 @@ struct PlusOfferPrompt: View {
     /// Closing the Plus screen without Plus also closes the place itself, so
     /// one × goes back (the album's work, 11/12 review 7).
     var onDeclined: (() -> Void)? = nil
+    /// 11/14 (family journey A3): Plus was bought or restored here; the place
+    /// goes on with what the person asked for (「作る」 makes the window).
+    /// Called once the sheet has gone, never for a cancelled, failed or
+    /// pending purchase.
+    var onPurchased: (() -> Void)? = nil
     @State private var showsOffer = false
     @State private var didPresent = false
     @State private var finishedWithPlus = false
@@ -1169,7 +1197,7 @@ struct PlusOfferPrompt: View {
         }
         .sheet(isPresented: $showsOffer, onDismiss: {
             NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
-            if !finishedWithPlus { onDeclined?() }
+            if !finishedWithPlus { onDeclined?() } else { onPurchased?() }
             finishedWithPlus = false
         }) {
             MembershipOfferSheet(model: .live(), context: context, reasonOverride: reasonOverride) { result in

@@ -10,7 +10,10 @@ After the cat line moved to 0.5 (11/13), an otter photo became the cover of
 - たぶん猫: 0.5 ..< 0.7.
 
 Every place where the app chooses photos by itself uses 確かな猫 first and
-falls back to たぶん猫 only when there are not enough. Lists the user browses
+falls back to たぶん猫 only when there are not enough. 11/15: an automatic
+theme, growth entry, highlight, monthly/yearly work page or movie never
+stands on たぶん猫 alone (the 2020 otter); with fewer than 20 確かな猫 in the
+whole library the tiers are off and every cat photo counts. Lists the user browses
 and every count keep both tiers, unchanged. Nothing is rescanned; the
 widget-side tier travels as optional keys older builds ignore.
 
@@ -69,6 +72,11 @@ class TierTests(unittest.TestCase):
         # The detection line itself is untouched; nothing is rescanned.
         self.assertIn("confidenceThreshold: defaultConfidenceThreshold,", SETTINGS)
         self.assertIn("static let currentDetectorPolicyVersion = 2", SETTINGS)
+        # 11/15 safety net, next to the other tier settings.
+        self.assertIn("static let minimumConfidentCatPhotos = 20", SETTINGS)
+        self.assertLess(SETTINGS.index("confidentCatThreshold: Float = 0.7"),
+                        SETTINGS.index("minimumConfidentCatPhotos = 20"))
+        self.assertIn("confidentPhotoCount >= AppSettings.minimumConfidentCatPhotos", DETECTION)
 
     def test_one_shared_cheap_helper(self):
         tier = section(DETECTION, "enum CatPickTier {", "\n}\n")
@@ -88,8 +96,10 @@ class TierTests(unittest.TestCase):
                        "membership.decision == .included"):
             self.assertIn(needle, vouched)
         self.assertNotIn("singleCat", vouched)
-        picks = section(VIEW_MODEL, "func isConfidentCatForPicks(_ asset: AssetRecord) -> Bool {", "}")
-        self.assertIn("asset.isConfidentCat || userVouchedCatPhotoIdentifiers.contains(asset.localIdentifier)", picks)
+        picks = section(VIEW_MODEL, "func isConfidentCatForPicks(_ asset: AssetRecord) -> Bool {", "\n    }")
+        self.assertIn("return !tiers.apply || asset.isConfidentCat", picks)
+        self.assertIn("|| tiers.vouched.contains(asset.localIdentifier)", picks)
+        self.assertIn("CatPickTier.tiersApply(confidentPhotoCount: confident)", VIEW_MODEL)
         # Built once per presentation version, not per photo.
         self.assertIn("cachedUserVouchedCatPhotoIdentifiers", VIEW_MODEL)
 
@@ -121,16 +131,19 @@ class PresentationTests(unittest.TestCase):
     def test_theme_membership_orders_confident_first_but_all_photos_stay(self):
         album = section(PRESENTATION, "    private func album(\n", "    private func albumPreservingOrder(")
         self.assertIn("CatPickTier.confidentFirst(\n            photos.sorted(by: newestFirst),", album)
+        # 11/15: no theme on たぶん猫 alone.
+        self.assertIn("guard ordered.first?.isConfidentCat == true else { return nil }", album)
         # The browse grid (すべての猫写真) keeps newest first, both tiers.
         self.assertIn("albumPreservingOrder(\n                .allCatPhotos,", PRESENTATION)
         highlights = section(PRESENTATION, "struct AlbumHighlightBuilder {", "func featured(")
-        self.assertIn("sceneRepresentatives(from: photos.filter(\\.isConfidentCat))", highlights)
-        self.assertIn("confidentScenes.count >= Self.minimumSceneCount", highlights)
+        self.assertIn("let scenes = sceneRepresentatives(from: photos.filter(\\.isConfidentCat))", highlights)
+        self.assertNotIn(": sceneRepresentatives(from: photos)", highlights)
 
     def test_growth_prefers_confident(self):
         select = section(GROWTH, "    func select(\n", "    func candidateGroups(")
         self.assertIn("group.photos.contains(where: \\.isConfidentCat)", select)
-        self.assertIn("confidentGroups.count >= GrowthAlbumVisibilityPolicy.minimumComparablePeriods", select)
+        self.assertIn("groups = confidentGroups", select)
+        self.assertNotIn("confidentGroups.count >=", select)
         preferred = section(GROWTH, "    private func isPreferred(", "    private func comparableArea(")
         self.assertLess(preferred.index("isConfidentCat"), preferred.index("isLiked"))
         self.assertIn("if candidate.confidentCount != current.confidentCount", GROWTH)
@@ -143,12 +156,18 @@ class WorkTests(unittest.TestCase):
         self.assertEqual(PROTOTYPE.count("for tier in tiers(photos) {"), 2)
         self.assertIn("if lhs.isConfidentCat != rhs.isConfidentCat { return lhs.isConfidentCat }", PROTOTYPE)
         self.assertIn("let candidates = Array(AlbumPrototype.ranked(source).prefix(24))", PROTOTYPE)
+        # 11/15: no year work, and no month page in it, from たぶん猫 alone.
+        self.assertIn("guard entry.value >= 9, confidentYears.contains(year) else { return false }", PROTOTYPE)
+        self.assertEqual(PROTOTYPE.count("from: catPhotos).filter(\\.isConfidentCat)")
+                         + PROTOTYPE.count(".filter(\\.isConfidentCat), count: 1).first"), 2)
+        self.assertIn("AlbumPrototype.arrivedYears(from: catPhotos, now: at, deliverNow: true).contains(year)", MAIN)
         self.assertNotIn("source.sorted { AlbumPrototype.score($0) > AlbumPrototype.score($1) }", PROTOTYPE)
 
     def test_monthly_window(self):
         build = section(MONTHLY, "    func build(\n", "    func buildMostRecent(")
         self.assertIn("let confidentScenes = scenePhotos.filter(\\.isConfidentCat)", build)
         self.assertIn("confidentScenes.count >= Self.minimumSceneCount", build)
+        self.assertIn("guard !confidentScenes.isEmpty else {", build)
         # The month's availability still counts both tiers.
         self.assertIn("availableSceneCount: scenePhotos.count", build)
         self.assertIn("return story.first(where: \\.isConfidentCat) ?? story.first", MONTHLY)
@@ -156,6 +175,7 @@ class WorkTests(unittest.TestCase):
 
     def test_seasonal_movie(self):
         self.assertIn("probableCatIdentifiers: Set<String>", MOVIE)
+        self.assertIn("return .unavailable(.notEnoughDistinctScenes(available: 0))", MOVIE)
         self.assertEqual(MAIN.count("probableCatIdentifiers: probableCatIdentifiers"), 2)
         self.assertIn(".filter { !$0.isConfidentCat }.map(\\.localIdentifier))", MAIN)
 
@@ -212,7 +232,10 @@ class MeasurementAndTests(unittest.TestCase):
                      "testThemeCoversAreConfidentAndMembershipKeepsBoth",
                      "testGrowthLeavesOutAPeriodWithOnlyProbablePhotos",
                      "testMonthlyWorkFallsBackAndKeepsAConfidentCover",
-                     "testTodayPhotoPrefersConfidentAndKeepsTodaysChoice"):
+                     "testTodayPhotoPrefersConfidentAndKeepsTodaysChoice",
+                     "testNoThemeStandsOnProbablePhotosAlone", "testSafetyNetLineIsTwenty",
+                     "testYearWorkNeedsAConfidentPhoto", "testMonthOfProbablePhotosAloneHasNoWork",
+                     "testHighlightNeedsEnoughConfidentScenes"):
             self.assertIn(f"func {name}()", TESTS)
         self.assertIn("python3 ci/test-confident-cats.py", QUICK)
         self.assertIn("try probableCatsGoLast()", read("ci/verify-personal-rediscovery.swift"))

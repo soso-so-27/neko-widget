@@ -498,6 +498,14 @@ struct MonthlyWindowBuilder {
         // they are enough for a work; otherwise every scene, 確かな猫 preferred
         // (see `preferred`). The month's availability counts both tiers.
         let confidentScenes = scenePhotos.filter(\.isConfidentCat)
+        // 11/15: a month of たぶん猫 alone has no work.
+        guard !confidentScenes.isEmpty else {
+            return unavailableResult(
+                monthStart: interval.start,
+                reason: .notEnoughDistinctScenes,
+                availableSceneCount: 0
+            )
+        }
         let pool = confidentScenes.count >= Self.minimumSceneCount
             ? confidentScenes
             : scenePhotos

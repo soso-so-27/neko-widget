@@ -467,6 +467,18 @@ struct PhotoCountWithScanActivity: View {
     }
 }
 
+/// 11/14 (family journey A6): the 写真 tab with no cat photos of one's own.
+/// Someone in a まど is shown where the family's photos are; everyone else
+/// keeps the usual empty state. People with photos never see either.
+enum PhotosEmptyStatePolicy {
+    static let windowMemberLine = "まどに届いた写真は、まどのタブで見られます。"
+    static let openWindowsAction = "まどを開く"
+
+    static func pointsToWindows(scanFinished: Bool, catPhotoCount: Int, isWindowMember: Bool) -> Bool {
+        scanFinished && catPhotoCount == 0 && isWindowMember
+    }
+}
+
 struct HomeView: View {
 
     let catPhotos: [PhotoPresentation]
@@ -501,6 +513,12 @@ struct HomeView: View {
     /// so the grid starts without a heading row of its own. A month chosen
     /// there arrives here and is cleared once the grid has moved.
     let tabRowMonthJump: Binding<String?>?
+    /// 11/14 (family journey A6): switches to the まど tab. Nil where there is
+    /// no まど tab; the empty state then stays as it was.
+    let openWindows: (() -> Void)?
+    /// This iPhone is in at least one まど (its home-screen copy lists one),
+    /// read only while there are no cat photos to show.
+    @State private var isWindowMember = false
 
     /// Rows are built lazily, so a large batch costs little; fewer appends
     /// mean fewer layout passes while the grid is moving.
@@ -534,9 +552,11 @@ struct HomeView: View {
         showsCatProfileNavigation: Bool = true,
         headerAccessory: AnyView? = nil,
         themeRow: AnyView? = nil,
-        tabRowMonthJump: Binding<String?>? = nil
+        tabRowMonthJump: Binding<String?>? = nil,
+        openWindows: (() -> Void)? = nil
     ) {
         self.themeRow = themeRow
+        self.openWindows = openWindows
         self.tabRowMonthJump = tabRowMonthJump
         self.catPhotos = catPhotos
         self.scan = scan
@@ -623,6 +643,10 @@ struct HomeView: View {
                         }
                         emptyPhotoState
                             .padding(.horizontal, cardMargin)
+                            .task(id: openWindows != nil) {
+                                guard openWindows != nil else { isWindowMember = false; return }
+                                isWindowMember = !GroupWidgetCache.entries().isEmpty
+                            }
                     }
                 } else {
                     photoAccessCard
@@ -954,6 +978,24 @@ struct HomeView: View {
                 description: Text("選んでいる猫と、写真へのアクセスを確かめてください。"))
                 .frame(maxWidth: .infinity, minHeight: 280)
                 .accessibilityIdentifier("photo-library-scoped-empty")
+        } else if let openWindows, PhotosEmptyStatePolicy.pointsToWindows(
+            scanFinished: scan.hasFinalResult && !scan.isScanning,
+            catPhotoCount: scan.displayedCatCount, isWindowMember: isWindowMember) {
+            // 11/14 (A6): no cat photos of one's own, but in a まど (often
+            // someone who was invited): where the family's photos are.
+            ContentUnavailableView {
+                Label(OnboardingPresentationCopy.scanZeroTitle, systemImage: "photo.on.rectangle")
+            } description: {
+                Text(PhotosEmptyStatePolicy.windowMemberLine)
+            } actions: {
+                Button(action: openWindows) {
+                    Text(PhotosEmptyStatePolicy.openWindowsAction).frame(minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("photo-hub-empty-open-windows")
+            }
+            .frame(maxWidth: .infinity, minHeight: 320)
+            .accessibilityIdentifier("photo-hub-empty-window-member")
         } else if scan.hasFinalResult && scan.displayedCatCount == 0 && !scan.isScanning {
             ContentUnavailableView {
                 Label(OnboardingPresentationCopy.scanZeroTitle, systemImage: "photo.on.rectangle")

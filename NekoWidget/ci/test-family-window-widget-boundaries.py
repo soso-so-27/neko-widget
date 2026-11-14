@@ -5266,7 +5266,8 @@ class WindowCreationEntryTests(unittest.TestCase):
         window = source("NekoWidget/Views/GroupWindowView.swift")
         self.assertNotIn("グループのまど", window)
         create = section(window, "struct GroupWindowCreateScreen: View {", "struct GroupWindowListSection: View {")
-        self.assertIn("GroupWindowMembersScreen(client: model.client, windowID: createdWindowID)", create)
+        # 11/14 (A2): the new window's members screen offers 「ホーム画面に置く」.
+        self.assertIn("GroupWindowMembersScreen(client: model.client, windowID: createdWindowID, offersWidgetPlacement: true)", create)
 
     def test_create_says_it_is_making_and_puts_the_keyboard_away(self) -> None:
         window = source("NekoWidget/Views/GroupWindowView.swift")
@@ -5459,7 +5460,8 @@ class FreeFirstPhotoTests(unittest.TestCase):
 class FamilyInviteMessageTests(unittest.TestCase):
     def test_family_invitation_carries_a_line_like_a_window(self) -> None:
         notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
-        self.assertIn("message: Text(FamilyNotebookInviteView.inviteMessage(cats: model.catNames))", notebook)
+        # 11/14 (A5): one press opens the system share sheet with the line.
+        self.assertIn("message: FamilyNotebookInviteView.inviteMessage(cats: model.catNames)", notebook)
         self.assertIn("のことを一緒に書こう。このリンクから参加してね。", notebook)
 
 
@@ -5964,14 +5966,16 @@ class FirstLaunchInvitationTests(unittest.TestCase):
         self.assertIn("state.finishForInvitation()", root_view)
         family = section(root_view, ".sheet(item: $familyLink, onDismiss: {", "FamilyNotebookJoinView(link:")
         self.assertIn("completeOnboardingForInvitation()", family)
-        # 11/12: the first screen has no line for invited people (it stopped
-        # everyone else); the link itself opens the join screen. No help sheet.
+        # 11/14 (family journey A1): one quiet line for invited people, named
+        # for them (11/12's "what link?"), not a button; the link itself still
+        # opens the join screen. No help sheet.
         self.assertNotIn("showsInvitationHint", root_view)
         self.assertNotIn("OnboardingInvitationHelpView", root_view)
         onboarding = source("NekoWidget/Views/OnboardingView.swift")
         self.assertNotIn("showsInvitationHint", onboarding)
         purpose = section(onboarding, "private struct OnboardingPurposePage: View", "struct OnboardingWindowMosaic: View")
         self.assertNotIn("届いた招待リンク", purpose)
+        self.assertIn("Text(OnboardingPresentationCopy.purposeInvitationLine)", purpose)
         self.assertNotIn('"onboarding-purpose-join-hint"', purpose)
         self.assertNotIn('"onboarding-purpose-join"', purpose)
         self.assertNotIn("struct OnboardingInvitationHelpView: View", onboarding)
@@ -9180,14 +9184,14 @@ class CatIdentityMeasure1113Tests(unittest.TestCase):
         # (C1CA7050…, the 0.5 cat line and its migration), then
         # CatHomeCareTests (C1E0A7E0…, the この子 page's 「これからのこと」),
         # then AppLimitsTests (C1A11A17…, the 11/14 limits), then
+        # FamilyJourneyTests (C1FA3A11…, the 11/14 family journey), then
         # LaunchWorkTests (4C570000…, the light first seconds after launch).
         self.assertIn("children = (C1108C000000000000000002,C1D3A9110000000000000006,"
                       "C15C0A7E0000000000000002,C1A1BF100000000000000002,C1CA70500000000000000002,"
-                      "C1E0A7E00000000000000002,C1A11A170000000000000002,4C570000000000000000000A,);"
-                      " path = NekoWidgetTests;", self.project)
+                      "C1E0A7E00000000000000002,C1A11A170000000000000002,C1FA3A110000000000000002,4C570000000000000000000A,); path = NekoWidgetTests;", self.project)
         self.assertIn("files = (C1108C000000000000000003,C1D3A9110000000000000005,"
                       "C15C0A7E0000000000000001,C1A1BF100000000000000001,C1CA70500000000000000001,"
-                      "C1E0A7E00000000000000001,C1A11A170000000000000001,4C5700000000000000000009,);", self.project)
+                      "C1E0A7E00000000000000001,C1A11A170000000000000001,C1FA3A110000000000000001,4C5700000000000000000009,);", self.project)
         self.assertEqual(len(set(re.findall(r"C1D3A911000000000000000\d", self.project))), 6)
 
     def test_store_product_compiles_none_of_it(self) -> None:

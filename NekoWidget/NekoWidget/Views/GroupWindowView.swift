@@ -1968,16 +1968,20 @@ private struct GroupPhotoPageImageKey: Hashable {
 struct GroupWindowMembersScreen: View {
     @StateObject private var model: GroupWindowMembersModel
     private let onLeft: (() -> Void)?
+    private let offersWidgetPlacement: Bool
 
-    init(client: any GroupWindowClient, windowID: String, onLeft: (() -> Void)? = nil) {
+    init(client: any GroupWindowClient, windowID: String, onLeft: (() -> Void)? = nil,
+         offersWidgetPlacement: Bool = false) {
         _model = StateObject(wrappedValue: GroupWindowMembersModel(client: client, windowID: windowID))
         self.onLeft = onLeft
+        self.offersWidgetPlacement = offersWidgetPlacement
     }
 
     var body: some View {
         GroupWindowMembersView(
             model: model,
-            onLeft: onLeft
+            onLeft: onLeft,
+            offersWidgetPlacement: offersWidgetPlacement
         )
     }
 }
@@ -2188,11 +2192,25 @@ struct GroupWindowCreateScreen: View {
     private var trimmedOwner: String { ownerName.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var tooLong: Bool { !GroupDisplayName.fits(trimmed) || !GroupDisplayName.fits(trimmedOwner) }
 
+    /// 11/14 (family journey A3): Plus bought (or restored) from the prompt
+    /// under the names: make the window with them, as 「作る」 would, without
+    /// a second press. A cancelled, failed or pending purchase never calls this.
+    private func createAfterPromptPurchase() {
+        guard PlusPurchaseContinuation.createsWindow(
+            name: trimmed, ownerName: trimmedOwner, namesFit: !tooLong,
+            isWorking: model.isWorking, alreadyCreated: createdWindowID != nil)
+        else { return }
+        // The relay can still refuse once (Plus not seen there yet): the
+        // existing sheet then retries once more by itself.
+        create()
+    }
+
     var body: some View {
         // The new window takes this page's place, so Back goes to the list,
         // not to the form that already made it (11/6: Back reopened the form).
         if let createdWindowID {
-            GroupWindowMembersScreen(client: model.client, windowID: createdWindowID)
+            // 11/14 (A2): just made, so the members screen offers 「ホーム画面に置く」.
+            GroupWindowMembersScreen(client: model.client, windowID: createdWindowID, offersWidgetPlacement: true)
         } else {
             form
         }
@@ -2222,11 +2240,14 @@ struct GroupWindowCreateScreen: View {
             }
             // The button sits right under the name, not at the bottom of an empty screen.
             Section {
-                if membershipAccess.decision(for: .createOwnWindow) != .allowed {
+                // 11/14 (A3): bought from here, the making goes on under this
+                // same button (「作っています…」) before membership re-reads.
+                if membershipAccess.decision(for: .createOwnWindow) != .allowed, !model.isWorking {
                     // まどを作るのは Plus（App Store の14日間無料を含む）。押したときだけ開く。
                     PlusOfferPrompt(context: .createWindow,
                                     decision: membershipAccess.decision(for: .createOwnWindow),
-                                    presentsImmediately: false)
+                                    presentsImmediately: false,
+                                    onPurchased: createAfterPromptPurchase)
                 } else {
                     Button {
                         create()
@@ -2287,6 +2308,18 @@ struct GroupWindowStandardsAgreement: View {
 }
 
 extension GroupWidgetCache {
+    /// 11/14 (family journey A2): 「ホーム画面に置く」 right after joining or
+    /// making a window. The Widget's 「表示する写真」 lists only windows in
+    /// this copy, written when the window's page loads; before that, the new
+    /// window is written by name alone (no photo yet), so it is there to pick.
+    /// A window already here is left as it is.
+    @MainActor static func offerForPlacement(windowID: String, windowName: String) {
+        guard entry(windowID: windowID) == nil else { return }
+        try? update(windowID: windowID, windowName: windowName, photoID: nil, jpeg: nil,
+                    senderDisplayName: nil, capturedAt: nil, isPaused: false)
+        WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+    }
+
     /// Chooses a window's home-screen photo again from what this iPhone keeps,
     /// outside the window's own screen (11/7: 「表示する」 in Settings left the
     /// widget as it was). Only a window already on the home screen is touched.
@@ -2318,12 +2351,14 @@ extension GroupWidgetCache {
 struct GroupInvitationShareSheet: UIViewControllerRepresentable {
     let item: String
     let message: String
+    /// 11/14 (A5): the family notebook's invitation uses the same sheet.
+    var completedUsage: UsageEvent = .madoInviteShared
     let onFinish: () -> Void
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
         let controller = UIActivityViewController(activityItems: [message, item], applicationActivities: nil)
         controller.completionWithItemsHandler = { _, completed, _, _ in
-            if completed { UsageCounter.shared.count(.madoInviteShared) }  // Usage (11/7)
+            if completed { UsageCounter.shared.count(completedUsage) }  // Usage (11/7)
             onFinish()
         }
         return controller
