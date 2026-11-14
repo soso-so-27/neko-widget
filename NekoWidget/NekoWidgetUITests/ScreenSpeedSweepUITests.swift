@@ -353,6 +353,60 @@ final class ScreenSpeedSweepUITests: XCTestCase {
     @MainActor func testScroll10ToolEvacuation() { scrollTool(name: "避難に備える", tile: "tools-evacuation-open", profile: false, until: ["evacuation-now-open"]) }
     @MainActor func testScroll11ToolEvacuationNow() { scrollTool(name: "いま避難する", tile: "tools-evacuation-open", profile: false, until: ["evacuation-now-open"], then: "evacuation-now-open", thenTitle: "いま避難する") }
 
+    // MARK: - この子のページ送り
+
+    /// 11/14: この子の猫のページを横に送る（猫 3 匹、写真あり）。1 回の計測で
+    /// 左へ 2 回送り、測り終えてから右へ 2 回戻す（5 回で 10 回分）。
+    /// scrollDragging（指で動かしている間）と scrollingAndDeceleration
+    /// （止まるまで）の hitch を測る。
+    @MainActor func testScroll20CatHomePager() { measureCatHomePager("標準", []) }
+    /// 変える前の描き方に 1 つだけ戻して比べる（DEBUG の起動引数、CatHomeSpeedSwitch）。
+    @MainActor func testScroll21CatHomePagerOldCorners() {
+        measureCatHomePager("角の塗り（前）", ["--cat-home-speed-old-corners"])
+    }
+    @MainActor func testScroll22CatHomePagerOldMaterials() {
+        measureCatHomePager("すりガラスと影（前）", ["--cat-home-speed-old-materials"])
+    }
+    @MainActor func testScroll23CatHomePagerRebuildsPages() {
+        measureCatHomePager("ページを毎回作り直す（前）", ["--cat-home-speed-rebuild-pages"])
+    }
+    @MainActor func testScroll24CatHomePagerNoCard() {
+        measureCatHomePager("縮みなし", ["--cat-home-speed-no-card"])
+    }
+
+    @MainActor
+    private func measureCatHomePager(_ name: String, _ extra: [String]) {
+        let app = XCUIApplication()
+        app.launchArguments = japanese + ["--app-store-screenshot-fixture", "--cat-home-stress",
+                                          "--cat-home-stress-scenario", "60",
+                                          "--cat-home-stress-names", "むぎ|ソラ|ちゃちゃ"] + extra
+        app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] = "ScreenSpeedSweepPager.\(UUID().uuidString)"
+        app.launch()
+        _ = app.tabBars.firstMatch.waitForExistence(timeout: 30)
+        dismissSystemAlert()
+        let label = "ページ送り:" + name
+        guard tapTab(app, "main-tab-tools", "この子") else { missing(label, app); return }
+        guard app.descendants(matching: .any)["cat-home-hero"].firstMatch.waitForExistence(timeout: 20) else {
+            missing(label, app); return
+        }
+        // The photos are drawn before the first swipe.
+        Thread.sleep(forTimeInterval: 2)
+        print("SPEED|\(label)|scroll_begin|-")
+        let options = XCTMeasureOptions()
+        options.iterationCount = 5
+        options.invocationOptions = [.manuallyStop]
+        measure(metrics: [XCTOSSignpostMetric.scrollDraggingMetric,
+                          XCTOSSignpostMetric.scrollingAndDecelerationMetric], options: options) {
+            app.swipeLeft()
+            app.swipeLeft()
+            stopMeasuring()
+            app.swipeRight()
+            app.swipeRight()
+        }
+        print("SPEED|\(label)|scroll_end|-")
+        app.terminate()
+    }
+
     @MainActor
     func testScroll12CatCare() {
         let app = launchFixture()

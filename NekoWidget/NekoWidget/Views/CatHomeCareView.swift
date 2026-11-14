@@ -44,9 +44,11 @@ struct CatHomeCareLinks {
     let cat: CatHomeCat
     /// The cat's 「この子のこと」 (the ワクチン and 体重 lists); nil before it has one.
     let catID: UUID?
-    /// 「この子のこと」 itself, for what has no page of its own yet.
-    let carePage: AnyView
     let saveLifeDates: (String, CatProfileLifeDatesPresentation) async -> Bool
+
+    /// 「この子のこと」 itself (also for what has no page of its own yet),
+    /// opened by value (CatHomeView's navigationDestination).
+    var about: CatHomeAboutRoute { CatHomeAboutRoute(catID: cat.id) }
 }
 
 /// The care card: the rows with something written, then 「この子のこと」;
@@ -71,7 +73,7 @@ struct CatHomeCareCard: View {
             // 11/14: the last row, the same row as the others (was a box of
             // its own under the card); it opens the cat's page, as before.
             if !shown.isEmpty { Divider().padding(.leading, 16) }
-            NavigationLink { links.carePage } label: { CatHomeCareRow(title: "この子のこと", value: nil) }
+            NavigationLink(value: links.about) { CatHomeCareRow(title: "この子のこと", value: nil) }
                 .buttonStyle(CatHomeCarePressStyle())
                 .accessibilityIdentifier(links.cat.profile != nil ? "tools-cat-\(links.cat.id)"
                                                                    : "tools-family-cat-\(links.cat.id)")
@@ -114,7 +116,7 @@ struct CatHomeCareCard: View {
                 Button { editsDates = true } label: { row }
                     .buttonStyle(CatHomeCarePressStyle())
             } else {
-                NavigationLink { links.carePage } label: { row }
+                NavigationLink(value: links.about) { row }
                     .buttonStyle(CatHomeCarePressStyle())
             }
         case "vet":
@@ -128,7 +130,7 @@ struct CatHomeCareCard: View {
                 } label: { row }
                     .buttonStyle(CatHomeCarePressStyle())
             } else {
-                NavigationLink { links.carePage } label: { row }
+                NavigationLink(value: links.about) { row }
                     .buttonStyle(CatHomeCarePressStyle())
             }
         }
