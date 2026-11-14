@@ -94,6 +94,12 @@ enum FamilyNotebookCatCareBridgeVerifier {
         try check(forward == backward && forward?.operation == offline && forward?.history.count == 1, "same version ordering as birthday; losing value retained")
         let projected = try FamilyNotebookCatCareBridge.apply(store.snapshot(), to: care)
         try check(projected.cats[0].adoptionDay?.value?.day.year == 2021 && projected.cats[0].adoptionDay?.value?.isApproximate == false, "date and precision change together")
+        let personalBytes = try CatCareDecoding.encode(care)
+        let displayBytes = try FamilyNotebookRecordOrigin.recording(CatCareDecoding.encode(projected), over: personalBytes, tool: "CatCare", family: true)
+        let privateCopy = try CatCareDecoding.decode(CatCareDecoding.personalBackup(displayBytes)).state
+        try check(privateCopy.cats[0].adoptionDay == care.cats[0].adoptionDay, "received family date never replaces the owner's private backup")
+        let legacyCopy = try CatCareDecoding.decode(CatCareDecoding.personalBackup(CatCareDecoding.encode(projected))).state
+        try check(legacyCopy.cats[0].adoptionDay == nil, "legacy family stamp is excluded from private backup")
         let identity = CatHouseholdIdentityState(mode: .profiled, profiles: [profile, empty], memberships: [], globalExcludedAssets: [], legacyUnscoped: nil)
         let updated = FamilyNotebookCatCareBridge.projectingAdoptionDays(projected, into: identity)
         try check(updated.profiles[0].resolvedLifeDates.adoptionDay?.year == 2021 && updated.profiles[1] == empty, "only explicit profile binding projects")
