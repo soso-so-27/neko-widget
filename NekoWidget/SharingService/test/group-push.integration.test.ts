@@ -48,6 +48,37 @@ async function apnsGate(active:boolean) {
 }
 const noNetwork:typeof fetch=async()=>{throw new Error('Unexpected APNs request');};
 describe('group-only push registration and just-before-send eligibility',()=>{
+  it('coalesces two-minute cohorts across concurrent drains while preserving retry and send-time revocation',async()=>{
+    const {owner,bob,w,settings}=await setup();settings.GROUP_NOTIFICATION_COALESCING_ENABLED='YES';
+    ok((await register(bob,w,settings)).result);
+    await photo(owner,w,settings);await photo(owner,w,settings);
+    const now=Math.floor(Date.now()/1000);
+    // Put both synthetic events in a complete cohort without advancing auth time.
+    await db.prepare('UPDATE group_notification_events SET created_at=? WHERE space_id=?').bind(Math.floor(now/120)*120-240,w.windowId).run();
+    let calls=0;const sent:typeof fetch=async(_url,init)=>{
+      calls++;expect(new Headers(init!.headers).get('apns-collapse-id')!.length).toBeLessThanOrEqual(64);
+      return new Response(null,{status:200});
+    };
+    await Promise.all([drainGroupNotifications(settings,now,sent),drainGroupNotifications(settings,now,sent)]);
+    expect(calls).toBe(1);
+    await drainGroupNotifications(settings,now,noNetwork);
+    expect((await db.prepare("SELECT COUNT(*) n FROM group_notification_deliveries q JOIN group_notification_events e ON e.id=q.event_id WHERE e.space_id=? AND q.state='pending'").bind(w.windowId).first())?.n).toBe(0);
+    const latest=await photo(owner,w,settings);
+    expect((await drainGroupNotifications(settings,now,noNetwork)).leased).toBe(0);
+    await db.prepare('UPDATE group_notification_events SET created_at=? WHERE moment_id=?').bind(Math.floor(now/120)*120-120,latest).run();
+    // This cohort is still delayed; force a separate completed cohort for retry.
+    await db.prepare('UPDATE group_notification_events SET created_at=? WHERE moment_id=?').bind(Math.floor(now/120)*120-360,latest).run();
+    const companion=await photo(owner,w,settings);
+    await db.prepare('UPDATE group_notification_events SET created_at=? WHERE moment_id=?').bind(Math.floor(now/120)*120-360,companion).run();
+    // Read the drain clock after enqueue; available_at may cross a second boundary.
+    const retryNow=Math.floor(Date.now()/1000);
+    let failedCalls=0;
+    const retry=await drainGroupNotifications(settings,retryNow,async()=>{failedCalls++;return new Response(null,{status:503});});
+    expect(retry.retried).toBe(1);
+    expect(failedCalls).toBe(1);
+    const changed=await drainGroupNotifications(settings,retryNow+31,noNetwork,{beforeSend:()=>apnsGate(false)});
+    expect(changed.skipped).toBe(2);await apnsGate(true);
+  });
   it('encrypts physical tokens and sends only a generic payload plus an opaque window route',async()=>{
     const {owner,bob,w,settings}=await setup(),r=await register(bob,w,settings);ok(r.result);
     const stored=await db.prepare('SELECT * FROM group_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,bob.deviceId).first();

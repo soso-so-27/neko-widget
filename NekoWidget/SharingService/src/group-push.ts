@@ -1,5 +1,5 @@
 import {groupPushRevocationStatements} from './group-push-revocation';
-import { base64urlDecode,randomBase64url } from './encoding';
+import { base64urlDecode,randomBase64url,sha256Base64url } from './encoding';
 import { ApiError,jsonResponse } from './errors';
 import type { Env } from './env';
 import { groupMutationStatement,groupAuthorizationStatements,requireGroupMember,storedGroupMutation,type GroupActor } from './group-auth';
@@ -74,6 +74,12 @@ interface Current extends Queued {
   space_id:string;moment_id:string;kind:'new_moment'|'heart';expires_at:number;
   token_ciphertext:string;token_nonce:string;encryption_key_id:string;environment:'production'|'development';
 }
+// Two-minute cohorts, released 2–4 minutes after creation. Keep token generation
+// in the identity so re-registration cannot inherit another subscription's ACK.
+const sameCohort = `other.device_id=group_notification_deliveries.device_id
+  AND other.token_digest=group_notification_deliveries.token_digest
+  AND other.subscription_generation=group_notification_deliveries.subscription_generation
+  AND oe.space_id=e.space_id AND oe.kind=e.kind AND oe.created_at/120=e.created_at/120`;
 export function groupNotificationPayload(row:Pick<Current,'kind'|'space_id'>):string {
   return JSON.stringify({aps:{alert:{title:'ねこのまど',body:row.kind==='new_moment'?'新しい一枚が届きました。':'届けた写真にハートが届きました。'},
     'content-available':1,'mutable-content':1},neko:{v:3,kind:row.kind==='new_moment'?'moment':'heart',windowId:row.space_id}});
@@ -103,14 +109,28 @@ export async function drainGroupNotifications(env:Env,now=Math.floor(Date.now()/
   let credential,keyring,authorization:string;
   try { credential=parseProviderCredential(env);keyring=parseTokenKeyring(env);authorization=await providerJWT(credential,now); }
   catch { summary.configurationUnavailable=true;return summary; }
+  const coalesce=env.GROUP_NOTIFICATION_COALESCING_ENABLED==='YES';
+  if(coalesce) await env.DB.prepare(`UPDATE group_notification_deliveries SET state='skipped'
+    WHERE state='pending' AND EXISTS (SELECT 1 FROM group_notification_events e
+      JOIN group_notification_events oe ON oe.space_id=e.space_id
+      JOIN group_notification_deliveries other ON other.event_id=oe.id
+      WHERE e.id=group_notification_deliveries.event_id AND other.state='accepted' AND ${sameCohort})`).run();
   const candidates=await env.DB.prepare(`SELECT event_id,device_id,token_digest,subscription_generation,attempts FROM group_notification_deliveries
-    WHERE (state='pending' AND available_at<=?) OR (state='leased' AND lease_expires_at<=?) ORDER BY available_at,event_id,device_id LIMIT 50`)
-    .bind(now,now).all<Queued>();
+    WHERE ((state='pending' AND available_at<=?) OR (state='leased' AND lease_expires_at<=?))
+      AND (?=0 OR (SELECT (created_at/120+2)*120 FROM group_notification_events WHERE id=event_id)<=?)
+    ORDER BY available_at,event_id,device_id LIMIT 50`)
+    .bind(now,now,Number(coalesce),now).all<Queued>();
   for(const row of candidates.results) {
     const leaseId=randomBase64url(16),leased=await env.DB.prepare(`UPDATE group_notification_deliveries SET state='leased',lease_id=?,lease_expires_at=?
       WHERE event_id=? AND device_id=? AND token_digest=? AND subscription_generation=?
-        AND ((state='pending' AND available_at<=?) OR (state='leased' AND lease_expires_at<=?))`)
-      .bind(leaseId,now+90,row.event_id,row.device_id,row.token_digest,row.subscription_generation,now,now).run();
+        AND ((state='pending' AND available_at<=?) OR (state='leased' AND lease_expires_at<=?))
+        AND (?=0 OR NOT EXISTS (SELECT 1 FROM group_notification_events e
+          JOIN group_notification_events oe ON oe.space_id=e.space_id
+          JOIN group_notification_deliveries other ON other.event_id=oe.id
+          WHERE e.id=group_notification_deliveries.event_id AND ${sameCohort}
+            AND (other.state='accepted' OR (other.state='leased' AND other.lease_expires_at>?)
+              OR (other.state='pending' AND other.attempts>0 AND other.available_at>?))))`)
+      .bind(leaseId,now+90,row.event_id,row.device_id,row.token_digest,row.subscription_generation,now,now,Number(coalesce),now,now).run();
     if(leased.meta.changes!==1)continue;summary.leased++;
     await hooks.afterLease?.(row);
     const snapshot=await current(env,row,leaseId,gate!.generation);
@@ -120,6 +140,9 @@ export async function drainGroupNotifications(env:Env,now=Math.floor(Date.now()/
     let token:Uint8Array;
     try { token=await decryptDeviceToken(snapshot,credential,keyring); }
     catch { await finish(env,row,leaseId,row.attempts>=7?'invalid':'pending',now);summary.retried++;continue; }
+    const event=coalesce?await env.DB.prepare('SELECT created_at FROM group_notification_events WHERE id=?').bind(row.event_id).first<{created_at:number}>():null;
+    const collapse=event ? 'group-'+await sha256Base64url(new TextEncoder().encode(
+      `${snapshot.space_id}:${row.device_id}:${snapshot.kind}:${Math.floor(event.created_at/120)}`)) : `group-${snapshot.kind}-${row.event_id}`;
     await hooks.beforeSend?.(row);
     // Fresh eligibility, lease, token generation and gate generation after ALL
     // awaits. No window/member/caption text ever leaves in the APNs payload.
@@ -133,7 +156,7 @@ export async function drainGroupNotifications(env:Env,now=Math.floor(Date.now()/
     try {
       response=await fetchImpl(`https://${credential.environment==='production'?'api':'api.sandbox'}.push.apple.com/3/device/${hex}`,{
         method:'POST',headers:{authorization:`bearer ${authorization}`,'apns-push-type':'alert','apns-priority':'10',
-          'apns-topic':credential.bundleId,'apns-expiration':String(live.expires_at),'apns-collapse-id':`group-${live.kind}-${row.event_id}`,
+          'apns-topic':credential.bundleId,'apns-expiration':String(live.expires_at),'apns-collapse-id':collapse,
           'content-type':'application/json'},body:groupNotificationPayload(live),signal:AbortSignal.timeout(10000)});
     } catch { await finish(env,row,leaseId,'pending',now);summary.retried++;continue; }
     if(response.status===200) {
