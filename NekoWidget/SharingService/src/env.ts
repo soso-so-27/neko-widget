@@ -27,6 +27,7 @@ export interface Env extends GroupReportMailEnv {
   GROUP_MODERATION_RUNTIME_ENABLED?: string;
   /// Group APNs registration/dispatch is an independent opt-in. Secrets or
   /// the legacy APNs switch alone never start new group notifications.
+  FAMILY_NOTEBOOK_APNS_RUNTIME_ENABLED?: string;
   GROUP_APNS_RUNTIME_ENABLED?: string;
   GROUP_WINDOW_MANAGEMENT_RUNTIME_ENABLED?: string;
   /// Exact, independent server-side switch for accepting new moderation
