@@ -102,6 +102,14 @@ enum GroupWindowPresentation {
     /// carry on; nobody is told why, and nothing is lost.
     static let invitationPausedMessage = "いまは、新しく招待したり参加したりできません。"
 
+    /// 11/14 (family journey A2): after joining or making a window, the way
+    /// to the widget guide for it. The same words on both screens.
+    static let placeOnHomeScreenAction = "ホーム画面に置く"
+    /// 11/14 (family journey A4): the server's invitation lifetime, 24 hours
+    /// (SharingService group-windows.ts createGroupInvitation, and the family
+    /// notebook's invitations in migration 0055).
+    static let invitationLifetimeCaption = "24時間使えます。"
+
     /// The window keeps everything; only new photos stop. Never says
     /// "deleted", never blames the members.
     static let pausedDetail = "これまでの写真はそのままで、新しい写真だけ届きません。"
@@ -415,6 +423,10 @@ struct GroupWindowMembersView: View {
     var capabilities: GroupWindowScreenCapabilities = .full
     /// After leaving: closes the window the members screen was opened from.
     var onLeft: (() -> Void)? = nil
+    /// 11/14 (family journey A2): opened right after making the window, so
+    /// it offers 「ホーム画面に置く」 for it (one row under its name).
+    var offersWidgetPlacement = false
+    @State private var showsWidgetGuide = false
     @Environment(\.dismiss) private var dismiss
     @State private var removalTarget: GroupMember?
     @State private var showsRemoval = false
@@ -442,7 +454,7 @@ struct GroupWindowMembersView: View {
     private var presentsSheet: Bool {
         showsRename || showsRemoval || showsRevokeConfirmation
             || showsLeaveConfirmation || showsCloseConfirmation || rejectionTarget != nil
-            || sharingInvitation != nil || restoreTarget != nil
+            || sharingInvitation != nil || restoreTarget != nil || showsWidgetGuide
     }
     /// Admissions already shown once, so 「〇〇さんが参加しました」 is said once
     /// and not every time the screen opens. Written only when leaving.
@@ -579,6 +591,9 @@ struct GroupWindowMembersView: View {
         .confirmationDialog(rejectionTitle, isPresented: rejectionPresented, titleVisibility: .visible,
                             presenting: rejectionTarget, actions: rejectionActions)
         .sheet(item: $sharingInvitation) { invitation in invitationShareSheet(invitation) }
+        .sheet(isPresented: $showsWidgetGuide) {
+            if let window = model.window { OfficialWindowWidgetGuide(displayName: window.name) }
+        }
         .modifier(GroupHiddenMemberDialogs(windowID: model.windowID, target: $restoreTarget, hidden: $hiddenMembers))
     }
 
@@ -686,6 +701,15 @@ struct GroupWindowMembersView: View {
                     .foregroundStyle(.secondary)
             }
             .frame(minHeight: 44)
+            if offersWidgetPlacement, window.state != .closed {
+                Button {
+                    GroupWidgetCache.offerForPlacement(windowID: window.id, windowName: window.name)
+                    showsWidgetGuide = true
+                } label: {
+                    Label(GroupWindowPresentation.placeOnHomeScreenAction, systemImage: "square.grid.2x2")
+                }
+                .accessibilityIdentifier("group-window-place-widget")
+            }
         }
     }
 
@@ -831,7 +855,8 @@ struct GroupWindowMembersView: View {
             if let invitation = model.activeInvitation {
                 // The link itself is never drawn; it travels only through
                 // the share sheet, so a screenshot cannot leak it. 11/8 (17):
-                // the message it carries and its expiry are not shown here.
+                // the message it carries is not shown here; 11/14 (A4): how
+                // long it lasts is, in one short line (no date and time).
                 Button { sharingInvitation = invitation } label: {
                     Label("招待リンクを送る", systemImage: "square.and.arrow.up")
                         .font(.headline)
@@ -839,6 +864,9 @@ struct GroupWindowMembersView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("group-window-share-invitation")
+                Text(GroupWindowPresentation.invitationLifetimeCaption)
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("group-window-invitation-lifetime")
                 Button(role: .destructive) {
                     showsRevokeConfirmation = true
                 } label: {
@@ -863,6 +891,9 @@ struct GroupWindowMembersView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(model.isWorking || renewingInvitation)
                 .accessibilityIdentifier("group-window-renew-invitation")
+                Text(GroupWindowPresentation.invitationLifetimeCaption)
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("group-window-invitation-lifetime")
                 Text("前に送ったリンクは使えなくなります。")
                     .font(.footnote).foregroundStyle(.secondary)
             } else if let earlier = model.earlierInvitation {
@@ -1149,6 +1180,8 @@ final class GroupJoinModel: ObservableObject {
 
     let invitationID: String
     let invitationContext: GroupInvitationContext?
+    /// The window the link is for, so 「ホーム画面に置く」 can name it (A2).
+    let windowID: String?
     /// Nil until the production adapter exists in this build; the screen
     /// then explains that applying is not available yet.
     private let client: (any GroupWindowClient)?
@@ -1160,6 +1193,7 @@ final class GroupJoinModel: ObservableObject {
         self.client = client
         self.invitationID = invitationID
         self.invitationContext = context
+        self.windowID = windowID
         displayName = GroupDisplayName.remembered
         // The home-screen copy only holds windows this iPhone is in (pruned
         // after every list load), so it answers before any request.
@@ -1167,6 +1201,13 @@ final class GroupJoinModel: ObservableObject {
     }
 
     var isAvailable: Bool { client != nil }
+
+    /// The joined window's name for the widget guide: the invitation's own,
+    /// else the home-screen copy's. Nil when neither is known (an older link).
+    var placementWindowName: String? {
+        if let name = invitationContext?.windowName, !name.isEmpty { return name }
+        return windowID.flatMap { GroupWidgetCache.entry(windowID: $0)?.windowName }
+    }
 
     var trimmedName: String {
         displayName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1263,6 +1304,8 @@ struct GroupJoinView: View {
     @FocusState private var typingName: Bool
     @ObservedObject var model: GroupJoinModel
     var onOpenWindow: (() -> Void)? = nil
+    /// 11/14 (A2): the widget guide for the joined window, over this screen.
+    @State private var showsWidgetGuide = false
 
     var body: some View {
         Form {
@@ -1302,6 +1345,11 @@ struct GroupJoinView: View {
         }
         .navigationTitle("まどに参加")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showsWidgetGuide) {
+            if let windowName = model.placementWindowName {
+                OfficialWindowWidgetGuide(displayName: windowName)
+            }
+        }
         .onChange(of: model.isWorking) { _, working in if !working { running = nil } }
         .task { await model.resume() }
         .task(id: model.isPending) {
@@ -1426,6 +1474,20 @@ struct GroupJoinView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("group-join-open-window")
+            }
+            // 11/14 (family journey A2): the second, quieter way on. The same
+            // guide as のわのまど, with this window's name in its last line.
+            if let windowName = model.placementWindowName, let windowID = model.windowID {
+                Button {
+                    GroupWidgetCache.offerForPlacement(windowID: windowID, windowName: windowName)
+                    showsWidgetGuide = true
+                } label: {
+                    Label(GroupWindowPresentation.placeOnHomeScreenAction, systemImage: "square.grid.2x2")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("group-join-place-widget")
             }
         }
     }

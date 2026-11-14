@@ -242,18 +242,32 @@ final class AppViewModel: ObservableObject {
     /// photo (saved it, included it for a cat, chose it as a key photo, or it
     /// is in a linked album). Cheap: one set lookup, the set built once per
     /// presentation version.
+    /// 11/15: with fewer than 20 確かな猫 in the whole library the tiers are
+    /// off (CatPickTier.tiersApply) and every cat photo counts.
     func isConfidentCatForPicks(_ asset: AssetRecord) -> Bool {
-        asset.isConfidentCat || userVouchedCatPhotoIdentifiers.contains(asset.localIdentifier)
+        let tiers = catPickTiers
+        return !tiers.apply || asset.isConfidentCat
+            || tiers.vouched.contains(asset.localIdentifier)
     }
 
-    var userVouchedCatPhotoIdentifiers: Set<String> {
+    var userVouchedCatPhotoIdentifiers: Set<String> { catPickTiers.vouched }
+
+    /// Built once per presentation version: the vouched set and whether the
+    /// library has enough 確かな猫 for the tiers to apply.
+    private var catPickTiers: (vouched: Set<String>, apply: Bool) {
         let version = presentationVersion
         if let cached = cachedUserVouchedCatPhotoIdentifiers, cached.version == version {
-            return cached.identifiers
+            return (cached.identifiers, cached.tiersApply)
         }
         let identifiers = catHouseholdIdentity?.userVouchedAssetIdentifiers ?? []
-        cachedUserVouchedCatPhotoIdentifiers = (version, identifiers)
-        return identifiers
+        var confident = 0
+        for asset in catAssets where asset.isConfidentCat || identifiers.contains(asset.localIdentifier) {
+            confident += 1
+            if CatPickTier.tiersApply(confidentPhotoCount: confident) { break }
+        }
+        let apply = CatPickTier.tiersApply(confidentPhotoCount: confident)
+        cachedUserVouchedCatPhotoIdentifiers = (version, identifiers, apply)
+        return (identifiers, apply)
     }
 
     func profileMemberships(for localIdentifier: String) -> [CatAssetProfileMembership] {
@@ -333,7 +347,8 @@ final class AppViewModel: ObservableObject {
     )?
     private var cachedUserVouchedCatPhotoIdentifiers: (
         version: LibraryPresentationVersion,
-        identifiers: Set<String>
+        identifiers: Set<String>,
+        tiersApply: Bool
     )?
     /// Serializes the one-way legacy-to-profiled transition with household
     /// exclusion mutations. Without this queue, an exclusion can commit to

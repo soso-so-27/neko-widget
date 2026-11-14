@@ -342,15 +342,35 @@ final class ConfidentCatPickTests: XCTestCase {
         XCTAssertEqual(all.coverPhoto.localIdentifier, "cat-a")
     }
 
-    func testOnlyProbablePhotosStillMakeAnAlbum() {
-        let photos = [photo("maybe-1", daysAfterStart: 5, confident: false),
-                      photo("maybe-2", daysAfterStart: 6, confident: false)]
-        guard let year = CuratedAlbumBuilder(timeZone: utc).sections(from: photos, lifeReference: nil)
-            .flatMap(\.albums).first(where: { $0.id == .calendarYear(2026) }) else {
-            return XCTFail("year album")
+    func testNoThemeStandsOnProbablePhotosAlone() {
+        // 11/15: 2020 holds only たぶん猫 (the otter); 2026 has a 確かな猫.
+        let photos = [photo("otter-2020", daysAfterStart: -6 * 365, confident: false, area: 0.6),
+                      photo("maybe-2026", daysAfterStart: 6, confident: false, area: 0.6),
+                      photo("cat-2026", daysAfterStart: 5)]
+        let albums = CuratedAlbumBuilder(timeZone: utc).sections(from: photos, lifeReference: nil)
+            .flatMap(\.albums)
+        XCTAssertNil(albums.first { $0.id == .calendarYear(2020) })
+        XCTAssertNil(albums.first { $0.id == .closeUp })
+        XCTAssertEqual(albums.first { $0.id == .calendarYear(2026) }?.photos.map(\.localIdentifier),
+                       ["cat-2026", "maybe-2026"])
+        // The browse grid and its count keep every photo.
+        XCTAssertEqual(albums.first { $0.id == .allCatPhotos }?.photos.count, 3)
+    }
+
+    func testSafetyNetLineIsTwenty() {
+        XCTAssertEqual(AppSettings.minimumConfidentCatPhotos, 20)
+        XCTAssertFalse(CatPickTier.tiersApply(confidentPhotoCount: 19))
+        XCTAssertTrue(CatPickTier.tiersApply(confidentPhotoCount: 20))
+    }
+
+    func testYearWorkNeedsAConfidentPhoto() {
+        let probableYear = (0..<9).map {
+            photo("maybe-\($0)", daysAfterStart: Double(-365 + $0 * 20), confident: false)
         }
-        XCTAssertEqual(year.photos.map(\.localIdentifier), ["maybe-2", "maybe-1"])
-        XCTAssertEqual(year.coverPhoto.localIdentifier, "maybe-2")
+        let sureYear = (0..<9).map { photo("sure-\($0)", daysAfterStart: Double(-730 + $0 * 20)) }
+        let years = AlbumPrototype.arrivedYears(from: probableYear + sureYear,
+                                                now: start, deliverNow: false)
+        XCTAssertEqual(years, [2024])
     }
 
     func testAllConfidentLibraryIsUnchanged() {
@@ -381,9 +401,9 @@ final class ConfidentCatPickTests: XCTestCase {
             photo("sure-2025", daysAfterStart: -199, area: 0.9),
             photo("maybe-2026", daysAfterStart: 3, confident: false)
         ]
-        // Only one period has a 確かな猫: not enough, so both periods stay.
+        // 11/15: a period of たぶん猫 alone is never an entry.
         let items = GrowthAlbumSelector(timeZone: utc).select(from: photos, lifeReference: nil)
-        XCTAssertEqual(items.map(\.photo.localIdentifier), ["sure-2025", "maybe-2026"])
+        XCTAssertEqual(items.map(\.photo.localIdentifier), ["sure-2025"])
     }
 
     func testGrowthKeepsAPeriodTheUserChoseAPhotoFor() {
@@ -439,6 +459,25 @@ final class ConfidentCatPickTests: XCTestCase {
         XCTAssertEqual(work.photos.count, 6)
         XCTAssertEqual(work.coverPhoto?.localIdentifier, "sure")
         XCTAssertEqual(work.previewPhotos.first?.localIdentifier, "sure")
+    }
+
+    func testMonthOfProbablePhotosAloneHasNoWork() {
+        let probable = (0..<6).map { photo("maybe-\($0)", daysAfterStart: Double($0 * 4), confident: false) }
+        guard case .unavailable = MonthlyWindowBuilder(timeZone: utc)
+            .build(from: probable, monthContaining: start) else {
+            return XCTFail("no work from たぶん猫 alone")
+        }
+    }
+
+    func testHighlightNeedsEnoughConfidentScenes() {
+        let confident = (0..<2).map { photo("sure-\($0)", daysAfterStart: Double($0), area: 0.6) }
+        let probable = (0..<4).map {
+            photo("maybe-\($0)", daysAfterStart: Double($0) + 0.5, confident: false, area: 0.6)
+        }
+        let sections = CuratedAlbumBuilder(timeZone: utc).sections(from: confident + probable, lifeReference: nil)
+        let highlights = AlbumHighlightBuilder(now: start.addingTimeInterval(60 * day), timeZone: utc)
+            .highlights(from: sections)
+        XCTAssertNil(highlights.first { $0.sourceAlbumID == .closeUp })
     }
 
     func testHighlightUsesConfidentScenesWhenEnough() {
