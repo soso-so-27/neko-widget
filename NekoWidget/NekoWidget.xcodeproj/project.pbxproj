@@ -68,6 +68,7 @@
 		C1D3C0E70000000000000001 /* CatPhotoCoverageMeasurement.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1D3C0E70000000000000002 /* CatPhotoCoverageMeasurement.swift */; };
 		C1D3A9110000000000000001 /* CatIdentityMeasurement.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1D3A9110000000000000002 /* CatIdentityMeasurement.swift */; };
 		C1D3A9110000000000000003 /* CatIdentityMeasureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1D3A9110000000000000004 /* CatIdentityMeasureView.swift */; };
+		B1114A000000000000000001 /* KeychainSyncProbeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1114A000000000000000002 /* KeychainSyncProbeView.swift */; };
 		C02609290000000000000019 /* CareHandoffFixtureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0260929000000000000001A /* CareHandoffFixtureView.swift */; };
 		E02609290000000000000011 /* EvacuationPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609290000000000000012 /* EvacuationPlan.swift */; };
 		E02609290000000000000013 /* EvacuationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609290000000000000014 /* EvacuationStore.swift */; };
@@ -417,6 +418,7 @@
 		C1D3C0E70000000000000002 /* CatPhotoCoverageMeasurement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatPhotoCoverageMeasurement.swift; sourceTree = "<group>"; };
 		C1D3A9110000000000000002 /* CatIdentityMeasurement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatIdentityMeasurement.swift; sourceTree = "<group>"; };
 		C1D3A9110000000000000004 /* CatIdentityMeasureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatIdentityMeasureView.swift; sourceTree = "<group>"; };
+		B1114A000000000000000002 /* KeychainSyncProbeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainSyncProbeView.swift; sourceTree = "<group>"; };
 		C0260929000000000000001A /* CareHandoffFixtureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareHandoffFixtureView.swift; sourceTree = "<group>"; };
 		E02609290000000000000012 /* EvacuationPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvacuationPlan.swift; sourceTree = "<group>"; };
 		E02609290000000000000014 /* EvacuationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvacuationStore.swift; sourceTree = "<group>"; };
@@ -1026,6 +1028,7 @@
 				7A11120F0000000000000002 /* CatHomeCareCore.swift */,
 				7A11121C0000000000000002 /* ToolMemoSheet.swift */,
 				C1D3A9110000000000000004 /* CatIdentityMeasureView.swift */,
+				B1114A000000000000000002 /* KeychainSyncProbeView.swift */,
                 D02609300000000000000004 /* VeterinaryVisitView.swift */,
 				6ECEA0305B053B99E1245523 /* VeterinaryCapture.swift */,
 				C0260929000000000000001A /* CareHandoffFixtureView.swift */,
@@ -1426,6 +1429,7 @@
 				C1D3C0E70000000000000001 /* CatPhotoCoverageMeasurement.swift in Sources */,
 				C1D3A9110000000000000001 /* CatIdentityMeasurement.swift in Sources */,
 				C1D3A9110000000000000003 /* CatIdentityMeasureView.swift in Sources */,
+				B1114A000000000000000001 /* KeychainSyncProbeView.swift in Sources */,
 				C02609290000000000000019 /* CareHandoffFixtureView.swift in Sources */,
 				100000000000000000000168 /* MomentSharingCore.swift in Sources */,
 				AA2610200000000000000006 /* GroupWindowFixture.swift in Sources */,
