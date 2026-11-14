@@ -783,7 +783,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(room.waitForExistence(timeout: 15)); room.tap()
         XCTAssertTrue(app.buttons["group-window-open-members"].waitForExistence(timeout: 15))
         let delivered = app.descendants(matching: .any).matching(
-            NSPredicate(format: "label CONTAINS %@", "から届いた写真")).firstMatch
+            NSPredicate(format: "label CONTAINS %@", "からの写真")).firstMatch
         XCTAssertTrue(delivered.waitForExistence(timeout: 15)); delivered.tap()
         XCTAssertTrue(app.staticTexts["ふたりでくっついて寝ていた"].waitForExistence(timeout: 15))
         sleep(2)

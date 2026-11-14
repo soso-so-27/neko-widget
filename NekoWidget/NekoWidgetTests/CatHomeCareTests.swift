@@ -291,6 +291,59 @@ final class CatHomeCareTests: XCTestCase {
         XCTAssertEqual(Layout.nameFit(scale: 3, maxWidth: 232, width: fullWidth(6)), .init(size: 51, lines: 2))
     }
 
+    /// Lines of `characters` full-width glyphs broken in `width` (the hero
+    /// breaks in its name width less 4).
+    private func lines(_ characters: Int, in width: Double) -> (Double) -> Int {
+        { size in
+            let perLine = max(Int(width / size), 1)
+            return (characters + perLine - 1) / perLine
+        }
+    }
+
+    func testTheLongestNameFitsTwoLinesAtTheDefaultTextSize() {
+        typealias Layout = CatHomeHeroLayout
+        // 11/14: the limit is 20 characters. At 34 two lines of 228 hold 12
+        // (6 a line), so a longer name steps down to the two-line floor, 22:
+        // 10 a line, 20 in two.
+        XCTAssertEqual(Layout.nameFit(scale: 1, maxWidth: 232, width: fullWidth(12), lines: lines(12, in: 228)),
+                       .init(size: 34, lines: 2))
+        XCTAssertEqual(Layout.nameFit(scale: 1, maxWidth: 232, width: fullWidth(13), lines: lines(13, in: 228)),
+                       .init(size: 22, lines: 2))
+        XCTAssertEqual(Layout.nameFit(scale: 1, maxWidth: 232, width: fullWidth(20), lines: lines(20, in: 228)),
+                       .init(size: 22, lines: 2))
+        XCTAssertLessThanOrEqual(lines(20, in: 228)(22), 2)
+        // Wider iPhones fit it the same way.
+        XCTAssertLessThanOrEqual(lines(20, in: 239)(22), 2)
+        XCTAssertLessThanOrEqual(lines(20, in: 262)(22), 2)
+        // Short names are not touched by the floor.
+        XCTAssertEqual(Layout.nameFit(scale: 1, maxWidth: 232, width: fullWidth(4), lines: lines(4, in: 228)),
+                       .init(size: 56, lines: 1))
+        // The floor grows with the text size like the ladder (33 at the cap);
+        // there a very long name may still be cut (VoiceOver reads it whole).
+        XCTAssertEqual(Layout.nameFit(scale: 3, maxWidth: 232, width: fullWidth(20), lines: lines(20, in: 228)),
+                       .init(size: 33, lines: 2))
+    }
+
+    func testPagePositionAndMovesBetweenCats() {
+        typealias Access = CatHomePageAccess
+        // One cat: no position; its only move is to the add page.
+        XCTAssertNil(Access.position(index: 0, catCount: 1))
+        XCTAssertEqual(Access.spoken("むぎ、オス", index: 0, catCount: 1), "むぎ、オス")
+        XCTAssertEqual(Access.actions(index: 0, catCount: 1).map(\.name), ["猫を追加するページへ"])
+        // Three cats.
+        XCTAssertEqual(Access.spoken("むぎ、オス、4歳", index: 0, catCount: 3), "むぎ、オス、4歳、3匹中1匹目")
+        XCTAssertEqual(Access.position(index: 2, catCount: 3), "3匹中3匹目")
+        XCTAssertEqual(Access.actions(index: 0, catCount: 3).map(\.name), ["次の子"])
+        XCTAssertEqual(Access.actions(index: 1, catCount: 3).map(\.name), ["前の子", "次の子"])
+        XCTAssertEqual(Access.actions(index: 2, catCount: 3).map(\.name), ["前の子", "猫を追加するページへ"])
+        XCTAssertEqual(Access.actions(index: 2, catCount: 3).map(\.by), [-1, 1])
+        // The add page (index 3) is a target; nothing past either end.
+        XCTAssertEqual(Access.target(from: 2, by: 1, catCount: 3), 3)
+        XCTAssertEqual(Access.target(from: 3, by: -1, catCount: 3), 2)
+        XCTAssertNil(Access.target(from: 3, by: 1, catCount: 3))
+        XCTAssertNil(Access.target(from: 0, by: -1, catCount: 3))
+    }
+
     func testPageDotsCapAtSevenWithShrinkingEnds() {
         typealias Layout = CatHomeHeroLayout
         XCTAssertEqual(Layout.dots(count: 1, current: 0), [])

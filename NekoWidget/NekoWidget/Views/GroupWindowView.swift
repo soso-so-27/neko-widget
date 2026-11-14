@@ -1235,12 +1235,29 @@ enum GroupPhotoTileDate {
     }
 }
 
+/// What VoiceOver reads on a tile of the window's list (11/14).
+enum GroupPhotoTileSpeech {
+    /// The photo, which opens it: 「ママからの写真、3日前」, or
+    /// 「自分が届けた写真、今日」.
+    static func photo(sender: String, isOwn: Bool, day: String, reported: Bool, hidden: Bool) -> String {
+        var parts = [isOwn ? "自分が届けた写真" : GroupDisplayName.from(sender) + "の写真", day]
+        if reported { parts.append("通報した写真") } else if hidden { parts.append("表示していない写真") }
+        return parts.joined(separator: "、")
+    }
+
+    /// The heart, as in the photo's own page: whether this person sent one.
+    static func heart(mine: Bool, canHeart: Bool) -> String {
+        mine ? "ハートを送りました" : canHeart ? "ハートを送る" : "ハート"
+    }
+}
+
 private struct GroupPhotoTile: View {
     @ObservedObject var model: GroupWindowScreenModel
     let entry: GroupWindowLocalPhotoStore.Entry
     let open: () -> Void
     @State private var image: UIImage?
     @ObservedObject private var safety = GroupSafety.shared
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     private var heartCount: Int { model.hearts[entry.id]?.filter(\.active).count ?? 0 }
     private var reported: Bool { safety.hasReported(entry.id, in: model.windowID) }
@@ -1276,53 +1293,50 @@ private struct GroupPhotoTile: View {
                     Task { await model.toggleHeart(entry.id) }
                 }
                 .onTapGesture(count: 1, perform: open)
+                // 11/14: VoiceOver opens the photo here; it says who sent it
+                // and when, so the name and the day under it are not read again.
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(GroupPhotoTileSpeech.photo(
+                    sender: entry.senderDisplayName, isOwn: entry.isOwn,
+                    day: GroupPhotoTileDate.text(entry.createdAt), reported: reported, hidden: entry.isHidden))
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHint("大きく表示します")
+                .accessibilityAction(open)
+                .accessibilityIdentifier("group-photo-tile-photo")
             // 11/12 (review 12): who sent it is the gift, so the name is a
             // size up and the circle carries its first letter; the day reads
             // as 「3日前」 for the first week.
-            HStack(spacing: 10) {
-                GroupMemberAvatar(name: entry.isOwn ? "あなた" : entry.senderDisplayName, size: 30)
-                Text(entry.isOwn ? "あなた" : entry.senderDisplayName)
-                    .font(.body.weight(.semibold))
-                    .lineLimit(1)
-                Text(GroupPhotoTileDate.text(entry.createdAt))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                Button {
-                    guard canHeart else { return }
-                    Task { await model.toggleHeart(entry.id) }
-                } label: {
-                    let mine = model.myHeartIsActive(entry.id)
-                    HStack(spacing: 5) {
-                        Image(systemName: mine ? "heart.fill" : "heart")
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(mine ? Color.red : Color.secondary)
-                            .symbolEffect(.bounce, value: mine)
-                        if heartCount > 0 {
-                            Text(heartCount.formatted())
-                                .foregroundStyle(.secondary)
-                        }
+            // 11/14: at the accessibility text sizes the name has a line of
+            // its own, the day and the heart under it.
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 10) {
+                        avatar
+                        senderName.lineLimit(2)
                     }
-                    .font(.subheadline.weight(.semibold).monospacedDigit())
-                    .frame(minWidth: 44, minHeight: 44)
-                    .contentShape(Rectangle())
+                    HStack(spacing: 10) {
+                        day
+                        Spacer(minLength: 8)
+                        heartButton
+                    }
                 }
-                .buttonStyle(.plain)
-                .disabled(!canHeart)
-                .accessibilityLabel(heartCount > 0 ? "ハート \(heartCount)" : "ハート")
-                .accessibilityHint(canHeart ? "ハートを送ります" : "")
-                .accessibilityIdentifier("group-photo-tile-heart")
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+            } else {
+                HStack(spacing: 10) {
+                    avatar
+                    senderName.lineLimit(1)
+                    day
+                    Spacer(minLength: 8)
+                    heartButton
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
         }
         .background(Color(uiColor: .secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(tileLabel)
-        .accessibilityHint("大きく表示します。ハートも送れます")
-        .accessibilityAction(named: Text("大きく見る"), open)
         .task(id: entry.id) {
             guard !entry.isHidden, let url = await model.imageURL(for: entry) else { return }
             let decoded = await Task.detached(priority: .userInitiated) {
@@ -1333,14 +1347,53 @@ private struct GroupPhotoTile: View {
         }
         .onChange(of: reported) { _, covered in if covered { image = nil } }
     }
-}
 
-private extension GroupPhotoTile {
-    var tileLabel: String {
-        var parts = [entry.isOwn ? "自分が届けた写真" : "\(GroupDisplayName.from(entry.senderDisplayName))届いた写真"]
-        if reported { parts.append("通報した写真") } else if entry.isHidden { parts.append("表示していない写真") }
-        if !(model.hearts[entry.id]?.filter(\.active).isEmpty ?? true) { parts.append("ハートあり") }
-        return parts.joined(separator: "、")
+    private var avatar: some View {
+        GroupMemberAvatar(name: entry.isOwn ? "あなた" : entry.senderDisplayName, size: 30)
+            .accessibilityHidden(true)
+    }
+
+    private var senderName: some View {
+        Text(entry.isOwn ? "あなた" : entry.senderDisplayName)
+            .font(.body.weight(.semibold))
+            .accessibilityHidden(true)
+    }
+
+    private var day: some View {
+        Text(GroupPhotoTileDate.text(entry.createdAt))
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .accessibilityHidden(true)
+    }
+
+    private var heartButton: some View {
+        Button {
+            guard canHeart else { return }
+            Task { await model.toggleHeart(entry.id) }
+        } label: {
+            let mine = model.myHeartIsActive(entry.id)
+            HStack(spacing: 5) {
+                Image(systemName: mine ? "heart.fill" : "heart")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(mine ? Color.red : Color.secondary)
+                    .symbolEffect(.bounce, value: mine)
+                if heartCount > 0 {
+                    Text(heartCount.formatted())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .font(.subheadline.weight(.semibold).monospacedDigit())
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!canHeart)
+        // 11/14: as on the photo's own page, it says whether this
+        // person sent one (not only by its red).
+        .accessibilityLabel(GroupPhotoTileSpeech.heart(mine: model.myHeartIsActive(entry.id), canHeart: canHeart))
+        .accessibilityValue(heartCount > 0 ? "\(heartCount)" : "")
+        .accessibilityIdentifier("group-photo-tile-heart")
     }
 }
 
@@ -1824,6 +1877,8 @@ private struct GroupPhotoDetail: View {
         }
         .preferredColorScheme(.dark)
         .onAppear { model.actionMessage = nil }
+        // 11/14: the passing line under the photo is read when it shows.
+        .announcesWhenShown(model.actionMessage)
         .task(id: selection) { await safety.load(windowID: model.windowID) }
         .onChange(of: selection) { _, _ in model.actionMessage = nil }
     }

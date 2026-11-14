@@ -309,7 +309,8 @@ struct DetachedToolPhotoRow: View {
             .frame(minHeight: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(title == "証明の写真" ? "証明の写真。開くには2回タップ" : "写真。開くには2回タップ")
+        // VoiceOver says how to open a button itself (11/14).
+        .accessibilityLabel(title == "証明の写真" ? "証明の写真" : "写真")
         .contextMenu { Button("写真を外す", role: .destructive) { confirmsRemoval = true } }
         .confirmationDialog("写真を外しますか？", isPresented: $confirmsRemoval, titleVisibility: .visible) {
             Button("写真を外す", role: .destructive, action: remove)
