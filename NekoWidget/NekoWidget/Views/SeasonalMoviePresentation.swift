@@ -319,6 +319,13 @@ struct SeasonalMovieBuilder {
             }
             let result = buildMostRecent(from: confident, through: referenceDate)
             if case .ready = result { return result }
+            // 11/15: a quarter of たぶん猫 alone has no movie.
+            guard let interval = completedQuarter(containing: referenceDate),
+                  confident.contains(where: {
+                      $0.creationDate >= interval.start && $0.creationDate < interval.end
+                  }) else {
+                return .unavailable(.notEnoughDistinctScenes(available: 0))
+            }
         }
         return buildMostRecent(from: inputCandidates, through: referenceDate)
     }

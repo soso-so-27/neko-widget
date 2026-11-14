@@ -142,9 +142,8 @@ struct GrowthAlbumSelector {
                     group.photos.contains { $0.localIdentifier == identifier }
                 } == true
         }
-        if confidentGroups.count >= GrowthAlbumVisibilityPolicy.minimumComparablePeriods {
-            groups = confidentGroups
-        }
+        // 11/15: always; a period of たぶん猫 alone is never an entry.
+        groups = confidentGroups
         guard let firstGroup = groups.first else { return [] }
 
         let validPreferences: [GrowthAlbumPeriod: PhotoPresentation] = Dictionary(
