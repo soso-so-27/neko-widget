@@ -45,7 +45,7 @@ enum LaunchWorkFixture {
             seeded.mutationRevision = current.mutationRevision
             _ = try await identities.save(seeded, expectedMutationRevision: current.mutationRevision)
         } catch {
-            NSLog("LAUNCHWORK fixture seed failed: %@", String(describing: error))
+            NSLog("LAUNCHWORK fixture seed failed: %@", String(reflecting: type(of: error)))
         }
     }
 
@@ -139,11 +139,14 @@ actor LaunchWorkFixtureScanner: LibraryScanning {
     ) async throws -> LibrarySnapshot {
         let settings = inputSettings.normalized()
         let started = Date()
+        let retriesTraits = forceFullAnalysis || ScanRetryPolicy.retriesMissingAlbumTraits(
+            lastRetry: LibraryVerificationStore.shared.albumTraitRetryAt, now: started)
+        if retriesTraits { LibraryVerificationStore.shared.noteAlbumTraitRetry(at: started) }
         let purpose = existing.scanState.purpose ?? (forceFullAnalysis ? .manualRescan : .regular)
         let assets = existing.assets.sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
         var records = [AssetRecord?](repeating: nil, count: assets.count)
         let quickEnd = min(settings.quickScanLimit, assets.count)
-        try await process(0..<quickEnd, assets, &records, settings, forceFullAnalysis, .quickScan, purpose, onEvent)
+        try await process(0..<quickEnd, assets, &records, settings, forceFullAnalysis, retriesTraits, .quickScan, purpose, onEvent)
         var quick = existing
         quick.assets = records.compactMap { $0 } + assets[quickEnd...]
         quick.scanState = state(records, scanned: quickEnd, total: assets.count,
@@ -154,7 +157,7 @@ actor LaunchWorkFixtureScanner: LibraryScanning {
         quick.settings = settings
         quick.updatedAt = .now
         await onEvent(.provisional(quick))
-        try await process(quickEnd..<assets.count, assets, &records, settings, forceFullAnalysis, .fullScan, purpose, onEvent)
+        try await process(quickEnd..<assets.count, assets, &records, settings, forceFullAnalysis, retriesTraits, .fullScan, purpose, onEvent)
         try Task.checkCancellation()
         var final = existing
         final.assets = records.compactMap { $0 }
@@ -169,7 +172,7 @@ actor LaunchWorkFixtureScanner: LibraryScanning {
 
     private func process(
         _ range: Range<Int>, _ assets: [AssetRecord], _ records: inout [AssetRecord?],
-        _ settings: AppSettings, _ force: Bool, _ phase: ScanPhase, _ purpose: ScanPurpose,
+        _ settings: AppSettings, _ force: Bool, _ retriesTraits: Bool, _ phase: ScanPhase, _ purpose: ScanPurpose,
         _ onEvent: @escaping @Sendable (ScanEvent) async -> Void
     ) async throws {
         var start = range.lowerBound
@@ -182,9 +185,11 @@ actor LaunchWorkFixtureScanner: LibraryScanning {
             var pending = 0
             for index in start..<end {
                 var record = assets[index]
-                if force || Self.needsAnalysis(record, now: .now) {
+                if force || Self.needsAnalysis(record, now: .now, retriesTraits: retriesTraits) {
                     pending += 1
-                    record.analyzedAt = .now
+                    // A failed photo's record carries its last attempt, as in
+                    // PhotoLibraryScanner; a cat missing traits keeps its own.
+                    if record.analysisStatus == .failed { record.analyzedAt = .now }
                 }
                 records[index] = record
             }
@@ -208,10 +213,14 @@ actor LaunchWorkFixtureScanner: LibraryScanning {
     }
 
     /// The photos PhotoLibraryScanner sends to Vision on a pass that is not
-    /// a full rescan: failed ones and cats still missing album traits.
-    static func needsAnalysis(_ record: AssetRecord, now: Date) -> Bool {
-        if record.analysisStatus == .failed { return true }
-        return record.isCatCandidate && record.albumAnalysisVersion != CatAlbumTraits.currentAnalysisVersion
+    /// a full rescan: failed ones and cats still missing album traits, each
+    /// when ScanRetryPolicy says their retry is due.
+    static func needsAnalysis(_ record: AssetRecord, now: Date, retriesTraits: Bool) -> Bool {
+        if record.analysisStatus == .failed {
+            return ScanRetryPolicy.retriesFailedPhoto(lastAttempt: record.analyzedAt, now: now)
+        }
+        return retriesTraits && record.isCatCandidate
+            && record.albumAnalysisVersion != CatAlbumTraits.currentAnalysisVersion
     }
 
     /// The same counts PhotoLibraryScanner.makeState derives (two passes over
@@ -236,6 +245,16 @@ actor LaunchWorkFixtureScanner: LibraryScanning {
     }
 }
 
+/// Photos' change history for the synthetic library: nothing changes
+/// between launches (the owner's usual opening). A launch with no stored
+/// receipt still makes a full pass, as on a phone.
+struct LaunchWorkFixtureChangeTokens: PhotoLibraryChangeTokenSource {
+    func currentToken() -> Data? { Data("launch-work-fixture".utf8) }
+    func changes(since token: Data, maximumUpdated: Int) -> PhotoLibraryChangeCheck {
+        .changes(PhotoLibraryChangeSummary())
+    }
+}
+
 /// The fixture's root: the app's own AppRootView over a view model whose
 /// scanner and photo access are the fixture's.
 struct LaunchWorkFixtureRoot: View {
@@ -252,7 +271,8 @@ struct LaunchWorkFixtureRoot: View {
         .task {
             guard model == nil else { return }
             await LaunchWorkFixture.prepare()
-            model = AppViewModel(scanner: LaunchWorkFixtureScanner())
+            model = AppViewModel(scanner: LaunchWorkFixtureScanner(),
+                                 changeTokens: LaunchWorkFixtureChangeTokens())
         }
     }
 }

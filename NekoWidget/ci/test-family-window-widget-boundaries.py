@@ -3153,7 +3153,7 @@ class AppDrawingWasteTests(unittest.TestCase):
         self.assertIn("@State private var seasonalMovieVideoCatalogDigest = SeasonalMovieVideoCatalogDigestCache()", main)
         self.assertIn(".onReceive(NotificationCenter.default.publisher(for: .photoLibraryContentDidChange)) { _ in\n            photoLibraryChangeCount &+= 1", main)
         model = source("NekoWidget/ViewModels/AppViewModel.swift")
-        observer = section(model, "private lazy var libraryObserver = PhotoLibraryObserver {", "init() {")
+        observer = section(model, "private lazy var libraryObserver = PhotoLibraryObserver {", "    init(\n        scanner:")
         self.assertIn("NotificationCenter.default.post(name: .photoLibraryContentDidChange, object: nil)", observer)
 
     def test_plus_offer_photo_is_found_without_sorting_every_candidate(self) -> None:
@@ -9162,13 +9162,15 @@ class CatIdentityMeasure1113Tests(unittest.TestCase):
         # (C1A1BF10…) joined the same test target, then CatThresholdTests
         # (C1CA7050…, the 0.5 cat line and its migration), then
         # CatHomeCareTests (C1E0A7E0…, the この子 page's 「これからのこと」),
-        # then AppLimitsTests (C1A11A17…, the 11/14 limits).
+        # then AppLimitsTests (C1A11A17…, the 11/14 limits), then
+        # LaunchWorkTests (4C570000…, the light first seconds after launch).
         self.assertIn("children = (C1108C000000000000000002,C1D3A9110000000000000006,"
                       "C15C0A7E0000000000000002,C1A1BF100000000000000002,C1CA70500000000000000002,"
-                      "C1E0A7E00000000000000002,C1A11A170000000000000002,); path = NekoWidgetTests;", self.project)
+                      "C1E0A7E00000000000000002,C1A11A170000000000000002,4C570000000000000000000A,);"
+                      " path = NekoWidgetTests;", self.project)
         self.assertIn("files = (C1108C000000000000000003,C1D3A9110000000000000005,"
                       "C15C0A7E0000000000000001,C1A1BF100000000000000001,C1CA70500000000000000001,"
-                      "C1E0A7E00000000000000001,C1A11A170000000000000001,);", self.project)
+                      "C1E0A7E00000000000000001,C1A11A170000000000000001,4C5700000000000000000009,);", self.project)
         self.assertEqual(len(set(re.findall(r"C1D3A911000000000000000\d", self.project))), 6)
 
     def test_store_product_compiles_none_of_it(self) -> None:

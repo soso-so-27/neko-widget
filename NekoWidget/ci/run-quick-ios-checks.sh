@@ -159,6 +159,7 @@ python3 ci/test-album-link-followups.py
 python3 ci/test-cat-threshold.py
 python3 ci/test-confident-cats.py
 python3 ci/test-app-limits.py
+python3 ci/test-launch-work.py
 
 xcrun --sdk macosx swiftc -D DEBUG -parse-as-library \
   -target "$(uname -m)-apple-macos14.0" \

@@ -19,9 +19,11 @@
 		C1A11A170000000000000001 /* AppLimitsTests.swift in Sources */ = { isa = PBXBuildFile; fileRef = C1A11A170000000000000002; };
 		C1E0A7E00000000000000002 /* CatHomeCareTests.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatHomeCareTests.swift; sourceTree = "<group>"; };
 		C1E0A7E00000000000000001 /* CatHomeCareTests.swift in Sources */ = { isa = PBXBuildFile; fileRef = C1E0A7E00000000000000002; };
+		4C570000000000000000000A /* LaunchWorkTests.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchWorkTests.swift; sourceTree = "<group>"; };
+		4C5700000000000000000009 /* LaunchWorkTests.swift in Sources */ = { isa = PBXBuildFile; fileRef = 4C570000000000000000000A; };
 		C1108C000000000000000005 = { isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = NekoWidgetTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		C1108C000000000000000004 = { isa = PBXGroup; children = (C1108C000000000000000002,C1D3A9110000000000000006,C15C0A7E0000000000000002,C1A1BF100000000000000002,C1CA70500000000000000002,C1E0A7E00000000000000002,C1A11A170000000000000002,); path = NekoWidgetTests; sourceTree = "<group>"; };
-		C1108C000000000000000006 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (C1108C000000000000000003,C1D3A9110000000000000005,C15C0A7E0000000000000001,C1A1BF100000000000000001,C1CA70500000000000000001,C1E0A7E00000000000000001,C1A11A170000000000000001,); runOnlyForDeploymentPostprocessing = 0; };
+		C1108C000000000000000004 = { isa = PBXGroup; children = (C1108C000000000000000002,C1D3A9110000000000000006,C15C0A7E0000000000000002,C1A1BF100000000000000002,C1CA70500000000000000002,C1E0A7E00000000000000002,C1A11A170000000000000002,4C570000000000000000000A,); path = NekoWidgetTests; sourceTree = "<group>"; };
+		C1108C000000000000000006 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (C1108C000000000000000003,C1D3A9110000000000000005,C15C0A7E0000000000000001,C1A1BF100000000000000001,C1CA70500000000000000001,C1E0A7E00000000000000001,C1A11A170000000000000001,4C5700000000000000000009,); runOnlyForDeploymentPostprocessing = 0; };
 		C1108C000000000000000007 = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		C1108C000000000000000008 = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		C1108C00000000000000000A = { isa = XCBuildConfiguration; baseConfigurationReference = F00000000000000000000001; buildSettings = {
@@ -140,6 +142,7 @@
 		100000000000000000000114 /* PhotoImageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000214 /* PhotoImageLoader.swift */; };
 		100000000000000000000115 /* PhotoLibraryObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000215 /* PhotoLibraryObserver.swift */; };
 		100000000000000000000116 /* PhotoLibraryScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000216 /* PhotoLibraryScanner.swift */; };
+		4C5700000000000000000007 /* LibraryVerification.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C5700000000000000000008 /* LibraryVerification.swift */; };
 		4C5700000000000000000003 /* LaunchWorkFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C5700000000000000000004 /* LaunchWorkFixture.swift */; };
 		4C5700000000000000000001 /* LaunchWorkMeter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C5700000000000000000002 /* LaunchWorkMeter.swift */; };
 		100000000000000000000117 /* PhotoSelectors.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000217 /* PhotoSelectors.swift */; };
@@ -504,6 +507,7 @@
 		F00000000000000000000214 /* PhotoImageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoImageLoader.swift; sourceTree = "<group>"; };
 		F00000000000000000000215 /* PhotoLibraryObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoLibraryObserver.swift; sourceTree = "<group>"; };
 		F00000000000000000000216 /* PhotoLibraryScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoLibraryScanner.swift; sourceTree = "<group>"; };
+		4C5700000000000000000008 /* LibraryVerification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryVerification.swift; sourceTree = "<group>"; };
 		4C5700000000000000000004 /* LaunchWorkFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchWorkFixture.swift; sourceTree = "<group>"; };
 		4C5700000000000000000002 /* LaunchWorkMeter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchWorkMeter.swift; sourceTree = "<group>"; };
 		F00000000000000000000217 /* PhotoSelectors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoSelectors.swift; sourceTree = "<group>"; };
@@ -888,6 +892,7 @@
 		C00000000000000000000003 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				4C5700000000000000000008 /* LibraryVerification.swift */,
 				4C5700000000000000000004 /* LaunchWorkFixture.swift */,
 				4C5700000000000000000002 /* LaunchWorkMeter.swift */,
 				C02610140000000000000002 /* ToolPreservation.swift */,
@@ -1298,6 +1303,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4C5700000000000000000007 /* LibraryVerification.swift in Sources */,
 				4C5700000000000000000003 /* LaunchWorkFixture.swift in Sources */,
 				4C5700000000000000000001 /* LaunchWorkMeter.swift in Sources */,
 				93483D27026CF4E63D650048 /* GroupShareCreateRequest.swift in Sources */,

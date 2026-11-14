@@ -267,6 +267,8 @@ final class AppViewModel: ObservableObject {
 
     private let authorizationService: PhotoAuthorizationService
     private let scanner: any LibraryScanning
+    private let changeTokens: any PhotoLibraryChangeTokenSource
+    private let verificationStore: LibraryVerificationStore
     private let albumService: PhotoAlbumService
     private let widgetCacheBuilder: WidgetCacheBuilder
     private var personalReplenishmentTask: Task<Void, Never>?
@@ -315,6 +317,8 @@ final class AppViewModel: ObservableObject {
         var snapshot: LibrarySnapshot
         var state: ScanState
         var catAssetCount: Int
+        /// False when every analyzed record equals the one already held.
+        var changedRecords: Bool
     }
     private var pendingScanProgress: PendingScanProgress?
     private var scanProgressFlushTask: Task<Void, Never>?
@@ -499,12 +503,18 @@ final class AppViewModel: ObservableObject {
         Task { [weak self] in await self?.refreshPhotoSourceAlbums() }
     }
 
-    /// `scanner` is PhotoLibraryScanner except in the DEBUG launch-work
-    /// fixture, which walks synthetic records instead of PhotoKit.
-    init(scanner: any LibraryScanning = PhotoLibraryScanner()) {
+    /// `scanner` and `changeTokens` are PhotoKit's except in the DEBUG
+    /// launch-work fixture, which walks synthetic records instead.
+    init(
+        scanner: any LibraryScanning = PhotoLibraryScanner(),
+        changeTokens: any PhotoLibraryChangeTokenSource = PhotoKitChangeTokenSource(),
+        verificationStore: LibraryVerificationStore = .shared
+    ) {
         authorizationService = PhotoAuthorizationService()
         authorizationStatus = authorizationService.status
         self.scanner = scanner
+        self.changeTokens = changeTokens
+        self.verificationStore = verificationStore
         albumService = PhotoAlbumService()
         imageLoader = PhotoImageLoader()
         widgetCacheBuilder = WidgetCacheBuilder()
@@ -766,7 +776,7 @@ final class AppViewModel: ObservableObject {
         // already-current empty curation state.
         await refreshCandidateOutputsAfterCurationChange(reportErrors: false)
         libraryObserver.start()
-        await synchronizeOnActive(refreshLimitedAccess: false)
+        await synchronizeOnActive(refreshLimitedAccess: false, refreshesWidgetsWhenUnchanged: false)
     }
 
     /// 「もう一度」 after a failed start: the same start, from the beginning.
@@ -809,10 +819,10 @@ final class AppViewModel: ObservableObject {
     }
 
     func syncOnActive() async {
-        await synchronizeOnActive(refreshLimitedAccess: true)
+        await synchronizeOnActive(refreshLimitedAccess: true, refreshesWidgetsWhenUnchanged: true)
     }
 
-    private func synchronizeOnActive(refreshLimitedAccess: Bool) async {
+    private func synchronizeOnActive(refreshLimitedAccess: Bool, refreshesWidgetsWhenUnchanged: Bool) async {
 #if DEBUG
         if isUIFixture { return }
 #endif
@@ -865,7 +875,64 @@ final class AppViewModel: ObservableObject {
         }
         lastActivationSyncAt = .now
         libraryChangePending = false
-        await launchScan(forceFullAnalysis: scanState.requiresFullRescan)
+        let forceFullAnalysis = scanState.requiresFullRescan
+        // 11/14: no pass when Photos has changed nothing the scan keeps since
+        // the last completed one (see LibraryVerificationPolicy). The linked
+        // albums, today's photo and the Widget authority were refreshed above.
+        if !forceFullAnalysis, await libraryIsUnchangedSinceLastPass() {
+            LaunchWork.count("verificationSkipped")
+            if refreshesWidgetsWhenUnchanged { scheduleIdleWidgetRefresh() }
+            return
+        }
+        // A pass after the first one waits for the screen to settle and runs
+        // below the screen's priority; a first or resumed pass is unchanged.
+        let isVerification = !forceFullAnalysis && scanState.phase == .completed
+            && scanState.lastScannedAt != nil
+        if isVerification {
+            do { try await Task.sleep(for: .milliseconds(1_500)) } catch { return }
+            guard UIApplication.shared.applicationState == .active else {
+                libraryChangePending = true
+                return
+            }
+        }
+        await launchScan(forceFullAnalysis: forceFullAnalysis, isVerification: isVerification)
+    }
+
+    /// Reads Photos' change history off the main thread. A skip moves the
+    /// stored token forward, so benign updates are not compared again.
+    private func libraryIsUnchangedSinceLastPass() async -> Bool {
+        guard let receipt = verificationStore.receipt else { return false }
+        let snapshot = self.snapshot
+        let source = catCandidateCuration.sourceAlbumIdentifier
+        let limited = isLimitedAccess
+        let tokens = changeTokens
+        let (decision, token) = await Task.detached(priority: .utility) {
+            () -> (LibraryVerificationPolicy.Decision, Data?) in
+            let token = tokens.currentToken()
+            let check = tokens.changes(since: receipt.token, maximumUpdated: 2_000)
+            return (LibraryVerificationPolicy.decide(
+                receipt: receipt, snapshot: snapshot, sourceAlbumIdentifier: source,
+                isLimitedAccess: limited, forceFullAnalysis: false, now: .now, check: check), token)
+        }.value
+        guard decision == .skip, let token else { return false }
+        var advanced = receipt
+        advanced.token = token
+        verificationStore.saveReceipt(advanced)
+        return true
+    }
+
+    private var idleWidgetRefreshTask: Task<Void, Never>?
+
+    /// Back from the background with nothing new in Photos: the Widget's
+    /// images are still topped up, once the screen has settled.
+    private func scheduleIdleWidgetRefresh() {
+        idleWidgetRefreshTask?.cancel()
+        idleWidgetRefreshTask = Task(priority: .utility) { [weak self] in
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            guard let self, !Task.isCancelled,
+                  UIApplication.shared.applicationState == .active else { return }
+            await self.refreshManagedOutputs(reportErrors: false)
+        }
     }
 
     func rescan() async {
@@ -1028,14 +1095,19 @@ final class AppViewModel: ObservableObject {
             await reconcilePersonalWidgetReadAuthority()
             return
         }
-        let albums = LaunchWork.measure("albumCatalog") {
-            PhotoSourceAlbumCatalog.availableAlbums(excluding: snapshot.albumLocalIdentifier)
-        }
-        photoSourceAlbums = albums
-        photoSourceStatus = PhotoSourceAlbumCatalog.status(
+        // Counting every album's photos is PhotoKit work: off the main
+        // thread (11/14), and published only when it changed.
+        let managedAlbum = snapshot.albumLocalIdentifier
+        let albums = await Task.detached(priority: .utility) {
+            PhotoSourceAlbumCatalog.availableAlbums(excluding: managedAlbum)
+        }.value
+        LaunchWork.count("albumCatalog")
+        if photoSourceAlbums != albums { photoSourceAlbums = albums }
+        let sourceStatus = PhotoSourceAlbumCatalog.status(
             sourceAlbumIdentifier: catCandidateCuration.sourceAlbumIdentifier,
             in: albums
         )
+        if photoSourceStatus != sourceStatus { photoSourceStatus = sourceStatus }
         if let sourceAlbumIdentifier = catCandidateCuration.sourceAlbumIdentifier,
            photoSourceStatus != .unavailable {
             do {
@@ -1121,7 +1193,7 @@ final class AppViewModel: ObservableObject {
         for albumIdentifier in Set(links.map { $0.1.localIdentifier })
         where availableIdentifiers.contains(albumIdentifier) {
             do {
-                let assets = try await Task.detached(priority: .userInitiated) {
+                let assets = try await Task.detached(priority: .utility) {
                     try PhotoSourceAlbumCatalog.accessibleImageAssets(
                         sourceAlbumIdentifier: albumIdentifier
                     )
@@ -1144,7 +1216,7 @@ final class AppViewModel: ObservableObject {
                 }
             }
         }
-        profilePhotoAlbumAssetDates = dates
+        if profilePhotoAlbumAssetDates != dates { profilePhotoAlbumAssetDates = dates }
 
         let updates = links.compactMap { profileID, link -> (UUID, String, [String])? in
             guard let assets = assetsByAlbum[link.localIdentifier] else { return nil }
@@ -1162,7 +1234,9 @@ final class AppViewModel: ObservableObject {
                 assets.map(\.localIdentifier)
             )
         }
-        unavailableProfilePhotoAlbumIdentifiers = unavailableIdentifiers
+        if unavailableProfilePhotoAlbumIdentifiers != unavailableIdentifiers {
+            unavailableProfilePhotoAlbumIdentifiers = unavailableIdentifiers
+        }
         guard !updates.isEmpty else { return }
         do {
             let hasLimitedPhotosAccess = authorizationStatus == .limited
@@ -2560,13 +2634,17 @@ final class AppViewModel: ObservableObject {
 
     private func reconcileCandidatePostureState() {
         let summary = PostureScanSummary(records: candidateSnapshot(snapshot).catAssets)
-        scanState.postureSummary = summary
+        var state = scanState
+        state.postureSummary = summary
         // Build 13-15's posture repair route is decode-only. Bbox posture
         // albums are derived locally and must never schedule another scan.
-        if scanState.purpose == .postureRepair {
-            scanState.purpose = nil
+        if state.purpose == .postureRepair {
+            state.purpose = nil
         }
-        snapshot.scanState = scanState
+        // Unchanged (the usual case on every launch and return): nothing
+        // assigned, so nothing re-drawn (11/14).
+        if scanState != state { scanState = state }
+        if snapshot.scanState != state { snapshot.scanState = state }
     }
 
     private func refreshCandidateOutputsAfterCurationChange(
@@ -2582,7 +2660,13 @@ final class AppViewModel: ObservableObject {
         await refreshManagedOutputs(reportErrors: reportErrors)
     }
 
-    private func launchScan(forceFullAnalysis: Bool) async {
+    /// Set while a pass that follows a completed one runs: progress that
+    /// changes no record is not published (11/14).
+    private var isVerificationPass = false
+    private var quietScanProgress: (generation: Int, state: ScanState)?
+    private var scanMergeIndex: (count: Int, content: Int, index: [String: Int])?
+
+    private func launchScan(forceFullAnalysis: Bool, isVerification: Bool = false) async {
         guard catIdentityLoadState == .ready else {
             logCandidateAuthorityUnavailable(operation: "launch_scan")
             return
@@ -2634,7 +2718,8 @@ final class AppViewModel: ObservableObject {
             ]
         )
 
-        let task = Task { [weak self] in
+        isVerificationPass = isVerification
+        let task = Task(priority: isVerification ? .utility : nil) { [weak self] in
             guard let self else { return }
             await self.performScan(
                 generation: generation,
@@ -2647,9 +2732,15 @@ final class AppViewModel: ObservableObject {
         guard generation == scanGeneration else { return }
         scanTask = nil
         isScanning = false
+        isVerificationPass = false
     }
 
     private func performScan(generation: Int, forceFullAnalysis: Bool) async {
+        // Taken before the pass reads Photos: a change made during the pass
+        // is still after this token, so the next launch looks again.
+        let tokens = changeTokens
+        let startToken = await Task.detached(priority: .utility) { tokens.currentToken() }.value
+        let sourceAlbumIdentifier = catCandidateCuration.sourceAlbumIdentifier
         do {
             let final = try await scanner.scan(
                 existing: snapshot,
@@ -2662,10 +2753,18 @@ final class AppViewModel: ObservableObject {
             guard generation == scanGeneration else { return }
 
             discardPendingScanProgress(generation: generation)
+            quietScanProgress = nil
             applySnapshot(final)
             lastScanProgressPublicationUptime = ProcessInfo.processInfo.systemUptime
             chooseCurrentAssetIfNeeded()
             await saveSnapshot(reportErrors: true)
+            if let startToken, let lastScannedAt = snapshot.scanState.lastScannedAt,
+               snapshot.scanState.phase == .completed {
+                verificationStore.saveReceipt(LibraryVerificationReceipt(
+                    token: startToken, analysisFingerprint: snapshot.settings.analysisFingerprint,
+                    sourceAlbumIdentifier: sourceAlbumIdentifier, lastScannedAt: lastScannedAt,
+                    recordCount: snapshot.assets.count))
+            }
             // Usage (11/7): the first scan that finds cats on this iPhone.
             if !catAssets.isEmpty { UsageCounter.shared.countFirstTime(.catsFound) }
             logBoundingBoxAspectDistribution(trigger: "scan-final")
@@ -2754,6 +2853,13 @@ final class AppViewModel: ObservableObject {
             // The scanner's provisional snapshot contains every quick-stage
             // record, including any still held by the UI coalescer.
             discardPendingScanProgress(generation: generation)
+            if isVerificationPass, provisional.assets == snapshot.assets {
+                // 11/14: the newest photos are as they were; the final
+                // result publishes, saves and refreshes the Widget once.
+                LaunchWork.count("provisionalQuiet")
+                quietScanProgress = (generation, provisional.scanState)
+                return
+            }
             applySnapshot(provisional)
             lastScanProgressPublicationUptime = ProcessInfo.processInfo.systemUptime
             chooseCurrentAssetIfNeeded()
@@ -2818,7 +2924,9 @@ final class AppViewModel: ObservableObject {
                 generation: generation,
                 operation: "timer_ready"
             )
-            if isResumeCheckpoint {
+            // A quiet verification publication changed no record: nothing
+            // new to keep (11/14).
+            if isResumeCheckpoint, quietScanProgress?.generation != generation {
                 await saveSnapshot(reportErrors: false)
             }
             return
@@ -2887,9 +2995,18 @@ final class AppViewModel: ObservableObject {
             state: pending.state,
             analyzedRecords: pending.analyzedRecords
         )
+        lastScanProgressPublicationUptime = ProcessInfo.processInfo.systemUptime
+        if isVerificationPass, !publication.changedRecords {
+            // 11/14: a verification pass re-reading photos it already knows
+            // changes no record; publishing it re-drew every tab once a
+            // second. The 写真 tab says only 「猫の写真を探しています」 then.
+            LaunchWork.count("progressQuiet")
+            quietScanProgress = (generation, publication.state)
+            return
+        }
+        quietScanProgress = nil
         scanState = publication.state
         snapshot = publication.snapshot
-        lastScanProgressPublicationUptime = ProcessInfo.processInfo.systemUptime
         chooseCurrentAssetIfNeeded()
 
         SharedLog.app.info(
@@ -2946,7 +3063,10 @@ final class AppViewModel: ObservableObject {
 
     private func latestScanProgressState(generation: Int) -> ScanState {
         guard let pending = pendingScanProgress,
-              pending.generation == generation else { return scanState }
+              pending.generation == generation else {
+            if let quiet = quietScanProgress, quiet.generation == generation { return quiet.state }
+            return scanState
+        }
         return pending.state
     }
 
@@ -2960,6 +3080,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private func resetScanProgressCoalescer() {
+        quietScanProgress = nil
         scanProgressFlushTask?.cancel()
         scanProgressFlushTask = nil
         scanProgressFlushSequence &+= 1
@@ -2974,6 +3095,11 @@ final class AppViewModel: ObservableObject {
             state: pending.state,
             analyzedRecords: pending.analyzedRecords
         )
+        // Only new analysis is worth a checkpoint (11/14).
+        if isVerificationPass, !checkpoint.changedRecords {
+            LaunchWork.count("checkpointSkipped")
+            return
+        }
         await saveSnapshot(checkpoint.snapshot, reportErrors: false, synchronizesWidgetAuthority: false)
     }
 
@@ -2995,28 +3121,37 @@ final class AppViewModel: ObservableObject {
         analyzedRecords: [AssetRecord]
     ) -> ScanProgressSnapshot {
         var updated = snapshot
+        var changedRecords = false
         if !analyzedRecords.isEmpty {
-            var indexByIdentifier = Dictionary(
-                uniqueKeysWithValues: updated.assets.indices.map {
-                    (updated.assets[$0].localIdentifier, $0)
-                }
-            )
-            for record in analyzedRecords {
-                let existingIndex = indexByIdentifier[record.localIdentifier]
-                var merged = record.preservingUserState(
-                    from: existingIndex.map { updated.assets[$0] }
+            // The index of the published snapshot is kept while its records
+            // are unchanged, instead of rebuilt (10,000 entries) per publication.
+            let content = photoPresentationRevisions.content
+            var indexByIdentifier: [String: Int]
+            if let cached = scanMergeIndex, cached.count == updated.assets.count, cached.content == content {
+                indexByIdentifier = cached.index
+            } else {
+                indexByIdentifier = Dictionary(
+                    updated.assets.indices.map { (updated.assets[$0].localIdentifier, $0) },
+                    uniquingKeysWith: { first, _ in first }
                 )
-                if let sharedLike = sharedLikeRecords[record.localIdentifier] {
-                    merged.liked = sharedLike.isLiked
-                    merged.likedAt = sharedLike.likedAt
-                }
-                if let existingIndex {
-                    updated.assets[existingIndex] = merged
-                } else {
-                    indexByIdentifier[record.localIdentifier] = updated.assets.count
-                    updated.assets.append(merged)
-                }
+                scanMergeIndex = (updated.assets.count, content, indexByIdentifier)
             }
+            changedRecords = ScanProgressMerge.merge(
+                analyzedRecords, into: &updated.assets,
+                index: &indexByIdentifier, likes: sharedLikeRecords)
+        }
+        if isVerificationPass, !changedRecords {
+            // Same records, so the same cats and posture summary: only the
+            // counts move (11/14). Nothing here is published.
+            var quiet = ScanProgressPublicationPolicy.preservingLiveRescanIntent(
+                pending: state, live: snapshot.scanState)
+            quiet.postureSummary = snapshot.scanState.postureSummary
+            if quiet.purpose == .postureRepair { quiet.purpose = nil }
+            var held = snapshot
+            held.scanState = quiet
+            return ScanProgressSnapshot(snapshot: held, state: quiet,
+                                        catAssetCount: snapshot.scanState.catAssets,
+                                        changedRecords: false)
         }
 
         let candidateCats = candidateSnapshot(updated).catAssets
@@ -3037,7 +3172,8 @@ final class AppViewModel: ObservableObject {
         return ScanProgressSnapshot(
             snapshot: updated,
             state: reconciledState,
-            catAssetCount: candidateCats.count
+            catAssetCount: candidateCats.count,
+            changedRecords: changedRecords
         )
     }
 
@@ -3294,7 +3430,7 @@ final class AppViewModel: ObservableObject {
 
     private func performChooseCurrentAssetIfNeeded() {
         guard canPresentCatIdentity else {
-            currentAsset = nil
+            if currentAsset != nil { currentAsset = nil }
             return
         }
         let eligible = candidateSnapshot(snapshot)
@@ -3305,7 +3441,8 @@ final class AppViewModel: ObservableObject {
             selector: photoSelector,
             isConfident: isConfidentCatForPicks
         )
-        currentAsset = resolution.asset
+        // An equal assignment still publishes and re-draws every tab.
+        if currentAsset != resolution.asset { currentAsset = resolution.asset }
         if resolution.state != todayPhotoSelectionState {
             todayPhotoSelectionState = resolution.state
             todayPhotoSelectionStore.save(resolution.state)
@@ -3459,9 +3596,14 @@ final class AppViewModel: ObservableObject {
                 ]
             )
             if result.hasMore {
-                personalReplenishmentTask = Task { [weak self] in
+                // 11/14: the remaining rounds wait for the screen to settle,
+                // run below its priority, and reload the Widget once at the end.
+                personalReplenishmentTask = Task(priority: .utility) { [weak self] in
+                    do { try await Task.sleep(for: .seconds(2)) } catch { return }
                     guard let self else { return }
                     var attemptedPhotoIDs = result.attemptedPhotoIDs
+                    var added = false
+                    defer { if added { self.reloadAllWidgetTimelines() } }
                     for _ in 0..<10 {
                         guard !Task.isCancelled, generation == self.personalPreparationGeneration,
                               UIApplication.shared.applicationState == .active else { return }
@@ -3476,7 +3618,7 @@ final class AppViewModel: ObservableObject {
                             attemptedPhotoIDs.formUnion(batch.attemptedPhotoIDs)
                             try self.synchronizeCloudyWindowMetadata()
                             try await CloudyWindowImagePreparer.shared.prepare()
-                            if batch.addedCount > 0 { reloadAllWidgetTimelines() }
+                            if batch.addedCount > 0 { added = true }
                             if !batch.hasMore { return }
                         } catch { return } // Next foreground/BG opportunity can resume.
                     }
@@ -3575,7 +3717,8 @@ final class AppViewModel: ObservableObject {
                 // current snapshot, so the last sync can be reused.
                 _ = try synchronizePersonalWidgetAuthority()
             }
-            try await store.save(value)
+            let wrote = try await store.save(value)
+            if !wrote { LaunchWork.count("storeSaveUnchanged") }
         } catch {
             Self.logError(error, category: "storage", operation: "save_snapshot")
             if reportErrors { setError(error) }
@@ -3595,9 +3738,9 @@ final class AppViewModel: ObservableObject {
         var day: DateComponents
         var cloudyWindow: Bool
     }
-    private static let widgetAuthorityReuseSeconds: TimeInterval = 600
-    private var widgetAuthorityCache: (key: WidgetAuthorityKey, revision: String, uptime: TimeInterval)?
-    private var cloudyMetadataCache: (key: WidgetAuthorityKey, metadata: [String: CloudyWindowPhotoMetadata])?
+    private var widgetAuthoritySync = ReuseGate<WidgetAuthorityKey, String>(reuseSeconds: 600)
+    private var cloudyMetadataCache = ReuseGate<WidgetAuthorityKey, [String: CloudyWindowPhotoMetadata]>(
+        reuseSeconds: .infinity)
 
     private var widgetAuthorityKey: WidgetAuthorityKey {
         WidgetAuthorityKey(
@@ -3612,7 +3755,7 @@ final class AppViewModel: ObservableObject {
     /// Forgets the last sync, so the next one runs: the stored authority was
     /// changed outside it (suspended, cleared).
     private func forgetWidgetAuthoritySync() {
-        widgetAuthorityCache = nil
+        widgetAuthoritySync.forget()
     }
 
     /// `input` nil means the current snapshot, the only case that may reuse
@@ -3627,15 +3770,14 @@ final class AppViewModel: ObservableObject {
     ) throws -> (revision: String, reused: Bool) {
         let key = input == nil ? widgetAuthorityKey : nil
         let uptime = ProcessInfo.processInfo.systemUptime
-        if let key, let cached = widgetAuthorityCache, cached.key == key,
-           uptime - cached.uptime < Self.widgetAuthorityReuseSeconds {
+        if let revision = widgetAuthoritySync.reusable(for: key, uptime: uptime) {
             LaunchWork.count("personalWidgetSyncReused")
-            return (cached.revision, true)
+            return (revision, true)
         }
         let revision = try LaunchWork.measure("personalWidgetSync") {
             try performSynchronizePersonalWidgetAuthority(input: input)
         }
-        widgetAuthorityCache = key.map { (key: $0, revision: revision, uptime: uptime) }
+        widgetAuthoritySync.record(revision, for: key, uptime: uptime)
         return (revision, false)
     }
 
@@ -3738,11 +3880,11 @@ final class AppViewModel: ObservableObject {
         guard CloudyWindowAvailability.isAvailable else { return }
         let key = input == nil ? widgetAuthorityKey : nil
         let metadata: [String: CloudyWindowPhotoMetadata]
-        if let key, let cached = cloudyMetadataCache, cached.key == key {
-            metadata = cached.metadata
+        if let cached = cloudyMetadataCache.reusable(for: key, uptime: 0) {
+            metadata = cached
         } else {
             metadata = makeCloudyWindowMetadata(source: input ?? candidateSnapshot(snapshot))
-            cloudyMetadataCache = key.map { (key: $0, metadata: metadata) }
+            cloudyMetadataCache.record(metadata, for: key, uptime: 0)
         }
         // The store still runs each time: it keeps only the photos its
         // current candidates need, and a Widget refill adds candidates.
