@@ -185,6 +185,7 @@ function ownershipStatements(db:D1Database,claim:IdentityErasureClaim):D1Prepare
     one('DELETE FROM family_notebook_admission_events WHERE actor_person_id=?'),
     one('DELETE FROM family_notebook_payer_events WHERE actor_person_id=?'),
     one('DELETE FROM family_notebook_crypto_receipts WHERE actor_person_id=?'),
+    one('DELETE FROM family_notebook_daily_usage WHERE person_id=?'),
     one('DELETE FROM family_notebook_members WHERE person_id=?'),
     // Transient check rows normally disappear in their writer's own batch.
     ...['group_creation_policy_checks','group_creation_environment_checks','group_window_creation_checks'].map(t=>one(`DELETE FROM ${t} WHERE owner_person_id=?`)),
@@ -240,7 +241,7 @@ export async function identityErasureDataIsClear(db:D1Database,personId:string):
       .map(t=>`SELECT 1 FROM ${t} WHERE device_id IN (SELECT id FROM devices)`),
     ...['group_push_subscriptions','group_join_push_subscriptions'].map(t=>`SELECT 1 FROM ${t} WHERE (device_id IN (SELECT id FROM devices) OR space_id IN (SELECT space_id FROM owned))
       AND (expires_at<>0 OR token_ciphertext<>'' OR token_nonce<>'' OR token_digest<>'')`),
-    ...['group_join_requests','group_legacy_bindings','group_report_daily_usage','group_billing_connections','family_notebook_members','family_notebook_crypto_devices','family_notebook_join_requests']
+    ...['group_join_requests','group_legacy_bindings','group_report_daily_usage','group_billing_connections','family_notebook_members','family_notebook_crypto_devices','family_notebook_join_requests','family_notebook_daily_usage']
       .map(t=>`SELECT 1 FROM ${t} WHERE person_id=p.id`),
     ...['family_notebook_crypto_receipts','family_notebook_governance_events','family_notebook_admission_events','family_notebook_payer_events'].map(t=>`SELECT 1 FROM ${t} WHERE actor_person_id=p.id`),
     'SELECT 1 FROM group_moment_hearts WHERE participant_id IN (SELECT participant_id FROM members)',
