@@ -57,7 +57,8 @@ struct MembershipOfferView: View {
     ]
     static let reassurances = [
         "いつでも解約できます",
-        "解約しても、写真・まど・メモは消えません",
+        // 11/14: only what this iPhone keeps; the auto-save copy ends 12 months later.
+        "解約しても、このiPhoneの写真・メモ・まどの写真は消えません",
         "招待した家族は無料で入れます",
     ]
     /// Apple's own instructions; the app never cancels on the person's behalf.
