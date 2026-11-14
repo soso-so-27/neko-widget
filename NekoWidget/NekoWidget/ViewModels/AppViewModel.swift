@@ -2974,7 +2974,7 @@ final class AppViewModel: ObservableObject {
             state: pending.state,
             analyzedRecords: pending.analyzedRecords
         )
-        await saveSnapshot(checkpoint.snapshot, reportErrors: false)
+        await saveSnapshot(checkpoint.snapshot, reportErrors: false, synchronizesWidgetAuthority: false)
     }
 
     /// Produces the one value assigned to `snapshot` for a UI publication. A
@@ -3518,6 +3518,7 @@ final class AppViewModel: ObservableObject {
         do {
             personalReplenishmentTask?.cancel()
             personalPreparationGeneration += 1
+            forgetWidgetAuthoritySync()
             let revision = try PersonalRediscoveryStore.shared.updateEligibility(
                 photoIDs: [], scopeIdentifier: "invalidated", isAuthorized: false, now: .now)
             try await widgetCacheBuilder.clearPersonal(expectedRevision: revision)
@@ -3541,12 +3542,18 @@ final class AppViewModel: ObservableObject {
     }
 
     private func saveSnapshot(reportErrors: Bool) async {
-        await saveSnapshot(snapshot, reportErrors: reportErrors)
+        await saveSnapshot(snapshot, reportErrors: reportErrors, synchronizesWidgetAuthority: true)
     }
 
+    /// `synchronizesWidgetAuthority` is false only for a scan's 1,000-photo
+    /// resume checkpoint (11/14): it carries records not yet published, adds
+    /// photos at most, and the scan's provisional and final results sync the
+    /// Widget authority anyway. Revocations (permission, scope, deletion)
+    /// never arrive through a checkpoint.
     private func saveSnapshot(
         _ value: LibrarySnapshot,
-        reportErrors: Bool
+        reportErrors: Bool,
+        synchronizesWidgetAuthority: Bool
     ) async {
         LaunchWork.count("saveSnapshot")
         guard catIdentityLoadState == .ready else {
@@ -3563,7 +3570,11 @@ final class AppViewModel: ObservableObject {
         do {
             // Publish permission/scope changes before an awaited disk operation
             // can let a Widget intent validate an obsolete candidate pool.
-            _ = try synchronizePersonalWidgetAuthority(input: value)
+            if synchronizesWidgetAuthority {
+                // Only `saveSnapshot(reportErrors:)` asks for it, with the
+                // current snapshot, so the last sync can be reused.
+                _ = try synchronizePersonalWidgetAuthority()
+            }
             try await store.save(value)
         } catch {
             Self.logError(error, category: "storage", operation: "save_snapshot")
@@ -3571,9 +3582,61 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    /// Everything the Widget authority and the cloudy-window metadata are
+    /// derived from (11/14). The same key within 10 minutes means the same
+    /// answer, so the sync is skipped; after launch it was asked for about
+    /// 20 times (album refresh, cache rebuild, each scan stage, each save,
+    /// each Widget refill) with nothing changed in between.
+    private struct WidgetAuthorityKey: Equatable {
+        var version: LibraryPresentationVersion
+        var settings: AppSettings
+        var authorized: Bool
+        var received: Set<String>
+        var day: DateComponents
+        var cloudyWindow: Bool
+    }
+    private static let widgetAuthorityReuseSeconds: TimeInterval = 600
+    private var widgetAuthorityCache: (key: WidgetAuthorityKey, revision: String, uptime: TimeInterval)?
+    private var cloudyMetadataCache: (key: WidgetAuthorityKey, metadata: [String: CloudyWindowPhotoMetadata])?
+
+    private var widgetAuthorityKey: WidgetAuthorityKey {
+        WidgetAuthorityKey(
+            version: presentationVersion,
+            settings: snapshot.settings,
+            authorized: canPresentPhotoCandidates && catIdentityLoadState == .ready,
+            received: receivedPhotoIdentifiers,
+            day: Calendar.current.dateComponents([.year, .month, .day], from: .now),
+            cloudyWindow: CloudyWindowAvailability.isAvailable)
+    }
+
+    /// Forgets the last sync, so the next one runs: the stored authority was
+    /// changed outside it (suspended, cleared).
+    private func forgetWidgetAuthoritySync() {
+        widgetAuthorityCache = nil
+    }
+
+    /// `input` nil means the current snapshot, the only case that may reuse
+    /// the last result. Returns the eligibility revision.
     @discardableResult
     private func synchronizePersonalWidgetAuthority(input: LibrarySnapshot? = nil) throws -> String {
-        try LaunchWork.measure("personalWidgetSync") { try performSynchronizePersonalWidgetAuthority(input: input) }
+        try synchronizePersonalWidgetAuthorityReportingReuse(input: input).revision
+    }
+
+    private func synchronizePersonalWidgetAuthorityReportingReuse(
+        input: LibrarySnapshot? = nil
+    ) throws -> (revision: String, reused: Bool) {
+        let key = input == nil ? widgetAuthorityKey : nil
+        let uptime = ProcessInfo.processInfo.systemUptime
+        if let key, let cached = widgetAuthorityCache, cached.key == key,
+           uptime - cached.uptime < Self.widgetAuthorityReuseSeconds {
+            LaunchWork.count("personalWidgetSyncReused")
+            return (cached.revision, true)
+        }
+        let revision = try LaunchWork.measure("personalWidgetSync") {
+            try performSynchronizePersonalWidgetAuthority(input: input)
+        }
+        widgetAuthorityCache = key.map { (key: $0, revision: revision, uptime: uptime) }
+        return (revision, false)
     }
 
     private func performSynchronizePersonalWidgetAuthority(input: LibrarySnapshot? = nil) throws -> String {
@@ -3620,7 +3683,7 @@ final class AppViewModel: ObservableObject {
             try PersonalRediscoveryStore.shared.updateCatTiers(
                 probablePhotoIDs: personalWidgetProbablePhotoIDs(eligible), now: now)
         }
-        try synchronizeCloudyWindowMetadata(input: curated)
+        try synchronizeCloudyWindowMetadata(input: input == nil ? nil : curated)
         if !bootstrap.isEmpty { reloadAllWidgetTimelines() }
         return revision
     }
@@ -3673,7 +3736,21 @@ final class AppViewModel: ObservableObject {
 
     private func performSynchronizeCloudyWindowMetadata(input: LibrarySnapshot? = nil) throws {
         guard CloudyWindowAvailability.isAvailable else { return }
-        let source = input ?? candidateSnapshot(snapshot)
+        let key = input == nil ? widgetAuthorityKey : nil
+        let metadata: [String: CloudyWindowPhotoMetadata]
+        if let key, let cached = cloudyMetadataCache, cached.key == key {
+            metadata = cached.metadata
+        } else {
+            metadata = makeCloudyWindowMetadata(source: input ?? candidateSnapshot(snapshot))
+            cloudyMetadataCache = key.map { (key: $0, metadata: metadata) }
+        }
+        // The store still runs each time: it keeps only the photos its
+        // current candidates need, and a Widget refill adds candidates.
+        try CloudyWindowStore.shared.synchronize(metadata: metadata,
+            profiles: Dictionary(uniqueKeysWithValues: catProfiles.map { ($0.id.uuidString.lowercased(), $0.displayName) }))
+    }
+
+    private func makeCloudyWindowMetadata(source: LibrarySnapshot) -> [String: CloudyWindowPhotoMetadata] {
         let records = source.assets
         let received = receivedPhotoIdentifiers
         // 11/13: the Widget extension only sees these profile IDs, so the app
@@ -3690,8 +3767,10 @@ final class AppViewModel: ObservableObject {
             )
         } ?? []
         var metadata: [String: CloudyWindowPhotoMetadata] = [:]
+        metadata.reserveCapacity(records.count)
+        let confirmation = catHouseholdIdentity.map(CatProfileConfirmationIndex.init)
         for record in records where !received.contains(record.localIdentifier) {
-            var profiles = catHouseholdIdentity?.confirmedProfileIDs(for: record.localIdentifier) ?? []
+            var profiles = confirmation?.confirmedProfileIDs(for: record.localIdentifier) ?? []
             if let singleCatID, singleCatPhotos.contains(record.localIdentifier) {
                 profiles.insert(singleCatID)
             }
@@ -3701,8 +3780,7 @@ final class AppViewModel: ObservableObject {
                 previouslyShown: record.shownCount > 0 || record.lastShownAt != nil,
                 isProbableCat: !isConfidentCatForPicks(record))
         }
-        try CloudyWindowStore.shared.synchronize(metadata: metadata,
-            profiles: Dictionary(uniqueKeysWithValues: catProfiles.map { ($0.id.uuidString.lowercased(), $0.displayName) }))
+        return metadata
     }
 
     private func reconcilePersonalWidgetReadAuthority() async {
@@ -3711,9 +3789,13 @@ final class AppViewModel: ObservableObject {
 #endif
         guard catIdentityLoadState == .ready,
               !canReadPhotos || readablePhotoProjection.isResolved else { return }
-        defer { reloadAllWidgetTimelines() }
+        var reused = false
+        // Nothing to redraw when the same authority was already published.
+        defer { if !reused { reloadAllWidgetTimelines() } }
         do {
-            let revision = try synchronizePersonalWidgetAuthority()
+            let result = try synchronizePersonalWidgetAuthorityReportingReuse()
+            reused = result.reused
+            let revision = result.revision
             // Only derived personal Widget images are removed. A stale cleanup
             // cannot remove bytes published by a newer permission generation.
             try await widgetCacheBuilder.prunePersonalCache(expectedRevision: revision)
@@ -3727,6 +3809,7 @@ final class AppViewModel: ObservableObject {
 
     private func suspendPersonalWidgetAuthority() -> Bool {
         do {
+            forgetWidgetAuthoritySync()
             try PersonalRediscoveryStore.shared.suspend(now: .now)
             personalReplenishmentTask?.cancel()
             personalPreparationGeneration += 1
