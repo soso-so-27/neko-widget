@@ -2888,9 +2888,10 @@ struct GroupHiddenMembersView: View {
     }
 }
 
-/// 設定「まどと家族の手帳から抜ける」(A1): one state, one sentence, one button.
+/// 設定「まどと家族の手帳のデータを消す」(A1): one state, one sentence, one button.
 /// Named for its weight (11/7): it ends every window and the family notebook,
 /// so it is not taken for leaving only the notebook (that is in the notebook).
+/// 11/14 (App Review 5.1.1(v)): named for deleting, as its sentence says.
 struct GroupIdentityDeletionView: View {
     let client: ProductionGroupWindowClient
     @State private var record: GroupIdentityDeletion?
@@ -2918,7 +2919,7 @@ struct GroupIdentityDeletionView: View {
                     // here; that is said once, on 「アカウントとデータを消す」 (29).
                     Text("まどと家族の手帳から抜けて、あなたが届けた写真・ひとこと・ハートを消します。")
                     Button(role: .destructive) { confirms = true } label: {
-                        WorkingLabel(title: "まどと家族の手帳から抜ける", workingTitle: "抜けています…", working: working)
+                        WorkingLabel(title: "まどと家族の手帳のデータを消す", workingTitle: "消しています…", working: working)
                     }
                         .frame(minHeight: 44)
                         .disabled(working || !loaded)
@@ -2934,14 +2935,14 @@ struct GroupIdentityDeletionView: View {
                 }
             }
         }
-        .confirmationDialog("まどと家族の手帳から抜けますか？", isPresented: $confirms, titleVisibility: .visible) {
-            Button("抜ける", role: .destructive) { Task { await delete() } }
+        .confirmationDialog("まどと家族の手帳のデータを消しますか？", isPresented: $confirms, titleVisibility: .visible) {
+            Button("消す", role: .destructive) { Task { await delete() } }
             Button("キャンセル", role: .cancel) {}
         } message: {
             // 11/7: say that this cannot be undone, as the auto-save deletion does.
             Text("元に戻せません。あなたが作ったまども終わりになります。メンバーのiPhoneに届いた写真は残ります。")
         }
-        .navigationTitle("まどと家族の手帳から抜ける")
+        .navigationTitle("まどと家族の手帳のデータを消す")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             record = try? await client.identityDeletion()

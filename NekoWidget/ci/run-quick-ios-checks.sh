@@ -162,6 +162,7 @@ python3 ci/test-app-limits.py
 python3 ci/test-family-journey.py
 python3 ci/test-when-stuck.py
 python3 ci/test-launch-work.py
+python3 ci/test-review-eye.py
 
 xcrun --sdk macosx swiftc -D DEBUG -parse-as-library \
   -target "$(uname -m)-apple-macos14.0" \
