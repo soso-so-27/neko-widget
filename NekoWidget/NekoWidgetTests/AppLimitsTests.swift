@@ -62,7 +62,10 @@ final class AppLimitsTests: XCTestCase {
         XCTAssertNoThrow(try limited.validate())
         let applied = try limited.applying(to: emptyState(), expectedRevision: 0)
         XCTAssertEqual(applied.profiles.count, 10)
-        XCTAssertEqual(applied.profiles.map(\.id), cats.prefix(10).map(\.id))
+        // Which cats: the first 10 in the file. The household then lists
+        // them by its own rule (createdAt, then ID), as every import did.
+        XCTAssertEqual(Set(applied.profiles.map(\.id)), Set(cats.prefix(10).map(\.id)))
+        XCTAssertFalse(applied.profiles.contains { $0.id == cats[10].id || $0.id == cats[11].id })
         // Reading the same file again changes nothing and duplicates nothing.
         XCTAssertEqual(try limited.applying(to: applied, expectedRevision: applied.mutationRevision), applied)
 
