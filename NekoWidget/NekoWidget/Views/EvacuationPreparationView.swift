@@ -488,14 +488,16 @@ private struct EvacuationSuppliesEditor: View {
                         }
                     }
                 }
+                let suppliesFull = store.plan.supplies.count >= EvacuationPlan.maximumSupplies
                 Button("持ち物を追加", systemImage: "plus") {
                     let item = EvacuationSupply(title: "")
                     if store.update({ $0.supplies.append(item) }) { newItemID = item.id }
-                }.disabled(store.plan.supplies.count >= 200)
+                }.disabled(suppliesFull)
                     .accessibilityIdentifier("evacuation-add-supply")
                 Button("おすすめの持ち物を足す", systemImage: "plus") { addRecommended() }
-                    .disabled(store.plan.supplies.count >= 200)
+                    .disabled(suppliesFull)
                     .accessibilityIdentifier("evacuation-add-recommended")
+                if suppliesFull { LimitNote(AppLimitCopy.items("持ち物", EvacuationPlan.maximumSupplies)) }
             }
             Section("備蓄の目安") {
                 Text("フード・水は最低5日分、できれば7日分が目安です。")
@@ -647,7 +649,9 @@ private struct EvacuationCatsView: View {
                     }
             } else {
                 List {
-                    if couldNotOpen {
+                    if couldNotOpen && store.isFullOfCats {
+                        LimitNote(AppLimitCopy.catsInTool)
+                    } else if couldNotOpen {
                         Text("猫の情報を作れませんでした。上の猫をもう一度押してください。")
                             .font(.footnote).foregroundStyle(.secondary)
                     } else {
@@ -1167,7 +1171,10 @@ private struct EvacuationDestinationsView: View {
             Section {
                 Button("行き先の候補を追加", systemImage: "plus") {
                     store.update { $0.destinations.append(EvacuationDestination()) }
-                }.disabled(store.plan.destinations.count >= 30)
+                }.disabled(store.plan.destinations.count >= EvacuationPlan.maximumDestinations)
+                if store.plan.destinations.count >= EvacuationPlan.maximumDestinations {
+                    LimitNote(AppLimitCopy.items("行き先の候補", EvacuationPlan.maximumDestinations))
+                }
             } footer: { Text("猫を受け入れてもらえるか、前もって自治体や施設に確かめてください。") }
             // 11/8: shown here as on paper; written only in 「この子のこと」.
             ToolCatCareSection(title: "連絡先と病院", lines: store.contactLines(includeEmpty: true),
@@ -1220,7 +1227,7 @@ private struct EvacuationDestinationEditor: View {
                         change { $0.address = new.isEmpty ? nil : new }
                     }), axis: .vertical)
                         .textContentType(.fullStreetAddress)
-                    TextField("電話番号（任意）", text: text(\.telephone))
+                    TextField("電話番号（任意）", text: PhoneNumberInput.binding(text(\.telephone)))
                         .keyboardType(.phonePad)
                         .textContentType(.telephoneNumber)
                     TextField("確かめた受け入れの条件", text: text(\.conditions), axis: .vertical)

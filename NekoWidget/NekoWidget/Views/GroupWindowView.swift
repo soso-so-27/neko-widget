@@ -657,7 +657,9 @@ final class GroupWindowScreenModel: ObservableObject {
             guard pendingHearts[photoID]?.tap == tap else { return }
             pendingHearts[photoID] = nil
             hearts[photoID] = before
-            message = GroupWindowPresentation.message(for: error)
+            message = error as? GroupClientError == .dailyLimit
+                ? GroupWindowPresentation.dailyHeartLimitMessage
+                : GroupWindowPresentation.message(for: error)
         }
     }
 
@@ -2199,13 +2201,13 @@ struct GroupWindowCreateScreen: View {
     private var form: some View {
         Form {
             Section {
-                TextField("例：実家のまど", text: $name)
+                TextField("例：実家のまど", text: VisibleTextInput.binding($name))
                     .focused($typing, equals: .name)
                     .disabled(model.isWorking)
                     .accessibilityIdentifier("group-window-create-name")
             } header: { Text("まどの名前") }
             Section {
-                TextField("例：お母さん", text: $ownerName)
+                TextField("例：お母さん", text: VisibleTextInput.binding($ownerName))
                     .textContentType(.nickname)
                     .focused($typing, equals: .owner)
                     .disabled(model.isWorking)

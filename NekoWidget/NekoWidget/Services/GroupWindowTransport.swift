@@ -161,6 +161,9 @@ enum GroupHTTPRequest {
             case "cannot_remove_owner", "cannot_remove_last_owner_device": throw GroupClientError.cannotRemoveOwner
             case "owner_cannot_leave": throw GroupClientError.ownerCannotLeave
             case "idempotency_conflict": throw GroupClientError.idempotencyConflict
+            // SharingService group-api.ts: group_photo_daily_limit and
+            // group_heart_daily_limit both answer 409 daily_limit.
+            case "daily_limit": throw GroupClientError.dailyLimit
             default: throw GroupClientError.unavailable
             }
         }

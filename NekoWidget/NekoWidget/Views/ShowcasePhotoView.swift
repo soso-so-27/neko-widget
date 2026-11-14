@@ -1120,6 +1120,9 @@ struct ShowcasePreparationView: View {
                         if allEntries.count > ShowcasePhotoStore.maximumCount {
                             Text("追加やおすすめで選び直すには、9枚以下にしてください。")
                                 .font(.footnote).foregroundStyle(.secondary)
+                        } else if allEntries.count == ShowcasePhotoStore.maximumCount {
+                            // 11/14: the 「＋」 tile is gone at 9; say why.
+                            LimitNote(AppLimitCopy.items("見せる写真", ShowcasePhotoStore.maximumCount, unit: "枚"))
                         }
                         if shown.count < allEntries.count {
                             Text("表示できない写真は省いています")

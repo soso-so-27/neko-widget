@@ -1592,7 +1592,7 @@ struct FamilyNotebookJoinView: View {
                         .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 } else {
                     if sharing.service.sendsInvitations {
-                        TextField("家族に表示するあなたの名前", text: $displayName)
+                        TextField("家族に表示するあなたの名前", text: VisibleTextInput.binding($displayName))
                             .textFieldStyle(.roundedBorder)
                             .focused($typingName)
                             .disabled(sharing.isWorking)
@@ -1655,7 +1655,7 @@ struct FamilyNotebookNameView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("あなたの名前", text: $name)
+                    TextField("あなたの名前", text: VisibleTextInput.binding($name))
                 } footer: { Text("書いた人の名前として、家族に表示されます。") }
                 Button("この名前で手帳を作る") {
                     guard let valid = try? GroupWire.name(name) else { return }

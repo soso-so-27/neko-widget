@@ -484,7 +484,23 @@ struct CatCareState: Codable, Equatable, Sendable {
 
 enum CatCareLimits {
     static let textCharacters = 500
-    static let nameCharacters = 40
+    /// 11/14: one rule for a cat's name, the same as CatNameText (20; an
+    /// emoji is one). Names written before may be longer and are kept up to
+    /// `storedNameCharacters` when copied in from a tool.
+    static let nameCharacters = 20
+    static let storedNameCharacters = 80
+    /// 11/14: a telephone number: digits, spaces, ＋, －, ( and ), at most 20.
+    /// A value saved before is kept as it is.
+    static let phoneCharacters = 20
+
+    static func isPhoneCharacter(_ character: Character) -> Bool {
+        guard character.unicodeScalars.count == 1, let scalar = character.unicodeScalars.first else { return false }
+        switch scalar.value {
+        case 0x30...0x39, 0xFF10...0xFF19: return true // 0-9, ０-９
+        case 0x20, 0x3000, 0x2B, 0xFF0B, 0x2D, 0xFF0D, 0x2212, 0x30FC, 0x28, 0x29, 0xFF08, 0xFF09: return true
+        default: return false
+        }
+    }
     static let maximumWeights = 500
     static let maximumMedications = 100
     static let maximumVaccinations = 100
@@ -669,7 +685,7 @@ enum CatCareImport {
         var r = state.cats[index]
         guard r.deletedAt == nil else { return }
         if r.profileID == nil { r.profileID = source.profileID }
-        fill(&r.name, source.name, by: by, now: now, limit: CatCareLimits.nameCharacters)
+        fill(&r.name, source.name, by: by, now: now, limit: CatCareLimits.storedNameCharacters)
         fill(&r.marks, source.marks, by: by, now: now)
         fill(&r.conditions, source.conditions, by: by, now: now)
         fill(&r.water, source.water, by: by, now: now)
