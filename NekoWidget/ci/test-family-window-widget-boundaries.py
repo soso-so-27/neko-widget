@@ -8813,11 +8813,12 @@ class CatHomeTab1112Tests(unittest.TestCase):
         # 11/13: the scrim's stops are pinned in CatHomePolish1113Tests (lighter).
         self.assertIn("LinearGradient(stops: [.init(color: .black.opacity(0), location: 0.5),", hero)
         self.assertIn("Color(.systemGroupedBackground).opacity(0)", hero)
-        # The name: large and heavy, scaling with a cap, two lines at accessibility sizes.
+        # The name: large and heavy, scaling with a cap; 11/14: a size ladder
+        # within 62% of the width, two lines at the smallest (pinned in
+        # ci/test-cat-home-care.py).
         self.assertIn("@ScaledMetric(relativeTo: .largeTitle) private var nameSize: CGFloat = 56", hero)
-        self.assertIn(".font(.system(size: min(nameSize, 84), weight: .heavy))", hero)
-        self.assertIn(".lineLimit(typeSize.isAccessibilitySize ? 2 : 1)", hero)
-        self.assertIn(".minimumScaleFactor(0.5)", hero)
+        self.assertIn(".font(.system(size: CGFloat(fit.size), weight: .heavy))", hero)
+        self.assertIn("text.lineLimit(2)", hero)
         self.assertIn(".accessibilityLabel(facts.spoken)", hero)
         # About 46% of the screen, less on short screens (iPhone SE).
         metrics = section(self.home, "struct CatHomeMetrics {", "/// One cat's page:")
@@ -9014,7 +9015,8 @@ class CatHomePolish1113Tests(unittest.TestCase):
         # (pinned in ci/test-cat-home-care.py), 設定 stays top right.
         self.assertNotIn("in: Capsule())", self.home)
         hero = section(self.home, "private struct CatHomeHero: View {", "/// The tools under the photo:")
-        self.assertIn(".frame(minHeight: 44)", hero)
+        # 11/14: the menu is a round button after the name, 44 points to tap.
+        self.assertIn("let target = max(circle, 44)", hero)
         self.assertIn('.accessibilityIdentifier("tools-cat-menu")', hero)
         bar = section(self.home, "    private var topBar: some View {", "    private func catMenuItems(")
         self.assertIn(".background(.ultraThinMaterial, in: Circle())", bar)

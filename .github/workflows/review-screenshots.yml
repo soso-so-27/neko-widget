@@ -13,6 +13,10 @@ on:
         type: choice
         default: all
         options: [all, light, dark, se]
+      only:
+        description: "撮るテストだけ（カンマ区切りの ReviewScreenshotUITests のメソッド名、例 test04ToolsCatCareAndVet,test14CatHomeStress）。空欄は全部"
+        type: string
+        default: ""
   # Also reachable as app-store-screenshots.yml with mode=review, which is
   # already on the default branch and so can be dispatched on any branch.
   workflow_call:
@@ -20,6 +24,9 @@ on:
       sets:
         type: string
         default: all
+      only:
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -41,6 +48,8 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       REVIEW_SET: ${{ matrix.set }}
       TEST_RUNNER_REVIEW_SET: ${{ matrix.set }}
+      # Optional: only these test methods (comma-separated); empty runs all.
+      REVIEW_ONLY: ${{ inputs.only }}
     steps:
       - name: Check out repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -181,11 +190,26 @@ jobs:
           PY
           class=NekoWidgetUITests/ReviewScreenshotUITests
           if [[ "$REVIEW_SET" == se ]]; then
-            methods=(test04ToolsCatCareAndVet test05ToolsLostAndCare test08PlusOffer test09Settings test12Onboarding)
+            methods=(test04ToolsCatCareAndVet test05ToolsLostAndCare test08PlusOffer test09Settings test12Onboarding
+                     test14CatHomeStress)
           else
             methods=(test01Photos test02Windows test03Albums test04ToolsCatCareAndVet test05ToolsLostAndCare
                      test06ToolsEvacuationAndShowcase test07LostFlyer test08PlusOffer test09Settings
-                     test12Onboarding test13ValidationError)
+                     test12Onboarding test13ValidationError test14CatHomeStress)
+          fi
+          # `only`: just the named methods (each must be one of this class's).
+          if [[ -n "${REVIEW_ONLY// /}" ]]; then
+            IFS=',' read -r -a requested <<< "${REVIEW_ONLY// /}"
+            methods=()
+            for method in "${requested[@]}"; do
+              [[ -z "$method" ]] && continue
+              if ! grep -qE "func ${method}\(\)" NekoWidgetUITests/ReviewScreenshotUITests.swift; then
+                echo "::error::Unknown ReviewScreenshotUITests method: $method"
+                exit 1
+              fi
+              methods+=("$method")
+            done
+            echo "Only: ${methods[*]}"
           fi
           run_tests() {
             local attempt="$1"; shift
@@ -235,7 +259,7 @@ jobs:
           mkdir -p "$WORK/shots"
           if (( ${#bundles[@]} > 0 )); then
             python3 ci/collect-review-screenshots.py collect --set "$REVIEW_SET" \
-              --output "$WORK/shots" "${bundles[@]}"
+              --only "${REVIEW_ONLY// /}" --output "$WORK/shots" "${bundles[@]}"
           else
             printf 'MISSING   %s/*  no result bundle (the Simulator or build did not run)\n' \
               "$REVIEW_SET" > "$WORK/shots/index-$REVIEW_SET.txt"

@@ -176,22 +176,133 @@ class NameIsTheCatMenu(unittest.TestCase):
         self.assertNotIn("current: nil", HOME)
 
     def test_the_name_is_the_menu(self):
+        # 11/14 (owner, on device): a Menu whose label was the big name showed
+        # the system's lifted rectangle around it when tapped. The name is now
+        # plain text and the menu is a small round chevron button after it,
+        # so the system highlight is a small circle.
         hero = block(HOME, "private struct CatHomeHero: View {")
-        menu = block(hero, "private var nameMenu: some View {")
+        menu = block(hero, "private var menuButton: some View {")
         self.assertIn("Menu { menu } label: {", menu)
-        self.assertIn("HStack(alignment: .firstTextBaseline", menu)
-        self.assertIn(".font(.system(size: min(nameSize, 84), weight: .heavy))", menu)
-        self.assertIn(".minimumScaleFactor(0.5)", menu)
         self.assertIn('Image(systemName: "chevron.down")', menu)
-        self.assertIn(".font(.system(size: (min(nameSize, 84) * 0.28).rounded(), weight: .semibold))", menu)
-        self.assertIn(".foregroundStyle(.white.opacity(0.85))", menu)
-        self.assertIn(".fixedSize()", menu)
-        self.assertIn(".frame(minHeight: 44)", menu)
+        self.assertIn("let circle = min(menuCircle, 40)", menu)
+        self.assertIn("let target = max(circle, 44)", menu)
+        self.assertIn(".background(.ultraThinMaterial, in: Circle())", menu)
+        self.assertIn(".contentShape(Circle())", menu)
+        self.assertIn(".contentShape(.contextMenuPreview, Circle().inset(by: (target - circle) / 2))", menu)
+        self.assertNotIn("Rectangle()", menu)
+        self.assertNotIn("Text(cat.name)", menu)
+        self.assertIn(".menuStyle(.button)", menu)
+        self.assertIn(".buttonStyle(.plain)", menu)
+        self.assertIn(".menuIndicator(.hidden)", menu)
         self.assertIn('.accessibilityLabel("猫を切り替える")', menu)
         self.assertIn(".accessibilityValue(cat.name)", menu)
         self.assertIn('.accessibilityIdentifier("tools-cat-menu")', menu)
-        # The name is drawn once, inside the menu.
-        self.assertEqual(hero.count("Text(cat.name)"), 1)
+        self.assertIn("@ScaledMetric(relativeTo: .body) private var menuCircle: CGFloat = 30", hero)
+        # The name is drawn once, as plain text the photo's summary reads.
+        self.assertEqual(hero.count("Text(name)"), 1)
+        self.assertNotIn("Text(cat.name)", hero)
+        name = block(hero, "private func nameText(_ name: String, fit: CatHomeHeroLayout.NameFit, maxWidth: CGFloat) -> some View {")
+        self.assertIn(".font(.system(size: CGFloat(fit.size), weight: .heavy))", name)
+        self.assertIn(".accessibilityHidden(true)", name)
+        self.assertNotIn("Menu", name)
+        self.assertNotIn("nameMenu", HOME)
+
+    def test_the_chevron_sits_on_the_middle_of_the_name(self):
+        # Centred on the glyphs of the name's last line, not on its baseline.
+        hero = block(HOME, "private struct CatHomeHero: View {")
+        row = block(hero, "private func nameRow(_ fit: CatHomeHeroLayout.NameFit, maxWidth: CGFloat) -> some View {")
+        self.assertIn("let gap = max((size * 0.12).rounded(), 6)", row)
+        self.assertIn("HStack(alignment: .lastTextBaseline, spacing: gap) {", row)
+        # Two lines: just after the end of the last line (measured with TextKit).
+        self.assertIn("ZStack(alignment: Alignment(horizontal: .leading, vertical: .lastTextBaseline)) {", row)
+        self.assertIn("let lines = nameLines(size: size, maxWidth: maxWidth)", row)
+        self.assertIn("nameText(lines.text, fit: fit, maxWidth: maxWidth)", row)
+        self.assertIn(".alignmentGuide(.leading) { _ in -(lines.lastWidth + gap) }", row)
+        self.assertEqual(row.count("centred(menuButton, size: size)"), 2)
+        centred = block(hero, "private func centred<Content: View>(_ content: Content, size: CGFloat) -> some View {")
+        self.assertIn(".alignmentGuide(.lastTextBaseline) { dimensions in", centred)
+        self.assertIn("dimensions[VerticalAlignment.center] + size * CGFloat(CatHomeHeroLayout.glyphCentre)", centred)
+        # The drawn lines are TextKit's lines (an explicit break), so the
+        # button's place matches the text as drawn.
+        last = block(hero, "private func nameLines(size: CGFloat, maxWidth: CGFloat) -> (text: String, lastWidth: CGFloat) {")
+        self.assertIn("paragraph.lineBreakStrategy = .standard", last)
+        self.assertIn("container.lineFragmentPadding = 0", last)
+        self.assertIn("CGSize(width: max(maxWidth - 4, 1), height: .greatestFiniteMagnitude)", last)
+        self.assertIn('return (first + "\\n" + rest, last)', last)
+        self.assertNotIn("firstTextBaseline", hero)
+        self.assertIn("static let glyphCentre = 0.36", CORE)
+
+    def test_names_of_any_length_fit_the_ladder(self):
+        # 11/14: at most 62% of the photo's width; 56 → 48 → 40 → 34 (scaled
+        # by Dynamic Type up to 1.5×), then two lines at the smallest.
+        hero = block(HOME, "private struct CatHomeHero: View {")
+        words = block(hero, "private var words: some View {")
+        self.assertIn("(metrics.width * CGFloat(CatHomeHeroLayout.nameWidthShare)).rounded(.down)", words)
+        self.assertIn("let fit = nameFit(maxWidth: nameWidth)", words)
+        fit = block(hero, "private func nameFit(maxWidth: CGFloat) -> CatHomeHeroLayout.NameFit {")
+        self.assertIn("CatHomeHeroLayout.nameFit(scale: Double(scale), maxWidth: Double(maxWidth))", fit)
+        # iPhone SE: the ladder does not grow with the text size (45_home_text_ax3).
+        self.assertIn("metrics.heroHeight < CatHomeHeroLayout.shortHero ? min(nameSize / 56, 1) : nameSize / 56", fit)
+        self.assertIn("static let shortHero: CGFloat = 320", CORE)
+        self.assertIn("UIFont.systemFont(ofSize: CGFloat(size), weight: .heavy)", fit)
+        name = block(hero, "private func nameText(_ name: String, fit: CatHomeHeroLayout.NameFit, maxWidth: CGFloat) -> some View {")
+        self.assertIn("text.lineLimit(1).fixedSize()", name)
+        self.assertIn("text.lineLimit(2)", name)
+        self.assertIn(".frame(width: maxWidth, alignment: .leading)", name)
+        self.assertNotIn("minimumScaleFactor(0.5)", hero)
+        for pinned in ("static let nameLadder: [Double] = [56, 48, 40, 34]", "static let nameScaleCap = 1.5",
+                       "static let nameWidthShare = 0.62", "return NameFit(size: size, lines: 1)",
+                       "return NameFit(size: sizes.last ?? nameLadder[nameLadder.count - 1], lines: 2)"):
+            self.assertIn(pinned, CORE)
+        # The line wraps to two lines before it shrinks, never below 0.85.
+        self.assertIn(".lineLimit(typeSize.isAccessibilitySize ? 3 : 2)", words)
+        self.assertIn(".minimumScaleFactor(0.85)", words)
+        self.assertIn(".fixedSize(horizontal: false, vertical: true)", words)
+        self.assertIn("func testNameLadderKeepsShortNamesAtFiftySix()", TESTS)
+        self.assertIn("func testNameLadderScalesWithTextSizeUpToTheCap()", TESTS)
+
+    def test_dots_cap_at_seven(self):
+        hero = block(HOME, "private struct CatHomeHero: View {")
+        words = block(hero, "private var words: some View {")
+        self.assertIn("CatHomePageDots(count: pageCount, current: pageIndex)", words)
+        self.assertIn("static let maxDots = 7", CORE)
+        self.assertIn("ForEach(CatHomeHeroLayout.dots(count: count, current: current), id: \\.index) { dot in", HOME)
+        self.assertIn("func testPageDotsCapAtSevenWithShrinkingEnds()", TESTS)
+
+    def test_pages_are_cards_only_while_they_move(self):
+        # 11/14: at rest exactly as before; while moving, each page scales to
+        # 0.92 at most with continuous corners up to 32 painted in the page
+        # background (no clip, no opacity, no blur); Reduce Motion: none.
+        pager = block(HOME, "private func pager(_ cats: [CatHomeCat], current: CatHomeCat, metrics: CatHomeMetrics) -> some View {")
+        self.assertIn(".modifier(CatHomeCardWhileMoving(enabled: !reduceMotion && cats.count > 1))", pager)
+        self.assertIn(".scrollTransition(.interactive, axis: .horizontal) { content, phase in", pager)
+        self.assertIn("content.scaleEffect(phase.isIdentity || reduceMotion", pager)
+        self.assertIn("? 1 : 1 - shrink * CGFloat(min(abs(phase.value), 1)))", pager)
+        for gone in (".opacity(", ".blur(", ".offset(", "rotation"):
+            self.assertNotIn(gone, pager)
+        self.assertIn(".scrollTargetBehavior(.paging)", pager)
+        self.assertIn(".scrollPosition(id: $pageID)", pager)
+        self.assertIn(".scrollDisabled(cats.count < 2)", pager)
+        card = block(HOME, "private struct CatHomeCardWhileMoving: ViewModifier {")
+        self.assertIn("static let shrink: CGFloat = 0.08", card)
+        self.assertIn("static let radius: CGFloat = 32", card)
+        self.assertIn("CatHomeCardCorners(radius: Self.radius * progress)", card)
+        self.assertIn(".fill(Color(.systemGroupedBackground), style: FillStyle(eoFill: true))", card)
+        self.assertIn(".allowsHitTesting(false)", card)
+        self.assertIn("return moved < 0.01 ? 0 : (moved * 100).rounded() / 100", card)
+        self.assertNotIn(".mask", card)
+        self.assertNotIn(".clipShape", card)
+        corners = block(HOME, "private struct CatHomeCardCorners: Shape {")
+        self.assertIn("guard radius > 0 else { return Path() }", corners)
+        self.assertIn("style: .continuous", corners)
+        self.assertIn("@Environment(\\.accessibilityReduceMotion) private var reduceMotion", HOME)
+
+    def test_a_settled_page_change_ticks_once(self):
+        pager = block(HOME, "private func pager(_ cats: [CatHomeCat], current: CatHomeCat, metrics: CatHomeMetrics) -> some View {")
+        self.assertIn(".sensoryFeedback(.selection, trigger: pageID) { old, new in", pager)
+        self.assertIn("old != nil && new != nil && old != new", pager)
+        # The page is still kept once the pages rest.
+        self.assertIn("try? await Task.sleep(for: .milliseconds(700))", HOME)
 
     def test_the_summary_is_read_once_and_the_menu_on_its_own(self):
         hero = block(HOME, "private struct CatHomeHero: View {")
@@ -286,6 +397,26 @@ class Captures(unittest.TestCase):
         self.assertIn("!visits.contains(where: { $0.catID == catID })", seed)
         self.assertNotIn("PhotoMemoryNoteStore", seed)
         self.assertIn("await AppStoreScreenshotFixture.seedCatHomeCareIfRequested()", FIXTURE)
+
+    def test_stress_captures_are_synthetic_and_debug_only(self):
+        # 11/14: the この子 page under stress for the designer, light, dark and SE.
+        test = block(REVIEW, "func test14CatHomeStress() {")
+        for name in ("40_home_name_1", "40_home_name_30", "41_home_menu_open", "41b_home_menu_open_1cat",
+                     "42_home_cats_8", "43_home_photo_bright", "43_home_photo_portrait_small",
+                     "44_home_rows_long_values", "44_home_searching", "44_home_departed",
+                     "45_home_text_ax3", "46_home_mid_swipe"):
+            self.assertIn(f'shot("{name}", app)', test)
+            self.assertIn(f'"{name}"', COLLECT)
+        self.assertIn("STRESS_SCREENS", COLLECT.split("SE_SCREENS = (", 1)[1].split("EXPECTED", 1)[0])
+        stress = FIXTURE.split("enum CatHomeStress {", 1)[1]
+        self.assertTrue(FIXTURE.startswith("#if DEBUG"))
+        self.assertTrue(FIXTURE.rstrip().endswith("#endif"))
+        self.assertIn("CommandLine.arguments.contains(AppStoreScreenshotFixture.launchArgument)", stress)
+        # Code-drawn cats only; one ID range per scenario.
+        self.assertIn("makeCatIllustration(variant:", stress)
+        self.assertNotIn("OwnerStoreCaptureFixture", stress)
+        self.assertIn('String(format: "C47E%04X-0000-4000-8000-%012X", scenario & 0xFFFF, index)', stress)
+        self.assertIn("await AppStoreScreenshotFixture.CatHomeStress.seedIfRequested()", FIXTURE)
 
 
 if __name__ == "__main__":

@@ -180,3 +180,69 @@ enum CatHomeCareCore {
         utc.date(from: DateComponents(year: day.year, month: day.month, day: day.day))
     }
 }
+
+// MARK: - 「この子」 page: the name and the dots on the photo (11/14)
+
+/// Pure layout rules of the hero, pinned by unit tests: the name's size
+/// ladder and the page dots beyond seven cats.
+enum CatHomeHeroLayout {
+    /// The name's sizes at the default text size, largest first.
+    static let nameLadder: [Double] = [56, 48, 40, 34]
+    /// Dynamic Type scales the ladder up to this (56 → 84, as before).
+    static let nameScaleCap = 1.5
+    /// The name takes at most this share of the photo's width at rest.
+    static let nameWidthShare = 0.62
+    /// The middle of the name's glyphs above its baseline, as a share of
+    /// its size (kana, kanji and capitals alike); the menu button sits there.
+    static let glyphCentre = 0.36
+    /// A photo shorter than this (iPhone SE, 40% of a short screen) keeps
+    /// the ladder at its default sizes at every text size.
+    static let shortHero: CGFloat = 320
+
+    struct NameFit: Equatable {
+        var size: Double
+        var lines: Int
+    }
+
+    /// The largest ladder size whose one-line width (`width(size)`) fits
+    /// `maxWidth`; else two lines at the smallest size.
+    static func nameFit(scale: Double, maxWidth: Double, width: (Double) -> Double) -> NameFit {
+        let factor = min(max(scale, 0.5), nameScaleCap)
+        let sizes = nameLadder.map { ($0 * factor).rounded() }
+        for size in sizes where width(size) <= maxWidth {
+            return NameFit(size: size, lines: 1)
+        }
+        return NameFit(size: sizes.last ?? nameLadder[nameLadder.count - 1], lines: 2)
+    }
+
+    struct Dot: Equatable {
+        var index: Int
+        /// 1, or smaller at an end that has more pages beyond it.
+        var scale: Double
+    }
+
+    /// At most this many dots, as the system page control.
+    static let maxDots = 7
+
+    /// The dots for `count` pages (none for one page): every page up to
+    /// seven; beyond that the seven around `current`, the end dot at half
+    /// size and the one next to it at three quarters on a side with more
+    /// pages beyond. The current page is always a full dot.
+    static func dots(count: Int, current: Int) -> [Dot] {
+        guard count > 1 else { return [] }
+        let current = min(max(current, 0), count - 1)
+        guard count > maxDots else { return (0..<count).map { Dot(index: $0, scale: 1) } }
+        let start = min(max(current - maxDots / 2, 0), count - maxDots)
+        let end = start + maxDots
+        return (start..<end).map { index in
+            var scale = 1.0
+            if start > 0 {
+                if index == start { scale = 0.5 } else if index == start + 1 { scale = 0.75 }
+            }
+            if end < count {
+                if index == end - 1 { scale = 0.5 } else if index == end - 2 { scale = 0.75 }
+            }
+            return Dot(index: index, scale: index == current ? 1 : scale)
+        }
+    }
+}

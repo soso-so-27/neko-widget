@@ -50,6 +50,12 @@ enum AppStoreScreenshotFixture {
     private static var imageCache: [String: UIImage] = [:]
 
     static func image(for localIdentifier: String) -> UIImage? {
+        if localIdentifier.hasPrefix(CatHomeStress.photoPrefix) {
+            if let cached = imageCache[localIdentifier] { return cached }
+            let image = CatHomeStress.image(for: localIdentifier)
+            imageCache[localIdentifier] = image
+            return image
+        }
         if let number = Int(localIdentifier.replacingOccurrences(
             of: "app-store-screenshot-fixture-page-", with: "")),
            localIdentifier.hasPrefix("app-store-screenshot-fixture-page-"),
@@ -76,6 +82,7 @@ enum AppStoreScreenshotFixture {
     }
 
     static func isFixtureIdentifier(_ localIdentifier: String) -> Bool {
+        if localIdentifier.hasPrefix(CatHomeStress.photoPrefix) { return true }
         if localIdentifier.hasPrefix("app-store-screenshot-fixture-page-"),
            let number = Int(localIdentifier.dropFirst("app-store-screenshot-fixture-page-".count)),
            (1...6_000).contains(number) { return true }
@@ -500,6 +507,9 @@ struct AppStoreScreenshotFixtureRootView: View {
         }
     }
     private var catProfiles: CatProfilesPresentation {
+        if AppStoreScreenshotFixture.CatHomeStress.isRequested {
+            return CatProfilesPresentation(profiles: AppStoreScreenshotFixture.CatHomeStress.profiles())
+        }
         guard ["cats", "rediscovery", "tool-profiles"].contains(widgetRecoveryCase ?? "") else { return CatProfilesPresentation(profiles: addedToolProfiles) }
         let all = photos.map {
             CatProfilePhotoPresentation(localIdentifier: $0.localIdentifier,
@@ -636,7 +646,8 @@ struct AppStoreScreenshotFixtureRootView: View {
 
     private var productScreens: some View {
         mainTabContent
-        .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--ux-large-text") ? .accessibility5 : .large)
+        .environment(\.dynamicTypeSize, AppStoreScreenshotFixture.CatHomeStress.typeSize
+                     ?? (CommandLine.arguments.contains("--ux-large-text") ? .accessibility5 : .large))
         .preferredColorScheme(CommandLine.arguments.contains("--tools-hub-dark") ? .dark
                               : CommandLine.arguments.contains("--tools-hub-light") ? .light : nil)
         .accessibilityIdentifier("app-store-screenshot-fixture-root")
@@ -644,7 +655,9 @@ struct AppStoreScreenshotFixtureRootView: View {
             AppStoreScreenshotFixture.seedCatCareIfRequested()
             OwnerStoreCaptureFixture.prepareWidgets()
             await AppStoreScreenshotFixture.seedCatHomeCareIfRequested()
+            await AppStoreScreenshotFixture.CatHomeStress.seedIfRequested()
         }
+        .task { await AppStoreScreenshotFixture.CatHomeStress.parkMidSwipeIfRequested() }
         .onReceive(NotificationCenter.default.publisher(for: PhotoLibraryReadingPosition.diagnosticNotification)) { _ in
             guard widgetRecoveryCase == "paging",
                   ProcessInfo.processInfo.environment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] != nil else { return }
@@ -1596,5 +1609,247 @@ private struct ToolProfileDataCheckView: View {
     }
 }
 
+
+// MARK: - The この子 page under stress (review captures only)
+
+extension AppStoreScreenshotFixture {
+    /// `--cat-home-stress` (with the screenshot fixture): the この子 page's
+    /// cats as a review capture asks for them, to see the page in many
+    /// situations: names of any length, one to eight cats, bright, dark and
+    /// low-resolution key photos, no rows or every row, a cat being searched
+    /// for, a departed cat, larger text. Code-drawn cats and sample names
+    /// only; every scenario has its own cat IDs, so what one capture writes
+    /// into the stores never shows in another. DEBUG only.
+    ///
+    /// - `--cat-home-stress-names A|B|C`: one cat per name, in order.
+    /// - `--cat-home-stress-scenario N`: the scenario number (its cat IDs).
+    /// - `--cat-home-stress-photo normal|bright|dark|facelow|small`: the
+    ///   first cat's key photo.
+    /// - `--cat-home-stress-rows none|basic|all|long`: what the first cat
+    ///   has written (none: no dates, no record).
+    /// - `--cat-home-stress-searching`, `--cat-home-stress-departed`.
+    /// - `--cat-home-stress-text xl|ax3`: the text size.
+    /// - `--cat-home-stress-mid-swipe`: the pager is parked between the
+    ///   first two pages (UI tests cannot capture during a held drag).
+    @MainActor
+    enum CatHomeStress {
+        static let argument = "--cat-home-stress"
+        static let photoPrefix = "app-store-screenshot-fixture-stress-"
+
+        static var isRequested: Bool {
+            CommandLine.arguments.contains(AppStoreScreenshotFixture.launchArgument)
+                && CommandLine.arguments.contains(argument)
+        }
+
+        private static func value(_ flag: String) -> String? {
+            let arguments = CommandLine.arguments
+            guard let index = arguments.firstIndex(of: flag), index + 1 < arguments.count else { return nil }
+            return arguments[index + 1]
+        }
+
+        static var names: [String] {
+            let names = (value("--cat-home-stress-names") ?? "むぎ").components(separatedBy: "|")
+            return names.isEmpty ? ["むぎ"] : names
+        }
+        static var photo: String { value("--cat-home-stress-photo") ?? "normal" }
+        static var rows: String { value("--cat-home-stress-rows") ?? "basic" }
+        static var scenario: Int { Int(value("--cat-home-stress-scenario") ?? "") ?? 0 }
+        static var searching: Bool { CommandLine.arguments.contains("--cat-home-stress-searching") }
+        static var departed: Bool { CommandLine.arguments.contains("--cat-home-stress-departed") }
+        static var parksMidSwipe: Bool { CommandLine.arguments.contains("--cat-home-stress-mid-swipe") }
+
+        static var typeSize: DynamicTypeSize? {
+            guard isRequested else { return nil }
+            switch value("--cat-home-stress-text") {
+            case "xl": return .xLarge
+            case "ax3": return .accessibility3
+            default: return nil
+            }
+        }
+
+        /// The cat's profile ID: one range per scenario.
+        static func identifier(_ index: Int) -> String {
+            String(format: "C47E%04X-0000-4000-8000-%012X", scenario & 0xFFFF, index)
+        }
+
+        static func profiles() -> [CatProfilePresentation] {
+            let now = Date(), calendar = Calendar.nekoGregorian
+            // 4歳4か月 and 1,560 days together, never today's birthday.
+            let birthday = calendar.date(byAdding: DateComponents(year: -4, month: -4, day: -3), to: now) ?? now
+            let adoption = calendar.date(byAdding: .day, value: -1_560, to: now) ?? now
+            return names.enumerated().map { index, name in
+                let id = identifier(index)
+                let kind = index == 0 ? photo : "normal"
+                let cover = CatProfilePhotoPresentation(localIdentifier: "\(photoPrefix)\(kind)-\(index)",
+                                                        assignedProfileIdentifiers: [id])
+                var profile = CatProfilePresentation(identifier: id, name: name, coverPhoto: cover,
+                                                     confirmedPhotos: [cover])
+                if rows != "none" {
+                    profile.lifeDates = CatProfileLifeDatesPresentation(
+                        birthday: CatProfileLifeReferencePresentation(kind: .birthday, date: birthday,
+                                                                      isApproximate: false),
+                        adoptionDay: CatProfileLifeReferencePresentation(kind: .adoptionDay, date: adoption,
+                                                                         isApproximate: false),
+                        primaryKind: .birthday)
+                }
+                return profile
+            }
+        }
+
+        /// The key photos: `<prefix><kind>-<index>`.
+        static func image(for localIdentifier: String) -> UIImage? {
+            guard localIdentifier.hasPrefix(photoPrefix) else { return nil }
+            let parts = localIdentifier.dropFirst(photoPrefix.count).split(separator: "-")
+            guard parts.count == 2, let index = Int(parts[1]) else { return nil }
+            switch String(parts[0]) {
+            case "normal":
+                return AppStoreScreenshotFixture.makeCatIllustration(variant: index)
+            case "bright":
+                // Near white to the very top: the status bar, 設定 and the name.
+                return AppStoreScreenshotFixture.makeCatIllustration(variant: 0, palette: (
+                    UIColor(white: 1, alpha: 1), UIColor(red: 0.93, green: 0.91, blue: 0.87, alpha: 1),
+                    UIColor(white: 0.99, alpha: 1), UIColor(red: 0.99, green: 0.98, blue: 0.95, alpha: 1)),
+                    muzzle: UIColor(white: 0.98, alpha: 1))
+            case "dark":
+                return AppStoreScreenshotFixture.makeCatIllustration(variant: 0, palette: (
+                    UIColor(red: 0.05, green: 0.05, blue: 0.06, alpha: 1),
+                    UIColor(red: 0.11, green: 0.11, blue: 0.12, alpha: 1),
+                    UIColor(red: 0.16, green: 0.16, blue: 0.18, alpha: 1),
+                    UIColor(red: 0.03, green: 0.03, blue: 0.04, alpha: 1)),
+                    muzzle: UIColor(red: 0.17, green: 0.17, blue: 0.19, alpha: 1))
+            case "facelow":
+                // The cat low in a wide frame: its face where the name sits.
+                let cat = AppStoreScreenshotFixture.makeCatIllustration(variant: 1)
+                let format = UIGraphicsImageRendererFormat()
+                format.opaque = true
+                format.scale = 1
+                return UIGraphicsImageRenderer(size: CGSize(width: 1_400, height: 1_000), format: format).image { _ in
+                    UIColor(red: 0.80, green: 0.86, blue: 0.90, alpha: 1).setFill()
+                    UIRectFill(CGRect(x: 0, y: 0, width: 1_400, height: 1_000))
+                    cat.draw(in: CGRect(x: 0, y: 380, width: 900, height: 900))
+                }
+            case "small":
+                // 90 × 160 pixels, upscaled by the page.
+                let cat = AppStoreScreenshotFixture.makeCatIllustration(variant: 3)
+                let format = UIGraphicsImageRendererFormat()
+                format.opaque = true
+                format.scale = 1
+                return UIGraphicsImageRenderer(size: CGSize(width: 90, height: 160), format: format).image { _ in
+                    cat.draw(in: CGRect(x: -35, y: 0, width: 160, height: 160))
+                }
+            default:
+                return nil
+            }
+        }
+
+        /// What the scenario's cats have written: a sex for every cat (so
+        /// the line reads 「オス・4歳4か月　／　うちに来て 1,560日」), then the
+        /// first cat's rows, search and farewell. Written once.
+        static func seedIfRequested() async {
+            guard isRequested, rows != "none" else { return }
+            let calendar = Calendar.nekoGregorian, now = Date()
+            let today = CatCareDay(date: now, calendar: calendar)
+            let rows = self.rows
+            for (index, name) in names.enumerated() {
+                guard let profileID = UUID(uuidString: identifier(index)),
+                      let record = CatCareStore.shared.ensureRecord(profileID: profileID, name: name) else { continue }
+                CatCareStore.shared.update { state in
+                    guard let at = state.cats.firstIndex(where: { $0.catID == record.catID }) else { return }
+                    let by = state.deviceID
+                    if state.cats[at].sex == nil {
+                        state.cats[at].sex = CatCareStamped(value: index % 2 == 0 ? CatCareSex.male : CatCareSex.female,
+                                                            editedAt: now, editedBy: by)
+                    }
+                    guard index == 0, state.cats[at].weights.isEmpty, rows == "all" || rows == "long" else { return }
+                    let given = calendar.date(byAdding: .day, value: -300, to: now)
+                        .flatMap { CatCareDay(date: $0, calendar: calendar) }
+                    let due: CatCareDay?
+                    let weighed: CatCareDay?
+                    if rows == "all" {
+                        due = calendar.date(byAdding: .day, value: 30, to: now).flatMap { CatCareDay(date: $0, calendar: calendar) }
+                        weighed = calendar.date(byAdding: .day, value: -24, to: now)
+                            .flatMap { CatCareDay(date: $0, calendar: calendar) }
+                    } else {
+                        // 「次は 2027年12月ごろ」 and a weight from another year.
+                        due = CatCareDay(year: max((today?.year ?? 2026) + 1, 2027), month: 12, day: 15)
+                        weighed = CatCareDay(year: (today?.year ?? 2026) - 1, month: 10, day: 21)
+                    }
+                    if let given, let due {
+                        state.cats[at].vaccinations = [CatCareVaccination(kind: "3種混合", givenOn: given, nextDueOn: due,
+                                                                          editedAt: now, editedBy: by)]
+                    }
+                    if let weighed {
+                        state.cats[at].weights = [CatCareWeight(measuredOn: weighed, grams: rows == "all" ? 4_800 : 5_550,
+                                                                editedAt: now, editedBy: by)]
+                    }
+                }
+            }
+            guard let firstID = UUID(uuidString: identifier(0)), let first = names.first else { return }
+            if rows == "all" || rows == "long" {
+                let store = VeterinaryVisitStore.shared
+                if let visits = try? await store.visits(), !visits.contains(where: { $0.catID == firstID }),
+                   let open = try? await store.current(catID: firstID, catName: first, create: { commit in try commit() }) {
+                    var memo = open
+                    if rows == "all" {
+                        // Finished, with its next visit: 「次は …」.
+                        memo.doctorNote = "体重は順調です。"
+                        memo.nextVisitOn = VeterinaryVisit.day(calendar.date(byAdding: .day, value: 40, to: now) ?? now)
+                        memo.completedAt = calendar.date(byAdding: .day, value: -50, to: now)
+                    } else {
+                        // Something written, not finished: 「書きかけ」.
+                        memo.observations = "ごはんを少し残すことがあります。"
+                    }
+                    _ = try? await store.save(memo, expectedRevision: open.revision)
+                }
+            }
+            if searching, LostCatDraftStore.shared.drafts[identifier(0)] == nil {
+                var draft = LostCatDraft()
+                draft.name = first
+                draft.flyerMadeAt = now
+                try? LostCatDraftStore.shared.save(draft, for: identifier(0))
+            }
+            if departed, let day = calendar.date(byAdding: .day, value: -20, to: now)
+                .flatMap({ CatCareDay(date: $0, calendar: calendar) }) {
+                let defaults = UserDefaults.standard
+                let json = defaults.string(forKey: CatFarewell.key) ?? ""
+                defaults.set(CatFarewell.setting(day, for: identifier(0), in: json), forKey: CatFarewell.key)
+            }
+        }
+
+        /// `--cat-home-stress-mid-swipe`: once the pager is on screen, its
+        /// scroll view rests 42% of the way to the second page, as a finger
+        /// would hold it, so the capture shows the pages as cards.
+        static func parkMidSwipeIfRequested() async {
+            guard isRequested, parksMidSwipe else { return }
+            for _ in 0..<80 {
+                try? await Task.sleep(for: .milliseconds(500))
+                let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                    .flatMap(\.windows)
+                for window in windows {
+                    if let pager = horizontalPager(in: window, screen: window.bounds.size) {
+                        pager.setContentOffset(CGPoint(x: (pager.bounds.width * 0.42).rounded(),
+                                                       y: pager.contentOffset.y), animated: false)
+                        return
+                    }
+                }
+            }
+        }
+
+        /// The full-screen horizontal scroll view with more than one page
+        /// across (a short carousel elsewhere never matches).
+        private static func horizontalPager(in view: UIView, screen: CGSize) -> UIScrollView? {
+            if let scroll = view as? UIScrollView, scroll.bounds.width >= screen.width - 1,
+               scroll.bounds.height > screen.height * 0.6, !scroll.isHidden, scroll.window != nil,
+               scroll.contentSize.width > scroll.bounds.width * 1.5,
+               scroll.contentSize.height <= scroll.bounds.height + 1 {
+                return scroll
+            }
+            for child in view.subviews {
+                if let found = horizontalPager(in: child, screen: screen) { return found }
+            }
+            return nil
+        }
+    }
+}
 
 #endif
