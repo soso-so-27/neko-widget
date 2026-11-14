@@ -61,6 +61,7 @@ export function safeFailure(error: unknown): never {
   if (error instanceof ApiError) throw error;
   const message = error instanceof Error ? error.message : '';
   const codes: [string, number, string][] = [
+    ['family_notebook_quota_unavailable', 503, 'family_notebook_quota_unavailable'],
     ['family_notebook_disabled', 503, 'family_notebook_disabled'],
     ['family_notebook_invalid_authentication', 401, 'invalid_authentication'],
     ['group_invalid_authentication', 401, 'invalid_authentication'],

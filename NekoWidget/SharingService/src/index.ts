@@ -701,6 +701,7 @@ export default {
       // Withdrawals remain cleanup-eligible even when the pilot gate is off.
       ctx.waitUntil(runFamilyRecordCleanup(env));
       ctx.waitUntil(cleanupDissolvedFamilyRosters(env));
+      ctx.waitUntil(env.DB.prepare('DELETE FROM family_notebook_daily_usage WHERE day<(unixepoch()+32400)/86400-1').run());
       ctx.waitUntil(runGroupRelayCleanup(env));
     } else if (controller.cron === APNS_DRAIN_CRON) {
       if(deletionRequired(env))ctx.waitUntil(env.DB.prepare('SELECT 1 FROM group_identity_deletion_acceptance LIMIT 1').first()

@@ -273,3 +273,57 @@ describe('family encrypted history transaction boundary', () => {
     expect(copy).toEqual([{sequence:1,packet:op}]);
   });
 });
+
+
+describe('family quota atomic boundary',()=>{
+  async function limits(test:()=>Promise<void>) {
+    await db.prepare('UPDATE family_notebook_quota_policy SET enabled=1,maximum_operations=1 WHERE singleton=1').run();
+    try { await test(); } finally { await db.prepare('UPDATE family_notebook_quota_policy SET enabled=0,maximum_operations=500000,maximum_bytes=536870912,daily_operations=10000,daily_bytes=16777216 WHERE singleton=1').run(); }
+  }
+  it('admits exactly one concurrent operation, keeps its retry, and preserves rejected pending content',async()=>{
+    const a=await plusOwner(),f=await create(a),{r}=await initialize(a,f),path=`${root}/${f}/crypto/operations`;
+    const packets=await Promise.all([operation(a,r),operation(a,r)]);
+    await limits(async()=>{
+      const results=await Promise.all(packets.map(op=>invoke(a,path,body(op,1,1,op.operationId))));
+      expect(results.map(x=>x.status).sort()).toEqual([200,409]);
+      const accepted=results.findIndex(x=>x.status===200),rejected=1-accepted,op=packets[accepted]!;
+      expect(results[rejected]!.data.error).toMatchObject({code:'family_notebook_limit_exceeded',reason:'total_operations',maximumOperations:1,usedOperations:1});
+      expect(ok(await invoke(a,path,body(op,1,1,op.operationId)))).toEqual(results[accepted]!.data);
+      expect(ok(await invoke(a,`${path}/0`)).operations).toHaveLength(1);
+      expect((await db.prepare('SELECT COUNT(*) n FROM family_notebook_crypto_receipts WHERE operation_id=?').bind(packets[rejected]!.operationId).first())?.n).toBe(0);
+      expect(await db.prepare('SELECT operations,bytes FROM family_notebook_usage WHERE family_id=?').bind(f).first()).toEqual({operations:1,bytes:new TextEncoder().encode(JSON.stringify(op)).length});
+    });
+  });
+  it('counts exact bytes and distinguishes total and daily limits',async()=>{
+    const a=await plusOwner(),f=await create(a),{r}=await initialize(a,f),path=`${root}/${f}/crypto/operations`,one=await operation(a,r),two=await operation(a,r);
+    const bytes=new TextEncoder().encode(JSON.stringify(one)).length;
+    await limits(async()=>{
+      await db.prepare('UPDATE family_notebook_quota_policy SET maximum_operations=500000,maximum_bytes=?').bind(bytes).run();
+      ok(await invoke(a,path,body(one,1,1,one.operationId)));
+      expect((await invoke(a,path,body(two,1,1,two.operationId))).data.error.reason).toBe('total_bytes');
+      await db.prepare('UPDATE family_notebook_quota_policy SET maximum_bytes=536870912,daily_bytes=?').bind(bytes).run();
+      expect((await invoke(a,path,body(two,1,1,two.operationId))).data.error.reason).toBe('daily_bytes');
+      await db.prepare('UPDATE family_notebook_quota_policy SET daily_bytes=16777216,daily_operations=1').run();
+      expect((await invoke(a,path,body(two,1,1,two.operationId))).data.error.reason).toBe('daily_operations');
+    });
+  });
+  it('reconciles deletion/restoration without refunding daily allowance',async()=>{
+    const a=await plusOwner(),f=await create(a),{r}=await initialize(a,f),op=await operation(a,r);
+    ok(await invoke(a,`${root}/${f}/crypto/operations`,body(op,1,1,op.operationId)));
+    const saved=await db.prepare('SELECT * FROM family_notebook_crypto_operations WHERE family_id=?').bind(f).first<Record<string,string|number>>();
+    await db.prepare('DELETE FROM family_notebook_crypto_operations WHERE family_id=?').bind(f).run();
+    expect(await db.prepare('SELECT operations,bytes FROM family_notebook_usage WHERE family_id=?').bind(f).first()).toEqual({operations:0,bytes:0});
+    await db.prepare('INSERT INTO family_notebook_crypto_operations VALUES(?,?,?,?,?,?,?)').bind(saved!.family_id,saved!.sequence,saved!.operation_id,saved!.epoch,saved!.actor_person_id,saved!.actor_device_id,saved!.packet).run();
+    expect((await db.prepare('SELECT operations FROM family_notebook_usage WHERE family_id=?').bind(f).first())?.operations).toBe(1);
+    expect((await db.prepare('SELECT operations FROM family_notebook_daily_usage WHERE person_id=?').bind(a.id).first())?.operations).toBe(2);
+  });
+  it('measures synthetic signed packets for a per-person daily allowance',async()=>{
+    const a=await plusOwner(),f=await create(a),{r}=await initialize(a,f),measurements=[];
+    for(const size of [48,1024,8192,1048576]) {
+      const op=await operation(a,r,size),bytes=new TextEncoder().encode(JSON.stringify(op)).length;
+      measurements.push({ciphertextBytes:size,packetBytes:bytes,dailyFits:Math.min(10000,Math.floor(16777216/bytes)),totalFits:Math.min(500000,Math.floor(536870912/bytes))});
+    }
+    expect(measurements[1]!.dailyFits).toBeGreaterThan(5000);
+    console.info(JSON.stringify({syntheticFamilyQuota:measurements}));
+  });
+});
