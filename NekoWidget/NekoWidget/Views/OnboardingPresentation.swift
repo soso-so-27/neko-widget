@@ -99,6 +99,10 @@ enum OnboardingPresentationCopy {
     static let purposeBody = "写真はiPhoneの中だけで探します。外には送りません。"
     static let purposeAction = "猫を探す"
     static let purposeFootnote = ""
+    /// 11/14 (family journey A1): people who installed from an invitation
+    /// land here with nothing about it. One quiet line, not a button: the
+    /// link itself opens the join screen over this page.
+    static let purposeInvitationLine = "招待を受けた方は、届いたリンクをもう一度開いてください。"
 
     // The promise is said once, on page one (and on Home's card for anyone
     // who skipped). Page two is the windows and the Photos dialog only: its

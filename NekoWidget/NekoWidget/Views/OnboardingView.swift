@@ -235,9 +235,18 @@ private struct OnboardingPurposePage: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("onboarding-purpose-start")
-                // 11/12: no line for invited people. They arrive by tapping
-                // their link, which opens the join screen by itself; the line
-                // stopped everyone else ("what link?").
+                // 11/14 (A1): one quiet line for people who installed from an
+                // invitation. It names who it is for, so everyone else reads
+                // past it (11/12's "what link?"); not a button. Only in builds
+                // that can join a window.
+                if SharingAPIConfiguration.current.isReviewVisible {
+                    Text(OnboardingPresentationCopy.purposeInvitationLine)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("onboarding-purpose-invitation-line")
+                }
                 if !OnboardingPresentationCopy.purposeFootnote.isEmpty {
                     Text(OnboardingPresentationCopy.purposeFootnote)
                         .font(.footnote)

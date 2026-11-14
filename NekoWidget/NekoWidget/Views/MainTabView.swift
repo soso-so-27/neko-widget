@@ -1589,7 +1589,9 @@ struct MainTabView: View {
             headerAccessory: catProfilesPresentation.profiles.isEmpty ? nil : AnyView(EmptyView()),
             themeRow: Version1.isOn && hasPhotoAccess && !themes.isEmpty
                 ? AnyView(photoThemeRow(themes)) : nil,
-            tabRowMonthJump: catProfilesPresentation.profiles.isEmpty ? nil : $photoLibraryMonthJump
+            tabRowMonthJump: catProfilesPresentation.profiles.isEmpty ? nil : $photoLibraryMonthJump,
+            // 11/14 (A6): no cat photos but in a まど: 「まどを開く」 comes here.
+            openWindows: showsMadoTab ? { selectedTab = .windows } : nil
         )
     }
 

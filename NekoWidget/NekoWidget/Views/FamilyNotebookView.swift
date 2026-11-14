@@ -722,6 +722,9 @@ struct FamilyNotebookView: View {
     /// 「家族の手帳を作る」 led to Plus: once bought, go on to the name (11/6:
     /// without Plus, 作る ended in an alert with only 「閉じる」).
     @State private var createsAfterPlus = false
+    /// 11/14 (family journey A3): 「Plusを始めて再開する」 led to Plus: once
+    /// bought, 「わたしのPlusで再開する」 is done for the person (no second press).
+    @State private var claimsAfterPlus = false
     @State private var boughtPlus = false
     @State private var showsName = false
     /// 「家族の手帳から抜ける」 at the bottom of the notebook (11/7).
@@ -840,7 +843,12 @@ struct FamilyNotebookView: View {
             .sheet(isPresented: $showsCats) { FamilyNotebookCatSelectionView() }
             .sheet(isPresented: $showsPlusOffer, onDismiss: {
                 NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
-                Task { await sharing.refresh() }
+                let claims = claimsAfterPlus && boughtPlus
+                claimsAfterPlus = false
+                Task {
+                    await sharing.refresh()
+                    if claims { await claimPayerAfterPurchase() }
+                }
                 if createsAfterPlus { createsAfterPlus = false; showsName = boughtPlus }
                 boughtPlus = false
             }) {
@@ -1036,6 +1044,18 @@ struct FamilyNotebookView: View {
 }
 
 extension FamilyNotebookView {
+    /// 11/14 (family journey A3): after 「Plusを始めて再開する」 and a purchase,
+    /// the same as pressing 「わたしのPlusで再開する」 — only when the family
+    /// now offers it. Otherwise the section shows what it shows today
+    /// (「Plusをもう一度確かめる」 while the family has not seen the Plus yet).
+    private func claimPayerAfterPurchase() async {
+        guard case let .noPayer(canClaim, handoverPending)? = sharing.pause,
+              PlusPurchaseContinuation.claimsFamilyPayer(bought: true, canClaim: canClaim,
+                                                         handoverPending: handoverPending)
+        else { return }
+        _ = await sharing.perform { try await sharing.service.claimPayer(operationID: $0) }
+    }
+
     /// Shown while new writing does not reach the family (1029e). Everything
     /// written stays; only sharing stops. After the payer left, anyone with
     /// Plus may carry it on, and someone without Plus may start it.
@@ -1090,7 +1110,7 @@ extension FamilyNotebookView {
                         Task { await sharing.refresh() }
                     }
                 } else {
-                    Button { showsPlusOffer = true } label: {
+                    Button { claimsAfterPlus = true; showsPlusOffer = true } label: {
                         HStack(spacing: 8) {
                             Text("Plusを始めて再開する").font(.headline)
                             FamilyNotebookPlusMark()
@@ -1517,6 +1537,10 @@ struct FamilyNotebookInviteView: View {
     @ObservedObject private var sharing = FamilyNotebookSharing.shared
     @Environment(\.dismiss) private var dismiss
     @State private var invitation: FamilyInvitation?
+    /// 11/14 (family journey A5): one press makes the link and opens the
+    /// share sheet once it is ready; the button shows progress meanwhile.
+    @State private var creating = false
+    @State private var sharesInvitation = false
 
     var body: some View {
         NavigationStack {
@@ -1524,34 +1548,22 @@ struct FamilyNotebookInviteView: View {
                 FamilyNotebookInvitationCard(from: "あなた", cats: model.catNames)
                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                 Spacer()
-                if let invitation {
-                    // A line beside the link, as for a まど: a bare URL said
-                    // nothing about what it was (11/6).
-                    ShareLink(item: invitation.link,
-                              message: Text(FamilyNotebookInviteView.inviteMessage(cats: model.catNames))) {
-                        Label("招待を送る", systemImage: "square.and.arrow.up")
-                            .font(.headline).frame(maxWidth: .infinity, minHeight: 50)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .simultaneousGesture(TapGesture().onEnded { UsageCounter.shared.count(.familyInviteShared) })  // Usage (11/7): ShareLink reports no completion
-                } else {
-                    Button {
-                        Task {
-                            let service = sharing.service
-                            var made: FamilyInvitation?
-                            await sharing.perform { made = try await service.createInvitation(operationID: $0) }
-                            invitation = made
+                Button(action: send) {
+                    Group {
+                        if creating { ProgressView() } else {
+                            Label("招待を送る", systemImage: "square.and.arrow.up").font(.headline)
                         }
-                    } label: {
-                        Group {
-                            if sharing.isWorking { ProgressView() } else {
-                                Label("招待を送る", systemImage: "square.and.arrow.up").font(.headline)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 50)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!sharing.service.sendsInvitations || sharing.isWorking)
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!sharing.service.sendsInvitations || (sharing.isWorking && !creating))
+                .accessibilityIdentifier("family-notebook-send-invitation")
+                if sharing.service.sendsInvitations {
+                    // 11/14 (A4): the server's 24 hours (migration 0055).
+                    Text(GroupWindowPresentation.invitationLifetimeCaption)
+                        .font(.footnote).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("family-notebook-invitation-lifetime")
                 }
                 Text(sharing.service.sendsInvitations ? "招待された人は無料です。" : "試作のため、まだ送れません。招待された人は無料です。")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -1561,7 +1573,60 @@ struct FamilyNotebookInviteView: View {
             .navigationTitle("招待する")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
+            // A line beside the link, as for a まど: a bare URL said nothing
+            // about what it was (11/6). The same system sheet as a まど's.
+            .sheet(isPresented: $sharesInvitation) {
+                if let invitation {
+                    GroupInvitationShareSheet(
+                        item: invitation.link.absoluteString,
+                        message: FamilyNotebookInviteView.inviteMessage(cats: model.catNames),
+                        completedUsage: .familyInviteShared
+                    ) { sharesInvitation = false }
+                    .presentationDetents([.medium, .large])
+                    .ignoresSafeArea()
+                }
+            }
+            // The notebook's own error, here: the notebook is under this sheet.
+            .alert("家族の手帳", isPresented: Binding(get: { sharing.failure != nil && !sharesInvitation },
+                                                  set: { if !$0 { sharing.failure = nil } })) {
+                Button("閉じる", role: .cancel) {}
+            } message: { Text(sharing.failure?.message ?? "") }
         }
+    }
+
+    /// Makes the link on the first press and shares it when it is ready; a
+    /// press while it is being made does nothing (FamilyInviteSendTap).
+    private func send() {
+        let hasInvitation = invitation.map { $0.expiresAt > Date.now } ?? false
+        switch FamilyInviteSendTap.action(isCreating: creating, hasInvitation: hasInvitation) {
+        case .ignore:
+            return
+        case .share:
+            sharesInvitation = true
+        case .create:
+            creating = true
+            Task {
+                defer { creating = false }
+                let service = sharing.service
+                var made: FamilyInvitation?
+                // A failure is kept in `sharing.failure` and shown above; the
+                // screen stays as it was.
+                await sharing.perform { made = try await service.createInvitation(operationID: $0) }
+                guard let made else { return }
+                invitation = made
+                sharesInvitation = true
+            }
+        }
+    }
+}
+
+/// 11/14 (family journey A5): what one press on 「招待を送る」 does.
+enum FamilyInviteSendTap: Equatable {
+    case ignore, create, share
+
+    static func action(isCreating: Bool, hasInvitation: Bool) -> Self {
+        if isCreating { return .ignore }
+        return hasInvitation ? .share : .create
     }
 }
 
