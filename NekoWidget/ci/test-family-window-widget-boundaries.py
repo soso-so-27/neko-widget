@@ -3130,8 +3130,11 @@ class AppDrawingWasteTests(unittest.TestCase):
         self.assertIn("private func highResolutionRecoverySamplePresentation(", guarded)
         self.assertTrue(guarded.rstrip().endswith("#endif"))
         presentation = section(root, "settings: settingsPresentation,", "excludedCatPhotos:")
-        self.assertIn("detectionAccuracySample: internalDetectionAccuracySample(hasPhotoAccess: hasPhotoAccess)", presentation)
-        self.assertIn("highResolutionRecoverySample: internalHighResolutionRecoverySample(", presentation)
+        # 11/14: made once per change in ProfilePresentationCache, not per drawing.
+        self.assertIn("detectionAccuracySample: profileValues.detectionSample", presentation)
+        self.assertIn("highResolutionRecoverySample: profileValues.recoverySample", presentation)
+        self.assertIn("detectionSample: internalDetectionAccuracySample(hasPhotoAccess: hasPhotoAccess)", root)
+        self.assertIn("recoverySample: internalHighResolutionRecoverySample(", root)
         self.assertNotIn("? detectionAccuracySamplePresentation", presentation)
 
     def test_app_root_does_not_observe_the_family_notebook(self) -> None:
@@ -3158,7 +3161,7 @@ class AppDrawingWasteTests(unittest.TestCase):
         self.assertIn("@State private var seasonalMovieVideoCatalogDigest = SeasonalMovieVideoCatalogDigestCache()", main)
         self.assertIn(".onReceive(NotificationCenter.default.publisher(for: .photoLibraryContentDidChange)) { _ in\n            photoLibraryChangeCount &+= 1", main)
         model = source("NekoWidget/ViewModels/AppViewModel.swift")
-        observer = section(model, "private lazy var libraryObserver = PhotoLibraryObserver {", "init() {")
+        observer = section(model, "private lazy var libraryObserver = PhotoLibraryObserver {", "    init(\n        scanner:")
         self.assertIn("NotificationCenter.default.post(name: .photoLibraryContentDidChange, object: nil)", observer)
 
     def test_plus_offer_photo_is_found_without_sorting_every_candidate(self) -> None:
@@ -5878,7 +5881,18 @@ class PhotoScanStatusTests(unittest.TestCase):
     def test_searching_says_so_and_a_retry_only_appears_when_it_can_work(self) -> None:
         home = source("NekoWidget/Views/HomeView.swift")
         status = section(home, "private var partialScanStatus: some View {", "private var monthDestinations")
-        self.assertLess(status.index("if scan.isScanning {"), status.index('"もう一度探す"'))
+        # 11/14: a search no longer swaps the row's words or inserts a row
+        # above the grid (the grid jumped on every launch); it is the spinner
+        # after 「〇枚」, and only failed or unreadable photos keep a row.
+        self.assertNotIn("if scan.isScanning {", status)
+        self.assertIn("if scan.hasFailed || scan.hasDeferredAssets {\n                            partialScanStatus", home)
+        self.assertNotIn("scan.hasFailed || scan.hasDeferredAssets || scan.isScanning || scan.isPaused", home)
+        count = section(home, "struct PhotoCountWithScanActivity: View {", "struct HomeView: View {")
+        self.assertIn("@ObservedObject private var activity = ScanActivity.shared", count)
+        self.assertIn(".frame(width: 16, height: 16)", count)
+        self.assertIn('"\\(count.formatted())枚、新しい写真を確かめています"', count)
+        self.assertNotIn("Text(\"猫の写真を探しています\")", count)
+        self.assertIn("PhotoCountWithScanActivity(count: catPhotos.count)", home)
         self.assertNotIn("まだ読み込めない写真があります", status)
         self.assertNotIn(".disabled(scan.isScanning)", status)
         self.assertIn('"読み込めなかった写真が\\(scan.deferredAssets.formatted())枚あります"', status)
@@ -8100,8 +8114,11 @@ class DesignPolish1111Tests(unittest.TestCase):
         library = section(main, "private var photoLibrary: some View {", "private var albumRoot: some View {")
         self.assertIn("photoLibraryCatRow", library)
         row = section(main, "private struct PhotoLibraryCatRow<", "private struct PhotoThemeTile: View {")
-        for part in ("picker()", '.accessibilityIdentifier("photo-hub-detected-grid")', "PhotoLibraryMonthJumpMenu(", "addPhotos()"):
+        # 11/14: the count carries the scan spinner in a fixed slot.
+        for part in ("picker()", "PhotoCountWithScanActivity(count: photos.count)", "PhotoLibraryMonthJumpMenu(", "addPhotos()"):
             self.assertIn(part, row)
+        count = section(source("NekoWidget/Views/HomeView.swift"), "struct PhotoCountWithScanActivity: View {", "struct HomeView: View {")
+        self.assertIn('.accessibilityIdentifier("photo-hub-detected-grid")', count)
         # The count and 日付 belong to すべて only.
         self.assertIn("photoLibrarySelection.selection == .all && hasPhotoAccess ? photoLibraryCatPhotos : []",
                       section(main, "private var photoLibraryCatRow: some View {", "private var photoLibraryCatPicker: some View {"))
@@ -9175,13 +9192,14 @@ class CatIdentityMeasure1113Tests(unittest.TestCase):
         # CatHomeCareTests (C1E0A7E0…, the この子 page's 「これからのこと」),
         # then AppLimitsTests (C1A11A17…, the 11/14 limits), then
         # FamilyJourneyTests (C1FA3A11…, the 11/14 family journey), then
-        # WhenStuckTests (C1A51C14…, the 11/14 「困ったとき」 words).
+        # WhenStuckTests (C1A51C14…, the 11/14 「困ったとき」 words), then
+        # LaunchWorkTests (4C570000…, the light first seconds after launch).
         self.assertIn("children = (C1108C000000000000000002,C1D3A9110000000000000006,"
                       "C15C0A7E0000000000000002,C1A1BF100000000000000002,C1CA70500000000000000002,"
-                      "C1E0A7E00000000000000002,C1A11A170000000000000002,C1FA3A110000000000000002,C1A51C140000000000000002,); path = NekoWidgetTests;", self.project)
+                      "C1E0A7E00000000000000002,C1A11A170000000000000002,C1FA3A110000000000000002,C1A51C140000000000000002,4C570000000000000000000A,); path = NekoWidgetTests;", self.project)
         self.assertIn("files = (C1108C000000000000000003,C1D3A9110000000000000005,"
                       "C15C0A7E0000000000000001,C1A1BF100000000000000001,C1CA70500000000000000001,"
-                      "C1E0A7E00000000000000001,C1A11A170000000000000001,C1FA3A110000000000000001,C1A51C140000000000000001,);", self.project)
+                      "C1E0A7E00000000000000001,C1A11A170000000000000001,C1FA3A110000000000000001,C1A51C140000000000000001,4C5700000000000000000009,);", self.project)
         self.assertEqual(len(set(re.findall(r"C1D3A911000000000000000\d", self.project))), 6)
 
     def test_store_product_compiles_none_of_it(self) -> None:

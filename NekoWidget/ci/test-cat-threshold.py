@@ -91,7 +91,7 @@ class CatThresholdTests(unittest.TestCase):
         self.assertLess(settings, migration.index("let activeSettings = value.settings"))
         self.assertIn(".migratedToLowerConfidenceThreshold(settings: activeSettings)", migration)
         self.assertNotIn("requiresFullRescan = true\n                value.scanState.purpose = .manualRescan", migration)
-        save = section(STORE, "func save(_ snapshot: LibrarySnapshot) throws {", "\n    }\n")
+        save = section(STORE, "func save(_ snapshot: LibrarySnapshot) throws -> Bool {", "\n    }\n")
         self.assertIn(".migratedToLowerConfidenceThreshold(settings: activeSettings)", save)
         reuse = section(SCANNER, "private static func canReusePrimaryAnalysis(", "\n    }\n")
         self.assertIn(".migratedToLowerConfidenceThreshold(settings: settings)", reuse)

@@ -10,6 +10,9 @@ struct NekoWidgetApp: App {
     private var appDelegate
 
     init() {
+#if DEBUG
+        LaunchWorkMeter.shared.startIfRequested()
+#endif
         ClientUpgradePresenter.shared.start()
         ShowcaseAppShortcuts.updateAppShortcutParameters()
 #if DEBUG
@@ -98,6 +101,8 @@ struct NekoWidgetApp: App {
                 OfficialWindowUIFixture()
             } else if CommandLine.arguments.contains("--window-list-ui-fixture") {
                 WindowListNavigationFixture()
+            } else if LaunchWorkFixture.isOn {
+                LaunchWorkFixtureRoot()
             } else if CommandLine.arguments.contains(AppStoreScreenshotFixture.launchArgument) {
                 AppStoreScreenshotFixtureRootView()
             } else if CommandLine.arguments.contains("--cat-profile-photo-flow-fixture") {

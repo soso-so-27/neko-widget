@@ -415,6 +415,58 @@ struct PhotoLibraryMonthJumpMenu: View {
     }
 }
 
+/// 11/14: whether a pass over Photos has been checking for more than a
+/// second. Its own small observable, so the spinner after 「〇枚」 changes
+/// without re-drawing the grid or any tab.
+@MainActor
+final class ScanActivity: ObservableObject {
+    static let shared = ScanActivity()
+    @Published private(set) var isChecking = false
+    private var pending: Task<Void, Never>?
+
+    func passStarted() {
+        pending?.cancel()
+        pending = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            guard let self, !Task.isCancelled, !self.isChecking else { return }
+            self.isChecking = true
+        }
+    }
+
+    func passEnded() {
+        pending?.cancel()
+        pending = nil
+        if isChecking { isChecking = false }
+    }
+}
+
+/// 「〇枚」 and, in a slot that is always there, a small spinner while a
+/// pass checks photos (11/14). No words; VoiceOver hears it on the count.
+struct PhotoCountWithScanActivity: View {
+    let count: Int
+    @ObservedObject private var activity = ScanActivity.shared
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("\(count.formatted())枚")
+                .font(.subheadline.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
+            ZStack {
+                if activity.isChecking {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            .frame(width: 16, height: 16)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(activity.isChecking
+            ? "\(count.formatted())枚、新しい写真を確かめています" : "\(count.formatted())枚")
+        .accessibilityIdentifier("photo-hub-detected-grid")
+    }
+}
+
 /// 11/14 (family journey A6): the 写真 tab with no cat photos of one's own.
 /// Someone in a まど is shown where the family's photos are; everyone else
 /// keeps the usual empty state. People with photos never see either.
@@ -574,7 +626,12 @@ struct HomeView: View {
                     .id("photo-library-all-header")
 
                     if !catPhotos.isEmpty {
-                        if scan.hasFailed || scan.hasDeferredAssets || scan.isScanning || scan.isPaused {
+                        // 11/14: a search never inserts a row above the grid
+                        // (the grid jumped down and back on every launch). It
+                        // shows as the small spinner after 「〇枚」; only a state
+                        // with something to press keeps its row. A paused
+                        // search resumes by itself when the app opens.
+                        if scan.hasFailed || scan.hasDeferredAssets {
                             partialScanStatus
                         }
                         detectedPhotosSection
@@ -703,11 +760,9 @@ struct HomeView: View {
     /// long time with a gray 「もう一度探す」 that could not be pressed).
     private var partialScanStatus: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if scan.isScanning {
-                // Still searching: say so; there is nothing to press yet.
-                Label("猫の写真を探しています", systemImage: "photo.badge.clock")
-                    .font(.subheadline)
-            } else {
+            // 11/14: the same row while a search runs (no words swapped in, no
+            // button taken away), so its height never changes during a pass.
+            Group {
                 Label(scan.hasFailed ? "写真を最後まで探せませんでした"
                       : scan.hasDeferredAssets ? "読み込めなかった写真が\(scan.deferredAssets.formatted())枚あります"
                       : scan.isPaused ? "写真を探すのを一時停止しています" : "猫の写真を探しています",
@@ -765,10 +820,7 @@ struct HomeView: View {
                         .font(.title3.bold())
                         .accessibilityAddTraits(.isHeader)
                 }
-                Text("\(catPhotos.count.formatted())枚")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("photo-hub-detected-grid")
+                PhotoCountWithScanActivity(count: catPhotos.count)
                 Spacer()
                 if isEmbedded {
                     monthJumpMenu(monthDestinations)

@@ -906,6 +906,7 @@ struct MainTabView: View {
     }
 
     var body: some View {
+        let _ = LaunchWork.count("mainTabBody")
         routedTabContentOfferingFirstPlus
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active {
@@ -1106,6 +1107,10 @@ struct MainTabView: View {
     /// `showcaseCandidates.first`, found in one pass: drawing needs only the
     /// best photo, so the whole library is neither indexed nor sorted.
     private var bestShowcaseCandidate: PhotoPresentation? {
+        LaunchWork.measure("bestShowcase") { findBestShowcaseCandidate() }
+    }
+
+    private func findBestShowcaseCandidate() -> PhotoPresentation? {
         let excludedIdentifiers = excludedCatCandidateIdentifiers
         var seen = Set<String>()
         var best: PhotoPresentation?
@@ -3728,12 +3733,7 @@ private struct PhotoLibraryCatRow<CatPicker: View, AddPhotos: View>: View {
         HStack(spacing: 10) {
             picker()
             if !photos.isEmpty {
-                Text("\(photos.count.formatted())枚")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .accessibilityIdentifier("photo-hub-detected-grid")
+                PhotoCountWithScanActivity(count: photos.count)
             }
             Spacer(minLength: 0)
             PhotoLibraryMonthJumpMenu(months: months) { monthJump = $0 }

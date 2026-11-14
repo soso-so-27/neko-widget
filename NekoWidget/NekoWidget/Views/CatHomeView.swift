@@ -302,6 +302,7 @@ struct CatHomeView: View {
     static let menuMinimumCats = 5
 
     var body: some View {
+        let _ = LaunchWork.count("catHomeBody")
         let cats = self.cats
         let current = currentCat(in: cats)
         let _ = updatePageActions()

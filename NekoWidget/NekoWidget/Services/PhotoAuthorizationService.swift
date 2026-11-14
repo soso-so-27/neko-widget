@@ -4,7 +4,11 @@ import UIKit
 
 struct PhotoAuthorizationService {
     var status: PHAuthorizationStatus {
-        PHPhotoLibrary.authorizationStatus(for: .readWrite)
+#if DEBUG
+        // The launch-work fixture's synthetic library reads as allowed.
+        if LaunchWorkFixture.isOn { return .authorized }
+#endif
+        return PHPhotoLibrary.authorizationStatus(for: .readWrite)
     }
 
     var canReadPhotos: Bool {
