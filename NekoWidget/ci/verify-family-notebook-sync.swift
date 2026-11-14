@@ -170,7 +170,7 @@ private enum VerifyFamilyNotebookSync {
         }
         _ = try await engine.synchronize(current: current, history: [:], keys: [1: key])
         if phase == "new-receive" {
-            try check(try store.snapshot().operations.contains { $0.target.field.rawValue == "adoptionDay" }, "new receives and projects adoption")
+            try check(try store.snapshot().operations.contains { $0.target.field?.rawValue == "adoptionDay" }, "new receives and projects adoption")
             _ = try store.edit(target: .init(familyCatID: f.cat, field: FamilyNotebookField(rawValue: "adoptionDay")!), value: .text("2020-03-01|0"), author: author)
         }
         if phase == "old-edit" {
@@ -184,11 +184,11 @@ private enum VerifyFamilyNotebookSync {
         }
         if phase == "new-verify" {
             let snapshot = try store.snapshot()
-            try check(snapshot.operations.filter { $0.target.field.rawValue == "adoptionDay" }.count == 2, "new recovers complete adoption history")
+            try check(snapshot.operations.filter { $0.target.field?.rawValue == "adoptionDay" }.count == 2, "new recovers complete adoption history")
             try check(snapshot.operations.contains { $0.value == .text("古い版の編集") }, "old name edit survives resync")
             try check(try store.pendingOperations().isEmpty, "new sends retained pending adoption")
             let restored = try FamilyNotebookStore(directory: root.appendingPathComponent("restored"), familyID: family, deviceID: device)
-            try check(try restored.snapshot().operations.filter { $0.target.field.rawValue == "adoptionDay" }.count == 2, "new opens old restored backup")
+            try check(try restored.snapshot().operations.filter { $0.target.field?.rawValue == "adoptionDay" }.count == 2, "new opens old restored backup")
             try check(try restored.pendingOperations().isEmpty, "restored private copy never sends")
         }
         try JSONEncoder().encode(await relay.savedPackets()).write(to: packetsURL)

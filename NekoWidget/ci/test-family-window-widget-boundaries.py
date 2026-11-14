@@ -8837,7 +8837,9 @@ class CatHomeTab1112Tests(unittest.TestCase):
         self.assertIn('parts.joined(separator: "　／　")', facts)
         # No line when nothing is known; never a count of days without the day.
         self.assertIn("line: parts.isEmpty ? nil : parts.joined", facts)
-        self.assertIn("let adoption: Date? = profile?.lifeDates.adoptionDay?.date", facts)
+        self.assertIn("adoption = profile?.lifeDates.adoptionDay?.date", facts)
+        self.assertIn("if let shared = record?.adoptionDay", facts)
+        self.assertIn("adoption = shared.value?.day.date(calendar: calendar)", facts)
         self.assertIn('"\\(years)歳\\(months)か月"', facts)
         # VoiceOver: 「むぎ、オス、4歳2か月、うちに来て1204日」.
         self.assertIn('[cat.name, sex, age, days.map { "うちに来て\\($0)日" }].compactMap { $0 }.joined(separator: "、")', facts)
