@@ -626,6 +626,7 @@ private struct CatHomeHero: View {
     let menu: AnyView
     @Environment(\.displayScale) private var displayScale
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.colorScheme) private var colorScheme
     @ScaledMetric(relativeTo: .largeTitle) private var nameSize: CGFloat = 56
     /// The round cat-menu button after the name (40 at most).
     @ScaledMetric(relativeTo: .body) private var menuCircle: CGFloat = 30
@@ -658,6 +659,16 @@ private struct CatHomeHero: View {
                                        .init(color: .black.opacity(0.3), location: 0.72),
                                        .init(color: .black.opacity(0.6), location: 1)],
                                startPoint: .top, endPoint: .bottom)
+            }
+            .overlay(alignment: .top) {
+                // The clock and battery sit on the photo (11/14): white in dark
+                // mode, black in light mode. A short wash of the opposite tone
+                // keeps them readable on a very bright or very dark photo.
+                LinearGradient(colors: [(colorScheme == .dark ? Color.black : Color.white).opacity(0.32),
+                                        (colorScheme == .dark ? Color.black : Color.white).opacity(0)],
+                               startPoint: .top, endPoint: .bottom)
+                    .frame(height: metrics.topInset + 36)
+                    .allowsHitTesting(false)
             }
             .overlay(alignment: .bottom) {
                 LinearGradient(colors: [Color(.systemGroupedBackground).opacity(0), Color(.systemGroupedBackground)],
