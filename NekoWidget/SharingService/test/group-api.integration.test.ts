@@ -6,6 +6,21 @@ import type {Env} from '../src/env';
 import {testEnv,db,key,sign,send,post,person,signed,call,ok,create,invitation,apply,transition,packet} from './group-fixture';
 
 describe('gated group HTTP identity, invitation and membership',()=>{
+  it('atomically replaces invitations, cancels old requests and keeps replay from replacing the latest link',async()=>{
+    const owner=await plusOwner(),guest=await person(),w=await create(owner);
+    const old=await invitation(owner,w),pending=await apply(guest,w,old);ok(pending.response,201);
+    const path=`/v3/group-windows/${w.windowId}/invitations`;
+    const body={operationId:crypto.randomUUID(),expectedRevision:1,proofPublicKey:(await key()).publicKey};
+    const first=ok(await call(owner,path,body),201);
+    expect(ok(await call(guest,`/v3/group-windows/${w.windowId}/join-status`,{requestId:pending.id})).state).toBe('cancelled');
+    const replacements=await Promise.all([invitation(owner,w),invitation(owner,w)]);
+    const active=await db.prepare('SELECT id FROM group_invitations WHERE space_id=? AND revoked_at IS NULL').bind(w.windowId).all<{id:string}>();
+    expect(active.results).toHaveLength(1);
+    expect(replacements.map(i=>i.id)).toContain(active.results[0]!.id);
+    expect(ok(await call(owner,path,body)).invitationId).toBe(first.invitationId);
+    expect((await db.prepare('SELECT id FROM group_invitations WHERE space_id=? AND revoked_at IS NULL').bind(w.windowId).all()).results).toEqual(active.results);
+    expect((await call(await person(),`/v3/group-windows/${w.windowId}/invitation-challenges`,{invitationId:old.id})).data.error.code).toBe('invitation_revoked');
+  });
   it('allows a fresh request after removal without rewriting the old approval',async()=>{
     const owner=await plusOwner(),guest=await person();let w=await create(owner);
     const invite=await invitation(owner,w),first=await apply(guest,w,invite);ok(first.response,201);

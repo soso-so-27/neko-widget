@@ -194,8 +194,9 @@ describe('independent family admission, not publicly enabled', () => {
   });
   it('returns only the applicant outcomes and rejects duplicate live applications atomically', async () => {
     const owner = await plusOwner(), guest = await person(), outsider = await person(), f = await family(owner);
-    const first = await invitation(owner, f.id), second = await invitation(owner, f.id);
+    const first = await invitation(owner, f.id);
     const pending = await join(guest, f.id, first); ok(pending.reply);
+    const second = await invitation(owner, f.id);
     const duplicate = await join(guest, f.id, second);
     expect(duplicate.reply.data.error.code).toBe('family_notebook_request_already_pending');
     expect((await db.prepare("SELECT COUNT(*) n FROM family_notebook_join_requests WHERE person_id=? AND state='pending'").bind(guest.id).first())?.n).toBe(1);
@@ -213,4 +214,16 @@ describe('independent family admission, not publicly enabled', () => {
     expect(directory.joinRequests).toContainEqual(expect.objectContaining({ requestId: retry.id, state: 'expired' }));
   });
 
+  it('keeps only the newest active invitation atomically without reviving one on replay', async () => {
+    const p=await plusOwner(), f=await family(p), old=await invitation(p,f.id);
+    const newest=await Promise.all([invitation(p,f.id),invitation(p,f.id)]);
+    const rows=await db.prepare("SELECT id FROM family_notebook_invitations WHERE family_id=? AND state='active'").bind(f.id).all<{id:string}>();
+    expect(rows.results).toHaveLength(1);
+    expect(newest.map(i=>i.id)).toContain(rows.results[0]!.id);
+    ok(await call(p,`${root}/${f.id}/invitations`,old.body));
+    expect((await db.prepare("SELECT id FROM family_notebook_invitations WHERE family_id=? AND state='active'").bind(f.id).all()).results).toEqual(rows.results);
+    const outsider=await person();
+    expect((await call(outsider,`${root}/${f.id}/invitations`,{...old.body,operationId:crypto.randomUUID()})).status).not.toBe(200);
+    expect((await db.prepare("SELECT id FROM family_notebook_invitations WHERE family_id=? AND state='active'").bind(f.id).all()).results).toEqual(rows.results);
+  });
 });

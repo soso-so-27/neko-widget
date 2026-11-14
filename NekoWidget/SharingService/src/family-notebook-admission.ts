@@ -120,6 +120,7 @@ export async function familyNotebookAdmission(request: Request, env: Env): Promi
     }
     const resultingGeneration = generation + (operation === 'create' || operation === 'approve' ? 1 : 0);
     await env.DB.batch([...groupAuthorizationStatements(env, actor),
+      ...(operation === 'invite' ? [env.DB.prepare("UPDATE family_notebook_invitations SET state='revoked' WHERE family_id=? AND state='active'").bind(familyId)] : []),
       env.DB.prepare(`INSERT INTO family_notebook_admission_events
         (actor_device_id,operation_id,actor_person_id,request_hash,family_id,operation,expected_generation,
           resulting_generation,invitation_id,join_id,proof_public_key,ciphertext,store_environment,maximum_members,
