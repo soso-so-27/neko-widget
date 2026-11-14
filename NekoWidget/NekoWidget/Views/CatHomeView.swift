@@ -28,19 +28,13 @@ struct CatHomeTools {
 /// off in Release.
 enum CatHomeSpeedSwitch {
 #if DEBUG
-    /// The corners painted from a per-frame geometry callback while moving.
-    static let oldCorners = CommandLine.arguments.contains("--cat-home-speed-old-corners")
     /// Material circles behind the two round buttons.
     static let oldMaterials = CommandLine.arguments.contains("--cat-home-speed-old-materials")
     /// Every page drawn again whenever the pager's state changes.
     static let rebuildsPages = CommandLine.arguments.contains("--cat-home-speed-rebuild-pages")
-    /// No scale while moving either.
-    static let noCard = CommandLine.arguments.contains("--cat-home-speed-no-card")
 #else
-    static let oldCorners = false
     static let oldMaterials = false
     static let rebuildsPages = false
-    static let noCard = false
 #endif
 }
 
@@ -427,12 +421,9 @@ struct CatHomeView: View {
     // MARK: Pages
 
     /// The cats side by side, one page each; a swipe switches the cat.
-    /// 11/14: at rest a page is exactly as before (full bleed); while it
-    /// moves each page is a little smaller, the page background showing
-    /// between the two (the WWDC23 「Beyond scroll views」 scrollTransition
-    /// pattern), drawn by the render pass only: no state, no callback per
-    /// frame. (The rounded corners needed a geometry callback every frame;
-    /// they are gone.) Reduce Motion: plain paging.
+    /// 11/14: plain paging, the page moves exactly with the finger (the
+    /// card look, smaller pages with rounded corners while moving, made the
+    /// content drift from the finger and cost frames; it is gone).
     ///
     /// 11/14: each page is Equatable, so a change of `pageID` mid-swipe
     /// re-draws only what depends on it (which page VoiceOver reads), not
@@ -446,29 +437,19 @@ struct CatHomeView: View {
     /// 11/14: after the last cat, one more page adds a cat (the one place a
     /// cat is added); its dot is a small 「＋」.
     private func pager(_ cats: [CatHomeCat], current: CatHomeCat, metrics: CatHomeMetrics) -> some View {
-        let reduceMotion = self.reduceMotion
-        let shrink = CatHomeCardWhileMoving.shrink
         let onAddPage = pageID == Self.addPageID
-        let still = reduceMotion || CatHomeSpeedSwitch.noCard
         let pageActions = self.pageActions
-        func card<Page: View>(_ page: Page) -> some View {
-            page
-                .modifier(CatHomeOldCorners(enabled: !reduceMotion))
-                .scrollTransition(.interactive, axis: .horizontal) { content, phase in
-                    content.scaleEffect(phase.isIdentity || still
-                                        ? 1 : 1 - shrink * CGFloat(min(abs(phase.value), 1)))
-                }
-                .containerRelativeFrame(.horizontal)
-        }
         @ViewBuilder func pages() -> some View {
             ForEach(Array(cats.enumerated()), id: \.element.id) { index, cat in
-                card(page(cat, index: index, cats: cats, metrics: metrics).equatable())
+                page(cat, index: index, cats: cats, metrics: metrics).equatable()
+                    .containerRelativeFrame(.horizontal)
                     // Only the page on screen is read and found by tests.
                     .accessibilityHidden(onAddPage || cat.id != current.id)
                     .id(cat.id)
             }
-            card(CatHomeNoCatPage(metrics: metrics, tools: tools, openSettings: { pageActions.openSettings() },
-                                  sentence: "猫を増やすときは、ここから。", householdTools: false) { pageActions.add() })
+            CatHomeNoCatPage(metrics: metrics, tools: tools, openSettings: { pageActions.openSettings() },
+                             sentence: "猫を増やすときは、ここから。", householdTools: false) { pageActions.add() }
+                .containerRelativeFrame(.horizontal)
                 .accessibilityHidden(!onAddPage)
                 .id(Self.addPageID)
         }
@@ -554,7 +535,7 @@ struct CatHomeView: View {
     }
 
     private func show(_ id: String) {
-        withAnimation(.snappy) { pageID = id }
+        withAnimation(reduceMotion ? nil : .snappy) { pageID = id }
         storedCatID = id
     }
 }
@@ -581,21 +562,6 @@ private struct CatHomeSettledPage: ViewModifier {
             content.onChange(of: pageID, initial: true) { _, id in
                 if settled != id { settled = id }
             }
-        }
-    }
-}
-
-/// The corners painted while moving (CatHomeCardWhileMoving), only with
-/// the DEBUG switch --cat-home-speed-old-corners: they need a geometry
-/// callback on every page every frame.
-private struct CatHomeOldCorners: ViewModifier {
-    let enabled: Bool
-
-    func body(content: Content) -> some View {
-        if CatHomeSpeedSwitch.oldCorners {
-            content.modifier(CatHomeCardWhileMoving(enabled: enabled))
-        } else {
-            content
         }
     }
 }
@@ -714,57 +680,6 @@ private struct CatHomeFrameProbeModifier: ViewModifier {
     }
 }
 #endif
-
-/// While the pages move, each page is a card with continuous rounded corners
-/// (0 at rest, `radius` a full page away); its scale comes from the pager's
-/// scrollTransition. The corners are painted in the page background (the
-/// colour that shows between the two cards) rather than clipped: at rest
-/// the paint is an empty path, so nothing is clipped or composited offscreen
-/// and the photo under the status bar draws exactly as before, also while the
-/// page scrolls up and down. A ViewModifier, so the moving offset re-draws
-/// only the corners, never the page's own body.
-private struct CatHomeCardWhileMoving: ViewModifier {
-    /// How much smaller a page is a full page away (0.92 at most).
-    static let shrink: CGFloat = 0.08
-    static let radius: CGFloat = 32
-
-    let enabled: Bool
-    /// 0 at rest, 1 a full page away; kept in hundredths.
-    @State private var progress: CGFloat = 0
-
-    func body(content: Content) -> some View {
-        content
-            .overlay {
-                CatHomeCardCorners(radius: Self.radius * progress)
-                    .fill(Color(.systemGroupedBackground), style: FillStyle(eoFill: true))
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-            }
-            .onGeometryChange(for: CGFloat.self) { proxy in
-                let width = proxy.size.width
-                guard width > 0 else { return 0 }
-                let moved = min(abs(proxy.frame(in: .scrollView(axis: .horizontal)).minX) / width, 1)
-                // A settled page reads exactly 0 (no corner, no clip).
-                return moved < 0.01 ? 0 : (moved * 100).rounded() / 100
-            } action: { value in
-                let next = enabled ? value : 0
-                if next != progress { progress = next }
-            }
-    }
-}
-
-/// What lies outside a rounded rectangle in the rectangle (even-odd); an
-/// empty path when the radius is 0.
-private struct CatHomeCardCorners: Shape {
-    var radius: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        guard radius > 0 else { return Path() }
-        var path = Path(rect)
-        path.addRoundedRect(in: rect, cornerSize: CGSize(width: radius, height: radius), style: .continuous)
-        return path
-    }
-}
 
 /// Sizes taken once from the screen: the photo is about 46% of its height
 /// (40% on short screens, so the first buttons show on iPhone SE).

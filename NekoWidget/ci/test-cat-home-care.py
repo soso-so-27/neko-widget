@@ -280,40 +280,23 @@ class NameIsTheCatMenu(unittest.TestCase):
         self.assertIn("ForEach(CatHomeHeroLayout.dots(count: count, current: current), id: \\.index) { dot in", HOME)
         self.assertIn("func testPageDotsCapAtSevenWithShrinkingEnds()", TESTS)
 
-    def test_pages_are_cards_only_while_they_move(self):
-        # 11/14: at rest exactly as before; while moving, each page scales to
-        # 0.92 at most in the render pass only (no clip, no opacity, no blur,
-        # no per-frame callback); Reduce Motion: none. The painted corners
-        # (a geometry callback every frame) only with a DEBUG switch.
+    def test_pages_move_exactly_with_the_finger(self):
+        # 11/14 (owner: 「指についてくる感じが弱い」): plain paging. No scale,
+        # corners, opacity or offset while moving, so the page under the
+        # finger moves exactly with it; Reduce Motion also drops the menu's
+        # animated jump.
         pager = block(HOME, "private func pager(_ cats: [CatHomeCat], current: CatHomeCat, metrics: CatHomeMetrics) -> some View {")
-        self.assertIn(".modifier(CatHomeOldCorners(enabled: !reduceMotion))", pager)
-        self.assertIn(".scrollTransition(.interactive, axis: .horizontal) { content, phase in", pager)
-        self.assertIn("let still = reduceMotion || CatHomeSpeedSwitch.noCard", pager)
-        self.assertIn("content.scaleEffect(phase.isIdentity || still", pager)
-        old = block(HOME, "private struct CatHomeOldCorners: ViewModifier {")
-        self.assertIn("if CatHomeSpeedSwitch.oldCorners {", old)
-        self.assertIn('static let oldCorners = CommandLine.arguments.contains("--cat-home-speed-old-corners")', HOME)
-        self.assertIn("static let oldCorners = false", HOME)
-        self.assertIn("? 1 : 1 - shrink * CGFloat(min(abs(phase.value), 1)))", pager)
-        for gone in (".opacity(", ".blur(", ".offset(", "rotation"):
-            self.assertNotIn(gone, pager)
+        for gone in (".scrollTransition", ".scaleEffect", ".opacity(", ".blur(", ".offset(", "rotation", ".modifier("):
+            self.assertNotIn(gone, pager.replace(".modifier(CatHomeSettledPage", "").replace(".modifier(CatHomeFrameProbeModifier", ""))
+        for gone in ("CatHomeCardWhileMoving", "CatHomeCardCorners", "CatHomeOldCorners", "shrink:", "noCard", "oldCorners"):
+            self.assertNotIn(gone, HOME)
+        self.assertEqual(pager.count(".containerRelativeFrame(.horizontal)"), 2)
         self.assertIn(".scrollTargetBehavior(.paging)", pager)
         self.assertIn(".scrollPosition(id: $pageID)", pager)
         # 11/14: with a cat there are always two pages (the add page).
         self.assertNotIn(".scrollDisabled(", pager)
-        card = block(HOME, "private struct CatHomeCardWhileMoving: ViewModifier {")
-        self.assertIn("static let shrink: CGFloat = 0.08", card)
-        self.assertIn("static let radius: CGFloat = 32", card)
-        self.assertIn("CatHomeCardCorners(radius: Self.radius * progress)", card)
-        self.assertIn(".fill(Color(.systemGroupedBackground), style: FillStyle(eoFill: true))", card)
-        self.assertIn(".allowsHitTesting(false)", card)
-        self.assertIn("return moved < 0.01 ? 0 : (moved * 100).rounded() / 100", card)
-        self.assertNotIn(".mask", card)
-        self.assertNotIn(".clipShape", card)
-        corners = block(HOME, "private struct CatHomeCardCorners: Shape {")
-        self.assertIn("guard radius > 0 else { return Path() }", corners)
-        self.assertIn("style: .continuous", corners)
-        self.assertIn("@Environment(\\.accessibilityReduceMotion) private var reduceMotion", HOME)
+        self.assertIn("@Environment(\.accessibilityReduceMotion) private var reduceMotion", HOME)
+        self.assertIn("withAnimation(reduceMotion ? nil : .snappy) { pageID = id }", HOME)
 
     def test_swipe_moves_only_sideways_with_neighbours_ready(self):
         # 11/14 (build 373: swiping between cats felt rough). A page that fits
@@ -344,7 +327,7 @@ class NameIsTheCatMenu(unittest.TestCase):
         # a pageID change mid-swipe does not draw them again; the round
         # buttons have a fixed fill, not a material.
         pager = block(HOME, "private func pager(_ cats: [CatHomeCat], current: CatHomeCat, metrics: CatHomeMetrics) -> some View {")
-        self.assertIn("card(page(cat, index: index, cats: cats, metrics: metrics).equatable())", pager)
+        self.assertIn("page(cat, index: index, cats: cats, metrics: metrics).equatable()", pager)
         page = block(HOME, "private struct CatHomePage: View {")
         self.assertNotIn("AnyView", page)
         self.assertIn("let actions: CatHomePageActions", page)
@@ -367,7 +350,7 @@ class NameIsTheCatMenu(unittest.TestCase):
         # The DEBUG switches are off in Release.
         switch = block(HOME, "enum CatHomeSpeedSwitch {")
         self.assertIn("#else", switch)
-        self.assertEqual(switch.count("= false"), 4)
+        self.assertEqual(switch.count("= false"), 2)
 
     def test_a_cat_is_added_on_the_last_page_only(self):
         # 11/14 (owner): one place to add a cat, a page after the last cat:
@@ -376,7 +359,7 @@ class NameIsTheCatMenu(unittest.TestCase):
         pager = block(HOME, "private func pager(_ cats: [CatHomeCat], current: CatHomeCat, metrics: CatHomeMetrics) -> some View {")
         self.assertIn('static let addPageID = "cat-home-add-page"', HOME)
         self.assertLess(pager.index("ForEach(Array(cats.enumerated())"), pager.index(".id(Self.addPageID)"))
-        self.assertIn('sentence: "猫を増やすときは、ここから。", householdTools: false) { pageActions.add() })', pager)
+        self.assertIn('sentence: "猫を増やすときは、ここから。", householdTools: false) { pageActions.add() }', pager)
         self.assertIn("openSettings: { pageActions.openSettings() }", pager)
         empty = block(HOME, "private struct CatHomeNoCatPage: View {")
         self.assertIn('var sentence = "この子を追加すると、ここに出ます。"', empty)

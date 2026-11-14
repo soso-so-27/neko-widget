@@ -363,22 +363,15 @@ final class ScreenSpeedSweepUITests: XCTestCase {
     @MainActor func testScroll19CatHomePagerWarmUp() { measureCatHomePager("慣らし", []) }
     @MainActor func testScroll20CatHomePager() { measureCatHomePager("標準", []) }
     /// 変える前の描き方に 1 つだけ戻して比べる（DEBUG の起動引数、CatHomeSpeedSwitch）。
-    @MainActor func testScroll21CatHomePagerOldCorners() {
-        measureCatHomePager("角の塗り（前）", ["--cat-home-speed-old-corners"])
-    }
     @MainActor func testScroll22CatHomePagerOldMaterials() {
-        measureCatHomePager("すりガラスと影（前）", ["--cat-home-speed-old-materials"])
+        measureCatHomePager("すりガラス（前）", ["--cat-home-speed-old-materials"])
     }
     @MainActor func testScroll23CatHomePagerRebuildsPages() {
         measureCatHomePager("ページを毎回作り直す（前）", ["--cat-home-speed-rebuild-pages"])
     }
-    @MainActor func testScroll24CatHomePagerNoCard() {
-        measureCatHomePager("縮みなし", ["--cat-home-speed-no-card"])
-    }
-    /// 前の描き方を全部（角の塗り・すりガラス・作り直し）。
+    /// 前の描き方を全部（すりガラス・作り直し）。
     @MainActor func testScroll26CatHomePagerAllOld() {
-        measureCatHomePager("前の描き方すべて", ["--cat-home-speed-old-corners", "--cat-home-speed-old-materials",
-                                          "--cat-home-speed-rebuild-pages"])
+        measureCatHomePager("前の描き方すべて", ["--cat-home-speed-old-materials", "--cat-home-speed-rebuild-pages"])
     }
     /// 標準をもう一度（同じ実行の中のばらつきを見る）。
     @MainActor func testScroll27CatHomePagerAgain() { measureCatHomePager("標準（2回目）", []) }
