@@ -1593,7 +1593,7 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launch()
         let proof = app.buttons["cat-care-restored-vaccine-proof"]
         XCTAssertTrue(proof.waitForExistence(timeout: 12), app.debugDescription)
-        XCTAssertEqual(proof.label, "証明の写真。開くには2回タップ")
+        XCTAssertEqual(proof.label, "証明の写真")
         XCTAssertFalse(app.staticTexts["試験のワクチン"].exists)
         proof.tap()
         let enlarged = app.descendants(matching: .any).matching(identifier: "tool-record-photo-full").firstMatch

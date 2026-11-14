@@ -223,7 +223,7 @@ struct AlbumView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("album-card-\(album.id.logKey)")
-                    .accessibilityLabel("\(album.title)、\(GrowthAlbumOverviewCard.dateRange(for: album))")
+                    .accessibilityLabel(album.title)
                     .accessibilityValue(GrowthAlbumOverviewCard.dateRange(for: album))
                 }
             }
@@ -2904,7 +2904,8 @@ struct PhotoBrowserView: View {
                 .font(.headline)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-                .accessibilityLabel(spokenDate)
+                // 11/14: the day once, as the value (it was the label too).
+                .accessibilityLabel("撮影日")
                 .accessibilityValue(spokenDate)
                 .accessibilityHint(context ?? "")
                 .accessibilityIdentifier("photo-browser-date")
@@ -3035,7 +3036,7 @@ struct PhotoBrowserView: View {
             }
                 .foregroundStyle(.secondary)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(spokenDate)
+                .accessibilityLabel("撮影日")
                 .accessibilityValue(spokenDate)
                 .accessibilityHint(PhotoRediscoveryContext.yearsAgo(for: photo.creationDate) ?? "")
                 .accessibilityIdentifier("photo-browser-date")
@@ -3207,6 +3208,8 @@ struct PhotoBrowserView: View {
                     .background(.black.opacity(0.85), in: Capsule()).padding(.bottom, 100)
                     .accessibilityIdentifier("photo-browser-showcase-added")
                     .id(noticeID)
+                    // 11/14: it goes in three seconds, so VoiceOver reads it as it shows.
+                    .onAppear { AccessibilityNotification.Announcement("見せる写真に追加しました").post() }
                     .task {
                         try? await Task.sleep(for: .seconds(3))
                         if !Task.isCancelled { showcaseNoticeID = nil }

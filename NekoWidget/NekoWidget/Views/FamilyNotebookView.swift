@@ -1395,6 +1395,7 @@ struct FamilyNotebookMemberView: View {
                     Image(systemName: "person.crop.circle.fill")
                         .font(.system(size: 64))
                         .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
                     Text(member.displayName).font(.title2.bold())
                 }
                 .frame(maxWidth: .infinity)
@@ -1511,6 +1512,7 @@ struct FamilyNotebookInvitationCard: View {
             Image(systemName: "person.2.fill")
                 .font(.system(size: 36))
                 .foregroundStyle(.white)
+                .accessibilityHidden(true)
                 .frame(width: 76, height: 76)
                 .background(Color.accentColor.gradient, in: Circle())
             Text("\(from)から、家族の手帳への招待").font(.headline).multilineTextAlignment(.center)

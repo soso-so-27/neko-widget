@@ -204,15 +204,27 @@ enum CatHomeHeroLayout {
         var lines: Int
     }
 
+    /// One more size, for two lines only (11/14): the longest name, 20
+    /// full-width characters, is ten a line at 22 in the narrowest name
+    /// (iPhone SE: 232 wide, 228 as the lines are broken), so at the default
+    /// text size it never ends in 「…」. At 34 two lines hold twelve.
+    static let twoLineFloor: Double = 22
+
     /// The largest ladder size whose one-line width (`width(size)`) fits
-    /// `maxWidth`; else two lines at the smallest size.
-    static func nameFit(scale: Double, maxWidth: Double, width: (Double) -> Double) -> NameFit {
+    /// `maxWidth`; else two lines at the smallest size, or at the two-line
+    /// floor when `lines(size)` (how many lines the name takes there) says
+    /// the smallest size needs more than two. Larger text sizes may still
+    /// cut a very long name; VoiceOver reads it whole.
+    static func nameFit(scale: Double, maxWidth: Double, width: (Double) -> Double,
+                        lines: ((Double) -> Int)? = nil) -> NameFit {
         let factor = min(max(scale, 0.5), nameScaleCap)
         let sizes = nameLadder.map { ($0 * factor).rounded() }
         for size in sizes where width(size) <= maxWidth {
             return NameFit(size: size, lines: 1)
         }
-        return NameFit(size: sizes.last ?? nameLadder[nameLadder.count - 1], lines: 2)
+        let smallest = sizes.last ?? nameLadder[nameLadder.count - 1]
+        guard let lines, lines(smallest) > 2 else { return NameFit(size: smallest, lines: 2) }
+        return NameFit(size: (twoLineFloor * factor).rounded(), lines: 2)
     }
 
     struct Dot: Equatable {
@@ -244,5 +256,51 @@ enum CatHomeHeroLayout {
             }
             return Dot(index: index, scale: index == current ? 1 : scale)
         }
+    }
+}
+
+// MARK: - 「この子」 page: VoiceOver between the cats (11/14)
+
+/// What VoiceOver reads and offers to move between the cats' pages; the
+/// page after the last cat adds a cat.
+enum CatHomePageAccess {
+    static let previous = "前の子"
+    static let next = "次の子"
+    static let toAdd = "猫を追加するページへ"
+
+    /// 「3匹中1匹目」 after the photo's summary; nil with one cat.
+    static func position(index: Int, catCount: Int) -> String? {
+        catCount >= 2 ? "\(catCount)匹中\(index + 1)匹目" : nil
+    }
+
+    /// The photo's summary with the position: 「むぎ、オス、4歳、3匹中1匹目」.
+    static func spoken(_ facts: String, index: Int, catCount: Int) -> String {
+        [facts, position(index: index, catCount: catCount)].compactMap { $0 }.joined(separator: "、")
+    }
+
+    /// The page `by` pages from `index`: a cat, or `catCount` for the add
+    /// page; nil past either end.
+    static func target(from index: Int, by: Int, catCount: Int) -> Int? {
+        let target = index + by
+        return (0...catCount).contains(target) ? target : nil
+    }
+
+    struct Action: Hashable {
+        let name: String
+        /// Pages to move: -1 back, 1 on.
+        let by: Int
+    }
+
+    /// The actions a page offers: 「前の子」 from the second cat and from
+    /// the add page, 「次の子」 up to the last cat, then 「猫を追加するページへ」.
+    static func actions(index: Int, catCount: Int) -> [Action] {
+        var result: [Action] = []
+        if index > 0 { result.append(Action(name: previous, by: -1)) }
+        if index < catCount - 1 {
+            result.append(Action(name: next, by: 1))
+        } else if index == catCount - 1 {
+            result.append(Action(name: toAdd, by: 1))
+        }
+        return result
     }
 }

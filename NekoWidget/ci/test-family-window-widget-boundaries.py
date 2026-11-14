@@ -5257,10 +5257,14 @@ class GroupWindowUsabilityTests(unittest.TestCase):
         self.assertIn('WorkingLabel(title: "断る"', setup)
         # Removing a member has a visible button and a VoiceOver action, not only a swipe.
         self.assertIn('"group-window-remove-member"', setup)
-        self.assertIn('.accessibilityAction(named: Text("外す"))', setup)
-        # Photo tiles are buttons and say whether they have a heart.
+        # 11/14: the action is offered only for someone who can be removed.
+        self.assertIn('if canRemove {\n                Button("外す")', setup)
+        self.assertNotIn('.accessibilityAction(named: Text("外す"))', setup)
+        # Photo tiles open as buttons (「ママからの写真、3日前」); the heart
+        # says whether this person sent one (11/14).
         self.assertNotIn(".onTapGesture { openedEntry = entry }", window)
-        self.assertIn('parts.append("ハートあり")', window)
+        self.assertIn('GroupDisplayName.from(sender) + "の写真"', window)
+        self.assertIn('mine ? "ハートを送りました" : canHeart ? "ハートを送る" : "ハート"', window)
 
 
 class WindowCreationEntryTests(unittest.TestCase):
@@ -8851,7 +8855,7 @@ class CatHomeTab1112Tests(unittest.TestCase):
         self.assertIn("@ScaledMetric(relativeTo: .largeTitle) private var nameSize: CGFloat = 56", hero)
         self.assertIn(".font(.system(size: CGFloat(fit.size), weight: .heavy))", hero)
         self.assertIn("text.lineLimit(2)", hero)
-        self.assertIn(".accessibilityLabel(facts.spoken)", hero)
+        self.assertIn(".accessibilityLabel(CatHomePageAccess.spoken(facts.spoken,", hero)
         # About 46% of the screen, less on short screens (iPhone SE).
         metrics = section(self.home, "struct CatHomeMetrics {", "/// One cat's page:")
         self.assertIn("heroHeight = (screen * (screen < 700 ? 0.40 : 0.46)).rounded()", metrics)
@@ -9193,13 +9197,16 @@ class CatIdentityMeasure1113Tests(unittest.TestCase):
         # then AppLimitsTests (C1A11A17…, the 11/14 limits), then
         # FamilyJourneyTests (C1FA3A11…, the 11/14 family journey), then
         # WhenStuckTests (C1A51C14…, the 11/14 「困ったとき」 words), then
-        # LaunchWorkTests (4C570000…, the light first seconds after launch).
+        # LaunchWorkTests (4C570000…, the light first seconds after launch), then
+        # AccessibilitySpeechTests (C1A55E50…, the 11/14 VoiceOver review).
         self.assertIn("children = (C1108C000000000000000002,C1D3A9110000000000000006,"
                       "C15C0A7E0000000000000002,C1A1BF100000000000000002,C1CA70500000000000000002,"
-                      "C1E0A7E00000000000000002,C1A11A170000000000000002,C1FA3A110000000000000002,C1A51C140000000000000002,4C570000000000000000000A,); path = NekoWidgetTests;", self.project)
+                      "C1E0A7E00000000000000002,C1A11A170000000000000002,C1FA3A110000000000000002,C1A51C140000000000000002,4C570000000000000000000A,"
+                      "C1A55E500000000000000002,); path = NekoWidgetTests;", self.project)
         self.assertIn("files = (C1108C000000000000000003,C1D3A9110000000000000005,"
                       "C15C0A7E0000000000000001,C1A1BF100000000000000001,C1CA70500000000000000001,"
-                      "C1E0A7E00000000000000001,C1A11A170000000000000001,C1FA3A110000000000000001,C1A51C140000000000000001,4C5700000000000000000009,);", self.project)
+                      "C1E0A7E00000000000000001,C1A11A170000000000000001,C1FA3A110000000000000001,C1A51C140000000000000001,4C5700000000000000000009,"
+                      "C1A55E500000000000000001,);", self.project)
         self.assertEqual(len(set(re.findall(r"C1D3A911000000000000000\d", self.project))), 6)
 
     def test_store_product_compiles_none_of_it(self) -> None:
