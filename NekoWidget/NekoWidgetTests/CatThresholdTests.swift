@@ -188,4 +188,43 @@ final class CatThresholdTests: XCTestCase {
         XCTAssertEqual(again.assets, loaded.assets)
         XCTAssertEqual(again.settings, loaded.settings)
     }
+
+    // MARK: - 11/14: fresh analyses are handed over within a second
+
+    private func reports(batchEnd: Int, analyzed: Int, seconds: TimeInterval,
+                         rangeEnd: Int = 9_681, first: Bool = false) -> Bool {
+        ScanProgressEventPolicy.shouldReport(
+            batchEnd: batchEnd, rangeEnd: rangeEnd, isFirstQuickBatch: first,
+            analyzedSinceLastReport: analyzed, secondsSinceLastReport: seconds)
+    }
+
+    func testFreshAnalysesAreHandedOverWithinASecond() {
+        // Between the 100-photo marks, fresh work no longer waits for the next
+        // mark: a visit that ends after 40 photos keeps them.
+        XCTAssertTrue(reports(batchEnd: 1_244, analyzed: 4, seconds: 1.0))
+        XCTAssertTrue(reports(batchEnd: 1_244, analyzed: 40, seconds: 3.5))
+        XCTAssertFalse(reports(batchEnd: 1_244, analyzed: 4, seconds: 0.4))
+        XCTAssertEqual(ScanProgressEventPolicy.maximumUnreportedSeconds, 1)
+    }
+
+    func testReusedStretchKeepsTheHundredPhotoCadence() {
+        // Walking past photos already on the current line costs no image
+        // request, so nothing extra is handed over there.
+        XCTAssertFalse(reports(batchEnd: 1_244, analyzed: 0, seconds: 30))
+        XCTAssertTrue(reports(batchEnd: 1_300, analyzed: 0, seconds: 0))
+        XCTAssertTrue(reports(batchEnd: 3_000, analyzed: 0, seconds: 0))  // resume checkpoint mark
+        XCTAssertTrue(reports(batchEnd: 9_681, analyzed: 0, seconds: 0))  // end of the pass
+        XCTAssertTrue(reports(batchEnd: 4, analyzed: 4, seconds: 0, rangeEnd: 500, first: true))
+    }
+
+    func testRecordsFromTheRescanAreReusedOnTheNextPass() {
+        // A record written by a fresh scan carries exactly the current stamp,
+        // so it is never opened again (no field differs from the migration).
+        let current = legacySettings(line: 0.7).migratedToCurrentDetectorPolicy().normalized()
+        let fresh = record("fresh", cat: false, confidence: 0, fingerprint: current.analysisFingerprint)
+        XCTAssertEqual(fresh.migratedToAreaIndependentDetection(settings: current)
+            .migratedToLowerConfidenceThreshold(settings: current)
+            .analysisFingerprint, current.analysisFingerprint)
+        XCTAssertEqual(current.analysisFingerprint, "cat-v3:\(Float(0.5).bitPattern):3")
+    }
 }
