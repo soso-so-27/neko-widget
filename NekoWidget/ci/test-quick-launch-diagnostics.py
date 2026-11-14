@@ -1,4 +1,6 @@
 import json
+import importlib.util
+import itertools
 from pathlib import Path
 import plistlib
 import shutil
@@ -162,6 +164,7 @@ class QuickLaunchDiagnosticsTests(unittest.TestCase):
                 directory = self.root / scenario; directory.mkdir()
                 preamble = r'''
 RUNNER_TEMP="$PWD"
+GITHUB_OUTPUT="$PWD/outputs"
 xcrun() { echo "xcrun $*" >> trace; if [[ "$*" == *"create"* ]]; then echo AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE; fi; }
 python3() {
   echo "python3 $*" >> trace
@@ -186,6 +189,53 @@ xcodebuild() {
                     self.assertIn("-only-testing:NekoWidgetTests", trace)
                     self.assertEqual(trace.count("test-without-building"), 1)
 
+    def test_workflow_only_classifies_explicit_first_install_timeout(self):
+        workflow = (ROOT.parent / ".github/workflows/quick-launch-attempt.yml").read_text(encoding="utf-8")
+        body = workflow.split("        run: |\n", 1)[1].split("      - name: Attach", 1)[0]
+        body = "\n".join(line[10:] for line in body.splitlines()).replace("${{ inputs.attempt }}", "1")
+        bash = "C:/Program Files/Git/bin/bash.exe" if Path("C:/Program Files/Git/bin/bash.exe").exists() else shutil.which("bash")
+        for status, marker, expected in ((0, False, "passed"), (124, True, "install_timeout"), (124, False, "failed"), (37, True, "failed"), (1, False, "failed")):
+            with self.subTest(status=status, marker=marker):
+                directory = self.root / f"wrapper-{status}-{marker}"; directory.mkdir()
+                preamble = r'''set -euo pipefail
+RUNNER_TEMP="$PWD"
+RUNNER_NAME=synthetic
+GITHUB_OUTPUT="$PWD/outputs"
+GITHUB_STEP_SUMMARY="$PWD/summary"
+touch "$GITHUB_OUTPUT"
+export RUNNER_TEMP RUNNER_NAME GITHUB_OUTPUT GITHUB_STEP_SUMMARY
+tar() { :; }
+bash() {
+  if [[ "$marker" == True ]]; then echo install_timeout=true >> "$GITHUB_OUTPUT"; fi
+  return "$status"
+}
+'''
+                (directory / "case.sh").write_text(preamble + f"\nstatus={status}\nmarker={marker}\n" + body, encoding="utf-8", newline="\n")
+                result = subprocess.run([bash, "case.sh"], cwd=directory, capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 0 if expected != "failed" else status, result.stderr)
+                self.assertIn(f"result={expected}", (directory / "outputs").read_text())
+                self.assertIn("Fresh Mac attempt 1", (directory / "summary").read_text())
+
+    def test_fresh_mac_gate_requires_successful_sequential_attempt(self):
+        spec = importlib.util.spec_from_file_location("launch_gate", ROOT / "ci/check-fresh-launch-result.py")
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        states = {
+            "passed": {"result": "success", "outputs": {"result": "passed"}},
+            "timeout": {"result": "success", "outputs": {"result": "install_timeout"}},
+            "failed": {"result": "failure"},
+            "cancelled": {"result": "cancelled"},
+            "skipped": {"result": "skipped"},
+            "missing": {"result": "success", "outputs": {}},
+        }
+        accepted = {("passed", "skipped", "skipped"), ("timeout", "passed", "skipped"), ("timeout", "timeout", "passed")}
+        for values in itertools.product(states, repeat=3):
+            needs = {"quick-check": {"result": "success"}}
+            needs.update({f"launch-attempt-{n}": states[value] for n, value in enumerate(values, 1)})
+            self.assertEqual(gate.passed(needs), values in accepted, values)
+            needs["quick-check"]["result"] = "failure"
+            self.assertFalse(gate.passed(needs), values)
+
     def test_real_shell_failure_path_preserves_status_retry_limit_and_cleanup_order(self):
         script = (ROOT / "ci/run-quick-launch.sh").read_text(encoding="utf-8")
         setup = script.split("quick_launch_active=false", 1)[1].split('bounded 60 xcrun simctl boot "$device"', 1)[0]
@@ -194,7 +244,7 @@ xcodebuild() {
         launch = "reboot_simulator() {" + launch
         bash = shutil.which("bash") if not Path("C:/Program Files/Git/bin/bash.exe").exists() else "C:/Program Files/Git/bin/bash.exe"
         self.assertIsNotNone(bash)
-        for scenario, expected_status, expected_launches in (("error", 37, 1), ("timeout", 124, 2), ("recovered", 0, 2), ("alive-failed", 1, 1)):
+        for scenario, expected_status, expected_launches in (("error", 37, 1), ("timeout", 124, 2), ("recovered", 0, 2), ("alive-failed", 1, 1), ("install-timeout", 124, 0), ("install-error", 37, 0)):
             with self.subTest(scenario=scenario):
                 directory = self.root / scenario; directory.mkdir()
                 preamble = r'''set -euo pipefail
@@ -202,11 +252,14 @@ device=AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE
 bundle=jp.nekowidget.app
 app=NekoWidget.app
 RUNNER_TEMP="$PWD"
+GITHUB_OUTPUT="$PWD/outputs"
 python3() { echo "diagnostic $*" >> trace; if [[ "$*" == *" collect "* ]]; then return 42; fi; }
 sleep() { :; }
 xcrun() { echo "xcrun $*" >> trace; if [[ "$*" == *"launchctl list"* && "$scenario" != alive-failed ]]; then echo "1234 0 jp.nekowidget.app"; fi; }
 bounded() {
   echo "bounded $*" >> trace
+  if [[ "$*" == *"simctl install"* && "$scenario" == install-timeout ]]; then return 124; fi
+  if [[ "$*" == *"simctl install"* && "$scenario" == install-error ]]; then return 37; fi
   if [[ "$*" == *"simctl launch"* ]]; then
     count=0; if [[ -f count ]]; then read -r count < count; fi
     count=$((count+1)); echo "$count" > count
@@ -225,6 +278,12 @@ bounded() {
                 trace = (directory / "trace").read_text()
                 self.assertEqual(trace.count("bounded 90 xcrun simctl launch"), expected_launches)
                 self.assertIn("xcrun simctl delete", trace)
+                output = directory / "outputs"
+                self.assertEqual(output.exists(), scenario == "install-timeout")
+                if output.exists():
+                    self.assertEqual(output.read_text().strip(), "install_timeout=true")
+                    self.assertEqual(trace.count("bounded 90 xcrun simctl install"), 1)
+                    self.assertNotIn("bounded 30 xcrun simctl shutdown", trace)
                 if expected_status:
                     self.assertIn(f"--exit-status {expected_status}", trace)
                     self.assertLess(trace.index(" collect "), trace.index("xcrun simctl delete"))
