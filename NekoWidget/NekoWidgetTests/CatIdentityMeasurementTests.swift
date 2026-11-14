@@ -228,6 +228,47 @@ final class CatPhotoCoverageMeasurementTests: XCTestCase {
         XCTAssertEqual(CatPhotoCoverageLibraryFacts.storedConfidenceBand(record(.unavailableLocally, 0)), 0)
     }
 
+    func testRescanPendingReasonsFollowTheScannerStamp() {
+        var old = AppSettings.default
+        old.confidenceThreshold = 0.7
+        let current = AppSettings.default
+        func record(_ status: AssetAnalysisStatus, _ settings: AppSettings,
+                    confidence: Float = 0.8, traits: Bool = true) -> AssetRecord {
+            AssetRecord(
+                localIdentifier: "x", creationDate: nil, isFavorite: false, isScreenshot: false,
+                burstIdentifier: nil,
+                cat: CatDetection(detected: status == .detected, confidence: confidence,
+                                  boundingBox: nil, areaRatio: 0.1, catCount: 1),
+                analysisStatus: status, analysisFingerprint: settings.analysisFingerprint,
+                albumAnalysisVersion: traits ? CatAlbumTraits.currentAnalysisVersion : nil,
+                albumTraits: status == .detected && traits
+                    ? CatAlbumTraits(postures: [], containsPerson: false, isOuting: nil, largestCatAreaRatio: 0.1)
+                    : nil
+            )
+        }
+        func reason(_ value: AssetRecord) -> Int? {
+            CatPhotoCoverageLibraryFacts.rescanPendingReason(value, settings: current)
+        }
+        // Older line: "no cat" waits for the scan; a cat found at 0.7 moves without one.
+        XCTAssertEqual(reason(record(.noCat, old)), 0)
+        XCTAssertNil(reason(record(.detected, old)))
+        XCTAssertEqual(reason(record(.unavailableLocally, old)), 2)
+        XCTAssertEqual(reason(record(.failed, old)), 2)
+        XCTAssertEqual(reason(record(.excludedScreenshot, old)), 3)
+        XCTAssertEqual(reason(record(.excludedBurstDuplicate, old)), 3)
+        var otherRevision = old
+        otherRevision.analysisRevision += 1
+        XCTAssertEqual(reason(record(.detected, otherRevision)), 1)
+        // On the current line: done, except the two kinds opened every pass.
+        XCTAssertNil(reason(record(.noCat, current)))
+        XCTAssertNil(reason(record(.unavailableLocally, current)))
+        XCTAssertNil(reason(record(.detected, current)))
+        XCTAssertEqual(reason(record(.failed, current)), 4)
+        XCTAssertEqual(reason(record(.detected, current, traits: false)), 5)
+        XCTAssertEqual(CatPhotoCoverageLibraryFacts.rescanPendingLabels.count,
+                       CatPhotoCoverageLibraryFacts().rescanPending.count)
+    }
+
     func testRecheckCountsLoadsEvenWithoutAnImage() {
         var recheck = CatPhotoCoverageRecheck()
         recheck.add(load: .inCloud, sample: nil)
@@ -247,7 +288,11 @@ final class CatPhotoCoverageMeasurementTests: XCTestCase {
         run.rechecks[0].add(load: .local1024, sample: CatPhotoRecognitionSample(bestCatConfidence: 0.55, bestCatArea: 0.03))
         run.library.storedConfidenceLinked = [4, 2, 1]
         run.library.storedConfidenceElsewhere = [90, 3, 7]
+        run.library.rescanPending = [7_000, 0, 5, 12, 3, 1]
         let text = CatPhotoCoverageCore.summaryText(facts: run)
+        XCTAssertTrue(text.contains("rescan pending 7021: no cat at older line 7000, cat at older line 0, "
+            + "iCloud or failed at older line 5, screenshot or burst at older line 12, "
+            + "failed, every pass 3, cat traits pending 1\n"))
         XCTAssertTrue(text.hasPrefix("cat-photo-coverage v2\n"))
         XCTAssertTrue(text.contains("stored best cat, in linked albums: none 4, 0.5-0.7 2, >=0.7 1\n"))
         XCTAssertTrue(text.contains("stored best cat, elsewhere: none 90, 0.5-0.7 3, >=0.7 7\n"))

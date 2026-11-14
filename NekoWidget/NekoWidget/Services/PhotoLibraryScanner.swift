@@ -9,6 +9,32 @@ enum ScanEvent: Sendable {
     case provisional(LibrarySnapshot)
 }
 
+/// When the scanner hands finished records to the app (11/14). Records only
+/// survive leaving the foreground once handed over: the app merges them and
+/// saves on suspend, and the next pass reuses them. Handing them over only
+/// every 100 photos lost up to 99 fresh analyses per visit (about 20-40 s of
+/// 1024 + 2048px work), so short visits re-did the same photos and the
+/// 0.5-line rescan could stay on 「猫の写真を探しています」 for days.
+/// Pure, so it is unit-tested without PhotoKit.
+enum ScanProgressEventPolicy {
+    /// Fresh analyses are handed over at least this often.
+    static let maximumUnreportedSeconds: TimeInterval = 1
+
+    static func shouldReport(
+        batchEnd: Int,
+        rangeEnd: Int,
+        isFirstQuickBatch: Bool,
+        analyzedSinceLastReport: Int,
+        secondsSinceLastReport: TimeInterval
+    ) -> Bool {
+        if isFirstQuickBatch || batchEnd == rangeEnd || batchEnd.isMultiple(of: 100) {
+            return true
+        }
+        return analyzedSinceLastReport > 0
+            && secondsSinceLastReport >= maximumUnreportedSeconds
+    }
+}
+
 actor PhotoLibraryScanner {
     // Vision's synchronous perform calls run on ordinary Foundation workers.
     // Share the limit across generations; cancellation cannot free an active
@@ -498,6 +524,8 @@ actor PhotoLibraryScanner {
         var newlyAnalyzedCount = 0
         var reusedCount = 0
         var recoveryDiagnostics = startingRecoveryDiagnostics
+        var analyzedSinceLastReport = 0
+        var lastReportUptime = ProcessInfo.processInfo.systemUptime
 
         while batchStart < range.upperBound {
             try Task.checkCancellation()
@@ -649,9 +677,17 @@ actor PhotoLibraryScanner {
             }
 
             batchStart = batchEnd
+            analyzedSinceLastReport += pending.count
             let isFirstQuickBatch = phase == .quickScan
                 && batchEnd == min(range.lowerBound + concurrency, range.upperBound)
-            if isFirstQuickBatch || batchEnd == range.upperBound || batchEnd.isMultiple(of: 100) {
+            let nowUptime = ProcessInfo.processInfo.systemUptime
+            if ScanProgressEventPolicy.shouldReport(
+                batchEnd: batchEnd,
+                rangeEnd: range.upperBound,
+                isFirstQuickBatch: isFirstQuickBatch,
+                analyzedSinceLastReport: analyzedSinceLastReport,
+                secondsSinceLastReport: nowUptime - lastReportUptime
+            ) {
                 let state = makeState(
                     records: records,
                     scannedAssets: batchEnd,
@@ -674,6 +710,8 @@ actor PhotoLibraryScanner {
                     )
                 )
                 lastPublishedIndex = batchEnd
+                analyzedSinceLastReport = 0
+                lastReportUptime = ProcessInfo.processInfo.systemUptime
             }
             await Task.yield()
         }
