@@ -95,6 +95,7 @@ const expectedMigrationNames = [
   "0075_group_identity_deletion_checkpoint.sql",
   "0076_family_pending_person.sql",
   "0077_family_notebook_join_proof.sql",
+  "0079_group_push_coalescing_indexes.sql",
 ];
 
 const databaseGateColumns = [
