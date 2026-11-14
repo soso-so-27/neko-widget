@@ -552,9 +552,9 @@ struct NekoWidgetView: View {
         variant.maximumPixelDimension
     }
 
-    /// Missing permissions, an unfinished scan, sync latency, and an invalid
-    /// cache all fail closed to the same empty entry. Keep this copy neutral
-    /// instead of presenting an unverified diagnosis inside the Widget.
+    /// An empty Widget names only a cause the app wrote down (photo access,
+    /// no cat photos) or one the extension saw itself (unreadable, a reveal
+    /// that was not saved); anything else stays "being prepared" (11/14).
     private var emptyState: some View {
         ZStack {
             LinearGradient(
@@ -614,13 +614,16 @@ struct NekoWidgetView: View {
             if definition.endpoint == nil { return "公式のまどを準備中" }
             return OfficialWindowStore.forWindow(definition).snapshot().isSubscribed ? "いま届いている写真はありません" : definition.displayName
         }
+        if let state = personalStuckState {
+            // 11/10: not an error. Seen right after placing, before the app ran.
+            if state == .preparing, isCloudyProfileSource { return "くもりのまどを準備しています" }
+            return state.title
+        }
         if effectiveEmptyStateReason == .sourceUnavailable {
             return "このまどは終わりました"
         }
         if effectiveEmptyStateReason == .needsApp {
-            if entry.photoSourceIdentifier.hasPrefix(CloudyWindowStore.profilePrefix) { return "くもりのまどを準備しています" }
-            // 11/10: not an error. Seen right after placing, before the app ran.
-            return "写真を準備しています"
+            return WidgetStuckState.preparing.title
         }
         if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier) {
             // Waiting also follows the expiry of a previously displayed photo.
@@ -633,7 +636,7 @@ struct NekoWidgetView: View {
             if cached?.isPaused == true { return "このまどは止まっています" }
             return cached?.photoID != nil ? "アプリを開くと写真が出ます" : "まだ写真が届いていません"
         }
-        return "写真を準備しています"
+        return WidgetStuckState.preparing.title
     }
 
     private var emptyStateSubtitle: String {
@@ -642,18 +645,37 @@ struct NekoWidgetView: View {
             guard OfficialWindowConfiguration.definition(for: windowID) != nil else { return "長押しして、別のまどを選んでください" }
             return "タップしてまどを開く"
         }
+        if let state = personalStuckState {
+            if state == .preparing, isCloudyProfileSource { return "アプリを一度開くと始まります" }
+            return state.subtitle
+        }
         if effectiveEmptyStateReason == .sourceUnavailable {
             return "長押しして、別のまどを選んでください"
         }
         if effectiveEmptyStateReason == .needsApp {
-            if entry.photoSourceIdentifier.hasPrefix(CloudyWindowStore.profilePrefix) { return "アプリを一度開くと始まります" }
-            return "アプリを開くと始まります"
+            return WidgetStuckState.preparing.subtitle
         }
         if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)
             || GroupWidgetCache.isGroupSourceID(entry.photoSourceIdentifier) {
             return entry.windowDisplayName
         }
-        return "タップしてアプリを開く"
+        return WidgetStuckState.preparing.subtitle
+    }
+
+    private var isCloudyProfileSource: Bool {
+        entry.photoSourceIdentifier.hasPrefix(CloudyWindowStore.profilePrefix)
+    }
+
+    /// This iPhone's photos and the cloudy windows say why they are empty
+    /// (11/14, A1/A2/A8): the provider's cause, or an image that the provider
+    /// found but could not be drawn here.
+    private var personalStuckState: WidgetStuckState? {
+        let source = entry.photoSourceIdentifier
+        guard source == WidgetPhotoSource.personalLibraryID || isCloudyProfileSource else { return nil }
+        if let state = entry.personalStuckState { return state }
+        if entry.emptyStateReason == .none, entry.cacheFilename != nil { return .unreadable }
+        if entry.emptyStateReason == .sourceUnavailable, isCloudyProfileSource { return .catRemoved }
+        return .preparing
     }
 
     private var effectiveEmptyStateReason: WidgetEmptyStateReason {

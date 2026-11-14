@@ -71,24 +71,22 @@ private struct PickedGroupPhoto: Transferable {
 
 /// Sensitive-content check on a temporary, protected file, deleted at once.
 private enum GroupPhotoModeration {
-    enum Verdict { case safe, hidden, checkOff, retryLater }
+    /// The production check never stops when the system's sensitive-content
+    /// warning is off (11/6: off delivers and shows): no "turn it on" verdict.
+    enum Verdict { case safe, hidden, retryLater }
 
     /// Why a picked photo cannot be delivered.
     static func sendMessage(_ verdict: Verdict) -> String? {
         switch verdict {
         case .safe: return nil
         case .hidden: return "センシティブな内容が含まれている可能性があるため、この写真は届けられません。"
-        case .checkOff:
-            return "写真を届けるには、「設定」→「プライバシーとセキュリティ」→「センシティブな内容の警告」をオンにしてください。"
         case .retryLater: return "写真を確かめられませんでした。少し待ってから、もう一度お試しください。"
         }
     }
 
     /// Why arrived photos are not shown yet. They wait on the relay until then.
     static func receiveMessage(_ verdict: Verdict) -> String {
-        verdict == .checkOff
-            ? "届いた写真を見るには、「設定」→「プライバシーとセキュリティ」→「センシティブな内容の警告」をオンにしてから、画面を下に引いて更新してください。"
-            : "届いた写真を、まだ表示できません。少し待ってから、画面を下に引いて更新してください。"
+        "届いた写真を、まだ表示できません。少し待ってから、画面を下に引いて更新してください。"
     }
 
     static func check(_ jpeg: Data, with moderation: any MomentModerating) async -> Verdict {
@@ -105,8 +103,6 @@ private enum GroupPhotoModeration {
             return .safe
         } catch MomentSharingError.sensitiveContent {
             return .hidden
-        } catch MomentSharingError.moderationDisabled {
-            return .checkOff
         } catch {
             return .retryLater
         }
@@ -280,7 +276,7 @@ final class GroupWindowScreenModel: ObservableObject {
                 try Task.checkCancellation()
                 guard !(await store.contains(photoID: photo.id, windowID: windowID)) else { continue }
                 triedNew = true
-                if let deferred = await receive(photo, me: latest.myParticipantID), waiting != .checkOff {
+                if let deferred = await receive(photo, me: latest.myParticipantID) {
                     waiting = deferred
                 }
                 // Each photo shows as soon as it is kept, not after all of them.
@@ -380,7 +376,7 @@ final class GroupWindowScreenModel: ObservableObject {
                 verdict = await GroupPhotoModeration.check(incoming.jpeg, with: moderation)
             }
             // Keep it unacknowledged; it is tried again next time.
-            guard verdict != .retryLater, verdict != .checkOff else { return verdict }
+            guard verdict != .retryLater else { return verdict }
             let store = self.store
             let windowID = self.windowID
             let hidden = verdict == .hidden
@@ -3115,12 +3111,9 @@ actor GroupWindowScreenFixture: GroupWindowMediaClient {
     }
 }
 
-/// The fixture's on-device check: always safe, or "turned off" to show why
-/// photos wait (`--group-window-screens-check-off`).
+/// The fixture's on-device check: always safe.
 struct GroupWindowFixtureModeration: MomentModerating {
-    func requireSafeImage(at url: URL) async throws {
-        if GroupWindowUIFixture.checkIsOff { throw MomentSharingError.moderationDisabled }
-    }
+    func requireSafeImage(at url: URL) async throws {}
 }
 #endif
 

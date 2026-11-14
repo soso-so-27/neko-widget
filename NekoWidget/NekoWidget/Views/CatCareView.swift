@@ -1602,7 +1602,7 @@ struct CatCareListView: View {
             }
             .accessibilityIdentifier("cat-care-confirm-delete")
             Button("キャンセル", role: .cancel) { pendingDelete = nil }
-        } message: { Text("削除した記録は、ほかのツールにも載らなくなります。") }
+        } message: { Text("削除した記録は、ほかのツールにも載らなくなります。元に戻せません。") }
     }
 
     private var isEmpty: Bool {

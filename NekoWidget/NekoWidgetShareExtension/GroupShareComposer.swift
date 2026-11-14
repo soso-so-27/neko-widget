@@ -109,8 +109,6 @@ final class GroupShareComposerModel: ObservableObject {
             return "きょうはここまでです。あした、また届けられます。"
         case MomentSharingError.sensitiveContent:
             return "センシティブな内容が含まれている可能性があります。別の写真を選んでください。"
-        case MomentSharingError.moderationDisabled:
-            return "写真を届けるには、「設定」→「プライバシーとセキュリティ」→「センシティブな内容の警告」をオンにしてください。"
         case MomentSharingError.moderationUnavailable:
             return "写真を確かめられませんでした。少し待ってから、もう一度お試しください。"
         default:

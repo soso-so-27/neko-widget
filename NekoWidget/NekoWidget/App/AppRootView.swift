@@ -188,9 +188,10 @@ struct AppRootView: View {
             presentedError = PresentedError(message: message)
         }
         .alert(item: $presentedError) { error in
+            // One sentence and one button (11/14): the message already says
+            // what happened, so it is the title instead of a fixed heading.
             Alert(
-                title: Text("うまくいきませんでした"),
-                message: Text(error.message),
+                title: Text(error.message),
                 dismissButton: .default(Text("閉じる")) {
                     viewModel.clearError()
                 }

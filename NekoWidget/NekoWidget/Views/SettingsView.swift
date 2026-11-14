@@ -365,7 +365,9 @@ struct SettingsView: View {
                 Text("ねこのまどについて")
             } footer: {
                 // Read-only facts live in the footer, not in a row that looks tappable.
-                Text("ねこのまど バージョン \(appVersion)")
+                // 11/14: with the build number, so a question can name it.
+                Text("ねこのまど バージョン \(appVersion)（\(appBuild)）")
+                    .accessibilityLabel("ねこのまど バージョン \(appVersion)、ビルド \(appBuild)")
                     .accessibilityIdentifier("settings-app-version")
             }
 
@@ -527,9 +529,13 @@ struct SettingsView: View {
 #endif
     }
 
-    /// 「1.0」 only: no build number or OS requirement on the screen (11/8).
+    /// 「1.0（374）」: the version and the build, no OS requirement (11/14).
     private var appVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+    }
+
+    private var appBuild: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
     }
 
     private var photoSettingsSummary: String {
