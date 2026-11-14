@@ -76,7 +76,11 @@ final class AppViewModel: ObservableObject {
         }
     }
     @Published private(set) var snapshot: LibrarySnapshot = .empty {
-        didSet { photoPresentationRevisions.update(from: oldValue, to: snapshot) }
+        didSet {
+            LaunchWork.measure("snapshotDidSet") {
+                photoPresentationRevisions.update(from: oldValue, to: snapshot)
+            }
+        }
     }
     private var photoPresentationRevisions = LibraryPhotoPresentationRevisions()
     @Published private(set) var scanState: ScanState = .idle
@@ -262,7 +266,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private let authorizationService: PhotoAuthorizationService
-    private let scanner: PhotoLibraryScanner
+    private let scanner: any LibraryScanning
     private let albumService: PhotoAlbumService
     private let widgetCacheBuilder: WidgetCacheBuilder
     private var personalReplenishmentTask: Task<Void, Never>?
@@ -387,7 +391,7 @@ final class AppViewModel: ObservableObject {
 #endif
         // Revoke shared readers before asynchronous PhotoKit resolution.
         _ = suspendPersonalWidgetAuthority()
-        WidgetCenter.shared.reloadAllTimelines()
+        reloadAllWidgetTimelines()
     }
 
     private func updatePhotoReadAuthority() {
@@ -495,10 +499,12 @@ final class AppViewModel: ObservableObject {
         Task { [weak self] in await self?.refreshPhotoSourceAlbums() }
     }
 
-    init() {
+    /// `scanner` is PhotoLibraryScanner except in the DEBUG launch-work
+    /// fixture, which walks synthetic records instead of PhotoKit.
+    init(scanner: any LibraryScanning = PhotoLibraryScanner()) {
         authorizationService = PhotoAuthorizationService()
         authorizationStatus = authorizationService.status
-        scanner = PhotoLibraryScanner()
+        self.scanner = scanner
         albumService = PhotoAlbumService()
         imageLoader = PhotoImageLoader()
         widgetCacheBuilder = WidgetCacheBuilder()
@@ -1022,9 +1028,9 @@ final class AppViewModel: ObservableObject {
             await reconcilePersonalWidgetReadAuthority()
             return
         }
-        let albums = PhotoSourceAlbumCatalog.availableAlbums(
-            excluding: snapshot.albumLocalIdentifier
-        )
+        let albums = LaunchWork.measure("albumCatalog") {
+            PhotoSourceAlbumCatalog.availableAlbums(excluding: snapshot.albumLocalIdentifier)
+        }
         photoSourceAlbums = albums
         photoSourceStatus = PhotoSourceAlbumCatalog.status(
             sourceAlbumIdentifier: catCandidateCuration.sourceAlbumIdentifier,
@@ -2465,6 +2471,10 @@ final class AppViewModel: ObservableObject {
     }
 
     private func candidateSnapshot(_ input: LibrarySnapshot) -> LibrarySnapshot {
+        LaunchWork.measure("candidateSnapshot") { makeCandidateSnapshot(input) }
+    }
+
+    private func makeCandidateSnapshot(_ input: LibrarySnapshot) -> LibrarySnapshot {
         if catIdentityLoadState == .failed || !readablePhotoProjection.isResolved {
             var value = input
             value.assets.removeAll()
@@ -2601,6 +2611,7 @@ final class AppViewModel: ObservableObject {
         }
         guard generation == scanGeneration else { return }
 
+        LaunchWork.count("launchScan")
         isScanning = true
         var startingState = scanState
         startingState.phase = .quickScan
@@ -2855,6 +2866,15 @@ final class AppViewModel: ObservableObject {
         generation: Int,
         operation: String
     ) {
+        LaunchWork.measure("progressPublish") {
+            performPublishPendingScanProgress(generation: generation, operation: operation)
+        }
+    }
+
+    private func performPublishPendingScanProgress(
+        generation: Int,
+        operation: String
+    ) {
         guard let pending = pendingScanProgress,
               pending.generation == generation else { return }
 
@@ -2965,6 +2985,15 @@ final class AppViewModel: ObservableObject {
         state: ScanState,
         analyzedRecords: [AssetRecord]
     ) -> ScanProgressSnapshot {
+        LaunchWork.measure("progressMerge") {
+            performMakeScanProgressSnapshot(state: state, analyzedRecords: analyzedRecords)
+        }
+    }
+
+    private func performMakeScanProgressSnapshot(
+        state: ScanState,
+        analyzedRecords: [AssetRecord]
+    ) -> ScanProgressSnapshot {
         var updated = snapshot
         if !analyzedRecords.isEmpty {
             var indexByIdentifier = Dictionary(
@@ -3015,6 +3044,15 @@ final class AppViewModel: ObservableObject {
     private func applySnapshot(
         _ newSnapshot: LibrarySnapshot,
         preservingLiveSettings: Bool = true
+    ) {
+        LaunchWork.measure("applySnapshot") {
+            performApplySnapshot(newSnapshot, preservingLiveSettings: preservingLiveSettings)
+        }
+    }
+
+    private func performApplySnapshot(
+        _ newSnapshot: LibrarySnapshot,
+        preservingLiveSettings: Bool
     ) {
         // A full scan can run while the user adds a photo to “思い出” or while the
         // quick-stage album/cache publication updates display history. Merge
@@ -3251,6 +3289,10 @@ final class AppViewModel: ObservableObject {
     }
 
     private func chooseCurrentAssetIfNeeded() {
+        LaunchWork.measure("chooseToday") { performChooseCurrentAssetIfNeeded() }
+    }
+
+    private func performChooseCurrentAssetIfNeeded() {
         guard canPresentCatIdentity else {
             currentAsset = nil
             return
@@ -3407,7 +3449,7 @@ final class AppViewModel: ObservableObject {
             try await CloudyWindowImagePreparer.shared.prepare()
             // Preparation is not a view. Keep legacy lastShownAt/shownCount
             // unchanged; the shared journal records issued slots separately.
-            WidgetCenter.shared.reloadAllTimelines()
+            reloadAllWidgetTimelines()
             SharedLog.app.info(
                 "widget-cache",
                 "Widget timeline reload requested",
@@ -3424,6 +3466,7 @@ final class AppViewModel: ObservableObject {
                         guard !Task.isCancelled, generation == self.personalPreparationGeneration,
                               UIApplication.shared.applicationState == .active else { return }
                         await Task.yield()
+                        LaunchWork.count("replenishRound")
                         do {
                             let batch = try await self.widgetCacheBuilder.replenishPersonal(
                                 from: input, eligibilityRevision: revision,
@@ -3433,7 +3476,7 @@ final class AppViewModel: ObservableObject {
                             attemptedPhotoIDs.formUnion(batch.attemptedPhotoIDs)
                             try self.synchronizeCloudyWindowMetadata()
                             try await CloudyWindowImagePreparer.shared.prepare()
-                            if batch.addedCount > 0 { WidgetCenter.shared.reloadAllTimelines() }
+                            if batch.addedCount > 0 { reloadAllWidgetTimelines() }
                             if !batch.hasMore { return }
                         } catch { return } // Next foreground/BG opportunity can resume.
                     }
@@ -3478,7 +3521,7 @@ final class AppViewModel: ObservableObject {
             let revision = try PersonalRediscoveryStore.shared.updateEligibility(
                 photoIDs: [], scopeIdentifier: "invalidated", isAuthorized: false, now: .now)
             try await widgetCacheBuilder.clearPersonal(expectedRevision: revision)
-            WidgetCenter.shared.reloadAllTimelines()
+            reloadAllWidgetTimelines()
         } catch {
             Self.logError(error, category: "widget-cache", operation: "clear_cache")
             if reportErrors { setError(error) }
@@ -3505,6 +3548,7 @@ final class AppViewModel: ObservableObject {
         _ value: LibrarySnapshot,
         reportErrors: Bool
     ) async {
+        LaunchWork.count("saveSnapshot")
         guard catIdentityLoadState == .ready else {
             logCandidateAuthorityUnavailable(operation: "save_snapshot")
             return
@@ -3529,6 +3573,10 @@ final class AppViewModel: ObservableObject {
 
     @discardableResult
     private func synchronizePersonalWidgetAuthority(input: LibrarySnapshot? = nil) throws -> String {
+        try LaunchWork.measure("personalWidgetSync") { try performSynchronizePersonalWidgetAuthority(input: input) }
+    }
+
+    private func performSynchronizePersonalWidgetAuthority(input: LibrarySnapshot? = nil) throws -> String {
         let now = Date.now
         let curated = candidateSnapshot(input ?? snapshot)
         let eligible = photoSelector.eligibleCandidates(from: curated.assets,
@@ -3573,7 +3621,7 @@ final class AppViewModel: ObservableObject {
                 probablePhotoIDs: personalWidgetProbablePhotoIDs(eligible), now: now)
         }
         try synchronizeCloudyWindowMetadata(input: curated)
-        if !bootstrap.isEmpty { WidgetCenter.shared.reloadAllTimelines() }
+        if !bootstrap.isEmpty { reloadAllWidgetTimelines() }
         return revision
     }
 
@@ -3620,6 +3668,10 @@ final class AppViewModel: ObservableObject {
     }
 
     private func synchronizeCloudyWindowMetadata(input: LibrarySnapshot? = nil) throws {
+        try LaunchWork.measure("cloudyMetadata") { try performSynchronizeCloudyWindowMetadata(input: input) }
+    }
+
+    private func performSynchronizeCloudyWindowMetadata(input: LibrarySnapshot? = nil) throws {
         guard CloudyWindowAvailability.isAvailable else { return }
         let source = input ?? candidateSnapshot(snapshot)
         let records = source.assets
@@ -3659,7 +3711,7 @@ final class AppViewModel: ObservableObject {
 #endif
         guard catIdentityLoadState == .ready,
               !canReadPhotos || readablePhotoProjection.isResolved else { return }
-        defer { WidgetCenter.shared.reloadAllTimelines() }
+        defer { reloadAllWidgetTimelines() }
         do {
             let revision = try synchronizePersonalWidgetAuthority()
             // Only derived personal Widget images are removed. A stale cleanup
@@ -3683,6 +3735,11 @@ final class AppViewModel: ObservableObject {
             setError(error)
             return false
         }
+    }
+
+    private func reloadAllWidgetTimelines() {
+        LaunchWork.count("reloadAllTimelines")
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     private func setError(_ error: Error) {

@@ -906,6 +906,7 @@ struct MainTabView: View {
     }
 
     var body: some View {
+        let _ = LaunchWork.count("mainTabBody")
         routedTabContentOfferingFirstPlus
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active {
@@ -1106,6 +1107,10 @@ struct MainTabView: View {
     /// `showcaseCandidates.first`, found in one pass: drawing needs only the
     /// best photo, so the whole library is neither indexed nor sorted.
     private var bestShowcaseCandidate: PhotoPresentation? {
+        LaunchWork.measure("bestShowcase") { findBestShowcaseCandidate() }
+    }
+
+    private func findBestShowcaseCandidate() -> PhotoPresentation? {
         let excludedIdentifiers = excludedCatCandidateIdentifiers
         var seen = Set<String>()
         var best: PhotoPresentation?

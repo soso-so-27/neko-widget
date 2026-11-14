@@ -444,6 +444,10 @@ struct AppRootView: View {
     }
 
     private var mainTabContent: MainTabView {
+        LaunchWork.measure("mainTabContent") { makeMainTabContent() }
+    }
+
+    private func makeMainTabContent() -> MainTabView {
         let visibleSnapshot = hasPhotoAccess
             ? viewModel.presentationSnapshot
             : .empty

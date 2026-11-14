@@ -35,6 +35,20 @@ enum ScanProgressEventPolicy {
     }
 }
 
+/// The one scan entry point AppViewModel uses. PhotoLibraryScanner reads
+/// PhotoKit; the DEBUG launch-work fixture walks synthetic records.
+protocol LibraryScanning: Sendable {
+    func scan(
+        existing: LibrarySnapshot,
+        settings: AppSettings,
+        forceFullAnalysis: Bool,
+        sourceAlbumIdentifier: String?,
+        onEvent: @escaping @Sendable (ScanEvent) async -> Void
+    ) async throws -> LibrarySnapshot
+}
+
+extension PhotoLibraryScanner: LibraryScanning {}
+
 actor PhotoLibraryScanner {
     // Vision's synchronous perform calls run on ordinary Foundation workers.
     // Share the limit across generations; cancellation cannot free an active
