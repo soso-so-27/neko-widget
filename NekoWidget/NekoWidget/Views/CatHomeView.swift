@@ -32,8 +32,6 @@ enum CatHomeSpeedSwitch {
     static let oldCorners = CommandLine.arguments.contains("--cat-home-speed-old-corners")
     /// Material circles behind the two round buttons.
     static let oldMaterials = CommandLine.arguments.contains("--cat-home-speed-old-materials")
-    /// One live shadow under the whole name block.
-    static let oldShadow = CommandLine.arguments.contains("--cat-home-speed-old-shadow")
     /// Every page drawn again whenever the pager's state changes.
     static let rebuildsPages = CommandLine.arguments.contains("--cat-home-speed-rebuild-pages")
     /// No scale while moving either.
@@ -41,7 +39,6 @@ enum CatHomeSpeedSwitch {
 #else
     static let oldCorners = false
     static let oldMaterials = false
-    static let oldShadow = false
     static let rebuildsPages = false
     static let noCard = false
 #endif
@@ -645,30 +642,6 @@ enum CatHomeGlass {
     }
 }
 
-/// The shadow under the white words on the photo. 11/14: drawn once with
-/// each text into a bitmap (drawingGroup), so moving the page only moves
-/// the bitmap; the live shadow under the whole block (before) comes back
-/// with --cat-home-speed-old-shadow.
-private struct CatHomeWordsShadow: ViewModifier {
-    /// The block around the words (before), or one text of it (now).
-    let whole: Bool
-
-    func body(content: Content) -> some View {
-        if whole != CatHomeSpeedSwitch.oldShadow {
-            content
-        } else if whole {
-            content.shadow(color: .black.opacity(0.45), radius: 8, y: 1)
-        } else {
-            // Room for the shadow inside the bitmap; the layout is unchanged.
-            content
-                .padding(12)
-                .shadow(color: .black.opacity(0.45), radius: 8, y: 1)
-                .drawingGroup()
-                .padding(-12)
-        }
-    }
-}
-
 #if DEBUG
 /// 11/14: DEBUG-only frame probe for the speed sweep (--cat-home-frame-probe).
 /// The simulator gives XCTest no hitch metrics, so a display link counts,
@@ -985,17 +958,15 @@ private struct CatHomeHero: View {
                     .lineLimit(typeSize.isAccessibilitySize ? 3 : 2)
                     .minimumScaleFactor(0.85)
                     .fixedSize(horizontal: false, vertical: true)
-                    .modifier(CatHomeWordsShadow(whole: false))
                     .accessibilityHidden(true)
             }
             if pageCount > 1 {
                 CatHomePageDots(count: pageCount, current: pageIndex)
-                    .modifier(CatHomeWordsShadow(whole: false))
                     .padding(.top, 4)
                     .accessibilityHidden(true)
             }
         }
-        .modifier(CatHomeWordsShadow(whole: true))
+        .shadow(color: .black.opacity(0.45), radius: 8, y: 1)
         .padding(.horizontal, 20)
         .padding(.bottom, Self.fade + 6)
     }
@@ -1086,22 +1057,20 @@ private struct CatHomeHero: View {
         return (first + "\n" + rest, last)
     }
 
+    @ViewBuilder
     private func nameText(_ name: String, fit: CatHomeHeroLayout.NameFit, maxWidth: CGFloat) -> some View {
         let text = Text(name)
             .font(.system(size: CGFloat(fit.size), weight: .heavy))
             .foregroundStyle(.white)
             // The photo above reads the name; the button reads it as its value.
             .accessibilityHidden(true)
-        return Group {
-            if fit.lines == 1 {
-                text.lineLimit(1).fixedSize()
-            } else {
-                text.lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: maxWidth, alignment: .leading)
-            }
+        if fit.lines == 1 {
+            text.lineLimit(1).fixedSize()
+        } else {
+            text.lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: maxWidth, alignment: .leading)
         }
-        .modifier(CatHomeWordsShadow(whole: false))
     }
 
     /// The cat menu (every cat, a check on this one; 11/14: no

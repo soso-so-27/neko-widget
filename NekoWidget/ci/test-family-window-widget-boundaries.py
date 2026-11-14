@@ -9012,10 +9012,7 @@ class CatHomePolish1113Tests(unittest.TestCase):
         self.assertNotIn("location: 0.3)", hero)
         # The fade into the page and the text shadow stay.
         self.assertIn("Color(.systemGroupedBackground).opacity(0)", hero)
-        # 11/14: drawn into a bitmap with each text (CatHomeWordsShadow).
-        self.assertIn(".shadow(color: .black.opacity(0.45), radius: 8, y: 1)",
-                      section(self.home, "private struct CatHomeWordsShadow: ViewModifier {", "/// While the pages move"))
-        self.assertIn(".modifier(CatHomeWordsShadow(whole: false))", hero)
+        self.assertIn(".shadow(color: .black.opacity(0.45), radius: 8, y: 1)", hero)
 
     def test_cat_menu_and_settings_read_as_live_controls(self) -> None:
         # 11/14: the capsule is gone; the name on the photo is the cat menu

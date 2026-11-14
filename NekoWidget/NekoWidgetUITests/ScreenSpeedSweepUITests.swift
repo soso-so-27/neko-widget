@@ -375,13 +375,10 @@ final class ScreenSpeedSweepUITests: XCTestCase {
     @MainActor func testScroll24CatHomePagerNoCard() {
         measureCatHomePager("縮みなし", ["--cat-home-speed-no-card"])
     }
-    @MainActor func testScroll25CatHomePagerOldShadow() {
-        measureCatHomePager("名前の影（前）", ["--cat-home-speed-old-shadow"])
-    }
-    /// 前の描き方を全部（角の塗り・すりガラス・影・作り直し）。
+    /// 前の描き方を全部（角の塗り・すりガラス・作り直し）。
     @MainActor func testScroll26CatHomePagerAllOld() {
         measureCatHomePager("前の描き方すべて", ["--cat-home-speed-old-corners", "--cat-home-speed-old-materials",
-                                          "--cat-home-speed-old-shadow", "--cat-home-speed-rebuild-pages"])
+                                          "--cat-home-speed-rebuild-pages"])
     }
     /// 標準をもう一度（同じ実行の中のばらつきを見る）。
     @MainActor func testScroll27CatHomePagerAgain() { measureCatHomePager("標準（2回目）", []) }

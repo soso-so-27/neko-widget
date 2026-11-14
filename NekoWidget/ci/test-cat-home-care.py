@@ -342,8 +342,7 @@ class NameIsTheCatMenu(unittest.TestCase):
         # 11/14 (owner: 「カクカクする」「指についてくる感じが弱い」). The pages
         # are Equatable values (no AnyView, no fresh closures to compare), so
         # a pageID change mid-swipe does not draw them again; the round
-        # buttons have a fixed fill, not a material; the shadow under the
-        # words is drawn into a bitmap with each text.
+        # buttons have a fixed fill, not a material.
         pager = block(HOME, "private func pager(_ cats: [CatHomeCat], current: CatHomeCat, metrics: CatHomeMetrics) -> some View {")
         self.assertIn("card(page(cat, index: index, cats: cats, metrics: metrics).equatable())", pager)
         page = block(HOME, "private struct CatHomePage: View {")
@@ -359,19 +358,16 @@ class NameIsTheCatMenu(unittest.TestCase):
         self.assertEqual(HOME.count(".ultraThinMaterial"), 2)
         glass = block(HOME, "enum CatHomeGlass {")
         self.assertIn("CatHomeSpeedSwitch.oldMaterials ? AnyShapeStyle(.ultraThinMaterial)", glass)
-        shadow = block(HOME, "private struct CatHomeWordsShadow: ViewModifier {")
-        self.assertIn(".drawingGroup()", shadow)
-        hero = block(HOME, "private struct CatHomeHero: View {")
-        self.assertEqual(hero.count(".modifier(CatHomeWordsShadow(whole: false))"), 3)
-        self.assertEqual(hero.count(".modifier(CatHomeWordsShadow(whole: true))"), 1)
-        self.assertNotIn("\n        .shadow(", hero)
+        # The name's shadow stays live: rasterising it measured no better in
+        # the speed sweep (11/14) and risked the name's baseline.
+        self.assertNotIn(".drawingGroup()", HOME)
         # Nothing holds the drag back.
         for gesture in ("DragGesture", "simultaneousGesture", "highPriorityGesture", "onTapGesture"):
             self.assertNotIn(gesture, HOME)
         # The DEBUG switches are off in Release.
         switch = block(HOME, "enum CatHomeSpeedSwitch {")
         self.assertIn("#else", switch)
-        self.assertEqual(switch.count("= false"), 5)
+        self.assertEqual(switch.count("= false"), 4)
 
     def test_a_cat_is_added_on_the_last_page_only(self):
         # 11/14 (owner): one place to add a cat, a page after the last cat:
