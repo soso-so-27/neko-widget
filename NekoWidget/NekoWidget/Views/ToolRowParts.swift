@@ -97,6 +97,62 @@ struct ToolFieldCounter: View {
     }
 }
 
+/// The one sentence a full list says where its add button was (11/14), the
+/// same wording everywhere: 「体重は500件までです。」. Cats are counted in 匹,
+/// photos in 枚.
+enum AppLimitCopy {
+    static func items(_ name: String, _ limit: Int, unit: String = "件") -> String {
+        "\(name)は\(limit.formatted())\(unit)までです。"
+    }
+    static let catProfiles = "猫は\(CatProfileLimit.maximumLiving)匹まで登録できます。"
+    static let catProfilesImported = "\(CatProfileLimit.maximumLiving)匹まで読み込みました。"
+    static let catsInTool = items("猫", CatProfileLimit.maximumLiving, unit: "匹")
+}
+
+/// The sentence of AppLimitCopy, in the footnote style the tools use.
+struct LimitNote: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("limit-note")
+    }
+}
+
+/// A telephone number field (11/14): digits, spaces, ＋, －, ( and ) only,
+/// at most 20, with the phone keyboard. A value saved before is shown as it
+/// is; only what is typed or pasted now is filtered.
+enum PhoneNumberInput {
+    static func binding(_ text: Binding<String>) -> Binding<String> {
+        Binding(get: { text.wrappedValue }, set: { new in
+            text.wrappedValue = TextInputGate.accept(new, previous: text.wrappedValue,
+                                                     limit: CatCareLimits.phoneCharacters,
+                                                     allow: CatCareLimits.isPhoneCharacter)
+        })
+    }
+}
+
+/// A name field: control, zero-width and bidi characters and line breaks are
+/// taken out as they are typed or pasted (11/14). The length rule of each
+/// field stays as it was; a cat's name uses CatNameText instead.
+enum VisibleTextInput {
+    static func binding(_ text: Binding<String>) -> Binding<String> {
+        Binding(get: { text.wrappedValue }, set: { new in
+            text.wrappedValue = VisibleText.cleaned(new)
+        })
+    }
+
+    static func catName(_ text: Binding<String>) -> Binding<String> {
+        Binding(get: { text.wrappedValue }, set: { new in
+            text.wrappedValue = CatNameText.accept(new, previous: text.wrappedValue)
+        })
+    }
+}
+
 /// The page a row opens, used by every tool page made as a list of rows:
 /// the row's name as its title, the controls for that one topic, in the
 /// tool's frame, with the same way to put the keyboard away. A page to

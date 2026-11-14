@@ -350,7 +350,7 @@ final class CatCareStore: ObservableObject {
             var record = CatCareRecord(catID: toolCatID, profileID: profileID)
             let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
-                record.name = .init(value: CatCareLimits.clippedText(trimmed, limit: CatCareLimits.nameCharacters),
+                record.name = .init(value: CatCareLimits.clippedText(trimmed, limit: CatCareLimits.storedNameCharacters),
                                     editedAt: Date(), editedBy: state.deviceID)
             }
             state.cats.append(record)

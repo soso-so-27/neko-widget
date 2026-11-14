@@ -41,6 +41,11 @@ enum SavedToolCatChoices {
     }
 }
 
+/// 11/14: the sentence where 「写真を選ぶ」 stops (photos and records together).
+enum VeterinaryVisitLimit {
+    static let entries = AppLimitCopy.items("見せる写真・記録", VeterinaryVisitStore.maximumEntries)
+}
+
 /// Display only the closed, user-facing messages owned by these stores.
 /// Arbitrary platform errors may contain file paths or private source details.
 private func veterinaryErrorMessage(_ error: any Error) -> String {
@@ -692,8 +697,11 @@ private struct VeterinaryConsultationView: View {
             Section {
                 ForEach(visit.orderedEntries) { entry in entryRow(entry, visit: visit) }
                 if visit.completedAt == nil {
+                    let full = visit.entries.count >= VeterinaryVisitStore.maximumEntries
                     Button("写真を選ぶ", systemImage: "plus") { picking = true }
+                        .disabled(full)
                         .accessibilityIdentifier("vet-pick-records")
+                    if full { LimitNote(VeterinaryVisitLimit.entries) }
                 } else if visit.entries.isEmpty {
                     nothingWritten
                 }
@@ -1060,6 +1068,9 @@ private struct VeterinaryRecordPicker: View {
     var body: some View {
         NavigationStack {
             List {
+                if visit.entries.count >= VeterinaryVisitStore.maximumEntries {
+                    LimitNote(VeterinaryVisitLimit.entries)
+                }
                 Section("最近の写真") {
                     captureRows
                     if !mine.isEmpty {

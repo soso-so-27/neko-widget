@@ -77,6 +77,9 @@ struct CareCat: Codable, Equatable, Identifiable {
 }
 
 struct CareHandoffPlan: Codable, Equatable {
+    /// What a saved memo may hold. Adding stops at the cat limit (10 living,
+    /// CareHandoffStore, 11/14); memos saved before with more cats still open.
+    static let storedMaximumCats = 20
     struct DetachedPhoto: Codable, Equatable, Identifiable {
         var id: UUID
         var photoName: String
@@ -184,7 +187,7 @@ struct CareHandoffPlan: Codable, Equatable {
     }
 
     func validate() throws {
-        guard [1,2].contains(schemaVersion), cats.count <= 20,
+        guard [1,2].contains(schemaVersion), cats.count <= Self.storedMaximumCats,
               Set(cats.map(\.id)).count == cats.count,
               cats.allSatisfy({ (!$0.meals.isEmpty || $0.familyContext != nil) && $0.meals.count <= 8
                   && Set($0.meals.map(\.id)).count == $0.meals.count }),

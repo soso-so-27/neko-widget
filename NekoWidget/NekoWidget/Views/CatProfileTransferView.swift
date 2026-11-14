@@ -84,6 +84,8 @@ struct CatProfileTransferView: View {
                 List {
                     Section {
                         Text(item.isUnchanged ? "名前と日付はもう入っています。" : "この内容をこのiPhoneに登録します。")
+                        // 11/14: a file with more than 10 cats brings the first 10.
+                        if item.wasLimited { LimitNote(AppLimitCopy.catProfilesImported) }
                     }
                     ForEach(item.transfer.profiles) { profile in
                         Section(profile.name) {
@@ -115,7 +117,8 @@ struct CatProfileTransferView: View {
                                 Task { @MainActor in
                                     switch await actions.importProfileDates(confirmed) {
                                     case let .success(changed):
-                                        pendingNotice = changed ? "猫の名前と日付、選んだ写真がどの子かを引き継ぎました。" : "今の内容と同じだったので、変わったところはありません。"
+                                        pendingNotice = (changed ? "猫の名前と日付、選んだ写真がどの子かを引き継ぎました。" : "今の内容と同じだったので、変わったところはありません。")
+                                            + (item.wasLimited ? AppLimitCopy.catProfilesImported : "")
                                     case let .failure(error):
                                         pendingNotice = (error as? LocalizedError)?.errorDescription
                                             ?? "引き継ぎを完了できませんでした。ファイルを選び直してください。"

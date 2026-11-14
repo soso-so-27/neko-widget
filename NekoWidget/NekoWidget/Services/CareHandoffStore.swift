@@ -113,6 +113,10 @@ final class CareHandoffStore: ObservableObject {
             return false
         }
     }
+    /// 11/14: the plan has as many living cats as can exist.
+    var isFullOfCats: Bool {
+        !CatProfileLimit.canAdd(plan.cats.map(\.profileID), departed: CatFarewell.departedIdentifiers())
+    }
     func addCat(profileID: String? = nil, name: String = "",
                 using source: EvacuationStore? = nil, sourceCatID: UUID? = nil,
                 access: MembershipActionAccess) -> UUID? {
@@ -121,7 +125,9 @@ final class CareHandoffStore: ObservableObject {
             if matches.count > 1 { return nil }
             if let found = matches.first { return found.id }
         }
-        guard plan.cats.count < 20, loadError == nil, saveError == nil, let repository else { return nil }
+        // 11/14: as many cats as can exist (10 living; a departed cat is not
+        // counted). A plan saved with more still opens; only adding stops.
+        guard !isFullOfCats, loadError == nil, saveError == nil, let repository else { return nil }
         // A selected saved cat, or one unambiguous profile ID. Names are not identity.
         let candidates = source?.loadError == nil && source?.saveError == nil ? source?.plan.cats ?? [] : []
         let matches = candidates.filter { cat in

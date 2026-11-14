@@ -2658,7 +2658,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         heading = section(care, "private func profileHeading(", "private var isProfile: Bool {")
         self.assertIn("showsKeyPhotoPicker = true", heading)
         self.assertIn('"cat-profile-rename"', heading)
-        self.assertIn("await profileActions.updateName(profile.identifier, draftName)", heading)
+        # 11/14: the name is cleaned and held to 20 first (ci/test-app-limits.py).
+        self.assertIn("await profileActions.updateName(profile.identifier, name)", heading)
         # 11/11: renamed in the system dialog, not in rows opened under the name.
         self.assertIn('.alert("名前を変更", isPresented: $showsNameEditor)', heading)
         self.assertIn('Button("キャンセル", role: .cancel) {}', heading)
@@ -4986,7 +4987,9 @@ class CatCareRowListPage1112Tests(unittest.TestCase):
         self.assertIn("CatCareTextField(item: item, text: $draft[dynamicMember: item.path], focus: focus)", page)
         self.assertIn('Label("15桁の数字にすると保存されます。", systemImage: "exclamationmark.circle")', page)
         field = section(self.view, "private struct CatCareTextField: View {", "// MARK: - Progress")
-        for needed in ("TextField(item.example, text: $text,", ".keyboardType(item.keyboard)", ".focused(focus)",
+        # 11/14: a telephone field filters what is typed (ci/test-app-limits.py).
+        for needed in ("TextField(item.example, text: item.isPhone ? PhoneNumberInput.binding($text) : $text,",
+                       ".keyboardType(item.keyboard)", ".focused(focus)",
                        ".accessibilityIdentifier(item.identifier)", ".accessibilityLabel(item.title)"):
             self.assertIn(needed, field)
         items = section(self.view, "private struct CatCareTextItem {", "private struct CatCareTextField: View {")
@@ -6269,7 +6272,8 @@ class VeterinaryRoundOneTests(unittest.TestCase):
         # Every chosen photo, not the first one.
         self.assertIn("for (offset, entry) in visit.orderedEntries.enumerated()", export)
         self.assertNotIn(".first(where: { $0.photoFile != nil })", export)
-        self.assertIn("visit.entries.count <= 20", self.store)
+        self.assertIn("visit.entries.count <= Self.maximumEntries", self.store)
+        self.assertIn("nonisolated static let maximumEntries = 20", self.store)
 
     def test_names_buttons_and_fields_are_plain(self) -> None:
         self.assertIn('Label("先生に見せる", systemImage: "stethoscope")', self.view)
@@ -9152,13 +9156,14 @@ class CatIdentityMeasure1113Tests(unittest.TestCase):
         # 11/13: SingleCatPhotosTests (C15C0A7E…) and AlbumLinkFollowupsTests
         # (C1A1BF10…) joined the same test target, then CatThresholdTests
         # (C1CA7050…, the 0.5 cat line and its migration), then
-        # CatHomeCareTests (C1E0A7E0…, the この子 page's 「これからのこと」).
+        # CatHomeCareTests (C1E0A7E0…, the この子 page's 「これからのこと」),
+        # then AppLimitsTests (C1A11A17…, the 11/14 limits).
         self.assertIn("children = (C1108C000000000000000002,C1D3A9110000000000000006,"
                       "C15C0A7E0000000000000002,C1A1BF100000000000000002,C1CA70500000000000000002,"
-                      "C1E0A7E00000000000000002,); path = NekoWidgetTests;", self.project)
+                      "C1E0A7E00000000000000002,C1A11A170000000000000002,); path = NekoWidgetTests;", self.project)
         self.assertIn("files = (C1108C000000000000000003,C1D3A9110000000000000005,"
                       "C15C0A7E0000000000000001,C1A1BF100000000000000001,C1CA70500000000000000001,"
-                      "C1E0A7E00000000000000001,);", self.project)
+                      "C1E0A7E00000000000000001,C1A11A170000000000000001,);", self.project)
         self.assertEqual(len(set(re.findall(r"C1D3A911000000000000000\d", self.project))), 6)
 
     def test_store_product_compiles_none_of_it(self) -> None:

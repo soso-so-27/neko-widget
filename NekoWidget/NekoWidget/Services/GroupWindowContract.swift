@@ -113,6 +113,10 @@ enum GroupClientError: Error, Equatable, Sendable {
     case invitationExpired, invitationRevoked, invitationPaused, requestNotPending
     case cannotRemoveOwner, ownerCannotLeave, invalidResponse
     case idempotencyConflict
+    /// 11/14: the server's `daily_limit` (409): 5 photos per person per
+    /// window per day (JST), or 30 hearts a day. Which one is known from the
+    /// request that got it.
+    case dailyLimit
 }
 
 enum GroupInvitationError: Error, Equatable, Sendable {

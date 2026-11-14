@@ -233,6 +233,8 @@ struct PhotoMemoryNoteEditor: View {
     @State private var isSaving = false
     @State private var loadFailed = false
     @State private var saveError: String?
+    /// 11/14: a photo without a memo, when 3,000 memos are written.
+    @State private var notesFull = false
     @State private var confirmsDiscard = false
     @State private var confirmsDelete = false
     @State private var weightEnabled = false
@@ -358,6 +360,10 @@ struct PhotoMemoryNoteEditor: View {
             && !hasCurrentPhoto {
             Section {
                 Text("元の写真が見つかりません。写真へのアクセスを確かめて、写真を選び直してください。")
+            }
+        } else if isLoaded && notesFull {
+            Section {
+                LimitNote(PhotoMemoryNoteStoreError.limitReached.errorDescription ?? "")
             }
         } else if isLoaded {
             // 11/13: writing a memo (and its weight) is free for everyone.
@@ -491,6 +497,7 @@ struct PhotoMemoryNoteEditor: View {
             guard !Task.isCancelled else { return }
             original = loaded
             if let loaded { savedPhotoURL = try await store.photoURL(for: loaded.id) }
+            else { notesFull = (try? await store.isFull()) ?? false }
             text = loaded?.text ?? ""
             loadWeight(loaded?.weight)
             loadFailed = false

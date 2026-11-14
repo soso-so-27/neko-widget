@@ -124,6 +124,12 @@ struct EvacuationDestination: Codable, Equatable, Identifiable {
 }
 
 struct EvacuationPlan: Codable, Equatable {
+    /// 11/14: the lists stop here, and say so where 「追加」 was.
+    static let maximumSupplies = 200
+    static let maximumDestinations = 30
+    /// What a saved plan may hold. Adding stops at the cat limit (10 living,
+    /// EvacuationStore); plans saved before with more cats still open.
+    static let storedMaximumCats = 30
     var schemaVersion = 1
     var cats: [EvacuationCat] = []
     var supplies: [EvacuationSupply] = EvacuationPlan.recommendedSupplies.map {
@@ -165,7 +171,7 @@ struct EvacuationPlan: Codable, Equatable {
     mutating func addRecommendedSupplies() -> Int {
         let titles = Set(supplies.map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines) })
         var added = 0
-        for title in Self.recommendedSupplies where !titles.contains(title) && supplies.count < 200 {
+        for title in Self.recommendedSupplies where !titles.contains(title) && supplies.count < Self.maximumSupplies {
             supplies.append(EvacuationSupply(title: title, quantity: Self.recommendedQuantity(title, cats: max(cats.count, 1))))
             added += 1
         }
@@ -208,7 +214,7 @@ struct EvacuationPlan: Codable, Equatable {
                     supplies[index].title = title
                     carriedIDs.remove(supplies[index].id)
                 }
-            } else if supplies.count < 200 {
+            } else if supplies.count < Self.maximumSupplies {
                 supplies.append(EvacuationSupply(title: title, quantity: "5日分以上", catID: cat.id))
             }
         }
@@ -321,8 +327,8 @@ struct EvacuationPlan: Codable, Equatable {
     }
 
     func validate() throws {
-        guard schemaVersion == 1, cats.count <= 30, supplies.count <= 200,
-              destinations.count <= 30,
+        guard schemaVersion == 1, cats.count <= Self.storedMaximumCats, supplies.count <= Self.maximumSupplies,
+              destinations.count <= Self.maximumDestinations,
               Set(cats.map(\.id)).count == cats.count,
               Set(supplies.map(\.id)).count == supplies.count,
               Set(destinations.map(\.id)).count == destinations.count,

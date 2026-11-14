@@ -72,7 +72,9 @@ struct CareHandoffView: View {
                 editor(id).id(id)
             } else {
                 List {
-                    if couldNotOpen {
+                    if couldNotOpen && store.isFullOfCats {
+                        LimitNote(AppLimitCopy.catsInTool)
+                    } else if couldNotOpen {
                         Text("お世話メモを作れませんでした。上の猫をもう一度押してください。")
                             .font(.footnote).foregroundStyle(.secondary)
                     } else {
@@ -738,7 +740,8 @@ extension CareCatEditor {
         guard let id = store.addCat(profileID: profile.identifier, name: profile.displayName,
                                     using: reuseStore, access: actionAccess) else {
             // A failed save is shown by CareSaveNotice; say it here only otherwise.
-            if store.saveError == nil { error = "\(profile.displayName)のお世話メモを作れませんでした。もう一度押してください。" }
+            if store.isFullOfCats { error = AppLimitCopy.catsInTool }
+            else if store.saveError == nil { error = "\(profile.displayName)のお世話メモを作れませんでした。もう一度押してください。" }
             return
         }
         disclosure.catIDs.insert(id); error = nil

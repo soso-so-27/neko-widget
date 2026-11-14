@@ -1568,7 +1568,8 @@ final class AppViewModel: ObservableObject {
         guard catIdentityLoadState == .ready, let current = catHouseholdIdentity else {
             throw CatProfileTransferError.notReady
         }
-        let transfer = try CatProfileTransfer.decode(data)
+        // 11/14: at most 10 cats come in, the first ones in the file.
+        let (transfer, wasLimited) = try CatProfileTransfer.decode(data).limitedToCatProfileLimit()
         let reconciled = current.reconcilingLegacyUnscoped(
             lifeReference: settings.catLifeReference, curation: catCandidateCuration
         )
@@ -1583,6 +1584,7 @@ final class AppViewModel: ObservableObject {
             expectedCurationRevision: catCandidateCuration.mutationRevision,
             expectedLegacyReference: settings.catLifeReference,
             isUnchanged: proposed == reconciled,
+            wasLimited: wasLimited,
             photoCandidates: Dictionary(uniqueKeysWithValues: (transfer.photos ?? []).map { photo in
                 (photo.id, candidates.filter { $0.metadata == photo.metadata })
             })
@@ -1678,8 +1680,11 @@ final class AppViewModel: ObservableObject {
         // profile exists. Keep the photo its page shows now (one explicit
         // include); every other derived photo is left as it is, not migrated.
         let shownSingleCatPhoto = singleCatShownPhotoIdentifier()
+        let departed = CatFarewell.departedIdentifiers()
         do {
             let committed = try await mutateCatHouseholdIdentity { state in
+                // 11/14: at most 10 living cats; the add screens say so first.
+                guard CatProfileLimit.canAdd(state.profiles.map(\.id.uuidString), departed: departed) else { return }
                 // Profile creation is the one-way boundary where identity
                 // becomes canonical. Fold in the last committed Build 13
                 // curation revision first, including a revision whose prior

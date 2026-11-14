@@ -63,6 +63,12 @@ enum CatFarewell {
     static func text(_ day: CatCareDay) -> String {
         "\(day.year)年\(day.month)月\(day.day)日"
     }
+
+    /// The profiles whose day is recorded: they do not count toward the
+    /// 10 living cats (11/14). Read where SwiftUI's @AppStorage is not at hand.
+    static func departedIdentifiers(_ defaults: UserDefaults = .standard) -> Set<String> {
+        Set(days(defaults.string(forKey: key) ?? "").keys)
+    }
 }
 
 /// Recording the day, quietly: a date and one sentence, nothing to fill in.
@@ -604,7 +610,7 @@ struct CatCareDetailView: View {
                 if item.isMicrochip && microchipInvalid {
                     Label("15桁の数字にすると保存されます。", systemImage: "exclamationmark.circle")
                         .foregroundStyle(.orange)
-                } else if !item.isMicrochip {
+                } else if !item.isMicrochip && !item.isPhone {
                     // 11/12 (round 2): the same counter as every page to write in.
                     ToolFieldCounter(count: draft[keyPath: item.path].count, limit: CatCareLimits.textCharacters)
                 }
@@ -768,7 +774,7 @@ struct CatCareDetailView: View {
             .listRowBackground(Color.clear)
             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
             .alert("名前を変更", isPresented: $showsNameEditor) {
-                TextField("名前", text: $draftName)
+                TextField("名前", text: VisibleTextInput.catName($draftName))
                     .accessibilityIdentifier("cat-profile-name-field")
                 Button("保存") { saveName(profile) }
                 Button("キャンセル", role: .cancel) {}
@@ -803,11 +809,11 @@ struct CatCareDetailView: View {
 
     /// An empty name keeps the old one: the dialog cannot grey out 保存.
     private func saveName(_ profile: CatProfilePresentation) {
-        guard !draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard let name = CatNameText.saving(draftName) else { return }
         isSavingName = true
         nameSaveFailed = false
         Task {
-            let saved = await profileActions.updateName(profile.identifier, draftName)
+            let saved = await profileActions.updateName(profile.identifier, name)
             isSavingName = false
             nameSaveFailed = !saved
         }
@@ -1108,6 +1114,8 @@ private struct CatCareTextItem {
     var lines: ClosedRange<Int>? = nil
     var keyboard: UIKeyboardType = .default
     var isMicrochip = false
+    /// 11/14: a telephone number (PhoneNumberInput).
+    var isPhone = false
 
     // 基本
     static var coat: Self {
@@ -1164,7 +1172,7 @@ private struct CatCareTextItem {
     }
     static var vetPhone: Self {
         Self(title: "かかりつけ病院の電話", systemImage: "phone.circle", example: "例：03-1234-5678", path: \.vetPhone,
-             identifier: "cat-care-vet-phone", note: .vetPhone, keyboard: .phonePad)
+             identifier: "cat-care-vet-phone", note: .vetPhone, keyboard: .phonePad, isPhone: true)
     }
 }
 
@@ -1176,9 +1184,11 @@ private struct CatCareTextField: View {
     let focus: FocusState<Bool>.Binding
 
     var body: some View {
-        TextField(item.example, text: $text, axis: item.lines == nil ? .horizontal : .vertical)
+        TextField(item.example, text: item.isPhone ? PhoneNumberInput.binding($text) : $text,
+                  axis: item.lines == nil ? .horizontal : .vertical)
             .lineLimit(item.lines ?? (1...1))
             .keyboardType(item.keyboard)
+            .textContentType(item.isPhone ? .telephoneNumber : nil)
             .font(item.isMicrochip ? Font.body.monospacedDigit() : Font.body)
             .focused(focus)
             .accessibilityLabel(item.title)
@@ -1449,6 +1459,31 @@ struct CatCareListEditor: Identifiable {
     }
 }
 
+/// 11/14: each list's limit, counted as the store counts it, and the one
+/// sentence shown where 「追加」 was.
+extension CatCareListEditor.Kind {
+    var limit: Int {
+        switch self {
+        case .weight: CatCareLimits.maximumWeights
+        case .medication: CatCareLimits.maximumMedications
+        case .vaccination: CatCareLimits.maximumVaccinations
+        case .meal: CatCareLimits.maximumMeals
+        }
+    }
+
+    func isFull(_ record: CatCareRecord?) -> Bool {
+        guard let r = record else { return false }
+        switch self {
+        case .weight: return r.weights.count >= limit
+        case .medication: return r.medications.count >= limit
+        case .vaccination: return r.vaccinations.count >= limit
+        case .meal: return r.activeMeals.count >= limit
+        }
+    }
+
+    var limitSentence: String { AppLimitCopy.items(CatCareFormat.title(self), limit) }
+}
+
 struct CatCareListView: View {
     let kind: CatCareListEditor.Kind
     let catID: UUID?
@@ -1540,13 +1575,18 @@ struct CatCareListView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            Button { editing = CatCareListEditor(kind: kind) } label: {
-                Label(CatCareFormat.title(kind) + "を追加", systemImage: "plus")
-                    .frame(maxWidth: .infinity, minHeight: 44)
+            VStack(spacing: 8) {
+                if kind.isFull(record) {
+                    LimitNote(kind.limitSentence)
+                }
+                Button { editing = CatCareListEditor(kind: kind) } label: {
+                    Label(CatCareFormat.title(kind) + "を追加", systemImage: "plus")
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!store.canSave || kind.isFull(record))
+                .accessibilityIdentifier("cat-care-add-\(kind.rawValue)")
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(!store.canSave)
-            .accessibilityIdentifier("cat-care-add-\(kind.rawValue)")
             .padding().background(.regularMaterial)
         }
         .navigationTitle(CatCareFormat.title(kind))

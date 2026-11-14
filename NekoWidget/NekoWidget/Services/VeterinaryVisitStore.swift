@@ -105,8 +105,8 @@ enum VeterinaryVisitError: Error, LocalizedError {
         case .wrongCat: "この体重は別の猫のものです。どの猫の体重か確かめてください。"
         case .confirmationRequired: "どの猫の記録か確かめてください。"
         case .invalidName: "猫の名前を1〜200文字で入力してください。"
-        case .visitLimit: "保存できませんでした。もう一度お試しください（書いた内容は残っています）。"
-        case .tooLarge: "1回の診察で見せる記録は20件までです。写真が大きすぎるときは、別の写真を選んでください。"
+        case .visitLimit: "診察メモは1,000件までです。" // maximumFinishedPerCat
+        case .tooLarge: "1回の診察で見せる記録は\(VeterinaryVisitStore.maximumEntries)件までです。写真が大きすぎるときは、別の写真を選んでください。"
         }
     }
 }
@@ -129,7 +129,23 @@ actor VeterinaryVisitStore {
         /// first frame shows as a photo), and a change received from the
         /// family keeps it as it was. Entries no longer there are dropped.
         var videoSeconds: [String: Double]? = nil
+        /// 11/14: memos this build could not read (a newer format, a broken
+        /// one, or more than an older limit allowed). They stay in the file
+        /// as they were, after the readable ones; never shown, changed or
+        /// deleted, so a newer build still finds them.
+        var unreadVisits: [Any] = []
+        /// Their entries' IDs (video lengths stay) and photo files (never deleted).
+        var unreadEntryIDs: Set<String> = []
+        var unreadPhotoFiles: Set<String> = []
+        private enum CodingKeys: String, CodingKey {
+            case schema, visits, retiredPhotoFiles, detachedPhotos, videoSeconds
+        }
     }
+    /// 11/14: one memo shows at most 20 photos and records.
+    nonisolated static let maximumEntries = 20
+    /// 11/14: a cat keeps up to 1,000 finished memos; then no new one starts.
+    /// There is no limit on reading: a file with more still opens.
+    nonisolated static let maximumFinishedPerCat = 1_000
     private let directory: URL
 
     init(directory: URL? = nil) {
@@ -263,7 +279,7 @@ actor VeterinaryVisitStore {
                     return entry.id == photo.entry.id
                 }
                 if entries.isEmpty, photo.entry.familyPhotoLink == nil, photo.familyPhotoLink != nil,
-                   connected.visits[i].entries.count < 20,
+                   connected.visits[i].entries.count < Self.maximumEntries,
                    !connected.visits[i].entries.contains(where: { $0.sourceNoteID == photo.entry.sourceNoteID }) {
                     connected.visits[i].entries.append(photo.entry)
                     return false
@@ -305,7 +321,9 @@ actor VeterinaryVisitStore {
         var state = try load()
         if let existing = state.visits.first(where: { $0.catID == catID && $0.completedAt == nil }) { return existing }
         guard Self.isValidCatName(catName) else { throw VeterinaryVisitError.invalidName }
-        guard state.visits.count < 36_500 else { throw VeterinaryVisitError.visitLimit }
+        guard state.visits.filter({ $0.catID == catID && $0.completedAt != nil }).count < Self.maximumFinishedPerCat else {
+            throw VeterinaryVisitError.visitLimit
+        }
         let visit = VeterinaryVisit(id: UUID(), catID: catID, catName: catName, revision: UUID(),
             startedOn: nil, observations: "", questions: "", entries: [], completedAt: nil, createdAt: VeterinaryVisit.now())
         try create {
@@ -384,7 +402,7 @@ actor VeterinaryVisitStore {
             || source.note.weight != nil || jpeg != nil else { throw VeterinaryVisitError.changed }
         let old = visit.entries.first { $0.sourceNoteID == source.id }
         guard old == nil || replace else { throw VeterinaryVisitError.changed }
-        guard old != nil || visit.entries.count < 20 else { throw VeterinaryVisitError.tooLarge }
+        guard old != nil || visit.entries.count < Self.maximumEntries else { throw VeterinaryVisitError.tooLarge }
         if let jpeg { try Self.validateJPEG(jpeg) }
         if let videoSeconds {
             guard VeterinaryVisitEntry.validVideoSeconds(videoSeconds), jpeg != nil,
@@ -475,6 +493,8 @@ actor VeterinaryVisitStore {
         guard !pending.isEmpty else { return }
         var remaining: [String] = []
         for file in pending {
+            // A photo that a memo this build could not read still uses is kept.
+            if state.unreadPhotoFiles.contains(file) { continue }
             // All names were validated before accepting state. No PhotoKit,
             // original memo, cloud or outside directory is a deletion target.
             do { try FileManager.default.removeItem(at: directory.appendingPathComponent(file)) }
@@ -502,9 +522,16 @@ actor VeterinaryVisitStore {
             }
             throw VeterinaryVisitError.storage
         }
+        // 11/14: the whole file first; when a memo in it cannot be read, the
+        // readable ones open and the rest is kept as it is (no count cap).
+        if let state = try? strictState(data) { return state }
+        return try tolerantState(data)
+    }
+
+    private func strictState(_ data: Data) throws -> State {
         do {
             let state = try JSONDecoder().decode(State.self, from: data)
-            guard [1,2].contains(state.schema), state.visits.count <= 36_500,
+            guard [1,2].contains(state.schema),
                   Set(state.visits.map(\.id)).count == state.visits.count,
                   Set(state.visits.filter { $0.completedAt == nil && $0.familyRecordID == nil }.map(\.catID)).count == state.visits.filter({ $0.completedAt == nil && $0.familyRecordID == nil }).count else { throw VeterinaryVisitError.corrupted }
             var photoFiles = Set<String>()
@@ -512,19 +539,69 @@ actor VeterinaryVisitStore {
                 try validate(visit)
                 for file in visit.entries.compactMap(\.photoFile) { guard photoFiles.insert(file).inserted else { throw VeterinaryVisitError.corrupted } }
             }
-            let detached = state.detachedPhotos ?? []
-            guard detached.count <= 36_500, Set(detached.map(\.id)).count == detached.count else { throw VeterinaryVisitError.corrupted }
-            for photo in detached {
-                guard let file = photo.entry.photoFile, Self.validPhotoFile(file), photoFiles.insert(file).inserted else { throw VeterinaryVisitError.corrupted }
-            }
-            let retired = state.retiredPhotoFiles ?? []
-            guard retired.count <= 2000, Set(retired).count == retired.count,
-                  retired.allSatisfy({ Self.validPhotoFile($0) && !photoFiles.contains($0) }) else { throw VeterinaryVisitError.corrupted }
-            let videos = state.videoSeconds ?? [:]
-            guard videos.count <= state.visits.reduce(detached.count, { $0 + $1.entries.count }),
-                  videos.allSatisfy({ UUID(uuidString: $0.key) != nil && VeterinaryVisitEntry.validVideoSeconds($0.value) }) else { throw VeterinaryVisitError.corrupted }
+            try Self.validateAttachments(state, photoFiles: photoFiles, unreadEntries: 0)
             return state
         } catch { throw VeterinaryVisitError.corrupted }
+    }
+
+    /// Detached photos, files waiting to be deleted and video lengths: the
+    /// same checks on both ways of reading. Any failure here is the whole file.
+    private static func validateAttachments(_ state: State, photoFiles: Set<String>, unreadEntries: Int) throws {
+        var photoFiles = photoFiles
+        let detached = state.detachedPhotos ?? []
+        guard Set(detached.map(\.id)).count == detached.count else { throw VeterinaryVisitError.corrupted }
+        for photo in detached {
+            guard let file = photo.entry.photoFile, validPhotoFile(file), photoFiles.insert(file).inserted else { throw VeterinaryVisitError.corrupted }
+        }
+        let retired = state.retiredPhotoFiles ?? []
+        guard retired.count <= 2000, Set(retired).count == retired.count,
+              retired.allSatisfy({ validPhotoFile($0) && !photoFiles.contains($0) }) else { throw VeterinaryVisitError.corrupted }
+        let videos = state.videoSeconds ?? [:]
+        guard videos.count <= state.visits.reduce(detached.count + unreadEntries, { $0 + $1.entries.count }),
+              videos.allSatisfy({ UUID(uuidString: $0.key) != nil && VeterinaryVisitEntry.validVideoSeconds($0.value) }) else { throw VeterinaryVisitError.corrupted }
+    }
+
+    /// 11/14: one memo that cannot be read no longer closes every memo.
+    /// Each memo is read on its own; one that fails (or repeats an ID, a
+    /// photo, or a second open memo for a cat) is set aside, unchanged.
+    private func tolerantState(_ data: Data) throws -> State {
+        do {
+            guard var top = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let raw = top["visits"] as? [Any] else { throw VeterinaryVisitError.corrupted }
+            top["visits"] = [Any]()
+            var state = try JSONDecoder().decode(State.self, from: JSONSerialization.data(withJSONObject: top))
+            guard [1,2].contains(state.schema) else { throw VeterinaryVisitError.corrupted }
+            var ids = Set<UUID>(), openCats = Set<UUID>(), photoFiles = Set<String>()
+            var unreadEntries = 0
+            for item in raw {
+                if let visit = readableVisit(item), !ids.contains(visit.id),
+                   visit.completedAt != nil || visit.familyRecordID != nil || !openCats.contains(visit.catID) {
+                    let files = visit.entries.compactMap(\.photoFile)
+                    if Set(files).count == files.count, photoFiles.isDisjoint(with: files) {
+                        ids.insert(visit.id)
+                        if visit.completedAt == nil && visit.familyRecordID == nil { openCats.insert(visit.catID) }
+                        photoFiles.formUnion(files)
+                        state.visits.append(visit)
+                        continue
+                    }
+                }
+                state.unreadVisits.append(item)
+                let entries = ((item as? [String: Any])?["entries"] as? [Any] ?? []).compactMap { $0 as? [String: Any] }
+                unreadEntries += entries.count
+                state.unreadEntryIDs.formUnion(entries.compactMap { $0["id"] as? String })
+                state.unreadPhotoFiles.formUnion(entries.compactMap { $0["photoFile"] as? String })
+            }
+            try Self.validateAttachments(state, photoFiles: photoFiles, unreadEntries: unreadEntries)
+            return state
+        } catch { throw VeterinaryVisitError.corrupted }
+    }
+
+    private func readableVisit(_ item: Any) -> VeterinaryVisit? {
+        guard JSONSerialization.isValidJSONObject(item),
+              let bytes = try? JSONSerialization.data(withJSONObject: item),
+              let visit = try? JSONDecoder().decode(VeterinaryVisit.self, from: bytes) else { return nil }
+        do { try validate(visit) } catch { return nil }
+        return visit
     }
 
     private static func canInitializeMissingManifest(in directory: URL) -> Bool {
@@ -550,7 +627,7 @@ actor VeterinaryVisitStore {
               visit.nextVisitOn.map(PhotoMemoWeightValue.validDay) ?? true,
               visit.createdAt?.timeIntervalSince1970.isFinite ?? true,
               visit.updatedAt?.timeIntervalSince1970.isFinite ?? true,
-              visit.entries.count <= 20, Set(visit.entries.map(\.id)).count == visit.entries.count,
+              visit.entries.count <= Self.maximumEntries, Set(visit.entries.map(\.id)).count == visit.entries.count,
               Set(visit.entries.map(\.sourceNoteID)).count == visit.entries.count else { throw VeterinaryVisitError.corrupted }
         for entry in visit.entries {
             try entry.weight?.validate()
@@ -579,6 +656,7 @@ actor VeterinaryVisitStore {
         // Only entries still in a memo keep their video length.
         if let videos = state.videoSeconds {
             let live = Set(state.visits.flatMap { $0.entries.map(\.id.uuidString) } + (state.detachedPhotos ?? []).map(\.id.uuidString))
+                .union(state.unreadEntryIDs)
             let kept = videos.filter { live.contains($0.key) }
             state.videoSeconds = kept.isEmpty ? nil : kept
         }
@@ -593,10 +671,12 @@ actor VeterinaryVisitStore {
               retired.allSatisfy({ Self.validPhotoFile($0) && !live.contains($0) }) else { throw VeterinaryVisitError.storage }
         let url = directory.appendingPathComponent("state.json")
         let previous = FileManager.default.fileExists(atPath: url.path) ? try AppRecordJSON.read(url) : nil
-        let displayed = try JSONEncoder().encode(state)
+        let displayed = try Self.keepingUnread(state.unreadVisits, in: JSONEncoder().encode(state))
         let bytes: Data
         if let projectedBeforeReconnecting {
-            let projected = try FamilyNotebookRecordOrigin.recording(JSONEncoder().encode(projectedBeforeReconnecting), over: previous,
+            let projected = try FamilyNotebookRecordOrigin.recording(
+                Self.keepingUnread(projectedBeforeReconnecting.unreadVisits, in: JSONEncoder().encode(projectedBeforeReconnecting)),
+                over: previous,
                 tool: "VeterinaryVisits", family: true)
             bytes = try FamilyNotebookRecordOrigin.recording(displayed, over: projected, tool: "VeterinaryVisits", family: false)
         } else {
@@ -608,6 +688,14 @@ actor VeterinaryVisitStore {
         #endif
         try write(bytes, to: url)
         NotificationCenter.default.post(name: Notification.Name("neko.app-records.committed.v1"), object: directory)
+    }
+    /// The memos this build could not read go back after the readable ones,
+    /// as they were read. An older build reads the same file as before.
+    private static func keepingUnread(_ unread: [Any], in encoded: Data) throws -> Data {
+        guard !unread.isEmpty else { return encoded }
+        guard var object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] else { throw VeterinaryVisitError.storage }
+        object["visits"] = (object["visits"] as? [Any] ?? []) + unread
+        return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
     }
     private func write(_ data: Data, to url: URL) throws {
 #if os(iOS)

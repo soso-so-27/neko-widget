@@ -104,6 +104,9 @@ final class GroupShareComposerModel: ObservableObject {
         case GroupClientError.notMember, GroupClientError.authenticationRequired,
              GroupClientError.staleEpoch, GroupClientError.rotationPending:
             return "このまどには届けられません。アプリでまどを確かめてください。"
+        case GroupClientError.dailyLimit:
+            // 11/14: the same words as the app (GroupWindowPresentation).
+            return "きょうはここまでです。あした、また届けられます。"
         case MomentSharingError.sensitiveContent:
             return "センシティブな内容が含まれている可能性があります。別の写真を選んでください。"
         case MomentSharingError.moderationDisabled:

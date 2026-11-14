@@ -534,12 +534,20 @@ private struct CatProfileCreationFlow: ViewModifier {
     @State private var creationPhotoIdentifier: String?
     @State private var continuesProfileCreation = false
     @State private var createdProfileIdentifier: String?
+    /// 11/14: at 10 living cats, one sentence and no form.
+    @State private var showsLimit = false
+    @AppStorage(CatFarewell.key) private var farewellJSON = ""
 
     func body(content: Content) -> some View {
         content
             .onChange(of: isStarted) { _, started in
                 guard started else { return }
                 isStarted = false
+                guard CatProfileLimit.canAdd(presentation.profiles.map(\.identifier),
+                                             departed: Set(CatFarewell.days(farewellJSON).keys)) else {
+                    showsLimit = true
+                    return
+                }
                 creationPhotoIdentifier = nil
                 continuesProfileCreation = false
                 if presentation.profileCreationPhotos.isEmpty {
@@ -587,6 +595,9 @@ private struct CatProfileCreationFlow: ViewModifier {
                 )
                 .id(request.id)
             }
+            .alert(AppLimitCopy.catProfiles, isPresented: $showsLimit) {
+                Button("閉じる", role: .cancel) {}
+            }
     }
 }
 
@@ -630,7 +641,7 @@ private struct AddCatProfileView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("猫の名前", text: $draft.name)
+                    TextField("猫の名前", text: VisibleTextInput.catName($draft.name))
                         .accessibilityIdentifier("cat-profile-name")
                     if !referenceCandidates.isEmpty {
                         Button {
@@ -688,7 +699,9 @@ private struct AddCatProfileView: View {
                         isSaving = true
                         saveFailed = false
                         Task {
-                            let identifier = await createProfile(draft)
+                            var cleaned = draft
+                            cleaned.name = CatNameText.saving(draft.name) ?? ""
+                            let identifier = await createProfile(cleaned)
                             isSaving = false
                             if let identifier {
                                 onCreated(identifier)
@@ -698,7 +711,7 @@ private struct AddCatProfileView: View {
                             }
                         }
                     }
-                    .disabled(isSaving || draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(isSaving || CatNameText.saving(draft.name) == nil)
                     .accessibilityIdentifier("cat-profile-create")
                 }
             }
@@ -757,6 +770,7 @@ struct ToolCatPicker<Legacy: View>: View {
     @State private var name = ""
     @State private var failed = false
     @State private var busy = false
+    @State private var showsLimit = false
     @AppStorage(CatFarewell.key) private var farewellJSON = ""
     var body: some View {
         Group {
@@ -778,7 +792,11 @@ struct ToolCatPicker<Legacy: View>: View {
                 }
                 Button("猫を追加", systemImage: "plus") {
                     // The same add screen as ツールの「＋」 when the cats are known.
-                    if presentation != nil { addsCatWithPhoto = true } else { name = ""; addsCat = true }
+                    if presentation != nil { addsCatWithPhoto = true }
+                    else if !CatProfileLimit.canAdd(profiles.map(\.identifier),
+                                                    departed: Set(CatFarewell.days(farewellJSON).keys)) {
+                        showsLimit = true // 11/14: no name field at 10 cats
+                    } else { name = ""; addsCat = true }
                 }
                     .accessibilityIdentifier("tool-profile-add").disabled(busy)
                     .modifier(ToolAddCatFlow(isStarted: $addsCatWithPhoto, presentation: presentation, actions: actions))
@@ -789,11 +807,11 @@ struct ToolCatPicker<Legacy: View>: View {
             legacy()
         }
         .alert("猫を追加", isPresented: $addsCat) {
-            TextField("名前", text: $name)
+            TextField("名前", text: VisibleTextInput.catName($name))
             Button("追加") {
                 busy = true
                 Task {
-                    let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let value = CatNameText.saving(name) ?? ""
                     let id = await actions.createProfile(CatProfileDraftPresentation(name: value))
                     busy = false
                     if let id {
@@ -801,8 +819,11 @@ struct ToolCatPicker<Legacy: View>: View {
                             confirmedPhotos: [], lifeReference: nil))
                     } else { failed = true }
                 }
-            }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }.disabled(CatNameText.saving(name) == nil)
             Button("キャンセル", role: .cancel) {}
+        }
+        .alert(AppLimitCopy.catProfiles, isPresented: $showsLimit) {
+            Button("閉じる", role: .cancel) {}
         }
         .alert("この子を追加できませんでした", isPresented: $failed) {
             Button("閉じる", role: .cancel) {}
