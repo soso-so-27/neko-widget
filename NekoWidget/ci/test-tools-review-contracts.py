@@ -47,7 +47,9 @@ class ToolsReviewContracts(unittest.TestCase):
     def test_name_validation_does_not_change_persistent_schema_acceptance(self):
         store = source("VeterinaryVisitStore.swift")
         self.assertIn('guard Self.isValidCatName(catName) else { throw VeterinaryVisitError.invalidName }', store)
-        self.assertIn('guard state.visits.count < 36_500 else { throw VeterinaryVisitError.visitLimit }', store)
+        # 11/14: 1,000 finished memos per cat, no cap on reading (ci/test-app-limits.py).
+        self.assertIn('guard state.visits.filter({ $0.catID == catID && $0.completedAt != nil }).count < Self.maximumFinishedPerCat else {', store)
+        self.assertNotIn('36_500', store)
         self.assertIn('guard Self.validName(visit.catName)', store)
         self.assertIn('private static func validName(_ name: String) -> Bool { !name.isEmpty', store)
         view = source("VeterinaryVisitView.swift")
