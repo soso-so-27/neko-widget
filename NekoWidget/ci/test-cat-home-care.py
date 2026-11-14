@@ -210,9 +210,18 @@ class NameIsTheCatMenu(unittest.TestCase):
         # Centred on the glyphs of the name's last line, not on its baseline.
         hero = block(HOME, "private struct CatHomeHero: View {")
         row = block(hero, "private func nameRow(_ fit: CatHomeHeroLayout.NameFit, maxWidth: CGFloat) -> some View {")
-        self.assertIn("HStack(alignment: .lastTextBaseline, spacing: max((size * 0.12).rounded(), 6)) {", row)
-        self.assertIn(".alignmentGuide(.lastTextBaseline) { dimensions in", row)
-        self.assertIn("dimensions[VerticalAlignment.center] + size * CGFloat(CatHomeHeroLayout.glyphCentre)", row)
+        self.assertIn("let gap = max((size * 0.12).rounded(), 6)", row)
+        self.assertIn("HStack(alignment: .lastTextBaseline, spacing: gap) {", row)
+        # Two lines: just after the end of the last line (measured with TextKit).
+        self.assertIn("ZStack(alignment: Alignment(horizontal: .leading, vertical: .lastTextBaseline)) {", row)
+        self.assertIn(".alignmentGuide(.leading) { _ in -(last + gap) }", row)
+        self.assertEqual(row.count("centred(menuButton, size: size)"), 2)
+        centred = block(hero, "private func centred<Content: View>(_ content: Content, size: CGFloat) -> some View {")
+        self.assertIn(".alignmentGuide(.lastTextBaseline) { dimensions in", centred)
+        self.assertIn("dimensions[VerticalAlignment.center] + size * CGFloat(CatHomeHeroLayout.glyphCentre)", centred)
+        last = block(hero, "private func lastLineWidth(size: CGFloat, maxWidth: CGFloat) -> CGFloat {")
+        self.assertIn("container.maximumNumberOfLines = 2", last)
+        self.assertIn("container.lineFragmentPadding = 0", last)
         self.assertNotIn("firstTextBaseline", hero)
         self.assertIn("static let glyphCentre = 0.36", CORE)
 

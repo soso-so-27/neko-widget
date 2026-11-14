@@ -735,17 +735,53 @@ private struct CatHomeHero: View {
     /// menu previews only). With the name as the label that highlight was a
     /// faint rectangle around the big name; on a round button it is a small
     /// circle that looks intended.
+    @ViewBuilder
     private func nameRow(_ fit: CatHomeHeroLayout.NameFit, maxWidth: CGFloat) -> some View {
         let size = CGFloat(fit.size)
-        return HStack(alignment: .lastTextBaseline, spacing: max((size * 0.12).rounded(), 6)) {
-            nameText(fit, maxWidth: maxWidth)
-            menuButton
-                // The circle's centre about 0.36 of the size above the
-                // baseline: the middle of kana, kanji and capitals alike.
-                .alignmentGuide(.lastTextBaseline) { dimensions in
-                    dimensions[VerticalAlignment.center] + size * CGFloat(CatHomeHeroLayout.glyphCentre)
-                }
+        let gap = max((size * 0.12).rounded(), 6)
+        if fit.lines == 1 {
+            HStack(alignment: .lastTextBaseline, spacing: gap) {
+                nameText(fit, maxWidth: maxWidth)
+                centred(menuButton, size: size)
+            }
+        } else {
+            // Two lines: the button just after the end of the last line,
+            // not after the full width of the first.
+            let last = lastLineWidth(size: size, maxWidth: maxWidth)
+            ZStack(alignment: Alignment(horizontal: .leading, vertical: .lastTextBaseline)) {
+                nameText(fit, maxWidth: maxWidth)
+                centred(menuButton, size: size)
+                    .alignmentGuide(.leading) { _ in -(last + gap) }
+            }
         }
+    }
+
+    /// The circle's centre about 0.36 of the size above the baseline: the
+    /// middle of kana, kanji and capitals alike.
+    private func centred<Content: View>(_ content: Content, size: CGFloat) -> some View {
+        content.alignmentGuide(.lastTextBaseline) { dimensions in
+            dimensions[VerticalAlignment.center] + size * CGFloat(CatHomeHeroLayout.glyphCentre)
+        }
+    }
+
+    /// How wide the name's last line is when it wraps in `maxWidth` (two
+    /// lines at most, the second cut short with an ellipsis like the text).
+    private func lastLineWidth(size: CGFloat, maxWidth: CGFloat) -> CGFloat {
+        let storage = NSTextStorage(string: cat.name, attributes: [
+            .font: UIFont.systemFont(ofSize: size, weight: .heavy)])
+        let layout = NSLayoutManager()
+        let container = NSTextContainer(size: CGSize(width: maxWidth, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        container.maximumNumberOfLines = 2
+        container.lineBreakMode = .byTruncatingTail
+        layout.addTextContainer(container)
+        storage.addLayoutManager(layout)
+        layout.ensureLayout(for: container)
+        var last: CGFloat = maxWidth
+        layout.enumerateLineFragments(forGlyphRange: layout.glyphRange(for: container)) { _, used, _, _, _ in
+            last = used.width
+        }
+        return min(ceil(last), maxWidth)
     }
 
     @ViewBuilder
