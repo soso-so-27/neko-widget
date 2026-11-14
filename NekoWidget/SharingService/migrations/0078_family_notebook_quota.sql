@@ -37,21 +37,21 @@ CREATE INDEX family_notebook_daily_usage_day ON family_notebook_daily_usage(day)
 
 CREATE TRIGGER family_notebook_quota_admit BEFORE INSERT ON family_notebook_crypto_operations
 BEGIN
-  SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM family_notebook_quota_policy WHERE singleton=1)
+  SELECT (CASE WHEN NOT EXISTS(SELECT 1 FROM family_notebook_quota_policy WHERE singleton=1)
     OR NOT EXISTS(SELECT 1 FROM family_notebook_usage WHERE family_id=NEW.family_id)
-    THEN RAISE(ABORT,'family_notebook_quota_unavailable') END;
-  SELECT CASE WHEN (SELECT enabled FROM family_notebook_quota_policy)=1 AND
+    THEN RAISE(ABORT,'family_notebook_quota_unavailable') END);
+  SELECT (CASE WHEN (SELECT enabled FROM family_notebook_quota_policy)=1 AND
     (SELECT operations FROM family_notebook_usage WHERE family_id=NEW.family_id)+1>(SELECT maximum_operations FROM family_notebook_quota_policy)
-    THEN RAISE(ABORT,'family_quota_total_operations') END;
-  SELECT CASE WHEN (SELECT enabled FROM family_notebook_quota_policy)=1 AND
+    THEN RAISE(ABORT,'family_quota_total_operations') END);
+  SELECT (CASE WHEN (SELECT enabled FROM family_notebook_quota_policy)=1 AND
     (SELECT bytes FROM family_notebook_usage WHERE family_id=NEW.family_id)+length(CAST(NEW.packet AS BLOB))>(SELECT maximum_bytes FROM family_notebook_quota_policy)
-    THEN RAISE(ABORT,'family_quota_total_bytes') END;
-  SELECT CASE WHEN (SELECT enabled FROM family_notebook_quota_policy)=1 AND
+    THEN RAISE(ABORT,'family_quota_total_bytes') END);
+  SELECT (CASE WHEN (SELECT enabled FROM family_notebook_quota_policy)=1 AND
     COALESCE((SELECT operations FROM family_notebook_daily_usage WHERE person_id=NEW.actor_person_id AND day=(unixepoch()+32400)/86400),0)+1>(SELECT daily_operations FROM family_notebook_quota_policy)
-    THEN RAISE(ABORT,'family_quota_daily_operations') END;
-  SELECT CASE WHEN (SELECT enabled FROM family_notebook_quota_policy)=1 AND
+    THEN RAISE(ABORT,'family_quota_daily_operations') END);
+  SELECT (CASE WHEN (SELECT enabled FROM family_notebook_quota_policy)=1 AND
     COALESCE((SELECT bytes FROM family_notebook_daily_usage WHERE person_id=NEW.actor_person_id AND day=(unixepoch()+32400)/86400),0)+length(CAST(NEW.packet AS BLOB))>(SELECT daily_bytes FROM family_notebook_quota_policy)
-    THEN RAISE(ABORT,'family_quota_daily_bytes') END;
+    THEN RAISE(ABORT,'family_quota_daily_bytes') END);
 END;
 CREATE TRIGGER family_notebook_usage_append AFTER INSERT ON family_notebook_crypto_operations
 BEGIN
