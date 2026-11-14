@@ -18,7 +18,7 @@ final class ReviewScreenshotUITests: XCTestCase {
         // この子 under stress: every capture on iPhone SE too.
         "40_home_name_1", "40_home_name_2", "40_home_name_4", "40_home_name_6",
         "40_home_name_9", "40_home_name_14", "40_home_name_30", "41_home_menu_open",
-        "41b_home_menu_open_1cat", "42_home_cats_1", "42_home_cats_3", "42_home_cats_8",
+        "41b_home_add_page", "42_home_cats_1", "42_home_cats_3", "42_home_cats_8",
         "43_home_photo_bright", "43_home_photo_dark", "43_home_photo_face_low", "43_home_photo_portrait_small",
         "44_home_rows_none", "44_home_rows_all", "44_home_rows_long_values", "44_home_searching",
         "44_home_departed", "45_home_text_xl", "45_home_text_ax3", "46_home_mid_swipe",
@@ -181,7 +181,7 @@ final class ReviewScreenshotUITests: XCTestCase {
         let app = launch(fixture + ["--app-store-screenshot-cat-care", "--cat-home-care-fixture"], tools: true)
         shot("10_cat_home", app) {
             guard tapTab(app, "main-tab-tools", "この子") else { return "この子 tab not found" }
-            guard chooseHomeCat(app, Self.mike) else { return "cat menu on この子 not found" }
+            guard chooseHomeCat(app, Self.mike) else { return "cat page on この子 not found" }
             guard app.buttons["tools-care-open"].waitForExistence(timeout: 15) else { return "tool buttons did not appear" }
             guard app.descendants(matching: .any)["cat-home-care-vet"].firstMatch.waitForExistence(timeout: 10) else {
                 return "「これからのこと」 did not appear"
@@ -190,7 +190,7 @@ final class ReviewScreenshotUITests: XCTestCase {
             return nil
         }
         shot("10b_cat_home_second_cat", app) {
-            guard chooseHomeCat(app, Self.sora) else { return "second cat not in the cat menu" }
+            guard chooseHomeCat(app, Self.sora) else { return "second cat page not reached" }
             guard app.descendants(matching: .any)["tools-cat-" + Self.sora].firstMatch.waitForExistence(timeout: 10) else {
                 return "second cat's page did not appear"
             }
@@ -290,7 +290,7 @@ final class ReviewScreenshotUITests: XCTestCase {
                            environment: ["NEKO_CAT_HOME_NO_PHOTO": "1"], tools: true)
         shot("10d_cat_home_no_photo", plain) {
             guard tapTab(plain, "main-tab-tools", "この子") else { return "この子 tab not found" }
-            guard chooseHomeCat(plain, Self.mike) else { return "cat menu on この子 not found" }
+            guard chooseHomeCat(plain, Self.mike) else { return "cat page on この子 not found" }
             guard plain.buttons["tools-care-open"].waitForExistence(timeout: 15) else { return "tool buttons did not appear" }
             settle(1)
             return nil
@@ -693,15 +693,21 @@ final class ReviewScreenshotUITests: XCTestCase {
         shot("40_home_name_30", app) { reachStressHome(app) }
         app.terminate()
 
-        // Three cats: the page, then the cat menu open over it.
+        // Three cats: the page (no cat menu below five cats).
         app = launchStress(10, names: ["むぎ", "ソラ", "ちゃちゃ"])
         shot("42_home_cats_3", app) { reachStressHome(app) }
-        shot("41_home_menu_open", app) { openStressMenu(app) }
         app.terminate()
-        // One cat: no dots; the menu is still there (「この子を追加」).
+        // Five cats: the cat menu (the cats only) open over the page.
+        app = launchStress(13, names: ["むぎ", "ソラ", "ちゃちゃ", "こむぎ", "あめ"])
+        shot("41_home_menu_open", app) {
+            if let reason = reachStressHome(app) { return reason }
+            return openStressMenu(app)
+        }
+        app.terminate()
+        // One cat: its dot and the 「＋」 of the add page; then the add page.
         app = launchStress(11, names: ["むぎ"])
         shot("42_home_cats_1", app) { reachStressHome(app) }
-        shot("41b_home_menu_open_1cat", app) { openStressMenu(app) }
+        shot("41b_home_add_page", app) { showStressAddPage(app) }
         app.terminate()
         // Eight cats: at most seven dots, the far end shrinking.
         app = launchStress(12, names: ["むぎ", "ソラ", "ちゃちゃ", "ミ", "こむぎ", "あめ", "きなこ", "のり"])
@@ -773,7 +779,9 @@ final class ReviewScreenshotUITests: XCTestCase {
     @MainActor
     private func reachStressHome(_ app: XCUIApplication, waitingFor identifier: String? = nil) -> String? {
         guard tapTab(app, "main-tab-tools", "この子") else { return "この子 tab not found" }
-        guard app.buttons["tools-cat-menu"].waitForExistence(timeout: 15) else { return "cat menu button not found" }
+        guard app.descendants(matching: .any)["cat-home-hero"].firstMatch.waitForExistence(timeout: 15) else {
+            return "cat page not found"
+        }
         if let identifier,
            !app.descendants(matching: .any)[identifier].firstMatch.waitForExistence(timeout: 12) {
             return "\(identifier) did not appear"
@@ -782,14 +790,28 @@ final class ReviewScreenshotUITests: XCTestCase {
         return nil
     }
 
-    /// The cat menu open over the page (every cat, 「この子を追加」).
+    /// The cat menu open over the page (every cat; five cats or more).
     @MainActor
     private func openStressMenu(_ app: XCUIApplication) -> String? {
         let menu = app.buttons["tools-cat-menu"]
         guard menu.waitForExistence(timeout: 10), menu.isHittable else { return "cat menu button not hittable" }
         menu.tap()
-        guard app.buttons["tools-cat-profiles"].waitForExistence(timeout: 6) else { return "cat menu did not open" }
+        let item = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "tools-cat-menu-")).firstMatch
+        guard item.waitForExistence(timeout: 6) else { return "cat menu did not open" }
         settle(1)
+        return nil
+    }
+
+    /// The page after the last cat, where a cat is added (11/14).
+    @MainActor
+    private func showStressAddPage(_ app: XCUIApplication) -> String? {
+        let add = app.buttons["cat-home-add"]
+        for _ in 0..<13 where !(add.exists && add.isHittable) {
+            app.swipeLeft()
+            _ = add.waitForExistence(timeout: 2)
+        }
+        guard add.exists, add.isHittable else { return "add page not reached" }
+        settle(1.5)
         return nil
     }
 
@@ -892,21 +914,33 @@ final class ReviewScreenshotUITests: XCTestCase {
         return true
     }
 
-    /// Shows a cat's page from the cat menu over the photo (the one place
-    /// a cat is chosen; the tools no longer have their own menu from here).
+    /// 11/14: a cat's page on この子 is reached by swiping (the round cat
+    /// menu shows only from five cats). The cat's 「この子のこと」 row is found
+    /// only on the page on screen. Swipes toward the add page first, then
+    /// back; at most 13 pages each way.
     @MainActor
     private func chooseHomeCat(_ app: XCUIApplication, _ identifier: String) -> Bool {
-        let menu = app.buttons["tools-cat-menu"]
-        guard menu.waitForExistence(timeout: 15) else { return false }
-        // 11/13: the menu scrolls with the page; back to the top first.
-        for _ in 0..<8 where !menu.isHittable { app.swipeDown() }
-        menu.tap()
-        let item = app.buttons["tools-cat-menu-" + identifier]
-        guard item.waitForExistence(timeout: 5) else { closeTop(app); return false }
-        item.tap()
-        _ = item.waitForNonExistence(timeout: 5)
+        guard swipeToHomeCat(app, identifier) else { return false }
         settle(0.8)
         return true
+    }
+
+    @MainActor
+    private func swipeToHomeCat(_ app: XCUIApplication, _ identifier: String) -> Bool {
+        let row = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier IN %@", ["tools-cat-" + identifier, "tools-family-cat-" + identifier])).firstMatch
+        _ = app.descendants(matching: .any)["cat-home-hero"].firstMatch.waitForExistence(timeout: 10)
+        if row.waitForExistence(timeout: 2) { return true }
+        let add = app.buttons["cat-home-add"]
+        for _ in 0..<13 where !add.exists {
+            app.swipeLeft()
+            if row.waitForExistence(timeout: 2) { return true }
+        }
+        for _ in 0..<13 {
+            app.swipeRight()
+            if row.waitForExistence(timeout: 2) { return true }
+        }
+        return false
     }
 
     @MainActor

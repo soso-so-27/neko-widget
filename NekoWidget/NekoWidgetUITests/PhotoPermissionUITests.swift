@@ -3362,19 +3362,23 @@ final class SoloMemoriesUITests: XCTestCase {
         // 11/13: 写真を見せる opens for the この子 page's cat (the one place the
         // cat is chosen). The page is chosen here, so the stored page from an
         // earlier test does not decide the result.
+        // 11/14: by swiping (the round menu shows only from five cats), until
+        // the cat's 「この子のこと」 row is on the page on screen.
         func choosePage(_ identifier: String) {
-            let menu = app.buttons["tools-cat-menu"]
-            XCTAssertTrue(menu.waitForExistence(timeout: 10), app.debugDescription)
-            // 11/13: the menu scrolls with the page; back to the top first.
-            for _ in 0..<8 where !menu.isHittable { app.swipeDown() }
-            menu.tap()
-            let item = app.buttons["tools-cat-menu-" + identifier]
-            XCTAssertTrue(item.waitForExistence(timeout: 5), app.debugDescription)
-            item.tap()
-            XCTAssertTrue(item.waitForNonExistence(timeout: 5))
-            let value = NSPredicate(format: "value CONTAINS %@", identifier == "fixture-cat-1" ? "ソラ" : "ミケ")
-            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: value, object: menu)], timeout: 5),
-                           .completed)
+            let row = app.descendants(matching: .any).matching(NSPredicate(
+                format: "identifier IN %@", ["tools-cat-" + identifier, "tools-family-cat-" + identifier])).firstMatch
+            _ = app.descendants(matching: .any)["cat-home-hero"].firstMatch.waitForExistence(timeout: 10)
+            var found = row.waitForExistence(timeout: 2)
+            let add = app.buttons["cat-home-add"]
+            for _ in 0..<13 where !found && !add.exists {
+                app.swipeLeft()
+                found = row.waitForExistence(timeout: 2)
+            }
+            for _ in 0..<13 where !found {
+                app.swipeRight()
+                found = row.waitForExistence(timeout: 2)
+            }
+            XCTAssertTrue(found, app.debugDescription)
         }
         choosePage("fixture-cat-1")
         showcase.tap()
@@ -4508,7 +4512,7 @@ final class SoloMemoriesUITests: XCTestCase {
             format: "identifier BEGINSWITH %@ AND NOT (identifier BEGINSWITH %@) AND identifier != %@",
             "tools-cat-", "tools-cat-menu", "tools-cat-profiles")).firstMatch
         XCTAssertTrue(firstCat.waitForExistence(timeout: 5))
-        let catName = (app.buttons["tools-cat-menu"].value as? String) == "ソラ" ? "ソラ" : "ミケ"
+        let catName = firstCat.identifier.hasSuffix("fixture-cat-1") ? "ソラ" : "ミケ"
         firstCat.tap()
         // 11/12 (round 2): the bar names the page; the name is under the photo.
         XCTAssertTrue(app.navigationBars["この子のこと"].waitForExistence(timeout: 5))

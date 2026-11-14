@@ -402,19 +402,32 @@ final class ScreenSpeedSweepUITests: XCTestCase {
         return app
     }
 
-    /// The cat's page on この子, from the menu over the photo (the tools open
-    /// for the page's cat). Leaves the page as it is when the menu is missing.
+    /// 11/14: a cat's page on この子 is reached by swiping (the round cat
+    /// menu shows only from five cats). The cat's 「この子のこと」 row is found
+    /// only on the page on screen. Swipes toward the add page first, then
+    /// back; at most 13 pages each way.
+    /// Leaves the page as it is when the cat is not found.
     @MainActor
     private func chooseHomeCat(_ app: XCUIApplication, _ identifier: String) {
-        let menu = app.buttons["tools-cat-menu"]
-        guard menu.waitForExistence(timeout: 10) else { return }
-        // 11/13: the menu scrolls with the page; back to the top first.
-        for _ in 0..<8 where !menu.isHittable { app.swipeDown() }
-        menu.tap()
-        let item = app.buttons["tools-cat-menu-" + identifier]
-        guard item.waitForExistence(timeout: 5) else { return }
-        item.tap()
-        _ = item.waitForNonExistence(timeout: 5)
+        _ = swipeToHomeCat(app, identifier)
+    }
+
+    @MainActor
+    private func swipeToHomeCat(_ app: XCUIApplication, _ identifier: String) -> Bool {
+        let row = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier IN %@", ["tools-cat-" + identifier, "tools-family-cat-" + identifier])).firstMatch
+        _ = app.descendants(matching: .any)["cat-home-hero"].firstMatch.waitForExistence(timeout: 10)
+        if row.waitForExistence(timeout: 2) { return true }
+        let add = app.buttons["cat-home-add"]
+        for _ in 0..<13 where !add.exists {
+            app.swipeLeft()
+            if row.waitForExistence(timeout: 2) { return true }
+        }
+        for _ in 0..<13 {
+            app.swipeRight()
+            if row.waitForExistence(timeout: 2) { return true }
+        }
+        return false
     }
 
     @MainActor

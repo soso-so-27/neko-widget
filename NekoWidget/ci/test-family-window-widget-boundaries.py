@@ -8849,8 +8849,9 @@ class CatHomeTab1112Tests(unittest.TestCase):
         menu = section(self.home, "    private func catMenuItems(", "    private func show(")
         self.assertIn("ForEach(cats) { cat in", menu)
         self.assertIn('.accessibilityIdentifier("tools-cat-menu-\\(cat.id)")', menu)
-        self.assertIn('Button { addsCat = true } label: { Label("この子を追加", systemImage: "plus") }', menu)
-        self.assertIn('.accessibilityIdentifier("tools-cat-profiles")', menu)
+        # 11/14: the cats only; a cat is added on the page after the last cat.
+        self.assertNotIn("この子を追加", menu)
+        self.assertNotIn("tools-cat-profiles", self.home)
         # 11/14: the name on the photo opens these items.
         hero = section(self.home, "private struct CatHomeHero: View {", "/// The tools under the photo:")
         self.assertIn('.accessibilityLabel("猫を切り替える")', hero)
@@ -8871,8 +8872,8 @@ class CatHomeTab1112Tests(unittest.TestCase):
         pager = section(self.home, "    private func pager(", "    /// The page 「この子のこと」 opens")
         self.assertIn(".scrollTargetBehavior(.paging)", pager)
         self.assertIn(".scrollPosition(id: $pageID)", pager)
-        self.assertIn(".scrollDisabled(cats.count < 2)", pager)
-        self.assertIn(".accessibilityHidden(cat.id != current.id)", pager)
+        self.assertNotIn(".scrollDisabled(", pager)
+        self.assertIn(".accessibilityHidden(onAddPage || cat.id != current.id)", pager)
         self.assertEqual(self.home.count("@AppStorage(\"catHome.selectedCat.v1\")"), 1)
         # Written after the pages rest, never mid-swipe.
         task = section(self.home, ".task(id: pageID) {", "    // MARK: Cats")
@@ -8943,7 +8944,8 @@ class CatHomeTab1112Tests(unittest.TestCase):
         # No cat: のわ, one sentence, one button; the two household tools only.
         empty = section(self.home, "private struct CatHomeNoCatPage: View {", "private struct CatHomePressStyle")
         self.assertIn('Image("Nowa-sit-up")', empty)
-        self.assertIn('Text("この子を追加すると、ここに出ます。")', empty)
+        self.assertIn('var sentence = "この子を追加すると、ここに出ます。"', empty)
+        self.assertIn("Text(sentence)", empty)
         self.assertIn('Text("この子を追加")', empty)
         self.assertIn(".nekoPrimaryButton()", empty)
         self.assertIn("toolsShown: CatHomeTool.household", empty)

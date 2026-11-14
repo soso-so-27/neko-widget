@@ -246,6 +246,12 @@ struct CatHomeView: View {
 
     /// Up to this many cats, every page is built up front (CatHomeView.pager).
     static let eagerPages = 12
+    /// The page after the last cat, where a cat is added (11/14: the one
+    /// place). Never kept as the remembered page.
+    static let addPageID = "cat-home-add-page"
+    /// The round cat menu after the name shows from this many cats; with
+    /// fewer, the cats are switched by swiping (11/14).
+    static let menuMinimumCats = 5
 
     var body: some View {
         let cats = self.cats
@@ -283,7 +289,7 @@ struct CatHomeView: View {
         .onAppear { Task { await states.refresh() } }
         // Kept once the pages rest, never while they move.
         .task(id: pageID) {
-            guard let pageID, pageID != storedCatID else { return }
+            guard let pageID, pageID != Self.addPageID, pageID != storedCatID else { return }
             try? await Task.sleep(for: .milliseconds(700))
             guard !Task.isCancelled else { return }
             storedCatID = pageID
@@ -310,6 +316,8 @@ struct CatHomeView: View {
 
     private func currentCat(in cats: [CatHomeCat]) -> CatHomeCat? {
         let chosen = pageID ?? storedCatID
+        // On the add page the tools stay with the last cat.
+        if chosen == Self.addPageID { return cats.last }
         return cats.first { $0.id == chosen } ?? cats.first
     }
 
@@ -367,22 +375,33 @@ struct CatHomeView: View {
     /// the next cat's photo is already drawn when a swipe starts (a lazy
     /// stack built it, and began loading its photo, only as it scrolled in).
     /// More cats than that: lazy, so a big home does not hold every photo.
+    ///
+    /// 11/14: after the last cat, one more page adds a cat (the one place a
+    /// cat is added); its dot is a small 「＋」.
     private func pager(_ cats: [CatHomeCat], current: CatHomeCat, metrics: CatHomeMetrics) -> some View {
         let reduceMotion = self.reduceMotion
         let shrink = CatHomeCardWhileMoving.shrink
-        func pages() -> some View {
+        let onAddPage = pageID == Self.addPageID
+        func card<Page: View>(_ page: Page) -> some View {
+            page
+                .modifier(CatHomeCardWhileMoving(enabled: !reduceMotion))
+                .scrollTransition(.interactive, axis: .horizontal) { content, phase in
+                    content.scaleEffect(phase.isIdentity || reduceMotion
+                                        ? 1 : 1 - shrink * CGFloat(min(abs(phase.value), 1)))
+                }
+                .containerRelativeFrame(.horizontal)
+        }
+        @ViewBuilder func pages() -> some View {
             ForEach(Array(cats.enumerated()), id: \.element.id) { index, cat in
-                page(cat, index: index, cats: cats, metrics: metrics)
-                    .modifier(CatHomeCardWhileMoving(enabled: !reduceMotion && cats.count > 1))
-                    .scrollTransition(.interactive, axis: .horizontal) { content, phase in
-                        content.scaleEffect(phase.isIdentity || reduceMotion
-                                            ? 1 : 1 - shrink * CGFloat(min(abs(phase.value), 1)))
-                    }
+                card(page(cat, index: index, cats: cats, metrics: metrics))
                     // Only the page on screen is read and found by tests.
-                    .accessibilityHidden(cat.id != current.id)
-                    .containerRelativeFrame(.horizontal)
+                    .accessibilityHidden(onAddPage || cat.id != current.id)
                     .id(cat.id)
             }
+            card(CatHomeNoCatPage(metrics: metrics, tools: tools, topBar: AnyView(topBar),
+                                  sentence: "猫を増やすときは、ここから。", householdTools: false) { addsCat = true })
+                .accessibilityHidden(!onAddPage)
+                .id(Self.addPageID)
         }
         return ScrollView(.horizontal) {
             if cats.count <= Self.eagerPages {
@@ -396,7 +415,6 @@ struct CatHomeView: View {
         .scrollTargetBehavior(.paging)
         .scrollPosition(id: $pageID)
         .scrollIndicators(.hidden)
-        .scrollDisabled(cats.count < 2)
         // A light tick when another cat's page is reached; never on the
         // first appearance (pageID is set from nil there).
         .sensoryFeedback(.selection, trigger: pageID) { old, new in
@@ -409,14 +427,15 @@ struct CatHomeView: View {
         let record = self.record(for: cat)
         let facts = self.facts(for: cat, record: record)
         return CatHomePage(cat: cat, facts: facts, metrics: metrics,
-                           pageIndex: index, pageCount: cats.count,
+                           pageIndex: index, pageCount: cats.count + 1,
                            vetUnfinished: states.vetMemos(for: cat, record: record).contains(where: \.isUnfinished),
                            searching: states.searching(cat),
                            tools: tools,
                            care: care(for: cat, record: record, facts: facts),
                            careLinks: CatHomeCareLinks(cat: cat, catID: record?.catID, carePage: AnyView(carePage(cat)),
                                                        saveLifeDates: actions.updateLifeDates),
-                           catMenu: AnyView(catMenuItems(cats, current: cat)),
+                           catMenu: cats.count >= Self.menuMinimumCats
+                               ? AnyView(catMenuItems(cats, current: cat)) : nil,
                            topBar: AnyView(topBar))
     }
 
@@ -486,10 +505,9 @@ struct CatHomeView: View {
         .padding(.top, 2)
     }
 
-    /// The items of the cat menu (the name on the photo): every cat this tab
-    /// knows, and 「この子を追加」. Always there, even with one cat, since it
-    /// is also where a cat is added.
-    @ViewBuilder
+    /// The items of the cat menu (the round button after the name, from
+    /// `menuMinimumCats` cats): every cat this tab knows, a check on this
+    /// one. 11/14: no 「この子を追加」 here; the last page adds a cat.
     private func catMenuItems(_ cats: [CatHomeCat], current: CatHomeCat) -> some View {
         ForEach(cats) { cat in
             Button { show(cat.id) } label: {
@@ -497,9 +515,6 @@ struct CatHomeView: View {
             }
             .accessibilityIdentifier("tools-cat-menu-\(cat.id)")
         }
-        Divider()
-        Button { addsCat = true } label: { Label("この子を追加", systemImage: "plus") }
-            .accessibilityIdentifier("tools-cat-profiles")
     }
 
     private func show(_ id: String) {
@@ -590,8 +605,9 @@ private struct CatHomePage: View {
     /// is then 「この子のこと」 alone.
     let care: CatHomeCareRows?
     let careLinks: CatHomeCareLinks
-    /// The items of the cat menu, which is the name on the photo.
-    let catMenu: AnyView
+    /// The items of the cat menu after the name; nil with fewer than
+    /// `CatHomeView.menuMinimumCats` cats (no button, swipe instead).
+    let catMenu: AnyView?
     /// 設定, at the top of the photo; it scrolls with it.
     let topBar: AnyView
 
@@ -640,8 +656,8 @@ private struct CatHomeHero: View {
     let metrics: CatHomeMetrics
     let pageIndex: Int
     let pageCount: Int
-    /// The cat menu's items (every cat, 「この子を追加」).
-    let menu: AnyView
+    /// The cat menu's items (every cat); nil: the name alone, no button.
+    let menu: AnyView?
     @Environment(\.displayScale) private var displayScale
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.colorScheme) private var colorScheme
@@ -758,8 +774,8 @@ private struct CatHomeHero: View {
         }
     }
 
-    /// The name as plain text, then the cat menu: a chevron in a small
-    /// round button just after it, centred on the name's glyphs (on its last
+    /// The name as plain text, then (from five cats) the cat menu: a
+    /// chevron in a small round button just after it, centred on the name's glyphs (on its last
     /// line when it takes two).
     ///
     /// 11/14: a Menu shows the system's lifted highlight around its whole
@@ -775,9 +791,9 @@ private struct CatHomeHero: View {
         if fit.lines == 1 {
             HStack(alignment: .lastTextBaseline, spacing: gap) {
                 nameText(cat.name, fit: fit, maxWidth: maxWidth)
-                centred(menuButton, size: size)
+                if let menu { centred(menuButton(menu), size: size) }
             }
-        } else {
+        } else if let menu {
             // Two lines: broken where TextKit breaks them, so the button
             // sits just after the end of the last line as drawn (11/14: the
             // first capture put it after the first line's full width, and
@@ -785,9 +801,12 @@ private struct CatHomeHero: View {
             let lines = nameLines(size: size, maxWidth: maxWidth)
             ZStack(alignment: Alignment(horizontal: .leading, vertical: .lastTextBaseline)) {
                 nameText(lines.text, fit: fit, maxWidth: maxWidth)
-                centred(menuButton, size: size)
+                centred(menuButton(menu), size: size)
                     .alignmentGuide(.leading) { _ in -(lines.lastWidth + gap) }
             }
+        } else {
+            // Fewer than five cats: the name alone (11/14).
+            nameText(cat.name, fit: fit, maxWidth: maxWidth)
         }
     }
 
@@ -841,8 +860,8 @@ private struct CatHomeHero: View {
         }
     }
 
-    /// The cat menu (every cat, a check on this one, 「この子を追加」).
-    private var menuButton: some View {
+    /// The cat menu (every cat, a check on this one).
+    private func menuButton(_ menu: AnyView) -> some View {
         let circle = min(menuCircle, 40)
         let target = max(circle, 44)
         return Menu { menu } label: {
@@ -887,9 +906,10 @@ private struct CatHomeHero: View {
     }
 }
 
-/// Which page this is, on the photo: one dot per cat, at most seven; with
+/// Which page this is, on the photo: one dot per page, at most seven; with
 /// more cats the seven around this page show and the ends shrink, as the
-/// system page control does (CatHomeHeroLayout.dots).
+/// system page control does (CatHomeHeroLayout.dots). The last page adds a
+/// cat: its dot is a small 「＋」 with the same size and opacity rules.
 private struct CatHomePageDots: View {
     let count: Int
     let current: Int
@@ -897,9 +917,18 @@ private struct CatHomePageDots: View {
     var body: some View {
         HStack(spacing: 6) {
             ForEach(CatHomeHeroLayout.dots(count: count, current: current), id: \.index) { dot in
-                Circle()
-                    .fill(Color.white.opacity(dot.index == current ? 1 : 0.45))
-                    .frame(width: 6 * CGFloat(dot.scale), height: 6 * CGFloat(dot.scale))
+                let side = 6 * CGFloat(dot.scale)
+                let tone = Color.white.opacity(dot.index == current ? 1 : 0.45)
+                if dot.index == count - 1 {
+                    Image(systemName: "plus")
+                        .font(.system(size: (side * 1.4).rounded(), weight: .heavy))
+                        .foregroundStyle(tone)
+                        .frame(width: side, height: side)
+                } else {
+                    Circle()
+                        .fill(tone)
+                        .frame(width: side, height: side)
+                }
             }
         }
         .frame(height: 6)
@@ -1072,12 +1101,16 @@ private struct CatHomeToolRow: View {
 }
 
 /// No cat yet: のわ in a soft field, one sentence, one button; under it the
-/// two tools for the whole home.
+/// two tools for the whole home. 11/14: the same page, without the tools and
+/// with its own sentence, is the last page after the cats (adding a cat).
 private struct CatHomeNoCatPage: View {
     let metrics: CatHomeMetrics
     let tools: CatHomeTools
     /// 設定 (no cat menu without a cat), scrolling with the page.
     let topBar: AnyView
+    var sentence = "この子を追加すると、ここに出ます。"
+    /// 避難に備える and 写真を見せる; only with no cat.
+    var householdTools = true
     let add: () -> Void
 
     var body: some View {
@@ -1092,7 +1125,7 @@ private struct CatHomeNoCatPage: View {
                         // のわ is black: a pale round keeps the shape in dark mode.
                         .background(Color(red: 0.96, green: 0.94, blue: 0.90), in: Circle())
                         .accessibilityHidden(true)
-                    Text("この子を追加すると、ここに出ます。")
+                    Text(sentence)
                         .font(.body)
                         .foregroundStyle(.primary)
                         .multilineTextAlignment(.center)
@@ -1108,9 +1141,11 @@ private struct CatHomeNoCatPage: View {
                 .padding(.bottom, 24)
                 .frame(maxWidth: .infinity, minHeight: metrics.heroHeight)
                 .background(Color(.secondarySystemGroupedBackground))
-                CatHomeToolBar(cat: nil, toolsShown: CatHomeTool.household, width: metrics.width,
-                               vetUnfinished: false, searching: false, tools: tools)
-                    .padding(.horizontal, 16)
+                if householdTools {
+                    CatHomeToolBar(cat: nil, toolsShown: CatHomeTool.household, width: metrics.width,
+                                   vetUnfinished: false, searching: false, tools: tools)
+                        .padding(.horizontal, 16)
+                }
             }
             .padding(.bottom, 24)
             .overlay(alignment: .top) { topBar.padding(.top, metrics.topInset) }
