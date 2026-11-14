@@ -61,6 +61,10 @@ final class LaunchWorkMeter: NSObject {
     private var window = 0
     private var finishWork: DispatchWorkItem?
     private var observer: NSObjectProtocol?
+    private var backgroundObserver: NSObjectProtocol?
+    /// A cold launch also posts willEnterForeground; only a return from the
+    /// background starts a new window.
+    private var wasInBackground = false
 
     private var duration: TimeInterval {
         Double(ProcessInfo.processInfo.environment["NEKO_LAUNCH_WORK_SECONDS"] ?? "") ?? 25
@@ -73,7 +77,16 @@ final class LaunchWorkMeter: NSObject {
         observer = NotificationCenter.default.addObserver(
             forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.beginWindow() }
+            MainActor.assumeIsolated {
+                guard let self, self.wasInBackground else { return }
+                self.wasInBackground = false
+                self.beginWindow()
+            }
+        }
+        backgroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.wasInBackground = true }
         }
         beginWindow()
     }
