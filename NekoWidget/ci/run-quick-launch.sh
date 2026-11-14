@@ -75,12 +75,12 @@ if bounded 90 xcrun simctl install "$device" "$app"; then
 else
   install_status=$?
   quick_observe install-failure
-  # Retry only a timeout, never a build, signing, or application error. Reuse
-  # the successful build on this runner; do not repeat compilation or tests.
+  # Only this first-install timeout may move to another hosted Mac. The
+  # explicit output distinguishes it from any other command returning 124.
   if [ "$install_status" -ne 124 ]; then exit "$install_status"; fi
-  echo "Simulator install stalled; rebooting once and reusing the built app"
-  reboot_simulator
-  bounded 90 xcrun simctl install "$device" "$app"
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then echo "install_timeout=true" >> "$GITHUB_OUTPUT"; fi
+  echo "First install timed out; end this Mac attempt without launching." >&2
+  exit 124
 fi
 quick_snapshot before-launch
 if launch=$(bounded 90 xcrun simctl launch "$device" "$bundle"); then

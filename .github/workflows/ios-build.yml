@@ -55,48 +55,40 @@ jobs:
           retention-days: 1
           compression-level: 0
 
+  launch-attempt-1:
+    needs: quick-check
+    uses: ./.github/workflows/quick-launch-attempt.yml
+    with:
+      attempt: 1
+
+  launch-attempt-2:
+    needs: launch-attempt-1
+    if: always() && needs.launch-attempt-1.result == 'success' && needs.launch-attempt-1.outputs.result == 'install_timeout'
+    uses: ./.github/workflows/quick-launch-attempt.yml
+    with:
+      attempt: 2
+
+  launch-attempt-3:
+    needs: launch-attempt-2
+    if: always() && needs.launch-attempt-2.result == 'success' && needs.launch-attempt-2.outputs.result == 'install_timeout'
+    uses: ./.github/workflows/quick-launch-attempt.yml
+    with:
+      attempt: 3
+
   quick-launch:
     name: Fresh runner launch
-    needs: quick-check
-    runs-on: macos-15
-    # Existing per-command bounds and both timeout retries total about 20 min;
-    # leave room for checkout, observations, artifact upload and cleanup.
-    # This outer budget must not interrupt the bounded recovery path.
-    timeout-minutes: 30
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    needs: [quick-check, launch-attempt-1, launch-attempt-2, launch-attempt-3]
+    if: always() && needs.quick-check.result != 'skipped'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
-        with:
-          name: quick-launch-app
-          path: ${{ runner.temp }}/QuickLaunch
-      - name: Extract the app from this run and launch on a fresh runner
-        run: |
-          tar -xzf "$RUNNER_TEMP/QuickLaunch/quick-launch-app.tar.gz" -C "$RUNNER_TEMP/QuickLaunch"
-          export QUICK_APP_PATH="$RUNNER_TEMP/QuickLaunch/NekoWidget.app"
-          bash NekoWidget/ci/run-quick-launch.sh
-      - name: Attach launch screenshot
-        if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: launch-screenshot
-          path: ${{ runner.temp }}/ci-screenshots/*.png
-          if-no-files-found: ignore
-          retention-days: 7
-      - name: Attach minimal synthetic launch failure diagnostics
-        # Also retain the first timeout when the existing single retry recovers.
-        # A clean run creates no failure directory and uploads nothing.
-        if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: synthetic-launch-failure-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/quick-launch-failure/
-          if-no-files-found: ignore
-          retention-days: 3
-          compression-level: 0
+      - name: Require a successful launch, never a skipped or exhausted attempt
+        env:
+          LAUNCH_NEEDS: ${{ toJSON(needs) }}
+        run: python3 NekoWidget/ci/check-fresh-launch-result.py
 
   owner-products:
     name: Build and inspect owner-only products
