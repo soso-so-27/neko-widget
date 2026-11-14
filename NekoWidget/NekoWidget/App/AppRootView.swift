@@ -472,7 +472,8 @@ struct AppRootView: View {
             unavailableAlbums: viewModel.unavailableProfilePhotoAlbumIdentifiers,
             albumDates: viewModel.profilePhotoAlbumAssetDates,
             care: CatCareStore.shared.state, lifeReference: viewModel.settings.catLifeReference,
-            excluded: viewModel.excludedCatAssets)
+            excluded: viewModel.excludedCatAssets,
+            isFinalScan: DetectionAccuracySampler.isFinal(viewModel.snapshot))
         let profileValues = profilePresentationCache.values(for: profileKey) {
             LaunchWork.count("profilePresentationsBuilt")
             let identityProjection = identity.map { profileIdentityProjection($0) }
@@ -490,7 +491,12 @@ struct AppRootView: View {
                     projection: identityProjection,
                     assetsByIdentifier: assetsByIdentifier
                 ),
-                readableIdentifiers: Set(readableSnapshot.assets.map(\.localIdentifier)))
+                readableIdentifiers: Set(readableSnapshot.assets.map(\.localIdentifier)),
+                // Internal builds' review samples hash and sort every cat
+                // photo: once per change too.
+                detectionSample: internalDetectionAccuracySample(hasPhotoAccess: hasPhotoAccess),
+                recoverySample: internalHighResolutionRecoverySample(
+                    hasPhotoAccess: hasPhotoAccess, records: visibleCatAssets))
         }
         let profilesPresentation = profileValues.profiles
         let profilePhotos = profileValues.albumPhotos
@@ -525,11 +531,8 @@ struct AppRootView: View {
                 ? effectiveAlbumState(catAssetCount: visibleCatAssets.count)
                 : .idle,
             settings: settingsPresentation,
-            detectionAccuracySample: internalDetectionAccuracySample(hasPhotoAccess: hasPhotoAccess),
-            highResolutionRecoverySample: internalHighResolutionRecoverySample(
-                hasPhotoAccess: hasPhotoAccess,
-                records: visibleCatAssets
-            ),
+            detectionAccuracySample: profileValues.detectionSample,
+            highResolutionRecoverySample: profileValues.recoverySample,
             excludedCatPhotos: hasPhotoAccess
                 ? excludedCatPhotoPresentations(assetsByIdentifier: assetsByIdentifier)
                 : [],
@@ -1496,12 +1499,15 @@ private final class ProfilePresentationCache: ObservableObject {
         var care: CatCareState?
         var lifeReference: CatLifeReference?
         var excluded: [ExcludedCatAsset]
+        var isFinalScan: Bool
     }
 
     struct Values {
         var profiles: CatProfilesPresentation
         var albumPhotos: [String: [PhotoPresentation]]
         var readableIdentifiers: Set<String>
+        var detectionSample: DetectionAccuracySamplePresentation
+        var recoverySample: DetectionAccuracySamplePresentation
     }
 
     private var cached: (key: Key, values: Values)?

@@ -3125,8 +3125,11 @@ class AppDrawingWasteTests(unittest.TestCase):
         self.assertIn("private func highResolutionRecoverySamplePresentation(", guarded)
         self.assertTrue(guarded.rstrip().endswith("#endif"))
         presentation = section(root, "settings: settingsPresentation,", "excludedCatPhotos:")
-        self.assertIn("detectionAccuracySample: internalDetectionAccuracySample(hasPhotoAccess: hasPhotoAccess)", presentation)
-        self.assertIn("highResolutionRecoverySample: internalHighResolutionRecoverySample(", presentation)
+        # 11/14: made once per change in ProfilePresentationCache, not per drawing.
+        self.assertIn("detectionAccuracySample: profileValues.detectionSample", presentation)
+        self.assertIn("highResolutionRecoverySample: profileValues.recoverySample", presentation)
+        self.assertIn("detectionSample: internalDetectionAccuracySample(hasPhotoAccess: hasPhotoAccess)", root)
+        self.assertIn("recoverySample: internalHighResolutionRecoverySample(", root)
         self.assertNotIn("? detectionAccuracySamplePresentation", presentation)
 
     def test_app_root_does_not_observe_the_family_notebook(self) -> None:
