@@ -30,10 +30,24 @@ export const operatorMailTexts = Object.freeze({
 });
 export type OperatorMailKind = keyof typeof operatorMailTexts;
 
+// Only these fixed reasons may enter a closure email. Never interpolate errors,
+// provider responses, account identifiers or database values into mail.
+export const intakeClosureReasons = Object.freeze({
+  'cost-unavailable': '費用を安全に確認できなかったため、保存の受付を閉じました。',
+  budget: '費用の見込みが停止額に達したため、保存の受付を閉じました。',
+  limits: '保存の上限設定が承認済みの設定と一致しなかったため、受付を閉じました。',
+  expired: '保存の受付・更新許可・安全確認のいずれかの期限が切れたため、受付を閉じました。',
+  credentials: '費用を取得するための認証が拒否されたため、保存の受付を閉じました。',
+  stopped: '保存の受付が停止状態になっています。記録だけでは停止した理由を特定できません。',
+  unknown: '保存を続けるための安全確認が完了しませんでした。記録だけでは詳しい理由を特定できません。',
+});
+export type IntakeClosureReason = keyof typeof intakeClosureReasons;
+
 /** Sends only fixed operator text. Configuration comes from Env, never a report. */
 export async function sendOperatorMail(
   env: GroupReportMailEnv,
   kind: OperatorMailKind,
+  reason?: IntakeClosureReason,
 ): Promise<void> {
   if (env.GROUP_REPORT_EMAIL_ENABLED !== "YES") {
     throw new Error("group_report_email_disabled");
@@ -47,11 +61,21 @@ export async function sendOperatorMail(
   if (!isMailbox(to) || !isMailbox(from) || typeof binding?.send !== "function") {
     throw new Error("group_report_email_invalid_configuration");
   }
-  const text = operatorMailTexts[kind];
+  const subject = operatorMailTexts[kind];
+  const closure = kind === 'closed' || kind === 'expired' || kind === 'credentials';
+  const selectedReason = kind === 'expired' ? 'expired' : kind === 'credentials' ? 'credentials' : reason ?? 'unknown';
+  if (closure && !Object.hasOwn(intakeClosureReasons, selectedReason)) {
+    throw new Error('group_report_email_invalid_reason');
+  }
+  const text = closure ? [
+    `理由：${intakeClosureReasons[selectedReason]}`,
+    '現在：新しい保存は受け付けません。保存済みの記録は消えず、戻せます。',
+    '対応：続けて試す場合は、原因を確認し、持ち主の承認後に受付を開け直してください。続けない場合は、そのままで構いません。',
+  ].join('\n') : subject;
   try {
     // The native structured API creates MIME. Do not forward arbitrary Env or
     // report fields, custom headers, HTML, attachments, CC or BCC.
-    await binding.send({ from, to, subject: text, text });
+    await binding.send({ from, to, subject, text });
   } catch {
     // Provider diagnostics may include addresses or message contents. Keep the
     // queue retryable without carrying those diagnostics into logs/status.
