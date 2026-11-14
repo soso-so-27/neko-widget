@@ -52,6 +52,11 @@ struct CatCareDay: Codable, Equatable, Comparable, Hashable, Sendable {
 
 /// A value plus who and when last edited it. The newer edit wins a merge;
 /// the same instant is broken by `editedBy`, so both iPhones agree.
+struct CatCareAdoptionDay: Codable, Equatable, Sendable {
+    var day: CatCareDay
+    var isApproximate: Bool
+}
+
 struct CatCareStamped<Value: Codable & Equatable & Sendable>: Codable, Equatable, Sendable {
     var value: Value
     var editedAt: Date
@@ -273,6 +278,7 @@ struct CatCareRecord: Codable, Equatable, Identifiable, Sendable {
     var sex: CatCareStamped<CatCareSex>?
     var neutered: CatCareStamped<CatCareTriState>?
     var birthday: CatCareStamped<CatCareDay?>?
+    var adoptionDay: CatCareStamped<CatCareAdoptionDay?>?
     var coat: CatCareStamped<String>?
     var marks: CatCareStamped<String>?
     /// 15 digits or empty. Never put a negative answer in the number slot:
@@ -540,6 +546,7 @@ enum CatCareMerge {
         r.sex = pick(a.sex, b.sex)
         r.neutered = pick(a.neutered, b.neutered)
         r.birthday = pick(a.birthday, b.birthday)
+        r.adoptionDay = pick(a.adoptionDay, b.adoptionDay)
         r.coat = pick(a.coat, b.coat)
         r.marks = pick(a.marks, b.marks)
         r.microchip = pick(a.microchip, b.microchip)

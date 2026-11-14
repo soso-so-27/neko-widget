@@ -77,6 +77,32 @@ final class FamilyNotebookStore: @unchecked Sendable {
             try values.encodeIfPresent(retained.isEmpty ? opaqueOperations : retained, forKey: .opaqueOperations)
         }
 
+        func promotingAdoptionOperations() throws -> State {
+            var state = self
+            var remaining: [FamilyNotebookOpaqueOperation] = []
+            for retained in state.opaqueOperations ?? [] {
+                if case .known(let operation) = try FamilyNotebookReceivedOperation.decode(retained.plaintext, promoteAdoption: true),
+                   operation.target.field == .adoptionDay {
+                    state.operations = try FamilyNotebookCore.merge(state.operations, [operation])
+                    state.adoptionPlaintexts[operation.id] = retained.plaintext
+                    let pending = State.pendingAdoptionPrefix + operation.id.uuidString
+                    let acknowledged = State.acknowledgedAdoptionPrefix + operation.id.uuidString
+                    guard !(state.ledgerKeys.contains(pending) && state.ledgerKeys.contains(acknowledged)) else {
+                        throw FamilyNotebookError.corruptStorage
+                    }
+                    if state.ledgerKeys.remove(pending) != nil { state.outboxIDs.insert(operation.id) }
+                    if state.ledgerKeys.remove(acknowledged) != nil {
+                        state.acknowledgements.append(.init(familyID: familyID, operationID: operation.id, version: operation.version))
+                    }
+                } else { remaining.append(retained) }
+            }
+            state.opaqueOperations = remaining.isEmpty ? nil : remaining
+            guard !state.ledgerKeys.contains(where: { $0.hasPrefix(State.pendingAdoptionPrefix) || $0.hasPrefix(State.acknowledgedAdoptionPrefix) })
+            else { throw FamilyNotebookError.corruptStorage }
+            try FamilyNotebookStore.validate(state, familyID: familyID)
+            return state
+        }
+
         var snapshot: FamilyNotebookSnapshot {
             .init(familyID: familyID, revision: revision, clock: clock, operations: operations,
                   mappings: mappings, ledgerKeys: ledgerKeys, outbox: operations.filter { outboxIDs.contains($0.id) },
@@ -408,28 +434,7 @@ final class FamilyNotebookStore: @unchecked Sendable {
         do { state = try decoder.decode(State.self, from: bytes) }
         catch { throw FamilyNotebookError.corruptStorage }
         try Self.validate(state, familyID: familyID)
-        var remaining: [FamilyNotebookOpaqueOperation] = []
-        for retained in state.opaqueOperations ?? [] {
-            if case .known(let operation) = try FamilyNotebookReceivedOperation.decode(retained.plaintext, promoteAdoption: true),
-               operation.target.field == .adoptionDay {
-                state.operations = try FamilyNotebookCore.merge(state.operations, [operation])
-                state.adoptionPlaintexts[operation.id] = retained.plaintext
-                let pending = State.pendingAdoptionPrefix + operation.id.uuidString
-                let acknowledged = State.acknowledgedAdoptionPrefix + operation.id.uuidString
-                guard !(state.ledgerKeys.contains(pending) && state.ledgerKeys.contains(acknowledged)) else {
-                    throw FamilyNotebookError.corruptStorage
-                }
-                if state.ledgerKeys.remove(pending) != nil { state.outboxIDs.insert(operation.id) }
-                if state.ledgerKeys.remove(acknowledged) != nil {
-                    state.acknowledgements.append(.init(familyID: familyID, operationID: operation.id, version: operation.version))
-                }
-            } else { remaining.append(retained) }
-        }
-        state.opaqueOperations = remaining.isEmpty ? nil : remaining
-        guard !state.ledgerKeys.contains(where: { $0.hasPrefix(State.pendingAdoptionPrefix) || $0.hasPrefix(State.acknowledgedAdoptionPrefix) })
-        else { throw FamilyNotebookError.corruptStorage }
-        try Self.validate(state, familyID: familyID)
-        return state
+        return try state.promotingAdoptionOperations()
     }
 
     static func validate(_ state: State, familyID: UUID) throws {

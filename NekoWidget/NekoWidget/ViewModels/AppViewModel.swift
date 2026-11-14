@@ -333,6 +333,7 @@ final class AppViewModel: ObservableObject {
     private var isManualRescanRequestPending = false
     private var receivedMemoryImportObserver: NSObjectProtocol?
     private var todayDayChangeObserver: NSObjectProtocol?
+    private var adoptionDayObserver: NSObjectProtocol?
     /// nil means no additional in-memory source filter. When an album is
     /// selected this is refreshed from PhotoKit before a scan, so old snapshot
     /// records outside that album disappear from candidate surfaces at once.
@@ -536,6 +537,10 @@ final class AppViewModel: ObservableObject {
                 )
             }
         }
+        adoptionDayObserver = NotificationCenter.default.addObserver(forName: .appRecordsCommitted, object: nil, queue: .main) { [weak self] note in
+            guard let url = note.object as? URL, url.deletingLastPathComponent().lastPathComponent == "CatCare" else { return }
+            Task { @MainActor [weak self] in await self?.projectSharedAdoptionDays() }
+        }
         todayDayChangeObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.significantTimeChangeNotification,
             object: nil,
@@ -552,6 +557,7 @@ final class AppViewModel: ObservableObject {
     }
 
     deinit {
+        if let adoptionDayObserver { NotificationCenter.default.removeObserver(adoptionDayObserver) }
         if let receivedMemoryImportObserver {
             NotificationCenter.default.removeObserver(receivedMemoryImportObserver)
         }
@@ -1708,6 +1714,16 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    private func projectSharedAdoptionDays() async {
+        guard catIdentityLoadState == .ready else { return }
+        do {
+            _ = try await mutateCatHouseholdIdentity { state in
+                guard let care = CatCareStore.shared.state else { return }
+                state = FamilyNotebookCatCareBridge.projectingAdoptionDays(care, into: state)
+            }
+        } catch { Self.logError(error, category: "cat-identity", operation: "project_adoption_day") }
+    }
+
     func updateCatProfileLifeDates(
         profileID: UUID,
         dates: CatProfileLifeDates,
@@ -1717,6 +1733,14 @@ final class AppViewModel: ObservableObject {
             return false
         }
         do {
+            guard let old = catHouseholdIdentity?.profiles.first(where: { $0.id == profileID }) else { return false }
+            let before = old.resolvedLifeDates, after = dates.normalized()
+            if before.adoptionDay != after.adoptionDay || before.adoptionDayIsApproximate != after.adoptionDayIsApproximate {
+                _ = FamilyNotebookPrototype.shared
+                guard CatCareStore.shared.setAdoptionDay(profileID: profileID, name: old.displayName, dates: after) else {
+                    throw FamilyNotebookError.storageUnavailable
+                }
+            }
             let committed = try await mutateCatHouseholdIdentity { state in
                 guard var profile = state.profiles.first(where: { $0.id == profileID }) else {
                     return
@@ -2297,6 +2321,12 @@ final class AppViewModel: ObservableObject {
                 snapshot.settings.catLifeReference = settings.catLifeReference
             }
             catIdentityLoadState = .ready
+            FamilyNotebookPrototype.shared.applyFamilyWrites()
+            if let care = CatCareStore.shared.state {
+                let initial = FamilyNotebookCatCareBridge.importingAdoptionDays(loaded.profiles, into: care, at: Date())
+                if initial != care { _ = CatCareStore.shared.update { $0 = initial } }
+            }
+            await projectSharedAdoptionDays()
             SharedLog.app.info(
                 "cat-identity",
                 "Cat household identity state loaded",

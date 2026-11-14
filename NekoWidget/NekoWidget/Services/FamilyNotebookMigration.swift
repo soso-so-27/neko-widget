@@ -275,6 +275,10 @@ enum FamilyNotebookMigration {
                 if let stamp = input.sex { try text(.sex, stamp.value.rawValue, catID: id, source: source, at: stamp.editedAt) }
                 if let stamp = input.neutered { try text(.neutered, stamp.value.rawValue, catID: id, source: source, at: stamp.editedAt) }
                 if let stamp = input.indoorOnly { try text(.indoorOnly, stamp.value.rawValue, catID: id, source: source, at: stamp.editedAt) }
+                if let stamp = input.adoptionDay {
+                    let value = stamp.value.map { FamilyNotebookAdoptionDate(day: String(format: "%04d-%02d-%02d", $0.day.year, $0.day.month, $0.day.day), isApproximate: $0.isApproximate).value } ?? .clear
+                    try put(.adoptionDay, value, catID: id, source: source, at: stamp.editedAt)
+                }
                 if let stamp = input.birthday { try put(.birthday, day(stamp.value), catID: id, source: source, at: stamp.editedAt) }
                 if let stamp = input.allergy {
                     try text(.allergyStatus, stamp.value.status.rawValue, catID: id, source: source, at: stamp.editedAt)

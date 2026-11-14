@@ -284,6 +284,29 @@ final class CatCareStore: ObservableObject {
             .appendingPathComponent(ref.fileName)
     }
 
+    /// Explicit user edits, including clear, are durably journaled before the
+    /// profile projection. Initial unset values never use this entry point.
+    func setAdoptionDay(profileID: UUID, name: String, dates: CatProfileLifeDates) -> Bool {
+        let value = dates.adoptionDay.flatMap { date in
+            CatCareDay(year: date.year, month: date.month, day: date.day).map {
+                CatCareAdoptionDay(day: $0, isApproximate: dates.adoptionDayIsApproximate)
+            }
+        }
+        guard dates.adoptionDay == nil || value != nil,
+              (state?.cats.filter { $0.profileID == profileID && $0.deletedAt == nil }.count ?? 0) <= 1 else { return false }
+        return update { state in
+            let matches = state.cats.indices.filter { state.cats[$0].profileID == profileID && state.cats[$0].deletedAt == nil }
+            if let index = matches.first {
+                state.cats[index].adoptionDay = .init(value: value, editedAt: Date(), editedBy: "local:Profile")
+            } else {
+                var record = CatCareRecord(catID: UUID(), profileID: profileID)
+                record.name = .init(value: name, editedAt: Date(), editedBy: "local:Profile")
+                record.adoptionDay = .init(value: value, editedAt: Date(), editedBy: "local:Profile")
+                state.cats.append(record)
+            }
+        }
+    }
+
     /// The birthday lives in the cat profile; this keeps a copy that follows
     /// it (set, changed or cleared there), so every tool can say the age.
     func importBirthdays(_ profiles: [CatProfilePresentation]) {
