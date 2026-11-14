@@ -745,17 +745,19 @@ private struct CatHomeHero: View {
         let gap = max((size * 0.12).rounded(), 6)
         if fit.lines == 1 {
             HStack(alignment: .lastTextBaseline, spacing: gap) {
-                nameText(fit, maxWidth: maxWidth)
+                nameText(cat.name, fit: fit, maxWidth: maxWidth)
                 centred(menuButton, size: size)
             }
         } else {
-            // Two lines: the button just after the end of the last line,
-            // not after the full width of the first.
-            let last = lastLineWidth(size: size, maxWidth: maxWidth)
+            // Two lines: broken where TextKit breaks them, so the button
+            // sits just after the end of the last line as drawn (11/14: the
+            // first capture put it after the first line's full width, and
+            // SwiftUI's own breaks differ from a measurement).
+            let lines = nameLines(size: size, maxWidth: maxWidth)
             ZStack(alignment: Alignment(horizontal: .leading, vertical: .lastTextBaseline)) {
-                nameText(fit, maxWidth: maxWidth)
+                nameText(lines.text, fit: fit, maxWidth: maxWidth)
                 centred(menuButton, size: size)
-                    .alignmentGuide(.leading) { _ in -(last + gap) }
+                    .alignmentGuide(.leading) { _ in -(lines.lastWidth + gap) }
             }
         }
     }
@@ -768,29 +770,36 @@ private struct CatHomeHero: View {
         }
     }
 
-    /// How wide the name's last line is when it wraps in `maxWidth` (two
-    /// lines at most, the second cut short with an ellipsis like the text).
-    private func lastLineWidth(size: CGFloat, maxWidth: CGFloat) -> CGFloat {
+    /// The name with a line break where it wraps in `maxWidth` (a little
+    /// narrower, so the drawn text never wraps again), and how wide its last
+    /// line is: the full width when more than two lines are cut short.
+    private func nameLines(size: CGFloat, maxWidth: CGFloat) -> (text: String, lastWidth: CGFloat) {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakStrategy = .standard
         let storage = NSTextStorage(string: cat.name, attributes: [
-            .font: UIFont.systemFont(ofSize: size, weight: .heavy)])
+            .font: UIFont.systemFont(ofSize: size, weight: .heavy), .paragraphStyle: paragraph])
         let layout = NSLayoutManager()
-        let container = NSTextContainer(size: CGSize(width: maxWidth, height: .greatestFiniteMagnitude))
+        let container = NSTextContainer(size: CGSize(width: max(maxWidth - 4, 1), height: .greatestFiniteMagnitude))
         container.lineFragmentPadding = 0
-        container.maximumNumberOfLines = 2
-        container.lineBreakMode = .byTruncatingTail
         layout.addTextContainer(container)
         storage.addLayoutManager(layout)
         layout.ensureLayout(for: container)
-        var last: CGFloat = maxWidth
-        layout.enumerateLineFragments(forGlyphRange: layout.glyphRange(for: container)) { _, used, _, _, _ in
-            last = used.width
+        var lines: [(range: NSRange, width: CGFloat)] = []
+        layout.enumerateLineFragments(forGlyphRange: layout.glyphRange(for: container)) { _, used, _, glyphs, _ in
+            lines.append((layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil), used.width))
         }
-        return min(ceil(last), maxWidth)
+        guard lines.count >= 2 else { return (cat.name, min(ceil(lines.first?.width ?? maxWidth), maxWidth)) }
+        let name = cat.name as NSString
+        let first = name.substring(with: lines[0].range).trimmingCharacters(in: .whitespaces)
+        let rest = name.substring(from: NSMaxRange(lines[0].range)).trimmingCharacters(in: .whitespaces)
+        let last = lines.count == 2 ? min(ceil(lines[1].width), maxWidth) : maxWidth
+        return (first + "
+" + rest, last)
     }
 
     @ViewBuilder
-    private func nameText(_ fit: CatHomeHeroLayout.NameFit, maxWidth: CGFloat) -> some View {
-        let text = Text(cat.name)
+    private func nameText(_ name: String, fit: CatHomeHeroLayout.NameFit, maxWidth: CGFloat) -> some View {
+        let text = Text(name)
             .font(.system(size: CGFloat(fit.size), weight: .heavy))
             .foregroundStyle(.white)
             // The photo above reads the name; the button reads it as its value.
