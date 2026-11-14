@@ -213,6 +213,53 @@ enum CatRecognitionRule {
     }
 }
 
+/// 11/14: two tiers from the stored best cat confidence. 確かな猫 (at or
+/// above `AppSettings.confidentCatThreshold`) and たぶん猫 (the 0.5 line up
+/// to it). Wherever the app chooses photos by itself it uses 確かな猫 first
+/// and falls back to たぶん猫 only when there are not enough; lists the user
+/// browses and every count keep both tiers unchanged.
+enum CatPickTier {
+    /// A stored confidence of 0 (or not a number) is a record written before
+    /// confidences were kept with every detection. Such a record passed the
+    /// line of its day (0.7 before 11/13), so it counts as 確かな猫.
+    static func isConfident(storedConfidence: Float) -> Bool {
+        guard storedConfidence.isFinite, storedConfidence > 0 else { return true }
+        return storedConfidence >= AppSettings.confidentCatThreshold
+    }
+
+    /// Stable: 確かな猫 first, then たぶん猫, each keeping its input order, so
+    /// an all-confident list comes back exactly as it was.
+    static func confidentFirst<Item>(
+        _ items: [Item],
+        isConfident: (Item) -> Bool
+    ) -> [Item] {
+        var confident: [Item] = []
+        var probable: [Item] = []
+        confident.reserveCapacity(items.count)
+        for item in items {
+            if isConfident(item) { confident.append(item) } else { probable.append(item) }
+        }
+        return confident + probable
+    }
+
+    /// Only 確かな猫 when at least `minimum` exist, otherwise everything
+    /// (たぶん猫 last). For surfaces that need a fixed number of photos.
+    static func preferringConfident<Item>(
+        _ items: [Item],
+        minimum: Int,
+        isConfident: (Item) -> Bool
+    ) -> [Item] {
+        let ordered = confidentFirst(items, isConfident: isConfident)
+        let confidentCount = items.lazy.filter(isConfident).count
+        return confidentCount >= max(1, minimum) ? Array(ordered.prefix(confidentCount)) : ordered
+    }
+}
+
+extension CatDetection {
+    /// 確かな猫 from the stored best cat confidence alone.
+    var isConfidentCat: Bool { CatPickTier.isConfident(storedConfidence: confidence) }
+}
+
 /// Active normalized bounding-box posture policy (width / height v1).
 /// Normalized Vision coordinates are used exactly as stored; pixel dimensions
 /// and the photo's source aspect ratio are deliberately not folded into it.

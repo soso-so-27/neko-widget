@@ -80,22 +80,26 @@ enum AlbumPrototype {
         var chosen: [PhotoPresentation] = []
         var perMonth: [Int: Int] = [:]
         var days: Set<Date> = []
-        let ranked = photos.sorted { score($0) > score($1) }
-        for photo in ranked {
-            guard chosen.count < 9 else { break }
-            if let date = photo.creationDate {
-                let month = calendar.component(.month, from: date)
-                let day = calendar.startOfDay(for: date)
-                guard perMonth[month, default: 0] < 2, !days.contains(day) else { continue }
-                perMonth[month, default: 0] += 1
-                days.insert(day)
+        // 11/14: 確かな猫 fill the nine first (spread, then the rest); たぶん猫
+        // only fill what is still empty.
+        for tier in tiers(photos) {
+            let ordered = ranked(tier)
+            for photo in ordered {
+                guard chosen.count < 9 else { break }
+                if let date = photo.creationDate {
+                    let month = calendar.component(.month, from: date)
+                    let day = calendar.startOfDay(for: date)
+                    guard perMonth[month, default: 0] < 2, !days.contains(day) else { continue }
+                    perMonth[month, default: 0] += 1
+                    days.insert(day)
+                }
+                chosen.append(photo)
             }
-            chosen.append(photo)
-        }
-        // A thin year: fill up with what is left, best first.
-        if chosen.count < 9 {
-            let ids = Set(chosen.map(\.localIdentifier))
-            chosen += ranked.filter { !ids.contains($0.localIdentifier) }.prefix(9 - chosen.count)
+            // A thin year: fill up with what is left, best first.
+            if chosen.count < 9 {
+                let ids = Set(chosen.map(\.localIdentifier))
+                chosen += ordered.filter { !ids.contains($0.localIdentifier) }.prefix(9 - chosen.count)
+            }
         }
         return chosen
     }
@@ -163,6 +167,17 @@ enum AlbumPrototype {
         return value
     }
 
+    /// 11/14: 確かな猫 always rank above たぶん猫, then by `rank`. The app picks
+    /// the works' photos and covers itself, so a doubtful photo is used only
+    /// when there are not enough sure ones.
+    static func ranked(_ photos: [PhotoPresentation],
+                       by rank: (PhotoPresentation) -> Double = AlbumPrototype.score) -> [PhotoPresentation] {
+        photos.sorted { lhs, rhs in
+            if lhs.isConfidentCat != rhs.isConfidentCat { return lhs.isConfidentCat }
+            return rank(lhs) > rank(rhs)
+        }
+    }
+
     /// The best `count` photos, spread out: never two within 15 minutes of each
     /// other (bursts, near-duplicates) and at most two from the same day.
     static func pick(_ photos: [PhotoPresentation], count: Int,
@@ -170,26 +185,37 @@ enum AlbumPrototype {
         let calendar = Calendar.nekoGregorian
         var chosen: [PhotoPresentation] = []
         var perDay: [Date: Int] = [:]
-        for photo in photos.sorted(by: { rank($0) > rank($1) }) {
-            guard chosen.count < count else { break }
-            if let date = photo.creationDate {
-                if chosen.contains(where: { other in
-                    guard let otherDate = other.creationDate else { return false }
-                    return abs(otherDate.timeIntervalSince(date)) < 15 * 60
-                }) { continue }
-                let day = calendar.startOfDay(for: date)
-                if perDay[day, default: 0] >= 2 { continue }
-                perDay[day, default: 0] += 1
+        // 11/14: 確かな猫 fill the work first (spread, then the rest); たぶん猫
+        // only fill what is still empty.
+        for tier in tiers(photos) {
+            let ordered = ranked(tier, by: rank)
+            for photo in ordered {
+                guard chosen.count < count else { break }
+                if let date = photo.creationDate {
+                    if chosen.contains(where: { other in
+                        guard let otherDate = other.creationDate else { return false }
+                        return abs(otherDate.timeIntervalSince(date)) < 15 * 60
+                    }) { continue }
+                    let day = calendar.startOfDay(for: date)
+                    if perDay[day, default: 0] >= 2 { continue }
+                    perDay[day, default: 0] += 1
+                }
+                chosen.append(photo)
             }
-            chosen.append(photo)
-        }
-        // A month with few days: fill up with what is left, best first.
-        if chosen.count < count {
-            let ids = Set(chosen.map(\.localIdentifier))
-            chosen += photos.filter { !ids.contains($0.localIdentifier) }
-                .sorted { rank($0) > rank($1) }.prefix(count - chosen.count)
+            // A month with few days: fill up with what is left, best first.
+            if chosen.count < count {
+                let ids = Set(chosen.map(\.localIdentifier))
+                chosen += ordered.filter { !ids.contains($0.localIdentifier) }
+                    .prefix(count - chosen.count)
+            }
         }
         return chosen
+    }
+
+    /// 確かな猫, then たぶん猫 (CatPickTier); an empty tier is skipped.
+    static func tiers(_ photos: [PhotoPresentation]) -> [[PhotoPresentation]] {
+        [photos.filter(\.isConfidentCat), photos.filter { !$0.isConfidentCat }]
+            .filter { !$0.isEmpty }
     }
 
     /// The cats actually in these photos, most often first, at most two.
@@ -1088,7 +1114,7 @@ struct MonthlyStoryView: View {
         // must not restore its old IDs when this month becomes unavailable.
         let source = month
         // Look at the best candidates themselves: sharp and well lit beats blurred or dark.
-        let candidates = Array(source.sorted { AlbumPrototype.score($0) > AlbumPrototype.score($1) }.prefix(24))
+        let candidates = Array(AlbumPrototype.ranked(source).prefix(24))
         var thumbnails: [String: UIImage] = [:]
         await withTaskGroup(of: (String, UIImage?).self) { group in
             for photo in candidates {

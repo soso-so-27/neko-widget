@@ -236,6 +236,25 @@ final class AppViewModel: ObservableObject {
         return detected
     }
 
+    /// 11/14 確かな猫 for the app's own picks (covers, widgets, works): the
+    /// stored best cat confidence reaches 0.7, or the user vouched for the
+    /// photo (saved it, included it for a cat, chose it as a key photo, or it
+    /// is in a linked album). Cheap: one set lookup, the set built once per
+    /// presentation version.
+    func isConfidentCatForPicks(_ asset: AssetRecord) -> Bool {
+        asset.isConfidentCat || userVouchedCatPhotoIdentifiers.contains(asset.localIdentifier)
+    }
+
+    var userVouchedCatPhotoIdentifiers: Set<String> {
+        let version = presentationVersion
+        if let cached = cachedUserVouchedCatPhotoIdentifiers, cached.version == version {
+            return cached.identifiers
+        }
+        let identifiers = catHouseholdIdentity?.userVouchedAssetIdentifiers ?? []
+        cachedUserVouchedCatPhotoIdentifiers = (version, identifiers)
+        return identifiers
+    }
+
     func profileMemberships(for localIdentifier: String) -> [CatAssetProfileMembership] {
         catHouseholdIdentity?.memberships.filter {
             $0.assetLocalIdentifier == localIdentifier
@@ -310,6 +329,10 @@ final class AppViewModel: ObservableObject {
         detected: Set<String>,
         sets: [UUID: Set<String>],
         assignments: [String: Set<String>]
+    )?
+    private var cachedUserVouchedCatPhotoIdentifiers: (
+        version: LibraryPresentationVersion,
+        identifiers: Set<String>
     )?
     /// Serializes the one-way legacy-to-profiled transition with household
     /// exclusion mutations. Without this queue, an exclusion can commit to
@@ -3208,7 +3231,8 @@ final class AppViewModel: ObservableObject {
             from: eligible.assets,
             settings: settings,
             previousState: todayPhotoSelectionState,
-            selector: photoSelector
+            selector: photoSelector,
+            isConfident: isConfidentCatForPicks
         )
         currentAsset = resolution.asset
         if resolution.state != todayPhotoSelectionState {
@@ -3345,9 +3369,11 @@ final class AppViewModel: ObservableObject {
         do {
             let revision = try synchronizePersonalWidgetAuthority()
             let input = candidateSnapshot(snapshot)
+            let probable = personalWidgetProbablePhotoIDs(input.assets)
             let result = try await widgetCacheBuilder.replenishPersonal(
                 from: input, eligibilityRevision: revision,
-                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs())
+                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs(),
+                probablePhotoIDs: probable)
             try synchronizeCloudyWindowMetadata()
             try await CloudyWindowImagePreparer.shared.prepare()
             // Preparation is not a view. Keep legacy lastShownAt/shownCount
@@ -3373,7 +3399,8 @@ final class AppViewModel: ObservableObject {
                             let batch = try await self.widgetCacheBuilder.replenishPersonal(
                                 from: input, eligibilityRevision: revision,
                                 skippingPhotoIDs: attemptedPhotoIDs,
-                                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs())
+                                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs(),
+                                probablePhotoIDs: probable)
                             attemptedPhotoIDs.formUnion(batch.attemptedPhotoIDs)
                             try self.synchronizeCloudyWindowMetadata()
                             try await CloudyWindowImagePreparer.shared.prepare()
@@ -3510,9 +3537,20 @@ final class AppViewModel: ObservableObject {
             isAuthorized: authorized, now: now, photoModificationDates: dates,
             bootstrapCandidates: bootstrap,
             interval: TimeInterval(curated.settings.widgetEntryIntervalMinutes * 60))
+        if authorized {
+            // 11/14: たぶん猫 go to the end of the daily plan; today's photo
+            // and any slot already given to a Widget stay.
+            try PersonalRediscoveryStore.shared.updateCatTiers(
+                probablePhotoIDs: personalWidgetProbablePhotoIDs(eligible), now: now)
+        }
         try synchronizeCloudyWindowMetadata(input: curated)
         if !bootstrap.isEmpty { WidgetCenter.shared.reloadAllTimelines() }
         return revision
+    }
+
+    /// 11/14: the daily photo's たぶん猫 (CatPickTier, with the user's vouching).
+    private func personalWidgetProbablePhotoIDs(_ records: [AssetRecord]) -> Set<String> {
+        Set(records.filter { !isConfidentCatForPicks($0) }.map(\.localIdentifier))
     }
 
     /// 11/13: adding the first or a second cat profile (or deleting back to
@@ -3579,7 +3617,8 @@ final class AppViewModel: ObservableObject {
             metadata[record.localIdentifier] = .init(creationDate: record.creationDate,
                 burstIdentifier: record.burstIdentifier,
                 profileIDs: Set(profiles.map { $0.uuidString.lowercased() }),
-                previouslyShown: record.shownCount > 0 || record.lastShownAt != nil)
+                previouslyShown: record.shownCount > 0 || record.lastShownAt != nil,
+                isProbableCat: !isConfidentCatForPicks(record))
         }
         try CloudyWindowStore.shared.synchronize(metadata: metadata,
             profiles: Dictionary(uniqueKeysWithValues: catProfiles.map { ($0.id.uuidString.lowercased(), $0.displayName) }))

@@ -136,6 +136,7 @@ actor WidgetCacheBuilder {
         eligibilityRevision: String,
         skippingPhotoIDs: Set<String> = [],
         priorityPhotoIDs: Set<String> = [],
+        probablePhotoIDs: Set<String>? = nil,
         now: Date = .now
     ) async throws -> PersonalWidgetPreparationResult {
         guard let container = SharedContainer.containerURL,
@@ -156,11 +157,20 @@ actor WidgetCacheBuilder {
         let needsGeometryIDs = Set(initial.candidates.filter {
             $0.item.rendererVersion == nil || $0.item.renderPlans == nil || $0.item.sourcePixelSize == nil
         }.map { $0.item.localIdentifier })
+        // 11/14: たぶん猫 (CatPickTier). The app passes the set with the user's
+        // vouching (a cat include, key photo, linked album); a background
+        // refresh without it uses the record alone and the next foreground
+        // sync corrects the tier (PersonalRediscoveryStore.updateCatTiers).
+        let isProbable: (AssetRecord) -> Bool = { record in
+            probablePhotoIDs.map { $0.contains(record.localIdentifier) } ?? !record.isConfidentCat
+        }
         var ordered = selector.candidateOrder(from: snapshot.assets,
                                               settings: snapshot.settings, now: now)
             .filter { initial.eligiblePhotoIDs.contains($0.localIdentifier)
                 && (!existingIDs.contains($0.localIdentifier) || needsGeometryIDs.contains($0.localIdentifier))
                 && !skippingPhotoIDs.contains($0.localIdentifier) }
+        // 確かな猫 are prepared first; the weighted order inside each tier stays.
+        ordered = CatPickTier.confidentFirst(ordered) { !isProbable($0) }
         ordered = ordered.filter { priorityPhotoIDs.contains($0.localIdentifier) }
             + ordered.filter { !priorityPhotoIDs.contains($0.localIdentifier) }
         // Refill once a displayed photo can safely retire. Waiting for seventy
@@ -211,7 +221,7 @@ actor WidgetCacheBuilder {
                 prepared.append(.init(item: rendered.item, creationDate: record.creationDate,
                                       burstIdentifier: record.burstIdentifier,
                                       isFavorite: record.isFavorite, isSaved: record.liked,
-                                      preparedAt: now))
+                                      preparedAt: now, isProbableCat: isProbable(record)))
             } else { unavailable += 1 }
             if prepared.count >= 10 { break }
         }
@@ -1249,7 +1259,7 @@ actor WidgetCacheBuilder {
         let boxes = (request.results ?? []).compactMap { observation -> CGRect? in
             guard observation.labels.contains(where: {
                 $0.identifier.caseInsensitiveCompare("cat") == .orderedSame
-                    && $0.confidence >= 0.70
+                    && $0.confidence >= AppSettings.confidentCatThreshold
             }) else { return nil }
             return observation.boundingBox
         }

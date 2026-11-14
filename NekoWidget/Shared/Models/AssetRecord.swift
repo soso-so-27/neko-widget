@@ -86,6 +86,14 @@ struct AssetRecord: Codable, Identifiable, Equatable, Sendable {
         analysisStatus == .detected && cat.detected
     }
 
+    /// 11/14 確かな猫 for the app's own picks: the stored best cat confidence
+    /// reaches the confident line, or the user saved the photo (お気に入り).
+    /// Other user vouching (an include for a cat, a key photo, a linked
+    /// album) is known to the identity ledger; see AppViewModel.
+    var isConfidentCat: Bool {
+        liked || cat.isConfidentCat
+    }
+
     /// A secondary-only repair may preserve the primary cat box only when it
     /// was produced under the current detector settings and the exact PhotoKit
     /// source revision is unchanged. Legacy records without a capture marker

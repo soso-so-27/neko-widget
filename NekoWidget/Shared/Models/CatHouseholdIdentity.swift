@@ -512,6 +512,23 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
         })
     }
 
+    /// 11/14: photos the user vouched for as a cat, whatever the stored
+    /// confidence: an explicit include for any cat, a cat's key photo, or a
+    /// photo in a linked Photos album. The app's own picks treat them as
+    /// 確かな猫 (CatPickTier). The single-cat rule's derived photos are not
+    /// in it: that rule is the app's, not the user's.
+    var userVouchedAssetIdentifiers: Set<String> {
+        var result = Set<String>()
+        for profile in profiles {
+            result.formUnion(profile.photoAlbumLink?.lastKnownAssetLocalIdentifiers ?? [])
+            if let key = profile.keyPhotoLocalIdentifier { result.insert(key) }
+        }
+        for membership in memberships where membership.decision == .included {
+            result.insert(membership.assetLocalIdentifier)
+        }
+        return result
+    }
+
     func confirmedAssetIdentifiers(for profileID: UUID) -> Set<String> {
         guard let profile = profiles.first(where: { $0.id == profileID }) else {
             return []

@@ -104,6 +104,7 @@ private enum CloudyWindowVerifier {
         try albumArrivalGates()
         try albumArrivalFrozenAfterExpiry()
         try albumCoverBeyondPreparationBounds()
+        try probableCatsOnlyWhenNothingElse()
         print("Cloudy window: daily reveal, stale actions, restart, rotation, cats, permission, public mode and publication checks passed")
     }
 
@@ -411,6 +412,32 @@ private enum CloudyWindowVerifier {
         let back = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: again.addingTimeInterval(10))
         try check(back[0].selection.id == shown.selection.id && !back[0].isCloudy,
                   "re-adding the Widget keeps the same cleared photo")
+    }
+
+    /// 11/14: たぶん猫 are chosen only when the scope has no 確かな猫; a cat
+    /// whose photos are all たぶん猫 still gets its turn.
+    private static func probableCatsOnlyWhenNothingElse() throws {
+        var household = try Fixture(count: 4)
+        defer { household.cleanup() }
+        for id in ["photo-00", "photo-01", "photo-02"] { household.metadata[id]?.isProbableCat = true }
+        try household.store.synchronize(metadata: household.metadata, profiles: household.profiles, now: baseline)
+        for offset in 0..<4 {
+            let entry = try household.store.timeline(scopeID: CloudyWindowStore.personalScope,
+                now: baseline.addingTimeInterval(Double(offset) * day))[0]
+            try check(entry.selection.photoID == "photo-03", "the one 確かな猫 is chosen every day")
+        }
+        var cats = try Fixture(count: 6, cats: 2)
+        defer { cats.cleanup() }
+        // cat-0: photo-00, 02, 04 (00 is たぶん猫); cat-1: 01, 03, 05 (all たぶん猫).
+        for id in ["photo-00", "photo-01", "photo-03", "photo-05"] { cats.metadata[id]?.isProbableCat = true }
+        try cats.store.synchronize(metadata: cats.metadata, profiles: cats.profiles, now: baseline)
+        for offset in 0..<4 {
+            let entry = try cats.store.timeline(scopeID: CloudyWindowStore.profilePrefix + "cat-0",
+                now: baseline.addingTimeInterval(Double(offset) * day))[0]
+            try check(entry.selection.photoID != "photo-00", "a cat with 確かな猫 never shows its たぶん猫")
+        }
+        let onlyProbable = try cats.store.timeline(scopeID: CloudyWindowStore.profilePrefix + "cat-1", now: baseline)
+        try check(!onlyProbable.isEmpty, "a cat with only たぶん猫 still gets a photo")
     }
 
     private static func rotationAndSmallPools() throws {
