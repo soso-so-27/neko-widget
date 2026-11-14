@@ -148,7 +148,7 @@ enum FamilyNotebookRecordOrigin {
         func family(_ value: Any?) -> Bool {
             ((value as? Object)?["editedBy"] as? String)?.hasPrefix("family:") == true
         }
-        let fields = ["name", "sex", "neutered", "birthday", "coat", "marks", "microchip", "indoorOnly",
+        let fields = ["name", "sex", "neutered", "birthday", "adoptionDay", "coat", "marks", "microchip", "indoorOnly",
                       "conditions", "specialDiet", "water", "litter", "temperament"]
         var result = value
         result["cats"] = cats.map { input -> Object in

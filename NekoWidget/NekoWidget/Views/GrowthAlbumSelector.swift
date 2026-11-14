@@ -132,7 +132,19 @@ struct GrowthAlbumSelector {
         lifeReference: CatLifeReference?,
         preferredPhotoIdentifiers: [GrowthAlbumPeriod: String] = [:]
     ) -> [GrowthAlbumItem] {
-        let groups = candidateGroups(from: inputPhotos, lifeReference: lifeReference)
+        var groups = candidateGroups(from: inputPhotos, lifeReference: lifeReference)
+        // 11/14: a period whose only photos are たぶん猫 (and none chosen by
+        // the user) is left out while enough periods have a 確かな猫, so the
+        // first and last pages are never a doubtful photo.
+        let confidentGroups = groups.filter { group in
+            group.photos.contains(where: \.isConfidentCat)
+                || preferredPhotoIdentifiers[group.period].map { identifier in
+                    group.photos.contains { $0.localIdentifier == identifier }
+                } == true
+        }
+        if confidentGroups.count >= GrowthAlbumVisibilityPolicy.minimumComparablePeriods {
+            groups = confidentGroups
+        }
         guard let firstGroup = groups.first else { return [] }
 
         let validPreferences: [GrowthAlbumPeriod: PhotoPresentation] = Dictionary(
@@ -277,6 +289,8 @@ struct GrowthAlbumSelector {
                 let candidate = BoundaryPair(
                     first: firstPhoto,
                     last: lastPhoto,
+                    confidentCount: (firstPhoto.isConfidentCat ? 1 : 0)
+                        + (lastPhoto.isConfidentCat ? 1 : 0),
                     likedCount: (firstPhoto.isLiked ? 1 : 0)
                         + (lastPhoto.isLiked ? 1 : 0),
                     favoriteCount: (firstPhoto.isPhotoLibraryFavorite ? 1 : 0)
@@ -321,6 +335,7 @@ struct GrowthAlbumSelector {
             .enumerated() {
             let candidate = RankedPhoto(
                 photo: photo,
+                confident: photo.isConfidentCat,
                 liked: photo.isLiked,
                 favorite: photo.isPhotoLibraryFavorite,
                 score: relationshipPenalty(photo, firstBoundary)
@@ -340,6 +355,9 @@ struct GrowthAlbumSelector {
         _ candidate: BoundaryPair,
         isPreferredOver current: BoundaryPair
     ) -> Bool {
+        if candidate.confidentCount != current.confidentCount {
+            return candidate.confidentCount > current.confidentCount
+        }
         if candidate.likedCount != current.likedCount {
             return candidate.likedCount > current.likedCount
         }
@@ -357,6 +375,7 @@ struct GrowthAlbumSelector {
         _ candidate: RankedPhoto,
         isPreferredOver current: RankedPhoto
     ) -> Bool {
+        if candidate.confident != current.confident { return candidate.confident }
         if candidate.liked != current.liked { return candidate.liked }
         if candidate.favorite != current.favorite { return candidate.favorite }
         if candidate.score != current.score { return candidate.score < current.score }
@@ -449,6 +468,10 @@ struct GrowthAlbumSelector {
         over current: PhotoPresentation,
         anniversary: Date?
     ) -> Bool {
+        // 11/14: 確かな猫 before たぶん猫 (a saved photo is always 確かな猫).
+        if candidate.isConfidentCat != current.isConfidentCat {
+            return candidate.isConfidentCat
+        }
         if candidate.isLiked != current.isLiked { return candidate.isLiked }
         if candidate.isPhotoLibraryFavorite != current.isPhotoLibraryFavorite {
             return candidate.isPhotoLibraryFavorite
@@ -539,6 +562,7 @@ struct GrowthAlbumSelector {
 private struct BoundaryPair {
     let first: PhotoPresentation
     let last: PhotoPresentation
+    let confidentCount: Int
     let likedCount: Int
     let favoriteCount: Int
     let score: Double
@@ -547,6 +571,7 @@ private struct BoundaryPair {
 
 private struct RankedPhoto {
     let photo: PhotoPresentation
+    let confident: Bool
     let liked: Bool
     let favorite: Bool
     let score: Double

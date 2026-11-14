@@ -15,6 +15,11 @@ struct PersonalRediscoveryCandidate: Codable, Equatable, Sendable {
     var isFavorite: Bool = false
     var isSaved: Bool = false
     var preparedAt: Date = .now
+    /// 11/14 たぶん猫: the stored best cat confidence is under 0.7 and the
+    /// user has not vouched for the photo. Such photos come last in the
+    /// daily plan. Optional: nil (older app builds, older files) is 確かな猫,
+    /// and older Widget builds ignore the key.
+    var isProbableCat: Bool? = nil
 }
 
 struct PersonalRediscoveryEntryToken: Codable, Equatable, Sendable {
@@ -265,6 +270,29 @@ struct PersonalRediscoveryStore: Sendable {
         }
     }
 
+    /// 11/14: the app marks which candidates are たぶん猫 (`probablePhotoIDs`;
+    /// every other candidate becomes 確かな猫). Today's photo and any slot a
+    /// Widget was already given stay as they are; only later slots move
+    /// たぶん猫 to the end of their cycle. Writes nothing when unchanged.
+    func updateCatTiers(probablePhotoIDs: Set<String>, now: Date = .now) throws {
+        try locked {
+            guard var state = try read(), state.isAuthorized else { return }
+            let before = state.plan.map { $0.cycles.map(\.order) }
+            var changed = false
+            for index in state.candidates.indices {
+                let probable = probablePhotoIDs.contains(state.candidates[index].item.localIdentifier)
+                if state.candidates[index].isProbableCat != probable {
+                    state.candidates[index].isProbableCat = probable
+                    changed = true
+                }
+            }
+            deferProbableCats(&state, now: now)
+            guard changed || state.plan.map({ $0.cycles.map(\.order) }) != before else { return }
+            state.updatedAt = now
+            try write(state)
+        }
+    }
+
     func invalidate(now: Date = .now) throws {
         _ = try updateEligibility(photoIDs: [], scopeIdentifier: "invalidated", isAuthorized: false, now: now)
     }
@@ -426,6 +454,7 @@ struct PersonalRediscoveryStore: Sendable {
                 state.plan = plan
             }
             repairPlan(&state, now: now)
+            deferProbableCats(&state, now: now)
             state.updatedAt = now
             let encoded = try encode(state)
             let result = snapshot(state, now: now)
@@ -871,6 +900,31 @@ struct PersonalRediscoveryStore: Sendable {
         state.plan = plan
     }
 
+    /// 11/14: within each plan cycle, the slots after today and after every
+    /// issued Widget slot list 確かな猫 before たぶん猫 (stable inside each
+    /// tier). No change when no candidate is たぶん猫.
+    private func deferProbableCats(_ state: inout PersonalRediscoveryFile, now: Date) {
+        guard var plan = state.plan else { return }
+        let probable = Set(state.candidates.filter { $0.isProbableCat == true }
+            .map { $0.item.localIdentifier })
+        guard !probable.isEmpty else { return }
+        var firstMovable = Self.slot(at: now, in: plan) + 1
+        for issue in state.issues where !issue.invalidated {
+            firstMovable = max(firstMovable, Self.slot(at: issue.scheduledAt, in: plan) + 1)
+        }
+        for index in plan.cycles.indices {
+            var cycle = plan.cycles[index]
+            let offset = Int(max(0, min(Int64(cycle.order.count), firstMovable - cycle.startSlot)))
+            guard offset < cycle.order.count else { continue }
+            let tail = Array(cycle.order[offset...])
+            let reordered = tail.filter { !probable.contains($0) } + tail.filter { probable.contains($0) }
+            guard reordered != tail else { continue }
+            cycle.order.replaceSubrange(offset..., with: reordered)
+            plan.cycles[index] = cycle
+        }
+        state.plan = plan
+    }
+
     private func entry(
         item: WidgetManifestItem?, date: Date, slotID: String,
         state: PersonalRediscoveryFile, now: Date, timeZone: TimeZone
@@ -927,6 +981,10 @@ struct PersonalRediscoveryStore: Sendable {
             if left != right { return left < right }
             return (tieOrder[lhs.item.localIdentifier] ?? 0) < (tieOrder[rhs.item.localIdentifier] ?? 0)
         }
+        // 11/14: 確かな猫 first, たぶん猫 last; unchanged when every
+        // candidate is 確かな猫 (the seeded order above stays as it was).
+        remaining = remaining.filter { $0.isProbableCat != true }
+            + remaining.filter { $0.isProbableCat == true }
         var result: [PersonalRediscoveryCandidate] = []
         while !remaining.isEmpty {
             let index = remaining.firstIndex(where: { candidate in

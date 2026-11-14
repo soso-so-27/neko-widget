@@ -194,7 +194,7 @@ struct CatProfile: Codable, Equatable, Identifiable, Sendable {
         value.displayName = String(
             displayName
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-                .prefix(80)
+                .prefix(CatNameText.storedMaximumCharacters)
         )
         if let lifeDates = value.lifeDates {
             value.setLifeDates(lifeDates)
@@ -510,6 +510,23 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
                 ? profile.id
                 : nil
         })
+    }
+
+    /// 11/14: photos the user vouched for as a cat, whatever the stored
+    /// confidence: an explicit include for any cat, a cat's key photo, or a
+    /// photo in a linked Photos album. The app's own picks treat them as
+    /// 確かな猫 (CatPickTier). The single-cat rule's derived photos are not
+    /// in it: that rule is the app's, not the user's.
+    var userVouchedAssetIdentifiers: Set<String> {
+        var result = Set<String>()
+        for profile in profiles {
+            result.formUnion(profile.photoAlbumLink?.lastKnownAssetLocalIdentifiers ?? [])
+            if let key = profile.keyPhotoLocalIdentifier { result.insert(key) }
+        }
+        for membership in memberships where membership.decision == .included {
+            result.insert(membership.assetLocalIdentifier)
+        }
+        return result
     }
 
     func confirmedAssetIdentifiers(for profileID: UUID) -> Set<String> {
@@ -1073,5 +1090,134 @@ enum CatHouseholdIdentityRevisionPolicy {
         committed.createdAt = current.createdAt
         committed.updatedAt = max(current.updatedAt, max(current.createdAt, date))
         return committed.normalized()
+    }
+}
+
+// MARK: - Limits on cats and names (11/14)
+
+/// At most 10 living cat profiles. A profile whose farewell day is recorded
+/// does not count; a cat written only in a tool or the family notebook is not
+/// a profile. Existing data with more keeps working: only adding stops.
+enum CatProfileLimit {
+    static let maximumLiving = 10
+
+    /// The cats that count: every identifier that is not departed. A nil
+    /// identifier (a tool cat without a profile) counts as one cat in a tool.
+    static func livingCount(_ identifiers: [String?], departed: Set<String>) -> Int {
+        identifiers.filter { $0.map { !departed.contains($0) } ?? true }.count
+    }
+
+    static func canAdd(_ identifiers: [String?], departed: Set<String>) -> Bool {
+        livingCount(identifiers, departed: departed) < maximumLiving
+    }
+
+    /// Profile identifiers (never nil).
+    static func livingCount(_ identifiers: [String], departed: Set<String>) -> Int {
+        livingCount(identifiers.map { Optional($0) }, departed: departed)
+    }
+
+    static func canAdd(_ identifiers: [String], departed: Set<String>) -> Bool {
+        canAdd(identifiers.map { Optional($0) }, departed: departed)
+    }
+
+    static func room(existing identifiers: [String], departed: Set<String>) -> Int {
+        room(existing: identifiers.map { Optional($0) }, departed: departed)
+    }
+
+    /// Profiles first, in their order, up to the limit, counting only the
+    /// living ones already there. Used where a file brings in many at once.
+    static func room(existing identifiers: [String?], departed: Set<String>) -> Int {
+        max(0, maximumLiving - livingCount(identifiers, departed: departed))
+    }
+}
+
+/// What a person types as a name: no control, zero-width, bidi-control
+/// characters or line breaks, and no spaces at either end once saved.
+/// Emoji joined with a zero-width joiner stay one character.
+enum VisibleText {
+    static func cleaned(_ value: String) -> String {
+        let scalars = Array(value.unicodeScalars)
+        var output = String.UnicodeScalarView()
+        for (index, scalar) in scalars.enumerated() {
+            if scalar.value == 0x200D {
+                // Keep a joiner only inside an emoji sequence (👨‍👩‍👧, 🏳️‍🌈).
+                let next = index + 1 < scalars.count ? scalars[index + 1] : nil
+                if let previous = output.last, previous.value == 0xFE0F || isEmojiLike(previous),
+                   let next, isEmojiLike(next) {
+                    output.append(scalar)
+                }
+                continue
+            }
+            if isInvisible(scalar) { continue }
+            output.append(scalar)
+        }
+        return String(output)
+    }
+
+    /// Cleaned, with leading and trailing spaces (also full-width) removed.
+    static func finalized(_ value: String) -> String {
+        cleaned(value).trimmingCharacters(in: .whitespaces)
+    }
+
+    static func isInvisible(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x00...0x1F, 0x7F...0x9F: return true // controls, line breaks, tabs
+        case 0x00AD, 0x061C, 0x180E: return true
+        case 0x200B, 0x200C, 0x200E, 0x200F: return true
+        case 0x2028...0x202E: return true // line/paragraph separators, bidi embedding
+        case 0x2060...0x2064, 0x2066...0x2069: return true // word joiner, bidi isolates
+        case 0xFEFF: return true
+        default: return false
+        }
+    }
+
+    /// Pictographs and symbols an emoji sequence joins (🐈‍⬛ ends in U+2B1B).
+    /// Ranges, not Unicode properties, so the older macOS checks compile too.
+    private static func isEmojiLike(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x1F000...0x1FAFF, 0x2190...0x2BFF, 0x00A9, 0x00AE, 0x203C, 0x2049,
+             0x2122, 0x2139, 0x3030, 0x303D, 0x3297, 0x3299: return true
+        default: return false
+        }
+    }
+}
+
+/// A field that stops at its limit while typing or pasting, instead of
+/// cutting text afterwards. Only newly inserted characters are filtered and
+/// counted: a value already longer than the limit is shown as it is and can
+/// be shortened, never grown.
+enum TextInputGate {
+    static func accept(_ proposed: String, previous: String, limit: Int,
+                       allow: (Character) -> Bool = { _ in true }) -> String {
+        let old = Array(previous), new = Array(proposed)
+        var prefix = 0
+        while prefix < old.count, prefix < new.count, old[prefix] == new[prefix] { prefix += 1 }
+        var suffix = 0
+        while suffix < old.count - prefix, suffix < new.count - prefix,
+              old[old.count - 1 - suffix] == new[new.count - 1 - suffix] { suffix += 1 }
+        let kept = prefix + suffix
+        let room = max(0, max(limit, kept) - kept)
+        let inserted = new[prefix..<(new.count - suffix)].filter(allow).prefix(room)
+        return String(new[..<prefix]) + String(inserted) + String(new[(new.count - suffix)...])
+    }
+}
+
+/// One rule for a cat's name wherever it is written (the profile and
+/// 「この子のこと」): 20 characters as people count them (an emoji is one).
+/// Names saved before 11/14 may be longer (up to 80); they are kept.
+enum CatNameText {
+    static let maximumCharacters = 20
+    /// What older builds allowed and stored; reading never cuts below this.
+    static let storedMaximumCharacters = 80
+
+    /// For a TextField binding: cleaned, and stops at 20.
+    static func accept(_ proposed: String, previous: String) -> String {
+        TextInputGate.accept(VisibleText.cleaned(proposed), previous: previous, limit: maximumCharacters)
+    }
+
+    /// What is saved; nil when nothing is left after cleaning.
+    static func saving(_ value: String) -> String? {
+        let name = VisibleText.finalized(value)
+        return name.isEmpty ? nil : name
     }
 }

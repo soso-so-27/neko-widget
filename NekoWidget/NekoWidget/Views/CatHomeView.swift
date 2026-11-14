@@ -169,8 +169,13 @@ struct CatHomeFacts {
         let birthday: Date? = profile?.lifeDates.birthday?.date
             ?? (profile?.lifeReference?.kind == .birthday ? profile?.lifeReference?.date : nil)
             ?? record?.birthday?.value?.date(calendar: calendar)
-        let adoption: Date? = profile?.lifeDates.adoptionDay?.date
-            ?? (profile?.lifeReference?.kind == .adoptionDay ? profile?.lifeReference?.date : nil)
+        let adoption: Date?
+        if let shared = record?.adoptionDay {
+            adoption = shared.value?.day.date(calendar: calendar)
+        } else {
+            adoption = profile?.lifeDates.adoptionDay?.date
+                ?? (profile?.lifeReference?.kind == .adoptionDay ? profile?.lifeReference?.date : nil)
+        }
         let sex: String? = switch record?.sex?.value ?? .unknown {
         case .male: "オス"
         case .female: "メス"

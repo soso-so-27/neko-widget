@@ -15,10 +15,47 @@ enum FamilyNotebookAttachmentLink {
 /// name, and family writes never change household-wide contacts or vet details.
 enum FamilyNotebookCatCareBridge {
     static let fields: [FamilyNotebookField] = [
-        .name, .sex, .neutered, .indoorOnly, .birthday, .coat, .marks, .microchip,
+        .name, .sex, .neutered, .indoorOnly, .birthday, .adoptionDay, .coat, .marks, .microchip,
         .conditions, .allergyStatus, .allergyText, .specialDiet, .water, .litter, .temperament,
         .vetName, .vetPhone, .vetNote
     ]
+    // Initial import never converts an unset profile to a deletion, and a
+    // received family stamp wins over an old profile's private initial value.
+    static func importingAdoptionDays(_ profiles: [CatProfile], into original: CatCareState, at now: Date) -> CatCareState {
+        var state = original
+        for profile in profiles {
+            let dates = profile.resolvedLifeDates
+            guard let date = dates.adoptionDay,
+                  let day = CatCareDay(year: date.year, month: date.month, day: date.day) else { continue }
+            let indices = state.cats.indices.filter { state.cats[$0].profileID == profile.id && state.cats[$0].deletedAt == nil }
+            guard indices.count <= 1 else { continue }
+            if let index = indices.first {
+                guard state.cats[index].adoptionDay == nil else { continue }
+                state.cats[index].adoptionDay = .init(value: .init(day: day, isApproximate: dates.adoptionDayIsApproximate), editedAt: now, editedBy: "import:Profile")
+            } else {
+                var record = CatCareRecord(catID: UUID(), profileID: profile.id)
+                record.name = .init(value: profile.displayName, editedAt: now, editedBy: "import:Profile")
+                record.adoptionDay = .init(value: .init(day: day, isApproximate: dates.adoptionDayIsApproximate), editedAt: now, editedBy: "import:Profile")
+                state.cats.append(record)
+            }
+        }
+        return state
+    }
+
+    static func projectingAdoptionDays(_ care: CatCareState, into original: CatHouseholdIdentityState) -> CatHouseholdIdentityState {
+        var state = original
+        for index in state.profiles.indices {
+            let matches = care.cats.filter { $0.profileID == state.profiles[index].id && $0.deletedAt == nil }
+            guard matches.count == 1, let stamp = matches[0].adoptionDay else { continue }
+            var dates = state.profiles[index].resolvedLifeDates
+            if let value = stamp.value, let date = value.day.date(), let life = CatLifeDate(date: date) {
+                dates.adoptionDay = life; dates.adoptionDayIsApproximate = value.isApproximate
+            } else { dates.adoptionDay = nil; dates.adoptionDayIsApproximate = false }
+            state.profiles[index].setLifeDates(dates, preferredPrimaryKind: state.profiles[index].lifeReference?.kind)
+        }
+        return state
+    }
+
     static let lists: [FamilyNotebookCollection] = [.weight, .medication, .vaccination, .meal]
 
     static func mappings(for snapshot: FamilyNotebookSnapshot, existingLocalIDs: Set<UUID> = [], makeID: () -> UUID = UUID.init) throws -> [FamilyNotebookLocalMapping] {
@@ -156,6 +193,14 @@ enum FamilyNotebookCatCareBridge {
         case .litter: record.litter = try stamp(text(value))
         case .temperament: record.temperament = try stamp(text(value))
         case .birthday: record.birthday = try stamp(day(value))
+        case .adoptionDay:
+            let date = try FamilyNotebookAdoptionDate.decode(value)
+            let converted: CatCareAdoptionDay?
+            if let date {
+                guard let day = CatCareDay(isoDay: date.day) else { throw FamilyNotebookError.invalidValue }
+                converted = .init(day: day, isApproximate: date.isApproximate)
+            } else { converted = nil }
+            record.adoptionDay = stamp(converted)
         case .sex:
             let name = try text(value)
             guard let result = CatCareSex(rawValue: name.isEmpty ? "unknown" : name) else { throw FamilyNotebookError.invalidValue }

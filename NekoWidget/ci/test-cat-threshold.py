@@ -14,6 +14,9 @@ default line is now 0.5.
    them again. The fingerprint format and snapshot schema are unchanged, so
    older builds still read the file.
 3. The 写真 tab's paused / failed search continues instead of starting over.
+4. (11/14) The scanner hands fresh analyses to the app at least once a second,
+   not only every 100 photos, so a short visit keeps its work and the next
+   pass reuses it. The internal coverage text counts what is still pending.
 
 Native behaviour: NekoWidgetTests CatThresholdTests.
 """
@@ -112,6 +115,32 @@ class CatThresholdTests(unittest.TestCase):
         self.assertIn("} else if scan.hasDeferredAssets {\n                    Button(\"もう一度探す\", action: rescan)", status)
         self.assertIn("var resumeScan: (() async -> Void)? = nil", MAIN)
         self.assertIn("await viewModel.resumeScan()", ROOT_VIEW)
+
+    def test_fresh_analyses_are_handed_over_within_a_second(self):
+        policy = section(SCANNER, "enum ScanProgressEventPolicy {", "\n}\n")
+        self.assertIn("static let maximumUnreportedSeconds: TimeInterval = 1", policy)
+        self.assertIn("if isFirstQuickBatch || batchEnd == rangeEnd || batchEnd.isMultiple(of: 100) {", policy)
+        self.assertIn("return analyzedSinceLastReport > 0\n            && secondsSinceLastReport >= maximumUnreportedSeconds", policy)
+        process = section(SCANNER, "    private func process(", "    private func makeState(")
+        self.assertIn("analyzedSinceLastReport += pending.count", process)
+        self.assertIn("if ScanProgressEventPolicy.shouldReport(", process)
+        self.assertNotIn("if isFirstQuickBatch || batchEnd == range.upperBound || batchEnd.isMultiple(of: 100) {", process)
+        report = process[process.index("if ScanProgressEventPolicy.shouldReport("):process.index("await Task.yield()")]
+        self.assertIn("lastPublishedIndex = batchEnd\n                analyzedSinceLastReport = 0", report)
+        # The 1,000-photo save checkpoint and the newest-first order stay.
+        self.assertIn('NSSortDescriptor(key: "creationDate", ascending: false)', SCANNER)
+        self.assertIn("scannedAssets > 0 && scannedAssets.isMultiple(of: 1_000)", read("NekoWidget/Services/PhotoSelectors.swift"))
+        # Nothing the app saves changes: same stamp, same record shape.
+        self.assertIn("analysisFingerprint: settings.analysisFingerprint,", SCANNER)
+
+    def test_internal_coverage_counts_pending_rescan(self):
+        coverage = read("NekoWidget/Services/CatPhotoCoverageMeasurement.swift")
+        reason = section(coverage, "static func rescanPendingReason(", "\n    }\n")
+        self.assertIn(".migratedToLowerConfidenceThreshold(settings: settings)", reason)
+        self.assertIn("if record.analysisStatus == .failed { return 4 }", reason)
+        self.assertIn('lines.append("rescan pending \(library.rescanPending.reduce(0, +)): "', coverage)
+        self.assertIn("let scanSettings = snapshot.settings.normalized()", coverage)
+        self.assertTrue(coverage.startswith("#if DEBUG || INTERNAL_PRESENTATION\n"))
 
     def test_unit_tests_are_in_the_test_target(self):
         project = read("NekoWidget.xcodeproj/project.pbxproj")

@@ -54,10 +54,18 @@ final class CatPreparednessStore: ObservableObject {
 
     func save(_ record: CatPreparednessRecord, for key: String) throws {
         var safe = record
+        // 11/14: the flyer's own limits (LostCatFlyerRenderer), the same ones
+        // the flyer checks. A value already saved stays as it is, even if
+        // longer; only a changed value is held to the limit.
+        let saved = records[key]
+        func limited(_ value: String, _ previous: String?, _ limit: Int) -> String {
+            value == previous ? value : String(value.prefix(limit))
+        }
         safe.name = String(record.name.prefix(60))
-        safe.identifyingFeatures = String(record.identifyingFeatures.prefix(240))
-        safe.approachAdvice = String(record.approachAdvice.prefix(160))
-        safe.collar = String(record.collar.prefix(80))
+        safe.identifyingFeatures = limited(record.identifyingFeatures, saved?.identifyingFeatures,
+                                           LostCatFlyerRenderer.featuresLimit)
+        safe.approachAdvice = limited(record.approachAdvice, saved?.approachAdvice, LostCatFlyerRenderer.adviceLimit)
+        safe.collar = limited(record.collar, saved?.collar, LostCatFlyerRenderer.collarLimit)
         safe.contactSuggestion = String(record.contactSuggestion.prefix(160))
         safe.confirmedAt = Date()
         var next = records
@@ -451,9 +459,13 @@ struct LostCatFoundDraft {
 }
 
 enum LostCatFlyerRenderer {
+    /// One set of limits (11/14): the flyer checks these and the saved
+    /// record (CatPreparednessStore.save) holds a changed value to them.
+    /// They were tuned so the text fits the flyer.
     static let featuresLimit = 200
     static let collarLimit = 40
     static let adviceLimit = 80
+    static let foundMessageLimit = LostCatText.foundMessageLimit
 
     static func lengthIssue(_ value: String, label: String, limit: Int) -> String? {
         let excess = value.count - limit

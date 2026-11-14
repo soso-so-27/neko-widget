@@ -22,6 +22,23 @@ xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0
   NekoWidget/Services/FamilyNotebookSync.swift NekoWidget/Services/FamilyNotebookBackup.swift ci/verify-family-notebook-sync.swift \
   -o "$RUNNER_TEMP/verify-family-notebook-sync"
 "$RUNNER_TEMP/verify-family-notebook-sync"
+
+# Actual pre-change reader; keep the immutable baseline separate.
+old_notebook_common=("${notebook_common[@]:0:${#notebook_common[@]}-2}" ci/fixtures/family-notebook-before-adoption/FamilyNotebookCore.swift ci/fixtures/family-notebook-before-adoption/FamilyNotebookStore.swift)
+xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" "${old_notebook_common[@]}" \
+  Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
+  NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupInvitationLink.swift NekoWidget/Services/GroupWindowStorage.swift \
+  NekoWidget/Services/GroupWindowOperationStore.swift Shared/Sharing/ClientUpgradeRequirement.swift NekoWidget/Services/GroupWindowTransport.swift \
+  NekoWidget/Services/FamilyNotebookCrypto.swift NekoWidget/Services/FamilyNotebookTransport.swift \
+  NekoWidget/Services/FamilyNotebookSync.swift ci/fixtures/family-notebook-before-adoption/FamilyNotebookBackup.swift ci/verify-family-notebook-sync.swift \
+  -o "$RUNNER_TEMP/verify-family-notebook-sync-old"
+"$RUNNER_TEMP/verify-family-notebook-sync-old"
+
+export ADOPTION_ROOT="$RUNNER_TEMP/family-adoption-compat-$$"
+ADOPTION_PHASE=new-receive "$RUNNER_TEMP/verify-family-notebook-sync"
+ADOPTION_PHASE=old-edit "$RUNNER_TEMP/verify-family-notebook-sync-old"
+ADOPTION_PHASE=new-verify "$RUNNER_TEMP/verify-family-notebook-sync"
+unset ADOPTION_ROOT
 xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" "${notebook_common[@]}" \
   Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
   NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupInvitationLink.swift NekoWidget/Services/GroupWindowStorage.swift \

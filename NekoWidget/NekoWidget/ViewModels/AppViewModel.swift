@@ -236,6 +236,25 @@ final class AppViewModel: ObservableObject {
         return detected
     }
 
+    /// 11/14 確かな猫 for the app's own picks (covers, widgets, works): the
+    /// stored best cat confidence reaches 0.7, or the user vouched for the
+    /// photo (saved it, included it for a cat, chose it as a key photo, or it
+    /// is in a linked album). Cheap: one set lookup, the set built once per
+    /// presentation version.
+    func isConfidentCatForPicks(_ asset: AssetRecord) -> Bool {
+        asset.isConfidentCat || userVouchedCatPhotoIdentifiers.contains(asset.localIdentifier)
+    }
+
+    var userVouchedCatPhotoIdentifiers: Set<String> {
+        let version = presentationVersion
+        if let cached = cachedUserVouchedCatPhotoIdentifiers, cached.version == version {
+            return cached.identifiers
+        }
+        let identifiers = catHouseholdIdentity?.userVouchedAssetIdentifiers ?? []
+        cachedUserVouchedCatPhotoIdentifiers = (version, identifiers)
+        return identifiers
+    }
+
     func profileMemberships(for localIdentifier: String) -> [CatAssetProfileMembership] {
         catHouseholdIdentity?.memberships.filter {
             $0.assetLocalIdentifier == localIdentifier
@@ -311,6 +330,10 @@ final class AppViewModel: ObservableObject {
         sets: [UUID: Set<String>],
         assignments: [String: Set<String>]
     )?
+    private var cachedUserVouchedCatPhotoIdentifiers: (
+        version: LibraryPresentationVersion,
+        identifiers: Set<String>
+    )?
     /// Serializes the one-way legacy-to-profiled transition with household
     /// exclusion mutations. Without this queue, an exclusion can commit to
     /// the legacy curation actor while profile creation concurrently makes the
@@ -333,6 +356,7 @@ final class AppViewModel: ObservableObject {
     private var isManualRescanRequestPending = false
     private var receivedMemoryImportObserver: NSObjectProtocol?
     private var todayDayChangeObserver: NSObjectProtocol?
+    private var adoptionDayObserver: NSObjectProtocol?
     /// nil means no additional in-memory source filter. When an album is
     /// selected this is refreshed from PhotoKit before a scan, so old snapshot
     /// records outside that album disappear from candidate surfaces at once.
@@ -536,6 +560,10 @@ final class AppViewModel: ObservableObject {
                 )
             }
         }
+        adoptionDayObserver = NotificationCenter.default.addObserver(forName: .appRecordsCommitted, object: nil, queue: .main) { [weak self] note in
+            guard let url = note.object as? URL, url.deletingLastPathComponent().lastPathComponent == "CatCare" else { return }
+            Task { @MainActor [weak self] in self?.objectWillChange.send() }
+        }
         todayDayChangeObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.significantTimeChangeNotification,
             object: nil,
@@ -552,6 +580,7 @@ final class AppViewModel: ObservableObject {
     }
 
     deinit {
+        if let adoptionDayObserver { NotificationCenter.default.removeObserver(adoptionDayObserver) }
         if let receivedMemoryImportObserver {
             NotificationCenter.default.removeObserver(receivedMemoryImportObserver)
         }
@@ -1539,7 +1568,8 @@ final class AppViewModel: ObservableObject {
         guard catIdentityLoadState == .ready, let current = catHouseholdIdentity else {
             throw CatProfileTransferError.notReady
         }
-        let transfer = try CatProfileTransfer.decode(data)
+        // 11/14: at most 10 cats come in, the first ones in the file.
+        let (transfer, wasLimited) = try CatProfileTransfer.decode(data).limitedToCatProfileLimit()
         let reconciled = current.reconcilingLegacyUnscoped(
             lifeReference: settings.catLifeReference, curation: catCandidateCuration
         )
@@ -1554,6 +1584,7 @@ final class AppViewModel: ObservableObject {
             expectedCurationRevision: catCandidateCuration.mutationRevision,
             expectedLegacyReference: settings.catLifeReference,
             isUnchanged: proposed == reconciled,
+            wasLimited: wasLimited,
             photoCandidates: Dictionary(uniqueKeysWithValues: (transfer.photos ?? []).map { photo in
                 (photo.id, candidates.filter { $0.metadata == photo.metadata })
             })
@@ -1649,8 +1680,11 @@ final class AppViewModel: ObservableObject {
         // profile exists. Keep the photo its page shows now (one explicit
         // include); every other derived photo is left as it is, not migrated.
         let shownSingleCatPhoto = singleCatShownPhotoIdentifier()
+        let departed = CatFarewell.departedIdentifiers()
         do {
             let committed = try await mutateCatHouseholdIdentity { state in
+                // 11/14: at most 10 living cats; the add screens say so first.
+                guard CatProfileLimit.canAdd(state.profiles.map(\.id.uuidString), departed: departed) else { return }
                 // Profile creation is the one-way boundary where identity
                 // becomes canonical. Fold in the last committed Build 13
                 // curation revision first, including a revision whose prior
@@ -1717,15 +1751,33 @@ final class AppViewModel: ObservableObject {
             return false
         }
         do {
+            guard let old = catHouseholdIdentity?.profiles.first(where: { $0.id == profileID }) else { return false }
+            let display = catHouseholdIdentity.map { FamilyNotebookCatCareBridge.projectingAdoptionDays(CatCareStore.shared.state ?? CatCareState(), into: $0) }
+            let before = display?.profiles.first(where: { $0.id == profileID })?.resolvedLifeDates ?? old.resolvedLifeDates
+            let after = dates.normalized()
+            let adoptionChanged = before.adoptionDay != after.adoptionDay || before.adoptionDayIsApproximate != after.adoptionDayIsApproximate
+            if adoptionChanged {
+                _ = FamilyNotebookPrototype.shared
+                guard CatCareStore.shared.setAdoptionDay(profileID: profileID, name: old.displayName, dates: after) else {
+                    throw FamilyNotebookError.storageUnavailable
+                }
+            }
             let committed = try await mutateCatHouseholdIdentity { state in
                 guard var profile = state.profiles.first(where: { $0.id == profileID }) else {
                     return
                 }
-                profile.setLifeDates(dates, preferredPrimaryKind: preferredPrimaryKind)
+                var personalDates = dates
+                if !adoptionChanged {
+                    // Merely editing the birthday must not put a received
+                    // family date into the owner's private profile backup.
+                    personalDates.adoptionDay = profile.resolvedLifeDates.adoptionDay
+                    personalDates.adoptionDayIsApproximate = profile.resolvedLifeDates.adoptionDayIsApproximate
+                }
+                profile.setLifeDates(personalDates, preferredPrimaryKind: preferredPrimaryKind)
                 state.upsertProfile(profile)
             }
-            return committed.profiles.first(where: { $0.id == profileID })?
-                .resolvedLifeDates == dates.normalized()
+            let displayed = FamilyNotebookCatCareBridge.projectingAdoptionDays(CatCareStore.shared.state ?? CatCareState(), into: committed)
+            return displayed.profiles.first(where: { $0.id == profileID })?.resolvedLifeDates == dates.normalized()
         } catch {
             Self.logError(error, category: "cat-identity", operation: "update_profile_date")
             setError(error)
@@ -2297,6 +2349,11 @@ final class AppViewModel: ObservableObject {
                 snapshot.settings.catLifeReference = settings.catLifeReference
             }
             catIdentityLoadState = .ready
+            FamilyNotebookPrototype.shared.applyFamilyWrites()
+            if let care = CatCareStore.shared.state {
+                let initial = FamilyNotebookCatCareBridge.importingAdoptionDays(loaded.profiles, into: care, at: Date())
+                if initial != care { _ = CatCareStore.shared.update { $0 = initial } }
+            }
             SharedLog.app.info(
                 "cat-identity",
                 "Cat household identity state loaded",
@@ -3203,7 +3260,8 @@ final class AppViewModel: ObservableObject {
             from: eligible.assets,
             settings: settings,
             previousState: todayPhotoSelectionState,
-            selector: photoSelector
+            selector: photoSelector,
+            isConfident: isConfidentCatForPicks
         )
         currentAsset = resolution.asset
         if resolution.state != todayPhotoSelectionState {
@@ -3340,9 +3398,11 @@ final class AppViewModel: ObservableObject {
         do {
             let revision = try synchronizePersonalWidgetAuthority()
             let input = candidateSnapshot(snapshot)
+            let probable = personalWidgetProbablePhotoIDs(input.assets)
             let result = try await widgetCacheBuilder.replenishPersonal(
                 from: input, eligibilityRevision: revision,
-                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs())
+                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs(),
+                probablePhotoIDs: probable)
             try synchronizeCloudyWindowMetadata()
             try await CloudyWindowImagePreparer.shared.prepare()
             // Preparation is not a view. Keep legacy lastShownAt/shownCount
@@ -3368,7 +3428,8 @@ final class AppViewModel: ObservableObject {
                             let batch = try await self.widgetCacheBuilder.replenishPersonal(
                                 from: input, eligibilityRevision: revision,
                                 skippingPhotoIDs: attemptedPhotoIDs,
-                                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs())
+                                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs(),
+                                probablePhotoIDs: probable)
                             attemptedPhotoIDs.formUnion(batch.attemptedPhotoIDs)
                             try self.synchronizeCloudyWindowMetadata()
                             try await CloudyWindowImagePreparer.shared.prepare()
@@ -3505,9 +3566,20 @@ final class AppViewModel: ObservableObject {
             isAuthorized: authorized, now: now, photoModificationDates: dates,
             bootstrapCandidates: bootstrap,
             interval: TimeInterval(curated.settings.widgetEntryIntervalMinutes * 60))
+        if authorized {
+            // 11/14: たぶん猫 go to the end of the daily plan; today's photo
+            // and any slot already given to a Widget stay.
+            try PersonalRediscoveryStore.shared.updateCatTiers(
+                probablePhotoIDs: personalWidgetProbablePhotoIDs(eligible), now: now)
+        }
         try synchronizeCloudyWindowMetadata(input: curated)
         if !bootstrap.isEmpty { WidgetCenter.shared.reloadAllTimelines() }
         return revision
+    }
+
+    /// 11/14: the daily photo's たぶん猫 (CatPickTier, with the user's vouching).
+    private func personalWidgetProbablePhotoIDs(_ records: [AssetRecord]) -> Set<String> {
+        Set(records.filter { !isConfidentCatForPicks($0) }.map(\.localIdentifier))
     }
 
     /// 11/13: adding the first or a second cat profile (or deleting back to
@@ -3574,7 +3646,8 @@ final class AppViewModel: ObservableObject {
             metadata[record.localIdentifier] = .init(creationDate: record.creationDate,
                 burstIdentifier: record.burstIdentifier,
                 profileIDs: Set(profiles.map { $0.uuidString.lowercased() }),
-                previouslyShown: record.shownCount > 0 || record.lastShownAt != nil)
+                previouslyShown: record.shownCount > 0 || record.lastShownAt != nil,
+                isProbableCat: !isConfidentCatForPicks(record))
         }
         try CloudyWindowStore.shared.synchronize(metadata: metadata,
             profiles: Dictionary(uniqueKeysWithValues: catProfiles.map { ($0.id.uuidString.lowercased(), $0.displayName) }))

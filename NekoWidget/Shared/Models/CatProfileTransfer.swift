@@ -90,6 +90,30 @@ struct CatProfileTransfer: Codable, Equatable, Sendable {
         try validate()
     }
 
+    private init(format: String, version: Int, profiles: [Entry], photos: [Photo]?) {
+        self.format = format
+        self.version = version
+        self.profiles = profiles
+        self.photos = photos
+    }
+
+    /// 11/14: a file brings in at most `CatProfileLimit.maximumLiving` cats,
+    /// the first ones in the file's order. The file itself is not changed;
+    /// its photos that only belong to cats left out are not offered.
+    /// Import only fills an empty household, so every cat counts as living.
+    func limitedToCatProfileLimit() -> (transfer: Self, wasLimited: Bool) {
+        guard profiles.count > CatProfileLimit.maximumLiving else { return (self, false) }
+        let kept = Array(profiles.prefix(CatProfileLimit.maximumLiving))
+        let keptIDs = Set(kept.map(\.id))
+        let keptPhotos = photos.map { all in
+            all.compactMap { photo -> Photo? in
+                let owners = photo.profileIDs.filter { keptIDs.contains($0) }
+                return owners.isEmpty ? nil : Photo(id: photo.id, metadata: photo.metadata, profileIDs: owners)
+            }
+        }
+        return (Self(format: format, version: version, profiles: kept, photos: keptPhotos), true)
+    }
+
     static func decode(_ data: Data) throws -> Self {
         guard data.count <= maximumBytes else { throw CatProfileTransferError.invalidFile }
         let value: Self
@@ -125,7 +149,8 @@ struct CatProfileTransfer: Codable, Equatable, Sendable {
             throw CatProfileTransferError.invalidFile
         }
         for entry in profiles {
-            guard !entry.name.isEmpty, entry.name.count <= 80,
+            // Names saved by older builds may be up to 80 characters; kept as they are.
+            guard !entry.name.isEmpty, entry.name.count <= CatNameText.storedMaximumCharacters,
                   entry.name == entry.name.trimmingCharacters(in: .whitespacesAndNewlines),
                   Self.valid(entry.dates.birthday), Self.valid(entry.dates.adoptionDay),
                   entry.dates == entry.dates.normalized(),
@@ -183,6 +208,8 @@ struct CatProfileImportPreview: Identifiable {
     let expectedCurationRevision: Int
     let expectedLegacyReference: CatLifeReference?
     let isUnchanged: Bool
+    /// The file had more cats than can be added; the first ones are shown.
+    var wasLimited = false
     var photoCandidates: [UUID: [CatProfileTransferCandidate]] = [:]
     /// Empty by default, even when exactly one metadata candidate exists.
     var selectedPhotoIdentifiers: [UUID: String] = [:]

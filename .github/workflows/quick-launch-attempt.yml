@@ -1,0 +1,76 @@
+name: One fresh Mac launch attempt
+on:
+  workflow_call:
+    inputs:
+      attempt:
+        required: true
+        type: number
+    outputs:
+      result:
+        value: ${{ jobs.launch.outputs.result }}
+permissions:
+  contents: read
+jobs:
+  launch:
+    name: Mac attempt ${{ inputs.attempt }}
+    runs-on: macos-15
+    timeout-minutes: 30
+    outputs:
+      result: ${{ steps.launch.outputs.result }}
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: quick-launch-app
+          path: ${{ runner.temp }}/QuickLaunch
+      - name: Extract and check the same validated app
+        id: launch
+        shell: bash
+        run: |
+          tar -xzf "$RUNNER_TEMP/QuickLaunch/quick-launch-app.tar.gz" -C "$RUNNER_TEMP/QuickLaunch"
+          export QUICK_APP_PATH="$RUNNER_TEMP/QuickLaunch/NekoWidget.app"
+          started=$SECONDS
+          set +e
+          bash NekoWidget/ci/run-quick-launch.sh 2>&1 | tee "$RUNNER_TEMP/launch-timing.txt"
+          status=${PIPESTATUS[0]}
+          set -e
+          result=failed
+          if [[ "$status" == 0 ]]; then
+            result=passed
+          elif [[ "$status" == 124 ]] && grep -qx 'install_timeout=true' "$GITHUB_OUTPUT"; then
+            result=install_timeout
+          fi
+          echo "result=$result" >> "$GITHUB_OUTPUT"
+          {
+            echo '### Fresh Mac attempt ${{ inputs.attempt }}'
+            echo "Runner: $RUNNER_NAME; result: $result; elapsed: $((SECONDS-started))s"
+            echo '```text'
+            grep -E '^(START|END|TIMEOUT) ' "$RUNNER_TEMP/launch-timing.txt" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$result" == install_timeout ]]; then exit 0; fi
+          exit "$status"
+      - name: Attach launch screenshot
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: launch-screenshot-${{ inputs.attempt }}
+          path: ${{ runner.temp }}/ci-screenshots/*.png
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Attach minimal synthetic launch failure diagnostics
+        # Also retain the first timeout when the existing single retry recovers.
+        # A clean run creates no failure directory and uploads nothing.
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: synthetic-launch-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.attempt }}
+          path: ${{ runner.temp }}/quick-launch-failure/
+          if-no-files-found: ignore
+          retention-days: 3
+          compression-level: 0
+

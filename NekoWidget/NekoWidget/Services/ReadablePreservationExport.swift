@@ -394,7 +394,10 @@ enum FamilyNotebookReadableText {
             .handoff: "お世話の引き継ぎ", .handoffMeal: "ごはんのお願い"]
         var lines = ["家族の手帳", "", "今の記録です。以前の内容も元の記録.jsonに残っています。"], count = 0
         let dates = ISO8601DateFormatter()
-        func value(_ input: FamilyNotebookValue?) -> String {
+        func value(_ input: FamilyNotebookValue?, field: FamilyNotebookField? = nil) -> String {
+            if field == .adoptionDay, let input, let date = try? FamilyNotebookAdoptionDate.decode(input) {
+                return date.day + (date.isApproximate ? "ごろ" : "")
+            }
             switch input {
             case .text(let text), .day(let text): return text
             case .integer(let number): return String(number)
@@ -422,10 +425,10 @@ enum FamilyNotebookReadableText {
                     let group = target.collection.rawValue + (target.recordID?.uuidString ?? "")
                     if group != previous { lines.append("\n" + (collections[target.collection] ?? "記録")); previous = group; count += 1 }
                     let label = ReadablePreservationText.labels[field.rawValue] ?? field.rawValue
-                    lines.append(label + "：" + value(state.operation.value))
+                    lines.append(label + "：" + value(state.operation.value, field: field))
                     lines.append("  書いた人：" + state.operation.author.displayName + "／" + dates.string(from: state.operation.editedAt))
                     for alternative in state.history where alternative.isConcurrentConflict {
-                        lines.append("  同じころに書かれた内容：" + value(alternative.operation.value) + "（" + alternative.operation.author.displayName + "）")
+                        lines.append("  同じころに書かれた内容：" + value(alternative.operation.value, field: field) + "（" + alternative.operation.author.displayName + "）")
                     }
                 }
             }

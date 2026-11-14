@@ -110,7 +110,7 @@ struct CatPhotoRecognitionHistogram: Equatable, Sendable {
         guard let value else { return 0 }
         if value < 0.3 { return 1 }
         if value < 0.5 { return 2 }
-        if value < 0.7 { return 3 }
+        if value < AppSettings.confidentCatThreshold { return 3 }
         return 4
     }
 
@@ -177,9 +177,45 @@ struct CatPhotoCoverageLibraryFacts: Equatable, Sendable {
 
     static let storedConfidenceLabels = ["none", "0.5-0.7", ">=0.7"]
 
+    /// 11/14: band 1 is たぶん猫 and band 2 確かな猫 by the stored confidence
+    /// alone (CatPickTier, the same line the app's own picks use).
     static func storedConfidenceBand(_ record: AssetRecord) -> Int {
         guard record.isCatCandidate else { return 0 }
-        return record.cat.confidence < 0.7 ? 1 : 2
+        return record.cat.isConfidentCat ? 2 : 1
+    }
+
+    /// 11/14: records the next normal scan still has to open again, by reason
+    /// (`rescanPendingLabels`). The first four are not on the current line yet
+    /// (screenshots and bursts only get a new stamp, no image); "failed" and
+    /// "cat traits" are opened again on every pass by design.
+    var rescanPending = [0, 0, 0, 0, 0, 0]
+
+    static let rescanPendingLabels = [
+        "no cat at older line", "cat at older line", "iCloud or failed at older line",
+        "screenshot or burst at older line", "failed, every pass", "cat traits pending",
+    ]
+
+    /// Index into `rescanPending`, nil = reused as it is. The same stamp rule
+    /// as the scanner's reuse check (edited photos are not visible here).
+    static func rescanPendingReason(_ record: AssetRecord, settings: AppSettings) -> Int? {
+        let onCurrentLine = record.migratedToAreaIndependentDetection(settings: settings)
+            .migratedToLowerConfidenceThreshold(settings: settings)
+            .analysisFingerprint == settings.analysisFingerprint
+        if !onCurrentLine {
+            switch record.analysisStatus {
+            case .noCat: return 0
+            case .excludedScreenshot, .excludedBurstDuplicate: return 3
+            case .detected where record.isCatCandidate: return 1
+            default: return 2
+            }
+        }
+        if record.analysisStatus == .failed { return 4 }
+        if record.isCatCandidate,
+           record.albumAnalysisVersion != CatAlbumTraits.currentAnalysisVersion
+               || record.albumTraits?.analysisVersion != CatAlbumTraits.currentAnalysisVersion {
+            return 5
+        }
+        return nil
     }
 }
 
@@ -279,6 +315,7 @@ enum CatPhotoCoverageCore {
         let bands = CatPhotoCoverageLibraryFacts.storedConfidenceLabels
         lines.append("stored best cat, in linked albums: " + zip(bands, library.storedConfidenceLinked).map { "\($0) \($1)" }.joined(separator: ", "))
         lines.append("stored best cat, elsewhere: " + zip(bands, library.storedConfidenceElsewhere).map { "\($0) \($1)" }.joined(separator: ", "))
+        lines.append("rescan pending \(library.rescanPending.reduce(0, +)): " + zip(CatPhotoCoverageLibraryFacts.rescanPendingLabels, library.rescanPending).map { "\($0) \($1)" }.joined(separator: ", "))
         lines.append("linked albums: cats \(facts.catsWithAlbum), photos \(facts.linkedPhotos) (deduplicated), in 2+ albums \(facts.linkedInSeveralAlbums)")
         lines.append("")
         lines.append("each linked photo in exactly one bucket")
@@ -400,8 +437,14 @@ enum CatPhotoCoverageRunner {
         library.records = snapshot.assets.count
         library.scannedAssets = snapshot.scanState.scannedAssets
         library.totalAssets = snapshot.scanState.totalAssets
+        let scanSettings = snapshot.settings.normalized()
         for record in snapshot.assets {
             library.statusCounts[CatPhotoCoverageCore.statusIndex(CatPhotoCoverageRecordStatus(record))] += 1
+            // Only photos the scan still fetches; it drops or keeps the rest dormant.
+            if scanIdentifiers.contains(record.localIdentifier),
+               let reason = CatPhotoCoverageLibraryFacts.rescanPendingReason(record, settings: scanSettings) {
+                library.rescanPending[reason] += 1
+            }
             let band = CatPhotoCoverageLibraryFacts.storedConfidenceBand(record)
             if ownerCount[record.localIdentifier] != nil {
                 library.storedConfidenceLinked[band] += 1

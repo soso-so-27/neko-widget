@@ -89,8 +89,14 @@ enum GroupWindowPresentation {
             return "まどを読み込めませんでした。もう一度お試しください。"
         case .idempotencyConflict:
             return "うまくいきませんでした。画面を開き直して、もう一度お試しください。"
+        case .dailyLimit:
+            return dailyPhotoLimitMessage
         }
     }
+
+    /// 11/14: the server's daily limits, said instead of a failure.
+    static let dailyPhotoLimitMessage = "きょうはここまでです。あした、また届けられます。"
+    static let dailyHeartLimitMessage = "きょうのハートはここまでです。"
 
     /// The team paused new invitations and new people joining. Windows in use
     /// carry on; nobody is told why, and nothing is lost.
@@ -1042,7 +1048,7 @@ struct GroupWindowRenameSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("例：実家のまど", text: $name)
+                    TextField("例：実家のまど", text: VisibleTextInput.binding($name))
                         .focused($typing)
                         .disabled(model.isWorking)
                         .accessibilityIdentifier("group-window-rename-field")
@@ -1345,7 +1351,7 @@ struct GroupJoinView: View {
 
     private var applySection: some View {
         Section {
-            TextField("まどでの名前（例：お父さん）", text: $model.displayName)
+            TextField("まどでの名前（例：お父さん）", text: VisibleTextInput.binding($model.displayName))
                 .focused($typingName)
                 .disabled(model.isWorking)
                 .accessibilityIdentifier("group-join-name")

@@ -474,8 +474,11 @@ enum ShowcaseRecommender {
 
     static func identifiers(from candidates: [PhotoPresentation],
                             excluding excluded: Set<String>) async -> [String] {
+        // 11/14: the app chooses these, so 確かな猫 come first (CatPickTier);
+        // たぶん猫 fill only places the sure photos cannot.
         let seeds = candidates.filter { !excluded.contains($0.localIdentifier) }
             .sorted { first, second in
+                if first.isConfidentCat != second.isConfidentCat { return first.isConfidentCat }
                 if first.isLiked != second.isLiked { return first.isLiked }
                 if first.isPhotoLibraryFavorite != second.isPhotoLibraryFavorite {
                     return first.isPhotoLibraryFavorite
@@ -512,6 +515,9 @@ enum ShowcaseRecommender {
             await Task.yield()
         }
         let ordered = ranked.sorted { first, second in
+            if first.photo.isConfidentCat != second.photo.isConfidentCat {
+                return first.photo.isConfidentCat
+            }
             if first.photo.isLiked != second.photo.isLiked { return first.photo.isLiked }
             if first.photo.isPhotoLibraryFavorite != second.photo.isPhotoLibraryFavorite {
                 return first.photo.isPhotoLibraryFavorite
@@ -530,24 +536,29 @@ enum ShowcaseRecommender {
             return first.photo.localIdentifier < second.photo.localIdentifier
         }
         var selected = [Ranked]()
-        var remaining = [Ranked]()
         // First pass spreads the presentation across days; second pass fills
-        // from other eligible photos if the library is small.
-        for item in ordered {
-            let sameDay = selected.filter { first in
-                guard let a = first.photo.creationDate, let b = item.photo.creationDate else {
-                    return false
+        // from other eligible photos if the library is small. 11/14: both
+        // passes run for 確かな猫 before たぶん猫 are considered at all.
+        let tiers = [ordered.filter(\.photo.isConfidentCat),
+                     ordered.filter { !$0.photo.isConfidentCat }]
+        for tier in tiers {
+            var remaining = [Ranked]()
+            for item in tier {
+                let sameDay = selected.filter { first in
+                    guard let a = first.photo.creationDate, let b = item.photo.creationDate else {
+                        return false
+                    }
+                    return Calendar.current.isDate(a, inSameDayAs: b)
+                }.count
+                if sameDay >= 2 || selected.contains(where: { similar($0, item) }) {
+                    remaining.append(item)
+                } else if selected.count < ShowcasePhotoStore.maximumCount {
+                    selected.append(item)
                 }
-                return Calendar.current.isDate(a, inSameDayAs: b)
-            }.count
-            if sameDay >= 2 || selected.contains(where: { similar($0, item) }) {
-                remaining.append(item)
-            } else if selected.count < ShowcasePhotoStore.maximumCount {
-                selected.append(item)
             }
-        }
-        for item in remaining where selected.count < ShowcasePhotoStore.maximumCount {
-            if !selected.contains(where: { similar($0, item) }) { selected.append(item) }
+            for item in remaining where selected.count < ShowcasePhotoStore.maximumCount {
+                if !selected.contains(where: { similar($0, item) }) { selected.append(item) }
+            }
         }
         let selectedIDs = Set(selected.map { $0.photo.localIdentifier })
         return selected.map { $0.photo.localIdentifier }

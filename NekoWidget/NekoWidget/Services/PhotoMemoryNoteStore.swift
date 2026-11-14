@@ -325,6 +325,8 @@ enum PhotoMemoryNoteStoreError: Error, LocalizedError, Equatable {
     case unsupportedSchema(Int)
     case corruptedState
     case storageUnavailable
+    /// 11/14: a new memo past `PhotoMemoryNoteStore.maximumNotes`.
+    case limitReached
 
     var errorDescription: String? {
         switch self {
@@ -342,6 +344,8 @@ enum PhotoMemoryNoteStoreError: Error, LocalizedError, Equatable {
             "メモを読み込めませんでした。書いたメモは消えていません。"
         case .storageUnavailable:
             "メモを読み込んだり保存したりできませんでした。もう一度お試しください。"
+        case .limitReached:
+            "写真のメモは3,000件までです。" // maximumNotes
         }
     }
 }
@@ -358,6 +362,10 @@ actor PhotoMemoryNoteStore {
     static let shared = PhotoMemoryNoteStore()
 #endif
     nonisolated static let maximumCharacters = 500
+    /// 11/14: every memo is one JSON file read whole, so new memos stop at
+    /// 3,000. Only adding stops: a file with more still opens and each memo
+    /// in it can be changed or deleted. The file format is unchanged.
+    nonisolated static let maximumNotes = 3_000
 
     private struct Header: Decodable {
         let schemaVersion: Int
@@ -397,6 +405,13 @@ actor PhotoMemoryNoteStore {
         Self.commitLock.lock()
         defer { Self.commitLock.unlock() }
         return try load(from: resolvedFileURL()).notes[identifier]
+    }
+
+    /// True when a memo for a photo without one cannot be added (11/14).
+    func isFull() throws -> Bool {
+        Self.commitLock.lock()
+        defer { Self.commitLock.unlock() }
+        return try load(from: resolvedFileURL()).notes.count >= Self.maximumNotes
     }
 
     func photoURL(for id: UUID) throws -> URL? {
@@ -630,6 +645,7 @@ actor PhotoMemoryNoteStore {
         // Same text with newly available context is still a real mutation.
         if existing?.text == text, existing?.context == preservedContext, existing?.weight == weight { return existing }
         if existing == nil, text.isEmpty, weight == nil { return nil }
+        if existing == nil, state.notes.count >= Self.maximumNotes { throw PhotoMemoryNoteStoreError.limitReached }
 
         let now = Date()
         var note = text.isEmpty && weight == nil ? nil : PhotoMemoryNote(

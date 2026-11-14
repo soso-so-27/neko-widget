@@ -49,7 +49,7 @@ final class FamilyNotebookPrototype: ObservableObject {
 
     /// The items of 「この子のこと」 that go back and forth one by one.
     static let catFields: [FamilyNotebookField] = [
-        .name, .sex, .neutered, .indoorOnly, .birthday, .coat, .marks, .microchip,
+        .name, .sex, .neutered, .indoorOnly, .birthday, .adoptionDay, .coat, .marks, .microchip,
         .conditions, .allergyStatus, .allergyText, .specialDiet, .water, .litter, .temperament,
         .vetName, .vetPhone, .vetNote]
 
@@ -353,7 +353,18 @@ final class FamilyNotebookPrototype: ObservableObject {
             guard let previous = then.entries.first(where: { $0.target == entry.target }) else { return true }
             return previous.value != entry.value
         }
-        try store.applyLocalChanges(.init(familyID: snapshot.familyID, entries: entries, mappings: now.mappings), author: writer())
+        let initialAdoption = entries.filter { entry in
+            guard entry.target.field == .adoptionDay,
+                  let mapping = snapshot.activeMappings.first(where: { $0.familyCatID == entry.target.familyCatID && $0.recordID == nil }),
+                  let local = mapping.toolCatID,
+                  let stamp = after.cats.first(where: { $0.catID == local })?.adoptionDay else { return false }
+            return stamp.editedBy == "import:Profile"
+        }
+        if !initialAdoption.isEmpty {
+            try store.applyImport(.init(familyID: snapshot.familyID, entries: initialAdoption, mappings: now.mappings), author: writer())
+        }
+        let initialTargets = Set(initialAdoption.map(\.target))
+        try store.applyLocalChanges(.init(familyID: snapshot.familyID, entries: entries.filter { !initialTargets.contains($0.target) }, mappings: now.mappings), author: writer())
         reload()
     }
 
@@ -431,6 +442,11 @@ final class FamilyNotebookPrototype: ObservableObject {
         case .sex: record.sex = stamp(CatCareSex(rawValue: text) ?? .unknown)
         case .neutered: record.neutered = stamp(CatCareTriState(rawValue: text) ?? .unknown)
         case .indoorOnly: record.indoorOnly = stamp(CatCareTriState(rawValue: text) ?? .unknown)
+        case .adoptionDay:
+            if value == .clear { record.adoptionDay = stamp(nil) }
+            else if let date = try? FamilyNotebookAdoptionDate.decode(value), let day = CatCareDay(isoDay: date.day) {
+                record.adoptionDay = stamp(.init(day: day, isApproximate: date.isApproximate))
+            }
         case .birthday:
             var day: CatCareDay?
             if case let .day(written) = value {
@@ -1592,7 +1608,7 @@ struct FamilyNotebookJoinView: View {
                         .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 } else {
                     if sharing.service.sendsInvitations {
-                        TextField("家族に表示するあなたの名前", text: $displayName)
+                        TextField("家族に表示するあなたの名前", text: VisibleTextInput.binding($displayName))
                             .textFieldStyle(.roundedBorder)
                             .focused($typingName)
                             .disabled(sharing.isWorking)
@@ -1655,7 +1671,7 @@ struct FamilyNotebookNameView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("あなたの名前", text: $name)
+                    TextField("あなたの名前", text: VisibleTextInput.binding($name))
                 } footer: { Text("書いた人の名前として、家族に表示されます。") }
                 Button("この名前で手帳を作る") {
                     guard let valid = try? GroupWire.name(name) else { return }
@@ -1927,6 +1943,7 @@ enum FamilyNotebookWords {
         case .neutered: "去勢・避妊"
         case .indoorOnly: "室内飼い"
         case .birthday: "誕生日"
+        case .adoptionDay: "迎えた日"
         case .coat: "毛色・柄"
         case .marks: "見分ける特徴"
         case .microchip: "マイクロチップ"
@@ -1993,6 +2010,9 @@ enum FamilyNotebookWords {
 
     /// What a value reads as, or nil when nothing is written.
     static func text(_ value: FamilyNotebookValue?, _ field: FamilyNotebookField) -> String? {
+        if field == .adoptionDay, let value, let date = try? FamilyNotebookAdoptionDate.decode(value) {
+            return date.day + (date.isApproximate ? "ごろ" : "")
+        }
         switch value {
         case let .text(text)?:
             if let choices = choices(field) {

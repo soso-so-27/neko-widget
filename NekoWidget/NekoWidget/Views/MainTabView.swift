@@ -2896,10 +2896,14 @@ struct MainTabView: View {
         let service = SeasonalMovieCandidateService()
         let photoCandidates = await service.photoCandidates(albumEligibleCatPhotos, in: quarter)
         guard !Task.isCancelled else { return }
+        // 11/14: たぶん猫 photos join a movie only when 確かな猫 are not enough.
+        let probableCatIdentifiers = Set(albumEligibleCatPhotos.lazy
+            .filter { !$0.isConfidentCat }.map(\.localIdentifier))
         var archiveDraft: SeasonalMovieArchiveDraft?
         if case let .ready(photoPresentation) = builder.buildMostRecent(
             from: photoCandidates,
-            through: now
+            through: now,
+            probableCatIdentifiers: probableCatIdentifiers
         ) {
             archiveDraft = await seasonalMovieArchive.recordDraft(
                 photoPresentation
@@ -2918,7 +2922,8 @@ struct MainTabView: View {
         guard !Task.isCancelled else { return }
         if case let .ready(richerPresentation) = builder.buildMostRecent(
             from: photoCandidates + videoBatch.candidates,
-            through: now
+            through: now,
+            probableCatIdentifiers: probableCatIdentifiers
         ) {
             if let archiveDraft {
                 seasonalMovie = await seasonalMovieArchive.finalizeDraft(
