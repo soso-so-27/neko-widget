@@ -45,8 +45,9 @@ final class CatHomeCareTests: XCTestCase {
                        Core.Value(text: "7月10日（あと7日）", tone: .soon))
         XCTAssertEqual(Core.birthday(birthday, today: day(2026, 7, 10)), Core.Value(text: "きょう", tone: .soon))
         // The day after: a year (365 days) to go.
-        XCTAssertEqual(Core.birthday(birthday, today: day(2026, 7, 11)).text, "7月10日（あと364日）")
-        XCTAssertEqual(Core.birthday(nil, today: day(2026, 7, 11)), Core.Value(text: "未設定", tone: .quiet))
+        XCTAssertEqual(Core.birthday(birthday, today: day(2026, 7, 11))?.text, "7月10日（あと364日）")
+        // No birthday: no row (never 未設定 on the page).
+        XCTAssertNil(Core.birthday(nil, today: day(2026, 7, 11)))
     }
 
     func testBirthdayAcrossTheYearEnd() {
@@ -57,9 +58,9 @@ final class CatHomeCareTests: XCTestCase {
     func testFebruary29BirthdayIsMarch1InOtherYears() {
         let leap = day(2020, 2, 29)
         XCTAssertEqual(Core.birthday(leap, today: day(2027, 3, 1)), Core.Value(text: "きょう", tone: .soon))
-        XCTAssertEqual(Core.birthday(leap, today: day(2027, 2, 28)).text, "2月29日（あと1日）")
+        XCTAssertEqual(Core.birthday(leap, today: day(2027, 2, 28))?.text, "2月29日（あと1日）")
         XCTAssertEqual(Core.birthday(leap, today: day(2028, 2, 29)), Core.Value(text: "きょう", tone: .soon))
-        XCTAssertEqual(Core.birthday(leap, today: day(2028, 3, 1)).text, "2月29日（あと365日）")
+        XCTAssertEqual(Core.birthday(leap, today: day(2028, 3, 1))?.text, "2月29日（あと365日）")
     }
 
     // MARK: ワクチン
@@ -89,11 +90,11 @@ final class CatHomeCareTests: XCTestCase {
         XCTAssertEqual(Core.vaccination(items, today: day(2026, 11, 13)), Core.Value(text: "前回 4月2日", tone: .quiet))
         // Never a worked-out next day: a vaccination a year ago stays 「前回」.
         let old = [vaccination(given: day(2025, 11, 13), next: nil)]
-        XCTAssertEqual(Core.vaccination(old, today: day(2026, 11, 13)).text, "前回 2025年11月13日")
-        XCTAssertEqual(Core.vaccination([], today: day(2026, 11, 13)), Core.Value(text: "未記入", tone: .quiet))
-        // Only a day given in the future is no 「前回」.
-        XCTAssertEqual(Core.vaccination([vaccination(given: day(2026, 12, 1), next: nil)], today: day(2026, 11, 13)).text,
-                       "未記入")
+        XCTAssertEqual(Core.vaccination(old, today: day(2026, 11, 13))?.text, "前回 2025年11月13日")
+        // Nothing recorded: no row (never 未記入 on the page).
+        XCTAssertNil(Core.vaccination([], today: day(2026, 11, 13)))
+        // Only a day given in the future is no 「前回」, so no row either.
+        XCTAssertNil(Core.vaccination([vaccination(given: day(2026, 12, 1), next: nil)], today: day(2026, 11, 13)))
     }
 
     // MARK: 病院
@@ -103,16 +104,16 @@ final class CatHomeCareTests: XCTestCase {
                      Core.VetMemo(completedAt: date(2026, 11, 1), hasContent: true, nextVisit: day(2026, 12, 10))]
         XCTAssertEqual(Core.vet(memos, today: day(2026, 11, 13), calendar: calendar()),
                        Core.Value(text: "書きかけ", tone: .unfinished))
-        // An empty open memo says nothing.
+        // An empty open memo says nothing: no row.
         let empty = [Core.VetMemo(completedAt: nil, hasContent: false, nextVisit: nil)]
-        XCTAssertEqual(Core.vet(empty, today: day(2026, 11, 13), calendar: calendar()), Core.Value(text: "なし", tone: .quiet))
+        XCTAssertNil(Core.vet(empty, today: day(2026, 11, 13), calendar: calendar()))
     }
 
     func testVetNextVisitDayWithinSevenDaysAndOnTheDay() {
         let memos = [Core.VetMemo(completedAt: date(2026, 11, 11), hasContent: true, nextVisit: day(2026, 12, 10))]
         let today = day(2026, 11, 13)
         XCTAssertEqual(Core.vet(memos, today: today, calendar: calendar()), Core.Value(text: "次は 12月10日", tone: .quiet))
-        XCTAssertEqual(Core.vet(memos, today: day(2026, 12, 2), calendar: calendar()).tone, .quiet)
+        XCTAssertEqual(Core.vet(memos, today: day(2026, 12, 2), calendar: calendar())?.tone, .quiet)
         XCTAssertEqual(Core.vet(memos, today: day(2026, 12, 3), calendar: calendar()),
                        Core.Value(text: "次は 12月10日", tone: .soon))
         XCTAssertEqual(Core.vet(memos, today: day(2026, 12, 10), calendar: calendar()), Core.Value(text: "きょう", tone: .soon))
@@ -120,19 +121,20 @@ final class CatHomeCareTests: XCTestCase {
         XCTAssertEqual(Core.vet(memos, today: day(2026, 12, 11), calendar: calendar()),
                        Core.Value(text: "前回 11月11日", tone: .quiet))
         let nextYear = [Core.VetMemo(completedAt: date(2026, 11, 11), hasContent: true, nextVisit: day(2027, 2, 1))]
-        XCTAssertEqual(Core.vet(nextYear, today: today, calendar: calendar()).text, "次は 2027年2月1日")
+        XCTAssertEqual(Core.vet(nextYear, today: today, calendar: calendar())?.text, "次は 2027年2月1日")
     }
 
     func testVetLastFinishedMemoAndNothing() {
         let memos = [Core.VetMemo(completedAt: date(2025, 6, 3), hasContent: true, nextVisit: nil),
                      Core.VetMemo(completedAt: date(2026, 9, 20), hasContent: true, nextVisit: nil)]
         XCTAssertEqual(Core.vet(memos, today: day(2026, 11, 13), calendar: calendar()), Core.Value(text: "前回 9月20日"))
-        XCTAssertEqual(Core.vet([], today: day(2026, 11, 13), calendar: calendar()), Core.Value(text: "なし"))
+        // No memo: no row (never なし on the page).
+        XCTAssertNil(Core.vet([], today: day(2026, 11, 13), calendar: calendar()))
         // The finished day is the iPhone's day: 23:30 in Tokyo is still 9/20.
         let late = [Core.VetMemo(completedAt: date(2026, 9, 20, hour: 23), hasContent: true, nextVisit: nil)]
-        XCTAssertEqual(Core.vet(late, today: day(2026, 11, 13), calendar: calendar()).text, "前回 9月20日")
-        XCTAssertEqual(Core.vet(late, today: day(2026, 11, 13), calendar: calendar("UTC")).text, "前回 9月20日")
-        XCTAssertEqual(Core.vet(late, today: day(2026, 11, 13), calendar: calendar("Pacific/Auckland")).text, "前回 9月21日")
+        XCTAssertEqual(Core.vet(late, today: day(2026, 11, 13), calendar: calendar())?.text, "前回 9月20日")
+        XCTAssertEqual(Core.vet(late, today: day(2026, 11, 13), calendar: calendar("UTC"))?.text, "前回 9月20日")
+        XCTAssertEqual(Core.vet(late, today: day(2026, 11, 13), calendar: calendar("Pacific/Auckland"))?.text, "前回 9月21日")
     }
 
     func testVetMemoFromAVisitUsesTheSameContentTest() {
@@ -154,12 +156,13 @@ final class CatHomeCareTests: XCTestCase {
         let items = [weight(5_400, day(2026, 9, 1)), weight(5_500, day(2026, 10, 21)),
                      weight(5_600, day(2026, 10, 25), deleted: true)]
         XCTAssertEqual(Core.weight(items, today: day(2026, 11, 13)), Core.Value(text: "5.50kg（10月21日）"))
-        XCTAssertEqual(Core.weight(items, today: day(2027, 1, 2)).text, "5.50kg（2026年10月21日）")
+        XCTAssertEqual(Core.weight(items, today: day(2027, 1, 2))?.text, "5.50kg（2026年10月21日）")
         // Two on one day: the one written last.
         let same = [weight(4_000, day(2026, 10, 21), edited: 10), weight(4_100, day(2026, 10, 21), edited: 20)]
-        XCTAssertEqual(Core.weight(same, today: day(2026, 11, 13)).text, "4.10kg（10月21日）")
-        XCTAssertEqual(Core.weight([weight(850, day(2026, 11, 1))], today: day(2026, 11, 13)).text, "850g（11月1日）")
-        XCTAssertEqual(Core.weight([], today: day(2026, 11, 13)), Core.Value(text: "未記入"))
+        XCTAssertEqual(Core.weight(same, today: day(2026, 11, 13))?.text, "4.10kg（10月21日）")
+        XCTAssertEqual(Core.weight([weight(850, day(2026, 11, 1))], today: day(2026, 11, 13))?.text, "850g（11月1日）")
+        // No weight: no row (never 未記入 on the page).
+        XCTAssertNil(Core.weight([], today: day(2026, 11, 13)))
     }
 
     // MARK: The hero's line
@@ -221,22 +224,31 @@ final class CatHomeCareTests: XCTestCase {
     func testRowsForEachKindOfCat() {
         let id = UUID()
         let now = date(2026, 11, 13)
-        let profileRows = CatHomeCareRows.make(hasProfile: true, record: nil, birthday: nil, vetMemos: [],
-                                               now: now, calendar: calendar())
-        XCTAssertEqual(profileRows?.birthday?.text, "未設定")
-        XCTAssertEqual(profileRows?.vaccination?.text, "未記入")
-        XCTAssertEqual(profileRows?.vet?.text, "なし")
-        XCTAssertEqual(profileRows?.weight?.text, "未記入")
-        // A cat known only from the tools: just its vet memos, else no card.
+        // 11/14: only rows with something written. A profile with nothing
+        // written has no rows (its card is 「この子のこと」 alone).
+        XCTAssertNil(CatHomeCareRows.make(hasProfile: true, record: nil, birthday: nil, vetMemos: [],
+                                          now: now, calendar: calendar()))
+        let birthdayOnly = CatHomeCareRows.make(hasProfile: true, record: nil, birthday: day(2021, 7, 10), vetMemos: [],
+                                                now: now, calendar: calendar())
+        XCTAssertEqual(birthdayOnly?.birthday?.text, "7月10日（あと239日）")
+        XCTAssertNil(birthdayOnly?.vaccination)
+        XCTAssertNil(birthdayOnly?.vet)
+        XCTAssertNil(birthdayOnly?.weight)
+        // A cat known only from the tools: just its vet memos, else no rows.
         XCTAssertNil(CatHomeCareRows.make(hasProfile: false, record: nil, birthday: nil, vetMemos: [],
                                           now: now, calendar: calendar()))
         let toolOnly = CatHomeCareRows.make(hasProfile: false, record: nil, birthday: nil,
                                             vetMemos: [.init(completedAt: nil, hasContent: true, nextVisit: nil)],
                                             now: now, calendar: calendar())
         XCTAssertEqual(toolOnly, CatHomeCareRows(vet: Core.Value(text: "書きかけ", tone: .unfinished)))
-        // A family cat with its shared record: all four.
-        XCTAssertNotNil(CatHomeCareRows.make(hasProfile: false, record: CatCareRecord(catID: id), birthday: nil,
-                                             vetMemos: [], now: now, calendar: calendar())?.weight)
+        // A family cat with its shared record: the rows its record has.
+        XCTAssertNil(CatHomeCareRows.make(hasProfile: false, record: CatCareRecord(catID: id), birthday: nil,
+                                          vetMemos: [], now: now, calendar: calendar()))
+        var record = CatCareRecord(catID: id)
+        record.weights = [weight(5_500, day(2026, 10, 21))]
+        let family = CatHomeCareRows.make(hasProfile: false, record: record, birthday: nil, vetMemos: [],
+                                          now: now, calendar: calendar())
+        XCTAssertEqual(family, CatHomeCareRows(weight: Core.Value(text: "5.50kg（10月21日）")))
     }
 
     func testDayArithmeticIgnoresClockChanges() {

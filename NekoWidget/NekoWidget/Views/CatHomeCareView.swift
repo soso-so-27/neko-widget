@@ -2,35 +2,40 @@ import SwiftUI
 
 // MARK: - 「この子」 page: 「これからのこと」 (11/14, 「猫を大切にできるページ」)
 //
-// One card under the buttons, four rows always in this order: 誕生日,
-// ワクチン, 病院, 体重. Settings-style rows (the name, the value at the side,
-// a chevron), no icons and no colours but the one orange 「書きかけ」. Every
+// One card under the buttons: 誕生日, ワクチン, 病院, 体重 in this order,
+// each only when something is written for it (11/14: never 未設定・未記入・
+// なし on this page). Settings-style rows (the name, the value at the side,
+// a chevron), no icons and no colours but the one orange 「書きかけ」, then
+// 「この子のこと」 as the last row (11/14: was a box of its own). Every
 // value is read from what is already in memory (この子のこと and the vet
 // memos CatHomeToolStates reads after drawing); the words and boundaries are
 // in CatHomeCareCore.swift. Each row opens where that thing is written.
 
-/// The four values of a cat's card; a row is nil when it cannot be shown.
+/// The four values of a cat's card; a row is nil when nothing is written
+/// for it, and is then left out.
 struct CatHomeCareRows: Equatable {
     var birthday: CatHomeCareCore.Value?
     var vaccination: CatHomeCareCore.Value?
     var vet: CatHomeCareCore.Value?
     var weight: CatHomeCareCore.Value?
 
-    /// All four for a cat with a profile or a 「この子のこと」; a cat known
-    /// only from the tools has just its vet memos, and no card without them.
+    /// The rows with something written, for a cat with a profile or a
+    /// 「この子のこと」; a cat known only from the tools has just its vet
+    /// memos. nil when no row has anything (the card is 「この子のこと」 alone).
     static func make(hasProfile: Bool, record: CatCareRecord?, birthday: CatCareDay?,
                      vetMemos: [CatHomeCareCore.VetMemo], now: Date = Date(),
                      calendar: Calendar = .nekoGregorian) -> CatHomeCareRows? {
         guard let today = CatCareDay(date: now, calendar: calendar) else { return nil }
         let vet = CatHomeCareCore.vet(vetMemos, today: today, calendar: calendar)
         guard hasProfile || record != nil else {
-            return vetMemos.isEmpty ? nil : CatHomeCareRows(vet: vet)
+            return vet.map { CatHomeCareRows(vet: $0) }
         }
-        return CatHomeCareRows(
+        let rows = CatHomeCareRows(
             birthday: CatHomeCareCore.birthday(birthday, today: today),
             vaccination: CatHomeCareCore.vaccination(record?.vaccinations ?? [], today: today),
             vet: vet,
             weight: CatHomeCareCore.weight(record?.weights ?? [], today: today))
+        return rows == CatHomeCareRows() ? nil : rows
     }
 }
 
@@ -44,30 +49,35 @@ struct CatHomeCareLinks {
     let saveLifeDates: (String, CatProfileLifeDatesPresentation) async -> Bool
 }
 
-/// 「これからのこと」: the heading, then the card of rows.
+/// The care card: the rows with something written, then 「この子のこと」;
+/// no heading.
 struct CatHomeCareCard: View {
-    let rows: CatHomeCareRows
+    /// nil: a departed cat, or nothing written for any of the four; the card
+    /// is then 「この子のこと」 alone.
+    let rows: CatHomeCareRows?
     let links: CatHomeCareLinks
     @State private var editsDates = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("これからのこと")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .accessibilityAddTraits(.isHeader)
-                .padding(.leading, 4)
-            VStack(spacing: 0) {
-                let shown = entries
-                ForEach(Array(shown.enumerated()), id: \.element.id) { index, entry in
-                    if index > 0 { Divider().padding(.leading, 16) }
-                    link(entry)
-                        .accessibilityIdentifier("cat-home-care-" + entry.id)
-                }
+        // No heading (11/14): with real data most rows read 「前回…」, so
+        // 「これからのこと」 said something the card did not.
+        VStack(spacing: 0) {
+            let shown = entries
+            ForEach(Array(shown.enumerated()), id: \.element.id) { index, entry in
+                if index > 0 { Divider().padding(.leading, 16) }
+                link(entry)
+                    .accessibilityIdentifier("cat-home-care-" + entry.id)
             }
-            .background(Color(.secondarySystemGroupedBackground),
-                        in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            // 11/14: the last row, the same row as the others (was a box of
+            // its own under the card); it opens the cat's page, as before.
+            if !shown.isEmpty { Divider().padding(.leading, 16) }
+            NavigationLink { links.carePage } label: { CatHomeCareRow(title: "この子のこと", value: nil) }
+                .buttonStyle(CatHomeCarePressStyle())
+                .accessibilityIdentifier(links.cat.profile != nil ? "tools-cat-\(links.cat.id)"
+                                                                   : "tools-family-cat-\(links.cat.id)")
         }
+        .background(Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("cat-home-care")
         .sheet(isPresented: $editsDates) {
@@ -83,8 +93,10 @@ struct CatHomeCareCard: View {
         let value: CatHomeCareCore.Value
     }
 
-    /// Always 誕生日, ワクチン, 病院, 体重, leaving out only a row that is nil.
+    /// 誕生日, ワクチン, 病院, 体重 in this order, leaving out a row with
+    /// nothing written (nil).
     private var entries: [Entry] {
+        guard let rows else { return [] }
         var result: [Entry] = []
         if let value = rows.birthday { result.append(Entry(id: "birthday", title: "誕生日", value: value)) }
         if let value = rows.vaccination { result.append(Entry(id: "vaccine", title: "ワクチン", value: value)) }
@@ -124,10 +136,11 @@ struct CatHomeCareCard: View {
 }
 
 /// A row like 設定's: the name, the value at the side, a chevron. At the
-/// accessibility sizes the value goes under the name.
+/// accessibility sizes the value goes under the name. No value: the name
+/// and the chevron only (「この子のこと」).
 private struct CatHomeCareRow: View {
     let title: String
-    let value: CatHomeCareCore.Value
+    let value: CatHomeCareCore.Value?
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
@@ -140,12 +153,14 @@ private struct CatHomeCareRow: View {
                     .font(.body)
                     .foregroundStyle(Color.primary)
                 if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
-                Text(value.text)
-                    .font(.body)
-                    .foregroundStyle(color)
-                    .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
-                    .minimumScaleFactor(0.8)
-                    .multilineTextAlignment(typeSize.isAccessibilitySize ? .leading : .trailing)
+                if let value {
+                    Text(value.text)
+                        .font(.body)
+                        .foregroundStyle(color(value.tone))
+                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+                        .minimumScaleFactor(0.8)
+                        .multilineTextAlignment(typeSize.isAccessibilitySize ? .leading : .trailing)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             ToolChevron()
@@ -155,11 +170,11 @@ private struct CatHomeCareRow: View {
         .frame(minHeight: 44)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title)、\(value.text)")
+        .accessibilityLabel(value.map { "\(title)、\($0.text)" } ?? title)
     }
 
-    private var color: Color {
-        switch value.tone {
+    private func color(_ tone: CatHomeCareCore.Tone) -> Color {
+        switch tone {
         case .quiet: Color.secondary
         case .soon: Color.primary
         case .unfinished: Color.orange

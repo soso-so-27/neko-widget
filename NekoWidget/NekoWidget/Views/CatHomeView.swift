@@ -3,8 +3,9 @@ import SwiftUI
 
 // MARK: - The 「この子」 tab (11/12, 案D 「写真が主役」)
 //
-// One page per cat: the cat's key photo across the top with its name, a
-// row of round buttons for the five tools, then 「この子のこと」. With two
+// One page per cat: the cat's key photo across the top with its name (the
+// cat menu), a row of round buttons for the five tools, then one card ending
+// in 「この子のこと」. With two
 // or more cats the pages sit side by side; the chosen cat is remembered and
 // is the cat the tools open for. Built apart from MainTabView so its body
 // stays small for the type checker.
@@ -251,7 +252,7 @@ struct CatHomeView: View {
                 if let current {
                     pager(cats, current: current, metrics: metrics)
                 } else {
-                    CatHomeNoCatPage(metrics: metrics, tools: tools, topBar: AnyView(topBar(cats, current: nil))) {
+                    CatHomeNoCatPage(metrics: metrics, tools: tools, topBar: AnyView(topBar)) {
                         addsCat = true
                     }
                 }
@@ -259,8 +260,9 @@ struct CatHomeView: View {
             .ignoresSafeArea(.container, edges: .top)
         }
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
-        // 11/13: the cat menu and 設定 are part of each page's content (on top
-        // of the photo, scrolling away with it), not pinned over the page.
+        // 11/13: 設定 is part of each page's content (on top of the photo,
+        // scrolling away with it), not pinned over the page; 11/14: the cat
+        // menu is the name on the photo.
         // No title on this page: the photo runs under the status bar.
         .toolbar(.hidden, for: .navigationBar)
         .addingCatProfile(isStarted: $addsCat, presentation: presentation, actions: actions) { identifier in
@@ -374,16 +376,16 @@ struct CatHomeView: View {
     private func page(_ cat: CatHomeCat, index: Int, cats: [CatHomeCat], metrics: CatHomeMetrics) -> CatHomePage {
         let record = self.record(for: cat)
         let facts = self.facts(for: cat, record: record)
-        let carePage = AnyView(self.carePage(cat))
         return CatHomePage(cat: cat, facts: facts, metrics: metrics,
                            pageIndex: index, pageCount: cats.count,
                            vetUnfinished: states.vetMemos(for: cat, record: record).contains(where: \.isUnfinished),
                            searching: states.searching(cat),
-                           tools: tools, carePage: carePage,
+                           tools: tools,
                            care: care(for: cat, record: record, facts: facts),
-                           careLinks: CatHomeCareLinks(cat: cat, catID: record?.catID, carePage: carePage,
+                           careLinks: CatHomeCareLinks(cat: cat, catID: record?.catID, carePage: AnyView(carePage(cat)),
                                                        saveLifeDates: actions.updateLifeDates),
-                           topBar: AnyView(topBar(cats, current: cat)))
+                           catMenu: AnyView(catMenuItems(cats, current: cat)),
+                           topBar: AnyView(topBar))
     }
 
     /// The page 「この子のこと」 opens: the cat's own page (CatProfileDetailView)
@@ -428,14 +430,14 @@ struct CatHomeView: View {
 
     // MARK: Over the photo
 
-    /// The cat menu (top left) and 設定 (top right), over the photo.
-    private func topBar(_ cats: [CatHomeCat], current: CatHomeCat?) -> some View {
+    /// 設定 (top right), over the photo. 11/14: no cat menu here; the name
+    /// on the photo is the cat menu (CatHomeHero), so the name shows once.
+    private var topBar: some View {
         HStack(alignment: .center) {
-            if let current { catMenu(cats, current: current) }
             Spacer(minLength: 12)
             Button(action: openSettings) {
-                // 11/13: the same material as the cat menu, so both read as
-                // live controls on any photo (a dark tint looked disabled).
+                // 11/13: a material, so it reads as a live control on any
+                // photo (a dark tint looked disabled).
                 SettingsGearIcon()
                     .font(.body.weight(.semibold))
                     .foregroundStyle(Color.primary)
@@ -452,36 +454,20 @@ struct CatHomeView: View {
         .padding(.top, 2)
     }
 
-    /// Every cat this tab knows, and 「この子を追加」. Always there, since it
+    /// The items of the cat menu (the name on the photo): every cat this tab
+    /// knows, and 「この子を追加」. Always there, even with one cat, since it
     /// is also where a cat is added.
-    private func catMenu(_ cats: [CatHomeCat], current: CatHomeCat) -> some View {
-        Menu {
-            ForEach(cats) { cat in
-                Button { show(cat.id) } label: {
-                    if cat.id == current.id { Label(cat.name, systemImage: "checkmark") } else { Text(cat.name) }
-                }
-                .accessibilityIdentifier("tools-cat-menu-\(cat.id)")
+    @ViewBuilder
+    private func catMenuItems(_ cats: [CatHomeCat], current: CatHomeCat) -> some View {
+        ForEach(cats) { cat in
+            Button { show(cat.id) } label: {
+                if cat.id == current.id { Label(cat.name, systemImage: "checkmark") } else { Text(cat.name) }
             }
-            Divider()
-            Button { addsCat = true } label: { Label("この子を追加", systemImage: "plus") }
-                .accessibilityIdentifier("tools-cat-profiles")
-        } label: {
-            HStack(spacing: 5) {
-                Text(current.name).lineLimit(1)
-                Image(systemName: "chevron.down").font(.caption.weight(.bold))
-            }
-            .font(.subheadline.weight(.bold))
-            .foregroundStyle(Color.primary)
-            .padding(.horizontal, 14)
-            .frame(minHeight: 36)
-            .background(.ultraThinMaterial, in: Capsule())
-            .frame(maxWidth: 220, alignment: .leading)
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
+            .accessibilityIdentifier("tools-cat-menu-\(cat.id)")
         }
-        .accessibilityLabel("猫を切り替える")
-        .accessibilityValue(current.name)
-        .accessibilityIdentifier("tools-cat-menu")
+        Divider()
+        Button { addsCat = true } label: { Label("この子を追加", systemImage: "plus") }
+            .accessibilityIdentifier("tools-cat-profiles")
     }
 
     private func show(_ id: String) {
@@ -505,8 +491,8 @@ struct CatHomeMetrics {
     }
 }
 
-/// One cat's page: the photo with the name, the tools, 「これからのこと」
-/// (11/14), then 「この子のこと」 as one row. Only what helps take care of
+/// One cat's page: the photo with the name, the tools, then one card: the
+/// four rows (11/14) and 「この子のこと」 last. Only what helps take care of
 /// the cat: its photos and past records live in their own tabs.
 private struct CatHomePage: View {
     let cat: CatHomeCat
@@ -517,17 +503,20 @@ private struct CatHomePage: View {
     let vetUnfinished: Bool
     let searching: Bool
     let tools: CatHomeTools
-    let carePage: AnyView
-    /// nil: a departed cat, or nothing to show for the four rows.
+    /// nil: a departed cat, or nothing to show for the four rows; the card
+    /// is then 「この子のこと」 alone.
     let care: CatHomeCareRows?
     let careLinks: CatHomeCareLinks
-    /// The cat menu and 設定, at the top of the photo; they scroll with it.
+    /// The items of the cat menu, which is the name on the photo.
+    let catMenu: AnyView
+    /// 設定, at the top of the photo; it scrolls with it.
     let topBar: AnyView
 
     var body: some View {
         ScrollView(.vertical) {
             VStack(spacing: 0) {
-                CatHomeHero(cat: cat, facts: facts, metrics: metrics, pageIndex: pageIndex, pageCount: pageCount)
+                CatHomeHero(cat: cat, facts: facts, metrics: metrics, pageIndex: pageIndex, pageCount: pageCount,
+                            menu: catMenu)
                 // 18 (was 22): the page fits one screen on a standard iPhone (11/14).
                 VStack(spacing: 18) {
                     // A cat whose farewell day is recorded is not offered in the tools.
@@ -537,8 +526,9 @@ private struct CatHomePage: View {
                         // Until 「この迷子の記録を終える」 clears the place, day and log.
                         if searching { CatHomeSearchingLine(cat: cat) }
                     }
-                    if let care { CatHomeCareCard(rows: care, links: careLinks) }
-                    CatHomeAboutCard(cat: cat, destination: carePage)
+                    // 「この子のこと」 is the card's last row (11/14), so the
+                    // card is there for every cat, departed ones too.
+                    CatHomeCareCard(rows: care, links: careLinks)
                 }
                 .padding(.horizontal, 16)
                 // Up into the photo's fade.
@@ -555,12 +545,16 @@ private struct CatHomePage: View {
 }
 
 /// The cat's key photo from the very top, its name and one line on it.
+/// 11/14: the name is the cat menu (a small chevron after it), so the name
+/// is not said twice on the page.
 private struct CatHomeHero: View {
     let cat: CatHomeCat
     let facts: CatHomeFacts
     let metrics: CatHomeMetrics
     let pageIndex: Int
     let pageCount: Int
+    /// The cat menu's items (every cat, 「この子を追加」).
+    let menu: AnyView
     @Environment(\.displayScale) private var displayScale
     @Environment(\.dynamicTypeSize) private var typeSize
     @ScaledMetric(relativeTo: .largeTitle) private var nameSize: CGFloat = 56
@@ -569,6 +563,21 @@ private struct CatHomeHero: View {
     static let fade: CGFloat = 44
 
     var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            // VoiceOver: the photo is one header read once (name, sex, age,
+            // days); the name over it is the cat menu, reached on its own.
+            photoLayer
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(facts.spoken)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("cat-home-hero")
+            words
+        }
+        .frame(width: metrics.width, height: metrics.heroHeight)
+        .clipped()
+    }
+
+    private var photoLayer: some View {
         backdrop
             .frame(width: metrics.width, height: metrics.heroHeight)
             .overlay {
@@ -584,12 +593,6 @@ private struct CatHomeHero: View {
                                startPoint: .top, endPoint: .bottom)
                     .frame(height: Self.fade)
             }
-            .overlay(alignment: .bottomLeading) { words }
-            .clipped()
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(facts.spoken)
-            .accessibilityAddTraits(.isHeader)
-            .accessibilityIdentifier("cat-home-hero")
     }
 
     @ViewBuilder private var backdrop: some View {
@@ -612,17 +615,15 @@ private struct CatHomeHero: View {
 
     private var words: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(cat.name)
-                .font(.system(size: min(nameSize, 84), weight: .heavy))
-                .foregroundStyle(.white)
-                .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
-                .minimumScaleFactor(0.5)
+            nameMenu
+            // The line and the dots are in the photo's spoken summary.
             if let line = facts.line {
                 Text(line)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.92))
                     .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                     .minimumScaleFactor(0.75)
+                    .accessibilityHidden(true)
             }
             if pageCount > 1 {
                 HStack(spacing: 6) {
@@ -633,11 +634,37 @@ private struct CatHomeHero: View {
                     }
                 }
                 .padding(.top, 4)
+                .accessibilityHidden(true)
             }
         }
         .shadow(color: .black.opacity(0.45), radius: 8, y: 1)
         .padding(.horizontal, 20)
         .padding(.bottom, Self.fade + 6)
+    }
+
+    /// The name, then a small chevron on its baseline (about 40% of the
+    /// name's cap height, which is about 0.7 of its size); together they open
+    /// the cat menu. The chevron keeps its size, so a long name gives up only
+    /// the chevron's width before it shrinks or truncates.
+    private var nameMenu: some View {
+        Menu { menu } label: {
+            HStack(alignment: .firstTextBaseline, spacing: (min(nameSize, 84) * 0.12).rounded()) {
+                Text(cat.name)
+                    .font(.system(size: min(nameSize, 84), weight: .heavy))
+                    .foregroundStyle(.white)
+                    .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
+                    .minimumScaleFactor(0.5)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: (min(nameSize, 84) * 0.28).rounded(), weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .fixedSize()
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .accessibilityLabel("猫を切り替える")
+        .accessibilityValue(cat.name)
+        .accessibilityIdentifier("tools-cat-menu")
     }
 
     /// The frame's shape, rounded so the cached image is found again.
@@ -738,7 +765,7 @@ struct CatHomeRoute: Hashable {
 }
 
 /// 「むぎを探しています」: the 迷子 state in words between the buttons and
-/// 「この子のこと」; opens the same 迷子のとき for this cat.
+/// the card; opens the same 迷子のとき for this cat.
 private struct CatHomeSearchingLine: View {
     let cat: CatHomeCat
 
@@ -825,59 +852,6 @@ private struct CatHomeToolRow: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(state.map { "\(tool.title)、\($0.text)" } ?? tool.title)
-    }
-}
-
-/// 「この子のこと」 as one row at the bottom: the name and a chevron (11/14:
-/// no 「あと○つ」 here; the count stays inside この子のこと). The row opens
-/// the cat's page, with the same identifiers.
-private struct CatHomeAboutCard: View {
-    let cat: CatHomeCat
-    let destination: AnyView
-
-    var body: some View {
-        NavigationLink { destination } label: {
-            CatHomeLine(title: "この子のこと", value: nil, emphasized: true)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 16)
-                .background(Color(.secondarySystemGroupedBackground),
-                            in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .accessibilityElement(children: .combine)
-        }
-        .buttonStyle(CatHomePressStyle())
-        .accessibilityIdentifier(cat.profile != nil ? "tools-cat-\(cat.id)" : "tools-family-cat-\(cat.id)")
-    }
-}
-
-/// A name and its value on one line; at the accessibility sizes the value
-/// goes under the name.
-private struct CatHomeLine: View {
-    let title: String
-    let value: String?
-    var emphasized = false
-    @Environment(\.dynamicTypeSize) private var typeSize
-
-    var body: some View {
-        HStack(spacing: 8) {
-            let layout = typeSize.isAccessibilitySize
-                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
-                : AnyLayout(HStackLayout(spacing: 8))
-            layout {
-                Text(title)
-                    .font(emphasized ? .headline : .body)
-                    .foregroundStyle(.primary)
-                if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
-                if let value {
-                    Text(value)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(typeSize.isAccessibilitySize ? .leading : .trailing)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            if emphasized { ToolChevron() }
-        }
     }
 }
 

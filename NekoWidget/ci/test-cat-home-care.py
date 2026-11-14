@@ -2,8 +2,12 @@
 「猫を大切にできるページ」).
 
 The page is only what helps take care of the cat: the hero, the five round
-buttons, one card 「これからのこと」 with four rows always in this order
-(誕生日, ワクチン, 病院, 体重), then 「この子のこと」 as one row with no count.
+buttons, one card with 誕生日, ワクチン, 病院, 体重 in this order, each only
+when something is written for it (11/14: never 未設定・未記入・なし on the
+page), and 「この子のこと」 always as its last row with no count
+(11/14: was a box of its own; the card is that row alone for a departed cat
+or one with nothing to show). The name on the photo is the cat menu, so the
+name is not shown twice.
 The photos, 「1年前のきょう」 and the list of past records left the page.
 Every value is read from what is already in memory; nothing is stored and no
 schedule is worked out. Native behaviour of the words and boundaries:
@@ -46,12 +50,16 @@ def block(source, marker):
 
 
 class PageOrder(unittest.TestCase):
-    def test_card_sits_between_the_buttons_and_the_about_row(self):
+    def test_card_sits_under_the_buttons_with_the_about_row_inside(self):
         page = block(HOME, "private struct CatHomePage: View {")
         order = ["CatHomeToolBar(", "if searching { CatHomeSearchingLine(cat: cat) }",
-                 "if let care { CatHomeCareCard(rows: care, links: careLinks) }",
-                 "CatHomeAboutCard(cat: cat, destination: carePage)"]
+                 "CatHomeCareCard(rows: care, links: careLinks)"]
         self.assertEqual([page.index(item) for item in order], sorted(page.index(item) for item in order))
+        # 11/14: no box of its own under the card; the card is there for
+        # every cat (a departed cat's card is 「この子のこと」 alone).
+        self.assertNotIn("CatHomeAboutCard", HOME)
+        self.assertNotIn("if let care { CatHomeCareCard(", page)
+        self.assertIn("carePage: AnyView(carePage(cat))", HOME)
         self.assertLess(page.index("if !facts.departed {"), page.index("CatHomeToolBar("))
         self.assertIn(".padding(.bottom, 32)", page)
         # The top controls still scroll with the hero.
@@ -79,15 +87,35 @@ class PageOrder(unittest.TestCase):
 
 
 class Card(unittest.TestCase):
-    def test_four_rows_always_in_this_order_with_identifiers(self):
+    def test_only_rows_with_data_in_this_order_with_identifiers(self):
         entries = block(VIEW, "private var entries: [Entry] {")
         order = ['id: "birthday", title: "誕生日"', 'id: "vaccine", title: "ワクチン"',
                  'id: "vet", title: "病院"', 'id: "weight", title: "体重"']
         self.assertEqual([entries.index(item) for item in order], sorted(entries.index(item) for item in order))
         card = block(VIEW, "struct CatHomeCareCard: View {")
-        self.assertIn('Text("これからのこと")', card)
+        # 11/14: no heading. With real data most rows read 「前回…」.
+        self.assertNotIn('Text("これからのこと")', card)
+        self.assertNotIn('.isHeader', card)
         self.assertIn('.accessibilityIdentifier("cat-home-care")', card)
         self.assertIn('.accessibilityIdentifier("cat-home-care-" + entry.id)', card)
+        self.assertIn("guard let rows else { return [] }", block(VIEW, "private var entries: [Entry] {"))
+        for row in ("birthday", "vaccination", "vet", "weight"):
+            self.assertIn(f"if let value = rows.{row} {{", entries)
+        # この子のこと always, after the rows.
+        about = 'NavigationLink { links.carePage } label: { CatHomeCareRow(title: "この子のこと", value: nil) }'
+        self.assertLess(card.index("ForEach(Array(shown.enumerated())"), card.index(about))
+
+    def test_no_empty_wording_on_the_page(self):
+        # Not in code (the comments say why they are gone).
+        for word in ("ToolEmptyValue", '"未設定"', '"未記入"', '"なし"'):
+            self.assertNotIn(word, CORE + VIEW, word)
+        for name in ("birthday(_ birthday: CatCareDay?, today: CatCareDay) -> Value? {",
+                     "vaccination(_ vaccinations: [CatCareVaccination], today: CatCareDay) -> Value? {",
+                     "vet(_ memos: [VetMemo], today: CatCareDay, calendar: Calendar = .nekoGregorian) -> Value? {",
+                     "weight(_ weights: [CatCareWeight], today: CatCareDay) -> Value? {"):
+            self.assertIn("static func " + name, CORE)
+        make = block(VIEW, "static func make(hasProfile: Bool, record: CatCareRecord?, birthday: CatCareDay?,")
+        self.assertIn("return rows == CatHomeCareRows() ? nil : rows", make)
 
     def test_rows_are_settings_rows_without_icons(self):
         row = block(VIEW, "private struct CatHomeCareRow: View {")
@@ -111,7 +139,7 @@ class Card(unittest.TestCase):
     def test_which_cats_get_which_rows(self):
         make = block(VIEW, "static func make(hasProfile: Bool, record: CatCareRecord?, birthday: CatCareDay?,")
         self.assertIn("guard hasProfile || record != nil else {", make)
-        self.assertIn("return vetMemos.isEmpty ? nil : CatHomeCareRows(vet: vet)", make)
+        self.assertIn("return vet.map { CatHomeCareRows(vet: $0) }", make)
 
     def test_the_vet_state_has_one_place(self):
         button = block(HOME, "private struct CatHomeToolButton: View {")
@@ -120,22 +148,82 @@ class Card(unittest.TestCase):
         bar = block(HOME, "private struct CatHomeToolBar: View {")
         self.assertIn('if tool == .vet && vetUnfinished { return (text: "書きかけ", color: Color.orange) }', bar)
 
-    def test_about_row_has_no_count(self):
-        card = block(HOME, "private struct CatHomeAboutCard: View {")
-        self.assertIn('CatHomeLine(title: "この子のこと", value: nil, emphasized: true)', card)
+    def test_about_row_is_the_cards_last_row_with_no_count(self):
+        card = block(VIEW, "struct CatHomeCareCard: View {")
+        about = 'NavigationLink { links.carePage } label: { CatHomeCareRow(title: "この子のこと", value: nil) }'
+        self.assertIn(about, card)
+        # After the four rows, a divider only when there are rows above it.
+        self.assertLess(card.index("ForEach(Array(shown.enumerated())"), card.index(about))
+        self.assertIn("if !shown.isEmpty { Divider().padding(.leading, 16) }", card)
+        self.assertIn('.accessibilityIdentifier(links.cat.profile != nil ? "tools-cat-\\(links.cat.id)"', card)
+        self.assertIn(': "tools-family-cat-\\(links.cat.id)")', card)
         self.assertNotIn("あと", card)
+        # The same row as the others: the same weight, no value.
+        row = block(VIEW, "private struct CatHomeCareRow: View {")
+        self.assertIn("let value: CatHomeCareCore.Value?", row)
+        self.assertIn('.accessibilityLabel(value.map { "\\(title)、\\($0.text)" } ?? title)', row)
+        self.assertNotIn(".headline", row)
+
+
+class NameIsTheCatMenu(unittest.TestCase):
+    """11/14: the big name on the photo opens the cat menu; no capsule."""
+
+    def test_the_top_bar_is_settings_only(self):
+        bar = block(HOME, "private var topBar: some View {")
+        self.assertNotIn("Menu", bar)
+        self.assertNotIn("Capsule", HOME)
+        self.assertIn('.accessibilityIdentifier("tools-settings-button")', bar)
+        self.assertNotIn("current: nil", HOME)
+
+    def test_the_name_is_the_menu(self):
+        hero = block(HOME, "private struct CatHomeHero: View {")
+        menu = block(hero, "private var nameMenu: some View {")
+        self.assertIn("Menu { menu } label: {", menu)
+        self.assertIn("HStack(alignment: .firstTextBaseline", menu)
+        self.assertIn(".font(.system(size: min(nameSize, 84), weight: .heavy))", menu)
+        self.assertIn(".minimumScaleFactor(0.5)", menu)
+        self.assertIn('Image(systemName: "chevron.down")', menu)
+        self.assertIn(".font(.system(size: (min(nameSize, 84) * 0.28).rounded(), weight: .semibold))", menu)
+        self.assertIn(".foregroundStyle(.white.opacity(0.85))", menu)
+        self.assertIn(".fixedSize()", menu)
+        self.assertIn(".frame(minHeight: 44)", menu)
+        self.assertIn('.accessibilityLabel("猫を切り替える")', menu)
+        self.assertIn(".accessibilityValue(cat.name)", menu)
+        self.assertIn('.accessibilityIdentifier("tools-cat-menu")', menu)
+        # The name is drawn once, inside the menu.
+        self.assertEqual(hero.count("Text(cat.name)"), 1)
+
+    def test_the_summary_is_read_once_and_the_menu_on_its_own(self):
+        hero = block(HOME, "private struct CatHomeHero: View {")
+        body = block(hero, "var body: some View {")
+        self.assertIn("ZStack(alignment: .bottomLeading) {", body)
+        self.assertLess(body.index("photoLayer"), body.index("words"))
+        self.assertLess(body.index(".accessibilityElement(children: .ignore)"), body.index("words"))
+        self.assertIn(".accessibilityLabel(facts.spoken)", body)
+        self.assertIn(".accessibilityAddTraits(.isHeader)", body)
+        self.assertEqual(body.count(".accessibilityElement("), 1)
+        words = block(hero, "private var words: some View {")
+        self.assertEqual(words.count(".accessibilityHidden(true)"), 2)
+
+    def test_the_items_are_the_same(self):
+        items = block(HOME, "private func catMenuItems(_ cats: [CatHomeCat], current: CatHomeCat) -> some View {")
+        self.assertIn("ForEach(cats) { cat in", items)
+        self.assertIn('.accessibilityIdentifier("tools-cat-menu-\\(cat.id)")', items)
+        self.assertIn('Button { addsCat = true } label: { Label("この子を追加", systemImage: "plus") }', items)
+        self.assertIn('.accessibilityIdentifier("tools-cat-profiles")', items)
+        self.assertIn("catMenu: AnyView(catMenuItems(cats, current: cat)),", HOME)
 
 
 class Words(unittest.TestCase):
     def test_values_use_real_data_only(self):
         for word in ('"きょう"', '"次は \\(due.month)月ごろ"', '"次は \\(due.year)年\\(due.month)月ごろ"',
-                     '"前回 "', '"書きかけ"', '"次は "', "ToolEmptyValue.unset", "ToolEmptyValue.unwritten",
-                     "ToolEmptyValue.none", '"\\(birthday.month)月\\(birthday.day)日（あと\\(days)日）"'):
+                     '"前回 "', '"書きかけ"', '"次は "',
+                     '"\\(birthday.month)月\\(birthday.day)日（あと\\(days)日）"'):
             self.assertIn(word, CORE, word)
         self.assertIn("static let soonDays = 7", CORE)
         self.assertIn("static let vaccinationGraceDays = 60", CORE)
         # Never a worked-out schedule from the last vaccination.
-        vaccination = block(CORE, "static func vaccination(_ vaccinations: [CatCareVaccination], today: CatCareDay) -> Value {")
+        vaccination = block(CORE, "static func vaccination(_ vaccinations: [CatCareVaccination], today: CatCareDay) -> Value? {")
         self.assertNotIn("givenOn.year + 1", vaccination)
         self.assertNotIn("byAdding: .year", CORE)
 
