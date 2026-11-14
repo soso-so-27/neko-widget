@@ -87,6 +87,7 @@ private func checkCaptionVisibilityFooter() throws {
 @main
 private enum GroupWindowChecks {
     static func main() async throws {
+        try checkRecoveryProof()
         if CommandLine.arguments.count > 1 { try checkWireVector(path: CommandLine.arguments[1]) }
         try checkCaptionVisibilityFooter()
         let a = Person(id: "person-a"), b = Person(id: "person-b"), c = Person(id: "person-c")
@@ -232,4 +233,79 @@ private enum GroupWindowChecks {
         try check(offlineRejected, "fixture offline state")
         print("Group HPKE, roster, removal, sender integrity, limits and UI fixture checks passed")
     }
+}
+
+private func checkRecoveryProof() throws {
+    let golden = GroupRecoveryClaim(version: 1, environment: "staging", windowID: "room", personID: "owner", participantID: "p1",
+        recoveryGeneration: 1, previousRevision: 1, previousHash: Data(repeating: 0, count: 32), nextHash: Data(repeating: 1, count: 32),
+        newDevice: .init(id: "new", signingPublicKey: Data(repeating: 2, count: 32), hpkePublicKey: Data(repeating: 3, count: 32), personAuthorization: Data(repeating: 4, count: 64)),
+        replacedDeviceIDs: ["b", "a"], operationID: "op1", challenge: Data(repeating: 5, count: 32), issuedAt: 1000, expiresAt: 1300)
+    let hash = GroupCanonical.hash(try golden.canonicalBytes()).base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+    try check(hash == "VLXwWfoFfKC_21jMxc1todZ3QSB-uH-mO-JVFb9YMrw", "Swift/TS recovery canonical bytes")
+    try check(GroupCanonical.hash(golden.signatureBytes(root: true)).base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "") == "NV7JbqaSbEPsrqrsps4_VgJ-AY6aaUCuyqndzvzyLLo", "ROOT signature bytes match TS")
+    try check(GroupCanonical.hash(golden.signatureBytes(root: false)).base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "") == "2LXPNN6swU0VJdJqFCAqCOJtTult4_VSTOZqLAGTqqs", "DEVICE signature bytes match TS")
+    var reordered = golden; reordered.replacedDeviceIDs.reverse()
+    try check(golden.canonicalBytes() == reordered.canonicalBytes(), "recovery replacement order")
+    var unknown = golden; unknown.version = 2
+    do { _ = try unknown.canonicalBytes(); throw Failure.check("unknown recovery version accepted") }
+    catch GroupRecoveryProofError.updateRequired { }
+    try check(!GroupRecoveryProofVerifier.issuanceEnabled, "recovery issuance remains disabled")
+
+    let person = Person(id: "owner"), family = Person(id: "family")
+    let oldPhone = Device(id: "old"), newPhone = Device(id: "new"), familyPhone = Device(id: "family-phone")
+    let oldDevice = try oldPhone.rosterDevice(person: person)
+    let newDevice = try newPhone.rosterDevice(person: person)
+    let owner = GroupRosterMember(participantID: "p1", personID: person.id, identityPublicKey: person.identity.publicKey.rawRepresentation, role: .owner, devices: [oldDevice])
+    let other = GroupRosterMember(participantID: "p2", personID: family.id, identityPublicKey: family.identity.publicKey.rawRepresentation, role: .member, devices: [try familyPhone.rosterDevice(person: family)])
+    let old = GroupRoster(windowID: "room-one", revision: 1, keyEpoch: 1, previousHash: Data(repeating: 0, count: 32), ownerPersonID: person.id, members: [owner, other])
+    let signed = try GroupRosterVerifier.sign(old, deviceID: oldPhone.id, privateKey: oldPhone.signing)
+    let previous = try GroupRosterVerifier.verify(signed, anchor: .init(windowID: old.windowID, ownerPersonID: person.id, ownerIdentityPublicKey: person.identity.publicKey.rawRepresentation))
+    func nextRoster(devices: [GroupRosterDevice], familyMember: GroupRosterMember? = nil, revision: Int = 2, epoch: Int = 2) -> GroupRoster {
+        .init(windowID: old.windowID, revision: revision, keyEpoch: epoch, previousHash: previous.hash, ownerPersonID: person.id,
+              members: [.init(participantID: owner.participantID, personID: person.id, identityPublicKey: owner.identityPublicKey, role: .owner, devices: devices), familyMember ?? other])
+    }
+    func proof(_ next: GroupRoster, removed: [String] = []) throws -> GroupRecoveryProof {
+        let c = GroupRecoveryClaim(version: 1, environment: "staging", windowID: old.windowID, personID: person.id, participantID: owner.participantID,
+            recoveryGeneration: 1, previousRevision: 1, previousHash: previous.hash, nextHash: GroupCanonical.hash(try next.canonicalBytes()), newDevice: newDevice,
+            replacedDeviceIDs: removed, operationID: "op1", challenge: Data(repeating: 7, count: 32), issuedAt: 1000, expiresAt: 1300)
+        return .init(claim: c, rootSignature: try person.identity.signature(for: c.signatureBytes(root: true)), deviceSignature: try newPhone.signing.signature(for: c.signatureBytes(root: false)))
+    }
+    let next = nextRoster(devices: [oldDevice, newDevice]), p = try proof(next)
+    let ledger = GroupRecoveryLedger(environment: "staging", windowID: old.windowID, personID: person.id, participantID: owner.participantID,
+        identityPublicKey: owner.identityPublicKey, revision: 1, hash: previous.hash, recoveryGeneration: 1, state: .active, newDeviceWasRevoked: false,
+        challenge: .init(value: p.claim.challenge, operationID: "op1", issuedAt: 1000, expiresAt: 1300, consumed: false))
+    try GroupRecoveryProofVerifier.validate(p, previous: previous, next: next, ledger: ledger, now: 1100)
+    let familyNew = try newPhone.rosterDevice(person: family)
+    let memberNext = GroupRoster(windowID: old.windowID, revision: 2, keyEpoch: 2, previousHash: previous.hash, ownerPersonID: person.id,
+        members: [owner, .init(participantID: other.participantID, personID: family.id, identityPublicKey: other.identityPublicKey, role: .member, devices: other.devices + [familyNew])])
+    var memberClaim = p.claim; memberClaim.personID = family.id; memberClaim.participantID = other.participantID
+    memberClaim.newDevice = familyNew; memberClaim.nextHash = GroupCanonical.hash(try memberNext.canonicalBytes())
+    let memberProof = GroupRecoveryProof(claim: memberClaim, rootSignature: try family.identity.signature(for: memberClaim.signatureBytes(root: true)), deviceSignature: try newPhone.signing.signature(for: memberClaim.signatureBytes(root: false)))
+    var memberLedger = ledger; memberLedger.personID = family.id; memberLedger.participantID = other.participantID; memberLedger.identityPublicKey = other.identityPublicKey
+    try GroupRecoveryProofVerifier.validate(memberProof, previous: previous, next: memberNext, ledger: memberLedger, now: 1100)
+    let replacement = nextRoster(devices: [newDevice])
+    try GroupRecoveryProofVerifier.validate(proof(replacement, removed: [oldDevice.id]), previous: previous, next: replacement, ledger: ledger, now: 1100)
+    for state in [GroupRecoveryLedger.State.closed, .deleted, .left, .removed, .rootRevoked] {
+        var l = ledger; l.state = state
+        try rejects("closed/revoked recovery") { try GroupRecoveryProofVerifier.validate(p, previous: previous, next: next, ledger: l, now: 1100) }
+    }
+    let mutations: [(inout GroupRecoveryLedger) -> Void] = [
+        { $0.environment = "production" }, { $0.windowID = "other" }, { $0.personID = "other" }, { $0.participantID = "other" },
+        { $0.revision += 1 }, { $0.hash = Data(repeating: 9, count: 32) }, { $0.recoveryGeneration += 1 },
+        { $0.newDeviceWasRevoked = true }, { $0.challenge.consumed = true }, { $0.challenge.operationID = "other" },
+        { $0.challenge.value = Data(repeating: 9, count: 32) }, { $0.challenge.issuedAt -= 1 }, { $0.challenge.expiresAt += 1 },
+        { $0.identityPublicKey = Data(repeating: 9, count: 32) }
+    ]
+    for mutation in mutations { var l = ledger; mutation(&l)
+        try rejects("ledger recovery binding") { try GroupRecoveryProofVerifier.validate(p, previous: previous, next: next, ledger: l, now: 1100) }
+    }
+    for now in [999, 1300] { try rejects("recovery expiry") { try GroupRecoveryProofVerifier.validate(p, previous: previous, next: next, ledger: ledger, now: now) } }
+    var swapped = p; swapped.rootSignature = p.deviceSignature; swapped.deviceSignature = p.rootSignature
+    try rejects("recovery signature domain") { try GroupRecoveryProofVerifier.validate(swapped, previous: previous, next: next, ledger: ledger, now: 1100) }
+    let changedOther = GroupRosterMember(participantID: "different", personID: other.personID, identityPublicKey: other.identityPublicKey, role: other.role, devices: other.devices)
+    for wrong in [nextRoster(devices: [oldDevice,newDevice], familyMember: changedOther), nextRoster(devices: [newDevice]), nextRoster(devices: [oldDevice,newDevice], revision: 3), nextRoster(devices: [oldDevice,newDevice], epoch: 1)] {
+        let freshlySigned = try proof(wrong)
+        try rejects("root cannot authorize other changes") { try GroupRecoveryProofVerifier.validate(freshlySigned, previous: previous, next: wrong, ledger: ledger, now: 1100) }
+    }
+    print("GROUP recovery P1 signatures, trusted ledger, immutable membership and canonical vector passed; issuance OFF")
 }
