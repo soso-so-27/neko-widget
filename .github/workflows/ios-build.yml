@@ -63,14 +63,14 @@ jobs:
 
   launch-attempt-2:
     needs: launch-attempt-1
-    if: always() && needs.launch-attempt-1.result == 'success' && needs.launch-attempt-1.outputs.result == 'install_timeout'
+    if: always() && needs.launch-attempt-1.result == 'success' && contains(fromJSON('["install_timeout","launch_timeout"]'), needs.launch-attempt-1.outputs.result)
     uses: ./.github/workflows/quick-launch-attempt.yml
     with:
       attempt: 2
 
   launch-attempt-3:
-    needs: launch-attempt-2
-    if: always() && needs.launch-attempt-2.result == 'success' && needs.launch-attempt-2.outputs.result == 'install_timeout'
+    needs: [launch-attempt-1, launch-attempt-2]
+    if: always() && needs.launch-attempt-1.outputs.result == 'install_timeout' && needs.launch-attempt-2.result == 'success' && contains(fromJSON('["install_timeout","launch_timeout"]'), needs.launch-attempt-2.outputs.result)
     uses: ./.github/workflows/quick-launch-attempt.yml
     with:
       attempt: 3
