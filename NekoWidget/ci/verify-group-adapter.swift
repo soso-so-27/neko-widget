@@ -563,6 +563,22 @@ private struct GroupAdapterChecks {
         try check(GroupNameCrypto.open(name, slot: "window", key: key, roster: roster) == "実家のまど", "owner-signed encrypted name")
         try rejects("name wrong slot") { _ = try GroupNameCrypto.open(name, slot: "member:other", key: key, roster: roster) }
         try rejects("name forged owner") { _ = try GroupNameCrypto.seal("偽", slot: "window", key: key, roster: roster, signerID: vector.packet.signerDeviceID, signingKey: .init()) }
+        // Bypass the sender's validation to model an old or hostile owner client.
+        struct ReceivedName: Encodable { let name: String; let signerDeviceID: String; let signature: Data }
+        let nameContext = try GroupCanonical.fields(["NW3.NAME", roster.roster.windowID,
+            String(roster.roster.keyEpoch), "window"].map(GroupCanonical.text) + [roster.hash])
+        for invalid in ["", "\u{0000}", String(repeating: "あ", count: 81)] {
+            let proof = try GroupCanonical.fields([GroupCanonical.text("NW3.NAME.SIGN"), nameContext, Data(invalid.utf8)])
+            let signed = ReceivedName(name: invalid, signerDeviceID: vector.packet.signerDeviceID,
+                signature: try signing.signature(for: proof))
+            let box = try AES.GCM.seal(GroupWire.encode(signed), using: key, authenticating: nameContext).combined!
+            try check(GroupNameCrypto.open(box, slot: "window", key: key, roster: roster) == "名前を表示できません",
+                "invalid authenticated label is isolated")
+            let forged = ReceivedName(name: invalid, signerDeviceID: vector.packet.signerDeviceID, signature: Data(repeating: 0, count: 64))
+            let badBox = try AES.GCM.seal(GroupWire.encode(forged), using: key, authenticating: nameContext).combined!
+            try rejects("invalid label never bypasses signature") { _ = try GroupNameCrypto.open(badBox, slot: "window", key: key, roster: roster) }
+        }
+        try check(GroupNameCrypto.open(name, slot: "window", key: key, roster: roster) == "実家のまど", "next valid label still opens")
         let candidate = Curve25519.Signing.PrivateKey(), agreement = try identity.agreementKey
         let join = try GroupNameCrypto.sealJoin("なつみ", windowID: roster.roster.windowID, invitationID: "invite", personID: "candidate", deviceID: "phone",
             ownerPersonID: roster.roster.ownerPersonID, ownerRoot: vector.anchor.ownerIdentityPublicKey,
