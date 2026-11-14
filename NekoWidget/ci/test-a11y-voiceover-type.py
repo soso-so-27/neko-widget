@@ -106,7 +106,7 @@ class WindowTiles(unittest.TestCase):
     def test_the_photo_opens_and_says_who_and_when(self):
         tile = block(WINDOW, "private struct GroupPhotoTile: View {")
         self.assertIn(".accessibilityAddTraits(.isButton)", tile)
-        self.assertIn(".accessibilityAction(open)", tile)
+        self.assertIn(".accessibilityAction(.default) { open() }", tile)
         self.assertIn("day: GroupPhotoTileDate.text(entry.createdAt), reported: reported, hidden: entry.isHidden))", tile)
         # Nothing read on the container (.contain never reads its own label).
         self.assertNotIn(".accessibilityLabel(tileLabel)", WINDOW)

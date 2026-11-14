@@ -1301,7 +1301,7 @@ private struct GroupPhotoTile: View {
                     day: GroupPhotoTileDate.text(entry.createdAt), reported: reported, hidden: entry.isHidden))
                 .accessibilityAddTraits(.isButton)
                 .accessibilityHint("大きく表示します")
-                .accessibilityAction(open)
+                .accessibilityAction(.default) { open() }
                 .accessibilityIdentifier("group-photo-tile-photo")
             // 11/12 (review 12): who sent it is the gift, so the name is a
             // size up and the circle carries its first letter; the day reads
