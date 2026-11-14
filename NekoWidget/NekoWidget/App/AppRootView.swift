@@ -779,7 +779,11 @@ struct AppRootView: View {
                 accessiblePhotoCount: $0.accessibleAssetCount
             )
         }
-        let profiles = identity.profiles.map { profile -> CatProfilePresentation in
+        // A display projection only: family dates stay in the notebook and
+        // never overwrite the personal identity file or its portable backup.
+        let displayedIdentity = FamilyNotebookCatCareBridge.projectingAdoptionDays(
+            CatCareStore.shared.state ?? CatCareState(), into: identity)
+        let profiles = displayedIdentity.profiles.map { profile -> CatProfilePresentation in
             let confirmedIdentifiers = projection.confirmedByProfile[profile.id] ?? []
             let confirmed = confirmedIdentifiers
                 .map { identifier in

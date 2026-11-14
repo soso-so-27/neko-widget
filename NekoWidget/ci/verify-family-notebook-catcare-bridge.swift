@@ -69,7 +69,51 @@ enum FamilyNotebookCatCareBridgeVerifier {
         try require(reopened.operations.contains { $0.target.familyCatID == newCat && $0.target.collection == .weight }, "readd includes child records")
         print("Family unshare: atomic failure, private records, offline conflict, restart and readd passed")
     }
+    static func adoptionDays() throws {
+        let f = FamilyNotebookMigrationVerifier.Fixture()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("adoption-bridge-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        func check(_ ok: Bool, _ reason: String) throws { try FamilyNotebookMigrationVerifier.require(ok, reason) }
+        let date = CatLifeDate(date: CatCareDay(year: 2020, month: 2, day: 29)!.date()!)!
+        let profile = CatProfile(id: f.profileA, displayName: "合成", lifeDates: .init(adoptionDay: date, adoptionDayIsApproximate: true))
+        let empty = CatProfile(id: f.profileB, displayName: "未設定")
+        let care = FamilyNotebookCatCareBridge.importingAdoptionDays([profile, empty], into: f.care, at: FamilyNotebookMigrationVerifier.now)
+        try check(care.cats[0].adoptionDay?.value?.isApproximate == true && care.cats[1].adoptionDay == nil, "initial import retains approximation; unset emits no clear")
+        try check(FamilyNotebookCatCareBridge.importingAdoptionDays([profile, empty], into: care, at: Date()) == care, "initial import runs once")
+        let store = try FamilyNotebookStore(directory: root, familyID: f.family, deviceID: "device")
+        let source = try FamilyNotebookMigrationSource(catCare: .init(state: care, unreadableCatCount: 0))
+        let plan = try FamilyNotebookMigration.prepare(source: source, familyID: f.family, mappings: f.links).plan
+        try check(plan.entries.filter { $0.target.field == .adoptionDay }.count == 1, "only explicitly populated adoption migrates")
+        try store.applyImport(plan, author: FamilyNotebookMigrationVerifier.author)
+        let changed = try store.edit(target: .init(familyCatID: f.familyA, field: .adoptionDay), value: .text("2021-03-01|0"), author: FamilyNotebookMigrationVerifier.author)
+        let offline = FamilyNotebookOperation(familyID: f.family, target: changed.target, value: .text("2022-04-02|1"),
+            version: .init(clock: changed.version.clock + 1, deviceID: "other", operationID: UUID()),
+            author: FamilyNotebookMigrationVerifier.author, editedAt: FamilyNotebookMigrationVerifier.now)
+        let forward = FamilyNotebookCore.resolve(target: changed.target, operations: [changed, offline])
+        let backward = FamilyNotebookCore.resolve(target: changed.target, operations: [offline, changed])
+        try check(forward == backward && forward?.operation == offline && forward?.history.count == 1, "same version ordering as birthday; losing value retained")
+        let projected = try FamilyNotebookCatCareBridge.apply(store.snapshot(), to: care)
+        try check(projected.cats[0].adoptionDay?.value?.day.year == 2021 && projected.cats[0].adoptionDay?.value?.isApproximate == false, "date and precision change together")
+        let personalBytes = try CatCareDecoding.encode(care)
+        let displayBytes = try FamilyNotebookRecordOrigin.recording(CatCareDecoding.encode(projected), over: personalBytes, tool: "CatCare", family: true)
+        let privateCopy = try CatCareDecoding.decode(CatCareDecoding.personalBackup(displayBytes)).state
+        try check(privateCopy.cats[0].adoptionDay == care.cats[0].adoptionDay, "received family date never replaces the owner's private backup")
+        let legacyCopy = try CatCareDecoding.decode(CatCareDecoding.personalBackup(CatCareDecoding.encode(projected))).state
+        try check(legacyCopy.cats[0].adoptionDay == nil, "legacy family stamp is excluded from private backup")
+        let identity = CatHouseholdIdentityState(mode: .profiled, profiles: [profile, empty], memberships: [], globalExcludedAssets: [], legacyUnscoped: nil)
+        let updated = FamilyNotebookCatCareBridge.projectingAdoptionDays(projected, into: identity)
+        try check(updated.profiles[0].resolvedLifeDates.adoptionDay?.year == 2021 && updated.profiles[1] == empty, "only explicit profile binding projects")
+        try check(FamilyNotebookCatCareBridge.importingAdoptionDays([profile], into: projected, at: Date()) == projected, "received shared date wins over stale initial profile")
+        _ = try store.edit(target: changed.target, value: .clear, author: FamilyNotebookMigrationVerifier.author)
+        let cleared = try FamilyNotebookCatCareBridge.apply(store.snapshot(), to: projected)
+        try check(cleared.cats[0].adoptionDay != nil && cleared.cats[0].adoptionDay?.value == nil, "explicit clear remains a stamped decision")
+        try check(FamilyNotebookCatCareBridge.projectingAdoptionDays(cleared, into: updated).profiles[0].resolvedLifeDates.adoptionDay == nil, "explicit clear reaches profile")
+        try check(FamilyNotebookCatCareBridge.importingAdoptionDays([profile], into: cleared, at: Date()) == cleared, "clear is never revived by initial import")
+        print("Adoption bridge: unset, one-time import, approximation, explicit identity, shared precedence and explicit clear passed")
+    }
+
     static func run() throws {
+        try adoptionDays()
         try absenceAnswers()
         try unsharingPreservesRecords()
         let fixture = FamilyNotebookMigrationVerifier.Fixture()

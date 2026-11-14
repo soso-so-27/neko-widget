@@ -90,7 +90,7 @@ jobs:
   family-notebook:
     if: github.event_name == 'workflow_dispatch' && inputs.notebook_models
     name: Family notebook model probe - not release evidence
-    runs-on: macos-15-intel
+    runs-on: macos-15
     timeout-minutes: 10
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer

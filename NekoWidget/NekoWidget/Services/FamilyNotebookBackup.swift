@@ -64,10 +64,14 @@ enum FamilyNotebookBackup {
     }
     struct Manifest: Codable { var version = 1; var copies: [Copy] }
     static func decode(_ data: Data) throws -> Manifest {
-        let value = try JSONDecoder().decode(Manifest.self, from: data)
+        var value = try JSONDecoder().decode(Manifest.self, from: data)
         guard value.version == 1, value.copies.count <= 1000,
               Set(value.copies.map(\.id)).count == value.copies.count else { throw FamilyNotebookError.corruptStorage }
-        for copy in value.copies { try FamilyNotebookStore.validate(copy.state, familyID: copy.state.familyID) }
+        for index in value.copies.indices {
+            let state = value.copies[index].state
+            try FamilyNotebookStore.validate(state, familyID: state.familyID)
+            value.copies[index].state = try state.promotingAdoptionOperations()
+        }
         return value
     }
     static func encode(_ value: Manifest) throws -> Data {
@@ -136,7 +140,7 @@ enum FamilyNotebookBackup {
             let state = try JSONDecoder().decode(FamilyNotebookStore.State.self, from: data)
             try FamilyNotebookStore.validate(state, familyID: familyID)
             let id = UUID(uuidString: String(AppRecordJSON.name(AppRecordJSON.hash(Data(key.utf8))).dropLast(5)))!
-            retained.removeAll { $0.id == id }; retained.append(.init(id: id,state: state))
+            retained.removeAll { $0.id == id }; retained.append(.init(id: id,state: try state.promotingAdoptionOperations()))
         }
         guard !retained.isEmpty else { return }
         let data = try encode(.init(copies: retained.sorted { $0.id.uuidString < $1.id.uuidString }))

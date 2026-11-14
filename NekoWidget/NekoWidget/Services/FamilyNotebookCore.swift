@@ -104,7 +104,7 @@ enum FamilyNotebookField: String, Codable, CaseIterable, Hashable, Sendable {
     // Old clients reject this unknown field before applying the packet. A
     // shared removal must never look like deletion of someone's personal cat.
     case sharingEnded
-    case farewellDay
+    case farewellDay, adoptionDay
     case name, sex, neutered, birthday, coat, marks, microchip, indoorOnly
     case conditions, allergyStatus, allergyText, specialDiet, water, litter, temperament
     case vetName, vetPhone, vetNote, measuredOn, grams, medicationName, dose, schedule
@@ -117,6 +117,21 @@ enum FamilyNotebookField: String, Codable, CaseIterable, Hashable, Sendable {
 
 enum FamilyNotebookValue: Codable, Equatable, Sendable {
     case text(String), integer(Int), decimal(Double), date(Date), day(String), clear
+}
+
+/// One operation keeps the date and its approximate flag together in a conflict.
+struct FamilyNotebookAdoptionDate: Codable, Equatable, Sendable {
+    let day: String
+    let isApproximate: Bool
+    var value: FamilyNotebookValue { .text(day + (isApproximate ? "|1" : "|0")) }
+    static func decode(_ value: FamilyNotebookValue) throws -> Self? {
+        if value == .clear { return nil }
+        guard case .text(let text) = value else { throw FamilyNotebookError.invalidValue }
+        let parts = text.split(separator: "|", omittingEmptySubsequences: false)
+        guard parts.count == 2, FamilyNotebookCore.validDay(String(parts[0])),
+              parts[1] == "0" || parts[1] == "1" else { throw FamilyNotebookError.invalidValue }
+        return .init(day: String(parts[0]), isApproximate: parts[1] == "1")
+    }
 }
 
 struct FamilyNotebookTarget: Codable, Hashable, Sendable {
@@ -296,7 +311,7 @@ enum FamilyNotebookCore {
         }
         let allowed: Set<FamilyNotebookField>
         switch target.collection {
-        case .cat: allowed = [.name, .sex, .neutered, .birthday, .coat, .marks, .microchip, .indoorOnly,
+        case .cat: allowed = [.name, .sex, .neutered, .birthday, .adoptionDay, .coat, .marks, .microchip, .indoorOnly,
                               .conditions, .allergyStatus, .allergyText, .specialDiet, .water, .litter,
                               .temperament, .vetName, .vetPhone, .vetNote, .farewellDay]
         case .weight: allowed = [.measuredOn, .grams]
@@ -310,6 +325,7 @@ enum FamilyNotebookCore {
         }
         guard allowed.contains(field), let value else { throw FamilyNotebookError.invalidTarget }
         if value == .clear { return }
+        if field == .adoptionDay { _ = try FamilyNotebookAdoptionDate.decode(value); return }
         let days: Set<FamilyNotebookField> = [.birthday, .measuredOn, .startedOn, .endedOn, .givenOn, .nextDueOn, .farewellDay, .nextVisitOn]
         let dates: Set<FamilyNotebookField> = [.completedAt, .capturedAt, .writtenAt]
         switch value {
@@ -436,6 +452,15 @@ enum FamilyNotebookCore {
 /// The identity header is the stable protocol boundary for future payloads.
 struct FamilyNotebookOpaqueOperation: Codable, Equatable, Sendable {
     let plaintext: Data
+    static func preserving(_ operation: FamilyNotebookOperation) throws -> Self {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.keyEncodingStrategy = .custom { path in
+            let key = path.last!.stringValue
+            return Key(key.hasSuffix("ID") ? String(key.dropLast(2)) + "Id" : key)
+        }
+        return .init(plaintext: try encoder.encode(operation))
+    }
     struct Header: Decodable {
         struct Target: Decodable {
             let familyCatID: UUID
@@ -491,7 +516,7 @@ enum FamilyNotebookReceivedOperation: Sendable {
     case known(FamilyNotebookOperation)
     case opaque(FamilyNotebookOpaqueOperation)
 
-    static func decode(_ plaintext: Data) throws -> Self {
+    static func decode(_ plaintext: Data, promoteAdoption: Bool = false) throws -> Self {
         let retained = FamilyNotebookOpaqueOperation(plaintext: plaintext)
         let header = try retained.header()
         guard let root = try JSONSerialization.jsonObject(with: plaintext) as? [String: Any],
@@ -553,6 +578,7 @@ enum FamilyNotebookReceivedOperation: Sendable {
             || extra(target, ["familyCatId", "collection", "recordId", "parentRecordId", "field"])
             || extra(version, ["clock", "deviceId", "operationId"])
             || extra(author, ["personId", "displayName"]) { return .opaque(retained) }
+        if operation.target.field == .adoptionDay && !promoteAdoption { return .opaque(retained) }
         return .known(operation)
     }
 }

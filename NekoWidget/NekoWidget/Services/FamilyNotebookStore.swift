@@ -36,6 +36,10 @@ final class FamilyNotebookStore: @unchecked Sendable {
         var sharingEnded: Bool?
         var farewellDecisions: [FamilyNotebookFarewellDecision]?
         var opaqueOperations: [FamilyNotebookOpaqueOperation]?
+        // Runtime only. On disk these stay in the old reader's opaque array.
+        var adoptionPlaintexts: [UUID: Data] = [:]
+        static let pendingAdoptionPrefix = "compat-adoption-v1:pending:"
+        static let acknowledgedAdoptionPrefix = "compat-adoption-v1:ack:"
 
         private enum CodingKeys: String, CodingKey {
             case schemaVersion, familyID, revision, clock, operations, outboxIDs
@@ -46,19 +50,57 @@ final class FamilyNotebookStore: @unchecked Sendable {
         // change on decoding the same state, so serialize only these unordered
         // collections in a stable order. Keep operation/history order intact.
         func encode(to encoder: Encoder) throws {
+            let adoption = operations.filter { $0.target.field == .adoptionDay }
+            let adoptionIDs = Set(adoption.map(\.id))
+            var retained = opaqueOperations ?? []
+            var ledger = ledgerKeys
+            for operation in adoption {
+                retained.append(try adoptionPlaintexts[operation.id].map(FamilyNotebookOpaqueOperation.init(plaintext:))
+                    ?? FamilyNotebookOpaqueOperation.preserving(operation))
+                if outboxIDs.contains(operation.id) { ledger.insert(Self.pendingAdoptionPrefix + operation.id.uuidString) }
+                if acknowledgements.contains(where: { $0.operationID == operation.id }) {
+                    ledger.insert(Self.acknowledgedAdoptionPrefix + operation.id.uuidString)
+                }
+            }
             var values = encoder.container(keyedBy: CodingKeys.self)
-            try values.encode(schemaVersion, forKey: .schemaVersion)
+            try values.encode(adoption.isEmpty ? schemaVersion : 3, forKey: .schemaVersion)
             try values.encode(familyID, forKey: .familyID)
             try values.encode(revision, forKey: .revision)
             try values.encode(clock, forKey: .clock)
-            try values.encode(operations, forKey: .operations)
-            try values.encode(outboxIDs.sorted { $0.uuidString < $1.uuidString }, forKey: .outboxIDs)
-            try values.encode(acknowledgements, forKey: .acknowledgements)
+            try values.encode(operations.filter { !adoptionIDs.contains($0.id) }, forKey: .operations)
+            try values.encode(outboxIDs.subtracting(adoptionIDs).sorted { $0.uuidString < $1.uuidString }, forKey: .outboxIDs)
+            try values.encode(acknowledgements.filter { !adoptionIDs.contains($0.operationID) }, forKey: .acknowledgements)
             try values.encode(mappings, forKey: .mappings)
-            try values.encode(ledgerKeys.sorted(), forKey: .ledgerKeys)
+            try values.encode(ledger.sorted(), forKey: .ledgerKeys)
             try values.encodeIfPresent(sharingEnded, forKey: .sharingEnded)
             try values.encodeIfPresent(farewellDecisions, forKey: .farewellDecisions)
-            try values.encodeIfPresent(opaqueOperations, forKey: .opaqueOperations)
+            try values.encodeIfPresent(retained.isEmpty ? opaqueOperations : retained, forKey: .opaqueOperations)
+        }
+
+        func promotingAdoptionOperations() throws -> State {
+            var state = self
+            var remaining: [FamilyNotebookOpaqueOperation] = []
+            for retained in state.opaqueOperations ?? [] {
+                if case .known(let operation) = try FamilyNotebookReceivedOperation.decode(retained.plaintext, promoteAdoption: true),
+                   operation.target.field == .adoptionDay {
+                    state.operations = try FamilyNotebookCore.merge(state.operations, [operation])
+                    state.adoptionPlaintexts[operation.id] = retained.plaintext
+                    let pending = State.pendingAdoptionPrefix + operation.id.uuidString
+                    let acknowledged = State.acknowledgedAdoptionPrefix + operation.id.uuidString
+                    guard !(state.ledgerKeys.contains(pending) && state.ledgerKeys.contains(acknowledged)) else {
+                        throw FamilyNotebookError.corruptStorage
+                    }
+                    if state.ledgerKeys.remove(pending) != nil { state.outboxIDs.insert(operation.id) }
+                    if state.ledgerKeys.remove(acknowledged) != nil {
+                        state.acknowledgements.append(.init(familyID: familyID, operationID: operation.id, version: operation.version))
+                    }
+                } else { remaining.append(retained) }
+            }
+            state.opaqueOperations = remaining.isEmpty ? nil : remaining
+            guard !state.ledgerKeys.contains(where: { $0.hasPrefix(State.pendingAdoptionPrefix) || $0.hasPrefix(State.acknowledgedAdoptionPrefix) })
+            else { throw FamilyNotebookError.corruptStorage }
+            try FamilyNotebookStore.validate(state, familyID: familyID)
+            return state
         }
 
         var snapshot: FamilyNotebookSnapshot {
@@ -176,6 +218,14 @@ final class FamilyNotebookStore: @unchecked Sendable {
                 case .opaque(let operation):
                     let h = try operation.header()
                     guard h.familyID == familyID else { throw FamilyNotebookError.familyMismatch }
+                    if case .known(let decoded) = try FamilyNotebookReceivedOperation.decode(operation.plaintext, promoteAdoption: true),
+                       decoded.target.field == .adoptionDay {
+                        if let old = state.adoptionPlaintexts[decoded.id], old != operation.plaintext {
+                            throw FamilyNotebookError.operationCollision
+                        }
+                        known.append(decoded); state.adoptionPlaintexts[decoded.id] = operation.plaintext
+                        continue
+                    }
                     if let old = try opaque.first(where: { try $0.header().version.operationID == h.version.operationID }) {
                         guard old == operation else { throw FamilyNotebookError.operationCollision }
                     } else { opaque.append(operation) }
@@ -380,11 +430,11 @@ final class FamilyNotebookStore: @unchecked Sendable {
         let decoder = JSONDecoder()
         guard let header = try? decoder.decode(Header.self, from: bytes) else { throw FamilyNotebookError.corruptStorage }
         guard [1, 2, 3].contains(header.schemaVersion) else { throw FamilyNotebookError.unsupportedSchema }
-        let state: State
+        var state: State
         do { state = try decoder.decode(State.self, from: bytes) }
         catch { throw FamilyNotebookError.corruptStorage }
         try Self.validate(state, familyID: familyID)
-        return state
+        return try state.promotingAdoptionOperations()
     }
 
     static func validate(_ state: State, familyID: UUID) throws {
