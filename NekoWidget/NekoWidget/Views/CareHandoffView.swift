@@ -382,7 +382,7 @@ private struct CareCatEditor: View {
                         if let onDeleted { onDeleted() } else { dismiss() }
                     }
                 }
-            } message: { Text("この子のお世話メモだけを削除します。") }
+            } message: { Text("この子のお世話メモだけを削除します。元に戻せません。") }
             .navigationDestination(item: $preview) { item in
                 CareDisplayView(record: item.record) {
                     store.recordMade(health: item.record.includesHealth, contacts: item.record.includesContacts)

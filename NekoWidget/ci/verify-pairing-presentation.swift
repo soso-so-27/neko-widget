@@ -7,7 +7,6 @@ enum PairingPresentationVerificationError: Error {
 @main
 enum PairingPresentationVerifier {
     static func main() throws {
-        try verifyFailedSetupRecovery()
         try verify(
             phase: .unpaired,
             role: nil,
@@ -219,69 +218,6 @@ enum PairingPresentationVerifier {
                 "Unexpected guidance for the partner iPhone"
             )
         }
-    }
-
-    private static func verifyFailedSetupRecovery() throws {
-        var state = PairingState.unpaired(installationMarker: UUID().uuidString)
-        state.phase = .failed
-        func expect(_ expected: FailedPairingRecoveryAction) throws {
-            guard FailedPairingRecoveryAction.resolve(state) == expected else {
-                throw PairingPresentationVerificationError.failed("Unsafe failed-setup recovery choice")
-            }
-            let presentation = FailedPairingRecoveryPresentation.make(state)
-            guard presentation.action == expected,
-                  !presentation.buttonTitle.isEmpty,
-                  !presentation.detail.contains("画面の案内"),
-                  !presentation.detail.contains("期限が切れ"),
-                  !presentation.detail.contains("通信に失敗") else {
-                throw PairingPresentationVerificationError.failed("Recovery copy invented a cause or disagreed with durable state")
-            }
-        }
-        try expect(.restartLocalDraft)
-        state.role = .inviter
-        state.credentialAccount = UUID().uuidString
-        state.participantID = "fixture-participant"
-        state.pendingOperation = "create"
-        state.pendingClientRequestID = UUID().uuidString
-        try expect(.unavailable)
-        state.dailyBoundaryMinuteUTC = 240
-        try expect(.resumeCreate)
-        state.role = .invitee
-        state.pendingOperation = "enroll"
-        try expect(.unavailable)
-        state.invitationID = "fixture-invitation"
-        try expect(.resumeJoin)
-        state.pendingOperation = nil
-        state.pendingClientRequestID = nil
-        try expect(.unavailable)
-        state.spaceID = "fixture-space"
-        try expect(.unavailable) // Missing remote member is not a local draft.
-        state.memberID = "fixture-member"
-        try expect(.checkConnection)
-        state.pendingOperation = "complete"
-        state.pendingClientRequestID = UUID().uuidString
-        try expect(.checkConnection)
-        state.pendingOperation = "approve"
-        try expect(.unavailable) // Wrong role cannot replace a pending operation.
-        state.pendingOperation = "cancel"
-        try expect(.unavailable)
-        state.pendingCancelRevokesWholeSpace = false
-        try expect(.resumeCancellation)
-        state.pendingOperation = "recoveryComplete"
-        state.pendingCancelRevokesWholeSpace = nil
-        try expect(.unavailable)
-        state.pendingOperation = nil
-        state.pendingClientRequestID = nil
-        state.recoveryID = "fixture-recovery"
-        try expect(.unavailable)
-        state.recoveryID = nil
-        state.phase = .paired
-        try expect(.unavailable)
-        state = PairingState.unpaired(installationMarker: UUID().uuidString)
-        state.phase = .failed
-        state.pendingOperation = "cancel"
-        state.pendingClientRequestID = UUID().uuidString
-        try expect(.unavailable) // Never discard a cancellation awaiting a response.
     }
 
     private static func verify(

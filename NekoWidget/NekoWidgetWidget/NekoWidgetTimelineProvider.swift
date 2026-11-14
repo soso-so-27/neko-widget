@@ -84,11 +84,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                     "preview": "\(context.isPreview)"
                 ]
             )
-            return .empty(
-                at: now,
-                imageVariant: variant,
-                photoSourceIdentifier: source.id
-            )
+            return personalStuckEntry(at: now, variant: variant, sourceID: source.id, unreadable: false)
         }
 
         SharedLog.widget.debug(
@@ -231,13 +227,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                 ]
             )
             return Timeline(
-                entries: [
-                    .empty(
-                        at: now,
-                        imageVariant: variant,
-                        photoSourceIdentifier: source.id
-                    )
-                ],
+                entries: [personalStuckEntry(at: now, variant: variant, sourceID: source.id, unreadable: false)],
                 policy: .never
             )
         }
@@ -312,14 +302,29 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         let isProfile = sourceID.hasPrefix(CloudyWindowStore.profilePrefix)
         guard sourceID == WidgetPhotoSource.personalLibraryID || isProfile else { return nil }
         guard CloudyWindowStore.shared.isCloudySource(sourceID) else {
-            return isProfile ? Timeline(entries: [.empty(at: now, imageVariant: variant,
-                photoSourceIdentifier: sourceID, emptyStateReason: .sourceUnavailable)], policy: .never) : nil
+            // A cat's own window whose cat was deleted (11/14, A8).
+            return isProfile ? Timeline(entries: [.stuck(.catRemoved, at: now, imageVariant: variant,
+                photoSourceIdentifier: sourceID)], policy: .never) : nil
         }
         // The daily photo is free for everyone (11/11): no membership gate.
-        let plan = (try? CloudyWindowStore.shared.timeline(scopeID: sourceID, now: now,
-            allowsSelection: true, selectionValidUntil: nil)) ?? []
+        let plan: [CloudyWindowEntry]
+        var unreadable = false
+        do {
+            plan = try CloudyWindowStore.shared.timeline(scopeID: sourceID, now: now,
+                allowsSelection: true, selectionValidUntil: nil)
+        } catch {
+            plan = []
+            unreadable = true
+        }
         let likes = readLikeState()
+        let defaults = UserDefaults(suiteName: SharedContainer.appGroupIdentifier)
         let entries = plan.prefix(2).map { planned in
+            // A tag tap that could not be saved says so for that photo (11/14, A2).
+            if planned.isCloudy, CloudyWindowRevealFailure.matches(
+                scopeID: sourceID, selectionID: planned.selection.id, in: defaults) {
+                return NekoWidgetEntry.stuck(.revealFailed, at: planned.date, imageVariant: variant,
+                                             photoSourceIdentifier: sourceID)
+            }
             var entry = NekoWidgetEntry(date: planned.date, localIdentifier: planned.photo.photoID,
                 cacheFilename: (planned.isCloudy ? planned.photo.cloudy : planned.photo.clear).filename(for: variant),
                 imageVariant: variant, photoSourceIdentifier: sourceID, familySourceDigest: nil,
@@ -330,8 +335,8 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             entry.cloudyWindowSelection = planned.selection
             return entry
         }
-        return Timeline(entries: entries.isEmpty ? [.empty(at: now, imageVariant: variant,
-            photoSourceIdentifier: sourceID, emptyStateReason: .needsApp)] : entries,
+        return Timeline(entries: entries.isEmpty ? [personalStuckEntry(at: now, variant: variant,
+            sourceID: sourceID, unreadable: unreadable)] : entries,
             policy: .after(entries.isEmpty ? now.addingTimeInterval(20 * 60) : CloudyWindowStore.shared.nextRefresh(after: now)))
     }
 
@@ -349,8 +354,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             let likes = readLikeState()
             let entries = plan.entries.prefix(Self.maximumTimelineEntryCount).map { planned in
                 guard let item = planned.item else {
-                    return NekoWidgetEntry.empty(at: planned.date, imageVariant: variant,
-                                                 emptyStateReason: .needsApp)
+                    return personalStuckEntry(at: planned.date, variant: variant, unreadable: true)
                 }
                 var entry = NekoWidgetEntry(
                     date: planned.date, localIdentifier: item.localIdentifier,
@@ -366,14 +370,25 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                 entry.personalRediscoveryAction = planned.action
                 return entry
             }
-            return Timeline(entries: entries.isEmpty ? [.empty(at: now, imageVariant: variant)] : entries,
+            return Timeline(entries: entries.isEmpty
+                                ? [personalStuckEntry(at: now, variant: variant, unreadable: false)] : entries,
                             policy: .after(plan.reloadDate))
         } catch {
             SharedLog.widget.error("timeline", "Personal photo plan could not be read",
                                    metadata: SharedLog.errorMetadata(error, category: .widgetTimeline))
-            return Timeline(entries: [.empty(at: now, imageVariant: variant, emptyStateReason: .needsApp)],
+            return Timeline(entries: [personalStuckEntry(at: now, variant: variant, unreadable: true)],
                             policy: .after(now.addingTimeInterval(20 * 60)))
         }
+    }
+
+    /// This iPhone's photos with nothing to show: the cause the app last
+    /// wrote, else "unreadable" or "preparing" (11/14, A1).
+    private func personalStuckEntry(at date: Date, variant: WidgetImageVariant,
+                                    sourceID: String = WidgetPhotoSource.personalLibraryID,
+                                    unreadable: Bool) -> NekoWidgetEntry {
+        let status = WidgetLibraryStatus.read(from: UserDefaults(suiteName: SharedContainer.appGroupIdentifier))
+        return .stuck(.personal(status: status, unreadable: unreadable), at: date,
+                      imageVariant: variant, photoSourceIdentifier: sourceID)
     }
 
     private func officialEntry(now: Date, variant: WidgetImageVariant, sourceID: String) -> NekoWidgetEntry {

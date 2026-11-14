@@ -50,7 +50,7 @@ struct PhotoPermissionView: View {
 
     private var message: String {
         status == .restricted
-            ? "スクリーンタイムなどの制限で、写真を読み込めません。"
+            ? "スクリーンタイムなどの制限で、写真を読み込めません。制限を変えると、読み込めます。"
             : "設定で許可すると、猫の写真を探せます。"
     }
 }

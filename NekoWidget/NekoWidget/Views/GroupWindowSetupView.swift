@@ -1820,10 +1820,6 @@ enum GroupWindowUIFixture {
         CommandLine.arguments.contains("--group-window-screens-fixture")
     }
 
-    static var checkIsOff: Bool {
-        CommandLine.arguments.contains("--group-window-screens-check-off")
-    }
-
     static var showsFailedDelivery: Bool {
         CommandLine.arguments.contains("--group-window-screens-failed-send")
     }

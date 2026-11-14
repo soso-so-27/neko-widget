@@ -244,3 +244,100 @@ struct WidgetTimelineLease: Codable, Equatable, Sendable {
     var cacheFilenames: [String]
     var recordedAt: Date
 }
+
+/// What the app last learned about this iPhone's photos, for the words a
+/// personal Widget shows when it has no photo (11/14). Optional and additive:
+/// no value (the app has not run yet, or an older app) keeps 「写真を準備して
+/// います」, and an older extension never reads the key.
+enum WidgetLibraryStatus: String, Sendable {
+    case photoAccessNeeded
+    case noCatPhotos
+
+    static let defaultsKey = "widgetLibraryStatus.v1"
+
+    static func read(from defaults: UserDefaults?) -> Self? {
+        defaults?.string(forKey: defaultsKey).flatMap(Self.init(rawValue:))
+    }
+
+    /// Writes only a change, so a repeated call costs one read.
+    @discardableResult
+    static func write(_ value: Self?, to defaults: UserDefaults?) -> Bool {
+        guard let defaults, read(from: defaults) != value else { return false }
+        if let value {
+            defaults.set(value.rawValue, forKey: defaultsKey)
+        } else {
+            defaults.removeObject(forKey: defaultsKey)
+        }
+        return true
+    }
+}
+
+/// A cloudy window whose tag tap could not be saved (11/14). The next
+/// timeline says so for that one selection, instead of staying cloudy without
+/// a word. Cleared by the next saved reveal and whenever the app is opened.
+enum CloudyWindowRevealFailure {
+    static let defaultsKey = "cloudyWindowRevealFailure.v1"
+
+    static func record(scopeID: String, selectionID: String, in defaults: UserDefaults?) {
+        defaults?.set(["scope": scopeID, "selection": selectionID], forKey: defaultsKey)
+    }
+
+    static func matches(scopeID: String, selectionID: String, in defaults: UserDefaults?) -> Bool {
+        guard let value = defaults?.dictionary(forKey: defaultsKey) as? [String: String] else { return false }
+        return value["scope"] == scopeID && value["selection"] == selectionID
+    }
+
+    /// Returns whether a failure was stored.
+    @discardableResult
+    static func clear(in defaults: UserDefaults?) -> Bool {
+        guard let defaults, defaults.object(forKey: defaultsKey) != nil else { return false }
+        defaults.removeObject(forKey: defaultsKey)
+        return true
+    }
+}
+
+/// The words of a personal or cloudy Widget with no photo to show (11/14):
+/// one state, one line of what to do, and only a cause the app knows.
+enum WidgetStuckState: Equatable, Sendable {
+    /// The app has not run yet, or has not finished the first look.
+    case preparing
+    case photoAccessNeeded
+    case noCatPhotos
+    /// The plan or the photo's image could not be read.
+    case unreadable
+    /// The tag tap on a cloudy window could not be saved.
+    case revealFailed
+    /// A cat's own cloudy window whose cat was deleted.
+    case catRemoved
+
+    /// The personal photo source. A known cause comes first; an unreadable
+    /// plan says only that it cannot be shown now.
+    static func personal(status: WidgetLibraryStatus?, unreadable: Bool) -> Self {
+        switch status {
+        case .photoAccessNeeded: return .photoAccessNeeded
+        case .noCatPhotos: return .noCatPhotos
+        case nil: return unreadable ? .unreadable : .preparing
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .preparing: return "写真を準備しています"
+        case .photoAccessNeeded: return "写真の許可が必要です"
+        case .noCatPhotos: return "猫の写真がまだありません"
+        case .unreadable: return "いまは出せません"
+        case .revealFailed: return "晴らせませんでした"
+        case .catRemoved: return "この子の写真は出せなくなりました"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .preparing: return "アプリを開くと始まります"
+        case .photoAccessNeeded, .revealFailed: return "タップしてアプリを開く"
+        case .noCatPhotos: return "猫の写真を撮ると、ここに出ます"
+        case .unreadable: return "アプリを開くと、また出ます"
+        case .catRemoved: return "長押しして、別の写真を選んでください"
+        }
+    }
+}

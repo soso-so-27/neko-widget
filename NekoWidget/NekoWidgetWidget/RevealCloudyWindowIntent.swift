@@ -21,8 +21,16 @@ struct RevealCloudyWindowIntent: AppIntent {
         defer { WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget") }
         // Old entries refresh only; they cannot reveal tomorrow's photo.
         // The daily photo is free for everyone (11/11): no membership gate.
-        _ = try? CloudyWindowStore.shared.reveal(selectionID: selectionID, scopeID: scopeID, photoID: photoID,
-            allowsSelection: true, selectionValidUntil: nil)
+        let defaults = UserDefaults(suiteName: SharedContainer.appGroupIdentifier)
+        do {
+            try CloudyWindowStore.shared.reveal(selectionID: selectionID, scopeID: scopeID, photoID: photoID,
+                allowsSelection: true, selectionValidUntil: nil)
+            CloudyWindowRevealFailure.clear(in: defaults)
+        } catch {
+            // Not saved: the reloaded timeline says so for this photo (11/14).
+            // Only a thrown save counts; an old entry's tap stays a refresh.
+            CloudyWindowRevealFailure.record(scopeID: scopeID, selectionID: selectionID, in: defaults)
+        }
         return .result()
     }
 }
