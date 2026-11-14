@@ -1496,7 +1496,7 @@ struct LikedPhotosView: View {
                 AlbumOverviewCard(identifier: month.coverPhoto?.localIdentifier, catBoundingBox: month.coverPhoto?.catBoundingBox,
                     title: "\(month.monthNumber)月の作品", subtitle: "\(month.yearNumber)年 · \(month.photos.count.formatted())枚",
                     isMovie: false, isNew: isLatest && latestMonthlyWindowIsUnread && !summaryNeedsPlus,
-                    networkAccessAllowed: true, previewPhotos: Array(month.photos.prefix(3)), isCompact: false, isWide: isWide)
+                    networkAccessAllowed: true, previewPhotos: month.previewPhotos, isCompact: false, isWide: isWide)
             } else {
                 AlbumNavigationRow(title: "\(month.yearNumber)年\(month.monthNumber)月", subtitle: "\(month.photos.count.formatted())枚",
                     newBadgeIdentifier: isLatest && latestMonthlyWindowIsUnread && !summaryNeedsPlus

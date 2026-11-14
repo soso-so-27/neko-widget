@@ -94,6 +94,9 @@ struct CatProfilePhotoPresentation: Identifiable, Equatable {
     /// A photo can belong to multiple cats. These are explicit assignments.
     var assignedProfileIdentifiers: Set<String>
     var detectedCatCount: Int
+    /// 11/14 確かな猫 (CatPickTier) for the app's own cover pick; lists show
+    /// every photo regardless.
+    var isConfidentCat: Bool
 
     var id: String { localIdentifier }
 
@@ -102,13 +105,15 @@ struct CatProfilePhotoPresentation: Identifiable, Equatable {
         creationDate: Date? = nil,
         catBoundingBox: CGRect? = nil,
         assignedProfileIdentifiers: Set<String> = [],
-        detectedCatCount: Int = 1
+        detectedCatCount: Int = 1,
+        isConfidentCat: Bool = true
     ) {
         self.localIdentifier = localIdentifier
         self.creationDate = creationDate
         self.catBoundingBox = catBoundingBox
         self.assignedProfileIdentifiers = assignedProfileIdentifiers
         self.detectedCatCount = max(1, detectedCatCount)
+        self.isConfidentCat = isConfidentCat
     }
 }
 

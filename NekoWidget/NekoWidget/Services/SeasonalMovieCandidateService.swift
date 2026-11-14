@@ -315,7 +315,9 @@ actor SeasonalMovieCandidateService {
     /// each month instead of taking only its newest videos.
     private static let maximumVideosPerMonth = 12
     private static let requiredCatFrames = 2
-    private static let catConfidenceThreshold: Float = 0.70
+    /// Video frames are checked here, not by the library scan: only a
+    /// 確かな猫 frame counts (11/14: the named line, not a copy of it).
+    private static let catConfidenceThreshold = AppSettings.confidentCatThreshold
     private static let excerptDuration: TimeInterval = 2.1
 
     /// Returns locally available media candidates. Network access is disabled

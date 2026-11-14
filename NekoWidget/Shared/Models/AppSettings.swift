@@ -92,6 +92,11 @@ struct AppSettings: Codable, Equatable, Sendable {
     static let defaultConfidenceThreshold: Float = 0.5
     /// The line used until 11/13. Read only by the one-time migration.
     static let legacyDefaultConfidenceThreshold: Float = 0.7
+    /// 11/14 確かな猫: a stored best cat confidence at or above this line.
+    /// 0.5 ..< 0.7 is たぶん猫 — shown in every list the user browses, but
+    /// never chosen by the app on its own (covers, widgets, works) while
+    /// enough 確かな猫 exist. The old 0.7 line, kept as its own setting.
+    static let confidentCatThreshold: Float = 0.7
 
     static let `default` = AppSettings(
         dateRange: .all,

@@ -33,8 +33,15 @@ struct MonthlyWindowPresentation: Identifiable, Hashable, Sendable {
         "\(yearNumber)年\(monthNumber)月の作品"
     }
 
+    /// 11/14: the earliest 確かな猫 (CatPickTier), else the earliest photo.
     var coverPhoto: PhotoPresentation? {
-        storyPhotos.first
+        let story = storyPhotos
+        return story.first(where: \.isConfidentCat) ?? story.first
+    }
+
+    /// The small cover collage: 確かな猫 first, each tier in story order.
+    var previewPhotos: [PhotoPresentation] {
+        Array(CatPickTier.confidentFirst(storyPhotos, isConfident: \.isConfidentCat).prefix(3))
     }
 
     /// The cover and the first browser page share the same chronological order.
@@ -487,9 +494,16 @@ struct MonthlyWindowBuilder {
             )
         }
 
-        let targetCount = min(Self.maximumSceneCount, scenePhotos.count)
+        // 11/14: the app chooses these photos, so it uses 確かな猫 only when
+        // they are enough for a work; otherwise every scene, 確かな猫 preferred
+        // (see `preferred`). The month's availability counts both tiers.
+        let confidentScenes = scenePhotos.filter(\.isConfidentCat)
+        let pool = confidentScenes.count >= Self.minimumSceneCount
+            ? confidentScenes
+            : scenePhotos
+        let targetCount = min(Self.maximumSceneCount, pool.count)
         let selected = selectRepresentatives(
-            from: scenePhotos,
+            from: pool,
             targetCount: targetCount,
             interval: interval
         )
@@ -750,6 +764,7 @@ struct MonthlyWindowBuilder {
         _ lhs: PhotoPresentation,
         _ rhs: PhotoPresentation
     ) -> Bool {
+        if lhs.isConfidentCat != rhs.isConfidentCat { return lhs.isConfidentCat }
         if lhs.isLiked != rhs.isLiked { return lhs.isLiked }
         if lhs.hasCurrentAlbumAnalysis != rhs.hasCurrentAlbumAnalysis {
             return lhs.hasCurrentAlbumAnalysis
@@ -848,6 +863,7 @@ struct MonthlyWindowBuilder {
         over rhs: PhotoPresentation,
         near center: Date
     ) -> Bool {
+        if lhs.isConfidentCat != rhs.isConfidentCat { return lhs.isConfidentCat }
         if lhs.isLiked != rhs.isLiked { return lhs.isLiked }
 
         let leftDistance = abs((lhs.creationDate ?? .distantPast).timeIntervalSince(center))
@@ -866,6 +882,7 @@ struct MonthlyWindowBuilder {
         than rhs: PhotoPresentation,
         selected: [PhotoPresentation]
     ) -> Bool {
+        if lhs.isConfidentCat != rhs.isConfidentCat { return !lhs.isConfidentCat }
         let leftDistance = minimumDistance(from: lhs, to: selected)
         let rightDistance = minimumDistance(from: rhs, to: selected)
         if leftDistance != rightDistance { return leftDistance < rightDistance }
