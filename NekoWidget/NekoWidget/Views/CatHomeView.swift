@@ -30,8 +30,10 @@ enum CatHomeSpeedSwitch {
 #if DEBUG
     /// The corners painted from a per-frame geometry callback while moving.
     static let oldCorners = CommandLine.arguments.contains("--cat-home-speed-old-corners")
-    /// Material circles and one live shadow under the whole name block.
+    /// Material circles behind the two round buttons.
     static let oldMaterials = CommandLine.arguments.contains("--cat-home-speed-old-materials")
+    /// One live shadow under the whole name block.
+    static let oldShadow = CommandLine.arguments.contains("--cat-home-speed-old-shadow")
     /// Every page drawn again whenever the pager's state changes.
     static let rebuildsPages = CommandLine.arguments.contains("--cat-home-speed-rebuild-pages")
     /// No scale while moving either.
@@ -39,6 +41,7 @@ enum CatHomeSpeedSwitch {
 #else
     static let oldCorners = false
     static let oldMaterials = false
+    static let oldShadow = false
     static let rebuildsPages = false
     static let noCard = false
 #endif
@@ -645,13 +648,13 @@ enum CatHomeGlass {
 /// The shadow under the white words on the photo. 11/14: drawn once with
 /// each text into a bitmap (drawingGroup), so moving the page only moves
 /// the bitmap; the live shadow under the whole block (before) comes back
-/// with --cat-home-speed-old-materials.
+/// with --cat-home-speed-old-shadow.
 private struct CatHomeWordsShadow: ViewModifier {
     /// The block around the words (before), or one text of it (now).
     let whole: Bool
 
     func body(content: Content) -> some View {
-        if whole != CatHomeSpeedSwitch.oldMaterials {
+        if whole != CatHomeSpeedSwitch.oldShadow {
             content
         } else if whole {
             content.shadow(color: .black.opacity(0.45), radius: 8, y: 1)

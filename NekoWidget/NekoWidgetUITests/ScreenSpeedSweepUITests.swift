@@ -359,6 +359,8 @@ final class ScreenSpeedSweepUITests: XCTestCase {
     /// 左へ 2 回送り、測り終えてから右へ 2 回戻す（5 回で 10 回分）。
     /// scrollDragging（指で動かしている間）と scrollingAndDeceleration
     /// （止まるまで）の hitch を測る。
+    /// 最初の 1 本はシミュレータの立ち上がりの重さを含むので、数に入れない。
+    @MainActor func testScroll19CatHomePagerWarmUp() { measureCatHomePager("慣らし", []) }
     @MainActor func testScroll20CatHomePager() { measureCatHomePager("標準", []) }
     /// 変える前の描き方に 1 つだけ戻して比べる（DEBUG の起動引数、CatHomeSpeedSwitch）。
     @MainActor func testScroll21CatHomePagerOldCorners() {
@@ -373,6 +375,16 @@ final class ScreenSpeedSweepUITests: XCTestCase {
     @MainActor func testScroll24CatHomePagerNoCard() {
         measureCatHomePager("縮みなし", ["--cat-home-speed-no-card"])
     }
+    @MainActor func testScroll25CatHomePagerOldShadow() {
+        measureCatHomePager("名前の影（前）", ["--cat-home-speed-old-shadow"])
+    }
+    /// 前の描き方を全部（角の塗り・すりガラス・影・作り直し）。
+    @MainActor func testScroll26CatHomePagerAllOld() {
+        measureCatHomePager("前の描き方すべて", ["--cat-home-speed-old-corners", "--cat-home-speed-old-materials",
+                                          "--cat-home-speed-old-shadow", "--cat-home-speed-rebuild-pages"])
+    }
+    /// 標準をもう一度（同じ実行の中のばらつきを見る）。
+    @MainActor func testScroll27CatHomePagerAgain() { measureCatHomePager("標準（2回目）", []) }
 
     @MainActor
     private func measureCatHomePager(_ name: String, _ extra: [String]) {

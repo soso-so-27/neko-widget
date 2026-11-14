@@ -371,7 +371,7 @@ class NameIsTheCatMenu(unittest.TestCase):
         # The DEBUG switches are off in Release.
         switch = block(HOME, "enum CatHomeSpeedSwitch {")
         self.assertIn("#else", switch)
-        self.assertEqual(switch.count("= false"), 4)
+        self.assertEqual(switch.count("= false"), 5)
 
     def test_a_cat_is_added_on_the_last_page_only(self):
         # 11/14 (owner): one place to add a cat, a page after the last cat:
