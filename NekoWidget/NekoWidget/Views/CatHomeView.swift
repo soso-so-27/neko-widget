@@ -244,6 +244,9 @@ struct CatHomeView: View {
     @State private var addedCat: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// Up to this many cats, every page is built up front (CatHomeView.pager).
+    static let eagerPages = 12
+
     var body: some View {
         let cats = self.cats
         let current = currentCat(in: cats)
@@ -359,25 +362,36 @@ struct CatHomeView: View {
     /// rounded corners, the page background showing between the two (the
     /// WWDC23 「Beyond scroll views」 scrollTransition pattern). Reduce
     /// Motion: plain paging.
+    ///
+    /// 11/14: up to `eagerPages` cats every page is built with the pager, so
+    /// the next cat's photo is already drawn when a swipe starts (a lazy
+    /// stack built it, and began loading its photo, only as it scrolled in).
+    /// More cats than that: lazy, so a big home does not hold every photo.
     private func pager(_ cats: [CatHomeCat], current: CatHomeCat, metrics: CatHomeMetrics) -> some View {
         let reduceMotion = self.reduceMotion
         let shrink = CatHomeCardWhileMoving.shrink
-        return ScrollView(.horizontal) {
-            LazyHStack(spacing: 0) {
-                ForEach(Array(cats.enumerated()), id: \.element.id) { index, cat in
-                    page(cat, index: index, cats: cats, metrics: metrics)
-                        .modifier(CatHomeCardWhileMoving(enabled: !reduceMotion && cats.count > 1))
-                        .scrollTransition(.interactive, axis: .horizontal) { content, phase in
-                            content.scaleEffect(phase.isIdentity || reduceMotion
-                                                ? 1 : 1 - shrink * CGFloat(min(abs(phase.value), 1)))
-                        }
-                        // Only the page on screen is read and found by tests.
-                        .accessibilityHidden(cat.id != current.id)
-                        .containerRelativeFrame(.horizontal)
-                        .id(cat.id)
-                }
+        func pages() -> some View {
+            ForEach(Array(cats.enumerated()), id: \.element.id) { index, cat in
+                page(cat, index: index, cats: cats, metrics: metrics)
+                    .modifier(CatHomeCardWhileMoving(enabled: !reduceMotion && cats.count > 1))
+                    .scrollTransition(.interactive, axis: .horizontal) { content, phase in
+                        content.scaleEffect(phase.isIdentity || reduceMotion
+                                            ? 1 : 1 - shrink * CGFloat(min(abs(phase.value), 1)))
+                    }
+                    // Only the page on screen is read and found by tests.
+                    .accessibilityHidden(cat.id != current.id)
+                    .containerRelativeFrame(.horizontal)
+                    .id(cat.id)
             }
-            .scrollTargetLayout()
+        }
+        return ScrollView(.horizontal) {
+            if cats.count <= Self.eagerPages {
+                HStack(spacing: 0) { pages() }
+                    .scrollTargetLayout()
+            } else {
+                LazyHStack(spacing: 0) { pages() }
+                    .scrollTargetLayout()
+            }
         }
         .scrollTargetBehavior(.paging)
         .scrollPosition(id: $pageID)
@@ -609,6 +623,10 @@ private struct CatHomePage: View {
             .overlay(alignment: .top) { topBar.padding(.top, metrics.topInset) }
         }
         .scrollIndicators(.hidden)
+        // 11/14: a page that fits the screen does not move up and down at
+        // all, so a slightly slanted swipe between cats stays sideways; a
+        // taller page (iPhone SE, large text, 迷子) still scrolls.
+        .scrollBounceBehavior(.basedOnSize, axes: .vertical)
         .ignoresSafeArea(.container, edges: .top)
     }
 }
@@ -1098,6 +1116,10 @@ private struct CatHomeNoCatPage: View {
             .overlay(alignment: .top) { topBar.padding(.top, metrics.topInset) }
         }
         .scrollIndicators(.hidden)
+        // 11/14: a page that fits the screen does not move up and down at
+        // all, so a slightly slanted swipe between cats stays sideways; a
+        // taller page (iPhone SE, large text, 迷子) still scrolls.
+        .scrollBounceBehavior(.basedOnSize, axes: .vertical)
         .ignoresSafeArea(.container, edges: .top)
     }
 }

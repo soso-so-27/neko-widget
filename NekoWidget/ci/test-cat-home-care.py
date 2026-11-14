@@ -297,6 +297,28 @@ class NameIsTheCatMenu(unittest.TestCase):
         self.assertIn("style: .continuous", corners)
         self.assertIn("@Environment(\\.accessibilityReduceMotion) private var reduceMotion", HOME)
 
+    def test_swipe_moves_only_sideways_with_neighbours_ready(self):
+        # 11/14 (build 373: swiping between cats felt rough). A page that fits
+        # the screen does not bounce up and down, so a slanted swipe stays
+        # sideways; up to 12 cats every page is built up front, so the next
+        # cat's photo is drawn before the swipe; more cats stay lazy.
+        for marker in ("private struct CatHomePage: View {", "private struct CatHomeNoCatPage: View {"):
+            page = block(HOME, marker)
+            self.assertIn(".scrollBounceBehavior(.basedOnSize, axes: .vertical)", page)
+        pager = block(HOME, "private func pager(_ cats: [CatHomeCat], current: CatHomeCat, metrics: CatHomeMetrics) -> some View {")
+        self.assertIn("static let eagerPages = 12", HOME)
+        self.assertIn("if cats.count <= Self.eagerPages {", pager)
+        self.assertIn("HStack(spacing: 0) { pages() }", pager)
+        self.assertIn("LazyHStack(spacing: 0) { pages() }", pager)
+        self.assertEqual(pager.count(".scrollTargetLayout()"), 2)
+        self.assertLess(pager.index("if cats.count <= Self.eagerPages {"), pager.index("LazyHStack("))
+        # Off-screen pages stay out of VoiceOver and UI tests; no per-page
+        # refresh (the tools refresh once, when the tab appears).
+        self.assertIn(".accessibilityHidden(cat.id != current.id)", pager)
+        self.assertNotIn(".task", pager)
+        self.assertNotIn(".onAppear", block(HOME, "private struct CatHomePage: View {"))
+        self.assertEqual(HOME.count(".onAppear { Task { await states.refresh() } }"), 1)
+
     def test_a_settled_page_change_ticks_once(self):
         pager = block(HOME, "private func pager(_ cats: [CatHomeCat], current: CatHomeCat, metrics: CatHomeMetrics) -> some View {")
         self.assertIn(".sensoryFeedback(.selection, trigger: pageID) { old, new in", pager)
