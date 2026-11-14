@@ -1,3 +1,4 @@
+import { drainFamilyNotifications,cleanupExpiredFamilyPush } from './family-notebook-push';
 import { clientUpgradeResponse } from './client-upgrade-required';
 import { beginReadDiagnostic, finishReadDiagnostic, readStage } from './read-failure-diagnostic';
 import {advanceIdentityDeletion,deletionRequired,scopeIdentityCheck,identityDeletionAPI,isIdentityDeletionPath,protectedGroupRead} from './group-identity-service';
@@ -708,6 +709,7 @@ export default {
       ctx.waitUntil(env.GROUP_REPORT_EMAIL_ENABLED==='YES'
         ? protectedGroupRead(env,()=>drainGroupReportMail(env)) : drainGroupReportMail(env));
       ctx.waitUntil(drainNotificationOutbox(env));
+      if(env.FAMILY_NOTEBOOK_APNS_RUNTIME_ENABLED === 'YES') ctx.waitUntil(protectedGroupRead(env,async()=>{ await cleanupExpiredFamilyPush(env,Math.floor(Date.now()/1000));return drainFamilyNotifications(env); }));
       if(env.GROUP_APNS_RUNTIME_ENABLED === 'YES') ctx.waitUntil(protectedGroupRead(env,()=>Promise.all([drainGroupNotifications(env),drainGroupAdmissionNotifications(env)])));
     } else if (controller.cron === LEGACY_CLEANUP_CRON) {
       ctx.waitUntil(runLegacyScheduledCleanup(env));
