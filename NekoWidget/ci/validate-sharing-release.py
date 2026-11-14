@@ -31,6 +31,7 @@ MEDIA_INTERACTION_COLLECTIONS = {
 }
 APP_FUNCTIONALITY = "NSPrivacyCollectedDataTypePurposeAppFunctionality"
 PHOTO_DESCRIPTION_TERMS = ("選んだ1枚", "2,048", "位置情報", "暗号化", "原本")
+PRODUCTION_PHOTO_DESCRIPTION_TERMS = PHOTO_DESCRIPTION_TERMS[:-1] + ("自動保存をオンにすると", "記録に足した写真のコピー", "それ以外の写真は送りません")
 LOCAL_PHOTO_DESCRIPTION_TERMS = ("猫", "iPhoneの中", "アルバム", "ウィジェット")
 LOCAL_PHOTO_DESCRIPTION_FORBIDDEN_TERMS = (
     "共有",
@@ -860,7 +861,7 @@ def validate_production(app: dict, share: dict, widget: dict, expected: dict) ->
     require(not failures, "; ".join(failures))
     activation = share.get("NSExtension", {}).get("NSExtensionAttributes", {}).get("NSExtensionActivationRule")
     require(activation == {"NSExtensionActivationSupportsImageWithMaxCount": 1}, "Public share extension must accept one image only")
-    require(all(term in app.get("NSPhotoLibraryUsageDescription", "") for term in PHOTO_DESCRIPTION_TERMS), "Public photo disclosure is incomplete")
+    require(all(term in app.get("NSPhotoLibraryUsageDescription", "") for term in PRODUCTION_PHOTO_DESCRIPTION_TERMS), "Public photo disclosure is incomplete")
 
 
 def main() -> int:
