@@ -53,12 +53,18 @@ enum AlbumPrototype {
         let calendar = Calendar.nekoGregorian
         let thisYear = calendar.component(.year, from: now)
         var counts: [Int: Int] = [:]
+        var confidentYears: Set<Int> = []
         for photo in catPhotos {
-            if let date = photo.creationDate { counts[calendar.component(.year, from: date), default: 0] += 1 }
+            if let date = photo.creationDate {
+                let year = calendar.component(.year, from: date)
+                counts[year, default: 0] += 1
+                if photo.isConfidentCat { confidentYears.insert(year) }
+            }
         }
         return counts.filter { entry in
             let year = entry.key
-            guard entry.value >= 9 else { return false }
+            // 11/15: a year of たぶん猫 alone has no work.
+            guard entry.value >= 9, confidentYears.contains(year) else { return false }
             if year < thisYear { return true }
             guard year == thisYear else { return false }
             return deliverNow || (yearArrivalDate(year).map { now >= $0 } ?? false)
@@ -1509,7 +1515,9 @@ private struct YearBookView: View {
         if let cover = nine.first { result.append(.cover(cover)) }
         for month in 1...12 {
             guard let start = calendar.date(from: DateComponents(year: year, month: month, day: 1)),
-                  let best = AlbumPrototype.pick(AlbumPrototype.photos(in: start, from: catPhotos), count: 1).first
+                  // 11/15: a month of たぶん猫 alone gets no page.
+                  let best = AlbumPrototype.pick(AlbumPrototype.photos(in: start, from: catPhotos)
+                      .filter(\.isConfidentCat), count: 1).first
             else { continue }
             result.append(.month(month, best))
         }
@@ -1736,7 +1744,8 @@ private struct YearStoryContentView: View {
         var result: [Page] = [.cover(cover)]
         for month in 1...12 {
             guard let start = calendar.date(from: DateComponents(year: year, month: month, day: 1)) else { continue }
-            let photos = AlbumPrototype.photos(in: start, from: catPhotos)
+            // 11/15: a month of たぶん猫 alone gets no page.
+            let photos = AlbumPrototype.photos(in: start, from: catPhotos).filter(\.isConfidentCat)
             if let best = AlbumPrototype.pick(photos, count: 1).first { result.append(.month(month, best)) }
         }
         var counts: [String: Int] = [:]

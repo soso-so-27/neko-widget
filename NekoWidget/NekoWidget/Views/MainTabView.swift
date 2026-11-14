@@ -2786,7 +2786,7 @@ struct MainTabView: View {
             }
             let year = calendar.component(.year, from: now)
             if let at = AlbumArrivalNotice.yearDelivery(year), now < at,
-               AlbumPrototype.photos(inYear: year, from: catPhotos).count >= 9 {
+               AlbumPrototype.arrivedYears(from: catPhotos, now: at, deliverNow: true).contains(year) {
                 yearNotice = (year, at)
             }
         }
