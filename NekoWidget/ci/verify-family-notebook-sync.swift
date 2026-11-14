@@ -17,6 +17,8 @@ private actor Relay: GroupHTTPTransport {
     func count() -> Int { requests }
     func append(_ packet: EncryptedFamilyNotebookOperation) { packets.append(packet) }
     func packetCount() -> Int { packets.count }
+    func savedPackets() -> [EncryptedFamilyNotebookOperation] { packets }
+    func activate() { paused = false }
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
         requests += 1
         let path = request.url!.path
@@ -53,7 +55,7 @@ private actor Relay: GroupHTTPTransport {
         }
         struct Upload: Decodable { let operationID: UUID; let expectedGeneration: Int; let expectedEpoch: Int; let payload: EncryptedFamilyNotebookOperation }
         let body = request.httpBody!, upload = try GroupWire.decode(Upload.self, body)
-        _ = try FamilyNotebookOperationCrypto.open(upload.payload, roster: current, key: key)
+        _ = try FamilyNotebookOperationCrypto.openRetaining(upload.payload, roster: current, key: key)
         if let old = bodies[upload.operationID] { try check(old == body, "restart sent different ciphertext for an unknown outcome") }
         else { bodies[upload.operationID] = body; packets.append(upload.payload) }
         if loseNext { loseNext = false; throw Failure.lostReply }
@@ -69,6 +71,9 @@ private actor Relay: GroupHTTPTransport {
 @main
 private enum VerifyFamilyNotebookSync {
     static func main() async throws {
+        if let phase = ProcessInfo.processInfo.environment["ADOPTION_PHASE"] {
+            try await adoptionCompatibility(phase); return
+        }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("family-sync-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         var identity = GroupDeviceIdentity.firstDevice(); identity.registered = true
@@ -126,6 +131,70 @@ private enum VerifyFamilyNotebookSync {
         try check(try local.snapshot().operations.count == 2, "departure retains every original")
         print("Family notebook sync: authenticated encrypted merge, pause/resume, lost ACK restart, older-copy refill, tamper and departure retention passed")
     }
+    // The shell runs this identical fixture with the actual pre-change and new binaries.
+    private static func adoptionCompatibility(_ phase: String) async throws {
+        let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["ADOPTION_ROOT"]!)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        struct Fixture: Codable { let identity: GroupDeviceIdentity; let family: UUID; let cat: UUID }
+        let fixtureURL = root.appendingPathComponent("fixture.json")
+        let f: Fixture
+        if phase == "new-receive" {
+            var identity = GroupDeviceIdentity.firstDevice(); identity.registered = true
+            f = Fixture(identity: identity, family: UUID(), cat: UUID())
+            try JSONEncoder().encode(f).write(to: fixtureURL)
+        } else { f = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: fixtureURL)) }
+        let identity = f.identity, device = try identity.deviceID, family = f.family
+        let author = FamilyNotebookAuthor(personID: identity.personID, displayName: "合成")
+        let member = FamilyNotebookCryptoMember(personID: identity.personID, identityPublicKey: identity.personPublicKey,
+            devices: [try identity.certificate(windowID: family.uuidString.lowercased())])
+        let key = Data(repeating: 17, count: 32)
+        let roster = FamilyNotebookCryptoRoster(familyID: family, epoch: 1, previousHash: Data(repeating: 0, count: 32), keyCommitment: GroupCanonical.hash(key), members: [member])
+        let signed = try FamilyNotebookRosterCrypto.sign(roster, deviceID: device, signingKey: identity.signingKey)
+        let current = try FamilyNotebookRosterCrypto.restore(signed, trustedPin: .init(familyID: family, epoch: 1, hash: GroupCanonical.hash(roster.canonicalBytes())))
+        let packetsURL = root.appendingPathComponent("packets.json")
+        var packets: [EncryptedFamilyNotebookOperation] = []
+        if phase == "new-receive" {
+            let op = FamilyNotebookOperation(familyID: family, target: .init(familyCatID: f.cat, field: FamilyNotebookField(rawValue: "adoptionDay")!),
+                value: .text("2020-02-29|1"), version: .init(clock: 1, deviceID: device, operationID: UUID()), author: author, editedAt: Date())
+            packets = [try FamilyNotebookOperationCrypto.seal(op, roster: current, key: key, signingKey: identity.signingKey)]
+        } else { packets = try JSONDecoder().decode([EncryptedFamilyNotebookOperation].self, from: Data(contentsOf: packetsURL)) }
+        let store = try FamilyNotebookStore(directory: root.appendingPathComponent("store"), familyID: family, deviceID: device)
+        let relay = Relay(family: family, identity: identity, current: current, key: key, packets: packets)
+        await relay.activate()
+        let journal = try GroupOperationStore(directory: root.appendingPathComponent("journal-" + phase), maximumRecordBytes: 2_100_000)
+        let network = try FamilyNotebookTransport(endpoint: URL(string: "https://compat.invalid")!, identity: identity, transport: relay, journal: journal)
+        let engine = try FamilyNotebookSync(familyID: family, identity: identity, store: store, network: network, journal: journal, endpointID: "https://compat.invalid")
+        if phase == "old-edit" {
+            try check(try store.snapshot().opaqueOperations.count == 2, "old reader retains received and pending adoption")
+            _ = try store.edit(target: .init(familyCatID: f.cat, field: .name), value: .text("古い版の編集"), author: author)
+        }
+        _ = try await engine.synchronize(current: current, history: [:], keys: [1: key])
+        if phase == "new-receive" {
+            try check(try store.snapshot().operations.contains { $0.target.field.rawValue == "adoptionDay" }, "new receives and projects adoption")
+            _ = try store.edit(target: .init(familyCatID: f.cat, field: FamilyNotebookField(rawValue: "adoptionDay")!), value: .text("2020-03-01|0"), author: author)
+        }
+        if phase == "old-edit" {
+            let state = try JSONDecoder().decode(FamilyNotebookStore.State.self, from: Data(contentsOf: root.appendingPathComponent("store/family-notebook.json")))
+            let backup = try FamilyNotebookBackup.encode(.init(copies: [.init(id: UUID(), state: state)]))
+            let restored = try FamilyNotebookBackup.decode(FamilyNotebookBackup.restored(backup))
+            try check(restored.copies[0].state.opaqueOperations?.count == 2, "old backup and restore retain both adoption values")
+            let dir = root.appendingPathComponent("restored")
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try JSONEncoder().encode(restored.copies[0].state).write(to: dir.appendingPathComponent("family-notebook.json"))
+        }
+        if phase == "new-verify" {
+            let snapshot = try store.snapshot()
+            try check(snapshot.operations.filter { $0.target.field.rawValue == "adoptionDay" }.count == 2, "new recovers complete adoption history")
+            try check(snapshot.operations.contains { $0.value == .text("古い版の編集") }, "old name edit survives resync")
+            try check(try store.pendingOperations().isEmpty, "new sends retained pending adoption")
+            let restored = try FamilyNotebookStore(directory: root.appendingPathComponent("restored"), familyID: family, deviceID: device)
+            try check(try restored.snapshot().operations.filter { $0.target.field.rawValue == "adoptionDay" }.count == 2, "new opens old restored backup")
+            try check(try restored.pendingOperations().isEmpty, "restored private copy never sends")
+        }
+        try JSONEncoder().encode(await relay.savedPackets()).write(to: packetsURL)
+        print("Adoption compatibility phase passed: " + phase)
+    }
+
     private static func verifyFuture(root: URL, identity: GroupDeviceIdentity, current: VerifiedFamilyNotebookRoster,
                                      key: Data, author: FamilyNotebookAuthor) async throws {
         let family = current.roster.familyID, device = try identity.deviceID, cat = UUID()
