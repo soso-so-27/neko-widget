@@ -169,7 +169,8 @@ final class ReviewScreenshotUITests: XCTestCase {
     func test04ToolsCatCareAndVet() {
         // 11/14: the first cat's 「これからのこと」 has all four rows filled
         // (birthday, a vaccination due soon, a vet memo with its next visit,
-        // a weight); the second cat's read 未設定・未記入・なし.
+        // a weight); the second cat has nothing written, so its card is
+        // 「この子のこと」 alone (11/14: no 未設定・未記入・なし on the page).
         let app = launch(fixture + ["--app-store-screenshot-cat-care", "--cat-home-care-fixture"], tools: true)
         shot("10_cat_home", app) {
             guard tapTab(app, "main-tab-tools", "この子") else { return "この子 tab not found" }

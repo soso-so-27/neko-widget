@@ -2,36 +2,40 @@ import SwiftUI
 
 // MARK: - 「この子」 page: 「これからのこと」 (11/14, 「猫を大切にできるページ」)
 //
-// One card under the buttons, four rows always in this order: 誕生日,
-// ワクチン, 病院, 体重. Settings-style rows (the name, the value at the side,
+// One card under the buttons: 誕生日, ワクチン, 病院, 体重 in this order,
+// each only when something is written for it (11/14: never 未設定・未記入・
+// なし on this page). Settings-style rows (the name, the value at the side,
 // a chevron), no icons and no colours but the one orange 「書きかけ」, then
 // 「この子のこと」 as the last row (11/14: was a box of its own). Every
 // value is read from what is already in memory (この子のこと and the vet
 // memos CatHomeToolStates reads after drawing); the words and boundaries are
 // in CatHomeCareCore.swift. Each row opens where that thing is written.
 
-/// The four values of a cat's card; a row is nil when it cannot be shown.
+/// The four values of a cat's card; a row is nil when nothing is written
+/// for it, and is then left out.
 struct CatHomeCareRows: Equatable {
     var birthday: CatHomeCareCore.Value?
     var vaccination: CatHomeCareCore.Value?
     var vet: CatHomeCareCore.Value?
     var weight: CatHomeCareCore.Value?
 
-    /// All four for a cat with a profile or a 「この子のこと」; a cat known
-    /// only from the tools has just its vet memos, and no card without them.
+    /// The rows with something written, for a cat with a profile or a
+    /// 「この子のこと」; a cat known only from the tools has just its vet
+    /// memos. nil when no row has anything (the card is 「この子のこと」 alone).
     static func make(hasProfile: Bool, record: CatCareRecord?, birthday: CatCareDay?,
                      vetMemos: [CatHomeCareCore.VetMemo], now: Date = Date(),
                      calendar: Calendar = .nekoGregorian) -> CatHomeCareRows? {
         guard let today = CatCareDay(date: now, calendar: calendar) else { return nil }
         let vet = CatHomeCareCore.vet(vetMemos, today: today, calendar: calendar)
         guard hasProfile || record != nil else {
-            return vetMemos.isEmpty ? nil : CatHomeCareRows(vet: vet)
+            return vet.map { CatHomeCareRows(vet: $0) }
         }
-        return CatHomeCareRows(
+        let rows = CatHomeCareRows(
             birthday: CatHomeCareCore.birthday(birthday, today: today),
             vaccination: CatHomeCareCore.vaccination(record?.vaccinations ?? [], today: today),
             vet: vet,
             weight: CatHomeCareCore.weight(record?.weights ?? [], today: today))
+        return rows == CatHomeCareRows() ? nil : rows
     }
 }
 
@@ -45,9 +49,10 @@ struct CatHomeCareLinks {
     let saveLifeDates: (String, CatProfileLifeDatesPresentation) async -> Bool
 }
 
-/// The care card: four rows, then 「この子のこと」; no heading.
+/// The care card: the rows with something written, then 「この子のこと」;
+/// no heading.
 struct CatHomeCareCard: View {
-    /// nil: a departed cat, or nothing to show for the four rows; the card
+    /// nil: a departed cat, or nothing written for any of the four; the card
     /// is then 「この子のこと」 alone.
     let rows: CatHomeCareRows?
     let links: CatHomeCareLinks
@@ -88,7 +93,8 @@ struct CatHomeCareCard: View {
         let value: CatHomeCareCore.Value
     }
 
-    /// Always 誕生日, ワクチン, 病院, 体重, leaving out only a row that is nil.
+    /// 誕生日, ワクチン, 病院, 体重 in this order, leaving out a row with
+    /// nothing written (nil).
     private var entries: [Entry] {
         guard let rows else { return [] }
         var result: [Entry] = []

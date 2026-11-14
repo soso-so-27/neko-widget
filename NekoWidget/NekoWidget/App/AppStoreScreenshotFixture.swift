@@ -299,7 +299,7 @@ enum AppStoreScreenshotFixture {
     /// 11/14: what the first cat's four rows read besides the cat-care
     /// fixture (birthday and weight): a vaccination due in about three weeks
     /// and a vet memo finished two months ago with its next visit day. The
-    /// second cat keeps nothing, so its rows read 未設定・未記入・なし.
+    /// second cat keeps nothing, so its card is 「この子のこと」 alone.
     /// Written once, never over what is there.
     static func seedCatHomeCareIfRequested() async {
         guard showsCatHomeCare,

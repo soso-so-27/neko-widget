@@ -2,8 +2,10 @@ import Foundation
 
 // MARK: - 「この子」 page: 「これからのこと」 (11/14, 「猫を大切にできるページ」)
 //
-// Under the five buttons a cat's page has one card of four rows, always in
-// this order: 誕生日, ワクチン, 病院, 体重. Each value is read from what is
+// Under the five buttons a cat's page has one card: 誕生日, ワクチン, 病院,
+// 体重 in this order, each only when something is written for it (11/14: no
+// 未設定・未記入・なし on the page; an empty 「ワクチン 未記入」 in a shared
+// screenshot reads as a judgement), then 「この子のこと」. Each value is read from what is
 // already written (この子のこと and 病院で見せる); nothing is stored and no
 // schedule is ever worked out (no 「one year after the last vaccine」).
 // The hero's day-specific line (誕生日, うちに来た日) is here too. This file is
@@ -54,10 +56,10 @@ enum CatHomeCareCore {
 
     // MARK: 誕生日
 
-    /// 「7月10日（あと239日）」, 「きょう」 on the day, 未設定 without one.
-    static func birthday(_ birthday: CatCareDay?, today: CatCareDay) -> Value {
+    /// 「7月10日（あと239日）」, 「きょう」 on the day; nil without one.
+    static func birthday(_ birthday: CatCareDay?, today: CatCareDay) -> Value? {
         guard let birthday, let next = nextOccurrence(of: birthday, onOrAfter: today),
-              let days = days(from: today, to: next) else { return Value(text: ToolEmptyValue.unset) }
+              let days = days(from: today, to: next) else { return nil }
         if days == 0 { return Value(text: "きょう", tone: .soon) }
         return Value(text: "\(birthday.month)月\(birthday.day)日（あと\(days)日）",
                      tone: days <= soonDays ? .soon : .quiet)
@@ -66,8 +68,8 @@ enum CatHomeCareCore {
     // MARK: ワクチン
 
     /// 「次は 11月ごろ」 from a recorded next due day (ahead, or at most 60
-    /// days past); else 「前回 2025年11月8日」; else 未記入.
-    static func vaccination(_ vaccinations: [CatCareVaccination], today: CatCareDay) -> Value {
+    /// days past); else 「前回 2025年11月8日」; else nil.
+    static func vaccination(_ vaccinations: [CatCareVaccination], today: CatCareDay) -> Value? {
         let active = vaccinations.filter { $0.deletedAt == nil }
         if let earliest = adding(-vaccinationGraceDays, to: today),
            let due = active.compactMap(\.nextDueOn).filter({ $0 >= earliest }).min() {
@@ -79,15 +81,15 @@ enum CatHomeCareCore {
         if let last = active.map(\.givenOn).filter({ $0 <= today }).max() {
             return Value(text: "前回 " + dayText(last, today: today))
         }
-        return Value(text: ToolEmptyValue.unwritten)
+        return nil
     }
 
     // MARK: 病院
 
     /// 「書きかけ」 for an unfinished memo with something in it; else the
     /// next visit day of the newest finished memo that has one, when today or
-    /// later; else 「前回」 and the newest finished memo's day; else なし.
-    static func vet(_ memos: [VetMemo], today: CatCareDay, calendar: Calendar = .nekoGregorian) -> Value {
+    /// later; else 「前回」 and the newest finished memo's day; else nil.
+    static func vet(_ memos: [VetMemo], today: CatCareDay, calendar: Calendar = .nekoGregorian) -> Value? {
         if memos.contains(where: \.isUnfinished) { return Value(text: "書きかけ", tone: .unfinished) }
         let finished = memos.compactMap { memo in memo.completedAt.map { (at: $0, memo: memo) } }
             .sorted { $0.at > $1.at }
@@ -99,17 +101,17 @@ enum CatHomeCareCore {
         if let last = finished.first, let day = CatCareDay(date: last.at, calendar: calendar) {
             return Value(text: "前回 " + dayText(day, today: today))
         }
-        return Value(text: ToolEmptyValue.none)
+        return nil
     }
 
     // MARK: 体重
 
-    /// 「5.50kg（10月21日）」 from the newest weight; 未記入 without one.
-    static func weight(_ weights: [CatCareWeight], today: CatCareDay) -> Value {
+    /// 「5.50kg（10月21日）」 from the newest weight; nil without one.
+    static func weight(_ weights: [CatCareWeight], today: CatCareDay) -> Value? {
         let latest = weights.filter { $0.deletedAt == nil }.max { left, right in
             left.measuredOn != right.measuredOn ? left.measuredOn < right.measuredOn : left.editedAt < right.editedAt
         }
-        guard let latest else { return Value(text: ToolEmptyValue.unwritten) }
+        guard let latest else { return nil }
         return Value(text: CatCareFormat.weight(latest.grams) + "（" + dayText(latest.measuredOn, today: today) + "）")
     }
 
