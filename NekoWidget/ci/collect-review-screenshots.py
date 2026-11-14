@@ -26,6 +26,15 @@ import sys
 import tempfile
 from pathlib import Path
 
+# この子 under stress (test14CatHomeStress): light, dark and se alike.
+STRESS_SCREENS = (
+    "40_home_name_1", "40_home_name_2", "40_home_name_4", "40_home_name_6",
+    "40_home_name_9", "40_home_name_14", "40_home_name_30", "41_home_menu_open",
+    "41b_home_menu_open_1cat", "42_home_cats_1", "42_home_cats_3", "42_home_cats_8",
+    "43_home_photo_bright", "43_home_photo_dark", "43_home_photo_face_low", "43_home_photo_portrait_small",
+    "44_home_rows_none", "44_home_rows_all", "44_home_rows_long_values", "44_home_searching",
+    "44_home_departed", "45_home_text_xl", "45_home_text_ax3", "46_home_mid_swipe",
+)
 # Every screen ReviewScreenshotUITests captures, in review order.
 FULL_SCREENS = (
     "01_photos_top", "01_photos_scrolled", "02_photo_detail", "03_memo_editor",
@@ -43,12 +52,12 @@ FULL_SCREENS = (
     "28_onboarding_5_widget_guide",
     "29_widget_guide_1", "29_widget_guide_2", "29_widget_guide_3", "29_widget_guide_4", "29_widget_guide_5",
     "90_error_vet_field_page", "90_error_vet_row", "91_error_plus_product_unavailable",
-)
+) + STRESS_SCREENS
 SE_SCREENS = (
     "10_cat_home", "10b_cat_home_second_cat", "10c_cat_home_no_cat", "10d_cat_home_no_photo",
     "11_cat_care_top", "12_vet_bottom", "14_lost_bottom", "16_care_bottom",
     "23_plus_offer_top", "23_plus_offer_bottom", "24_settings_top", "28_onboarding_1",
-)
+) + STRESS_SCREENS
 EXPECTED = {"light": FULL_SCREENS, "dark": FULL_SCREENS, "se": SE_SCREENS}
 MARKER = re.compile(r"review-(shot|missing|debug)__([A-Za-z0-9_]+?)__end")
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -83,8 +92,34 @@ def attachments(export_directory: Path):
                 yield match.group(1), match.group(2), exported
 
 
-def collect(review_set: str, output: Path, bundles: list[Path]) -> int:
+UI_TEST = Path(__file__).resolve().parents[1] / "NekoWidgetUITests" / "ReviewScreenshotUITests.swift"
+
+
+def screens_by_method(source: str) -> dict[str, list[str]]:
+    """Each test method's capture names, read from the UI test source."""
+    parts = re.split(r"\bfunc\s+(test\w+)\s*\(", source)
+    result: dict[str, list[str]] = {}
+    for method, body in zip(parts[1::2], parts[2::2]):
+        names = re.findall(r'shot\("([A-Za-z0-9_]+)"', body)
+        if 'shot("29_widget_guide_\\(page)"' in body:
+            names += [f"29_widget_guide_{page}" for page in range(2, 6)]
+        result[method] = names
+    return result
+
+
+def expected_screens(review_set: str, only: str = "", source: str | None = None) -> tuple[str, ...]:
+    """The set's screens; with `only` (comma-separated methods), just theirs."""
     expected = EXPECTED[review_set]
+    methods = [method.strip() for method in only.split(",") if method.strip()]
+    if not methods:
+        return expected
+    by_method = screens_by_method(source if source is not None else UI_TEST.read_text(encoding="utf-8"))
+    selected = {name for method in methods for name in by_method.get(method, [])}
+    return tuple(name for name in expected if name in selected)
+
+
+def collect(review_set: str, output: Path, bundles: list[Path], only: str = "") -> int:
+    expected = expected_screens(review_set, only)
     shots: dict[str, Path] = {}
     debug: dict[str, Path] = {}
     reasons: dict[str, str] = {}
@@ -186,12 +221,14 @@ def main() -> int:
     collect_command = commands.add_parser("collect")
     collect_command.add_argument("--set", required=True, choices=sorted(EXPECTED))
     collect_command.add_argument("--output", required=True, type=Path)
+    collect_command.add_argument("--only", default="",
+                                 help="comma-separated test methods; only their screens are expected")
     collect_command.add_argument("bundles", nargs="+", type=Path)
     index_command = commands.add_parser("index")
     index_command.add_argument("directory", type=Path)
     arguments = parser.parse_args()
     if arguments.command == "collect":
-        collect(arguments.set, arguments.output, arguments.bundles)
+        collect(arguments.set, arguments.output, arguments.bundles, arguments.only)
     else:
         build_index(arguments.directory)
     return 0

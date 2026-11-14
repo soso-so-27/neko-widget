@@ -15,6 +15,13 @@ final class ReviewScreenshotUITests: XCTestCase {
         "10_cat_home", "10b_cat_home_second_cat", "10c_cat_home_no_cat", "10d_cat_home_no_photo",
         "11_cat_care_top", "12_vet_bottom", "14_lost_bottom", "16_care_bottom",
         "23_plus_offer_top", "23_plus_offer_bottom", "24_settings_top", "28_onboarding_1",
+        // この子 under stress: every capture on iPhone SE too.
+        "40_home_name_1", "40_home_name_2", "40_home_name_4", "40_home_name_6",
+        "40_home_name_9", "40_home_name_14", "40_home_name_30", "41_home_menu_open",
+        "41b_home_menu_open_1cat", "42_home_cats_1", "42_home_cats_3", "42_home_cats_8",
+        "43_home_photo_bright", "43_home_photo_dark", "43_home_photo_face_low", "43_home_photo_portrait_small",
+        "44_home_rows_none", "44_home_rows_all", "44_home_rows_long_values", "44_home_searching",
+        "44_home_departed", "45_home_text_xl", "45_home_text_ax3", "46_home_mid_swipe",
     ]
     private static let mike = "11111111-1111-4111-8111-111111111111"
     private static let sora = "22222222-2222-4222-8222-222222222222"
@@ -652,6 +659,138 @@ final class ReviewScreenshotUITests: XCTestCase {
             return nil
         }
         app.terminate()
+    }
+
+    // MARK: - この子 under stress (11/14)
+
+    /// The この子 page in many situations for the designer: names of 1 to
+    /// 30 characters, the cat menu open, one, three and eight cats, bright,
+    /// dark, face-low and low-resolution photos, no rows, every row, long
+    /// values, 迷子, a departed cat, larger text and a page mid-swipe. Each
+    /// launch is its own scenario (its own cat IDs, AppStoreScreenshotFixture
+    /// .CatHomeStress), so nothing one capture writes shows in another.
+    @MainActor
+    func test14CatHomeStress() {
+        var app = launchStress(1, names: ["ミ", "ソラ"])
+        shot("40_home_name_1", app) { reachStressHome(app) }
+        app.terminate()
+        app = launchStress(2, names: ["むぎ", "ソラ"])
+        shot("40_home_name_2", app) { reachStressHome(app) }
+        app.terminate()
+        app = launchStress(3, names: ["ちゃちゃ", "ソラ"])
+        shot("40_home_name_4", app) { reachStressHome(app) }
+        app.terminate()
+        app = launchStress(4, names: ["ぽんずちゃん", "ソラ"])
+        shot("40_home_name_6", app) { reachStressHome(app) }
+        app.terminate()
+        app = launchStress(5, names: ["アレキサンダー大王", "ソラ"])
+        shot("40_home_name_9", app) { reachStressHome(app) }
+        app.terminate()
+        app = launchStress(6, names: ["うちのかわいいかわいいこねこ", "ソラ"])
+        shot("40_home_name_14", app) { reachStressHome(app) }
+        app.terminate()
+        app = launchStress(7, names: ["Sir Whiskers McFluffington III", "ソラ"])
+        shot("40_home_name_30", app) { reachStressHome(app) }
+        app.terminate()
+
+        // Three cats: the page, then the cat menu open over it.
+        app = launchStress(10, names: ["むぎ", "ソラ", "ちゃちゃ"])
+        shot("42_home_cats_3", app) { reachStressHome(app) }
+        shot("41_home_menu_open", app) { openStressMenu(app) }
+        app.terminate()
+        // One cat: no dots; the menu is still there (「この子を追加」).
+        app = launchStress(11, names: ["むぎ"])
+        shot("42_home_cats_1", app) { reachStressHome(app) }
+        shot("41b_home_menu_open_1cat", app) { openStressMenu(app) }
+        app.terminate()
+        // Eight cats: at most seven dots, the far end shrinking.
+        app = launchStress(12, names: ["むぎ", "ソラ", "ちゃちゃ", "ミ", "こむぎ", "あめ", "きなこ", "のり"])
+        shot("42_home_cats_8", app) { reachStressHome(app) }
+        app.terminate()
+
+        app = launchStress(20, names: ["むぎ", "ソラ"], ["--cat-home-stress-photo", "bright"])
+        shot("43_home_photo_bright", app) { reachStressHome(app) }
+        app.terminate()
+        app = launchStress(21, names: ["むぎ", "ソラ"], ["--cat-home-stress-photo", "dark"])
+        shot("43_home_photo_dark", app) { reachStressHome(app) }
+        app.terminate()
+        app = launchStress(22, names: ["むぎ", "ソラ"], ["--cat-home-stress-photo", "facelow"])
+        shot("43_home_photo_face_low", app) { reachStressHome(app) }
+        app.terminate()
+        app = launchStress(23, names: ["むぎ", "ソラ"], ["--cat-home-stress-photo", "small"])
+        shot("43_home_photo_portrait_small", app) { reachStressHome(app) }
+        app.terminate()
+
+        app = launchStress(30, names: ["むぎ", "ソラ"], ["--cat-home-stress-rows", "none"])
+        shot("44_home_rows_none", app) { reachStressHome(app) }
+        app.terminate()
+        app = launchStress(31, names: ["むぎ", "ソラ"], ["--cat-home-stress-rows", "all"])
+        shot("44_home_rows_all", app) { reachStressHome(app, waitingFor: "cat-home-care-vet") }
+        app.terminate()
+        app = launchStress(32, names: ["むぎ", "ソラ"], ["--cat-home-stress-rows", "long"])
+        shot("44_home_rows_long_values", app) { reachStressHome(app, waitingFor: "cat-home-care-vet") }
+        app.terminate()
+        app = launchStress(33, names: ["アレキサンダー大王", "ソラ"], ["--cat-home-stress-searching"])
+        shot("44_home_searching", app) { reachStressHome(app, waitingFor: "cat-home-searching") }
+        app.terminate()
+        app = launchStress(34, names: ["むぎ", "ソラ"], ["--cat-home-stress-departed"])
+        shot("44_home_departed", app) {
+            if let reason = reachStressHome(app) { return reason }
+            // A departed cat is not offered in the tools.
+            guard !app.buttons["tools-care-open"].exists else { return "departed state not shown (tool buttons still there)" }
+            return nil
+        }
+        app.terminate()
+
+        app = launchStress(40, names: ["ぽんずちゃん", "ソラ"], ["--cat-home-stress-rows", "all", "--cat-home-stress-text", "xl"])
+        shot("45_home_text_xl", app) { reachStressHome(app, waitingFor: "cat-home-care-vet") }
+        app.terminate()
+        app = launchStress(41, names: ["ぽんずちゃん", "ソラ"], ["--cat-home-stress-rows", "all", "--cat-home-stress-text", "ax3"])
+        shot("45_home_text_ax3", app) { reachStressHome(app) }
+        app.terminate()
+
+        // XCUITest cannot capture while a drag is held (the press-and-drag
+        // call returns only after the finger lifts), so the fixture parks
+        // the pager 42% of the way to the second cat, where a finger would
+        // hold it; the pages draw as they do mid-drag.
+        app = launchStress(50, names: ["むぎ", "ソラ"], ["--cat-home-stress-mid-swipe"])
+        shot("46_home_mid_swipe", app) {
+            if let reason = reachStressHome(app) { return reason }
+            settle(4)
+            return nil
+        }
+        app.terminate()
+    }
+
+    /// One stress scenario (AppStoreScreenshotFixture.CatHomeStress).
+    @MainActor
+    private func launchStress(_ scenario: Int, names: [String], _ extra: [String] = []) -> XCUIApplication {
+        launch(fixture + ["--cat-home-stress", "--cat-home-stress-scenario", String(scenario),
+                          "--cat-home-stress-names", names.joined(separator: "|")] + extra, tools: true)
+    }
+
+    /// The この子 tab with the first cat's page; nil when it is on screen.
+    @MainActor
+    private func reachStressHome(_ app: XCUIApplication, waitingFor identifier: String? = nil) -> String? {
+        guard tapTab(app, "main-tab-tools", "この子") else { return "この子 tab not found" }
+        guard app.buttons["tools-cat-menu"].waitForExistence(timeout: 15) else { return "cat menu button not found" }
+        if let identifier,
+           !app.descendants(matching: .any)[identifier].firstMatch.waitForExistence(timeout: 12) {
+            return "\(identifier) did not appear"
+        }
+        settle(2)
+        return nil
+    }
+
+    /// The cat menu open over the page (every cat, 「この子を追加」).
+    @MainActor
+    private func openStressMenu(_ app: XCUIApplication) -> String? {
+        let menu = app.buttons["tools-cat-menu"]
+        guard menu.waitForExistence(timeout: 10), menu.isHittable else { return "cat menu button not hittable" }
+        menu.tap()
+        guard app.buttons["tools-cat-profiles"].waitForExistence(timeout: 6) else { return "cat menu did not open" }
+        settle(1)
+        return nil
     }
 
     // MARK: - Helpers

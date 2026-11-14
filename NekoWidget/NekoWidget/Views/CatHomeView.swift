@@ -242,6 +242,7 @@ struct CatHomeView: View {
     @State private var pageID: String?
     @State private var addsCat = false
     @State private var addedCat: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let cats = self.cats
@@ -353,11 +354,23 @@ struct CatHomeView: View {
     // MARK: Pages
 
     /// The cats side by side, one page each; a swipe switches the cat.
+    /// 11/14: at rest a page is exactly as before (full bleed, no corners);
+    /// while it moves each page becomes a card, a little smaller with
+    /// rounded corners, the page background showing between the two (the
+    /// WWDC23 「Beyond scroll views」 scrollTransition pattern). Reduce
+    /// Motion: plain paging.
     private func pager(_ cats: [CatHomeCat], current: CatHomeCat, metrics: CatHomeMetrics) -> some View {
-        ScrollView(.horizontal) {
+        let reduceMotion = self.reduceMotion
+        let shrink = CatHomeCardWhileMoving.shrink
+        return ScrollView(.horizontal) {
             LazyHStack(spacing: 0) {
                 ForEach(Array(cats.enumerated()), id: \.element.id) { index, cat in
                     page(cat, index: index, cats: cats, metrics: metrics)
+                        .modifier(CatHomeCardWhileMoving(enabled: !reduceMotion && cats.count > 1))
+                        .scrollTransition(.interactive, axis: .horizontal) { content, phase in
+                            content.scaleEffect(phase.isIdentity || reduceMotion
+                                                ? 1 : 1 - shrink * CGFloat(min(abs(phase.value), 1)))
+                        }
                         // Only the page on screen is read and found by tests.
                         .accessibilityHidden(cat.id != current.id)
                         .containerRelativeFrame(.horizontal)
@@ -370,6 +383,11 @@ struct CatHomeView: View {
         .scrollPosition(id: $pageID)
         .scrollIndicators(.hidden)
         .scrollDisabled(cats.count < 2)
+        // A light tick when another cat's page is reached; never on the
+        // first appearance (pageID is set from nil there).
+        .sensoryFeedback(.selection, trigger: pageID) { old, new in
+            old != nil && new != nil && old != new
+        }
         .onAppear { if pageID == nil { pageID = current.id } }
     }
 
@@ -476,6 +494,57 @@ struct CatHomeView: View {
     }
 }
 
+/// While the pages move, each page is a card with continuous rounded corners
+/// (0 at rest, `radius` a full page away); its scale comes from the pager's
+/// scrollTransition. The corners are painted in the page background (the
+/// colour that shows between the two cards) rather than clipped: at rest
+/// the paint is an empty path, so nothing is clipped or composited offscreen
+/// and the photo under the status bar draws exactly as before, also while the
+/// page scrolls up and down. A ViewModifier, so the moving offset re-draws
+/// only the corners, never the page's own body.
+private struct CatHomeCardWhileMoving: ViewModifier {
+    /// How much smaller a page is a full page away (0.92 at most).
+    static let shrink: CGFloat = 0.08
+    static let radius: CGFloat = 32
+
+    let enabled: Bool
+    /// 0 at rest, 1 a full page away; kept in hundredths.
+    @State private var progress: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                CatHomeCardCorners(radius: Self.radius * progress)
+                    .fill(Color(.systemGroupedBackground), style: FillStyle(eoFill: true))
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                let width = proxy.size.width
+                guard width > 0 else { return 0 }
+                let moved = min(abs(proxy.frame(in: .scrollView(axis: .horizontal)).minX) / width, 1)
+                // A settled page reads exactly 0 (no corner, no clip).
+                return moved < 0.01 ? 0 : (moved * 100).rounded() / 100
+            } action: { value in
+                let next = enabled ? value : 0
+                if next != progress { progress = next }
+            }
+    }
+}
+
+/// What lies outside a rounded rectangle in the rectangle (even-odd); an
+/// empty path when the radius is 0.
+private struct CatHomeCardCorners: Shape {
+    var radius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        guard radius > 0 else { return Path() }
+        var path = Path(rect)
+        path.addRoundedRect(in: rect, cornerSize: CGSize(width: radius, height: radius), style: .continuous)
+        return path
+    }
+}
+
 /// Sizes taken once from the screen: the photo is about 46% of its height
 /// (40% on short screens, so the first buttons show on iPhone SE).
 struct CatHomeMetrics {
@@ -558,6 +627,8 @@ private struct CatHomeHero: View {
     @Environment(\.displayScale) private var displayScale
     @Environment(\.dynamicTypeSize) private var typeSize
     @ScaledMetric(relativeTo: .largeTitle) private var nameSize: CGFloat = 56
+    /// The round cat-menu button after the name (40 at most).
+    @ScaledMetric(relativeTo: .body) private var menuCircle: CGFloat = 30
 
     /// How tall the fade into the page is, under the name.
     static let fade: CGFloat = 44
@@ -614,27 +685,27 @@ private struct CatHomeHero: View {
     }
 
     private var words: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            nameMenu
+        // 11/14: the name takes at most 62% of the photo's width at rest.
+        let nameWidth = (metrics.width * CGFloat(CatHomeHeroLayout.nameWidthShare)).rounded(.down)
+        let fit = nameFit(maxWidth: nameWidth)
+        return VStack(alignment: .leading, spacing: 6) {
+            nameRow(fit, maxWidth: nameWidth)
             // The line and the dots are in the photo's spoken summary.
             if let line = facts.line {
+                // Two lines (three at the accessibility sizes) before it
+                // gets any smaller, and never below 0.85.
                 Text(line)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.92))
-                    .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
-                    .minimumScaleFactor(0.75)
+                    .lineLimit(typeSize.isAccessibilitySize ? 3 : 2)
+                    .minimumScaleFactor(0.85)
+                    .fixedSize(horizontal: false, vertical: true)
                     .accessibilityHidden(true)
             }
             if pageCount > 1 {
-                HStack(spacing: 6) {
-                    ForEach(0..<pageCount, id: \.self) { index in
-                        Circle()
-                            .fill(Color.white.opacity(index == pageIndex ? 1 : 0.45))
-                            .frame(width: 6, height: 6)
-                    }
-                }
-                .padding(.top, 4)
-                .accessibilityHidden(true)
+                CatHomePageDots(count: pageCount, current: pageIndex)
+                    .padding(.top, 4)
+                    .accessibilityHidden(true)
             }
         }
         .shadow(color: .black.opacity(0.45), radius: 8, y: 1)
@@ -642,26 +713,75 @@ private struct CatHomeHero: View {
         .padding(.bottom, Self.fade + 6)
     }
 
-    /// The name, then a small chevron on its baseline (about 40% of the
-    /// name's cap height, which is about 0.7 of its size); together they open
-    /// the cat menu. The chevron keeps its size, so a long name gives up only
-    /// the chevron's width before it shrinks or truncates.
-    private var nameMenu: some View {
-        Menu { menu } label: {
-            HStack(alignment: .firstTextBaseline, spacing: (min(nameSize, 84) * 0.12).rounded()) {
-                Text(cat.name)
-                    .font(.system(size: min(nameSize, 84), weight: .heavy))
-                    .foregroundStyle(.white)
-                    .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
-                    .minimumScaleFactor(0.5)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: (min(nameSize, 84) * 0.28).rounded(), weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .fixedSize()
-            }
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
+    /// The largest size of the ladder (56, 48, 40, 34, each scaled by
+    /// Dynamic Type up to 1.5×) at which the name fits on one line in
+    /// `maxWidth`; else two lines at the smallest. A short name (up to
+    /// three full-width characters) stays at 56.
+    private func nameFit(maxWidth: CGFloat) -> CatHomeHeroLayout.NameFit {
+        let name = cat.name as NSString
+        return CatHomeHeroLayout.nameFit(scale: Double(nameSize / 56), maxWidth: Double(maxWidth)) { size in
+            let font = UIFont.systemFont(ofSize: CGFloat(size), weight: .heavy)
+            return Double(ceil(name.size(withAttributes: [.font: font]).width))
         }
+    }
+
+    /// The name as plain text, then the cat menu: a chevron in a small
+    /// round button just after it, centred on the name's glyphs (on its last
+    /// line when it takes two).
+    ///
+    /// 11/14: a Menu shows the system's lifted highlight around its whole
+    /// label while it opens, and SwiftUI has no API to turn that off for a
+    /// Menu (`ContentShapeKinds.contextMenuPreview` is documented for context
+    /// menu previews only). With the name as the label that highlight was a
+    /// faint rectangle around the big name; on a round button it is a small
+    /// circle that looks intended.
+    private func nameRow(_ fit: CatHomeHeroLayout.NameFit, maxWidth: CGFloat) -> some View {
+        let size = CGFloat(fit.size)
+        return HStack(alignment: .lastTextBaseline, spacing: max((size * 0.12).rounded(), 6)) {
+            nameText(fit, maxWidth: maxWidth)
+            menuButton
+                // The circle's centre about 0.36 of the size above the
+                // baseline: the middle of kana, kanji and capitals alike.
+                .alignmentGuide(.lastTextBaseline) { dimensions in
+                    dimensions[VerticalAlignment.center] + size * CGFloat(CatHomeHeroLayout.glyphCentre)
+                }
+        }
+    }
+
+    @ViewBuilder
+    private func nameText(_ fit: CatHomeHeroLayout.NameFit, maxWidth: CGFloat) -> some View {
+        let text = Text(cat.name)
+            .font(.system(size: CGFloat(fit.size), weight: .heavy))
+            .foregroundStyle(.white)
+            // The photo above reads the name; the button reads it as its value.
+            .accessibilityHidden(true)
+        if fit.lines == 1 {
+            text.lineLimit(1).fixedSize()
+        } else {
+            text.lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: maxWidth, alignment: .leading)
+        }
+    }
+
+    /// The cat menu (every cat, a check on this one, 「この子を追加」).
+    private var menuButton: some View {
+        let circle = min(menuCircle, 40)
+        let target = max(circle, 44)
+        return Menu { menu } label: {
+            Image(systemName: "chevron.down")
+                .font(.system(size: (circle * 0.42).rounded(), weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: circle, height: circle)
+                .background(.ultraThinMaterial, in: Circle())
+                .environment(\.colorScheme, .dark)
+                .frame(width: target, height: target)
+                .contentShape(Circle())
+                .contentShape(.contextMenuPreview, Circle().inset(by: (target - circle) / 2))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
         .accessibilityLabel("猫を切り替える")
         .accessibilityValue(cat.name)
         .accessibilityIdentifier("tools-cat-menu")
@@ -687,6 +807,25 @@ private struct CatHomeHero: View {
             return CGRect(x: 0.3, y: 0.55, width: 0.4, height: 0.3)
         }
         return CGRect(x: box.minX, y: box.maxY - box.height / 3, width: box.width, height: box.height / 3)
+    }
+}
+
+/// Which page this is, on the photo: one dot per cat, at most seven; with
+/// more cats the seven around this page show and the ends shrink, as the
+/// system page control does (CatHomeHeroLayout.dots).
+private struct CatHomePageDots: View {
+    let count: Int
+    let current: Int
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(CatHomeHeroLayout.dots(count: count, current: current), id: \.index) { dot in
+                Circle()
+                    .fill(Color.white.opacity(dot.index == current ? 1 : 0.45))
+                    .frame(width: 6 * CGFloat(dot.scale), height: 6 * CGFloat(dot.scale))
+            }
+        }
+        .frame(height: 6)
     }
 }
 

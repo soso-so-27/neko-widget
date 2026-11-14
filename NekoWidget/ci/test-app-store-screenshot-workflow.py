@@ -596,6 +596,23 @@ class ReviewScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn('attachment.name = "review-missing__\\(name)__end"', self.ui_test)
         self.assertIn('attachment.name = "review-shot__\\(name)__end"', self.ui_test)
 
+    def test_only_runs_the_named_methods_and_expects_only_their_screens(self) -> None:
+        # 11/14: a capture of a few tests instead of the whole class.
+        trigger = self.workflow.split("on:\n", 1)[1].split("\npermissions:", 1)[0]
+        self.assertEqual(trigger.count("      only:\n"), 2)
+        self.assertIn("REVIEW_ONLY: ${{ inputs.only }}", self.workflow)
+        self.assertIn('IFS=\',\' read -r -a requested <<< "${REVIEW_ONLY// /}"', self.workflow)
+        self.assertIn('--only "${REVIEW_ONLY// /}"', self.workflow)
+        everything = self.collector.expected_screens("light")
+        self.assertEqual(everything, self.collector.FULL_SCREENS)
+        chosen = self.collector.expected_screens("light", "test09Settings, test14CatHomeStress", self.ui_test)
+        self.assertIn("24_settings_top", chosen)
+        self.assertIn("29_widget_guide_5", chosen)
+        self.assertIn("46_home_mid_swipe", chosen)
+        self.assertNotIn("01_photos_top", chosen)
+        se = self.collector.expected_screens("se", "test14CatHomeStress", self.ui_test)
+        self.assertEqual(se, self.collector.STRESS_SCREENS)
+
     def test_store_workflow_only_hands_review_mode_to_the_review_workflow(self) -> None:
         store = source(".github/workflows/app-store-screenshots.yml")
         jobs = store.split("\njobs:\n", 1)[1]

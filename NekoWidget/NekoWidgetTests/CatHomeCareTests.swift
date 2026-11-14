@@ -258,4 +258,56 @@ final class CatHomeCareTests: XCTestCase {
         XCTAssertEqual(Core.completedYears(from: day(2020, 2, 29), to: day(2021, 2, 28)), 0)
         XCTAssertEqual(Core.completedYears(from: day(2020, 2, 29), to: day(2021, 3, 1)), 1)
     }
+    // MARK: The name and the dots on the photo
+
+    /// Width of a name of `characters` full-width glyphs at `size` (each
+    /// glyph as wide as the size, as heavy kana and kanji nearly are).
+    private func fullWidth(_ characters: Int) -> (Double) -> Double {
+        { size in Double(characters) * size }
+    }
+
+    func testNameLadderKeepsShortNamesAtFiftySix() {
+        typealias Layout = CatHomeHeroLayout
+        // iPhone SE / standard width 375: 62% is 232.
+        XCTAssertEqual(Layout.nameFit(scale: 1, maxWidth: 232, width: fullWidth(1)), .init(size: 56, lines: 1))
+        XCTAssertEqual(Layout.nameFit(scale: 1, maxWidth: 232, width: fullWidth(2)), .init(size: 56, lines: 1))
+        XCTAssertEqual(Layout.nameFit(scale: 1, maxWidth: 232, width: fullWidth(3)), .init(size: 56, lines: 1))
+        // Four at 56 is 224 (fits), five steps down to 40 (5 × 48 = 240 does not fit).
+        XCTAssertEqual(Layout.nameFit(scale: 1, maxWidth: 232, width: fullWidth(4)), .init(size: 56, lines: 1))
+        XCTAssertEqual(Layout.nameFit(scale: 1, maxWidth: 232, width: fullWidth(5)), .init(size: 40, lines: 1))
+        XCTAssertEqual(Layout.nameFit(scale: 1, maxWidth: 232, width: fullWidth(6)), .init(size: 34, lines: 1))
+        // Longer: two lines at the smallest size.
+        XCTAssertEqual(Layout.nameFit(scale: 1, maxWidth: 232, width: fullWidth(9)), .init(size: 34, lines: 2))
+        XCTAssertEqual(Layout.nameFit(scale: 1, maxWidth: 232, width: fullWidth(80)), .init(size: 34, lines: 2))
+    }
+
+    func testNameLadderScalesWithTextSizeUpToTheCap() {
+        typealias Layout = CatHomeHeroLayout
+        // Larger text: every step grows; the cap keeps 56 at 84 at most.
+        XCTAssertEqual(Layout.nameFit(scale: 1.2, maxWidth: 400, width: fullWidth(2)), .init(size: 67, lines: 1))
+        XCTAssertEqual(Layout.nameFit(scale: 3, maxWidth: 400, width: fullWidth(2)), .init(size: 84, lines: 1))
+        // The same width rule at the accessibility sizes: 3 × 84 = 252 > 232.
+        XCTAssertEqual(Layout.nameFit(scale: 3, maxWidth: 232, width: fullWidth(3)), .init(size: 72, lines: 1))
+        XCTAssertEqual(Layout.nameFit(scale: 3, maxWidth: 232, width: fullWidth(6)), .init(size: 51, lines: 2))
+    }
+
+    func testPageDotsCapAtSevenWithShrinkingEnds() {
+        typealias Layout = CatHomeHeroLayout
+        XCTAssertEqual(Layout.dots(count: 1, current: 0), [])
+        XCTAssertEqual(Layout.dots(count: 3, current: 1).map(\.scale), [1, 1, 1])
+        XCTAssertEqual(Layout.dots(count: 7, current: 6).count, 7)
+        // Eight cats, the first page: dots 0…6, the far end shrinks.
+        let first = Layout.dots(count: 8, current: 0)
+        XCTAssertEqual(first.map(\.index), Array(0...6))
+        XCTAssertEqual(first.map(\.scale), [1, 1, 1, 1, 1, 0.75, 0.5])
+        // The last page: dots 1…7, the near end shrinks.
+        let last = Layout.dots(count: 8, current: 7)
+        XCTAssertEqual(last.map(\.index), Array(1...7))
+        XCTAssertEqual(last.map(\.scale), [0.5, 0.75, 1, 1, 1, 1, 1])
+        // In the middle of twelve: both ends shrink, the current page is in the middle.
+        let middle = Layout.dots(count: 12, current: 6)
+        XCTAssertEqual(middle.map(\.index), Array(3...9))
+        XCTAssertEqual(middle.map(\.scale), [0.5, 0.75, 1, 1, 1, 0.75, 0.5])
+        XCTAssertTrue(middle.contains(.init(index: 6, scale: 1)))
+    }
 }
