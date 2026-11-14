@@ -228,7 +228,7 @@ class NameIsTheCatMenu(unittest.TestCase):
         self.assertIn("paragraph.lineBreakStrategy = .standard", last)
         self.assertIn("container.lineFragmentPadding = 0", last)
         self.assertIn("CGSize(width: max(maxWidth - 4, 1), height: .greatestFiniteMagnitude)", last)
-        self.assertIn('return (first + "\n" + rest, last)', last)
+        self.assertIn('return (first + "\\n" + rest, last)', last)
         self.assertNotIn("firstTextBaseline", hero)
         self.assertIn("static let glyphCentre = 0.36", CORE)
 

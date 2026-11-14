@@ -793,8 +793,7 @@ private struct CatHomeHero: View {
         let first = name.substring(with: lines[0].range).trimmingCharacters(in: .whitespaces)
         let rest = name.substring(from: NSMaxRange(lines[0].range)).trimmingCharacters(in: .whitespaces)
         let last = lines.count == 2 ? min(ceil(lines[1].width), maxWidth) : maxWidth
-        return (first + "
-" + rest, last)
+        return (first + "\n" + rest, last)
     }
 
     @ViewBuilder
