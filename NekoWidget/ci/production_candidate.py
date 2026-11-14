@@ -113,7 +113,7 @@ def settings(contract, *, synthetic=False):
     result.update({"INTERNAL_PRESENTATION_CONDITION": "",
                    "OWNER_INTERNAL_REPORTS_DISABLED": "NO",
                    "SHARE_EXTENSION_INFOPLIST_FILE": "NekoWidgetShareExtension/Info.plist",
-                   "PHOTO_LIBRARY_USAGE_DESCRIPTION": "猫の写真を端末内で解析し、アルバムとウィジェットに表示します。共有では選んだ1枚を最大2,048pxに縮小し、位置情報を除いて暗号化して届けます。原本を自動送信しません。"})
+                   "PHOTO_LIBRARY_USAGE_DESCRIPTION": "猫の写真を端末内で解析し、アルバムとウィジェットに表示します。共有では選んだ1枚を最大2,048pxに縮小し、位置情報を除いて暗号化して届けます。自動保存をオンにすると、記録に足した写真のコピーも暗号化して保存します。それ以外の写真は送りません。"})
     for name in result:
         result[name] = re.sub(r"\$\(([^)]+)\)", lambda m: result[m[1]], result[name])
     module("validate-production-settings").verify(result)
