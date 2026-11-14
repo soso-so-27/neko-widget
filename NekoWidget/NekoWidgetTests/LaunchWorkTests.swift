@@ -252,6 +252,22 @@ final class LaunchWorkTests: XCTestCase {
         XCTAssertTrue(loaded.assets[0].isFavorite)
     }
 
+    // MARK: - 写真 tab: a spinner after 「〇枚」, only for real work
+
+    @MainActor
+    func testSpinnerShowsOnlyAfterASecondOfChecking() async throws {
+        let activity = ScanActivity()
+        activity.passStarted()
+        activity.passEnded()  // a pass that ends at once shows nothing
+        try await Task.sleep(for: .milliseconds(1_300))
+        XCTAssertFalse(activity.isChecking)
+        activity.passStarted()
+        try await Task.sleep(for: .milliseconds(1_300))
+        XCTAssertTrue(activity.isChecking)
+        activity.passEnded()
+        XCTAssertFalse(activity.isChecking)
+    }
+
     // MARK: - Cats per photo, built once
 
     func testConfirmationIndexAnswersLikeTheLedger() {

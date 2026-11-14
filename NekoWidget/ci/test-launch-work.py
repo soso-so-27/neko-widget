@@ -140,6 +140,22 @@ class LaunchWork(unittest.TestCase):
         catalog = block(MODEL, "func refreshPhotoSourceAlbums()")
         self.assertIn("Task.detached(priority: .utility) {\n            PhotoSourceAlbumCatalog.availableAlbums(", catalog)
 
+    def test_photos_tab_grid_never_moves_for_a_search(self):
+        home = read("NekoWidget/Views/HomeView.swift")
+        main = read("NekoWidget/Views/MainTabView.swift")
+        self.assertIn("if scan.hasFailed || scan.hasDeferredAssets {\n                            partialScanStatus", home)
+        self.assertIn("PhotoCountWithScanActivity(count: catPhotos.count)", home)
+        self.assertIn("PhotoCountWithScanActivity(count: photos.count)", main)
+        count = block(home, "struct PhotoCountWithScanActivity: View {")
+        self.assertIn(".frame(width: 16, height: 16)", count)
+        self.assertIn("ProgressView().controlSize(.small)", count)
+        launch = block(MODEL, "private func launchScan(")
+        self.assertIn("ScanActivity.shared.passStarted()", launch)
+        self.assertIn("ScanActivity.shared.passEnded()", launch)
+        self.assertIn("ScanActivity.shared.passEnded()", block(MODEL, "func suspendScan()"))
+        self.assertIn("deferredAssets: viewModel.isScanning ? viewModel.deferredAssetsBeforePass : state.deferredAssets",
+                      read("NekoWidget/App/AppRootView.swift"))
+
     def test_meter_and_fixture_are_debug_only(self):
         debug, release = METER.split("#else", 1)
         self.assertTrue(debug.lstrip().startswith("import Foundation") and "#if DEBUG" in debug)

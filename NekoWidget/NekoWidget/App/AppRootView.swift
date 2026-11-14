@@ -609,7 +609,7 @@ struct AppRootView: View {
         var presentation = ScanPresentation(
             scannedAssets: state.scannedAssets,
             totalAssets: state.totalAssets,
-            deferredAssets: state.deferredAssets,
+            deferredAssets: viewModel.isScanning ? viewModel.deferredAssetsBeforePass : state.deferredAssets,
             isScanning: viewModel.isScanning,
             isPaused: state.phase == .cancelled,
             lastScannedAt: state.lastScannedAt,

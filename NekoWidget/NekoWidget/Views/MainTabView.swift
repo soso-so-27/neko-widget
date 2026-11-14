@@ -3731,12 +3731,7 @@ private struct PhotoLibraryCatRow<CatPicker: View, AddPhotos: View>: View {
         HStack(spacing: 10) {
             picker()
             if !photos.isEmpty {
-                Text("\(photos.count.formatted())枚")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .accessibilityIdentifier("photo-hub-detected-grid")
+                PhotoCountWithScanActivity(count: photos.count)
             }
             Spacer(minLength: 0)
             PhotoLibraryMonthJumpMenu(months: months) { monthJump = $0 }

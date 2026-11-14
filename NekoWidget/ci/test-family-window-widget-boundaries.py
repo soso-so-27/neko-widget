@@ -5871,7 +5871,18 @@ class PhotoScanStatusTests(unittest.TestCase):
     def test_searching_says_so_and_a_retry_only_appears_when_it_can_work(self) -> None:
         home = source("NekoWidget/Views/HomeView.swift")
         status = section(home, "private var partialScanStatus: some View {", "private var monthDestinations")
-        self.assertLess(status.index("if scan.isScanning {"), status.index('"もう一度探す"'))
+        # 11/14: a search no longer swaps the row's words or inserts a row
+        # above the grid (the grid jumped on every launch); it is the spinner
+        # after 「〇枚」, and only failed or unreadable photos keep a row.
+        self.assertNotIn("if scan.isScanning {", status)
+        self.assertIn("if scan.hasFailed || scan.hasDeferredAssets {\n                            partialScanStatus", home)
+        self.assertNotIn("scan.hasFailed || scan.hasDeferredAssets || scan.isScanning || scan.isPaused", home)
+        count = section(home, "struct PhotoCountWithScanActivity: View {", "struct HomeView: View {")
+        self.assertIn("@ObservedObject private var activity = ScanActivity.shared", count)
+        self.assertIn(".frame(width: 16, height: 16)", count)
+        self.assertIn('"\\(count.formatted())枚、新しい写真を確かめています"', count)
+        self.assertNotIn("Text(\"猫の写真を探しています\")", count)
+        self.assertIn("PhotoCountWithScanActivity(count: catPhotos.count)", home)
         self.assertNotIn("まだ読み込めない写真があります", status)
         self.assertNotIn(".disabled(scan.isScanning)", status)
         self.assertIn('"読み込めなかった写真が\\(scan.deferredAssets.formatted())枚あります"', status)
@@ -8089,8 +8100,11 @@ class DesignPolish1111Tests(unittest.TestCase):
         library = section(main, "private var photoLibrary: some View {", "private var albumRoot: some View {")
         self.assertIn("photoLibraryCatRow", library)
         row = section(main, "private struct PhotoLibraryCatRow<", "private struct PhotoThemeTile: View {")
-        for part in ("picker()", '.accessibilityIdentifier("photo-hub-detected-grid")', "PhotoLibraryMonthJumpMenu(", "addPhotos()"):
+        # 11/14: the count carries the scan spinner in a fixed slot.
+        for part in ("picker()", "PhotoCountWithScanActivity(count: photos.count)", "PhotoLibraryMonthJumpMenu(", "addPhotos()"):
             self.assertIn(part, row)
+        count = section(source("NekoWidget/Views/HomeView.swift"), "struct PhotoCountWithScanActivity: View {", "struct HomeView: View {")
+        self.assertIn('.accessibilityIdentifier("photo-hub-detected-grid")', count)
         # The count and 日付 belong to すべて only.
         self.assertIn("photoLibrarySelection.selection == .all && hasPhotoAccess ? photoLibraryCatPhotos : []",
                       section(main, "private var photoLibraryCatRow: some View {", "private var photoLibraryCatPicker: some View {"))

@@ -395,7 +395,8 @@ final class AppViewModel: ObservableObject {
 #endif
         // Revoke shared readers before asynchronous PhotoKit resolution.
         _ = suspendPersonalWidgetAuthority()
-        reloadAllWidgetTimelines()
+        LaunchWork.count("reloadAllTimelines")
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     private func updatePhotoReadAuthority() {
@@ -999,6 +1000,7 @@ final class AppViewModel: ObservableObject {
         scanTask?.cancel()
         scanTask = nil
         isScanning = false
+        ScanActivity.shared.passEnded()
         libraryChangePending = true
         SharedLog.app.info(
             "scan",
@@ -2663,6 +2665,7 @@ final class AppViewModel: ObservableObject {
     /// Set while a pass that follows a completed one runs: progress that
     /// changes no record is not published (11/14).
     private var isVerificationPass = false
+    private(set) var deferredAssetsBeforePass = 0
     private var quietScanProgress: (generation: Int, state: ScanState)?
     private var scanMergeIndex: (count: Int, content: Int, index: [String: Int])?
 
@@ -2696,7 +2699,11 @@ final class AppViewModel: ObservableObject {
         guard generation == scanGeneration else { return }
 
         LaunchWork.count("launchScan")
+        // The 写真 tab keeps the last settled count of unreadable photos while
+        // a pass recounts them, so its row does not come and go (11/14).
+        deferredAssetsBeforePass = scanState.deferredAssets
         isScanning = true
+        ScanActivity.shared.passStarted()
         var startingState = scanState
         startingState.phase = .quickScan
         startingState.lastError = nil
@@ -2732,6 +2739,7 @@ final class AppViewModel: ObservableObject {
         guard generation == scanGeneration else { return }
         scanTask = nil
         isScanning = false
+        ScanActivity.shared.passEnded()
         isVerificationPass = false
     }
 
