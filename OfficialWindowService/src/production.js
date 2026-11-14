@@ -29,6 +29,15 @@ export default {
       if (!isIndex && !/^\/__program\/images\/[a-f0-9]{64}\.jpg$/.test(pathname)) {
         return new Response(null, { status: 404 });
       }
+      // The live index and its current allowed filenames are checked by program
+      // before this image read. Never cache the index or a public response: gate,
+      // withdrawal and day boundaries must still run on every request.
+      const cache = !isIndex ? globalThis.caches?.default : undefined;
+      const cacheKey = new Request(new URL('/__official_cache/' + prefix + pathname, request.url));
+      if (cache) {
+        try { const hit = await cache.match(cacheKey); if (hit?.status === 200) return hit; }
+        catch { /* Cache is only an optimization. */ }
+      }
       const object = await env.OFFICIAL.get(prefix + pathname);
       if (!object) return new Response(null, { status: 404 });
       const maximum = isIndex ? 256 * 1024 : 4 * 1024 * 1024;
@@ -36,7 +45,13 @@ export default {
         await object.body?.cancel();
         return new Response(null, { status: 503 });
       }
-      return new Response(object.body);
+      const response = new Response(object.body);
+      if (cache) {
+        const stored = response.clone();
+        stored.headers.set('Cache-Control', 'public, max-age=300');
+        try { await cache.put(cacheKey, stored); } catch { /* Read remains available. */ }
+      }
+      return response;
     } } });
   },
 };
