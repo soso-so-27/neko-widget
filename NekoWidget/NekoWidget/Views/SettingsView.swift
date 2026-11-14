@@ -437,6 +437,8 @@ struct SettingsView: View {
                                     .font(.footnote).foregroundStyle(.secondary)
                             }
                         }
+                        NavigationLink("機種変更の小さな試験") { KeychainSyncProbeView() }
+                            .accessibilityIdentifier("settings-keychain-sync-probe")
                         NavigationLink("猫の見分けを測る（テスト用）") { CatIdentityMeasureView() }
                             .accessibilityIdentifier("settings-cat-identity-measure")
                         NavigationLink {
