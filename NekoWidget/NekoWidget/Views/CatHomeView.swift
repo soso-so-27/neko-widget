@@ -484,6 +484,9 @@ struct CatHomeView: View {
         .scrollTargetBehavior(.paging)
         .scrollPosition(id: $pageID)
         .scrollIndicators(.hidden)
+#if DEBUG
+        .modifier(CatHomeFrameProbeModifier())
+#endif
         // A light tick once the pages rest on another page (11/14: not when
         // pageID changes mid-swipe; iOS 17 has no scroll phase and ticks on
         // pageID as before); never on the first appearance.
@@ -662,6 +665,79 @@ private struct CatHomeWordsShadow: ViewModifier {
         }
     }
 }
+
+#if DEBUG
+/// 11/14: DEBUG-only frame probe for the speed sweep (--cat-home-frame-probe).
+/// The simulator gives XCTest no hitch metrics, so a display link counts,
+/// while the pager scrolls (iOS 18 scroll phase), how many frames came late
+/// on the main thread and by how much. The totals are put on a hidden text
+/// (identifier cat-home-frame-probe) only when the pager rests.
+@MainActor
+final class CatHomeFrameProbe: NSObject, ObservableObject {
+    static let isOn = CommandLine.arguments.contains("--cat-home-frame-probe")
+    @Published private(set) var summary = "frames=0 late=0 late_ms=0 max_ms=0"
+    private var link: CADisplayLink?
+    private var last: CFTimeInterval = 0
+    private var frames = 0
+    private var late = 0
+    private var lateSeconds: CFTimeInterval = 0
+    private var maxGap: CFTimeInterval = 0
+
+    func setMoving(_ moving: Bool) {
+        if moving {
+            guard link == nil else { return }
+            last = 0
+            let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
+            link.add(to: .main, forMode: .common)
+            self.link = link
+        } else {
+            link?.invalidate()
+            link = nil
+            summary = String(format: "frames=%d late=%d late_ms=%.0f max_ms=%.0f",
+                             frames, late, lateSeconds * 1000, maxGap * 1000)
+        }
+    }
+
+    @objc private func tick(_ link: CADisplayLink) {
+        defer { last = link.timestamp }
+        guard last > 0 else { return }
+        let gap = link.timestamp - last
+        let expected = max(link.duration, 1.0 / 120)
+        frames += 1
+        maxGap = max(maxGap, gap)
+        if gap > expected * 1.5 {
+            late += 1
+            lateSeconds += gap - expected
+        }
+    }
+}
+
+private struct CatHomeFrameProbeModifier: ViewModifier {
+    @StateObject private var probe = CatHomeFrameProbe()
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18, *) {
+            if CatHomeFrameProbe.isOn {
+                content
+                    .onScrollPhaseChange { _, phase in probe.setMoving(phase != .idle) }
+                    .overlay(alignment: .topLeading) {
+                        Text(probe.summary)
+                            .font(.system(size: 1))
+                            .foregroundStyle(Color.clear)
+                            .frame(width: 1, height: 1)
+                            .allowsHitTesting(false)
+                            .accessibilityLabel(probe.summary)
+                            .accessibilityIdentifier("cat-home-frame-probe")
+                    }
+            } else {
+                content
+            }
+        } else {
+            content
+        }
+    }
+}
+#endif
 
 /// While the pages move, each page is a card with continuous rounded corners
 /// (0 at rest, `radius` a full page away); its scale comes from the pager's
