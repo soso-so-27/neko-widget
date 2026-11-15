@@ -193,6 +193,28 @@ struct VerifiedGroupRoster: Sendable {
 }
 
 enum GroupRosterVerifier {
+    /// Recovery-only entry: server authority is limited to current head/closure.
+    /// The owner anchor still comes exclusively from the personal root signature.
+    /// Returning a verified roster grants neither membership nor any photo key.
+    static func verifyRecoveryHead(_ packet: SignedGroupRoster, receipts: [GroupAnchorReceipt],
+                                   root: Data, environment: String, windowID: String,
+                                   currentRevision: Int, currentHash: Data,
+                                   rootIsCurrent: Bool) throws -> VerifiedGroupRoster? {
+        guard rootIsCurrent else { throw GroupRecoveryProofError.staleState }
+        switch GroupAnchorReceipt.resolve(receipts, root: root, environment: environment,
+                                          windowID: windowID, rootIsCurrent: rootIsCurrent) {
+        case .needsOriginalDeviceOrInvitation: return nil
+        case .revoked, .conflictingAnchors: throw GroupRecoveryProofError.invalidProof
+        case .trusted(let anchor):
+            guard currentRevision > 0, currentHash.count == 32,
+                  packet.roster.revision == currentRevision,
+                  GroupCanonical.hash(try packet.roster.canonicalBytes()) == currentHash,
+                  packet.roster.members.contains(where: { $0.identityPublicKey == root })
+            else { throw GroupRecoveryProofError.staleState }
+            return try verifyPacket(packet, anchor: anchor, previous: nil, restoredPin: currentHash)
+        }
+    }
+
     static func verify(_ packet: SignedGroupRoster, anchor: GroupTrustAnchor,
                        previous: VerifiedGroupRoster? = nil) throws -> VerifiedGroupRoster {
         try verifyPacket(packet, anchor: anchor, previous: previous, restoredPin: nil)

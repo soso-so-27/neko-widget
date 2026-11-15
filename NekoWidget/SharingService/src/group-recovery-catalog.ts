@@ -5,6 +5,7 @@ import { groupFields } from './group-protocol';
 import { enforceRateLimit, parseJsonBody, readBody, transientNetworkKey } from './http';
 import { binaryField, exactKeys, uuidField } from './validation';
 import { protectedGroupRead, requireCurrentIdentity } from './group-identity-service';
+import { groupRecoveryPendingAPI } from './group-recovery-pending';
 
 export interface RecoveryChallenge {
   id: string; person_id: string; identity_public_key: string; operation_id: string;
@@ -32,22 +33,23 @@ export async function groupRecoveryCatalogAPI(request: Request, env: Env): Promi
   if (url.pathname === '/v3/group-recovery/challenges') {
     exactKeys(body, ['identityPublicKey', 'operationId', 'purpose']);
     const key = binaryField(body, 'identityPublicKey', 32), operation = uuidField(body, 'operationId');
-    // Registration/status will be introduced with their own signed transcripts.
-    if (body.purpose !== 'catalog') throw new ApiError(400, 'invalid_purpose', 'Invalid recovery purpose.');
+    if (!['catalog','status','register'].includes(String(body.purpose))) throw new ApiError(400, 'invalid_purpose', 'Invalid recovery purpose.');
+    const purpose = body.purpose as RecoveryChallenge['purpose'];
     const person = await sha256Base64url(base64urlDecode(key, 32));
     await enforceRateLimit(env, env.MEMBER_RATE_LIMITER, `group-recovery-root:${person}`);
     const challenge: RecoveryChallenge = { id: crypto.randomUUID(), person_id: person, identity_public_key: key,
-      operation_id: operation, purpose: 'catalog', environment: env.ENVIRONMENT,
+      operation_id: operation, purpose, environment: env.ENVIRONMENT,
       nonce: randomBase64url(32), issued_at: now, expires_at: now + 300, consumed_at: null };
     await env.DB.batch([
       env.DB.prepare('DELETE FROM group_recovery_challenges WHERE id IN (SELECT id FROM group_recovery_challenges WHERE expires_at<=? LIMIT 100)').bind(now),
       env.DB.prepare(`INSERT INTO group_recovery_challenges
         (id,person_id,identity_public_key,operation_id,purpose,environment,nonce,issued_at,expires_at)
-        VALUES (?,?,?,?,?,?,?,?,?)`).bind(challenge.id, person, key, operation, 'catalog', env.ENVIRONMENT, challenge.nonce, now, now + 300),
+        VALUES (?,?,?,?,?,?,?,?,?)`).bind(challenge.id, person, key, operation, purpose, env.ENVIRONMENT, challenge.nonce, now, now + 300),
     ]);
     // This response does not disclose whether the root is registered.
     return jsonResponse({ challenge }, 201);
   }
+  if (url.pathname.startsWith('/v3/group-recovery/operations/')) return groupRecoveryPendingAPI(env, body, url.pathname, now);
   if (url.pathname !== '/v3/group-recovery/catalog') throw new ApiError(404, 'not_found', 'Endpoint unavailable.');
   exactKeys(body, ['challengeId', 'rootSignature']);
   const id = uuidField(body, 'challengeId'), signature = binaryField(body, 'rootSignature', 64);

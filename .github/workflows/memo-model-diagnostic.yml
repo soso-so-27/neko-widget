@@ -3,6 +3,10 @@ name: Private memo model diagnostic
 on:
   workflow_dispatch:
     inputs:
+      recovery_models:
+        description: Verify recovery anchors and pending-state models without a Simulator
+        type: boolean
+        default: false
       veterinary_models:
         description: Run existing private memo and veterinary persistence checks only
         type: boolean
@@ -68,7 +72,7 @@ jobs:
           if-no-files-found: warn
 
   personal-store:
-    if: github.event_name == 'workflow_dispatch' && !inputs.notebook_models && !inputs.veterinary_models
+    if: github.event_name == 'workflow_dispatch' && !inputs.notebook_models && !inputs.veterinary_models && !inputs.recovery_models
     name: Personal store concurrency probe - not release evidence
     runs-on: macos-15
     timeout-minutes: 5
@@ -103,3 +107,20 @@ jobs:
         run: |
           if [[ "${{ inputs.notebook_network_only }}" != "true" ]]; then bash ci/run-family-notebook-checks.sh; fi
           bash ci/run-family-notebook-network-checks.sh
+
+  recovery-models:
+    if: github.event_name == 'workflow_dispatch' && inputs.recovery_models
+    runs-on: macos-15-intel
+    timeout-minutes: 5
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Verify root anchors and pending recovery states
+        working-directory: NekoWidget
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx swiftc -D DEBUG -parse-as-library -target "$(uname -m)-apple-macos14.0" Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift NekoWidget/Services/GroupWindowFixture.swift ci/verify-group-windows.swift -o "$RUNNER_TEMP/recovery-models"
+          "$RUNNER_TEMP/recovery-models" ci/fixtures/group-roster-v3.json
