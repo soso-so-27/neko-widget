@@ -35,6 +35,20 @@ enum ScanProgressEventPolicy {
     }
 }
 
+/// The one scan entry point AppViewModel uses. PhotoLibraryScanner reads
+/// PhotoKit; the DEBUG launch-work fixture walks synthetic records.
+protocol LibraryScanning: Sendable {
+    func scan(
+        existing: LibrarySnapshot,
+        settings: AppSettings,
+        forceFullAnalysis: Bool,
+        sourceAlbumIdentifier: String?,
+        onEvent: @escaping @Sendable (ScanEvent) async -> Void
+    ) async throws -> LibrarySnapshot
+}
+
+extension PhotoLibraryScanner: LibraryScanning {}
+
 actor PhotoLibraryScanner {
     // Vision's synchronous perform calls run on ordinary Foundation workers.
     // Share the limit across generations; cancellation cannot free an active
@@ -315,6 +329,15 @@ actor PhotoLibraryScanner {
     ) async throws -> LibrarySnapshot {
         let settings = inputSettings.normalized()
         let scanStartedAt = Date()
+        // 11/14: cats whose album traits could not be read (iCloud-only)
+        // go back to Vision at most once a day, or on 「もう一度探す」.
+        let retriesAlbumTraits = forceFullAnalysis || ScanRetryPolicy.retriesMissingAlbumTraits(
+            lastRetry: LibraryVerificationStore.shared.albumTraitRetryAt, now: scanStartedAt)
+        if retriesAlbumTraits {
+            // Noted when the attempt begins: at most one a day, even when the
+            // app leaves the foreground before the pass ends.
+            LibraryVerificationStore.shared.noteAlbumTraitRetry(at: scanStartedAt)
+        }
         var migratedExisting = existing
         migratedExisting.assets = existing.assets.map {
             $0.migratedToBoundingBoxPostureAnalysis(
@@ -391,6 +414,8 @@ actor PhotoLibraryScanner {
                 outingByIdentifier: outingByIdentifier,
                 settings: settings,
                 forceFullAnalysis: forceFullAnalysis,
+                retriesAlbumTraits: retriesAlbumTraits,
+                scanStartedAt: scanStartedAt,
                 totalAssets: assets.count,
                 phase: .quickScan,
                 purpose: scanPurpose,
@@ -440,6 +465,8 @@ actor PhotoLibraryScanner {
                 outingByIdentifier: outingByIdentifier,
                 settings: settings,
                 forceFullAnalysis: forceFullAnalysis,
+                retriesAlbumTraits: retriesAlbumTraits,
+                scanStartedAt: scanStartedAt,
                 totalAssets: assets.count,
                 phase: .fullScan,
                 purpose: scanPurpose,
@@ -512,6 +539,8 @@ actor PhotoLibraryScanner {
         outingByIdentifier: [String: Bool?],
         settings: AppSettings,
         forceFullAnalysis: Bool,
+        retriesAlbumTraits: Bool,
+        scanStartedAt: Date,
         totalAssets: Int,
         phase: ScanPhase,
         purpose: ScanPurpose,
@@ -572,7 +601,11 @@ actor PhotoLibraryScanner {
                    (previous.sourceModificationDateWasCaptured != true
                        || previous.sourceModificationDate
                            == Self.normalizedModificationDate(asset.modificationDate)),
-                   previous.analysisStatus != .failed {
+                   // 11/14: a failed photo is tried again once a day, not on
+                   // every pass; 「もう一度探す」 (a full rescan) tries at once.
+                   (previous.analysisStatus != .failed
+                       || !ScanRetryPolicy.retriesFailedPhoto(
+                           lastAttempt: previous.analyzedAt, now: scanStartedAt)) {
                     var reused = previous
                     reused.creationDate = asset.creationDate
                     reused.sourceModificationDate = Self.normalizedModificationDate(
@@ -606,13 +639,28 @@ actor PhotoLibraryScanner {
                             recoveryDiagnostics.merge(.init(
                                 evidence: reused.analysisEvidence
                             ))
-                        } else {
+                        } else if retriesAlbumTraits {
                             pending.append((index, asset, previous, .groupedAlbumOnly))
+                        } else {
+                            // Traits retried earlier today; the cat stays as it is.
+                            records[index] = reused
+                            reusedCount += 1
+                            recoveryDiagnostics.merge(.init(
+                                evidence: reused.analysisEvidence
+                            ))
                         }
                     } else if reused.analysisStatus == .noCat {
                         reused.albumAnalysisVersion =
                             CatAlbumTraits.currentAnalysisVersion
                         reused.albumTraits = nil
+                        records[index] = reused
+                        reusedCount += 1
+                        recoveryDiagnostics.merge(.init(
+                            evidence: reused.analysisEvidence
+                        ))
+                    } else if reused.analysisStatus == .failed {
+                        // Failed less than a day ago (checked above): kept
+                        // as failed until its retry is due.
                         records[index] = reused
                         reusedCount += 1
                         recoveryDiagnostics.merge(.init(

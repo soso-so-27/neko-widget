@@ -68,7 +68,8 @@ struct GroupShareTransport: GroupHTTPTransport {
         guard let url = request.url, Self.allows(method: request.httpMethod ?? "", path: url.path) else {
             throw GroupClientError.authenticationRequired
         }
-        return try await transport.send(request, maximumBytes: maximumBytes)
+        // 1115s: everything sent from the share sheet is the person's own action.
+        return try await SharingPersonAction.run { try await transport.send(request, maximumBytes: maximumBytes) }
     }
 }
 

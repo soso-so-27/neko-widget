@@ -184,6 +184,7 @@ async function dispatch(request:Request,env:Env,ctx?:ExecutionContext):Promise<R
   }
 
   if (pathname === '/v3/group-identities' || pathname.startsWith('/v3/group-identities/')
+      || pathname.startsWith('/v3/group-recovery/')
       || pathname === '/v3/group-windows' || pathname.startsWith('/v3/group-windows/')) {
     // Reporting is independent of media reception and creator Plus. Only this
     // narrow router can authenticate a revoked device's scoped report grant.

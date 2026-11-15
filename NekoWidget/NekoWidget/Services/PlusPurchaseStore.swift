@@ -1,6 +1,9 @@
 import Combine
 import Foundation
 import StoreKit
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// A pseudonymous purchase correlation identifier. It is deliberately not a
 /// window participant, device, Keychain credential account, or window owner.
@@ -250,6 +253,10 @@ final class PlusPurchaseStore: ObservableObject {
     private var startTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     private var reconciliationTask: Task<Void, Never>?
+    /// The few re-checks after a purchase the server has not confirmed yet.
+    private var serverConfirmationRecheckTask: Task<Void, Never>?
+    /// 10 minutes after a purchase the server had not confirmed yet.
+    private var serverConfirmationDeadline: Date?
     private var authorityAllowsNewPurchase = false
     private var purchaseEligibilityGeneration: UInt64 = 0
     private var usesLiveCache = false
@@ -295,6 +302,7 @@ final class PlusPurchaseStore: ObservableObject {
         transactionUpdatesTask?.cancel()
         storefrontUpdatesTask?.cancel()
         authorityExpiryTask?.cancel()
+        serverConfirmationRecheckTask?.cancel()
     }
 
     /// Refresh at the existing signed deadline even if the app stays foreground.
@@ -304,10 +312,13 @@ final class PlusPurchaseStore: ObservableObject {
         guard let expiry = entitlementState.lastServerConfirmed?.expirationDate,
               expiry > .now else { return }
         authorityExpiryTask = Task { @MainActor [weak self] in
-            do { try await Task.sleep(for: .seconds(max(0, expiry.timeIntervalSinceNow))) }
-            catch { return }
-            guard !Task.isCancelled, let self else { return }
-            await self.refreshAfterForegroundEntry()
+            // 1115v: automatic even when a tap started it.
+            await SharingPersonAction.automatic {
+                do { try await Task.sleep(for: .seconds(max(0, expiry.timeIntervalSinceNow))) }
+                catch { return }
+                guard !Task.isCancelled, let self else { return }
+                await self.refreshAfterForegroundEntry()
+            }
         }
     }
 
@@ -454,6 +465,9 @@ final class PlusPurchaseStore: ObservableObject {
         startTask?.cancel()
         refreshTask?.cancel()
         reconciliationTask?.cancel()
+        serverConfirmationRecheckTask?.cancel()
+        serverConfirmationRecheckTask = nil
+        serverConfirmationDeadline = nil
         transactionUpdatesTask?.cancel()
         transactionUpdatesTask = nil
         storefrontUpdatesTask?.cancel()
@@ -547,11 +561,13 @@ final class PlusPurchaseStore: ObservableObject {
                             return .purchased
                         case .denied, .indeterminate:
                             awaitingServerConfirmation = true
+                            recheckServerConfirmationAfterPurchase()
                             return .awaitingServerConfirmation
                         }
                     } catch {
                         awaitingServerConfirmation = true
                         markServerConfirmationIndeterminate()
+                        recheckServerConfirmationAfterPurchase()
                         return .awaitingServerConfirmation
                     }
                 case .unverified:
@@ -572,6 +588,155 @@ final class PlusPurchaseStore: ObservableObject {
         } catch {
             return .failed
         }
+    }
+
+    /// 11/15 (TestFlight 378): just after a purchase the server's first answer
+    /// may not be Plus yet (it reads Apple's subscription status as the
+    /// transaction arrives; that time it took about 4 minutes), and nothing
+    /// asked again until 「購入を復元」. Ask again by itself, as 「購入を復元」's
+    /// re-check does: the signed transaction is sent again (the server reads
+    /// Apple's status again) and only the server's answer may grant Plus.
+    /// Nothing is bought, restored or extended here. First these five tries,
+    /// then every 30 s until 10 minutes after the purchase, only while the
+    /// app is in front and wherever the person is (the Plus screen may be
+    /// closed). In the background it stops; coming back resumes it
+    /// (`resumeServerConfirmationRechecksIfDue`). After that the screen keeps
+    /// 「購入を復元」 right under its line.
+    ///
+    /// 1115q: the billing relay allows 10 calls a minute (transactions and
+    /// entitlements apart), so three tries in the first minute (5, 20, 45 s)
+    /// and an automatic try only while the last 60 s hold at most 4 of each
+    /// (`PlusConfirmationSchedule`); a 429 pauses them at least a minute.
+    static let serverConfirmationRecheckDelays = PlusConfirmationSchedule.firstMinuteDelays
+    static let serverConfirmationFollowUpInterval = PlusConfirmationSchedule.followUpInterval
+    static let serverConfirmationWindow = PlusConfirmationSchedule.window
+
+    /// 1115v: the gate every billing call passes at the send (unmarked:
+    /// automatic). Kept so checks can drive the store's own entrances.
+    var billingBudget = BillingCallBudget.shared
+    /// Verified StoreKit events the gate held back: sent when it opens, never
+    /// finished before the relay took them (StoreKit also hands unfinished
+    /// ones back at the next launch).
+    private var deferredUpdates: [VerificationResult<Transaction>] = []
+    /// An automatic authority read the gate held back (a deadline, the
+    /// Widget's background pass): read once when the gate opens.
+    private var deferredAuthorityRead = false
+    private var deferredBillingTask: Task<Void, Never>?
+
+    /// An automatic billing check fits: not paused after a 429, and each
+    /// kind of call has room for one more automatic call.
+    func allowsAutomaticBillingCheck(at now: Date = Date()) -> Bool {
+        billingBudget.nextAutomatic(.transaction, at: now) == nil
+            && billingBudget.nextAutomatic(.entitlement, at: now) == nil
+            && PlusConfirmationSchedule.allowsAutomaticCheck(
+                transactions: billingBudget.automaticCalls(.transaction, at: now),
+                entitlements: billingBudget.automaticCalls(.entitlement, at: now))
+    }
+
+    /// A 429 from the billing relay: automatic calls wait at least a minute
+    /// from when it came back.
+    private func noteBillingFailure(_ error: Error) {
+        if case .requestRejected(429, _)? = error as? BillingClientError {
+            billingBudget.noteRateLimited(at: Date())
+        }
+    }
+
+    /// Held-back work is retried once the gate opens: the held StoreKit
+    /// events (until each is taken), and a held authority read once.
+    private func scheduleDeferredBillingWork() {
+        guard deferredBillingTask == nil else { return }
+        deferredBillingTask = Task { @MainActor [weak self] in
+            // 1115v: automatic even when a tap started it.
+            await SharingPersonAction.automatic {
+                while !Task.isCancelled {
+                    guard let store = self, !store.deferredUpdates.isEmpty || store.deferredAuthorityRead else { break }
+                    let now = Date()
+                    let opens = [store.billingBudget.nextAutomatic(.transaction, at: now),
+                                 store.billingBudget.nextAutomatic(.entitlement, at: now)].compactMap { $0 }.max()
+                    let wait = max(1, opens.map { $0.timeIntervalSince(now) } ?? 1)
+                    do { try await Task.sleep(for: .seconds(wait)) } catch { return }
+                    guard !Task.isCancelled else { return }
+                    let updates = store.deferredUpdates
+                    store.deferredUpdates.removeAll()
+                    for update in updates { await store.handleTransactionUpdate(update) }
+                    if store.deferredAuthorityRead {
+                        store.deferredAuthorityRead = false
+                        store.retriesDeferredAuthorityRead = false
+                        _ = await store.refreshServerAuthority()
+                        store.retriesDeferredAuthorityRead = true
+                    }
+                }
+                self?.deferredBillingTask = nil
+            }
+        }
+    }
+    /// The one retry of a held authority read is not held again into a loop.
+    private var retriesDeferredAuthorityRead = true
+
+    /// Coming to the front (1115q): the usual refresh, unless this minute's
+    /// billing calls are already near the relay's limit (a burst of openings).
+    func refreshOnForegroundEntry() async {
+        guard allowsAutomaticBillingCheck() else { return }
+        await refreshAfterForegroundEntry()
+    }
+
+    private func recheckServerConfirmationAfterPurchase() {
+        serverConfirmationDeadline = Date().addingTimeInterval(Self.serverConfirmationWindow)
+        runServerConfirmationRechecks(first: Self.serverConfirmationRecheckDelays)
+    }
+
+    /// Called when the app comes to the front (its own refresh there is the
+    /// one immediate check). Continues the remaining time; never a second loop.
+    func resumeServerConfirmationRechecksIfDue() {
+        guard serverConfirmationRecheckTask == nil, let deadline = serverConfirmationDeadline,
+              Date() < deadline, !entitlementState.grantsPlus else { return }
+        runServerConfirmationRechecks(first: [])
+    }
+
+    private var isInFront: Bool {
+#if canImport(UIKit)
+        UIApplication.shared.applicationState == .active
+#else
+        true
+#endif
+    }
+
+    /// The one recheck loop: starting it again replaces the running one.
+    private func runServerConfirmationRechecks(first: [Duration]) {
+        serverConfirmationRecheckTask?.cancel()
+        serverConfirmationRecheckTask = Task { @MainActor [weak self] in
+            // 1115v: automatic even when a tap started it.
+            await SharingPersonAction.automatic {
+                var delays = first
+                while true {
+                    let delay = delays.isEmpty ? Self.serverConfirmationFollowUpInterval : delays.removeFirst()
+                    do { try await Task.sleep(for: delay) } catch { return }
+                    guard let store = self, !Task.isCancelled else { return }
+                    guard let deadline = store.serverConfirmationDeadline, Date() < deadline,
+                          !store.entitlementState.grantsPlus else {
+                        store.finishServerConfirmationRechecks(); return
+                    }
+                    // In the background: stop here; coming back to the front resumes.
+                    guard store.isInFront else { store.serverConfirmationRecheckTask = nil; return }
+                    // The person's own purchase or restore is running: it reads
+                    // the same answer, so this pass waits for the next try. Near
+                    // the billing relay's limit, this try is skipped too (1115q).
+                    guard !store.isPurchasing, !store.isRestoring,
+                          store.allowsAutomaticBillingCheck() else { continue }
+                    await store.refreshAfterForegroundEntry()
+                    guard !Task.isCancelled else { return }
+                    if store.entitlementState.grantsPlus { store.finishServerConfirmationRechecks(); return }
+                    // A verified purchase the server has not confirmed yet is
+                    // still waiting; never an offer to buy it again.
+                    store.awaitingServerConfirmation = true
+                }
+            }
+        }
+    }
+
+    private func finishServerConfirmationRechecks() {
+        serverConfirmationRecheckTask = nil
+        serverConfirmationDeadline = nil
     }
 
     /// AppStore.sync can show Apple Account authentication. Call this only
@@ -667,12 +832,15 @@ final class PlusPurchaseStore: ObservableObject {
     private func startStorefrontUpdatesListener() {
         guard storefrontUpdatesTask == nil else { return }
         storefrontUpdatesTask = Task { @MainActor [weak self] in
-            for await _ in Storefront.updates {
-                guard !Task.isCancelled else { return }
-                self?.workHistoryGeneration &+= 1
-                self?.workHistory = nil
-                await self?.refreshWorkHistory()
-                await self?.loadProducts()
+            // 1115v: automatic even when a tap started it.
+            await SharingPersonAction.automatic {
+                for await _ in Storefront.updates {
+                    guard !Task.isCancelled else { return }
+                    self?.workHistoryGeneration &+= 1
+                    self?.workHistory = nil
+                    await self?.refreshWorkHistory()
+                    await self?.loadProducts()
+                }
             }
         }
     }
@@ -680,14 +848,17 @@ final class PlusPurchaseStore: ObservableObject {
     private func startTransactionUpdatesListener() {
         guard transactionUpdatesTask == nil else { return }
         transactionUpdatesTask = Task { @MainActor [weak self] in
-            for await update in Transaction.updates {
-                guard !Task.isCancelled else { return }
-                // Withdraw stale historical rights before the server round trip.
-                self?.workHistoryGeneration &+= 1
-                self?.workHistory = nil
-                await self?.refreshWorkHistory()
-                await self?.handleTransactionUpdate(update)
-                await self?.refreshRenewal()
+            // 1115v: automatic even when a tap started it.
+            await SharingPersonAction.automatic {
+                for await update in Transaction.updates {
+                    guard !Task.isCancelled else { return }
+                    // Withdraw stale historical rights before the server round trip.
+                    self?.workHistoryGeneration &+= 1
+                    self?.workHistory = nil
+                    await self?.refreshWorkHistory()
+                    await self?.handleTransactionUpdate(update)
+                    await self?.refreshRenewal()
+                }
             }
         }
     }
@@ -726,6 +897,15 @@ final class PlusPurchaseStore: ObservableObject {
                     pendingProductID = nil
                 }
                 _ = await refreshServerAuthority()
+            } catch is BillingCallDeferred {
+                // 1115v: held back at the gate, not sent: kept unfinished and
+                // sent when the gate opens. Meanwhile nothing is extended.
+                if !deferredUpdates.contains(where: {
+                    if case let .verified(held) = $0 { return held.id == transaction.id }
+                    return false
+                }) { deferredUpdates.append(result) }
+                markServerConfirmationIndeterminate()
+                scheduleDeferredBillingWork()
             } catch {
                 markServerConfirmationIndeterminate()
             }
@@ -822,6 +1002,15 @@ final class PlusPurchaseStore: ObservableObject {
             markServerConfirmationIndeterminate()
             return .indeterminate
         }
+        // 1115v: the billing gate, at the send. Held back: nothing is sent and
+        // nothing changes; an automatic read is tried once when it opens.
+        guard billingBudget.admit(.entitlement, personAction: SharingAutoCallBudget.isPersonAction) else {
+            if !SharingAutoCallBudget.isPersonAction, retriesDeferredAuthorityRead {
+                deferredAuthorityRead = true
+                scheduleDeferredBillingWork()
+            }
+            return .indeterminate
+        }
         let expectedContext = cacheContext
         let generation = authorityGeneration
         do {
@@ -890,6 +1079,7 @@ final class PlusPurchaseStore: ObservableObject {
             awaitingServerConfirmation = false
             return .confirmed
         } catch {
+            noteBillingFailure(error)
             guard generation == authorityGeneration else { return .indeterminate }
             if usesLiveCache {
                 switch error {
@@ -1067,10 +1257,16 @@ final class PlusPurchaseStore: ObservableObject {
            purchaseCache?.alreadyRecorded(stamp, context: context, now: .now) == true {
             return
         }
+        // 1115v: the billing gate, at the send. Held back: thrown before
+        // anything is sent, so the transaction is not finished.
+        guard billingBudget.admit(.transaction, personAction: SharingAutoCallBudget.isPersonAction) else {
+            throw BillingCallDeferred()
+        }
         let acknowledgement: BillingTransactionRecordAcknowledgement
         do {
             acknowledgement = try await recordVerifiedTransactionEvent(event, billingAccountID)
         } catch {
+            noteBillingFailure(error)
             if context == cacheContext {
                 switch error {
                 case BillingClientError.requestRejected(let status, _) where (400..<500).contains(status) && status != 429:

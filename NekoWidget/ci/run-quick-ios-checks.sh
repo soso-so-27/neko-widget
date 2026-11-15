@@ -6,6 +6,20 @@ cd "$(dirname "$0")/.."
 check_mode="${1:-all}"
 case "$check_mode" in all|public|public-build|owner) ;; *) echo "Use all, public, public-build, or owner" >&2; exit 2 ;; esac
 
+# P2 synthetic adapter checks precede expensive builds. No real Keychain calls.
+if [[ "$check_mode" != owner ]]; then
+python3 ci/test-root-sync-boundary.py
+xcrun --sdk macosx swiftc -D INTERNAL_PRESENTATION -parse-as-library \
+  NekoWidget/Services/RootSyncStore.swift ci/verify-root-sync-store.swift \
+  -o "$RUNNER_TEMP/root-sync-tests"
+"$RUNNER_TEMP/root-sync-tests"
+printf 'let p2ProductionBoundary = RootSyncStore.self\n' > "$RUNNER_TEMP/root-sync-public.swift"
+if xcrun --sdk macosx swiftc -typecheck NekoWidget/Services/RootSyncStore.swift "$RUNNER_TEMP/root-sync-public.swift" 2> "$RUNNER_TEMP/root-sync-public-error.txt"; then
+  echo "P2 store unexpectedly exists in production" >&2; exit 1
+fi
+grep -F "cannot find 'RootSyncStore' in scope" "$RUNNER_TEMP/root-sync-public-error.txt" > /dev/null
+fi
+
 # Shared photo/memo fixtures remain available after removing the pair-window UI.
 # Parse DEBUG sources too: the shipping Release build does not compile these branches.
 xcrun swiftc -frontend -parse -D DEBUG \
@@ -158,7 +172,14 @@ python3 ci/test-cat-home-care.py
 python3 ci/test-album-link-followups.py
 python3 ci/test-cat-threshold.py
 python3 ci/test-confident-cats.py
+python3 ci/test-new-photo-tomorrow.py
+python3 ci/test-day-words.py
 python3 ci/test-app-limits.py
+python3 ci/test-family-journey.py
+python3 ci/test-when-stuck.py
+python3 ci/test-launch-work.py
+python3 ci/test-review-eye.py
+python3 ci/test-a11y-voiceover-type.py
 
 xcrun --sdk macosx swiftc -D DEBUG -parse-as-library \
   -target "$(uname -m)-apple-macos14.0" \
@@ -187,7 +208,8 @@ xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0
   NekoWidget/Services/GroupWindowOperationStore.swift Shared/Sharing/ClientUpgradeRequirement.swift NekoWidget/Services/GroupWindowTransport.swift \
   NekoWidget/Services/FamilyNotebookCore.swift NekoWidget/Services/FamilyNotebookCrypto.swift \
   NekoWidget/Services/FamilyNotebookTransport.swift NekoWidget/Services/FamilyNotebookInvitationCrypto.swift \
-  NekoWidget/Services/FamilyNotebookKeyCoordinator.swift ci/verify-family-notebook-key-delivery.swift \
+  NekoWidget/Services/FamilyNotebookKeyCoordinator.swift NekoWidget/Services/SharingAutoCheckPolicy.swift \
+  ci/verify-family-notebook-key-delivery.swift \
   -o "$RUNNER_TEMP/family-notebook-key-delivery-tests"
 "$RUNNER_TEMP/family-notebook-key-delivery-tests"
 

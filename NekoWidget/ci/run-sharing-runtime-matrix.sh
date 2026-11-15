@@ -622,6 +622,9 @@ PY
                         testCaptureOfficialWidgetAllSupportedSizesAndHomeScreen) widget_review_conditions="APP_STORE_SCREENSHOT_WIDGET_FIXTURE OFFICIAL_WINDOW_WIDGET_FIXTURE" ;;
                         testCaptureJapaneseCurrentWidgetPlacementGuide) widget_review_conditions="" ;;
                         testCaptureJapaneseLocalOnlyWidgetPreviewForAppStore) widget_review_conditions="APP_STORE_SCREENSHOT_WIDGET_FIXTURE" ;;
+                        testCaptureCloudyDayWordsWidgets)
+                            widget_review_conditions="APP_STORE_SCREENSHOT_WIDGET_FIXTURE CLOUDY_DAY_WORDS_WIDGET_FIXTURE"
+                            python3 ci/inject-day-words-widget-photos.py NekoWidgetWidget/NekoWidgetView.swift || return $? ;;
                     esac
                     ;;
                 personal-available)

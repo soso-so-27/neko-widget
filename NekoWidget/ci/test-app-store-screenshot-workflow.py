@@ -201,6 +201,17 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn("UIGraphicsImageRenderer", self.widget_view)
         self.assertIn(dual_guard, self.widget_loader)
         self.assertIn("AppStoreWidgetPreviewFixture.image", self.widget_loader)
+        # 11/15 day-words review: Debug-only, inside the dual guard, exclusive.
+        self.assertIn(
+            "#if CLOUDY_DAY_WORDS_WIDGET_FIXTURE && (!DEBUG || !APP_STORE_SCREENSHOT_WIDGET_FIXTURE)\n#error(",
+            self.widget_view,
+        )
+        fixture_body = self.widget_view.split(dual_guard + "\n/// A workflow-gated", 1)[1]
+        for marker in ("__DAY_WORDS_BRIGHT_JPEG_BASE64__", "__DAY_WORDS_DARK_JPEG_BASE64__"):
+            self.assertEqual(self.widget_view.count(marker), 1)
+            self.assertIn(marker, fixture_body)
+        loader_fixture = self.widget_loader.split(dual_guard, 1)[1].split("#endif\n#endif", 1)[0]
+        self.assertIn("dayWordsImage", loader_fixture)
         self.assertIn(".accessibilityElement(children: .ignore)", self.widget_view)
         self.assertNotIn("URLSession.", self.widget_view)
         self.assertNotIn("PHAsset.", self.widget_view)
@@ -384,10 +395,10 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn("--app-store-screenshot-fixture", self.ui_test)
         self.assertIn("app.wait(for: .runningForeground", self.widget_ui_test)
         self.assertIn(
-            "このiPhoneで見つけた猫写真",
+            "このiPhoneで見つけた猫の写真",
             self.widget_view,
         )
-        self.assertNotIn("このiPhoneで見つけた猫写真", self.widget_ui_test)
+        self.assertNotIn("このiPhoneで見つけた猫の写真", self.widget_ui_test)
         self.assertIn("waitForFixturePalette(timeout: 15)", self.widget_ui_test)
         self.assertIn("fixturePaletteIsVisible", self.widget_ui_test)
         self.assertIn("pixels.withUnsafeMutableBytes", self.widget_ui_test)

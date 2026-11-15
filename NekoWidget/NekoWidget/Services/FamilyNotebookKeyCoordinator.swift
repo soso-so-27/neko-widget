@@ -53,6 +53,17 @@ actor FamilyNotebookKeyCoordinator {
     private let endpoint: String, identity: GroupDeviceIdentity, network: FamilyNotebookTransport
     private let secrets: any GroupSecretStore, journal: any GroupSecretStore
     private var working = false
+    /// 11/15 (1115q): what the last pass saw (the relay's generation, epoch,
+    /// devices, readiness, and the keys held). A pass that changes it moved;
+    /// the notebook's one schedule waits longer after passes that did not.
+    private(set) var observation = ""
+    /// Key reads per pass, newest epoch first (11/15: up to 8 empty replies
+    /// were read again on every pass while a key had not arrived).
+    static let keyReadsPerPass = 2
+    private func observe(_ state: State, keys: Int? = nil) {
+        observation = "g\(state.generation)e\(state.currentEpoch)d\(state.devices.count)r\(state.ready)"
+            + (keys.map { "k\($0)" } ?? "")
+    }
 
     init(endpoint: URL, identity: GroupDeviceIdentity, network: FamilyNotebookTransport,
          secrets: any GroupSecretStore, journal: any GroupSecretStore) throws {
@@ -133,6 +144,7 @@ actor FamilyNotebookKeyCoordinator {
     }
     private func state(_ family: UUID) async throws -> State {
         let value = try GroupWire.decode(State.self, await network.read(path(family) + "state"))
+        defer { observe(value) }
         guard value.schemaVersion == 1, value.familyID == family, (1...1_000_000_000).contains(value.generation),
               (0...1_000_000_000).contains(value.currentEpoch), (value.currentEpoch == 0) == (value.roster == nil),
               (1...64).contains(value.people.count), Set(value.people).count == value.people.count,
@@ -301,7 +313,7 @@ actor FamilyNotebookKeyCoordinator {
         for epoch in contexts.keys.sorted(by: >) {
             let source = contexts[epoch]!
             if let saved = try key(family, source.source) { keys[epoch] = saved; continue }
-            guard keyRequests < 8 else { continue }; keyRequests += 1
+            guard keyRequests < Self.keyReadsPerPass else { continue }; keyRequests += 1
             let reply = try GroupWire.decode(KeysReply.self, await network.read(path(family) + "keys/" + String(epoch)))
             guard reply.schemaVersion == 1, reply.familyID == family, reply.currentEpoch == current.roster.epoch,
                   reply.generation == currentState.generation, reply.envelopes.count <= 192 else { throw FamilyNotebookTransportError.stale }
@@ -311,6 +323,7 @@ actor FamilyNotebookKeyCoordinator {
                 }
             }
         }
+        observe(currentState, keys: keys.count)
         guard currentState.ready else {
             return .init(current: current, history: history, keys: keys, ready: false, moreWork: true)
         }
@@ -338,6 +351,7 @@ actor FamilyNotebookKeyCoordinator {
             dispatch.index += 1
             try journal.write(GroupWire.encode(dispatch), account: dispatchAccount, createOnly: false)
         }
+        observe(currentState, keys: keys.count)
         let complete = keys.count == contexts.count
         return .init(current: current, history: history, keys: keys, ready: currentState.ready && complete,
                      moreWork: !complete || dispatch.index < total)

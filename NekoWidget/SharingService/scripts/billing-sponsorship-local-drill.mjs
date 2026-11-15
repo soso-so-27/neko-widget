@@ -96,6 +96,10 @@ const expectedMigrationNames = [
   "0076_family_pending_person.sql",
   "0077_family_notebook_join_proof.sql",
   "0078_family_notebook_quota.sql",
+  "0079_group_push_coalescing_indexes.sql",
+  "0080_group_recovery_catalog.sql",
+  "0081_group_anchor_receipts.sql",
+  "0082_group_recovery_pending.sql",
 ];
 
 const databaseGateColumns = [

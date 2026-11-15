@@ -13,9 +13,11 @@
   <title>家族の手帳への招待 — ねこのまど</title>
   <link rel="stylesheet" href="assets/site.css">
   <style>
-    .actions { display: grid; gap: 12px; margin: 24px 0 8px; }
+    [hidden] { display: none !important; }
+    .steps { margin: 24px 0 8px; }
+    .steps li { margin: 0 0 16px; }
     .button { display: block; text-align: center; text-decoration: none; font-weight: 600;
-      border-radius: 14px; padding: 14px 18px; border: 1px solid var(--border); }
+      border-radius: 14px; padding: 14px 18px; border: 1px solid var(--border); margin-top: 8px; }
     .button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
   </style>
 </head>
@@ -27,11 +29,16 @@
     <h1>家族の手帳への招待</h1>
     <p>猫のお世話の記録を家族で一緒に書く「家族の手帳」に招待されています。参加は無料です。</p>
     <p id="android-note" class="updated" hidden>ねこのまどは、いまはiPhoneだけで使えます。</p>
-    <div class="actions">
-      <a class="button primary" href="https://apps.apple.com/jp/app/id6801962436">App Store で入れる</a>
-      <a class="button" id="open-app" href="nekowidget://family-join">アプリで開く</a>
-    </div>
-    <p id="install-note" class="updated">ねこのまどを入れたら、このページに戻って「アプリで開く」を押してください。招待リンクの期限は24時間です。</p>
+    <p id="desktop-note" hidden>iPhoneでこのリンクを開いてください。</p>
+    <ol id="steps" class="steps">
+      <li>ねこのまどを入れる
+        <a class="button primary" href="https://apps.apple.com/jp/app/id6801962436">App Store で入れる</a></li>
+      <li>このページに戻る</li>
+      <li>「アプリで開く」を押す
+        <a class="button" id="open-app" href="nekowidget://family-join">アプリで開く</a></li>
+    </ol>
+    <p id="install-note" class="updated">もう入れてある方は、3だけで参加できます。招待リンクは24時間使えます。</p>
+    <p id="in-app-note" class="updated" hidden>うまく開かないときは、右上のメニューから「Safariで開く」を選んでください。</p>
     <p class="updated">このページに名前や招待コードを入力する必要はありません。招待の鍵は、リンクの「#」から後ろにあり、このサイトには送られません。</p>
   </main>
   <script>
@@ -42,11 +49,26 @@
       if (hash && hash.length > 1) {
         document.getElementById("open-app").href = "nekowidget://family-join" + hash;
       }
-      // Android: no app yet, so say so instead of an App Store button (11/7).
-      if (/Android/i.test(navigator.userAgent)) {
-        document.getElementById("android-note").hidden = false;
-        document.querySelector(".actions").style.display = "none";
-        document.getElementById("install-note").style.display = "none";
+      // Where the page was opened decides the one extra line (11/14).
+      // Only the browser's own User-Agent is read; nothing is sent anywhere.
+      var ua = navigator.userAgent;
+      var show = function (id) { document.getElementById(id).hidden = false; };
+      var hideSteps = function () {
+        document.getElementById("steps").hidden = true;
+        document.getElementById("install-note").hidden = true;
+      };
+      var iPadDesktopMode = /Macintosh/.test(ua) && navigator.maxTouchPoints > 1;
+      if (/Android/i.test(ua)) {
+        // Android: no app yet, so say so instead of an App Store button (11/7).
+        show("android-note");
+        hideSteps();
+      } else if (!/iPhone|iPad|iPod/.test(ua) && !iPadDesktopMode) {
+        // A computer: the app opens only on an iPhone.
+        show("desktop-note");
+        hideSteps();
+      } else if (/\bLine\/|Instagram|FBAN|FBAV|FB_IAB|MicroMessenger/.test(ua)) {
+        // An app's own browser (LINE, Instagram and the like) may not open the app.
+        show("in-app-note");
       }
     })();
   </script>

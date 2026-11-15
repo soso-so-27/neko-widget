@@ -77,7 +77,7 @@ struct GrowthAlbumDetailView: View {
                 pendingExclusionIdentifier = nil
             }
         } message: {
-            Text("写真アプリの写真は消えません。")
+            Text("写真アプリの写真は消えません。設定の「写真の表示と整理」→「外した写真」から戻せます。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             if let identifier = pendingAssignmentIdentifier {

@@ -1,6 +1,7 @@
 import type {GroupReportMailEnv} from './group-report-mail';
 
 export interface Env extends GroupReportMailEnv {
+  GROUP_RECOVERY_CATALOG_ENABLED?: string;
   CLIENT_UPGRADE_REQUIRED_ENABLED?: string;
   MINIMUM_SUPPORTED_IOS_BUILD?: string;
   BILLING_TRANSACTION_RETENTION_REQUIRED?: string;
@@ -28,6 +29,7 @@ export interface Env extends GroupReportMailEnv {
   /// Group APNs registration/dispatch is an independent opt-in. Secrets or
   /// the legacy APNs switch alone never start new group notifications.
   GROUP_APNS_RUNTIME_ENABLED?: string;
+  GROUP_NOTIFICATION_COALESCING_ENABLED?: string;
   GROUP_WINDOW_MANAGEMENT_RUNTIME_ENABLED?: string;
   /// Exact, independent server-side switch for accepting new moderation
   /// report reservations, ciphertext uploads and commits. Report cleanup,

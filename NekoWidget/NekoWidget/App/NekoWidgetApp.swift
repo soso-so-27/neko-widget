@@ -10,6 +10,9 @@ struct NekoWidgetApp: App {
     private var appDelegate
 
     init() {
+#if DEBUG
+        LaunchWorkMeter.shared.startIfRequested()
+#endif
         ClientUpgradePresenter.shared.start()
         ShowcaseAppShortcuts.updateAppShortcutParameters()
 #if DEBUG
@@ -98,6 +101,8 @@ struct NekoWidgetApp: App {
                 OfficialWindowUIFixture()
             } else if CommandLine.arguments.contains("--window-list-ui-fixture") {
                 WindowListNavigationFixture()
+            } else if LaunchWorkFixture.isOn {
+                LaunchWorkFixtureRoot()
             } else if CommandLine.arguments.contains(AppStoreScreenshotFixture.launchArgument) {
                 AppStoreScreenshotFixtureRootView()
             } else if CommandLine.arguments.contains("--cat-profile-photo-flow-fixture") {
@@ -145,8 +150,11 @@ struct ProductionAppRootView: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .membershipAccessRefreshRequested)) { _ in
+                // 1115v: posted only after the person's own step (closing the
+                // Plus screen, 購入を復元, 「Plusをもう一度確かめる」); automatic
+                // code never posts it. Their read, outside the automatic budget.
                 Task {
-                    await plusPurchases.refreshAfterForegroundEntry()
+                    await SharingPersonAction.run { await plusPurchases.refreshAfterForegroundEntry() }
                     membershipNow = .now
                 }
             }
@@ -157,6 +165,11 @@ struct ProductionAppRootView: View {
             // and the file is written only on going to the background.
             .task(id: scenePhase) {
                 guard scenePhase == .active else { return }
+                // A cloudy window that said 「晴らせませんでした」 is cloudy again,
+                // with its tag, once the app is open (11/14, A2).
+                if CloudyWindowRevealFailure.clear(in: UserDefaults(suiteName: SharedContainer.appGroupIdentifier)) {
+                    WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+                }
                 // In memory only: the first Plus offer waits for an opening
                 // later than the one that ended the first run (11/10).
                 FirstPlusOfferPolicy.activeSince = .now
@@ -172,7 +185,12 @@ struct ProductionAppRootView: View {
                 }
                 guard newPhase == .active else { return }
                 Task {
-                    await plusPurchases.refreshAfterForegroundEntry()
+                    // 1115q: skipped only when this minute's billing calls are
+                    // near the relay's limit (a burst of openings).
+                    await plusPurchases.refreshOnForegroundEntry()
+                    // 11/15: a purchase still waiting for the server is
+                    // checked again for the rest of its 10 minutes.
+                    plusPurchases.resumeServerConfirmationRechecksIfDue()
                     // Retry the bounded Widget snapshot even when the server
                     // returns the same entitlement after a prior disk error.
                     try? PersonalWidgetMembershipStore.publish(

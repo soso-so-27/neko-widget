@@ -71,24 +71,22 @@ private struct PickedGroupPhoto: Transferable {
 
 /// Sensitive-content check on a temporary, protected file, deleted at once.
 private enum GroupPhotoModeration {
-    enum Verdict { case safe, hidden, checkOff, retryLater }
+    /// The production check never stops when the system's sensitive-content
+    /// warning is off (11/6: off delivers and shows): no "turn it on" verdict.
+    enum Verdict { case safe, hidden, retryLater }
 
     /// Why a picked photo cannot be delivered.
     static func sendMessage(_ verdict: Verdict) -> String? {
         switch verdict {
         case .safe: return nil
         case .hidden: return "センシティブな内容が含まれている可能性があるため、この写真は届けられません。"
-        case .checkOff:
-            return "写真を届けるには、「設定」→「プライバシーとセキュリティ」→「センシティブな内容の警告」をオンにしてください。"
         case .retryLater: return "写真を確かめられませんでした。少し待ってから、もう一度お試しください。"
         }
     }
 
     /// Why arrived photos are not shown yet. They wait on the relay until then.
     static func receiveMessage(_ verdict: Verdict) -> String {
-        verdict == .checkOff
-            ? "届いた写真を見るには、「設定」→「プライバシーとセキュリティ」→「センシティブな内容の警告」をオンにしてから、画面を下に引いて更新してください。"
-            : "届いた写真を、まだ表示できません。少し待ってから、画面を下に引いて更新してください。"
+        "届いた写真を、まだ表示できません。少し待ってから、画面を下に引いて更新してください。"
     }
 
     static func check(_ jpeg: Data, with moderation: any MomentModerating) async -> Verdict {
@@ -105,8 +103,6 @@ private enum GroupPhotoModeration {
             return .safe
         } catch MomentSharingError.sensitiveContent {
             return .hidden
-        } catch MomentSharingError.moderationDisabled {
-            return .checkOff
         } catch {
             return .retryLater
         }
@@ -241,7 +237,9 @@ final class GroupWindowScreenModel: ObservableObject {
 
     /// Reads the window, keeps every new photo on this iPhone, then tells the
     /// relay it arrived. A failed step keeps what is already shown.
-    func sync() async { await sync(background: false) }
+    /// Opening the まど, pulling to refresh, 「もう一度」: the person's own read
+    /// (1115s). A background pass calls `sync(background: true)`: automatic.
+    func sync() async { await SharingPersonAction.run { await sync(background: false) } }
 
     func sync(background: Bool) async {
         guard !Task.isCancelled else { return }
@@ -280,7 +278,7 @@ final class GroupWindowScreenModel: ObservableObject {
                 try Task.checkCancellation()
                 guard !(await store.contains(photoID: photo.id, windowID: windowID)) else { continue }
                 triedNew = true
-                if let deferred = await receive(photo, me: latest.myParticipantID), waiting != .checkOff {
+                if let deferred = await receive(photo, me: latest.myParticipantID) {
                     waiting = deferred
                 }
                 // Each photo shows as soon as it is kept, not after all of them.
@@ -380,7 +378,7 @@ final class GroupWindowScreenModel: ObservableObject {
                 verdict = await GroupPhotoModeration.check(incoming.jpeg, with: moderation)
             }
             // Keep it unacknowledged; it is tried again next time.
-            guard verdict != .retryLater, verdict != .checkOff else { return verdict }
+            guard verdict != .retryLater else { return verdict }
             let store = self.store
             let windowID = self.windowID
             let hidden = verdict == .hidden
@@ -437,47 +435,50 @@ final class GroupWindowScreenModel: ObservableObject {
     /// key). Sending never writes the photo's own memo: the memo is this
     /// iPhone's alone, the ひとこと is the まど's (11/9, one-way).
     func deliver(_ prepared: PreparedPhoto, memo: String) async {
-        guard canSend, let me = window?.myParticipantID else { return }
-        isSending = true
-        sendCompleted = false
-        // Only this photo's own retry clears its row; a different photo sent
-        // meanwhile leaves the earlier undelivered one offered (11/7).
-        if failedDelivery?.photo.operationID == prepared.operationID { failedDelivery = nil }
-        defer { isSending = false }
-        do {
-            let operationID = prepared.operationID
-            let sent = try await client.sendPhoto(normalizedJPEG: prepared.jpeg, caption: memo,
-                                                  windowID: windowID, operationID: operationID)
-            await receive(sent, me: me, outgoingOperationID: operationID)
-            sendCompleted = true
-            UsageCounter.shared.count(.madoPhotoSent)  // Usage (11/7)
-            message = nil
-            await sync()
-        } catch let pending as GroupDeliveryConfirmationPending {
-            failedDelivery = FailedDelivery(photo: prepared, memo: memo, confirmationPhotoID: pending.photoID)
-            message = "届いたか確かめています。"
-            await sync()
-        } catch {
-            message = Self.deliveryMessage(for: error)
-            if !(error is GroupSubscriptionError) {
-                // The same operation resends safely, unless the window's key changed.
-                let keepsOperation: Bool
-                switch error as? GroupClientError {
-                case .some(.staleEpoch), .some(.rotationPending), .some(.idempotencyConflict): keepsOperation = false
-                default: keepsOperation = true
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            guard canSend, let me = window?.myParticipantID else { return }
+            isSending = true
+            sendCompleted = false
+            // Only this photo's own retry clears its row; a different photo sent
+            // meanwhile leaves the earlier undelivered one offered (11/7).
+            if failedDelivery?.photo.operationID == prepared.operationID { failedDelivery = nil }
+            defer { isSending = false }
+            do {
+                let operationID = prepared.operationID
+                let sent = try await client.sendPhoto(normalizedJPEG: prepared.jpeg, caption: memo,
+                                                      windowID: windowID, operationID: operationID)
+                await receive(sent, me: me, outgoingOperationID: operationID)
+                sendCompleted = true
+                UsageCounter.shared.count(.madoPhotoSent)  // Usage (11/7)
+                message = nil
+                await sync()
+            } catch let pending as GroupDeliveryConfirmationPending {
+                failedDelivery = FailedDelivery(photo: prepared, memo: memo, confirmationPhotoID: pending.photoID)
+                message = "届いたか確かめています。"
+                await sync()
+            } catch {
+                message = Self.deliveryMessage(for: error)
+                if !(error is GroupSubscriptionError) {
+                    // The same operation resends safely, unless the window's key changed.
+                    let keepsOperation: Bool
+                    switch error as? GroupClientError {
+                    case .some(.staleEpoch), .some(.rotationPending), .some(.idempotencyConflict): keepsOperation = false
+                    default: keepsOperation = true
+                    }
+                    if !keepsOperation {
+                        // The old sealed copy can no longer be sent; the retry seals anew.
+                        await client.discardPendingDelivery(operationID: prepared.operationID)
+                    }
+                    let retry = keepsOperation
+                        ? prepared : PreparedPhoto(jpeg: prepared.jpeg)
+                    failedDelivery = FailedDelivery(photo: retry, memo: memo)
                 }
-                if !keepsOperation {
-                    // The old sealed copy can no longer be sent; the retry seals anew.
-                    await client.discardPendingDelivery(operationID: prepared.operationID)
-                }
-                let retry = keepsOperation
-                    ? prepared : PreparedPhoto(jpeg: prepared.jpeg)
-                failedDelivery = FailedDelivery(photo: retry, memo: memo)
+                let reason = message
+                await sync()
+                // A sync that works must not erase why this photo was not sent.
+                if message == nil, !isGone { message = reason }
             }
-            let reason = message
-            await sync()
-            // A sync that works must not erase why this photo was not sent.
-            if message == nil, !isGone { message = reason }
         }
     }
 
@@ -494,8 +495,11 @@ final class GroupWindowScreenModel: ObservableObject {
     }
 
     func retryFailedDelivery() async {
-        guard let failed = failedDelivery else { return }
-        await deliver(failed.photo, memo: failed.memo)
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            guard let failed = failedDelivery else { return }
+            await deliver(failed.photo, memo: failed.memo)
+        }
     }
 
     func discardFailedDelivery() {
@@ -523,85 +527,100 @@ final class GroupWindowScreenModel: ObservableObject {
     /// The ひとこと is never copied into the memo; the photo screen shows it
     /// read-only beside 「○○から」 (11/9).
     func addToFavorites(_ entry: GroupWindowLocalPhotoStore.Entry) async {
-        guard !entry.isOwn, !entry.isHidden else { return }
-        addingFavoriteID = entry.id
-        defer { addingFavoriteID = nil }
-        let service = ReceivedPhotoMemoryImportService()
-        do {
-            var identifier = entry.favoriteLocalIdentifier
-            if identifier == nil {
-                guard let url = await store.imageURL(photoID: entry.id, windowID: windowID),
-                      let jpeg = try? Data(contentsOf: url) else {
-                    actionMessage = "写真を読み込めませんでした。"
-                    return
-                }
-                try await service.requestMemoryImportAuthorization()
-                let token = entry.favoriteImportToken ?? UUID()
-                if entry.favoriteImportToken == nil {
-                    try await store.setFavoriteImport(photoID: entry.id, windowID: windowID, token: token, localIdentifier: nil)
-                } else {
-                    // An earlier copy may have finished before the app stopped.
-                    identifier = try? await service.recoverImportedAsset(importToken: token)
-                }
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            guard !entry.isOwn, !entry.isHidden else { return }
+            addingFavoriteID = entry.id
+            defer { addingFavoriteID = nil }
+            let service = ReceivedPhotoMemoryImportService()
+            do {
+                var identifier = entry.favoriteLocalIdentifier
                 if identifier == nil {
-                    identifier = try await service.importMemory(
-                        MomentPhotoLibraryCopyPayload(jpegData: jpeg, capturedAt: entry.createdAt),
-                        importToken: token
-                    )
+                    guard let url = await store.imageURL(photoID: entry.id, windowID: windowID),
+                          let jpeg = try? Data(contentsOf: url) else {
+                        actionMessage = "写真を読み込めませんでした。"
+                        return
+                    }
+                    try await service.requestMemoryImportAuthorization()
+                    let token = entry.favoriteImportToken ?? UUID()
+                    if entry.favoriteImportToken == nil {
+                        try await store.setFavoriteImport(photoID: entry.id, windowID: windowID, token: token, localIdentifier: nil)
+                    } else {
+                        // An earlier copy may have finished before the app stopped.
+                        identifier = try? await service.recoverImportedAsset(importToken: token)
+                    }
+                    if identifier == nil {
+                        identifier = try await service.importMemory(
+                            MomentPhotoLibraryCopyPayload(jpegData: jpeg, capturedAt: entry.createdAt),
+                            importToken: token
+                        )
+                    }
+                    if let identifier {
+                        try await store.setFavoriteImport(photoID: entry.id, windowID: windowID,
+                                                          token: token, localIdentifier: identifier)
+                    }
                 }
-                if let identifier {
-                    try await store.setFavoriteImport(photoID: entry.id, windowID: windowID,
-                                                      token: token, localIdentifier: identifier)
-                }
+                guard let favorite = identifier else { throw ReceivedPhotoMemoryImportError.importFailed }
+                try SharedLikeStore.set(localIdentifier: favorite, isLiked: true, source: "received-memory")
+                NotificationCenter.default.post(name: .receivedMemoryImportNeedsRefresh, object: favorite)
+                entries = await store.entries(windowID: windowID)
+                actionMessage = "お気に入りに追加しました。写真アプリにも保存しました。"
+            } catch {
+                entries = await store.entries(windowID: windowID)
+                actionMessage = (error as? LocalizedError)?.errorDescription
+                    ?? "お気に入りに追加できませんでした。少し待ってから、もう一度お試しください。"
             }
-            guard let favorite = identifier else { throw ReceivedPhotoMemoryImportError.importFailed }
-            try SharedLikeStore.set(localIdentifier: favorite, isLiked: true, source: "received-memory")
-            NotificationCenter.default.post(name: .receivedMemoryImportNeedsRefresh, object: favorite)
-            entries = await store.entries(windowID: windowID)
-            actionMessage = "お気に入りに追加しました。写真アプリにも保存しました。"
-        } catch {
-            entries = await store.entries(windowID: windowID)
-            actionMessage = (error as? LocalizedError)?.errorDescription
-                ?? "お気に入りに追加できませんでした。少し待ってから、もう一度お試しください。"
         }
     }
 
     /// Removes a photo from this iPhone only.
     func remove(_ entry: GroupWindowLocalPhotoStore.Entry) async {
-        do {
-            try await store.remove(photoID: entry.id, windowID: windowID)
-        } catch {
-            actionMessage = "消せませんでした。もう一度お試しください。"
-            return
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            do {
+                try await store.remove(photoID: entry.id, windowID: windowID)
+            } catch {
+                actionMessage = "消せませんでした。もう一度お試しください。"
+                return
+            }
+            entries = await store.entries(windowID: windowID)
+            await updateHomeScreenPhoto()
         }
-        entries = await store.entries(windowID: windowID)
-        await updateHomeScreenPhoto()
     }
 
     /// Blocks this person here; they are not told. 11/8: 「表示しない」 was
     /// folded into ブロック, so the window offers only ブロック and 通報.
     /// People hidden before stay hidden (their saved state is kept as it was).
     func blockSender(of entry: GroupWindowLocalPhotoStore.Entry) async {
-        await store.hide(memberID: entry.senderParticipantID, name: entry.senderDisplayName, windowID: windowID, blocked: true)
-        entries = await store.entries(windowID: windowID)
-        await updateHomeScreenPhoto()
-        // 11/8: where to undo it is said here only, once.
-        actionMessage = "\(GroupDisplayName.withSan(entry.senderDisplayName))をブロックしました。設定の「ブロックした人」から戻せます。"
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            await store.hide(memberID: entry.senderParticipantID, name: entry.senderDisplayName, windowID: windowID, blocked: true)
+            entries = await store.entries(windowID: windowID)
+            await updateHomeScreenPhoto()
+            // 11/8: where to undo it is said here only, once.
+            actionMessage = "\(GroupDisplayName.withSan(entry.senderDisplayName))をブロックしました。設定の「ブロックした人」から戻せます。"
+        }
     }
 
     /// For a window this iPhone left: deletes every kept photo.
     func forgetFormerWindow() async {
-        await store.forget(windowID: windowID)
-        try? GroupWidgetCache.remove(windowID: windowID)
-        WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            await store.forget(windowID: windowID)
+            try? GroupWidgetCache.remove(windowID: windowID)
+            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+        }
     }
 
     /// Reads only the window (state, name, members), so a delivery from a
     /// photo's detail can check it without downloading every photo.
     func loadWindow() async {
-        do { window = try await client.window(id: windowID); message = nil }
-        catch is CancellationError {}
-        catch { message = GroupWindowPresentation.message(for: error) }
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            do { window = try await client.window(id: windowID); message = nil }
+            catch is CancellationError {}
+            catch { message = GroupWindowPresentation.message(for: error) }
+        }
     }
 
     /// The same checks as a picked photo, for a photo opened in the 写真 tab or an album.
@@ -635,31 +654,34 @@ final class GroupWindowScreenModel: ObservableObject {
     }
 
     func toggleHeart(_ photoID: String) async {
-        let active = !myHeartIsActive(photoID)
-        // Show the heart at once; the relay confirms (or corrects) it after.
-        let before = hearts[photoID]
-        heartTaps += 1
-        let tap = heartTaps
-        pendingHearts[photoID] = (active, tap)
-        applyMyHeart(active, to: photoID)
-        do {
-            let updated = try await client.setHeart(
-                photoID: photoID, windowID: windowID,
-                active: active, operationID: UUID()
-            )
-            // A newer tap on the same photo wins; its own answer comes later.
-            guard pendingHearts[photoID]?.tap == tap else { return }
-            pendingHearts[photoID] = nil
-            hearts[photoID] = updated.hearts
-            if active { UsageCounter.shared.count(.madoHeart) }  // Usage (11/7)
-            await store.saveHearts(hearts, windowID: windowID)
-        } catch {
-            guard pendingHearts[photoID]?.tap == tap else { return }
-            pendingHearts[photoID] = nil
-            hearts[photoID] = before
-            message = error as? GroupClientError == .dailyLimit
-                ? GroupWindowPresentation.dailyHeartLimitMessage
-                : GroupWindowPresentation.message(for: error)
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            let active = !myHeartIsActive(photoID)
+            // Show the heart at once; the relay confirms (or corrects) it after.
+            let before = hearts[photoID]
+            heartTaps += 1
+            let tap = heartTaps
+            pendingHearts[photoID] = (active, tap)
+            applyMyHeart(active, to: photoID)
+            do {
+                let updated = try await client.setHeart(
+                    photoID: photoID, windowID: windowID,
+                    active: active, operationID: UUID()
+                )
+                // A newer tap on the same photo wins; its own answer comes later.
+                guard pendingHearts[photoID]?.tap == tap else { return }
+                pendingHearts[photoID] = nil
+                hearts[photoID] = updated.hearts
+                if active { UsageCounter.shared.count(.madoHeart) }  // Usage (11/7)
+                await store.saveHearts(hearts, windowID: windowID)
+            } catch {
+                guard pendingHearts[photoID]?.tap == tap else { return }
+                pendingHearts[photoID] = nil
+                hearts[photoID] = before
+                message = error as? GroupClientError == .dailyLimit
+                    ? GroupWindowPresentation.dailyHeartLimitMessage
+                    : GroupWindowPresentation.message(for: error)
+            }
         }
     }
 
@@ -1239,12 +1261,29 @@ enum GroupPhotoTileDate {
     }
 }
 
+/// What VoiceOver reads on a tile of the window's list (11/14).
+enum GroupPhotoTileSpeech {
+    /// The photo, which opens it: 「ママからの写真、3日前」, or
+    /// 「自分が届けた写真、今日」.
+    static func photo(sender: String, isOwn: Bool, day: String, reported: Bool, hidden: Bool) -> String {
+        var parts = [isOwn ? "自分が届けた写真" : GroupDisplayName.from(sender) + "の写真", day]
+        if reported { parts.append("通報した写真") } else if hidden { parts.append("表示していない写真") }
+        return parts.joined(separator: "、")
+    }
+
+    /// The heart, as in the photo's own page: whether this person sent one.
+    static func heart(mine: Bool, canHeart: Bool) -> String {
+        mine ? "ハートを送りました" : canHeart ? "ハートを送る" : "ハート"
+    }
+}
+
 private struct GroupPhotoTile: View {
     @ObservedObject var model: GroupWindowScreenModel
     let entry: GroupWindowLocalPhotoStore.Entry
     let open: () -> Void
     @State private var image: UIImage?
     @ObservedObject private var safety = GroupSafety.shared
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     private var heartCount: Int { model.hearts[entry.id]?.filter(\.active).count ?? 0 }
     private var reported: Bool { safety.hasReported(entry.id, in: model.windowID) }
@@ -1280,53 +1319,50 @@ private struct GroupPhotoTile: View {
                     Task { await model.toggleHeart(entry.id) }
                 }
                 .onTapGesture(count: 1, perform: open)
+                // 11/14: VoiceOver opens the photo here; it says who sent it
+                // and when, so the name and the day under it are not read again.
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(GroupPhotoTileSpeech.photo(
+                    sender: entry.senderDisplayName, isOwn: entry.isOwn,
+                    day: GroupPhotoTileDate.text(entry.createdAt), reported: reported, hidden: entry.isHidden))
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHint("大きく表示します")
+                .accessibilityAction(.default) { open() }
+                .accessibilityIdentifier("group-photo-tile-photo")
             // 11/12 (review 12): who sent it is the gift, so the name is a
             // size up and the circle carries its first letter; the day reads
             // as 「3日前」 for the first week.
-            HStack(spacing: 10) {
-                GroupMemberAvatar(name: entry.isOwn ? "あなた" : entry.senderDisplayName, size: 30)
-                Text(entry.isOwn ? "あなた" : entry.senderDisplayName)
-                    .font(.body.weight(.semibold))
-                    .lineLimit(1)
-                Text(GroupPhotoTileDate.text(entry.createdAt))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                Button {
-                    guard canHeart else { return }
-                    Task { await model.toggleHeart(entry.id) }
-                } label: {
-                    let mine = model.myHeartIsActive(entry.id)
-                    HStack(spacing: 5) {
-                        Image(systemName: mine ? "heart.fill" : "heart")
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(mine ? Color.red : Color.secondary)
-                            .symbolEffect(.bounce, value: mine)
-                        if heartCount > 0 {
-                            Text(heartCount.formatted())
-                                .foregroundStyle(.secondary)
-                        }
+            // 11/14: at the accessibility text sizes the name has a line of
+            // its own, the day and the heart under it.
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 10) {
+                        avatar
+                        senderName.lineLimit(2)
                     }
-                    .font(.subheadline.weight(.semibold).monospacedDigit())
-                    .frame(minWidth: 44, minHeight: 44)
-                    .contentShape(Rectangle())
+                    HStack(spacing: 10) {
+                        day
+                        Spacer(minLength: 8)
+                        heartButton
+                    }
                 }
-                .buttonStyle(.plain)
-                .disabled(!canHeart)
-                .accessibilityLabel(heartCount > 0 ? "ハート \(heartCount)" : "ハート")
-                .accessibilityHint(canHeart ? "ハートを送ります" : "")
-                .accessibilityIdentifier("group-photo-tile-heart")
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+            } else {
+                HStack(spacing: 10) {
+                    avatar
+                    senderName.lineLimit(1)
+                    day
+                    Spacer(minLength: 8)
+                    heartButton
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
         }
         .background(Color(uiColor: .secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(tileLabel)
-        .accessibilityHint("大きく表示します。ハートも送れます")
-        .accessibilityAction(named: Text("大きく見る"), open)
         .task(id: entry.id) {
             guard !entry.isHidden, let url = await model.imageURL(for: entry) else { return }
             let decoded = await Task.detached(priority: .userInitiated) {
@@ -1337,14 +1373,53 @@ private struct GroupPhotoTile: View {
         }
         .onChange(of: reported) { _, covered in if covered { image = nil } }
     }
-}
 
-private extension GroupPhotoTile {
-    var tileLabel: String {
-        var parts = [entry.isOwn ? "自分が届けた写真" : "\(GroupDisplayName.from(entry.senderDisplayName))届いた写真"]
-        if reported { parts.append("通報した写真") } else if entry.isHidden { parts.append("表示していない写真") }
-        if !(model.hearts[entry.id]?.filter(\.active).isEmpty ?? true) { parts.append("ハートあり") }
-        return parts.joined(separator: "、")
+    private var avatar: some View {
+        GroupMemberAvatar(name: entry.isOwn ? "あなた" : entry.senderDisplayName, size: 30)
+            .accessibilityHidden(true)
+    }
+
+    private var senderName: some View {
+        Text(entry.isOwn ? "あなた" : entry.senderDisplayName)
+            .font(.body.weight(.semibold))
+            .accessibilityHidden(true)
+    }
+
+    private var day: some View {
+        Text(GroupPhotoTileDate.text(entry.createdAt))
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .accessibilityHidden(true)
+    }
+
+    private var heartButton: some View {
+        Button {
+            guard canHeart else { return }
+            Task { await model.toggleHeart(entry.id) }
+        } label: {
+            let mine = model.myHeartIsActive(entry.id)
+            HStack(spacing: 5) {
+                Image(systemName: mine ? "heart.fill" : "heart")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(mine ? Color.red : Color.secondary)
+                    .symbolEffect(.bounce, value: mine)
+                if heartCount > 0 {
+                    Text(heartCount.formatted())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .font(.subheadline.weight(.semibold).monospacedDigit())
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!canHeart)
+        // 11/14: as on the photo's own page, it says whether this
+        // person sent one (not only by its red).
+        .accessibilityLabel(GroupPhotoTileSpeech.heart(mine: model.myHeartIsActive(entry.id), canHeart: canHeart))
+        .accessibilityValue(heartCount > 0 ? "\(heartCount)" : "")
+        .accessibilityIdentifier("group-photo-tile-heart")
     }
 }
 
@@ -1828,6 +1903,8 @@ private struct GroupPhotoDetail: View {
         }
         .preferredColorScheme(.dark)
         .onAppear { model.actionMessage = nil }
+        // 11/14: the passing line under the photo is read when it shows.
+        .announcesWhenShown(model.actionMessage)
         .task(id: selection) { await safety.load(windowID: model.windowID) }
         .onChange(of: selection) { _, _ in model.actionMessage = nil }
     }
@@ -1968,16 +2045,20 @@ private struct GroupPhotoPageImageKey: Hashable {
 struct GroupWindowMembersScreen: View {
     @StateObject private var model: GroupWindowMembersModel
     private let onLeft: (() -> Void)?
+    private let offersWidgetPlacement: Bool
 
-    init(client: any GroupWindowClient, windowID: String, onLeft: (() -> Void)? = nil) {
+    init(client: any GroupWindowClient, windowID: String, onLeft: (() -> Void)? = nil,
+         offersWidgetPlacement: Bool = false) {
         _model = StateObject(wrappedValue: GroupWindowMembersModel(client: client, windowID: windowID))
         self.onLeft = onLeft
+        self.offersWidgetPlacement = offersWidgetPlacement
     }
 
     var body: some View {
         GroupWindowMembersView(
             model: model,
-            onLeft: onLeft
+            onLeft: onLeft,
+            offersWidgetPlacement: offersWidgetPlacement
         )
     }
 }
@@ -2127,34 +2208,37 @@ final class GroupWindowListModel: ObservableObject {
     private var createOperation: (draft: String, id: UUID)?
 
     func create(name: String, ownerName: String) async -> GroupWindow? {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let owner = ownerName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !owner.isEmpty, !isWorking else { return nil }
-        isWorking = true
-        defer { isWorking = false }
-        let draft = trimmed + "\u{1F}" + owner
-        let operationID: UUID
-        if let createOperation, createOperation.draft == draft { operationID = createOperation.id }
-        else { operationID = UUID(); createOperation = (draft, operationID) }
-        do {
-            let window = try await client.createWindow(name: trimmed, ownerDisplayName: owner, operationID: operationID)
-            createOperation = nil
-            UsageCounter.shared.count(.madoCreated)  // Usage (11/7)
-            GroupDisplayName.remember(owner)
-            // Keep the created window on an invitation-network failure; retrying must not create another window.
-            do { _ = try await client.createInvitation(windowID: window.id, operation: GroupOperation(expectedRevision: window.revision)) }
-            catch { message = "まどを作りました。招待リンクは、まどの「メンバー」から作れます。" }
-            Task { await GroupAdmissionService.shared.refresh(requestPermission: true) }
-            await load()
-            return window
-        } catch {
-            if (error as? GroupSubscriptionError) == .ownerPlusRequired {
-                message = nil
-                needsPlus = true
-            } else {
-                message = GroupWindowPresentation.message(for: error)
+        // 1115s: the person's own action, outside the automatic budget.
+        return await SharingPersonAction.run {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let owner = ownerName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !owner.isEmpty, !isWorking else { return nil }
+            isWorking = true
+            defer { isWorking = false }
+            let draft = trimmed + "\u{1F}" + owner
+            let operationID: UUID
+            if let createOperation, createOperation.draft == draft { operationID = createOperation.id }
+            else { operationID = UUID(); createOperation = (draft, operationID) }
+            do {
+                let window = try await client.createWindow(name: trimmed, ownerDisplayName: owner, operationID: operationID)
+                createOperation = nil
+                UsageCounter.shared.count(.madoCreated)  // Usage (11/7)
+                GroupDisplayName.remember(owner)
+                // Keep the created window on an invitation-network failure; retrying must not create another window.
+                do { _ = try await client.createInvitation(windowID: window.id, operation: GroupOperation(expectedRevision: window.revision)) }
+                catch { message = "まどを作りました。招待リンクは、まどの「メンバー」から作れます。" }
+                Task { await GroupAdmissionService.shared.refresh(requestPermission: true) }
+                await load()
+                return window
+            } catch {
+                if (error as? GroupSubscriptionError) == .ownerPlusRequired {
+                    message = nil
+                    needsPlus = true
+                } else {
+                    message = GroupWindowPresentation.message(for: error)
+                }
+                return nil
             }
-            return nil
         }
     }
 }
@@ -2188,11 +2272,25 @@ struct GroupWindowCreateScreen: View {
     private var trimmedOwner: String { ownerName.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var tooLong: Bool { !GroupDisplayName.fits(trimmed) || !GroupDisplayName.fits(trimmedOwner) }
 
+    /// 11/14 (family journey A3): Plus bought (or restored) from the prompt
+    /// under the names: make the window with them, as 「作る」 would, without
+    /// a second press. A cancelled, failed or pending purchase never calls this.
+    private func createAfterPromptPurchase() {
+        guard PlusPurchaseContinuation.createsWindow(
+            name: trimmed, ownerName: trimmedOwner, namesFit: !tooLong,
+            isWorking: model.isWorking, alreadyCreated: createdWindowID != nil)
+        else { return }
+        // The relay can still refuse once (Plus not seen there yet): the
+        // existing sheet then retries once more by itself.
+        create()
+    }
+
     var body: some View {
         // The new window takes this page's place, so Back goes to the list,
         // not to the form that already made it (11/6: Back reopened the form).
         if let createdWindowID {
-            GroupWindowMembersScreen(client: model.client, windowID: createdWindowID)
+            // 11/14 (A2): just made, so the members screen offers 「ホーム画面に置く」.
+            GroupWindowMembersScreen(client: model.client, windowID: createdWindowID, offersWidgetPlacement: true)
         } else {
             form
         }
@@ -2222,11 +2320,14 @@ struct GroupWindowCreateScreen: View {
             }
             // The button sits right under the name, not at the bottom of an empty screen.
             Section {
-                if membershipAccess.decision(for: .createOwnWindow) != .allowed {
+                // 11/14 (A3): bought from here, the making goes on under this
+                // same button (「作っています…」) before membership re-reads.
+                if membershipAccess.decision(for: .createOwnWindow) != .allowed, !model.isWorking {
                     // まどを作るのは Plus（App Store の14日間無料を含む）。押したときだけ開く。
                     PlusOfferPrompt(context: .createWindow,
                                     decision: membershipAccess.decision(for: .createOwnWindow),
-                                    presentsImmediately: false)
+                                    presentsImmediately: false,
+                                    onPurchased: createAfterPromptPurchase)
                 } else {
                     Button {
                         create()
@@ -2287,6 +2388,18 @@ struct GroupWindowStandardsAgreement: View {
 }
 
 extension GroupWidgetCache {
+    /// 11/14 (family journey A2): 「ホーム画面に置く」 right after joining or
+    /// making a window. The Widget's 「表示する写真」 lists only windows in
+    /// this copy, written when the window's page loads; before that, the new
+    /// window is written by name alone (no photo yet), so it is there to pick.
+    /// A window already here is left as it is.
+    @MainActor static func offerForPlacement(windowID: String, windowName: String) {
+        guard entry(windowID: windowID) == nil else { return }
+        try? update(windowID: windowID, windowName: windowName, photoID: nil, jpeg: nil,
+                    senderDisplayName: nil, capturedAt: nil, isPaused: false)
+        WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+    }
+
     /// Chooses a window's home-screen photo again from what this iPhone keeps,
     /// outside the window's own screen (11/7: 「表示する」 in Settings left the
     /// widget as it was). Only a window already on the home screen is touched.
@@ -2318,12 +2431,14 @@ extension GroupWidgetCache {
 struct GroupInvitationShareSheet: UIViewControllerRepresentable {
     let item: String
     let message: String
+    /// 11/14 (A5): the family notebook's invitation uses the same sheet.
+    var completedUsage: UsageEvent = .madoInviteShared
     let onFinish: () -> Void
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
         let controller = UIActivityViewController(activityItems: [message, item], applicationActivities: nil)
         controller.completionWithItemsHandler = { _, completed, _, _ in
-            if completed { UsageCounter.shared.count(.madoInviteShared) }  // Usage (11/7)
+            if completed { UsageCounter.shared.count(completedUsage) }  // Usage (11/7)
             onFinish()
         }
         return controller
@@ -2350,6 +2465,8 @@ struct GroupWindowListSection: View {
     @State private var reloading = false
     @State private var formerWindows: [GroupWindowLocalPhotoStore.KnownWindow] = []
     @State private var showsLeftWindowNotice = false
+    /// 1115s: coming to the front reads the list again at most every 20 s.
+    @State private var lastForegroundLoad: Date?
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var openInbox = GroupWindowOpenInbox.shared
     @ObservedObject private var invitationInbox = GroupInvitationInbox.shared
@@ -2467,7 +2584,7 @@ struct GroupWindowListSection: View {
                     // Nothing to show and the relay could not be reached: say so, with a retry.
                     VStack(spacing: 12) {
                         Text(message).font(.footnote).foregroundStyle(.secondary)
-                        Button { reloading = true; Task { defer { reloading = false }; await model.load() } } label: {
+                        Button { reloading = true; Task { defer { reloading = false }; await SharingPersonAction.run { await model.load() } } } label: {
                             WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: reloading)
                         }
                             .disabled(model.isWorking || reloading)
@@ -2479,7 +2596,7 @@ struct GroupWindowListSection: View {
                     // A refresh that failed is not an emergency: say so quietly, with a retry.
                     HStack(spacing: 8) {
                         Text("いまは新しい内容を読み込めません。").font(.footnote).foregroundStyle(.secondary)
-                        Button { reloading = true; Task { defer { reloading = false }; await model.load() } } label: {
+                        Button { reloading = true; Task { defer { reloading = false }; await SharingPersonAction.run { await model.load() } } } label: {
                             WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: reloading)
                         }
                             .font(.footnote.weight(.semibold))
@@ -2526,7 +2643,11 @@ struct GroupWindowListSection: View {
             await loadFormerWindows()
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active, model.hasLoaded { Task { await model.load(); await loadFormerWindows() } }
+            // Automatic (unmarked, within the budget); not again within 20 s (1115s).
+            guard phase == .active, model.hasLoaded,
+                  SharingForegroundGap.allows(since: lastForegroundLoad) else { return }
+            lastForegroundLoad = .now
+            Task { await model.load(); await loadFormerWindows() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .groupWindowListNeedsReload)) { _ in
             // 「前のまど」 too, so a window just left or forgotten shows where it now is (11/7).
@@ -2537,7 +2658,8 @@ struct GroupWindowListSection: View {
             // 11/7: the photo the home screen showed opens on top of its window.
             let photoID = openInbox.pendingPhotoID
             openInbox.consume()
-            if !model.windows.contains(where: { $0.id == requested }) { await model.load() }
+            // Opened from a notification or the Widget: the person's own read (1115s).
+            if !model.windows.contains(where: { $0.id == requested }) { await SharingPersonAction.run { await model.load() } }
             // Open only a window this iPhone is still a member of.
             if model.windows.contains(where: { $0.id == requested }) {
                 GroupWindowListNavigation.shared.openedWindow = GroupWindowRoute(windowID: requested, photoID: photoID)
@@ -2857,9 +2979,10 @@ struct GroupHiddenMembersView: View {
     }
 }
 
-/// 設定「まどと家族の手帳から抜ける」(A1): one state, one sentence, one button.
+/// 設定「まどと家族の手帳のデータを消す」(A1): one state, one sentence, one button.
 /// Named for its weight (11/7): it ends every window and the family notebook,
 /// so it is not taken for leaving only the notebook (that is in the notebook).
+/// 11/14 (App Review 5.1.1(v)): named for deleting, as its sentence says.
 struct GroupIdentityDeletionView: View {
     let client: ProductionGroupWindowClient
     @State private var record: GroupIdentityDeletion?
@@ -2887,7 +3010,7 @@ struct GroupIdentityDeletionView: View {
                     // here; that is said once, on 「アカウントとデータを消す」 (29).
                     Text("まどと家族の手帳から抜けて、あなたが届けた写真・ひとこと・ハートを消します。")
                     Button(role: .destructive) { confirms = true } label: {
-                        WorkingLabel(title: "まどと家族の手帳から抜ける", workingTitle: "抜けています…", working: working)
+                        WorkingLabel(title: "まどと家族の手帳のデータを消す", workingTitle: "消しています…", working: working)
                     }
                         .frame(minHeight: 44)
                         .disabled(working || !loaded)
@@ -2903,14 +3026,14 @@ struct GroupIdentityDeletionView: View {
                 }
             }
         }
-        .confirmationDialog("まどと家族の手帳から抜けますか？", isPresented: $confirms, titleVisibility: .visible) {
-            Button("抜ける", role: .destructive) { Task { await delete() } }
+        .confirmationDialog("まどと家族の手帳のデータを消しますか？", isPresented: $confirms, titleVisibility: .visible) {
+            Button("消す", role: .destructive) { Task { await delete() } }
             Button("キャンセル", role: .cancel) {}
         } message: {
             // 11/7: say that this cannot be undone, as the auto-save deletion does.
             Text("元に戻せません。あなたが作ったまども終わりになります。メンバーのiPhoneに届いた写真は残ります。")
         }
-        .navigationTitle("まどと家族の手帳から抜ける")
+        .navigationTitle("まどと家族の手帳のデータを消す")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             record = try? await client.identityDeletion()
@@ -3080,12 +3203,9 @@ actor GroupWindowScreenFixture: GroupWindowMediaClient {
     }
 }
 
-/// The fixture's on-device check: always safe, or "turned off" to show why
-/// photos wait (`--group-window-screens-check-off`).
+/// The fixture's on-device check: always safe.
 struct GroupWindowFixtureModeration: MomentModerating {
-    func requireSafeImage(at url: URL) async throws {
-        if GroupWindowUIFixture.checkIsOff { throw MomentSharingError.moderationDisabled }
-    }
+    func requireSafeImage(at url: URL) async throws {}
 }
 #endif
 
@@ -3254,7 +3374,7 @@ struct GroupReportsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: safety.isWorking) { _, working in if !working { running = nil } }
         .task { await safety.refresh(windowID: windowID) }
-        .refreshable { await safety.refresh(windowID: windowID) }
+        .refreshable { await SharingPersonAction.run { await safety.refresh(windowID: windowID) } }
     }
 
     /// What the answer means, in the app's own words. Never the server's.

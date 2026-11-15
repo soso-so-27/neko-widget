@@ -34,6 +34,40 @@ private struct SyntheticBillingSigner: GroupBillingSigner {
     }
 }
 
+private actor ReceiptTransport: GroupHTTPTransport {
+    private var bodies: [Data] = []
+    private let memory: MemorySecrets
+    private let fallback: (any GroupHTTPTransport)?
+    private var firstReceipt: CheckedContinuation<Void, Never>?
+    init(memory: MemorySecrets, fallback: (any GroupHTTPTransport)? = nil) { self.memory = memory; self.fallback = fallback }
+    func sent() -> [Data] { bodies }
+    func waitForFirstReceipt() async {
+        if !bodies.isEmpty { return }
+        await withCheckedContinuation { firstReceipt = $0 }
+    }
+    func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
+        if let fallback, request.url?.path.hasSuffix("/anchor-receipt") != true {
+            return try await fallback.send(request, maximumBytes: maximumBytes)
+        }
+        guard let url = request.url, url.path.hasSuffix("/anchor-receipt"), let body = request.httpBody else {
+            throw Failure.check("backfill must not register a person or fetch a roster")
+        }
+        let window = url.path.split(separator: "/")[2]
+        guard try memory.read("anchor-receipt-pending:" + String(window)) != nil else {
+            throw Failure.check("receipt must be persisted before sending")
+        }
+        bodies.append(body)
+        firstReceipt?.resume(); firstReceipt = nil
+        if fallback != nil {
+            return .init(status: 404, data: Data(#"{"error":{"code":"not_found"}}"#.utf8))
+        }
+        if bodies.count == 1 { throw GroupClientError.offline }
+        // The second request committed remotely, but its response was lost.
+        if bodies.count == 2 { throw GroupClientError.offline }
+        return .init(status: 200, data: try JSONSerialization.data(withJSONObject: ["state": "stored", "windowId": String(window)]))
+    }
+}
+
 /// Request/response echo, not a second relay implementation. Real permissions,
 /// DB races and quotas are checked by Worker integration tests. This fixture
 /// exercises native persistence ordering, request bytes and HPKE round trips.
@@ -563,6 +597,22 @@ private struct GroupAdapterChecks {
         try check(GroupNameCrypto.open(name, slot: "window", key: key, roster: roster) == "実家のまど", "owner-signed encrypted name")
         try rejects("name wrong slot") { _ = try GroupNameCrypto.open(name, slot: "member:other", key: key, roster: roster) }
         try rejects("name forged owner") { _ = try GroupNameCrypto.seal("偽", slot: "window", key: key, roster: roster, signerID: vector.packet.signerDeviceID, signingKey: .init()) }
+        // Bypass the sender's validation to model an old or hostile owner client.
+        struct ReceivedName: Encodable { let name: String; let signerDeviceID: String; let signature: Data }
+        let nameContext = try GroupCanonical.fields(["NW3.NAME", roster.roster.windowID,
+            String(roster.roster.keyEpoch), "window"].map(GroupCanonical.text) + [roster.hash])
+        for invalid in ["", "\u{0000}", String(repeating: "あ", count: 81)] {
+            let proof = try GroupCanonical.fields([GroupCanonical.text("NW3.NAME.SIGN"), nameContext, Data(invalid.utf8)])
+            let signed = ReceivedName(name: invalid, signerDeviceID: vector.packet.signerDeviceID,
+                signature: try signing.signature(for: proof))
+            let box = try AES.GCM.seal(GroupWire.encode(signed), using: key, authenticating: nameContext).combined!
+            try check(GroupNameCrypto.open(box, slot: "window", key: key, roster: roster) == "名前を表示できません",
+                "invalid authenticated label is isolated")
+            let forged = ReceivedName(name: invalid, signerDeviceID: vector.packet.signerDeviceID, signature: Data(repeating: 0, count: 64))
+            let badBox = try AES.GCM.seal(GroupWire.encode(forged), using: key, authenticating: nameContext).combined!
+            try rejects("invalid label never bypasses signature") { _ = try GroupNameCrypto.open(badBox, slot: "window", key: key, roster: roster) }
+        }
+        try check(GroupNameCrypto.open(name, slot: "window", key: key, roster: roster) == "実家のまど", "next valid label still opens")
         let candidate = Curve25519.Signing.PrivateKey(), agreement = try identity.agreementKey
         let join = try GroupNameCrypto.sealJoin("なつみ", windowID: roster.roster.windowID, invitationID: "invite", personID: "candidate", deviceID: "phone",
             ownerPersonID: roster.roster.ownerPersonID, ownerRoot: vector.anchor.ownerIdentityPublicKey,
@@ -597,6 +647,76 @@ private struct GroupAdapterChecks {
         let room = try await client.createWindow(name: "うちのまど", operationID: op)
         try check(room.name == "うちのまど" && room.memberCount == 1 && room.deviceCount == 1 && room.members[0].displayName == "自分", "real adapter owner round trip")
         try check(room.deliveryStatus == .active && room.deliveryReason == .ownerPlus && room.ownerParticipantID == room.myParticipantID, "verified server policy reaches UI contract")
+        let receiptRelay = ReceiptTransport(memory: memory)
+        var backfill = try ProductionGroupWindowClient(endpoint: URL(string: "https://api.nekonomado.com")!,
+            secrets: memory, transport: receiptRelay, outboxDirectory: folder.appendingPathComponent("receipts"))
+        let originalIdentity = try memory.read("identity")
+        await backfill.backfillAnchorReceipts()
+        try check(memory.read("anchor-receipt:" + room.id) == nil, "failed receipt has no completion marker")
+        let pendingReceipt = try memory.read("anchor-receipt-pending:" + room.id)
+        try check(pendingReceipt != nil, "failed send preserves original signed receipt")
+        backfill = try ProductionGroupWindowClient(endpoint: URL(string: "https://api.nekonomado.com")!,
+            secrets: memory, transport: receiptRelay, outboxDirectory: folder.appendingPathComponent("receipts"))
+        await backfill.backfillAnchorReceipts()
+        try check(memory.read("anchor-receipt:" + room.id) == nil, "lost successful response is not marked complete")
+        await backfill.setAnchorReceiptForeground(false)
+        await backfill.setAnchorReceiptForeground(true)
+        // 1115s: not again within 20 s of the last pass, whatever the foreground did.
+        let beforeGap = await receiptRelay.sent().count
+        await backfill.backfillAnchorReceipts()
+        try check(await receiptRelay.sent().count == beforeGap, "anchor receipts keep a 20 s gap")
+        await backfill.forgetAnchorBackfillGap()
+        await backfill.backfillAnchorReceipts()
+        let storedReceipt = try GroupWire.decode(GroupAnchorReceipt.self, memory.read("anchor-receipt:" + room.id)!)
+        let receiptIdentity = try GroupWire.decode(GroupDeviceIdentity.self, originalIdentity!)
+        try check(storedReceipt.verifies(root: receiptIdentity.personPublicKey, environment: "production", windowID: room.id), "backfill signs the existing pin with the existing root")
+        backfill = try ProductionGroupWindowClient(endpoint: URL(string: "https://api.nekonomado.com")!,
+            secrets: memory, transport: receiptRelay, outboxDirectory: folder.appendingPathComponent("receipts"))
+        await backfill.backfillAnchorReceipts()
+        let sentReceipts = await receiptRelay.sent()
+        try check(sentReceipts.count == 3 && sentReceipts.allSatisfy { $0 == sentReceipts[0] }, "failures and lost response retry persisted bytes; completed restart sends nothing")
+        try check(memory.read("anchor-receipt-pending:" + room.id) == pendingReceipt, "pending original is not replaced by a new signature")
+        try check(memory.read("identity") == originalIdentity, "backfill never replaces identity")
+        // Simulate termination after persisting, before the first network send.
+        let unsentMemory = MemorySecrets()
+        for account in try memory.accounts(prefix: "") where !account.hasPrefix("anchor-receipt") {
+            if let bytes = try memory.read(account) { try unsentMemory.write(bytes, account: account, createOnly: true) }
+        }
+        try unsentMemory.write(pendingReceipt!, account: "anchor-receipt-pending:" + room.id, createOnly: true)
+        let unsentRelay = ReceiptTransport(memory: unsentMemory)
+        let resumedUnsent = try ProductionGroupWindowClient(endpoint: URL(string: "https://api.nekonomado.com")!,
+            secrets: unsentMemory, transport: unsentRelay, outboxDirectory: folder.appendingPathComponent("unsent-receipts"))
+        await resumedUnsent.backfillAnchorReceipts()
+        let firstUnsent = await unsentRelay.sent()
+        try check(firstUnsent == [sentReceipts[0]], "restart before first send uses the already persisted proof")
+        let missingMemory = MemorySecrets()
+        for account in try memory.accounts(prefix: "") where !account.hasPrefix("anchor-receipt") {
+            if let bytes = try memory.read(account) { try missingMemory.write(bytes, account: account, createOnly: true) }
+        }
+        let missingRelay = ReceiptTransport(memory: missingMemory, fallback: relay)
+        let missingClient = try ProductionGroupWindowClient(endpoint: URL(string: "https://api.nekonomado.com")!,
+            secrets: missingMemory, transport: missingRelay, outboxDirectory: folder.appendingPathComponent("missing-receipts"))
+        let openedWhileMissing = try await missingClient.window(id: room.id)
+        await missingRelay.waitForFirstReceipt()
+        await missingClient.setAnchorReceiptForeground(true)
+        await missingClient.backfillAnchorReceipts()
+        await missingClient.backfillAnchorReceipts()
+        let firstForeground = await missingRelay.sent()
+        try check(openedWhileMissing.name == room.name && firstForeground.count == 1,
+            "404 is silent; opening a window then delayed backfill sends once in the same foreground")
+        try check(missingMemory.read("anchor-receipt:" + room.id) == nil, "404 never marks the receipt complete")
+        await missingClient.setAnchorReceiptForeground(false)
+        await missingClient.backfillAnchorReceipts()
+        let backgroundRequests = await missingRelay.sent()
+        try check(backgroundRequests.count == 1, "background never sends receipts")
+        await missingClient.setAnchorReceiptForeground(true)
+        // 1115s: a real next foreground comes after the 20 s gap.
+        await missingClient.forgetAnchorBackfillGap()
+        await missingClient.backfillAnchorReceipts()
+        await missingClient.backfillAnchorReceipts()
+        let nextForeground = await missingRelay.sent()
+        try check(nextForeground.count == 2 && nextForeground[0] == nextForeground[1],
+            "next foreground retries once with identical persisted proof")
         await relay.setDelivery("paused")
         let paused = try await client.window(id: room.id)
         try check(paused.deliveryStatus == .paused && paused.deliveryReason == .ownerPlusRequired && paused.state == .active && paused.canManage,

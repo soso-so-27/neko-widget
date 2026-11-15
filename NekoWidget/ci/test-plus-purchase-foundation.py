@@ -400,8 +400,14 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         # fixture stands in for one (11/8: the UI test found the link missing).
         view = source("NekoWidget/Views/MembershipOfferView.swift")
         footer = section(view, "@ViewBuilder private var footerLinkContent: some View {", "\n    }\n")
-        for identifier in ("membership-offer-restore", "membership-offer-terms", "membership-offer-privacy"):
+        for identifier in ("membership-offer-terms", "membership-offer-privacy"):
             self.assertIn(f'.accessibilityIdentifier("{identifier}")', footer)
+        # 11/15: the one 「購入を復元」 is among the links unless the line on
+        # screen asks for it; then it stands under that line instead.
+        self.assertIn("if !restoreNearMessage { restoreButton }", footer)
+        restore = section(view, "    private var restoreButton: some View {", "\n    }\n")
+        self.assertIn('.accessibilityIdentifier("membership-offer-restore")', restore)
+        self.assertEqual(view.count('"membership-offer-restore"'), 1)
         self.assertIn('Link("利用規約", destination: termsURL)', footer)
         # 11/11: the EULA URL is shared with 設定, written once in the configuration.
         self.assertIn("if let termsURL = AppPublicLinksConfiguration.termsOfUseURL {", footer)
@@ -824,7 +830,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
             "家族の手帳を作って、家族と一緒に書く",
             "猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる",
         ])
-        self.assertIn('"解約しても、写真・まど・メモは消えません",', view)
+        self.assertIn('"解約しても、このiPhoneの写真・メモ・まどの写真は消えません",', view)
         # No memo-originated Plus entry remains (offer, usage name, auto-open key).
         model = source("NekoWidget/Services/MembershipOfferModel.swift")
         contexts = section(model, "enum PlusOfferContext: Equatable, Sendable {", "    var entryTitle: String {")

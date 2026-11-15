@@ -32,7 +32,9 @@ class PhotoReadAuthorityRecoveryTests(unittest.TestCase):
         self.assertNotIn("let initialPhoto = likedPhotos.first", detail)
         self.assertIn(".id(photoPresentationVersion.sourceResolutionRevision)", detail)
         root = read("NekoWidget/App/AppRootView.swift")
-        self.assertIn("readablePhotoIdentifiers: Set(readableSnapshot.assets.map", root)
+        # 11/14: built once per input change in ProfilePresentationCache.
+        self.assertIn("readableIdentifiers: Set(readableSnapshot.assets.map", root)
+        self.assertIn("readablePhotoIdentifiers: profileValues.readableIdentifiers,", root)
         self.assertIn("sourceSnapshot: readableSnapshot", root)
     def test_failed_scan_precedes_waiting_empty_state(self):
         source = read("NekoWidget/Views/HomeView.swift")

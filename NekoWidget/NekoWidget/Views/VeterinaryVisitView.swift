@@ -872,7 +872,7 @@ private struct VeterinaryConsultationView: View {
         .confirmationDialog("この診察メモを削除しますか？", isPresented: $deletesVisit, titleVisibility: .visible) {
             Button("削除", role: .destructive) { Task { await deleteVisit() } }
             Button("キャンセル", role: .cancel) {}
-        } message: { Text("この診察メモだけを削除します。") }
+        } message: { Text("この診察メモだけを削除します。元に戻せません。") }
         .appRecordEditing(retainWhileHidden: changes || busy || picking || weighing)
     }
     /// Leaving the page, or a page a row opened, saves what is pending at once.

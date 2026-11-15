@@ -800,7 +800,9 @@ struct ManagedPreservationView: View {
                 .accessibilityIdentifier("preservation-record-" + record.id.uuidString.lowercased())
             }
             if coordinator.records.isEmpty && !coordinator.isBusy && coordinator.errorMessage == nil {
-                Text("保存した記録はまだありません。")
+                // Browsing to restore: the usual cause is another Apple Account (11/14).
+                Text(allowsManualSaving ? "保存した記録はまだありません。"
+                     : "保存した記録はまだありません。保存したときと同じApple Accountか、確かめてください。")
                     .foregroundStyle(.secondary)
             }
             if coordinator.hasMore { Button("続きを読み込む") { coordinator.loadMore() } }

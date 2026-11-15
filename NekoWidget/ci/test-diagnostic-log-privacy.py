@@ -884,7 +884,7 @@ class DiagnosticLogPrivacyTests(unittest.TestCase):
             app,
         )
         self.assertIn(
-            "写真へのアクセスとiPhoneの空き容量を確かめて、もう一度お試しください。",
+            "うまくいきませんでした。もう一度お試しください。",
             app,
         )
 

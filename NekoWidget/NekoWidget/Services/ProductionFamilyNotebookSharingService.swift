@@ -89,6 +89,8 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     private var session: FamilyNotebookSession?
     private var working = false
     private(set) var needsAnotherPass = false
+    /// 11/15 (1115q): what the last key pass saw; a changed value is progress.
+    private(set) var lastKeyObservation = ""
     private(set) var currentFamilyID: UUID?
     private(set) var memberNames: [String: String] = [:]
     private(set) var lastJoinResults: [FamilyNotebookAdmissionClient.JoinResult] = []
@@ -180,7 +182,9 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
             // Paused sharing still has a real membership and a retained local
             // notebook. Do not turn a write-gate rejection into an endless spinner.
             if state.sharingStatus == .paused { return .inFamily(.init(role: state.role == .payer ? .payer : .member)) }
-            guard let material = try await context.keys.prepare(family: family.familyID) else { needsAnotherPass = true; return .waitingForKeys }
+            let prepared = try await context.keys.prepare(family: family.familyID)
+            lastKeyObservation = await context.keys.observation
+            guard let material = prepared else { needsAnotherPass = true; return .waitingForKeys }
             guard material.ready, !material.moreWork else { needsAnotherPass = true; return .waitingForKeys }
             let sync = try FamilyNotebookSync(familyID: family.familyID, identity: context.identity, store: store,
                 network: context.wire, journal: context.journal, endpointID: context.endpoint.absoluteString)

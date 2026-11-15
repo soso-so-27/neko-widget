@@ -1593,7 +1593,7 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launch()
         let proof = app.buttons["cat-care-restored-vaccine-proof"]
         XCTAssertTrue(proof.waitForExistence(timeout: 12), app.debugDescription)
-        XCTAssertEqual(proof.label, "証明の写真。開くには2回タップ")
+        XCTAssertEqual(proof.label, "証明の写真")
         XCTAssertFalse(app.staticTexts["試験のワクチン"].exists)
         proof.tap()
         let enlarged = app.descendants(matching: .any).matching(identifier: "tool-record-photo-full").firstMatch
@@ -3947,7 +3947,7 @@ final class SoloMemoriesUITests: XCTestCase {
             let reassurance = app.descendants(matching: .any)["membership-offer-reassurance"].firstMatch
             for _ in 0..<10 { if reassurance.isHittable { break }; app.swipeUp() }
             XCTAssertTrue(reassurance.isHittable, "The three reassurances must be readable before the links")
-            for line in ["いつでも解約できます", "解約しても、写真・まど・メモは消えません", "招待した家族は無料で入れます"] {
+            for line in ["いつでも解約できます", "解約しても、このiPhoneの写真・メモ・まどの写真は消えません", "招待した家族は無料で入れます"] {
                 XCTAssertTrue(reassurance.label.contains(line), "Missing reassurance: \(line)")
             }
             for identifier in ["membership-offer-restore", "membership-offer-cancel-help",
