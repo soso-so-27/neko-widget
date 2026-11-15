@@ -375,6 +375,12 @@ class PublicPolicySiteTests(unittest.TestCase):
         self.assertGreaterEqual(privacy.count(f"「{name}」"), 3)
         self.assertIn("<h3>まどの管理者の証明</h3>", privacy)
         self.assertIn("写真、まどの名前、表示名は入りません。", privacy)
+        # 11/16: matches 0081 (person / space / owner ids, owner key,
+        # signature, environment) and the backfill when the app opens.
+        self.assertIn("すでに参加しているまどがあるときはアプリを開いたときに", privacy)
+        self.assertIn("まど・あなた・作った人の識別子", privacy)
+        self.assertIn("本番用かどうかの区分", privacy)
+        self.assertNotIn("まどを作ったときと入ったときに", privacy)
         self.assertNotIn("iCloudキーチェーン", privacy)
         lp = ROOT / "lp" / "index.html"
         if lp.is_file():
