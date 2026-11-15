@@ -62,7 +62,9 @@ private enum Outcome { case sent, waiting, held, rateLimited(Double) }
 private func send(_ phone: Phone, person: Bool, bulk: Bool, at now: Double, server: OwnerServer) -> (Outcome, Double) {
     switch phone.budget.decide(personAction: person, bulk: bulk, at: at(now)) {
     case .held: return (.held, now)
-    case .wait(let until): return (.waiting, until.timeIntervalSinceReferenceDate)
+    // As PreservationCallBudget.admit: at least 0.05 s, so a place that frees
+    // only by floating-point rounding at the 60 s edge cannot stall the clock.
+    case .wait(let until): return (.waiting, max(now + 0.05, until.timeIntervalSinceReferenceDate))
     case .send:
         phone.sends.append((now, person))
         let reply = now + OwnerServer.latency
