@@ -53,6 +53,7 @@ xcrun --sdk macosx swiftc -parse-as-library "${notebook_common[@]}" \
   NekoWidget/Services/PhotoMemoryNoteStore.swift NekoWidget/Services/VeterinaryVisitStore.swift \
   NekoWidget/Services/FamilyNotebookMigration.swift NekoWidget/Services/FamilyNotebookCatCareBridge.swift \
   NekoWidget/Services/FamilyNotebookToolBridge.swift ci/verify-family-notebook-tool-bridge.swift \
+  NekoWidget/Services/FamilyNotebookCatLink.swift ci/verify-family-notebook-cat-link.swift \
   ci/verify-family-notebook-catcare-bridge.swift \
   ci/verify-family-notebook-migration.swift -o "$RUNNER_TEMP/verify-family-notebook-migration"
 "$RUNNER_TEMP/verify-family-notebook-migration"

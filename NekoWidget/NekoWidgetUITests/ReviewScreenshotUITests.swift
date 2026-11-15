@@ -768,6 +768,37 @@ final class ReviewScreenshotUITests: XCTestCase {
         app.terminate()
     }
 
+    // MARK: - この子 and the family notebook (11/15)
+
+    /// A family member's この子: the question for a family cat with the same
+    /// name as a cat here, a family cat with no photo, and 「この子を追加」
+    /// starting with the family's cats. Sample names only.
+    @MainActor
+    func test15FamilyNotebookLink() {
+        var app = launchStress(60, names: ["ソラ", "コテツ"], ["--cat-home-stress-family", "ソラ"])
+        shot("47_home_family_link_question", app) {
+            if let reason = reachStressHome(app) { return reason }
+            guard app.descendants(matching: .any)["family-link-question"].firstMatch.waitForExistence(timeout: 10) else {
+                return "link question did not appear"
+            }
+            settle(1.5)
+            return nil
+        }
+        app.terminate()
+        app = launchStress(61, names: ["-"], ["--cat-home-stress-family", "ミケ"])
+        shot("47b_home_family_cat_no_photo", app) {
+            reachStressHome(app, waitingFor: "cat-home-choose-photo")
+        }
+        shot("47c_home_add_from_family", app) {
+            if let reason = showStressAddPage(app) { return reason }
+            app.buttons["cat-home-add"].tap()
+            guard app.buttons["新しい子を追加"].waitForExistence(timeout: 8) else { return "family choice did not open" }
+            settle(1)
+            return nil
+        }
+        app.terminate()
+    }
+
     /// One stress scenario (AppStoreScreenshotFixture.CatHomeStress).
     @MainActor
     private func launchStress(_ scenario: Int, names: [String], _ extra: [String] = []) -> XCUIApplication {

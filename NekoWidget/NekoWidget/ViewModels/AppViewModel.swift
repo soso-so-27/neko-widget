@@ -65,6 +65,9 @@ struct LibraryPresentationVersion: Hashable {
     let identityMutationRevision: Int?
     let sourceResolutionRevision: Int
     let canPresent: Bool
+    /// 11/15: the single-cat rule is off while the family notebook has a cat
+    /// not linked to a cat of this iPhone (CatSingleCatRule).
+    var familyCatsOutsideProfiles = false
 }
 
 @MainActor
@@ -152,7 +155,8 @@ final class AppViewModel: ObservableObject {
             curationMutationRevision: catCandidateCuration.mutationRevision,
             identityMutationRevision: catHouseholdIdentity?.mutationRevision,
             sourceResolutionRevision: presentationSourceResolutionRevision,
-            canPresent: canPresentPhotoCandidates
+            canPresent: canPresentPhotoCandidates,
+            familyCatsOutsideProfiles: CatSingleCatRule.familyCatsOutsideProfiles
         )
     }
     var catAssets: [AssetRecord] {
@@ -1887,6 +1891,27 @@ final class AppViewModel: ObservableObject {
             Self.logError(error, category: "cat-identity", operation: "update_profile_date")
             setError(error)
             return false
+        }
+    }
+
+    /// 11/15: only when the profile has no birthday (FamilyNotebookCatLink).
+    /// A birthday the person set is never replaced here.
+    func fillCatProfileBirthday(profileID: UUID, day: CatCareDay) async {
+        guard candidateAuthorityIsReady(operation: "fill_profile_birthday"),
+              catHouseholdIdentity?.profiles.first(where: { $0.id == profileID })?.resolvedLifeDates.birthday == nil,
+              let date = day.date(calendar: .nekoGregorian), let birthday = CatLifeDate(date: date) else { return }
+        do {
+            _ = try await mutateCatHouseholdIdentity { state in
+                guard var profile = state.profiles.first(where: { $0.id == profileID }),
+                      profile.resolvedLifeDates.birthday == nil else { return }
+                var dates = profile.resolvedLifeDates
+                dates.birthday = birthday
+                dates.birthdayIsApproximate = false
+                profile.setLifeDates(dates, preferredPrimaryKind: profile.lifeReference?.kind)
+                state.upsertProfile(profile)
+            }
+        } catch {
+            Self.logError(error, category: "cat-identity", operation: "fill_profile_birthday")
         }
     }
 
@@ -3894,6 +3919,28 @@ final class AppViewModel: ObservableObject {
         } catch {
             Self.logError(error, category: "widget-cache", operation: "cloudy_profile_count")
         }
+    }
+
+    /// 11/15: the family notebook gained (or lost the last) cat that is not
+    /// linked to a cat of this iPhone. Turning the single-cat rule off keeps
+    /// the only cat's page photo first, as adding a second profile does.
+    /// Called only when the value changes, never while scrolling.
+    func setFamilyCatsOutsideProfiles(_ value: Bool) async {
+        guard CatSingleCatRule.familyCatsOutsideProfiles != value else { return }
+        if value, catIdentityLoadState == .ready, let shown = singleCatShownPhotoIdentifier() {
+            do {
+                _ = try await mutateCatHouseholdIdentity { state in
+                    if shown.profileID == state.singleCatProfileID {
+                        state.pinSingleCatPhotoBeforeAnotherProfile(shownPhotoIdentifier: shown.photo)
+                    }
+                }
+            } catch {
+                Self.logError(error, category: "cat-identity", operation: "pin_before_family_cat")
+            }
+        }
+        CatSingleCatRule.familyCatsOutsideProfiles = value
+        objectWillChange.send()
+        synchronizeCloudyWindowProfilesAfterCountChange()
     }
 
     /// The photo the only cat's page shows now when it has no key photo: the

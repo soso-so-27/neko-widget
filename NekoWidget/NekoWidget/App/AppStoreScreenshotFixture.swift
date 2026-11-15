@@ -1631,6 +1631,9 @@ extension AppStoreScreenshotFixture {
     /// - `--cat-home-stress-text xl|ax3`: the text size.
     /// - `--cat-home-stress-mid-swipe`: the pager is parked between the
     ///   first two pages (UI tests cannot capture during a held drag).
+    /// - `--cat-home-stress-family A|B`: 11/15, family-notebook cats with no
+    ///   cat of this iPhone (sample names). `--cat-home-stress-names -`: no
+    ///   cat of this iPhone at all.
     @MainActor
     enum CatHomeStress {
         static let argument = "--cat-home-stress"
@@ -1648,8 +1651,12 @@ extension AppStoreScreenshotFixture {
         }
 
         static var names: [String] {
+            if value("--cat-home-stress-names") == "-" { return [] }
             let names = (value("--cat-home-stress-names") ?? "むぎ").components(separatedBy: "|")
             return names.isEmpty ? ["むぎ"] : names
+        }
+        static var familyNames: [String] {
+            value("--cat-home-stress-family")?.components(separatedBy: "|").filter { !$0.isEmpty } ?? []
         }
         static var photo: String { value("--cat-home-stress-photo") ?? "normal" }
         static var rows: String { value("--cat-home-stress-rows") ?? "basic" }
@@ -1746,6 +1753,9 @@ extension AppStoreScreenshotFixture {
         /// the line reads 「オス・4歳4か月　／　うちに来て 1,560日」), then the
         /// first cat's rows, search and farewell. Written once.
         static func seedIfRequested() async {
+            if isRequested, !familyNames.isEmpty {
+                FamilyNotebookPrototype.shared.useFixtureFamilyCats(familyNames, scenario: scenario)
+            }
             guard isRequested, rows != "none" else { return }
             let calendar = Calendar.nekoGregorian, now = Date()
             let today = CatCareDay(date: now, calendar: calendar)

@@ -91,8 +91,10 @@ class CatLimitTests(unittest.TestCase):
         self.assertIn("showsLimit = true // 11/14: no name field at 10 cats", picker)
         self.assertIn(".alert(AppLimitCopy.catProfiles, isPresented: $showsLimit) {", picker)
         # この子 page, the cat list and the tools all use the shared flow.
-        self.assertIn(".addingCatProfile(isStarted: $addsCat, presentation: presentation, actions: actions)",
-                      read("NekoWidget/Views/CatHomeView.swift"))
+        # 11/15: この子 passes a family cat's name into the same flow.
+        self.assertIn(".addingCatProfile(isStarted: $addsCat, presentation: presentation, actions: actions,\n"
+                      "                          initialName: registeringFamilyCat?.name)",
+                      read("NekoWidget/Views/CatHomeView.swift").replace("\r\n", "\n"))
 
     def test_import_brings_the_first_ten_and_says_so(self):
         self.assertIn("func limitedToCatProfileLimit() -> (transfer: Self, wasLimited: Bool) {", TRANSFER)
