@@ -106,6 +106,12 @@ final class FamilyNotebookPrototype: ObservableObject {
             let tool = UUID(uuidString: String(format: "FA417001-%04X-4000-8000-%012X", scenario & 0xFFFF, index))!
             return .init(id: id, toolID: tool, name: name)
         }
+        // A family-shared 旅立った日 for the first cat (review capture only).
+        if CommandLine.arguments.contains("--cat-home-stress-family-farewell"), let first = fixtureCats?.first,
+           let day = Calendar.nekoGregorian.date(byAdding: .day, value: -20, to: Date()).flatMap({ CatCareDay(date: $0) }) {
+            familyFarewellDays = ["tool-" + first.toolID.uuidString: day]
+            CatFarewell.familyDays = familyFarewellDays
+        }
         objectWillChange.send()
     }
 #endif
@@ -122,11 +128,86 @@ final class FamilyNotebookPrototype: ObservableObject {
     }
 
     private func refreshUnlinked() {
+#if DEBUG
+        if fixtureCats != nil { return }
+#endif
         var next: [FamilyNotebookCatLink.Unlinked] = []
+        var order: [UUID] = []
+        var farewells: [String: CatCareDay] = [:]
         if isReal, hasFamily, let snapshot {
             next = FamilyNotebookCatLink.unlinked(snapshot, care: CatCareStore.shared.state) { name(of: $0) }
+            let cats = familyCats
+            order = FamilyNotebookCatOrder.ordered(cats.map(\.id), in: snapshot)
+            for cat in cats {
+                guard let day = FamilyNotebookCatOrder.sharedFarewell(cat.id, in: snapshot) else { continue }
+                // The key the page reads (CatHomeCat.farewellKey).
+                if let profile = FamilyNotebookCatLink.linkedProfile(cat.id, in: snapshot) {
+                    farewells[profile.uuidString] = day
+                } else {
+                    farewells["tool-" + cat.toolID.uuidString] = day
+                }
+            }
         }
         if next != unlinkedCats { unlinkedCats = next }
+        if order != familyOrder { familyOrder = order }
+        if farewells != familyFarewellDays {
+            familyFarewellDays = farewells
+            CatFarewell.familyDays = farewells
+        }
+    }
+
+    /// 11/15: the family's order of its cats (FamilyNotebookCatOrder), and the
+    /// 旅立った日 the family shared, by the key the page reads. Worked out when
+    /// the notebook is read again, never per drawing.
+    @Published private(set) var familyOrder: [UUID] = []
+    @Published private(set) var familyFarewellDays: [String: CatCareDay] = [:]
+
+    /// This iPhone's cats in their order (registration order), for the first
+    /// places of the cats this person put into the notebook. Set by AppRootView.
+    var profileOrder: [UUID] = [] {
+        didSet { if profileOrder != oldValue { writeInitialPositions() } }
+    }
+
+    /// The first places, once per cat and iPhone (a ledger key), and only by
+    /// the person who put the cat into the notebook (FamilyNotebookCatOrder).
+    /// Local writes only; they go out with the next pass of the family.
+    private func writeInitialPositions() {
+        guard isReal, hasFamily, let store, let snapshot, let author = realAuthor, !profileOrder.isEmpty else { return }
+        let first = FamilyNotebookCatOrder.initialPositions(snapshot, person: author.personID, profileOrder: profileOrder)
+        guard !first.isEmpty else { return }
+        let entries = first.map { item in
+            FamilyNotebookImportEntry(ledgerKey: "position-init:" + item.cat.uuidString.lowercased(),
+                                      target: .init(familyCatID: item.cat, field: .position),
+                                      value: .integer(item.position), editedAt: Date())
+        }
+        _ = try? store.applyImport(.init(familyID: snapshot.familyID, entries: entries, mappings: []), author: author)
+        reload()
+    }
+
+    /// 並べ替え: the family's cats in a new order. One operation per cat whose
+    /// place changed, written together when the person finishes; sent by the
+    /// person's own pass, not one call per move.
+    func reorderFamilyCats(_ order: [UUID]) throws {
+        guard isReal, hasFamily, let store, let snapshot, let author = realAuthor else { throw FamilySharingError.notAllowed }
+        let known = Set(familyCats.map(\.id))
+        guard Set(order) == known, order.count == known.count else { throw FamilySharingError.notAllowed }
+        for item in FamilyNotebookCatOrder.positions(for: order, in: snapshot) {
+            _ = try store.edit(target: .init(familyCatID: item.cat, field: .position), value: .integer(item.position), author: author)
+        }
+        reload()
+        Task { _ = await SharingPersonAction.run { await FamilyNotebookSharing.shared.refresh() } }
+    }
+
+    /// Whether linking would keep the family's value over something this
+    /// iPhone wrote differently (then the question asks once more).
+    func linkReplacesOwnWriting(_ cat: UUID, profile: String) -> Bool {
+#if DEBUG
+        if fixtureCats != nil { return CommandLine.arguments.contains("--cat-home-stress-link-differs") }
+#endif
+        guard isReal, let snapshot, let id = UUID(uuidString: profile),
+              let tool = FamilyNotebookCatLink.catMapping(cat, in: snapshot)?.toolCatID,
+              let care = CatCareStore.shared.state else { return false }
+        return FamilyNotebookCatLink.differs(care, toolCatID: tool, profile: id)
     }
 
     /// The family cat a cat of this iPhone is linked to, if any.
@@ -277,6 +358,7 @@ final class FamilyNotebookPrototype: ObservableObject {
                 existingLocalIDs: Set(CatCareStore.shared.state?.cats.map(\.catID) ?? []))
             if mappings != snapshot.activeMappings { _ = try store.applyImport(.init(familyID: snapshot.familyID, entries: [], mappings: mappings), author: author) }
             reload(); applyFamilyWrites(reportsFailure: reportsFailure)
+            writeInitialPositions()
         } catch { if reportsFailure { message = "家族の手帳を開けませんでした。少し待ってから、もう一度お試しください。" } }
     }
 
@@ -702,7 +784,9 @@ final class FamilyNotebookPrototype: ObservableObject {
     var recentFromFamily: [FamilyNotebookOperation] {
         guard let snapshot else { return [] }
         var seen = Set<FamilyNotebookTarget>()
-        return Array(snapshot.operations.filter { !isMe($0.author) && $0.target.field != nil && !snapshot.unsharedCatIDs.contains($0.target.familyCatID) }
+        // 11/15: a new order of the cats is not a written item.
+        return Array(snapshot.operations.filter { !isMe($0.author) && $0.target.field != nil && $0.target.field != .position
+                && !snapshot.unsharedCatIDs.contains($0.target.familyCatID) }
             .sorted { $0.version > $1.version }
             .filter { seen.insert($0.target).inserted }
             .prefix(5))
@@ -2124,14 +2208,22 @@ struct FamilyNotebookLinkQuestionView: View {
     let cats: [CatProfilePresentation]
     let choose: (CatProfilePresentation) -> Void
     let other: () -> Void
+    @ObservedObject private var model = FamilyNotebookPrototype.shared
     @Environment(\.dismiss) private var dismiss
+    /// 11/15: the chosen cat has writing that differs from the family's:
+    /// asked once more before the family's is kept.
+    @State private var confirming: CatProfilePresentation?
+
+    private func pick(_ profile: CatProfilePresentation) {
+        if model.linkReplacesOwnWriting(cat.id, profile: profile.identifier) { confirming = profile } else { choose(profile) }
+    }
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
                     ForEach(cats) { profile in
-                        Button { choose(profile) } label: {
+                        Button { pick(profile) } label: {
                             HStack(spacing: 14) {
                                 CatProfileThumbnail(photo: profile.coverPhoto)
                                     .frame(width: 52, height: 52)
@@ -2163,6 +2255,13 @@ struct FamilyNotebookLinkQuestionView: View {
             .navigationTitle("家族の手帳の「" + cat.name + "」")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
+            .alert("このiPhoneに書いたことは、家族の手帳の内容に合わせます。",
+                   isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
+                   presenting: confirming) { profile in
+                Button("つなぐ") { confirming = nil; choose(profile) }
+                    .accessibilityIdentifier("family-link-confirm")
+                Button("やめる", role: .cancel) { confirming = nil }
+            }
         }
         .presentationDetents([.medium, .large])
         .accessibilityIdentifier("family-link-question")
@@ -2454,6 +2553,7 @@ enum FamilyNotebookWords {
         // The tools' fields, so 最近の書き込み never shows an internal name
         // such as 「grams」 or 「usualFood」 (11/6).
         case .farewellDay: "旅立った日"
+        case .position: "並び順"
         case .sharingEnded: "共有"
         case .measuredOn: "体重を量った日"
         case .grams: "体重"

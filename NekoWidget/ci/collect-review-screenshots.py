@@ -38,6 +38,7 @@ STRESS_SCREENS = (
 # この子 and the family notebook (test15FamilyNotebookLink), light and dark.
 FAMILY_LINK_SCREENS = (
     "47_home_family_link_question", "47b_home_family_cat_no_photo", "47c_home_add_from_family",
+    "48_cat_order_mixed", "48b_family_link_confirm", "48c_home_family_farewell",
 )
 # Every screen ReviewScreenshotUITests captures, in review order.
 FULL_SCREENS = (

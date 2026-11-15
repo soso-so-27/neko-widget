@@ -463,6 +463,8 @@ struct AppStoreScreenshotFixtureRootView: View {
     @State private var showsFamilyWindow = false
     @State private var photoPositionDiagnostics = ""
     @State private var addedToolProfiles: [CatProfilePresentation] = []
+    /// 11/15 `--cat-home-stress-order`: the 並べ替え screen over the tabs.
+    @State private var showsOrder = false
     @State private var deletedToolProfiles = Set<String>()
 
     private var photos: [PhotoPresentation] {
@@ -658,6 +660,15 @@ struct AppStoreScreenshotFixtureRootView: View {
             await AppStoreScreenshotFixture.CatHomeStress.seedIfRequested()
         }
         .task { await AppStoreScreenshotFixture.CatHomeStress.parkMidSwipeIfRequested() }
+        .task {
+            guard AppStoreScreenshotFixture.CatHomeStress.isRequested,
+                  CommandLine.arguments.contains("--cat-home-stress-order") else { return }
+            try? await Task.sleep(for: .seconds(1.5))
+            showsOrder = true
+        }
+        .sheet(isPresented: $showsOrder) {
+            NavigationStack { CatOrderView(profiles: catProfiles.profiles, actions: profileActions) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: PhotoLibraryReadingPosition.diagnosticNotification)) { _ in
             guard widgetRecoveryCase == "paging",
                   ProcessInfo.processInfo.environment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] != nil else { return }

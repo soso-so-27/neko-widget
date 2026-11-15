@@ -90,6 +90,12 @@ struct AppRootView: View {
         // 11/15: a family cat not linked to a cat of this iPhone turns the
         // single-cat rule off (its photos may be in the library). Only when
         // that changes, never while drawing.
+        // 11/15: the order of this iPhone's cats (the first family places),
+        // and a 旅立った日 the family shared, for the widget too.
+        .task(id: viewModel.catProfiles.map(\.id)) { familyNotebook.profileOrder = viewModel.catProfiles.map(\.id) }
+        .onReceive(familyNotebook.$familyFarewellDays.dropFirst().removeDuplicates()) { _ in
+            viewModel.familyFarewellsChanged()
+        }
         .onReceive(familyNotebook.$unlinkedCats.map { !$0.isEmpty }.removeDuplicates()) { outside in
             familyNotebook.fillProfileBirthday = { [viewModel] profile, day in
                 await viewModel.fillCatProfileBirthday(profileID: profile, day: day)
@@ -1061,7 +1067,10 @@ struct AppRootView: View {
                 guard let profileID = UUID(uuidString: identifier) else { return false }
                 return await viewModel.deleteCatProfile(profileID: profileID)
             },
-            currentErrorMessage: { viewModel.errorMessage }
+            currentErrorMessage: { viewModel.errorMessage },
+            reorderProfiles: { identifiers in
+                await viewModel.reorderCatProfiles(identifiers.compactMap(UUID.init(uuidString:)))
+            }
         )
     }
 

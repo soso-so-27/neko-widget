@@ -6890,7 +6890,8 @@ class NavigationAfterActionTests(unittest.TestCase):
         row = source("NekoWidget/Views/FamilyNotebookSharedCatRow.swift")
         self.assertNotIn("NavigationLink", row)
         home = source("NekoWidget/Views/CatHomeView.swift")
-        self.assertIn("for cat in familyOnlyCats where seen.insert(cat.toolID.uuidString.uppercased()).inserted {", home)
+        self.assertIn("for cat in only where seen.insert(cat.toolID.uuidString.uppercased()).inserted {", home)
+        self.assertIn("let only = familyOnlyCats", home)
         self.assertNotIn("CatCareDetailView(toolCatID: cat.toolID, name: cat.name)", notebook)
         self.assertIn("if joined == .joined { onJoined?(); dismiss() }", notebook)
         care = source("NekoWidget/Views/CatCareView.swift")
@@ -8907,10 +8908,12 @@ class CatHomeTab1112Tests(unittest.TestCase):
         self.assertIn('.accessibilityLabel("猫を切り替える")', hero)
         self.assertIn(".accessibilityValue(cat.name)", hero)
         self.assertIn('.accessibilityIdentifier("tools-cat-menu")', hero)
-        # Profiles, family cats without a profile here, then cats known only from the tools.
+        # 11/15: the family notebook's cats in the family's order, then this
+        # iPhone's other cats, family cats kept only here, cats from the tools.
         cats = section(self.home, "    private var cats: [CatHomeCat] {", "    private func currentCat(")
-        self.assertLess(cats.index("presentation.profiles.map"), cats.index("for cat in familyOnlyCats"))
-        self.assertLess(cats.index("for cat in familyOnlyCats"), cats.index("for cat in states.toolCats"))
+        self.assertLess(cats.index("for id in familyNotebook.familyOrder"), cats.index("for profile in presentation.profiles"))
+        self.assertLess(cats.index("for profile in presentation.profiles"), cats.index("for cat in only where"))
+        self.assertLess(cats.index("for cat in only where"), cats.index("for cat in states.toolCats"))
         self.assertIn("SavedToolCatChoices.cats(care: .shared, evacuation: .shared)", self.home)
         # 設定 top right, as before.
         bar = section(self.home, "private struct CatHomeSettingsBar: View {", "enum CatHomeGlass {")

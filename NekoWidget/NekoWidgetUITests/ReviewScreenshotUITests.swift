@@ -799,6 +799,40 @@ final class ReviewScreenshotUITests: XCTestCase {
         app.terminate()
     }
 
+    /// 11/15: 並べ替え with the family's cats and this iPhone's own, the one
+    /// sentence before linking replaces this iPhone's writing, and a cat whose
+    /// 旅立った日 the family shared. Sample names only.
+    @MainActor
+    func test16FamilyOrderAndFarewell() {
+        var app = launchStress(70, names: ["ソラ", "コテツ"], ["--cat-home-stress-family", "ミケ", "--cat-home-stress-order"])
+        shot("48_cat_order_mixed", app) {
+            guard app.descendants(matching: .any)["cat-order"].firstMatch.waitForExistence(timeout: 20) else {
+                return "order screen did not appear"
+            }
+            settle(1.5)
+            return nil
+        }
+        app.terminate()
+        app = launchStress(71, names: ["ソラ", "コテツ"], ["--cat-home-stress-family", "ソラ", "--cat-home-stress-link-differs"])
+        shot("48b_family_link_confirm", app) {
+            if let reason = reachStressHome(app) { return reason }
+            let same = app.buttons["family-link-same"].firstMatch
+            guard same.waitForExistence(timeout: 10) else { return "link question did not appear" }
+            same.tap()
+            guard app.buttons["つなぐ"].waitForExistence(timeout: 8) else { return "confirmation did not appear" }
+            settle(1)
+            return nil
+        }
+        app.terminate()
+        app = launchStress(72, names: ["-"], ["--cat-home-stress-family", "ミケ", "--cat-home-stress-family-farewell"])
+        shot("48c_home_family_farewell", app) {
+            if let reason = reachStressHome(app) { return reason }
+            guard !app.buttons["tools-care-open"].exists else { return "family farewell not shown (tool buttons still there)" }
+            return nil
+        }
+        app.terminate()
+    }
+
     /// One stress scenario (AppStoreScreenshotFixture.CatHomeStress).
     @MainActor
     private func launchStress(_ scenario: Int, names: [String], _ extra: [String] = []) -> XCUIApplication {

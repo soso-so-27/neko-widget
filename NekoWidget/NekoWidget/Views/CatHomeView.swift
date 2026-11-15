@@ -417,14 +417,31 @@ struct CatHomeView: View {
 
     // MARK: Cats
 
-    /// Profiles, then family cats without a profile here, then cats known
-    /// only from the tools; one page each.
+    /// 11/15: the family notebook's cats first, in the family's order (one
+    /// order for everyone; a cat linked to a cat here shows as that cat),
+    /// then this iPhone's other cats in their own order, then family cats
+    /// kept only here, then cats known only from the tools; one page each.
     private var cats: [CatHomeCat] {
-        var result = presentation.profiles.map {
-            CatHomeCat(id: $0.identifier, name: $0.displayName, kind: .profile($0))
+        var result: [CatHomeCat] = []
+        var seen = Set<String>()
+        let only = familyOnlyCats
+        let shared = Dictionary(familyNotebook.activeFamilyCats.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for id in familyNotebook.familyOrder {
+            guard let family = shared[id] else { continue }
+            if let profileID = careStore.state?.cats.first(where: { $0.catID == family.toolID && $0.deletedAt == nil })?.profileID,
+               let profile = presentation.profiles.first(where: { $0.identifier == profileID.uuidString }) {
+                if seen.insert(profile.identifier.uppercased()).inserted {
+                    result.append(CatHomeCat(id: profile.identifier, name: profile.displayName, kind: .profile(profile)))
+                }
+            } else if let cat = only.first(where: { $0.toolID == family.toolID }),
+                      seen.insert(cat.toolID.uuidString.uppercased()).inserted {
+                result.append(CatHomeCat(id: cat.toolID.uuidString, name: cat.name, kind: .toolCat(cat.toolID)))
+            }
         }
-        var seen = Set(result.map { $0.id.uppercased() })
-        for cat in familyOnlyCats where seen.insert(cat.toolID.uuidString.uppercased()).inserted {
+        for profile in presentation.profiles where seen.insert(profile.identifier.uppercased()).inserted {
+            result.append(CatHomeCat(id: profile.identifier, name: profile.displayName, kind: .profile(profile)))
+        }
+        for cat in only where seen.insert(cat.toolID.uuidString.uppercased()).inserted {
             result.append(CatHomeCat(id: cat.toolID.uuidString, name: cat.name, kind: .toolCat(cat.toolID)))
         }
         for cat in states.toolCats where seen.insert(cat.id.uuidString.uppercased()).inserted {
@@ -470,7 +487,9 @@ struct CatHomeView: View {
 
     private func facts(for cat: CatHomeCat, record: CatCareRecord?) -> CatHomeFacts {
         // Cats whose farewell day is recorded (1.0 only, as in この子のこと).
-        let farewell = Version1.isOn ? CatFarewell.days(farewellJSON)[cat.farewellKey] : nil
+        // 11/15: a day the family shared shows as one recorded here.
+        let farewell = Version1.isOn
+            ? (CatFarewell.days(farewellJSON)[cat.farewellKey] ?? familyNotebook.familyFarewellDays[cat.farewellKey]) : nil
         return CatHomeFacts.make(cat: cat, record: record, farewell: farewell)
     }
 
