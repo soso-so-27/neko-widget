@@ -288,6 +288,37 @@ private func checkRecoverySelection() throws {
     try check(GroupRecoveryRegistrationState.registeredWaitingForKeys(operationID: id, deviceID: "d").nextAction == .waitForKeys, "registration is not decryption")
     try check(GroupRecoveryRegistrationState.revoked(operationID: id).nextAction == .stop, "revocation cannot retry registration")
     try check(GroupRecoveryRegistrationState.needsOriginalDeviceOrInvitation(operationID: id).nextAction == .stop, "missing anchor never creates a new person")
+    let selfAnchor = GroupTrustAnchor(windowID: "room", ownerPersonID: rootID(publicRoot), ownerIdentityPublicKey: publicRoot)
+    let selfReceipt = try GroupAnchorReceipt.make(environment: "staging", anchor: selfAnchor, root: root)
+    let phone = Device(id: "old-phone")
+    let unsigned = GroupRosterDevice(id: phone.id, signingPublicKey: phone.signing.publicKey.rawRepresentation,
+        hpkePublicKey: phone.agreement.publicKey.rawRepresentation, personAuthorization: Data())
+    let certified = GroupRosterDevice(id: phone.id, signingPublicKey: unsigned.signingPublicKey, hpkePublicKey: unsigned.hpkePublicKey,
+        personAuthorization: try root.signature(for: unsigned.authorizationBytes(windowID: "room", personID: selfAnchor.ownerPersonID)))
+    let headRoster = GroupRoster(windowID: "room", revision: 7, keyEpoch: 4, previousHash: Data(repeating: 3, count: 32),
+        ownerPersonID: selfAnchor.ownerPersonID, members: [.init(participantID: "p", personID: selfAnchor.ownerPersonID,
+            identityPublicKey: publicRoot, role: .owner, devices: [certified])])
+    let headPacket = try GroupRosterVerifier.sign(headRoster, deviceID: phone.id, privateKey: phone.signing)
+    let headHash = GroupCanonical.hash(try headRoster.canonicalBytes())
+    let recoveredHead = try GroupRosterVerifier.verifyRecoveryHead(headPacket, receipts: [selfReceipt], root: publicRoot,
+        environment: "staging", windowID: "room", currentRevision: 7, currentHash: headHash, rootIsCurrent: true)
+    try check(recoveredHead?.hash == headHash, "root receipt anchors a current server head without trusting an owner supplied by relay")
+    try check(try GroupRosterVerifier.verifyRecoveryHead(headPacket, receipts: [], root: publicRoot,
+        environment: "staging", windowID: "room", currentRevision: 7, currentHash: headHash, rootIsCurrent: true) == nil, "missing receipt needs original device")
+    for live in [true, false] {
+        try rejects("unproved head or revoked root") { _ = try GroupRosterVerifier.verifyRecoveryHead(headPacket, receipts: [selfReceipt], root: publicRoot,
+            environment: "staging", windowID: "room", currentRevision: 7, currentHash: live ? Data(repeating: 0, count: 32) : headHash, rootIsCurrent: live) }
+    }
+    let noSource = try GroupRecoveryPendingStateResolver.resolve(operationID: id, state: "noKeyProvider", verifiedMembers: [selfAnchor.ownerPersonID],
+        verifiedOwnerID: selfAnchor.ownerPersonID, personID: selfAnchor.ownerPersonID, expectedDeviceID: "new", returnedDeviceID: "new", canRequestFreshGeneration: true)
+    try check(noSource.knowsWindowExists && !noSource.canOpen && !noSource.canSend, "pending shows existence but grants no access")
+    try check(noSource.freshGenerationChoice(confirmedPastUnavailable: false, newName: "new") == .stop, "fresh generation is never automatic")
+    try check(noSource.freshGenerationChoice(confirmedPastUnavailable: true, newName: "new") == .prepareFreshGeneration(id, newName: "new"), "explicit choice creates only a proposal")
+    for state in ["noKeyProvider", "ready"] {
+        try rejects("relay cannot make shared room fresh or grant ready") { _ = try GroupRecoveryPendingStateResolver.resolve(operationID: id, state: state,
+            verifiedMembers: [selfAnchor.ownerPersonID, "family"], verifiedOwnerID: selfAnchor.ownerPersonID,
+            personID: selfAnchor.ownerPersonID, expectedDeviceID: "new", returnedDeviceID: "new", canRequestFreshGeneration: true) }
+    }
     print("P3 root selection and recovery retry states passed")
 }
 

@@ -44,9 +44,14 @@ enum GroupRecoveryRegistrationState: Equatable, Sendable {
     case revoked(operationID: UUID)
     /// 元の端末で一度アプリを開くか、もう一度招待が必要。Never create another person.
     case needsOriginalDeviceOrInvitation(operationID: UUID)
+    case noKeyProvider(operationID: UUID, deviceID: String)
+    case deviceLimit(operationID: UUID)
+    case unavailable(operationID: UUID)
 }
 enum GroupRecoveryRetryAction: Equatable, Sendable {
     case queryStatus(UUID), submitSameOperation(UUID), waitForKeys, complete, stop
+    case askFreshGenerationConsent, manageDevices
+    case prepareFreshGeneration(UUID, newName: String)
 }
 extension GroupRecoveryRegistrationState {
     var nextAction: GroupRecoveryRetryAction {
@@ -55,8 +60,26 @@ extension GroupRecoveryRegistrationState {
         case .notStarted(let id): return .submitSameOperation(id)
         case .registeredWaitingForKeys: return .waitForKeys
         case .ready: return .complete
+        case .noKeyProvider: return .askFreshGenerationConsent
+        case .deviceLimit: return .manageDevices
+        case .unavailable(let id): return .queryStatus(id)
         case .revoked, .needsOriginalDeviceOrInvitation: return .stop
         }
+    }
+    var canOpen: Bool { if case .ready = self { return true }; return false }
+    var canSend: Bool { canOpen }
+    var knowsWindowExists: Bool {
+        switch self {
+        case .registeredWaitingForKeys, .noKeyProvider, .ready, .needsOriginalDeviceOrInvitation: true
+        default: false
+        }
+    }
+    /// Only produces a local, explicit proposal. No automatic generation change.
+    func freshGenerationChoice(confirmedPastUnavailable: Bool, newName: String) -> GroupRecoveryRetryAction {
+        guard case .noKeyProvider(let id, _) = self, confirmedPastUnavailable,
+              !newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              newName.utf8.count <= 80 else { return .stop }
+        return .prepareFreshGeneration(id, newName: newName)
     }
 }
 
@@ -385,6 +408,29 @@ struct GroupPhotoCommitReceipt: Decodable {
               momentID == photoID, senderParticipantID == participantID, senderDeviceID == deviceID,
               self.revision == revision, keyEpoch == epoch, state == "committed", createdAt > 0 else {
             throw GroupClientError.invalidResponse
+        }
+    }
+}
+
+/// Root/anchor verification must succeed before mapping relay state for the UI.
+/// No server response can produce .ready; P5 owns authenticated key installation.
+enum GroupRecoveryPendingStateResolver {
+    enum Failure: Error { case invalidState }
+    static func resolve(operationID: UUID, state: String, verifiedMembers: [String]?, verifiedOwnerID: String?,
+                        personID: String, expectedDeviceID: String, returnedDeviceID: String?,
+                        canRequestFreshGeneration: Bool) throws -> GroupRecoveryRegistrationState {
+        if state == "needsOriginalDeviceOrInvitation" { return .needsOriginalDeviceOrInvitation(operationID: operationID) }
+        guard let members = verifiedMembers, members.contains(personID)
+        else { throw Failure.invalidState }
+        if state == "notStarted" { return .notStarted(operationID: operationID) }
+        guard returnedDeviceID == expectedDeviceID else { throw Failure.invalidState }
+        switch state {
+        case "registeredWaitingForKeys": return .registeredWaitingForKeys(operationID: operationID, deviceID: expectedDeviceID)
+        case "noKeyProvider":
+            guard canRequestFreshGeneration, members.count == 1,
+                  verifiedOwnerID == personID else { throw Failure.invalidState }
+            return .noKeyProvider(operationID: operationID, deviceID: expectedDeviceID)
+        default: throw Failure.invalidState
         }
     }
 }

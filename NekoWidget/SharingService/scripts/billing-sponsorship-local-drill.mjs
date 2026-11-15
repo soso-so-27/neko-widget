@@ -98,6 +98,7 @@ const expectedMigrationNames = [
   "0079_group_push_coalescing_indexes.sql",
   "0080_group_recovery_catalog.sql",
   "0081_group_anchor_receipts.sql",
+  "0082_group_recovery_pending.sql",
 ];
 
 const databaseGateColumns = [
