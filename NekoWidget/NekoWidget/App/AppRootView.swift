@@ -122,14 +122,20 @@ struct AppRootView: View {
             await GroupAdmissionService.shared.refresh()
         }
         .task(id: scenePhase) {
-            guard scenePhase == .active else { return }
 #if DEBUG
             guard !GroupWindowUIFixture.showsScreens else { return }
 #endif
+            guard let client = GroupWindowClientProvider.production else { return }
+            if scenePhase == .background {
+                await client.setAnchorReceiptForeground(false)
+                return
+            }
+            guard scenePhase == .active else { return }
+            await client.setAnchorReceiptForeground(true)
             // Let launch/rendering finish; cancellation on background defers to
             // the next foreground. This never blocks the visible list.
             do { try await Task.sleep(for: .seconds(5)) } catch { return }
-            await GroupWindowClientProvider.production?.backfillAnchorReceipts()
+            await client.backfillAnchorReceipts()
         }
         .onChange(of: viewModel.isScanning, initial: true) { _, isScanning in
             AppIdleTimer.setPreventSleep(isScanning && scenePhase == .active, for: "photo-scan")

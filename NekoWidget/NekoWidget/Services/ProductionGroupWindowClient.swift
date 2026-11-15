@@ -37,14 +37,21 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     private var reconcilingAdmissions = false
     private var anchorReceiptAttempts = Set<String>()
     private var anchorReceiptBackfillRunning = false
+    private var anchorReceiptForeground = true
+
+    /// Only a real background -> active transition starts another attempt.
+    /// Initial activation keeps any attempt already started by opening a window.
+    func setAnchorReceiptForeground(_ active: Bool) {
+        if active && !anchorReceiptForeground { anchorReceiptAttempts.removeAll() }
+        anchorReceiptForeground = active
+    }
 
     /// Called after a foreground delay. Reads only existing local pins/identity;
     /// no registration, new identity, roster fetch, or key recovery.
     func backfillAnchorReceipts() async {
-        guard !anchorReceiptBackfillRunning else { return }
+        guard anchorReceiptForeground, !anchorReceiptBackfillRunning else { return }
         anchorReceiptBackfillRunning = true
         defer { anchorReceiptBackfillRunning = false }
-        anchorReceiptAttempts.removeAll()
         guard let accounts = try? secrets.accounts(prefix: "window:") else { return }
         for account in accounts {
             if Task.isCancelled { return }
@@ -52,7 +59,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         }
     }
     private func publishAnchorReceipt(windowID: String) async {
-        guard !Task.isCancelled, !anchorReceiptAttempts.contains(windowID) else { return }
+        guard anchorReceiptForeground, !Task.isCancelled, !anchorReceiptAttempts.contains(windowID) else { return }
         do {
             guard let id = try load(GroupDeviceIdentity.self, "identity"), id.registered,
                   let privateRoot = id.personPrivateKey else { return }
