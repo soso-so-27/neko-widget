@@ -88,11 +88,11 @@ final class FamilyJourneyTests: XCTestCase {
         // server confirmed one about 4 minutes after it).
         XCTAssertEqual(PlusPurchaseStore.serverConfirmationFollowUpInterval, .seconds(30))
         XCTAssertEqual(PlusPurchaseStore.serverConfirmationWindow, 600)
-        // An automatic try needs room for itself and a tap: at most 4 of
-        // each kind in the last 60 s.
-        XCTAssertTrue(PlusConfirmationSchedule.allowsAutomaticCheck(transactions: 4, entitlements: 4))
-        XCTAssertFalse(PlusConfirmationSchedule.allowsAutomaticCheck(transactions: 5, entitlements: 0))
-        XCTAssertFalse(PlusConfirmationSchedule.allowsAutomaticCheck(transactions: 0, entitlements: 5))
+        // An automatic try needs room for itself within the billing gate's
+        // 4 automatic calls of each kind a minute (1115v).
+        XCTAssertTrue(PlusConfirmationSchedule.allowsAutomaticCheck(transactions: 3, entitlements: 3))
+        XCTAssertFalse(PlusConfirmationSchedule.allowsAutomaticCheck(transactions: 4, entitlements: 0))
+        XCTAssertFalse(PlusConfirmationSchedule.allowsAutomaticCheck(transactions: 0, entitlements: 4))
     }
 
     func testFamilyScheduleBacksOffAndStopsWhenOnlyTheOtherIPhoneCanMoveIt() {
