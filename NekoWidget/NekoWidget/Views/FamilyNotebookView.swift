@@ -893,7 +893,9 @@ struct FamilyNotebookView: View {
                 }
                 guard model.isReal else { return }
                 let pending = (sharing.service as? ProductionFamilyNotebookSharingService)?.needsAnotherPass == true
-                do { try await Task.sleep(for: .seconds(pending ? 5 : 60)) } catch { return }
+                // 11/15: a request to join showed up to a minute late with the
+                // notebook open; 20 s while it is open (pull to refresh too).
+                do { try await Task.sleep(for: .seconds(pending ? 5 : 20)) } catch { return }
             } while !Task.isCancelled
         }
         .onAppear { model.markSeen() }
@@ -1058,7 +1060,13 @@ struct FamilyNotebookView: View {
 
     private func decide(_ request: FamilyNotebookJoinRequest, approve: Bool) {
         guard let real = sharing.service as? ProductionFamilyNotebookSharingService else { return }
-        Task { await sharing.perform { try await real.decide(requestID: request.id, approve: approve, operationID: $0) } }
+        Task {
+            // 11/15: the answered request leaves the list once the relay took
+            // it; pressing a stale row again only finds it gone (staleRoster).
+            if await sharing.perform({ try await real.decide(requestID: request.id, approve: approve, operationID: $0) }) {
+                sharing.forgetRequest(request.id)
+            }
+        }
     }
 }
 
@@ -1662,7 +1670,10 @@ struct FamilyNotebookInviteView: View {
                 var made: FamilyInvitation?
                 // A failure is kept in `sharing.failure` and shown above; the
                 // screen stays as it was.
-                await sharing.perform { made = try await service.createInvitation(operationID: $0) }
+                // 11/15: the share sheet opens as soon as the link exists; the
+                // whole-family read that followed (sync included) is left to
+                // the notebook's next pass, since a link changes nothing shown.
+                await sharing.perform(readsAfter: false) { made = try await service.createInvitation(operationID: $0) }
                 guard let made else { return }
                 invitation = made
                 sharesInvitation = true
@@ -1724,11 +1735,19 @@ struct FamilyNotebookJoinView: View {
                         .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 } else {
                     if sharing.service.sendsInvitations {
-                        TextField("家族に表示するあなたの名前", text: VisibleTextInput.binding($displayName))
-                            .textFieldStyle(.roundedBorder)
-                            .focused($typingName)
-                            .disabled(sharing.isWorking)
-                            .accessibilityIdentifier("family-notebook-display-name")
+                        // 11/15: the name is filled in already, so the hint
+                        // never showed and it read as the notebook's name. The
+                        // same heading as the まど's join screen.
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("あなたの名前").font(.subheadline.weight(.semibold))
+                            TextField("家族に表示するあなたの名前", text: VisibleTextInput.binding($displayName))
+                                .textFieldStyle(.roundedBorder)
+                                .focused($typingName)
+                                .disabled(sharing.isWorking)
+                                .accessibilityLabel("あなたの名前")
+                                .accessibilityIdentifier("family-notebook-display-name")
+                            Text("家族に表示されます。").font(.footnote).foregroundStyle(.secondary)
+                        }
                     }
                     Button {
                         typingName = false
@@ -1981,11 +2000,39 @@ private struct FamilyNotebookToolSyncModifier: ViewModifier {
         }
     }
 }
+/// 11/15 (TestFlight 378): the person let in learned it only by opening the
+/// notebook, which 設定 did not offer yet, so it never appeared. Each time
+/// the app comes to the front, someone in a family or waiting to be let in
+/// reads the family once (and every 30 s while still waiting), and the
+/// family's cats reach 「この子」. Photos access plays no part in this.
+private struct FamilyNotebookOpeningCheck: ViewModifier {
+    @ObservedObject private var model = FamilyNotebookPrototype.shared
+    @Environment(\.scenePhase) private var phase
+
+    func body(content: Content) -> some View {
+        content.task(id: phase == .active) {
+            guard phase == .active, model.isReal,
+                  model.hasFamily || FamilyNotebookSharing.awaitingApproval else { return }
+            while !Task.isCancelled {
+                if !FamilyNotebookSharing.shared.isWorking { await FamilyNotebookSharing.shared.refresh() }
+                if model.hasFamily { model.applyFamilyWrites() }
+                guard FamilyNotebookSharing.awaitingApproval else { return }
+                do { try await Task.sleep(for: .seconds(30)) } catch { return }
+            }
+        }
+    }
+}
+
 extension View {
     /// Poll only while an actual shared tool is visible in the foreground.
     /// The sharing service still enforces participation, pause and entitlement.
     func familyNotebookToolSync(enabled: Bool = true) -> some View {
         modifier(FamilyNotebookToolSyncModifier(enabled: enabled))
+    }
+
+    /// Put once at the app's root (11/15).
+    func familyNotebookOpeningCheck() -> some View {
+        modifier(FamilyNotebookOpeningCheck())
     }
 }
 

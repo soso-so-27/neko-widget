@@ -244,6 +244,66 @@ class PurchaseWaitAndFamilyPause1115Tests(unittest.TestCase):
         self.assertIn("testServerConfirmationIsAskedAgainAFewTimesWithinTwoMinutes", TESTS)
 
 
+SETTINGS = read("NekoWidget/Views/SettingsView.swift")
+
+
+class FamilyJoinAfterApproval1115Tests(unittest.TestCase):
+    """11/15 (TestFlight 378, two iPhones): the approved person stayed in
+    「参加を待っている人」, the person let in never saw the notebook, the
+    invite link took long, requests showed late, and the name field read as
+    the notebook's name."""
+
+    def test_answered_request_leaves_the_list(self):
+        refresh = section(SHARING, "func refresh(reportsFailure: Bool = false) async -> Bool {", "func refreshAfterPlusChange()")
+        self.assertIn("let nextRequests = next.membership == nil ? [] : try await real.pendingRequests()", refresh)
+        self.assertNotIn("syncing ? requests", refresh)
+        decide = section(NOTEBOOK, "private func decide(_ request: FamilyNotebookJoinRequest, approve: Bool) {", "\n    }\n")
+        self.assertIn("sharing.forgetRequest(request.id)", decide)
+        # A second press on a stale row finds it gone; it never approves twice.
+        service = read("NekoWidget/Services/ProductionFamilyNotebookSharingService.swift")
+        again = section(service, "func decide(requestID: UUID, approve: Bool, operationID: UUID) async throws {", "struct FamilyNotebookJoinRequest")
+        self.assertIn("guard let request = result.requests.first(where: { $0.requestID == requestID }) else { throw FamilySharingError.staleRoster }", again)
+        perform = section(SHARING, "func perform(readsAfter: Bool = true", "func forgetRequest(")
+        self.assertIn("if readsAfter { await refreshAfterChange() }", perform)
+        self.assertIn("while refreshing {", section(SHARING, "private func refreshAfterChange() async {", "\n    }\n"))
+
+    def test_person_let_in_learns_it_when_the_app_opens(self):
+        self.assertIn('static let key = "familyNotebookAwaitingApproval"', SHARING)
+        refresh = section(SHARING, "func refresh(reportsFailure: Bool = false) async -> Bool {", "func refreshAfterPlusChange()")
+        self.assertIn("case .pendingApproval: Self.noteAwaitingApproval(true)", refresh)
+        self.assertIn("case .notInFamily, .inFamily: Self.noteAwaitingApproval(false)", refresh)
+        check = section(NOTEBOOK, "private struct FamilyNotebookOpeningCheck: ViewModifier {", "extension View {")
+        self.assertIn("model.hasFamily || FamilyNotebookSharing.awaitingApproval", check)
+        self.assertIn("await FamilyNotebookSharing.shared.refresh()", check)
+        self.assertIn("model.applyFamilyWrites()", check)
+        self.assertIn(".seconds(30)", check)
+        # Nothing about Photos decides it.
+        for photos in ("PHPhotoLibrary", "authorizationStatus", "PhotoAuthorization"):
+            self.assertNotIn(photos, check)
+        self.assertIn(".familyNotebookOpeningCheck()", ROOT_VIEW)
+        # 設定 keeps the one way to the notebook while waiting.
+        self.assertIn("@AppStorage(FamilyNotebookAwaitingApproval.key) private var awaitsFamilyApproval = false", SETTINGS)
+        self.assertIn("private var showsFamilyNotebookRow: Bool { familyNotebook.hasFamily || awaitsFamilyApproval }", SETTINGS)
+        self.assertEqual(SETTINGS.count('Text("参加を待っています")'), 1)
+
+    def test_invite_link_opens_without_the_whole_family_read(self):
+        family = section(NOTEBOOK, "struct FamilyNotebookInviteView: View {", "enum FamilyInviteSendTap")
+        self.assertIn("await sharing.perform(readsAfter: false) { made = try await service.createInvitation(operationID: $0) }", family)
+        self.assertEqual(NOTEBOOK.count("readsAfter: false"), 1)
+        self.assertIn("if creating { ProgressView() }", family)
+
+    def test_requests_are_read_every_20_seconds_while_open(self):
+        self.assertIn("Task.sleep(for: .seconds(pending ? 5 : 20))", NOTEBOOK)
+        self.assertIn(".refreshable { if !sharing.isWorking { await sharing.refresh(reportsFailure: true) } }", NOTEBOOK)
+
+    def test_join_name_field_says_whose_name(self):
+        join = section(NOTEBOOK, "struct FamilyNotebookJoinView: View {", "struct FamilyNotebookNameView: View {")
+        field = section(join, 'Text("あなたの名前")', '.accessibilityIdentifier("family-notebook-display-name")')
+        self.assertIn("TextField(", field)
+        self.assertLess(join.index('"family-notebook-display-name"'), join.index('Text("家族に表示されます。")'))
+        self.assertIn('Text("あなたの名前")', section(SETUP, "private var applySection: some View {", "\n    }\n"))
+
+
 class RegistrationTests(unittest.TestCase):
     def test_native_tests_are_in_the_test_target(self):
         self.assertIn("path = FamilyJourneyTests.swift;", PROJECT)

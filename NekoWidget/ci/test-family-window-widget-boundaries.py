@@ -6911,8 +6911,9 @@ class OnePlaceSettingsTests(unittest.TestCase):
         self.assertIn('"settings-family-notebook"', body)
         # Not tinted: hierarchical styles inside a list button turn blue (346, 11/8).
         family = section(body, "if showsFamilyNotebookRow {", '"settings-family-notebook"')
-        # 11/10: only for someone already in a family; starting one is in この子のこと.
-        self.assertIn("private var showsFamilyNotebookRow: Bool { familyNotebook.hasFamily }", settings)
+        # 11/10: only for someone already in a family, or (11/15) waiting to be
+        # let in; starting one is in この子のこと.
+        self.assertIn("private var showsFamilyNotebookRow: Bool { familyNotebook.hasFamily || awaitsFamilyApproval }", settings)
         self.assertIn('Text("家族の手帳").foregroundStyle(Color.primary)', family)
         self.assertIn(".foregroundStyle(Color(uiColor: .tertiaryLabel))", family)
         self.assertNotIn('"settings-cat-profiles"', body)
