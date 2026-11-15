@@ -98,6 +98,9 @@ struct KeychainSyncProbeView: View {
 
     var body: some View {
         List {
+            Section("新しいストアの試験") {
+                NavigationLink("P2・rootだけの同期") { P2RootSyncProbeView() }
+            }
             Section {
                 Text("練習用の本人鍵だけを同期します。実際の本人・写真・手帳の鍵には触れません。2台とも同じテスト用の版を使ってください。")
                 Text("作成するのは1台だけ。もう1台は、この画面で到着を待ちます。照合番号が同じか比べてください。")
@@ -128,4 +131,87 @@ struct KeychainSyncProbeView: View {
         }
     }
 }
+
+@MainActor
+private final class P2RootSyncProbeModel: ObservableObject {
+    @Published var status = "未観測"
+    @Published var busy = false
+    @Published var events: [String] = []
+    private var store: RootSyncStore?
+    private var currentID: String?
+    private var started = Date()
+    init() {
+        // An isolated synthetic namespace, never a product root or the P0 item.
+        store = try? RootSyncStore(bundleID: (Bundle.main.bundleIdentifier ?? "neko") + ".diagnostic.1115e",
+                                   environment: .synthetic)
+    }
+    private func record(_ text: String) {
+        events.append("\(Date().ISO8601Format()) +\(Int(Date().timeIntervalSince(started)))秒: \(text)")
+        if events.count > 100 { events.removeFirst(events.count - 100) }
+    }
+    private func observe() async {
+        guard let store else { status = "試験の準備ができません"; return }
+        let next: String
+        switch await store.candidates() {
+        case .none: currentID = nil; next = "見つかりません（未作成・同期待ち・削除・同期設定は区別できません）"
+        case .one(let id): currentID = id; next = "あり・照合番号 " + id
+        case .unresolved(let ids): currentID = nil; next = "複数の候補があります。自動選択しません（\(ids.count)件）"
+        case .failed(let error): currentID = nil; next = "読取できません: \(error.diagnosticCode)（鍵なしとは扱いません）"
+        }
+        if status != next { status = next; record(next) }
+    }
+    func refresh() async {
+        guard !busy else { return }; busy = true; defer { busy = false }
+        await observe()
+    }
+    func create() async {
+        guard !busy, let store else { return }; busy = true; defer { busy = false }
+        // No replacement or automatic generation when existing state is unresolved.
+        guard case .none = await store.candidates() else { record("既存・同期待ちの競合やエラーを上書きしません"); await observe(); return }
+        let result = await store.storeIfAbsent(explicitRoot: Curve25519.Signing.PrivateKey().rawRepresentation)
+        record("合成項目の作成結果: \(result)。相手への到着は未確認")
+        await observe()
+    }
+    func remove() async {
+        guard !busy, let store, let id = currentID else { return }; busy = true; defer { busy = false }
+        record("表示していた合成項目だけ削除: \(await store.removeExact(expectedRootID: id))。相手の結果は別に確認")
+        await observe()
+    }
+    func restartClock() { started = Date(); record("測り直し（端末時計、2秒間隔の観測）") }
+    var report: String { "P2合成root同期（秘密鍵なし）\n" + events.joined(separator: "\n") }
+}
+
+private struct P2RootSyncProbeView: View {
+    @StateObject private var model = P2RootSyncProbeModel()
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var confirmsDelete = false
+    var body: some View {
+        List {
+            Text("合成rootだけの新しい同期ストアです。実際の本人・写真・手帳の鍵は読みません。作るのはAだけです。")
+            Section("いまの観測") {
+                Text(model.status).textSelection(.enabled)
+                Button("合成rootを作る（Aだけ）") { Task { await model.create() } }
+                Button("読み取り直す") { Task { await model.refresh() } }
+                Button("観測をここから測り直す") { model.restartClock() }
+                Button("表示中の合成rootだけ消す", role: .destructive) { confirmsDelete = true }
+            }.disabled(model.busy)
+            Section("結果（画面を閉じる前に残す）") {
+                Text(model.report).font(.caption.monospaced()).textSelection(.enabled)
+                ShareLink("結果の文字を共有", item: model.report)
+            }
+        }
+        .navigationTitle("P2・rootだけの同期")
+        .confirmationDialog("表示中の合成項目1件だけを消します。もう1台への削除は別に確認してください。", isPresented: $confirmsDelete, titleVisibility: .visible) {
+            Button("合成項目だけを消す", role: .destructive) { Task { await model.remove() } }
+        }
+        .task {
+            await model.refresh()
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(2)) } catch { break }
+                if scenePhase == .active { await model.refresh() }
+            }
+        }
+    }
+}
+
 #endif
