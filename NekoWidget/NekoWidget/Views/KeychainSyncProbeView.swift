@@ -156,7 +156,7 @@ private final class P2RootSyncProbeModel: ObservableObject {
         case .none: currentID = nil; next = "見つかりません（未作成・同期待ち・削除・同期設定は区別できません）"
         case .one(let id): currentID = id; next = "あり・照合番号 " + id
         case .unresolved(let ids): currentID = nil; next = "複数の候補があります。自動選択しません（\(ids.count)件）"
-        case .failed(let error): currentID = nil; next = "読取できません: \(error)（鍵なしとは扱いません）"
+        case .failed(let error): currentID = nil; next = "読取できません: \(error.diagnosticCode)（鍵なしとは扱いません）"
         }
         if status != next { status = next; record(next) }
     }

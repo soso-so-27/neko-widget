@@ -32,6 +32,16 @@ struct SyncedRoot: Sendable, Equatable, CustomStringConvertible, CustomDebugStri
 }
 enum RootSyncFailure: Error, Equatable, Sendable {
     case invalidInput, invalidRecord, updateRequired, temporarilyUnavailable, keychain(OSStatus), conflict
+    var diagnosticCode: String {
+        switch self {
+        case .invalidInput: return "invalid-input"
+        case .invalidRecord: return "invalid-record"
+        case .updateRequired: return "update-required"
+        case .temporarilyUnavailable: return "temporarily-unavailable"
+        case .keychain(let status): return "keychain-status-\(status)"
+        case .conflict: return "conflict"
+        }
+    }
 }
 enum RootSyncRead: Sendable, Equatable {
     case found(SyncedRoot), missing, failed(RootSyncFailure)
