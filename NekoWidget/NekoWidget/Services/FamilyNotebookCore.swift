@@ -122,7 +122,7 @@ enum FamilyNotebookField: String, Codable, CaseIterable, Hashable, Sendable {
 extension FamilyNotebookField {
     /// Fields an older app does not know. Received, they stay opaque until a
     /// store promotes them; on disk they stay in the old reader's opaque array.
-    static let compatibility: Set<FamilyNotebookField> = [.adoptionDay, .position]
+    static let compatibility: Set<FamilyNotebookField> = [.adoptionDay, .position, .representativePhoto]
     /// The family's order of cats: 0 first. Ties are broken by the cat's ID.
     static let positionRange = 0...100_000
 }
