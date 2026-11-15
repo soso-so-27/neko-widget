@@ -206,6 +206,7 @@
 		10000000000000000000017F /* SeasonalMovieExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000261 /* SeasonalMovieExportService.swift */; };
 		E02310230000000000000001 /* PlusAuthorityCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02310230000000000000002 /* PlusAuthorityCache.swift */; };
 		8BE1F5B90183B4417111F2F8 /* PlusRenewalPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C062ACA7CED496D27DBC997 /* PlusRenewalPresentation.swift */; };
+		5A11150A0000000000000001 /* SharingAutoCheckPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A11150A0000000000000002 /* SharingAutoCheckPolicy.swift */; };
 		100000000000000000000180 /* PlusPurchaseStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000262 /* PlusPurchaseStore.swift */; };
 		100000000000000000000181 /* BillingClientCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000263 /* BillingClientCore.swift */; };
 		100000000000000000000182 /* BillingKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000264 /* BillingKeychainStore.swift */; };
@@ -542,6 +543,7 @@
 		F00000000000000000000261 /* SeasonalMovieExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeasonalMovieExportService.swift; sourceTree = "<group>"; };
 		E02310230000000000000002 /* PlusAuthorityCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlusAuthorityCache.swift; sourceTree = "<group>"; };
 		7C062ACA7CED496D27DBC997 /* PlusRenewalPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlusRenewalPresentation.swift; sourceTree = "<group>"; };
+		5A11150A0000000000000002 /* SharingAutoCheckPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharingAutoCheckPolicy.swift; sourceTree = "<group>"; };
 		F00000000000000000000262 /* PlusPurchaseStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlusPurchaseStore.swift; sourceTree = "<group>"; };
 		F00000000000000000000263 /* BillingClientCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillingClientCore.swift; sourceTree = "<group>"; };
 		F00000000000000000000264 /* BillingKeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillingKeychainStore.swift; sourceTree = "<group>"; };
@@ -998,6 +1000,7 @@
 				F00000000000000000000262 /* PlusPurchaseStore.swift */,
 				E02310230000000000000002 /* PlusAuthorityCache.swift */,
 				7C062ACA7CED496D27DBC997 /* PlusRenewalPresentation.swift */,
+				5A11150A0000000000000002 /* SharingAutoCheckPolicy.swift */,
 				E02609210000000000000002 /* MembershipOfferModel.swift */,
 				F00000000000000000000263 /* BillingClientCore.swift */,
 				F00000000000000000000264 /* BillingKeychainStore.swift */,
@@ -1415,6 +1418,7 @@
 				100000000000000000000180 /* PlusPurchaseStore.swift in Sources */,
 				E02310230000000000000001 /* PlusAuthorityCache.swift in Sources */,
 				8BE1F5B90183B4417111F2F8 /* PlusRenewalPresentation.swift in Sources */,
+				5A11150A0000000000000001 /* SharingAutoCheckPolicy.swift in Sources */,
 				E02609210000000000000001 /* MembershipOfferModel.swift in Sources */,
 				100000000000000000000181 /* BillingClientCore.swift in Sources */,
 				100000000000000000000182 /* BillingKeychainStore.swift in Sources */,

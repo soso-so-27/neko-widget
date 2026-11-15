@@ -881,23 +881,17 @@ struct FamilyNotebookView: View {
                                 presenting: decliningRequest, actions: decliningActions)
         }
         .onChange(of: sharing.isWorking) { _, working in if !working { running = nil } }
-        .task(id: scenePhase) {
-            guard scenePhase == .active else { return }
-            repeat {
-                // An open sheet (inviting, choosing cats) is not redrawn under
-                // the person by the background pass (11/5: the sheets jumped).
-                if !presentsSheet {
-                    if !sharing.isWorking { await sharing.refresh() }
-                    if let membership = sharing.state.membership { model.rememberShown(membership) }
-                    if model.hasFamily { try? await model.copyTools(); model.applyFamilyWrites() }
-                }
-                guard model.isReal else { return }
-                let pending = (sharing.service as? ProductionFamilyNotebookSharingService)?.needsAnotherPass == true
-                // 11/15: a request to join showed up to a minute late with the
-                // notebook open; 20 s while it is open (pull to refresh too).
-                do { try await Task.sleep(for: .seconds(pending ? 5 : 20)) } catch { return }
-            } while !Task.isCancelled
+        // 11/15 (1115q): no loop of its own; the one schedule
+        // (FamilyNotebookAutoCheck) reads 「参加を待っている人」 every 20 s and
+        // the whole family every 60 s while this is open. An open sheet
+        // (inviting, choosing cats) is not redrawn under the person (11/5).
+        .onAppear {
+            FamilyNotebookAutoCheck.shared.appeared(.notebook)
+            // Test builds (the family on this iPhone alone) send nothing.
+            if !model.isReal { Task { await sharing.refresh() } }
         }
+        .onDisappear { FamilyNotebookAutoCheck.shared.disappeared(.notebook) }
+        .onChange(of: presentsSheet, initial: true) { _, open in FamilyNotebookAutoCheck.shared.holdsRedraw = open }
         .onAppear { model.markSeen() }
         .onDisappear { model.markSeen() }
     }
@@ -1989,27 +1983,27 @@ struct FamilyFaces: View {
 private struct FamilyNotebookToolSyncModifier: ViewModifier {
     var enabled: Bool
     @ObservedObject private var model = FamilyNotebookPrototype.shared
-    @Environment(\.scenePhase) private var phase
+    @State private var counted = false
     func body(content: Content) -> some View {
-        content.task(id: enabled && phase == .active && model.hasFamily) {
-            guard enabled, phase == .active, model.hasFamily, model.isReal else { return }
-            while !Task.isCancelled {
-                if !FamilyNotebookSharing.shared.isWorking { await FamilyNotebookSharing.shared.refresh() }
-                do { try await Task.sleep(for: .seconds(5)) } catch { return }
-            }
-        }
+        // 11/15 (1115q): the tool says it is on screen; the one schedule reads
+        // the family every 30 s meanwhile (it was every 5 s, a loop of its own).
+        content
+            .onAppear { update(enabled && model.hasFamily) }
+            .onChange(of: enabled && model.hasFamily) { _, on in update(on) }
+            .onDisappear { update(false) }
+    }
+    private func update(_ on: Bool) {
+        guard on != counted else { return }
+        counted = on
+        if on { FamilyNotebookAutoCheck.shared.appeared(.tool) } else { FamilyNotebookAutoCheck.shared.disappeared(.tool) }
     }
 }
 /// 11/15 (TestFlight 378): the person let in learned it only by opening the
-/// notebook, which 設定 did not offer yet, so it never appeared: their
-/// device was never registered for the notebook's key, and the family's
-/// iPhone had nobody to send the key to. Each time the app comes to the
-/// front, someone in a family, waiting to be let in, or not yet known to be
-/// neither reads the family. The passes go on while the keys still move
-/// (every 5 s, at most 12) and every 30 s while still waiting, so whichever
-/// iPhone opens first, the other finishes: the new member registers, the
-/// family's iPhone signs them in and sends the key, the new member reads it.
-/// The family's cats then reach 「この子」. Photos access plays no part.
+/// notebook, so their device never registered for the key. Coming to the
+/// front starts the one schedule (FamilyNotebookAutoCheck): someone in a
+/// family, waiting to be let in, or not yet known to be neither, is read
+/// once, and again on the schedule's terms (1115q: within this iPhone's
+/// call budget). Photos access plays no part.
 private struct FamilyNotebookOpeningCheck: ViewModifier {
     @ObservedObject private var model = FamilyNotebookPrototype.shared
     @ObservedObject private var purchases = PlusPurchaseStore.productionShared
@@ -2024,21 +2018,8 @@ private struct FamilyNotebookOpeningCheck: ViewModifier {
             guard plus, model.isReal, model.hasFamily, FamilyNotebookSharing.shared.pause != nil else { return }
             Task { await FamilyNotebookSharing.shared.refreshAfterPlusChange(reportsFailure: false) }
         }
-        .task(id: phase == .active) {
-            guard phase == .active, model.isReal,
-                  model.hasFamily || FamilyNotebookSharing.awaitingApproval
-                    || FamilyNotebookSharing.awaitingApprovalUnknown else { return }
-            var keyPasses = 0
-            while !Task.isCancelled {
-                if !FamilyNotebookSharing.shared.isWorking { await FamilyNotebookSharing.shared.refresh() }
-                if model.hasFamily { model.applyFamilyWrites() }
-                let keysMove = (FamilyNotebookSharing.shared.service as? ProductionFamilyNotebookSharingService)?.needsAnotherPass == true
-                let delay: Duration
-                if keysMove, keyPasses < 12 { keyPasses += 1; delay = .seconds(5) }
-                else if FamilyNotebookSharing.awaitingApproval { delay = .seconds(30) }
-                else { return }
-                do { try await Task.sleep(for: delay) } catch { return }
-            }
+        .onChange(of: phase == .active, initial: true) { _, active in
+            FamilyNotebookAutoCheck.shared.setActive(active)
         }
     }
 }

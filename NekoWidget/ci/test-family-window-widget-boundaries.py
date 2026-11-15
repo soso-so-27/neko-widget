@@ -3349,7 +3349,8 @@ class GroupWindowUITests(unittest.TestCase):
         self.assertNotIn("pendingRequests = []", load)
         # 11/5: the 8-second pass stays quiet and waits while a sheet is open.
         self.assertIn("if reportsFailure || window == nil {", load)
-        self.assertIn("if !presentsSheet { await model.load(reportsFailure: false) }", view)
+        # 1115q: the pass is automatic, within this iPhone's call budget.
+        self.assertIn("if !presentsSheet {\n                    await SharingAutoCallBudget.$isAutomatic.withValue(true) { await model.load(reportsFailure: false) }", view)
         join = section(view, "func refresh(reportsFailure: Bool = false) async {", "func cancel() async {")
         self.assertIn("if reportsFailure { errorMessage = GroupWindowPresentation.message(for: error) }", join)
         self.assertIn(".refreshable { await model.refresh(reportsFailure: true) }", view)
@@ -7191,7 +7192,9 @@ class ToolOpenWasteTests(unittest.TestCase):
         self.assertLess(attach.index("UserDefaults.standard.data(forKey: Self.bindingKey) != bytes {"),
                         attach.index("UserDefaults.standard.set(bytes, forKey: Self.bindingKey)"))
         sync = section(view, "private struct FamilyNotebookToolSyncModifier: ViewModifier {", "extension View {")
-        self.assertIn("try await Task.sleep(for: .seconds(5))", sync)
+        # 1115q: no loop of its own; the one schedule reads every 30 s.
+        self.assertNotIn("Task.sleep", sync)
+        self.assertIn("FamilyNotebookAutoCheck.shared.appeared(.tool)", sync)
 
 
 

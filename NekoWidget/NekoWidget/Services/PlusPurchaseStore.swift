@@ -599,11 +599,40 @@ final class PlusPurchaseStore: ObservableObject {
     /// closed). In the background it stops; coming back resumes it
     /// (`resumeServerConfirmationRechecksIfDue`). After that the screen keeps
     /// 「購入を復元」 right under its line.
-    static let serverConfirmationRecheckDelays: [Duration] = [
-        .seconds(2), .seconds(4), .seconds(8), .seconds(15), .seconds(30),
-    ]
-    static let serverConfirmationFollowUpInterval: Duration = .seconds(30)
-    static let serverConfirmationWindow: TimeInterval = 10 * 60
+    ///
+    /// 1115q: the billing relay allows 10 calls a minute (transactions and
+    /// entitlements apart), so three tries in the first minute (5, 20, 45 s)
+    /// and an automatic try only while the last 60 s hold at most 4 of each
+    /// (`PlusConfirmationSchedule`); a 429 pauses them at least a minute.
+    static let serverConfirmationRecheckDelays = PlusConfirmationSchedule.firstMinuteDelays
+    static let serverConfirmationFollowUpInterval = PlusConfirmationSchedule.followUpInterval
+    static let serverConfirmationWindow = PlusConfirmationSchedule.window
+
+    /// Billing calls of the last minute, taps included (1115q).
+    private var transactionPosts = SharingCallWindow(limit: .max)
+    private var entitlementReads = SharingCallWindow(limit: .max)
+    private var billingPausedUntil: Date?
+
+    /// An automatic billing check fits: not paused after a 429, and each
+    /// kind of call has room for one more with a tap still to spare.
+    func allowsAutomaticBillingCheck(at now: Date = Date()) -> Bool {
+        if let billingPausedUntil, now < billingPausedUntil { return false }
+        return PlusConfirmationSchedule.allowsAutomaticCheck(
+            transactions: transactionPosts.count(at: now), entitlements: entitlementReads.count(at: now))
+    }
+
+    private func noteBillingFailure(_ error: Error) {
+        if case .requestRejected(429, _)? = error as? BillingClientError {
+            billingPausedUntil = Date().addingTimeInterval(PlusConfirmationSchedule.rateLimitedPause)
+        }
+    }
+
+    /// Coming to the front (1115q): the usual refresh, unless this minute's
+    /// billing calls are already near the relay's limit (a burst of openings).
+    func refreshOnForegroundEntry() async {
+        guard allowsAutomaticBillingCheck() else { return }
+        await refreshAfterForegroundEntry()
+    }
 
     private func recheckServerConfirmationAfterPurchase() {
         serverConfirmationDeadline = Date().addingTimeInterval(Self.serverConfirmationWindow)
@@ -642,8 +671,10 @@ final class PlusPurchaseStore: ObservableObject {
                 // In the background: stop here; coming back to the front resumes.
                 guard store.isInFront else { store.serverConfirmationRecheckTask = nil; return }
                 // The person's own purchase or restore is running: it reads
-                // the same answer, so this pass waits for the next try.
-                guard !store.isPurchasing, !store.isRestoring else { continue }
+                // the same answer, so this pass waits for the next try. Near
+                // the billing relay's limit, this try is skipped too (1115q).
+                guard !store.isPurchasing, !store.isRestoring,
+                      store.allowsAutomaticBillingCheck() else { continue }
                 await store.refreshAfterForegroundEntry()
                 guard !Task.isCancelled else { return }
                 if store.entitlementState.grantsPlus { store.finishServerConfirmationRechecks(); return }
@@ -912,6 +943,7 @@ final class PlusPurchaseStore: ObservableObject {
         do {
             // Validate again even for injected clients. Only this response,
             // never a transaction-recording acknowledgement, may grant Plus.
+            entitlementReads.record(at: Date())
             let response = try await fetchAuthoritativeEntitlement()
             // A newer transaction/denial wins over an older suspended GET.
             guard generation == authorityGeneration else { return .indeterminate }
@@ -975,6 +1007,7 @@ final class PlusPurchaseStore: ObservableObject {
             awaitingServerConfirmation = false
             return .confirmed
         } catch {
+            noteBillingFailure(error)
             guard generation == authorityGeneration else { return .indeterminate }
             if usesLiveCache {
                 switch error {
@@ -1154,8 +1187,10 @@ final class PlusPurchaseStore: ObservableObject {
         }
         let acknowledgement: BillingTransactionRecordAcknowledgement
         do {
+            transactionPosts.record(at: Date())
             acknowledgement = try await recordVerifiedTransactionEvent(event, billingAccountID)
         } catch {
+            noteBillingFailure(error)
             if context == cacheContext {
                 switch error {
                 case BillingClientError.requestRejected(let status, _) where (400..<500).contains(status) && status != 429:

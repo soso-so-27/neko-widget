@@ -520,7 +520,10 @@ struct GroupWindowMembersView: View {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(8))
                 guard !Task.isCancelled else { return }
-                if !presentsSheet { await model.load(reportsFailure: false) }
+                // 11/15 (1115q): automatic, within this iPhone's call budget.
+                if !presentsSheet {
+                    await SharingAutoCallBudget.$isAutomatic.withValue(true) { await model.load(reportsFailure: false) }
+                }
             }
         }
         .refreshable { await model.load() }
@@ -1361,7 +1364,8 @@ struct GroupJoinView: View {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(8))
                 guard !Task.isCancelled else { return }
-                await model.refresh()
+                // 11/15 (1115q): automatic, within this iPhone's call budget.
+                await SharingAutoCallBudget.$isAutomatic.withValue(true) { await model.refresh() }
             }
         }
         .refreshable { await model.refresh(reportsFailure: true) }

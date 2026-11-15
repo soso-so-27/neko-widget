@@ -166,6 +166,7 @@ class EmptyPhotosTests(unittest.TestCase):
 
 
 STORE = read("NekoWidget/Services/PlusPurchaseStore.swift")
+POLICY = read("NekoWidget/Services/SharingAutoCheckPolicy.swift")
 OFFER_VIEW = read("NekoWidget/Views/MembershipOfferView.swift")
 SHARING = read("NekoWidget/Services/FamilyNotebookSharing.swift")
 ACCESS = read("NekoWidget/Services/MembershipAccessContext.swift")
@@ -184,7 +185,8 @@ class PurchaseWaitAndFamilyPause1115Tests(unittest.TestCase):
         # as 「購入を復元」, never a purchase, AppStore.sync or a local grant.
         self.assertIn("let delay = delays.isEmpty ? Self.serverConfirmationFollowUpInterval : delays.removeFirst()", recheck)
         self.assertIn("await store.refreshAfterForegroundEntry()", recheck)
-        self.assertIn("guard !store.isPurchasing, !store.isRestoring else { continue }", recheck)
+        self.assertIn("guard !store.isPurchasing, !store.isRestoring,\n"
+                      "                      store.allowsAutomaticBillingCheck() else { continue }", recheck)
         for forbidden in ("AppStore.sync", "product.purchase", "entitlementState =", "canStartNewPurchase = true",
                           "repeat {", "grantsPlus = true"):
             self.assertNotIn(forbidden, recheck)
@@ -192,8 +194,10 @@ class PurchaseWaitAndFamilyPause1115Tests(unittest.TestCase):
         self.assertIn("serverConfirmationRecheckTask?.cancel()", section(STORE, "    func stop() {", "\n    }\n"))
         # 11/15 (second fix): then every 30 s until 10 minutes after the
         # purchase, only in front, wherever the person is; one loop at a time.
-        self.assertIn("static let serverConfirmationFollowUpInterval: Duration = .seconds(30)", STORE)
-        self.assertIn("static let serverConfirmationWindow: TimeInterval = 10 * 60", STORE)
+        self.assertIn("static let serverConfirmationFollowUpInterval = PlusConfirmationSchedule.followUpInterval", STORE)
+        self.assertIn("static let serverConfirmationWindow = PlusConfirmationSchedule.window", STORE)
+        self.assertIn("static let followUpInterval: Duration = .seconds(30)", POLICY)
+        self.assertIn("static let window: TimeInterval = 10 * 60", POLICY)
         self.assertIn("serverConfirmationDeadline = Date().addingTimeInterval(Self.serverConfirmationWindow)", recheck)
         self.assertIn("guard let deadline = store.serverConfirmationDeadline, Date() < deadline,", recheck)
         self.assertIn("guard store.isInFront else { store.serverConfirmationRecheckTask = nil; return }", recheck)
@@ -205,7 +209,7 @@ class PurchaseWaitAndFamilyPause1115Tests(unittest.TestCase):
         self.assertEqual(STORE.count("serverConfirmationRecheckTask = Task"), 1)
         app = read("NekoWidget/App/NekoWidgetApp.swift")
         active = section(app, "guard newPhase == .active else { return }", "membershipNow = .now")
-        self.assertLess(active.index("await plusPurchases.refreshAfterForegroundEntry()"),
+        self.assertLess(active.index("await plusPurchases.refreshOnForegroundEntry()"),
                         active.index("plusPurchases.resumeServerConfirmationRechecksIfDue()"))
         # Confirmed later: the family's paused box is read again by itself.
         check = section(NOTEBOOK, "private struct FamilyNotebookOpeningCheck: ViewModifier {", "extension View {")
@@ -294,17 +298,19 @@ class FamilyJoinAfterApproval1115Tests(unittest.TestCase):
         self.assertIn("case .pendingApproval, .waitingForKeys: Self.noteAwaitingApproval(true)", refresh)
         self.assertIn("case .notInFamily, .inFamily: Self.noteAwaitingApproval(false)", refresh)
         check = section(NOTEBOOK, "private struct FamilyNotebookOpeningCheck: ViewModifier {", "extension View {")
-        self.assertIn("model.hasFamily || FamilyNotebookSharing.awaitingApproval", check)
+        # 1115q: coming to the front only tells the one schedule.
+        self.assertIn("FamilyNotebookAutoCheck.shared.setActive(active)", check)
+        auto = section(SHARING, "final class FamilyNotebookAutoCheck {", "/// 11/15: this iPhone asked to join")
+        self.assertIn("model.hasFamily || FamilyNotebookSharing.awaitingApproval", auto)
         # An app from before 11/15 left no mark: one read settles it.
-        self.assertIn("|| FamilyNotebookSharing.awaitingApprovalUnknown else { return }", check)
+        self.assertIn("|| FamilyNotebookSharing.awaitingApprovalUnknown)", auto)
         self.assertIn("UserDefaults.standard.object(forKey: FamilyNotebookAwaitingApproval.key) == nil", SHARING)
-        self.assertIn("await FamilyNotebookSharing.shared.refresh()", check)
-        self.assertIn("model.applyFamilyWrites()", check)
-        # Key passes go on (bounded) so the family's iPhone signs the newcomer
-        # in and sends the key in one opening; waiting goes on every 30 s.
-        self.assertIn("needsAnotherPass == true", check)
-        self.assertIn("if keysMove, keyPasses < 12 { keyPasses += 1; delay = .seconds(5) }", check)
-        self.assertIn("else if FamilyNotebookSharing.awaitingApproval { delay = .seconds(30) }", check)
+        self.assertIn("await sharing.refresh()", auto)
+        self.assertIn("model.applyFamilyWrites()", auto)
+        # Key passes go on while they move, waiting goes on every 30 s.
+        self.assertIn("keysMove: real?.needsAnotherPass == true", auto)
+        self.assertIn("static let keyBackoff: [TimeInterval] = [5, 10, 20, 40, 60]", POLICY)
+        self.assertIn("static let awaitingInterval: TimeInterval = 30", POLICY)
         # Two synthetic iPhones: approval before the newcomer registers still ends readable.
         delivery = read("ci/verify-family-notebook-key-delivery.swift")
         self.assertIn("try await approvedBeforeNewcomerRegisters(directory: directory, endpoint: endpoint)", delivery)
@@ -329,7 +335,12 @@ class FamilyJoinAfterApproval1115Tests(unittest.TestCase):
         self.assertIn("if creating { ProgressView() }", family)
 
     def test_requests_are_read_every_20_seconds_while_open(self):
-        self.assertIn("Task.sleep(for: .seconds(pending ? 5 : 20))", NOTEBOOK)
+        # 1115q: the list only, every 20 s; the whole family every 60 s.
+        self.assertIn("static let requestsInterval: TimeInterval = 20", POLICY)
+        self.assertIn("static let notebookFullInterval: TimeInterval = 60", POLICY)
+        auto = section(SHARING, "final class FamilyNotebookAutoCheck {", "/// 11/15: this iPhone asked to join")
+        self.assertIn("case .requestsOnly:\n                        await sharing.refreshRequests()", auto)
+        self.assertNotIn("Task.sleep(for: .seconds(pending ? 5 : 20))", NOTEBOOK)
         self.assertIn(".refreshable { if !sharing.isWorking { await sharing.refresh(reportsFailure: true) } }", NOTEBOOK)
 
     def test_join_name_field_says_whose_name(self):
@@ -338,6 +349,76 @@ class FamilyJoinAfterApproval1115Tests(unittest.TestCase):
         self.assertIn("TextField(", field)
         self.assertLess(join.index('"family-notebook-display-name"'), join.index('Text("家族に表示されます。")'))
         self.assertIn('Text("あなたの名前")', section(SETUP, "private var applySection: some View {", "\n    }\n"))
+
+
+TRANSPORT = read("NekoWidget/Services/GroupWindowTransport.swift")
+KEYS = read("NekoWidget/Services/FamilyNotebookKeyCoordinator.swift")
+DELIVERY = read("ci/verify-family-notebook-key-delivery.swift")
+
+
+class CallBudget1115qTests(unittest.TestCase):
+    """1115q: automatic checks could pass the relay's limits (120 a minute per
+    address for the まど and the notebook, 10 for billing). One schedule,
+    backoff while keys do not move, a per-iPhone budget, 429 pauses."""
+
+    def test_transport_budget_is_30_a_minute_for_automatic_calls_only(self):
+        send = section(TRANSPORT, "func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {", "enum GroupHTTPRequest")
+        self.assertLess(send.index("try SharingAutoCallBudget.admitIfAutomatic()"), send.index("session.bytes(for: request)"))
+        self.assertIn('SharingAutoCallBudget.noteReply(status: http.statusCode, retryAfter: http.value(forHTTPHeaderField: "Retry-After"))', send)
+        self.assertIn("static let perMinute = 30", TRANSPORT)
+        self.assertIn("static let rateLimitedPause: TimeInterval = 60", TRANSPORT)
+        self.assertIn("@TaskLocal static var isAutomatic = false", TRANSPORT)
+        self.assertIn("guard isAutomatic else { return }", section(TRANSPORT, "static func admitIfAutomatic(", "\n    }\n"))
+        self.assertIn("max(Self.rateLimitedPause, retryAfter ?? 0)", TRANSPORT)
+
+    def test_one_schedule_for_the_notebook(self):
+        # No loop of its own in the notebook, the tool or the opening check.
+        notebook = section(NOTEBOOK, "struct FamilyNotebookView: View {", "extension FamilyNotebookView {")
+        self.assertNotIn("Task.sleep", notebook)
+        tool = section(NOTEBOOK, "private struct FamilyNotebookToolSyncModifier: ViewModifier {", "private struct FamilyNotebookOpeningCheck")
+        self.assertNotIn("Task.sleep", tool)
+        self.assertIn("FamilyNotebookAutoCheck.shared.appeared(.tool)", tool)
+        self.assertNotIn("Task.sleep", section(NOTEBOOK, "private struct FamilyNotebookOpeningCheck: ViewModifier {", "extension View {"))
+        self.assertIn("FamilyNotebookAutoCheck.shared.appeared(.notebook)", notebook)
+        auto = section(SHARING, "final class FamilyNotebookAutoCheck {", "/// 11/15: this iPhone asked to join")
+        self.assertEqual(auto.count("loop = Task"), 1)
+        self.assertIn("if loop != nil && !sleeping { return }", auto)
+        self.assertIn("await SharingAutoCallBudget.$isAutomatic.withValue(true) {", auto)
+        self.assertIn("FamilyAutoCheckPolicy.next(situation(now: Date()))", auto)
+        self.assertIn("SharingAutoCallBudget.shared.pausedUntil()", auto)
+        # The まど's waiting lists are automatic too.
+        setup = read("NekoWidget/Views/GroupWindowSetupView.swift")
+        self.assertEqual(setup.count("SharingAutoCallBudget.$isAutomatic.withValue(true)"), 2)
+
+    def test_backoff_and_waiting_on_others(self):
+        nxt = section(POLICY, "static func next(_ s: Situation) -> Decision? {", "\n    }\n}")
+        self.assertIn("if delay >= waitsOnOthers && !screen { return nil }", nxt)
+        self.assertIn("static let wakeGap: TimeInterval = 20", POLICY)
+        self.assertIn("static let nudgeGap: TimeInterval = 5", POLICY)
+        self.assertIn("static let toolFullInterval: TimeInterval = 30", POLICY)
+        # Key reads per pass: newest first, two at most.
+        self.assertIn("static let keyReadsPerPass = 2", KEYS)
+        self.assertIn("guard keyRequests < Self.keyReadsPerPass else { continue }", KEYS)
+        self.assertIn("private(set) var observation", KEYS)
+
+    def test_purchase_wait_fits_the_billing_limit(self):
+        self.assertIn("static let firstMinuteDelays: [Duration] = [.seconds(5), .seconds(15), .seconds(25)]", POLICY)
+        self.assertIn("static let automaticCeiling = 5", POLICY)
+        loop = section(STORE, "private func runServerConfirmationRechecks(first: [Duration]) {", "private func finishServerConfirmationRechecks()")
+        self.assertIn("store.allowsAutomaticBillingCheck() else { continue }", loop)
+        self.assertIn("entitlementReads.record(at: Date())\n            let response = try await fetchAuthoritativeEntitlement()", STORE)
+        self.assertIn("transactionPosts.record(at: Date())", STORE)
+        self.assertEqual(STORE.count("noteBillingFailure(error)"), 2)
+        self.assertIn("await plusPurchases.refreshOnForegroundEntry()", read("NekoWidget/App/NekoWidgetApp.swift"))
+
+    def test_counted_on_a_synthetic_clock(self):
+        for name in ("keysNeverArrive()", "notebookOpenAndReopened()", "awaitingApproval()", "purchaseWaits()",
+                     "approvalToReading(directory: directory, endpoint: endpoint)"):
+            self.assertIn(name, section(DELIVERY, "static func run(directory: URL, endpoint: URL) async throws {", "\n    }\n"))
+        self.assertIn("try await CallBudgetChecks.run(directory: directory, endpoint: endpoint)", DELIVERY)
+        self.assertIn("try check(bReadsAt! <= 30,", DELIVERY)
+        self.assertIn("try check(after.0 <= 6 && after.1 <= 6,", DELIVERY)
+        self.assertIn("NekoWidget/Services/SharingAutoCheckPolicy.swift", read("ci/run-quick-ios-checks.sh"))
 
 
 class RegistrationTests(unittest.TestCase):
