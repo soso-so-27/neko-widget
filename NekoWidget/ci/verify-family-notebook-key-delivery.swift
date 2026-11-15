@@ -272,7 +272,7 @@ private final class Meter: @unchecked Sendable {
     /// One call through the app's own gate; unmarked calls are automatic.
     func call() throws {
         try SharingAutoCallBudget.admit(budget, at: clock.date)
-        times.append(clock.seconds); clock.seconds += 0.05
+        times.append(clock.seconds); clock.seconds += 0.0625
     }
     func calls(_ count: Int) throws { for _ in 0..<count { try call() } }
     func reset() { times.removeAll(); budget = SharingAutoCallBudget() }
@@ -284,7 +284,7 @@ private struct MeteredTransport: GroupHTTPTransport {
     let relay: Relay, meter: Meter
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
         try await SharingAutoCallBudget.gated(meter.budget, at: { meter.clock.date }) { _ in
-            meter.times.append(meter.clock.seconds); meter.clock.seconds += 0.05
+            meter.times.append(meter.clock.seconds); meter.clock.seconds += 0.0625
             return try await relay.send(request, maximumBytes: maximumBytes)
         }
     }
@@ -613,7 +613,7 @@ private extension CallBudgetChecks {
                 let tapped: Bool = SharingAutoCallBudget.$isPersonAction.withValue(true) { (try? phone.call()) != nil }
                 if tapped { all.append(clock.seconds) }
             }
-            clock.seconds += 0.3
+            clock.seconds += 0.25
         }
         for phone in phones { try check(maxPerMinute(phone.times) <= SharingAutoCallBudget.devicePerMinute, "one iPhone over its limit") }
         let together = maxPerMinute(all)
