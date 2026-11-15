@@ -127,6 +127,36 @@ actor FamilyNotebookRepresentativePhotoClient {
     private var contextKey: String {
         GroupWire.base64(Data(GroupCanonical.hash(Data((endpoint.absoluteString + "|" + familyID.uuidString + "|" + identity.personID).utf8)).prefix(16)))
     }
+    private struct Visibility: Codable {
+        var hiddenAuthors: Set<String> = []
+        var reportedAssets: Set<UUID> = []
+    }
+    private var visibilityAccount: String {
+        "op:fp:v:" + GroupWire.base64(GroupCanonical.hash(Data((endpoint.absoluteString + "|" + identity.personID).utf8)))
+    }
+    private func visibility() throws -> Visibility {
+        guard let data = try journal.read(visibilityAccount) else { return Visibility() }
+        return try GroupWire.decode(Visibility.self, data)
+    }
+    /// Local only: never changes notebook membership or text sharing.
+    func hideAuthor(_ personID: String) throws {
+        guard (try? GroupWire.bytes(personID, count: 32).count) == 32 else { throw FamilyNotebookCryptoError.invalid }
+        var value = try visibility(); value.hiddenAuthors.insert(personID)
+        try journal.write(try GroupWire.encode(value), account: visibilityAccount, createOnly: false)
+        // Persist the deny rule before discarding caches. A failed removal must
+        // not restore visibility after restart.
+        for account in try journal.accounts(prefix: cachePrefix) { try journal.remove(account) }
+    }
+    func unhideAuthor(_ personID: String) throws {
+        var value = try visibility(); value.hiddenAuthors.remove(personID)
+        try journal.write(try GroupWire.encode(value), account: visibilityAccount, createOnly: false)
+    }
+    func hiddenAuthors() throws -> Set<String> { try visibility().hiddenAuthors }
+    private func markReported(_ assetID: UUID) throws {
+        var value = try visibility(); value.reportedAssets.insert(assetID)
+        try journal.write(try GroupWire.encode(value), account: visibilityAccount, createOnly: false)
+        for account in try journal.accounts(prefix: cachePrefix) { try journal.remove(account) }
+    }
     private var pendingPrefix: String { "op:fp:p:" + contextKey + ":" }
     private var cachePrefix: String { "op:fp:c:" + contextKey + ":" }
     private func cacheAccount(assetID: UUID, hash: Data) -> String {
@@ -212,7 +242,9 @@ actor FamilyNotebookRepresentativePhotoClient {
     func image(slot: Slot, reference: FamilyNotebookRepresentativePhotoReference,
                roster: VerifiedFamilyNotebookRoster, verifiedAuthorID: String, hiddenAuthors: Set<String> = []) async throws -> Data? {
         guard runtimeEnabled else { throw FamilyNotebookTransportError.unavailable }
-        guard !hiddenAuthors.contains(verifiedAuthorID) else { return nil }
+        let local = try visibility()
+        guard !hiddenAuthors.contains(verifiedAuthorID), !local.hiddenAuthors.contains(verifiedAuthorID),
+              !local.reportedAssets.contains(reference.assetID) else { return nil }
         guard slot.authorID == verifiedAuthorID else { throw FamilyNotebookCryptoError.untrusted }
         try reference.validate()
         guard slot.slotID == reference.slotID, slot.assetID == reference.assetID, slot.revision == reference.revision,
