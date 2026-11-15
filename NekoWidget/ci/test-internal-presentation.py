@@ -70,7 +70,10 @@ class InternalPresentationBoundaryTests(unittest.TestCase):
                      'debug.albumPrototype.yearNow', 'debug.albumPrototype.slideshow',
                      # 11/13: the cat-identity measurement (owner test builds only).
                      'CatIdentityMeasureView', 'CatIdentityMeasurementCore', 'CatIdentityMeasurementRunner',
-                     'CatIdentityFeatureExtractor', 'settings-cat-identity-measure', '猫の見分けを測る')
+                     'CatIdentityFeatureExtractor', 'settings-cat-identity-measure', '猫の見分けを測る',
+                     # 11/15: the device-change screens' samples (no entry until issuance is on).
+                     'GroupRecoveryGallery', 'GroupRecoverySamples', 'settings-group-recovery-gallery',
+                     '機種変更の画面（見本）')
         for path, source in self.sources().items():
             for token in forbidden:
                 with self.subTest(path=path, token=token):
@@ -82,7 +85,8 @@ class InternalPresentationBoundaryTests(unittest.TestCase):
             for token in ('MembershipOfferPreviewView', 'BillingSandboxOwnerEnrollmentView', 'QuotaTrial',
                           'BookDemandPreviewView', 'GroupReportingPrototype', 'GroupListTrace',
                           'settings-cloudy-again', '--membership-offer-no-trial',
-                          'CatIdentityMeasureView', 'settings-cat-identity-measure'):
+                          'CatIdentityMeasureView', 'settings-cat-identity-measure',
+                          'GroupRecoveryGallery', 'settings-group-recovery-gallery'):
                 with self.subTest(defines=defines, token=token):
                     self.assertIn(token, combined)
 

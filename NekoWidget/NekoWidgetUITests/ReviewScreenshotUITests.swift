@@ -768,6 +768,80 @@ final class ReviewScreenshotUITests: XCTestCase {
         app.terminate()
     }
 
+    // MARK: - 機種変更の画面（11/15、見本の状態だけ。発行が OFF の間は通常の版に出ない）
+
+    @MainActor
+    func test15RecoveryScreens() {
+        var app = launchRecovery(nil)
+        shot("92_recovery_gallery", app) { waitFor(app.buttons["group-recovery-entry"], "gallery") }
+        app.terminate()
+
+        stateScreenshot("92b_recovery_checking", "checking", "group-recovery-screen")
+        stateScreenshot("92c_recovery_unavailable", "unavailable", "group-recovery-primary")
+        stateScreenshot("92d_recovery_found", "notStarted", "group-recovery-primary")
+        stateScreenshot("92e_recovery_waiting", "waiting", "group-recovery-screen")
+
+        app = stateScreenshot("92f_recovery_no_provider", "noKeyProvider", "group-recovery-primary", keepsOpen: true)
+        shot("92g_recovery_fresh_name", app) {
+            app.buttons["group-recovery-primary"].tap()
+            return waitFor(app.textFields["group-recovery-fresh-name"], "name step")
+        }
+        app.terminate()
+
+        stateScreenshot("92h_recovery_needs_original", "needsOriginal", "group-recovery-screen")
+
+        app = stateScreenshot("92i_recovery_device_limit", "deviceLimit", "group-recovery-device-sample-device-1", keepsOpen: true)
+        shot("92j_recovery_device_remove", app) {
+            app.buttons["group-recovery-device-sample-device-1"].tap()
+            return waitFor(app.buttons["外す"], "remove confirmation")
+        }
+        app.terminate()
+
+        stateScreenshot("92k_recovery_revoked", "revoked", "group-recovery-screen")
+
+        app = stateScreenshot("92l_recovery_choose", "chooseRoot", "group-recovery-root-sample-root-a", keepsOpen: true)
+        shot("92m_recovery_choose_confirm", app) {
+            app.buttons["group-recovery-root-sample-root-a"].tap()
+            return waitFor(app.buttons["こちらを使う"], "choose confirmation")
+        }
+        app.terminate()
+
+        stateScreenshot("92n_recovery_windows", "windows", "group-recovery-window-sample-window-1")
+
+        // いちばん大きい文字
+        stateScreenshot("93_recovery_found_ax5", "notStarted", "group-recovery-primary", largest: true)
+        stateScreenshot("93b_recovery_waiting_ax5", "waiting", "group-recovery-screen", largest: true)
+        stateScreenshot("93c_recovery_no_provider_ax5", "noKeyProvider", "group-recovery-primary", largest: true)
+        stateScreenshot("93d_recovery_needs_original_ax5", "needsOriginal", "group-recovery-screen", largest: true)
+        stateScreenshot("93e_recovery_device_limit_ax5", "deviceLimit", "group-recovery-device-sample-device-1", largest: true)
+        stateScreenshot("93f_recovery_choose_ax5", "chooseRoot", "group-recovery-root-sample-root-a", largest: true)
+    }
+
+    /// One sample state on its own launch. `mark` is an element that shows it is drawn.
+    @MainActor @discardableResult
+    private func stateScreenshot(_ name: String, _ sample: String, _ mark: String,
+                              largest: Bool = false, keepsOpen: Bool = false) -> XCUIApplication {
+        let app = launchRecovery(sample, largest: largest)
+        shot(name, app) { waitFor(app.descendants(matching: .any)[mark].firstMatch, sample) }
+        if !keepsOpen { app.terminate() }
+        return app
+    }
+
+    @MainActor
+    private func launchRecovery(_ sample: String?, largest: Bool = false) -> XCUIApplication {
+        var arguments = ["--group-recovery-ui-fixture"]
+        if let sample { arguments += ["--group-recovery-case", sample] }
+        if largest { arguments += ["--group-recovery-text", "ax5"] }
+        return launch(arguments)
+    }
+
+    @MainActor
+    private func waitFor(_ element: XCUIElement, _ what: String) -> String? {
+        guard element.waitForExistence(timeout: 15) else { return what + " not shown" }
+        settle(1)
+        return nil
+    }
+
     /// One stress scenario (AppStoreScreenshotFixture.CatHomeStress).
     @MainActor
     private func launchStress(_ scenario: Int, names: [String], _ extra: [String] = []) -> XCUIApplication {

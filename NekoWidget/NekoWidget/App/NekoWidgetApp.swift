@@ -99,6 +99,8 @@ struct NekoWidgetApp: App {
                 WidgetPhotoOpeningFixture()
             } else if CommandLine.arguments.contains("--official-window-ui-fixture") {
                 OfficialWindowUIFixture()
+            } else if CommandLine.arguments.contains(GroupRecoveryFixtureRoot.launchArgument) {
+                GroupRecoveryFixtureRoot()
             } else if CommandLine.arguments.contains("--window-list-ui-fixture") {
                 WindowListNavigationFixture()
             } else if LaunchWorkFixture.isOn {
