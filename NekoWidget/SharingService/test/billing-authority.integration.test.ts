@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   ingestAppleBillingNotification,
@@ -614,6 +614,39 @@ describe.sequential("App Store billing authority", () => {
       lease_token: null,
       last_error_code: "ordinary_status_outage",
     });
+  });
+
+  it("logs only fixed recheck reasons without changing eligibility or exposing errors", async () => {
+    await setAuthorityGates(true, true);
+    const value = await queuedTransaction();
+    const now = Math.floor(Date.now() / 1000);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let calls = 0;
+    const fetcher = async () => { calls++; throw new Error("secret-transaction-key-canary"); };
+    try {
+      await testEnv.DB.prepare("UPDATE billing_reconciliation_jobs SET not_before=?,lease_token=?,lease_expires_at=? WHERE original_transaction_id=?")
+        .bind(now+60, "abcdefghijklmnopqrstuv", now+120, value.originalTransactionId).run();
+      await reconcileBillingTransactionNow(immediateEnv,value.billingAccountId,value.originalTransactionId,fetcher,now);
+      expect(calls).toBe(0);
+      await testEnv.DB.prepare("UPDATE billing_reconciliation_jobs SET lease_token=NULL,lease_expires_at=NULL WHERE original_transaction_id=?")
+        .bind(value.originalTransactionId).run();
+      await reconcileBillingTransactionNow(immediateEnv,value.billingAccountId,value.originalTransactionId,fetcher,now);
+      expect(calls).toBe(0);
+      await reconcileBillingTransactionNow(immediateEnv,value.billingAccountId,value.originalTransactionId,fetcher,now+60);
+      expect(calls).toBe(1);
+      expect(warning.mock.calls.map(args=>JSON.parse(String(args[0])))).toEqual([
+        {event:"neko_billing_recheck_v1",reason:"lease_busy"},
+        {event:"neko_billing_recheck_v1",reason:"scheduled_wait"},
+        {event:"neko_billing_recheck_v1",reason:"apple_query_failed"},
+      ]);
+      expect(JSON.stringify(warning.mock.calls)).not.toContain(value.originalTransactionId);
+      expect(JSON.stringify(warning.mock.calls)).not.toContain(value.billingAccountId);
+      expect(JSON.stringify(warning.mock.calls)).not.toContain("canary");
+      expect(await effectiveBillingEntitlement(testEnv,value.billingAccountId)).toMatchObject({grantsPlus:false});
+      warning.mockImplementation(() => { throw new Error("logger unavailable"); });
+      await reconcileBillingTransactionNow(immediateEnv,value.billingAccountId,value.originalTransactionId,fetcher,now+60);
+      expect(calls).toBe(1); // backoff remains authoritative even if logging throws
+    } finally { warning.mockRestore(); }
   });
 
   it("immediately reconciles only the requested authenticated lineage", async () => {

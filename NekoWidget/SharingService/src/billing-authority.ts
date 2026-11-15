@@ -36,6 +36,13 @@ const reconciliationLimit = 8;
 const leaseSeconds = 120;
 const periodicReconciliationSeconds = 24 * 60 * 60;
 
+// Fixed reasons only: never serialize the job, transaction, account, keys or error.
+function reconciliationDiagnostic(reason: 'lease_busy' | 'scheduled_wait' | 'job_absent'
+  | 'claim_changed' | 'apple_query_failed' | 'processing_failed'): void {
+  try { console.warn(JSON.stringify({ event: 'neko_billing_recheck_v1', reason })); }
+  catch { /* Logging must not alter billing decisions or retry scheduling. */ }
+}
+
 interface BillingAuthorityGateRow {
   apple_notification_ingestion_enabled: 0 | 1;
   subscription_reconciliation_enabled: 0 | 1;
@@ -658,15 +665,19 @@ export async function reconcileBillingTransactionNow(
   if ((await loadGate(env))?.subscription_reconciliation_enabled !== 1) return;
   await requireOwnerSandboxAccount(env, billingAccountId);
   const job = await env.DB.prepare(
-    `SELECT j.environment, j.original_transaction_id, j.request_generation, j.attempts
+    `SELECT j.environment, j.original_transaction_id, j.request_generation, j.attempts, j.not_before, j.lease_expires_at
        FROM billing_reconciliation_jobs j
        JOIN billing_transaction_lineages l
          ON l.environment = j.environment AND l.original_transaction_id = j.original_transaction_id
-      WHERE j.environment = ? AND j.original_transaction_id = ? AND l.billing_account_id = ?
-        AND j.not_before <= ?
-        AND (j.lease_expires_at IS NULL OR j.lease_expires_at <= ?)`,
-  ).bind(storeEnvironment, originalTransactionId, billingAccountId, now, now).first<ReconciliationJobRow>();
-  if (job === null) return;
+      WHERE j.environment = ? AND j.original_transaction_id = ? AND l.billing_account_id = ?`,
+  ).bind(storeEnvironment, originalTransactionId, billingAccountId).first<ReconciliationJobRow & {
+    not_before: number; lease_expires_at: number | null;
+  }>();
+  if (job === null) { reconciliationDiagnostic('job_absent'); return; }
+  if (job.lease_expires_at !== null && job.lease_expires_at > now) {
+    reconciliationDiagnostic('lease_busy'); return;
+  }
+  if (job.not_before > now) { reconciliationDiagnostic('scheduled_wait'); return; }
   await reconcileClaimedJob(env, job, billingAccountId, fetchStatus, now, undefined, true);
 }
 
@@ -696,7 +707,9 @@ async function reconcileClaimedJob(
     now,
     now,
   ).run();
-  if (claimed.meta.changes !== 1) return;
+  if (claimed.meta.changes !== 1) { reconciliationDiagnostic('claim_changed'); return; }
+
+  let queryingApple = false;
 
   try {
     const lineage = await env.DB.prepare(
@@ -711,7 +724,9 @@ async function reconcileClaimedJob(
       || (await loadGate(env))?.subscription_reconciliation_enabled !== 1) {
       throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
     }
+    queryingApple = true;
     const status = await fetchStatus(job.original_transaction_id, env, job.environment);
+    queryingApple = false;
     await requireOwnerSandboxAccount(env, lineage.billing_account_id);
     if ((requireStaticGate && !billingSubscriptionReconciliationRuntimeEnabled(env))
       || (await loadGate(env))?.subscription_reconciliation_enabled !== 1) {
@@ -732,6 +747,7 @@ async function reconcileClaimedJob(
     await releaseSuccessfulLease(env, job, leaseToken, completedAt, keepPeriodic);
     await scheduleBillingAccountRetention(env,lineage.billing_account_id,completedAt*1000);
   } catch (error) {
+    reconciliationDiagnostic(queryingApple ? 'apple_query_failed' : 'processing_failed');
     const code = error instanceof ApiError
       ? error.code.replace(/[^a-z0-9_]/gu, "_").slice(0, 64)
       : "billing_reconciliation_unavailable";
