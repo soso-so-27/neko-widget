@@ -121,6 +121,16 @@ struct AppRootView: View {
             // SwiftUI uses scenes: app-delegate foreground callbacks alone are insufficient.
             await GroupAdmissionService.shared.refresh()
         }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+#if DEBUG
+            guard !GroupWindowUIFixture.showsScreens else { return }
+#endif
+            // Let launch/rendering finish; cancellation on background defers to
+            // the next foreground. This never blocks the visible list.
+            do { try await Task.sleep(for: .seconds(5)) } catch { return }
+            await GroupWindowClientProvider.production?.backfillAnchorReceipts()
+        }
         .onChange(of: viewModel.isScanning, initial: true) { _, isScanning in
             AppIdleTimer.setPreventSleep(isScanning && scenePhase == .active, for: "photo-scan")
         }

@@ -34,6 +34,27 @@ private struct SyntheticBillingSigner: GroupBillingSigner {
     }
 }
 
+private actor ReceiptTransport: GroupHTTPTransport {
+    private var bodies: [Data] = []
+    private let memory: MemorySecrets
+    init(memory: MemorySecrets) { self.memory = memory }
+    func sent() -> [Data] { bodies }
+    func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
+        guard let url = request.url, url.path.hasSuffix("/anchor-receipt"), let body = request.httpBody else {
+            throw Failure.check("backfill must not register a person or fetch a roster")
+        }
+        let window = url.path.split(separator: "/")[2]
+        guard try memory.read("anchor-receipt-pending:" + String(window)) != nil else {
+            throw Failure.check("receipt must be persisted before sending")
+        }
+        bodies.append(body)
+        if bodies.count == 1 { throw GroupClientError.offline }
+        // The second request committed remotely, but its response was lost.
+        if bodies.count == 2 { throw GroupClientError.offline }
+        return .init(status: 200, data: try JSONSerialization.data(withJSONObject: ["state": "stored", "windowId": String(window)]))
+    }
+}
+
 /// Request/response echo, not a second relay implementation. Real permissions,
 /// DB races and quotas are checked by Worker integration tests. This fixture
 /// exercises native persistence ordering, request bytes and HPKE round trips.
@@ -597,6 +618,41 @@ private struct GroupAdapterChecks {
         let room = try await client.createWindow(name: "うちのまど", operationID: op)
         try check(room.name == "うちのまど" && room.memberCount == 1 && room.deviceCount == 1 && room.members[0].displayName == "自分", "real adapter owner round trip")
         try check(room.deliveryStatus == .active && room.deliveryReason == .ownerPlus && room.ownerParticipantID == room.myParticipantID, "verified server policy reaches UI contract")
+        let receiptRelay = ReceiptTransport(memory: memory)
+        var backfill = try ProductionGroupWindowClient(endpoint: URL(string: "https://api.nekonomado.com")!,
+            secrets: memory, transport: receiptRelay, outboxDirectory: folder.appendingPathComponent("receipts"))
+        let originalIdentity = try memory.read("identity")
+        await backfill.backfillAnchorReceipts()
+        try check(memory.read("anchor-receipt:" + room.id) == nil, "failed receipt has no completion marker")
+        let pendingReceipt = try memory.read("anchor-receipt-pending:" + room.id)
+        try check(pendingReceipt != nil, "failed send preserves original signed receipt")
+        backfill = try ProductionGroupWindowClient(endpoint: URL(string: "https://api.nekonomado.com")!,
+            secrets: memory, transport: receiptRelay, outboxDirectory: folder.appendingPathComponent("receipts"))
+        await backfill.backfillAnchorReceipts()
+        try check(memory.read("anchor-receipt:" + room.id) == nil, "lost successful response is not marked complete")
+        await backfill.backfillAnchorReceipts()
+        let storedReceipt = try GroupWire.decode(GroupAnchorReceipt.self, memory.read("anchor-receipt:" + room.id)!)
+        let receiptIdentity = try GroupWire.decode(GroupDeviceIdentity.self, originalIdentity!)
+        try check(storedReceipt.verifies(root: receiptIdentity.personPublicKey, environment: "production", windowID: room.id), "backfill signs the existing pin with the existing root")
+        backfill = try ProductionGroupWindowClient(endpoint: URL(string: "https://api.nekonomado.com")!,
+            secrets: memory, transport: receiptRelay, outboxDirectory: folder.appendingPathComponent("receipts"))
+        await backfill.backfillAnchorReceipts()
+        let sentReceipts = await receiptRelay.sent()
+        try check(sentReceipts.count == 3 && sentReceipts.allSatisfy { $0 == sentReceipts[0] }, "failures and lost response retry persisted bytes; completed restart sends nothing")
+        try check(memory.read("anchor-receipt-pending:" + room.id) == pendingReceipt, "pending original is not replaced by a new signature")
+        try check(memory.read("identity") == originalIdentity, "backfill never replaces identity")
+        // Simulate termination after persisting, before the first network send.
+        let unsentMemory = MemorySecrets()
+        for account in try memory.accounts(prefix: "") where !account.hasPrefix("anchor-receipt") {
+            if let bytes = try memory.read(account) { try unsentMemory.write(bytes, account: account, createOnly: true) }
+        }
+        try unsentMemory.write(pendingReceipt!, account: "anchor-receipt-pending:" + room.id, createOnly: true)
+        let unsentRelay = ReceiptTransport(memory: unsentMemory)
+        let resumedUnsent = try ProductionGroupWindowClient(endpoint: URL(string: "https://api.nekonomado.com")!,
+            secrets: unsentMemory, transport: unsentRelay, outboxDirectory: folder.appendingPathComponent("unsent-receipts"))
+        await resumedUnsent.backfillAnchorReceipts()
+        let firstUnsent = await unsentRelay.sent()
+        try check(firstUnsent == [sentReceipts[0]], "restart before first send uses the already persisted proof")
         await relay.setDelivery("paused")
         let paused = try await client.window(id: room.id)
         try check(paused.deliveryStatus == .paused && paused.deliveryReason == .ownerPlusRequired && paused.state == .active && paused.canManage,

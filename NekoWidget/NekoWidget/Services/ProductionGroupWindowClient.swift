@@ -35,6 +35,71 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     private var verifiedListEntries: [String: VerifiedListEntry] = [:]
     private var heartOperations = Set<UUID>()
     private var reconcilingAdmissions = false
+    private var anchorReceiptAttempts = Set<String>()
+    private var anchorReceiptBackfillRunning = false
+
+    /// Called after a foreground delay. Reads only existing local pins/identity;
+    /// no registration, new identity, roster fetch, or key recovery.
+    func backfillAnchorReceipts() async {
+        guard !anchorReceiptBackfillRunning else { return }
+        anchorReceiptBackfillRunning = true
+        defer { anchorReceiptBackfillRunning = false }
+        anchorReceiptAttempts.removeAll()
+        guard let accounts = try? secrets.accounts(prefix: "window:") else { return }
+        for account in accounts {
+            if Task.isCancelled { return }
+            await publishAnchorReceipt(windowID: String(account.dropFirst("window:".count)))
+        }
+    }
+    private func publishAnchorReceipt(windowID: String) async {
+        guard !Task.isCancelled, !anchorReceiptAttempts.contains(windowID) else { return }
+        do {
+            guard let id = try load(GroupDeviceIdentity.self, "identity"), id.registered,
+                  let privateRoot = id.personPrivateKey else { return }
+            let record = try local(windowID)
+            // A staged but unaccepted invitation is not a recovered membership.
+            guard let roster = try record.verified(), roster.roster.members.contains(where: { $0.personID == id.personID }) else { return }
+            let environment: String
+            switch endpoint.host {
+            case "api.nekonomado.com": environment = "production"
+#if DEBUG || INTERNAL_PRESENTATION
+            case "neko-window-sharing-staging.nakanishisoya.workers.dev": environment = "staging"
+#endif
+            default: return
+            }
+            let account = "anchor-receipt:" + windowID
+            let pendingAccount = "anchor-receipt-pending:" + windowID
+            let receipt: GroupAnchorReceipt
+            if let pending = try load(GroupAnchorReceipt.self, pendingAccount) {
+                receipt = pending
+            } else {
+                receipt = try GroupAnchorReceipt.make(environment: environment, anchor: record.anchor,
+                    root: Curve25519.Signing.PrivateKey(rawRepresentation: privateRoot))
+                // App-private Keychain; this prefix is never published to the
+                // share extension. Persist before any await/network operation.
+                try save(receipt, pendingAccount, createOnly: true)
+            }
+            guard receipt.anchor == record.anchor,
+                  receipt.verifies(root: id.personPublicKey, environment: environment, windowID: windowID) else { return }
+            if let saved = try load(GroupAnchorReceipt.self, account), saved.anchor == receipt.anchor,
+               saved.verifies(root: id.personPublicKey, environment: environment, windowID: windowID) { return }
+            anchorReceiptAttempts.insert(windowID)
+            struct Input: Encodable {
+                let environment: String; let personId: String; let ownerPersonId: String
+                let ownerPublicKey: String; let rootSignature: String
+            }
+            struct Reply: Decodable { let state: String; let windowID: String }
+            let input = Input(environment: environment, personId: id.personID, ownerPersonId: receipt.anchor.ownerPersonID,
+                ownerPublicKey: GroupWire.base64(receipt.anchor.ownerIdentityPublicKey), rootSignature: GroupWire.base64(receipt.rootSignature))
+            let response = try GroupWire.decode(Reply.self, await raw("/v3/group-windows/\(windowID)/anchor-receipt",
+                body: GroupWire.encode(input), identity: id))
+            guard response.state == "stored", response.windowID == windowID else { return }
+            try save(receipt, account)
+        } catch {
+            // Silent, bounded to one attempt per foreground session. The next
+            // foreground retries the same persisted receipt, never new keys.
+        }
+    }
 
     init(endpoint: URL, namespace: String, ownerDisplayName: String = "自分", outboxDirectory: URL? = nil) throws {
         self.endpoint = endpoint
@@ -449,6 +514,9 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         verifiedListEntries[windowID] = .init(window: result, encryptedName: reply.window.encryptedName,
             rosterHash: head.hash, keyHash: GroupCanonical.hash(key.withUnsafeBytes { Data($0) }),
             personID: identity.personID, deviceID: myDeviceID)
+#if !NEKO_SHARE_EXTENSION
+        Task { await self.publishAnchorReceipt(windowID: windowID) }
+#endif
         return result
     }
 
