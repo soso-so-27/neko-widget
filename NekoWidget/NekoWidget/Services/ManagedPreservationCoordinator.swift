@@ -83,14 +83,17 @@ enum ManagedPreservationExport {
                                       progress: @escaping @Sendable (Int, Int) async -> Void,
                                       phase: @escaping @Sendable (PreservationExportPhase) async -> Void = { _ in }) {
         let completed = CompletedExport()
+        // 1115v-4: the person's own export, wherever the exporter runs it.
         exporter.prepare(build: {
-            let (payload, session) = try await archiveAll(client: client, reauthenticate: reauthenticate, progress: progress, phase: phase)
-            await completed.set(session)
-            return payload
+            try await PreservationBulkRead.run {
+                let (payload, session) = try await archiveAll(client: client, reauthenticate: reauthenticate, progress: progress, phase: phase)
+                await completed.set(session)
+                return payload
+            }
         }, verify: {
             // The first invocation precedes construction. Later verification may
             // pause for explicit authentication before checking the view's owner.
-            try await completed.verify(validate: validate)
+            try await PreservationBulkRead.run { try await completed.verify(validate: validate) }
         })
     }
 
@@ -540,7 +543,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         guard isSignedIn, !membershipRestoring, let owner = authenticatedOwnerID else { return }
         let ticket = viewEpoch
         membershipRestoring = true
-        Task { [weak self] in
+        Task { [weak self] in await SharingPersonAction.run {
             let note = await MembershipOfferModel.restoreForAnotherScreen()
             guard let self else { return }
             self.membershipRestoring = false
@@ -554,7 +557,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
                   self.membershipRequestID == requestID, self.membership?.canSave != true,
                   self.membershipMessage == nil else { return }
             self.membershipMessage = note
-        }
+        } }
     }
 
     func checkNoticeContact() {
@@ -716,8 +719,10 @@ final class ManagedPreservationCoordinator: ObservableObject {
             let owner = try await self.requireCurrentOwner(ticket)
             self.toolBackupProgress = "ツールの記録を復元中…"
             defer { if self.viewEpoch == ticket { self.toolBackupProgress = nil } }
-            let saved = try await ToolBackupTransfer.restore(record, client: self.client) { completed, total in
-                await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = ToolBackupProgress.message("復元", completed: completed, total: total) } }
+            let saved = try await PreservationBulkRead.run {
+                try await ToolBackupTransfer.restore(record, client: self.client) { completed, total in
+                    await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = ToolBackupProgress.message("復元", completed: completed, total: total) } }
+                }
             }
             guard try await self.requireCurrentOwner(ticket) == owner else { throw ManagedPreservationError.staleSession }
             self.restoredToolBackup = saved
@@ -1303,7 +1308,9 @@ final class ManagedPreservationCoordinator: ObservableObject {
         guard isEnabled, !isBusy else { return }
         let ticket = viewEpoch
         isBusy = true; errorMessage = nil; statusMessage = nil
-        task = Task { [weak self] in
+        // 1115v-4: every operation here is the person's own (a button, or
+        // opening the screen), and so are the reads it starts.
+        task = Task { [weak self] in await SharingPersonAction.run {
             guard let self else { return }
             defer { if self.viewEpoch == ticket { self.isBusy = false; self.task = nil } }
             do {
@@ -1327,7 +1334,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
                     ? ManagedPreservationError.interrupted.errorDescription
                     : (known?.errorDescription ?? (error as? ToolBackupError)?.errorDescription ?? ManagedPreservationError.unavailable.errorDescription)
             }
-        }
+        } }
     }
 
     private func check(_ ticket: UUID) throws {

@@ -639,6 +639,9 @@ actor ManagedPreservationClient {
     private let configuration: ManagedPreservationConfiguration
     private let transport = ManagedPreservationTransport()
     private let requestOverride: RequestTransport?
+    /// 1115v-4: the owner-limit gate. Checks that replace the network keep
+    /// their own pace unless they bring a budget.
+    private let callBudget: PreservationCallBudget?
     private let exportNow: @Sendable () -> Date
     private let sessionNow: @Sendable () -> Date
     private let credentialState: CredentialStateReader
@@ -685,8 +688,9 @@ actor ManagedPreservationClient {
          billingIdentity: ManagedPreservationBillingIdentity = .init(), requestOverride: RequestTransport? = nil,
          exportNow: @escaping @Sendable () -> Date = { Date() },
          sessionNow: @escaping @Sendable () -> Date = { Date() },
-         credentialState: CredentialStateReader? = nil) {
+         credentialState: CredentialStateReader? = nil, callBudget: PreservationCallBudget? = nil) {
         self.configuration = configuration
+        self.callBudget = callBudget ?? (requestOverride == nil ? .shared : nil)
         self.exportNow = exportNow
         self.sessionNow = sessionNow
         self.credentialState = credentialState ?? { user in try await ManagedPreservationClient.nativeCredentialState(user) }
@@ -910,6 +914,7 @@ actor ManagedPreservationClient {
         let receipt = existing ?? .init(ownerId: checkpoint.credential.ownerId,
                                         token: token, state: .unconfirmed)
         let body = try JSONEncoder().encode(["confirmation": "delete-service-account", "receipt": receipt.token])
+        try await admitOwnerCall()
         do {
             _ = try await request("POST", path: "/v1/account-deletion", body: body,
                                   token: checkpoint.credential.token, maximumBytes: 2048, expectedStatus: 202,
@@ -1529,11 +1534,26 @@ actor ManagedPreservationClient {
         guard epoch == captured else { throw ManagedPreservationError.staleSession }
     }
 
+    /// 1115v-4: every call the server's owner limit counts passes here
+    /// first. It may wait for a free place; an automatic call within the
+    /// pause after a 429 is not sent and reads as the server's RATE_LIMITED.
+    private func admitOwnerCall() async throws {
+        guard let callBudget else { return }
+        do { try await PreservationCallBudget.admit(callBudget) }
+        catch is PreservationCallHeld { throw ManagedPreservationError.rateLimited }
+    }
+
+    /// Calls let through the gate so far (nil: no gate).
+    func admittedCalls() -> Int? { callBudget?.admittedCalls }
+
     private func authenticated(_ method: String, path: String, query: [URLQueryItem] = [],
                                body: Data? = nil, revision: Int? = nil,
                                maximumBytes: Int = 65_536, responseFile: URL? = nil,
                                expectedMIMEType: String = "application/json", checkpoint: SessionCheckpoint? = nil,
                                strictToolDeletion: Bool = false, invalidatesSession: Bool = true) async throws -> Data {
+        // The gate comes before the session is captured: a wait never sends
+        // a credential that changed meanwhile.
+        try await admitOwnerCall()
         // Validate and capture in one actor turn, before the first suspension.
         // A caller's earlier check cannot bind a later request after sign-in changes.
         if let checkpoint { try requireSessionCheckpoint(checkpoint) }
@@ -1619,6 +1639,12 @@ actor ManagedPreservationClient {
             try Task.checkCancellation()
             guard let http = response as? HTTPURLResponse, http.url == url else {
                 throw ManagedPreservationError.invalidResponse
+            }
+            // 1115v-4: automatic calls wait at least a minute from this reply
+            // (longer when Retry-After says so), whichever limit answered.
+            if http.statusCode == 429 {
+                callBudget?.noteRateLimited(retryAfter: http.value(forHTTPHeaderField: "Retry-After")
+                    .flatMap { TimeInterval($0.trimmingCharacters(in: .whitespaces)) }, at: Date())
             }
             try ClientUpgradeRequirement.shared.checkResponse(status: http.statusCode, data: data)
             guard (200...299).contains(http.statusCode) else {

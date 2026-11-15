@@ -178,6 +178,7 @@ python3 ci/test-new-photo-tomorrow.py
 python3 ci/test-day-words.py
 python3 ci/test-app-limits.py
 python3 ci/test-family-journey.py
+python3 ci/test-preservation-call-budget.py
 python3 ci/test-when-stuck.py
 python3 ci/test-launch-work.py
 python3 ci/test-review-eye.py
@@ -217,6 +218,17 @@ xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0
   ci/verify-family-notebook-key-delivery.swift \
   -o "$RUNNER_TEMP/family-notebook-key-delivery-tests"
 "$RUNNER_TEMP/family-notebook-key-delivery-tests"
+# 1115v-4: the automatic-save server's owner limit, counted on a synthetic clock.
+xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+  Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
+  NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupInvitationLink.swift NekoWidget/Services/GroupWindowStorage.swift \
+  NekoWidget/Services/GroupWindowOperationStore.swift Shared/Sharing/ClientUpgradeRequirement.swift NekoWidget/Services/GroupWindowTransport.swift \
+  NekoWidget/Services/FamilyNotebookCore.swift NekoWidget/Services/FamilyNotebookCrypto.swift \
+  NekoWidget/Services/FamilyNotebookTransport.swift NekoWidget/Services/FamilyNotebookInvitationCrypto.swift \
+  NekoWidget/Services/FamilyNotebookKeyCoordinator.swift NekoWidget/Services/SharingAutoCheckPolicy.swift \
+  ci/verify-preservation-call-budget.swift \
+  -o "$RUNNER_TEMP/preservation-call-budget-tests"
+"$RUNNER_TEMP/preservation-call-budget-tests"
 
 bash ci/run-family-notebook-network-checks.sh
 python3 ci/prepare-preservation-signin-probe.py "$RUNNER_TEMP/preservation-signin-probe.swift"
