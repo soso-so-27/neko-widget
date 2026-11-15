@@ -15,7 +15,7 @@ async function asset(env:Env,family:string,id:string):Promise<Asset>{
  const row=await env.DB.prepare('SELECT * FROM family_representative_assets WHERE family_id=? AND asset_id=?').bind(family,id).first<Asset>();
  if(!row) fail('access_unavailable',404);return row;
 }
-const receipt=(a:Asset)=>({schemaVersion:1,assetId:a.asset_id,uploadId:a.asset_id,expiresAt:a.expires_at,reservedRevision:a.revision});
+const receipt=(a:Asset)=>({schemaVersion:1,assetId:a.asset_id,uploadId:a.asset_id,expiresAt:a.expires_at,reservedRevision:a.revision,state:a.state});
 function photoChecks(env:Env,a:Asset,mode:'upload'|'commit'):D1PreparedStatement[]{
  const id=crypto.randomUUID();return [env.DB.prepare('INSERT INTO family_representative_commit_checks VALUES (?,?,?,?,?,?)').bind(id,a.family_id,a.slot_id,a.asset_id,a.revision-1,mode),env.DB.prepare('DELETE FROM family_representative_commit_checks WHERE id=?').bind(id)];
 }
@@ -81,7 +81,13 @@ export async function familyRepresentativePhoto(request:Request,env:Env):Promise
     try { await env.DB.batch([...checks(env,actor,family,current.generation,current.epoch,'operation'),...photoChecks(env,a,'upload'),env.DB.prepare(`UPDATE family_representative_assets SET state='uploaded' WHERE asset_id=? AND state IN ('reserved','uploaded')`).bind(id)]); }
     catch(error) {
      const after=await asset(env,family,id);
-     if(after.state==='retired'||after.state==='deleted') await env.MEDIA.delete(after.object_key);
+     if(after.state==='retired'||after.state==='deleted') {
+      // Cleanup may have completed while this PUT was still writing. Reopen
+      // its cleanup claim before deleting, so a failed R2 delete is retried.
+      await env.DB.prepare("UPDATE family_representative_assets SET state='retired' WHERE asset_id=? AND state IN ('retired','deleted')").bind(id).run();
+      await env.MEDIA.delete(after.object_key);
+      await env.DB.prepare("UPDATE family_representative_assets SET state='deleted' WHERE asset_id=? AND state='retired'").bind(id).run();
+     }
      throw error;
     }
     return jsonResponse({schemaVersion:1,assetId:id,uploaded:true});

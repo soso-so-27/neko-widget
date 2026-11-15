@@ -422,4 +422,25 @@ describe('representative photo reservation and exchange',()=>{
   expect((await db.prepare('SELECT COUNT(*) n FROM family_notebook_crypto_operations WHERE family_id=?').bind(f).first())?.n).toBe(2);
  });
 
+ it('reopens cleanup after a late PUT and keeps it pending when deletion fails',async()=>{
+  const p=await plusOwner(),f=await create(p),{r}=await initialize(p,f);
+  const bytes=new Uint8Array(100).fill(7),assetId=crypto.randomUUID(),path=`${root}/${f}/representative-photos/uploads`;
+  ok(await invoke(p,path,{schemaVersion:1,operationId:crypto.randomUUID(),slotId:crypto.randomUUID(),assetId,expectedRevision:0,expectedGeneration:1,keyEpoch:1,rosterHash:r.hash,ciphertextBytes:bytes.length,ciphertextSHA256:await sha256Base64url(bytes)},photos),201);
+  const racing={...photos,MEDIA:new Proxy(photos.MEDIA!,{get(target,key){
+   if(key==='put')return async(...args:Parameters<R2Bucket['put']>)=>{
+    const result=await target.put(...args);
+    await db.prepare("UPDATE family_representative_assets SET state='deleted' WHERE asset_id=?").bind(assetId).run();
+    return result;
+   };
+   if(key==='delete')return async()=>{throw new Error('synthetic delete failure')};
+   const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;
+  }})};
+  const request=await signed(p,path+'/'+assetId,bytes,undefined,'PUT');
+  let reply:Response;try{reply=await route(request,racing)}catch(error){reply=errorResponse(error)}
+  expect(reply.status).toBeGreaterThanOrEqual(400);
+  expect((await db.prepare('SELECT state FROM family_representative_assets WHERE asset_id=?').bind(assetId).first())?.state).toBe('retired');
+  await cleanupFamilyRepresentativePhotos(photos);
+  expect(await photos.MEDIA!.get(`family-representative/v1/${f}/${assetId}`)).toBeNull();
+ });
+
 });

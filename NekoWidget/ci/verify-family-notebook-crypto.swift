@@ -98,6 +98,9 @@ private enum VerifyFamilyNotebookCrypto {
         try rejects("device certificate is family-bound") { _ = try wrongFamily.canonicalBytes() }
         try tampering(encrypted, envelope: envelope, roster: r1, context: oldContext, key: key1, person: b)
         try frontier(a, b)
+#if FAMILY_REPRESENTATIVE_IMAGE_CHECKS
+        try verifyFamilyRepresentativeImage()
+#endif
         let jpeg = Data([0xff, 0xd8, 0xff, 0xd9]) // Cipher fixture, not a decoded image.
         let photo = try FamilyNotebookRepresentativePhotoCrypto.seal(jpeg: jpeg, width: 1, height: 1,
             familyID: family, slotID: cat, assetID: UUID(), revision: 1, roster: r1)
