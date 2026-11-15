@@ -126,6 +126,76 @@ enum GroupReportCrypto {
         return envelope
     }
 
+    /// Family photos use a separate authenticated domain; they cannot be
+    /// interpreted as a window report or carry any notebook encryption key.
+    static func encryptFamilyPhoto(canonicalJPEG: Data, familyID: UUID, assetID: UUID,
+                                   reporterPersonID: String, reasonCode: String,
+                                   keyID: String, publicKey: Data) throws -> Data {
+#if os(iOS)
+        let trusted = acceptsRecipient(keyID: keyID, publicKey: publicKey, configuration: .current)
+#else
+        let trusted = keyID == moderationKeyID && publicKey == moderationPublicKey
+#endif
+        guard trusted else { throw GroupReportCryptoError.untrustedModerationKey }
+        return try familyEnvelope(canonicalJPEG: canonicalJPEG, familyID: familyID,
+            assetID: assetID, reporterPersonID: reporterPersonID, reasonCode: reasonCode,
+            keyID: keyID, publicKey: publicKey, reportedAt: Date())
+    }
+    private struct FamilyPlaintext: Encodable {
+        let protocolVersion = 1
+        let familyID: String
+        let assetID: String
+        let reporterPersonID: String
+        let reason: String
+        let reportedAt: Date
+        let canonicalJPEG: Data
+    }
+    private struct FamilyEnvelope: Encodable {
+        let protocolVersion = 1
+        let domain = "NW3.FAMILY-PHOTO.MODERATION-REPORT"
+        let moderationKeyID: String
+        let ephemeralPublicKey: Data
+        let ciphertext: Data
+    }
+    private static func familyEnvelope(canonicalJPEG: Data, familyID: UUID, assetID: UUID,
+                                       reporterPersonID: String, reasonCode: String,
+                                       keyID: String, publicKey: Data, reportedAt: Date) throws -> Data {
+        let decoded = Data(base64Encoded: reporterPersonID.replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/") + "=")
+        guard reporterPersonID.utf8.count == 43, let decoded, decoded.count == 32,
+              decoded.base64EncodedString().replacingOccurrences(of: "+", with: "-")
+                .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "") == reporterPersonID,
+              keyID == moderationKeyID, publicKey.count == 32,
+              ["objectionable", "harassment", "privacy", "other"].contains(reasonCode),
+              reportedAt.timeIntervalSinceReferenceDate.isFinite else { throw GroupReportCryptoError.invalidInput }
+        try validateCanonicalJPEG(canonicalJPEG)
+        let family = familyID.uuidString.lowercased(), asset = assetID.uuidString.lowercased()
+        let aad = authenticatedData(["NW3.FAMILY-PHOTO.MODERATION-REPORT", "1", family,
+            asset, reporterPersonID, reasonCode, keyID])
+        let ephemeral = Curve25519.KeyAgreement.PrivateKey()
+        let recipient = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: publicKey)
+        let shared = try ephemeral.sharedSecretFromKeyAgreement(with: recipient)
+        let key = shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: Data(SHA256.hash(data: aad)),
+            sharedInfo: Data("jp.nekowidget.family-photo.report.v1".utf8), outputByteCount: 32)
+        let encoder = PropertyListEncoder(); encoder.outputFormat = .binary
+        var plaintext = try encoder.encode(FamilyPlaintext(familyID: family, assetID: asset,
+            reporterPersonID: reporterPersonID, reason: reasonCode, reportedAt: reportedAt, canonicalJPEG: canonicalJPEG))
+        defer { plaintext.resetBytes(in: 0..<plaintext.count) }
+        let ciphertext = try ChaChaPoly.seal(plaintext, using: key, authenticating: aad).combined
+        let envelope = try encoder.encode(FamilyEnvelope(moderationKeyID: keyID,
+            ephemeralPublicKey: ephemeral.publicKey.rawRepresentation, ciphertext: ciphertext))
+        guard envelope.count <= maximumEnvelopeBytes else { throw GroupReportCryptoError.payloadTooLarge }
+        return envelope
+    }
+#if GROUP_REPORT_CRYPTO_CHECKS
+    static func encryptFamilyForInteroperability(canonicalJPEG: Data, familyID: UUID, assetID: UUID,
+        reporterPersonID: String, reasonCode: String, publicKey: Data) throws -> Data {
+        try familyEnvelope(canonicalJPEG: canonicalJPEG, familyID: familyID, assetID: assetID,
+            reporterPersonID: reporterPersonID, reasonCode: reasonCode, keyID: moderationKeyID,
+            publicKey: publicKey, reportedAt: Date(timeIntervalSince1970: 1_700_000_000))
+    }
+#endif
+
     private static func isCanonicalID(_ value: String) -> Bool {
         guard value.utf8.count == 22, value.utf8.allSatisfy({
             (48...57).contains($0) || (65...90).contains($0)

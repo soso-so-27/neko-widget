@@ -3,6 +3,10 @@ name: Private memo model diagnostic
 on:
   workflow_dispatch:
     inputs:
+      report_crypto_only:
+        description: Run selected-evidence encryption and recipient binding checks only
+        type: boolean
+        default: false
       anchor_receipts:
         description: Run native anchor receipt persistence and foreground retry checks only
         type: boolean
@@ -45,6 +49,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  report-crypto:
+    if: github.event_name == 'workflow_dispatch' && inputs.report_crypto_only
+    name: Selected report evidence crypto probe - not release evidence
+    runs-on: macos-15-intel
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Verify selected JPEG, pinned recipient and report domain
+        working-directory: NekoWidget
+        run: |
+          set -euo pipefail
+          xcrun swiftc -D GROUP_REPORT_CRYPTO_CHECKS -parse-as-library Shared/Sharing/SharingAPIConfiguration.swift Shared/Sharing/GroupReportCrypto.swift ci/verify-group-report-crypto.swift -o "$RUNNER_TEMP/report-crypto"
+          "$RUNNER_TEMP/report-crypto" ci/fixtures/group-report-v3.json | node ci/verify-group-report-crypto.mjs --swift-stdin
   anchor-receipts:
     if: github.event_name == 'workflow_dispatch' && inputs.anchor_receipts
     name: Native receipt retry probe - not release evidence
