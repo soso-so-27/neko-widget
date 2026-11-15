@@ -199,13 +199,14 @@ struct GroupRecoveryStateView: View {
                 ForEach(devices) { device in
                     Button { removing = device } label: {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(device.modelName).font(.body.weight(.semibold)).foregroundStyle(.primary)
+                            Text(device.modelName).font(.body.weight(.semibold))
                             Text(GroupRecoveryWords.registered(Self.day(device.registeredAt)))
                                 .font(.subheadline).foregroundStyle(.secondary)
                         }
                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                         .accessibilityElement(children: .combine)
                     }
+                    .tint(Color.primary)
                     .accessibilityIdentifier("group-recovery-device-\(device.id)")
                 }
             } header: {
@@ -238,9 +239,10 @@ struct GroupRecoveryStateView: View {
             Section {
                 ForEach(candidates) { candidate in
                     Button { choosing = candidate } label: {
-                        Text(candidate.text).foregroundStyle(.primary)
+                        Text(candidate.text)
                             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     }
+                    .tint(Color.primary)
                     .accessibilityIdentifier("group-recovery-root-\(candidate.id)")
                 }
             } header: {
@@ -260,7 +262,7 @@ struct GroupRecoveryStateView: View {
     private func header(_ screen: GroupRecoveryPresentation) -> some View {
         VStack(alignment: .leading, spacing: NekoSpacing.xxs) {
             Text(screen.title)
-                .font(.title3.weight(.bold)).foregroundStyle(.primary)
+                .font(.title3.weight(.bold)).foregroundStyle(Color.primary)
                 .accessibilityAddTraits(.isHeader)
             if let message = screen.message {
                 Text(message).font(.subheadline).foregroundStyle(.secondary)
@@ -392,7 +394,7 @@ enum GroupRecoverySamples {
 
     private static func date(_ year: Int, _ month: Int, _ day: Int) -> Date {
         Calendar(identifier: .gregorian).date(from: DateComponents(timeZone: TimeZone(identifier: "Asia/Tokyo"),
-                                                                    year: year, month: month, day: day)) ?? Date()
+                                                                    year: year, month: month, day: day, hour: 12)) ?? Date()
     }
 }
 
