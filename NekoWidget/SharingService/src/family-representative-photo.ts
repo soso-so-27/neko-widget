@@ -19,7 +19,7 @@ async function asset(env:Env,family:string,id:string):Promise<Asset>{
 }
 const receipt=(a:Asset)=>({schemaVersion:1,assetId:a.asset_id,uploadId:a.asset_id,expiresAt:a.expires_at,reservedRevision:a.revision,state:a.state});
 function photoChecks(env:Env,a:Asset,mode:'upload'|'commit'):D1PreparedStatement[]{
- const id=crypto.randomUUID();return [env.DB.prepare('INSERT INTO family_representative_commit_checks VALUES (?,?,?,?,?,?)').bind(id,a.family_id,a.slot_id,a.asset_id,a.revision-1,mode),env.DB.prepare('DELETE FROM family_representative_commit_checks WHERE id=?').bind(id)];
+ const id=crypto.randomUUID();return [env.DB.prepare("SELECT json(CASE WHEN EXISTS(SELECT 1 FROM family_representative_assets WHERE asset_id=? AND object_key=?) THEN 'true' ELSE 'photo_reservation_changed' END)").bind(a.asset_id,a.object_key),env.DB.prepare('INSERT INTO family_representative_commit_checks VALUES (?,?,?,?,?,?)').bind(id,a.family_id,a.slot_id,a.asset_id,a.revision-1,mode),env.DB.prepare('DELETE FROM family_representative_commit_checks WHERE id=?').bind(id)];
 }
 export async function familyRepresentativePhoto(request:Request,env:Env):Promise<Response>{
  try{
