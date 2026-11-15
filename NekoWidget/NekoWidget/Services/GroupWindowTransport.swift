@@ -155,7 +155,7 @@ final class SharingAutoCallBudget: @unchecked Sendable {
 
     /// The one way a request reaches the network (GroupURLSessionTransport):
     /// admitted or refused before anything is sent, and a 429 noted after.
-    static func gated(_ budget: SharingAutoCallBudget = .shared, at now: () -> Date = { Date() },
+    static func gated(_ budget: SharingAutoCallBudget = .shared, at now: @escaping () -> Date = { Date() },
                       _ network: (_ replied: (_ status: Int, _ retryAfter: String?) -> Void) async throws -> GroupHTTPReply)
         async throws -> GroupHTTPReply {
         try admit(budget, at: now())
