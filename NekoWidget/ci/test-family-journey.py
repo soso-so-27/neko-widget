@@ -165,6 +165,85 @@ class EmptyPhotosTests(unittest.TestCase):
         self.assertIn("openWindows: showsMadoTab ? { selectedTab = .windows } : nil", TABS)
 
 
+STORE = read("NekoWidget/Services/PlusPurchaseStore.swift")
+OFFER_VIEW = read("NekoWidget/Views/MembershipOfferView.swift")
+SHARING = read("NekoWidget/Services/FamilyNotebookSharing.swift")
+ACCESS = read("NekoWidget/Services/MembershipAccessContext.swift")
+
+
+class PurchaseWaitAndFamilyPause1115Tests(unittest.TestCase):
+    """11/15 (TestFlight 378): bought from the family notebook, the screen
+    waited until 「購入を復元」 by hand, the button was below the fold, and
+    「Plusを確認できました。」 stood under 「共有が止まっています」."""
+
+    def test_server_confirmation_is_asked_again_by_itself(self):
+        purchase = section(STORE, "    func purchase(\n", "    /// 11/15 (TestFlight 378)")
+        self.assertEqual(purchase.count("recheckServerConfirmationAfterPurchase()"), 2)
+        recheck = section(STORE, "private func recheckServerConfirmationAfterPurchase() {", "    /// AppStore.sync")
+        # Bounded, and only the server's answer can grant: the same re-check
+        # as 「購入を復元」, never a purchase, AppStore.sync or a local grant.
+        self.assertIn("for delay in Self.serverConfirmationRecheckDelays {", recheck)
+        self.assertIn("await store.refreshAfterForegroundEntry()", recheck)
+        self.assertIn("guard !store.isPurchasing, !store.isRestoring else { continue }", recheck)
+        for forbidden in ("AppStore.sync", "product.purchase", "entitlementState =", "canStartNewPurchase = true",
+                          "while true", "repeat {"):
+            self.assertNotIn(forbidden, recheck)
+        self.assertIn("store.awaitingServerConfirmation = true", recheck)
+        self.assertIn("serverConfirmationRecheckTask?.cancel()", section(STORE, "    func stop() {", "\n    }\n"))
+
+    def test_waiting_sheet_goes_on_once_plus_is_confirmed(self):
+        sheet = section(OFFER, "struct MembershipOfferSheet: View {", "enum PlusPurchaseContinuation {")
+        self.assertIn("awaitsConfirmation = result == .waiting && !model.isMember", sheet)
+        change = section(sheet, ".onChange(of: model.isMember) { _, member in", "private var offerScreen: some View {")
+        self.assertIn("guard member, awaitsConfirmation, !showsStarted else { return }", change)
+        self.assertIn("completePurchase()", change)
+        # A restore finishes the sheet itself, so it is not finished twice.
+        restore = section(sheet, "onRestore: {", "onClose:")
+        self.assertLess(restore.index("awaitsConfirmation = false"), restore.index("await model.restore()"))
+        # Membership still comes only from the store's server-confirmed state.
+        self.assertIn("isMember = purchases.entitlementState.permitsPersonalPlus", OFFER)
+
+    def test_restore_stands_under_the_line_that_asks_for_it(self):
+        self.assertIn('var asksForRestore: Bool { !isMember && (message?.contains("「購入を復元」") ?? false) }', OFFER)
+        self.assertIn("restoreNearMessage: model.asksForRestore", OFFER)
+        actions = section(OFFER_VIEW, "    private var actions: some View {", "    private var reassurance: some View {")
+        self.assertLess(actions.index('"membership-offer-message"'), actions.index("if restoreNearMessage {"))
+        self.assertLess(actions.index("if restoreNearMessage {"), actions.index('"membership-offer-manage"'))
+        footer = section(OFFER_VIEW, "@ViewBuilder private var footerLinkContent: some View {", "\n    }\n")
+        self.assertIn("if !restoreNearMessage { restoreButton }", footer)
+        # One 「購入を復元」 on the screen, the sheet's own (it finishes the sheet).
+        self.assertEqual(OFFER_VIEW.count("restoreButton\n"), 1)
+        self.assertEqual(OFFER_VIEW.count("if !restoreNearMessage { restoreButton }"), 1)
+        self.assertNotIn("MembershipRestoreButton(", OFFER_VIEW)
+
+    def test_family_is_read_again_after_plus_and_never_says_found_while_stopped(self):
+        after = section(SHARING, "func refreshAfterPlusChange() async -> Bool {", "\n    }\n")
+        self.assertIn("while refreshing {", after)
+        self.assertIn("return await refresh(reportsFailure: true)", after)
+        self.assertIn("guard !refreshing else { return false }", SHARING)
+        dismiss = section(NOTEBOOK, ".sheet(isPresented: $showsPlusOffer, onDismiss: {", "MembershipOfferSheet(model: .live()")
+        self.assertIn("if bought { await sharing.refreshAfterPlusChange() } else { await sharing.refresh() }", dismiss)
+        paused = section(NOTEBOOK, "private func pausedSection(_ pause: FamilySharingPause) -> some View {", "} footer: {")
+        self.assertEqual(paused.count("showsFound: false"), 2)
+        self.assertEqual(paused.count("Task { await recheckFamilyAfterPlus() }"), 2)
+        self.assertEqual(paused.count("familyAwaitsPlusLine"), 2)
+        # The check and its line are one row, so rows do not come and go mid-check.
+        self.assertEqual(paused.count(
+            "VStack(alignment: .leading, spacing: 8) {\n                        MembershipRestoreButton("), 2)
+        self.assertNotIn("Plusを確認できました", NOTEBOOK)
+        recheck = section(NOTEBOOK, "private func recheckFamilyAfterPlus() async {", "@ViewBuilder private var familyAwaitsPlusLine")
+        self.assertIn("guard await sharing.refreshAfterPlusChange() else { return }", recheck)
+        self.assertIn("PlusPurchaseContinuation.familyStillAwaitsPlus(", recheck)
+        self.assertIn('static let familyAwaitsPlus = "家族の手帳には、まだPlusが届いていません。少しおいて、もう一度確かめてください。"',
+                      NOTEBOOK)
+        button = section(ACCESS, "struct MembershipRestoreButton: View {", "private func restore() {")
+        self.assertIn("if showsFound {", button)
+        self.assertIn("showsFound: Bool = true", button)
+        self.assertIn("testFamilySaysItHasNotSeenThePlusOnlyWhileItStillStops", TESTS)
+        self.assertIn("testRestoreStandsUnderTheLineThatAsksForIt", TESTS)
+        self.assertIn("testServerConfirmationIsAskedAgainAFewTimesWithinTwoMinutes", TESTS)
+
+
 class RegistrationTests(unittest.TestCase):
     def test_native_tests_are_in_the_test_target(self):
         self.assertIn("path = FamilyJourneyTests.swift;", PROJECT)

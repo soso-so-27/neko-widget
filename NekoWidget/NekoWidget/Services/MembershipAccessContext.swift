@@ -246,15 +246,21 @@ struct MembershipRestoreButton: View {
     let identifier: String
     /// After a restore that found Plus. Plus checks are refreshed either way.
     let restored: () -> Void
+    /// 「Plusを確認できました。」 under the button. False where the place
+    /// says what the found Plus changed itself (the family notebook, 11/15:
+    /// it stood under 「共有が止まっています」).
+    let showsFound: Bool
     @StateObject private var model: MembershipOfferModel
     @State private var running = false
     @State private var found = false
 
     init(title: String = "購入を復元", look: Look = .prominent,
-         identifier: String = "membership-restore-submit", restored: @escaping () -> Void = {}) {
+         identifier: String = "membership-restore-submit", showsFound: Bool = true,
+         restored: @escaping () -> Void = {}) {
         self.title = title
         self.look = look
         self.identifier = identifier
+        self.showsFound = showsFound
         self.restored = restored
         _model = StateObject(wrappedValue: MembershipOfferModel.live(presentsOffer: false))
     }
@@ -265,10 +271,12 @@ struct MembershipRestoreButton: View {
             .accessibilityIdentifier(identifier)
             .task { await model.load() }
         if found {
-            Text("Plusを確認できました。")
-                .font(.footnote).foregroundStyle(.secondary)
-                .listRowBackground(Color.clear)
-                .accessibilityIdentifier("membership-restore-found")
+            if showsFound {
+                Text("Plusを確認できました。")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .listRowBackground(Color.clear)
+                    .accessibilityIdentifier("membership-restore-found")
+            }
         } else if !running, let message = model.message, !message.isEmpty {
             Text(message)
                 .font(.footnote)

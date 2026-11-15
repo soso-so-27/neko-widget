@@ -726,6 +726,9 @@ struct FamilyNotebookView: View {
     /// bought, 「わたしのPlusで再開する」 is done for the person (no second press).
     @State private var claimsAfterPlus = false
     @State private var boughtPlus = false
+    /// 11/15: 「Plusをもう一度確かめる」 found Plus, but the family read after
+    /// it still says sharing is stopped. Said in place of 「確認できました」.
+    @State private var familyAwaitsPlus = false
     @State private var showsName = false
     /// 「家族の手帳から抜ける」 at the bottom of the notebook (11/7).
     @State private var confirmsLeave = false
@@ -846,9 +849,12 @@ struct FamilyNotebookView: View {
             .sheet(isPresented: $showsPlusOffer, onDismiss: {
                 NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
                 let claims = claimsAfterPlus && boughtPlus
+                let bought = boughtPlus
                 claimsAfterPlus = false
                 Task {
-                    await sharing.refresh()
+                    // 11/15: a purchase is read by the family at once, never
+                    // dropped behind a background pass.
+                    if bought { await sharing.refreshAfterPlusChange() } else { await sharing.refresh() }
                     if claims { await claimPayerAfterPurchase() }
                 }
                 if createsAfterPlus { createsAfterPlus = false; showsName = boughtPlus }
@@ -1069,6 +1075,26 @@ extension FamilyNotebookView {
         _ = await sharing.perform { try await sharing.service.claimPayer(operationID: $0) }
     }
 
+    /// 11/15 (TestFlight 378): 「Plusをもう一度確かめる」 found Plus. Read the
+    /// family again at once; the paused box goes when the family sees the
+    /// Plus. If it still does not, say that, never 「確認できました」 under
+    /// 「共有が止まっています」.
+    private func recheckFamilyAfterPlus() async {
+        familyAwaitsPlus = false
+        guard await sharing.refreshAfterPlusChange() else { return }
+        familyAwaitsPlus = PlusPurchaseContinuation.familyStillAwaitsPlus(
+            pause: sharing.pause, hasPersonalPlus: access.hasPersonalPlus())
+    }
+
+    @ViewBuilder private var familyAwaitsPlusLine: some View {
+        if familyAwaitsPlus {
+            Text(FamilyNotebookWords.familyAwaitsPlus)
+                .font(.footnote).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("family-notebook-awaits-plus")
+        }
+    }
+
     /// Shown while new writing does not reach the family (1029e). Everything
     /// written stays; only sharing stops. After the payer left, anyone with
     /// Plus may carry it on, and someone without Plus may start it.
@@ -1090,9 +1116,14 @@ extension FamilyNotebookView {
                 // (11/6: the notebook said it would come back by itself). This
                 // iPhone shows Plus: check it again right here (11/7).
                 if access.hasPersonalPlus() {
-                    MembershipRestoreButton(title: "Plusをもう一度確かめる", look: .wide,
-                                            identifier: "family-notebook-payer-restore") {
-                        Task { await sharing.refresh() }
+                    // One row whatever the check shows (11/15: the app quit around
+                    // this check while rows came and went); the box goes as a whole.
+                    VStack(alignment: .leading, spacing: 8) {
+                        MembershipRestoreButton(title: "Plusをもう一度確かめる", look: .wide,
+                                                identifier: "family-notebook-payer-restore", showsFound: false) {
+                            Task { await recheckFamilyAfterPlus() }
+                        }
+                        familyAwaitsPlusLine
                     }
                 } else {
                     Button { showsPlusOffer = true } label: {
@@ -1118,9 +1149,14 @@ extension FamilyNotebookView {
                 } else if access.hasPersonalPlus() {
                     // This iPhone has Plus but the family side does not see it yet:
                     // check it again right here, never the offer (11/5, 11/7).
-                    MembershipRestoreButton(title: "Plusをもう一度確かめる", look: .wide,
-                                            identifier: "family-notebook-restore-plus") {
-                        Task { await sharing.refresh() }
+                    // One row whatever the check shows (11/15: the app quit around
+                    // this check while rows came and went); the box goes as a whole.
+                    VStack(alignment: .leading, spacing: 8) {
+                        MembershipRestoreButton(title: "Plusをもう一度確かめる", look: .wide,
+                                                identifier: "family-notebook-restore-plus", showsFound: false) {
+                            Task { await recheckFamilyAfterPlus() }
+                        }
+                        familyAwaitsPlusLine
                     }
                 } else {
                     Button { claimsAfterPlus = true; showsPlusOffer = true } label: {
@@ -1964,6 +2000,9 @@ enum FamilyNotebookWords {
         payer ? "抜けると、ほかの家族がPlusを始めるまで、家族みんなの共有が止まります。"
             : "これから書くことは家族に届かなくなります。"
     }
+
+    /// 11/15: this iPhone's Plus was found, but the family does not see it yet.
+    static let familyAwaitsPlus = "家族の手帳には、まだPlusが届いていません。少しおいて、もう一度確かめてください。"
 
     /// What stopped (1029e). That nothing written is lost is left to the help page (1031).
     static func pausedDetail(_ pause: FamilySharingPause) -> String {

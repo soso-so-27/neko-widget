@@ -40,8 +40,11 @@ final class FamilyNotebookSharing: ObservableObject {
 
     /// Background passes stay quiet: only something the person did, or asked to
     /// check again, shows a failure (11/5: the alert repeated while polling).
-    func refresh(reportsFailure: Bool = false) async {
-        guard !refreshing else { return }
+    /// Returns whether this pass read the family (false when another pass was
+    /// already running, or the read failed).
+    @discardableResult
+    func refresh(reportsFailure: Bool = false) async -> Bool {
+        guard !refreshing else { return false }
         refreshing = true; defer { refreshing = false }
         do {
             let loaded = try await service.loadState()
@@ -66,11 +69,28 @@ final class FamilyNotebookSharing: ObservableObject {
                 let nextRequests = next.membership == nil ? [] : syncing ? requests : try await real.pendingRequests()
                 if nextRequests != requests { requests = nextRequests }
             }
+            return true
         } catch is CancellationError {
             // Leaving the screen is not a service failure.
+            return false
         } catch {
             if reportsFailure { failure = error as? FamilySharingError ?? .serviceUnavailable }
+            return false
         }
+    }
+
+    /// 11/15 (TestFlight 378): after Plus was bought or confirmed on this
+    /// iPhone. A background pass already running may have read the family
+    /// before the Plus, and a second call during it was dropped, so
+    /// 「共有が止まっています」 stayed under 「Plusを確認できました。」. Waits
+    /// for that pass, then reads the family again, saying if it failed.
+    @discardableResult
+    func refreshAfterPlusChange() async -> Bool {
+        while refreshing {
+            do { try await Task.sleep(for: .milliseconds(100)) }
+            catch { return false }
+        }
+        return await refresh(reportsFailure: true)
     }
 
     /// Runs one operation with a fresh ID, then reads the state again.

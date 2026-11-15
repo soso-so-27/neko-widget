@@ -15,6 +15,9 @@ struct MembershipOfferView: View {
     let canPurchase: Bool
     let canRestore: Bool
     let message: String?
+    /// 11/15 (TestFlight 378): the message says to press 「購入を復元」, so the
+    /// one 「購入を復元」 moves from the links to right under it.
+    let restoreNearMessage: Bool
     let isMember: Bool
     /// 「11月9日まで使えます」 in place of 「Plusを利用中です」 when Plus will not renew.
     let memberEndLine: String?
@@ -86,6 +89,7 @@ struct MembershipOfferView: View {
         canPurchase: Bool,
         canRestore: Bool,
         message: String?,
+        restoreNearMessage: Bool = false,
         isMember: Bool = false,
         memberEndLine: String? = nil,
         purchaseTitle: String? = nil,
@@ -108,6 +112,7 @@ struct MembershipOfferView: View {
         self.canPurchase = canPurchase
         self.canRestore = canRestore
         self.message = message
+        self.restoreNearMessage = restoreNearMessage
         self.isMember = isMember
         self.memberEndLine = memberEndLine
         self.purchaseTitle = purchaseTitle
@@ -401,7 +406,15 @@ struct MembershipOfferView: View {
                     .announcesWhenShown(message)
             }
 
-            // No separate re-check: 「購入を復元」 below does both (11/5).
+            // 11/15: right under the line that asks for it, in the pinned
+            // bar, never also among the links (one place).
+            if restoreNearMessage {
+                restoreButton
+                    .font(.subheadline.weight(.semibold))
+                    .buttonStyle(.bordered)
+            }
+
+            // No separate re-check: 「購入を復元」 does both (11/5).
             if let onManageSubscription, isMember || canRefresh {
                 Button("サブスクリプションを管理", action: onManageSubscription)
                     .frame(minHeight: 44)
@@ -443,15 +456,7 @@ struct MembershipOfferView: View {
     }
 
     @ViewBuilder private var footerLinkContent: some View {
-        Button {
-            running = "購入を復元"
-            onRestore()
-        } label: {
-            WorkingLabel(title: "購入を復元", workingTitle: "確認しています…", working: running == "購入を復元" && isWorking)
-        }
-            .frame(minHeight: 44)
-            .disabled(isWorking || !canRestore)
-            .accessibilityIdentifier("membership-offer-restore")
+        if !restoreNearMessage { restoreButton }
         if let cancellationHelpURL = Self.cancellationHelpURL {
             Link("解約のしかた", destination: cancellationHelpURL)
                 .frame(minHeight: 44)
@@ -467,6 +472,20 @@ struct MembershipOfferView: View {
                 .frame(minHeight: 44)
                 .accessibilityIdentifier("membership-offer-privacy")
         }
+    }
+
+    /// The screen's one 「購入を復元」: among the links, or under the line
+    /// that asks for it (`restoreNearMessage`), never both.
+    private var restoreButton: some View {
+        Button {
+            running = "購入を復元"
+            onRestore()
+        } label: {
+            WorkingLabel(title: "購入を復元", workingTitle: "確認しています…", working: running == "購入を復元" && isWorking)
+        }
+            .frame(minHeight: 44)
+            .disabled(isWorking || !canRestore)
+            .accessibilityIdentifier("membership-offer-restore")
     }
 }
 
