@@ -1141,6 +1141,16 @@ enum AppStoreWidgetPreviewFixture {
             .init(id: "large-text-clear-birthday-two", revealed: true, dayKind: .milestone,
                   milestone: cats(.birthday, [("そら", 5), ("こむぎ", 3)]), largeText: true),
             .init(id: "cloudy-album", revealed: false, dayKind: .ordinary, albumPeriod: "2026-10"),
+            .init(id: "cloudy-adoption-one-year", revealed: false, dayKind: .milestone,
+                  milestone: cats(.adoption, [("そら", 1)])),
+            .init(id: "cloudy-adoption-two-same", revealed: false, dayKind: .milestone,
+                  milestone: cats(.adoption, [("そら", 4), ("こむぎ", 4)])),
+            .init(id: "cloudy-birthday-three", revealed: false, dayKind: .milestone,
+                  milestone: cats(.birthday, [("そら", 5), ("こむぎ", 3), ("もち", 2)])),
+            .init(id: "cloudy-birthday-name-years", revealed: false, dayKind: .milestone,
+                  milestone: cats(.birthday, [("4年", 5)])),
+            .init(id: "cloudy-birthday-name-kite", revealed: false, dayKind: .milestone,
+                  milestone: cats(.birthday, [("来て", 5)])),
         ]
     }()
 

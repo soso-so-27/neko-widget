@@ -239,6 +239,8 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
             "cloudy-adoption-one", "clear-date-same-day", "clear-date-near", "clear-birthday-one",
             "clear-birthday-two", "clear-birthday-two-long", "clear-adoption-one", "clear-ordinary",
             "large-text-cloudy-birthday-two", "large-text-clear-birthday-two", "cloudy-album",
+            "cloudy-adoption-one-year", "cloudy-adoption-two-same", "cloudy-birthday-three",
+            "cloudy-birthday-name-years", "cloudy-birthday-name-kite",
         ]
         let photos = ["bright", "dark"]
         let slotSeconds: TimeInterval = 8
@@ -264,7 +266,8 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         hierarchy.lifetime = .keepAlways
         add(hierarchy)
         // Pass 1: Small and Large. Pass 2: Medium added on top (Small moves on).
-        for pass in ["small-large", "medium"] {
+        // Medium was photographed on 11/15 (pass "medium"); one pass is enough now.
+        for pass in ["small-large"] {
             if pass == "medium" {
                 // Press the clear wallpaper below Large (not a Widget, whose
                 // own menu would open) to edit the Home Screen again.
