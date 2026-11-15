@@ -3350,7 +3350,8 @@ class GroupWindowUITests(unittest.TestCase):
         # 11/5: the 8-second pass stays quiet and waits while a sheet is open.
         self.assertIn("if reportsFailure || window == nil {", load)
         # 1115q: the pass is automatic, within this iPhone's call budget.
-        self.assertIn("if !presentsSheet {\n                    await SharingAutoCallBudget.$isAutomatic.withValue(true) { await model.load(reportsFailure: false) }", view)
+        # 1115s: unmarked, so automatic within this iPhone's call budget.
+        self.assertIn("if !presentsSheet { await model.load(reportsFailure: false) }", view)
         join = section(view, "func refresh(reportsFailure: Bool = false) async {", "func cancel() async {")
         self.assertIn("if reportsFailure { errorMessage = GroupWindowPresentation.message(for: error) }", join)
         self.assertIn(".refreshable { await model.refresh(reportsFailure: true) }", view)
@@ -5359,9 +5360,10 @@ class WorkingFeedbackTests(unittest.TestCase):
         window = source("NekoWidget/Views/GroupWindowView.swift")
         # Retry progress is the view's own: background loads must not redraw the list.
         self.assertNotIn("isLoading", window)
-        self.assertEqual(window.count("reloading = true; Task { defer { reloading = false }; await model.load() }"), 2)
+        # 1115s: 「もう一度」 is the person's own read.
+        self.assertEqual(window.count("reloading = true; Task { defer { reloading = false }; await SharingPersonAction.run { await model.load() } }"), 2)
         favorite = section(window, "func addToFavorites(", "func remove(")
-        self.assertIn("addingFavoriteID = entry.id\n        defer { addingFavoriteID = nil }", favorite)
+        self.assertIn("addingFavoriteID = entry.id\n            defer { addingFavoriteID = nil }", favorite)
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
         self.assertNotIn("isLoading", setup)
         self.assertIn("Task { defer { reloading = false }; await model.load() }", setup)
@@ -5578,7 +5580,7 @@ class JoinOwnWindowTests(unittest.TestCase):
     def test_a_link_to_a_window_already_joined_opens_it(self) -> None:
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
         self.assertIn("alreadyMember = windowID.map { GroupWidgetCache.entry(windowID: $0) != nil } ?? false", setup)
-        self.assertIn("} catch GroupInvitationError.alreadyMember {\n            alreadyMember = true", setup)
+        self.assertIn("} catch GroupInvitationError.alreadyMember {\n                alreadyMember = true", setup)
         self.assertIn('Label("もうこのまどに入っています", systemImage: "checkmark.circle")', setup)
         self.assertIn("windowID: invitation.windowID)", setup)
         self.assertNotIn('Text("招待されたまど")', setup)

@@ -190,16 +190,19 @@ final class GroupSafety: ObservableObject {
 
     @discardableResult
     func run<Value>(windowID: String, _ operation: () async throws -> Value) async -> Value? {
-        isWorking = true
-        defer { isWorking = false }
-        do {
-            let value = try await operation()
-            await load(windowID: windowID)
-            return value
-        } catch {
-            failure = error as? GroupSafetyError ?? .unknownOutcome
-            await load(windowID: windowID)
-            return nil
+        // 1115s: the person's own action, outside the automatic budget.
+        return await SharingPersonAction.run {
+            isWorking = true
+            defer { isWorking = false }
+            do {
+                let value = try await operation()
+                await load(windowID: windowID)
+                return value
+            } catch {
+                failure = error as? GroupSafetyError ?? .unknownOutcome
+                await load(windowID: windowID)
+                return nil
+            }
         }
     }
 }

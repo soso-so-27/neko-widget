@@ -47,6 +47,13 @@ final class FamilyNotebookSharing: ObservableObject {
     /// already running, or the read failed).
     @discardableResult
     func refresh(reportsFailure: Bool = false) async -> Bool {
+        // 1115s: a read the person asked for (pull to refresh, 「もう一度確認」,
+        // after their own operation) is theirs; a quiet pass is automatic.
+        guard reportsFailure else { return await read(reportsFailure: false) }
+        return await SharingPersonAction.run { await read(reportsFailure: true) }
+    }
+
+    private func read(reportsFailure: Bool) async -> Bool {
         guard !refreshing else { return false }
         refreshing = true; defer { refreshing = false }
         do {
@@ -114,26 +121,29 @@ final class FamilyNotebookSharing: ObservableObject {
     /// (an invitation link: the share sheet opens first, 11/15).
     @discardableResult
     func perform(readsAfter: Bool = true, _ operation: (UUID) async throws -> Void) async -> Bool {
-        // A background pass in flight must not swallow the person's tap.
-        while refreshing {
-            do { try await Task.sleep(for: .milliseconds(100)) }
-            catch { return false }
-        }
-        guard !Task.isCancelled, !isWorking else { return false }
-        isWorking = true
-        defer { isWorking = false }
-        do {
-            try await operation(UUID())
-            if readsAfter { await refreshAfterChange() }
-            // A made family, a join or an approval: the schedule takes over.
-            FamilyNotebookAutoCheck.shared.nudge()
-            return true
-        } catch is CancellationError {
-            return false
-        } catch {
-            failure = error as? FamilySharingError ?? .unknownOutcome
-            await refreshAfterChange()
-            return false
+        // 1115s: the person's own action, outside the automatic budget.
+        return await SharingPersonAction.run {
+            // A background pass in flight must not swallow the person's tap.
+            while refreshing {
+                do { try await Task.sleep(for: .milliseconds(100)) }
+                catch { return false }
+            }
+            guard !Task.isCancelled, !isWorking else { return false }
+            isWorking = true
+            defer { isWorking = false }
+            do {
+                try await operation(UUID())
+                if readsAfter { await refreshAfterChange() }
+                // A made family, a join or an approval: the schedule takes over.
+                FamilyNotebookAutoCheck.shared.nudge()
+                return true
+            } catch is CancellationError {
+                return false
+            } catch {
+                failure = error as? FamilySharingError ?? .unknownOutcome
+                await refreshAfterChange()
+                return false
+            }
         }
     }
 
@@ -283,15 +293,14 @@ final class FamilyNotebookAutoCheck {
                lastPassAt.map({ at > $0 }) ?? true {
                 lastPassAt = at; lastFullAt = at; read = true
             } else if !holdsRedraw && !sharing.isWorking {
-                await SharingAutoCallBudget.$isAutomatic.withValue(true) {
-                    switch pass {
-                    case .full:
-                        await sharing.refresh()
-                        if let membership = sharing.state.membership { model.rememberShown(membership) }
-                        if model.hasFamily { try? await model.copyTools(); model.applyFamilyWrites() }
-                    case .requestsOnly:
-                        await sharing.refreshRequests()
-                    }
+                // Unmarked: automatic, within this iPhone's call budget (1115s).
+                switch pass {
+                case .full:
+                    await sharing.refresh()
+                    if let membership = sharing.state.membership { model.rememberShown(membership) }
+                    if model.hasFamily { try? await model.copyTools(); model.applyFamilyWrites() }
+                case .requestsOnly:
+                    await sharing.refreshRequests()
                 }
                 let now = Date()
                 lastPassAt = now

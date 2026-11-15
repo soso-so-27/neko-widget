@@ -56,11 +56,13 @@ struct GroupHostBillingSigner: GroupBillingSigner {
     }
 }
 
-/// 11/15 (1115q): the relay allows 120 calls a minute per address (two
-/// iPhones on one Wi-Fi share it). Every automatic call of the まど and the
-/// family notebook on this iPhone counts here: 30 in any 60 seconds at most,
-/// and none for at least a minute after a 429. What the person pressed is
-/// never counted or held back here.
+/// 11/15 (1115q, 1115s): the relay allows 120 calls a minute per address
+/// (two iPhones on one Wi-Fi share it). Every call of the まど and the family
+/// notebook goes through here and is automatic unless the person's own tap
+/// marks it (`SharingPersonAction.run`): a call added later without a mark is
+/// counted and held back, never let through. Automatic calls: 30 in any 60 s,
+/// none for at least a minute after a 429. All calls of this iPhone, taps
+/// included: 59 in any 60 s, so two iPhones stay under the relay's 120.
 struct SharingCallWindow: Sendable {
     let limit: Int
     let seconds: TimeInterval
@@ -85,29 +87,42 @@ struct SharingCallWindow: Sendable {
     }
 }
 
-/// An automatic call that was not sent: over the budget, or paused after a
-/// 429. Nothing reached the relay; the next scheduled pass tries again.
-struct SharingCallDeferred: Error, Sendable { let until: Date }
-
 final class SharingAutoCallBudget: @unchecked Sendable {
     static let shared = SharingAutoCallBudget()
+    /// Automatic calls of one iPhone in any 60 s.
     static let perMinute = 30
+    /// All calls of one iPhone in any 60 s, taps included: two iPhones on
+    /// one address stay under the relay's 120.
+    static let devicePerMinute = 59
     /// No Retry-After: at least this long after a 429.
     static let rateLimitedPause: TimeInterval = 60
-    /// Set by the automatic passes only (the family notebook's one schedule,
-    /// the まど's waiting lists). Taps and pull-to-refresh leave it false.
-    @TaskLocal static var isAutomatic = false
+    /// Set only by the person's own action (a tap, pull to refresh, opening
+    /// a link). Everything else, a call nobody marked included, is automatic.
+    @TaskLocal static var isPersonAction = false
 
     private let lock = NSLock()
-    private var window: SharingCallWindow
+    private var automatic: SharingCallWindow
+    private var all: SharingCallWindow
     private var pausedUntil: Date?
 
-    init(limit: Int = SharingAutoCallBudget.perMinute) { window = SharingCallWindow(limit: limit) }
+    init(limit: Int = SharingAutoCallBudget.perMinute, deviceLimit: Int = SharingAutoCallBudget.devicePerMinute) {
+        automatic = SharingCallWindow(limit: limit)
+        all = SharingCallWindow(limit: deviceLimit)
+    }
 
-    func admitAutomatic(at now: Date = Date()) throws {
+    /// Takes one call or refuses it. A refused call was never sent: the
+    /// caller sees the same error as the relay's own 「少しおいて」 answer.
+    func admit(personAction: Bool, at now: Date = Date()) throws {
         lock.lock(); defer { lock.unlock() }
-        if let pausedUntil, now < pausedUntil { throw SharingCallDeferred(until: pausedUntil) }
-        guard window.admit(at: now) else { throw SharingCallDeferred(until: now.addingTimeInterval(1)) }
+        if personAction {
+            guard all.admit(at: now) else { throw GroupClientError.unavailable }
+            return
+        }
+        if let pausedUntil, now < pausedUntil { throw GroupClientError.unavailable }
+        guard automatic.count(at: now) < automatic.limit, all.count(at: now) < all.limit else {
+            throw GroupClientError.unavailable
+        }
+        _ = automatic.admit(at: now); _ = all.admit(at: now)
     }
 
     func noteRateLimited(retryAfter: TimeInterval?, at now: Date = Date()) {
@@ -125,19 +140,65 @@ final class SharingAutoCallBudget: @unchecked Sendable {
 
     func automaticCalls(at now: Date = Date()) -> Int {
         lock.lock(); defer { lock.unlock() }
-        return window.count(at: now)
+        return automatic.count(at: now)
+    }
+
+    func allCalls(at now: Date = Date()) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return all.count(at: now)
     }
 
     /// The gate every transport puts in front of a request.
-    static func admitIfAutomatic(_ budget: SharingAutoCallBudget = .shared, at now: Date = Date()) throws {
-        guard isAutomatic else { return }
-        try budget.admitAutomatic(at: now)
+    static func admit(_ budget: SharingAutoCallBudget = .shared, at now: Date = Date()) throws {
+        try budget.admit(personAction: isPersonAction, at: now)
+    }
+
+    /// The one way a request reaches the network (GroupURLSessionTransport):
+    /// admitted or refused before anything is sent, and a 429 noted after.
+    static func gated(_ budget: SharingAutoCallBudget = .shared, at now: () -> Date = { Date() },
+                      _ network: (_ replied: (_ status: Int, _ retryAfter: String?) -> Void) async throws -> GroupHTTPReply)
+        async throws -> GroupHTTPReply {
+        try admit(budget, at: now())
+        let replyTime = now()
+        return try await network { status, retryAfter in
+            noteReply(status: status, retryAfter: retryAfter, budget, at: replyTime)
+        }
     }
 
     /// What a 429 reply sets, whoever made the call.
     static func noteReply(status: Int, retryAfter: String?, _ budget: SharingAutoCallBudget = .shared, at now: Date = Date()) {
         guard status == 429 else { return }
-        budget.noteRateLimited(retryAfter: retryAfter.flatMap { TimeInterval($0.trimmingCharacters(in: .whitespaces)) }, at: now)
+        budget.noteRateLimited(retryAfter: retryAfter.flatMap { retryAfterSeconds($0, now: now) }, at: now)
+    }
+
+    /// Retry-After as seconds or as an HTTP date (RFC 9110).
+    static func retryAfterSeconds(_ value: String, now: Date = Date()) -> TimeInterval? {
+        let text = value.trimmingCharacters(in: .whitespaces)
+        if let seconds = TimeInterval(text) { return seconds }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        return formatter.date(from: text).map { $0.timeIntervalSince(now) }
+    }
+}
+
+/// 1115s: a check that comes with coming to the front (the まど list, the
+/// admission and notification registration, the trust-anchor receipts) does
+/// not run again within 20 s of the last one.
+enum SharingForegroundGap {
+    static let seconds: TimeInterval = 20
+    static func allows(since last: Date?, now: Date = Date()) -> Bool {
+        last.map { now.timeIntervalSince($0) >= seconds } ?? true
+    }
+}
+
+/// The person's own action: its calls are not held to the automatic budget
+/// (only to the iPhone's 59 a minute). Tasks started inside inherit it; a
+/// detached task or a send saved for later does not, and is automatic.
+enum SharingPersonAction {
+    static func run<T>(_ work: () async throws -> T) async rethrows -> T {
+        try await SharingAutoCallBudget.$isPersonAction.withValue(true, operation: work)
     }
 }
 
@@ -158,8 +219,15 @@ final class GroupURLSessionTransport: GroupHTTPTransport, Sendable {
     }
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
         try ClientUpgradeRequirement.shared.checkAllowed()
-        // 11/15 (1115q): automatic passes stay within this iPhone's budget.
-        try SharingAutoCallBudget.admitIfAutomatic()
+        // 11/15 (1115q, 1115s): every call passes the gate first; unmarked ones
+        // are automatic. The checks drive this same gate with the network replaced.
+        return try await SharingAutoCallBudget.gated { replied in
+            try await network(request, maximumBytes: maximumBytes, replied: replied)
+        }
+    }
+
+    private func network(_ request: URLRequest, maximumBytes: Int,
+                         replied: (_ status: Int, _ retryAfter: String?) -> Void) async throws -> GroupHTTPReply {
         var request = request
         request.setValue(ClientUpgradeRequirement.buildHeader, forHTTPHeaderField: "X-Neko-App-Build")
         do {
@@ -174,7 +242,7 @@ final class GroupURLSessionTransport: GroupHTTPTransport, Sendable {
                 guard data.count < maximumBytes else { throw GroupClientError.invalidResponse }
                 data.append(byte)
             }
-            SharingAutoCallBudget.noteReply(status: http.statusCode, retryAfter: http.value(forHTTPHeaderField: "Retry-After"))
+            replied(http.statusCode, http.value(forHTTPHeaderField: "Retry-After"))
             try ClientUpgradeRequirement.shared.checkResponse(status: http.statusCode, data: data)
             return .init(status: http.statusCode, data: data)
         } catch let error as URLError {

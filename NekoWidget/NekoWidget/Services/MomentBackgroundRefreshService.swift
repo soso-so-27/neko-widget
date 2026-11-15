@@ -374,13 +374,21 @@ final class GroupAdmissionService: ObservableObject {
     private var rerun = false
     private var permissionRequested = false
     private var refreshingWidgets = Set<String>()
+    /// 1115s: coming to the front, the notification registration and a
+    /// notification all ask for this; within 20 s of the last one it does not
+    /// run again (all of it is automatic, within this iPhone's call budget).
+    private var lastRefreshAt: Date?
 
     func register(deviceToken: Data, epoch: UInt64) async {
         guard epoch >= tokenEpoch else { return }
         tokenEpoch = epoch; token = deviceToken
-        await refresh()
+        await refresh(force: true)
     }
-    func refresh(requestPermission: Bool = false) async {
+    /// `force`: a new device token or the person's own join must be told
+    /// even right after another check.
+    func refresh(requestPermission: Bool = false, force: Bool = false) async {
+        guard requestPermission || force || SharingForegroundGap.allows(since: lastRefreshAt) else { return }
+        lastRefreshAt = Date()
         permissionRequested = permissionRequested || requestPermission
         rerun = true
         guard !running else { return }
@@ -434,7 +442,8 @@ final class GroupAdmissionService: ObservableObject {
         await refresh()
         await refreshWidgetPhotos(windowID: route.windowID)
         // Explicit tap may navigate only AFTER authenticated membership, roster and key loading.
-        if open, (try? await client.window(id: route.windowID)) != nil {
+        // 1115s: the tap is the person's own; this one read of the window is theirs.
+        if open, (try? await SharingPersonAction.run({ try await client.window(id: route.windowID) })) != nil {
             GroupWindowOpenInbox.shared.open(windowID: route.windowID)
         }
         return true

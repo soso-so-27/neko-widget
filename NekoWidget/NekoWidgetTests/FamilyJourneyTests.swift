@@ -118,15 +118,30 @@ final class FamilyJourneyTests: XCTestCase {
     }
 
     func testAutomaticCallsStayWithin30AMinuteAndPauseAfter429() throws {
-        let budget = SharingAutoCallBudget(limit: 30), start = Date()
-        for i in 0..<30 { XCTAssertNoThrow(try budget.admitAutomatic(at: start.addingTimeInterval(Double(i)))) }
-        XCTAssertThrowsError(try budget.admitAutomatic(at: start.addingTimeInterval(59)))
-        XCTAssertNoThrow(try budget.admitAutomatic(at: start.addingTimeInterval(60.5)))
+        let budget = SharingAutoCallBudget(), start = Date()
+        for i in 0..<30 { XCTAssertNoThrow(try budget.admit(personAction: false, at: start.addingTimeInterval(Double(i)))) }
+        XCTAssertThrowsError(try budget.admit(personAction: false, at: start.addingTimeInterval(59)))
+        XCTAssertNoThrow(try budget.admit(personAction: false, at: start.addingTimeInterval(60.5)))
         budget.noteRateLimited(retryAfter: nil, at: start.addingTimeInterval(61))
-        XCTAssertThrowsError(try budget.admitAutomatic(at: start.addingTimeInterval(120)))
-        XCTAssertNoThrow(try budget.admitAutomatic(at: start.addingTimeInterval(122)))
-        // A tap is never held back by the budget.
-        XCTAssertNoThrow(try SharingAutoCallBudget.admitIfAutomatic(budget, at: start.addingTimeInterval(122)))
+        XCTAssertThrowsError(try budget.admit(personAction: false, at: start.addingTimeInterval(120)))
+        // A tap goes during the pause; it is not automatic.
+        XCTAssertNoThrow(try budget.admit(personAction: true, at: start.addingTimeInterval(120)))
+        XCTAssertNoThrow(try budget.admit(personAction: false, at: start.addingTimeInterval(122)))
+        // 1115s: a call nobody marked is automatic.
+        XCTAssertFalse(SharingAutoCallBudget.isPersonAction)
+        let unmarked = SharingAutoCallBudget()
+        try SharingAutoCallBudget.admit(unmarked, at: start)
+        XCTAssertEqual(unmarked.automaticCalls(at: start), 1)
+    }
+
+    func testTapsStopAtTheIPhonesLimitSoTwoIPhonesStayUnder120() {
+        let budget = SharingAutoCallBudget(), start = Date()
+        var taps = 0
+        while (try? budget.admit(personAction: true, at: start)) != nil, taps < 200 { taps += 1 }
+        XCTAssertEqual(taps, SharingAutoCallBudget.devicePerMinute)
+        XCTAssertLessThan(2 * SharingAutoCallBudget.devicePerMinute, 120)
+        // The iPhone's minute is full: nothing automatic either.
+        XCTAssertThrowsError(try budget.admit(personAction: false, at: start))
     }
 
     // MARK: - A5: one press makes and sends the family invitation
