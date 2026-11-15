@@ -63,7 +63,7 @@ class DayRuleNumberTests(unittest.TestCase):
         self.assertIn("date.timeIntervalSince(captured) <= Double(newPhotoDays) * 86_400", new)
         old = section(CLOUDY, "static func isOldPhoto(", "static func dayNumber(_ date: Date)")
         self.assertIn("date.timeIntervalSince($0) > Double(newPhotoDays) * 86_400 } ?? true", old)
-        check = section(CLOUDY, "private func isNew(_ photoID: String", "/// 11/15: ハート")
+        check = section(CLOUDY, "private func isNew(_ photoID: String", "private func quality(")
         self.assertIn("!state.seenPhotoIDs.contains(photoID)", check)
         self.assertIn("$0.scopeID == scopeID && $0.day < date && $0.photoID == photoID", check)
 
@@ -77,7 +77,7 @@ class ChooseOrderTests(unittest.TestCase):
 
     def test_new_then_date_then_ordinary(self) -> None:
         new = CHOOSE.index("if !hadKind(.new, within: splits ? Self.newDayGap : 2, before: date, in: previous) {")
-        date = CHOOSE.index("if splits, !hadKind(.date, within: Self.dateDayGap, before: date, in: previous) {")
+        date = CHOOSE.index("if splits, !hadKind(.date, within: Self.dateDayGap, before: date, in: previous),")
         ordinary = CHOOSE.index("// Ordinary day. With enough older photos, only those.")
         turns = CHOOSE.index("var selectedProfile = profile")
         self.assertLess(new, date)
@@ -96,13 +96,17 @@ class ChooseOrderTests(unittest.TestCase):
         self.assertLess(new.index("if dayA != dayB { return dayA > dayB }"),
                         new.index("if qualityA != qualityB { return qualityA < qualityB }"))
         quality = section(CLOUDY, "private func quality(", "private func hadKind(")
-        self.assertIn("(metadata?.isFavorite == true ? 0 : 4) + (metadata?.isSaved == true ? 0 : 2) + (fits ? 0 : 1)",
+        # The app's heart (record.liked), then the Photos favorite, as the
+        # pool's weights (liked 3x, favorite 2x).
+        self.assertIn("(metadata?.isLiked == true ? 0 : 4) + (metadata?.isPhotosFavorite == true ? 0 : 2) + (fits ? 0 : 1)",
                       quality)
+        selectors = read("NekoWidget/Services/PhotoSelectors.swift")
+        self.assertLess(selectors.index("if asset.liked { value *= 3 }"), selectors.index("if asset.isFavorite { value *= 2 }"))
         self.assertIn("$0.compositionMode == .catFullBleed", quality)
 
     def test_date_day_prefers_same_day_and_unshown_years(self) -> None:
         date = section(CHOOSE, "if splits, !hadKind(.date,", "// Ordinary day.")
-        self.assertIn("for photo in candidates where !recent.contains(photo.photoID) {", date)
+        self.assertIn("for photo in candidates where !recent.contains(photo.photoID)\n", date)
         self.assertIn("let rank = [match.offset > 0 ? 1 : 0, datedYears.contains(year) ? 1 : 0,", date)
         match = section(CLOUDY, "static func dateMatch(capturedDay: Int, targetDay: Int)", "static func dateMatch(takenAt")
         self.assertIn("if offset <= dateWindowDays", match)
@@ -122,13 +126,13 @@ class ChooseOrderTests(unittest.TestCase):
                      "var dateSameDay: Bool? = nil", "var chosenAt: Date? = nil"):
             self.assertIn(line, selection)
         metadata = section(CLOUDY, "struct CloudyWindowPhotoMetadata: Codable", "enum CloudyWindowDayKind")
-        self.assertIn("var isFavorite: Bool? = nil", metadata)
-        self.assertIn("var isSaved: Bool? = nil", metadata)
+        self.assertIn("var isLiked: Bool? = nil", metadata)
+        self.assertIn("var isPhotosFavorite: Bool? = nil", metadata)
         state = section(CLOUDY, "private struct CloudyWindowState: Codable {", "/// All experiment metadata")
         self.assertIn("var version = 1", state)
         self.assertIn("var libraryChangedAt: Date? = nil", state)
         self.assertIn("var datedYears: Set<Int>? = nil", state)
-        self.assertIn("isFavorite: record.isFavorite, isSaved: record.liked)", VIEW_MODEL)
+        self.assertIn("isLiked: record.liked, isPhotosFavorite: record.isFavorite)", VIEW_MODEL)
         # Selections are kept 40 days: enough for the 2- and 6-day gaps.
         self.assertIn("now.timeIntervalSince(selection.day) > 40 * 86_400", CLOUDY)
 
@@ -141,7 +145,8 @@ class TomorrowTests(unittest.TestCase):
         self.assertIn("(planned.chosenAt ?? .distantPast) < changed", swap)
         self.assertLess(timeline.index("selection?.albumPeriod != arrival.period"), timeline.index(swap))
         sync = section(CLOUDY, "func synchronize(metadata:", "func synchronizeAlbumArrival(")
-        self.assertIn("if state.metadata != kept || state.profiles != profiles { state.libraryChangedAt = now }", sync)
+        self.assertIn("if state.metadata != kept || state.profiles != profiles || (state.profileMilestones ?? [:]) != coming\n", sync)
+        self.assertIn("|| (state.departedProfileIDs ?? []) != gone {", sync)
         publish = section(CLOUDY, "func publish(_ photo:", "func timeline(")
         self.assertIn("state.libraryChangedAt = now", publish)
 
@@ -159,7 +164,8 @@ class PoolTests(unittest.TestCase):
     def test_the_pool_of_100_gets_them_from_loaded_dates(self) -> None:
         rebuild = section(VIEW_MODEL, "private func performRebuildWidgetCache(", "private func clearAlbumAndWidgetOutputs(")
         self.assertIn("CloudyWindowStore.newPhotoIDs(cats.filter { $0.lastShownAt == nil },", rebuild)
-        self.assertIn(".union(CloudyWindowStore.datePhotoIDs(cats,", rebuild)
+        self.assertIn(".union(cloudyWindowDatePhotoIDs(cats))", rebuild)
+        self.assertIn("CloudyWindowStore.datePhotoIDs(cats, id: { $0.localIdentifier }, takenAt: { $0.creationDate })", VIEW_MODEL)
         self.assertEqual(rebuild.count("albumPriorityPhotoIDs().union(cloudyPriorityPhotos)"), 2)
         dates = section(CLOUDY, "static func datePhotoIDs<", "func configuration()")
         self.assertNotIn("calendar", dates.lower().replace("no calendar", ""))

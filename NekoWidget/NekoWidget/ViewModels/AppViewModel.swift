@@ -3620,7 +3620,8 @@ final class AppViewModel: ObservableObject {
                 let cats = input.assets.lazy.filter { $0.isCatCandidate && !$0.isScreenshot }
                 cloudyPriorityPhotos = CloudyWindowStore.newPhotoIDs(cats.filter { $0.lastShownAt == nil },
                     id: { $0.localIdentifier }, takenAt: { $0.creationDate })
-                    .union(CloudyWindowStore.datePhotoIDs(cats, id: { $0.localIdentifier }, takenAt: { $0.creationDate }))
+                    .union(cloudyWindowDatePhotoIDs(cats))
+                    .union(cloudyWindowMilestonePhotoIDs(cloudyWindowMilestones()))
             } else {
                 cloudyPriorityPhotos = []
             }
@@ -3924,18 +3925,110 @@ final class AppViewModel: ObservableObject {
 
     private func performSynchronizeCloudyWindowMetadata(input: LibrarySnapshot? = nil) throws {
         guard CloudyWindowAvailability.isAvailable else { return }
-        let key = input == nil ? widgetAuthorityKey : nil
-        let metadata: [String: CloudyWindowPhotoMetadata]
-        if let cached = cloudyMetadataCache.reusable(for: key, uptime: 0) {
-            metadata = cached
-        } else {
-            metadata = makeCloudyWindowMetadata(source: input ?? candidateSnapshot(snapshot))
-            cloudyMetadataCache.record(metadata, for: key, uptime: 0)
-        }
         // The store still runs each time: it keeps only the photos its
         // current candidates need, and a Widget refill adds candidates.
-        try CloudyWindowStore.shared.synchronize(metadata: metadata,
-            profiles: Dictionary(uniqueKeysWithValues: catProfiles.map { ($0.id.uuidString.lowercased(), $0.displayName) }))
+        try CloudyWindowStore.shared.synchronize(metadata: cloudyWindowMetadata(input: input),
+            profiles: Dictionary(uniqueKeysWithValues: catProfiles.map { ($0.id.uuidString.lowercased(), $0.displayName) }),
+            milestones: cloudyWindowMilestones(),
+            departed: cloudyWindowDepartedProfileIDs())
+    }
+
+    private func cloudyWindowMetadata(input: LibrarySnapshot? = nil) -> [String: CloudyWindowPhotoMetadata] {
+        let key = input == nil ? widgetAuthorityKey : nil
+        if let cached = cloudyMetadataCache.reusable(for: key, uptime: 0) { return cached }
+        let metadata = makeCloudyWindowMetadata(source: input ?? candidateSnapshot(snapshot))
+        cloudyMetadataCache.record(metadata, for: key, uptime: 0)
+        return metadata
+    }
+
+    /// 11/15 節目: each living cat's coming birthday (its year known) and the
+    /// day it came home, a year or more on, within the next year. The same
+    /// dates and the same count as the cat's page (CatHomeFacts.make and
+    /// CatHomeCareCore.heroDay). Keys as in the store's profiles.
+    private func cloudyWindowMilestones(now: Date = .now) -> [String: [CloudyWindowMilestoneDay]] {
+        let calendar = Calendar.nekoGregorian
+        guard let today = CatCareDay(date: now, calendar: calendar) else { return [:] }
+        let departed = Version1.isOn ? CatFarewell.departedIdentifiers() : []
+        let records = CatCareStore.shared.state?.cats ?? []
+        var result: [String: [CloudyWindowMilestoneDay]] = [:]
+        for profile in catProfiles where !departed.contains(profile.id.uuidString) {
+            let record = records.first { $0.profileID == profile.id }
+            func lifeDay(_ kind: CatLifeReferenceKind) -> CatCareDay? {
+                profile.lifeReference(for: kind)?.date.date().flatMap { CatCareDay(date: $0, calendar: calendar) }
+            }
+            let profileBirthday = lifeDay(.birthday)
+            let birthday = profileBirthday ?? record?.birthday?.value
+            let birthdayApproximate = profileBirthday != nil && profile.isLifeReferenceApproximate(for: .birthday)
+            let adoption: CatCareDay? = if let shared = record?.adoptionDay { shared.value?.day } else { lifeDay(.adoptionDay) }
+            var days = Set<CatCareDay>()
+            for base in [birthday, adoption].compactMap({ $0 }) {
+                for year in [today.year, today.year + 1] {
+                    if let next = CatHomeCareCore.occurrence(of: base, in: year), next >= today { days.insert(next) }
+                }
+            }
+            var marks: [CloudyWindowMilestoneDay] = []
+            for day in days.sorted() {
+                guard let start = CloudyWindowStore.calendar.date(
+                    from: DateComponents(year: day.year, month: day.month, day: day.day)) else { continue }
+                switch CatHomeCareCore.heroDay(birthday: birthday, birthdayYearKnown: !birthdayApproximate,
+                                               adoption: adoption, today: day) {
+                case let .birthday(years?)?:
+                    marks.append(.init(day: start, kind: CloudyWindowMilestoneKind.birthday.rawValue, years: years))
+                case let .adoption(years)?:
+                    marks.append(.init(day: start, kind: CloudyWindowMilestoneKind.adoption.rawValue, years: years))
+                default: break
+                }
+            }
+            if !marks.isEmpty { result[profile.id.uuidString.lowercased()] = marks }
+        }
+        return result
+    }
+
+    /// 11/15: cats whose 旅立った日 is recorded, as the store's profile keys.
+    private func cloudyWindowDepartedProfileIDs() -> Set<String> {
+        guard Version1.isOn else { return [] }
+        let departed = CatFarewell.departedIdentifiers()
+        return Set(catProfiles.filter { departed.contains($0.id.uuidString) }.map { $0.id.uuidString.lowercased() })
+    }
+
+    /// 11/15: the coming week's date photos for the pool, never a photo of
+    /// only cats that have died (it would never be chosen on a date day).
+    private func cloudyWindowDatePhotoIDs<S: Sequence>(_ cats: S) -> Set<String> where S.Element == AssetRecord {
+        let departed = cloudyWindowDepartedProfileIDs()
+        let picks = CloudyWindowStore.datePhotoIDs(cats, id: { $0.localIdentifier }, takenAt: { $0.creationDate })
+        guard !departed.isEmpty, !picks.isEmpty else { return picks }
+        let metadata = cloudyWindowMetadata()
+        return picks.filter { id in
+            guard let profiles = metadata[id]?.profileIDs, !profiles.isEmpty else { return true }
+            return !profiles.isSubset(of: departed)
+        }
+    }
+
+    /// 11/15 節目: photos of the cats whose day comes within the week, so
+    /// the bounded pool holds them: one with all of them first, then up to
+    /// three of each (the app's heart and the Photos favorite first, then
+    /// newest). Nothing to do on most days.
+    private func cloudyWindowMilestonePhotoIDs(_ milestones: [String: [CloudyWindowMilestoneDay]],
+                                               now: Date = .now) -> Set<String> {
+        let end = now.addingTimeInterval(8 * 86_400)
+        let cats = Set(milestones.filter { $0.value.contains { $0.day >= CloudyWindowStore.calendar.startOfDay(for: now)
+            && $0.day <= end } }.keys)
+        guard !cats.isEmpty else { return [] }
+        let photos = cloudyWindowMetadata().filter { !$0.value.profileIDs.isDisjoint(with: cats) && $0.value.isProbableCat != true }
+            .sorted { lhs, rhs in
+                let a = (lhs.value.isLiked == true ? 2 : 0) + (lhs.value.isPhotosFavorite == true ? 1 : 0)
+                let b = (rhs.value.isLiked == true ? 2 : 0) + (rhs.value.isPhotosFavorite == true ? 1 : 0)
+                if a != b { return a > b }
+                return (lhs.value.creationDate ?? .distantPast) > (rhs.value.creationDate ?? .distantPast)
+            }
+        var picked = Set<String>()
+        if cats.count > 1, let together = photos.first(where: { cats.isSubset(of: $0.value.profileIDs) }) {
+            picked.insert(together.key)
+        }
+        for cat in cats {
+            picked.formUnion(photos.filter { $0.value.profileIDs.contains(cat) }.prefix(3).map { $0.key })
+        }
+        return picked
     }
 
     private func makeCloudyWindowMetadata(source: LibrarySnapshot) -> [String: CloudyWindowPhotoMetadata] {
@@ -3967,7 +4060,7 @@ final class AppViewModel: ObservableObject {
                 profileIDs: Set(profiles.map { $0.uuidString.lowercased() }),
                 previouslyShown: record.shownCount > 0 || record.lastShownAt != nil,
                 isProbableCat: !isConfidentCatForPicks(record),
-                isFavorite: record.isFavorite, isSaved: record.liked)
+                isLiked: record.liked, isPhotosFavorite: record.isFavorite)
         }
         return metadata
     }

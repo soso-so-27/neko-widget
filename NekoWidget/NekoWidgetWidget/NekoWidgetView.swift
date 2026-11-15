@@ -137,24 +137,37 @@ struct NekoWidgetView: View {
                             ZStack {
                                 if selection.revealedAt == nil {
                                     // Says what you get, not the verb: 「晴らす」 alone was unclear.
+                                    // A 節目 day says whose day it is (11/15), in a shorter
+                                    // form when the longer does not fit on one line.
                                     Button(intent: RevealCloudyWindowIntent(selection: selection)) {
-                                        Label(selection.albumPeriod == nil ? "タップで、きょうの1枚" : "作品がとどきました",
-                                              systemImage: "hand.tap.fill")
-                                            .font(.caption.weight(.semibold))
-                                            .foregroundStyle(.white)
-                                            .padding(.horizontal, 12).padding(.vertical, 7)
-                                            .background(.black.opacity(0.35), in: Capsule())
-                                            .frame(minHeight: 44)
-                                            .contentShape(Rectangle())
+                                        if let tags = CloudyWindowDayText.tag(selection) {
+                                            ViewThatFits(in: .horizontal) {
+                                                revealCapsule(tags[0])
+                                                if tags.count > 1 { revealCapsule(tags[1]) }
+                                            }
+                                        } else {
+                                            revealCapsule(selection.albumPeriod == nil ? "タップで、きょうの1枚" : "作品がとどきました")
+                                        }
                                     }
                                     .buttonStyle(.plain)
                                     .padding(12)
-                                    .accessibilityLabel(selection.albumPeriod == nil
-                                        ? "くもりを晴らして、きょうの1枚を見る" : "くもりを晴らして、作品を見る")
+                                    .accessibilityLabel(CloudyWindowDayText.spokenTagPrefix(selection) + (selection.albumPeriod == nil
+                                        ? "くもりを晴らして、きょうの1枚を見る" : "くもりを晴らして、作品を見る"))
                                     .accessibilityIdentifier("cloudy-window-reveal")
                                     // Answers the tap: a short shrink and fade, ahead of the fog.
                                     .transition(reduceMotion ? AnyTransition.opacity
                                         : .scale(scale: 0.82).combined(with: .opacity))
+                                } else if let lines = CloudyWindowDayText.revealedLine(selection) {
+                                    // 11/15: 「1年前のきょう」 or 「むぎ 5歳」, as an official
+                                    // window's name, coming in once the tag has gone.
+                                    footerName {
+                                        ViewThatFits(in: .horizontal) {
+                                            Text(lines[0]).lineLimit(1)
+                                            if lines.count > 1 { Text(lines[1]).lineLimit(1) }
+                                        }
+                                    }
+                                    .transition(reduceMotion ? AnyTransition.opacity
+                                        : AnyTransition.opacity.animation(CloudyRevealMotion.line))
                                 }
                             }
                             .animation(reduceMotion ? nil : CloudyRevealMotion.capsule,
@@ -163,20 +176,11 @@ struct NekoWidgetView: View {
                             // Same type, colour, inset and alignment as a window's
                             // name (left in Small, centred in Medium and Large), so
                             // an official and a private Widget side by side line up.
-                            Text(photo.catName)
-                                .font(.caption2)
-                                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                                .foregroundStyle(.white.opacity(0.92))
-                                .multilineTextAlignment(footerTextLineAlignment)
-                                .padding(.bottom, footerTextBottomInset)
-                                .padding(.horizontal, footerInset)
-                                .padding(.bottom, footerInset)
-                                .frame(maxWidth: .infinity, alignment: footerTextAlignment)
-                                .background { footerBand(fadeHeight: 16) }
-                                .allowsHitTesting(false)
-                                .accessibilityHidden(true)
+                            footerName {
+                                Text(photo.catName)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
                         } else if isWindowPhoto {
                             familyPhotoFooter
                         } else {
@@ -198,6 +202,35 @@ struct NekoWidgetView: View {
         // The photo opens its detail; only the separate heart sends a reaction.
         // A received photo's bookmark only opens the app's save confirmation.
         // Personal-library memory stays explicit.
+    }
+
+    /// An official window's cat name, and a cloudy window's one line after
+    /// clearing (11/15): the same type, colour, inset, alignment and band.
+    private func footerName<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .font(.caption2)
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            .foregroundStyle(.white.opacity(0.92))
+            .multilineTextAlignment(footerTextLineAlignment)
+            .padding(.bottom, footerTextBottomInset)
+            .padding(.horizontal, footerInset)
+            .padding(.bottom, footerInset)
+            .frame(maxWidth: .infinity, alignment: footerTextAlignment)
+            .background { footerBand(fadeHeight: 16) }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
+    /// The cloudy window's tag: what clearing shows, one line.
+    private func revealCapsule(_ text: String) -> some View {
+        Label(text, systemImage: "hand.tap.fill")
+            .font(.caption.weight(.semibold))
+            .lineLimit(1)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .background(.black.opacity(0.35), in: Capsule())
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
     }
 
     /// Used only inside the successfully decoded photo branch above. The
@@ -223,7 +256,7 @@ struct NekoWidgetView: View {
         }
         if let photo = entry.officialPhoto { return "\(entry.windowDisplayName)。\(photo.catName)の写真" }
         guard isWindowPhoto
-        else { return "このiPhoneで見つけた猫の写真" }
+        else { return "このiPhoneで見つけた猫の写真" + CloudyWindowDayText.spokenPhotoSuffix(entry.cloudyWindowSelection) }
         let photo = "\(entry.windowDisplayName)に届いた猫の写真"
         if GroupWidgetCache.isGroupSourceID(entry.photoSourceIdentifier) {
             // A group's footer line is the sender 「ママから」, not a ひとこと:
@@ -1136,6 +1169,8 @@ enum AppStoreWidgetPreviewFixture {
 /// its own, where an ease-out jumps at the start.
 private enum CloudyRevealMotion {
     static let capsule = Animation.easeOut(duration: 0.25)
+    /// 11/15: a date day's or 節目's line comes in after the tag has gone.
+    static let line = Animation.easeInOut(duration: 0.6).delay(0.3)
     static let photo = Animation.easeInOut(duration: 1.9)
     static let fog = Animation.easeInOut(duration: 1.7)
 }

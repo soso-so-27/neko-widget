@@ -37,16 +37,110 @@ struct CloudyWindowPhotoMetadata: Codable, Equatable, Sendable {
     /// has no 確かな猫 to show. Optional: nil (older app builds) is 確かな猫,
     /// and older Widget builds ignore the key.
     var isProbableCat: Bool? = nil
-    /// 11/15: ハート (the Photos app's favorite) and お気に入り (saved in this
-    /// app) come first among equals. Optional: older builds leave them out.
-    var isFavorite: Bool? = nil
-    var isSaved: Bool? = nil
+    /// 11/15: the app's heart (`AssetRecord.liked`), then the Photos app's
+    /// favorite (`AssetRecord.isFavorite`) come first among equals, the same
+    /// order as the pool's weights (3x, 2x). Optional: older builds leave
+    /// them out, and the app writes them again on its next read.
+    var isLiked: Bool? = nil
+    var isPhotosFavorite: Bool? = nil
 }
 
 /// 11/15: why a day's photo was chosen. Stored as text so a kind added later
-/// (節目) never makes an older build fail to read the saved state.
+/// never makes an older build fail to read the saved state.
 enum CloudyWindowDayKind: String, Sendable {
-    case new, date, ordinary
+    case milestone, new, date, ordinary
+}
+
+/// 11/15 節目: a cat's birthday or the day it came home, with the whole years
+/// on that day (counted as on the cat's page, CatHomeCareCore.heroDay). The
+/// app writes the coming ones; the window only matches the day.
+struct CloudyWindowMilestoneDay: Codable, Equatable, Sendable {
+    /// The JST start of the day (CloudyWindowStore.calendar).
+    var day: Date
+    /// `CloudyWindowMilestoneKind` as text.
+    var kind: String
+    var years: Int
+}
+
+enum CloudyWindowMilestoneKind: String, Sendable {
+    case birthday, adoption
+}
+
+/// A 節目 day as chosen: which cats, their names and years then, and which of
+/// them the photo shows.
+struct CloudyWindowMilestone: Codable, Equatable, Sendable {
+    struct Cat: Codable, Equatable, Sendable {
+        var id: String
+        var name: String
+        var years: Int
+        var inPhoto: Bool
+    }
+    var kind: String
+    var cats: [Cat]
+}
+
+/// 11/15: the words a date day and a 節目 day add to the cloudy window. Each
+/// list is longest first; the Widget shows the first that fits on one line,
+/// never a cut word. Nothing on other days, nor on a monthly work's day.
+enum CloudyWindowDayText {
+    static let maximumNameLength = 20
+
+    private static func names(_ cats: [CloudyWindowMilestone.Cat]) -> [String] {
+        cats.map { String($0.name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maximumNameLength)) }
+    }
+
+    private static func milestoneOf(_ selection: CloudyWindowSelection) -> CloudyWindowMilestone? {
+        guard selection.kind == .milestone, selection.albumPeriod == nil,
+              let milestone = selection.milestone, !milestone.cats.isEmpty else { return nil }
+        return milestone
+    }
+
+    /// The tag while cloudy on a 節目 day: 「きょうは むぎの誕生日」, short
+    /// 「きょうは 誕生日」; 「むぎが来て 4年」, short 「うちに来た日」.
+    static func tag(_ selection: CloudyWindowSelection) -> [String]? {
+        guard let milestone = milestoneOf(selection) else { return nil }
+        let catNames = names(milestone.cats)
+        if milestone.kind == CloudyWindowMilestoneKind.birthday.rawValue {
+            let long = catNames.count == 1 ? "きょうは \(catNames[0])の誕生日"
+                : catNames.count == 2 ? "きょうは \(catNames[0])と\(catNames[1])の誕生日"
+                : "きょうは \(catNames.count)匹の誕生日"
+            return [long, "きょうは 誕生日"]
+        }
+        let years = Set(milestone.cats.map { $0.years })
+        let long = catNames.count == 1 ? "\(catNames[0])が来て \(milestone.cats[0].years)年"
+            : years.count == 1 ? "うちに来て \(milestone.cats[0].years)年" : "うちに来た日"
+        return long == "うちに来た日" ? [long] : [long, "うちに来た日"]
+    }
+
+    /// The one line after clearing: 「1年前のきょう」 / 「1年前の今ごろ」 on a
+    /// date day; 「むぎ 5歳」 (short 「5歳の誕生日」) or 「うちに来て 4年」 on
+    /// a 節目 day, for the cats in the photo.
+    static func revealedLine(_ selection: CloudyWindowSelection) -> [String]? {
+        guard selection.revealedAt != nil, selection.albumPeriod == nil else { return nil }
+        if selection.kind == .date, let years = selection.dateYearsAgo, years >= 1 {
+            return ["\(years)年前の" + (selection.dateSameDay == true ? "きょう" : "今ごろ")]
+        }
+        guard let milestone = milestoneOf(selection) else { return nil }
+        let shown = milestone.cats.filter { $0.inPhoto }
+        guard !shown.isEmpty else { return nil }
+        let years = Set(shown.map { $0.years })
+        if milestone.kind == CloudyWindowMilestoneKind.birthday.rawValue {
+            let long = zip(names(shown), shown).map { "\($0.0) \($0.1.years)歳" }.joined(separator: "・")
+            return [long, years.count == 1 ? "\(shown[0].years)歳の誕生日" : "きょうは 誕生日"]
+        }
+        return [years.count == 1 ? "うちに来て \(shown[0].years)年" : "うちに来た日"]
+    }
+
+    /// VoiceOver for the tag: 「きょうは むぎの誕生日。」 before what clearing
+    /// does; empty on other days.
+    static func spokenTagPrefix(_ selection: CloudyWindowSelection) -> String {
+        tag(selection).map { $0[0] + "。" } ?? ""
+    }
+
+    /// VoiceOver after clearing, added to the photo: 「、1年前のきょう」.
+    static func spokenPhotoSuffix(_ selection: CloudyWindowSelection?) -> String {
+        selection.flatMap(revealedLine).map { "、" + $0[0] } ?? ""
+    }
 }
 
 struct CloudyWindowPreparedPhoto: Codable, Equatable, Sendable {
@@ -75,6 +169,8 @@ struct CloudyWindowSelection: Codable, Equatable, Sendable {
     var dateYearsAgo: Int? = nil
     var dateSameDay: Bool? = nil
     var chosenAt: Date? = nil
+    /// 11/15 節目: the cats, names and years (only on a 節目 day).
+    var milestone: CloudyWindowMilestone? = nil
     var kind: CloudyWindowDayKind? { dayKind.flatMap(CloudyWindowDayKind.init(rawValue:)) }
 }
 
@@ -152,6 +248,13 @@ private struct CloudyWindowState: Codable {
     /// 11/15: capture years already shown on a date day, so another year
     /// comes first next time. Kept beyond the 40 days of selections.
     var datedYears: Set<Int>? = nil
+    /// 11/15 節目: each cat's coming birthdays and days it came home, by
+    /// profile ID (the same keys as `profiles`). Optional: older saves.
+    var profileMilestones: [String: [CloudyWindowMilestoneDay]]? = nil
+    /// 11/15: cats whose 旅立った日 is recorded (profile IDs, as `profiles`).
+    /// A photo of only such cats never makes a date day. Optional: older
+    /// saves have none.
+    var departedProfileIDs: Set<String>? = nil
 }
 
 /// All experiment metadata and derived files are local. Every operation is
@@ -369,6 +472,7 @@ struct CloudyWindowStore: Sendable {
     /// Metadata contains only known personal candidates. Imported received
     /// photos are excluded by the host, so a hidden sender cannot reappear.
     func synchronize(metadata: [String: CloudyWindowPhotoMetadata], profiles: [String: String],
+                     milestones: [String: [CloudyWindowMilestoneDay]] = [:], departed: Set<String> = [],
                      now: Date = .now) throws {
         guard internalPresentation else { return }
         try authorityStore.withAuthoritySnapshot(now: now) { authority in
@@ -377,9 +481,16 @@ struct CloudyWindowStore: Sendable {
                 .union(state.photos.map(\.photoID))
                 .union(state.albumArrival.map { [$0.photoID] } ?? [])
             let kept = metadata.filter { relevant.contains($0.key) }
-            if state.metadata != kept || state.profiles != profiles { state.libraryChangedAt = now }
+            let coming = milestones.filter { profiles[$0.key] != nil }
+            let gone = departed.filter { profiles[$0] != nil }
+            if state.metadata != kept || state.profiles != profiles || (state.profileMilestones ?? [:]) != coming
+                || (state.departedProfileIDs ?? []) != gone {
+                state.libraryChangedAt = now
+            }
             state.profiles = profiles
             state.metadata = kept
+            state.profileMilestones = coming.isEmpty ? nil : coming
+            state.departedProfileIDs = gone.isEmpty ? nil : gone
             reconcile(&state, authority: authority, now: now)
             try write(state)
             collectFiles(keeping: Set(state.photos.flatMap(\.filenames)))
@@ -556,12 +667,35 @@ struct CloudyWindowStore: Sendable {
                 day = Self.nextDay(after: day)
                 let best = available.compactMap { candidate -> (candidate: PersonalRediscoveryCandidate, offset: Int)? in
                     guard !shownRecently.contains(candidate.item.localIdentifier),
+                          !Self.showsOnlyDeparted(state.metadata[candidate.item.localIdentifier], in: state),
                           let match = Self.dateMatch(takenAt: taken(candidate), on: day) else { return nil }
                     return (candidate: candidate, offset: match.offset)
                 }.min { $0.offset < $1.offset }
                 if let best { datePhotos.append(best.candidate) }
             }
-            for candidate in Array(newPhotos) + datePhotos where !ordered.contains(where: {
+            // 11/15 節目: a cat whose birthday or day it came home is within
+            // the coming week keeps two of its photos ready (one with all
+            // such cats first).
+            let today = Self.calendar.startOfDay(for: now)
+            let weekEnd = today.addingTimeInterval(Double(Self.preparedDateDays) * 86_400 + 3_600)
+            let soonCats = Set((state.profileMilestones ?? [:]).filter { id, marks in
+                state.profiles[id] != nil && marks.contains { $0.day >= today && $0.day <= weekEnd && $0.years >= 1 }
+            }.keys)
+            var milestonePhotos: [PersonalRediscoveryCandidate] = []
+            if !soonCats.isEmpty {
+                let cats = { (candidate: PersonalRediscoveryCandidate) in
+                    state.metadata[candidate.item.localIdentifier]?.profileIDs ?? []
+                }
+                let unshown = available.filter { !shownRecently.contains($0.item.localIdentifier) }
+                let pool = unshown.isEmpty ? available : unshown
+                if soonCats.count > 1, let together = pool.first(where: { soonCats.isSubset(of: cats($0)) }) {
+                    milestonePhotos.append(together)
+                }
+                for cat in soonCats.sorted() {
+                    milestonePhotos += pool.filter { cats($0).contains(cat) }.prefix(2)
+                }
+            }
+            for candidate in Array(newPhotos) + datePhotos + milestonePhotos where !ordered.contains(where: {
                 $0.item.localIdentifier == candidate.item.localIdentifier
             }) { ordered.append(candidate) }
             let groups = state.profiles.keys.sorted()
@@ -764,6 +898,9 @@ struct CloudyWindowStore: Sendable {
                 // swapping in a different one the tap never showed.
                 state.selections[index].day = today
                 state.selections[index].albumPeriod = nil
+                // 11/15: its date or 節目 was another day's; the photo stays.
+                state.selections[index].dayKind = nil
+                state.selections[index].milestone = nil
                 state.selections[index].revealedAt = now
                 state.seenPhotoIDs.insert(photoID)
                 try write(state)
@@ -851,14 +988,22 @@ struct CloudyWindowStore: Sendable {
         return Self.isNewPhoto(takenAt: metadata.creationDate, previouslyShown: metadata.previouslyShown, at: date)
     }
 
-    /// 11/15: ハート (Photos favorite), then お気に入り, then a cat that fits
-    /// every Widget size. Smaller comes first.
+    /// 11/15: a photo whose cats have all died, so a date day never says
+    /// 「1年前のきょう」 over it. A photo with no cat, or with a living cat
+    /// too, is not.
+    private static func showsOnlyDeparted(_ metadata: CloudyWindowPhotoMetadata?, in state: CloudyWindowState) -> Bool {
+        guard let cats = metadata?.profileIDs, !cats.isEmpty, let departed = state.departedProfileIDs else { return false }
+        return cats.isSubset(of: departed)
+    }
+
+    /// 11/15: the app's heart, then the Photos app's favorite, then a cat
+    /// that fits every Widget size. Smaller comes first.
     private func quality(_ photo: CloudyWindowPreparedPhoto, in state: CloudyWindowState) -> Int {
         let metadata = state.metadata[photo.photoID]
         let fits = photo.source.renderPlans.map { plans in
             [plans.small, plans.medium, plans.large].allSatisfy { $0.compositionMode == .catFullBleed }
         } ?? false
-        return (metadata?.isFavorite == true ? 0 : 4) + (metadata?.isSaved == true ? 0 : 2) + (fits ? 0 : 1)
+        return (metadata?.isLiked == true ? 0 : 4) + (metadata?.isPhotosFavorite == true ? 0 : 2) + (fits ? 0 : 1)
     }
 
     /// 11/15: whether a day of this kind came within `gap` days before
@@ -866,6 +1011,47 @@ struct CloudyWindowStore: Sendable {
     private func hadKind(_ kind: CloudyWindowDayKind, within gap: Int, before date: Date,
                          in previous: [CloudyWindowSelection]) -> Bool {
         previous.contains { $0.kind == kind && date.timeIntervalSince($0.day) < (Double(gap) - 0.5) * 86_400 }
+    }
+
+    /// 11/15 節目: this window's cats (all in the household window) with a
+    /// birthday or a day they came home on `date`, a year or more on.
+    private func milestoneCats(_ kind: CloudyWindowMilestoneKind, on date: Date, scopeProfile: String?,
+                               in state: CloudyWindowState) -> [(id: String, years: Int)] {
+        state.profiles.keys.sorted().filter { id in scopeProfile.map { $0 == id } ?? true }.compactMap { id -> (id: String, years: Int)? in
+            guard let mark = state.profileMilestones?[id]?.first(where: {
+                $0.day == date && $0.kind == kind.rawValue && $0.years >= 1
+            }) else { return nil }
+            return (id: id, years: mark.years)
+        }
+    }
+
+    /// 11/15 節目: a photo with every cat if there is one, else the photo of
+    /// the cat shown least lately. A photo shown in the last 30 days only
+    /// when there is no other.
+    private func milestonePhoto(for cats: [String], from candidates: [CloudyWindowPreparedPhoto],
+                                previous: [CloudyWindowSelection], recent: Set<String>,
+                                in state: CloudyWindowState) -> CloudyWindowPreparedPhoto? {
+        func best(_ photos: [CloudyWindowPreparedPhoto]) -> CloudyWindowPreparedPhoto? {
+            let unshown = photos.filter { !recent.contains($0.photoID) }
+            return (unshown.isEmpty ? photos : unshown).min { lhs, rhs in
+                let a = previous.first { $0.photoID == lhs.photoID }?.day ?? .distantPast
+                let b = previous.first { $0.photoID == rhs.photoID }?.day ?? .distantPast
+                if a != b { return a < b }
+                let qualityA = quality(lhs, in: state), qualityB = quality(rhs, in: state)
+                if qualityA != qualityB { return qualityA < qualityB }
+                return lhs.photoID < rhs.photoID
+            }
+        }
+        let shown = { (photoID: String) in state.metadata[photoID]?.profileIDs ?? [] }
+        let everyone = Set(cats)
+        if let together = best(candidates.filter { everyone.isSubset(of: shown($0.photoID)) }) { return together }
+        let lastShown = { (cat: String) in
+            previous.first { shown($0.photoID).contains(cat) }?.day ?? .distantPast
+        }
+        for cat in cats.sorted(by: { lastShown($0) == lastShown($1) ? $0 < $1 : lastShown($0) < lastShown($1) }) {
+            if let photo = best(candidates.filter { shown($0.photoID).contains(cat) }) { return photo }
+        }
+        return nil
     }
 
     private func choose(state: CloudyWindowState, scopeID: String, date: Date,
@@ -909,6 +1095,22 @@ struct CloudyWindowStore: Sendable {
                 dayKind: kind.rawValue, dateYearsAgo: match?.yearsAgo,
                 dateSameDay: match.map { $0.offset == 0 }, chosenAt: now)
         }
+        let recent = Set(previous.filter { date.timeIntervalSince($0.day) < 30 * 86_400 }.map(\.photoID))
+        // 11/15 節目: a cat of this window has its birthday (first) or the day
+        // it came home. One photo with all of them if there is one, else the
+        // cat shown least lately. Without a photo of them, no 節目 day.
+        for kind in [CloudyWindowMilestoneKind.birthday, .adoption] {
+            let cats = milestoneCats(kind, on: date, scopeProfile: profile, in: state)
+            guard !cats.isEmpty, let photo = milestonePhoto(for: cats.map { $0.id }, from: candidates,
+                                                             previous: previous, recent: recent, in: state) else { continue }
+            let shown = state.metadata[photo.photoID]?.profileIDs ?? []
+            let milestone = CloudyWindowMilestone(kind: kind.rawValue, cats: cats.map { cat in
+                .init(id: cat.id, name: state.profiles[cat.id] ?? "", years: cat.years, inPhoto: shown.contains(cat.id))
+            })
+            return CloudyWindowSelection(scopeID: scopeID, day: date, photoID: photo.photoID,
+                profileID: profile ?? cats.first(where: { shown.contains($0.id) })?.id,
+                dayKind: CloudyWindowDayKind.milestone.rawValue, chosenAt: now, milestone: milestone)
+        }
         // 11/15: enough older photos in this window: the kinds of day apply.
         // Fewer: one rotation, and a new photo never two days running.
         let older = state.metadata.values.filter { metadata in
@@ -917,7 +1119,8 @@ struct CloudyWindowStore: Sendable {
         }.count
         let splits = older >= Self.splitPhotoCount
         // New day: the newest new photo, by the day it was taken; within a
-        // day ハート, お気に入り, a fitting cat. Ahead of the cats' turns.
+        // day the app's heart, the Photos favorite, a fitting cat. Ahead of
+        // the cats' turns.
         if !hadKind(.new, within: splits ? Self.newDayGap : 2, before: date, in: previous) {
             let newest = candidates.filter { isNew($0.photoID, scopeID: scopeID, date: date, in: state) }
                 .min { lhs, rhs in
@@ -934,12 +1137,14 @@ struct CloudyWindowStore: Sendable {
         // Date day: the same month and day of an earlier year first, then
         // within 3 days; a year not yet shown on a date day first. Never a
         // photo shown in the last 30 days.
-        let recent = Set(previous.filter { date.timeIntervalSince($0.day) < 30 * 86_400 }.map(\.photoID))
-        if splits, !hadKind(.date, within: Self.dateDayGap, before: date, in: previous) {
+        // 11/15: never a date day in the window of a cat that has died.
+        if splits, !hadKind(.date, within: Self.dateDayGap, before: date, in: previous),
+           !(profile.map { state.departedProfileIDs?.contains($0) == true } ?? false) {
             let datedYears = state.datedYears ?? []
             let datedPhotos = Set(previous.filter { $0.kind == .date }.map(\.photoID))
             var best: (photo: CloudyWindowPreparedPhoto, offset: Int, yearsAgo: Int, rank: [Int])?
-            for photo in candidates where !recent.contains(photo.photoID) {
+            for photo in candidates where !recent.contains(photo.photoID)
+                && !Self.showsOnlyDeparted(state.metadata[photo.photoID], in: state) {
                 guard let captured = state.metadata[photo.photoID]?.creationDate,
                       let match = Self.dateMatch(takenAt: captured, on: date) else { continue }
                 let year = Self.civil(dayNumber: Self.dayNumber(captured)).year
@@ -1002,8 +1207,8 @@ struct CloudyWindowStore: Sendable {
             let a = previous.first { $0.photoID == lhs.photoID }?.day ?? .distantPast
             let b = previous.first { $0.photoID == rhs.photoID }?.day ?? .distantPast
             if a != b { return a < b }
-            // 11/15: among equals, with the kinds of day: ハート, お気に入り,
-            // a fitting cat first.
+            // 11/15: among equals, with the kinds of day: the app's heart,
+            // the Photos favorite, a fitting cat first.
             if splits {
                 let qualityA = quality(lhs, in: state), qualityB = quality(rhs, in: state)
                 if qualityA != qualityB { return qualityA < qualityB }

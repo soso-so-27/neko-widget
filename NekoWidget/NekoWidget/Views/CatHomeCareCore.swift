@@ -122,13 +122,31 @@ enum CatHomeCareCore {
     /// first year. Nil on every other day. 2/29 counts on 3/1 in other years.
     static func heroDayLine(birthday: CatCareDay?, birthdayYearKnown: Bool, adoption: CatCareDay?,
                             today: CatCareDay) -> String? {
+        switch heroDay(birthday: birthday, birthdayYearKnown: birthdayYearKnown, adoption: adoption, today: today) {
+        case let .birthday(years?)?: "きょうで\(years)歳"
+        case .birthday(nil)?: "きょうは誕生日"
+        case let .adoption(years)?: "うちに来て \(years)年"
+        case nil: nil
+        }
+    }
+
+    /// The day itself, for the line above and the cloudy window's 節目
+    /// (11/15), so both count the same. A birthday's years are nil when the
+    /// year is not known or in its first year.
+    enum HeroDay: Equatable {
+        case birthday(years: Int?)
+        case adoption(years: Int)
+    }
+
+    static func heroDay(birthday: CatCareDay?, birthdayYearKnown: Bool, adoption: CatCareDay?,
+                        today: CatCareDay) -> HeroDay? {
         if let birthday, birthday <= today, nextOccurrence(of: birthday, onOrAfter: today) == today {
             let years = completedYears(from: birthday, to: today)
-            return birthdayYearKnown && years >= 1 ? "きょうで\(years)歳" : "きょうは誕生日"
+            return .birthday(years: birthdayYearKnown && years >= 1 ? years : nil)
         }
         if let adoption, adoption < today, nextOccurrence(of: adoption, onOrAfter: today) == today {
             let years = completedYears(from: adoption, to: today)
-            if years >= 1 { return "うちに来て \(years)年" }
+            if years >= 1 { return .adoption(years: years) }
         }
         return nil
     }
