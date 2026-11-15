@@ -153,7 +153,7 @@ actor FamilyNotebookSync {
                     writeContract: state.writeContract == nil ? nil : .init(effects:
                         operation.target.collection == .cat && (operation.target.field == nil || operation.target.field == .sharingEnded)
                             ? [.init(kind: "retireCat", slotID: FamilyNotebookRepresentativePhotoCrypto.slotID(familyID: familyID, catID: operation.target.familyCatID))]
-                            : operation.target.collection == .cat && operation.target.field == .representativePhoto && operation.value == .clear
+                            : operation.target.collection == .cat && operation.target.field?.rawValue == "representativePhoto" && operation.value == .clear
                                 ? [.init(kind: "clearPhoto", slotID: FamilyNotebookRepresentativePhotoCrypto.slotID(familyID: familyID, catID: operation.target.familyCatID))] : [])))
                 let intent = GroupCanonical.hash(try GroupWire.encode(operation)), uploadPath = path + "/crypto/operations"
                 let family = familyID, operationID = operation.id
