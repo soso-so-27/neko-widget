@@ -364,6 +364,24 @@ class PublicPolicySiteTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, lowered)
 
+    def test_deletion_name_and_owner_proof_match_the_app(self):
+        # 11/16: the policy names the deletion the way 設定 shows it, and the
+        # LP does not ask to turn the sensitive-content warning on (11/6).
+        privacy = (SITE / "privacy" / "index.html").read_text(encoding="utf-8")
+        settings = SETTINGS_VIEW.read_text(encoding="utf-8")
+        name = "まどと家族の手帳のデータを消す"
+        self.assertIn(f'Label("{name}"', settings)
+        self.assertNotIn("まどの利用者IDを削除", privacy)
+        self.assertGreaterEqual(privacy.count(f"「{name}」"), 3)
+        self.assertIn("<h3>まどの管理者の証明</h3>", privacy)
+        self.assertIn("写真、まどの名前、表示名は入りません。", privacy)
+        self.assertNotIn("iCloudキーチェーン", privacy)
+        lp = ROOT / "lp" / "index.html"
+        if lp.is_file():
+            landing = lp.read_text(encoding="utf-8")
+            self.assertNotIn("「センシティブな内容の警告」をオンにしてください", landing)
+            self.assertIn("センシティブな写真は届けず、表示もしません。", landing)
+
     def test_photo_album_disclosure_stays_aligned_with_implementation(self):
         service = PHOTO_ALBUM_SERVICE.read_text(encoding="utf-8")
         info = INFO_PLIST.read_text(encoding="utf-8")
