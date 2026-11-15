@@ -906,6 +906,7 @@ struct MainTabView: View {
     }
 
     var body: some View {
+        let _ = LaunchWork.count("mainTabBody")
         routedTabContentOfferingFirstPlus
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active {
@@ -996,6 +997,9 @@ struct MainTabView: View {
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
             if memoriesPath.isEmpty { albumHighlightsReferenceDate = Date() }
+            // 11/15: notifications turned on in Settings set a waiting work's
+            // notice now. New photos already set it after they are read.
+            if await AlbumArrivalNotice.permissionChangedSinceSet() { synchronizeAlbumArrival() }
             await seasonalMovieArchive.load()
         }
     }
@@ -1106,6 +1110,10 @@ struct MainTabView: View {
     /// `showcaseCandidates.first`, found in one pass: drawing needs only the
     /// best photo, so the whole library is neither indexed nor sorted.
     private var bestShowcaseCandidate: PhotoPresentation? {
+        LaunchWork.measure("bestShowcase") { findBestShowcaseCandidate() }
+    }
+
+    private func findBestShowcaseCandidate() -> PhotoPresentation? {
         let excludedIdentifiers = excludedCatCandidateIdentifiers
         var seen = Set<String>()
         var best: PhotoPresentation?
@@ -1589,7 +1597,9 @@ struct MainTabView: View {
             headerAccessory: catProfilesPresentation.profiles.isEmpty ? nil : AnyView(EmptyView()),
             themeRow: Version1.isOn && hasPhotoAccess && !themes.isEmpty
                 ? AnyView(photoThemeRow(themes)) : nil,
-            tabRowMonthJump: catProfilesPresentation.profiles.isEmpty ? nil : $photoLibraryMonthJump
+            tabRowMonthJump: catProfilesPresentation.profiles.isEmpty ? nil : $photoLibraryMonthJump,
+            // 11/14 (A6): no cat photos but in a まど: 「まどを開く」 comes here.
+            openWindows: showsMadoTab ? { selectedTab = .windows } : nil
         )
     }
 
@@ -2786,7 +2796,7 @@ struct MainTabView: View {
             }
             let year = calendar.component(.year, from: now)
             if let at = AlbumArrivalNotice.yearDelivery(year), now < at,
-               AlbumPrototype.photos(inYear: year, from: catPhotos).count >= 9 {
+               AlbumPrototype.arrivedYears(from: catPhotos, now: at, deliverNow: true).contains(year) {
                 yearNotice = (year, at)
             }
         }
@@ -3726,12 +3736,7 @@ private struct PhotoLibraryCatRow<CatPicker: View, AddPhotos: View>: View {
         HStack(spacing: 10) {
             picker()
             if !photos.isEmpty {
-                Text("\(photos.count.formatted())枚")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .accessibilityIdentifier("photo-hub-detected-grid")
+                PhotoCountWithScanActivity(count: photos.count)
             }
             Spacer(minLength: 0)
             PhotoLibraryMonthJumpMenu(months: months) { monthJump = $0 }

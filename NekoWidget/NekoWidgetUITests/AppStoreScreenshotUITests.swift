@@ -204,9 +204,15 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
         app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "invite-entry"
         app.launch()
-        // 11/12: one button and no line for invited people; their link opens
-        // the join screen by itself.
+        // 11/14 (family journey A1): one button and one quiet line for
+        // invited people; the line is not a button, their link opens the join
+        // screen by itself.
         XCTAssertTrue(app.buttons["onboarding-purpose-start"].waitForExistence(timeout: 15))
+        let invitationLine = app.staticTexts["onboarding-purpose-invitation-line"]
+        if invitationLine.exists {
+            XCTAssertEqual(invitationLine.label, "招待を受けた方は、届いたリンクをもう一度開いてください。")
+        }
+        XCTAssertFalse(app.buttons["onboarding-purpose-invitation-line"].exists)
         XCTAssertFalse(app.staticTexts["onboarding-purpose-join-hint"].exists)
         XCTAssertFalse(app.staticTexts["届いた招待リンクをタップしてください。"].exists)
         XCTAssertFalse(app.buttons["onboarding-purpose-join"].exists)
@@ -777,7 +783,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(room.waitForExistence(timeout: 15)); room.tap()
         XCTAssertTrue(app.buttons["group-window-open-members"].waitForExistence(timeout: 15))
         let delivered = app.descendants(matching: .any).matching(
-            NSPredicate(format: "label CONTAINS %@", "から届いた写真")).firstMatch
+            NSPredicate(format: "label CONTAINS %@", "からの写真")).firstMatch
         XCTAssertTrue(delivered.waitForExistence(timeout: 15)); delivered.tap()
         XCTAssertTrue(app.staticTexts["ふたりでくっついて寝ていた"].waitForExistence(timeout: 15))
         sleep(2)

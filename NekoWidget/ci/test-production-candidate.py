@@ -57,6 +57,14 @@ class ProductionCandidateTests(unittest.TestCase):
     def verify(self):
         return candidate.verify_products(self.app, self.contract, synthetic=True)
 
+    def test_auto_save_copy_disclosure_is_required(self):
+        info_path = self.app / "Info.plist"
+        info = plistlib.loads(info_path.read_bytes())
+        info["NSPhotoLibraryUsageDescription"] = info["NSPhotoLibraryUsageDescription"].replace("記録に足した写真のコピー", "写真")
+        info_path.write_bytes(plistlib.dumps(info))
+        with self.assertRaisesRegex(ValueError, "NSPhotoLibraryUsageDescription"):
+            self.verify()
+
     def test_complete_three_product_contract(self):
         self.verify()
 

@@ -542,7 +542,7 @@ struct PhotoMemoryNoteDetailView: View {
         .confirmationDialog("このメモを削除しますか？", isPresented: $confirmsDelete, titleVisibility: .visible) {
             Button("削除", role: .destructive) { Task { await delete() } }
             Button("キャンセル", role: .cancel) {}
-        } message: { Text("写真と診察メモに入れた分は残り、メモの文章・体重・測定日が削除されます。") }
+        } message: { Text("写真と診察メモに入れた分は残り、メモの文章・体重・測定日が削除されます。元に戻せません。") }
         .alert("メモを変更できませんでした", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("閉じる", role: .cancel) {}
         } message: { Text(error ?? "") }

@@ -27,6 +27,8 @@ def route(test):
     # Display-speed measurements (no pass/fail threshold). Manual only:
     # route=speed is not in the push/nightly route list.
     if 'ScreenSpeedSweepUITests/' in test: return 'speed'
+    # 11/14 main-thread stalls after launch on a large synthetic library.
+    if 'LaunchWorkUITests/' in test: return 'speed'
     if test.endswith('/testSyntheticMovieShippingExportsSoundOnAndOff'): return 'movie'
     if test.endswith('/testReviewPublicIPadCompatibility'): return 'ipad'
     # testReviewPublicPresentation needs the DEBUG fixture and DEBUG previews

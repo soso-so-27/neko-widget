@@ -105,6 +105,14 @@ private enum CloudyWindowVerifier {
         try albumArrivalFrozenAfterExpiry()
         try albumCoverBeyondPreparationBounds()
         try probableCatsOnlyWhenNothingElse()
+        try newPhotoGoesOutTomorrow()
+        try dateDays()
+        try fewPhotosKeepOneRotation()
+        try olderSavesRead()
+        try dailyShooterSixtyDays()
+        try milestoneDays()
+        try dayWords()
+        try departedCatsAndDateDays()
         print("Cloudy window: daily reveal, stale actions, restart, rotation, cats, permission, public mode and publication checks passed")
     }
 
@@ -440,9 +448,435 @@ private enum CloudyWindowVerifier {
         try check(!onlyProbable.isEmpty, "a cat with only たぶん猫 still gets a photo")
     }
 
-    private static func rotationAndSmallPools() throws {
-        let f = try Fixture(count: 32)
+    /// 11/15 毎日の1枚の決まり v2: a new day at most once in 3 days (the
+    /// newest new photo; within a capture day ハート first), ordinary days
+    /// only older photos when there are enough, today's photo never swapped,
+    /// and new photos enter the 32 (8 at most).
+    private static func newPhotoGoesOutTomorrow() throws {
+        let d = baseline
+        try check(CloudyWindowStore.newPhotoDays == 30 && CloudyWindowStore.newDayGap == 3
+                  && CloudyWindowStore.dateDayGap == 7 && CloudyWindowStore.dateWindowDays == 3
+                  && CloudyWindowStore.splitPhotoCount == 30 && CloudyWindowStore.preparedNewPhotoCount == 8,
+                  "the day rules keep their numbers")
+        try check(CloudyWindowStore.isNewPhoto(takenAt: d.addingTimeInterval(-29 * day), previouslyShown: false, at: d)
+                  && !CloudyWindowStore.isNewPhoto(takenAt: d.addingTimeInterval(-31 * day), previouslyShown: false, at: d)
+                  && !CloudyWindowStore.isNewPhoto(takenAt: d.addingTimeInterval(-3_600), previouslyShown: true, at: d)
+                  && !CloudyWindowStore.isNewPhoto(takenAt: nil, previouslyShown: false, at: d),
+                  "new means taken within 30 days and never shown")
+        try check(CloudyWindowStore.isOldPhoto(takenAt: d.addingTimeInterval(-31 * day), at: d)
+                  && !CloudyWindowStore.isOldPhoto(takenAt: d.addingTimeInterval(-29 * day), at: d)
+                  && CloudyWindowStore.isOldPhoto(takenAt: nil, at: d), "old means taken more than 30 days ago")
+        let taken = (0..<10).map { (id: "p\($0)", date: d.addingTimeInterval(-Double($0) * 3_600)) }
+            + [(id: "old", date: d.addingTimeInterval(-31 * day))]
+        let priority = CloudyWindowStore.newPhotoIDs(taken, now: d, id: { $0.id }, takenAt: { Optional($0.date) })
+        try check(priority == Set((0..<8).map { "p\($0)" }), "the host asks for the newest 8 new photos only")
+
+        var f = try Fixture(count: 40, cats: 2)
         defer { f.cleanup() }
+        takenLongAgo(&f)
+        try f.store.synchronize(metadata: f.metadata, profiles: f.profiles, now: d)
+        let before = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: d)
+        try check(before.count == 2 && before.allSatisfy { $0.selection.kind == .ordinary },
+                  "older photos only: ordinary days")
+        // Three photos of cat-0 are found on opening the app: two taken
+        // today (the earlier one with the app's heart, the later one a
+        // Photos favorite) and one yesterday.
+        f.metadata["photo-06"]?.creationDate = d.addingTimeInterval(-3_600)
+        f.metadata["photo-06"]?.isPhotosFavorite = true
+        f.metadata["photo-04"]?.creationDate = d.addingTimeInterval(-7_200)
+        f.metadata["photo-04"]?.isLiked = true
+        f.metadata["photo-02"]?.creationDate = d.addingTimeInterval(-day)
+        f.metadata["photo-02"]?.isLiked = true
+        try f.store.synchronize(metadata: f.metadata, profiles: f.profiles, now: d.addingTimeInterval(5))
+        let found = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: d.addingTimeInterval(10))
+        try check(found[0].selection.id == before[0].selection.id && found[0].photo.photoID == before[0].photo.photoID,
+                  "today's photo is never swapped")
+        try check(found[1].photo.photoID == "photo-04" && found[1].isCloudy && found[1].selection.kind == .new,
+                  "tomorrow is chosen again: the newest day's photo, the app's heart before a Photos favorite")
+        var kinds: [CloudyWindowDayKind?] = []
+        var photos: [String] = []
+        var date = found[1].date
+        for _ in 0..<7 {
+            let entry = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: date.addingTimeInterval(1))[0]
+            kinds.append(entry.selection.kind)
+            photos.append(entry.photo.photoID)
+            if entry.selection.kind == .ordinary {
+                try check(CloudyWindowStore.isOldPhoto(takenAt: f.metadata[entry.photo.photoID]?.creationDate, at: date),
+                          "an ordinary day never shows a photo of the last 30 days")
+            }
+            date = CloudyWindowStore.nextDay(after: date)
+        }
+        try check(kinds == [.new, .ordinary, .ordinary, .new, .ordinary, .ordinary, .new],
+                  "a new day at most once in 3 days")
+        try check(photos[0] == "photo-04" && photos[3] == "photo-06" && photos[6] == "photo-02",
+                  "new photos go out newest day first, each once")
+
+        // The 32 take the new photos first, 8 at most; the rest stays older.
+        var many = try Fixture(count: 60)
+        defer { many.cleanup() }
+        takenLongAgo(&many)
+        for index in 40..<60 {
+            many.metadata[String(format: "photo-%02d", index)]?.creationDate = d.addingTimeInterval(-Double(index) * 3_600)
+        }
+        try many.store.synchronize(metadata: many.metadata, profiles: many.profiles, now: d)
+        let plan = try many.store.preparation(now: d)!
+        let planned = plan.candidates.map { $0.item.localIdentifier }
+        try check(planned.first == "photo-40" && plan.protectedPhotoIDs.contains("photo-40"),
+                  "the newest new photo, outside the old 32, is prepared first")
+        try check(planned.filter { Int($0.dropFirst(6))! >= 40 }.count == 8 && planned.count == 32,
+                  "the 32 hold 8 new photos and older photos")
+    }
+
+    /// 11/15: a date day at most once a week; the same month and day before
+    /// within 3 days; only with enough older photos.
+    private static func dateDays() throws {
+        func match(_ taken: String, _ day: String) -> (offset: Int, yearsAgo: Int)? {
+            let formatter = ISO8601DateFormatter()
+            return CloudyWindowStore.dateMatch(takenAt: formatter.date(from: taken), on: formatter.date(from: day)!)
+        }
+        let sameDay = match("2025-10-24T12:00:00+09:00", "2026-10-24T00:00:00+09:00")
+        try check(sameDay?.offset == 0 && sameDay?.yearsAgo == 1, "date match: the same month and day a year ago")
+        let acrossNewYear = match("2023-12-30T12:00:00+09:00", "2026-01-02T00:00:00+09:00")
+        try check(acrossNewYear?.offset == 3 && acrossNewYear?.yearsAgo == 2, "date match: within 3 days across a new year")
+        let leapDay = match("2024-02-28T12:00:00+09:00", "2028-02-29T00:00:00+09:00")
+        try check(leapDay?.offset == 1, "date match: 2/29")
+        try check(match("2025-10-20T12:00:00+09:00", "2026-10-24T00:00:00+09:00") == nil
+                  && match("2026-10-23T12:00:00+09:00", "2026-10-24T00:00:00+09:00") == nil,
+                  "date match: not 4 days apart, not this year")
+        let hostPicks = CloudyWindowStore.datePhotoIDs(
+            [(id: "year-ago", date: baseline.addingTimeInterval(-365 * day + 2 * day)),
+             (id: "spring", date: baseline.addingTimeInterval(-200 * day)),
+             (id: "recent", date: baseline.addingTimeInterval(-2 * day))],
+            now: baseline, id: { $0.id }, takenAt: { Optional($0.date) })
+        try check(hostPicks == ["year-ago"], "the host asks for the coming week's date photos only")
+
+        var f = try Fixture(count: 40)
+        defer { f.cleanup() }
+        takenLongAgo(&f)
+        let formatter = ISO8601DateFormatter()
+        for (id, text) in [("photo-10", "2025-10-24T12:00:00+09:00"), ("photo-13", "2025-10-23T12:00:00+09:00"),
+                           ("photo-11", "2024-10-26T12:00:00+09:00"), ("photo-12", "2024-10-31T12:00:00+09:00"),
+                           ("photo-14", "2023-11-02T12:00:00+09:00")] {
+            f.metadata[id]?.creationDate = formatter.date(from: text)
+        }
+        try f.store.synchronize(metadata: f.metadata, profiles: f.profiles, now: baseline)
+        var date = CloudyWindowStore.calendar.startOfDay(for: baseline)
+        var dateDays: [Int] = []
+        for offset in 0..<14 {
+            let entry = try f.store.timeline(scopeID: CloudyWindowStore.personalScope,
+                now: offset == 0 ? baseline : date.addingTimeInterval(1))[0]
+            if offset == 0 {
+                try check(entry.selection.kind == .date && entry.photo.photoID == "photo-10"
+                          && entry.selection.dateSameDay == true && entry.selection.dateYearsAgo == 1,
+                          "the same month and day comes before one within 3 days")
+            }
+            if entry.selection.kind == .date {
+                dateDays.append(offset)
+                try check(CloudyWindowStore.dateMatch(takenAt: f.metadata[entry.photo.photoID]?.creationDate,
+                                                      on: date) != nil, "a date day shows a photo of that date")
+            }
+            date = CloudyWindowStore.nextDay(after: date)
+        }
+        try check(dateDays.first == 0 && dateDays.contains(7)
+                  && zip(dateDays, dateDays.dropFirst()).allSatisfy { $0.1 - $0.0 >= 7 },
+                  "a date day at most once a week")
+
+        // Fewer than 30 older photos: no date days.
+        var few = try Fixture(count: 20)
+        defer { few.cleanup() }
+        takenLongAgo(&few)
+        few.metadata["photo-10"]?.creationDate = formatter.date(from: "2025-10-24T12:00:00+09:00")
+        try few.store.synchronize(metadata: few.metadata, profiles: few.profiles, now: baseline)
+        let fewToday = try few.store.timeline(scopeID: CloudyWindowStore.personalScope, now: baseline)[0]
+        try check(fewToday.selection.kind != .date, "few photos: the kinds of day do not apply")
+    }
+
+    /// 11/15: under 30 older photos, one rotation; a new photo the next day,
+    /// never two days running, and recent photos stay in the rotation.
+    private static func fewPhotosKeepOneRotation() throws {
+        let f = try Fixture(count: 6)
+        defer { f.cleanup() }
+        var kinds: [CloudyWindowDayKind?] = []
+        var recentOnOrdinary = false
+        for offset in 0..<6 {
+            let now = baseline.addingTimeInterval(Double(offset) * day)
+            let entry = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: now)[0]
+            kinds.append(entry.selection.kind)
+            if entry.selection.kind == .ordinary,
+               !CloudyWindowStore.isOldPhoto(takenAt: f.metadata[entry.photo.photoID]?.creationDate, at: now) {
+                recentOnOrdinary = true
+            }
+        }
+        try check(kinds[0] == .new && zip(kinds, kinds.dropFirst()).allSatisfy { !($0.0 == .new && $0.1 == .new) },
+                  "few photos: a new photo comes, never two days running")
+        try check(recentOnOrdinary && !kinds.contains(.date), "few photos: the days are not split")
+    }
+
+    /// 11/15: saves from older builds read; a kind added later does not
+    /// break reading.
+    private static func olderSavesRead() throws {
+        let selection = try JSONDecoder().decode(CloudyWindowSelection.self, from: Data(
+            #"{"id":"a","scopeID":"personal-library","day":0,"photoID":"p"}"#.utf8))
+        try check(selection.dayKind == nil && selection.kind == nil && selection.chosenAt == nil
+                  && selection.dateYearsAgo == nil, "an older selection reads without a kind")
+        let later = try JSONDecoder().decode(CloudyWindowSelection.self, from: Data(
+            #"{"id":"a","scopeID":"personal-library","day":0,"photoID":"p","dayKind":"later-kind"}"#.utf8))
+        try check(later.dayKind == "later-kind" && later.kind == nil && later.milestone == nil,
+                  "a later kind reads as unknown")
+        let marks = try JSONDecoder().decode([String: [CloudyWindowMilestoneDay]].self, from: Data(
+            #"{"cat":[{"day":0,"kind":"birthday","years":5}]}"#.utf8))
+        try check(marks["cat"]?.first?.years == 5, "a cat's days read")
+        let metadata = try JSONDecoder().decode(CloudyWindowPhotoMetadata.self, from: Data(
+            #"{"creationDate":0,"profileIDs":[],"previouslyShown":false}"#.utf8))
+        try check(metadata.isLiked == nil && metadata.isPhotosFavorite == nil, "older photo details read")
+        let encoded = try JSONEncoder().encode(CloudyWindowSelection(scopeID: "s", day: baseline, photoID: "p",
+            profileID: nil, dayKind: CloudyWindowDayKind.date.rawValue, dateYearsAgo: 2, dateSameDay: false))
+        let back = try JSONDecoder().decode(CloudyWindowSelection.self, from: encoded)
+        try check(back.kind == .date && back.dateYearsAgo == 2 && back.dateSameDay == false, "the kind is kept")
+    }
+
+    /// 11/15: someone who takes a cat photo every day, for 60 days: about a
+    /// third are new days, and ordinary days never show the last 30 days.
+    private static func dailyShooterSixtyDays() throws {
+        var f = try Fixture(count: 100)
+        defer { f.cleanup() }
+        takenLongAgo(&f)
+        let start = CloudyWindowStore.nextDay(after: baseline)
+        for index in 0..<60 {
+            f.metadata[String(format: "photo-%02d", index)]?.creationDate =
+                start.addingTimeInterval(Double(index) * day + 8 * 3_600)
+        }
+        let image = try Data(contentsOf: f.directory.appendingPathComponent("widget-cache")
+            .appendingPathComponent(f.candidates[0].item.cacheFilename))
+        var newDays: [Int] = []
+        for offset in 0..<60 {
+            let now = start.addingTimeInterval(Double(offset) * day + 12 * 3_600)
+            let known = f.metadata.filter { entry in
+                let index = Int(entry.key.dropFirst(6))!
+                return index >= 60 || index <= offset
+            }
+            try f.store.synchronize(metadata: known, profiles: f.profiles, now: now)
+            let plan = try f.store.preparation(now: now)!
+            for candidate in plan.candidates where !plan.existing.contains(where: {
+                $0.photoID == candidate.item.localIdentifier
+            }) {
+                let photo = f.prepared[Int(candidate.item.localIdentifier.dropFirst(6))!]
+                try f.store.publish(photo, files: Dictionary(uniqueKeysWithValues: photo.filenames.map { ($0, image) }),
+                    authorityRevision: plan.authorityRevision, configurationRevision: plan.configuration.revision,
+                    protectedPhotoIDs: plan.protectedPhotoIDs, now: now)
+            }
+            let entry = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: now)[0]
+            switch entry.selection.kind {
+            case .new?: newDays.append(offset)
+            case .ordinary?:
+                try check(CloudyWindowStore.isOldPhoto(takenAt: known[entry.photo.photoID]?.creationDate, at: now),
+                          "a daily photographer's ordinary days stay older photos")
+            default: break
+            }
+        }
+        try check((18...22).contains(newDays.count) && zip(newDays, newDays.dropFirst()).allSatisfy { $0.1 - $0.0 >= 3 },
+                  "a daily photographer gets a new day about one day in three")
+    }
+
+    /// 11/15 節目: a cat's birthday or day it came home comes first; one
+    /// photo with every such cat, else the cat shown least lately; never a
+    /// first-year day; the monthly work comes before it.
+    private static func milestoneDays() throws {
+        let d = baseline
+        let tomorrow = CloudyWindowStore.nextDay(after: d)
+        func mark(_ kind: CloudyWindowMilestoneKind, _ years: Int, on day: Date? = nil) -> CloudyWindowMilestoneDay {
+            CloudyWindowMilestoneDay(day: day ?? tomorrow, kind: kind.rawValue, years: years)
+        }
+        let household = CloudyWindowStore.personalScope
+
+        var f = try Fixture(count: 40, cats: 2)
+        defer { f.cleanup() }
+        takenLongAgo(&f)
+        try f.store.synchronize(metadata: f.metadata, profiles: f.profiles,
+                                milestones: ["cat-0": [mark(.birthday, 5)], "cat-1": [mark(.birthday, 0)]], now: d)
+        let one = try f.store.timeline(scopeID: household, now: d)
+        try check(one[0].selection.kind == .ordinary && one[1].selection.kind == .milestone,
+                  "a 節目 day comes first")
+        try check(f.metadata[one[1].photo.photoID]?.profileIDs.contains("cat-0") == true
+                  && one[1].selection.milestone?.cats.map(\.id) == ["cat-0"],
+                  "the birthday cat's photo; a first-year day is not a 節目")
+        try check(CloudyWindowDayText.tag(one[1].selection) == ["きょうは 猫0の誕生日", "猫0の誕生日", "きょうは 誕生日", "誕生日"],
+                  "the tag names the cat")
+        let own = try f.store.timeline(scopeID: CloudyWindowStore.profilePrefix + "cat-0", now: d)
+        let other = try f.store.timeline(scopeID: CloudyWindowStore.profilePrefix + "cat-1", now: d)
+        try check(own[1].selection.kind == .milestone && other[1].selection.kind != .milestone,
+                  "a cat's own window keeps only its own day")
+
+        var both = try Fixture(count: 40, cats: 2)
+        defer { both.cleanup() }
+        takenLongAgo(&both)
+        both.metadata["photo-07"]?.profileIDs = ["cat-0", "cat-1"]
+        try both.store.synchronize(metadata: both.metadata, profiles: both.profiles,
+                                   milestones: ["cat-0": [mark(.birthday, 5)], "cat-1": [mark(.birthday, 3)]], now: d)
+        let together = try both.store.timeline(scopeID: household, now: d)[1]
+        try check(together.photo.photoID == "photo-07"
+                  && CloudyWindowDayText.tag(together.selection) == ["きょうは 猫0と猫1の誕生日", "きょうは 誕生日", "誕生日"],
+                  "two cats on the same birthday: the photo with both")
+        var cleared = together.selection
+        cleared.revealedAt = d
+        try check(CloudyWindowDayText.revealedLine(cleared) == ["猫0 5歳・猫1 3歳", "きょうは 誕生日"],
+                  "after clearing: each cat in the photo and its age")
+
+        var apart = try Fixture(count: 40, cats: 2)
+        defer { apart.cleanup() }
+        takenLongAgo(&apart)
+        try apart.store.synchronize(metadata: apart.metadata, profiles: apart.profiles,
+                                    milestones: ["cat-0": [mark(.birthday, 5)], "cat-1": [mark(.birthday, 3)]], now: d)
+        let pair = try apart.store.timeline(scopeID: household, now: d)
+        try check(apart.metadata[pair[0].photo.photoID]?.profileIDs == ["cat-0"]
+                  && apart.metadata[pair[1].photo.photoID]?.profileIDs == ["cat-1"]
+                  && pair[1].selection.milestone?.cats.map(\.inPhoto) == [false, true],
+                  "no photo with both: the cat shown least lately")
+        var apartCleared = pair[1].selection
+        apartCleared.revealedAt = d
+        try check(CloudyWindowDayText.revealedLine(apartCleared) == ["猫1 3歳", "3歳の誕生日"],
+                  "after clearing: only the cat in the photo")
+
+        var mixed = try Fixture(count: 40, cats: 2)
+        defer { mixed.cleanup() }
+        takenLongAgo(&mixed)
+        try mixed.store.synchronize(metadata: mixed.metadata, profiles: mixed.profiles,
+                                    milestones: ["cat-0": [mark(.adoption, 4)], "cat-1": [mark(.birthday, 2)]], now: d)
+        let birthdayFirst = try mixed.store.timeline(scopeID: household, now: d)[1].selection
+        try check(birthdayFirst.milestone?.kind == "birthday" && birthdayFirst.milestone?.cats.map(\.id) == ["cat-1"],
+                  "a birthday comes before a day a cat came home")
+
+        // The monthly work's day keeps the work.
+        let work = try Fixture(count: 6, cats: 2)
+        defer { work.cleanup() }
+        try deliver(work, now: baseline)
+        let workDay = CloudyWindowStore.calendar.startOfDay(for: closing)
+        try work.store.synchronize(metadata: work.metadata, profiles: work.profiles,
+                                   milestones: ["cat-1": [mark(.birthday, 2, on: workDay)]], now: baseline)
+        _ = try work.store.timeline(scopeID: household, now: closing.addingTimeInterval(-day))
+        let arrived = try work.store.timeline(scopeID: household, now: closing)[0]
+        try check(arrived.selection.albumPeriod == "2026-10" && arrived.selection.kind != .milestone
+                  && CloudyWindowDayText.tag(arrived.selection) == nil, "the monthly work comes before a 節目")
+    }
+
+    /// 11/15: the words of a date day and a 節目 day, and what VoiceOver adds.
+    private static func dayWords() throws {
+        let d = baseline
+        func selection(_ kind: String?, revealed: Bool = true, years: Int? = nil, sameDay: Bool? = nil,
+                       milestone: CloudyWindowMilestone? = nil, album: String? = nil) -> CloudyWindowSelection {
+            CloudyWindowSelection(scopeID: "s", day: d, photoID: "p", profileID: nil, revealedAt: revealed ? d : nil,
+                                  albumPeriod: album, dayKind: kind, dateYearsAgo: years, dateSameDay: sameDay,
+                                  milestone: milestone)
+        }
+        func cats(_ kind: CloudyWindowMilestoneKind, _ values: [(String, Int, Bool)]) -> CloudyWindowMilestone {
+            CloudyWindowMilestone(kind: kind.rawValue, cats: values.map {
+                CloudyWindowMilestone.Cat(id: $0.0, name: $0.0, years: $0.1, inPhoto: $0.2)
+            })
+        }
+        try check(CloudyWindowDayText.revealedLine(selection("date", years: 1, sameDay: true)) == ["1年前のきょう"],
+                  "date day: the same month and day says きょう")
+        try check(CloudyWindowDayText.revealedLine(selection("date", years: 3, sameDay: false)) == ["3年前の今ごろ"],
+                  "date day: within 3 days says 今ごろ")
+        try check(CloudyWindowDayText.revealedLine(selection("date", revealed: false, years: 1, sameDay: true)) == nil
+                  && CloudyWindowDayText.revealedLine(selection("date", years: 1, sameDay: true, album: "2026-10")) == nil
+                  && CloudyWindowDayText.revealedLine(selection("ordinary")) == nil
+                  && CloudyWindowDayText.revealedLine(selection("new")) == nil
+                  && CloudyWindowDayText.revealedLine(selection(nil)) == nil,
+                  "no line while cloudy, on a work's day, or on other days")
+        try check(CloudyWindowDayText.spokenPhotoSuffix(selection("date", years: 1, sameDay: true)) == "、1年前のきょう"
+                  && CloudyWindowDayText.spokenPhotoSuffix(nil) == ""
+                  && CloudyWindowDayText.spokenTagPrefix(selection("ordinary", revealed: false)) == "",
+                  "VoiceOver adds the line only when there is one")
+        let single = cats(.birthday, [("猫0", 5, true)])
+        try check(CloudyWindowDayText.revealedLine(selection("milestone", milestone: single)) == ["猫0 5歳", "5歳の誕生日"]
+                  && CloudyWindowDayText.spokenPhotoSuffix(selection("milestone", milestone: single)) == "、猫0 5歳"
+                  && CloudyWindowDayText.spokenTagPrefix(selection("milestone", revealed: false, milestone: single))
+                    == "きょうは 猫0の誕生日。", "a birthday's words and VoiceOver")
+        let three = selection("milestone", revealed: false,
+                              milestone: cats(.birthday, [("猫0", 5, true), ("猫1", 3, false), ("猫2", 2, false)]))
+        try check(CloudyWindowDayText.tag(three) == ["きょうは 3匹の誕生日", "3匹の誕生日", "誕生日"], "three cats: the count")
+        try check(CloudyWindowDayText.tag(selection("milestone", revealed: false,
+                                                    milestone: cats(.adoption, [("猫0", 4, true)])))
+                  == ["猫0が来て 4年", "うちに来て 4年", "うちに来た日"], "a day a cat came home")
+        let sameYears = cats(.adoption, [("猫0", 4, true), ("猫1", 4, true)])
+        try check(CloudyWindowDayText.tag(selection("milestone", revealed: false, milestone: sameYears))
+                  == ["うちに来て 4年", "うちに来た日"]
+                  && CloudyWindowDayText.revealedLine(selection("milestone", milestone: sameYears)) == ["うちに来て 4年"],
+                  "two cats home the same years")
+        let otherYears = cats(.adoption, [("猫0", 4, true), ("猫1", 2, true)])
+        try check(CloudyWindowDayText.tag(selection("milestone", revealed: false, milestone: otherYears)) == ["うちに来た日"]
+                  && CloudyWindowDayText.revealedLine(selection("milestone", milestone: otherYears)) == ["うちに来た日"],
+                  "two cats home different years")
+        let long = String(repeating: "な", count: 25)
+        try check(CloudyWindowDayText.tag(selection("milestone", revealed: false,
+                                                    milestone: cats(.birthday, [(long, 5, true)])))?.first
+                  == "きょうは " + String(repeating: "な", count: 20) + "の誕生日", "a name is 20 letters at most")
+        try check(CloudyWindowDayText.tag(selection("milestone", revealed: false, milestone: single, album: "2026-10")) == nil,
+                  "a monthly work's tag stays the work's")
+        try check(CloudyWindowDayText.revealForms(selection("ordinary", revealed: false)) == ["タップで、きょうの1枚", "きょうの1枚"]
+                  && CloudyWindowDayText.revealForms(selection("date", revealed: false, years: 1, sameDay: true))
+                    == ["タップで、きょうの1枚", "きょうの1枚"]
+                  && CloudyWindowDayText.revealForms(selection("milestone", revealed: false, milestone: single, album: "2026-10"))
+                    == ["作品がとどきました", "作品がとどいた"]
+                  && CloudyWindowDayText.revealForms(selection("milestone", revealed: false, milestone: single))
+                    == CloudyWindowDayText.tag(selection("milestone", revealed: false, milestone: single)),
+                  "every tag has a shorter form: other days and a work's day too")
+    }
+
+    /// 11/15: a photo of only cats that have died never makes a date day; one
+    /// with a living cat too may; a dead cat's own window has no date day.
+    private static func departedCatsAndDateDays() throws {
+        let formatter = ISO8601DateFormatter()
+        let household = CloudyWindowStore.personalScope
+
+        var only = try Fixture(count: 40, cats: 2)
+        defer { only.cleanup() }
+        takenLongAgo(&only)
+        only.metadata["photo-10"]?.creationDate = formatter.date(from: "2025-10-24T12:00:00+09:00")
+        only.metadata["photo-12"]?.creationDate = formatter.date(from: "2025-10-25T12:00:00+09:00")
+        only.metadata["photo-13"]?.creationDate = formatter.date(from: "2025-10-26T12:00:00+09:00")
+        try only.store.synchronize(metadata: only.metadata, profiles: only.profiles, departed: ["cat-0"], now: baseline)
+        let skipped = try only.store.timeline(scopeID: household, now: baseline)[0]
+        try check(skipped.selection.kind == .date && skipped.photo.photoID == "photo-13",
+                  "a photo of only a cat that has died is not a date day's")
+
+        var together = try Fixture(count: 40, cats: 2)
+        defer { together.cleanup() }
+        takenLongAgo(&together)
+        together.metadata["photo-10"]?.creationDate = formatter.date(from: "2025-10-24T12:00:00+09:00")
+        together.metadata["photo-12"]?.creationDate = formatter.date(from: "2025-10-25T12:00:00+09:00")
+        together.metadata["photo-12"]?.profileIDs = ["cat-0", "cat-1"]
+        try together.store.synchronize(metadata: together.metadata, profiles: together.profiles,
+                                       departed: ["cat-0"], now: baseline)
+        let shared = try together.store.timeline(scopeID: household, now: baseline)[0]
+        try check(shared.selection.kind == .date && shared.photo.photoID == "photo-12",
+                  "a photo with a living cat too may be a date day's")
+
+        func catWindow(departed: Set<String>) throws -> CloudyWindowSelection {
+            var f = try Fixture(count: 70, cats: 2)
+            defer { f.cleanup() }
+            takenLongAgo(&f)
+            f.metadata["photo-10"]?.creationDate = formatter.date(from: "2025-10-24T12:00:00+09:00")
+            try f.store.synchronize(metadata: f.metadata, profiles: f.profiles, departed: departed, now: baseline)
+            return try f.store.timeline(scopeID: CloudyWindowStore.profilePrefix + "cat-0", now: baseline)[0].selection
+        }
+        try check(try catWindow(departed: []).kind == .date, "a living cat's own window has date days")
+        try check(try catWindow(departed: ["cat-0"]).kind != .date, "a cat that has died: no date day in its window")
+    }
+
+    /// Long ago, a day apart each, so nearby captures are not taken as one.
+    private static func takenLongAgo(_ f: inout Fixture) {
+        for key in f.metadata.keys {
+            f.metadata[key]?.creationDate = baseline.addingTimeInterval(-Double(60 + Int(key.dropFirst(6))!) * day)
+        }
+    }
+
+    private static func rotationAndSmallPools() throws {
+        // Older photos: ordinary days only, so each one waits its turn.
+        var f = try Fixture(count: 32)
+        defer { f.cleanup() }
+        takenLongAgo(&f)
+        try f.store.synchronize(metadata: f.metadata, profiles: f.profiles, now: baseline)
         var seen: [String] = []
         for offset in 0..<35 {
             let entry = try f.store.timeline(scopeID: CloudyWindowStore.personalScope,
@@ -495,6 +929,9 @@ private enum CloudyWindowVerifier {
         var uneven = try Fixture(count: 5, cats: 2)
         defer { uneven.cleanup() }
         for key in uneven.metadata.keys { uneven.metadata[key]?.profileIDs = key == "photo-00" ? ["cat-0"] : ["cat-1"] }
+        // Photos taken long ago: a new photo goes ahead of the cats' turns
+        // for its day (newPhotoGoesOutTomorrow), so this checks the turns alone.
+        takenLongAgo(&uneven)
         try uneven.store.synchronize(metadata: uneven.metadata, profiles: uneven.profiles, now: baseline)
         let rotation = try (0..<5).map { offset in
             try uneven.store.timeline(scopeID: CloudyWindowStore.personalScope,

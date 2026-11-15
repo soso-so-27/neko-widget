@@ -227,6 +227,13 @@ enum CatPickTier {
         return storedConfidence >= AppSettings.confidentCatThreshold
     }
 
+    /// 11/15: false while the library holds fewer than
+    /// `AppSettings.minimumConfidentCatPhotos` 確かな猫; then every cat photo
+    /// counts as 確かな猫.
+    static func tiersApply(confidentPhotoCount: Int) -> Bool {
+        confidentPhotoCount >= AppSettings.minimumConfidentCatPhotos
+    }
+
     /// Stable: 確かな猫 first, then たぶん猫, each keeping its input order, so
     /// an all-confident list comes back exactly as it was.
     static func confidentFirst<Item>(

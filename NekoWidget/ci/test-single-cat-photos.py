@@ -77,7 +77,9 @@ class SingleCatRule(unittest.TestCase):
                       ROOT_VIEW)
 
     def test_widget_metadata_carries_the_rule(self):
-        sync = block(MODEL, "private func synchronizeCloudyWindowMetadata(")
+        # 11/14: the metadata is built in makeCloudyWindowMetadata (cached
+        # per Widget authority key) and written by synchronizeCloudyWindowMetadata.
+        sync = block(MODEL, "private func makeCloudyWindowMetadata(")
         self.assertIn("singleCatDerivedAssetIdentifiers(", sync)
         self.assertIn("profiles.insert(singleCatID)", sync)
         self.assertIn("synchronizeCloudyWindowProfilesAfterCountChange()",

@@ -86,7 +86,8 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn("client.reconcileAdmissions()", group)
         self.assertIn("client.acceptsNotification(windowID: route.windowID, requestID: route.requestID, kind: route.kind)", group)
         self.assertLess(group.index("client.acceptsNotification("), group.index("GroupWindowOpenInbox.shared.open("))
-        self.assertIn("(try? await client.window(id: route.windowID)) != nil", group)
+        # 1115s: the tap's one read of the window is the person's own.
+        self.assertIn("(try? await SharingPersonAction.run({ try await client.window(id: route.windowID) })) != nil", group)
         self.assertIn("requestPermission: Bool = false", group)
         self.assertIn("if permissionRequested, settings.authorizationStatus == .notDetermined", group)
         self.assertIn("if allowed && token == nil", group)

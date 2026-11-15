@@ -53,12 +53,18 @@ enum AlbumPrototype {
         let calendar = Calendar.nekoGregorian
         let thisYear = calendar.component(.year, from: now)
         var counts: [Int: Int] = [:]
+        var confidentYears: Set<Int> = []
         for photo in catPhotos {
-            if let date = photo.creationDate { counts[calendar.component(.year, from: date), default: 0] += 1 }
+            if let date = photo.creationDate {
+                let year = calendar.component(.year, from: date)
+                counts[year, default: 0] += 1
+                if photo.isConfidentCat { confidentYears.insert(year) }
+            }
         }
         return counts.filter { entry in
             let year = entry.key
-            guard entry.value >= 9 else { return false }
+            // 11/15: a year of たぶん猫 alone has no work.
+            guard entry.value >= 9, confidentYears.contains(year) else { return false }
             if year < thisYear { return true }
             guard year == thisYear else { return false }
             return deliverNow || (yearArrivalDate(year).map { now >= $0 } ?? false)
@@ -480,7 +486,7 @@ struct AlbumPrototypeView: View {
                     .zoomSource(source, in: zoom)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(book.accessibilityTitle + (workNeedsPlus ? "、Plusで見られます" : ""))
+            .accessibilityLabel(book.accessibilityTitle + (workNeedsPlus ? "、Plusでひらく" : ""))
         } else if month == thisMonth, let next {
             // This month's book in the making: its photos so far, nine places.
             let photos = AlbumPrototype.pick(AlbumPrototype.photos(in: next.start, from: catPhotos), count: 9)
@@ -571,7 +577,7 @@ struct AlbumPrototypeView: View {
             .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(movie.periodTitle)の季節のムービー、とどきました" + (workNeedsPlus ? "、Plusで見られます" : ""))
+        .accessibilityLabel("\(movie.periodTitle)の季節のムービー、とどきました" + (workNeedsPlus ? "、Plusでひらく" : ""))
         .accessibilityIdentifier("album-prototype-new-movie")
     }
 
@@ -747,7 +753,7 @@ struct PastWorksView: View {
         membershipAccess.workDecision(arrival: arrival) == .membershipRequired
     }
 
-    private func plusSuffix(_ arrival: Date) -> String { workNeedsPlus(arrival) ? "、Plusで見られます" : "" }
+    private func plusSuffix(_ arrival: Date) -> String { workNeedsPlus(arrival) ? "、Plusでひらく" : "" }
 
     private var shelves: [Int] {
         Array(Set(letters.map(\.yearNumber)).union(years)).sorted(by: >)
@@ -1307,6 +1313,10 @@ enum AlbumArrivalNotice {
     static let userInfoKey = "albumArrival"
     /// A notice that waits only for the permission the app has not asked for yet.
     @MainActor private static var waitingForPermission: (month: (start: Date, at: Date)?, year: (year: Int, at: Date)?)?
+    /// 11/15: the permission seen when a notice was last to be set. Turned
+    /// on later in Settings, the notices are set on the next return to the
+    /// app, not only after new photos are read.
+    @MainActor private static var permissionWhenSet: UNAuthorizationStatus?
     private static let monthID = "album-arrival.month"
     private static let yearID = "album-arrival.year"
 #if DEBUG || INTERNAL_PRESENTATION
@@ -1339,8 +1349,10 @@ enum AlbumArrivalNotice {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [monthID, yearID])
         waitingForPermission = nil
-        guard month != nil || year != nil else { return }
-        if await center.notificationSettings().authorizationStatus == .notDetermined {
+        guard month != nil || year != nil else { permissionWhenSet = nil; return }
+        let permission = await center.notificationSettings().authorizationStatus
+        permissionWhenSet = permission
+        if permission == .notDetermined {
             waitingForPermission = (month, year)
             return
         }
@@ -1352,6 +1364,14 @@ enum AlbumArrivalNotice {
         if let year {
             await add(yearID, "\(year.year)年の作品がとどきました。", trigger: calendarTrigger(year.at))
         }
+    }
+
+    /// True when a notice waits and the permission changed since it was
+    /// last to be set. Nothing to set (or not yet tried): false, no query.
+    @MainActor
+    static func permissionChangedSinceSet() async -> Bool {
+        guard let permissionWhenSet else { return false }
+        return await UNUserNotificationCenter.current().notificationSettings().authorizationStatus != permissionWhenSet
     }
 
     /// From the album tab: ask once when a work is on its way, then set its
@@ -1509,7 +1529,9 @@ private struct YearBookView: View {
         if let cover = nine.first { result.append(.cover(cover)) }
         for month in 1...12 {
             guard let start = calendar.date(from: DateComponents(year: year, month: month, day: 1)),
-                  let best = AlbumPrototype.pick(AlbumPrototype.photos(in: start, from: catPhotos), count: 1).first
+                  // 11/15: a month of たぶん猫 alone gets no page.
+                  let best = AlbumPrototype.pick(AlbumPrototype.photos(in: start, from: catPhotos)
+                      .filter(\.isConfidentCat), count: 1).first
             else { continue }
             result.append(.month(month, best))
         }
@@ -1572,10 +1594,7 @@ private struct YearBookView: View {
                             .padding(.bottom, 4)
                             .accessibilityHidden(true)
                     }
-                    Text(verbatim: "\(index + 1) / \(leaves.count)")
-                        .font(.footnote.monospacedDigit())
-                        .foregroundStyle(ink.opacity(0.6))
-                        .padding(.bottom, 6)
+                    BookPageNumber(index: $index, count: leaves.count, ink: ink)
                 }
             }
         }
@@ -1736,7 +1755,8 @@ private struct YearStoryContentView: View {
         var result: [Page] = [.cover(cover)]
         for month in 1...12 {
             guard let start = calendar.date(from: DateComponents(year: year, month: month, day: 1)) else { continue }
-            let photos = AlbumPrototype.photos(in: start, from: catPhotos)
+            // 11/15: a month of たぶん猫 alone gets no page.
+            let photos = AlbumPrototype.photos(in: start, from: catPhotos).filter(\.isConfidentCat)
             if let best = AlbumPrototype.pick(photos, count: 1).first { result.append(.month(month, best)) }
         }
         var counts: [String: Int] = [:]
@@ -2066,10 +2086,7 @@ struct MonthlyBookView: View {
                             .padding(.bottom, 4)
                             .accessibilityHidden(true)
                     }
-                    Text(verbatim: "\(index + 1) / \(leaves.count)")
-                        .font(.footnote.monospacedDigit())
-                        .foregroundStyle(Self.ink.opacity(0.6))
-                        .padding(.bottom, 6)
+                    BookPageNumber(index: $index, count: leaves.count, ink: Self.ink)
                 }
             }
         }
@@ -2232,6 +2249,54 @@ private extension View {
     /// The same margins on every page, like a printed book.
     func leafMargins(bottom: CGFloat = 60) -> some View {
         padding(.horizontal, 28).padding(.top, 64).padding(.bottom, bottom)
+    }
+}
+
+/// VoiceOver cannot drag a page curl (11/14), so the page number under the
+/// book is the handle: swipe up or down on it, or pick 「次のページ」 or
+/// 「前のページ」, and the page turns; it reads 「8ページ中3ページ目」.
+/// Outside the UIKit pager, so its actions always reach SwiftUI.
+enum BookPageAccess {
+    static let label = "ページをめくる"
+    static let next = "次のページ"
+    static let previous = "前のページ"
+
+    static func value(index: Int, count: Int) -> String { "\(count)ページ中\(index + 1)ページ目" }
+
+    /// The page after (or before) `index`, kept within the book.
+    static func turned(_ index: Int, count: Int, forward: Bool) -> Int {
+        guard count > 0 else { return 0 }
+        return min(max(forward ? index + 1 : index - 1, 0), count - 1)
+    }
+}
+
+/// 「3 / 8」 under a book, the same on the month's and the year's.
+struct BookPageNumber: View {
+    @Binding var index: Int
+    let count: Int
+    let ink: Color
+
+    var body: some View {
+        Text(verbatim: "\(index + 1) / \(count)")
+            .font(.footnote.monospacedDigit())
+            .foregroundStyle(ink.opacity(0.6))
+            .padding(.bottom, 6)
+            .accessibilityLabel(BookPageAccess.label)
+            .accessibilityValue(BookPageAccess.value(index: index, count: count))
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: turn(forward: true)
+                case .decrement: turn(forward: false)
+                @unknown default: break
+                }
+            }
+            .accessibilityAction(named: Text(BookPageAccess.next)) { turn(forward: true) }
+            .accessibilityAction(named: Text(BookPageAccess.previous)) { turn(forward: false) }
+            .accessibilityIdentifier("book-page-number")
+    }
+
+    private func turn(forward: Bool) {
+        index = BookPageAccess.turned(index, count: count, forward: forward)
     }
 }
 

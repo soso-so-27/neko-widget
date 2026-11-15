@@ -616,7 +616,9 @@ struct CuratedAlbumBuilder {
             photos.sorted(by: newestFirst),
             isConfident: \.isConfidentCat
         )
-        guard !ordered.isEmpty else { return nil }
+        // 11/15: an automatic theme never stands on たぶん猫 alone, so its
+        // cover (the first photo) is always a 確かな猫.
+        guard ordered.first?.isConfidentCat == true else { return nil }
         return CuratedAlbumPresentation(id: id, group: group, photos: ordered)
     }
 
@@ -830,10 +832,9 @@ struct AlbumHighlightBuilder {
             for (month, photos) in months {
                 // 11/14: the app picks these scenes, so 確かな猫 alone when
                 // they make enough scenes; otherwise every photo as before.
-                let confidentScenes = sceneRepresentatives(from: photos.filter(\.isConfidentCat))
-                let scenes = confidentScenes.count >= Self.minimumSceneCount
-                    ? confidentScenes
-                    : sceneRepresentatives(from: photos)
+                // 11/15: 確かな猫 scenes only; a month without enough of them
+                // has no highlight (たぶん猫 stay in the theme's own list).
+                let scenes = sceneRepresentatives(from: photos.filter(\.isConfidentCat))
                 guard scenes.count >= Self.minimumSceneCount else { continue }
                 highlights.append(AlbumHighlightPresentation(
                     id: "highlight-\(month.key)-\(themeID.logKey)",

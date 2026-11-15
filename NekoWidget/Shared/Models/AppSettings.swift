@@ -97,6 +97,10 @@ struct AppSettings: Codable, Equatable, Sendable {
     /// never chosen by the app on its own (covers, widgets, works) while
     /// enough 確かな猫 exist. The old 0.7 line, kept as its own setting.
     static let confidentCatThreshold: Float = 0.7
+    /// 11/15 safety net: with fewer 確かな猫 than this in the whole library,
+    /// the tiers are off and たぶん猫 count as 確かな猫 everywhere, so a cat
+    /// that photographs poorly still gets themes, widgets and works.
+    static let minimumConfidentCatPhotos = 20
 
     static let `default` = AppSettings(
         dateRange: .all,

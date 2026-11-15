@@ -233,6 +233,11 @@ enum OnboardingPresentationVerifier {
             OnboardingPresentationCopy.purposeFootnote.isEmpty,
             "page-one grew a footnote again"
         )
+        // 11/14 (family journey A1): one quiet line for invited people.
+        try require(
+            OnboardingPresentationCopy.purposeInvitationLine == "招待を受けた方は、届いたリンクをもう一度開いてください。",
+            "page-one invitation line changed"
+        )
         // 11/10: page two has no title of its own; it repeated page one.
         // The privacy promise is said once (page one, purposeBody); page two
         // no longer repeats it as bullets or a limited-access note (11/8).

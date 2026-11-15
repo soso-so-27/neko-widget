@@ -24,7 +24,16 @@ actor LibraryStore {
         return migration.snapshot
     }
 
-    func save(_ snapshot: LibrarySnapshot) throws {
+    /// The last value this store wrote (11/14). The app asked to save the
+    /// same snapshot several times per launch; an equal value is not encoded
+    /// (10-20 MB of JSON) and written again. Only this store writes the file
+    /// while the app runs; a restored dataset gets a new store.
+    private var lastSaved: LibrarySnapshot?
+
+    /// Returns false when `snapshot` equals the value last written.
+    @discardableResult
+    func save(_ snapshot: LibrarySnapshot) throws -> Bool {
+        if let lastSaved, lastSaved == snapshot { return false }
         var value = snapshot
         value.schemaVersion = max(
             value.schemaVersion,
@@ -46,6 +55,8 @@ actor LibraryStore {
         )
         value.updatedAt = .now
         try AtomicJSON.write(value, to: snapshotURL)
+        lastSaved = snapshot
+        return true
     }
 
     /// Recovers only the opaque PhotoKit collection identifier when the full

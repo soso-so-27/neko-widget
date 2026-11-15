@@ -102,6 +102,14 @@ enum GroupWindowPresentation {
     /// carry on; nobody is told why, and nothing is lost.
     static let invitationPausedMessage = "いまは、新しく招待したり参加したりできません。"
 
+    /// 11/14 (family journey A2): after joining or making a window, the way
+    /// to the widget guide for it. The same words on both screens.
+    static let placeOnHomeScreenAction = "ホーム画面に置く"
+    /// 11/14 (family journey A4): the server's invitation lifetime, 24 hours
+    /// (SharingService group-windows.ts createGroupInvitation, and the family
+    /// notebook's invitations in migration 0055).
+    static let invitationLifetimeCaption = "24時間使えます。"
+
     /// The window keeps everything; only new photos stop. Never says
     /// "deleted", never blames the members.
     static let pausedDetail = "これまでの写真はそのままで、新しい写真だけ届きません。"
@@ -221,7 +229,14 @@ final class GroupWindowMembersModel: ObservableObject {
 
     /// The 8-second pass stays quiet: the orange line is for a load the person
     /// started, or when nothing is on screen yet (11/5: it came and went).
+    /// Opening the screen, a pull, 「もう一度」: the person's own read (1115s).
+    /// The quiet 8-second pass (`reportsFailure: false`) is automatic.
     func load(reportsFailure: Bool = true) async {
+        if reportsFailure { await SharingPersonAction.run { await read(reportsFailure: true) } }
+        else { await read(reportsFailure: false) }
+    }
+
+    private func read(reportsFailure: Bool) async {
         do {
             let results = (try? await client.reconcileAdmissions()) ?? []
             admissionResults = results.filter { $0.windowID == windowID && !$0.joinedLocally }
@@ -340,61 +355,64 @@ final class GroupWindowMembersModel: ObservableObject {
         durable: Bool = false,
         _ body: (GroupOperation) async throws -> Void
     ) async {
-        guard let window, !isWorking else { return }
-        isWorking = true
-        defer { isWorking = false }
-        actionErrorMessage = nil
-        actionCompletionMessage = nil
-        // Compare-and-set against the revision shown on screen. A retry keeps
-        // the operation ID so the relay can replay instead of applying twice.
-        // Rename and close survive the app being closed: the same ID and
-        // arguments come back from GroupManagementMemory.
-        let saved = durable ? GroupManagementMemory.pending(windowID: windowID, key: key) : nil
-        let operation = saved.map { GroupOperation(id: $0.id, expectedRevision: $0.expectedRevision) }
-            ?? GroupOperation(id: retainedOperations[key]?.id ?? UUID(), expectedRevision: window.revision)
-        retainedOperations[key] = operation
-        if durable {
-            GroupManagementMemory.remember(.init(key: key, id: operation.id,
-                                                 expectedRevision: operation.expectedRevision), windowID: windowID)
-        }
-        func settle() {
-            retainedOperations[key] = nil
-            if durable { GroupManagementMemory.forget(windowID: windowID) }
-        }
-        do {
-            try await body(operation)
-            settle()
-            if reloadsAfterSuccess { await load() }
-        } catch let error as GroupSubscriptionError {
-            // Paused or not yet Plus: nothing to retry; show the latest state.
-            retainedOperations[key] = nil
-            if durable { GroupManagementMemory.forget(windowID: windowID) }
-            actionErrorMessage = GroupWindowPresentation.message(for: error)
-            await load()
-        } catch let error as GroupWindowManagementError {
-            // Accepted but not yet read back: keep the same operation for the
-            // next try. Anything else is final; show the latest state.
-            if error != .stateRefreshRequired { settle() }
-            actionErrorMessage = GroupWindowPresentation.message(for: error)
-            await load()
-        } catch let error as GroupClientError {
-            switch error {
-            case .offline:
-                // Resend the same operation when the network returns.
-                break
-            case .unavailable where durable:
-                // The outcome may be unknown: the same operation, never a new ID.
-                break
-            case .staleRevision:
-                // Same operation; re-read the list before the next attempt.
-                await load()
-            default:
-                settle()
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            guard let window, !isWorking else { return }
+            isWorking = true
+            defer { isWorking = false }
+            actionErrorMessage = nil
+            actionCompletionMessage = nil
+            // Compare-and-set against the revision shown on screen. A retry keeps
+            // the operation ID so the relay can replay instead of applying twice.
+            // Rename and close survive the app being closed: the same ID and
+            // arguments come back from GroupManagementMemory.
+            let saved = durable ? GroupManagementMemory.pending(windowID: windowID, key: key) : nil
+            let operation = saved.map { GroupOperation(id: $0.id, expectedRevision: $0.expectedRevision) }
+                ?? GroupOperation(id: retainedOperations[key]?.id ?? UUID(), expectedRevision: window.revision)
+            retainedOperations[key] = operation
+            if durable {
+                GroupManagementMemory.remember(.init(key: key, id: operation.id,
+                                                     expectedRevision: operation.expectedRevision), windowID: windowID)
             }
-            actionErrorMessage = GroupWindowPresentation.message(for: error)
-        } catch {
-            settle()
-            actionErrorMessage = GroupWindowPresentation.message(for: error)
+            @MainActor func settle() {
+                retainedOperations[key] = nil
+                if durable { GroupManagementMemory.forget(windowID: windowID) }
+            }
+            do {
+                try await body(operation)
+                settle()
+                if reloadsAfterSuccess { await load() }
+            } catch let error as GroupSubscriptionError {
+                // Paused or not yet Plus: nothing to retry; show the latest state.
+                retainedOperations[key] = nil
+                if durable { GroupManagementMemory.forget(windowID: windowID) }
+                actionErrorMessage = GroupWindowPresentation.message(for: error)
+                await load()
+            } catch let error as GroupWindowManagementError {
+                // Accepted but not yet read back: keep the same operation for the
+                // next try. Anything else is final; show the latest state.
+                if error != .stateRefreshRequired { settle() }
+                actionErrorMessage = GroupWindowPresentation.message(for: error)
+                await load()
+            } catch let error as GroupClientError {
+                switch error {
+                case .offline:
+                    // Resend the same operation when the network returns.
+                    break
+                case .unavailable where durable:
+                    // The outcome may be unknown: the same operation, never a new ID.
+                    break
+                case .staleRevision:
+                    // Same operation; re-read the list before the next attempt.
+                    await load()
+                default:
+                    settle()
+                }
+                actionErrorMessage = GroupWindowPresentation.message(for: error)
+            } catch {
+                settle()
+                actionErrorMessage = GroupWindowPresentation.message(for: error)
+            }
         }
     }
 }
@@ -415,6 +433,10 @@ struct GroupWindowMembersView: View {
     var capabilities: GroupWindowScreenCapabilities = .full
     /// After leaving: closes the window the members screen was opened from.
     var onLeft: (() -> Void)? = nil
+    /// 11/14 (family journey A2): opened right after making the window, so
+    /// it offers 「ホーム画面に置く」 for it (one row under its name).
+    var offersWidgetPlacement = false
+    @State private var showsWidgetGuide = false
     @Environment(\.dismiss) private var dismiss
     @State private var removalTarget: GroupMember?
     @State private var showsRemoval = false
@@ -442,7 +464,7 @@ struct GroupWindowMembersView: View {
     private var presentsSheet: Bool {
         showsRename || showsRemoval || showsRevokeConfirmation
             || showsLeaveConfirmation || showsCloseConfirmation || rejectionTarget != nil
-            || sharingInvitation != nil || restoreTarget != nil
+            || sharingInvitation != nil || restoreTarget != nil || showsWidgetGuide
     }
     /// Admissions already shown once, so 「〇〇さんが参加しました」 is said once
     /// and not every time the screen opens. Written only when leaving.
@@ -508,6 +530,7 @@ struct GroupWindowMembersView: View {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(8))
                 guard !Task.isCancelled else { return }
+                // 11/15 (1115q): automatic (unmarked), within this iPhone's call budget.
                 if !presentsSheet { await model.load(reportsFailure: false) }
             }
         }
@@ -579,6 +602,9 @@ struct GroupWindowMembersView: View {
         .confirmationDialog(rejectionTitle, isPresented: rejectionPresented, titleVisibility: .visible,
                             presenting: rejectionTarget, actions: rejectionActions)
         .sheet(item: $sharingInvitation) { invitation in invitationShareSheet(invitation) }
+        .sheet(isPresented: $showsWidgetGuide) {
+            if let window = model.window { OfficialWindowWidgetGuide(displayName: window.name) }
+        }
         .modifier(GroupHiddenMemberDialogs(windowID: model.windowID, target: $restoreTarget, hidden: $hiddenMembers))
     }
 
@@ -686,6 +712,15 @@ struct GroupWindowMembersView: View {
                     .foregroundStyle(.secondary)
             }
             .frame(minHeight: 44)
+            if offersWidgetPlacement, window.state != .closed {
+                Button {
+                    GroupWidgetCache.offerForPlacement(windowID: window.id, windowName: window.name)
+                    showsWidgetGuide = true
+                } label: {
+                    Label(GroupWindowPresentation.placeOnHomeScreenAction, systemImage: "square.grid.2x2")
+                }
+                .accessibilityIdentifier("group-window-place-widget")
+            }
         }
     }
 
@@ -771,12 +806,15 @@ struct GroupWindowMembersView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(member.displayName)、\(GroupWindowPresentation.memberDetail(member, in: window))"
                             + (hidden.map { $0.blocked == true ? "、ブロック中" : "、表示しない" } ?? ""))
-        .accessibilityAction(named: Text("外す")) {
-            guard canRemove, !model.isWorking else { return }
-            removalTarget = member
-            showsRemoval = true
-        }
         .accessibilityActions {
+            // 11/14: only for someone who can be removed (it did nothing for the others).
+            if canRemove {
+                Button("外す") {
+                    guard !model.isWorking else { return }
+                    removalTarget = member
+                    showsRemoval = true
+                }
+            }
             if let hidden {
                 Button(hidden.blocked == true ? "ブロックを解除" : "表示する") { restoreTarget = hidden }
             }
@@ -831,7 +869,8 @@ struct GroupWindowMembersView: View {
             if let invitation = model.activeInvitation {
                 // The link itself is never drawn; it travels only through
                 // the share sheet, so a screenshot cannot leak it. 11/8 (17):
-                // the message it carries and its expiry are not shown here.
+                // the message it carries is not shown here; 11/14 (A4): how
+                // long it lasts is, in one short line (no date and time).
                 Button { sharingInvitation = invitation } label: {
                     Label("招待リンクを送る", systemImage: "square.and.arrow.up")
                         .font(.headline)
@@ -839,6 +878,9 @@ struct GroupWindowMembersView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("group-window-share-invitation")
+                Text(GroupWindowPresentation.invitationLifetimeCaption)
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("group-window-invitation-lifetime")
                 Button(role: .destructive) {
                     showsRevokeConfirmation = true
                 } label: {
@@ -863,6 +905,9 @@ struct GroupWindowMembersView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(model.isWorking || renewingInvitation)
                 .accessibilityIdentifier("group-window-renew-invitation")
+                Text(GroupWindowPresentation.invitationLifetimeCaption)
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("group-window-invitation-lifetime")
                 Text("前に送ったリンクは使えなくなります。")
                     .font(.footnote).foregroundStyle(.secondary)
             } else if let earlier = model.earlierInvitation {
@@ -1149,6 +1194,8 @@ final class GroupJoinModel: ObservableObject {
 
     let invitationID: String
     let invitationContext: GroupInvitationContext?
+    /// The window the link is for, so 「ホーム画面に置く」 can name it (A2).
+    let windowID: String?
     /// Nil until the production adapter exists in this build; the screen
     /// then explains that applying is not available yet.
     private let client: (any GroupWindowClient)?
@@ -1160,6 +1207,7 @@ final class GroupJoinModel: ObservableObject {
         self.client = client
         self.invitationID = invitationID
         self.invitationContext = context
+        self.windowID = windowID
         displayName = GroupDisplayName.remembered
         // The home-screen copy only holds windows this iPhone is in (pruned
         // after every list load), so it answers before any request.
@@ -1167,6 +1215,13 @@ final class GroupJoinModel: ObservableObject {
     }
 
     var isAvailable: Bool { client != nil }
+
+    /// The joined window's name for the widget guide: the invitation's own,
+    /// else the home-screen copy's. Nil when neither is known (an older link).
+    var placementWindowName: String? {
+        if let name = invitationContext?.windowName, !name.isEmpty { return name }
+        return windowID.flatMap { GroupWidgetCache.entry(windowID: $0)?.windowName }
+    }
 
     var trimmedName: String {
         displayName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1180,42 +1235,54 @@ final class GroupJoinModel: ObservableObject {
     }
 
     func resume() async {
-        guard let client else { return }
-        do {
-            if let saved = try await client.resumableJoin(invitationID: invitationID) {
-                displayName = saved.displayName; update(with: saved)
-            }
-        } catch { errorMessage = GroupWindowPresentation.message(for: error) }
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            guard let client else { return }
+            do {
+                if let saved = try await client.resumableJoin(invitationID: invitationID) {
+                    displayName = saved.displayName; update(with: saved)
+                }
+            } catch { errorMessage = GroupWindowPresentation.message(for: error) }
+        }
     }
 
     func apply() async {
-        guard let client else {
-            errorMessage = GroupWindowPresentation.message(for: GroupClientError.unavailable)
-            return
-        }
-        guard canApply else { return }
-        isWorking = true
-        defer { isWorking = false }
-        errorMessage = nil
-        do {
-            let request = try await client.apply(
-                invitationID: invitationID,
-                displayName: trimmedName,
-                operationID: applyOperationID
-            )
-            GroupDisplayName.remember(trimmedName)
-            update(with: request)
-            Task { await GroupAdmissionService.shared.refresh(requestPermission: true) }
-        } catch GroupInvitationError.alreadyMember {
-            alreadyMember = true
-        } catch {
-            errorMessage = GroupWindowPresentation.message(for: error)
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            guard let client else {
+                errorMessage = GroupWindowPresentation.message(for: GroupClientError.unavailable)
+                return
+            }
+            guard canApply else { return }
+            isWorking = true
+            defer { isWorking = false }
+            errorMessage = nil
+            do {
+                let request = try await client.apply(
+                    invitationID: invitationID,
+                    displayName: trimmedName,
+                    operationID: applyOperationID
+                )
+                GroupDisplayName.remember(trimmedName)
+                update(with: request)
+                Task { await GroupAdmissionService.shared.refresh(requestPermission: true) }
+            } catch GroupInvitationError.alreadyMember {
+                alreadyMember = true
+            } catch {
+                errorMessage = GroupWindowPresentation.message(for: error)
+            }
         }
     }
 
     /// The 8-second check stays quiet; a pull to refresh says what failed
     /// (11/5: the red line came and went while waiting).
     func refresh(reportsFailure: Bool = false) async {
+        // 1115s: a pull is the person's own read; the 8-second pass is automatic.
+        if reportsFailure { await SharingPersonAction.run { await check(reportsFailure: true) } }
+        else { await check(reportsFailure: false) }
+    }
+
+    private func check(reportsFailure: Bool) async {
         guard case let .pending(request) = phase, let client else { return }
         do {
             let latest = try await client.joinStatus(requestID: request.id)
@@ -1229,15 +1296,18 @@ final class GroupJoinModel: ObservableObject {
     }
 
     func cancel() async {
-        guard case let .pending(request) = phase, let client, !isWorking else { return }
-        isWorking = true
-        defer { isWorking = false }
-        do {
-            try await client.cancel(requestID: request.id, operationID: UUID())
-            phase = .cancelled
-            errorMessage = nil
-        } catch {
-            errorMessage = GroupWindowPresentation.message(for: error)
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            guard case let .pending(request) = phase, let client, !isWorking else { return }
+            isWorking = true
+            defer { isWorking = false }
+            do {
+                try await client.cancel(requestID: request.id, operationID: UUID())
+                phase = .cancelled
+                errorMessage = nil
+            } catch {
+                errorMessage = GroupWindowPresentation.message(for: error)
+            }
         }
     }
 
@@ -1263,6 +1333,8 @@ struct GroupJoinView: View {
     @FocusState private var typingName: Bool
     @ObservedObject var model: GroupJoinModel
     var onOpenWindow: (() -> Void)? = nil
+    /// 11/14 (A2): the widget guide for the joined window, over this screen.
+    @State private var showsWidgetGuide = false
 
     var body: some View {
         Form {
@@ -1302,6 +1374,11 @@ struct GroupJoinView: View {
         }
         .navigationTitle("まどに参加")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showsWidgetGuide) {
+            if let windowName = model.placementWindowName {
+                OfficialWindowWidgetGuide(displayName: windowName)
+            }
+        }
         .onChange(of: model.isWorking) { _, working in if !working { running = nil } }
         .task { await model.resume() }
         .task(id: model.isPending) {
@@ -1310,6 +1387,7 @@ struct GroupJoinView: View {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(8))
                 guard !Task.isCancelled else { return }
+                // 11/15 (1115q): automatic (unmarked), within this iPhone's call budget.
                 await model.refresh()
             }
         }
@@ -1426,6 +1504,20 @@ struct GroupJoinView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("group-join-open-window")
+            }
+            // 11/14 (family journey A2): the second, quieter way on. The same
+            // guide as のわのまど, with this window's name in its last line.
+            if let windowName = model.placementWindowName, let windowID = model.windowID {
+                Button {
+                    GroupWidgetCache.offerForPlacement(windowID: windowID, windowName: windowName)
+                    showsWidgetGuide = true
+                } label: {
+                    Label(GroupWindowPresentation.placeOnHomeScreenAction, systemImage: "square.grid.2x2")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("group-join-place-widget")
             }
         }
     }
@@ -1756,10 +1848,6 @@ enum GroupWindowUIFixture {
     /// The まど tab and window screens on the screen fixture.
     static var showsScreens: Bool {
         CommandLine.arguments.contains("--group-window-screens-fixture")
-    }
-
-    static var checkIsOff: Bool {
-        CommandLine.arguments.contains("--group-window-screens-check-off")
     }
 
     static var showsFailedDelivery: Bool {

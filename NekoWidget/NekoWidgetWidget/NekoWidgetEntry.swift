@@ -42,6 +42,9 @@ struct NekoWidgetEntry: TimelineEntry {
     var cloudyWindowSelection: CloudyWindowSelection? = nil
     /// The group window photo this entry shows, for its heart button.
     var groupWindowPhoto: GroupWindowPhotoReference? = nil
+    /// This iPhone's photos and the cloudy windows: why nothing is shown,
+    /// as far as the extension knows (11/14).
+    var personalStuckState: WidgetStuckState? = nil
 
     static func empty(
         at date: Date,
@@ -67,6 +70,21 @@ struct NekoWidgetEntry: TimelineEntry {
             familyActionsRequireApp: false,
             emptyStateReason: emptyStateReason
         )
+    }
+
+    /// An empty personal or cloudy entry that says why (11/14). A deleted
+    /// cat keeps `.sourceUnavailable`, so a tap still opens the photo tab.
+    static func stuck(
+        _ state: WidgetStuckState,
+        at date: Date,
+        imageVariant: WidgetImageVariant?,
+        photoSourceIdentifier: String = WidgetPhotoSource.personalLibraryID
+    ) -> NekoWidgetEntry {
+        var entry = empty(at: date, imageVariant: imageVariant,
+                          photoSourceIdentifier: photoSourceIdentifier,
+                          emptyStateReason: state == .catRemoved ? .sourceUnavailable : .needsApp)
+        entry.personalStuckState = state
+        return entry
     }
 
     var photoURL: URL? {

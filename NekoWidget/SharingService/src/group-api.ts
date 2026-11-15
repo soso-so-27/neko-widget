@@ -1,4 +1,6 @@
 import { ApiError } from './errors';
+import { storeAnchorReceipt } from './group-anchor-receipts';
+import { groupRecoveryCatalogAPI } from './group-recovery-catalog';
 import type { Env } from './env';
 import { authenticateGroupRequest,groupId } from './group-auth';
 import { createGroupIdentityChallenge,registerGroupIdentity } from './group-identities';
@@ -61,6 +63,7 @@ export async function groupAPI(request:Request,env:Env):Promise<Response> {
 }
 async function dispatchGroup(request:Request,env:Env):Promise<Response> {
   const path=new URL(request.url).pathname;
+  if(path.startsWith('/v3/group-recovery/'))return groupRecoveryCatalogAPI(request,env);
   if(path===groupReportingAvailabilityPath)return groupReportingAvailability(request,env);
   if(groupReplyPath.test(path))return groupReportStatus(request,env);
   if(isGroupReportPath(path))return groupReportAPI(request,env);
@@ -88,6 +91,7 @@ async function dispatchGroup(request:Request,env:Env):Promise<Response> {
   const key=suffix.match(/^keys\/([1-9][0-9]{0,14})$/u);
   if(key && request.method==='GET') return getGroupKey(env,actor,windowId,Number(key[1]));
   if(!body) throw new ApiError(404,'not_found','The endpoint was not found.');
+  if(suffix==='anchor-receipt')return storeAnchorReceipt(env,actor,windowId,body);
   if(suffix==='name')return manageGroupWindow(env,actor,windowId,body);
   if(suffix==='close')return manageGroupWindow(env,actor,windowId,body,true);
   if(suffix==='join-push-subscription')return registerGroupJoinPush(env,actor,windowId,body);

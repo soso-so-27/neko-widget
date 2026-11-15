@@ -21,7 +21,7 @@ struct AccountDeletionChoicesView: View {
             if let client = GroupWindowClientProvider.production {
                 Section {
                     NavigationLink { GroupIdentityDeletionView(client: client) } label: {
-                        Label("まどと家族の手帳から抜ける", systemImage: "person.2.slash")
+                        Label("まどと家族の手帳のデータを消す", systemImage: "person.2.slash")
                     }
                     .accessibilityIdentifier("account-deletion-group-identity")
                 } footer: {
@@ -172,7 +172,9 @@ struct SettingsView: View {
 #endif
     /// Only once there is a family to open or leave; making one stays in
     /// この子のこと (11/10: one place to start it).
-    private var showsFamilyNotebookRow: Bool { familyNotebook.hasFamily }
+    /// 11/15: asked to join and waiting to be let in (set by FamilyNotebookSharing).
+    @AppStorage(FamilyNotebookAwaitingApproval.key) private var awaitsFamilyApproval = false
+    private var showsFamilyNotebookRow: Bool { familyNotebook.hasFamily || awaitsFamilyApproval }
 
     private var canOpenMembershipOffer: Bool {
         PlusOfferAvailability.isConfigured
@@ -305,6 +307,9 @@ struct SettingsView: View {
                                     Image(systemName: "person.2.fill")
                                 }
                                 Spacer(minLength: 8)
+                                if !familyNotebook.hasFamily {
+                                    Text("参加を待っています").foregroundStyle(Color(uiColor: .secondaryLabel))
+                                }
                                 Image(systemName: "chevron.right")
                                     .font(.footnote.weight(.semibold))
                                     .foregroundStyle(Color(uiColor: .tertiaryLabel))
@@ -365,7 +370,9 @@ struct SettingsView: View {
                 Text("ねこのまどについて")
             } footer: {
                 // Read-only facts live in the footer, not in a row that looks tappable.
-                Text("ねこのまど バージョン \(appVersion)")
+                // 11/14: with the build number, so a question can name it.
+                Text("ねこのまど バージョン \(appVersion)（\(appBuild)）")
+                    .accessibilityLabel("ねこのまど バージョン \(appVersion)、ビルド \(appBuild)")
                     .accessibilityIdentifier("settings-app-version")
             }
 
@@ -437,6 +444,8 @@ struct SettingsView: View {
                                     .font(.footnote).foregroundStyle(.secondary)
                             }
                         }
+                        NavigationLink("機種変更の小さな試験") { KeychainSyncProbeView() }
+                            .accessibilityIdentifier("settings-keychain-sync-probe")
                         NavigationLink("猫の見分けを測る（テスト用）") { CatIdentityMeasureView() }
                             .accessibilityIdentifier("settings-cat-identity-measure")
                         NavigationLink {
@@ -527,9 +536,13 @@ struct SettingsView: View {
 #endif
     }
 
-    /// 「1.0」 only: no build number or OS requirement on the screen (11/8).
+    /// 「1.0（374）」: the version and the build, no OS requirement (11/14).
     private var appVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+    }
+
+    private var appBuild: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
     }
 
     private var photoSettingsSummary: String {

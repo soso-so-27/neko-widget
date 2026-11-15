@@ -569,6 +569,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         # band, so two Small Widgets side by side line up.
         official = section(view, "} else if let photo = entry.officialPhoto {", "} else if isWindowPhoto {")
         self.assertIn("Text(photo.catName)", official)
+        # 11/15: one part for the name, shared with the cloudy window's line.
+        self.assertIn("footerName {", official)
+        official = section(view, "private func footerName<Content: View>(", "private func revealCapsule(")
         self.assertIn(".font(.caption2)", official)
         self.assertIn(".foregroundStyle(.white.opacity(0.92))", official)
         self.assertIn(".padding(.bottom, footerTextBottomInset)", official)
@@ -679,7 +682,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('return "このまどは終わりました"', empty_title)
         self.assertIn('return "写真を待っています"', empty_title)
         self.assertNotIn('return "まだ届いていません"', empty_title)
-        self.assertIn('return "写真を準備しています"', empty_title)
+        # 11/14: the personal words come from WidgetStuckState (Shared).
+        self.assertIn("return WidgetStuckState.preparing.title", empty_title)
+        self.assertIn('case .preparing: return "写真を準備しています"', source("Shared/Models/WidgetManifest.swift"))
         self.assertIn('return "長押しして、別のまどを選んでください"', empty_title)
         self.assertIn("return entry.windowDisplayName", empty_title)
 
@@ -776,9 +781,12 @@ try MomentSharingStateStore.verifyPrivateAlias()
 
         view = source("NekoWidgetWidget/NekoWidgetView.swift")
         # 11/10: right after placing, the personal Widget is "being prepared",
-        # not an error that tells the person to update.
-        self.assertIn('return "写真を準備しています"', view)
-        self.assertIn('return "アプリを開くと始まります"', view)
+        # not an error that tells the person to update (11/14: the words live
+        # in WidgetStuckState, with one state per known cause).
+        stuck = source("Shared/Models/WidgetManifest.swift")
+        self.assertIn('case .preparing: return "写真を準備しています"', stuck)
+        self.assertIn('case .preparing: return "アプリを開くと始まります"', stuck)
+        self.assertIn("return WidgetStuckState.preparing.subtitle", view)
         self.assertNotIn('return "写真を表示できません"', view)
         self.assertNotIn('return "アプリを開いて更新"', view)
         self.assertIn("let image = WidgetCacheImageLoader.image(", view)
@@ -2312,7 +2320,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "NekoWidgetWidget/NekoWidgetConfigurationIntent.swift"
         )
         self.assertNotIn("privateWindowDisplayName", home)
-        self.assertIn('"\\(entry.windowDisplayName)に届いた写真"', widget)
+        self.assertIn('"\\(entry.windowDisplayName)に届いた猫の写真"', widget)
         self.assertNotIn('"\\(entry.windowDisplayName)から届いた', widget)
         self.assertIn("Text(entry.windowDisplayName)", widget)
         self.assertIn('detail: "このまどに届いた最新の一枚"', widget_configuration)
@@ -2933,7 +2941,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         # 11/12: the guide's last step uses the Widget's own words.
         self.assertIn('[(image: "onboarding-widget-cloudy", text: OnboardingPresentationCopy.widgetCloudyStep)]', guide)
         widget_view = source("NekoWidgetWidget/NekoWidgetView.swift")
-        self.assertIn('"タップで、きょうの1枚"', widget_view)
+        self.assertIn("CloudyWindowDayText.revealForms(selection)", widget_view)
+        self.assertIn('["タップで、きょうの1枚", "きょうの1枚"]', source("Shared/Storage/CloudyWindowStore.swift"))
         self.assertIn("「タップで、きょうの1枚」を押すと", presentation)
         for text in (guide, presentation):
             self.assertNotIn("札を押すと", text)
@@ -3125,8 +3134,11 @@ class AppDrawingWasteTests(unittest.TestCase):
         self.assertIn("private func highResolutionRecoverySamplePresentation(", guarded)
         self.assertTrue(guarded.rstrip().endswith("#endif"))
         presentation = section(root, "settings: settingsPresentation,", "excludedCatPhotos:")
-        self.assertIn("detectionAccuracySample: internalDetectionAccuracySample(hasPhotoAccess: hasPhotoAccess)", presentation)
-        self.assertIn("highResolutionRecoverySample: internalHighResolutionRecoverySample(", presentation)
+        # 11/14: made once per change in ProfilePresentationCache, not per drawing.
+        self.assertIn("detectionAccuracySample: profileValues.detectionSample", presentation)
+        self.assertIn("highResolutionRecoverySample: profileValues.recoverySample", presentation)
+        self.assertIn("detectionSample: internalDetectionAccuracySample(hasPhotoAccess: hasPhotoAccess)", root)
+        self.assertIn("recoverySample: internalHighResolutionRecoverySample(", root)
         self.assertNotIn("? detectionAccuracySamplePresentation", presentation)
 
     def test_app_root_does_not_observe_the_family_notebook(self) -> None:
@@ -3153,7 +3165,7 @@ class AppDrawingWasteTests(unittest.TestCase):
         self.assertIn("@State private var seasonalMovieVideoCatalogDigest = SeasonalMovieVideoCatalogDigestCache()", main)
         self.assertIn(".onReceive(NotificationCenter.default.publisher(for: .photoLibraryContentDidChange)) { _ in\n            photoLibraryChangeCount &+= 1", main)
         model = source("NekoWidget/ViewModels/AppViewModel.swift")
-        observer = section(model, "private lazy var libraryObserver = PhotoLibraryObserver {", "init() {")
+        observer = section(model, "private lazy var libraryObserver = PhotoLibraryObserver {", "    init(\n        scanner:")
         self.assertIn("NotificationCenter.default.post(name: .photoLibraryContentDidChange, object: nil)", observer)
 
     def test_plus_offer_photo_is_found_without_sorting_every_candidate(self) -> None:
@@ -3337,6 +3349,8 @@ class GroupWindowUITests(unittest.TestCase):
         self.assertNotIn("pendingRequests = []", load)
         # 11/5: the 8-second pass stays quiet and waits while a sheet is open.
         self.assertIn("if reportsFailure || window == nil {", load)
+        # 1115q: the pass is automatic, within this iPhone's call budget.
+        # 1115s: unmarked, so automatic within this iPhone's call budget.
         self.assertIn("if !presentsSheet { await model.load(reportsFailure: false) }", view)
         join = section(view, "func refresh(reportsFailure: Bool = false) async {", "func cancel() async {")
         self.assertIn("if reportsFailure { errorMessage = GroupWindowPresentation.message(for: error) }", join)
@@ -3475,7 +3489,7 @@ class GroupWindowScreenTests(unittest.TestCase):
         # and only inside keep(), which the production adapter runs through storeAndAcknowledge (so ACK follows the write).
         receive = section(screen, "private func receive(", "func prepare(_ item: PhotosPickerItem) async")
         self.assertIn("GroupPhotoModeration.check(incoming.jpeg, with: moderation)", receive)
-        self.assertIn("guard verdict != .retryLater, verdict != .checkOff else { return verdict }", receive)
+        self.assertIn("guard verdict != .retryLater else { return verdict }", receive)
         self.assertIn("client.keep(incoming, outgoingOperationID: outgoingOperationID)", receive)
         self.assertLess(receive.index("GroupPhotoModeration.check"), receive.index("client.keep("))
         self.assertIn("try await store.save(", receive)
@@ -5249,10 +5263,14 @@ class GroupWindowUsabilityTests(unittest.TestCase):
         self.assertIn('WorkingLabel(title: "断る"', setup)
         # Removing a member has a visible button and a VoiceOver action, not only a swipe.
         self.assertIn('"group-window-remove-member"', setup)
-        self.assertIn('.accessibilityAction(named: Text("外す"))', setup)
-        # Photo tiles are buttons and say whether they have a heart.
+        # 11/14: the action is offered only for someone who can be removed.
+        self.assertIn('if canRemove {\n                Button("外す")', setup)
+        self.assertNotIn('.accessibilityAction(named: Text("外す"))', setup)
+        # Photo tiles open as buttons (「ママからの写真、3日前」); the heart
+        # says whether this person sent one (11/14).
         self.assertNotIn(".onTapGesture { openedEntry = entry }", window)
-        self.assertIn('parts.append("ハートあり")', window)
+        self.assertIn('GroupDisplayName.from(sender) + "の写真"', window)
+        self.assertIn('mine ? "ハートを送りました" : canHeart ? "ハートを送る" : "ハート"', window)
 
 
 class WindowCreationEntryTests(unittest.TestCase):
@@ -5263,7 +5281,8 @@ class WindowCreationEntryTests(unittest.TestCase):
         window = source("NekoWidget/Views/GroupWindowView.swift")
         self.assertNotIn("グループのまど", window)
         create = section(window, "struct GroupWindowCreateScreen: View {", "struct GroupWindowListSection: View {")
-        self.assertIn("GroupWindowMembersScreen(client: model.client, windowID: createdWindowID)", create)
+        # 11/14 (A2): the new window's members screen offers 「ホーム画面に置く」.
+        self.assertIn("GroupWindowMembersScreen(client: model.client, windowID: createdWindowID, offersWidgetPlacement: true)", create)
 
     def test_create_says_it_is_making_and_puts_the_keyboard_away(self) -> None:
         window = source("NekoWidget/Views/GroupWindowView.swift")
@@ -5341,9 +5360,10 @@ class WorkingFeedbackTests(unittest.TestCase):
         window = source("NekoWidget/Views/GroupWindowView.swift")
         # Retry progress is the view's own: background loads must not redraw the list.
         self.assertNotIn("isLoading", window)
-        self.assertEqual(window.count("reloading = true; Task { defer { reloading = false }; await model.load() }"), 2)
+        # 1115s: 「もう一度」 is the person's own read.
+        self.assertEqual(window.count("reloading = true; Task { defer { reloading = false }; await SharingPersonAction.run { await model.load() } }"), 2)
         favorite = section(window, "func addToFavorites(", "func remove(")
-        self.assertIn("addingFavoriteID = entry.id\n        defer { addingFavoriteID = nil }", favorite)
+        self.assertIn("addingFavoriteID = entry.id\n            defer { addingFavoriteID = nil }", favorite)
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
         self.assertNotIn("isLoading", setup)
         self.assertIn("Task { defer { reloading = false }; await model.load() }", setup)
@@ -5456,7 +5476,8 @@ class FreeFirstPhotoTests(unittest.TestCase):
 class FamilyInviteMessageTests(unittest.TestCase):
     def test_family_invitation_carries_a_line_like_a_window(self) -> None:
         notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
-        self.assertIn("message: Text(FamilyNotebookInviteView.inviteMessage(cats: model.catNames))", notebook)
+        # 11/14 (A5): one press opens the system share sheet with the line.
+        self.assertIn("message: FamilyNotebookInviteView.inviteMessage(cats: model.catNames)", notebook)
         self.assertIn("のことを一緒に書こう。このリンクから参加してね。", notebook)
 
 
@@ -5559,7 +5580,7 @@ class JoinOwnWindowTests(unittest.TestCase):
     def test_a_link_to_a_window_already_joined_opens_it(self) -> None:
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
         self.assertIn("alreadyMember = windowID.map { GroupWidgetCache.entry(windowID: $0) != nil } ?? false", setup)
-        self.assertIn("} catch GroupInvitationError.alreadyMember {\n            alreadyMember = true", setup)
+        self.assertIn("} catch GroupInvitationError.alreadyMember {\n                alreadyMember = true", setup)
         self.assertIn('Label("もうこのまどに入っています", systemImage: "checkmark.circle")', setup)
         self.assertIn("windowID: invitation.windowID)", setup)
         self.assertNotIn('Text("招待されたまど")', setup)
@@ -5871,7 +5892,18 @@ class PhotoScanStatusTests(unittest.TestCase):
     def test_searching_says_so_and_a_retry_only_appears_when_it_can_work(self) -> None:
         home = source("NekoWidget/Views/HomeView.swift")
         status = section(home, "private var partialScanStatus: some View {", "private var monthDestinations")
-        self.assertLess(status.index("if scan.isScanning {"), status.index('"もう一度探す"'))
+        # 11/14: a search no longer swaps the row's words or inserts a row
+        # above the grid (the grid jumped on every launch); it is the spinner
+        # after 「〇枚」, and only failed or unreadable photos keep a row.
+        self.assertNotIn("if scan.isScanning {", status)
+        self.assertIn("if scan.hasFailed || scan.hasDeferredAssets {\n                            partialScanStatus", home)
+        self.assertNotIn("scan.hasFailed || scan.hasDeferredAssets || scan.isScanning || scan.isPaused", home)
+        count = section(home, "struct PhotoCountWithScanActivity: View {", "struct HomeView: View {")
+        self.assertIn("@ObservedObject private var activity = ScanActivity.shared", count)
+        self.assertIn(".frame(width: 16, height: 16)", count)
+        self.assertIn('"\\(count.formatted())枚、新しい写真を確かめています"', count)
+        self.assertNotIn("Text(\"猫の写真を探しています\")", count)
+        self.assertIn("PhotoCountWithScanActivity(count: catPhotos.count)", home)
         self.assertNotIn("まだ読み込めない写真があります", status)
         self.assertNotIn(".disabled(scan.isScanning)", status)
         self.assertIn('"読み込めなかった写真が\\(scan.deferredAssets.formatted())枚あります"', status)
@@ -5897,10 +5929,9 @@ class SettingsLayoutTests(unittest.TestCase):
                  '"settings-account-deletion"', 'Text("テスト用")']
         positions = [body.index(item) for item in order]
         self.assertEqual(positions, sorted(positions))
-        # 11/8: the version only; no build number, OS requirement or full-access note.
-        self.assertIn('Text("ねこのまど バージョン \\(appVersion)")', settings)
+        # 11/14: the version and the build number; no OS requirement or full-access note.
+        self.assertIn('Text("ねこのまど バージョン \\(appVersion)（\\(appBuild)）")', settings)
         self.assertNotIn("iOS 17.1以上", settings)
-        self.assertNotIn('"CFBundleVersion"', settings)
         self.assertNotIn("すべての写真を使えます。", settings)
         for gone in ('Text("プライバシー")', 'Text("サポート")'):
             self.assertNotIn(gone, body)
@@ -5950,14 +5981,16 @@ class FirstLaunchInvitationTests(unittest.TestCase):
         self.assertIn("state.finishForInvitation()", root_view)
         family = section(root_view, ".sheet(item: $familyLink, onDismiss: {", "FamilyNotebookJoinView(link:")
         self.assertIn("completeOnboardingForInvitation()", family)
-        # 11/12: the first screen has no line for invited people (it stopped
-        # everyone else); the link itself opens the join screen. No help sheet.
+        # 11/14 (family journey A1): one quiet line for invited people, named
+        # for them (11/12's "what link?"), not a button; the link itself still
+        # opens the join screen. No help sheet.
         self.assertNotIn("showsInvitationHint", root_view)
         self.assertNotIn("OnboardingInvitationHelpView", root_view)
         onboarding = source("NekoWidget/Views/OnboardingView.swift")
         self.assertNotIn("showsInvitationHint", onboarding)
         purpose = section(onboarding, "private struct OnboardingPurposePage: View", "struct OnboardingWindowMosaic: View")
         self.assertNotIn("届いた招待リンク", purpose)
+        self.assertIn("Text(OnboardingPresentationCopy.purposeInvitationLine)", purpose)
         self.assertNotIn('"onboarding-purpose-join-hint"', purpose)
         self.assertNotIn('"onboarding-purpose-join"', purpose)
         self.assertNotIn("struct OnboardingInvitationHelpView: View", onboarding)
@@ -6083,7 +6116,10 @@ class GroupWindowAuditFixTests(unittest.TestCase):
 
     def test_waiting_photos_and_failed_sends_are_explained(self) -> None:
         window = source("NekoWidget/Views/GroupWindowView.swift")
-        self.assertIn("catch MomentSharingError.moderationDisabled {\n            return .checkOff", window)
+        # 11/14: the check never stops for the system warning being off, so
+        # no screen asks to turn 「センシティブな内容の警告」 on.
+        self.assertNotIn(".checkOff", window)
+        self.assertNotIn("センシティブな内容の警告", window)
         self.assertIn("receiveNotice = waiting.map(GroupPhotoModeration.receiveMessage)", window)
         deliver = section(window, "    func deliver(_ prepared: PreparedPhoto", "func retryFailedDelivery()")
         self.assertIn("let operationID = prepared.operationID", deliver)
@@ -6879,8 +6915,9 @@ class OnePlaceSettingsTests(unittest.TestCase):
         self.assertIn('"settings-family-notebook"', body)
         # Not tinted: hierarchical styles inside a list button turn blue (346, 11/8).
         family = section(body, "if showsFamilyNotebookRow {", '"settings-family-notebook"')
-        # 11/10: only for someone already in a family; starting one is in この子のこと.
-        self.assertIn("private var showsFamilyNotebookRow: Bool { familyNotebook.hasFamily }", settings)
+        # 11/10: only for someone already in a family, or (11/15) waiting to be
+        # let in; starting one is in この子のこと.
+        self.assertIn("private var showsFamilyNotebookRow: Bool { familyNotebook.hasFamily || awaitsFamilyApproval }", settings)
         self.assertIn('Text("家族の手帳").foregroundStyle(Color.primary)', family)
         self.assertIn(".foregroundStyle(Color(uiColor: .tertiaryLabel))", family)
         self.assertNotIn('"settings-cat-profiles"', body)
@@ -6914,7 +6951,7 @@ class OnePlaceSettingsTests(unittest.TestCase):
         self.assertIn("Plusは、ここで消しても解約されません。", choices)
         self.assertNotIn("サブスクリプション", source("NekoWidget/Views/GroupWindowView.swift"))
         # 11/8 (2): no ID or server in the words.
-        self.assertIn('Label("まどと家族の手帳から抜ける"', choices)
+        self.assertIn('Label("まどと家族の手帳のデータを消す"', choices)
         for word in ("のID", "とID", "サーバー"):
             self.assertNotIn(word, choices)
         self.assertIn("GroupWindowClientProvider.production != nil || ManagedPreservationConfiguration.current.isEnabled", choices)
@@ -7157,7 +7194,9 @@ class ToolOpenWasteTests(unittest.TestCase):
         self.assertLess(attach.index("UserDefaults.standard.data(forKey: Self.bindingKey) != bytes {"),
                         attach.index("UserDefaults.standard.set(bytes, forKey: Self.bindingKey)"))
         sync = section(view, "private struct FamilyNotebookToolSyncModifier: ViewModifier {", "extension View {")
-        self.assertIn("try await Task.sleep(for: .seconds(5))", sync)
+        # 1115q: no loop of its own; the one schedule reads every 30 s.
+        self.assertNotIn("Task.sleep", sync)
+        self.assertIn("FamilyNotebookAutoCheck.shared.appeared(.tool)", sync)
 
 
 
@@ -8089,8 +8128,11 @@ class DesignPolish1111Tests(unittest.TestCase):
         library = section(main, "private var photoLibrary: some View {", "private var albumRoot: some View {")
         self.assertIn("photoLibraryCatRow", library)
         row = section(main, "private struct PhotoLibraryCatRow<", "private struct PhotoThemeTile: View {")
-        for part in ("picker()", '.accessibilityIdentifier("photo-hub-detected-grid")', "PhotoLibraryMonthJumpMenu(", "addPhotos()"):
+        # 11/14: the count carries the scan spinner in a fixed slot.
+        for part in ("picker()", "PhotoCountWithScanActivity(count: photos.count)", "PhotoLibraryMonthJumpMenu(", "addPhotos()"):
             self.assertIn(part, row)
+        count = section(source("NekoWidget/Views/HomeView.swift"), "struct PhotoCountWithScanActivity: View {", "struct HomeView: View {")
+        self.assertIn('.accessibilityIdentifier("photo-hub-detected-grid")', count)
         # The count and 日付 belong to すべて only.
         self.assertIn("photoLibrarySelection.selection == .all && hasPhotoAccess ? photoLibraryCatPhotos : []",
                       section(main, "private var photoLibraryCatRow: some View {", "private var photoLibraryCatPicker: some View {"))
@@ -8823,7 +8865,7 @@ class CatHomeTab1112Tests(unittest.TestCase):
         self.assertIn("@ScaledMetric(relativeTo: .largeTitle) private var nameSize: CGFloat = 56", hero)
         self.assertIn(".font(.system(size: CGFloat(fit.size), weight: .heavy))", hero)
         self.assertIn("text.lineLimit(2)", hero)
-        self.assertIn(".accessibilityLabel(facts.spoken)", hero)
+        self.assertIn(".accessibilityLabel(CatHomePageAccess.spoken(facts.spoken,", hero)
         # About 46% of the screen, less on short screens (iPhone SE).
         metrics = section(self.home, "struct CatHomeMetrics {", "/// One cat's page:")
         self.assertIn("heroHeight = (screen * (screen < 700 ? 0.40 : 0.46)).rounded()", metrics)
@@ -9162,13 +9204,19 @@ class CatIdentityMeasure1113Tests(unittest.TestCase):
         # (C1A1BF10…) joined the same test target, then CatThresholdTests
         # (C1CA7050…, the 0.5 cat line and its migration), then
         # CatHomeCareTests (C1E0A7E0…, the この子 page's 「これからのこと」),
-        # then AppLimitsTests (C1A11A17…, the 11/14 limits).
+        # then AppLimitsTests (C1A11A17…, the 11/14 limits), then
+        # FamilyJourneyTests (C1FA3A11…, the 11/14 family journey), then
+        # WhenStuckTests (C1A51C14…, the 11/14 「困ったとき」 words), then
+        # LaunchWorkTests (4C570000…, the light first seconds after launch), then
+        # AccessibilitySpeechTests (C1A55E50…, the 11/14 VoiceOver review).
         self.assertIn("children = (C1108C000000000000000002,C1D3A9110000000000000006,"
                       "C15C0A7E0000000000000002,C1A1BF100000000000000002,C1CA70500000000000000002,"
-                      "C1E0A7E00000000000000002,C1A11A170000000000000002,); path = NekoWidgetTests;", self.project)
+                      "C1E0A7E00000000000000002,C1A11A170000000000000002,C1FA3A110000000000000002,C1A51C140000000000000002,4C570000000000000000000A,"
+                      "C1A55E500000000000000002,); path = NekoWidgetTests;", self.project)
         self.assertIn("files = (C1108C000000000000000003,C1D3A9110000000000000005,"
                       "C15C0A7E0000000000000001,C1A1BF100000000000000001,C1CA70500000000000000001,"
-                      "C1E0A7E00000000000000001,C1A11A170000000000000001,);", self.project)
+                      "C1E0A7E00000000000000001,C1A11A170000000000000001,C1FA3A110000000000000001,C1A51C140000000000000001,4C5700000000000000000009,"
+                      "C1A55E500000000000000001,);", self.project)
         self.assertEqual(len(set(re.findall(r"C1D3A911000000000000000\d", self.project))), 6)
 
     def test_store_product_compiles_none_of_it(self) -> None:

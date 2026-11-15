@@ -31,6 +31,7 @@ struct AppRootView: View {
     private var onboardingResumePageIndex = 0
     @StateObject private var widgetInstallationChecker = WidgetInstallationChecker()
     @StateObject private var photoPresentationCache = PhotoPresentationCache()
+    @StateObject private var profilePresentationCache = ProfilePresentationCache()
     @StateObject private var momentNotificationTapMailbox = MomentNotificationTapMailbox.shared
     @State private var presentedError: PresentedError?
     @State private var showsWidgetPlacementGuide = false
@@ -82,6 +83,9 @@ struct AppRootView: View {
             }
         }) { FamilyNotebookJoinView(link: $0.url, onJoined: { joinedFamilyFromLink = true }) }
         .sheet(isPresented: $showsFamilyNotebook) { FamilyNotebookView() }
+        // 11/15: a family member, or someone waiting to be let in, reads the
+        // family when the app opens, before any screen of it is opened.
+        .familyNotebookOpeningCheck()
         // An invitation link opened before the first-run guide ends: join at once,
         // then land in the まど tab. The guide can be finished later from 設定.
         .onChange(of: invitationInbox.pending?.id, initial: true) { _, _ in
@@ -119,6 +123,22 @@ struct AppRootView: View {
             guard scenePhase == .active else { return }
             // SwiftUI uses scenes: app-delegate foreground callbacks alone are insufficient.
             await GroupAdmissionService.shared.refresh()
+        }
+        .task(id: scenePhase) {
+#if DEBUG
+            guard !GroupWindowUIFixture.showsScreens else { return }
+#endif
+            guard let client = GroupWindowClientProvider.production else { return }
+            if scenePhase == .background {
+                await client.setAnchorReceiptForeground(false)
+                return
+            }
+            guard scenePhase == .active else { return }
+            await client.setAnchorReceiptForeground(true)
+            // Let launch/rendering finish; cancellation on background defers to
+            // the next foreground. This never blocks the visible list.
+            do { try await Task.sleep(for: .seconds(5)) } catch { return }
+            await client.backfillAnchorReceipts()
         }
         .onChange(of: viewModel.isScanning, initial: true) { _, isScanning in
             AppIdleTimer.setPreventSleep(isScanning && scenePhase == .active, for: "photo-scan")
@@ -187,9 +207,10 @@ struct AppRootView: View {
             presentedError = PresentedError(message: message)
         }
         .alert(item: $presentedError) { error in
+            // One sentence and one button (11/14): the message already says
+            // what happened, so it is the title instead of a fixed heading.
             Alert(
-                title: Text("うまくいきませんでした"),
-                message: Text(error.message),
+                title: Text(error.message),
                 dismissButton: .default(Text("閉じる")) {
                     viewModel.clearError()
                 }
@@ -444,6 +465,10 @@ struct AppRootView: View {
     }
 
     private var mainTabContent: MainTabView {
+        LaunchWork.measure("mainTabContent") { makeMainTabContent() }
+    }
+
+    private func makeMainTabContent() -> MainTabView {
         let visibleSnapshot = hasPhotoAccess
             ? viewModel.presentationSnapshot
             : .empty
@@ -457,22 +482,44 @@ struct AppRootView: View {
         let visibleCatAssets = photoProjection.catAssets
         let assetsByIdentifier = photoProjection.assetsByIdentifier
         let identity = hasPhotoAccess ? viewModel.catHouseholdIdentity : nil
-        let identityProjection = identity.map { profileIdentityProjection($0) }
-        let postureDiagnostics = postureDiagnosticsPresentation(
-            records: visibleCatAssets
-        )
-        let profilesPresentation = makeCatProfilesPresentation(
-            identity: identity,
-            projection: identityProjection,
-            assetsByIdentifier: assetsByIdentifier,
-            candidateAssets: visibleCatAssets,
-            postureDiagnostics: postureDiagnostics
-        )
-        let profilePhotos = makeProfileAlbumPhotos(
-            identity: identity,
-            projection: identityProjection,
-            assetsByIdentifier: assetsByIdentifier
-        )
+        // 11/14: the per-cat pages (sorting every cat's photos) and the
+        // readable set were rebuilt on every drawing of the root, ~130 ms each
+        // on a large library. Rebuilt only when one of their inputs changes.
+        let profileKey = ProfilePresentationCache.Key(
+            version: viewModel.presentationVersion, hasPhotoAccess: hasPhotoAccess,
+            identity: identity, received: viewModel.receivedPhotoIdentifiers,
+            sourceAlbums: viewModel.photoSourceAlbums,
+            unavailableAlbums: viewModel.unavailableProfilePhotoAlbumIdentifiers,
+            albumDates: viewModel.profilePhotoAlbumAssetDates,
+            care: CatCareStore.shared.state, lifeReference: viewModel.settings.catLifeReference,
+            excluded: viewModel.excludedCatAssets,
+            isFinalScan: DetectionAccuracySampler.isFinal(viewModel.snapshot))
+        let profileValues = profilePresentationCache.values(for: profileKey) {
+            LaunchWork.count("profilePresentationsBuilt")
+            let identityProjection = identity.map { profileIdentityProjection($0) }
+            let postureDiagnostics = postureDiagnosticsPresentation(records: visibleCatAssets)
+            return ProfilePresentationCache.Values(
+                profiles: makeCatProfilesPresentation(
+                    identity: identity,
+                    projection: identityProjection,
+                    assetsByIdentifier: assetsByIdentifier,
+                    candidateAssets: visibleCatAssets,
+                    postureDiagnostics: postureDiagnostics
+                ),
+                albumPhotos: makeProfileAlbumPhotos(
+                    identity: identity,
+                    projection: identityProjection,
+                    assetsByIdentifier: assetsByIdentifier
+                ),
+                readableIdentifiers: Set(readableSnapshot.assets.map(\.localIdentifier)),
+                // Internal builds' review samples hash and sort every cat
+                // photo: once per change too.
+                detectionSample: internalDetectionAccuracySample(hasPhotoAccess: hasPhotoAccess),
+                recoverySample: internalHighResolutionRecoverySample(
+                    hasPhotoAccess: hasPhotoAccess, records: visibleCatAssets))
+        }
+        let profilesPresentation = profileValues.profiles
+        let profilePhotos = profileValues.albumPhotos
 
         return MainTabView(
             currentPhoto: hasPhotoAccess
@@ -494,7 +541,7 @@ struct AppRootView: View {
             receivedPhotoIdentifiers: viewModel.receivedPhotoIdentifiers,
             savedPhotoIdentifiers: viewModel.savedPhotoIdentifiers,
             savedPhotoStateReadFailed: viewModel.savedPhotoStateReadFailed,
-            readablePhotoIdentifiers: Set(readableSnapshot.assets.map(\.localIdentifier)),
+            readablePhotoIdentifiers: profileValues.readableIdentifiers,
             photoLibraryLoadSucceeded: viewModel.widgetPhotoLibraryLoadSucceeded,
             photoPresentationVersion: viewModel.presentationVersion,
             scan: hasPhotoAccess
@@ -504,11 +551,8 @@ struct AppRootView: View {
                 ? effectiveAlbumState(catAssetCount: visibleCatAssets.count)
                 : .idle,
             settings: settingsPresentation,
-            detectionAccuracySample: internalDetectionAccuracySample(hasPhotoAccess: hasPhotoAccess),
-            highResolutionRecoverySample: internalHighResolutionRecoverySample(
-                hasPhotoAccess: hasPhotoAccess,
-                records: visibleCatAssets
-            ),
+            detectionAccuracySample: profileValues.detectionSample,
+            highResolutionRecoverySample: profileValues.recoverySample,
             excludedCatPhotos: hasPhotoAccess
                 ? excludedCatPhotoPresentations(assetsByIdentifier: assetsByIdentifier)
                 : [],
@@ -605,7 +649,7 @@ struct AppRootView: View {
         var presentation = ScanPresentation(
             scannedAssets: state.scannedAssets,
             totalAssets: state.totalAssets,
-            deferredAssets: state.deferredAssets,
+            deferredAssets: viewModel.isScanning ? viewModel.deferredAssetsBeforePass : state.deferredAssets,
             isScanning: viewModel.isScanning,
             isPaused: state.phase == .cancelled,
             lastScannedAt: state.lastScannedAt,
@@ -1457,6 +1501,42 @@ struct AppRootView: View {
         // The first Plus offer becomes due in persistOnboardingState.
         persistOnboardingState(state, entersPhotos: entersPhotos)
         hasSeenInitialScanResult = true
+    }
+}
+
+@MainActor
+/// The per-cat presentations of `mainTabContent` (11/14), kept while every
+/// input in `Key` is unchanged. Not published: reading never re-draws.
+private final class ProfilePresentationCache: ObservableObject {
+    struct Key: Equatable {
+        var version: LibraryPresentationVersion
+        var hasPhotoAccess: Bool
+        var identity: CatHouseholdIdentityState?
+        var received: Set<String>
+        var sourceAlbums: [PhotoSourceAlbumOption]
+        var unavailableAlbums: Set<String>
+        var albumDates: [String: Date]
+        var care: CatCareState?
+        var lifeReference: CatLifeReference?
+        var excluded: [ExcludedCatAsset]
+        var isFinalScan: Bool
+    }
+
+    struct Values {
+        var profiles: CatProfilesPresentation
+        var albumPhotos: [String: [PhotoPresentation]]
+        var readableIdentifiers: Set<String>
+        var detectionSample: DetectionAccuracySamplePresentation
+        var recoverySample: DetectionAccuracySamplePresentation
+    }
+
+    private var cached: (key: Key, values: Values)?
+
+    func values(for key: Key, make: () -> Values) -> Values {
+        if let cached, cached.key == key { return cached.values }
+        let values = make()
+        cached = (key, values)
+        return values
     }
 }
 

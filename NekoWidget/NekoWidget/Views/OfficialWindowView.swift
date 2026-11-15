@@ -577,6 +577,8 @@ struct OfficialWindowView: View {
             Text("このまどの写真が届かなくなり、ウィジェットにも出なくなります。")
         }
         .task(id: feedbackRevision) {
+            // 11/14: read as it shows; a passing line goes in six seconds.
+            if let message { AccessibilityNotification.Announcement(message).post() }
             guard feedbackIsTransient else { return }
             let revision = feedbackRevision
             do { try await Task.sleep(for: .seconds(6)) } catch { return }

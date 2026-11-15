@@ -118,6 +118,55 @@ struct GroupTrustAnchor: Codable, Equatable, Sendable {
     let ownerIdentityPublicKey: Data
 }
 
+/// Immutable personal attestation of a pin learned locally/from an invitation.
+/// No timestamp ranking: different owner pins for one scope are a conflict.
+struct GroupAnchorReceipt: Codable, Equatable, Sendable {
+    let environment: String
+    let personID: String
+    let anchor: GroupTrustAnchor
+    let rootSignature: Data
+
+    private static func identifier(_ key: Data) -> String {
+        GroupCanonical.hash(key).base64EncodedString().replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+    }
+    func transcript() throws -> Data {
+        guard ["production", "staging"].contains(environment), GroupCanonical.validID(personID),
+              GroupCanonical.validID(anchor.windowID), anchor.ownerIdentityPublicKey.count == 32,
+              anchor.ownerPersonID == Self.identifier(anchor.ownerIdentityPublicKey)
+        else { throw GroupProtocolError.invalidSignature }
+        return try GroupCanonical.fields(["NW3.ANCHOR.RECEIPT.V1", environment, personID,
+            anchor.windowID, anchor.ownerPersonID].map(GroupCanonical.text) + [anchor.ownerIdentityPublicKey])
+    }
+    static func make(environment: String, anchor: GroupTrustAnchor, root: Curve25519.Signing.PrivateKey) throws -> Self {
+        let unsigned = Self(environment: environment, personID: identifier(root.publicKey.rawRepresentation),
+            anchor: anchor, rootSignature: Data())
+        return try Self(environment: environment, personID: unsigned.personID, anchor: anchor,
+            rootSignature: root.signature(for: unsigned.transcript()))
+    }
+    func verifies(root: Data, environment: String, windowID: String) -> Bool {
+        guard root.count == 32, self.environment == environment, anchor.windowID == windowID,
+              personID == Self.identifier(root), rootSignature.count == 64,
+              let message = try? transcript(), let key = try? Curve25519.Signing.PublicKey(rawRepresentation: root)
+        else { return false }
+        return key.isValidSignature(rootSignature, for: message)
+    }
+    enum Resolution: Equatable {
+        case trusted(GroupTrustAnchor)
+        case needsOriginalDeviceOrInvitation
+        case conflictingAnchors
+        case revoked
+    }
+    static func resolve(_ receipts: [Self], root: Data, environment: String, windowID: String,
+                        rootIsCurrent: Bool) -> Resolution {
+        guard rootIsCurrent else { return .revoked }
+        let valid = receipts.filter { $0.verifies(root: root, environment: environment, windowID: windowID) }
+        guard let first = valid.first else { return .needsOriginalDeviceOrInvitation }
+        guard valid.allSatisfy({ $0.anchor == first.anchor }) else { return .conflictingAnchors }
+        return .trusted(first.anchor)
+    }
+}
+
 struct SignedGroupRoster: Codable, Equatable, Sendable {
     let roster: GroupRoster
     let signerDeviceID: String
@@ -144,6 +193,28 @@ struct VerifiedGroupRoster: Sendable {
 }
 
 enum GroupRosterVerifier {
+    /// Recovery-only entry: server authority is limited to current head/closure.
+    /// The owner anchor still comes exclusively from the personal root signature.
+    /// Returning a verified roster grants neither membership nor any photo key.
+    static func verifyRecoveryHead(_ packet: SignedGroupRoster, receipts: [GroupAnchorReceipt],
+                                   root: Data, environment: String, windowID: String,
+                                   currentRevision: Int, currentHash: Data,
+                                   rootIsCurrent: Bool) throws -> VerifiedGroupRoster? {
+        guard rootIsCurrent else { throw GroupRecoveryProofError.staleState }
+        switch GroupAnchorReceipt.resolve(receipts, root: root, environment: environment,
+                                          windowID: windowID, rootIsCurrent: rootIsCurrent) {
+        case .needsOriginalDeviceOrInvitation: return nil
+        case .revoked, .conflictingAnchors: throw GroupRecoveryProofError.invalidProof
+        case .trusted(let anchor):
+            guard currentRevision > 0, currentHash.count == 32,
+                  packet.roster.revision == currentRevision,
+                  GroupCanonical.hash(try packet.roster.canonicalBytes()) == currentHash,
+                  packet.roster.members.contains(where: { $0.identityPublicKey == root })
+            else { throw GroupRecoveryProofError.staleState }
+            return try verifyPacket(packet, anchor: anchor, previous: nil, restoredPin: currentHash)
+        }
+    }
+
     static func verify(_ packet: SignedGroupRoster, anchor: GroupTrustAnchor,
                        previous: VerifiedGroupRoster? = nil) throws -> VerifiedGroupRoster {
         try verifyPacket(packet, anchor: anchor, previous: previous, restoredPin: nil)
@@ -392,5 +463,134 @@ enum GroupCaptionCrypto {
         guard let value = String(data: data, encoding: .utf8), try GroupPhotoCaption.normalized(value) == value,
               !value.isEmpty else { throw GroupProtocolError.invalidPhoto }
         return value
+    }
+}
+
+// P1 recovery proof verification only. Issuance and all existing roster paths
+// remain unchanged; successful validation creates no business capability.
+enum GroupRecoveryProofError: Error, LocalizedError {
+    case invalidProof, staleState, invalidSignature, updateRequired
+    var errorDescription: String? {
+        switch self {
+        case .updateRequired: "App Storeでアプリを最新にしてください。"
+        default: "復旧の証明を確認できませんでした。"
+        }
+    }
+}
+struct GroupRecoveryClaim: Equatable, Sendable {
+    var version: Int
+    var environment: String
+    var windowID: String
+    var personID: String
+    var participantID: String
+    var recoveryGeneration: Int
+    var previousRevision: Int
+    var previousHash: Data
+    var nextHash: Data
+    var newDevice: GroupRosterDevice
+    var replacedDeviceIDs: [String]
+    var operationID: String
+    var challenge: Data
+    var issuedAt: Int
+    var expiresAt: Int
+
+    func canonicalBytes() throws -> Data {
+        func positive(_ n: Int) -> Bool { (1...9_007_199_254_740_991).contains(n) }
+        guard positive(version) else { throw GroupRecoveryProofError.invalidProof }
+        guard version == 1 else { throw GroupRecoveryProofError.updateRequired }
+        guard ["production", "staging"].contains(environment),
+              [windowID, personID, participantID, operationID, newDevice.id].allSatisfy(GroupCanonical.validID),
+              positive(recoveryGeneration), positive(previousRevision), positive(issuedAt), positive(expiresAt),
+              expiresAt > issuedAt, expiresAt - issuedAt <= 300,
+              previousHash.count == 32, nextHash.count == 32, challenge.count == 32,
+              newDevice.signingPublicKey.count == 32, newDevice.hpkePublicKey.count == 32,
+              newDevice.personAuthorization.count == 64, replacedDeviceIDs.count <= 3,
+              replacedDeviceIDs.allSatisfy(GroupCanonical.validID),
+              Set(replacedDeviceIDs).count == replacedDeviceIDs.count,
+              !replacedDeviceIDs.contains(newDevice.id) else { throw GroupRecoveryProofError.invalidProof }
+        var fields = ["NW3.RECOVER_DEVICE.V1", environment, windowID, personID, participantID,
+                      String(recoveryGeneration), String(previousRevision)].map(GroupCanonical.text)
+        fields += [previousHash, nextHash, GroupCanonical.text(newDevice.id), newDevice.signingPublicKey,
+                   newDevice.hpkePublicKey, newDevice.personAuthorization, GroupCanonical.text(String(replacedDeviceIDs.count))]
+        fields += replacedDeviceIDs.sorted().map(GroupCanonical.text)
+        fields += [GroupCanonical.text(operationID), challenge, GroupCanonical.text(String(issuedAt)), GroupCanonical.text(String(expiresAt))]
+        return try GroupCanonical.fields(fields)
+    }
+    func signatureBytes(root: Bool) throws -> Data {
+        try GroupCanonical.fields([GroupCanonical.text(root ? "NW3.RECOVER_DEVICE.ROOT.V1" : "NW3.RECOVER_DEVICE.DEVICE.V1"), canonicalBytes()])
+    }
+}
+struct GroupRecoveryProof: Sendable {
+    var claim: GroupRecoveryClaim
+    var rootSignature: Data
+    var deviceSignature: Data
+}
+/// This is an authenticated atomic-ledger input, not a Decodable request type.
+/// P3 must recheck it and consume the challenge atomically before issuance.
+struct GroupRecoveryLedger: Sendable {
+    enum State: Sendable { case active, closed, deleted, left, removed, rootRevoked }
+    struct Challenge: Sendable {
+        var value: Data
+        var operationID: String
+        var issuedAt: Int
+        var expiresAt: Int
+        var consumed: Bool
+    }
+    var environment: String
+    var windowID: String
+    var personID: String
+    var participantID: String
+    var identityPublicKey: Data
+    var revision: Int
+    var hash: Data
+    var recoveryGeneration: Int
+    var state: State
+    var newDeviceWasRevoked: Bool
+    var challenge: Challenge
+}
+enum GroupRecoveryProofVerifier {
+    static let issuanceEnabled = false
+    static func validate(_ proof: GroupRecoveryProof, previous: VerifiedGroupRoster,
+                         next: GroupRoster, ledger: GroupRecoveryLedger, now: Int) throws {
+        let c = proof.claim
+        _ = try c.canonicalBytes()
+        let old = previous.roster
+        let oldHash = GroupCanonical.hash(try old.canonicalBytes())
+        let nextHash = GroupCanonical.hash(try next.canonicalBytes())
+        guard (1...9_007_199_254_740_991).contains(now), now >= c.issuedAt, now < c.expiresAt,
+              ledger.state == .active, !ledger.newDeviceWasRevoked, !ledger.challenge.consumed,
+              ledger.environment == c.environment, ledger.windowID == c.windowID,
+              ledger.personID == c.personID, ledger.participantID == c.participantID,
+              ledger.recoveryGeneration == c.recoveryGeneration, ledger.revision == c.previousRevision,
+              ledger.hash == c.previousHash, ledger.challenge.value == c.challenge,
+              ledger.challenge.operationID == c.operationID, ledger.challenge.issuedAt == c.issuedAt,
+              ledger.challenge.expiresAt == c.expiresAt else { throw GroupRecoveryProofError.staleState }
+        guard old.windowID == c.windowID, old.revision == c.previousRevision, previous.hash == oldHash,
+              oldHash == c.previousHash, nextHash == c.nextHash, next.previousHash == oldHash,
+              next.windowID == old.windowID, next.ownerPersonID == old.ownerPersonID,
+              next.revision - old.revision == 1, next.keyEpoch - old.keyEpoch == 1,
+              next.members.count == old.members.count,
+              let owner = old.members.first(where: { $0.personID == c.personID && $0.participantID == c.participantID }),
+              let recovered = next.members.first(where: { $0.personID == c.personID && $0.participantID == c.participantID }),
+              owner.identityPublicKey == ledger.identityPublicKey, recovered.identityPublicKey == owner.identityPublicKey,
+              recovered.role == owner.role else { throw GroupRecoveryProofError.invalidProof }
+        guard !old.members.flatMap(\.devices).contains(where: {
+            $0.id == c.newDevice.id || $0.signingPublicKey == c.newDevice.signingPublicKey || $0.hpkePublicKey == c.newDevice.hpkePublicKey
+        }), c.replacedDeviceIDs.allSatisfy({ id in owner.devices.contains(where: { $0.id == id }) })
+        else { throw GroupRecoveryProofError.invalidProof }
+        let expected = (owner.devices.filter { !c.replacedDeviceIDs.contains($0.id) } + [c.newDevice]).sorted { $0.id < $1.id }
+        guard recovered.devices.sorted(by: { $0.id < $1.id }) == expected else { throw GroupRecoveryProofError.invalidProof }
+        for member in old.members where member.personID != c.personID {
+            guard let other = next.members.first(where: { $0.personID == member.personID }),
+                  member.participantID == other.participantID, member.identityPublicKey == other.identityPublicKey,
+                  member.role == other.role, member.devices.sorted(by: { $0.id < $1.id }) == other.devices.sorted(by: { $0.id < $1.id })
+            else { throw GroupRecoveryProofError.invalidProof }
+        }
+        let root = try Curve25519.Signing.PublicKey(rawRepresentation: owner.identityPublicKey)
+        let device = try Curve25519.Signing.PublicKey(rawRepresentation: c.newDevice.signingPublicKey)
+        guard proof.rootSignature.count == 64, proof.deviceSignature.count == 64,
+              root.isValidSignature(proof.rootSignature, for: try c.signatureBytes(root: true)),
+              device.isValidSignature(proof.deviceSignature, for: try c.signatureBytes(root: false))
+        else { throw GroupRecoveryProofError.invalidSignature }
     }
 }

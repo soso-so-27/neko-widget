@@ -139,6 +139,13 @@ actor ShareStub: GroupShareServing {
         try publisher.write(Data([4]), account: "billing-connection", createOnly: false)
         let leaked = try snapshot.read("billing-connection")
         precondition(leaked == nil)
+        for account in ["anchor-receipt:room", "anchor-receipt-pending:room"] {
+            try publisher.write(Data([7]), account: account, createOnly: true)
+            let privateReceipt = try original.read(account)
+            let sharedReceipt = try snapshot.read(account)
+            precondition(privateReceipt == Data([7]))
+            precondition(sharedReceipt == nil)
+        }
 
         let windowID = GroupWire.randomID()
         let anchor = GroupTrustAnchor(windowID: windowID, ownerPersonID: identity.personID, ownerIdentityPublicKey: identity.personPublicKey)

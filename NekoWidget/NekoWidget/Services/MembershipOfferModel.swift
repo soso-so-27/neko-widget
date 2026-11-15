@@ -275,6 +275,11 @@ final class MembershipOfferModel: ObservableObject {
 
     var canRestore: Bool { !isWorking && !(purchases?.isPurchasing ?? false) && !(purchases?.isRestoring ?? false) }
 
+    /// 11/15 (TestFlight 378): the line on screen tells the person to press
+    /// 「購入を復元」, so the screen's one 「購入を復元」 stands right under it
+    /// instead of among the links below the fold.
+    var asksForRestore: Bool { !isMember && (message?.contains("「購入を復元」") ?? false) }
+
     private init(
         isPreview: Bool,
         presentsOffer: Bool = true,
@@ -294,60 +299,69 @@ final class MembershipOfferModel: ObservableObject {
     deinit { expiryTask?.cancel() }
 
     func load() async {
-        guard !hasLoaded else { return }
-        hasLoaded = true
-        // Restoring an existing purchase does not need a product quote. The
-        // dedicated restore sheet has no price field or purchase action.
-        guard presentsOffer else {
-            updateMembershipState()
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            guard !hasLoaded else { return }
+            hasLoaded = true
+            // Restoring an existing purchase does not need a product quote. The
+            // dedicated restore sheet has no price field or purchase action.
+            guard presentsOffer else {
+                updateMembershipState()
+                isWorking = false
+                return
+            }
+            isWorking = true
+            await prepareOfferAction()
+            await reloadOfferForCurrentCatalog()
             isWorking = false
-            return
+            updateMembershipState()
+            applyOfferUnavailableMessage()
         }
-        isWorking = true
-        await prepareOfferAction()
-        await reloadOfferForCurrentCatalog()
-        isWorking = false
-        updateMembershipState()
-        applyOfferUnavailableMessage()
     }
 
     func purchase() async -> MembershipOfferActionResult {
-        guard canPurchase, let presentedOffer = offer else { return .unavailable }
-        actionResult = nil
-        isWorking = true
-        defer { isWorking = false }
-        let result = await purchaseAction(presentedOffer)
-        await reloadOfferPresentation()
-#if DEBUG || INTERNAL_PRESENTATION
-        if result == .completed, fixtureStatus != nil { fixtureStatus = .active }
-#endif
-        apply(result, restoring: false)
-        updateMembershipState()
-        if result == .offerChanged { apply(result, restoring: false) }
-        return result
+        // 1115s: the person's own action, outside the automatic budget.
+        return await SharingPersonAction.run {
+            guard canPurchase, let presentedOffer = offer else { return .unavailable }
+            actionResult = nil
+            isWorking = true
+            defer { isWorking = false }
+            let result = await purchaseAction(presentedOffer)
+            await reloadOfferPresentation()
+    #if DEBUG || INTERNAL_PRESENTATION
+            if result == .completed, fixtureStatus != nil { fixtureStatus = .active }
+    #endif
+            apply(result, restoring: false)
+            updateMembershipState()
+            if result == .offerChanged { apply(result, restoring: false) }
+            return result
+        }
     }
 
     /// The one 「購入を復元」 (11/5): the purchase re-check first, then the
     /// App Store restore. A member the re-check confirms needs no Apple sign-in.
     func restore() async -> MembershipOfferActionResult {
-        guard canRestore else { return .unavailable }
-        actionResult = nil
-        isWorking = true
-        defer { isWorking = false }
-        if await recheckConfirmsMembership() {
-            apply(.completed, restoring: true)
+        // 1115s: the person's own action, outside the automatic budget.
+        return await SharingPersonAction.run {
+            guard canRestore else { return .unavailable }
+            actionResult = nil
+            isWorking = true
+            defer { isWorking = false }
+            if await recheckConfirmsMembership() {
+                apply(.completed, restoring: true)
+                updateMembershipState()
+                if !isPreview { UsageCounter.shared.count(.plusRestored) }  // Usage (11/7)
+                return .completed
+            }
+            let result = await restoreAction()
+    #if DEBUG || INTERNAL_PRESENTATION
+            if result == .completed, fixtureStatus != nil { fixtureStatus = .active }
+    #endif
+            apply(result, restoring: true)
             updateMembershipState()
-            if !isPreview { UsageCounter.shared.count(.plusRestored) }  // Usage (11/7)
-            return .completed
+            if result == .completed, !isPreview { UsageCounter.shared.count(.plusRestored) }  // Usage (11/7)
+            return result
         }
-        let result = await restoreAction()
-#if DEBUG || INTERNAL_PRESENTATION
-        if result == .completed, fixtureStatus != nil { fixtureStatus = .active }
-#endif
-        apply(result, restoring: true)
-        updateMembershipState()
-        if result == .completed, !isPreview { UsageCounter.shared.count(.plusRestored) }  // Usage (11/7)
-        return result
     }
 
     /// The re-check half of 「購入を復元」: the shared purchase authority only,
@@ -500,46 +514,55 @@ final class MembershipOfferModel: ObservableObject {
     }
 
     func reloadOffer() async {
-        guard canReloadOffer else { return }
-        actionResult = nil
-        isWorking = true
-        await prepareOfferAction()
-        await reloadOfferForCurrentCatalog()
-        isWorking = false
-        updateMembershipState()
-        applyOfferUnavailableMessage()
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            guard canReloadOffer else { return }
+            actionResult = nil
+            isWorking = true
+            await prepareOfferAction()
+            await reloadOfferForCurrentCatalog()
+            isWorking = false
+            updateMembershipState()
+            applyOfferUnavailableMessage()
+        }
     }
 
     func refresh() async {
-        guard canRefresh else { return }
-        actionResult = nil
-        isWorking = true
-        if let purchases {
-            await purchases.refreshAfterForegroundEntry()
-        } else {
-#if DEBUG || INTERNAL_PRESENTATION
-            if let fixtureStatus {
-                switch fixtureStatus {
-                case .unknown, .authorityPending: self.fixtureStatus = .active
-                case .expired: self.fixtureStatus = .fresh
-                case .fresh, .active, .applePending: break
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            guard canRefresh else { return }
+            actionResult = nil
+            isWorking = true
+            if let purchases {
+                await purchases.refreshAfterForegroundEntry()
+            } else {
+    #if DEBUG || INTERNAL_PRESENTATION
+                if let fixtureStatus {
+                    switch fixtureStatus {
+                    case .unknown, .authorityPending: self.fixtureStatus = .active
+                    case .expired: self.fixtureStatus = .fresh
+                    case .fresh, .active, .applePending: break
+                    }
                 }
+    #endif
             }
-#endif
+            updateMembershipState()
+            isWorking = false
         }
-        updateMembershipState()
-        isWorking = false
     }
 
     /// Closing Apple's management sheet is not evidence of cancellation or expiry.
     /// Reconcile the shared authority even for a currently active member, without
     /// purchasing, invoking AppStore.sync, or changing preview entitlements.
     func refreshAfterSubscriptionManagement() async {
-        guard !isPreview, !isWorking, let purchases else { return }
-        isWorking = true
-        await purchases.refreshAfterForegroundEntry()
-        updateMembershipState()
-        isWorking = false
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            guard !isPreview, !isWorking, let purchases else { return }
+            isWorking = true
+            await purchases.refreshAfterForegroundEntry()
+            updateMembershipState()
+            isWorking = false
+        }
     }
 
     private func updateMembershipState() {
@@ -827,22 +850,25 @@ private final class MembershipStoreKitClient {
     }
 
     func restore() async -> MembershipOfferActionResult {
-        guard configuration.isConfigured, let session else { return .unavailable }
-        var outcome = await purchases.restorePurchases()
-        if outcome == .indeterminate {
-            do {
-                _ = try await session.recoverBillingAccountExplicitly()
-                await purchases.refreshAfterForegroundEntry()
-                if purchases.entitlementState.grantsPlus { return .completed }
-                outcome = .indeterminate
-            } catch { return .restoreFailed(.recovering(error)) }
-        }
-        switch outcome {
-        case .entitlementFound: return .completed
-        case .nothingToRestore: return .nothingToRestore
-        case .indeterminate: return .waiting
-        case .unavailable: return .unavailable
-        case .failed: return .restoreFailed(.appleConfirmation)
+        // 1115s: the person's own action, outside the automatic budget.
+        return await SharingPersonAction.run {
+            guard configuration.isConfigured, let session else { return .unavailable }
+            var outcome = await purchases.restorePurchases()
+            if outcome == .indeterminate {
+                do {
+                    _ = try await session.recoverBillingAccountExplicitly()
+                    await purchases.refreshAfterForegroundEntry()
+                    if purchases.entitlementState.grantsPlus { return .completed }
+                    outcome = .indeterminate
+                } catch { return .restoreFailed(.recovering(error)) }
+            }
+            switch outcome {
+            case .entitlementFound: return .completed
+            case .nothingToRestore: return .nothingToRestore
+            case .indeterminate: return .waiting
+            case .unavailable: return .unavailable
+            case .failed: return .restoreFailed(.appleConfirmation)
+            }
         }
     }
 
@@ -990,6 +1016,9 @@ struct MembershipOfferSheet: View {
     /// Bought here with nothing waiting: the one line and the one button.
     @State private var showsStarted = false
     @State private var nextStep: PlusStartedNextStep?
+    /// 11/15: this sheet's purchase ended waiting for the server. When the
+    /// store's own re-check then confirms Plus, it goes on as a purchase.
+    @State private var awaitsConfirmation = false
 #if DEBUG || INTERNAL_PRESENTATION
     @State private var showsManagementPreview = false
 #endif
@@ -1047,6 +1076,10 @@ struct MembershipOfferSheet: View {
         }
 #endif
         .task { await model.load() }
+        .onChange(of: model.isMember) { _, member in
+            guard member, awaitsConfirmation, !showsStarted else { return }
+            completePurchase()
+        }
     }
 
     private var offerScreen: some View {
@@ -1055,7 +1088,7 @@ struct MembershipOfferSheet: View {
             photo: photo, photoAsset: heldPhoto ?? placePhoto, offer: model.displayedOffer,
             isWorking: model.isWorking,
             canPurchase: model.canPurchase, canRestore: model.canRestore,
-            message: model.message,
+            message: model.message, restoreNearMessage: model.asksForRestore,
             isMember: model.isMember, memberEndLine: model.memberEndLine,
             purchaseTitle: model.purchaseTitle,
             canRefresh: model.canRefresh,
@@ -1065,6 +1098,9 @@ struct MembershipOfferSheet: View {
             onManageSubscription: manageSubscription,
             onPurchase: purchase,
             onRestore: {
+                // The restore finishes the sheet itself; the waiting purchase
+                // must not finish it a second time.
+                awaitsConfirmation = false
                 Task {
                     let result = await model.restore()
                     if result == .completed { onFinish(result) }
@@ -1090,23 +1126,32 @@ struct MembershipOfferSheet: View {
         Task {
             let result = await model.purchase()
             guard result == .completed else {
+                awaitsConfirmation = result == .waiting && !model.isMember
                 if model.isPreview && result == .cancelled { onFinish(result) }
                 return
             }
-            if !model.isPreview {
-                UsageCounter.shared.count(.plusPurchased(.init(context)))  // Usage (11/7)
-                // 11/12: 「自動保存も始めますか？」 is asked later, once, at the
-                // app's root (AutoSaveOfferLater), never over what was bought.
-                AutoSaveAfterPurchase.noteBought(from: context)
-            }
-            if context.hasPendingAction(showsClose: showsClose) {
-                // The caller re-reads membership through the dismissal and
-                // goes on with what the person asked for.
-                onFinish(result)
-            } else {
-                nextStep = nextStepSource?.resolve()
-                showsStarted = true
-            }
+            completePurchase()
+        }
+    }
+
+    /// A purchase that ended with Plus, at once or after the server's
+    /// confirmation came while this sheet waited (11/15).
+    private func completePurchase() {
+        let result = MembershipOfferActionResult.completed
+        awaitsConfirmation = false
+        if !model.isPreview {
+            UsageCounter.shared.count(.plusPurchased(.init(context)))  // Usage (11/7)
+            // 11/12: 「自動保存も始めますか？」 is asked later, once, at the
+            // app's root (AutoSaveOfferLater), never over what was bought.
+            AutoSaveAfterPurchase.noteBought(from: context)
+        }
+        if context.hasPendingAction(showsClose: showsClose) {
+            // The caller re-reads membership through the dismissal and
+            // goes on with what the person asked for.
+            onFinish(result)
+        } else {
+            nextStep = nextStepSource?.resolve()
+            showsStarted = true
         }
     }
 
@@ -1118,6 +1163,40 @@ struct MembershipOfferSheet: View {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(600))
             step.open()
+        }
+    }
+}
+
+/// 11/14 (family journey A3): what a place does once its Plus sheet has
+/// closed. Only a purchase or restore that ended with Plus goes on to the
+/// person's own action; cancelled, failed, pending (Ask to Buy) and the rest
+/// leave the place as it was.
+enum PlusPurchaseContinuation {
+    static func continues(after result: MembershipOfferActionResult) -> Bool {
+        result == .completed
+    }
+
+    /// 「まどを作る」: the names already typed are still there and valid, and
+    /// nothing is being made or was made already.
+    static func createsWindow(name: String, ownerName: String, namesFit: Bool,
+                              isWorking: Bool, alreadyCreated: Bool) -> Bool {
+        !name.isEmpty && !ownerName.isEmpty && namesFit && !isWorking && !alreadyCreated
+    }
+
+    /// 「Plusを始めて再開する」 in a family notebook nobody pays for: once
+    /// bought, take it over with this Plus when the family now allows it.
+    static func claimsFamilyPayer(bought: Bool, canClaim: Bool, handoverPending: Bool) -> Bool {
+        bought && canClaim && !handoverPending
+    }
+
+    /// 11/15 (TestFlight 378): this iPhone has Plus, yet the family read just
+    /// after still stops for want of it (the payer's own Plus, or nobody's to
+    /// claim with). The notebook says so in place of 「確認できました」.
+    static func familyStillAwaitsPlus(pause: FamilySharingPause?, hasPersonalPlus: Bool) -> Bool {
+        guard hasPersonalPlus else { return false }
+        switch pause {
+        case .payerPlusUnverified(isPayer: true)?, .noPayer(canClaim: false, handoverPending: false)?: return true
+        default: return false
         }
     }
 }
@@ -1137,6 +1216,11 @@ struct PlusOfferPrompt: View {
     /// Closing the Plus screen without Plus also closes the place itself, so
     /// one × goes back (the album's work, 11/12 review 7).
     var onDeclined: (() -> Void)? = nil
+    /// 11/14 (family journey A3): Plus was bought or restored here; the place
+    /// goes on with what the person asked for (「作る」 makes the window).
+    /// Called once the sheet has gone, never for a cancelled, failed or
+    /// pending purchase.
+    var onPurchased: (() -> Void)? = nil
     @State private var showsOffer = false
     @State private var didPresent = false
     @State private var finishedWithPlus = false
@@ -1169,7 +1253,7 @@ struct PlusOfferPrompt: View {
         }
         .sheet(isPresented: $showsOffer, onDismiss: {
             NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
-            if !finishedWithPlus { onDeclined?() }
+            if !finishedWithPlus { onDeclined?() } else { onPurchased?() }
             finishedWithPlus = false
         }) {
             MembershipOfferSheet(model: .live(), context: context, reasonOverride: reasonOverride) { result in

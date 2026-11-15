@@ -236,9 +236,12 @@ class NameIsTheCatMenu(unittest.TestCase):
         # The drawn lines are TextKit's lines (an explicit break), so the
         # button's place matches the text as drawn.
         last = block(hero, "private func nameLines(size: CGFloat, maxWidth: CGFloat) -> (text: String, lastWidth: CGFloat) {")
-        self.assertIn("paragraph.lineBreakStrategy = .standard", last)
-        self.assertIn("container.lineFragmentPadding = 0", last)
-        self.assertIn("CGSize(width: max(maxWidth - 4, 1), height: .greatestFiniteMagnitude)", last)
+        self.assertIn("let lines = lineFragments(size: size, maxWidth: maxWidth)", last)
+        # 11/14: the same TextKit lines decide the two-line floor in nameFit.
+        lines = block(hero, "private func lineFragments(size: CGFloat, maxWidth: CGFloat) -> [(range: NSRange, width: CGFloat)] {")
+        self.assertIn("paragraph.lineBreakStrategy = .standard", lines)
+        self.assertIn("container.lineFragmentPadding = 0", lines)
+        self.assertIn("CGSize(width: max(maxWidth - 4, 1), height: .greatestFiniteMagnitude)", lines)
         self.assertIn('return (first + "\\n" + rest, last)', last)
         self.assertNotIn("firstTextBaseline", hero)
         self.assertIn("static let glyphCentre = 0.36", CORE)
@@ -251,7 +254,11 @@ class NameIsTheCatMenu(unittest.TestCase):
         self.assertIn("(metrics.width * CGFloat(CatHomeHeroLayout.nameWidthShare)).rounded(.down)", words)
         self.assertIn("let fit = nameFit(maxWidth: nameWidth)", words)
         fit = block(hero, "private func nameFit(maxWidth: CGFloat) -> CatHomeHeroLayout.NameFit {")
-        self.assertIn("CatHomeHeroLayout.nameFit(scale: Double(scale), maxWidth: Double(maxWidth))", fit)
+        self.assertIn("CatHomeHeroLayout.nameFit(scale: Double(scale), maxWidth: Double(maxWidth), width: {", fit)
+        # 11/14: a 20-character name takes two lines at the two-line floor
+        # (22) instead of ending in 「…」; the lines are TextKit's own.
+        self.assertIn("lineFragments(size: CGFloat(size), maxWidth: maxWidth).count", fit)
+        self.assertIn("static let twoLineFloor: Double = 22", CORE)
         # iPhone SE: the ladder does not grow with the text size (45_home_text_ax3).
         self.assertIn("metrics.heroHeight < CatHomeHeroLayout.shortHero ? min(nameSize / 56, 1) : nameSize / 56", fit)
         self.assertIn("static let shortHero: CGFloat = 320", CORE)
@@ -263,7 +270,8 @@ class NameIsTheCatMenu(unittest.TestCase):
         self.assertNotIn("minimumScaleFactor(0.5)", hero)
         for pinned in ("static let nameLadder: [Double] = [56, 48, 40, 34]", "static let nameScaleCap = 1.5",
                        "static let nameWidthShare = 0.62", "return NameFit(size: size, lines: 1)",
-                       "return NameFit(size: sizes.last ?? nameLadder[nameLadder.count - 1], lines: 2)"):
+                       "let smallest = sizes.last ?? nameLadder[nameLadder.count - 1]",
+                       "guard let lines, lines(smallest) > 2 else { return NameFit(size: smallest, lines: 2) }"):
             self.assertIn(pinned, CORE)
         # The line wraps to two lines before it shrinks, never below 0.85.
         self.assertIn(".lineLimit(typeSize.isAccessibilitySize ? 3 : 2)", words)
@@ -359,7 +367,8 @@ class NameIsTheCatMenu(unittest.TestCase):
         pager = block(HOME, "private func pager(_ cats: [CatHomeCat], current: CatHomeCat, metrics: CatHomeMetrics) -> some View {")
         self.assertIn('static let addPageID = "cat-home-add-page"', HOME)
         self.assertLess(pager.index("ForEach(Array(cats.enumerated())"), pager.index(".id(Self.addPageID)"))
-        self.assertIn('sentence: "猫を増やすときは、ここから。", householdTools: false) { pageActions.add() }', pager)
+        self.assertIn('sentence: "猫を増やすときは、ここから。", householdTools: false,', pager)
+        self.assertIn("previous: { pageActions.turn(cats.count, -1) }) { pageActions.add() }", pager)
         self.assertIn("openSettings: { pageActions.openSettings() }", pager)
         empty = block(HOME, "private struct CatHomeNoCatPage: View {")
         self.assertIn('var sentence = "この子を追加すると、ここに出ます。"', empty)
@@ -397,7 +406,10 @@ class NameIsTheCatMenu(unittest.TestCase):
         self.assertIn("ZStack(alignment: .bottomLeading) {", body)
         self.assertLess(body.index("photoLayer"), body.index("words"))
         self.assertLess(body.index(".accessibilityElement(children: .ignore)"), body.index("words"))
-        self.assertIn(".accessibilityLabel(facts.spoken)", body)
+        # 11/14: with more cats, 「3匹中1匹目」 and 「次の子」「前の子」.
+        self.assertIn(".accessibilityLabel(CatHomePageAccess.spoken(facts.spoken, index: pageIndex, "
+                      "catCount: pageCount - 1))", body)
+        self.assertIn("CatHomePageAccess.actions(index: pageIndex, catCount: pageCount - 1)", body)
         self.assertIn(".accessibilityAddTraits(.isHeader)", body)
         self.assertEqual(body.count(".accessibilityElement("), 1)
         words = block(hero, "private var words: some View {")

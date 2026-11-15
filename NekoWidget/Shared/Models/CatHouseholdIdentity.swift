@@ -1063,6 +1063,52 @@ enum CatHouseholdIdentityRevisionError: Error, Equatable {
 }
 
 /// Pure compare-and-swap policy shared by the actor store and its verifier.
+/// 11/14: `confirmedProfileIDs(for:)` for a whole library. The ledger's own
+/// lookups search arrays (exclusions, decisions, a linked album's photos)
+/// once per photo and per cat; on 10,000 photos that was the slowest part of
+/// every Widget authority sync after launch. Built once, each photo is then
+/// a few set lookups. Same answers: the first decision for a (photo, cat)
+/// pair wins, a household exclusion wins over everything, a linked album
+/// counts only without a decision.
+struct CatProfileConfirmationIndex: Sendable {
+    private let excluded: Set<String>
+    private let profileIDs: [UUID]
+    private let decisions: [UUID: [String: CatAssetMembershipDecision]]
+    private let linked: [UUID: Set<String>]
+
+    init(_ state: CatHouseholdIdentityState) {
+        excluded = Set(state.globalExcludedAssets.map(\.localIdentifier))
+        profileIDs = state.profiles.map(\.id)
+        var linked: [UUID: Set<String>] = [:]
+        for profile in state.profiles where linked[profile.id] == nil {
+            linked[profile.id] = Set(profile.photoAlbumLink?.lastKnownAssetLocalIdentifiers ?? [])
+        }
+        self.linked = linked
+        var decisions: [UUID: [String: CatAssetMembershipDecision]] = [:]
+        for membership in state.memberships
+        where decisions[membership.profileID]?[membership.assetLocalIdentifier] == nil {
+            decisions[membership.profileID, default: [:]][membership.assetLocalIdentifier] = membership.decision
+        }
+        self.decisions = decisions
+    }
+
+    func confirmedProfileIDs(for assetLocalIdentifier: String) -> Set<UUID> {
+        guard !excluded.contains(assetLocalIdentifier) else { return [] }
+        var result = Set<UUID>()
+        for id in profileIDs {
+            switch decisions[id]?[assetLocalIdentifier] ?? .unknown {
+            case .included:
+                result.insert(id)
+            case .excluded:
+                continue
+            case .unknown:
+                if linked[id]?.contains(assetLocalIdentifier) == true { result.insert(id) }
+            }
+        }
+        return result
+    }
+}
+
 enum CatHouseholdIdentityRevisionPolicy {
     static func committing(
         _ proposed: CatHouseholdIdentityState,

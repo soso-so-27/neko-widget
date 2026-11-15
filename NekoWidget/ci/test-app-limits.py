@@ -204,7 +204,7 @@ class WindowDailyLimitTests(unittest.TestCase):
         self.assertIn('static let dailyHeartLimitMessage = "きょうのハートはここまでです。"', WINDOW_SETUP)
         self.assertIn("case .dailyLimit:\n            return dailyPhotoLimitMessage", WINDOW_SETUP)
         heart = section(WINDOW, "func toggleHeart(_ photoID: String) async {", "private func applyMyHeart(")
-        self.assertIn("error as? GroupClientError == .dailyLimit\n                ? GroupWindowPresentation.dailyHeartLimitMessage", heart)
+        self.assertIn("error as? GroupClientError == .dailyLimit\n                    ? GroupWindowPresentation.dailyHeartLimitMessage", heart)
         self.assertIn('case GroupClientError.dailyLimit:', SHARE)
 
 
