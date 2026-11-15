@@ -299,60 +299,69 @@ final class MembershipOfferModel: ObservableObject {
     deinit { expiryTask?.cancel() }
 
     func load() async {
-        guard !hasLoaded else { return }
-        hasLoaded = true
-        // Restoring an existing purchase does not need a product quote. The
-        // dedicated restore sheet has no price field or purchase action.
-        guard presentsOffer else {
-            updateMembershipState()
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            guard !hasLoaded else { return }
+            hasLoaded = true
+            // Restoring an existing purchase does not need a product quote. The
+            // dedicated restore sheet has no price field or purchase action.
+            guard presentsOffer else {
+                updateMembershipState()
+                isWorking = false
+                return
+            }
+            isWorking = true
+            await prepareOfferAction()
+            await reloadOfferForCurrentCatalog()
             isWorking = false
-            return
+            updateMembershipState()
+            applyOfferUnavailableMessage()
         }
-        isWorking = true
-        await prepareOfferAction()
-        await reloadOfferForCurrentCatalog()
-        isWorking = false
-        updateMembershipState()
-        applyOfferUnavailableMessage()
     }
 
     func purchase() async -> MembershipOfferActionResult {
-        guard canPurchase, let presentedOffer = offer else { return .unavailable }
-        actionResult = nil
-        isWorking = true
-        defer { isWorking = false }
-        let result = await purchaseAction(presentedOffer)
-        await reloadOfferPresentation()
-#if DEBUG || INTERNAL_PRESENTATION
-        if result == .completed, fixtureStatus != nil { fixtureStatus = .active }
-#endif
-        apply(result, restoring: false)
-        updateMembershipState()
-        if result == .offerChanged { apply(result, restoring: false) }
-        return result
+        // 1115s: the person's own action, outside the automatic budget.
+        return await SharingPersonAction.run {
+            guard canPurchase, let presentedOffer = offer else { return .unavailable }
+            actionResult = nil
+            isWorking = true
+            defer { isWorking = false }
+            let result = await purchaseAction(presentedOffer)
+            await reloadOfferPresentation()
+    #if DEBUG || INTERNAL_PRESENTATION
+            if result == .completed, fixtureStatus != nil { fixtureStatus = .active }
+    #endif
+            apply(result, restoring: false)
+            updateMembershipState()
+            if result == .offerChanged { apply(result, restoring: false) }
+            return result
+        }
     }
 
     /// The one 「購入を復元」 (11/5): the purchase re-check first, then the
     /// App Store restore. A member the re-check confirms needs no Apple sign-in.
     func restore() async -> MembershipOfferActionResult {
-        guard canRestore else { return .unavailable }
-        actionResult = nil
-        isWorking = true
-        defer { isWorking = false }
-        if await recheckConfirmsMembership() {
-            apply(.completed, restoring: true)
+        // 1115s: the person's own action, outside the automatic budget.
+        return await SharingPersonAction.run {
+            guard canRestore else { return .unavailable }
+            actionResult = nil
+            isWorking = true
+            defer { isWorking = false }
+            if await recheckConfirmsMembership() {
+                apply(.completed, restoring: true)
+                updateMembershipState()
+                if !isPreview { UsageCounter.shared.count(.plusRestored) }  // Usage (11/7)
+                return .completed
+            }
+            let result = await restoreAction()
+    #if DEBUG || INTERNAL_PRESENTATION
+            if result == .completed, fixtureStatus != nil { fixtureStatus = .active }
+    #endif
+            apply(result, restoring: true)
             updateMembershipState()
-            if !isPreview { UsageCounter.shared.count(.plusRestored) }  // Usage (11/7)
-            return .completed
+            if result == .completed, !isPreview { UsageCounter.shared.count(.plusRestored) }  // Usage (11/7)
+            return result
         }
-        let result = await restoreAction()
-#if DEBUG || INTERNAL_PRESENTATION
-        if result == .completed, fixtureStatus != nil { fixtureStatus = .active }
-#endif
-        apply(result, restoring: true)
-        updateMembershipState()
-        if result == .completed, !isPreview { UsageCounter.shared.count(.plusRestored) }  // Usage (11/7)
-        return result
     }
 
     /// The re-check half of 「購入を復元」: the shared purchase authority only,
@@ -505,46 +514,55 @@ final class MembershipOfferModel: ObservableObject {
     }
 
     func reloadOffer() async {
-        guard canReloadOffer else { return }
-        actionResult = nil
-        isWorking = true
-        await prepareOfferAction()
-        await reloadOfferForCurrentCatalog()
-        isWorking = false
-        updateMembershipState()
-        applyOfferUnavailableMessage()
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            guard canReloadOffer else { return }
+            actionResult = nil
+            isWorking = true
+            await prepareOfferAction()
+            await reloadOfferForCurrentCatalog()
+            isWorking = false
+            updateMembershipState()
+            applyOfferUnavailableMessage()
+        }
     }
 
     func refresh() async {
-        guard canRefresh else { return }
-        actionResult = nil
-        isWorking = true
-        if let purchases {
-            await purchases.refreshAfterForegroundEntry()
-        } else {
-#if DEBUG || INTERNAL_PRESENTATION
-            if let fixtureStatus {
-                switch fixtureStatus {
-                case .unknown, .authorityPending: self.fixtureStatus = .active
-                case .expired: self.fixtureStatus = .fresh
-                case .fresh, .active, .applePending: break
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            guard canRefresh else { return }
+            actionResult = nil
+            isWorking = true
+            if let purchases {
+                await purchases.refreshAfterForegroundEntry()
+            } else {
+    #if DEBUG || INTERNAL_PRESENTATION
+                if let fixtureStatus {
+                    switch fixtureStatus {
+                    case .unknown, .authorityPending: self.fixtureStatus = .active
+                    case .expired: self.fixtureStatus = .fresh
+                    case .fresh, .active, .applePending: break
+                    }
                 }
+    #endif
             }
-#endif
+            updateMembershipState()
+            isWorking = false
         }
-        updateMembershipState()
-        isWorking = false
     }
 
     /// Closing Apple's management sheet is not evidence of cancellation or expiry.
     /// Reconcile the shared authority even for a currently active member, without
     /// purchasing, invoking AppStore.sync, or changing preview entitlements.
     func refreshAfterSubscriptionManagement() async {
-        guard !isPreview, !isWorking, let purchases else { return }
-        isWorking = true
-        await purchases.refreshAfterForegroundEntry()
-        updateMembershipState()
-        isWorking = false
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            guard !isPreview, !isWorking, let purchases else { return }
+            isWorking = true
+            await purchases.refreshAfterForegroundEntry()
+            updateMembershipState()
+            isWorking = false
+        }
     }
 
     private func updateMembershipState() {
@@ -832,22 +850,25 @@ private final class MembershipStoreKitClient {
     }
 
     func restore() async -> MembershipOfferActionResult {
-        guard configuration.isConfigured, let session else { return .unavailable }
-        var outcome = await purchases.restorePurchases()
-        if outcome == .indeterminate {
-            do {
-                _ = try await session.recoverBillingAccountExplicitly()
-                await purchases.refreshAfterForegroundEntry()
-                if purchases.entitlementState.grantsPlus { return .completed }
-                outcome = .indeterminate
-            } catch { return .restoreFailed(.recovering(error)) }
-        }
-        switch outcome {
-        case .entitlementFound: return .completed
-        case .nothingToRestore: return .nothingToRestore
-        case .indeterminate: return .waiting
-        case .unavailable: return .unavailable
-        case .failed: return .restoreFailed(.appleConfirmation)
+        // 1115s: the person's own action, outside the automatic budget.
+        return await SharingPersonAction.run {
+            guard configuration.isConfigured, let session else { return .unavailable }
+            var outcome = await purchases.restorePurchases()
+            if outcome == .indeterminate {
+                do {
+                    _ = try await session.recoverBillingAccountExplicitly()
+                    await purchases.refreshAfterForegroundEntry()
+                    if purchases.entitlementState.grantsPlus { return .completed }
+                    outcome = .indeterminate
+                } catch { return .restoreFailed(.recovering(error)) }
+            }
+            switch outcome {
+            case .entitlementFound: return .completed
+            case .nothingToRestore: return .nothingToRestore
+            case .indeterminate: return .waiting
+            case .unavailable: return .unavailable
+            case .failed: return .restoreFailed(.appleConfirmation)
+            }
         }
     }
 

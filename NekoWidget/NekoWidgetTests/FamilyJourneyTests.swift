@@ -88,11 +88,11 @@ final class FamilyJourneyTests: XCTestCase {
         // server confirmed one about 4 minutes after it).
         XCTAssertEqual(PlusPurchaseStore.serverConfirmationFollowUpInterval, .seconds(30))
         XCTAssertEqual(PlusPurchaseStore.serverConfirmationWindow, 600)
-        // An automatic try needs room for itself and a tap: at most 4 of
-        // each kind in the last 60 s.
-        XCTAssertTrue(PlusConfirmationSchedule.allowsAutomaticCheck(transactions: 4, entitlements: 4))
-        XCTAssertFalse(PlusConfirmationSchedule.allowsAutomaticCheck(transactions: 5, entitlements: 0))
-        XCTAssertFalse(PlusConfirmationSchedule.allowsAutomaticCheck(transactions: 0, entitlements: 5))
+        // An automatic try needs room for itself within the billing gate's
+        // 4 automatic calls of each kind a minute (1115v).
+        XCTAssertTrue(PlusConfirmationSchedule.allowsAutomaticCheck(transactions: 3, entitlements: 3))
+        XCTAssertFalse(PlusConfirmationSchedule.allowsAutomaticCheck(transactions: 4, entitlements: 0))
+        XCTAssertFalse(PlusConfirmationSchedule.allowsAutomaticCheck(transactions: 0, entitlements: 4))
     }
 
     func testFamilyScheduleBacksOffAndStopsWhenOnlyTheOtherIPhoneCanMoveIt() {
@@ -132,6 +132,27 @@ final class FamilyJourneyTests: XCTestCase {
         let unmarked = SharingAutoCallBudget()
         try SharingAutoCallBudget.admit(unmarked, at: start)
         XCTAssertEqual(unmarked.automaticCalls(at: start), 1)
+    }
+
+    /// 1115v: the billing gate sits at the send. After a 429 the Widget's
+    /// background read sends nothing; the person's own read still goes; and
+    /// automatic reads stop at 4 a minute.
+    func testBillingGateHoldsAutomaticReadsAfter429ButNotTheTap() async {
+        final class Reads: @unchecked Sendable { var count = 0 }
+        let reads = Reads()
+        let store = PlusPurchaseStore(
+            configuration: PlusPurchaseConfiguration(isEnabled: true, monthlyProductID: "jp.neko.monthly", annualProductID: nil),
+            recordVerifiedTransactionEvent: { _, _ in throw BillingClientError.transportUnavailable },
+            fetchAuthoritativeEntitlement: { reads.count += 1; throw BillingClientError.transportUnavailable })
+        store.billingBudget = BillingCallBudget()
+        store.billingBudget.noteRateLimited(at: Date())
+        await store.refreshWidgetAuthorityInBackground()
+        XCTAssertEqual(reads.count, 0, "no automatic read within 60 s of a 429")
+        await SharingPersonAction.run { await store.refreshWidgetAuthorityInBackground() }
+        XCTAssertEqual(reads.count, 1, "the person's own read goes")
+        store.billingBudget = BillingCallBudget()
+        for _ in 0..<6 { await store.refreshWidgetAuthorityInBackground() }
+        XCTAssertEqual(reads.count, 1 + BillingCallBudget.automaticPerMinute)
     }
 
     func testTapsStopAtTheIPhonesLimitSoTwoIPhonesStayUnder120() {

@@ -150,8 +150,11 @@ struct ProductionAppRootView: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .membershipAccessRefreshRequested)) { _ in
+                // 1115v: posted only after the person's own step (closing the
+                // Plus screen, 購入を復元, 「Plusをもう一度確かめる」); automatic
+                // code never posts it. Their read, outside the automatic budget.
                 Task {
-                    await plusPurchases.refreshAfterForegroundEntry()
+                    await SharingPersonAction.run { await plusPurchases.refreshAfterForegroundEntry() }
                     membershipNow = .now
                 }
             }

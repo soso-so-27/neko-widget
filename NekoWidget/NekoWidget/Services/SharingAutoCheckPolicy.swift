@@ -86,11 +86,82 @@ enum PlusConfirmationSchedule {
     static let firstMinuteDelays: [Duration] = [.seconds(5), .seconds(15), .seconds(25)]
     static let followUpInterval: Duration = .seconds(30)
     static let window: TimeInterval = 10 * 60
-    /// Automatic tries need fewer than this many of each in the last 60 s.
-    static let automaticCeiling = 5
+    /// Automatic tries need fewer than this many of each in the last 60 s
+    /// (1115v: the billing gate allows 4 automatic ones of each).
+    static let automaticCeiling = BillingCallBudget.automaticPerMinute
     static let rateLimitedPause: TimeInterval = 60
 
     static func allowsAutomaticCheck(transactions: Int, entitlements: Int) -> Bool {
         transactions < automaticCeiling && entitlements < automaticCeiling
     }
 }
+
+/// 11/15 (1115v): the one gate in front of every billing call, at the very
+/// send (`PlusPurchaseStore.refreshServerAuthority` and its transaction
+/// record). The billing relay allows 10 calls a minute per address,
+/// transactions and entitlements counted apart. A call nobody marked is
+/// automatic: 4 of each kind in any 60 s, none for at least a minute after a
+/// 429 (counted from when the 429 came). The person's own (buying, 購入を復元,
+/// 「Plusをもう一度確かめる」, opening the Plus screen): with the automatic
+/// ones, 8 of each kind in any 60 s.
+final class BillingCallBudget: @unchecked Sendable {
+    enum Kind: Sendable { case transaction, entitlement }
+
+    static let shared = BillingCallBudget()
+    static let automaticPerMinute = 4
+    static let devicePerMinute = 8
+    static let rateLimitedPause: TimeInterval = 60
+
+    private let lock = NSLock()
+    private var automatic: [Kind: SharingCallWindow] = [
+        .transaction: SharingCallWindow(limit: automaticPerMinute),
+        .entitlement: SharingCallWindow(limit: automaticPerMinute),
+    ]
+    private var all: [Kind: SharingCallWindow] = [
+        .transaction: SharingCallWindow(limit: devicePerMinute),
+        .entitlement: SharingCallWindow(limit: devicePerMinute),
+    ]
+    private var pausedUntil: Date?
+
+    init() {}
+
+    /// Takes one call of `kind` or refuses it (nothing is sent then).
+    func admit(_ kind: Kind, personAction: Bool, at now: Date = Date()) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if personAction { return all[kind]!.admit(at: now) }
+        if let pausedUntil, now < pausedUntil { return false }
+        guard automatic[kind]!.count(at: now) < Self.automaticPerMinute,
+              all[kind]!.count(at: now) < Self.devicePerMinute else { return false }
+        _ = automatic[kind]!.admit(at: now); _ = all[kind]!.admit(at: now)
+        return true
+    }
+
+    /// `now` is when the 429 came back.
+    func noteRateLimited(retryAfter: TimeInterval? = nil, at now: Date = Date()) {
+        lock.lock(); defer { lock.unlock() }
+        let until = now.addingTimeInterval(max(Self.rateLimitedPause, retryAfter ?? 0))
+        pausedUntil = max(pausedUntil ?? until, until)
+    }
+
+    /// When an automatic call of `kind` may go again (now when nil).
+    func nextAutomatic(_ kind: Kind, at now: Date = Date()) -> Date? {
+        lock.lock(); defer { lock.unlock() }
+        var next: Date?
+        if let pausedUntil, now < pausedUntil { next = pausedUntil }
+        for window in [automatic[kind]!, all[kind]!] where window.count(at: now) >= window.limit {
+            if let oldest = window.times.filter({ now.timeIntervalSince($0) < window.seconds }).min() {
+                let free = oldest.addingTimeInterval(window.seconds)
+                next = max(next ?? free, free)
+            }
+        }
+        return next
+    }
+
+    func automaticCalls(_ kind: Kind, at now: Date = Date()) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return automatic[kind]!.count(at: now)
+    }
+}
+
+/// A billing call the gate held back. Nothing was sent; the work is kept.
+struct BillingCallDeferred: Error, Sendable {}

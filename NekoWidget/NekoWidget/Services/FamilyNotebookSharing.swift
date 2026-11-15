@@ -259,7 +259,8 @@ final class FamilyNotebookAutoCheck {
         let pass = keepsPlan ? plannedPass : .full
         loop?.cancel()
         sleeping = false
-        loop = Task { [weak self] in await self?.run(pass: pass, delay: delay) }
+        // 1115v: automatic even when a tap (an operation's nudge) started it.
+        loop = Task { [weak self] in await SharingPersonAction.automatic { await self?.run(pass: pass, delay: delay) } }
     }
 
     private func situation(now: Date) -> FamilyAutoCheckPolicy.Situation {

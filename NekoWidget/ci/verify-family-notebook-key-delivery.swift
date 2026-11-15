@@ -335,6 +335,11 @@ private enum CallBudgetChecks {
         let gate = try await unmarkedEntrancesAreHeld()
         let reopened = try foregroundEvery5Seconds()
         let wifi = try twoIPhonesOnOneAddress()
+        let pause = try await pauseCountsFromTheReply()
+        let billing = try billingGate()
+        print("1115v: a 429 that came back after 10 s holds automatic calls until \(pause.silentUntil) s, again at \(pause.resumesAt) s; "
+            + "billing ways in every 5 s for 10 min: automatic POST \(billing.transactions), GET \(billing.entitlements) a minute, "
+            + "\(billing.afterRateLimit) within 60 s of a 429, 購入を復元 went: \(billing.tapWent)")
         print("Budget gate (1115s): after 30 automatic calls \(gate.afterBudget) sent from \(gate.entrances) entrances; "
             + "within 60 s of a 429 \(gate.afterRateLimit); taps sent \(gate.taps), refused after \(SharingAutoCallBudget.devicePerMinute); "
             + "reopened every 5 s for 2 min: \(reopened.before) -> \(reopened.after) a minute; two iPhones on one address \(wifi) a minute")
@@ -619,5 +624,86 @@ private extension CallBudgetChecks {
         let together = maxPerMinute(all)
         try check(together < 120, "two iPhones: \(together) calls in a minute")
         return together
+    }
+}
+
+
+// MARK: - 1115v: the pause counts from the reply; the billing gate
+
+private extension CallBudgetChecks {
+    /// A 429 that takes 10 s to come back pauses automatic calls for 60 s
+    /// from its arrival (and Retry-After seconds from its arrival too).
+    static func pauseCountsFromTheReply() async throws -> (silentUntil: Double, resumesAt: Double) {
+        func run(retryAfter: String?, pause: Double) async throws -> (Double, Double) {
+            let clock = SimClock(), budget = SharingAutoCallBudget()
+            _ = try? await SharingAutoCallBudget.gated(budget, at: { clock.date }) { replied in
+                clock.seconds += 10          // the reply takes 10 s
+                replied(429, retryAfter)
+                return GroupHTTPReply(status: 429, data: Data())
+            }
+            let received = clock.seconds
+            func automaticGoes(at seconds: Double) async -> Bool {
+                clock.seconds = seconds
+                return (try? await SharingAutoCallBudget.gated(budget, at: { clock.date }) { _ in
+                    GroupHTTPReply(status: 200, data: Data()) }) != nil
+            }
+            var t = received
+            while t < received + pause - 1 {
+                t += 1
+                let goes = await automaticGoes(at: t)
+                try check(!goes, "429 pause: an automatic call went \(t - received) s after the reply")
+            }
+            let resumes = await automaticGoes(at: received + pause)
+            try check(resumes, "429 pause: automatic calls go again \(pause) s after the reply")
+            return (received + pause - 1, received + pause)
+        }
+        let plain = try await run(retryAfter: nil, pause: 60)
+        _ = try await run(retryAfter: "90", pause: 90)
+        return plain
+    }
+
+    /// Every automatic billing way in (the signed deadline, the Widget's
+    /// background pass, StoreKit's Transaction.updates, the purchase wait)
+    /// firing every 5 s for 10 minutes, with a 429 at 30 s; the person's
+    /// 購入を復元 at 35 s. Each kind: automatic at most 4 in any 60 s,
+    /// none within 60 s of the 429, and the tap goes.
+    static func billingGate() throws -> (transactions: Int, entitlements: Int, afterRateLimit: Int, tapWent: Bool) {
+        let budget = BillingCallBudget()
+        var posts: [Double] = [], gets: [Double] = []
+        var afterRateLimit = 0, tapWent = false
+        let rateLimitedAt = 30.0
+        let ways = ["signed deadline", "Widget background", "Transaction.updates", "purchase wait"]
+        var t = 0.0
+        while t < 600 {
+            let now = Date(timeIntervalSince1970: t)
+            if t == rateLimitedAt { budget.noteRateLimited(at: now) }   // the 429 came back
+            for _ in ways {
+                // Each way: the transaction (when it has one), then the authority read.
+                if budget.admit(.transaction, personAction: false, at: now) {
+                    posts.append(t)
+                    if t >= rateLimitedAt && t < rateLimitedAt + 60 { afterRateLimit += 1 }
+                }
+                if budget.admit(.entitlement, personAction: false, at: now) {
+                    gets.append(t)
+                    if t >= rateLimitedAt && t < rateLimitedAt + 60 { afterRateLimit += 1 }
+                }
+            }
+            if t == rateLimitedAt + 5 {
+                tapWent = budget.admit(.transaction, personAction: true, at: now)
+                    && budget.admit(.entitlement, personAction: true, at: now)
+            }
+            t += 5
+        }
+        let transactions = maxPerMinute(posts), entitlements = maxPerMinute(gets)
+        try check(transactions <= BillingCallBudget.automaticPerMinute && entitlements <= BillingCallBudget.automaticPerMinute,
+                  "billing: automatic \(transactions) / \(entitlements) in a minute")
+        try check(afterRateLimit == 0, "billing: \(afterRateLimit) automatic calls within 60 s of a 429")
+        try check(tapWent, "billing: 購入を復元 goes after the automatic ones used the minute")
+        // The person's own stop at 8 of each kind with the automatic ones.
+        let taps = BillingCallBudget()
+        var tapped = 0
+        while taps.admit(.entitlement, personAction: true, at: Date(timeIntervalSince1970: 0)) { tapped += 1; guard tapped < 50 else { break } }
+        try check(tapped == BillingCallBudget.devicePerMinute, "billing: taps stop at \(tapped)")
+        return (transactions, entitlements, afterRateLimit, tapWent)
     }
 }
