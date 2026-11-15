@@ -997,6 +997,9 @@ struct MainTabView: View {
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
             if memoriesPath.isEmpty { albumHighlightsReferenceDate = Date() }
+            // 11/15: notifications turned on in Settings set a waiting work's
+            // notice now. New photos already set it after they are read.
+            if await AlbumArrivalNotice.permissionChangedSinceSet() { synchronizeAlbumArrival() }
             await seasonalMovieArchive.load()
         }
     }
