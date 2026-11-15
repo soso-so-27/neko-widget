@@ -150,7 +150,7 @@ struct NekoWidgetView: View {
                                     .buttonStyle(.plain)
                                     .padding(12)
                                     .accessibilityLabel(selection.albumPeriod == nil
-                                        ? "きょうのまどのくもりを晴らす" : "作品がとどきました。くもりを晴らす")
+                                        ? "くもりを晴らして、きょうの1枚を見る" : "くもりを晴らして、作品を見る")
                                     .accessibilityIdentifier("cloudy-window-reveal")
                                     // Answers the tap: a short shrink and fade, ahead of the fog.
                                     .transition(reduceMotion ? AnyTransition.opacity
@@ -215,12 +215,23 @@ struct NekoWidgetView: View {
         return text
     }
 
+    /// What the photo is, never how to tap it (VoiceOver says that itself).
+    /// While cloudy only the state; the capsule says what clearing shows.
     private var loadedPhotoAccessibilityLabel: String {
-        if let photo = entry.officialPhoto { return "\(entry.windowDisplayName)。\(photo.catName)の写真。タップして開く" }
+        if let selection = entry.cloudyWindowSelection, selection.revealedAt == nil {
+            return selection.albumPeriod == nil ? "くもりのまど" : "くもりのまど。作品がとどきました"
+        }
+        if let photo = entry.officialPhoto { return "\(entry.windowDisplayName)。\(photo.catName)の写真" }
         guard isWindowPhoto
-        else { return "このiPhoneで見つけた猫写真" }
-        let photo = "\(entry.windowDisplayName)に届いた写真"
-        return familyCaption.map { "\(photo)。ひとこと。\($0)" } ?? photo
+        else { return "このiPhoneで見つけた猫の写真" }
+        let photo = "\(entry.windowDisplayName)に届いた猫の写真"
+        if GroupWidgetCache.isGroupSourceID(entry.photoSourceIdentifier) {
+            // A group's footer line is the sender 「ママから」, not a ひとこと:
+            // read as the app's tile does, 「ママからの写真」.
+            if let sender = familyCaption { return "\(entry.windowDisplayName)。\(sender)の写真" }
+            return entry.groupWindowPhoto?.isOwn == true ? "\(entry.windowDisplayName)。自分が届けた写真" : photo
+        }
+        return familyCaption.map { "\(photo)。ひとこと、\($0)" } ?? photo
     }
 
     /// One quiet footer for shared photos. Its background covers the full

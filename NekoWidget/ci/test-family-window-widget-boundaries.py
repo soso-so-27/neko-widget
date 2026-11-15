@@ -2317,7 +2317,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "NekoWidgetWidget/NekoWidgetConfigurationIntent.swift"
         )
         self.assertNotIn("privateWindowDisplayName", home)
-        self.assertIn('"\\(entry.windowDisplayName)に届いた写真"', widget)
+        self.assertIn('"\\(entry.windowDisplayName)に届いた猫の写真"', widget)
         self.assertNotIn('"\\(entry.windowDisplayName)から届いた', widget)
         self.assertIn("Text(entry.windowDisplayName)", widget)
         self.assertIn('detail: "このまどに届いた最新の一枚"', widget_configuration)
