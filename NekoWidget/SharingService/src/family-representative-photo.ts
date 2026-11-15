@@ -2,7 +2,7 @@ import {authenticateGroupRequest,groupAuthorizationStatements} from './group-aut
 import {familyUUID,verifyFamilyOperation} from './family-notebook-crypto';
 import {state,checks,roster} from './family-notebook-history';
 import {gate,safeFailure} from './family-notebook-payer';
-import {sha256Base64url} from './encoding';
+import {sha256Base64url,base64urlDecode,base64urlEncode} from './encoding';
 import {asObject,exactKeys,integerField,uuidField,binaryField} from './validation';
 import {parseJsonBody,requireEmptyBody} from './http';
 import {ApiError,jsonResponse} from './errors';
@@ -76,7 +76,8 @@ export async function familyRepresentativePhoto(request:Request,env:Env):Promise
    if(request.method==='PUT'&&!commit){
     if(bytes.length!==a.bytes||await sha256Base64url(bytes)!==a.hash)fail('invalid_photo_payload',422);
     await env.DB.batch(guards('operation'));
-    await env.MEDIA.put(a.object_key,bytes);
+    const stored=await env.MEDIA.put(a.object_key,bytes,{sha256:base64urlDecode(a.hash).slice().buffer});
+    if(!stored||stored.size!==a.bytes||!stored.checksums.sha256||base64urlEncode(new Uint8Array(stored.checksums.sha256))!==a.hash)fail('temporarily_unavailable',503);
     // A late PUT must not resurrect a retired object: cleanup remains pending until checked.
     try { await env.DB.batch([...checks(env,actor,family,current.generation,current.epoch,'operation'),...photoChecks(env,a,'upload'),env.DB.prepare(`UPDATE family_representative_assets SET state='uploaded' WHERE asset_id=? AND state IN ('reserved','uploaded')`).bind(id)]); }
     catch(error) {
@@ -101,6 +102,8 @@ export async function familyRepresentativePhoto(request:Request,env:Env):Promise
     const old=await env.DB.prepare('SELECT request_hash,result FROM family_notebook_crypto_receipts WHERE actor_device_id=? AND operation_id=?').bind(actor.deviceId,operationId).first<{request_hash:string;result:string}>();
     if(old){if(old.request_hash!==actor.requestHash)fail('idempotency_conflict');await env.DB.batch(guards('read'));return jsonResponse(JSON.parse(old.result));}
     if(a.state!=='uploaded')fail('invalid_photo_payload',422);
+    const stored=await env.MEDIA.head(a.object_key);
+    if(!stored||stored.size!==a.bytes||!stored.checksums.sha256||base64urlEncode(new Uint8Array(stored.checksums.sha256))!==a.hash)fail('temporarily_unavailable',503);
     const response={schemaVersion:1,assetId:id,revision:a.revision,operationId};
     await env.DB.batch([...guards('operation'),...photoChecks(env,a,'commit'),
      env.DB.prepare(`INSERT INTO family_notebook_write_policy VALUES (?,1) ON CONFLICT(family_id) DO NOTHING`).bind(family),

@@ -112,6 +112,11 @@ actor FamilyNotebookRepresentativePhotoClient {
     private let journal: any GroupSecretStore
     private let runtimeEnabled: Bool
     private var inFlight = false
+    private struct Journal: Codable {
+        let digest: Data
+        let pending: Pending?
+        let completed: Bool
+    }
 
     init(familyID: UUID, endpoint: URL, identity: GroupDeviceIdentity,
          transport: any GroupHTTPTransport = GroupURLSessionTransport(), journal: any GroupSecretStore,
@@ -119,7 +124,25 @@ actor FamilyNotebookRepresentativePhotoClient {
         self.familyID = familyID; self.endpoint = endpoint; self.identity = identity
         self.transport = transport; self.journal = journal; self.runtimeEnabled = runtimeEnabled
     }
-    private var endpointKey: String { GroupWire.base64(GroupCanonical.hash(Data(endpoint.absoluteString.utf8))) }
+    private var contextKey: String {
+        GroupWire.base64(Data(GroupCanonical.hash(Data((endpoint.absoluteString + "|" + familyID.uuidString + "|" + identity.personID).utf8)).prefix(16)))
+    }
+    private var pendingPrefix: String { "op:fp:p:" + contextKey + ":" }
+    private var cachePrefix: String { "op:fp:c:" + contextKey + ":" }
+    private func cacheAccount(assetID: UUID, hash: Data) -> String {
+        cachePrefix + GroupWire.base64(GroupCanonical.hash(Data(assetID.uuidString.lowercased().utf8) + hash))
+    }
+    func pendingDeliveries() throws -> [Pending] {
+        try journal.accounts(prefix: pendingPrefix).compactMap { account in
+            guard let data = try journal.read(account) else { return nil }
+            let stored = try GroupWire.decode(Journal.self, data)
+            guard !stored.completed, let pending = stored.pending,
+                  pending.operation.familyID == familyID, pending.operation.deviceID == (try identity.deviceID)
+            else { return nil }
+            guard GroupCanonical.hash(try GroupWire.encode(pending)) == stored.digest else { throw FamilyNotebookCryptoError.invalid }
+            return pending
+        }
+    }
     private var base: String { "/v3/family-notebooks/" + familyID.uuidString.lowercased() + "/representative-photos" }
     private func call(_ suffix: String, body: Data? = nil, method: String? = nil, maximum: Int = 262_144) async throws -> Data {
         guard runtimeEnabled else { throw FamilyNotebookTransportError.unavailable }
@@ -139,11 +162,17 @@ actor FamilyNotebookRepresentativePhotoClient {
         let reply = try GroupWire.decode(Reply.self, await call("/slots"))
         guard reply.schemaVersion == 1, reply.slots.count <= 10,
               Set(reply.slots.map(\.slotID)).count == reply.slots.count else { throw FamilyNotebookTransportError.invalidResponse }
+        let keep = Set(reply.slots.compactMap { slot -> String? in
+            guard let asset = slot.assetID, let hash = slot.ciphertextSHA256, hash.count == 32 else { return nil }
+            return cacheAccount(assetID: asset, hash: hash)
+        })
+        for account in try journal.accounts(prefix: cachePrefix) where !keep.contains(account) { try journal.remove(account) }
         return reply.slots
     }
     /// Invoke only after explicit consent; caller retains the Pending value for retries.
     /// This operation bypasses the ordinary text outbox: publish the reference atomically with the asset.
     func deliver(_ pending: Pending) async throws {
+        guard runtimeEnabled else { throw FamilyNotebookTransportError.unavailable }
         guard !inFlight else { throw FamilyNotebookTransportError.operationInFlight }
         inFlight = true; defer { inFlight = false }
         let r = pending.reservation
@@ -151,11 +180,14 @@ actor FamilyNotebookRepresentativePhotoClient {
               pending.operation.personID == identity.personID, pending.operation.deviceID == (try identity.deviceID),
               pending.ciphertext.count == r.ciphertextBytes, pending.ciphertext.count <= 200_028,
               GroupCanonical.hash(pending.ciphertext) == r.ciphertextSHA256 else { throw FamilyNotebookCryptoError.invalid }
-        let account = "family-photo-pending-" + endpointKey + "-" + r.operationID.uuidString.lowercased()
+        let account = pendingPrefix + r.operationID.uuidString.lowercased()
         let bytes = try GroupWire.encode(pending)
+        let digest = GroupCanonical.hash(bytes)
         if let stored = try journal.read(account) {
-            guard stored == bytes else { throw FamilyNotebookTransportError.idempotencyConflict }
-        } else { try journal.write(bytes, account: account, createOnly: true) }
+            let value = try GroupWire.decode(Journal.self, stored)
+            guard value.digest == digest else { throw FamilyNotebookTransportError.idempotencyConflict }
+            if value.completed { return }
+        } else { try journal.write(GroupWire.encode(Journal(digest: digest, pending: pending, completed: false)), account: account, createOnly: true) }
         struct Lease: Decodable { let schemaVersion: Int; let assetID: UUID; let uploadID: UUID; let reservedRevision: Int; let state: String }
         let lease = try GroupWire.decode(Lease.self, await call("/uploads", body: GroupWire.encode(r)))
         guard lease.schemaVersion == 1, lease.assetID == r.assetID, lease.uploadID == r.assetID,
@@ -174,7 +206,8 @@ actor FamilyNotebookRepresentativePhotoClient {
                    expectedRevision: r.expectedRevision, payload: pending.operation))))
         guard receipt.schemaVersion == 1, receipt.assetID == r.assetID, receipt.revision == r.expectedRevision + 1,
               receipt.operationID == pending.operation.operationID else { throw FamilyNotebookTransportError.invalidResponse }
-        // Keep the encrypted journal so a lost local completion cannot create a second upload.
+        // Retain only the digest after completion. A lost local completion still retries the same ciphertext.
+        try journal.write(GroupWire.encode(Journal(digest: digest, pending: nil, completed: true)), account: account, createOnly: false)
     }
     func image(slot: Slot, reference: FamilyNotebookRepresentativePhotoReference,
                roster: VerifiedFamilyNotebookRoster, verifiedAuthorID: String, hiddenAuthors: Set<String> = []) async throws -> Data? {
@@ -184,8 +217,7 @@ actor FamilyNotebookRepresentativePhotoClient {
         try reference.validate()
         guard slot.slotID == reference.slotID, slot.assetID == reference.assetID, slot.revision == reference.revision,
               slot.ciphertextSHA256 == reference.ciphertextSHA256 else { throw FamilyNotebookCryptoError.untrusted }
-        let cacheKey = "family-photo-cipher-" + endpointKey + "-" + familyID.uuidString.lowercased() + "-" + reference.assetID.uuidString.lowercased()
-            + "-" + GroupWire.base64(reference.ciphertextSHA256)
+        let cacheKey = cacheAccount(assetID: reference.assetID, hash: reference.ciphertextSHA256)
         let ciphertext: Data
         if let cached = try journal.read(cacheKey), GroupCanonical.hash(cached) == reference.ciphertextSHA256 { ciphertext = cached }
         else {
