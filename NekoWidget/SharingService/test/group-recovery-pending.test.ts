@@ -34,6 +34,7 @@ describe('pending-only root recovery',()=>{
  it('counts pending devices in the three-device limit, including concurrent reservations',async()=>{const f=await fixture();const calls=[];for(let n=0;n<3;n++){const k=await key();const op=crypto.randomUUID();const r=await f.prepared(true,op,{...f.intent,signingPublicKey:k.publicKey,hpkePublicKey:randomBase64url(32)});
   r.body.deviceSignature=await sign(k.privateKey,pendingAuthentication(r.c,f.w.windowId,{windowId:f.w.windowId,signingPublicKey:k.publicKey,hpkePublicKey:r.body.hpkePublicKey!,model:f.intent.model},'device'));calls.push(r.call());}
   const results=await Promise.allSettled(calls);expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(2);expect((await db.prepare('SELECT * FROM group_recovery_pending WHERE person_id=?').bind(f.p.id).all()).results).toHaveLength(2);
+  await expect(db.prepare("INSERT INTO group_person_devices VALUES (?,?,?,?,?,'active',?,NULL)").bind(randomBase64url(32),f.p.id,randomBase64url(32),randomBase64url(32),'synthetic',Math.floor(Date.now()/1000)).run()).rejects.toThrow('group_device_limit');
  });
  it('cleans pending requests on root revocation and denies status',async()=>{const f=await fixture();await f.invoke();await db.prepare("UPDATE group_people SET state='revoked' WHERE id=?").bind(f.p.id).run();expect(await db.prepare('SELECT 1 FROM group_recovery_pending WHERE person_id=?').bind(f.p.id).first()).toBeNull();await expect(f.invoke(false)).rejects.toMatchObject({status:401});});
  it('has no waiting expiry; distinguishes no provider without advancing generations',async()=>{const f=await fixture();await f.invoke();await db.prepare("UPDATE group_window_devices SET state='revoked',removed_revision=1 WHERE space_id=?").bind(f.w.windowId).run();
@@ -42,8 +43,13 @@ describe('pending-only root recovery',()=>{
   const other=await person();await db.prepare("INSERT INTO group_members VALUES (?,?,?,'member','active',1,NULL,'synthetic')").bind(crypto.randomUUID(),f.w.windowId,other.id).run();
   expect(await f.invoke(false)).toMatchObject({state:'registeredWaitingForKeys',canRequestFreshGeneration:false});
  });
+ it('removes pending immediately when identity deletion is accepted',async()=>{
+  const f=await fixture();await f.invoke();await db.prepare('INSERT INTO group_identity_deletion_acceptance(request_id,subject_id,nonce,request_hash,accepted_at) VALUES (?,?,?,?,?)').bind(crypto.randomUUID(),f.p.id,'synthetic','synthetic',Math.floor(Date.now()/1000)).run();
+  expect(await db.prepare('SELECT 1 FROM group_recovery_pending WHERE person_id=?').bind(f.p.id).first()).toBeNull();
+  await expect(f.invoke(false)).rejects.toMatchObject({status:401});
+ });
  it('cleans a pending request on leaving without changing other windows',async()=>{
-  const f=await fixture();await f.invoke();await db.prepare("UPDATE group_members SET state='left',removed_revision=1 WHERE space_id=? AND person_id=?").bind(f.w.windowId,f.p.id).run();
+  const f=await fixture();await f.invoke();await db.prepare("UPDATE group_members SET role='member' WHERE space_id=?").bind(f.w.windowId).run();await db.prepare("UPDATE group_members SET state='left',left_revision=1 WHERE space_id=? AND person_id=?").bind(f.w.windowId,f.p.id).run();
   expect(await db.prepare('SELECT 1 FROM group_recovery_pending WHERE person_id=?').bind(f.p.id).first()).toBeNull();
   await expect(f.invoke(false)).rejects.toMatchObject({status:401});
  });
