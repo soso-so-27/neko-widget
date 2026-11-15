@@ -2012,10 +2012,19 @@ private struct FamilyNotebookToolSyncModifier: ViewModifier {
 /// The family's cats then reach 「この子」. Photos access plays no part.
 private struct FamilyNotebookOpeningCheck: ViewModifier {
     @ObservedObject private var model = FamilyNotebookPrototype.shared
+    @ObservedObject private var purchases = PlusPurchaseStore.productionShared
     @Environment(\.scenePhase) private var phase
 
     func body(content: Content) -> some View {
-        content.task(id: phase == .active) {
+        content
+        // 11/15: Plus confirmed later (the purchase re-checks run wherever the
+        // person is): a family stopped for want of it is read again at once,
+        // so 「共有が止まっています」 goes without opening anything.
+        .onChange(of: purchases.entitlementState.permitsPersonalPlus) { _, plus in
+            guard plus, model.isReal, model.hasFamily, FamilyNotebookSharing.shared.pause != nil else { return }
+            Task { await FamilyNotebookSharing.shared.refreshAfterPlusChange(reportsFailure: false) }
+        }
+        .task(id: phase == .active) {
             guard phase == .active, model.isReal,
                   model.hasFamily || FamilyNotebookSharing.awaitingApproval
                     || FamilyNotebookSharing.awaitingApprovalUnknown else { return }

@@ -1,6 +1,9 @@
 import Combine
 import Foundation
 import StoreKit
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// A pseudonymous purchase correlation identifier. It is deliberately not a
 /// window participant, device, Keychain credential account, or window owner.
@@ -252,6 +255,8 @@ final class PlusPurchaseStore: ObservableObject {
     private var reconciliationTask: Task<Void, Never>?
     /// The few re-checks after a purchase the server has not confirmed yet.
     private var serverConfirmationRecheckTask: Task<Void, Never>?
+    /// 10 minutes after a purchase the server had not confirmed yet.
+    private var serverConfirmationDeadline: Date?
     private var authorityAllowsNewPurchase = false
     private var purchaseEligibilityGeneration: UInt64 = 0
     private var usesLiveCache = false
@@ -458,6 +463,8 @@ final class PlusPurchaseStore: ObservableObject {
         refreshTask?.cancel()
         reconciliationTask?.cancel()
         serverConfirmationRecheckTask?.cancel()
+        serverConfirmationRecheckTask = nil
+        serverConfirmationDeadline = nil
         transactionUpdatesTask?.cancel()
         transactionUpdatesTask = nil
         storefrontUpdatesTask?.cancel()
@@ -582,34 +589,74 @@ final class PlusPurchaseStore: ObservableObject {
 
     /// 11/15 (TestFlight 378): just after a purchase the server's first answer
     /// may not be Plus yet (it reads Apple's subscription status as the
-    /// transaction arrives), and nothing asked again until 「購入を復元」.
-    /// Ask again by itself a few times, as 「購入を復元」's re-check does: the
-    /// signed transaction is sent again (the server reads Apple's status
-    /// again) and only the server's answer may grant Plus. Nothing is bought,
-    /// restored or extended here. After the last try the screen keeps
+    /// transaction arrives; that time it took about 4 minutes), and nothing
+    /// asked again until 「購入を復元」. Ask again by itself, as 「購入を復元」's
+    /// re-check does: the signed transaction is sent again (the server reads
+    /// Apple's status again) and only the server's answer may grant Plus.
+    /// Nothing is bought, restored or extended here. First these five tries,
+    /// then every 30 s until 10 minutes after the purchase, only while the
+    /// app is in front and wherever the person is (the Plus screen may be
+    /// closed). In the background it stops; coming back resumes it
+    /// (`resumeServerConfirmationRechecksIfDue`). After that the screen keeps
     /// 「購入を復元」 right under its line.
     static let serverConfirmationRecheckDelays: [Duration] = [
         .seconds(2), .seconds(4), .seconds(8), .seconds(15), .seconds(30),
     ]
+    static let serverConfirmationFollowUpInterval: Duration = .seconds(30)
+    static let serverConfirmationWindow: TimeInterval = 10 * 60
 
     private func recheckServerConfirmationAfterPurchase() {
+        serverConfirmationDeadline = Date().addingTimeInterval(Self.serverConfirmationWindow)
+        runServerConfirmationRechecks(first: Self.serverConfirmationRecheckDelays)
+    }
+
+    /// Called when the app comes to the front (its own refresh there is the
+    /// one immediate check). Continues the remaining time; never a second loop.
+    func resumeServerConfirmationRechecksIfDue() {
+        guard serverConfirmationRecheckTask == nil, let deadline = serverConfirmationDeadline,
+              Date() < deadline, !entitlementState.grantsPlus else { return }
+        runServerConfirmationRechecks(first: [])
+    }
+
+    private var isInFront: Bool {
+#if canImport(UIKit)
+        UIApplication.shared.applicationState == .active
+#else
+        true
+#endif
+    }
+
+    /// The one recheck loop: starting it again replaces the running one.
+    private func runServerConfirmationRechecks(first: [Duration]) {
         serverConfirmationRecheckTask?.cancel()
         serverConfirmationRecheckTask = Task { @MainActor [weak self] in
-            for delay in Self.serverConfirmationRecheckDelays {
+            var delays = first
+            while true {
+                let delay = delays.isEmpty ? Self.serverConfirmationFollowUpInterval : delays.removeFirst()
                 do { try await Task.sleep(for: delay) } catch { return }
-                guard let store = self, !Task.isCancelled,
-                      !store.entitlementState.grantsPlus else { return }
+                guard let store = self, !Task.isCancelled else { return }
+                guard let deadline = store.serverConfirmationDeadline, Date() < deadline,
+                      !store.entitlementState.grantsPlus else {
+                    store.finishServerConfirmationRechecks(); return
+                }
+                // In the background: stop here; coming back to the front resumes.
+                guard store.isInFront else { store.serverConfirmationRecheckTask = nil; return }
                 // The person's own purchase or restore is running: it reads
                 // the same answer, so this pass waits for the next try.
                 guard !store.isPurchasing, !store.isRestoring else { continue }
                 await store.refreshAfterForegroundEntry()
                 guard !Task.isCancelled else { return }
+                if store.entitlementState.grantsPlus { store.finishServerConfirmationRechecks(); return }
                 // A verified purchase the server has not confirmed yet is
                 // still waiting; never an offer to buy it again.
-                if store.entitlementState.grantsPlus { return }
                 store.awaitingServerConfirmation = true
             }
         }
+    }
+
+    private func finishServerConfirmationRechecks() {
+        serverConfirmationRecheckTask = nil
+        serverConfirmationDeadline = nil
     }
 
     /// AppStore.sync can show Apple Account authentication. Call this only

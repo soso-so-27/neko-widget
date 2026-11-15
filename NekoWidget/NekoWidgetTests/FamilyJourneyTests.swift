@@ -83,6 +83,10 @@ final class FamilyJourneyTests: XCTestCase {
         XCTAssertEqual(delays.count, 5)
         XCTAssertEqual(delays.reduce(.zero, +), .seconds(59))
         XCTAssertEqual(delays, delays.sorted())
+        // Then every 30 s until 10 minutes after the purchase (11/15: the
+        // server confirmed one about 4 minutes after it).
+        XCTAssertEqual(PlusPurchaseStore.serverConfirmationFollowUpInterval, .seconds(30))
+        XCTAssertEqual(PlusPurchaseStore.serverConfirmationWindow, 600)
     }
 
     // MARK: - A5: one press makes and sends the family invitation

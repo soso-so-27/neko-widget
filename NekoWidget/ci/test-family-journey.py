@@ -182,14 +182,35 @@ class PurchaseWaitAndFamilyPause1115Tests(unittest.TestCase):
         recheck = section(STORE, "private func recheckServerConfirmationAfterPurchase() {", "    /// AppStore.sync")
         # Bounded, and only the server's answer can grant: the same re-check
         # as 「購入を復元」, never a purchase, AppStore.sync or a local grant.
-        self.assertIn("for delay in Self.serverConfirmationRecheckDelays {", recheck)
+        self.assertIn("let delay = delays.isEmpty ? Self.serverConfirmationFollowUpInterval : delays.removeFirst()", recheck)
         self.assertIn("await store.refreshAfterForegroundEntry()", recheck)
         self.assertIn("guard !store.isPurchasing, !store.isRestoring else { continue }", recheck)
         for forbidden in ("AppStore.sync", "product.purchase", "entitlementState =", "canStartNewPurchase = true",
-                          "while true", "repeat {"):
+                          "repeat {", "grantsPlus = true"):
             self.assertNotIn(forbidden, recheck)
         self.assertIn("store.awaitingServerConfirmation = true", recheck)
         self.assertIn("serverConfirmationRecheckTask?.cancel()", section(STORE, "    func stop() {", "\n    }\n"))
+        # 11/15 (second fix): then every 30 s until 10 minutes after the
+        # purchase, only in front, wherever the person is; one loop at a time.
+        self.assertIn("static let serverConfirmationFollowUpInterval: Duration = .seconds(30)", STORE)
+        self.assertIn("static let serverConfirmationWindow: TimeInterval = 10 * 60", STORE)
+        self.assertIn("serverConfirmationDeadline = Date().addingTimeInterval(Self.serverConfirmationWindow)", recheck)
+        self.assertIn("guard let deadline = store.serverConfirmationDeadline, Date() < deadline,", recheck)
+        self.assertIn("guard store.isInFront else { store.serverConfirmationRecheckTask = nil; return }", recheck)
+        self.assertIn("UIApplication.shared.applicationState == .active", recheck)
+        loop = section(STORE, "private func runServerConfirmationRechecks(first: [Duration]) {", "private func finishServerConfirmationRechecks()")
+        self.assertLess(loop.index("serverConfirmationRecheckTask?.cancel()"), loop.index("serverConfirmationRecheckTask = Task"))
+        resume = section(STORE, "func resumeServerConfirmationRechecksIfDue() {", "\n    }\n")
+        self.assertIn("guard serverConfirmationRecheckTask == nil, let deadline = serverConfirmationDeadline,", resume)
+        self.assertEqual(STORE.count("serverConfirmationRecheckTask = Task"), 1)
+        app = read("NekoWidget/App/NekoWidgetApp.swift")
+        active = section(app, "guard newPhase == .active else { return }", "membershipNow = .now")
+        self.assertLess(active.index("await plusPurchases.refreshAfterForegroundEntry()"),
+                        active.index("plusPurchases.resumeServerConfirmationRechecksIfDue()"))
+        # Confirmed later: the family's paused box is read again by itself.
+        check = section(NOTEBOOK, "private struct FamilyNotebookOpeningCheck: ViewModifier {", "extension View {")
+        self.assertIn(".onChange(of: purchases.entitlementState.permitsPersonalPlus) { _, plus in", check)
+        self.assertIn("refreshAfterPlusChange(reportsFailure: false)", check)
 
     def test_waiting_sheet_goes_on_once_plus_is_confirmed(self):
         sheet = section(OFFER, "struct MembershipOfferSheet: View {", "enum PlusPurchaseContinuation {")
@@ -217,9 +238,9 @@ class PurchaseWaitAndFamilyPause1115Tests(unittest.TestCase):
         self.assertNotIn("MembershipRestoreButton(", OFFER_VIEW)
 
     def test_family_is_read_again_after_plus_and_never_says_found_while_stopped(self):
-        after = section(SHARING, "func refreshAfterPlusChange() async -> Bool {", "\n    }\n")
+        after = section(SHARING, "func refreshAfterPlusChange(reportsFailure: Bool = true) async -> Bool {", "\n    }\n")
         self.assertIn("while refreshing {", after)
-        self.assertIn("return await refresh(reportsFailure: true)", after)
+        self.assertIn("return await refresh(reportsFailure: reportsFailure)", after)
         self.assertIn("guard !refreshing else { return false }", SHARING)
         dismiss = section(NOTEBOOK, ".sheet(isPresented: $showsPlusOffer, onDismiss: {", "MembershipOfferSheet(model: .live()")
         self.assertIn("if bought { await sharing.refreshAfterPlusChange() } else { await sharing.refresh() }", dismiss)
@@ -254,7 +275,7 @@ class FamilyJoinAfterApproval1115Tests(unittest.TestCase):
     the notebook's name."""
 
     def test_answered_request_leaves_the_list(self):
-        refresh = section(SHARING, "func refresh(reportsFailure: Bool = false) async -> Bool {", "func refreshAfterPlusChange()")
+        refresh = section(SHARING, "func refresh(reportsFailure: Bool = false) async -> Bool {", "func refreshAfterPlusChange(")
         self.assertIn("let nextRequests = next.membership == nil ? [] : try await real.pendingRequests()", refresh)
         self.assertNotIn("syncing ? requests", refresh)
         decide = section(NOTEBOOK, "private func decide(_ request: FamilyNotebookJoinRequest, approve: Bool) {", "\n    }\n")
@@ -269,7 +290,7 @@ class FamilyJoinAfterApproval1115Tests(unittest.TestCase):
 
     def test_person_let_in_learns_it_when_the_app_opens(self):
         self.assertIn('static let key = "familyNotebookAwaitingApproval"', SHARING)
-        refresh = section(SHARING, "func refresh(reportsFailure: Bool = false) async -> Bool {", "func refreshAfterPlusChange()")
+        refresh = section(SHARING, "func refresh(reportsFailure: Bool = false) async -> Bool {", "func refreshAfterPlusChange(")
         self.assertIn("case .pendingApproval, .waitingForKeys: Self.noteAwaitingApproval(true)", refresh)
         self.assertIn("case .notInFamily, .inFamily: Self.noteAwaitingApproval(false)", refresh)
         check = section(NOTEBOOK, "private struct FamilyNotebookOpeningCheck: ViewModifier {", "extension View {")

@@ -97,12 +97,12 @@ final class FamilyNotebookSharing: ObservableObject {
     /// 「共有が止まっています」 stayed under 「Plusを確認できました。」. Waits
     /// for that pass, then reads the family again, saying if it failed.
     @discardableResult
-    func refreshAfterPlusChange() async -> Bool {
+    func refreshAfterPlusChange(reportsFailure: Bool = true) async -> Bool {
         while refreshing {
             do { try await Task.sleep(for: .milliseconds(100)) }
             catch { return false }
         }
-        return await refresh(reportsFailure: true)
+        return await refresh(reportsFailure: reportsFailure)
     }
 
     /// Runs one operation with a fresh ID, then reads the state again.
