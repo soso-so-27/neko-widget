@@ -190,6 +190,20 @@ final class CatHomeCareTests: XCTestCase {
                                         today: day(2026, 11, 13)), "きょうで6歳")
     }
 
+    /// 11/15: the cloudy window's 節目 counts the same day and years.
+    func testHeroDayForTheCloudyWindow() {
+        let birthday = day(2021, 7, 10)
+        XCTAssertEqual(Core.heroDay(birthday: birthday, birthdayYearKnown: true, adoption: nil, today: day(2026, 7, 10)),
+                       .birthday(years: 5))
+        XCTAssertEqual(Core.heroDay(birthday: birthday, birthdayYearKnown: false, adoption: nil, today: day(2026, 7, 10)),
+                       .birthday(years: nil))
+        XCTAssertEqual(Core.heroDay(birthday: day(2026, 7, 10), birthdayYearKnown: true, adoption: nil,
+                                    today: day(2026, 7, 10)), .birthday(years: nil))
+        XCTAssertEqual(Core.heroDay(birthday: nil, birthdayYearKnown: true, adoption: day(2022, 11, 13),
+                                    today: day(2026, 11, 13)), .adoption(years: 4))
+        XCTAssertNil(Core.heroDay(birthday: birthday, birthdayYearKnown: true, adoption: nil, today: day(2026, 7, 11)))
+    }
+
     func testHeroLineFebruary29() {
         let leap = day(2020, 2, 29)
         XCTAssertEqual(Core.heroDayLine(birthday: leap, birthdayYearKnown: true, adoption: nil, today: day(2027, 3, 1)),

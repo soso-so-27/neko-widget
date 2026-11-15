@@ -569,6 +569,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         # band, so two Small Widgets side by side line up.
         official = section(view, "} else if let photo = entry.officialPhoto {", "} else if isWindowPhoto {")
         self.assertIn("Text(photo.catName)", official)
+        # 11/15: one part for the name, shared with the cloudy window's line.
+        self.assertIn("footerName {", official)
+        official = section(view, "private func footerName<Content: View>(", "private func revealCapsule(")
         self.assertIn(".font(.caption2)", official)
         self.assertIn(".foregroundStyle(.white.opacity(0.92))", official)
         self.assertIn(".padding(.bottom, footerTextBottomInset)", official)
