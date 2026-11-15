@@ -1313,6 +1313,10 @@ enum AlbumArrivalNotice {
     static let userInfoKey = "albumArrival"
     /// A notice that waits only for the permission the app has not asked for yet.
     @MainActor private static var waitingForPermission: (month: (start: Date, at: Date)?, year: (year: Int, at: Date)?)?
+    /// 11/15: the permission seen when a notice was last to be set. Turned
+    /// on later in Settings, the notices are set on the next return to the
+    /// app, not only after new photos are read.
+    @MainActor private static var permissionWhenSet: UNAuthorizationStatus?
     private static let monthID = "album-arrival.month"
     private static let yearID = "album-arrival.year"
 #if DEBUG || INTERNAL_PRESENTATION
@@ -1345,8 +1349,10 @@ enum AlbumArrivalNotice {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [monthID, yearID])
         waitingForPermission = nil
-        guard month != nil || year != nil else { return }
-        if await center.notificationSettings().authorizationStatus == .notDetermined {
+        guard month != nil || year != nil else { permissionWhenSet = nil; return }
+        let permission = await center.notificationSettings().authorizationStatus
+        permissionWhenSet = permission
+        if permission == .notDetermined {
             waitingForPermission = (month, year)
             return
         }
@@ -1358,6 +1364,14 @@ enum AlbumArrivalNotice {
         if let year {
             await add(yearID, "\(year.year)年の作品がとどきました。", trigger: calendarTrigger(year.at))
         }
+    }
+
+    /// True when a notice waits and the permission changed since it was
+    /// last to be set. Nothing to set (or not yet tried): false, no query.
+    @MainActor
+    static func permissionChangedSinceSet() async -> Bool {
+        guard let permissionWhenSet else { return false }
+        return await UNUserNotificationCenter.current().notificationSettings().authorizationStatus != permissionWhenSet
     }
 
     /// From the album tab: ask once when a work is on its way, then set its

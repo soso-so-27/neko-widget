@@ -105,6 +105,7 @@ private enum CloudyWindowVerifier {
         try albumArrivalFrozenAfterExpiry()
         try albumCoverBeyondPreparationBounds()
         try probableCatsOnlyWhenNothingElse()
+        try newPhotoGoesOutTomorrow()
         print("Cloudy window: daily reveal, stale actions, restart, rotation, cats, permission, public mode and publication checks passed")
     }
 
@@ -440,6 +441,65 @@ private enum CloudyWindowVerifier {
         try check(!onlyProbable.isEmpty, "a cat with only たぶん猫 still gets a photo")
     }
 
+    /// 11/15 撮ったら、あした出る: a new photo replaces tomorrow's cloudy
+    /// photo, never today's; several go out one a day, newest first, ahead of
+    /// the cats' turns, and only while taken within the last 7 days.
+    private static func newPhotoGoesOutTomorrow() throws {
+        let d = baseline
+        try check(CloudyWindowStore.newPhotoDays == 7, "new photos are new for 7 days")
+        try check(CloudyWindowStore.isNewPhoto(takenAt: d.addingTimeInterval(-6 * day), previouslyShown: false, at: d)
+                  && !CloudyWindowStore.isNewPhoto(takenAt: d.addingTimeInterval(-8 * day), previouslyShown: false, at: d)
+                  && !CloudyWindowStore.isNewPhoto(takenAt: d.addingTimeInterval(-3_600), previouslyShown: true, at: d)
+                  && !CloudyWindowStore.isNewPhoto(takenAt: nil, previouslyShown: false, at: d),
+                  "new means taken within 7 days and never shown")
+        let taken = (0..<10).map { (id: "p\($0)", date: d.addingTimeInterval(-Double($0) * 3_600)) }
+            + [(id: "old", date: d.addingTimeInterval(-8 * day))]
+        let priority = CloudyWindowStore.newPhotoIDs(taken, now: d, id: { $0.id }, takenAt: { Optional($0.date) })
+        try check(priority == Set((0..<7).map { "p\($0)" }), "the host asks for the newest 7 new photos only")
+
+        var f = try Fixture(count: 8, cats: 2)
+        defer { f.cleanup() }
+        takenLongAgo(&f)
+        try f.store.synchronize(metadata: f.metadata, profiles: f.profiles, now: d)
+        let before = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: d)
+        try check(before.count == 2 && before[0].selection.profileID == "cat-0"
+                  && before[1].selection.profileID == "cat-1", "old photos take the cats' turns")
+        // Two photos of cat-0 are taken today and found on opening the app.
+        f.metadata["photo-06"]?.creationDate = d.addingTimeInterval(-3_600)
+        f.metadata["photo-04"]?.creationDate = d.addingTimeInterval(-7_200)
+        try f.store.synchronize(metadata: f.metadata, profiles: f.profiles, now: d)
+        let found = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: d.addingTimeInterval(10))
+        try check(found[0].selection.id == before[0].selection.id && found[0].photo.photoID == before[0].photo.photoID,
+                  "today's photo is never swapped")
+        try check(found[1].photo.photoID == "photo-06" && found[1].isCloudy && found[1].selection.profileID == "cat-0",
+                  "the newest new photo becomes tomorrow's, ahead of the cats' turns")
+        let tomorrow = found[1].date.addingTimeInterval(1)
+        let next = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: tomorrow)
+        try check(next[0].selection.id == found[1].selection.id, "tomorrow's new photo is the one that comes")
+        try check(next[1].photo.photoID == "photo-04", "the next new photo goes out the day after, one a day")
+        let third = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: next[1].date.addingTimeInterval(1))
+        try check(third[0].photo.photoID == "photo-04"
+                  && !["photo-04", "photo-06"].contains(third[1].photo.photoID), "a new photo goes out once")
+        try check(third[1].selection.profileID == "cat-1", "the cats' turns resume after the new photos")
+
+        // A new photo beyond the prepared 32 is prepared first.
+        var many = try Fixture(count: 60)
+        defer { many.cleanup() }
+        takenLongAgo(&many)
+        many.metadata["photo-59"]?.creationDate = d.addingTimeInterval(-3_600)
+        try many.store.synchronize(metadata: many.metadata, profiles: many.profiles, now: d)
+        let plan = try many.store.preparation(now: d)!
+        try check(plan.candidates.first?.item.localIdentifier == "photo-59"
+                  && plan.protectedPhotoIDs.contains("photo-59"), "a new photo outside the 32 is prepared first")
+    }
+
+    /// Long ago, a day apart each, so nearby captures are not taken as one.
+    private static func takenLongAgo(_ f: inout Fixture) {
+        for key in f.metadata.keys {
+            f.metadata[key]?.creationDate = baseline.addingTimeInterval(-Double(60 + Int(key.dropFirst(6))!) * day)
+        }
+    }
+
     private static func rotationAndSmallPools() throws {
         let f = try Fixture(count: 32)
         defer { f.cleanup() }
@@ -495,6 +555,9 @@ private enum CloudyWindowVerifier {
         var uneven = try Fixture(count: 5, cats: 2)
         defer { uneven.cleanup() }
         for key in uneven.metadata.keys { uneven.metadata[key]?.profileIDs = key == "photo-00" ? ["cat-0"] : ["cat-1"] }
+        // Photos taken long ago: a new photo goes ahead of the cats' turns
+        // for its day (newPhotoGoesOutTomorrow), so this checks the turns alone.
+        takenLongAgo(&uneven)
         try uneven.store.synchronize(metadata: uneven.metadata, profiles: uneven.profiles, now: baseline)
         let rotation = try (0..<5).map { offset in
             try uneven.store.timeline(scopeID: CloudyWindowStore.personalScope,

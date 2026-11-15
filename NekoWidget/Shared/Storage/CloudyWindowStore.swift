@@ -141,6 +141,10 @@ struct CloudyWindowStore: Sendable {
     /// ready (11/10: a Widget placed during the first run said 「写真を表示
     /// できません」 until the app was opened again).
     static let prePlacementPhotoCount = 3
+    /// 11/15 撮ったら、あした出る: a photo taken in the last this-many days and
+    /// not shown yet goes out first, one a day, newest first. After that it
+    /// waits its turn like any other, so older photos keep their days.
+    static let newPhotoDays = 7
     static let maximumFileBytes = 220 * 1_024
     private let containerURL: URL?
     private let authorityStore: PersonalRediscoveryStore
@@ -169,6 +173,28 @@ struct CloudyWindowStore: Sendable {
 
     static func nextDay(after date: Date) -> Date {
         calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: date))!
+    }
+
+    /// 11/15: taken within `newPhotoDays` of `date` (and not in its future)
+    /// and never shown anywhere. The capture date, not the day the app found
+    /// it: an old photo that refills the pool is not new.
+    static func isNewPhoto(takenAt captured: Date?, previouslyShown: Bool, at date: Date) -> Bool {
+        guard !previouslyShown, let captured, captured <= date.addingTimeInterval(86_400) else { return false }
+        return date.timeIntervalSince(captured) <= Double(newPhotoDays) * 86_400
+    }
+
+    /// 11/15: the host's newest few new photos, so the bounded personal pool
+    /// takes them in before tomorrow's photo is chosen. At most one a day.
+    static func newPhotoIDs<S: Sequence>(_ items: S, now: Date = .now, id: (S.Element) -> String,
+                                         takenAt: (S.Element) -> Date?) -> Set<String> {
+        var recent: [(id: String, captured: Date)] = []
+        for item in items {
+            guard let captured = takenAt(item),
+                  isNewPhoto(takenAt: captured, previouslyShown: false, at: now) else { continue }
+            recent.append((id: id(item), captured: captured))
+        }
+        return Set(recent.sorted { $0.captured == $1.captured ? $0.id < $1.id : $0.captured > $1.captured }
+            .prefix(newPhotoDays).map { $0.id })
     }
 
     func configuration() -> CloudyWindowConfiguration {
@@ -390,6 +416,16 @@ struct CloudyWindowStore: Sendable {
             var ordered = candidates.filter { $0.item.localIdentifier == arrivalID }
             ordered += candidates.filter { pinned.contains($0.item.localIdentifier)
                 && $0.item.localIdentifier != arrivalID }
+            // 11/15: the newest new photos (a week's worth, one a day) are
+            // prepared next, so tomorrow's window can be one of them.
+            let newPhotos = available.filter { candidate in
+                let id = candidate.item.localIdentifier
+                guard let metadata = state.metadata[id], !state.seenPhotoIDs.contains(id) else { return false }
+                return Self.isNewPhoto(takenAt: metadata.creationDate, previouslyShown: metadata.previouslyShown, at: now)
+            }.prefix(Self.newPhotoDays)
+            ordered += newPhotos.filter { candidate in
+                !ordered.contains { $0.item.localIdentifier == candidate.item.localIdentifier }
+            }
             let groups = state.profiles.keys.sorted()
             var queues = groups.map { profile in
                 candidates.filter { state.metadata[$0.item.localIdentifier]?.profileIDs.contains(profile) == true }
@@ -508,6 +544,17 @@ struct CloudyWindowStore: Sendable {
                     if let old = selection { state.selections.removeAll { $0.id == old.id } }
                     let chosen = CloudyWindowSelection(scopeID: scopeID, day: date,
                         photoID: cover.photoID, profileID: profileID(scopeID, in: state), albumPeriod: arrival.period)
+                    selection = chosen
+                    state.selections.append(chosen)
+                }
+                // 11/15 撮ったら、あした出る: a new photo found after tomorrow's
+                // photo was chosen takes its place while tomorrow is still
+                // cloudy and not here yet. Today's photo is never swapped.
+                if maySelect, date > today, let planned = selection,
+                   planned.revealedAt == nil, planned.albumPeriod == nil,
+                   !isNew(planned.photoID, scopeID: scopeID, date: date, in: state),
+                   let chosen = choose(state: state, scopeID: scopeID, date: date, onlyNew: true) {
+                    state.selections.removeAll { $0.id == planned.id }
                     selection = chosen
                     state.selections.append(chosen)
                 }
@@ -645,7 +692,17 @@ struct CloudyWindowStore: Sendable {
         }
     }
 
-    private func choose(state: CloudyWindowState, scopeID: String, date: Date) -> CloudyWindowSelection? {
+    /// 11/15: new (see `isNewPhoto`), not seen in any window, and never this
+    /// window's photo before `date`.
+    private func isNew(_ photoID: String, scopeID: String, date: Date, in state: CloudyWindowState) -> Bool {
+        guard let metadata = state.metadata[photoID], !state.seenPhotoIDs.contains(photoID),
+              !state.selections.contains(where: { $0.scopeID == scopeID && $0.day < date && $0.photoID == photoID })
+        else { return false }
+        return Self.isNewPhoto(takenAt: metadata.creationDate, previouslyShown: metadata.previouslyShown, at: date)
+    }
+
+    private func choose(state: CloudyWindowState, scopeID: String, date: Date,
+                        onlyNew: Bool = false) -> CloudyWindowSelection? {
         let profile = profileID(scopeID, in: state)
         let previous = state.selections.filter { $0.scopeID == scopeID && $0.day < date }.sorted { $0.day > $1.day }
         var candidates = state.photos.filter { photo in
@@ -676,6 +733,21 @@ struct CloudyWindowStore: Sendable {
         if candidates.count > 1, let last = previous.first {
             candidates.removeAll { $0.photoID == last.photoID }
         }
+        // 11/15 撮ったら、あした出る: the newest new photo comes first, ahead
+        // of the cats' turns for that day only. Bursts, たぶん猫 and the
+        // previous day were already sorted out above.
+        let newest = candidates.filter { isNew($0.photoID, scopeID: scopeID, date: date, in: state) }
+            .min { lhs, rhs in
+                let a = state.metadata[lhs.photoID]?.creationDate ?? .distantPast
+                let b = state.metadata[rhs.photoID]?.creationDate ?? .distantPast
+                return a == b ? lhs.photoID < rhs.photoID : a > b
+            }
+        if let newest {
+            let cats = state.metadata[newest.photoID]?.profileIDs ?? []
+            return .init(scopeID: scopeID, day: date, photoID: newest.photoID,
+                         profileID: profile ?? state.profiles.keys.sorted().first(where: { cats.contains($0) }))
+        }
+        if onlyNew { return nil }
         var selectedProfile = profile
         if profile == nil {
             let groups = state.profiles.keys.sorted().filter { id in

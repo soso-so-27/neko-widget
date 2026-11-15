@@ -158,6 +158,7 @@ python3 ci/test-cat-home-care.py
 python3 ci/test-album-link-followups.py
 python3 ci/test-cat-threshold.py
 python3 ci/test-confident-cats.py
+python3 ci/test-new-photo-tomorrow.py
 python3 ci/test-app-limits.py
 python3 ci/test-family-journey.py
 python3 ci/test-when-stuck.py

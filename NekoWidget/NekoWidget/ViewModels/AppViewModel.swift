@@ -3611,9 +3611,17 @@ final class AppViewModel: ObservableObject {
             let revision = try synchronizePersonalWidgetAuthority()
             let input = candidateSnapshot(snapshot)
             let probable = personalWidgetProbablePhotoIDs(input.assets)
+            // 11/15 撮ったら、あした出る: the newest few cat photos of the last
+            // week join the bounded pool first, so the cloudy window can
+            // choose one for tomorrow. One pass over the loaded records.
+            let newPhotos: Set<String> = CloudyWindowAvailability.isAvailable
+                ? CloudyWindowStore.newPhotoIDs(
+                    input.assets.lazy.filter { $0.isCatCandidate && !$0.isScreenshot && $0.lastShownAt == nil },
+                    id: { $0.localIdentifier }, takenAt: { $0.creationDate })
+                : []
             let result = try await widgetCacheBuilder.replenishPersonal(
                 from: input, eligibilityRevision: revision,
-                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs(),
+                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs().union(newPhotos),
                 probablePhotoIDs: probable)
             try synchronizeCloudyWindowMetadata()
             try await CloudyWindowImagePreparer.shared.prepare()
@@ -3646,7 +3654,7 @@ final class AppViewModel: ObservableObject {
                             let batch = try await self.widgetCacheBuilder.replenishPersonal(
                                 from: input, eligibilityRevision: revision,
                                 skippingPhotoIDs: attemptedPhotoIDs,
-                                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs(),
+                                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs().union(newPhotos),
                                 probablePhotoIDs: probable)
                             attemptedPhotoIDs.formUnion(batch.attemptedPhotoIDs)
                             try self.synchronizeCloudyWindowMetadata()
