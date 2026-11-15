@@ -2001,10 +2001,15 @@ private struct FamilyNotebookToolSyncModifier: ViewModifier {
     }
 }
 /// 11/15 (TestFlight 378): the person let in learned it only by opening the
-/// notebook, which 設定 did not offer yet, so it never appeared. Each time
-/// the app comes to the front, someone in a family or waiting to be let in
-/// reads the family once (and every 30 s while still waiting), and the
-/// family's cats reach 「この子」. Photos access plays no part in this.
+/// notebook, which 設定 did not offer yet, so it never appeared: their
+/// device was never registered for the notebook's key, and the family's
+/// iPhone had nobody to send the key to. Each time the app comes to the
+/// front, someone in a family, waiting to be let in, or not yet known to be
+/// neither reads the family. The passes go on while the keys still move
+/// (every 5 s, at most 12) and every 30 s while still waiting, so whichever
+/// iPhone opens first, the other finishes: the new member registers, the
+/// family's iPhone signs them in and sends the key, the new member reads it.
+/// The family's cats then reach 「この子」. Photos access plays no part.
 private struct FamilyNotebookOpeningCheck: ViewModifier {
     @ObservedObject private var model = FamilyNotebookPrototype.shared
     @Environment(\.scenePhase) private var phase
@@ -2012,12 +2017,18 @@ private struct FamilyNotebookOpeningCheck: ViewModifier {
     func body(content: Content) -> some View {
         content.task(id: phase == .active) {
             guard phase == .active, model.isReal,
-                  model.hasFamily || FamilyNotebookSharing.awaitingApproval else { return }
+                  model.hasFamily || FamilyNotebookSharing.awaitingApproval
+                    || FamilyNotebookSharing.awaitingApprovalUnknown else { return }
+            var keyPasses = 0
             while !Task.isCancelled {
                 if !FamilyNotebookSharing.shared.isWorking { await FamilyNotebookSharing.shared.refresh() }
                 if model.hasFamily { model.applyFamilyWrites() }
-                guard FamilyNotebookSharing.awaitingApproval else { return }
-                do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                let keysMove = (FamilyNotebookSharing.shared.service as? ProductionFamilyNotebookSharingService)?.needsAnotherPass == true
+                let delay: Duration
+                if keysMove, keyPasses < 12 { keyPasses += 1; delay = .seconds(5) }
+                else if FamilyNotebookSharing.awaitingApproval { delay = .seconds(30) }
+                else { return }
+                do { try await Task.sleep(for: delay) } catch { return }
             }
         }
     }

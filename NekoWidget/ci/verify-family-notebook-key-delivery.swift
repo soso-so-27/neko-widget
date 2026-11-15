@@ -185,6 +185,61 @@ private actor Relay: GroupHTTPTransport {
         try await relay.replaceCertificateForTest(b.certificate(windowID: UUID().uuidString.lowercased()))
         try await rejected { _ = try await coordinator(b).prepare(family: family) }
         try check(await relay.deviceBodies().count == beforeInvalid, "a certificate signed for another family is rejected, not treated as registration")
-        print("Family notebook key delivery: real HPKE, pinned invitation, durable roster/key retry, explicit admission, pre-join keys, departure rotation and rejected-key isolation passed")
+        try await approvedBeforeNewcomerRegisters(directory: directory, endpoint: endpoint)
+        print("Family notebook key delivery: real HPKE, pinned invitation, durable roster/key retry, explicit admission, pre-join keys, departure rotation, rejected-key isolation and approval-before-registration passed")
+    }
+
+    /// 11/15 (TestFlight 378): the family approved the newcomer before the
+    /// newcomer's iPhone registered for the notebook (relay: approved, 0
+    /// crypto devices, 0 envelopes). Whichever iPhone opens first, the order
+    /// 申込み → 承認 → A opens → B opens → A opens → B opens ends with B
+    /// reading the notebook, with no new invitation. Each "opens" is what
+    /// FamilyNotebookOpeningCheck runs: a few passes of prepare.
+    private static func approvedBeforeNewcomerRegisters(directory: URL, endpoint: URL) async throws {
+        var a = GroupDeviceIdentity.firstDevice(), b = GroupDeviceIdentity.firstDevice()
+        a.registered = true; b.registered = true
+        let family = UUID(), relay = try Relay(family: family, creator: a)
+        func coordinator(_ who: GroupDeviceIdentity) throws -> FamilyNotebookKeyCoordinator {
+            let folder = directory.appendingPathComponent("late-" + who.personID)
+            let journal = try GroupOperationStore(directory: folder.appendingPathComponent("journal"), maximumRecordBytes: 2_100_000)
+            let secrets = try GroupOperationStore(directory: folder.appendingPathComponent("synthetic-secrets"))
+            return try .init(endpoint: endpoint, identity: who, network: .init(endpoint: endpoint, identity: who, transport: relay, journal: journal), secrets: secrets, journal: journal)
+        }
+        /// One opening: up to three passes, as the 5-second passes do.
+        func opens(_ who: GroupDeviceIdentity) async throws -> FamilyNotebookKeyMaterial? {
+            var last: FamilyNotebookKeyMaterial?
+            for _ in 0..<3 {
+                last = try await coordinator(who).prepare(family: family)
+                if last?.ready == true && !(last?.moreWork ?? true) { break }
+            }
+            return last
+        }
+        stage("Key delivery stage: approval before the newcomer registers")
+        let creator = try coordinator(a)
+        try await creator.registerCreatedFamily(family)
+        guard let original = try await creator.prepare(family: family), original.ready else { throw Failure.check("late: creator not ready") }
+        let now = Date(), (capability, cipher) = try FamilyNotebookInvitationCrypto.create(roster: original.current, generation: 1, identity: a,
+            payerPersonID: a.personID, invitationID: UUID(), inviterName: "synthetic", catNames: [], now: now)
+        let invitation = try FamilyNotebookInvitationCrypto.open(cipher, capability: capability, serverInviterPersonID: a.personID,
+            serverInviterDeviceID: a.deviceID, serverGeneration: 1, serverExpiresAt: Int64(now.timeIntervalSince1970) + 86400, now: now)
+        // 申込み (join receipt) and 承認 (approval receipt), nothing opened yet.
+        try await coordinator(b).registerInvitation(invitation)
+        try await relay.admit(b)
+        try await creator.confirmApprovedAddition(family: family, personID: b.personID, identityPublicKey: b.personPublicKey)
+        // A opens first: nobody to sign in or send the key to yet; no dead end.
+        _ = try await opens(a)
+        try check(await relay.epoch() == 1, "late: no rotation before the newcomer's device exists")
+        // B opens: registers its device and waits for the family's key.
+        let waiting = try await opens(b)
+        try check(waiting?.ready != true, "late: newcomer is not ready before the family signs it in")
+        try check(await relay.deviceBodies().count == 2, "late: newcomer registered exactly once")
+        // A opens again: signs the newcomer in and sends the key.
+        _ = try await opens(a)
+        let bDevice = try b.deviceID
+        try check(await relay.epoch() == 2, "late: family rotated to include the newcomer")
+        try check(await relay.delivered().contains { $0.recipientDeviceID == bDevice }, "late: key sent to the newcomer's device")
+        // B opens again: reads the notebook, old and new keys.
+        guard let joined = try await opens(b), joined.ready else { throw Failure.check("late: newcomer cannot read") }
+        try check(joined.keys[1] == original.keys[1] && joined.keys[2] != nil, "late: newcomer has the pre-join and current keys")
     }
 }

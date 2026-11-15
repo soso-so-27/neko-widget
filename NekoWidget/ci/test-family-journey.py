@@ -270,13 +270,28 @@ class FamilyJoinAfterApproval1115Tests(unittest.TestCase):
     def test_person_let_in_learns_it_when_the_app_opens(self):
         self.assertIn('static let key = "familyNotebookAwaitingApproval"', SHARING)
         refresh = section(SHARING, "func refresh(reportsFailure: Bool = false) async -> Bool {", "func refreshAfterPlusChange()")
-        self.assertIn("case .pendingApproval: Self.noteAwaitingApproval(true)", refresh)
+        self.assertIn("case .pendingApproval, .waitingForKeys: Self.noteAwaitingApproval(true)", refresh)
         self.assertIn("case .notInFamily, .inFamily: Self.noteAwaitingApproval(false)", refresh)
         check = section(NOTEBOOK, "private struct FamilyNotebookOpeningCheck: ViewModifier {", "extension View {")
         self.assertIn("model.hasFamily || FamilyNotebookSharing.awaitingApproval", check)
+        # An app from before 11/15 left no mark: one read settles it.
+        self.assertIn("|| FamilyNotebookSharing.awaitingApprovalUnknown else { return }", check)
+        self.assertIn("UserDefaults.standard.object(forKey: FamilyNotebookAwaitingApproval.key) == nil", SHARING)
         self.assertIn("await FamilyNotebookSharing.shared.refresh()", check)
         self.assertIn("model.applyFamilyWrites()", check)
-        self.assertIn(".seconds(30)", check)
+        # Key passes go on (bounded) so the family's iPhone signs the newcomer
+        # in and sends the key in one opening; waiting goes on every 30 s.
+        self.assertIn("needsAnotherPass == true", check)
+        self.assertIn("if keysMove, keyPasses < 12 { keyPasses += 1; delay = .seconds(5) }", check)
+        self.assertIn("else if FamilyNotebookSharing.awaitingApproval { delay = .seconds(30) }", check)
+        # Two synthetic iPhones: approval before the newcomer registers still ends readable.
+        delivery = read("ci/verify-family-notebook-key-delivery.swift")
+        self.assertIn("try await approvedBeforeNewcomerRegisters(directory: directory, endpoint: endpoint)", delivery)
+        late = section(delivery, "private static func approvedBeforeNewcomerRegisters(", "\n    }\n}")
+        order = ["confirmApprovedAddition", "_ = try await opens(a)", "let waiting = try await opens(b)",
+                 "_ = try await opens(a)\n        let bDevice", "guard let joined = try await opens(b), joined.ready"]
+        self.assertEqual(sorted(order, key=late.index), order)
+        self.assertIn("ci/verify-family-notebook-key-delivery.swift", read("ci/run-quick-ios-checks.sh"))
         # Nothing about Photos decides it.
         for photos in ("PHPhotoLibrary", "authorizationStatus", "PhotoAuthorization"):
             self.assertNotIn(photos, check)

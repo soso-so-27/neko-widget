@@ -63,8 +63,11 @@ final class FamilyNotebookSharing: ObservableObject {
                 state = next
             }
             // Only a settled answer moves the mark; a checking pass keeps it.
+            // Let in but without the notebook's key yet is still waiting
+            // (11/15: this device registers itself and the family's key
+            // reaches it over the next passes).
             switch next {
-            case .pendingApproval: Self.noteAwaitingApproval(true)
+            case .pendingApproval, .waitingForKeys: Self.noteAwaitingApproval(true)
             case .notInFamily, .inFamily: Self.noteAwaitingApproval(false)
             default: break
             }
@@ -144,6 +147,9 @@ final class FamilyNotebookSharing: ObservableObject {
     }
 
     static var awaitingApproval: Bool { UserDefaults.standard.bool(forKey: FamilyNotebookAwaitingApproval.key) }
+    /// Never settled on this iPhone: an app from before 11/15 asked to join
+    /// without leaving the mark. One read settles it either way.
+    static var awaitingApprovalUnknown: Bool { UserDefaults.standard.object(forKey: FamilyNotebookAwaitingApproval.key) == nil }
     private static func noteAwaitingApproval(_ value: Bool) {
         guard awaitingApproval != value else { return }
         UserDefaults.standard.set(value, forKey: FamilyNotebookAwaitingApproval.key)
