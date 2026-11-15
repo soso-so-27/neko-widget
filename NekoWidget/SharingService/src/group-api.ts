@@ -1,4 +1,5 @@
 import { ApiError } from './errors';
+import { groupRecoveryCatalogAPI } from './group-recovery-catalog';
 import type { Env } from './env';
 import { authenticateGroupRequest,groupId } from './group-auth';
 import { createGroupIdentityChallenge,registerGroupIdentity } from './group-identities';
@@ -61,6 +62,7 @@ export async function groupAPI(request:Request,env:Env):Promise<Response> {
 }
 async function dispatchGroup(request:Request,env:Env):Promise<Response> {
   const path=new URL(request.url).pathname;
+  if(path.startsWith('/v3/group-recovery/'))return groupRecoveryCatalogAPI(request,env);
   if(path===groupReportingAvailabilityPath)return groupReportingAvailability(request,env);
   if(groupReplyPath.test(path))return groupReportStatus(request,env);
   if(isGroupReportPath(path))return groupReportAPI(request,env);

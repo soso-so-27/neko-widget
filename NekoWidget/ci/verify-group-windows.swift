@@ -87,6 +87,7 @@ private func checkCaptionVisibilityFooter() throws {
 @main
 private enum GroupWindowChecks {
     static func main() async throws {
+        try checkRecoverySelection()
         try checkRecoveryProof()
         if CommandLine.arguments.count > 1 { try checkWireVector(path: CommandLine.arguments[1]) }
         try checkCaptionVisibilityFooter()
@@ -233,6 +234,25 @@ private enum GroupWindowChecks {
         try check(offlineRejected, "fixture offline state")
         print("Group HPKE, roster, removal, sender integrity, limits and UI fixture checks passed")
     }
+}
+
+private func checkRecoverySelection() throws {
+    let emptyA = GroupRootMembershipSummary(rootID: "a", windowIDs: [], notebookIDs: [])
+    let emptyB = GroupRootMembershipSummary(rootID: "b", windowIDs: [], notebookIDs: [])
+    try check(GroupRootSelectionPolicy.resolve(local: nil, sync: .checking, catalogs: [:]) == .checking, "no identity creation while sync is pending")
+    try check(GroupRootSelectionPolicy.resolve(local: nil, sync: .unavailable, catalogs: [:]) == .unavailable, "sync failure is not empty")
+    try check(GroupRootSelectionPolicy.resolve(local: nil, sync: .missing, catalogs: [:]) == .mayCreate, "creation only after confirmed absence")
+    try check(GroupRootSelectionPolicy.resolve(local: "a", sync: .candidates(["b"]), catalogs: [:]) == .checking, "no choice before both catalogs arrive")
+    try check(GroupRootSelectionPolicy.resolve(local: "a", sync: .candidates(["b"]), catalogs: ["a": emptyA, "b": emptyB]) == .use("b"), "both empty selects synced root")
+    let joinedA = GroupRootMembershipSummary(rootID: "a", windowIDs: [], notebookIDs: ["family"])
+    try check(GroupRootSelectionPolicy.resolve(local: "a", sync: .candidates(["b"]), catalogs: ["a": joinedA, "b": emptyB]) == .choose(["a", "b"]), "notebook membership requires user selection")
+    try check(GroupRootSelectionPolicy.resolve(local: nil, sync: .candidates(["b", "a"]), catalogs: ["a": emptyA, "b": emptyB]) == .choose(["a", "b"]), "multiple synced roots never chosen by order")
+    let id = UUID()
+    try check(GroupRecoveryRegistrationState.checking(operationID: id).nextAction == .queryStatus(id), "lost response queries same operation first")
+    try check(GroupRecoveryRegistrationState.notStarted(operationID: id).nextAction == .submitSameOperation(id), "retry keeps operation id")
+    try check(GroupRecoveryRegistrationState.registeredWaitingForKeys(operationID: id, deviceID: "d").nextAction == .waitForKeys, "registration is not decryption")
+    try check(GroupRecoveryRegistrationState.revoked(operationID: id).nextAction == .stop, "revocation cannot retry registration")
+    print("P3 root selection and recovery retry states passed")
 }
 
 private func checkRecoveryProof() throws {
