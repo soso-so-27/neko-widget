@@ -45,6 +45,7 @@ export interface Env extends GroupReportMailEnv {
   /// Separate opt-in for the family HTTP router. Absent remains unrouted,
   /// even if family/payer fixture gates or photo groups are enabled.
   FAMILY_NOTEBOOK_API_RUNTIME_ENABLED?: string;
+  FAMILY_REPRESENTATIVE_PHOTO_RUNTIME_ENABLED?: string;
   /// Independent family-notebook transaction boundary, together with D1 gate.
   FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED?: string;
   /// Admission safety limit, independently configurable before public rollout.

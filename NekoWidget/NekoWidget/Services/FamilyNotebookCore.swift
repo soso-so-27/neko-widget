@@ -104,6 +104,7 @@ enum FamilyNotebookField: String, Codable, CaseIterable, Hashable, Sendable {
     // Old clients reject this unknown field before applying the packet. A
     // shared removal must never look like deletion of someone's personal cat.
     case sharingEnded
+    case representativePhoto
     case farewellDay, adoptionDay
     /// 11/15: the cat's place in the family's order (an integer). Unknown to
     /// older apps, which keep it as an opaque operation, as with adoptionDay.
@@ -324,7 +325,7 @@ enum FamilyNotebookCore {
         switch target.collection {
         case .cat: allowed = [.name, .sex, .neutered, .birthday, .adoptionDay, .coat, .marks, .microchip, .indoorOnly,
                               .conditions, .allergyStatus, .allergyText, .specialDiet, .water, .litter,
-                              .temperament, .vetName, .vetPhone, .vetNote, .farewellDay, .position]
+                              .temperament, .vetName, .vetPhone, .vetNote, .farewellDay, .position, .representativePhoto]
         case .weight: allowed = [.measuredOn, .grams]
         case .medication: allowed = [.medicationName, .dose, .schedule, .startedOn, .endedOn, .note]
         case .vaccination: allowed = [.kind, .givenOn, .nextDueOn]
@@ -336,6 +337,13 @@ enum FamilyNotebookCore {
         }
         guard allowed.contains(field), let value else { throw FamilyNotebookError.invalidTarget }
         if value == .clear { return }
+        if field == .representativePhoto {
+            guard case .text(let reference) = value, reference.utf8.count <= 4096,
+                  let data = reference.data(using: .utf8),
+                  (try? JSONSerialization.jsonObject(with: data)) is [String: Any]
+            else { throw FamilyNotebookError.invalidValue }
+            return
+        }
         if field == .adoptionDay { _ = try FamilyNotebookAdoptionDate.decode(value); return }
         let days: Set<FamilyNotebookField> = [.birthday, .measuredOn, .startedOn, .endedOn, .givenOn, .nextDueOn, .farewellDay, .nextVisitOn]
         let dates: Set<FamilyNotebookField> = [.completedAt, .capturedAt, .writtenAt]
@@ -594,5 +602,23 @@ enum FamilyNotebookReceivedOperation: Sendable {
             return .opaque(retained)
         }
         return .known(operation)
+    }
+}
+
+
+enum FamilyNotebookRepresentativePhotoState: Equatable, Sendable {
+    case empty
+    case selected(selectionID: UUID)
+    case preparing(selectionID: UUID)
+    case sending(operationID: UUID)
+    case delivered(assetID: UUID, revision: Int)
+    case waitingForKeys
+    case waitingForRetry(until: Date)
+    case limited(reason: LimitReason, retryAt: Date?)
+    case failed(Failure)
+    case reported, hidden, unavailable, upgradeRequired
+    enum LimitReason: String, Equatable, Sendable { case slots, daily, cleanup }
+    enum Failure: String, Equatable, Sendable {
+        case authentication, conflict, invalidPayload, tooLarge, network, storage, untrusted
     }
 }

@@ -98,3 +98,28 @@ test('committed production configuration is closed and only binds the production
   assert.equal(config.workers_dev,false);assert.equal(config.preview_urls,false);
   assert.deepEqual(config.triggers.crons,[]);assert.equal(config.assets,undefined);
 });
+
+test('image edge hits still check the live gate and withdrawal before cache lookup', async t => {
+  t.mock.method(Date,'now',()=>start);
+  const store=new Map(); let matches=0;
+  const previous=globalThis.caches;
+  globalThis.caches={default:{async match(key){matches++;return store.get(key.url)?.clone();},async put(key,value){store.set(key.url,value.clone());}}};
+  t.after(()=>{ if(previous===undefined) delete globalThis.caches; else globalThis.caches=previous; });
+  const f=setup(), route='/windows/black-cats/'+a+'.jpg';
+  for(let n=0;n<2;n++) {
+    const response=await request(f.env,route);
+    assert.equal(response.status,200); assert.equal(response.headers.get('cache-control'),'no-store');
+    assert.equal(hash(Buffer.from(await response.arrayBuffer())),a);
+  }
+  assert.equal(f.reads.filter(k=>k.endsWith(a+'.jpg')).length,1);
+  assert.equal(f.reads.filter(k=>k.endsWith('index.json')).length,2);
+  assert.equal(matches,2);
+  f.env.INTAKE_ENABLED='NO';
+  assert.equal((await request(f.env,route)).status,503); assert.equal(matches,2);
+  f.env.INTAKE_ENABLED='YES';
+  const index=JSON.parse(f.objects.get(prefix+'/__program/index.json'));
+  index.images=index.images.filter(i=>i.sha256!==a);index.epochs[0].order=[b];
+  f.objects.set(prefix+'/__program/index.json',Buffer.from(JSON.stringify(index)));
+  assert.equal((await request(f.env,route)).status,404); assert.equal(matches,2);
+  assert.equal((await request(f.env,'/__official_cache/'+prefix+'/__program/images/'+a+'.jpg')).status,404);
+});

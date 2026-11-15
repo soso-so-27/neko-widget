@@ -28,3 +28,5 @@ xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0
   NekoWidget/Services/FamilyNotebookTransport.swift ci/verify-family-notebook-transport.swift \
   -o "$RUNNER_TEMP/family-notebook-transport-tests"
 "$RUNNER_TEMP/family-notebook-transport-tests"
+
+bash ci/run-family-representative-photo-checks.sh

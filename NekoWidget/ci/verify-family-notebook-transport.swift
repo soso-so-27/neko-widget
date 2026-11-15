@@ -11,7 +11,7 @@ private struct Mutation: Codable {
     let operationID: String; let expectedGeneration: Int; let expectedEpoch: Int; let payload: String
 }
 private actor Relay: GroupHTTPTransport {
-    enum Next: Equatable { case success, lostAfterCommit, lostBeforeCommit, stale, paused, badReceipt }
+    enum Next: Equatable { case success, lostAfterCommit, lostBeforeCommit, stale, paused, badReceipt, upgrade }
     let family: UUID, identity: GroupDeviceIdentity
     var next: Next = .success
     var requests: [URLRequest] = []
@@ -33,6 +33,7 @@ private actor Relay: GroupHTTPTransport {
         func error(_ code: String, _ status: Int) -> GroupHTTPReply {
             .init(status: status, data: Data("{\"error\":{\"code\":\"\(code)\"}}".utf8))
         }
+        if action == .upgrade { return error("photo_protocol_upgrade_required", 409) }
         if action == .stale { return error("family_notebook_crypto_stale", 409) }
         if action == .paused { return error("family_notebook_paused", 403) }
         if action == .lostBeforeCommit { throw Failure.lostReply }
@@ -159,6 +160,19 @@ private enum VerifyFamilyNotebookTransport {
         let beforeRetry = await relay.count()
         _ = try await send(client(), malformed, body(malformed))
         try check(await relay.count() == beforeRetry + 1, "malformed receipt was never cached as an ACK")
+
+        let legacyOp = UUID(), legacyBody = try body(legacyOp)
+        await relay.set(.lostBeforeCommit)
+        try await rejects(.unknownOutcome) { _ = try await send(first, legacyOp, legacyBody) }
+        var nextJSON = try JSONSerialization.jsonObject(with: body(legacyOp)) as! [String: Any]
+        nextJSON["writeContract"] = ["version": 1, "effects": []] as [String: Any]
+        await relay.set(.upgrade)
+        _ = try await send(client(), legacyOp, JSONSerialization.data(withJSONObject: nextJSON))
+        let upgradedBody = await relay.sent().last!.httpBody!
+        var preserved = try JSONSerialization.jsonObject(with: upgradedBody) as! [String: Any]
+        try check(preserved.removeValue(forKey: "writeContract") != nil, "explicit rejection upgrades envelope")
+        let originalJSON = try JSONSerialization.jsonObject(with: legacyBody) as! NSDictionary
+        try check(originalJSON.isEqual(to: preserved), "upgrade preserves exact original ciphertext and operation identity")
 
         let blocked = try FamilyNotebookTransport(endpoint: URL(string: "https://family.invalid")!, identity: identity, transport: relay, journal: BrokenJournal())
         let beforeWrite = await relay.count(), failed = UUID()

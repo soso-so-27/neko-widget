@@ -47,7 +47,7 @@ class OneField(unittest.TestCase):
         self.assertIn("case position", CORE)
         self.assertIn("static let compatibility: Set<FamilyNotebookField> = [.adoptionDay, .position]", CORE)
         self.assertIn("static let positionRange = 0...100_000", CORE)
-        self.assertIn(".vetName, .vetPhone, .vetNote, .farewellDay, .position]", CORE)
+        self.assertIn(".vetName, .vetPhone, .vetNote, .farewellDay, .position, .representativePhoto]", CORE)
         self.assertIn("|| (field == .position && FamilyNotebookField.positionRange.contains(number))", CORE)
         # Older apps keep it opaque; on disk it stays in their opaque array,
         # under its own ledger keys (a reader that knows only adoptionDay

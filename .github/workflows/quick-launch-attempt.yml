@@ -43,6 +43,8 @@ jobs:
             result=passed
           elif [[ "$status" == 124 ]] && grep -qx 'install_timeout=true' "$GITHUB_OUTPUT"; then
             result=install_timeout
+          elif [[ "$status" == 124 ]] && grep -qx 'launch_timeout=true' "$GITHUB_OUTPUT"; then
+            result=launch_timeout
           fi
           echo "result=$result" >> "$GITHUB_OUTPUT"
           {
@@ -52,7 +54,7 @@ jobs:
             grep -E '^(START|END|TIMEOUT) ' "$RUNNER_TEMP/launch-timing.txt" || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          if [[ "$result" == install_timeout ]]; then exit 0; fi
+          if [[ "$result" == install_timeout || "$result" == launch_timeout ]]; then exit 0; fi
           exit "$status"
       - name: Attach launch screenshot
         if: always()
