@@ -86,12 +86,12 @@ actor ProductionGroupWindowClient: GroupWindowClient {
                 let environment: String; let personId: String; let ownerPersonId: String
                 let ownerPublicKey: String; let rootSignature: String
             }
-            struct Reply: Decodable { let state: String; let windowId: String }
+            struct Reply: Decodable { let state: String; let windowID: String }
             let input = Input(environment: environment, personId: id.personID, ownerPersonId: receipt.anchor.ownerPersonID,
                 ownerPublicKey: GroupWire.base64(receipt.anchor.ownerIdentityPublicKey), rootSignature: GroupWire.base64(receipt.rootSignature))
             let response = try GroupWire.decode(Reply.self, await raw("/v3/group-windows/\(windowID)/anchor-receipt",
                 body: GroupWire.encode(input), identity: id))
-            guard response.state == "stored", response.windowId == windowID else { return }
+            guard response.state == "stored", response.windowID == windowID else { return }
             try save(receipt, account)
         } catch {
             // Silent, bounded to one attempt per foreground session. The next
