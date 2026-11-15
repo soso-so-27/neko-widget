@@ -215,7 +215,7 @@ class WidgetTests(unittest.TestCase):
         choose = section(CLOUDY, "private func choose(state:", "private func similar(")
         self.assertIn("state.metadata[photo.photoID]?.isProbableCat == true", choose)
         self.assertLess(choose.index("isProbableCat"), choose.index("let last = previous.first"))
-        self.assertIn("isProbableCat: !isConfidentCatForPicks(record))", VIEW_MODEL)
+        self.assertIn("isProbableCat: !isConfidentCatForPicks(record),", VIEW_MODEL)
 
 
 class MeasurementAndTests(unittest.TestCase):

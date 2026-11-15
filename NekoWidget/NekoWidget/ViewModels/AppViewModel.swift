@@ -3611,17 +3611,22 @@ final class AppViewModel: ObservableObject {
             let revision = try synchronizePersonalWidgetAuthority()
             let input = candidateSnapshot(snapshot)
             let probable = personalWidgetProbablePhotoIDs(input.assets)
-            // 11/15 撮ったら、あした出る: the newest few cat photos of the last
-            // week join the bounded pool first, so the cloudy window can
-            // choose one for tomorrow. One pass over the loaded records.
-            let newPhotos: Set<String> = CloudyWindowAvailability.isAvailable
-                ? CloudyWindowStore.newPhotoIDs(
-                    input.assets.lazy.filter { $0.isCatCandidate && !$0.isScreenshot && $0.lastShownAt == nil },
+            // 11/15: the newest new cat photos (8 at most) and, for the coming
+            // week, cat photos from earlier years on those dates join the
+            // bounded pool first, so a new day and a date day find theirs.
+            // One pass over the loaded capture dates; no library fetch.
+            let cloudyPriorityPhotos: Set<String>
+            if CloudyWindowAvailability.isAvailable {
+                let cats = input.assets.lazy.filter { $0.isCatCandidate && !$0.isScreenshot }
+                cloudyPriorityPhotos = CloudyWindowStore.newPhotoIDs(cats.filter { $0.lastShownAt == nil },
                     id: { $0.localIdentifier }, takenAt: { $0.creationDate })
-                : []
+                    .union(CloudyWindowStore.datePhotoIDs(cats, id: { $0.localIdentifier }, takenAt: { $0.creationDate }))
+            } else {
+                cloudyPriorityPhotos = []
+            }
             let result = try await widgetCacheBuilder.replenishPersonal(
                 from: input, eligibilityRevision: revision,
-                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs().union(newPhotos),
+                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs().union(cloudyPriorityPhotos),
                 probablePhotoIDs: probable)
             try synchronizeCloudyWindowMetadata()
             try await CloudyWindowImagePreparer.shared.prepare()
@@ -3654,7 +3659,7 @@ final class AppViewModel: ObservableObject {
                             let batch = try await self.widgetCacheBuilder.replenishPersonal(
                                 from: input, eligibilityRevision: revision,
                                 skippingPhotoIDs: attemptedPhotoIDs,
-                                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs().union(newPhotos),
+                                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs().union(cloudyPriorityPhotos),
                                 probablePhotoIDs: probable)
                             attemptedPhotoIDs.formUnion(batch.attemptedPhotoIDs)
                             try self.synchronizeCloudyWindowMetadata()
@@ -3961,7 +3966,8 @@ final class AppViewModel: ObservableObject {
                 burstIdentifier: record.burstIdentifier,
                 profileIDs: Set(profiles.map { $0.uuidString.lowercased() }),
                 previouslyShown: record.shownCount > 0 || record.lastShownAt != nil,
-                isProbableCat: !isConfidentCatForPicks(record))
+                isProbableCat: !isConfidentCatForPicks(record),
+                isFavorite: record.isFavorite, isSaved: record.liked)
         }
         return metadata
     }
