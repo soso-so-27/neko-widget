@@ -10,7 +10,7 @@ private enum Failure: Error { case check(String) }
 private func check(_ value: Bool, _ message: String) throws {
     if !value { FileHandle.standardError.write(Data(("Preservation call budget check failed: " + message + "\n").utf8)); throw Failure.check(message) }
 }
-private func at(_ seconds: Double) -> Date { Date(timeIntervalSince1970: seconds) }
+private func at(_ seconds: Double) -> Date { Date(timeIntervalSinceReferenceDate: seconds) }  // stored exactly: no rounding at the window edge
 
 /// The most calls in any 60 seconds.
 private func maxPerMinute(_ times: [Double]) -> Int {
@@ -62,7 +62,7 @@ private enum Outcome { case sent, waiting, held, rateLimited(Double) }
 private func send(_ phone: Phone, person: Bool, bulk: Bool, at now: Double, server: OwnerServer) -> (Outcome, Double) {
     switch phone.budget.decide(personAction: person, bulk: bulk, at: at(now)) {
     case .held: return (.held, now)
-    case .wait(let until): return (.waiting, until.timeIntervalSince1970)
+    case .wait(let until): return (.waiting, until.timeIntervalSinceReferenceDate)
     case .send:
         phone.sends.append((now, person))
         let reply = now + OwnerServer.latency
@@ -96,7 +96,7 @@ private final class AutoSave: Worker {
         // AppRecordPersistence.report: RATE_LIMITED.
         quiet = progressed ? 0 : quiet + 1
         nextAt = PreservationRetrySchedule.next(now: at(now), progressed: progressed, quietPasses: quiet,
-                                                opensAt: phone.budget.nextAutomatic(at: at(now))).timeIntervalSince1970
+                                                opensAt: phone.budget.nextAutomatic(at: at(now))).timeIntervalSinceReferenceDate
         nextAt = ceil(nextAt!)   // the 1 s loop
         plan = []
     }
