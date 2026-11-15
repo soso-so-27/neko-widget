@@ -57,6 +57,11 @@ for reader in old before-order; do
   POSITION_PHASE=old-edit "$RUNNER_TEMP/verify-family-notebook-sync-$reader"
   POSITION_PHASE=new-verify "$RUNNER_TEMP/verify-family-notebook-sync"
   unset POSITION_ROOT
+  export PHOTO_COMPAT_ROOT="$RUNNER_TEMP/family-photo-compat-$reader-$$"
+  PHOTO_COMPAT_PHASE=new-write "$RUNNER_TEMP/verify-family-notebook-sync"
+  PHOTO_COMPAT_PHASE=old-edit "$RUNNER_TEMP/verify-family-notebook-sync-$reader"
+  PHOTO_COMPAT_PHASE=new-verify "$RUNNER_TEMP/verify-family-notebook-sync"
+  unset PHOTO_COMPAT_ROOT
 done
 xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" "${notebook_common[@]}" \
   Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
