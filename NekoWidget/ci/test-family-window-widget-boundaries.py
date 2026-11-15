@@ -2941,7 +2941,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         # 11/12: the guide's last step uses the Widget's own words.
         self.assertIn('[(image: "onboarding-widget-cloudy", text: OnboardingPresentationCopy.widgetCloudyStep)]', guide)
         widget_view = source("NekoWidgetWidget/NekoWidgetView.swift")
-        self.assertIn('"タップで、きょうの1枚"', widget_view)
+        self.assertIn("CloudyWindowDayText.revealForms(selection)", widget_view)
+        self.assertIn('["タップで、きょうの1枚", "きょうの1枚"]', source("Shared/Storage/CloudyWindowStore.swift"))
         self.assertIn("「タップで、きょうの1枚」を押すと", presentation)
         for text in (guide, presentation):
             self.assertNotIn("札を押すと", text)

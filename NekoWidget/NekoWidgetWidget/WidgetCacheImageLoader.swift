@@ -21,6 +21,12 @@ enum WidgetCacheImageLoader {
         if cacheFilename == AppStoreWidgetPreviewFixture.cacheFilename {
             return AppStoreWidgetPreviewFixture.image(maximumPixelSize: maximumPixelSize)
         }
+#if CLOUDY_DAY_WORDS_WIDGET_FIXTURE
+        if cacheFilename.hasPrefix(AppStoreWidgetPreviewFixture.dayWordsCachePrefix) {
+            return AppStoreWidgetPreviewFixture.dayWordsImage(
+                cacheFilename: cacheFilename, maximumPixelSize: maximumPixelSize)
+        }
+#endif
 #endif
         let fileHash = SharedLog.shortHash(cacheFilename)
         if let groupWindowID = GroupWidgetCache.windowID(fromSourceID: photoSourceIdentifier) {

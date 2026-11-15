@@ -95,21 +95,33 @@ enum CloudyWindowDayText {
         return milestone
     }
 
-    /// The tag while cloudy on a 節目 day: 「きょうは むぎの誕生日」, short
-    /// 「きょうは 誕生日」; 「むぎが来て 4年」, short 「うちに来た日」.
+    /// The tag while cloudy on a 節目 day, longest first; the Widget shows
+    /// the longest that fits (11/15): 「きょうは むぎの誕生日」, 「むぎの誕生日」,
+    /// 「きょうは 誕生日」, 「誕生日」; 「むぎが来て 4年」, 「うちに来て 4年」, 「うちに来た日」.
     static func tag(_ selection: CloudyWindowSelection) -> [String]? {
         guard let milestone = milestoneOf(selection) else { return nil }
         let catNames = names(milestone.cats)
         if milestone.kind == CloudyWindowMilestoneKind.birthday.rawValue {
-            let long = catNames.count == 1 ? "きょうは \(catNames[0])の誕生日"
-                : catNames.count == 2 ? "きょうは \(catNames[0])と\(catNames[1])の誕生日"
-                : "きょうは \(catNames.count)匹の誕生日"
-            return [long, "きょうは 誕生日"]
+            switch catNames.count {
+            case 1: return ["きょうは \(catNames[0])の誕生日", "\(catNames[0])の誕生日", "きょうは 誕生日", "誕生日"]
+            case 2: return ["きょうは \(catNames[0])と\(catNames[1])の誕生日", "きょうは 誕生日", "誕生日"]
+            default: return ["きょうは \(catNames.count)匹の誕生日", "\(catNames.count)匹の誕生日", "誕生日"]
+            }
+        }
+        if catNames.count == 1 {
+            let years = milestone.cats[0].years
+            return ["\(catNames[0])が来て \(years)年", "うちに来て \(years)年", "うちに来た日"]
         }
         let years = Set(milestone.cats.map { $0.years })
-        let long = catNames.count == 1 ? "\(catNames[0])が来て \(milestone.cats[0].years)年"
-            : years.count == 1 ? "うちに来て \(milestone.cats[0].years)年" : "うちに来た日"
-        return long == "うちに来た日" ? [long] : [long, "うちに来た日"]
+        return years.count == 1 ? ["うちに来て \(milestone.cats[0].years)年", "うちに来た日"] : ["うちに来た日"]
+    }
+
+    /// Every form of the cloudy tag, longest first: a 節目 day's, else
+    /// 「タップで、きょうの1枚」 / 「きょうの1枚」, or on a monthly work's day
+    /// 「作品がとどきました」 / 「作品がとどいた」.
+    static func revealForms(_ selection: CloudyWindowSelection) -> [String] {
+        if let tag = tag(selection) { return tag }
+        return selection.albumPeriod == nil ? ["タップで、きょうの1枚", "きょうの1枚"] : ["作品がとどきました", "作品がとどいた"]
     }
 
     /// The one line after clearing: 「1年前のきょう」 / 「1年前の今ごろ」 on a

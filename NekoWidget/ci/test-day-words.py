@@ -9,9 +9,12 @@ Rules (ねこのまど_毎日の1枚の決まり_v2_1115.md, 日付の表示・�
   birthday (year known, not the first year) or the day it came home (a year
   or more on), counted as on the cat's page (CatHomeCareCore.heroDay). A
   birthday comes before a day a cat came home; the monthly work before both.
-- Tag while cloudy: 「きょうは むぎの誕生日」 / 「きょうは むぎと雨の誕生日」 /
-  「きょうは 3匹の誕生日」, short 「きょうは 誕生日」; 「むぎが来て 4年」 /
-  「うちに来て 4年」 / 「うちに来た日」. After clearing: 「むぎ 5歳」
+- Tag while cloudy, the longest form that fits on one line (never cut):
+  「きょうは むぎの誕生日」 → 「むぎの誕生日」 → 「きょうは 誕生日」 → 「誕生日」;
+  「きょうは むぎと雨の誕生日」 → 「きょうは 誕生日」 → 「誕生日」; 「きょうは 3匹の
+  誕生日」 → 「3匹の誕生日」 → 「誕生日」; 「むぎが来て 4年」 → 「うちに来て 4年」 →
+  「うちに来た日」; other days 「タップで、きょうの1枚」 → 「きょうの1枚」 and
+  「作品がとどきました」 → 「作品がとどいた」. Then the last form at 0.8, then the hand. After clearing: 「むぎ 5歳」
   (「5歳の誕生日」) or 「うちに来て 4年」.
 - VoiceOver: 「きょうは むぎの誕生日。くもりを晴らして、きょうの1枚を見る」 on the
   tag, and 「、むぎ 5歳」 / 「、1年前のきょう」 after the photo.
@@ -44,12 +47,17 @@ TEXT = section(CLOUDY, "enum CloudyWindowDayText {", "struct CloudyWindowPrepare
 
 class WordsTests(unittest.TestCase):
     def test_tag_words(self) -> None:
-        for words in ('"きょうは \\(catNames[0])の誕生日"', '"きょうは \\(catNames[0])と\\(catNames[1])の誕生日"',
-                      '"きょうは \\(catNames.count)匹の誕生日"', '"きょうは 誕生日"',
-                      '"\\(catNames[0])が来て \\(milestone.cats[0].years)年"',
-                      '"うちに来て \\(milestone.cats[0].years)年"', '"うちに来た日"'):
-            self.assertIn(words, TEXT)
+        tag = section(TEXT, "static func tag(", "static func revealForms(")
+        for words in ('["きょうは \(catNames[0])の誕生日", "\(catNames[0])の誕生日", "きょうは 誕生日", "誕生日"]',
+                      '["きょうは \(catNames[0])と\(catNames[1])の誕生日", "きょうは 誕生日", "誕生日"]',
+                      '["きょうは \(catNames.count)匹の誕生日", "\(catNames.count)匹の誕生日", "誕生日"]',
+                      '["\(catNames[0])が来て \(years)年", "うちに来て \(years)年", "うちに来た日"]',
+                      '["うちに来て \(milestone.cats[0].years)年", "うちに来た日"] : ["うちに来た日"]'):
+            self.assertIn(words, tag)
         self.assertIn("static let maximumNameLength = 20", TEXT)
+        forms = section(TEXT, "static func revealForms(", "/// The one line after clearing")
+        self.assertIn('if let tag = tag(selection) { return tag }', forms)
+        self.assertIn('["タップで、きょうの1枚", "きょうの1枚"] : ["作品がとどきました", "作品がとどいた"]', forms)
 
     def test_line_words(self) -> None:
         self.assertIn('"\\(years)年前の" + (selection.dateSameDay == true ? "きょう" : "今ごろ")', TEXT)
@@ -74,12 +82,18 @@ class WordsTests(unittest.TestCase):
 
 class WidgetTests(unittest.TestCase):
     def test_tag_falls_back_to_the_short_form(self) -> None:
-        capsule = section(WIDGET, "if let tags = CloudyWindowDayText.tag(selection) {", "} else {")
+        capsule = section(WIDGET, "Button(intent: RevealCloudyWindowIntent(selection: selection)) {", ".buttonStyle(.plain)")
+        self.assertIn("let forms = CloudyWindowDayText.revealForms(selection)", capsule)
         self.assertIn("ViewThatFits(in: .horizontal) {", capsule)
-        self.assertIn("revealCapsule(tags[0])", capsule)
-        self.assertIn("if tags.count > 1 { revealCapsule(tags[1]) }", capsule)
+        self.assertIn("ForEach(forms.indices, id: \.self) { revealCapsule(forms[$0]) }", capsule)
+        # No form fits: the last one at 0.8 of the caption, then the hand alone.
+        self.assertLess(capsule.index("ReducedRevealLabel(text: forms[forms.count - 1])"),
+                        capsule.index('revealCapsuleChrome(Image(systemName: "hand.tap.fill")'))
+        reduced = section(WIDGET, "private struct ReducedRevealLabel: View {", "private struct QuietWindowMark")
+        self.assertIn(".font(.system(size: size * 0.8, weight: .semibold))", reduced)
         reveal = section(WIDGET, "private func revealCapsule(", "/// Used only inside")
         self.assertIn(".lineLimit(1)", reveal)
+        self.assertIn(".font(.caption.weight(.semibold))", reveal)
         self.assertNotIn("minimumScaleFactor", reveal)
         self.assertIn('.accessibilityLabel(CloudyWindowDayText.spokenTagPrefix(selection) + (selection.albumPeriod == nil',
                       WIDGET)

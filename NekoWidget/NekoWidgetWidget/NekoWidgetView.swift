@@ -4,6 +4,9 @@ import WidgetKit
 import Foundation
 import ImageIO
 import UIKit
+#if CLOUDY_DAY_WORDS_WIDGET_FIXTURE
+import CoreImage
+#endif
 #endif
 
 #if APP_STORE_SCREENSHOT_WIDGET_FIXTURE && !DEBUG
@@ -32,6 +35,12 @@ import UIKit
 #endif
 #if PERSONAL_REDISCOVERY_WIDGET_USED_FIXTURE && !PERSONAL_REDISCOVERY_WIDGET_FIXTURE
 #error("The used state requires the personal rediscovery Widget fixture.")
+#endif
+#if CLOUDY_DAY_WORDS_WIDGET_FIXTURE && (!DEBUG || !APP_STORE_SCREENSHOT_WIDGET_FIXTURE)
+#error("The cloudy day-words review requires Debug and the dedicated screenshot fixture.")
+#endif
+#if CLOUDY_DAY_WORDS_WIDGET_FIXTURE && (OFFICIAL_WINDOW_WIDGET_FIXTURE || WIDGET_VISUAL_REVIEW_FIXTURE || PERSONAL_REDISCOVERY_WIDGET_FIXTURE)
+#error("Choose one photo source for the Widget review fixture.")
 #endif
 
 struct NekoWidgetView: View {
@@ -137,16 +146,18 @@ struct NekoWidgetView: View {
                             ZStack {
                                 if selection.revealedAt == nil {
                                     // Says what you get, not the verb: 「晴らす」 alone was unclear.
-                                    // A 節目 day says whose day it is (11/15), in a shorter
-                                    // form when the longer does not fit on one line.
+                                    // A 節目 day says whose day it is (11/15). Every tag shows
+                                    // the longest form that fits on one line, never a cut
+                                    // word; then the last form a little smaller; then the
+                                    // hand alone. VoiceOver keeps the whole sentence.
                                     Button(intent: RevealCloudyWindowIntent(selection: selection)) {
-                                        if let tags = CloudyWindowDayText.tag(selection) {
-                                            ViewThatFits(in: .horizontal) {
-                                                revealCapsule(tags[0])
-                                                if tags.count > 1 { revealCapsule(tags[1]) }
-                                            }
-                                        } else {
-                                            revealCapsule(selection.albumPeriod == nil ? "タップで、きょうの1枚" : "作品がとどきました")
+                                        let forms = CloudyWindowDayText.revealForms(selection)
+                                        ViewThatFits(in: .horizontal) {
+                                            ForEach(forms.indices, id: \.self) { revealCapsule(forms[$0]) }
+                                            revealCapsuleChrome(ReducedRevealLabel(text: forms[forms.count - 1])
+                                                .dynamicTypeSize(...DynamicTypeSize.xxxLarge))
+                                            revealCapsuleChrome(Image(systemName: "hand.tap.fill")
+                                                .font(.caption.weight(.semibold)))
                                         }
                                     }
                                     .buttonStyle(.plain)
@@ -197,6 +208,9 @@ struct NekoWidgetView: View {
         // Use the normal shipping text-size limits, with the environment at
         // its largest setting; this never changes ordinary or Release Widgets.
         .environment(\.dynamicTypeSize, .accessibility5)
+#elseif DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE && CLOUDY_DAY_WORDS_WIDGET_FIXTURE
+        // Review-only: two of the day-words states at the largest text size.
+        .environment(\.dynamicTypeSize, AppStoreWidgetPreviewFixture.dayWordsTextSize(at: entry.date))
 #endif
         // A photo is always navigation, never an implicit memory action.
         // The photo opens its detail; only the separate heart sends a reaction.
@@ -223,8 +237,12 @@ struct NekoWidgetView: View {
 
     /// The cloudy window's tag: what clearing shows, one line.
     private func revealCapsule(_ text: String) -> some View {
-        Label(text, systemImage: "hand.tap.fill")
-            .font(.caption.weight(.semibold))
+        revealCapsuleChrome(Label(text, systemImage: "hand.tap.fill")
+            .font(.caption.weight(.semibold)))
+    }
+
+    private func revealCapsuleChrome<Content: View>(_ content: Content) -> some View {
+        content
             .lineLimit(1)
             .foregroundStyle(.white)
             .padding(.horizontal, 12).padding(.vertical, 7)
@@ -784,6 +802,19 @@ private enum QuietWindowPalette {
 
 /// A quiet, reduced version of the app icon's window. The warm neutral frame
 /// keeps an empty Widget recognizable without turning it into a bright tile.
+/// The cloudy tag's last form when no form fits at full size (the largest
+/// text in Small): 0.8 of the caption size. Widgets stop growing text a
+/// little above the default, so the caller caps this one at xxxLarge.
+private struct ReducedRevealLabel: View {
+    @ScaledMetric(relativeTo: .caption) private var size: CGFloat = 12
+    let text: String
+
+    var body: some View {
+        Label(text, systemImage: "hand.tap.fill")
+            .font(.system(size: size * 0.8, weight: .semibold))
+    }
+}
+
 private struct QuietWindowMark: View {
     var body: some View {
         ZStack {
@@ -917,7 +948,9 @@ enum AppStoreWidgetPreviewFixture {
             }
             return entry
         }
-#if OFFICIAL_WINDOW_WIDGET_FIXTURE
+#if CLOUDY_DAY_WORDS_WIDGET_FIXTURE
+        return dayWordsEntry(at: date, variant: variant)
+#elseif OFFICIAL_WINDOW_WIDGET_FIXTURE
         // Exercise the shipping official-photo footer and hidden-action branch.
         // These existing illustration pixels bypass feed/cache I/O only in this
         // explicit Debug capture; they are not evidence of real-photo quality.
@@ -1048,6 +1081,147 @@ enum AppStoreWidgetPreviewFixture {
         // remains available to VoiceOver even when the small preview truncates.
         String(repeating: "あたたかい窓辺でのんびり。", count: 6)
             + "\n今日もいっしょにいようね。\nおやすみ 🐾。"
+    }
+#endif
+
+#if CLOUDY_DAY_WORDS_WIDGET_FIXTURE
+    /// Review-only (11/15): the cloudy window's day words in every state, on
+    /// two sample photos from ci/fixtures/cats, one state per fixed wall-clock
+    /// slot so one Home Screen capture photographs each in turn. The capture
+    /// workflow injects both JPEGs; without them the Widget shows no photo.
+    /// Sample names only; never a user's cat, photo or Photos library.
+    struct DayWordsState {
+        let id: String
+        let revealed: Bool
+        let dayKind: CloudyWindowDayKind
+        var dateYearsAgo: Int? = nil
+        var dateSameDay: Bool? = nil
+        var milestone: CloudyWindowMilestone? = nil
+        var largeText = false
+        var albumPeriod: String? = nil
+    }
+
+    static let dayWordsSlotSeconds: TimeInterval = 8
+    static let dayWordsCachePrefix = "day-words-"
+    /// Slots run through every state on the bright photo, then on the dark one.
+    static let dayWordsPhotos = ["bright", "dark"]
+
+    static let dayWordsStates: [DayWordsState] = { () -> [DayWordsState] in
+        func cats(_ kind: CloudyWindowMilestoneKind, _ list: [(String, Int)]) -> CloudyWindowMilestone {
+            CloudyWindowMilestone(kind: kind.rawValue, cats: list.enumerated().map {
+                CloudyWindowMilestone.Cat(id: "fixture-cat-\($0.offset)", name: $0.element.0, years: $0.element.1, inPhoto: true)
+            })
+        }
+        // Twenty characters each, the longest name a cat can have.
+        let longA = "きなこもちだいふくまるのすけみたらしあん"
+        let longB = "こむぎおはぎさくらもちまるのすけみたらし"
+        return [
+            .init(id: "cloudy-ordinary", revealed: false, dayKind: .ordinary),
+            .init(id: "cloudy-birthday-one", revealed: false, dayKind: .milestone,
+                  milestone: cats(.birthday, [("そら", 5)])),
+            .init(id: "cloudy-birthday-long-name", revealed: false, dayKind: .milestone,
+                  milestone: cats(.birthday, [(longA, 5)])),
+            .init(id: "cloudy-birthday-two", revealed: false, dayKind: .milestone,
+                  milestone: cats(.birthday, [("そら", 5), ("こむぎ", 3)])),
+            .init(id: "cloudy-adoption-one", revealed: false, dayKind: .milestone,
+                  milestone: cats(.adoption, [("そら", 4)])),
+            .init(id: "clear-date-same-day", revealed: true, dayKind: .date, dateYearsAgo: 1, dateSameDay: true),
+            .init(id: "clear-date-near", revealed: true, dayKind: .date, dateYearsAgo: 3, dateSameDay: false),
+            .init(id: "clear-birthday-one", revealed: true, dayKind: .milestone,
+                  milestone: cats(.birthday, [("そら", 5)])),
+            .init(id: "clear-birthday-two", revealed: true, dayKind: .milestone,
+                  milestone: cats(.birthday, [("そら", 5), ("こむぎ", 3)])),
+            .init(id: "clear-birthday-two-long", revealed: true, dayKind: .milestone,
+                  milestone: cats(.birthday, [(longA, 5), (longB, 3)])),
+            .init(id: "clear-adoption-one", revealed: true, dayKind: .milestone,
+                  milestone: cats(.adoption, [("そら", 4)])),
+            .init(id: "clear-ordinary", revealed: true, dayKind: .ordinary),
+            .init(id: "large-text-cloudy-birthday-two", revealed: false, dayKind: .milestone,
+                  milestone: cats(.birthday, [("そら", 5), ("こむぎ", 3)]), largeText: true),
+            .init(id: "large-text-clear-birthday-two", revealed: true, dayKind: .milestone,
+                  milestone: cats(.birthday, [("そら", 5), ("こむぎ", 3)]), largeText: true),
+            .init(id: "cloudy-album", revealed: false, dayKind: .ordinary, albumPeriod: "2026-10"),
+            .init(id: "cloudy-adoption-one-year", revealed: false, dayKind: .milestone,
+                  milestone: cats(.adoption, [("そら", 1)])),
+            .init(id: "cloudy-adoption-two-same", revealed: false, dayKind: .milestone,
+                  milestone: cats(.adoption, [("そら", 4), ("こむぎ", 4)])),
+            .init(id: "cloudy-birthday-three", revealed: false, dayKind: .milestone,
+                  milestone: cats(.birthday, [("そら", 5), ("こむぎ", 3), ("もち", 2)])),
+            .init(id: "cloudy-birthday-name-years", revealed: false, dayKind: .milestone,
+                  milestone: cats(.birthday, [("4年", 5)])),
+            .init(id: "cloudy-birthday-name-kite", revealed: false, dayKind: .milestone,
+                  milestone: cats(.birthday, [("来て", 5)])),
+        ]
+    }()
+
+    private static func dayWordsSlot(at date: Date) -> Int {
+        let count = dayWordsStates.count * dayWordsPhotos.count
+        let slot = Int((date.timeIntervalSince1970 / dayWordsSlotSeconds).rounded(.down))
+        return ((slot % count) + count) % count
+    }
+
+    static func dayWordsTextSize(at date: Date) -> DynamicTypeSize {
+        dayWordsStates[dayWordsSlot(at: date) % dayWordsStates.count].largeText ? .accessibility5 : .large
+    }
+
+    /// One full round of slots, from the current slot's start.
+    static func dayWordsEntries(from now: Date, variant: WidgetImageVariant) -> [NekoWidgetEntry] {
+        let start = (now.timeIntervalSince1970 / dayWordsSlotSeconds).rounded(.down) * dayWordsSlotSeconds
+        let count = dayWordsStates.count * dayWordsPhotos.count
+        return (0...count).map {
+            dayWordsEntry(at: Date(timeIntervalSince1970: start + Double($0) * dayWordsSlotSeconds), variant: variant)
+        }
+    }
+
+    private static func dayWordsEntry(at date: Date, variant: WidgetImageVariant) -> NekoWidgetEntry {
+        let slot = dayWordsSlot(at: date)
+        let state = dayWordsStates[slot % dayWordsStates.count]
+        let photo = dayWordsPhotos[slot / dayWordsStates.count]
+        var entry = NekoWidgetEntry(
+            date: date, localIdentifier: nil,
+            cacheFilename: dayWordsCachePrefix + photo + (state.revealed ? "-clear" : "-cloudy") + ".fixture",
+            imageVariant: variant, photoSourceIdentifier: WidgetPhotoSource.personalLibraryID,
+            familySourceDigest: nil, usesFamilySpecificImage: true,
+            windowDisplayName: PrivateWindowDisplayName.fallback,
+            isLiked: false, isLikeInteractionEnabled: false, isBookmarked: false,
+            isBookmarkInteractionEnabled: false, familyHeartStatus: .hidden,
+            familyActionsRequireApp: false, emptyStateReason: .none
+        )
+        var selection = CloudyWindowSelection(scopeID: "fixture-day-words", day: date,
+            photoID: "fixture-day-words-" + photo, profileID: nil)
+        selection.revealedAt = state.revealed ? date.addingTimeInterval(-60) : nil
+        selection.dayKind = state.dayKind.rawValue
+        selection.dateYearsAgo = state.dateYearsAgo
+        selection.dateSameDay = state.dateSameDay
+        selection.milestone = state.milestone
+        selection.albumPeriod = state.albumPeriod
+        entry.cloudyWindowSelection = selection
+        return entry
+    }
+
+    /// The injected sample photo, blurred for the cloudy states with the
+    /// shipping preparer's default strength and edge clamping.
+    static func dayWordsImage(cacheFilename: String, maximumPixelSize: Int) -> UIImage? {
+        let encoded: String
+        if cacheFilename.hasPrefix(dayWordsCachePrefix + "bright-") {
+            encoded = "__DAY_WORDS_BRIGHT_JPEG_BASE64__"
+        } else if cacheFilename.hasPrefix(dayWordsCachePrefix + "dark-") {
+            encoded = "__DAY_WORDS_DARK_JPEG_BASE64__"
+        } else {
+            return nil
+        }
+        guard let data = Data(base64Encoded: encoded), data.starts(with: [0xff, 0xd8]),
+              let image = WidgetCacheImageLoader.decodedImage(data: data, maximumPixelSize: maximumPixelSize,
+                  fileHash: SharedLog.shortHash(cacheFilename))
+        else { return nil }
+        guard cacheFilename.hasSuffix("-cloudy.fixture") else { return image }
+        guard let cg = image.cgImage else { return nil }
+        let input = CIImage(cgImage: cg)
+        let radius = CloudyWindowConfiguration().strength.radius * Double(cg.width) / 500
+        let blurred = input.clampedToExtent().applyingFilter("CIGaussianBlur",
+            parameters: [kCIInputRadiusKey: radius]).cropped(to: input.extent)
+        guard let output = CIContext().createCGImage(blurred, from: input.extent) else { return nil }
+        return UIImage(cgImage: output)
     }
 #endif
 
