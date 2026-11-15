@@ -124,10 +124,16 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         let now = Date()
         let variant = imageVariant(for: context.family)
 #if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE
+#if CLOUDY_DAY_WORDS_WIDGET_FIXTURE
+        // Review-only: one entry per fixed slot, each a different day-words state.
+        return Timeline(entries: AppStoreWidgetPreviewFixture.dayWordsEntries(from: now, variant: variant),
+                        policy: .atEnd)
+#else
         return Timeline(
             entries: [AppStoreWidgetPreviewFixture.entry(at: now, variant: variant)],
             policy: .never
         )
+#endif
 #endif
         let source = configuration.photoSource ?? .personalLibrary
         if let cloudy = cloudyTimeline(sourceID: source.id, now: now, variant: variant) { return cloudy }

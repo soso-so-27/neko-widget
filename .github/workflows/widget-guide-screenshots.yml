@@ -11,6 +11,7 @@ on:
         options:
           - guide
           - official
+          - day-words
 
 permissions:
   contents: read
@@ -103,6 +104,12 @@ jobs:
               test_selector="NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureOfficialWidgetAllSupportedSizesAndHomeScreen"
               fixture_condition="APP_STORE_SCREENSHOT_WIDGET_FIXTURE OFFICIAL_WINDOW_WIDGET_FIXTURE"
               ;;
+            day-words)
+              # Review-only: the cloudy window's day words on two sample photos.
+              test_selector="NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureCloudyDayWordsWidgets"
+              fixture_condition="APP_STORE_SCREENSHOT_WIDGET_FIXTURE CLOUDY_DAY_WORDS_WIDGET_FIXTURE"
+              python3 ci/inject-day-words-widget-photos.py NekoWidgetWidget/NekoWidgetView.swift
+              ;;
             *) echo "Unknown capture scenario." >&2; exit 1 ;;
           esac
           printf 'scenario=%s\n' "$CAPTURE_SCENARIO" > "$artifact_directory/capture-context.txt"
@@ -112,6 +119,8 @@ jobs:
               'Capture small/medium/large in Widget Gallery and install Small on the erased Simulator Home Screen.' \
               'Review the cat-name footer and absence of photo-action icons. Not real-photo quality, subscription, or on-device receiving evidence.' \
               >> "$artifact_directory/capture-context.txt"
+          fi
+          if [[ -n "$fixture_condition" ]]; then
             widget_conditions() {
               xcodebuild -project NekoWidget.xcodeproj -target NekoWidgetWidgetExtension \
                 -configuration "$1" -sdk iphonesimulator -showBuildSettings \
@@ -124,10 +133,10 @@ jobs:
             printf 'capture-debug=%s\nordinary-debug=%s\nrelease=%s\n' \
               "$capture_conditions" "$ordinary_conditions" "$release_conditions" \
               > "$artifact_directory/widget-fixture-build-conditions.txt"
-            for condition in DEBUG APP_STORE_SCREENSHOT_WIDGET_FIXTURE OFFICIAL_WINDOW_WIDGET_FIXTURE; do
+            for condition in DEBUG $fixture_condition; do
               [[ " $capture_conditions " == *" $condition "* ]] || { echo "Missing $condition" >&2; exit 1; }
             done
-            for condition in APP_STORE_SCREENSHOT_WIDGET_FIXTURE OFFICIAL_WINDOW_WIDGET_FIXTURE; do
+            for condition in $fixture_condition; do
               if [[ " $ordinary_conditions " == *" $condition "* || " $release_conditions " == *" $condition "* ]]; then
                 echo "Widget fixture leaked outside the capture Debug target." >&2
                 exit 1
@@ -239,7 +248,7 @@ jobs:
           set -Eeuo pipefail
           result_bundle="$RUNNER_TEMP/neko-widget-guide-screenshots/WidgetPlacementScreenshots.xcresult"
           output_directory="$RUNNER_TEMP/neko-widget-guide-screenshots/exported"
-          if [[ "$CAPTURE_SCENARIO" == official ]]; then
+          if [[ "$CAPTURE_SCENARIO" != guide ]]; then
             mkdir -p "$output_directory"
             xcrun xcresulttool export attachments \
               --path "$result_bundle" --output-path "$output_directory"
