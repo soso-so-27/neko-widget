@@ -118,7 +118,7 @@ actor GroupRecoveryClient {
         for d in result.devices {
             _ = try GroupWire.bytes(d.deviceID, count: 32)
             guard d.registeredAt > 0, d.registeredAt <= result.serverNow,
-                  d.model.map({ !$0.isEmpty && $0.count <= 80 && !$0.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) }) ?? true
+                  d.model.map({ !$0.isEmpty && $0.utf16.count <= 80 && !$0.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) }) ?? true
             else { throw Failure.invalidResponse }
         }
         return result
@@ -130,7 +130,7 @@ actor GroupRecoveryClient {
     func prepare(windowID: String, signingPublicKey: Data, hpkePublicKey: Data, model: String) throws -> Draft {
         guard enabled else { throw Failure.disabled }
         _ = try GroupWire.bytes(windowID, count: 16)
-        guard signingPublicKey.count == 32, hpkePublicKey.count == 32, !model.isEmpty, model.count <= 80,
+        guard signingPublicKey.count == 32, hpkePublicKey.count == 32, !model.isEmpty, model.utf16.count <= 80,
               !model.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else { throw Failure.invalidResponse }
         if let saved = try journal.read(account(windowID)) {
             let draft = try GroupWire.decode(Draft.self, saved)

@@ -7,6 +7,8 @@ private actor Relay: GroupHTTPTransport {
     var mode: Mode = .normal
     var challenges: [String: [String: Any]] = [:]
     var operations: [String] = []
+    var proof: [String: Any]?
+    func installProof(_ bytes: Data) throws { proof = try JSONSerialization.jsonObject(with: bytes) as? [String: Any] }
     func set(_ mode: Mode) { self.mode = mode }
     func seen() -> [String] { operations }
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
@@ -48,6 +50,10 @@ private actor Relay: GroupHTTPTransport {
             try check(key.isValidSignature(GroupWire.bytes(b["deviceSignature"] as! String), for: message("device")))
         }
         operations.append(c["operation_id"] as! String)
+        if mode == .normal, var proof {
+            proof["operationId"] = c["operation_id"]!; proof["personId"] = person; proof["windowId"] = window
+            return try reply(proof)
+        }
         return try reply(["operationId": c["operation_id"]!, "personId": person, "windowId": window,
             "state": mode == .ready ? "ready" : "needsOriginalDeviceOrInvitation", "canOpen": mode == .ready,
             "canSend": mode == .ready, "exists": true])
@@ -73,6 +79,33 @@ private actor Relay: GroupHTTPTransport {
         try check(registration.state == .needsOriginalDeviceOrInvitation(operationID: draft.operationID))
         _ = try await reopened.status(draft)
         let seen = await relay.seen(); try check(seen == Array(repeating: draft.operationID.uuidString.lowercased(), count: 2))
+        let ownerDevice = Curve25519.Signing.PrivateKey(), ownerHPKE = Curve25519.KeyAgreement.PrivateKey()
+        let person = GroupWire.base64(GroupCanonical.hash(root.publicKey.rawRepresentation))
+        let ownerID = GroupWire.base64(try GroupCanonical.hash(GroupCanonical.fields([ownerDevice.publicKey.rawRepresentation, ownerHPKE.publicKey.rawRepresentation])))
+        let unsigned = GroupRosterDevice(id: ownerID, signingPublicKey: ownerDevice.publicKey.rawRepresentation,
+            hpkePublicKey: ownerHPKE.publicKey.rawRepresentation, personAuthorization: Data())
+        let authorized = GroupRosterDevice(id: ownerID, signingPublicKey: unsigned.signingPublicKey, hpkePublicKey: unsigned.hpkePublicKey,
+            personAuthorization: try root.signature(for: unsigned.authorizationBytes(windowID: window, personID: person)))
+        let roster = GroupRoster(windowID: window, revision: 1, keyEpoch: 1, previousHash: Data(repeating: 0, count: 32),
+            ownerPersonID: person, members: [.init(participantID: GroupWire.randomID(), personID: person,
+                identityPublicKey: root.publicKey.rawRepresentation, role: .owner, devices: [authorized])])
+        let packet = try GroupRosterVerifier.sign(roster, deviceID: ownerID, privateKey: ownerDevice)
+        let anchor = try GroupAnchorReceipt.make(environment: "staging", anchor: .init(windowID: window, ownerPersonID: person,
+            ownerIdentityPublicKey: root.publicKey.rawRepresentation), root: root)
+        let pendingID = GroupWire.base64(try GroupCanonical.hash(GroupCanonical.fields([device.publicKey.rawRepresentation, hpke.publicKey.rawRepresentation])))
+        var proof: [String: Any] = ["state": "registeredWaitingForKeys", "exists": true, "canOpen": false, "canSend": false,
+            "deviceId": pendingID, "model": "iPhone", "registeredAt": Int(Date().timeIntervalSince1970),
+            "canRequestFreshGeneration": false, "revision": 1, "rosterHash": GroupWire.base64(try GroupCanonical.hash(roster.canonicalBytes())),
+            "roster": try JSONSerialization.jsonObject(with: GroupWire.encode(packet)),
+            "anchorReceipt": ["environment": "staging", "personId": person, "windowId": window, "ownerPersonId": person,
+                "ownerPublicKey": GroupWire.base64(root.publicKey.rawRepresentation), "rootSignature": GroupWire.base64(anchor.rootSignature)]]
+        try await relay.installProof(JSONSerialization.data(withJSONObject: proof))
+        let waiting = try await c.status(draft)
+        try check(waiting.state == .registeredWaitingForKeys(operationID: draft.operationID, deviceID: pendingID))
+        try check(!waiting.state.canOpen && !waiting.state.canSend && waiting.model == "iPhone")
+        proof["rosterHash"] = GroupWire.base64(Data(repeating: 0, count: 32))
+        try await relay.installProof(JSONSerialization.data(withJSONObject: proof))
+        do { _ = try await c.status(draft); throw TestFailure.failed } catch is GroupRecoveryProofError {}
         await relay.set(.ready)
         do { _ = try await c.status(draft); throw TestFailure.failed } catch is GroupRecoveryClient.Failure {} 
         await relay.set(.wrongEnvironment)
