@@ -700,7 +700,7 @@ private enum CloudyWindowVerifier {
         try check(f.metadata[one[1].photo.photoID]?.profileIDs.contains("cat-0") == true
                   && one[1].selection.milestone?.cats.map(\.id) == ["cat-0"],
                   "the birthday cat's photo; a first-year day is not a 節目")
-        try check(CloudyWindowDayText.tag(one[1].selection) == ["きょうは 猫0の誕生日", "きょうは 誕生日"],
+        try check(CloudyWindowDayText.tag(one[1].selection) == ["きょうは 猫0の誕生日", "猫0の誕生日", "きょうは 誕生日", "誕生日"],
                   "the tag names the cat")
         let own = try f.store.timeline(scopeID: CloudyWindowStore.profilePrefix + "cat-0", now: d)
         let other = try f.store.timeline(scopeID: CloudyWindowStore.profilePrefix + "cat-1", now: d)
@@ -715,7 +715,7 @@ private enum CloudyWindowVerifier {
                                    milestones: ["cat-0": [mark(.birthday, 5)], "cat-1": [mark(.birthday, 3)]], now: d)
         let together = try both.store.timeline(scopeID: household, now: d)[1]
         try check(together.photo.photoID == "photo-07"
-                  && CloudyWindowDayText.tag(together.selection) == ["きょうは 猫0と猫1の誕生日", "きょうは 誕生日"],
+                  && CloudyWindowDayText.tag(together.selection) == ["きょうは 猫0と猫1の誕生日", "きょうは 誕生日", "誕生日"],
                   "two cats on the same birthday: the photo with both")
         var cleared = together.selection
         cleared.revealedAt = d
@@ -794,10 +794,10 @@ private enum CloudyWindowVerifier {
                     == "きょうは 猫0の誕生日。", "a birthday's words and VoiceOver")
         let three = selection("milestone", revealed: false,
                               milestone: cats(.birthday, [("猫0", 5, true), ("猫1", 3, false), ("猫2", 2, false)]))
-        try check(CloudyWindowDayText.tag(three) == ["きょうは 3匹の誕生日", "きょうは 誕生日"], "three cats: the count")
+        try check(CloudyWindowDayText.tag(three) == ["きょうは 3匹の誕生日", "3匹の誕生日", "誕生日"], "three cats: the count")
         try check(CloudyWindowDayText.tag(selection("milestone", revealed: false,
                                                     milestone: cats(.adoption, [("猫0", 4, true)])))
-                  == ["猫0が来て 4年", "うちに来た日"], "a day a cat came home")
+                  == ["猫0が来て 4年", "うちに来て 4年", "うちに来た日"], "a day a cat came home")
         let sameYears = cats(.adoption, [("猫0", 4, true), ("猫1", 4, true)])
         try check(CloudyWindowDayText.tag(selection("milestone", revealed: false, milestone: sameYears))
                   == ["うちに来て 4年", "うちに来た日"]
@@ -813,6 +813,14 @@ private enum CloudyWindowVerifier {
                   == "きょうは " + String(repeating: "な", count: 20) + "の誕生日", "a name is 20 letters at most")
         try check(CloudyWindowDayText.tag(selection("milestone", revealed: false, milestone: single, album: "2026-10")) == nil,
                   "a monthly work's tag stays the work's")
+        try check(CloudyWindowDayText.revealForms(selection("ordinary", revealed: false)) == ["タップで、きょうの1枚", "きょうの1枚"]
+                  && CloudyWindowDayText.revealForms(selection("date", revealed: false, years: 1, sameDay: true))
+                    == ["タップで、きょうの1枚", "きょうの1枚"]
+                  && CloudyWindowDayText.revealForms(selection("milestone", revealed: false, milestone: single, album: "2026-10"))
+                    == ["作品がとどきました", "作品がとどいた"]
+                  && CloudyWindowDayText.revealForms(selection("milestone", revealed: false, milestone: single))
+                    == CloudyWindowDayText.tag(selection("milestone", revealed: false, milestone: single)),
+                  "every tag has a shorter form: other days and a work's day too")
     }
 
     /// 11/15: a photo of only cats that have died never makes a date day; one

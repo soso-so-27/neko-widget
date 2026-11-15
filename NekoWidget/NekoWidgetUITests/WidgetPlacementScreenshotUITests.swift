@@ -233,12 +233,12 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     /// The order must match AppStoreWidgetPreviewFixture.dayWordsStates.
     @MainActor
     func testCaptureCloudyDayWordsWidgets() throws {
-        executionTimeAllowance = 600
+        executionTimeAllowance = 1_200
         let states = [
             "cloudy-ordinary", "cloudy-birthday-one", "cloudy-birthday-long-name", "cloudy-birthday-two",
             "cloudy-adoption-one", "clear-date-same-day", "clear-date-near", "clear-birthday-one",
             "clear-birthday-two", "clear-birthday-two-long", "clear-adoption-one", "clear-ordinary",
-            "large-text-cloudy-birthday-two", "large-text-clear-birthday-two",
+            "large-text-cloudy-birthday-two", "large-text-clear-birthday-two", "cloudy-album",
         ]
         let photos = ["bright", "dark"]
         let slotSeconds: TimeInterval = 8
@@ -263,16 +263,31 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         hierarchy.name = "day-words-home-layout"
         hierarchy.lifetime = .keepAlways
         add(hierarchy)
-        let count = states.count * photos.count
-        for _ in 0..<count {
-            // Wait for the next slot, then let its transition settle (< 2 s).
-            let now = Date().timeIntervalSince1970
-            let next = ((now / slotSeconds).rounded(.down) + 1) * slotSeconds
-            let target = Date(timeIntervalSince1970: next + 5.5)
-            while Date() < target { RunLoop.current.run(until: min(target, Date().addingTimeInterval(0.25))) }
-            let slot = ((Int(next / slotSeconds) % count) + count) % count
-            captureScreenshot(named: String(format: "day-words-%02d-", slot)
-                + "\(photos[slot / states.count])-\(states[slot % states.count])")
+        // Pass 1: Small and Large. Pass 2: Medium added on top (Small moves on).
+        for pass in ["small-large", "medium"] {
+            if pass == "medium" {
+                // Press the clear wallpaper below Large (not a Widget, whose
+                // own menu would open) to edit the Home Screen again.
+                springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.12, dy: 0.80)).press(forDuration: 1.8)
+                _ = waitForElement(in: springboard, labels: ["編集", "Edit"], elementTypes: [.button], timeout: 5)
+                guard try addWidgetFromGallery(page: 2, in: springboard) else { return }
+                if let done = waitForElement(in: springboard, labels: ["完了", "Done"],
+                    elementTypes: [.button], timeout: 5, requireHittable: true) { done.tap() }
+                else { XCUIDevice.shared.press(.home) }
+            }
+            // The first entries can take a few seconds to render after a change.
+            sleep(20)
+            let count = states.count * photos.count
+            for _ in 0..<count {
+                // Wait for the next slot, then let its transition settle (< 2 s).
+                let now = Date().timeIntervalSince1970
+                let next = ((now / slotSeconds).rounded(.down) + 1) * slotSeconds
+                let target = Date(timeIntervalSince1970: next + 5.5)
+                while Date() < target { RunLoop.current.run(until: min(target, Date().addingTimeInterval(0.25))) }
+                let slot = ((Int(next / slotSeconds) % count) + count) % count
+                captureScreenshot(named: String(format: "day-words-%02d-", slot)
+                    + "\(photos[slot / states.count])-\(states[slot % states.count])-\(pass)")
+            }
         }
     }
 

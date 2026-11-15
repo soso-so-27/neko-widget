@@ -180,8 +180,10 @@ class WidgetPhoto(unittest.TestCase):
         self.assertIn('"くもりのまど" : "くもりのまど。作品がとどきました"', label)
         self.assertIn('? "くもりを晴らして、きょうの1枚を見る" : "くもりを晴らして、作品を見る")', WIDGET)
         self.assertNotIn("きょうのまどのくもりを晴らす", WIDGET)
-        # The visible words stay.
-        self.assertIn('"タップで、きょうの1枚" : "作品がとどきました"', WIDGET)
+        # The visible words stay (11/15: with a shorter form, in CloudyWindowDayText).
+        self.assertIn('["タップで、きょうの1枚", "きょうの1枚"] : ["作品がとどきました", "作品がとどいた"]',
+                      (ROOT / "Shared/Storage/CloudyWindowStore.swift").read_text(encoding="utf-8"))
+        self.assertIn("CloudyWindowDayText.revealForms(selection)", WIDGET)
 
     def test_photos_read_as_cat_photos_without_how_to_tap(self):
         label = self.label()
