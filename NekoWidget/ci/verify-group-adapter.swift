@@ -694,6 +694,8 @@ private struct GroupAdapterChecks {
         let backgroundRequests = await missingRelay.sent()
         try check(backgroundRequests.count == 1, "background never sends receipts")
         await missingClient.setAnchorReceiptForeground(true)
+        // 1115s: a real next foreground comes after the 20 s gap.
+        await missingClient.forgetAnchorBackfillGap()
         await missingClient.backfillAnchorReceipts()
         await missingClient.backfillAnchorReceipts()
         let nextForeground = await missingRelay.sent()
