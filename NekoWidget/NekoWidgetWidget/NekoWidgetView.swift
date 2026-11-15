@@ -1172,11 +1172,10 @@ enum AppStoreWidgetPreviewFixture {
         let slot = dayWordsSlot(at: entry.date)
         let state = dayWordsStates[slot % dayWordsStates.count]
         guard let selection = entry.cloudyWindowSelection else { return "#\(slot) \(state.id) no selection" }
-        let cats = selection.milestone.map { m in
+        let cats: String = selection.milestone.map { m in
             m.kind + ":" + m.cats.map { "\($0.name),\($0.years),\($0.inPhoto)" }.joined(separator: ";")
         } ?? "-"
-        return "#\(slot) \(state.id) kind=\(selection.dayKind ?? "nil") \(cats)
-"
+        return "#\(slot) \(state.id) kind=\(selection.dayKind ?? "nil") \(cats)\n"
             + CloudyWindowDayText.revealForms(selection).joined(separator: " / ")
     }
 
