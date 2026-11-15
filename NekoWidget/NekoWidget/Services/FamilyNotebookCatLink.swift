@@ -35,7 +35,8 @@ enum FamilyNotebookCatLink {
     /// Links the family cat's record to `profile`. This iPhone's own record of
     /// the profile, if any, fills only what the family record has not got,
     /// adds its list entries and its own photos; it is then kept as a
-    /// replaced record (its own values stay in it, nothing is erased).
+    /// replaced record (still the profile's, marked deleted, after the linked
+    /// record), so unlinking shows it again. Nothing is erased.
     static func linking(_ care: CatCareState, toolCatID: UUID, profile: UUID, now: Date) throws -> CatCareState {
         var state = care
         guard let target = state.cats.firstIndex(where: { $0.catID == toolCatID && $0.deletedAt == nil })
@@ -43,43 +44,77 @@ enum FamilyNotebookCatLink {
         var record = state.cats[target]
         guard record.profileID == nil || record.profileID == profile else { throw FamilyNotebookError.mappingConflict }
         record.profileID = profile
+        var replaced: [Int] = []
         for index in state.cats.indices where index != target {
             guard state.cats[index].profileID == profile, state.cats[index].deletedAt == nil else { continue }
             var own = state.cats[index]
             fill(&record, from: &own)
             // Kept, not erased: a value the family already had stays here.
-            own.profileID = nil
             own.deletedAt = now
             state.cats[index] = own
+            replaced.append(index)
         }
         state.cats[target] = record
+        // The linked record comes first, so every lookup by profile finds it.
+        if let first = replaced.min(), first < target {
+            let moved = state.cats.remove(at: target)
+            state.cats.insert(moved, at: first)
+        }
         return state
     }
 
-    /// Unlinks: the family cat keeps its record (and its proof photos); this
-    /// iPhone's cat gets its own copy of everything written so far, and its
-    /// own 見分ける写真. Nothing is erased on either side.
+    /// Whether this iPhone wrote something for the profile that differs from
+    /// what the family wrote (the family's value is the one kept): the one
+    /// case where linking asks before it goes ahead.
+    static func differs(_ care: CatCareState, toolCatID: UUID, profile: UUID) -> Bool {
+        guard let family = care.cats.first(where: { $0.catID == toolCatID && $0.deletedAt == nil }),
+              let own = care.cats.first(where: { $0.profileID == profile && $0.deletedAt == nil && $0.catID != toolCatID })
+        else { return false }
+        func differ<V: Codable & Equatable & Sendable>(_ a: CatCareStamped<V>?, _ b: CatCareStamped<V>?) -> Bool {
+            guard let a, let b else { return false }
+            return a.value != b.value
+        }
+        return differ(family.name, own.name) || differ(family.sex, own.sex) || differ(family.neutered, own.neutered)
+            || differ(family.birthday, own.birthday) || differ(family.adoptionDay, own.adoptionDay)
+            || differ(family.coat, own.coat) || differ(family.marks, own.marks) || differ(family.microchip, own.microchip)
+            || differ(family.microchipAnswer, own.microchipAnswer) || differ(family.indoorOnly, own.indoorOnly)
+            || differ(family.conditions, own.conditions) || differ(family.allergy, own.allergy)
+            || differ(family.vaccinationAnswer, own.vaccinationAnswer) || differ(family.specialDiet, own.specialDiet)
+            || differ(family.water, own.water) || differ(family.litter, own.litter)
+            || differ(family.temperament, own.temperament) || differ(family.vetOverride, own.vetOverride)
+    }
+
+    /// Unlinks: the family cat keeps its record (and its proof photos). This
+    /// iPhone's cat gets back its own record as it was before linking (what
+    /// it wrote is shown again), with what was written while linked filling
+    /// only what it had not got; with no record before, a copy of everything.
+    /// 見分ける写真 go with this iPhone's cat. Nothing is erased.
     static func unlinking(_ care: CatCareState, toolCatID: UUID, profile: UUID,
                           makeID: () -> UUID = UUID.init) throws -> CatCareState {
         var state = care
         guard let target = state.cats.firstIndex(where: { $0.catID == toolCatID && $0.deletedAt == nil }),
               state.cats[target].profileID == profile else { throw FamilyNotebookError.mappingConflict }
         var family = state.cats[target]
-        var own = family
-        own.catID = makeID()
-        guard !state.cats.contains(where: { $0.catID == own.catID }) else { throw FamilyNotebookError.mappingConflict }
-        own.profileID = profile
-        // The proof photos stay with the shared vaccinations they belong to.
-        own.vaccinations = family.vaccinations.map { var row = $0; row.proof = nil; row.familyPhotoLink = nil; return row }
-        own.detachedVaccinations = nil
-        own.partialWeights = nil
-        own.sharedWindowIDs = []
-        // 見分ける写真 are this iPhone's own: they go with this iPhone's cat.
+        // The shared copy, without the proof photos of the shared vaccinations.
+        var copy = family
+        copy.vaccinations = family.vaccinations.map { var row = $0; row.proof = nil; row.familyPhotoLink = nil; return row }
+        copy.detachedVaccinations = nil
+        copy.partialWeights = nil
+        copy.sharedWindowIDs = []
+        if let kept = state.cats.lastIndex(where: { $0.profileID == profile && $0.deletedAt != nil && $0.catID != toolCatID }) {
+            var own = state.cats[kept]
+            own.deletedAt = nil
+            fill(&own, from: &copy)
+            state.cats[kept] = own
+        } else {
+            copy.catID = makeID()
+            guard !state.cats.contains(where: { $0.catID == copy.catID }) else { throw FamilyNotebookError.mappingConflict }
+            state.cats.append(copy)
+        }
         family.facePhoto = nil
         family.bodyPhoto = nil
         family.profileID = nil
         state.cats[target] = family
-        state.cats.append(own)
         return state
     }
 
@@ -165,5 +200,78 @@ enum FamilyNotebookCatLink {
     /// The key the person's answer is kept under (this iPhone only).
     static func answerKey(family: UUID, cat: UUID) -> String {
         family.uuidString.lowercased() + ":" + cat.uuidString.lowercased()
+    }
+}
+
+/// 11/15 (段 1): one order of cats for the whole family, kept in the notebook
+/// as each cat's `position` (an integer; one operation per cat, so a new
+/// order reaches the family cat by cat, never all at once). The order is a
+/// sort of the cats that exist, so two people moving cats at the same time
+/// can neither lose nor double a cat: equal places fall back to the cat's ID.
+enum FamilyNotebookCatOrder {
+    /// The cat's place, or nil (never set, cleared, or out of range).
+    static func position(_ cat: UUID, in snapshot: FamilyNotebookSnapshot) -> Int? {
+        guard let state = snapshot.fieldState(for: .init(familyCatID: cat, field: .position)), !state.isDeleted,
+              case .integer(let value) = state.operation.value,
+              FamilyNotebookField.positionRange.contains(value) else { return nil }
+        return value
+    }
+
+    /// The cats in the family's order: placed cats by place, then the others;
+    /// equal places and unplaced cats in the order of their IDs.
+    static func ordered(_ cats: [UUID], in snapshot: FamilyNotebookSnapshot) -> [UUID] {
+        let places = Dictionary(cats.map { ($0, position($0, in: snapshot)) }, uniquingKeysWith: { first, _ in first })
+        return Array(Set(cats)).sorted { a, b in
+            switch (places[a] ?? nil, places[b] ?? nil) {
+            case let (x?, y?) where x != y: return x < y
+            case (_?, nil): return true
+            case (nil, _?): return false
+            default: return a.uuidString < b.uuidString
+            }
+        }
+    }
+
+    /// The first places, written once: only by the person who put the cat
+    /// into the notebook, from the iPhone that has it as one of its own cats
+    /// (its mapping names a profile), in that iPhone's order of profiles, and
+    /// only for cats with no place written by anyone yet. Placed after every
+    /// place already in the notebook. Everyone else keeps what they read.
+    static func initialPositions(_ snapshot: FamilyNotebookSnapshot, person: String,
+                                 profileOrder: [UUID]) -> [(cat: UUID, position: Int)] {
+        guard !snapshot.sharingEnded else { return [] }
+        let cats = snapshot.activeMappings.filter { $0.recordID == nil && $0.toolCatID != nil }
+        var eligible: [(cat: UUID, rank: Int)] = []
+        for mapping in cats {
+            let cat = mapping.familyCatID
+            guard let profile = mapping.profileID, let rank = profileOrder.firstIndex(of: profile),
+                  !eligible.contains(where: { $0.cat == cat }),
+                  snapshot.fieldState(for: .init(familyCatID: cat, field: nil))?.isDeleted != true,
+                  !snapshot.operations.contains(where: { $0.target.familyCatID == cat && $0.target.field == .position }),
+                  snapshot.operations.filter({ $0.target.familyCatID == cat }).min(by: { $0.version < $1.version })?.author.personID == person
+            else { continue }
+            eligible.append((cat, rank))
+        }
+        let known = Set(snapshot.operations.map(\.target.familyCatID)).compactMap { position($0, in: snapshot) }
+        let base = (known.max() ?? -1) + 1
+        return eligible.sorted { $0.rank < $1.rank }.enumerated().compactMap { index, item in
+            let value = base + index
+            return FamilyNotebookField.positionRange.contains(value) ? (item.cat, value) : nil
+        }
+    }
+
+    /// The places for a new order: 0, 1, 2… Only cats whose place changes.
+    static func positions(for order: [UUID], in snapshot: FamilyNotebookSnapshot) -> [(cat: UUID, position: Int)] {
+        order.enumerated().compactMap { index, cat in
+            guard FamilyNotebookField.positionRange.contains(index), position(cat, in: snapshot) != index else { return nil }
+            return (cat, index)
+        }
+    }
+
+    /// The 旅立った日 the family shared for a cat (someone confirmed it to
+    /// send it; this only reads it), or nil.
+    static func sharedFarewell(_ cat: UUID, in snapshot: FamilyNotebookSnapshot) -> CatCareDay? {
+        guard let state = snapshot.fieldState(for: .init(familyCatID: cat, field: .farewellDay)), !state.isDeleted,
+              case .day(let text) = state.operation.value else { return nil }
+        return CatCareDay(isoDay: text)
     }
 }

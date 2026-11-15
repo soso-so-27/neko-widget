@@ -196,7 +196,8 @@ jobs:
             methods=(test01Photos test02Windows test03Albums test04ToolsCatCareAndVet test05ToolsLostAndCare
                      test06ToolsEvacuationAndShowcase test07LostFlyer test08PlusOffer test09Settings
                      test12Onboarding test13ValidationError test14CatHomeStress test15FamilyNotebookLink
-                     test16RecoveryScreens)
+                     test16FamilyOrderAndFarewell
+                     test17RecoveryScreens)
           fi
           # `only`: just the named methods (each must be one of this class's).
           if [[ -n "${REVIEW_ONLY// /}" ]]; then

@@ -1915,6 +1915,32 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    /// 11/15 並べ替え: this iPhone's own cats (not in the family notebook) in a
+    /// new order. Their order is the order of the profiles, as when they were
+    /// added; only the order changes, nothing else of a profile.
+    func reorderCatProfiles(_ order: [UUID]) async -> Bool {
+        guard candidateAuthorityIsReady(operation: "reorder_profiles") else { return false }
+        do {
+            let committed = try await mutateCatHouseholdIdentity { state in
+                let moved = order.compactMap { id in state.profiles.first { $0.id == id } }
+                guard moved.count == order.count, Set(order).count == order.count else { return }
+                let slots = state.profiles.indices.filter { order.contains(state.profiles[$0].id) }
+                for (slot, profile) in zip(slots, moved) { state.profiles[slot] = profile }
+            }
+            return committed.profiles.map(\.id).filter { order.contains($0) } == order
+        } catch {
+            Self.logError(error, category: "cat-identity", operation: "reorder_profiles")
+            setError(error)
+            return false
+        }
+    }
+
+    /// 11/15: the family shared (or took back) a 旅立った日. The widget's
+    /// departed cats and 節目 follow, as for a day recorded here.
+    func familyFarewellsChanged() {
+        synchronizeCloudyWindowProfilesAfterCountChange()
+    }
+
     func updateCatProfileName(profileID: UUID, displayName: String) async -> Bool {
         let name = String(displayName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
         guard candidateAuthorityIsReady(operation: "update_profile_name"), !name.isEmpty else {

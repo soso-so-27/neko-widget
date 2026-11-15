@@ -83,6 +83,9 @@ private enum VerifyFamilyNotebookSync {
         if let phase = ProcessInfo.processInfo.environment["ADOPTION_PHASE"] {
             try await adoptionCompatibility(phase); return
         }
+        if let phase = ProcessInfo.processInfo.environment["POSITION_PHASE"] {
+            try await positionCompatibility(phase); return
+        }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("family-sync-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         var identity = GroupDeviceIdentity.firstDevice(); identity.registered = true
@@ -219,6 +222,101 @@ private enum VerifyFamilyNotebookSync {
         }
         try JSONEncoder().encode(await relay.savedPackets()).write(to: packetsURL)
         print("Adoption compatibility phase passed: " + phase)
+    }
+
+    // 11/15: the family order of cats (`position`), run with the frozen
+    // readers (before #985, and main before the order) and the new one.
+    // The old binaries do not know the field: it is reached by its raw name.
+    private static func positionCompatibility(_ phase: String) async throws {
+        let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["POSITION_ROOT"]!)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        struct Fixture: Codable { let identity: GroupDeviceIdentity; let family: UUID; let cats: [UUID] }
+        let fixtureURL = root.appendingPathComponent("fixture.json")
+        let f: Fixture
+        if phase == "new-write" {
+            var identity = GroupDeviceIdentity.firstDevice(); identity.registered = true
+            f = Fixture(identity: identity, family: UUID(), cats: [UUID(), UUID(), UUID()])
+            try JSONEncoder().encode(f).write(to: fixtureURL)
+        } else { f = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: fixtureURL)) }
+        let identity = f.identity, device = try identity.deviceID, family = f.family
+        let author = FamilyNotebookAuthor(personID: identity.personID, displayName: "合成")
+        let key = Data(repeating: 23, count: 32)
+        let rosterURL = root.appendingPathComponent("roster.json")
+        let signed: SignedFamilyNotebookRoster
+        if phase == "new-write" {
+            let member = FamilyNotebookCryptoMember(personID: identity.personID, identityPublicKey: identity.personPublicKey,
+                devices: [try identity.certificate(windowID: family.uuidString.lowercased())])
+            let roster = FamilyNotebookCryptoRoster(familyID: family, epoch: 1, previousHash: Data(repeating: 0, count: 32), keyCommitment: GroupCanonical.hash(key), members: [member])
+            signed = try FamilyNotebookRosterCrypto.sign(roster, deviceID: device, signingKey: identity.signingKey)
+            try JSONEncoder().encode(signed).write(to: rosterURL)
+        } else {
+            signed = try JSONDecoder().decode(SignedFamilyNotebookRoster.self, from: Data(contentsOf: rosterURL))
+        }
+        let current = try FamilyNotebookRosterCrypto.restore(signed, trustedPin: .init(familyID: family, epoch: 1, hash: GroupCanonical.hash(signed.roster.canonicalBytes())))
+        let packetsURL = root.appendingPathComponent("packets.json")
+        var packets: [EncryptedFamilyNotebookOperation] = []
+        let position = FamilyNotebookField(rawValue: "position")
+        func place(_ cat: UUID, in snapshot: FamilyNotebookSnapshot) -> Int? {
+            guard let position, let state = snapshot.fieldState(for: .init(familyCatID: cat, field: position)), !state.isDeleted,
+                  case .integer(let value) = state.operation.value else { return nil }
+            return value
+        }
+        if phase == "new-write" {
+            guard let position else { throw Failure.check("the new reader knows position") }
+            var clock: UInt64 = 0
+            func op(_ cat: UUID, _ field: FamilyNotebookField, _ value: FamilyNotebookValue) -> FamilyNotebookOperation {
+                clock += 1
+                return FamilyNotebookOperation(familyID: family, target: .init(familyCatID: cat, field: field), value: value,
+                    version: .init(clock: clock, deviceID: device, operationID: UUID()), author: author, editedAt: Date())
+            }
+            // A and B share a place (a tie); C has a far place an old app cannot read.
+            var ops = f.cats.enumerated().map { op($0.element, .name, .text("猫" + String($0.offset))) }
+            ops += [op(f.cats[0], position, .integer(1)), op(f.cats[1], position, .integer(1)), op(f.cats[2], position, .integer(5_000))]
+            packets = try ops.map { try FamilyNotebookOperationCrypto.seal($0, roster: current, key: key, signingKey: identity.signingKey) }
+        } else { packets = try JSONDecoder().decode([EncryptedFamilyNotebookOperation].self, from: Data(contentsOf: packetsURL)) }
+        let store = try FamilyNotebookStore(directory: root.appendingPathComponent("store"), familyID: family, deviceID: device)
+        let relay = Relay(family: family, identity: identity, current: current, key: key, packets: packets)
+        await relay.activate()
+        let journal = try GroupOperationStore(directory: root.appendingPathComponent("journal-" + phase), maximumRecordBytes: 2_100_000)
+        let network = try FamilyNotebookTransport(endpoint: URL(string: "https://compat.invalid")!, identity: identity, transport: relay, journal: journal)
+        let engine = try FamilyNotebookSync(familyID: family, identity: identity, store: store, network: network, journal: journal, endpointID: "https://compat.invalid")
+        if phase == "old-edit" {
+            try check(position == nil, "the frozen reader does not know position")
+            try check(try store.snapshot().opaqueOperations.count == 4, "the old reader keeps every place, received and pending, as it is")
+            // Ordinary edits on the old app: a name, and taking cat B out of the notebook.
+            _ = try store.edit(target: .init(familyCatID: f.cats[0], field: .name), value: .text("古い版の編集"), author: author)
+            _ = try store.edit(target: .init(familyCatID: f.cats[1], field: .sharingEnded), value: nil, author: author)
+        }
+        _ = try await engine.synchronize(current: current, history: [:], keys: [1: key])
+        if phase == "new-write" {
+            guard let position else { throw Failure.check("the new reader knows position") }
+            let snapshot = try store.snapshot()
+            try check(place(f.cats[2], in: snapshot) == 5_000 && place(f.cats[0], in: snapshot) == 1, "the new reader receives places")
+            // A new place written on this phone, not sent yet.
+            _ = try store.edit(target: .init(familyCatID: f.cats[2], field: position), value: .integer(0), author: author)
+        }
+        if phase == "old-edit" {
+            let state = try JSONDecoder().decode(FamilyNotebookStore.State.self, from: Data(contentsOf: root.appendingPathComponent("store/family-notebook.json")))
+            let backup = try FamilyNotebookBackup.encode(.init(copies: [.init(id: UUID(), state: state)]))
+            let restored = try FamilyNotebookBackup.decode(FamilyNotebookBackup.restored(backup))
+            try check(restored.copies[0].state.opaqueOperations?.count == 4, "old backup and restore keep every place")
+            let dir = root.appendingPathComponent("restored")
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try JSONEncoder().encode(restored.copies[0].state).write(to: dir.appendingPathComponent("family-notebook.json"))
+        }
+        if phase == "new-verify" {
+            let snapshot = try store.snapshot()
+            try check(place(f.cats[2], in: snapshot) == 0, "the place written before the old app ran is back, and the newest wins")
+            try check(place(f.cats[0], in: snapshot) == 1, "a tied place is kept as written")
+            try check(snapshot.operations.contains { $0.value == .text("古い版の編集") }, "the old app's name edit survives")
+            try check(snapshot.unsharedCatIDs == [f.cats[1]], "the cat the old app took out stays out")
+            try check(try store.pendingOperations().isEmpty, "the pending place is sent after the old app ran")
+            let restored = try FamilyNotebookStore(directory: root.appendingPathComponent("restored"), familyID: family, deviceID: device)
+            try check(place(f.cats[2], in: try restored.snapshot()) == 0, "the new app opens the old app's restored backup with its places")
+            try check(try restored.pendingOperations().isEmpty, "a restored private copy never sends")
+        }
+        try JSONEncoder().encode(await relay.savedPackets()).write(to: packetsURL)
+        print("Position compatibility phase passed: " + phase)
     }
 
     private static func verifyFuture(root: URL, identity: GroupDeviceIdentity, current: VerifiedFamilyNotebookRoster,

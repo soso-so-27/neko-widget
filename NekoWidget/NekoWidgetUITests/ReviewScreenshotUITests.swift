@@ -771,7 +771,7 @@ final class ReviewScreenshotUITests: XCTestCase {
     // MARK: - 機種変更の画面（11/15、見本の状態だけ。発行が OFF の間は通常の版に出ない）
 
     @MainActor
-    func test16RecoveryScreens() {
+    func test17RecoveryScreens() {
         var app = launchRecovery(nil)
         shot("92_recovery_gallery", app) { waitFor(app.buttons["group-recovery-entry"], "gallery") }
         app.terminate()
@@ -868,6 +868,40 @@ final class ReviewScreenshotUITests: XCTestCase {
             app.buttons["cat-home-add"].tap()
             guard app.buttons["新しい子を追加"].waitForExistence(timeout: 8) else { return "family choice did not open" }
             settle(1)
+            return nil
+        }
+        app.terminate()
+    }
+
+    /// 11/15: 並べ替え with the family's cats and this iPhone's own, the one
+    /// sentence before linking replaces this iPhone's writing, and a cat whose
+    /// 旅立った日 the family shared. Sample names only.
+    @MainActor
+    func test16FamilyOrderAndFarewell() {
+        var app = launchStress(70, names: ["ソラ", "コテツ"], ["--cat-home-stress-family", "ミケ", "--cat-home-stress-order"])
+        shot("48_cat_order_mixed", app) {
+            guard app.descendants(matching: .any)["cat-order"].firstMatch.waitForExistence(timeout: 20) else {
+                return "order screen did not appear"
+            }
+            settle(1.5)
+            return nil
+        }
+        app.terminate()
+        app = launchStress(71, names: ["ソラ", "コテツ"], ["--cat-home-stress-family", "ソラ", "--cat-home-stress-link-differs"])
+        shot("48b_family_link_confirm", app) {
+            if let reason = reachStressHome(app) { return reason }
+            let same = app.buttons["family-link-same"].firstMatch
+            guard same.waitForExistence(timeout: 10) else { return "link question did not appear" }
+            same.tap()
+            guard app.buttons["つなぐ"].waitForExistence(timeout: 8) else { return "confirmation did not appear" }
+            settle(1)
+            return nil
+        }
+        app.terminate()
+        app = launchStress(72, names: ["-"], ["--cat-home-stress-family", "ミケ", "--cat-home-stress-family-farewell"])
+        shot("48c_home_family_farewell", app) {
+            if let reason = reachStressHome(app) { return reason }
+            guard !app.buttons["tools-care-open"].exists else { return "family farewell not shown (tool buttons still there)" }
             return nil
         }
         app.terminate()
