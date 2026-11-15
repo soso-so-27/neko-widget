@@ -45,6 +45,8 @@ struct CatProfilesViewActions {
     /// The message the last failed action left (e.g. why an album cannot be
     /// linked), so a sheet can say it instead of failing silently.
     var currentErrorMessage: () -> String? = { nil }
+    /// 11/15 並べ替え: this iPhone's own cats (not in the family notebook).
+    var reorderProfiles: (_ profileIdentifiers: [String]) async -> Bool = { _ in false }
 
     static let noOp = CatProfilesViewActions(
         exportProfileDates: { throw CatProfileTransferError.notReady },
@@ -79,6 +81,9 @@ struct CatProfilesView: View {
     @State private var openedProfileIdentifier: String?
     @State private var organizationDestination: OrganizationDestination?
     @State private var showsAbout = false
+    /// 11/15: 「並べ替え」, the one place the order of the cats is changed.
+    @State private var reorders = false
+    @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
 
     var body: some View {
         Form {
@@ -137,6 +142,9 @@ struct CatProfilesView: View {
         }
         .addingCatProfile(isStarted: $addsCat, presentation: presentation, actions: actions) {
             openedProfileIdentifier = $0
+        }
+        .sheet(isPresented: $reorders) {
+            NavigationStack { CatOrderView(profiles: presentation.profiles, actions: actions) }
         }
         .navigationDestination(item: $openedProfileIdentifier) { identifier in
             if let profile = presentation.profiles.first(where: { $0.identifier == identifier }) {
@@ -203,6 +211,15 @@ struct CatProfilesView: View {
                     Label("未分類の写真", systemImage: "photo.on.rectangle")
                 }
                 .accessibilityIdentifier("cat-profiles-unassigned")
+            }
+            // 11/15: from two cats (the family's included).
+            if presentation.profiles.count + familyNotebook.unlinkedFamilyCats.count >= 2 {
+                Button {
+                    reorders = true
+                } label: {
+                    Label("並べ替え", systemImage: "arrow.up.arrow.down")
+                }
+                .accessibilityIdentifier("cat-profiles-reorder")
             }
             Button {
                 showsAbout = true
@@ -329,6 +346,123 @@ struct CatProfilePhotoFlowFixture: View {
 }
 #endif
 
+
+/// 11/15 並べ替え: the cats in two groups when a home has both: the family
+/// notebook's cats (one order for the whole family) and this iPhone's other
+/// cats (its own order). A cat moves within its group only; the groups show
+/// as two sections. Written once, with 完了, never per move.
+struct CatOrderView: View {
+    struct Row: Identifiable, Equatable {
+        let id: String
+        let name: String
+        let photo: CatProfilePhotoPresentation?
+        /// The family cat, or nil for a cat of this iPhone only.
+        let familyCat: UUID?
+    }
+
+    let profiles: [CatProfilePresentation]
+    let actions: CatProfilesViewActions
+    @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
+    @ObservedObject private var care = CatCareStore.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var family: [Row] = []
+    @State private var own: [Row] = []
+    @State private var loaded = false
+    @State private var saving = false
+    @State private var failed = false
+
+    var body: some View {
+        List {
+            if !family.isEmpty {
+                Section {
+                    rows($family)
+                } header: {
+                    if !own.isEmpty { Text("家族の手帳") }
+                }
+            }
+            if !own.isEmpty {
+                Section {
+                    rows($own)
+                } header: {
+                    if !family.isEmpty { Text("このiPhoneだけ") }
+                }
+            }
+        }
+        .environment(\.editMode, .constant(.active))
+        .navigationTitle("並べ替え")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() }.disabled(saving) }
+            ToolbarItem(placement: .confirmationAction) {
+                if saving { ProgressView() } else {
+                    Button("完了") { save() }
+                        .accessibilityIdentifier("cat-order-done")
+                }
+            }
+        }
+        .alert("並べ替えられませんでした", isPresented: $failed) { Button("閉じる", role: .cancel) {} }
+            message: { Text("少し待ってから、もう一度お試しください。") }
+        .onAppear { if !loaded { load(); loaded = true } }
+        .accessibilityIdentifier("cat-order")
+    }
+
+    private func rows(_ list: Binding<[Row]>) -> some View {
+        ForEach(list.wrappedValue) { row in
+            let index = list.wrappedValue.firstIndex(of: row) ?? 0
+            HStack(spacing: 12) {
+                CatProfileThumbnail(photo: row.photo)
+                    .frame(width: 44, height: 44)
+                    .accessibilityHidden(true)
+                Text(row.name)
+                    .font(.body)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(minHeight: 44)
+            .accessibilityElement(children: .combine)
+            // VoiceOver moves a cat without dragging.
+            .accessibilityActions {
+                if index > 0 { Button("上へ") { list.wrappedValue.swapAt(index, index - 1) } }
+                if index < list.wrappedValue.count - 1 { Button("下へ") { list.wrappedValue.swapAt(index, index + 1) } }
+            }
+        }
+        .onMove { list.wrappedValue.move(fromOffsets: $0, toOffset: $1) }
+    }
+
+    /// The family's cats in the family's order (a cat linked here shows with
+    /// its photo), then this iPhone's other cats in their order.
+    private func load() {
+        let shared = familyNotebook.activeFamilyCats
+        let order = familyNotebook.familyOrder.isEmpty ? shared.map(\.id) : familyNotebook.familyOrder
+        var linked = Set<String>()
+        family = order.compactMap { id -> Row? in
+            guard let cat = shared.first(where: { $0.id == id }) else { return nil }
+            let profileID = care.state?.cats.first(where: { $0.catID == cat.toolID && $0.deletedAt == nil })?.profileID
+            let profile = profiles.first { $0.identifier == profileID?.uuidString }
+            if let profile { linked.insert(profile.identifier) }
+            let name = profile?.displayName ?? (cat.name.isEmpty ? "名前未設定の猫" : cat.name)
+            return Row(id: id.uuidString, name: name, photo: profile?.coverPhoto, familyCat: id)
+        }
+        own = profiles.filter { !linked.contains($0.identifier) }.map {
+            Row(id: $0.identifier, name: $0.displayName, photo: $0.coverPhoto, familyCat: nil)
+        }
+    }
+
+    private func save() {
+        let familyOrder = family.compactMap(\.familyCat)
+        let ownOrder = own.map(\.id)
+        saving = true
+        Task {
+            var ok = true
+            if familyOrder != familyNotebook.familyOrder, !familyOrder.isEmpty, !familyNotebook.familyOrder.isEmpty {
+                do { try familyNotebook.reorderFamilyCats(familyOrder) } catch { ok = false }
+            }
+            let before = profiles.map(\.identifier).filter { ownOrder.contains($0) }
+            if ok, ownOrder != before { ok = await actions.reorderProfiles(ownOrder) }
+            saving = false
+            if ok { dismiss() } else { failed = true }
+        }
+    }
+}
 
 private struct CatProfileRow: View {
     let profile: CatProfilePresentation

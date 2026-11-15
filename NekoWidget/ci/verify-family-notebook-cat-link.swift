@@ -28,6 +28,8 @@ enum FamilyNotebookCatLinkVerifier {
         try whoIsAsked()
         try afterLeaving(root: root.appendingPathComponent("left"))
         try singleCatRule()
+        try familyOrder(root: root.appendingPathComponent("order"))
+        try sharedFarewell()
         print("Family cat link: local mapping, no second cat, nothing erased, unlink, asked once, leaving and single-cat checks passed")
     }
 
@@ -74,7 +76,15 @@ enum FamilyNotebookCatLinkVerifier {
         guard let kept = linked.cats.first(where: { $0.catID == phone.ownRecord }) else {
             throw FamilyNotebookMigrationVerifier.Failure.assertion("cat link: the own record must never be erased")
         }
-        try require(kept.deletedAt == now && kept.profileID == nil, "the own record is kept as replaced, not as the profile's")
+        try require(kept.deletedAt == now && kept.profileID == phone.profile, "the own record is kept as replaced, still the profile's")
+        try require(linked.cats.firstIndex { $0.catID == phone.tool }! < linked.cats.firstIndex { $0.catID == phone.ownRecord }!,
+                    "the linked record comes first, so a lookup by profile finds it")
+        try require(FamilyNotebookCatLink.differs(phone.care, toolCatID: phone.tool, profile: phone.profile),
+                    "writing that differs from the family's is asked about once more")
+        var same = phone.care
+        same.cats[0].name = nil; same.cats[0].temperament = nil
+        try require(!FamilyNotebookCatLink.differs(same, toolCatID: phone.tool, profile: phone.profile),
+                    "writing that only fills what the family left empty links without asking")
         try require(kept.temperament?.value == "こわがり" && kept.name?.value == "ソラちゃん",
                     "a value that lost to the family's stays in the kept record")
         try require(linked.cats.count == phone.care.cats.count, "nothing is removed from 「この子のこと」")
@@ -88,23 +98,40 @@ enum FamilyNotebookCatLinkVerifier {
     static func unlinkingKeepsEveryRecord() throws {
         let phone = Phone()
         let linked = try FamilyNotebookCatLink.linking(phone.care, toolCatID: phone.tool, profile: phone.profile, now: now)
+        // 11/15: unlinking shows this iPhone's own writing again.
+        let back = try FamilyNotebookCatLink.unlinking(linked, toolCatID: phone.tool, profile: phone.profile)
+        guard let restored = back.cats.first(where: { $0.catID == phone.ownRecord }) else {
+            throw FamilyNotebookMigrationVerifier.Failure.assertion("cat link: the own record comes back")
+        }
+        try require(restored.deletedAt == nil && restored.profileID == phone.profile, "the own record is the profile's again")
+        try require(restored.temperament?.value == "こわがり" && restored.name?.value == "ソラちゃん",
+                    "what this iPhone wrote (and lost to the family's) is shown again")
+        try require(restored.vaccinations.count == 1 && restored.vaccinations[0].proof == nil,
+                    "what was written while linked fills in, without the shared proof photo")
+        try require((restored.facePhoto?.value ?? nil)?.fileName == "OWN-FACE.jpg", "its own 見分ける写真 come back")
+        try require(back.cats.count == linked.cats.count
+                    && back.cats.filter { $0.profileID == phone.profile && $0.deletedAt == nil }.map(\.catID) == [phone.ownRecord],
+                    "one record per profile, nothing added or erased")
+        // A profile with no record before linking gets a copy of everything.
+        var fresh = phone.care
+        fresh.cats.removeAll { $0.catID == phone.ownRecord }
+        let freshLinked = try FamilyNotebookCatLink.linking(fresh, toolCatID: phone.tool, profile: phone.profile, now: now)
         let ownID = UUID()
-        let unlinked = try FamilyNotebookCatLink.unlinking(linked, toolCatID: phone.tool, profile: phone.profile, makeID: { ownID })
+        let unlinked = try FamilyNotebookCatLink.unlinking(freshLinked, toolCatID: phone.tool, profile: phone.profile, makeID: { ownID })
         guard let family = unlinked.cats.first(where: { $0.catID == phone.tool }),
               let own = unlinked.cats.first(where: { $0.catID == ownID }) else {
             throw FamilyNotebookMigrationVerifier.Failure.assertion("cat link: both cats stay after unlinking")
         }
         try require(family.profileID == nil && family.deletedAt == nil, "the family cat is its own page again")
         try require(own.profileID == phone.profile && own.deletedAt == nil, "this iPhone's cat keeps a record")
-        try require(own.water?.value == "流れる水" && own.temperament?.value == "人なつこい" && own.weights.count == 1,
+        try require(own.temperament?.value == "人なつこい" && own.name?.value == "ソラ",
                     "this iPhone's cat keeps a copy of everything written")
-        try require((own.facePhoto?.value ?? nil)?.fileName == "OWN-FACE.jpg" && family.facePhoto == nil,
-                    "見分ける写真 stay with this iPhone's cat")
+        try require(family.facePhoto == nil, "見分ける写真 are not left on the family's record")
         try require(family.vaccinations.first?.proof != nil && own.vaccinations.first?.proof == nil
                     && own.vaccinations.first?.familyPhotoLink == nil, "a proof photo stays with the shared vaccination only")
         try require(unlinked.cats.filter { $0.profileID == phone.profile && $0.deletedAt == nil }.count == 1,
                     "one record per profile after unlinking")
-        try require(unlinked.cats.count == linked.cats.count + 1, "unlinking adds a copy and erases nothing")
+        try require(unlinked.cats.count == freshLinked.cats.count + 1, "unlinking adds a copy and erases nothing")
     }
 
     // MARK: Two phones: no second family cat, the family's values stay
@@ -249,6 +276,105 @@ enum FamilyNotebookCatLinkVerifier {
         try require(care.cats.contains { $0.catID == tool && $0.deletedAt == nil } && left.operations.count == 1,
                     "the kept copy is not erased by leaving (the existing rule)")
         try rejects("a left notebook is not linked") { _ = try store.setLocalProfile(UUID(), forFamilyCat: cat) }
+    }
+
+    // MARK: The family order of cats
+
+    static func familyOrder(root: URL) throws {
+        let family = UUID()
+        let cats = (0..<4).map { _ in UUID() }.sorted { $0.uuidString < $1.uuidString }
+        let profiles = cats.map { _ in UUID() }
+        let a = try FamilyNotebookStore(directory: root.appendingPathComponent("a"), familyID: family, deviceID: "a")
+        // The creator put cats 0–2 in; cat 3 came from the joiner.
+        for (index, cat) in cats.enumerated() {
+            _ = try a.edit(target: .init(familyCatID: cat, field: .name), value: .text("猫"), author: index < 3 ? creator : joiner)
+        }
+        var links = cats.enumerated().map { index, cat in
+            FamilyNotebookLocalMapping(sourceKey: "cat:" + String(index), familyCatID: cat, profileID: index < 3 ? profiles[index] : nil, toolCatID: UUID())
+        }
+        try a.applyImport(.init(familyID: family, entries: [], mappings: links), author: creator)
+        let before = try a.snapshot()
+        try require(FamilyNotebookCatOrder.ordered(cats.reversed(), in: before) == cats, "no places: everyone sees the cats in ID order")
+        // The creator's first places: only its own cats, in its order of profiles.
+        let order = [profiles[2], profiles[0], profiles[1]]
+        let first = FamilyNotebookCatOrder.initialPositions(before, person: creator.personID, profileOrder: order)
+        try require(first.map(\.cat) == [cats[2], cats[0], cats[1]] && first.map(\.position) == [0, 1, 2],
+                    "the person who put the cats in writes their first places, in that iPhone's order")
+        try require(FamilyNotebookCatOrder.initialPositions(before, person: joiner.personID, profileOrder: order).isEmpty,
+                    "someone else (or a cat not linked here) does not write the first places")
+        func writeFirst(_ store: FamilyNotebookStore, _ person: FamilyNotebookAuthor) throws {
+            let items = FamilyNotebookCatOrder.initialPositions(try store.snapshot(), person: person.personID, profileOrder: order)
+            try store.applyImport(.init(familyID: family, entries: items.map {
+                .init(ledgerKey: "position-init:" + $0.cat.uuidString.lowercased(), target: .init(familyCatID: $0.cat, field: .position),
+                      value: .integer($0.position), editedAt: now)
+            }, mappings: []), author: person)
+        }
+        try writeFirst(a, creator)
+        let placed = try a.snapshot()
+        try writeFirst(a, creator)
+        try require(try a.snapshot().operations == placed.operations, "the first places are written once, not on every opening")
+        try require(FamilyNotebookCatOrder.ordered(cats, in: placed) == [cats[2], cats[0], cats[1], cats[3]],
+                    "placed cats in their places, the cat without a place after them")
+        // A new cat later gets a place after every place already there.
+        links[3] = .init(sourceKey: "cat:3", familyCatID: cats[3], profileID: profiles[3], toolCatID: links[3].toolCatID)
+        try require(FamilyNotebookCatOrder.initialPositions(placed, person: joiner.personID, profileOrder: profiles).isEmpty,
+                    "a cat its adder has not linked on that iPhone is not placed by it")
+
+        // Out of range or a tie falls back to the cats' IDs.
+        _ = try a.edit(target: .init(familyCatID: cats[1], field: .position), value: .integer(0), author: creator)
+        let tied = try a.snapshot()
+        try require(FamilyNotebookCatOrder.ordered(cats, in: tied).prefix(2) == ArraySlice([cats[1], cats[2]].sorted { $0.uuidString < $1.uuidString }),
+                    "equal places keep one stable order (the cats' IDs)")
+        try rejects("a place out of range is refused") {
+            _ = try a.edit(target: .init(familyCatID: cats[0], field: .position), value: .integer(FamilyNotebookField.positionRange.upperBound + 1), author: creator)
+        }
+        try rejects("a place is a number") {
+            _ = try a.edit(target: .init(familyCatID: cats[0], field: .position), value: .text("1"), author: creator)
+        }
+
+        // Two people move cats at the same time: no cat is lost or doubled.
+        let b = try FamilyNotebookStore(directory: root.appendingPathComponent("b"), familyID: family, deviceID: "b")
+        try b.receive(tied.operations)
+        for item in FamilyNotebookCatOrder.positions(for: [cats[3], cats[0], cats[1], cats[2]], in: try a.snapshot()) {
+            _ = try a.edit(target: .init(familyCatID: item.cat, field: .position), value: .integer(item.position), author: creator)
+        }
+        for item in FamilyNotebookCatOrder.positions(for: [cats[2], cats[1], cats[0], cats[3]], in: try b.snapshot()) {
+            _ = try b.edit(target: .init(familyCatID: item.cat, field: .position), value: .integer(item.position), author: joiner)
+        }
+        try a.receive(try b.snapshot().operations); try b.receive(try a.snapshot().operations)
+        let left = FamilyNotebookCatOrder.ordered(cats, in: try a.snapshot())
+        try require(left == FamilyNotebookCatOrder.ordered(cats, in: try b.snapshot()), "both phones show the same order")
+        try require(left.count == 4 && Set(left) == Set(cats), "every cat once, none lost or doubled")
+        try require(FamilyNotebookCatOrder.positions(for: left, in: try a.snapshot()).count <= 4, "a new order writes only the cats that move")
+        try require(FamilyNotebookCatOrder.positions(for: FamilyNotebookCatOrder.ordered(cats, in: tied), in: tied).allSatisfy { $0.position < 4 },
+                    "places are 0, 1, 2…")
+
+        // A cat taken out of the notebook loses its place with it.
+        _ = try a.edit(target: .init(familyCatID: cats[0], field: .sharingEnded), value: nil, author: creator)
+        try require(FamilyNotebookCatOrder.position(cats[0], in: try a.snapshot()) == nil, "a removed cat has no place")
+        try require(FamilyNotebookCatOrder.initialPositions(try a.snapshot(), person: creator.personID, profileOrder: order).isEmpty,
+                    "a removed cat is not placed again")
+    }
+
+    static func sharedFarewell() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("family-farewell-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let family = UUID(), cat = UUID()
+        let store = try FamilyNotebookStore(directory: root, familyID: family, deviceID: "a")
+        _ = try store.edit(target: .init(familyCatID: cat, field: .name), value: .text("ミケ"), author: creator)
+        try require(FamilyNotebookCatOrder.sharedFarewell(cat, in: try store.snapshot()) == nil, "no day: alive")
+        // A received, confirmed day (sent by the person who chose to share it).
+        let snapshot = try store.snapshot()
+        let day = FamilyNotebookOperation(familyID: family, target: .init(familyCatID: cat, field: .farewellDay), value: .day("2026-10-25"),
+            version: .init(clock: snapshot.clock + 1, deviceID: "b", operationID: UUID()), author: joiner, editedAt: now)
+        try store.receive([day])
+        try require(FamilyNotebookCatOrder.sharedFarewell(cat, in: try store.snapshot()) == CatCareDay(year: 2026, month: 10, day: 25),
+                    "a day the family shared is read for the page")
+        let cleared = FamilyNotebookOperation(familyID: family, target: .init(familyCatID: cat, field: .farewellDay), value: .clear,
+            version: .init(clock: snapshot.clock + 2, deviceID: "b", operationID: UUID()), author: joiner, editedAt: now,
+            observedOperationIDs: [day.id])
+        try store.receive([cleared])
+        try require(FamilyNotebookCatOrder.sharedFarewell(cat, in: try store.snapshot()) == nil, "a day taken back is no longer shown")
     }
 
     // MARK: The single-cat rule

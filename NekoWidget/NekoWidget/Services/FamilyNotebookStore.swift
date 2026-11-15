@@ -40,6 +40,13 @@ final class FamilyNotebookStore: @unchecked Sendable {
         var adoptionPlaintexts: [UUID: Data] = [:]
         static let pendingAdoptionPrefix = "compat-adoption-v1:pending:"
         static let acknowledgedAdoptionPrefix = "compat-adoption-v1:ack:"
+        // 11/15: the order of cats. Its own prefixes: a reader that knows only
+        // adoptionDay checks that no adoption key is left over after opening.
+        static let pendingPositionPrefix = "compat-position-v1:pending:"
+        static let acknowledgedPositionPrefix = "compat-position-v1:ack:"
+        static func compatPrefixes(_ field: FamilyNotebookField?) -> (pending: String, acknowledged: String) {
+            field == .position ? (pendingPositionPrefix, acknowledgedPositionPrefix) : (pendingAdoptionPrefix, acknowledgedAdoptionPrefix)
+        }
 
         private enum CodingKeys: String, CodingKey {
             case schemaVersion, familyID, revision, clock, operations, outboxIDs
@@ -50,16 +57,17 @@ final class FamilyNotebookStore: @unchecked Sendable {
         // change on decoding the same state, so serialize only these unordered
         // collections in a stable order. Keep operation/history order intact.
         func encode(to encoder: Encoder) throws {
-            let adoption = operations.filter { $0.target.field == .adoptionDay }
+            let adoption = operations.filter { $0.target.field.map { FamilyNotebookField.compatibility.contains($0) } == true }
             let adoptionIDs = Set(adoption.map(\.id))
             var retained = opaqueOperations ?? []
             var ledger = ledgerKeys
             for operation in adoption {
+                let prefixes = Self.compatPrefixes(operation.target.field)
                 retained.append(try adoptionPlaintexts[operation.id].map(FamilyNotebookOpaqueOperation.init(plaintext:))
                     ?? FamilyNotebookOpaqueOperation.preserving(operation))
-                if outboxIDs.contains(operation.id) { ledger.insert(Self.pendingAdoptionPrefix + operation.id.uuidString) }
+                if outboxIDs.contains(operation.id) { ledger.insert(prefixes.pending + operation.id.uuidString) }
                 if acknowledgements.contains(where: { $0.operationID == operation.id }) {
-                    ledger.insert(Self.acknowledgedAdoptionPrefix + operation.id.uuidString)
+                    ledger.insert(prefixes.acknowledged + operation.id.uuidString)
                 }
             }
             var values = encoder.container(keyedBy: CodingKeys.self)
@@ -82,11 +90,12 @@ final class FamilyNotebookStore: @unchecked Sendable {
             var remaining: [FamilyNotebookOpaqueOperation] = []
             for retained in state.opaqueOperations ?? [] {
                 if case .known(let operation) = try FamilyNotebookReceivedOperation.decode(retained.plaintext, promoteAdoption: true),
-                   operation.target.field == .adoptionDay {
+                   operation.target.field.map { FamilyNotebookField.compatibility.contains($0) } == true {
                     state.operations = try FamilyNotebookCore.merge(state.operations, [operation])
                     state.adoptionPlaintexts[operation.id] = retained.plaintext
-                    let pending = State.pendingAdoptionPrefix + operation.id.uuidString
-                    let acknowledged = State.acknowledgedAdoptionPrefix + operation.id.uuidString
+                    let prefixes = State.compatPrefixes(operation.target.field)
+                    let pending = prefixes.pending + operation.id.uuidString
+                    let acknowledged = prefixes.acknowledged + operation.id.uuidString
                     guard !(state.ledgerKeys.contains(pending) && state.ledgerKeys.contains(acknowledged)) else {
                         throw FamilyNotebookError.corruptStorage
                     }
@@ -97,7 +106,9 @@ final class FamilyNotebookStore: @unchecked Sendable {
                 } else { remaining.append(retained) }
             }
             state.opaqueOperations = remaining.isEmpty ? nil : remaining
-            guard !state.ledgerKeys.contains(where: { $0.hasPrefix(State.pendingAdoptionPrefix) || $0.hasPrefix(State.acknowledgedAdoptionPrefix) })
+            guard !state.ledgerKeys.contains(where: { key in
+                [State.pendingAdoptionPrefix, State.acknowledgedAdoptionPrefix, State.pendingPositionPrefix,
+                 State.acknowledgedPositionPrefix].contains { key.hasPrefix($0) } })
             else { throw FamilyNotebookError.corruptStorage }
             try FamilyNotebookStore.validate(state, familyID: familyID)
             return state
@@ -247,7 +258,7 @@ final class FamilyNotebookStore: @unchecked Sendable {
                     let h = try operation.header()
                     guard h.familyID == familyID else { throw FamilyNotebookError.familyMismatch }
                     if case .known(let decoded) = try FamilyNotebookReceivedOperation.decode(operation.plaintext, promoteAdoption: true),
-                       decoded.target.field == .adoptionDay {
+                       decoded.target.field.map { FamilyNotebookField.compatibility.contains($0) } == true {
                         if let old = state.adoptionPlaintexts[decoded.id], old != operation.plaintext {
                             throw FamilyNotebookError.operationCollision
                         }

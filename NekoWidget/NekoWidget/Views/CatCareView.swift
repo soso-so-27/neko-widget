@@ -48,6 +48,10 @@ enum CatCareSubject {
 /// deleted: the photos and records stay; the age stops at this day.
 enum CatFarewell {
     static let key = "debug.catFarewell.days.v1"
+    /// 11/15: the 旅立った日 the family shared in the notebook (someone chose
+    /// to send it), by the same keys. Read only; set by the notebook when it
+    /// is read, never saved here.
+    static var familyDays: [String: CatCareDay] = [:]
 
     static func days(_ json: String) -> [String: CatCareDay] {
         (try? JSONDecoder().decode([String: CatCareDay].self, from: Data(json.utf8))) ?? [:]
@@ -67,7 +71,7 @@ enum CatFarewell {
     /// The profiles whose day is recorded: they do not count toward the
     /// 10 living cats (11/14). Read where SwiftUI's @AppStorage is not at hand.
     static func departedIdentifiers(_ defaults: UserDefaults = .standard) -> Set<String> {
-        Set(days(defaults.string(forKey: key) ?? "").keys)
+        Set(days(defaults.string(forKey: key) ?? "").keys).union(familyDays.keys)
     }
 }
 

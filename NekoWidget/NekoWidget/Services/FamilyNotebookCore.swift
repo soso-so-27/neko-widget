@@ -105,6 +105,9 @@ enum FamilyNotebookField: String, Codable, CaseIterable, Hashable, Sendable {
     // shared removal must never look like deletion of someone's personal cat.
     case sharingEnded
     case farewellDay, adoptionDay
+    /// 11/15: the cat's place in the family's order (an integer). Unknown to
+    /// older apps, which keep it as an opaque operation, as with adoptionDay.
+    case position
     case name, sex, neutered, birthday, coat, marks, microchip, indoorOnly
     case conditions, allergyStatus, allergyText, specialDiet, water, litter, temperament
     case vetName, vetPhone, vetNote, measuredOn, grams, medicationName, dose, schedule
@@ -113,6 +116,14 @@ enum FamilyNotebookField: String, Codable, CaseIterable, Hashable, Sendable {
     case doctorNote, prescription, nextVisitOn
     case recipient, period, request, usualFood, meals, toilet, handling, important
     case callWhen, healthStatus, healthDetails
+}
+
+extension FamilyNotebookField {
+    /// Fields an older app does not know. Received, they stay opaque until a
+    /// store promotes them; on disk they stay in the old reader's opaque array.
+    static let compatibility: Set<FamilyNotebookField> = [.adoptionDay, .position]
+    /// The family's order of cats: 0 first. Ties are broken by the cat's ID.
+    static let positionRange = 0...100_000
 }
 
 enum FamilyNotebookValue: Codable, Equatable, Sendable {
@@ -313,7 +324,7 @@ enum FamilyNotebookCore {
         switch target.collection {
         case .cat: allowed = [.name, .sex, .neutered, .birthday, .adoptionDay, .coat, .marks, .microchip, .indoorOnly,
                               .conditions, .allergyStatus, .allergyText, .specialDiet, .water, .litter,
-                              .temperament, .vetName, .vetPhone, .vetNote, .farewellDay]
+                              .temperament, .vetName, .vetPhone, .vetNote, .farewellDay, .position]
         case .weight: allowed = [.measuredOn, .grams]
         case .medication: allowed = [.medicationName, .dose, .schedule, .startedOn, .endedOn, .note]
         case .vaccination: allowed = [.kind, .givenOn, .nextDueOn]
@@ -333,10 +344,11 @@ enum FamilyNotebookCore {
             if field == .doctorNote || field == .prescription {
                 guard text.count <= 500 else { throw FamilyNotebookError.invalidValue }
             }
-            guard !days.contains(field), !dates.contains(field), field != .grams, field != .order,
+            guard !days.contains(field), !dates.contains(field), field != .grams, field != .order, field != .position,
                   text.utf8.count <= 65_536, !text.contains("\u{0000}") else { throw FamilyNotebookError.invalidValue }
         case .integer(let number):
             guard (field == .grams && (0...1_000_000).contains(number)) || (field == .order && (0...100_000).contains(number))
+                    || (field == .position && FamilyNotebookField.positionRange.contains(number))
             else { throw FamilyNotebookError.invalidValue }
         case .decimal:
             // Reserved in the value algebra; no stage-1 field authorizes a decimal yet.
@@ -578,7 +590,9 @@ enum FamilyNotebookReceivedOperation: Sendable {
             || extra(target, ["familyCatId", "collection", "recordId", "parentRecordId", "field"])
             || extra(version, ["clock", "deviceId", "operationId"])
             || extra(author, ["personId", "displayName"]) { return .opaque(retained) }
-        if operation.target.field == .adoptionDay && !promoteAdoption { return .opaque(retained) }
+        if let field = operation.target.field, FamilyNotebookField.compatibility.contains(field), !promoteAdoption {
+            return .opaque(retained)
+        }
         return .known(operation)
     }
 }

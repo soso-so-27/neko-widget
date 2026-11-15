@@ -39,6 +39,25 @@ ADOPTION_PHASE=new-receive "$RUNNER_TEMP/verify-family-notebook-sync"
 ADOPTION_PHASE=old-edit "$RUNNER_TEMP/verify-family-notebook-sync-old"
 ADOPTION_PHASE=new-verify "$RUNNER_TEMP/verify-family-notebook-sync"
 unset ADOPTION_ROOT
+
+# 11/15: the family order of cats with two frozen readers: before #985 (the
+# one above) and main before the order. Neither baseline is updated.
+before_order_common=("${notebook_common[@]:0:${#notebook_common[@]}-2}" ci/fixtures/family-notebook-before-order/FamilyNotebookCore.swift ci/fixtures/family-notebook-before-order/FamilyNotebookStore.swift)
+xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" "${before_order_common[@]}" \
+  Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
+  NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupInvitationLink.swift NekoWidget/Services/GroupWindowStorage.swift \
+  NekoWidget/Services/GroupWindowOperationStore.swift Shared/Sharing/ClientUpgradeRequirement.swift NekoWidget/Services/GroupWindowTransport.swift \
+  NekoWidget/Services/FamilyNotebookCrypto.swift NekoWidget/Services/FamilyNotebookTransport.swift \
+  NekoWidget/Services/FamilyNotebookSync.swift ci/fixtures/family-notebook-before-order/FamilyNotebookBackup.swift ci/verify-family-notebook-sync.swift \
+  -o "$RUNNER_TEMP/verify-family-notebook-sync-before-order"
+"$RUNNER_TEMP/verify-family-notebook-sync-before-order"
+for reader in old before-order; do
+  export POSITION_ROOT="$RUNNER_TEMP/family-position-compat-$reader-$$"
+  POSITION_PHASE=new-write "$RUNNER_TEMP/verify-family-notebook-sync"
+  POSITION_PHASE=old-edit "$RUNNER_TEMP/verify-family-notebook-sync-$reader"
+  POSITION_PHASE=new-verify "$RUNNER_TEMP/verify-family-notebook-sync"
+  unset POSITION_ROOT
+done
 xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" "${notebook_common[@]}" \
   Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
   NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupInvitationLink.swift NekoWidget/Services/GroupWindowStorage.swift \
