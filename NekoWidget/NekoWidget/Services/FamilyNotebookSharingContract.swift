@@ -91,7 +91,7 @@ enum FamilySharingError: Error, Equatable, Sendable {
     /// Someone else in the family was confirmed as the payer first.
     case payerAlreadyChosen
     case offline, rateLimited, serviceUnavailable, unknownOutcome
-    case unsupported
+    case unsupported, upgradeRequired
     case farewellDayMissing, farewellPreviewChanged
     /// Not possible before the family works between iPhones (the prototype).
     case notAvailableYet
@@ -125,6 +125,7 @@ enum FamilySharingError: Error, Equatable, Sendable {
         case .rateLimited: "少し待ってから、もう一度お試しください。"
         case .serviceUnavailable: "いまは使えません。少し待ってから、もう一度お試しください。"
         case .unknownOutcome: "結果を確かめています。少し待ってから開き直してください。"
+        case .upgradeRequired: "この手帳は新しい版で書けます（アプリを更新してください）"
         case .unsupported: "App Storeでアプリを最新にしてください。記録は消えていません。"
         case .notAvailableYet: "いまは、まだ使えません。"
         case .farewellDayMissing: "この子の旅立った日は、まだ記録されていません。"

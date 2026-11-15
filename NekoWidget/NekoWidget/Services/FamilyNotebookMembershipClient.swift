@@ -260,6 +260,7 @@ actor FamilyNotebookMembershipClient {
         case .notMember: return .removedOrDissolved
         case .stale: return .staleRoster
         case .unavailable: return .serviceUnavailable
+        case .upgradeRequired: return .upgradeRequired
         case .operationInFlight, .unknownOutcome, .idempotencyConflict, .invalidResponse: return .unknownOutcome
         case .paused: return .membershipChecking
         case .server(let code, let status):
