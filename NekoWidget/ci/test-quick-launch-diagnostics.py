@@ -194,7 +194,7 @@ xcodebuild() {
         body = workflow.split("        run: |\n", 1)[1].split("      - name: Attach", 1)[0]
         body = "\n".join(line[10:] for line in body.splitlines()).replace("${{ inputs.attempt }}", "1")
         bash = "C:/Program Files/Git/bin/bash.exe" if Path("C:/Program Files/Git/bin/bash.exe").exists() else shutil.which("bash")
-        for status, marker, expected in ((0, False, "passed"), (124, True, "install_timeout"), (124, False, "failed"), (37, True, "failed"), (1, False, "failed")):
+        for status, marker, expected in ((0, "none", "passed"), (124, "install_timeout", "install_timeout"), (124, "launch_timeout", "launch_timeout"), (124, "none", "failed"), (37, "launch_timeout", "failed"), (37, "install_timeout", "failed"), (1, "none", "failed")):
             with self.subTest(status=status, marker=marker):
                 directory = self.root / f"wrapper-{status}-{marker}"; directory.mkdir()
                 preamble = r'''set -euo pipefail
@@ -206,7 +206,7 @@ touch "$GITHUB_OUTPUT"
 export RUNNER_TEMP RUNNER_NAME GITHUB_OUTPUT GITHUB_STEP_SUMMARY
 tar() { :; }
 bash() {
-  if [[ "$marker" == True ]]; then echo install_timeout=true >> "$GITHUB_OUTPUT"; fi
+  if [[ "$marker" != none ]]; then echo "$marker=true" >> "$GITHUB_OUTPUT"; fi
   return "$status"
 }
 '''
@@ -223,12 +223,13 @@ bash() {
         states = {
             "passed": {"result": "success", "outputs": {"result": "passed"}},
             "timeout": {"result": "success", "outputs": {"result": "install_timeout"}},
+            "launch": {"result": "success", "outputs": {"result": "launch_timeout"}},
             "failed": {"result": "failure"},
             "cancelled": {"result": "cancelled"},
             "skipped": {"result": "skipped"},
             "missing": {"result": "success", "outputs": {}},
         }
-        accepted = {("passed", "skipped", "skipped"), ("timeout", "passed", "skipped"), ("timeout", "timeout", "passed")}
+        accepted = {("passed", "skipped", "skipped"), ("timeout", "passed", "skipped"), ("timeout", "timeout", "passed"), ("launch", "passed", "skipped"), ("timeout", "launch", "passed")}
         for values in itertools.product(states, repeat=3):
             needs = {"quick-check": {"result": "success"}}
             needs.update({f"launch-attempt-{n}": states[value] for n, value in enumerate(values, 1)})
@@ -279,8 +280,10 @@ bounded() {
                 self.assertEqual(trace.count("bounded 90 xcrun simctl launch"), expected_launches)
                 self.assertIn("xcrun simctl delete", trace)
                 output = directory / "outputs"
-                self.assertEqual(output.exists(), scenario == "install-timeout")
-                if output.exists():
+                self.assertEqual(output.exists(), scenario in ("install-timeout", "timeout"))
+                if scenario == "timeout":
+                    self.assertEqual(output.read_text().strip(), "launch_timeout=true")
+                if scenario == "install-timeout":
                     self.assertEqual(output.read_text().strip(), "install_timeout=true")
                     self.assertEqual(trace.count("bounded 90 xcrun simctl install"), 1)
                     self.assertNotIn("bounded 30 xcrun simctl shutdown", trace)

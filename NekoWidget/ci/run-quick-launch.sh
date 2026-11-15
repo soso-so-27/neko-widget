@@ -97,7 +97,15 @@ else
   reboot_simulator
   quick_launch_after_phase=after-retry
   quick_snapshot before-retry
-  launch=$(bounded 90 xcrun simctl launch "$device" "$bundle")
+  if launch=$(bounded 90 xcrun simctl launch "$device" "$bundle"); then
+    :
+  else
+    retry_status=$?
+    if [[ "$retry_status" == 124 && -n "${GITHUB_OUTPUT:-}" ]]; then
+      echo "launch_timeout=true" >> "$GITHUB_OUTPUT"
+    fi
+    exit "$retry_status"
+  fi
 fi
 pid=${launch##*: }
 sleep 5
