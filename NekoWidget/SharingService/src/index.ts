@@ -1,3 +1,4 @@
+import {cleanupFamilyRepresentativePhotos} from './family-representative-photo';
 import { clientUpgradeResponse } from './client-upgrade-required';
 import { beginReadDiagnostic, finishReadDiagnostic, readStage } from './read-failure-diagnostic';
 import {advanceIdentityDeletion,deletionRequired,scopeIdentityCheck,identityDeletionAPI,isIdentityDeletionPath,protectedGroupRead} from './group-identity-service';
@@ -701,6 +702,7 @@ export default {
       ctx.waitUntil(runMomentCleanup(env));
       // Withdrawals remain cleanup-eligible even when the pilot gate is off.
       ctx.waitUntil(runFamilyRecordCleanup(env));
+      ctx.waitUntil(cleanupFamilyRepresentativePhotos(env));
       ctx.waitUntil(cleanupDissolvedFamilyRosters(env));
       ctx.waitUntil(env.DB.prepare('DELETE FROM family_notebook_daily_usage WHERE day<(unixepoch()+32400)/86400-1').run());
       ctx.waitUntil(runGroupRelayCleanup(env));

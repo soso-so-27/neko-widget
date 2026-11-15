@@ -124,7 +124,8 @@ export async function familyRepresentativePhoto(request:Request,env:Env):Promise
 
 /** Only this feature's recorded objects; never enumerate/delete unrelated R2 keys. */
 export async function cleanupFamilyRepresentativePhotos(env:Env,now=Math.floor(Date.now()/1000)):Promise<number>{
- if(env.FAMILY_REPRESENTATIVE_PHOTO_RUNTIME_ENABLED!=='YES'||!env.MEDIA)return 0;
+ if(!env.MEDIA)return 0;
+ if(!await env.DB.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='family_representative_assets'").first())return 0;
  const rows=await env.DB.prepare(`SELECT * FROM family_representative_assets WHERE state='retired' OR (state IN ('reserved','uploaded') AND expires_at<=?) ORDER BY expires_at LIMIT 20`).bind(now).all<Asset>();
  let removed=0;
  for(const a of rows.results){

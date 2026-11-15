@@ -65,9 +65,9 @@ actor FamilyNotebookRepresentativePhotoClient {
                         epochKey: Data, observedOperationIDs: [UUID]) throws -> Pending {
         guard expectedRevision >= 0, expectedRevision < 1_000_000_000, generation > 0 else { throw FamilyNotebookCryptoError.invalid }
         let pixels = try FamilyNotebookRepresentativePhotoImage.prepare(source)
-        let assetID = UUID()
+        let assetID = UUID(), slotID = FamilyNotebookRepresentativePhotoCrypto.slotID(familyID: familyID, catID: catID)
         let encrypted = try FamilyNotebookRepresentativePhotoCrypto.seal(jpeg: pixels.jpeg, width: pixels.width,
-            height: pixels.height, familyID: familyID, slotID: catID, assetID: assetID,
+            height: pixels.height, familyID: familyID, slotID: slotID, assetID: assetID,
             revision: expectedRevision + 1, roster: roster)
         guard let field = FamilyNotebookField(rawValue: "representativePhoto"), expectedRevision >= 0,
               expectedRevision < 1_000_000_000, generation > 0 else { throw FamilyNotebookCryptoError.invalid }
@@ -76,7 +76,7 @@ actor FamilyNotebookRepresentativePhotoClient {
             version: .init(clock: nextClock, deviceID: try identity.deviceID, operationID: UUID()), author: author,
             editedAt: Date(), observedOperationIDs: observedOperationIDs)
         let packet = try FamilyNotebookOperationCrypto.seal(operation, roster: roster, key: epochKey, signingKey: identity.signingKey)
-        return .init(reservation: .init(schemaVersion: 1, operationID: UUID(), slotID: catID, assetID: assetID,
+        return .init(reservation: .init(schemaVersion: 1, operationID: UUID(), slotID: slotID, assetID: assetID,
             expectedRevision: expectedRevision, expectedGeneration: generation, keyEpoch: roster.roster.epoch,
             rosterHash: roster.hash, ciphertextBytes: encrypted.ciphertext.count,
             ciphertextSHA256: encrypted.reference.ciphertextSHA256), ciphertext: encrypted.ciphertext, operation: packet)
@@ -127,7 +127,7 @@ actor FamilyNotebookRepresentativePhotoClient {
               GroupCanonical.hash(pending.ciphertext) == r.ciphertextSHA256 else { throw FamilyNotebookCryptoError.invalid }
         let account = "family-photo-pending-" + endpointKey + "-" + r.operationID.uuidString.lowercased()
         let bytes = try GroupWire.encode(pending)
-        if let stored = try journal.read(account: account) {
+        if let stored = try journal.read(account) {
             guard stored == bytes else { throw FamilyNotebookTransportError.idempotencyConflict }
         } else { try journal.write(bytes, account: account, createOnly: true) }
         struct Lease: Decodable { let schemaVersion: Int; let assetID: UUID; let uploadID: UUID; let reservedRevision: Int; let state: String }
@@ -161,7 +161,7 @@ actor FamilyNotebookRepresentativePhotoClient {
         let cacheKey = "family-photo-cipher-" + endpointKey + "-" + familyID.uuidString.lowercased() + "-" + reference.assetID.uuidString.lowercased()
             + "-" + GroupWire.base64(reference.ciphertextSHA256)
         let ciphertext: Data
-        if let cached = try journal.read(account: cacheKey), GroupCanonical.hash(cached) == reference.ciphertextSHA256 { ciphertext = cached }
+        if let cached = try journal.read(cacheKey), GroupCanonical.hash(cached) == reference.ciphertextSHA256 { ciphertext = cached }
         else {
             ciphertext = try await call("/assets/" + reference.assetID.uuidString.lowercased(), maximum: 200_028)
             guard GroupCanonical.hash(ciphertext) == reference.ciphertextSHA256 else { throw FamilyNotebookCryptoError.untrusted }
