@@ -47,6 +47,8 @@ final class CatHomePageActions {
     var openSettings: () -> Void = {}
     var choose: (String) -> Void = { _ in }
     var add: () -> Void = {}
+    /// 11/15: 「写真を選ぶ」 on a family cat's page (its page ID).
+    var choosePhoto: (String) -> Void = { _ in }
     /// VoiceOver's 「次の子」「前の子」: from a page (its index) by -1 or 1.
     var turn: (_ from: Int, _ by: Int) -> Void = { _, _ in }
     var saveLifeDates: (String, CatProfileLifeDatesPresentation) async -> Bool = { _, _ in false }
@@ -292,6 +294,16 @@ struct CatHomeView: View {
     /// The page the pager last came to rest on (the tick is for this).
     @State private var settledPageID: String?
     @State private var pageActions = CatHomePageActions()
+    /// 11/15: 「このiPhoneの子と同じですか。」 for one family cat.
+    @State private var linkQuestion: CatHomeLinkQuestion?
+    /// 11/15: 「この子を追加」 with family cats not yet on this iPhone.
+    @State private var choosesFamilyCat = false
+    /// 11/15: the family cat a new cat of this iPhone is registered as.
+    @State private var registeringFamilyCat: FamilyNotebookCatLink.Unlinked?
+    /// The question shown and not answered yet (closed: not asked again
+    /// until the next launch), and a cat to register once it is gone.
+    @State private var unansweredLinkCat: UUID?
+    @State private var registerAfterQuestion: FamilyNotebookCatLink.Unlinked?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Up to this many cats, every page is built up front (CatHomeView.pager).
@@ -315,7 +327,7 @@ struct CatHomeView: View {
                     pager(cats, current: current, metrics: metrics)
                 } else {
                     CatHomeNoCatPage(metrics: metrics, tools: tools, openSettings: openSettings) {
-                        addsCat = true
+                        startAdding()
                     }
                 }
             }
@@ -327,10 +339,49 @@ struct CatHomeView: View {
         // menu is the name on the photo.
         // No title on this page: the photo runs under the status bar.
         .toolbar(.hidden, for: .navigationBar)
-        .addingCatProfile(isStarted: $addsCat, presentation: presentation, actions: actions) { identifier in
+        .addingCatProfile(isStarted: $addsCat, presentation: presentation, actions: actions,
+                          initialName: registeringFamilyCat?.name) { identifier in
+            if let family = registeringFamilyCat {
+                registeringFamilyCat = nil
+                link(family, to: identifier)
+            }
             storedCatID = identifier
             pageID = identifier
             addedCat = identifier
+        }
+        .sheet(item: $linkQuestion, onDismiss: {
+            if let closed = unansweredLinkCat { familyNotebook.closeLinkQuestion(closed) }
+            unansweredLinkCat = nil
+            if let next = registerAfterQuestion { registerAfterQuestion = nil; register(next) }
+        }) { question in
+            FamilyNotebookLinkQuestionView(
+                cat: question.cat, cats: linkCandidates(for: question.cat),
+                choose: { profile in
+                    unansweredLinkCat = nil
+                    linkQuestion = nil
+                    link(question.cat, to: profile.identifier)
+                },
+                other: {
+                    unansweredLinkCat = nil
+                    familyNotebook.rememberLinkAnswer(question.cat.id)
+                    // From the page's 「写真を選ぶ」: another cat, so register it.
+                    if question.registersOther { registerAfterQuestion = question.cat }
+                    linkQuestion = nil
+                })
+        }
+        .confirmationDialog("家族の手帳の子から選ぶ", isPresented: $choosesFamilyCat, titleVisibility: .visible) {
+            ForEach(familyNotebook.unlinkedFamilyCats) { cat in
+                Button(cat.name.isEmpty ? "名前未設定の猫" : cat.name) { choosePhoto(for: cat) }
+            }
+            Button("新しい子を追加") { registeringFamilyCat = nil; addsCat = true }
+            Button("キャンセル", role: .cancel) {}
+        }
+        // Asked once the tab is open and still, never as the app opens.
+        .task(id: familyNotebook.unlinkedFamilyCats.map(\.id)) {
+            familyNotebook.deviceCats = presentation.profiles
+            try? await Task.sleep(for: .milliseconds(900))
+            guard !Task.isCancelled else { return }
+            askLinkQuestionIfNeeded()
         }
         .navigationDestination(item: $addedCat) { identifier in
             if let profile = presentation.profiles.first(where: { $0.identifier == identifier }) {
@@ -357,7 +408,10 @@ struct CatHomeView: View {
         pageActions.openSettings = openSettings
         pageActions.saveLifeDates = actions.updateLifeDates
         pageActions.choose = { id in show(id) }
-        pageActions.add = { addsCat = true }
+        pageActions.add = { startAdding() }
+        pageActions.choosePhoto = { id in
+            if let cat = familyNotebook.unlinkedFamilyCats.first(where: { $0.toolID.uuidString == id }) { choosePhoto(for: cat) }
+        }
         pageActions.turn = { index, by in turn(from: index, by: by) }
     }
 
@@ -390,7 +444,7 @@ struct CatHomeView: View {
     /// open even before their cat reappears through a new invitation.
     private var familyOnlyCats: [FamilyNotebookPrototype.FamilyCat] {
         let profileIDs = Set(presentation.profiles.map(\.identifier))
-        let shared = familyNotebook.familyCats.filter { cat in
+        let shared = familyNotebook.activeFamilyCats.filter { cat in
             guard let profileID = careStore.state?.cats
                 .first(where: { $0.catID == cat.toolID && $0.deletedAt == nil })?.profileID else { return true }
             return !profileIDs.contains(profileID.uuidString)
@@ -501,6 +555,7 @@ struct CatHomeView: View {
                                                        saveLifeDates: { await pageActions.saveLifeDates($0, $1) }),
                            menuCats: cats.count >= Self.menuMinimumCats
                                ? cats.map { CatHomeMenuCat(id: $0.id, name: $0.name) } : nil,
+                           choosesPhoto: unlinkedToolIDs.contains(cat.id),
                            actions: pageActions)
     }
 
@@ -547,6 +602,52 @@ struct CatHomeView: View {
     private func show(_ id: String) {
         withAnimation(reduceMotion ? nil : .snappy) { pageID = id }
         storedCatID = id
+    }
+
+    // MARK: The same cat in the family notebook (11/15)
+
+    /// Pages of family cats not linked to a cat of this iPhone.
+    private var unlinkedToolIDs: Set<String> {
+        Set(familyNotebook.unlinkedFamilyCats.map(\.toolID.uuidString))
+    }
+
+    /// This iPhone's cats that a family cat could be: same name first.
+    private func linkCandidates(for cat: FamilyNotebookCatLink.Unlinked) -> [CatProfilePresentation] {
+        FamilyNotebookCatLink.candidates(for: cat.name, among: presentation.profiles,
+                                         id: { UUID(uuidString: $0.identifier) }, name: { $0.displayName },
+                                         linked: familyNotebook.linkedProfiles)
+    }
+
+    private func askLinkQuestionIfNeeded() {
+        guard linkQuestion == nil, !choosesFamilyCat, !addsCat,
+              let cat = familyNotebook.pendingLinkQuestion(profiles: presentation.profiles.map(\.identifier))
+        else { return }
+        unansweredLinkCat = cat.id
+        linkQuestion = CatHomeLinkQuestion(cat: cat, registersOther: false)
+    }
+
+    /// 「この子を追加」: the family's cats first when some are not here yet.
+    private func startAdding() {
+        registeringFamilyCat = nil
+        if familyNotebook.unlinkedFamilyCats.isEmpty { addsCat = true } else { choosesFamilyCat = true }
+    }
+
+    /// A family cat gets this iPhone's photos: one of this iPhone's cats, or
+    /// a cat registered now with the family cat's name.
+    private func choosePhoto(for cat: FamilyNotebookCatLink.Unlinked) {
+        if linkCandidates(for: cat).isEmpty { register(cat) }
+        else { linkQuestion = CatHomeLinkQuestion(cat: cat, registersOther: true) }
+    }
+
+    private func register(_ cat: FamilyNotebookCatLink.Unlinked) {
+        registeringFamilyCat = cat
+        addsCat = true
+    }
+
+    private func link(_ cat: FamilyNotebookCatLink.Unlinked, to profile: String) {
+        guard let id = UUID(uuidString: profile) else { return }
+        let notebook = familyNotebook
+        Task { _ = try? await notebook.link(cat.id, toProfile: id) }
     }
 
     /// VoiceOver's 「次の子」「前の子」 (11/14): the same move as a swipe;
@@ -736,6 +837,8 @@ private struct CatHomePage: View {
     /// The cats of the cat menu after the name; nil with fewer than
     /// `CatHomeView.menuMinimumCats` cats (no button, swipe instead).
     let menuCats: [CatHomeMenuCat]?
+    /// 11/15: a family cat with no cat of this iPhone: 「写真を選ぶ」.
+    var choosesPhoto = false
     /// 設定, 写真を見せる, the cat menu and the birthday editor's save.
     let actions: CatHomePageActions
 
@@ -747,6 +850,7 @@ private struct CatHomePage: View {
                             turn: { [pageIndex] by in actions.turn(pageIndex, by) })
                 // 18 (was 22): the page fits one screen on a standard iPhone (11/14).
                 VStack(spacing: 18) {
+                    if choosesPhoto { CatHomeChoosePhotoButton(name: cat.name) { actions.choosePhoto(cat.id) } }
                     // A cat whose farewell day is recorded is not offered in the tools.
                     if !facts.departed {
                         CatHomeToolBar(cat: cat, toolsShown: CatHomeTool.allCases, width: metrics.width,
@@ -790,7 +894,7 @@ extension CatHomePage: Equatable {
             && lhs.pageIndex == rhs.pageIndex && lhs.pageCount == rhs.pageCount
             && lhs.vetUnfinished == rhs.vetUnfinished && lhs.searching == rhs.searching
             && lhs.care == rhs.care && lhs.careLinks.catID == rhs.careLinks.catID
-            && lhs.menuCats == rhs.menuCats && lhs.actions === rhs.actions
+            && lhs.menuCats == rhs.menuCats && lhs.choosesPhoto == rhs.choosesPhoto && lhs.actions === rhs.actions
     }
 }
 
@@ -873,9 +977,14 @@ private struct CatHomeHero: View {
 
     @ViewBuilder private var backdrop: some View {
         ZStack {
-            // A calm neutral for a cat without a key photo (no placeholder icon).
-            LinearGradient(colors: [Color(red: 0.56, green: 0.57, blue: 0.60), Color(red: 0.30, green: 0.31, blue: 0.34)],
+            // A calm neutral for a cat without a key photo; 11/15: with のわ
+            // on it, so a page with no photo (a family cat, a cat without
+            // photos yet) does not look unfinished.
+            LinearGradient(colors: [Color(red: 0.62, green: 0.59, blue: 0.55), Color(red: 0.36, green: 0.34, blue: 0.32)],
                            startPoint: .top, endPoint: .bottom)
+            if cat.profile?.coverPhoto == nil {
+                CatHomeNoPhotoArt(metrics: metrics)
+            }
             if let photo = cat.profile?.coverPhoto {
                 PhotoAssetImageView(
                     localIdentifier: photo.localIdentifier,
@@ -1278,6 +1387,57 @@ private struct CatHomeToolRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(state.map { "\(tool.title)、\($0.text)" } ?? tool.title)
     }
+}
+
+/// 11/15: the page of a cat without a photo: のわ, pale, where the photo
+/// would be. One picture for every such page.
+private struct CatHomeNoPhotoArt: View {
+    let metrics: CatHomeMetrics
+
+    var body: some View {
+        // Between the settings button and the name.
+        let top = metrics.topInset + 44
+        let room = max(metrics.heroHeight - top - 120, 56)
+        let side = min(room, 132)
+        Image("Nowa-sit-up")
+            .resizable()
+            .scaledToFit()
+            .frame(width: side * 0.7, height: side * 0.7)
+            .frame(width: side, height: side)
+            .background(Color(red: 0.96, green: 0.94, blue: 0.90), in: Circle())
+            .opacity(0.55)
+            .padding(.top, top + max((room - side) / 2, 0))
+            .frame(width: metrics.width, height: metrics.heroHeight, alignment: .top)
+            .clipped()
+            .accessibilityHidden(true)
+    }
+}
+
+/// 11/15: 「写真を選ぶ」 under the photo of a family cat this iPhone has no
+/// cat for: it links to a cat here, or registers one with its name.
+private struct CatHomeChoosePhotoButton: View {
+    let name: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label("写真を選ぶ", systemImage: "photo.on.rectangle")
+                .font(.body.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.capsule)
+        .accessibilityLabel(name.isEmpty ? "写真を選ぶ" : name + "の写真を選ぶ")
+        .accessibilityIdentifier("cat-home-choose-photo")
+    }
+}
+
+/// 11/15: the question's family cat, and whether 「べつの子」 goes on to
+/// register a cat (asked from the page's 「写真を選ぶ」).
+struct CatHomeLinkQuestion: Identifiable {
+    let cat: FamilyNotebookCatLink.Unlinked
+    let registersOther: Bool
+    var id: UUID { cat.id }
 }
 
 /// No cat yet: のわ in a soft field, one sentence, one button; under it the

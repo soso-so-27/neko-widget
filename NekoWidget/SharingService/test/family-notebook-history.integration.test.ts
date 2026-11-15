@@ -1,3 +1,4 @@
+import {cleanupFamilyRepresentativePhotos} from '../src/family-representative-photo';
 import { cleanupDissolvedFamilyRosters } from '../src/family-notebook-roster-cleanup';
 import { describe, expect, it } from 'vitest';
 import { route } from '../src/index';
@@ -212,7 +213,7 @@ describe('family encrypted history transaction boundary', () => {
     expect((await invoke(b, path, body(await envelope(b, b, r2, r), 2, 2), env)).data.error.code).toBe('family_notebook_crypto_stale');
   });
 
-  it('checks the deletion boundary of a dissolved family with another member’s history', async () => {
+  it('checks the deletion boundary of a dissolved family with another member窶冱 history', async () => {
     const a = await plusOwner(), b = await person(), f = await create(a), {m,r} = await initialize(a,f);
     await admit(a,b,f);
     const mb = await register(b,f,2,1), next = await packet(a,f,[m,mb],r);
@@ -272,4 +273,174 @@ describe('family encrypted history transaction boundary', () => {
     expect((await db.prepare('PRAGMA foreign_key_check').all()).results).toEqual([]);
     expect(copy).toEqual([{sequence:1,packet:op}]);
   });
+});
+
+
+describe('family quota atomic boundary',()=>{
+  async function limits(test:()=>Promise<void>) {
+    await db.prepare('UPDATE family_notebook_quota_policy SET enabled=1,maximum_operations=1 WHERE singleton=1').run();
+    try { await test(); } finally { await db.prepare('UPDATE family_notebook_quota_policy SET enabled=0,maximum_operations=500000,maximum_bytes=536870912,daily_operations=10000,daily_bytes=16777216 WHERE singleton=1').run(); }
+  }
+  it('admits exactly one concurrent operation, keeps its retry, and preserves rejected pending content',async()=>{
+    const a=await plusOwner(),f=await create(a),{r}=await initialize(a,f),path=`${root}/${f}/crypto/operations`;
+    const packets=await Promise.all([operation(a,r),operation(a,r)]);
+    await limits(async()=>{
+      const results=await Promise.all(packets.map(op=>invoke(a,path,body(op,1,1,op.operationId))));
+      expect(results.map(x=>x.status).sort()).toEqual([200,409]);
+      const accepted=results.findIndex(x=>x.status===200),rejected=1-accepted,op=packets[accepted]!;
+      expect(results[rejected]!.data.error).toMatchObject({code:'family_notebook_limit_exceeded',reason:'total_operations',maximumOperations:1,usedOperations:1});
+      expect(ok(await invoke(a,path,body(op,1,1,op.operationId)))).toEqual(results[accepted]!.data);
+      expect(ok(await invoke(a,`${path}/0`)).operations).toHaveLength(1);
+      expect((await db.prepare('SELECT COUNT(*) n FROM family_notebook_crypto_receipts WHERE operation_id=?').bind(packets[rejected]!.operationId).first())?.n).toBe(0);
+      expect(await db.prepare('SELECT operations,bytes FROM family_notebook_usage WHERE family_id=?').bind(f).first()).toEqual({operations:1,bytes:new TextEncoder().encode(JSON.stringify(op)).length});
+    });
+  });
+  it('counts exact bytes and distinguishes total and daily limits',async()=>{
+    const a=await plusOwner(),f=await create(a),{r}=await initialize(a,f),path=`${root}/${f}/crypto/operations`,one=await operation(a,r),two=await operation(a,r);
+    const bytes=new TextEncoder().encode(JSON.stringify(one)).length;
+    await limits(async()=>{
+      await db.prepare('UPDATE family_notebook_quota_policy SET maximum_operations=500000,maximum_bytes=?').bind(bytes).run();
+      ok(await invoke(a,path,body(one,1,1,one.operationId)));
+      expect((await invoke(a,path,body(two,1,1,two.operationId))).data.error.reason).toBe('total_bytes');
+      await db.prepare('UPDATE family_notebook_quota_policy SET maximum_bytes=536870912,daily_bytes=?').bind(bytes).run();
+      expect((await invoke(a,path,body(two,1,1,two.operationId))).data.error.reason).toBe('daily_bytes');
+      await db.prepare('UPDATE family_notebook_quota_policy SET daily_bytes=16777216,daily_operations=1').run();
+      expect((await invoke(a,path,body(two,1,1,two.operationId))).data.error.reason).toBe('daily_operations');
+    });
+  });
+  it('reconciles deletion/restoration without refunding daily allowance',async()=>{
+    const a=await plusOwner(),f=await create(a),{r}=await initialize(a,f),op=await operation(a,r);
+    ok(await invoke(a,`${root}/${f}/crypto/operations`,body(op,1,1,op.operationId)));
+    const saved=await db.prepare('SELECT * FROM family_notebook_crypto_operations WHERE family_id=?').bind(f).first<Record<string,string|number>>();
+    await db.prepare('DELETE FROM family_notebook_crypto_operations WHERE family_id=?').bind(f).run();
+    expect(await db.prepare('SELECT operations,bytes FROM family_notebook_usage WHERE family_id=?').bind(f).first()).toEqual({operations:0,bytes:0});
+    await db.prepare('INSERT INTO family_notebook_crypto_operations VALUES(?,?,?,?,?,?,?)').bind(saved!.family_id,saved!.sequence,saved!.operation_id,saved!.epoch,saved!.actor_person_id,saved!.actor_device_id,saved!.packet).run();
+    expect((await db.prepare('SELECT operations FROM family_notebook_usage WHERE family_id=?').bind(f).first())?.operations).toBe(1);
+    expect((await db.prepare('SELECT operations FROM family_notebook_daily_usage WHERE person_id=?').bind(a.id).first())?.operations).toBe(2);
+  });
+  it('measures synthetic signed packets for a per-person daily allowance',async()=>{
+    const a=await plusOwner(),f=await create(a),{r}=await initialize(a,f),measurements=[];
+    for(const size of [48,1024,8192,1048576]) {
+      const op=await operation(a,r,size),bytes=new TextEncoder().encode(JSON.stringify(op)).length;
+      measurements.push({ciphertextBytes:size,packetBytes:bytes,dailyFits:Math.min(10000,Math.floor(16777216/bytes)),totalFits:Math.min(500000,Math.floor(536870912/bytes))});
+    }
+    expect(measurements[1]!.dailyFits).toBeGreaterThan(5000);
+    console.info(JSON.stringify({syntheticFamilyQuota:measurements}));
+  });
+});
+
+
+describe('representative photo write contract (photo runtime remains OFF)', () => {
+  it('retains reads and committed legacy receipts while rejecting new old/unknown writes', async () => {
+    const owner = await plusOwner(), family = await create(owner), {r} = await initialize(owner,family);
+    const path = `${root}/${family}/crypto/operations`;
+    const prior = await operation(owner,r), priorBody = body(prior,1,1,prior.operationId);
+    ok(await invoke(owner,path,priorBody));
+    await db.prepare('INSERT INTO family_notebook_write_policy VALUES (?,1)').bind(family).run();
+    ok(await invoke(owner,path,priorBody));
+    const next = await operation(owner,r), nextBody = body(next,1,1,next.operationId);
+    expect((await invoke(owner,path,nextBody)).data.error.code).toBe('photo_protocol_upgrade_required');
+    expect((await invoke(owner,path,{...nextBody,writeContract:{version:2,effects:[]}})).data.error.code).toBe('photo_protocol_upgrade_required');
+    expect((await db.prepare('SELECT COUNT(*) n FROM family_notebook_crypto_operations WHERE family_id=?').bind(family).first())?.n).toBe(1);
+    const state = ok(await invoke(owner,`${root}/${family}/crypto/state`));
+    expect(state.writeContract).toEqual({supportedVersion:1,requiredVersion:1});
+    ok(await invoke(owner,`${root}/${family}/crypto/operations/0`));
+    ok(await invoke(owner,path,{...nextBody,writeContract:{version:1,effects:[]}}));
+    expect((await db.prepare('SELECT COUNT(*) n FROM family_notebook_crypto_operations WHERE family_id=?').bind(family).first())?.n).toBe(2);
+  });
+  it('checks the required contract inside the commit batch, not just before it', async () => {
+    const owner=await plusOwner(),family=await create(owner),{r}=await initialize(owner,family);
+    const packet=await operation(owner,r);
+    const env=beforeCommit(async()=>{await db.prepare('INSERT INTO family_notebook_write_policy VALUES (?,1)').bind(family).run();});
+    const reply=await invoke(owner,`${root}/${family}/crypto/operations`,body(packet,1,1,packet.operationId),env);
+    expect(reply.data.error.code).toBe('photo_protocol_upgrade_required');
+    expect((await db.prepare('SELECT COUNT(*) n FROM family_notebook_crypto_operations WHERE family_id=?').bind(family).first())?.n).toBe(0);
+  });
+});
+
+describe('representative photo reservation and exchange',()=>{
+ const photos:Env={...enabled,FAMILY_REPRESENTATIVE_PHOTO_RUNTIME_ENABLED:'YES'};
+ async function upload(p:Person,family:string,r:VerifiedFamilyCryptoRoster,slot=crypto.randomUUID(),revision=0){
+  const bytes=new Uint8Array(100).fill(7),assetId=crypto.randomUUID();
+  const rootPath=`${root}/${family}/representative-photos`;
+  const reservation={schemaVersion:1,operationId:crypto.randomUUID(),slotId:slot,assetId,expectedRevision:revision,expectedGeneration:1,keyEpoch:1,rosterHash:r.hash,ciphertextBytes:bytes.length,ciphertextSHA256:await sha256Base64url(bytes)};
+  ok(await invoke(p,rootPath+'/uploads',reservation,photos),201);
+  const req=await signed(p,rootPath+'/uploads/'+assetId,bytes,undefined,'PUT');
+  const reply=await route(req,photos);expect(reply.status).toBe(200);
+  const packet=await operation(p,r),commit={operationId:packet.operationId,expectedGeneration:1,expectedRevision:revision,payload:packet};
+  return {rootPath,reservation,assetId,slot,commit};
+ }
+ it('requires explicit ON and authenticates download; commits one current photo and keeps reads compatible',async()=>{
+  const p=await plusOwner(),f=await create(p),{r}=await initialize(p,f);
+  expect((await invoke(p,`${root}/${f}/representative-photos/slots`)).data.error.code).toBe('photo_feature_disabled');
+  const a=await upload(p,f,r);const path=a.rootPath+'/uploads/'+a.assetId+'/commit';
+  ok(await invoke(p,path,a.commit,photos));ok(await invoke(p,path,a.commit,photos));
+  const download=await route(await signed(p,a.rootPath+'/assets/'+a.assetId),photos);
+  expect(download.status).toBe(200);expect((await download.arrayBuffer()).byteLength).toBe(100);
+  expect((await invoke(await person(),a.rootPath+'/assets/'+a.assetId,undefined,photos)).status).toBe(404);
+  const state=ok(await invoke(p,`${root}/${f}/crypto/state`));expect(state.writeContract.requiredVersion).toBe(1);
+  const next=await upload(p,f,r,a.slot,1);ok(await invoke(p,next.rootPath+'/uploads/'+next.assetId+'/commit',next.commit,photos));
+  expect((await invoke(p,a.rootPath+'/assets/'+a.assetId,undefined,photos)).data.error.code).toBe('photo_retired');
+  expect((await db.prepare("SELECT COUNT(*) n FROM family_representative_assets WHERE family_id=? AND state='active'").bind(f).first())?.n).toBe(1);
+ });
+ it('does not publish when the expected slot revision changes before commit',async()=>{
+  const p=await plusOwner(),f=await create(p),{r}=await initialize(p,f),a=await upload(p,f,r);
+  const env={...beforeCommit(async()=>{await db.prepare('UPDATE family_representative_slots SET revision=9 WHERE family_id=?').bind(f).run();}),FAMILY_REPRESENTATIVE_PHOTO_RUNTIME_ENABLED:'YES'};
+  const reply=await invoke(p,a.rootPath+'/uploads/'+a.assetId+'/commit',a.commit,env);
+  expect(reply.data.error.code).toBe('revision_conflict');
+  expect((await db.prepare('SELECT COUNT(*) n FROM family_notebook_crypto_operations WHERE family_id=?').bind(f).first())?.n).toBe(0);
+ });
+ it('allows replacement at ten slots but rejects the eleventh; failed cleanup retains the charge',async()=>{
+  const p=await plusOwner(),f=await create(p),{r}=await initialize(p,f),a=await upload(p,f,r);
+  ok(await invoke(p,a.rootPath+'/uploads/'+a.assetId+'/commit',a.commit,photos));
+  for(let i=0;i<9;i++)await db.prepare("INSERT INTO family_representative_slots VALUES (?,?,0,NULL,'active')").bind(f,crypto.randomUUID()).run();
+  const next=await upload(p,f,r,a.slot,1);
+  ok(await invoke(p,next.rootPath+'/uploads/'+next.assetId+'/commit',next.commit,photos));
+  const extra={...a.reservation,operationId:crypto.randomUUID(),assetId:crypto.randomUUID(),slotId:crypto.randomUUID()};
+  expect((await invoke(p,a.rootPath+'/uploads',extra,photos)).data.error.code).toBe('photo_slots_full');
+  const replacement={...extra,slotId:a.slot,expectedRevision:2};
+  expect((await invoke(p,a.rootPath+'/uploads',replacement,photos)).data.error.code).toBe('photo_cleanup_pending');
+  const failing={...photos,MEDIA:new Proxy(photos.MEDIA!,{get(target,key){if(key==='delete')return async()=>{throw new Error('synthetic storage outage')};const v=Reflect.get(target,key);return typeof v==='function'?v.bind(target):v;}})};
+  await cleanupFamilyRepresentativePhotos(failing);
+  expect((await invoke(p,a.rootPath+'/uploads',replacement,photos)).data.error.code).toBe('photo_cleanup_pending');
+  await cleanupFamilyRepresentativePhotos(photos);
+  expect(await photos.MEDIA!.get(`family-representative/v1/${f}/${a.assetId}`)).toBeNull();
+  ok(await invoke(p,a.rootPath+'/uploads',replacement,photos),201);
+  expect(await photos.MEDIA!.get(`family-representative/v1/${f}/${next.assetId}`)).not.toBeNull();
+ });
+ it('retains committed receipts after lease expiration and retires a removed cat atomically',async()=>{
+  const p=await plusOwner(),f=await create(p),{r}=await initialize(p,f),a=await upload(p,f,r);
+  const path=a.rootPath+'/uploads/'+a.assetId+'/commit';
+  const saved=ok(await invoke(p,path,a.commit,photos));
+  await db.prepare('UPDATE family_representative_assets SET expires_at=1 WHERE asset_id=?').bind(a.assetId).run();
+  expect(ok(await invoke(p,path,a.commit,photos))).toEqual(saved);
+  const packet=await operation(p,r);
+  ok(await invoke(p,`${root}/${f}/crypto/operations`,{...body(packet,1,1,packet.operationId),writeContract:{version:1,effects:[{kind:'retireCat',slotId:a.slot}]}}));
+  expect((await invoke(p,a.rootPath+'/assets/'+a.assetId,undefined,photos)).data.error.code).toBe('photo_retired');
+  await cleanupFamilyRepresentativePhotos(photos);
+  expect(await photos.MEDIA!.get(`family-representative/v1/${f}/${a.assetId}`)).toBeNull();
+  expect((await db.prepare('SELECT COUNT(*) n FROM family_notebook_crypto_operations WHERE family_id=?').bind(f).first())?.n).toBe(2);
+ });
+
+ it('reopens cleanup after a late PUT and keeps it pending when deletion fails',async()=>{
+  const p=await plusOwner(),f=await create(p),{r}=await initialize(p,f);
+  const bytes=new Uint8Array(100).fill(7),assetId=crypto.randomUUID(),path=`${root}/${f}/representative-photos/uploads`;
+  ok(await invoke(p,path,{schemaVersion:1,operationId:crypto.randomUUID(),slotId:crypto.randomUUID(),assetId,expectedRevision:0,expectedGeneration:1,keyEpoch:1,rosterHash:r.hash,ciphertextBytes:bytes.length,ciphertextSHA256:await sha256Base64url(bytes)},photos),201);
+  const racing={...photos,MEDIA:new Proxy(photos.MEDIA!,{get(target,key){
+   if(key==='put')return async(...args:Parameters<R2Bucket['put']>)=>{
+    const result=await target.put(...args);
+    await db.prepare("UPDATE family_representative_assets SET state='deleted' WHERE asset_id=?").bind(assetId).run();
+    return result;
+   };
+   if(key==='delete')return async()=>{throw new Error('synthetic delete failure')};
+   const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;
+  }})};
+  const request=await signed(p,path+'/'+assetId,bytes,undefined,'PUT');
+  let reply:Response;try{reply=await route(request,racing)}catch(error){reply=errorResponse(error)}
+  expect(reply.status).toBeGreaterThanOrEqual(400);
+  expect((await db.prepare('SELECT state FROM family_representative_assets WHERE asset_id=?').bind(assetId).first())?.state).toBe('retired');
+  await cleanupFamilyRepresentativePhotos(photos);
+  expect(await photos.MEDIA!.get(`family-representative/v1/${f}/${assetId}`)).toBeNull();
+ });
+
 });

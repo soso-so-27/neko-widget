@@ -112,7 +112,12 @@ enum FamilyNotebookToolBridge {
                   let tool = catMapping.toolCatID else { continue }
             let values = Values(snapshot: snapshot, cat: mapping.familyCatID, collection: .handoff, record: record)
             var cat = plan.cats.first { $0.id == id } ?? CareCat(id: id, toolCatID: tool, meals: [])
-            guard (cat.toolCatID ?? cat.id) == tool || (catMapping.profileID != nil && cat.profileID.flatMap(UUID.init(uuidString:)) == catMapping.profileID) else { throw FamilyNotebookError.mappingConflict }
+            guard (cat.toolCatID ?? cat.id) == tool || (catMapping.profileID != nil && cat.profileID.flatMap(UUID.init(uuidString:)) == catMapping.profileID) else {
+                // 11/15: this iPhone unlinked its own cat from the family cat
+                // (FamilyNotebookCatLink). Its own plan stays as it is.
+                if catMapping.profileID == nil, cat.profileID != nil { continue }
+                throw FamilyNotebookError.mappingConflict
+            }
             if values.deleted {
                 if let index = plan.cats.firstIndex(where: { $0.id == id }) { plan.cats[index].familyDetached = true }
                 continue
@@ -165,7 +170,12 @@ enum FamilyNotebookToolBridge {
                   let cat = snapshot.activeMappings.first(where: { $0.familyCatID == mapping.familyCatID && $0.recordID == nil })?.toolCatID else { continue }
             let values = Values(snapshot: snapshot, cat: mapping.familyCatID, collection: .visit, record: record)
             let old = visits.first { $0.id == id }
-            guard old == nil || old?.catID == cat || snapshot.activeMappings.contains(where: { $0.familyCatID == mapping.familyCatID && $0.recordID == nil && $0.profileID == old?.catID }) else { throw FamilyNotebookError.mappingConflict }
+            guard old == nil || old?.catID == cat || snapshot.activeMappings.contains(where: { $0.familyCatID == mapping.familyCatID && $0.recordID == nil && $0.profileID == old?.catID }) else {
+                // 11/15: a consultation of this iPhone's own cat, which was
+                // unlinked from the family cat. It stays as it is.
+                if !snapshot.activeMappings.contains(where: { $0.familyCatID == mapping.familyCatID && $0.recordID == nil && $0.profileID != nil }) { continue }
+                throw FamilyNotebookError.mappingConflict
+            }
             if values.deleted {
                 if let i = visits.firstIndex(where: { $0.id == id }), visits[i].familyDetached != true {
                     visits[i].familyDetached = true; visits[i].revision = UUID()

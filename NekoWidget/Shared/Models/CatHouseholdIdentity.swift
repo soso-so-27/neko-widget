@@ -97,6 +97,13 @@ struct CatProfileLifeDates: Codable, Equatable, Sendable {
     }
 }
 
+/// 11/15: the app sets this while the family notebook has a cat that is not
+/// linked to a cat of this iPhone (FamilyNotebookCatLink). Nothing is saved:
+/// it is read again with every call, like the single-cat rule itself.
+enum CatSingleCatRule {
+    static var familyCatsOutsideProfiles = false
+}
+
 /// A user-owned cat identity. Vision detections never create profiles or move
 /// a life reference between profiles.
 struct CatProfile: Codable, Equatable, Identifiable, Sendable {
@@ -554,9 +561,11 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
 
     /// The household's only own cat profile (a departed cat still counts),
     /// or nil with zero or several. Family-notebook guests and tool-only cats
-    /// never live in `profiles`, so they do not count.
+    /// never live in `profiles`; 11/15: but while the family notebook has a
+    /// cat not linked to a cat of this iPhone, its photos may be in the
+    /// library too, so the home counts as one with several cats.
     var singleCatProfileID: UUID? {
-        profiles.count == 1 ? profiles.first?.id : nil
+        profiles.count == 1 && !CatSingleCatRule.familyCatsOutsideProfiles ? profiles.first?.id : nil
     }
 
     /// 11/13: while the household has exactly one cat profile, every detected

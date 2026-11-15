@@ -37,6 +37,7 @@ actor FamilyNotebookSync {
     private struct State: Decodable {
         let schemaVersion: Int; let familyID: UUID; let generation: Int64
         let currentEpoch: Int; let roster: SignedFamilyNotebookRoster?; let ready: Bool
+        let writeContract: FamilyNotebookWriteContract.Capability?
     }
     private struct Page: Decodable {
         struct Entry: Decodable { let sequence: Int; let packet: EncryptedFamilyNotebookOperation }
@@ -46,6 +47,7 @@ actor FamilyNotebookSync {
     private struct Upload: Encodable {
         let operationID: String; let expectedGeneration: Int64; let expectedEpoch: Int
         let payload: EncryptedFamilyNotebookOperation
+        var writeContract: FamilyNotebookWriteContract.Envelope? = nil
     }
 
     init(familyID: UUID, identity: GroupDeviceIdentity, store: FamilyNotebookStore, network: FamilyNotebookTransport,
@@ -136,6 +138,9 @@ actor FamilyNotebookSync {
         // Download/reading remains available during a Plus pause or while a
         // new participant waits for key rotation. No outbox entry is removed.
         if !paused && state.ready {
+            if let capability = state.writeContract, !capability.canWrite {
+                throw FamilyNotebookTransportError.upgradeRequired
+            }
             guard let key = keys[current.roster.epoch] else { throw FamilyNotebookSyncError.missingKey(epoch: current.roster.epoch) }
             for operation in try store.pendingOperations().prefix(64) {
                 guard try !store.snapshot().sharingEnded else { throw FamilyNotebookError.sharingEnded }
@@ -144,7 +149,10 @@ actor FamilyNotebookSync {
                 guard try store.pendingOperations().contains(where: { $0.id == operation.id }) else { continue }
                 let encrypted = try FamilyNotebookOperationCrypto.seal(operation, roster: current, key: key, signingKey: identity.signingKey)
                 let body = try GroupWire.encode(Upload(operationID: operation.id.uuidString.lowercased(), expectedGeneration: state.generation,
-                    expectedEpoch: current.roster.epoch, payload: encrypted))
+                    expectedEpoch: current.roster.epoch, payload: encrypted,
+                    writeContract: state.writeContract == nil ? nil : .init(effects:
+                        operation.target.collection == .cat && (operation.target.field == nil || operation.target.field == .sharingEnded)
+                            ? [.init(kind: "retireCat", slotID: FamilyNotebookRepresentativePhotoCrypto.slotID(familyID: familyID, catID: operation.target.familyCatID))] : [])))
                 let intent = GroupCanonical.hash(try GroupWire.encode(operation)), uploadPath = path + "/crypto/operations"
                 let family = familyID, operationID = operation.id
                 let validate: @Sendable (Data, Data) throws -> Void = { reply, sent in

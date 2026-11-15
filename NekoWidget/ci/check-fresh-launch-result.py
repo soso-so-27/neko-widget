@@ -7,6 +7,7 @@ def passed(needs):
     if needs.get("quick-check", {}).get("result") != "success":
         return False
     complete = False
+    launch_retry = False
     for number in range(1, 4):
         job = needs.get(f"launch-attempt-{number}", {})
         if complete:
@@ -18,6 +19,10 @@ def passed(needs):
         result = job.get("outputs", {}).get("result")
         if result == "passed":
             complete = True
+        elif launch_retry:
+            return False
+        elif result == "launch_timeout":
+            launch_retry = True
         elif result != "install_timeout":
             return False
     return complete

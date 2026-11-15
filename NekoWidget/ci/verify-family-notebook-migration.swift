@@ -123,6 +123,7 @@ enum FamilyNotebookMigrationVerifier {
     static func main() async throws {
         try FamilyNotebookCatCareBridgeVerifier.run()
         try FamilyNotebookToolBridgeVerifier.run()
+        try FamilyNotebookCatLinkVerifier.run()
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("family-migration-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let fixture = Fixture()

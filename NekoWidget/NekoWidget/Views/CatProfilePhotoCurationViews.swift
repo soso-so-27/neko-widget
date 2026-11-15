@@ -33,7 +33,7 @@ struct CatProfileDetailView: View {
     /// page shows whose cat it is: the whole page is the shared cat (11/7).
     private var familyNames: [String]? {
         guard let catID = CatCareSummary.record(profileIdentifier: profile.identifier)?.catID,
-              familyNotebook.familyCats.contains(where: { $0.toolID == catID }) else { return nil }
+              familyNotebook.activeFamilyCats.contains(where: { $0.toolID == catID }) else { return nil }
         return familyNotebook.members.map(\.displayName)
     }
 

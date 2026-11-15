@@ -8,7 +8,9 @@ private actor Relay: GroupHTTPTransport {
     var packets: [EncryptedFamilyNotebookOperation]
     var bodies: [UUID: Data] = [:]
     var paused = true, loseNext = false, tamper = false
+    var requiredVersion: Int? = nil
     var requests = 0
+    func requireVersion(_ version: Int) { requiredVersion = version }
     init(family: UUID, identity: GroupDeviceIdentity, current: VerifiedFamilyNotebookRoster, key: Data, packets: [EncryptedFamilyNotebookOperation]) {
         self.family = family; self.identity = identity; self.current = current; self.key = key; self.packets = packets
     }
@@ -35,8 +37,9 @@ private actor Relay: GroupHTTPTransport {
                 struct State: Encodable {
                     let schemaVersion = 1; let familyID: UUID; let generation = 1; let currentEpoch = 1
                     let roster: SignedFamilyNotebookRoster; let ready = true
+                    let writeContract: FamilyNotebookWriteContract.Capability?
                 }
-                return .init(status: 200, data: try GroupWire.encode(State(familyID: family, roster: current.packet)))
+                return .init(status: 200, data: try GroupWire.encode(State(familyID: family, roster: current.packet, writeContract: requiredVersion.map { .init(supportedVersion: $0, requiredVersion: $0) })))
             }
             let cursor = Int(path.split(separator: "/").last!)!
             struct Page: Encodable {
@@ -55,6 +58,12 @@ private actor Relay: GroupHTTPTransport {
         }
         struct Upload: Decodable { let operationID: UUID; let expectedGeneration: Int; let expectedEpoch: Int; let payload: EncryptedFamilyNotebookOperation }
         let body = request.httpBody!, upload = try GroupWire.decode(Upload.self, body)
+        if let version = requiredVersion {
+            let object = try JSONSerialization.jsonObject(with: body) as! [String: Any]
+            if (object["writeContract"] as? [String: Any])?["version"] as? Int != version {
+                return .init(status: 409, data: Data("{\"error\":{\"code\":\"photo_protocol_upgrade_required\"}}".utf8))
+            }
+        }
         _ = try FamilyNotebookOperationCrypto.openRetaining(upload.payload, roster: current, key: key)
         if let old = bodies[upload.operationID] { try check(old == body, "restart sent different ciphertext for an unknown outcome") }
         else { bodies[upload.operationID] = body; packets.append(upload.payload) }
@@ -110,12 +119,22 @@ private enum VerifyFamilyNotebookSync {
         let packetCount = await relay.packetCount()
         try check(resumed.uploaded == 1 && resumed.pending == 0 && packetCount == 2, "reopen reconciles the exact operation once")
 
+        // Unknown versions still download history, but retain edits without sending/ACK.
+        await relay.requireVersion(2)
+        let futurePending = try local.edit(target: .init(familyCatID: UUID(), field: .name), value: .text("pending protocol update"), author: author)
+        do { _ = try await engine(local).synchronize(current: current, history: [:], keys: [1:key]); throw Failure.check("unknown protocol wrote") }
+        catch FamilyNotebookTransportError.upgradeRequired { }
+        try check(try local.pendingOperations().contains { $0.id == futurePending.id }, "unknown version retains pending edit")
+        await relay.requireVersion(1)
+        _ = try await engine(local).synchronize(current: current, history: [:], keys: [1:key])
+        try check(try local.pendingOperations().isEmpty, "known version resumes pending edit")
+
         // An older/empty restored notebook must not trust the newer sidecar
         // cursor. Refill the complete history without deleting either copy.
         let older = try FamilyNotebookStore(directory: root.appendingPathComponent("older-copy"), familyID: family, deviceID: device)
         let refilled = try await engine(older).synchronize(current: current, history: [:], keys: [1: key])
-        try check(refilled.downloaded == 2 && older.snapshot().operations.count == 2, "older local copy refills all history")
-        try check(try local.snapshot().operations.count == 2, "original retained after refilling another copy")
+        try check(refilled.downloaded == 3 && older.snapshot().operations.count == 3, "older local copy refills all history")
+        try check(try local.snapshot().operations.count == 3, "original retained after refilling another copy")
 
         let tampered = try FamilyNotebookStore(directory: root.appendingPathComponent("tamper-check"), familyID: family, deviceID: device)
         await relay.setTamper()
@@ -128,7 +147,7 @@ private enum VerifyFamilyNotebookSync {
         do { _ = try await sync.synchronize(current: current, history: [:], keys: [1: key]); throw Failure.check("departed notebook sent traffic") }
         catch FamilyNotebookError.sharingEnded { }
         try check(await relay.count() == requestCount, "ended participation sends nothing")
-        try check(try local.snapshot().operations.count == 2, "departure retains every original")
+        try check(try local.snapshot().operations.count == 3, "departure retains every original")
         print("Family notebook sync: authenticated encrypted merge, pause/resume, lost ACK restart, older-copy refill, tamper and departure retention passed")
     }
     // The shell runs this identical fixture with the actual pre-change and new binaries.
