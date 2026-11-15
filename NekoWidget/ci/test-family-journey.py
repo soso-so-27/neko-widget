@@ -186,7 +186,7 @@ class PurchaseWaitAndFamilyPause1115Tests(unittest.TestCase):
         self.assertIn("let delay = delays.isEmpty ? Self.serverConfirmationFollowUpInterval : delays.removeFirst()", recheck)
         self.assertIn("await store.refreshAfterForegroundEntry()", recheck)
         self.assertIn("guard !store.isPurchasing, !store.isRestoring,\n"
-                      "                      store.allowsAutomaticBillingCheck() else { continue }", recheck)
+                      "                          store.allowsAutomaticBillingCheck() else { continue }", recheck)
         for forbidden in ("AppStore.sync", "product.purchase", "entitlementState =", "canStartNewPurchase = true",
                           "repeat {", "grantsPlus = true"):
             self.assertNotIn(forbidden, recheck)
@@ -386,7 +386,9 @@ class CallBudget1115qTests(unittest.TestCase):
         self.assertEqual(auto.count("loop = Task"), 1)
         self.assertIn("if loop != nil && !sleeping { return }", auto)
         # 1115s: the schedule's calls carry no mark: automatic by default.
-        self.assertNotIn("SharingPersonAction", auto)
+        # 1115v: automatic even when an operation's nudge started it.
+        self.assertNotIn("SharingPersonAction.run", auto)
+        self.assertIn("loop = Task { [weak self] in await SharingPersonAction.automatic {", auto)
         self.assertIn("FamilyAutoCheckPolicy.next(situation(now: Date()))", auto)
         self.assertIn("SharingAutoCallBudget.shared.pausedUntil()", auto)
         # The まど's waiting lists are automatic too.
@@ -406,11 +408,9 @@ class CallBudget1115qTests(unittest.TestCase):
 
     def test_purchase_wait_fits_the_billing_limit(self):
         self.assertIn("static let firstMinuteDelays: [Duration] = [.seconds(5), .seconds(15), .seconds(25)]", POLICY)
-        self.assertIn("static let automaticCeiling = 5", POLICY)
+        self.assertIn("static let automaticCeiling = BillingCallBudget.automaticPerMinute", POLICY)
         loop = section(STORE, "private func runServerConfirmationRechecks(first: [Duration]) {", "private func finishServerConfirmationRechecks()")
         self.assertIn("store.allowsAutomaticBillingCheck() else { continue }", loop)
-        self.assertIn("entitlementReads.record(at: Date())\n            let response = try await fetchAuthoritativeEntitlement()", STORE)
-        self.assertIn("transactionPosts.record(at: Date())", STORE)
         self.assertEqual(STORE.count("noteBillingFailure(error)"), 2)
         self.assertIn("await plusPurchases.refreshOnForegroundEntry()", read("NekoWidget/App/NekoWidgetApp.swift"))
 
@@ -509,6 +509,74 @@ class DefaultAutomatic1115sTests(unittest.TestCase):
         self.assertIn("try check(afterBudget == 0,", DELIVERY)
         self.assertIn("try check(afterRateLimit == 0,", DELIVERY)
         self.assertIn("try check(together < 120,", DELIVERY)
+
+
+APP = read("NekoWidget/App/NekoWidgetApp.swift")
+
+
+class BillingGateAndReplyTime1115vTests(unittest.TestCase):
+    """1115v: the 429 pause counted from the send, and billing calls that did
+    not pass the purchase-wait schedule."""
+
+    def test_pause_counts_from_the_reply(self):
+        gated = section(TRANSPORT, "static func gated(", "\n    }\n")
+        self.assertNotIn("let replyTime", gated)
+        self.assertIn("noteReply(status: status, retryAfter: retryAfter, budget, at: now())", gated)
+        self.assertIn("pauseCountsFromTheReply()", DELIVERY)
+        self.assertIn("clock.seconds += 10          // the reply takes 10 s", DELIVERY)
+
+    def test_one_billing_gate_at_the_send(self):
+        self.assertIn("static let automaticPerMinute = 4", POLICY)
+        self.assertIn("static let devicePerMinute = 8", POLICY)
+        authority = section(STORE, "    private func refreshServerAuthority() async -> ServerAuthorityRefresh {", "            let response = try await fetchAuthoritativeEntitlement()")
+        self.assertIn("guard billingBudget.admit(.entitlement, personAction: SharingAutoCallBudget.isPersonAction) else {", authority)
+        record = section(STORE, "    private func recordVerifiedTransactionEvent(", "            acknowledgement = try await recordVerifiedTransactionEvent(event, billingAccountID)")
+        self.assertIn("guard billingBudget.admit(.transaction, personAction: SharingAutoCallBudget.isPersonAction) else {\n            throw BillingCallDeferred()", record)
+        # The only two places that reach the billing relay.
+        self.assertEqual(STORE.count("try await fetchAuthoritativeEntitlement()"), 1)
+        self.assertEqual(STORE.count("try await recordVerifiedTransactionEvent(event, billingAccountID)"), 1)
+
+    def test_held_back_events_are_kept_and_never_finished(self):
+        update = section(STORE, "    private func handleTransactionUpdate(", "    private func reconcileCurrentEntitlements()")
+        held = section(update, "} catch is BillingCallDeferred {", "} catch {")
+        self.assertIn("deferredUpdates.append(result)", held)
+        self.assertIn("markServerConfirmationIndeterminate()", held)
+        self.assertIn("scheduleDeferredBillingWork()", held)
+        self.assertNotIn("finish()", held)
+        self.assertLess(update.index("try await recordVerifiedTransactionEvent("), update.index("await transaction.finish()"))
+        work = section(STORE, "private func scheduleDeferredBillingWork() {", "/// The one retry of a held authority read")
+        self.assertIn("for update in updates { await store.handleTransactionUpdate(update) }", work)
+        self.assertIn("store.retriesDeferredAuthorityRead = false", work)
+        self.assertNotIn("grantsPlus = true", work)
+
+    def test_long_lived_loops_are_automatic_and_taps_are_marked(self):
+        for name in ("authorityExpiryTask", "deferredBillingTask", "serverConfirmationRecheckTask",
+                     "storefrontUpdatesTask", "transactionUpdatesTask"):
+            task = section(STORE, name + " = Task { @MainActor [weak self] in", "await SharingPersonAction.automatic {")
+            self.assertLess(len(task), 160, name)  # the next lines of that Task
+        model = read("NekoWidget/Services/MembershipOfferModel.swift")
+        for signature in ("    func load() async {", "    func purchase() async -> MembershipOfferActionResult {",
+                          "    func restore() async -> MembershipOfferActionResult {", "    func refresh() async {",
+                          "    func refreshAfterSubscriptionManagement() async {"):
+            body = section(model, signature, "\n    }\n")
+            self.assertIn("SharingPersonAction.run", body, signature)
+        handler = section(APP, ".onReceive(NotificationCenter.default.publisher(for: .membershipAccessRefreshRequested))", "membershipNow = .now")
+        self.assertIn("await SharingPersonAction.run { await plusPurchases.refreshAfterForegroundEntry() }", handler)
+        # Who may post it: only places right after the person's own step.
+        import glob
+        posters = sorted(path.replace(chr(92), "/").split("/NekoWidget/NekoWidget/", 1)[-1]
+                         for path in glob.glob(str(ROOT / "NekoWidget" / "**" / "*.swift"), recursive=True)
+                         if "post(name: .membershipAccessRefreshRequested" in open(path, encoding="utf-8").read())
+        self.assertEqual(posters, ["Services/AppRecordPersistence.swift", "Services/MembershipAccessContext.swift",
+                                   "Services/MembershipOfferModel.swift", "Views/FamilyNotebookView.swift",
+                                   "Views/GroupWindowView.swift", "Views/MainTabView.swift",
+                                   "Views/ManagedPreservationView.swift", "Views/OnboardingView.swift"])
+        self.assertIn("SharingAutoCallBudget.$isPersonAction.withValue(false, operation: work)", TRANSPORT)
+
+    def test_counted(self):
+        self.assertIn("billingGate()", DELIVERY)
+        self.assertIn('try check(afterRateLimit == 0, "billing:', DELIVERY)
+        self.assertIn("testBillingGateHoldsAutomaticReadsAfter429ButNotTheTap", TESTS)
 
 
 class RegistrationTests(unittest.TestCase):

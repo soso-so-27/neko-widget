@@ -134,6 +134,27 @@ final class FamilyJourneyTests: XCTestCase {
         XCTAssertEqual(unmarked.automaticCalls(at: start), 1)
     }
 
+    /// 1115v: the billing gate sits at the send. After a 429 the Widget's
+    /// background read sends nothing; the person's own read still goes; and
+    /// automatic reads stop at 4 a minute.
+    func testBillingGateHoldsAutomaticReadsAfter429ButNotTheTap() async {
+        final class Reads: @unchecked Sendable { var count = 0 }
+        let reads = Reads()
+        let store = PlusPurchaseStore(
+            configuration: PlusPurchaseConfiguration(isEnabled: true, monthlyProductID: "jp.neko.monthly", annualProductID: nil),
+            recordVerifiedTransactionEvent: { _, _ in throw BillingClientError.transportUnavailable },
+            fetchAuthoritativeEntitlement: { reads.count += 1; throw BillingClientError.transportUnavailable })
+        store.billingBudget = BillingCallBudget()
+        store.billingBudget.noteRateLimited(at: Date())
+        await store.refreshWidgetAuthorityInBackground()
+        XCTAssertEqual(reads.count, 0, "no automatic read within 60 s of a 429")
+        await SharingPersonAction.run { await store.refreshWidgetAuthorityInBackground() }
+        XCTAssertEqual(reads.count, 1, "the person's own read goes")
+        store.billingBudget = BillingCallBudget()
+        for _ in 0..<6 { await store.refreshWidgetAuthorityInBackground() }
+        XCTAssertEqual(reads.count, 1 + BillingCallBudget.automaticPerMinute)
+    }
+
     func testTapsStopAtTheIPhonesLimitSoTwoIPhonesStayUnder120() {
         let budget = SharingAutoCallBudget(), start = Date()
         var taps = 0

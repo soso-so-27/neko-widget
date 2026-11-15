@@ -159,9 +159,9 @@ final class SharingAutoCallBudget: @unchecked Sendable {
                       _ network: (_ replied: (_ status: Int, _ retryAfter: String?) -> Void) async throws -> GroupHTTPReply)
         async throws -> GroupHTTPReply {
         try admit(budget, at: now())
-        let replyTime = now()
+        // 1115v: the pause counts from when the reply came, not from the send.
         return try await network { status, retryAfter in
-            noteReply(status: status, retryAfter: retryAfter, budget, at: replyTime)
+            noteReply(status: status, retryAfter: retryAfter, budget, at: now())
         }
     }
 
@@ -199,6 +199,13 @@ enum SharingForegroundGap {
 enum SharingPersonAction {
     static func run<T>(_ work: () async throws -> T) async rethrows -> T {
         try await SharingAutoCallBudget.$isPersonAction.withValue(true, operation: work)
+    }
+
+    /// 1115v: a long-lived loop or listener started from a tap (a task
+    /// inherits the mark) is automatic all the same: its later calls are not
+    /// the person's.
+    static func automatic<T>(_ work: () async throws -> T) async rethrows -> T {
+        try await SharingAutoCallBudget.$isPersonAction.withValue(false, operation: work)
     }
 }
 
