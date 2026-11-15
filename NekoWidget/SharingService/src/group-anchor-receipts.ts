@@ -36,7 +36,15 @@ export async function storeAnchorReceipt(env: Env, actor: GroupActor, window: st
       WHERE person_id=? AND space_id=? AND environment=?`).bind(actor.personId, window, env.ENVIRONMENT),
   ]);
   const saved = rows[3]!.results[0] as { owner_person_id: string; owner_public_key: string; root_signature: string } | undefined;
-  if (!saved || saved.owner_person_id !== owner || saved.owner_public_key !== ownerKey || saved.root_signature !== signature)
+  let savedValid = false;
+  if (saved) {
+    try {
+      savedValid = saved.owner_person_id === await sha256Base64url(base64urlDecode(saved.owner_public_key, 32))
+        && await verifyEd25519(actor.identityPublicKey, saved.root_signature,
+          anchorReceiptTranscript(env.ENVIRONMENT, actor.personId, window, saved.owner_person_id, saved.owner_public_key));
+    } catch { /* A corrupt stored proof never establishes trust. */ }
+  }
+  if (!saved || !savedValid || saved.owner_person_id !== owner || saved.owner_public_key !== ownerKey)
     throw new ApiError(409, 'anchor_receipt_conflict', 'The existing anchor is different.');
   return jsonResponse({ state: 'stored', windowId: window });
 }

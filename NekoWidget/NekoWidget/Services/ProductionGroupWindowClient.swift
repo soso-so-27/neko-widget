@@ -65,10 +65,22 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             case "neko-window-sharing-staging.nakanishisoya.workers.dev": environment = "staging"
             default: return
             }
-            let receipt = try GroupAnchorReceipt.make(environment: environment, anchor: record.anchor,
-                root: Curve25519.Signing.PrivateKey(rawRepresentation: privateRoot))
             let account = "anchor-receipt:" + windowID
-            if let saved = try load(GroupAnchorReceipt.self, account), saved == receipt { return }
+            let pendingAccount = "anchor-receipt-pending:" + windowID
+            let receipt: GroupAnchorReceipt
+            if let pending = try load(GroupAnchorReceipt.self, pendingAccount) {
+                receipt = pending
+            } else {
+                receipt = try GroupAnchorReceipt.make(environment: environment, anchor: record.anchor,
+                    root: Curve25519.Signing.PrivateKey(rawRepresentation: privateRoot))
+                // App-private Keychain; this prefix is never published to the
+                // share extension. Persist before any await/network operation.
+                try save(receipt, pendingAccount, createOnly: true)
+            }
+            guard receipt.anchor == record.anchor,
+                  receipt.verifies(root: id.personPublicKey, environment: environment, windowID: windowID) else { return }
+            if let saved = try load(GroupAnchorReceipt.self, account), saved.anchor == receipt.anchor,
+               saved.verifies(root: id.personPublicKey, environment: environment, windowID: windowID) { return }
             anchorReceiptAttempts.insert(windowID)
             struct Input: Encodable {
                 let environment: String; let personId: String; let ownerPersonId: String
@@ -83,7 +95,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             try save(receipt, account)
         } catch {
             // Silent, bounded to one attempt per foreground session. The next
-            // foreground retries the same deterministic receipt, never new keys.
+            // foreground retries the same persisted receipt, never new keys.
         }
     }
 

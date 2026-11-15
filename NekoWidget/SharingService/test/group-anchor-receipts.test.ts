@@ -3,6 +3,7 @@ import { anchorReceiptTranscript } from '../src/group-anchor-receipts';
 import { plusOwner } from './group-billing-fixture';
 import { create, db, person, sign, signed, send, testEnv, key } from './group-fixture';
 import { base64urlDecode, randomBase64url, sha256Base64url } from '../src/encoding';
+import vector from './anchor-receipt-vectors.json';
 
 const settings = { ...testEnv, ENVIRONMENT: 'staging', GROUP_RECOVERY_CATALOG_ENABLED: 'NO',
   MEMBER_RATE_LIMITER: { limit: async () => ({ success: true }) } };
@@ -15,6 +16,25 @@ async function fixture() {
   return { p, w, input, path, put: async (body = input) => send(await signed(p, path, body), settings) };
 }
 describe('personal root-signed trust anchor receipts', () => {
+  it('accepts distinct valid signatures for the same content and preserves the first proof', async () => {
+    const privateKey = await crypto.subtle.importKey('jwk', { kty: 'OKP', crv: 'Ed25519',
+      d: vector.seed, x: vector.publicKey }, { name: 'Ed25519' }, true, ['sign']);
+    const p = await person({ privateKey, publicKey: vector.publicKey });
+    expect(p.id).toBe(vector.personId);
+    const w = vector.windowId, participant = crypto.randomUUID();
+    await db.prepare("INSERT INTO group_windows(space_id,owner_person_id,mode,created_at,updated_at) VALUES (?,?,'active',1,1)").bind(w,p.id).run();
+    await db.prepare("INSERT INTO group_members VALUES (?,?,?,'owner','active',1,NULL,'synthetic')").bind(participant,w,p.id).run();
+    await db.prepare("INSERT INTO group_window_devices VALUES (?,?,?,'active',1,NULL)").bind(w,p.deviceId,participant).run();
+    const put = async (signature: string) => send(await signed(p, `/v3/group-windows/${w}/anchor-receipt`, {
+      environment:'staging',personId:p.id,ownerPersonId:p.id,ownerPublicKey:vector.publicKey,rootSignature:signature }), settings);
+    expect(vector.signatures[0]).not.toBe(vector.signatures[1]);
+    for (const signature of vector.signatures) expect((await put(signature)).status).toBe(200);
+    const stored = await db.prepare('SELECT root_signature FROM group_anchor_receipts WHERE person_id=? AND space_id=?').bind(p.id,w).first();
+    expect(stored?.root_signature).toBe(vector.signatures[0]);
+    // A corrupted original must also be verified, not silently replaced.
+    await db.prepare('UPDATE group_anchor_receipts SET root_signature=? WHERE person_id=? AND space_id=?').bind(randomBase64url(64),p.id,w).run();
+    expect((await put(vector.signatures[1]!)).status).toBe(409);
+  });
   it('stores one immutable receipt with recovery OFF and retries without duplicate rows', async () => {
     const f = await fixture();
     for (let i = 0; i < 2; i++) expect((await f.put()).data).toEqual({ state: 'stored', windowId: f.w.windowId });

@@ -246,7 +246,23 @@ private func checkRecoverySelection() throws {
         ownerIdentityPublicKey: owner.publicKey.rawRepresentation)
     let receipt = try GroupAnchorReceipt.make(environment: "staging", anchor: anchor, root: root)
     let publicRoot = root.publicKey.rawRepresentation
-    try check(receipt == GroupAnchorReceipt.make(environment: "staging", anchor: anchor, root: root), "retry receipt is deterministic")
+    let anotherSignature = try GroupAnchorReceipt.make(environment: "staging", anchor: anchor, root: root)
+    try check(receipt.verifies(root: publicRoot, environment: "staging", windowID: "room") && anotherSignature.verifies(root: publicRoot, environment: "staging", windowID: "room"), "both signatures verify without requiring deterministic signing")
+    try check(receipt.transcript() == anotherSignature.transcript(), "same anchor has the same signed message")
+    print("ANCHOR receipt signatures differ: \(receipt.rootSignature != anotherSignature.rootSignature); both verified")
+    let vector = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: "SharingService/test/anchor-receipt-vectors.json"))) as! [String: Any]
+    func binary(_ value: String) -> Data {
+        let normalized = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        return Data(base64Encoded: normalized + String(repeating: "=", count: (4 - normalized.count % 4) % 4))!
+    }
+    let vectorRoot = binary(vector["publicKey"] as! String), vectorWindow = vector["windowId"] as! String
+    let vectorAnchor = GroupTrustAnchor(windowID: vectorWindow, ownerPersonID: vector["personId"] as! String, ownerIdentityPublicKey: vectorRoot)
+    let signatures = vector["signatures"] as! [String]
+    try check(signatures[0] != signatures[1], "synthetic signatures are distinct")
+    for signature in signatures {
+        let value = GroupAnchorReceipt(environment: "staging", personID: vector["personId"] as! String, anchor: vectorAnchor, rootSignature: binary(signature))
+        try check(value.verifies(root: vectorRoot, environment: "staging", windowID: vectorWindow), "Mac verifies both distinct signatures of the same content")
+    }
     try check(GroupAnchorReceipt.resolve([receipt, receipt], root: publicRoot, environment: "staging", windowID: "room", rootIsCurrent: true) == .trusted(anchor), "identical receipts have one anchor")
     try check(GroupAnchorReceipt.resolve([receipt], root: publicRoot, environment: "production", windowID: "room", rootIsCurrent: true) == .needsOriginalDeviceOrInvitation, "receipt is environment scoped")
     try check(GroupAnchorReceipt.resolve([receipt], root: publicRoot, environment: "staging", windowID: "other", rootIsCurrent: true) == .needsOriginalDeviceOrInvitation, "receipt is window scoped")
