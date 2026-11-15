@@ -9,6 +9,7 @@ case "$check_mode" in all|public|public-build|owner) ;; *) echo "Use all, public
 # P2 synthetic adapter checks precede expensive builds. No real Keychain calls.
 if [[ "$check_mode" != owner ]]; then
 python3 ci/test-root-sync-boundary.py
+bash ci/run-group-recovery-client-checks.sh
 xcrun --sdk macosx swiftc -D INTERNAL_PRESENTATION -parse-as-library \
   NekoWidget/Services/RootSyncStore.swift ci/verify-root-sync-store.swift \
   -o "$RUNNER_TEMP/root-sync-tests"
