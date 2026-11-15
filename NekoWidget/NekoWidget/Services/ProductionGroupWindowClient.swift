@@ -62,7 +62,9 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             let environment: String
             switch endpoint.host {
             case "api.nekonomado.com": environment = "production"
+#if DEBUG || INTERNAL_PRESENTATION
             case "neko-window-sharing-staging.nakanishisoya.workers.dev": environment = "staging"
+#endif
             default: return
             }
             let account = "anchor-receipt:" + windowID
