@@ -4,7 +4,7 @@ import {authenticateGroupRequest,groupAuthorizationStatements} from './group-aut
 import {familyUUID,verifyFamilyOperation} from './family-notebook-crypto';
 import {state,checks,roster} from './family-notebook-history';
 import {gate,safeFailure} from './family-notebook-payer';
-import {sha256Base64url,base64urlDecode,base64urlEncode} from './encoding';
+import {sha256Base64url,base64urlDecode,base64urlEncode,randomBase64url} from './encoding';
 import {asObject,exactKeys,integerField,uuidField,binaryField} from './validation';
 import {parseJsonBody,requireEmptyBody} from './http';
 import {ApiError,jsonResponse} from './errors';
@@ -57,7 +57,7 @@ export async function familyRepresentativePhoto(request:Request,env:Env):Promise
    const old=await env.DB.prepare('SELECT * FROM family_representative_assets WHERE family_id=? AND operation_id=?').bind(family,operation).first<Asset>();
    if(old){if(old.person_id!==actor.personId||old.device_id!==actor.deviceId||old.request_hash!==actor.requestHash)fail('idempotency_conflict');await env.DB.batch(guards('read'));return jsonResponse(receipt(old));}
    if(generation!==current.generation||epoch!==current.epoch||b.rosterHash!==current.roster_hash)fail('key_epoch_pending');
-   const expires=actor.now+86400,key=`family-representative/v1/${family}/${assetId}`;
+   const expires=actor.now+86400,key=`family-representative/v1/${family}/${assetId}/${randomBase64url(24)}`;
    await env.DB.batch([...guards('operation'),
     env.DB.prepare(`INSERT INTO family_representative_slots VALUES (?,?,0,NULL,'active') ON CONFLICT(family_id,slot_id) DO NOTHING`).bind(family,slot),
     env.DB.prepare(`SELECT json(CASE WHEN EXISTS(SELECT 1 FROM family_representative_slots WHERE family_id=? AND slot_id=? AND revision=0 AND state='retired')
@@ -81,21 +81,21 @@ export async function familyRepresentativePhoto(request:Request,env:Env):Promise
    if(request.method==='PUT'&&!commit){
     if(bytes.length!==a.bytes||await sha256Base64url(bytes)!==a.hash)fail('invalid_photo_payload',422);
     await env.DB.batch(guards('operation'));
+    try {
     const stored=await putGroupUpload(env,env.MEDIA,a.object_key,bytes,{sha256:base64urlDecode(a.hash).slice().buffer},async()=>{
       await requireCurrentIdentity(env,actor.personId);
       await env.DB.batch([...guards('operation'),...photoChecks(env,a,'upload')]);
-    })??await env.MEDIA.head(a.object_key);
+    },true)??await env.MEDIA.head(a.object_key);
     if(!stored||stored.size!==a.bytes||!stored.checksums.sha256||base64urlEncode(new Uint8Array(stored.checksums.sha256))!==a.hash)fail('temporarily_unavailable',503);
     // A late PUT must not resurrect a retired object: cleanup remains pending until checked.
-    try { await env.DB.batch([...checks(env,actor,family,current.generation,current.epoch,'operation'),...photoChecks(env,a,'upload'),env.DB.prepare(`UPDATE family_representative_assets SET state='uploaded' WHERE asset_id=? AND state IN ('reserved','uploaded')`).bind(id)]); }
+    await env.DB.batch([...checks(env,actor,family,current.generation,current.epoch,'operation'),...photoChecks(env,a,'upload'),env.DB.prepare(`UPDATE family_representative_assets SET state='uploaded' WHERE asset_id=? AND state IN ('reserved','uploaded')`).bind(id)]); }
     catch(error) {
-     const after=await asset(env,family,id);
-     if(after.state==='retired'||after.state==='deleted') {
-      // Cleanup may have completed while this PUT was still writing. Reopen
-      // its cleanup claim before deleting, so a failed R2 delete is retried.
-      await env.DB.prepare("UPDATE family_representative_assets SET state='retired' WHERE asset_id=? AND state IN ('retired','deleted')").bind(id).run();
-      await env.MEDIA.delete(after.object_key);
-      await env.DB.prepare("UPDATE family_representative_assets SET state='deleted' WHERE asset_id=? AND state='retired'").bind(id).run();
+     const after=await env.DB.prepare('SELECT * FROM family_representative_assets WHERE family_id=? AND asset_id=?').bind(family,id).first<Asset>();
+     if(!after||after.object_key!==a.object_key||after.state==='retired'||after.state==='deleted') {
+      // The server nonce keeps an old request isolated from any reuse of the public asset ID.
+      await env.DB.prepare("UPDATE family_representative_assets SET state='retired' WHERE asset_id=? AND object_key=? AND state IN ('retired','deleted')").bind(id,a.object_key).run();
+      await env.MEDIA.delete(a.object_key);
+      if(!await env.MEDIA.head(a.object_key))await env.DB.prepare("UPDATE family_representative_assets SET state='deleted' WHERE asset_id=? AND object_key=? AND state='retired'").bind(id,a.object_key).run();
      }
      throw error;
     }

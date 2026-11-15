@@ -2,12 +2,12 @@ import type {Env} from './env';
 import {ApiError} from './errors';
 export interface FamilyPhotoDeletion {assetId:string;familyId:string;objectKey:string}
 const uuid='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
-const keyPattern=new RegExp(`^family-representative/v1/${uuid}/${uuid}$`);
+const keyPattern=new RegExp(`^family-representative/v1/${uuid}/${uuid}(?:/[A-Za-z0-9_-]{32})?$`);
 async function installed(db:D1Database){return !!await db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='family_representative_assets'").first();}
 export async function familyIdentityPhotos(env:Pick<Env,'DB'>,person:string):Promise<FamilyPhotoDeletion[]> {
  if(!await installed(env.DB))return [];
  const rows=(await env.DB.prepare(`SELECT asset_id AS assetId,family_id AS familyId,object_key AS objectKey FROM family_representative_assets WHERE person_id=? ORDER BY asset_id`).bind(person).all<FamilyPhotoDeletion>()).results;
- for(const row of rows)if(!keyPattern.test(row.objectKey)||row.objectKey!==`family-representative/v1/${row.familyId}/${row.assetId}`)throw new ApiError(503,'unavailable','The deletion target could not be verified.');
+ for(const row of rows)if(!keyPattern.test(row.objectKey)||!(row.objectKey===`family-representative/v1/${row.familyId}/${row.assetId}`||row.objectKey.startsWith(`family-representative/v1/${row.familyId}/${row.assetId}/`)))throw new ApiError(503,'unavailable','The deletion target could not be verified.');
  return rows;
 }
 /** Called only by the existing fenced identity-deletion coordinator. The caller
