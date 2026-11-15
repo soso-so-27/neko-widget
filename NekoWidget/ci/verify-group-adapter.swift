@@ -37,9 +37,18 @@ private struct SyntheticBillingSigner: GroupBillingSigner {
 private actor ReceiptTransport: GroupHTTPTransport {
     private var bodies: [Data] = []
     private let memory: MemorySecrets
-    init(memory: MemorySecrets) { self.memory = memory }
+    private let fallback: (any GroupHTTPTransport)?
+    private var firstReceipt: CheckedContinuation<Void, Never>?
+    init(memory: MemorySecrets, fallback: (any GroupHTTPTransport)? = nil) { self.memory = memory; self.fallback = fallback }
     func sent() -> [Data] { bodies }
+    func waitForFirstReceipt() async {
+        if !bodies.isEmpty { return }
+        await withCheckedContinuation { firstReceipt = $0 }
+    }
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
+        if let fallback, request.url?.path.hasSuffix("/anchor-receipt") != true {
+            return try await fallback.send(request, maximumBytes: maximumBytes)
+        }
         guard let url = request.url, url.path.hasSuffix("/anchor-receipt"), let body = request.httpBody else {
             throw Failure.check("backfill must not register a person or fetch a roster")
         }
@@ -48,6 +57,10 @@ private actor ReceiptTransport: GroupHTTPTransport {
             throw Failure.check("receipt must be persisted before sending")
         }
         bodies.append(body)
+        firstReceipt?.resume(); firstReceipt = nil
+        if fallback != nil {
+            return .init(status: 404, data: Data(#"{"error":{"code":"not_found"}}"#.utf8))
+        }
         if bodies.count == 1 { throw GroupClientError.offline }
         // The second request committed remotely, but its response was lost.
         if bodies.count == 2 { throw GroupClientError.offline }
@@ -630,6 +643,8 @@ private struct GroupAdapterChecks {
             secrets: memory, transport: receiptRelay, outboxDirectory: folder.appendingPathComponent("receipts"))
         await backfill.backfillAnchorReceipts()
         try check(memory.read("anchor-receipt:" + room.id) == nil, "lost successful response is not marked complete")
+        await backfill.setAnchorReceiptForeground(false)
+        await backfill.setAnchorReceiptForeground(true)
         await backfill.backfillAnchorReceipts()
         let storedReceipt = try GroupWire.decode(GroupAnchorReceipt.self, memory.read("anchor-receipt:" + room.id)!)
         let receiptIdentity = try GroupWire.decode(GroupDeviceIdentity.self, originalIdentity!)
@@ -653,6 +668,32 @@ private struct GroupAdapterChecks {
         await resumedUnsent.backfillAnchorReceipts()
         let firstUnsent = await unsentRelay.sent()
         try check(firstUnsent == [sentReceipts[0]], "restart before first send uses the already persisted proof")
+        let missingMemory = MemorySecrets()
+        for account in try memory.accounts(prefix: "") where !account.hasPrefix("anchor-receipt") {
+            if let bytes = try memory.read(account) { try missingMemory.write(bytes, account: account, createOnly: true) }
+        }
+        let missingRelay = ReceiptTransport(memory: missingMemory, fallback: relay)
+        let missingClient = try ProductionGroupWindowClient(endpoint: URL(string: "https://api.nekonomado.com")!,
+            secrets: missingMemory, transport: missingRelay, outboxDirectory: folder.appendingPathComponent("missing-receipts"))
+        let openedWhileMissing = try await missingClient.window(id: room.id)
+        await missingRelay.waitForFirstReceipt()
+        await missingClient.setAnchorReceiptForeground(true)
+        await missingClient.backfillAnchorReceipts()
+        await missingClient.backfillAnchorReceipts()
+        let firstForeground = await missingRelay.sent()
+        try check(openedWhileMissing.name == room.name && firstForeground.count == 1,
+            "404 is silent; opening a window then delayed backfill sends once in the same foreground")
+        try check(missingMemory.read("anchor-receipt:" + room.id) == nil, "404 never marks the receipt complete")
+        await missingClient.setAnchorReceiptForeground(false)
+        await missingClient.backfillAnchorReceipts()
+        let backgroundRequests = await missingRelay.sent()
+        try check(backgroundRequests.count == 1, "background never sends receipts")
+        await missingClient.setAnchorReceiptForeground(true)
+        await missingClient.backfillAnchorReceipts()
+        await missingClient.backfillAnchorReceipts()
+        let nextForeground = await missingRelay.sent()
+        try check(nextForeground.count == 2 && nextForeground[0] == nextForeground[1],
+            "next foreground retries once with identical persisted proof")
         await relay.setDelivery("paused")
         let paused = try await client.window(id: room.id)
         try check(paused.deliveryStatus == .paused && paused.deliveryReason == .ownerPlusRequired && paused.state == .active && paused.canManage,

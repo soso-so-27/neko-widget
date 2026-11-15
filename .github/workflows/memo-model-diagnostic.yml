@@ -3,6 +3,10 @@ name: Private memo model diagnostic
 on:
   workflow_dispatch:
     inputs:
+      anchor_receipts:
+        description: Run native anchor receipt persistence and foreground retry checks only
+        type: boolean
+        default: false
       veterinary_models:
         description: Run existing private memo and veterinary persistence checks only
         type: boolean
@@ -33,6 +37,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  anchor-receipts:
+    if: github.event_name == 'workflow_dispatch' && inputs.anchor_receipts
+    name: Native receipt retry probe - not release evidence
+    runs-on: macos-15-intel
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Exercise real adapter with synthetic transport and private storage
+        working-directory: NekoWidget
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx swiftc -D INTERNAL_PRESENTATION -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+            Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
+            NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupInvitationLink.swift NekoWidget/Services/GroupWindowStorage.swift \
+            NekoWidget/Services/GroupWindowOperationStore.swift Shared/Sharing/ClientUpgradeRequirement.swift NekoWidget/Services/GroupWindowTransport.swift \
+            NekoWidget/Services/GroupWindowAPIModels.swift NekoWidget/Services/GroupWindowPhotoValidation.swift \
+            NekoWidget/Services/ProductionGroupWindowClient.swift ci/verify-group-adapter.swift \
+            -o "$RUNNER_TEMP/group-adapter-tests"
+          "$RUNNER_TEMP/group-adapter-tests" ci/fixtures/group-http-v3.json ci/fixtures/group-roster-v3.json | node ci/verify-native-group-http.mjs
   private-models:
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.veterinary_models)
     name: Apple persistence models only - not release evidence
@@ -68,7 +93,7 @@ jobs:
           if-no-files-found: warn
 
   personal-store:
-    if: github.event_name == 'workflow_dispatch' && !inputs.notebook_models && !inputs.veterinary_models
+    if: github.event_name == 'workflow_dispatch' && !inputs.notebook_models && !inputs.veterinary_models && !inputs.anchor_receipts
     name: Personal store concurrency probe - not release evidence
     runs-on: macos-15
     timeout-minutes: 5
