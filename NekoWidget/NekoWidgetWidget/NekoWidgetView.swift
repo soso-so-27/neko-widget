@@ -54,6 +54,14 @@ struct NekoWidgetView: View {
         // clear it). Elsewhere a cloudy tap does nothing (11/5); the URL is nil
         // while cloudy, so the photo itself is never opened before the reveal.
         photoContent.widgetURL(entry.photoURL)
+#if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE && CLOUDY_DAY_WORDS_WIDGET_FIXTURE
+        // Review-only: which state this capture shows and the tag's forms.
+        .overlay(alignment: .top) {
+            Text(AppStoreWidgetPreviewFixture.dayWordsDebugLabel(entry))
+                .font(.system(size: 8, weight: .medium)).foregroundStyle(.yellow)
+                .lineLimit(4).padding(2).background(.black.opacity(0.8))
+        }
+#endif
         .containerBackground(for: .widget) {
             Color(red: 0.12, green: 0.10, blue: 0.09)
         }
@@ -1158,6 +1166,18 @@ enum AppStoreWidgetPreviewFixture {
         let count = dayWordsStates.count * dayWordsPhotos.count
         let slot = Int((date.timeIntervalSince1970 / dayWordsSlotSeconds).rounded(.down))
         return ((slot % count) + count) % count
+    }
+
+    static func dayWordsDebugLabel(_ entry: NekoWidgetEntry) -> String {
+        let slot = dayWordsSlot(at: entry.date)
+        let state = dayWordsStates[slot % dayWordsStates.count]
+        guard let selection = entry.cloudyWindowSelection else { return "#\(slot) \(state.id) no selection" }
+        let cats = selection.milestone.map { m in
+            m.kind + ":" + m.cats.map { "\($0.name),\($0.years),\($0.inPhoto)" }.joined(separator: ";")
+        } ?? "-"
+        return "#\(slot) \(state.id) kind=\(selection.dayKind ?? "nil") \(cats)
+"
+            + CloudyWindowDayText.revealForms(selection).joined(separator: " / ")
     }
 
     static func dayWordsTextSize(at date: Date) -> DynamicTypeSize {
