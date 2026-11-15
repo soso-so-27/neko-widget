@@ -172,7 +172,9 @@ struct SettingsView: View {
 #endif
     /// Only once there is a family to open or leave; making one stays in
     /// この子のこと (11/10: one place to start it).
-    private var showsFamilyNotebookRow: Bool { familyNotebook.hasFamily }
+    /// 11/15: asked to join and waiting to be let in (set by FamilyNotebookSharing).
+    @AppStorage(FamilyNotebookAwaitingApproval.key) private var awaitsFamilyApproval = false
+    private var showsFamilyNotebookRow: Bool { familyNotebook.hasFamily || awaitsFamilyApproval }
 
     private var canOpenMembershipOffer: Bool {
         PlusOfferAvailability.isConfigured
@@ -305,6 +307,9 @@ struct SettingsView: View {
                                     Image(systemName: "person.2.fill")
                                 }
                                 Spacer(minLength: 8)
+                                if !familyNotebook.hasFamily {
+                                    Text("参加を待っています").foregroundStyle(Color(uiColor: .secondaryLabel))
+                                }
                                 Image(systemName: "chevron.right")
                                     .font(.footnote.weight(.semibold))
                                     .foregroundStyle(Color(uiColor: .tertiaryLabel))

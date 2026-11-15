@@ -83,6 +83,9 @@ struct AppRootView: View {
             }
         }) { FamilyNotebookJoinView(link: $0.url, onJoined: { joinedFamilyFromLink = true }) }
         .sheet(isPresented: $showsFamilyNotebook) { FamilyNotebookView() }
+        // 11/15: a family member, or someone waiting to be let in, reads the
+        // family when the app opens, before any screen of it is opened.
+        .familyNotebookOpeningCheck()
         // An invitation link opened before the first-run guide ends: join at once,
         // then land in the まど tab. The guide can be finished later from 設定.
         .onChange(of: invitationInbox.pending?.id, initial: true) { _, _ in

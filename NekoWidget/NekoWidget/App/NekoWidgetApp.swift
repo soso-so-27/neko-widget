@@ -183,6 +183,9 @@ struct ProductionAppRootView: View {
                 guard newPhase == .active else { return }
                 Task {
                     await plusPurchases.refreshAfterForegroundEntry()
+                    // 11/15: a purchase still waiting for the server is
+                    // checked again for the rest of its 10 minutes.
+                    plusPurchases.resumeServerConfirmationRechecksIfDue()
                     // Retry the bounded Widget snapshot even when the server
                     // returns the same entitlement after a prior disk error.
                     try? PersonalWidgetMembershipStore.publish(

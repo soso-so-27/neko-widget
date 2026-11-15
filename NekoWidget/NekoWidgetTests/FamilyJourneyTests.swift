@@ -44,6 +44,51 @@ final class FamilyJourneyTests: XCTestCase {
         XCTAssertFalse(PlusPurchaseContinuation.claimsFamilyPayer(bought: true, canClaim: true, handoverPending: true))
     }
 
+    // MARK: - 11/15 (TestFlight 378): after Plus was bought
+
+    func testFamilySaysItHasNotSeenThePlusOnlyWhileItStillStops() {
+        // The payer's own Plus, or no payer and nobody's Plus to claim with.
+        XCTAssertTrue(PlusPurchaseContinuation.familyStillAwaitsPlus(
+            pause: .payerPlusUnverified(isPayer: true), hasPersonalPlus: true))
+        XCTAssertTrue(PlusPurchaseContinuation.familyStillAwaitsPlus(
+            pause: .noPayer(canClaim: false, handoverPending: false), hasPersonalPlus: true))
+        // Sharing came back, the family offers the claim, someone was asked
+        // to take over, another person pays, or this iPhone has no Plus.
+        XCTAssertFalse(PlusPurchaseContinuation.familyStillAwaitsPlus(pause: nil, hasPersonalPlus: true))
+        XCTAssertFalse(PlusPurchaseContinuation.familyStillAwaitsPlus(
+            pause: .noPayer(canClaim: true, handoverPending: false), hasPersonalPlus: true))
+        XCTAssertFalse(PlusPurchaseContinuation.familyStillAwaitsPlus(
+            pause: .noPayer(canClaim: false, handoverPending: true), hasPersonalPlus: true))
+        XCTAssertFalse(PlusPurchaseContinuation.familyStillAwaitsPlus(
+            pause: .payerPlusUnverified(isPayer: false), hasPersonalPlus: true))
+        XCTAssertFalse(PlusPurchaseContinuation.familyStillAwaitsPlus(
+            pause: .payerPlusUnverified(isPayer: true), hasPersonalPlus: false))
+        XCTAssertFalse(FamilyNotebookWords.familyAwaitsPlus.contains("確認できました"))
+    }
+
+    func testRestoreStandsUnderTheLineThatAsksForIt() {
+        // The server has not confirmed the purchase, or the state is unknown:
+        // the line says 「購入を復元」, so the button moves under it.
+        XCTAssertTrue(MembershipOfferModel.preview(state: .authorityPending).asksForRestore)
+        XCTAssertTrue(MembershipOfferModel.preview(state: .unknown).asksForRestore)
+        // Apple's own pending purchase, a member, and a fresh offer keep it
+        // among the links.
+        XCTAssertFalse(MembershipOfferModel.preview(state: .applePending).asksForRestore)
+        XCTAssertFalse(MembershipOfferModel.preview(state: .active).asksForRestore)
+        XCTAssertFalse(MembershipOfferModel.preview(state: .fresh).asksForRestore)
+    }
+
+    func testServerConfirmationIsAskedAgainAFewTimesWithinTwoMinutes() {
+        let delays = PlusPurchaseStore.serverConfirmationRecheckDelays
+        XCTAssertEqual(delays.count, 5)
+        XCTAssertEqual(delays.reduce(.zero, +), .seconds(59))
+        XCTAssertEqual(delays, delays.sorted())
+        // Then every 30 s until 10 minutes after the purchase (11/15: the
+        // server confirmed one about 4 minutes after it).
+        XCTAssertEqual(PlusPurchaseStore.serverConfirmationFollowUpInterval, .seconds(30))
+        XCTAssertEqual(PlusPurchaseStore.serverConfirmationWindow, 600)
+    }
+
     // MARK: - A5: one press makes and sends the family invitation
 
     func testOnePressMakesTheLinkAndASecondPressWhileMakingDoesNothing() {

@@ -40,8 +40,11 @@ final class FamilyNotebookSharing: ObservableObject {
 
     /// Background passes stay quiet: only something the person did, or asked to
     /// check again, shows a failure (11/5: the alert repeated while polling).
-    func refresh(reportsFailure: Bool = false) async {
-        guard !refreshing else { return }
+    /// Returns whether this pass read the family (false when another pass was
+    /// already running, or the read failed).
+    @discardableResult
+    func refresh(reportsFailure: Bool = false) async -> Bool {
+        guard !refreshing else { return false }
         refreshing = true; defer { refreshing = false }
         do {
             let loaded = try await service.loadState()
@@ -59,23 +62,54 @@ final class FamilyNotebookSharing: ObservableObject {
                 }
                 state = next
             }
+            // Only a settled answer moves the mark; a checking pass keeps it.
+            // Let in but without the notebook's key yet is still waiting
+            // (11/15: this device registers itself and the family's key
+            // reaches it over the next passes).
+            switch next {
+            case .pendingApproval, .waitingForKeys: Self.noteAwaitingApproval(true)
+            case .notInFamily, .inFamily: Self.noteAwaitingApproval(false)
+            default: break
+            }
             if nextPause != pause { pause = nextPause }
             if let real = service as? ProductionFamilyNotebookSharingService {
                 if ownJoinResults != real.lastJoinResults { ownJoinResults = real.lastJoinResults }
                 FamilyNotebookPrototype.shared.attachReal(real, reportsFailure: reportsFailure)
-                let nextRequests = next.membership == nil ? [] : syncing ? requests : try await real.pendingRequests()
+                // Read even while keys follow a change: an approval itself
+                // starts that pass, and the approved person must leave the
+                // list at once (11/15: they stayed with 受け入れる under them).
+                let nextRequests = next.membership == nil ? [] : try await real.pendingRequests()
                 if nextRequests != requests { requests = nextRequests }
             }
+            return true
         } catch is CancellationError {
             // Leaving the screen is not a service failure.
+            return false
         } catch {
             if reportsFailure { failure = error as? FamilySharingError ?? .serviceUnavailable }
+            return false
         }
     }
 
-    /// Runs one operation with a fresh ID, then reads the state again.
+    /// 11/15 (TestFlight 378): after Plus was bought or confirmed on this
+    /// iPhone. A background pass already running may have read the family
+    /// before the Plus, and a second call during it was dropped, so
+    /// 「共有が止まっています」 stayed under 「Plusを確認できました。」. Waits
+    /// for that pass, then reads the family again, saying if it failed.
     @discardableResult
-    func perform(_ operation: (UUID) async throws -> Void) async -> Bool {
+    func refreshAfterPlusChange(reportsFailure: Bool = true) async -> Bool {
+        while refreshing {
+            do { try await Task.sleep(for: .milliseconds(100)) }
+            catch { return false }
+        }
+        return await refresh(reportsFailure: reportsFailure)
+    }
+
+    /// Runs one operation with a fresh ID, then reads the state again.
+    /// `readsAfter: false` only where nothing on screen waits for that read
+    /// (an invitation link: the share sheet opens first, 11/15).
+    @discardableResult
+    func perform(readsAfter: Bool = true, _ operation: (UUID) async throws -> Void) async -> Bool {
         // A background pass in flight must not swallow the person's tap.
         while refreshing {
             do { try await Task.sleep(for: .milliseconds(100)) }
@@ -86,16 +120,46 @@ final class FamilyNotebookSharing: ObservableObject {
         defer { isWorking = false }
         do {
             try await operation(UUID())
-            await refresh()
+            if readsAfter { await refreshAfterChange() }
             return true
         } catch is CancellationError {
             return false
         } catch {
             failure = error as? FamilySharingError ?? .unknownOutcome
-            await refresh()
+            await refreshAfterChange()
             return false
         }
     }
+
+    /// The read after a change is never dropped behind a background pass.
+    private func refreshAfterChange() async {
+        while refreshing {
+            do { try await Task.sleep(for: .milliseconds(100)) }
+            catch { return }
+        }
+        await refresh()
+    }
+
+    /// 11/15: an approved or declined request leaves the list as soon as the
+    /// relay took the answer, before the next read.
+    func forgetRequest(_ id: UUID) {
+        requests.removeAll { $0.id == id }
+    }
+
+    static var awaitingApproval: Bool { UserDefaults.standard.bool(forKey: FamilyNotebookAwaitingApproval.key) }
+    /// Never settled on this iPhone: an app from before 11/15 asked to join
+    /// without leaving the mark. One read settles it either way.
+    static var awaitingApprovalUnknown: Bool { UserDefaults.standard.object(forKey: FamilyNotebookAwaitingApproval.key) == nil }
+    private static func noteAwaitingApproval(_ value: Bool) {
+        guard awaitingApproval != value else { return }
+        UserDefaults.standard.set(value, forKey: FamilyNotebookAwaitingApproval.key)
+    }
+}
+
+/// 11/15: this iPhone asked to join and waits for the family. Kept so the
+/// app checks again when opened, and 設定 keeps a way to the notebook.
+enum FamilyNotebookAwaitingApproval {
+    static let key = "familyNotebookAwaitingApproval"
 }
 
 /// Test builds: the family on this iPhone alone (FamilyNotebookPrototype).

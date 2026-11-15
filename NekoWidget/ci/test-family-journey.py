@@ -165,6 +165,181 @@ class EmptyPhotosTests(unittest.TestCase):
         self.assertIn("openWindows: showsMadoTab ? { selectedTab = .windows } : nil", TABS)
 
 
+STORE = read("NekoWidget/Services/PlusPurchaseStore.swift")
+OFFER_VIEW = read("NekoWidget/Views/MembershipOfferView.swift")
+SHARING = read("NekoWidget/Services/FamilyNotebookSharing.swift")
+ACCESS = read("NekoWidget/Services/MembershipAccessContext.swift")
+
+
+class PurchaseWaitAndFamilyPause1115Tests(unittest.TestCase):
+    """11/15 (TestFlight 378): bought from the family notebook, the screen
+    waited until 「購入を復元」 by hand, the button was below the fold, and
+    「Plusを確認できました。」 stood under 「共有が止まっています」."""
+
+    def test_server_confirmation_is_asked_again_by_itself(self):
+        purchase = section(STORE, "    func purchase(\n", "    /// 11/15 (TestFlight 378)")
+        self.assertEqual(purchase.count("recheckServerConfirmationAfterPurchase()"), 2)
+        recheck = section(STORE, "private func recheckServerConfirmationAfterPurchase() {", "    /// AppStore.sync")
+        # Bounded, and only the server's answer can grant: the same re-check
+        # as 「購入を復元」, never a purchase, AppStore.sync or a local grant.
+        self.assertIn("let delay = delays.isEmpty ? Self.serverConfirmationFollowUpInterval : delays.removeFirst()", recheck)
+        self.assertIn("await store.refreshAfterForegroundEntry()", recheck)
+        self.assertIn("guard !store.isPurchasing, !store.isRestoring else { continue }", recheck)
+        for forbidden in ("AppStore.sync", "product.purchase", "entitlementState =", "canStartNewPurchase = true",
+                          "repeat {", "grantsPlus = true"):
+            self.assertNotIn(forbidden, recheck)
+        self.assertIn("store.awaitingServerConfirmation = true", recheck)
+        self.assertIn("serverConfirmationRecheckTask?.cancel()", section(STORE, "    func stop() {", "\n    }\n"))
+        # 11/15 (second fix): then every 30 s until 10 minutes after the
+        # purchase, only in front, wherever the person is; one loop at a time.
+        self.assertIn("static let serverConfirmationFollowUpInterval: Duration = .seconds(30)", STORE)
+        self.assertIn("static let serverConfirmationWindow: TimeInterval = 10 * 60", STORE)
+        self.assertIn("serverConfirmationDeadline = Date().addingTimeInterval(Self.serverConfirmationWindow)", recheck)
+        self.assertIn("guard let deadline = store.serverConfirmationDeadline, Date() < deadline,", recheck)
+        self.assertIn("guard store.isInFront else { store.serverConfirmationRecheckTask = nil; return }", recheck)
+        self.assertIn("UIApplication.shared.applicationState == .active", recheck)
+        loop = section(STORE, "private func runServerConfirmationRechecks(first: [Duration]) {", "private func finishServerConfirmationRechecks()")
+        self.assertLess(loop.index("serverConfirmationRecheckTask?.cancel()"), loop.index("serverConfirmationRecheckTask = Task"))
+        resume = section(STORE, "func resumeServerConfirmationRechecksIfDue() {", "\n    }\n")
+        self.assertIn("guard serverConfirmationRecheckTask == nil, let deadline = serverConfirmationDeadline,", resume)
+        self.assertEqual(STORE.count("serverConfirmationRecheckTask = Task"), 1)
+        app = read("NekoWidget/App/NekoWidgetApp.swift")
+        active = section(app, "guard newPhase == .active else { return }", "membershipNow = .now")
+        self.assertLess(active.index("await plusPurchases.refreshAfterForegroundEntry()"),
+                        active.index("plusPurchases.resumeServerConfirmationRechecksIfDue()"))
+        # Confirmed later: the family's paused box is read again by itself.
+        check = section(NOTEBOOK, "private struct FamilyNotebookOpeningCheck: ViewModifier {", "extension View {")
+        self.assertIn(".onChange(of: purchases.entitlementState.permitsPersonalPlus) { _, plus in", check)
+        self.assertIn("refreshAfterPlusChange(reportsFailure: false)", check)
+
+    def test_waiting_sheet_goes_on_once_plus_is_confirmed(self):
+        sheet = section(OFFER, "struct MembershipOfferSheet: View {", "enum PlusPurchaseContinuation {")
+        self.assertIn("awaitsConfirmation = result == .waiting && !model.isMember", sheet)
+        change = section(sheet, ".onChange(of: model.isMember) { _, member in", "private var offerScreen: some View {")
+        self.assertIn("guard member, awaitsConfirmation, !showsStarted else { return }", change)
+        self.assertIn("completePurchase()", change)
+        # A restore finishes the sheet itself, so it is not finished twice.
+        restore = section(sheet, "onRestore: {", "onClose:")
+        self.assertLess(restore.index("awaitsConfirmation = false"), restore.index("await model.restore()"))
+        # Membership still comes only from the store's server-confirmed state.
+        self.assertIn("isMember = purchases.entitlementState.permitsPersonalPlus", OFFER)
+
+    def test_restore_stands_under_the_line_that_asks_for_it(self):
+        self.assertIn('var asksForRestore: Bool { !isMember && (message?.contains("「購入を復元」") ?? false) }', OFFER)
+        self.assertIn("restoreNearMessage: model.asksForRestore", OFFER)
+        actions = section(OFFER_VIEW, "    private var actions: some View {", "    private var reassurance: some View {")
+        self.assertLess(actions.index('"membership-offer-message"'), actions.index("if restoreNearMessage {"))
+        self.assertLess(actions.index("if restoreNearMessage {"), actions.index('"membership-offer-manage"'))
+        footer = section(OFFER_VIEW, "@ViewBuilder private var footerLinkContent: some View {", "\n    }\n")
+        self.assertIn("if !restoreNearMessage { restoreButton }", footer)
+        # One 「購入を復元」 on the screen, the sheet's own (it finishes the sheet).
+        self.assertEqual(OFFER_VIEW.count("restoreButton\n"), 1)
+        self.assertEqual(OFFER_VIEW.count("if !restoreNearMessage { restoreButton }"), 1)
+        self.assertNotIn("MembershipRestoreButton(", OFFER_VIEW)
+
+    def test_family_is_read_again_after_plus_and_never_says_found_while_stopped(self):
+        after = section(SHARING, "func refreshAfterPlusChange(reportsFailure: Bool = true) async -> Bool {", "\n    }\n")
+        self.assertIn("while refreshing {", after)
+        self.assertIn("return await refresh(reportsFailure: reportsFailure)", after)
+        self.assertIn("guard !refreshing else { return false }", SHARING)
+        dismiss = section(NOTEBOOK, ".sheet(isPresented: $showsPlusOffer, onDismiss: {", "MembershipOfferSheet(model: .live()")
+        self.assertIn("if bought { await sharing.refreshAfterPlusChange() } else { await sharing.refresh() }", dismiss)
+        paused = section(NOTEBOOK, "private func pausedSection(_ pause: FamilySharingPause) -> some View {", "} footer: {")
+        self.assertEqual(paused.count("showsFound: false"), 2)
+        self.assertEqual(paused.count("Task { await recheckFamilyAfterPlus() }"), 2)
+        self.assertEqual(paused.count("familyAwaitsPlusLine"), 2)
+        # The check and its line are one row, so rows do not come and go mid-check.
+        self.assertEqual(paused.count(
+            "VStack(alignment: .leading, spacing: 8) {\n                        MembershipRestoreButton("), 2)
+        self.assertNotIn("Plusを確認できました", NOTEBOOK)
+        recheck = section(NOTEBOOK, "private func recheckFamilyAfterPlus() async {", "@ViewBuilder private var familyAwaitsPlusLine")
+        self.assertIn("guard await sharing.refreshAfterPlusChange() else { return }", recheck)
+        self.assertIn("PlusPurchaseContinuation.familyStillAwaitsPlus(", recheck)
+        self.assertIn('static let familyAwaitsPlus = "家族の手帳には、まだPlusが届いていません。少しおいて、もう一度確かめてください。"',
+                      NOTEBOOK)
+        button = section(ACCESS, "struct MembershipRestoreButton: View {", "private func restore() {")
+        self.assertIn("if showsFound {", button)
+        self.assertIn("showsFound: Bool = true", button)
+        self.assertIn("testFamilySaysItHasNotSeenThePlusOnlyWhileItStillStops", TESTS)
+        self.assertIn("testRestoreStandsUnderTheLineThatAsksForIt", TESTS)
+        self.assertIn("testServerConfirmationIsAskedAgainAFewTimesWithinTwoMinutes", TESTS)
+
+
+SETTINGS = read("NekoWidget/Views/SettingsView.swift")
+
+
+class FamilyJoinAfterApproval1115Tests(unittest.TestCase):
+    """11/15 (TestFlight 378, two iPhones): the approved person stayed in
+    「参加を待っている人」, the person let in never saw the notebook, the
+    invite link took long, requests showed late, and the name field read as
+    the notebook's name."""
+
+    def test_answered_request_leaves_the_list(self):
+        refresh = section(SHARING, "func refresh(reportsFailure: Bool = false) async -> Bool {", "func refreshAfterPlusChange(")
+        self.assertIn("let nextRequests = next.membership == nil ? [] : try await real.pendingRequests()", refresh)
+        self.assertNotIn("syncing ? requests", refresh)
+        decide = section(NOTEBOOK, "private func decide(_ request: FamilyNotebookJoinRequest, approve: Bool) {", "\n    }\n")
+        self.assertIn("sharing.forgetRequest(request.id)", decide)
+        # A second press on a stale row finds it gone; it never approves twice.
+        service = read("NekoWidget/Services/ProductionFamilyNotebookSharingService.swift")
+        again = section(service, "func decide(requestID: UUID, approve: Bool, operationID: UUID) async throws {", "struct FamilyNotebookJoinRequest")
+        self.assertIn("guard let request = result.requests.first(where: { $0.requestID == requestID }) else { throw FamilySharingError.staleRoster }", again)
+        perform = section(SHARING, "func perform(readsAfter: Bool = true", "func forgetRequest(")
+        self.assertIn("if readsAfter { await refreshAfterChange() }", perform)
+        self.assertIn("while refreshing {", section(SHARING, "private func refreshAfterChange() async {", "\n    }\n"))
+
+    def test_person_let_in_learns_it_when_the_app_opens(self):
+        self.assertIn('static let key = "familyNotebookAwaitingApproval"', SHARING)
+        refresh = section(SHARING, "func refresh(reportsFailure: Bool = false) async -> Bool {", "func refreshAfterPlusChange(")
+        self.assertIn("case .pendingApproval, .waitingForKeys: Self.noteAwaitingApproval(true)", refresh)
+        self.assertIn("case .notInFamily, .inFamily: Self.noteAwaitingApproval(false)", refresh)
+        check = section(NOTEBOOK, "private struct FamilyNotebookOpeningCheck: ViewModifier {", "extension View {")
+        self.assertIn("model.hasFamily || FamilyNotebookSharing.awaitingApproval", check)
+        # An app from before 11/15 left no mark: one read settles it.
+        self.assertIn("|| FamilyNotebookSharing.awaitingApprovalUnknown else { return }", check)
+        self.assertIn("UserDefaults.standard.object(forKey: FamilyNotebookAwaitingApproval.key) == nil", SHARING)
+        self.assertIn("await FamilyNotebookSharing.shared.refresh()", check)
+        self.assertIn("model.applyFamilyWrites()", check)
+        # Key passes go on (bounded) so the family's iPhone signs the newcomer
+        # in and sends the key in one opening; waiting goes on every 30 s.
+        self.assertIn("needsAnotherPass == true", check)
+        self.assertIn("if keysMove, keyPasses < 12 { keyPasses += 1; delay = .seconds(5) }", check)
+        self.assertIn("else if FamilyNotebookSharing.awaitingApproval { delay = .seconds(30) }", check)
+        # Two synthetic iPhones: approval before the newcomer registers still ends readable.
+        delivery = read("ci/verify-family-notebook-key-delivery.swift")
+        self.assertIn("try await approvedBeforeNewcomerRegisters(directory: directory, endpoint: endpoint)", delivery)
+        late = section(delivery, "private static func approvedBeforeNewcomerRegisters(", "\n    }\n}")
+        order = ["confirmApprovedAddition", "_ = try await opens(a)", "let waiting = try await opens(b)",
+                 "_ = try await opens(a)\n        let bDevice", "guard let joined = try await opens(b), joined.ready"]
+        self.assertEqual(sorted(order, key=late.index), order)
+        self.assertIn("ci/verify-family-notebook-key-delivery.swift", read("ci/run-quick-ios-checks.sh"))
+        # Nothing about Photos decides it.
+        for photos in ("PHPhotoLibrary", "authorizationStatus", "PhotoAuthorization"):
+            self.assertNotIn(photos, check)
+        self.assertIn(".familyNotebookOpeningCheck()", ROOT_VIEW)
+        # 設定 keeps the one way to the notebook while waiting.
+        self.assertIn("@AppStorage(FamilyNotebookAwaitingApproval.key) private var awaitsFamilyApproval = false", SETTINGS)
+        self.assertIn("private var showsFamilyNotebookRow: Bool { familyNotebook.hasFamily || awaitsFamilyApproval }", SETTINGS)
+        self.assertEqual(SETTINGS.count('Text("参加を待っています")'), 1)
+
+    def test_invite_link_opens_without_the_whole_family_read(self):
+        family = section(NOTEBOOK, "struct FamilyNotebookInviteView: View {", "enum FamilyInviteSendTap")
+        self.assertIn("await sharing.perform(readsAfter: false) { made = try await service.createInvitation(operationID: $0) }", family)
+        self.assertEqual(NOTEBOOK.count("readsAfter: false"), 1)
+        self.assertIn("if creating { ProgressView() }", family)
+
+    def test_requests_are_read_every_20_seconds_while_open(self):
+        self.assertIn("Task.sleep(for: .seconds(pending ? 5 : 20))", NOTEBOOK)
+        self.assertIn(".refreshable { if !sharing.isWorking { await sharing.refresh(reportsFailure: true) } }", NOTEBOOK)
+
+    def test_join_name_field_says_whose_name(self):
+        join = section(NOTEBOOK, "struct FamilyNotebookJoinView: View {", "struct FamilyNotebookNameView: View {")
+        field = section(join, 'Text("あなたの名前")', '.accessibilityIdentifier("family-notebook-display-name")')
+        self.assertIn("TextField(", field)
+        self.assertLess(join.index('"family-notebook-display-name"'), join.index('Text("家族に表示されます。")'))
+        self.assertIn('Text("あなたの名前")', section(SETUP, "private var applySection: some View {", "\n    }\n"))
+
+
 class RegistrationTests(unittest.TestCase):
     def test_native_tests_are_in_the_test_target(self):
         self.assertIn("path = FamilyJourneyTests.swift;", PROJECT)

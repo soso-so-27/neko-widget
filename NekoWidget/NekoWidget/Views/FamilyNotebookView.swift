@@ -726,6 +726,9 @@ struct FamilyNotebookView: View {
     /// bought, 「わたしのPlusで再開する」 is done for the person (no second press).
     @State private var claimsAfterPlus = false
     @State private var boughtPlus = false
+    /// 11/15: 「Plusをもう一度確かめる」 found Plus, but the family read after
+    /// it still says sharing is stopped. Said in place of 「確認できました」.
+    @State private var familyAwaitsPlus = false
     @State private var showsName = false
     /// 「家族の手帳から抜ける」 at the bottom of the notebook (11/7).
     @State private var confirmsLeave = false
@@ -846,9 +849,12 @@ struct FamilyNotebookView: View {
             .sheet(isPresented: $showsPlusOffer, onDismiss: {
                 NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
                 let claims = claimsAfterPlus && boughtPlus
+                let bought = boughtPlus
                 claimsAfterPlus = false
                 Task {
-                    await sharing.refresh()
+                    // 11/15: a purchase is read by the family at once, never
+                    // dropped behind a background pass.
+                    if bought { await sharing.refreshAfterPlusChange() } else { await sharing.refresh() }
                     if claims { await claimPayerAfterPurchase() }
                 }
                 if createsAfterPlus { createsAfterPlus = false; showsName = boughtPlus }
@@ -887,7 +893,9 @@ struct FamilyNotebookView: View {
                 }
                 guard model.isReal else { return }
                 let pending = (sharing.service as? ProductionFamilyNotebookSharingService)?.needsAnotherPass == true
-                do { try await Task.sleep(for: .seconds(pending ? 5 : 60)) } catch { return }
+                // 11/15: a request to join showed up to a minute late with the
+                // notebook open; 20 s while it is open (pull to refresh too).
+                do { try await Task.sleep(for: .seconds(pending ? 5 : 20)) } catch { return }
             } while !Task.isCancelled
         }
         .onAppear { model.markSeen() }
@@ -1052,7 +1060,13 @@ struct FamilyNotebookView: View {
 
     private func decide(_ request: FamilyNotebookJoinRequest, approve: Bool) {
         guard let real = sharing.service as? ProductionFamilyNotebookSharingService else { return }
-        Task { await sharing.perform { try await real.decide(requestID: request.id, approve: approve, operationID: $0) } }
+        Task {
+            // 11/15: the answered request leaves the list once the relay took
+            // it; pressing a stale row again only finds it gone (staleRoster).
+            if await sharing.perform({ try await real.decide(requestID: request.id, approve: approve, operationID: $0) }) {
+                sharing.forgetRequest(request.id)
+            }
+        }
     }
 }
 
@@ -1067,6 +1081,26 @@ extension FamilyNotebookView {
                                                          handoverPending: handoverPending)
         else { return }
         _ = await sharing.perform { try await sharing.service.claimPayer(operationID: $0) }
+    }
+
+    /// 11/15 (TestFlight 378): 「Plusをもう一度確かめる」 found Plus. Read the
+    /// family again at once; the paused box goes when the family sees the
+    /// Plus. If it still does not, say that, never 「確認できました」 under
+    /// 「共有が止まっています」.
+    private func recheckFamilyAfterPlus() async {
+        familyAwaitsPlus = false
+        guard await sharing.refreshAfterPlusChange() else { return }
+        familyAwaitsPlus = PlusPurchaseContinuation.familyStillAwaitsPlus(
+            pause: sharing.pause, hasPersonalPlus: access.hasPersonalPlus())
+    }
+
+    @ViewBuilder private var familyAwaitsPlusLine: some View {
+        if familyAwaitsPlus {
+            Text(FamilyNotebookWords.familyAwaitsPlus)
+                .font(.footnote).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("family-notebook-awaits-plus")
+        }
     }
 
     /// Shown while new writing does not reach the family (1029e). Everything
@@ -1090,9 +1124,14 @@ extension FamilyNotebookView {
                 // (11/6: the notebook said it would come back by itself). This
                 // iPhone shows Plus: check it again right here (11/7).
                 if access.hasPersonalPlus() {
-                    MembershipRestoreButton(title: "Plusをもう一度確かめる", look: .wide,
-                                            identifier: "family-notebook-payer-restore") {
-                        Task { await sharing.refresh() }
+                    // One row whatever the check shows (11/15: the app quit around
+                    // this check while rows came and went); the box goes as a whole.
+                    VStack(alignment: .leading, spacing: 8) {
+                        MembershipRestoreButton(title: "Plusをもう一度確かめる", look: .wide,
+                                                identifier: "family-notebook-payer-restore", showsFound: false) {
+                            Task { await recheckFamilyAfterPlus() }
+                        }
+                        familyAwaitsPlusLine
                     }
                 } else {
                     Button { showsPlusOffer = true } label: {
@@ -1118,9 +1157,14 @@ extension FamilyNotebookView {
                 } else if access.hasPersonalPlus() {
                     // This iPhone has Plus but the family side does not see it yet:
                     // check it again right here, never the offer (11/5, 11/7).
-                    MembershipRestoreButton(title: "Plusをもう一度確かめる", look: .wide,
-                                            identifier: "family-notebook-restore-plus") {
-                        Task { await sharing.refresh() }
+                    // One row whatever the check shows (11/15: the app quit around
+                    // this check while rows came and went); the box goes as a whole.
+                    VStack(alignment: .leading, spacing: 8) {
+                        MembershipRestoreButton(title: "Plusをもう一度確かめる", look: .wide,
+                                                identifier: "family-notebook-restore-plus", showsFound: false) {
+                            Task { await recheckFamilyAfterPlus() }
+                        }
+                        familyAwaitsPlusLine
                     }
                 } else {
                     Button { claimsAfterPlus = true; showsPlusOffer = true } label: {
@@ -1626,7 +1670,10 @@ struct FamilyNotebookInviteView: View {
                 var made: FamilyInvitation?
                 // A failure is kept in `sharing.failure` and shown above; the
                 // screen stays as it was.
-                await sharing.perform { made = try await service.createInvitation(operationID: $0) }
+                // 11/15: the share sheet opens as soon as the link exists; the
+                // whole-family read that followed (sync included) is left to
+                // the notebook's next pass, since a link changes nothing shown.
+                await sharing.perform(readsAfter: false) { made = try await service.createInvitation(operationID: $0) }
                 guard let made else { return }
                 invitation = made
                 sharesInvitation = true
@@ -1688,11 +1735,19 @@ struct FamilyNotebookJoinView: View {
                         .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 } else {
                     if sharing.service.sendsInvitations {
-                        TextField("家族に表示するあなたの名前", text: VisibleTextInput.binding($displayName))
-                            .textFieldStyle(.roundedBorder)
-                            .focused($typingName)
-                            .disabled(sharing.isWorking)
-                            .accessibilityIdentifier("family-notebook-display-name")
+                        // 11/15: the name is filled in already, so the hint
+                        // never showed and it read as the notebook's name. The
+                        // same heading as the まど's join screen.
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("あなたの名前").font(.subheadline.weight(.semibold))
+                            TextField("家族に表示するあなたの名前", text: VisibleTextInput.binding($displayName))
+                                .textFieldStyle(.roundedBorder)
+                                .focused($typingName)
+                                .disabled(sharing.isWorking)
+                                .accessibilityLabel("あなたの名前")
+                                .accessibilityIdentifier("family-notebook-display-name")
+                            Text("家族に表示されます。").font(.footnote).foregroundStyle(.secondary)
+                        }
                     }
                     Button {
                         typingName = false
@@ -1945,11 +2000,59 @@ private struct FamilyNotebookToolSyncModifier: ViewModifier {
         }
     }
 }
+/// 11/15 (TestFlight 378): the person let in learned it only by opening the
+/// notebook, which 設定 did not offer yet, so it never appeared: their
+/// device was never registered for the notebook's key, and the family's
+/// iPhone had nobody to send the key to. Each time the app comes to the
+/// front, someone in a family, waiting to be let in, or not yet known to be
+/// neither reads the family. The passes go on while the keys still move
+/// (every 5 s, at most 12) and every 30 s while still waiting, so whichever
+/// iPhone opens first, the other finishes: the new member registers, the
+/// family's iPhone signs them in and sends the key, the new member reads it.
+/// The family's cats then reach 「この子」. Photos access plays no part.
+private struct FamilyNotebookOpeningCheck: ViewModifier {
+    @ObservedObject private var model = FamilyNotebookPrototype.shared
+    @ObservedObject private var purchases = PlusPurchaseStore.productionShared
+    @Environment(\.scenePhase) private var phase
+
+    func body(content: Content) -> some View {
+        content
+        // 11/15: Plus confirmed later (the purchase re-checks run wherever the
+        // person is): a family stopped for want of it is read again at once,
+        // so 「共有が止まっています」 goes without opening anything.
+        .onChange(of: purchases.entitlementState.permitsPersonalPlus) { _, plus in
+            guard plus, model.isReal, model.hasFamily, FamilyNotebookSharing.shared.pause != nil else { return }
+            Task { await FamilyNotebookSharing.shared.refreshAfterPlusChange(reportsFailure: false) }
+        }
+        .task(id: phase == .active) {
+            guard phase == .active, model.isReal,
+                  model.hasFamily || FamilyNotebookSharing.awaitingApproval
+                    || FamilyNotebookSharing.awaitingApprovalUnknown else { return }
+            var keyPasses = 0
+            while !Task.isCancelled {
+                if !FamilyNotebookSharing.shared.isWorking { await FamilyNotebookSharing.shared.refresh() }
+                if model.hasFamily { model.applyFamilyWrites() }
+                let keysMove = (FamilyNotebookSharing.shared.service as? ProductionFamilyNotebookSharingService)?.needsAnotherPass == true
+                let delay: Duration
+                if keysMove, keyPasses < 12 { keyPasses += 1; delay = .seconds(5) }
+                else if FamilyNotebookSharing.awaitingApproval { delay = .seconds(30) }
+                else { return }
+                do { try await Task.sleep(for: delay) } catch { return }
+            }
+        }
+    }
+}
+
 extension View {
     /// Poll only while an actual shared tool is visible in the foreground.
     /// The sharing service still enforces participation, pause and entitlement.
     func familyNotebookToolSync(enabled: Bool = true) -> some View {
         modifier(FamilyNotebookToolSyncModifier(enabled: enabled))
+    }
+
+    /// Put once at the app's root (11/15).
+    func familyNotebookOpeningCheck() -> some View {
+        modifier(FamilyNotebookOpeningCheck())
     }
 }
 
@@ -1964,6 +2067,9 @@ enum FamilyNotebookWords {
         payer ? "抜けると、ほかの家族がPlusを始めるまで、家族みんなの共有が止まります。"
             : "これから書くことは家族に届かなくなります。"
     }
+
+    /// 11/15: this iPhone's Plus was found, but the family does not see it yet.
+    static let familyAwaitsPlus = "家族の手帳には、まだPlusが届いていません。少しおいて、もう一度確かめてください。"
 
     /// What stopped (1029e). That nothing written is lost is left to the help page (1031).
     static func pausedDetail(_ pause: FamilySharingPause) -> String {

@@ -275,6 +275,11 @@ final class MembershipOfferModel: ObservableObject {
 
     var canRestore: Bool { !isWorking && !(purchases?.isPurchasing ?? false) && !(purchases?.isRestoring ?? false) }
 
+    /// 11/15 (TestFlight 378): the line on screen tells the person to press
+    /// 「購入を復元」, so the screen's one 「購入を復元」 stands right under it
+    /// instead of among the links below the fold.
+    var asksForRestore: Bool { !isMember && (message?.contains("「購入を復元」") ?? false) }
+
     private init(
         isPreview: Bool,
         presentsOffer: Bool = true,
@@ -990,6 +995,9 @@ struct MembershipOfferSheet: View {
     /// Bought here with nothing waiting: the one line and the one button.
     @State private var showsStarted = false
     @State private var nextStep: PlusStartedNextStep?
+    /// 11/15: this sheet's purchase ended waiting for the server. When the
+    /// store's own re-check then confirms Plus, it goes on as a purchase.
+    @State private var awaitsConfirmation = false
 #if DEBUG || INTERNAL_PRESENTATION
     @State private var showsManagementPreview = false
 #endif
@@ -1047,6 +1055,10 @@ struct MembershipOfferSheet: View {
         }
 #endif
         .task { await model.load() }
+        .onChange(of: model.isMember) { _, member in
+            guard member, awaitsConfirmation, !showsStarted else { return }
+            completePurchase()
+        }
     }
 
     private var offerScreen: some View {
@@ -1055,7 +1067,7 @@ struct MembershipOfferSheet: View {
             photo: photo, photoAsset: heldPhoto ?? placePhoto, offer: model.displayedOffer,
             isWorking: model.isWorking,
             canPurchase: model.canPurchase, canRestore: model.canRestore,
-            message: model.message,
+            message: model.message, restoreNearMessage: model.asksForRestore,
             isMember: model.isMember, memberEndLine: model.memberEndLine,
             purchaseTitle: model.purchaseTitle,
             canRefresh: model.canRefresh,
@@ -1065,6 +1077,9 @@ struct MembershipOfferSheet: View {
             onManageSubscription: manageSubscription,
             onPurchase: purchase,
             onRestore: {
+                // The restore finishes the sheet itself; the waiting purchase
+                // must not finish it a second time.
+                awaitsConfirmation = false
                 Task {
                     let result = await model.restore()
                     if result == .completed { onFinish(result) }
@@ -1090,23 +1105,32 @@ struct MembershipOfferSheet: View {
         Task {
             let result = await model.purchase()
             guard result == .completed else {
+                awaitsConfirmation = result == .waiting && !model.isMember
                 if model.isPreview && result == .cancelled { onFinish(result) }
                 return
             }
-            if !model.isPreview {
-                UsageCounter.shared.count(.plusPurchased(.init(context)))  // Usage (11/7)
-                // 11/12: 「自動保存も始めますか？」 is asked later, once, at the
-                // app's root (AutoSaveOfferLater), never over what was bought.
-                AutoSaveAfterPurchase.noteBought(from: context)
-            }
-            if context.hasPendingAction(showsClose: showsClose) {
-                // The caller re-reads membership through the dismissal and
-                // goes on with what the person asked for.
-                onFinish(result)
-            } else {
-                nextStep = nextStepSource?.resolve()
-                showsStarted = true
-            }
+            completePurchase()
+        }
+    }
+
+    /// A purchase that ended with Plus, at once or after the server's
+    /// confirmation came while this sheet waited (11/15).
+    private func completePurchase() {
+        let result = MembershipOfferActionResult.completed
+        awaitsConfirmation = false
+        if !model.isPreview {
+            UsageCounter.shared.count(.plusPurchased(.init(context)))  // Usage (11/7)
+            // 11/12: 「自動保存も始めますか？」 is asked later, once, at the
+            // app's root (AutoSaveOfferLater), never over what was bought.
+            AutoSaveAfterPurchase.noteBought(from: context)
+        }
+        if context.hasPendingAction(showsClose: showsClose) {
+            // The caller re-reads membership through the dismissal and
+            // goes on with what the person asked for.
+            onFinish(result)
+        } else {
+            nextStep = nextStepSource?.resolve()
+            showsStarted = true
         }
     }
 
@@ -1142,6 +1166,17 @@ enum PlusPurchaseContinuation {
     /// bought, take it over with this Plus when the family now allows it.
     static func claimsFamilyPayer(bought: Bool, canClaim: Bool, handoverPending: Bool) -> Bool {
         bought && canClaim && !handoverPending
+    }
+
+    /// 11/15 (TestFlight 378): this iPhone has Plus, yet the family read just
+    /// after still stops for want of it (the payer's own Plus, or nobody's to
+    /// claim with). The notebook says so in place of 「確認できました」.
+    static func familyStillAwaitsPlus(pause: FamilySharingPause?, hasPersonalPlus: Bool) -> Bool {
+        guard hasPersonalPlus else { return false }
+        switch pause {
+        case .payerPlusUnverified(isPayer: true)?, .noPayer(canClaim: false, handoverPending: false)?: return true
+        default: return false
+        }
     }
 }
 
