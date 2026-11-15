@@ -52,6 +52,8 @@ enum FamilyNotebookRepresentativePhotoImage {
         throw FamilyNotebookCryptoError.invalid
     }
     static func validate(_ jpeg: Data, reference: FamilyNotebookRepresentativePhotoReference) throws {
+        try reference.validate()
+        guard try withoutMetadata(jpeg) == jpeg else { throw FamilyNotebookCryptoError.invalid }
         guard jpeg.count <= 200_000, let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
               CGImageSourceGetType(source) as String? == UTType.jpeg.identifier,
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
