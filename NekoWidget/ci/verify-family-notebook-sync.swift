@@ -58,6 +58,10 @@ private actor Relay: GroupHTTPTransport {
         }
         struct Upload: Decodable { let operationID: UUID; let expectedGeneration: Int; let expectedEpoch: Int; let payload: EncryptedFamilyNotebookOperation }
         let body = request.httpBody!, upload = try GroupWire.decode(Upload.self, body)
+        if requiredVersion == nil {
+            let object = try JSONSerialization.jsonObject(with: body) as! [String: Any]
+            try check(Set(object.keys) == Set(["operationId", "expectedGeneration", "expectedEpoch", "payload"]), "old Worker accepts only the pre-contract fields")
+        }
         if let version = requiredVersion {
             let object = try JSONSerialization.jsonObject(with: body) as! [String: Any]
             if (object["writeContract"] as? [String: Any])?["version"] as? Int != version {
