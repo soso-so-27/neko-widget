@@ -48,23 +48,32 @@ struct NekoWidgetView: View {
         .containerBackground(for: .widget) {
             Color(red: 0.12, green: 0.10, blue: 0.09)
         }
-        // The fog clears inside the window: the capsule answers the tap first,
-        // the puffs thin out where they are, centre first, and the photo comes
-        // into focus. WidgetKit animates only transitions (two seconds at most),
-        // so each part leaves with its own removal transition and its own
-        // timing; the whole reveal settles within 1.4 seconds.
+        // The whole window clears at once: the capsule answers the tap first,
+        // the fog thins evenly where it is, and the clear photo dissolves in
+        // over the cloudy one at the same size, edge to edge. WidgetKit
+        // animates only transitions (two seconds at most), so each part
+        // leaves with its own transition; the reveal settles within 1.9 s.
         .animation(reduceMotion ? nil : CloudyRevealMotion.photo, value: entry.cloudyWindowSelection?.revealedAt)
     }
 
-    /// A cloudy window's clear photo settles from slightly near into place as
-    /// its blur dissolves, like a lens finding focus. Every other photo change
-    /// keeps the plain blur replace.
+    /// A cloudy window's clear photo fades in on top of the cloudy one, which
+    /// stays fully opaque underneath until the end (its removal is a scale so
+    /// small it cannot be seen, only so it is kept for the whole animation).
+    /// No blur and no visible scale: a blur picks up the transparent edge and
+    /// thins the frame first, letting the dark ground show as a border.
+    /// Every other photo change keeps the plain blur replace.
     private var photoTransition: AnyTransition {
         if reduceMotion { return .opacity }
         if entry.cloudyWindowSelection != nil {
-            return AnyTransition(.blurReplace).combined(with: .scale(scale: 1.05))
+            return .asymmetric(insertion: .opacity, removal: .scale(scale: 0.999))
         }
         return AnyTransition(.blurReplace)
+    }
+
+    /// The clear photo sits above the cloudy one it replaces. A removed view
+    /// keeps its last zIndex, so the outgoing cloudy photo stays at 0.
+    private var photoZIndex: Double {
+        entry.cloudyWindowSelection?.revealedAt == nil ? 0 : 1
     }
 
     private var photoContent: some View {
@@ -87,18 +96,23 @@ struct NekoWidgetView: View {
                         // Keep the source ratio and crop only the overflow.
                         // iOS 18 tinted and clear Home Screens: the photo keeps
                         // its colours instead of becoming one flat tinted square.
-                        Image(uiImage: image)
-                            .resizable()
-                            .interpolation(.high)
-                            .widgetFullColorPhoto()
-                            .scaledToFill()
-                            .frame(
-                                width: proxy.size.width,
-                                height: proxy.size.height
-                            )
-                            .clipped()
-                            .id(entry.cacheFilename)
-                            .transition(photoTransition)
+                        // Own stack, so the photo's zIndex orders only the old
+                        // and new photo and never lifts it above the fog.
+                        ZStack {
+                            Image(uiImage: image)
+                                .resizable()
+                                .interpolation(.high)
+                                .widgetFullColorPhoto()
+                                .scaledToFill()
+                                .frame(
+                                    width: proxy.size.width,
+                                    height: proxy.size.height
+                                )
+                                .clipped()
+                                .id(entry.cacheFilename)
+                                .zIndex(photoZIndex)
+                                .transition(photoTransition)
+                        }
 
                         if entry.cloudyWindowSelection != nil {
                             CloudyFogPuffs(isCloudy: entry.cloudyWindowSelection?.revealedAt == nil,
@@ -1107,21 +1121,18 @@ enum AppStoreWidgetPreviewFixture {
 
 /// Timing of the cloudy window's reveal. Built-in transitions and curves
 /// only: those are what WidgetKit documents for widgets (two seconds at most).
-/// The ease-out-cubic curve lands softly without a bounce.
+/// easeInOut: a fade that starts and ends gently reads as fog thinning on
+/// its own, where an ease-out jumps at the start.
 private enum CloudyRevealMotion {
-    private static func soft(_ duration: Double) -> Animation {
-        .timingCurve(0.33, 1, 0.68, 1, duration: duration)
-    }
-
     static let capsule = Animation.easeOut(duration: 0.25)
-    static let photo = soft(1.4)
-    /// Centre first, then the upper pair, then the lower pair.
-    static func puff(delay: Double) -> Animation { soft(1.0).delay(delay) }
+    static let photo = Animation.easeInOut(duration: 1.9)
+    static let fog = Animation.easeInOut(duration: 1.7)
 }
 
-/// Soft white puffs over the cloudy window. When the window clears, each
-/// one spreads a little and thins out where it is, from the centre outward,
-/// so the fog lifts instead of sliding away.
+/// Soft white fog over the cloudy window, reaching past every edge (the
+/// Widget's frame trims the overflow) so it never gathers inside the frame.
+/// When the window clears, the whole layer thins evenly where it is: no
+/// movement, no spreading, no order.
 private struct CloudyFogPuffs: View {
     let isCloudy: Bool
     let size: CGSize
@@ -1130,44 +1141,36 @@ private struct CloudyFogPuffs: View {
     private struct Puff: Identifiable {
         let id: Int
         let x: CGFloat, y: CGFloat, w: CGFloat, h: CGFloat
-        let dx: CGFloat, dy: CGFloat
-        let delay: Double
     }
 
+    /// The four corner puffs cover their corners even after the blur.
     private let puffs: [Puff] = [
-        Puff(id: 0, x: 0.22, y: 0.28, w: 0.95, h: 0.55, dx: -1, dy: -0.4, delay: 0.12),
-        Puff(id: 1, x: 0.80, y: 0.24, w: 0.85, h: 0.50, dx: 1, dy: -0.5, delay: 0.12),
-        Puff(id: 2, x: 0.50, y: 0.55, w: 1.10, h: 0.60, dx: 0, dy: 0.3, delay: 0),
-        Puff(id: 3, x: 0.15, y: 0.78, w: 0.80, h: 0.50, dx: -1, dy: 0.5, delay: 0.24),
-        Puff(id: 4, x: 0.86, y: 0.80, w: 0.85, h: 0.50, dx: 1, dy: 0.6, delay: 0.24),
+        Puff(id: 0, x: 0.20, y: 0.22, w: 1.15, h: 0.75),
+        Puff(id: 1, x: 0.82, y: 0.20, w: 1.10, h: 0.75),
+        Puff(id: 2, x: 0.50, y: 0.52, w: 1.30, h: 0.75),
+        Puff(id: 3, x: 0.18, y: 0.80, w: 1.10, h: 0.75),
+        Puff(id: 4, x: 0.84, y: 0.82, w: 1.10, h: 0.75),
     ]
 
     var body: some View {
         ZStack {
-            ForEach(puffs) { puff in
-                // Each puff has its own container so its removal can carry its
-                // own delay; the container stays while the puff leaves.
+            if isCloudy {
                 ZStack {
-                    if isCloudy {
+                    ForEach(puffs) { puff in
                         Ellipse()
                             .fill(Color.white.opacity(0.42))
                             .frame(width: size.width * puff.w, height: size.height * puff.h)
                             .blur(radius: min(size.width, size.height) * 0.12)
                             .position(x: size.width * puff.x, y: size.height * puff.y)
-                            .transition(reduceMotion ? .opacity : .asymmetric(
-                                insertion: .opacity,
-                                removal: .scale(scale: 1.3, anchor: UnitPoint(x: puff.x, y: puff.y))
-                                    .combined(with: .offset(x: puff.dx * size.width * 0.06,
-                                                            y: puff.dy * size.height * 0.06))
-                                    .combined(with: .opacity)))
                     }
                 }
                 .frame(width: size.width, height: size.height)
-                .animation(reduceMotion ? nil : CloudyRevealMotion.puff(delay: puff.delay),
-                           value: isCloudy)
+                .transition(.opacity)
             }
         }
         .frame(width: size.width, height: size.height)
+        .clipped()
+        .animation(reduceMotion ? nil : CloudyRevealMotion.fog, value: isCloudy)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
