@@ -54,6 +54,20 @@ struct NekoWidgetView: View {
         // clear it). Elsewhere a cloudy tap does nothing (11/5); the URL is nil
         // while cloudy, so the photo itself is never opened before the reveal.
         photoContent.widgetURL(entry.photoURL)
+#if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE && CLOUDY_DAY_WORDS_WIDGET_FIXTURE
+        // Review-only: which state this capture shows and the tag's forms.
+        .overlay(alignment: .top) {
+            GeometryReader { proxy in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(AppStoreWidgetPreviewFixture.dayWordsDebugLabel(entry)
+                         + " w=\(Int(proxy.size.width)) avail=\(Int(proxy.size.width - 24))")
+                        .font(.system(size: 8, weight: .medium)).foregroundStyle(.yellow)
+                        .lineLimit(4).padding(2).background(.black.opacity(0.8))
+                    if family == .systemLarge { dayWordsProbePanel(width: proxy.size.width - 24) }
+                }
+            }
+        }
+#endif
         .containerBackground(for: .widget) {
             Color(red: 0.12, green: 0.10, blue: 0.09)
         }
@@ -153,11 +167,11 @@ struct NekoWidgetView: View {
                                     Button(intent: RevealCloudyWindowIntent(selection: selection)) {
                                         let forms = CloudyWindowDayText.revealForms(selection)
                                         ViewThatFits(in: .horizontal) {
-                                            ForEach(forms.indices, id: \.self) { revealCapsule(forms[$0]) }
+                                            ForEach(forms.indices, id: \.self) { revealCapsule(forms[$0]).dayWordsProbe($0) }
                                             revealCapsuleChrome(ReducedRevealLabel(text: forms[forms.count - 1])
-                                                .dynamicTypeSize(...DynamicTypeSize.xxxLarge))
+                                                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)).dayWordsProbe(4)
                                             revealCapsuleChrome(Image(systemName: "hand.tap.fill")
-                                                .font(.caption.weight(.semibold)))
+                                                .font(.caption.weight(.semibold))).dayWordsProbe(5)
                                         }
                                     }
                                     .buttonStyle(.plain)
@@ -250,6 +264,39 @@ struct NekoWidgetView: View {
             .frame(minHeight: 44)
             .contentShape(Rectangle())
     }
+
+#if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE && CLOUDY_DAY_WORDS_WIDGET_FIXTURE
+    /// Review-only (Large): each sample tag's own size when fixed, and which
+    /// child ViewThatFits picks at the tag's available width (stroke colour).
+    @ViewBuilder private func dayWordsProbePanel(width: CGFloat) -> some View {
+        let samples = ["そらが来て 4年", "そらが来て 4 年", "そらが来て ４年", "そらが来て 5年",
+                       "そらが来て 14年", "そらが来て 1年", "うちに来た日"]
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(samples.indices, id: \.self) { index in
+                revealCapsule(samples[index]).fixedSize()
+                    .background(GeometryReader { size in
+                        Text("\(Int(size.size.width))x\(Int(size.size.height))")
+                            .font(.system(size: 9, weight: .bold)).foregroundStyle(.yellow)
+                            .padding(1).background(.black)
+                            .fixedSize().offset(x: size.size.width + 2)
+                    })
+            }
+            ForEach(["そらが来て 4年", "そらが来て 1年"], id: \.self) { first in
+                ViewThatFits(in: .horizontal) {
+                    revealCapsule(first).dayWordsProbe(0)
+                    revealCapsule("うちに来た日").dayWordsProbe(2)
+                }
+                .frame(width: width, alignment: .leading)
+            }
+            ViewThatFits(in: .horizontal) {
+                Text("そらが来て 4年").lineLimit(1).foregroundStyle(.white).dayWordsProbe(0)
+                Text("うちに来た日").foregroundStyle(.white).dayWordsProbe(2)
+            }
+            .frame(width: width, alignment: .leading)
+        }
+        .scaleEffect(0.75, anchor: .topLeading)
+    }
+#endif
 
     /// Used only inside the successfully decoded photo branch above. The
     /// optional text never gives an empty or personal-library Widget a caption.
@@ -802,6 +849,19 @@ private enum QuietWindowPalette {
 
 /// A quiet, reduced version of the app icon's window. The warm neutral frame
 /// keeps an empty Widget recognizable without turning it into a bright tile.
+private extension View {
+    /// Review-only: a stroke whose colour says which tag branch ViewThatFits
+    /// chose (forms 0-3 red/green/blue/cyan, smaller purple, hand orange).
+    /// Ordinary and Release builds return the view unchanged.
+    @ViewBuilder func dayWordsProbe(_ index: Int) -> some View {
+#if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE && CLOUDY_DAY_WORDS_WIDGET_FIXTURE
+        overlay(Capsule().stroke([Color.red, .green, .blue, .cyan, .purple, .orange][index % 6], lineWidth: 3))
+#else
+        self
+#endif
+    }
+}
+
 /// The cloudy tag's last form when no form fits at full size (the largest
 /// text in Small): 0.8 of the caption size. Widgets stop growing text a
 /// little above the default, so the caller caps this one at xxxLarge.
@@ -1158,6 +1218,17 @@ enum AppStoreWidgetPreviewFixture {
         let count = dayWordsStates.count * dayWordsPhotos.count
         let slot = Int((date.timeIntervalSince1970 / dayWordsSlotSeconds).rounded(.down))
         return ((slot % count) + count) % count
+    }
+
+    static func dayWordsDebugLabel(_ entry: NekoWidgetEntry) -> String {
+        let slot = dayWordsSlot(at: entry.date)
+        let state = dayWordsStates[slot % dayWordsStates.count]
+        guard let selection = entry.cloudyWindowSelection else { return "#\(slot) \(state.id) no selection" }
+        let cats: String = selection.milestone.map { m in
+            m.kind + ":" + m.cats.map { "\($0.name),\($0.years),\($0.inPhoto)" }.joined(separator: ";")
+        } ?? "-"
+        return "#\(slot) \(state.id) kind=\(selection.dayKind ?? "nil") \(cats)\n"
+            + CloudyWindowDayText.revealForms(selection).joined(separator: " / ")
     }
 
     static func dayWordsTextSize(at date: Date) -> DynamicTypeSize {

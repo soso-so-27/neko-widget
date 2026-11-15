@@ -266,8 +266,8 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         hierarchy.lifetime = .keepAlways
         add(hierarchy)
         // Pass 1: Small and Large. Pass 2: Medium added on top (Small moves on).
-        // Medium was photographed on 11/15 (pass "medium"); one pass is enough now.
-        for pass in ["small-large"] {
+        // Pass 1: Small and Large. Pass 2: Medium added on top (Small moves on).
+        for pass in ["small-large", "medium"] {
             if pass == "medium" {
                 // Press the clear wallpaper below Large (not a Widget, whose
                 // own menu would open) to edit the Home Screen again.

@@ -85,7 +85,11 @@ class WidgetTests(unittest.TestCase):
         capsule = section(WIDGET, "Button(intent: RevealCloudyWindowIntent(selection: selection)) {", ".buttonStyle(.plain)")
         self.assertIn("let forms = CloudyWindowDayText.revealForms(selection)", capsule)
         self.assertIn("ViewThatFits(in: .horizontal) {", capsule)
-        self.assertIn("ForEach(forms.indices, id: \.self) { revealCapsule(forms[$0]) }", capsule)
+        self.assertIn("ForEach(forms.indices, id: \.self) { revealCapsule(forms[$0]).dayWordsProbe($0) }", capsule)
+        # The probe stroke exists only in the review fixture build.
+        probe = section(WIDGET, "@ViewBuilder func dayWordsProbe(", "/// The cloudy tag's last form")
+        self.assertIn("#if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE && CLOUDY_DAY_WORDS_WIDGET_FIXTURE", probe)
+        self.assertIn("#else\n        self\n#endif", probe)
         # No form fits: the last one at 0.8 of the caption, then the hand alone.
         self.assertLess(capsule.index("ReducedRevealLabel(text: forms[forms.count - 1])"),
                         capsule.index('revealCapsuleChrome(Image(systemName: "hand.tap.fill")'))
