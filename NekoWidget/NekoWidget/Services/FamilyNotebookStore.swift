@@ -45,7 +45,8 @@ final class FamilyNotebookStore: @unchecked Sendable {
         static let pendingPositionPrefix = "compat-position-v1:pending:"
         static let acknowledgedPositionPrefix = "compat-position-v1:ack:"
         static func compatPrefixes(_ field: FamilyNotebookField?) -> (pending: String, acknowledged: String) {
-            field == .position ? (pendingPositionPrefix, acknowledgedPositionPrefix) : (pendingAdoptionPrefix, acknowledgedAdoptionPrefix)
+            if field == .representativePhoto { return ("compat-photo-v1:pending:", "compat-photo-v1:ack:") }
+            return field == .position ? (pendingPositionPrefix, acknowledgedPositionPrefix) : (pendingAdoptionPrefix, acknowledgedAdoptionPrefix)
         }
 
         private enum CodingKeys: String, CodingKey {

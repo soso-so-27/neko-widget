@@ -58,6 +58,10 @@ private actor Relay: GroupHTTPTransport {
         }
         struct Upload: Decodable { let operationID: UUID; let expectedGeneration: Int; let expectedEpoch: Int; let payload: EncryptedFamilyNotebookOperation }
         let body = request.httpBody!, upload = try GroupWire.decode(Upload.self, body)
+        if requiredVersion == nil {
+            let object = try JSONSerialization.jsonObject(with: body) as! [String: Any]
+            try check(Set(object.keys) == Set(["operationId", "expectedGeneration", "expectedEpoch", "payload"]), "old Worker accepts only the pre-contract fields")
+        }
         if let version = requiredVersion {
             let object = try JSONSerialization.jsonObject(with: body) as! [String: Any]
             if (object["writeContract"] as? [String: Any])?["version"] as? Int != version {
@@ -82,6 +86,9 @@ private enum VerifyFamilyNotebookSync {
     static func main() async throws {
         if let phase = ProcessInfo.processInfo.environment["ADOPTION_PHASE"] {
             try await adoptionCompatibility(phase); return
+        }
+        if let phase = ProcessInfo.processInfo.environment["PHOTO_COMPAT_PHASE"] {
+            try photoCompatibility(phase); return
         }
         if let phase = ProcessInfo.processInfo.environment["POSITION_PHASE"] {
             try await positionCompatibility(phase); return
@@ -227,6 +234,41 @@ private enum VerifyFamilyNotebookSync {
     // 11/15: the family order of cats (`position`), run with the frozen
     // readers (before #985, and main before the order) and the new one.
     // The old binaries do not know the field: it is reached by its raw name.
+    private static func photoCompatibility(_ phase: String) throws {
+        let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["PHOTO_COMPAT_ROOT"]!)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        struct Fixture: Codable { let family: UUID; let cat: UUID; let device: String; let author: FamilyNotebookAuthor; let text: String }
+        let file = root.appendingPathComponent("fixture.json")
+        let f: Fixture
+        if phase == "new-write" {
+            let identity = GroupDeviceIdentity.firstDevice()
+            let reference = FamilyNotebookRepresentativePhotoReference(schemaVersion: 1, assetID: UUID(), slotID: UUID(), revision: 1,
+                keyEpoch: 1, rosterHash: Data(repeating: 2, count: 32), ciphertextSHA256: Data(repeating: 3, count: 32),
+                ciphertextBytes: 100, contentKey: Data(repeating: 4, count: 32), mediaType: "image/jpeg", pixelWidth: 100, pixelHeight: 100)
+            try reference.validate()
+            f = Fixture(family: UUID(), cat: UUID(), device: try identity.deviceID,
+                author: .init(personID: identity.personID, displayName: "Synthetic"), text: String(decoding: try GroupWire.encode(reference), as: UTF8.self))
+            try JSONEncoder().encode(f).write(to: file)
+        } else { f = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: file)) }
+        let store = try FamilyNotebookStore(directory: root.appendingPathComponent("store"), familyID: f.family, deviceID: f.device)
+        let field = FamilyNotebookField(rawValue: "representativePhoto")
+        if phase == "new-write" {
+            guard let field else { throw Failure.check("new photo field") }
+            _ = try store.edit(target: .init(familyCatID: f.cat, field: .name), value: .text("Synthetic"), author: f.author)
+            _ = try store.edit(target: .init(familyCatID: f.cat, field: field), value: .text(f.text), author: f.author)
+        } else if phase == "old-edit" {
+            try check(try store.snapshot().opaqueOperations.count == 1, "frozen reader preserves photo reference")
+            _ = try store.edit(target: .init(familyCatID: f.cat, field: .name), value: .text("old edit"), author: f.author)
+        } else {
+            guard let field else { throw Failure.check("new photo field") }
+            let snapshot = try store.snapshot()
+            try check(snapshot.fieldState(for: .init(familyCatID: f.cat, field: field))?.operation.value == .text(f.text), "reference restored exactly")
+            try check(snapshot.fieldState(for: .init(familyCatID: f.cat, field: .name))?.operation.value == .text("old edit"), "old edit retained")
+            try check(try store.pendingOperations().filter { $0.target.field == field }.count == 1, "unsent photo restored once")
+        }
+        print("photo compatibility: \(phase) PASS")
+    }
+
     private static func positionCompatibility(_ phase: String) async throws {
         let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["POSITION_ROOT"]!)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
