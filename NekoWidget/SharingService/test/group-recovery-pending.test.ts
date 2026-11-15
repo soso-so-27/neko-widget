@@ -3,14 +3,17 @@ import { groupRecoveryCatalogAPI, type RecoveryChallenge } from '../src/group-re
 import { pendingAuthentication, type PendingIntent } from '../src/group-recovery-pending';
 import { anchorReceiptTranscript } from '../src/group-anchor-receipts';
 import { plusOwner } from './group-billing-fixture';
-import { create, db, person, sign, signed, send, testEnv, key } from './group-fixture';
+import { create, db, person, sign, signed, send, testEnv, key, invitation, apply, transition } from './group-fixture';
 import { randomBase64url } from '../src/encoding';
 const settings={...testEnv,ENVIRONMENT:'staging',GROUP_RECOVERY_CATALOG_ENABLED:'YES',MEMBER_RATE_LIMITER:{limit:async()=>({success:true})}};
 const req=(path:string,body:unknown)=>new Request('https://example.test/v3/group-recovery/'+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
-async function fixture(receipt=true){
- const p=await plusOwner(),w=await create(p),device=await key(),operation=crypto.randomUUID();
- if(receipt)expect((await send(await signed(p,`/v3/group-windows/${w.windowId}/anchor-receipt`,{environment:'staging',personId:p.id,ownerPersonId:p.id,ownerPublicKey:p.identity.publicKey,
- rootSignature:await sign(p.identity.privateKey,anchorReceiptTranscript('staging',p.id,w.windowId,p.id,p.identity.publicKey))}),settings)).status).toBe(200);
+async function fixture(receipt=true,guest=false){
+ const owner=await plusOwner(),p=guest?await person():owner,device=await key(),operation=crypto.randomUUID();
+ let w=await create(owner);
+ if(guest){const joined=await apply(p,w,await invitation(owner,w));expect(joined.response.status).toBe(201);const added=await transition(owner,w,'admit',joined.id,[...w.roster.members,joined.member]);expect(added.response.status).toBe(200);w=added.next;}
+
+ if(receipt)expect((await send(await signed(p,`/v3/group-windows/${w.windowId}/anchor-receipt`,{environment:'staging',personId:p.id,ownerPersonId:owner.id,ownerPublicKey:owner.identity.publicKey,
+ rootSignature:await sign(p.identity.privateKey,anchorReceiptTranscript('staging',p.id,w.windowId,owner.id,owner.identity.publicKey))}),settings)).status).toBe(200);
  const intent:PendingIntent={windowId:w.windowId,signingPublicKey:device.publicKey,hpkePublicKey:randomBase64url(32),model:'Synthetic iPhone'};
  async function prepared(register=true,op=operation,value=intent){const response=await groupRecoveryCatalogAPI(req('challenges',{identityPublicKey:p.identity.publicKey,operationId:op,purpose:register?'register':'status'}),settings);
   const {challenge:c}=await response.json() as {challenge:RecoveryChallenge};
@@ -44,12 +47,16 @@ describe('pending-only root recovery',()=>{
   expect(await f.invoke(false)).toMatchObject({state:'registeredWaitingForKeys',canRequestFreshGeneration:false});
  });
  it('removes pending immediately when identity deletion is accepted',async()=>{
-  const f=await fixture();await f.invoke();await db.prepare('INSERT INTO group_identity_deletion_acceptance(request_id,subject_id,nonce,request_hash,accepted_at) VALUES (?,?,?,?,?)').bind(crypto.randomUUID(),f.p.id,'synthetic','synthetic',Math.floor(Date.now()/1000)).run();
-  expect(await db.prepare('SELECT 1 FROM group_recovery_pending WHERE person_id=?').bind(f.p.id).first()).toBeNull();
-  await expect(f.invoke(false)).rejects.toMatchObject({status:401});
+  const f=await fixture();await f.invoke();const requestId=crypto.randomUUID();
+  try {
+   await db.prepare('INSERT INTO group_identity_deletion_acceptance(request_id,subject_id,nonce,request_hash,accepted_at) VALUES (?,?,?,?,?)').bind(requestId,f.p.id,'synthetic','synthetic',Math.floor(Date.now()/1000)).run();
+   expect(await db.prepare('SELECT 1 FROM group_recovery_pending WHERE person_id=?').bind(f.p.id).first()).toBeNull();
+   // This isolated acceptance intentionally lacks a journal commit: global fail-closed barrier takes precedence.
+   await expect(f.invoke(false)).rejects.toMatchObject({status:503,code:'deletion_recovery_required'});
+  } finally { await db.prepare('DELETE FROM group_identity_deletion_acceptance WHERE request_id=?').bind(requestId).run(); }
  });
  it('cleans a pending request on leaving without changing other windows',async()=>{
-  const f=await fixture();await f.invoke();await db.prepare("UPDATE group_members SET role='member' WHERE space_id=?").bind(f.w.windowId).run();await db.prepare("UPDATE group_members SET state='left',left_revision=1 WHERE space_id=? AND person_id=?").bind(f.w.windowId,f.p.id).run();
+  const f=await fixture(true,true);await f.invoke();await db.prepare("UPDATE group_members SET state='left',left_revision=1 WHERE space_id=? AND person_id=?").bind(f.w.windowId,f.p.id).run();
   expect(await db.prepare('SELECT 1 FROM group_recovery_pending WHERE person_id=?').bind(f.p.id).first()).toBeNull();
   await expect(f.invoke(false)).rejects.toMatchObject({status:401});
  });
