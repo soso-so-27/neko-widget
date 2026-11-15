@@ -771,7 +771,7 @@ final class ReviewScreenshotUITests: XCTestCase {
     // MARK: - 機種変更の画面（11/15、見本の状態だけ。発行が OFF の間は通常の版に出ない）
 
     @MainActor
-    func test15RecoveryScreens() {
+    func test16RecoveryScreens() {
         var app = launchRecovery(nil)
         shot("92_recovery_gallery", app) { waitFor(app.buttons["group-recovery-entry"], "gallery") }
         app.terminate()
@@ -840,6 +840,37 @@ final class ReviewScreenshotUITests: XCTestCase {
         guard element.waitForExistence(timeout: 15) else { return what + " not shown" }
         settle(1)
         return nil
+    }
+
+    // MARK: - この子 and the family notebook (11/15)
+
+    /// A family member's この子: the question for a family cat with the same
+    /// name as a cat here, a family cat with no photo, and 「この子を追加」
+    /// starting with the family's cats. Sample names only.
+    @MainActor
+    func test15FamilyNotebookLink() {
+        var app = launchStress(60, names: ["ソラ", "コテツ"], ["--cat-home-stress-family", "ソラ"])
+        shot("47_home_family_link_question", app) {
+            if let reason = reachStressHome(app) { return reason }
+            guard app.descendants(matching: .any)["family-link-question"].firstMatch.waitForExistence(timeout: 10) else {
+                return "link question did not appear"
+            }
+            settle(1.5)
+            return nil
+        }
+        app.terminate()
+        app = launchStress(61, names: ["-"], ["--cat-home-stress-family", "ミケ"])
+        shot("47b_home_family_cat_no_photo", app) {
+            reachStressHome(app, waitingFor: "cat-home-choose-photo")
+        }
+        shot("47c_home_add_from_family", app) {
+            if let reason = showStressAddPage(app) { return reason }
+            app.buttons["cat-home-add"].tap()
+            guard app.buttons["新しい子を追加"].waitForExistence(timeout: 8) else { return "family choice did not open" }
+            settle(1)
+            return nil
+        }
+        app.terminate()
     }
 
     /// One stress scenario (AppStoreScreenshotFixture.CatHomeStress).

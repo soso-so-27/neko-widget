@@ -1,3 +1,5 @@
+import { drainFamilyNotifications,cleanupExpiredFamilyPush } from './family-notebook-push';
+import {cleanupFamilyRepresentativePhotos} from './family-representative-photo';
 import { clientUpgradeResponse } from './client-upgrade-required';
 import { beginReadDiagnostic, finishReadDiagnostic, readStage } from './read-failure-diagnostic';
 import {advanceIdentityDeletion,deletionRequired,scopeIdentityCheck,identityDeletionAPI,isIdentityDeletionPath,protectedGroupRead} from './group-identity-service';
@@ -701,7 +703,9 @@ export default {
       ctx.waitUntil(runMomentCleanup(env));
       // Withdrawals remain cleanup-eligible even when the pilot gate is off.
       ctx.waitUntil(runFamilyRecordCleanup(env));
+      ctx.waitUntil(cleanupFamilyRepresentativePhotos(env));
       ctx.waitUntil(cleanupDissolvedFamilyRosters(env));
+      ctx.waitUntil(env.DB.prepare('DELETE FROM family_notebook_daily_usage WHERE day<(unixepoch()+32400)/86400-1').run());
       ctx.waitUntil(runGroupRelayCleanup(env));
     } else if (controller.cron === APNS_DRAIN_CRON) {
       if(deletionRequired(env))ctx.waitUntil(env.DB.prepare('SELECT 1 FROM group_identity_deletion_acceptance LIMIT 1').first()
@@ -709,6 +713,7 @@ export default {
       ctx.waitUntil(env.GROUP_REPORT_EMAIL_ENABLED==='YES'
         ? protectedGroupRead(env,()=>drainGroupReportMail(env)) : drainGroupReportMail(env));
       ctx.waitUntil(drainNotificationOutbox(env));
+      if(env.FAMILY_NOTEBOOK_APNS_RUNTIME_ENABLED === 'YES') ctx.waitUntil(protectedGroupRead(env,async()=>{ await cleanupExpiredFamilyPush(env,Math.floor(Date.now()/1000));return drainFamilyNotifications(env); }));
       if(env.GROUP_APNS_RUNTIME_ENABLED === 'YES') ctx.waitUntil(protectedGroupRead(env,()=>Promise.all([drainGroupNotifications(env),drainGroupAdmissionNotifications(env)])));
     } else if (controller.cron === LEGACY_CLEANUP_CRON) {
       ctx.waitUntil(runLegacyScheduledCleanup(env));

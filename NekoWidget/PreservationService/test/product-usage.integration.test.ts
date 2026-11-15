@@ -93,6 +93,23 @@ it('distinguishes bytes, records and both; unknown is never free capacity; reduc
   expect(()=>requireProductCapacity(settings,{...counters,product_bytes:200},{bytes:50,records:1},{bytes:40,records:1},false)).not.toThrow();
 });
 
+it('enforces decimal trial and Plus boundaries without allocating gigabytes and permits a tier upgrade',()=>{
+  const settings={PRODUCT_QUOTA_ENFORCEMENT:'true'}, zero={bytes:0,records:0};
+  for (const [trial,limit] of [[true,250_000_000],[false,3_000_000_000]] as const) {
+    const before={product_bytes:limit-1,product_records:2999,product_unknown:0};
+    expect(()=>requireProductCapacity(settings,before,zero,{bytes:1,records:1},trial)).not.toThrow();
+    expect(()=>requireProductCapacity(settings,before,zero,{bytes:2,records:1},trial)).toThrow('PRODUCT_STORAGE_LIMIT_EXCEEDED');
+    expect(()=>requireProductCapacity(settings,before,zero,{bytes:1,records:2},trial)).toThrow('PRODUCT_RECORD_LIMIT_EXCEEDED');
+  }
+  const trialFull={product_bytes:250_000_000,product_records:1,product_unknown:0};
+  expect(()=>requireProductCapacity(settings,trialFull,zero,{bytes:1,records:1},true)).toThrow('PRODUCT_STORAGE_LIMIT_EXCEEDED');
+  expect(()=>requireProductCapacity(settings,trialFull,zero,{bytes:1,records:1},false)).not.toThrow();
+  expect(()=>requireProductCapacity(settings,{...trialFull,product_bytes:300_000_000},
+    {bytes:100,records:1},{bytes:99,records:1},true)).not.toThrow();
+  // This exercises the quota's input tier. Apple-to-tier wiring is separately
+  // unresolved and these assertions must not be used to claim it is connected.
+});
+
 it('counts reconstructed JSON notes once despite multiple transport pieces and history metadata',async()=>{
   const root=crypto.randomUUID(),piece=crypto.randomUUID(),notes=JSON.stringify({schema:1,notes:{a:{text:'a'},b:{text:'b'}}});
   const raw=new TextEncoder().encode(notes),hash=await sha256(raw);

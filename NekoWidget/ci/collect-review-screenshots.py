@@ -35,7 +35,11 @@ STRESS_SCREENS = (
     "44_home_rows_none", "44_home_rows_all", "44_home_rows_long_values", "44_home_searching",
     "44_home_departed", "45_home_text_xl", "45_home_text_ax3", "46_home_mid_swipe",
 )
-# 機種変更の画面 on sample states (test15RecoveryScreens): light and dark.
+# この子 and the family notebook (test15FamilyNotebookLink), light and dark.
+FAMILY_LINK_SCREENS = (
+    "47_home_family_link_question", "47b_home_family_cat_no_photo", "47c_home_add_from_family",
+)
+# 機種変更の画面 on sample states (test16RecoveryScreens): light and dark.
 RECOVERY_SCREENS = (
     "92_recovery_gallery", "92b_recovery_checking", "92c_recovery_unavailable", "92d_recovery_found",
     "92e_recovery_waiting", "92f_recovery_no_provider", "92g_recovery_fresh_name", "92h_recovery_needs_original",
@@ -61,7 +65,7 @@ FULL_SCREENS = (
     "28_onboarding_5_widget_guide",
     "29_widget_guide_1", "29_widget_guide_2", "29_widget_guide_3", "29_widget_guide_4", "29_widget_guide_5",
     "90_error_vet_field_page", "90_error_vet_row", "91_error_plus_product_unavailable",
-) + STRESS_SCREENS + RECOVERY_SCREENS
+) + STRESS_SCREENS + FAMILY_LINK_SCREENS + RECOVERY_SCREENS
 SE_SCREENS = (
     "10_cat_home", "10b_cat_home_second_cat", "10c_cat_home_no_cat", "10d_cat_home_no_photo",
     "11_cat_care_top", "12_vet_bottom", "14_lost_bottom", "16_care_bottom",

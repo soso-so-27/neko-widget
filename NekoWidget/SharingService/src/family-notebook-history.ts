@@ -1,3 +1,4 @@
+import {parseFamilyWriteContract,familyWriteCapability,familyWriteCheck,familyWriteEffects} from './family-notebook-write-contract';
 import { authenticateGroupRequest, groupAuthorizationStatements, type GroupActor } from './group-auth';
 import { base64urlDecode, verifyEd25519 } from './encoding';
 import { groupDeviceAuthorization } from './group-protocol';
@@ -7,6 +8,7 @@ import { ApiError, jsonResponse } from './errors';
 import { parseJsonBody, requireEmptyBody } from './http';
 import { asObject, binaryField, exactKeys, integerField, uuidField } from './validation';
 import type { Env } from './env';
+import { familyQuotaFailure } from './family-notebook-quota';
 
 // Deliberately not in the public router. The native service/consent and key
 // delivery lifecycle must be connected before this becomes externally usable.
@@ -16,7 +18,7 @@ interface State { generation: number; epoch: number; packet: string | null; rost
 function unavailable(code = 'family_notebook_crypto_stale'): never {
   throw new ApiError(409, code, 'Reload the current family state.');
 }
-async function state(env: Env, actor: GroupActor, family: string): Promise<State> {
+export async function state(env: Env, actor: GroupActor, family: string): Promise<State> {
   const row = await env.DB.prepare(`SELECT f.generation,COALESCE(h.epoch,0) AS epoch,r.packet,r.roster_hash
     FROM family_notebook_spaces f JOIN family_notebook_members m ON m.family_id=f.id
     LEFT JOIN family_notebook_crypto_heads h ON h.family_id=f.id
@@ -26,7 +28,7 @@ async function state(env: Env, actor: GroupActor, family: string): Promise<State
   if (!row) throw new ApiError(404, 'not_found', 'The family was not found.');
   return row;
 }
-function checks(env: Env, actor: GroupActor, family: string, generation: number, epoch: number | null,
+export function checks(env: Env, actor: GroupActor, family: string, generation: number, epoch: number | null,
   mode: 'read' | 'ready' | Action): D1PreparedStatement[] {
   const id = crypto.randomUUID(), policy = familyStorePolicy(env);
   return [env.DB.prepare(`INSERT INTO family_notebook_crypto_environment_checks
@@ -35,7 +37,7 @@ function checks(env: Env, actor: GroupActor, family: string, generation: number,
     .bind(id, family, actor.personId, actor.deviceId, generation, epoch, mode, policy.environment, policy.acceptSandbox),
     env.DB.prepare('DELETE FROM family_notebook_crypto_environment_checks WHERE id=?').bind(id)];
 }
-async function roster(env: Env, family: string, epoch: number): Promise<VerifiedFamilyCryptoRoster> {
+export async function roster(env: Env, family: string, epoch: number): Promise<VerifiedFamilyCryptoRoster> {
   const row = await env.DB.prepare('SELECT packet,roster_hash FROM family_notebook_crypto_rosters WHERE family_id=? AND epoch=?')
     .bind(family, epoch).first<{ packet: string; roster_hash: string }>();
   if (!row) unavailable();
@@ -60,7 +62,10 @@ export async function familyNotebookHistory(request: Request, env: Env): Promise
     }
     if (number !== undefined || route === 'state') throw new ApiError(405, 'method_not_allowed', 'Unsupported family operation.');
     const action: Action = route === 'devices' ? 'device' : route === 'rosters' ? 'roster' : route === 'keys' ? 'key' : 'operation';
-    const body = parseJsonBody(request, bytes); exactKeys(body, ['operationId', 'expectedGeneration', 'expectedEpoch', 'payload']);
+    const body = parseJsonBody(request, bytes);
+    const hasContract = Object.hasOwn(body, 'writeContract');
+    exactKeys(body, ['operationId', 'expectedGeneration', 'expectedEpoch', 'payload', ...(action === 'operation' && hasContract ? ['writeContract'] : [])]);
+    const writeVersion = action === 'operation' && hasContract ? parseFamilyWriteContract(body.writeContract) : 0;
     const operationId = uuidField(body, 'operationId'), generation = integerField(body, 'expectedGeneration', 1, 1_000_000_000);
     const epoch = integerField(body, 'expectedEpoch', 0, 1_000_000_000);
     const previous = await env.DB.prepare('SELECT actor_person_id,family_id,action,request_hash,result FROM family_notebook_crypto_receipts WHERE actor_device_id=? AND operation_id=?')
@@ -75,6 +80,10 @@ export async function familyNotebookHistory(request: Request, env: Env): Promise
     const current = await state(env, actor, family);
     if (generation !== current.generation || epoch !== current.epoch) unavailable();
     const statements: D1PreparedStatement[] = [...groupAuthorizationStatements(env, actor), ...checks(env, actor, family, generation, epoch, action)];
+    if (action === 'operation') {
+      statements.push(...familyWriteCheck(env, family, writeVersion));
+      if(hasContract) statements.push(...familyWriteEffects(env,family,body.writeContract));
+    }
     const payload = asObject(body.payload);
     let appliedEpoch = epoch;
     if (action === 'device') {
@@ -123,7 +132,8 @@ export async function familyNotebookHistory(request: Request, env: Env): Promise
     const result = { schemaVersion: 1, familyId: family, operationId, action, appliedEpoch, requestHash: actor.requestHash };
     statements.push(env.DB.prepare('INSERT INTO family_notebook_crypto_receipts VALUES (?,?,?,?,?,?,?)')
       .bind(actor.deviceId, operationId, actor.personId, family, action, actor.requestHash, JSON.stringify(result)));
-    await env.DB.batch(statements);
+    try { await env.DB.batch(statements); }
+    catch (error) { await familyQuotaFailure(env.DB, family, actor.personId, error); throw error; }
     return jsonResponse(result);
   } catch (error) { safeFailure(error); }
 }
@@ -139,14 +149,14 @@ async function read(env: Env, actor: GroupActor, family: string, route: string, 
         WHERE m.family_id=? AND m.state='active' ORDER BY m.person_id`).bind(family),
       env.DB.prepare('SELECT epoch FROM family_notebook_crypto_ready WHERE family_id=?').bind(family));
     const batch = await env.DB.batch<Record<string, unknown>>(statements);
-    return jsonResponse({ ...base, roster: current.packet ? JSON.parse(current.packet) : null,
+    return jsonResponse({ ...base, writeContract: await familyWriteCapability(env, family), roster: current.packet ? JSON.parse(current.packet) : null,
       devices: batch.at(-3)!.results, people: batch.at(-2)!.results.map(r => r.person_id), ready: batch.at(-1)!.results.length === 1 });
   }
   if (route === 'rosters' && number !== undefined && number > 0 && number <= current.epoch) {
     statements.push(env.DB.prepare('SELECT packet FROM family_notebook_crypto_rosters WHERE family_id=? AND epoch=?').bind(family, number));
     const batch = await env.DB.batch<{ packet: string }>(statements), row = batch.at(-1)!.results[0];
     if (!row) unavailable();
-    return jsonResponse({ ...base, roster: JSON.parse(row.packet) });
+    return jsonResponse({ ...base, writeContract: await familyWriteCapability(env, family), roster: JSON.parse(row.packet) });
   }
   if (route === 'keys' && number !== undefined && number > 0 && number <= current.epoch) {
     statements.push(env.DB.prepare(`SELECT packet FROM family_notebook_crypto_envelopes WHERE family_id=? AND current_epoch=?

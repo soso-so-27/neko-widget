@@ -151,6 +151,34 @@ final class FamilyNotebookStore: @unchecked Sendable {
         return try snapshot()
     }
 
+    /// 11/15: which cat of this iPhone a family cat is (nil: none). Only the
+    /// local mapping changes: no operation, no outbox, nothing is sent.
+    @discardableResult
+    func setLocalProfile(_ profile: UUID?, forFamilyCat cat: UUID) throws -> FamilyNotebookSnapshot {
+        try transaction { state in
+            guard state.sharingEnded != true else { throw FamilyNotebookError.sharingEnded }
+            state.mappings = try Self.mappings(setting: profile, for: cat, in: state.snapshot)
+        }
+        return try snapshot()
+    }
+
+    /// The mapping list with only this family cat's local profile changed.
+    /// Refuses a removed cat and a profile that is another family cat's.
+    static func mappings(setting profile: UUID?, for cat: UUID,
+                         in snapshot: FamilyNotebookSnapshot) throws -> [FamilyNotebookLocalMapping] {
+        let current = snapshot.activeMappings.filter { $0.familyCatID == cat && $0.recordID == nil && $0.toolCatID != nil }
+        guard !snapshot.sharingEnded, !snapshot.unsharedCatIDs.contains(cat), current.count == 1,
+              profile != cat else { throw FamilyNotebookError.mappingConflict }
+        if let profile, snapshot.activeMappings.contains(where: {
+            $0.recordID == nil && $0.familyCatID != cat && ($0.profileID == profile || $0.toolCatID == profile)
+        }) { throw FamilyNotebookError.mappingConflict }
+        return snapshot.mappings.map { mapping in
+            guard mapping == current[0] else { return mapping }
+            return FamilyNotebookLocalMapping(sourceKey: mapping.sourceKey, familyCatID: mapping.familyCatID,
+                                              recordID: nil, profileID: profile, toolCatID: mapping.toolCatID)
+        }
+    }
+
     @discardableResult
     func edit(target: FamilyNotebookTarget, value: FamilyNotebookValue?, author: FamilyNotebookAuthor,
               editedAt: Date = Date(), enqueue: Bool = true, expectedRevision: UInt64? = nil) throws -> FamilyNotebookOperation {

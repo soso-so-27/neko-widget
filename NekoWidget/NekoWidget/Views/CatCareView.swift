@@ -182,6 +182,9 @@ struct CatCareDetailView: View {
     @State private var isSavingName = false
     @State private var nameSaveFailed = false
     @State private var showsDeleteConfirmation = false
+    /// 11/15: 「家族の手帳とのつながりを外す」 was chosen in 「…」.
+    @State private var confirmsUnlink = false
+    @State private var unlinkFailed = false
     @State private var isDeleting = false
     @State private var deleteFailed = false
     /// Opened from inside the family notebook: no second notebook on top of it.
@@ -232,7 +235,7 @@ struct CatCareDetailView: View {
     /// This cat is in the family notebook (not just: this person has a family).
     private var sharedWithFamily: Bool {
         guard let catID else { return false }
-        return familyNotebook.familyCats.contains { $0.toolID == catID }
+        return familyNotebook.activeFamilyCats.contains { $0.toolID == catID }
     }
 
     /// The rows and the delete question, apart from `body` so the type
@@ -247,6 +250,14 @@ struct CatCareDetailView: View {
                 // photos are this cat), what stays, and that it is final.
                 Text("名前・誕生日と、この子に分けた写真の記録が消えます。写真アプリの写真とツールの記録は残ります。元に戻せません。")
             }
+            .confirmationDialog("家族の手帳とのつながりを外しますか？", isPresented: $confirmsUnlink, titleVisibility: .visible) {
+                Button("つながりを外す", role: .destructive) { unlinkFromFamily() }
+                Button("キャンセル", role: .cancel) {}
+            } message: {
+                Text("この子の写真と、書いたことの控えは、このiPhoneに残ります。")
+            }
+            .alert("つながりを外せませんでした", isPresented: $unlinkFailed) { Button("閉じる", role: .cancel) {} }
+                message: { Text("少し待ってから、もう一度お試しください。") }
     }
 
     var body: some View {
@@ -843,8 +854,20 @@ struct CatCareDetailView: View {
                      menuIdentifier: "cat-care-more-menu") {
             deleteFailed = false
             showsDeleteConfirmation = true
+        } extra: {
+            // 11/15: only a cat this iPhone linked to a family cat; the one
+            // place to undo 「同じ子」.
+            if case let .profile(profile) = subject, familyNotebook.unlinkOffered(profile: profile.identifier) {
+                Button("家族の手帳とのつながりを外す", systemImage: "link") { confirmsUnlink = true }
+                    .accessibilityIdentifier("cat-profile-family-unlink")
+            }
         }
         .disabled(isDeleting)
+    }
+
+    private func unlinkFromFamily() {
+        guard case let .profile(profile) = subject else { return }
+        do { try familyNotebook.unlink(profile: profile.identifier) } catch { unlinkFailed = true }
     }
 
     private var deleteTitle: String { "\(subject.displayName)を削除しますか？" }
