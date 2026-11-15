@@ -1,3 +1,4 @@
+import {familyIdentityPhotos,type FamilyPhotoDeletion} from './family-photo-erasure';
 import {ApiError,jsonResponse} from './errors';
 import type {Env} from './env';
 import {authenticateGroupRequest} from './group-auth';
@@ -17,7 +18,7 @@ const bad=()=>new ApiError(503,'deletion_recovery_required','Group data is tempo
 const missing=()=>new ApiError(404,'not_found','The deletion request was not found.');
 function media(env:Env){if(!env.MEDIA)throw bad();return env.MEDIA;}
 type Tip={sequence:number;requestId:string}
-type Work={requestId:string;acceptedAt:number;personId:string;nonce:string;sequence:number;claim:Claim;markers:DeliveryMarker[];reports:Awaited<ReturnType<typeof prepareReportManifest>>;photos:Awaited<ReturnType<typeof prepareIdentityErasurePhotos>>};
+type Work={familyPhotos?:FamilyPhotoDeletion[];requestId:string;acceptedAt:number;personId:string;nonce:string;sequence:number;claim:Claim;markers:DeliveryMarker[];reports:Awaited<ReturnType<typeof prepareReportManifest>>;photos:Awaited<ReturnType<typeof prepareIdentityErasurePhotos>>};
 async function tip(env:Env) {
  const obj=await media(env).get(prefix+'control');if(!obj||obj.size>256)throw bad();
  const t=await obj.json<Tip>();if(!Number.isSafeInteger(t.sequence)||t.sequence<0||(t.sequence===0?t.requestId!=='':!uuid.test(t.requestId)))throw bad();
@@ -196,14 +197,15 @@ export async function advanceIdentityDeletion(env:Env) {
  }
  // Persist progress: a large collection must not re-read the same first page
  // on every cron invocation if the runtime's subrequest budget is exhausted.
- const end=Math.min(work.photos.length,progress.head_cursor+16);
+ const targets=[...work.photos.map(p=>[p.objectKey,p.objectKey+'.caption']),...(work.familyPhotos??[]).map(p=>[p.objectKey])];
+ const end=Math.min(targets.length,progress.head_cursor+16);
  for(let i=progress.head_cursor;i<end;i+=8){
-   const objects=work.photos.slice(i,Math.min(end,i+8)).flatMap(p=>[p.objectKey,p.objectKey+'.caption']);
+   const objects=targets.slice(i,Math.min(end,i+8)).flat();
    if((await Promise.all(objects.map(k=>bucket.head(k)))).some(Boolean))throw bad();
  }
  await env.DB.prepare('UPDATE group_identity_deletion_acceptance SET head_cursor=MAX(head_cursor,?) WHERE request_id=? AND nonce=?')
    .bind(end,work.requestId,work.nonce).run();
- if(end<work.photos.length)return;
+ if(end<targets.length)return;
  await env.DB.prepare('UPDATE group_identity_deletion_checkpoint SET sequence=?,request_id=? WHERE singleton=1 AND sequence=? AND request_id=?')
     .bind(work.sequence,work.requestId,applied.sequence,applied.requestId).run();
  if(!same(await cursor(env),work))throw bad();
@@ -241,12 +243,13 @@ export async function identityDeletionAPI(request:Request,env:Env,ctx?:Execution
  .bind(id,actor.personId,actor.requestHash).first<{nonce:string;accepted_at:number}>();
  if(!anchor)throw new ApiError(409,'idempotency_conflict','The deletion request has different content.');
  const proof=anchor.nonce;claim.acceptedAt=anchor.accepted_at;
- const [markers,reports,photos]=await protectedGroupRead(env,()=>Promise.all([
+ const [markers,reports,photos,familyPhotos]=await protectedGroupRead(env,()=>Promise.all([
    captureDeletedDeliveries(env.DB,actor.personId,control.sequence+1,claim.acceptedAt),
    prepareReportManifest(env,{requestId:id,acceptedAt:claim.acceptedAt},actor.personId),
    prepareIdentityErasurePhotos(env,actor.personId),
+   familyIdentityPhotos(env,actor.personId),
  ]));
- const work:Work={requestId:id,personId:actor.personId,acceptedAt:claim.acceptedAt,sequence:control.sequence+1,nonce:proof,claim,markers,reports,photos};
+ const work:Work={requestId:id,personId:actor.personId,acceptedAt:claim.acceptedAt,sequence:control.sequence+1,nonce:proof,claim,markers,reports,photos,familyPhotos};
  if(Date.now()/1000-claim.acceptedAt>=300 || JSON.stringify(work).length>15*1024*1024)throw bad();
  // The R2 intent is per nonce; a failed pre-acceptance request cannot
  // permanently occupy the globally ordered journal or revoke someone's key.

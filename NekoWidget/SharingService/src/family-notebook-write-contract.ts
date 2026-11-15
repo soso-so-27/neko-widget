@@ -8,7 +8,7 @@ export function parseFamilyWriteContract(value:unknown):number {
   exactKeys(contract,['version','effects']);
   if(!Array.isArray(contract.effects)||contract.effects.length>1)
     throw new ApiError(409,'photo_protocol_upgrade_required','This operation requires a supported effect handler.');
-  for(const effect of contract.effects){const e=asObject(effect);exactKeys(e,['kind','slotId']);if(e.kind!=='retireCat')throw new ApiError(409,'photo_protocol_upgrade_required','Unsupported effect.');uuidField(e,'slotId');}
+  for(const effect of contract.effects){const e=asObject(effect);exactKeys(e,['kind','slotId']);if(!['retireCat','clearPhoto'].includes(String(e.kind)))throw new ApiError(409,'photo_protocol_upgrade_required','Unsupported effect.');uuidField(e,'slotId');}
   return integerField(contract,'version',1,1);
 }
 export async function familyWriteCapability(env:Env,family:string){
@@ -26,6 +26,6 @@ export function familyWriteEffects(env:Env,family:string,value:unknown):D1Prepar
  return (contract.effects as unknown[]).flatMap(item=>{
   const e=asObject(item),slot=uuidField(e,'slotId');
   return [env.DB.prepare("UPDATE family_representative_assets SET state='retired',expires_at=unixepoch() WHERE family_id=? AND slot_id=? AND state IN ('active','reserved','uploaded')").bind(family,slot),
-   env.DB.prepare("UPDATE family_representative_slots SET state='retired',asset_id=NULL WHERE family_id=? AND slot_id=?").bind(family,slot)];
+   env.DB.prepare("UPDATE family_representative_slots SET state=?,asset_id=NULL,revision=revision+1 WHERE family_id=? AND slot_id=?").bind(e.kind==='retireCat'?'retired':'active',family,slot)];
  });
 }

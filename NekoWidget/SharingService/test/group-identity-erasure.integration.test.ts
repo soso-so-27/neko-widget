@@ -1,3 +1,4 @@
+import {familyIdentityPhotos} from '../src/family-photo-erasure';
 import {beforeAll,describe,expect,it} from 'vitest';
 import {base64urlDecode,randomBase64url,sha256Base64url} from '../src/encoding';
 import {groupCaptionTranscript} from '../src/group-captions';
@@ -224,4 +225,29 @@ describe('pre-fence photo inventory',()=>{
     expect(inventory.map(p=>p.momentId)).toEqual(ids.sort());
     expect(inventory.every(p=>p.windowId===aw.windowId)).toBe(true);
   });
+});
+
+it('identity erasure deletes only authored representative photos and retries failed physical deletion',async()=>{
+ const subject=await person(),other=await person(),family=crypto.randomUUID();
+ await db.prepare("INSERT INTO family_notebook_spaces VALUES (?,1,'active',?,NULL,NULL,unixepoch(),unixepoch())").bind(family,other.id).run();
+ async function photo(p:Person){
+  const slot=crypto.randomUUID(),asset=crypto.randomUUID(),objectKey=`family-representative/v1/${family}/${asset}`;
+  await db.prepare("INSERT INTO family_representative_slots VALUES (?,?,0,NULL,'active')").bind(family,slot).run();
+  await db.prepare("INSERT INTO family_representative_assets VALUES (?,?,?,?,?,?,1,1,?,?,30,?,'reserved',unixepoch(),unixepoch()+86400,?)")
+   .bind(asset,family,slot,crypto.randomUUID(),p.id,p.deviceId,randomBase64url(32),objectKey,randomBase64url(32),randomBase64url(32)).run();
+  await db.prepare("UPDATE family_representative_assets SET state='active' WHERE asset_id=?").bind(asset).run();
+  await db.prepare('UPDATE family_representative_slots SET revision=1,asset_id=? WHERE slot_id=?').bind(asset,slot).run();
+  await testEnv.MEDIA!.put(objectKey,'synthetic ciphertext');return {asset,slot,objectKey};
+ }
+ const mine=await photo(subject),theirs=await photo(other),inventory=await familyIdentityPhotos(testEnv,subject.id);
+ expect(inventory.map(x=>x.objectKey)).toEqual([mine.objectKey]);
+ const claim=await fence(subject),storage=testEnv.MEDIA!,original=storage.delete.bind(storage);
+ storage.delete=async()=>{throw Error('synthetic_photo_delete_failure');};
+ try{await expect(eraseGroupIdentityData(testEnv,claim)).rejects.toThrow('synthetic_photo_delete_failure');}finally{storage.delete=original;}
+ expect((await db.prepare('SELECT state FROM family_representative_assets WHERE asset_id=?').bind(mine.asset).first())?.state).toBe('retired');
+ expect(await storage.head(mine.objectKey)).not.toBeNull();expect(await storage.head(theirs.objectKey)).not.toBeNull();
+ expect(await eraseGroupIdentityData(testEnv,claim)).toEqual({morePhotos:false});
+ expect(await storage.head(mine.objectKey)).toBeNull();expect(await familyIdentityPhotos(testEnv,subject.id)).toEqual([]);
+ expect(await storage.head(theirs.objectKey)).not.toBeNull();
+ expect((await db.prepare('SELECT asset_id FROM family_representative_slots WHERE slot_id=?').bind(theirs.slot).first())?.asset_id).toBe(theirs.asset);
 });
