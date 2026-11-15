@@ -7,6 +7,7 @@ import { ApiError, jsonResponse } from './errors';
 import { parseJsonBody, requireEmptyBody } from './http';
 import { asObject, binaryField, exactKeys, integerField, uuidField } from './validation';
 import type { Env } from './env';
+import { familyQuotaFailure } from './family-notebook-quota';
 
 // Deliberately not in the public router. The native service/consent and key
 // delivery lifecycle must be connected before this becomes externally usable.
@@ -123,7 +124,8 @@ export async function familyNotebookHistory(request: Request, env: Env): Promise
     const result = { schemaVersion: 1, familyId: family, operationId, action, appliedEpoch, requestHash: actor.requestHash };
     statements.push(env.DB.prepare('INSERT INTO family_notebook_crypto_receipts VALUES (?,?,?,?,?,?,?)')
       .bind(actor.deviceId, operationId, actor.personId, family, action, actor.requestHash, JSON.stringify(result)));
-    await env.DB.batch(statements);
+    try { await env.DB.batch(statements); }
+    catch (error) { await familyQuotaFailure(env.DB, family, actor.personId, error); throw error; }
     return jsonResponse(result);
   } catch (error) { safeFailure(error); }
 }
