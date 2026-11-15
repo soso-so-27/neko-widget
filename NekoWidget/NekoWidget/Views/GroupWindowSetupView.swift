@@ -374,7 +374,7 @@ final class GroupWindowMembersModel: ObservableObject {
                 GroupManagementMemory.remember(.init(key: key, id: operation.id,
                                                      expectedRevision: operation.expectedRevision), windowID: windowID)
             }
-            func settle() {
+            @MainActor func settle() {
                 retainedOperations[key] = nil
                 if durable { GroupManagementMemory.forget(windowID: windowID) }
             }

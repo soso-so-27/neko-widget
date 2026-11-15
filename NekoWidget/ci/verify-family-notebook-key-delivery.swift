@@ -250,7 +250,7 @@ private actor Relay: GroupHTTPTransport {
 
 private final class SimClock: @unchecked Sendable {
     var seconds: Double = 0
-    var date: Date { Date(timeIntervalSince1970: 1_800_000_000 + seconds) }
+    var date: Date { Date(timeIntervalSince1970: seconds) }
 }
 
 /// The most calls in any 60 seconds.
@@ -589,7 +589,7 @@ private extension CallBudgetChecks {
         while t < 120 {
             clock.seconds = max(clock.seconds, t)
             for (name, cost) in [("admission", admission), ("list", list), ("anchor", anchor), ("notebook", notebook)] {
-                guard SharingForegroundGap.allows(since: last[name].map { Date(timeIntervalSince1970: 1_800_000_000 + $0) },
+                guard SharingForegroundGap.allows(since: last[name].map { Date(timeIntervalSince1970: $0) },
                                                   now: clock.date) else { continue }
                 last[name] = clock.seconds
                 try? meter.calls(cost)
