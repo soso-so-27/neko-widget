@@ -339,7 +339,7 @@ class FamilyJoinAfterApproval1115Tests(unittest.TestCase):
         self.assertIn("static let requestsInterval: TimeInterval = 20", POLICY)
         self.assertIn("static let notebookFullInterval: TimeInterval = 60", POLICY)
         auto = section(SHARING, "final class FamilyNotebookAutoCheck {", "/// 11/15: this iPhone asked to join")
-        self.assertIn("case .requestsOnly:\n                        await sharing.refreshRequests()", auto)
+        self.assertIn("case .requestsOnly:\n                    await sharing.refreshRequests()", auto)
         self.assertNotIn("Task.sleep(for: .seconds(pending ? 5 : 20))", NOTEBOOK)
         self.assertIn(".refreshable { if !sharing.isWorking { await sharing.refresh(reportsFailure: true) } }", NOTEBOOK)
 
@@ -352,6 +352,7 @@ class FamilyJoinAfterApproval1115Tests(unittest.TestCase):
 
 
 TRANSPORT = read("NekoWidget/Services/GroupWindowTransport.swift")
+SETUP = read("NekoWidget/Views/GroupWindowSetupView.swift")
 KEYS = read("NekoWidget/Services/FamilyNotebookKeyCoordinator.swift")
 DELIVERY = read("ci/verify-family-notebook-key-delivery.swift")
 
@@ -363,13 +364,14 @@ class CallBudget1115qTests(unittest.TestCase):
 
     def test_transport_budget_is_30_a_minute_for_automatic_calls_only(self):
         send = section(TRANSPORT, "func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {", "enum GroupHTTPRequest")
-        self.assertLess(send.index("try SharingAutoCallBudget.admitIfAutomatic()"), send.index("session.bytes(for: request)"))
-        self.assertIn('SharingAutoCallBudget.noteReply(status: http.statusCode, retryAfter: http.value(forHTTPHeaderField: "Retry-After"))', send)
+        # 1115s: every request passes the gate before the network.
+        self.assertLess(send.index("return try await SharingAutoCallBudget.gated { replied in"), send.index("session.bytes(for: request)"))
+        self.assertIn('replied(http.statusCode, http.value(forHTTPHeaderField: "Retry-After"))', send)
         self.assertIn("static let perMinute = 30", TRANSPORT)
+        self.assertIn("static let devicePerMinute = 59", TRANSPORT)
         self.assertIn("static let rateLimitedPause: TimeInterval = 60", TRANSPORT)
-        self.assertIn("@TaskLocal static var isAutomatic = false", TRANSPORT)
-        self.assertIn("guard isAutomatic else { return }", section(TRANSPORT, "static func admitIfAutomatic(", "\n    }\n"))
         self.assertIn("max(Self.rateLimitedPause, retryAfter ?? 0)", TRANSPORT)
+        self.assertIn('formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"', TRANSPORT)
 
     def test_one_schedule_for_the_notebook(self):
         # No loop of its own in the notebook, the tool or the opening check.
@@ -383,12 +385,13 @@ class CallBudget1115qTests(unittest.TestCase):
         auto = section(SHARING, "final class FamilyNotebookAutoCheck {", "/// 11/15: this iPhone asked to join")
         self.assertEqual(auto.count("loop = Task"), 1)
         self.assertIn("if loop != nil && !sleeping { return }", auto)
-        self.assertIn("await SharingAutoCallBudget.$isAutomatic.withValue(true) {", auto)
+        # 1115s: the schedule's calls carry no mark: automatic by default.
+        self.assertNotIn("SharingPersonAction", auto)
         self.assertIn("FamilyAutoCheckPolicy.next(situation(now: Date()))", auto)
         self.assertIn("SharingAutoCallBudget.shared.pausedUntil()", auto)
         # The まど's waiting lists are automatic too.
         setup = read("NekoWidget/Views/GroupWindowSetupView.swift")
-        self.assertEqual(setup.count("SharingAutoCallBudget.$isAutomatic.withValue(true)"), 2)
+        self.assertIn("if !presentsSheet { await model.load(reportsFailure: false) }", setup)
 
     def test_backoff_and_waiting_on_others(self):
         nxt = section(POLICY, "static func next(_ s: Situation) -> Decision? {", "\n    }\n}")
@@ -419,6 +422,93 @@ class CallBudget1115qTests(unittest.TestCase):
         self.assertIn("try check(bReadsAt! <= 30,", DELIVERY)
         self.assertIn("try check(after.0 <= 6 && after.1 <= 6,", DELIVERY)
         self.assertIn("NekoWidget/Services/SharingAutoCheckPolicy.swift", read("ci/run-quick-ios-checks.sh"))
+
+
+APP_ROOT = read("NekoWidget/App/AppRootView.swift")
+BACKGROUND = read("NekoWidget/Services/MomentBackgroundRefreshService.swift")
+CLIENT = read("NekoWidget/Services/ProductionGroupWindowClient.swift")
+WINDOW_VIEW = read("NekoWidget/Views/GroupWindowView.swift")
+REPORTING = read("NekoWidget/Services/GroupReporting.swift")
+SHARE = read("NekoWidgetShareExtension/GroupShareService.swift")
+
+
+class DefaultAutomatic1115sTests(unittest.TestCase):
+    """1115s: calls nobody marked passed the budget. Now every call is
+    automatic unless the person's own action marks it."""
+
+    def test_default_is_automatic(self):
+        self.assertIn("@TaskLocal static var isPersonAction = false", TRANSPORT)
+        self.assertNotIn("isAutomatic", TRANSPORT)
+        admit = section(TRANSPORT, "    func admit(personAction: Bool, at now: Date = Date()) throws {", "\n    }\n")
+        self.assertLess(admit.index("if personAction {"), admit.index("if let pausedUntil, now < pausedUntil"))
+        self.assertIn("guard automatic.count(at: now) < automatic.limit, all.count(at: now) < all.limit else {", admit)
+        self.assertIn("try budget.admit(personAction: isPersonAction, at: now)", TRANSPORT)
+        # Only SharingPersonAction sets the mark.
+        import glob
+        sources = glob.glob(str(ROOT / "NekoWidget" / "**" / "*.swift"), recursive=True) + glob.glob(str(ROOT / "NekoWidgetShareExtension" / "*.swift"))
+        setters = [path for path in sources if "$isPersonAction.withValue" in open(path, encoding="utf-8").read()]
+        self.assertEqual([path.replace(chr(92), "/").split("/NekoWidget/", 1)[-1] for path in setters], ["NekoWidget/Services/GroupWindowTransport.swift"])
+        # The one network transport; every relay client builds it.
+        self.assertEqual(TRANSPORT.count("URLSession(configuration:"), 1)
+        for path in ("NekoWidget/Services/FamilyNotebookServiceFactory.swift", "NekoWidget/Services/GroupReportingProvider.swift",
+                     "NekoWidget/Services/ProductionGroupWindowClient.swift", "NekoWidgetShareExtension/GroupShareService.swift"):
+            self.assertIn("GroupURLSessionTransport()", read(path), path)
+
+    def test_automatic_ways_in_stay_unmarked_and_keep_a_20_second_gap(self):
+        self.assertIn("static let seconds: TimeInterval = 20", TRANSPORT)
+        for name, text in (("AppRootView", APP_ROOT), ("background refresh", section(BACKGROUND, "final class GroupAdmissionService", "func receive(")),
+                           ("anchor receipts", section(CLIENT, "func backfillAnchorReceipts() async {", "\n    }\n"))):
+            self.assertNotIn("SharingPersonAction", text, name)
+        refresh = section(BACKGROUND, "func refresh(requestPermission: Bool = false, force: Bool = false) async {", "\n    }\n")
+        self.assertIn("guard requestPermission || force || SharingForegroundGap.allows(since: lastRefreshAt) else { return }", refresh)
+        self.assertIn("SharingForegroundGap.allows(since: lastAnchorBackfillAt)", CLIENT)
+        self.assertIn("let windows = try await recentOrFreshWindows()", CLIENT)
+        foreground = section(WINDOW_VIEW, ".onChange(of: scenePhase) { _, phase in", ".onReceive(")
+        self.assertIn("SharingForegroundGap.allows(since: lastForegroundLoad)", foreground)
+        self.assertNotIn("SharingPersonAction", foreground)
+        # A notification tap opens the window with the person's one read.
+        self.assertIn("SharingPersonAction.run({ try await client.window(id: route.windowID) })", BACKGROUND)
+
+    def test_the_persons_own_ways_in_are_marked(self):
+        marked = {
+            "family operations": section(SHARING, "func perform(readsAfter: Bool = true", "private func refreshAfterChange()"),
+            "family asked read": section(SHARING, "func refresh(reportsFailure: Bool = false) async -> Bool {", "private func read(reportsFailure: Bool)"),
+            "invitation link": section(NOTEBOOK, "struct FamilyNotebookJoinView: View {", "struct FamilyNotebookNameView: View {"),
+            "farewell preview": section(NOTEBOOK, "private func loadPreview() async {", "private func consent("),
+            "farewell consent": section(NOTEBOOK, "private func consent(_ preview: FamilyFarewellPreview) async {", "private func revoke()"),
+            "farewell revoke": section(NOTEBOOK, "    private func revoke() async {", "\n    }\n"),
+            "まど open/pull": section(WINDOW_VIEW, "    func sync() async {", "\n"),
+            "deliver": section(WINDOW_VIEW, "    func deliver(_ prepared: PreparedPhoto, memo: String) async {", "\n    }\n"),
+            "retry delivery": section(WINDOW_VIEW, "    func retryFailedDelivery() async {", "\n    }\n"),
+            "favorites": section(WINDOW_VIEW, "    func addToFavorites(", "\n    }\n"),
+            "remove": section(WINDOW_VIEW, "    func remove(_ entry: GroupWindowLocalPhotoStore.Entry) async {", "\n    }\n"),
+            "block sender": section(WINDOW_VIEW, "    func blockSender(of entry", "\n    }\n"),
+            "forget": section(WINDOW_VIEW, "    func forgetFormerWindow() async {", "\n    }\n"),
+            "photo window read": section(WINDOW_VIEW, "    func loadWindow() async {", "\n    }\n"),
+            "heart": section(WINDOW_VIEW, "    func toggleHeart(_ photoID: String) async {", "\n    }\n"),
+            "create まど": section(WINDOW_VIEW, "    func create(name: String, ownerName: String) async -> GroupWindow? {", "\n    }\n"),
+            "report and block": section(REPORTING, "func run<Value>(windowID: String", "\n    }\n"),
+            "members actions": section(SETUP, "    private func perform(", "\n    }\n"),
+            "members read": section(SETUP, "    func load(reportsFailure: Bool = true) async {", "private func read(reportsFailure: Bool)"),
+            "join apply": section(SETUP, "    func apply() async {", "\n    }\n"),
+            "join resume": section(SETUP, "    func resume() async {", "\n    }\n"),
+            "join cancel": section(SETUP, "    func cancel() async {", "\n    }\n"),
+            "join pull": section(SETUP, "    func refresh(reportsFailure: Bool = false) async {", "private func check(reportsFailure: Bool)"),
+            "share sheet": SHARE,
+        }
+        for name, text in marked.items():
+            self.assertIn("SharingPersonAction.run", text, name)
+        self.assertEqual(WINDOW_VIEW.count("await SharingPersonAction.run { await model.load() }"), 3)
+        self.assertIn(".refreshable { await SharingPersonAction.run { await safety.refresh(windowID: windowID) } }", WINDOW_VIEW)
+
+    def test_counted_at_the_real_gate(self):
+        for name in ("unmarkedEntrancesAreHeld()", "foregroundEvery5Seconds()", "twoIPhonesOnOneAddress()"):
+            self.assertIn(name, DELIVERY)
+        self.assertIn("try await SharingAutoCallBudget.gated(meter.budget, at: { meter.clock.date })", DELIVERY)
+        self.assertIn('"a call added later that nobody marked"', DELIVERY)
+        self.assertIn("try check(afterBudget == 0,", DELIVERY)
+        self.assertIn("try check(afterRateLimit == 0,", DELIVERY)
+        self.assertIn("try check(together < 120,", DELIVERY)
 
 
 class RegistrationTests(unittest.TestCase):

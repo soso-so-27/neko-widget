@@ -35,6 +35,10 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     private var verifiedListEntries: [String: VerifiedListEntry] = [:]
     private var heartOperations = Set<UUID>()
     private var reconcilingAdmissions = false
+    /// 1115s: the last list read, so registering notifications right after
+    /// the admission check does not read the same list again.
+    private var recentWindows: (at: Date, windows: [GroupWindow])?
+    private var lastAnchorBackfillAt: Date?
     private var anchorReceiptAttempts = Set<String>()
     private var anchorReceiptBackfillRunning = false
     private var anchorReceiptForeground = true
@@ -46,10 +50,17 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         anchorReceiptForeground = active
     }
 
+    /// Checks only (verify-group-adapter): the next pass may run at once,
+    /// as it would 20 s later.
+    func forgetAnchorBackfillGap() { lastAnchorBackfillAt = nil }
+
     /// Called after a foreground delay. Reads only existing local pins/identity;
     /// no registration, new identity, roster fetch, or key recovery.
     func backfillAnchorReceipts() async {
-        guard anchorReceiptForeground, !anchorReceiptBackfillRunning else { return }
+        // 1115s: automatic; not again within 20 s of the last pass.
+        guard anchorReceiptForeground, !anchorReceiptBackfillRunning,
+              SharingForegroundGap.allows(since: lastAnchorBackfillAt) else { return }
+        lastAnchorBackfillAt = Date()
         anchorReceiptBackfillRunning = true
         defer { anchorReceiptBackfillRunning = false }
         guard let accounts = try? secrets.accounts(prefix: "window:") else { return }
@@ -364,14 +375,25 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             }
 #endif
             let created = Dictionary(uniqueKeysWithValues: items.map { ($0.windowID, $0.createdAt) })
-            return result.sorted {
+            let sorted = result.sorted {
                 GroupWindowListOrder.precedes(id: $0.id, received: received[$0.id], created: created[$0.id] ?? nil,
                     otherID: $1.id, otherReceived: received[$1.id], otherCreated: created[$1.id] ?? nil)
             }
+            recentWindows = (Date(), sorted)
+            return sorted
         } catch {
             verifiedListEntries.removeAll()
+            recentWindows = nil
             throw error
         }
+    }
+
+    /// The list read within the last 20 s (1115s), else a fresh read.
+    private func recentOrFreshWindows() async throws -> [GroupWindow] {
+        if let recentWindows, Date().timeIntervalSince(recentWindows.at) < SharingForegroundGap.seconds {
+            return recentWindows.windows
+        }
+        return try await windows()
     }
     private func cachedListWindow(_ item: GroupAPIModel.WindowItem, identity: GroupDeviceIdentity) throws -> GroupWindow? {
 #if DEBUG || INTERNAL_PRESENTATION
@@ -972,7 +994,8 @@ extension ProductionGroupWindowClient {
     }
     func updatePushSubscriptions(deviceToken: Data?, environment: String) async throws {
         struct Registration: Codable { let digest: Data; let environment: String; let renewAt: Date }
-        let windows = try await windows()
+        // 1115s: the admission check just read the list; use that read.
+        let windows = try await recentOrFreshWindows()
         var scopes = Set(windows.map { $0.id + "/push-subscription" })
         let joins = try load([String: String].self, "join-index") ?? [:]
         for account in Set(try secrets.accounts(prefix: "join:") + joins.values.map { "join:" + $0 }) {

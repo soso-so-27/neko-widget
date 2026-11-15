@@ -1317,49 +1317,58 @@ struct FamilyFarewellShareSheet: View {
     }
 
     private func loadPreview() async {
-        working = true; defer { working = false }
-        errorMessage = nil
-        do {
-            preview = try await FamilyNotebookSharing.waitingForCheck { try await service.previewFarewellSharing(toolCatID: toolCatID) }
-            consentOperation = nil
-        } catch {
-            errorMessage = (error as? FamilySharingError ?? .serviceUnavailable).message
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            working = true; defer { working = false }
+            errorMessage = nil
+            do {
+                preview = try await FamilyNotebookSharing.waitingForCheck { try await service.previewFarewellSharing(toolCatID: toolCatID) }
+                consentOperation = nil
+            } catch {
+                errorMessage = (error as? FamilySharingError ?? .serviceUnavailable).message
+            }
         }
     }
 
     private func consent(_ preview: FamilyFarewellPreview) async {
-        working = true; defer { working = false }
-        errorMessage = nil
-        let operation = consentOperation ?? UUID()
-        consentOperation = operation
-        do {
-            try await service.consentToShareFarewell(previewID: preview.id, operationID: operation)
-            consentOperation = nil
-            self.preview = nil
-            await finish()
-        } catch {
-            let failure = error as? FamilySharingError ?? .unknownOutcome
-            // Unknown or not sent yet: the same operation next time. A changed
-            // date or family needs a new look first.
-            if failure == .farewellPreviewChanged { self.preview = nil }
-            if failure.recovery != .retry && failure != .unknownOutcome { consentOperation = nil }
-            errorMessage = failure.message
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            working = true; defer { working = false }
+            errorMessage = nil
+            let operation = consentOperation ?? UUID()
+            consentOperation = operation
+            do {
+                try await service.consentToShareFarewell(previewID: preview.id, operationID: operation)
+                consentOperation = nil
+                self.preview = nil
+                await finish()
+            } catch {
+                let failure = error as? FamilySharingError ?? .unknownOutcome
+                // Unknown or not sent yet: the same operation next time. A changed
+                // date or family needs a new look first.
+                if failure == .farewellPreviewChanged { self.preview = nil }
+                if failure.recovery != .retry && failure != .unknownOutcome { consentOperation = nil }
+                errorMessage = failure.message
+            }
         }
     }
 
     private func revoke() async {
-        working = true; defer { working = false }
-        errorMessage = nil
-        let operation = revokeOperation ?? UUID()
-        revokeOperation = operation
-        do {
-            try await service.revokeFarewellSharing(toolCatID: toolCatID, operationID: operation)
-            revokeOperation = nil
-            await finish()
-        } catch {
-            let failure = error as? FamilySharingError ?? .unknownOutcome
-            if failure.recovery != .retry && failure != .unknownOutcome { revokeOperation = nil }
-            errorMessage = failure.message
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            working = true; defer { working = false }
+            errorMessage = nil
+            let operation = revokeOperation ?? UUID()
+            revokeOperation = operation
+            do {
+                try await service.revokeFarewellSharing(toolCatID: toolCatID, operationID: operation)
+                revokeOperation = nil
+                await finish()
+            } catch {
+                let failure = error as? FamilySharingError ?? .unknownOutcome
+                if failure.recovery != .retry && failure != .unknownOutcome { revokeOperation = nil }
+                errorMessage = failure.message
+            }
         }
     }
 
@@ -1780,12 +1789,15 @@ struct FamilyNotebookJoinView: View {
             } message: { Text(sharing.failure?.message ?? "") }
         }
         .task {
-            await sharing.refresh()
-            do { preview = try await sharing.service.previewInvitation(link) }
-            catch {
-                // Already waiting: the used link is not an error to this person.
-                if sharing.state != .pendingApproval {
-                    sharing.failure = error as? FamilySharingError ?? .serviceUnavailable
+            // 1115s: opening the invitation link is the person's own action.
+            await SharingPersonAction.run {
+                await sharing.refresh()
+                do { preview = try await sharing.service.previewInvitation(link) }
+                catch {
+                    // Already waiting: the used link is not an error to this person.
+                    if sharing.state != .pendingApproval {
+                        sharing.failure = error as? FamilySharingError ?? .serviceUnavailable
+                    }
                 }
             }
         }

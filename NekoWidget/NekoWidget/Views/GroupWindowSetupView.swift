@@ -229,7 +229,14 @@ final class GroupWindowMembersModel: ObservableObject {
 
     /// The 8-second pass stays quiet: the orange line is for a load the person
     /// started, or when nothing is on screen yet (11/5: it came and went).
+    /// Opening the screen, a pull, 「もう一度」: the person's own read (1115s).
+    /// The quiet 8-second pass (`reportsFailure: false`) is automatic.
     func load(reportsFailure: Bool = true) async {
+        if reportsFailure { await SharingPersonAction.run { await read(reportsFailure: true) } }
+        else { await read(reportsFailure: false) }
+    }
+
+    private func read(reportsFailure: Bool) async {
         do {
             let results = (try? await client.reconcileAdmissions()) ?? []
             admissionResults = results.filter { $0.windowID == windowID && !$0.joinedLocally }
@@ -348,61 +355,64 @@ final class GroupWindowMembersModel: ObservableObject {
         durable: Bool = false,
         _ body: (GroupOperation) async throws -> Void
     ) async {
-        guard let window, !isWorking else { return }
-        isWorking = true
-        defer { isWorking = false }
-        actionErrorMessage = nil
-        actionCompletionMessage = nil
-        // Compare-and-set against the revision shown on screen. A retry keeps
-        // the operation ID so the relay can replay instead of applying twice.
-        // Rename and close survive the app being closed: the same ID and
-        // arguments come back from GroupManagementMemory.
-        let saved = durable ? GroupManagementMemory.pending(windowID: windowID, key: key) : nil
-        let operation = saved.map { GroupOperation(id: $0.id, expectedRevision: $0.expectedRevision) }
-            ?? GroupOperation(id: retainedOperations[key]?.id ?? UUID(), expectedRevision: window.revision)
-        retainedOperations[key] = operation
-        if durable {
-            GroupManagementMemory.remember(.init(key: key, id: operation.id,
-                                                 expectedRevision: operation.expectedRevision), windowID: windowID)
-        }
-        func settle() {
-            retainedOperations[key] = nil
-            if durable { GroupManagementMemory.forget(windowID: windowID) }
-        }
-        do {
-            try await body(operation)
-            settle()
-            if reloadsAfterSuccess { await load() }
-        } catch let error as GroupSubscriptionError {
-            // Paused or not yet Plus: nothing to retry; show the latest state.
-            retainedOperations[key] = nil
-            if durable { GroupManagementMemory.forget(windowID: windowID) }
-            actionErrorMessage = GroupWindowPresentation.message(for: error)
-            await load()
-        } catch let error as GroupWindowManagementError {
-            // Accepted but not yet read back: keep the same operation for the
-            // next try. Anything else is final; show the latest state.
-            if error != .stateRefreshRequired { settle() }
-            actionErrorMessage = GroupWindowPresentation.message(for: error)
-            await load()
-        } catch let error as GroupClientError {
-            switch error {
-            case .offline:
-                // Resend the same operation when the network returns.
-                break
-            case .unavailable where durable:
-                // The outcome may be unknown: the same operation, never a new ID.
-                break
-            case .staleRevision:
-                // Same operation; re-read the list before the next attempt.
-                await load()
-            default:
-                settle()
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            guard let window, !isWorking else { return }
+            isWorking = true
+            defer { isWorking = false }
+            actionErrorMessage = nil
+            actionCompletionMessage = nil
+            // Compare-and-set against the revision shown on screen. A retry keeps
+            // the operation ID so the relay can replay instead of applying twice.
+            // Rename and close survive the app being closed: the same ID and
+            // arguments come back from GroupManagementMemory.
+            let saved = durable ? GroupManagementMemory.pending(windowID: windowID, key: key) : nil
+            let operation = saved.map { GroupOperation(id: $0.id, expectedRevision: $0.expectedRevision) }
+                ?? GroupOperation(id: retainedOperations[key]?.id ?? UUID(), expectedRevision: window.revision)
+            retainedOperations[key] = operation
+            if durable {
+                GroupManagementMemory.remember(.init(key: key, id: operation.id,
+                                                     expectedRevision: operation.expectedRevision), windowID: windowID)
             }
-            actionErrorMessage = GroupWindowPresentation.message(for: error)
-        } catch {
-            settle()
-            actionErrorMessage = GroupWindowPresentation.message(for: error)
+            @MainActor func settle() {
+                retainedOperations[key] = nil
+                if durable { GroupManagementMemory.forget(windowID: windowID) }
+            }
+            do {
+                try await body(operation)
+                settle()
+                if reloadsAfterSuccess { await load() }
+            } catch let error as GroupSubscriptionError {
+                // Paused or not yet Plus: nothing to retry; show the latest state.
+                retainedOperations[key] = nil
+                if durable { GroupManagementMemory.forget(windowID: windowID) }
+                actionErrorMessage = GroupWindowPresentation.message(for: error)
+                await load()
+            } catch let error as GroupWindowManagementError {
+                // Accepted but not yet read back: keep the same operation for the
+                // next try. Anything else is final; show the latest state.
+                if error != .stateRefreshRequired { settle() }
+                actionErrorMessage = GroupWindowPresentation.message(for: error)
+                await load()
+            } catch let error as GroupClientError {
+                switch error {
+                case .offline:
+                    // Resend the same operation when the network returns.
+                    break
+                case .unavailable where durable:
+                    // The outcome may be unknown: the same operation, never a new ID.
+                    break
+                case .staleRevision:
+                    // Same operation; re-read the list before the next attempt.
+                    await load()
+                default:
+                    settle()
+                }
+                actionErrorMessage = GroupWindowPresentation.message(for: error)
+            } catch {
+                settle()
+                actionErrorMessage = GroupWindowPresentation.message(for: error)
+            }
         }
     }
 }
@@ -520,10 +530,8 @@ struct GroupWindowMembersView: View {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(8))
                 guard !Task.isCancelled else { return }
-                // 11/15 (1115q): automatic, within this iPhone's call budget.
-                if !presentsSheet {
-                    await SharingAutoCallBudget.$isAutomatic.withValue(true) { await model.load(reportsFailure: false) }
-                }
+                // 11/15 (1115q): automatic (unmarked), within this iPhone's call budget.
+                if !presentsSheet { await model.load(reportsFailure: false) }
             }
         }
         .refreshable { await model.load() }
@@ -1227,42 +1235,54 @@ final class GroupJoinModel: ObservableObject {
     }
 
     func resume() async {
-        guard let client else { return }
-        do {
-            if let saved = try await client.resumableJoin(invitationID: invitationID) {
-                displayName = saved.displayName; update(with: saved)
-            }
-        } catch { errorMessage = GroupWindowPresentation.message(for: error) }
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            guard let client else { return }
+            do {
+                if let saved = try await client.resumableJoin(invitationID: invitationID) {
+                    displayName = saved.displayName; update(with: saved)
+                }
+            } catch { errorMessage = GroupWindowPresentation.message(for: error) }
+        }
     }
 
     func apply() async {
-        guard let client else {
-            errorMessage = GroupWindowPresentation.message(for: GroupClientError.unavailable)
-            return
-        }
-        guard canApply else { return }
-        isWorking = true
-        defer { isWorking = false }
-        errorMessage = nil
-        do {
-            let request = try await client.apply(
-                invitationID: invitationID,
-                displayName: trimmedName,
-                operationID: applyOperationID
-            )
-            GroupDisplayName.remember(trimmedName)
-            update(with: request)
-            Task { await GroupAdmissionService.shared.refresh(requestPermission: true) }
-        } catch GroupInvitationError.alreadyMember {
-            alreadyMember = true
-        } catch {
-            errorMessage = GroupWindowPresentation.message(for: error)
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            guard let client else {
+                errorMessage = GroupWindowPresentation.message(for: GroupClientError.unavailable)
+                return
+            }
+            guard canApply else { return }
+            isWorking = true
+            defer { isWorking = false }
+            errorMessage = nil
+            do {
+                let request = try await client.apply(
+                    invitationID: invitationID,
+                    displayName: trimmedName,
+                    operationID: applyOperationID
+                )
+                GroupDisplayName.remember(trimmedName)
+                update(with: request)
+                Task { await GroupAdmissionService.shared.refresh(requestPermission: true) }
+            } catch GroupInvitationError.alreadyMember {
+                alreadyMember = true
+            } catch {
+                errorMessage = GroupWindowPresentation.message(for: error)
+            }
         }
     }
 
     /// The 8-second check stays quiet; a pull to refresh says what failed
     /// (11/5: the red line came and went while waiting).
     func refresh(reportsFailure: Bool = false) async {
+        // 1115s: a pull is the person's own read; the 8-second pass is automatic.
+        if reportsFailure { await SharingPersonAction.run { await check(reportsFailure: true) } }
+        else { await check(reportsFailure: false) }
+    }
+
+    private func check(reportsFailure: Bool) async {
         guard case let .pending(request) = phase, let client else { return }
         do {
             let latest = try await client.joinStatus(requestID: request.id)
@@ -1276,15 +1296,18 @@ final class GroupJoinModel: ObservableObject {
     }
 
     func cancel() async {
-        guard case let .pending(request) = phase, let client, !isWorking else { return }
-        isWorking = true
-        defer { isWorking = false }
-        do {
-            try await client.cancel(requestID: request.id, operationID: UUID())
-            phase = .cancelled
-            errorMessage = nil
-        } catch {
-            errorMessage = GroupWindowPresentation.message(for: error)
+        // 1115s: the person's own action, outside the automatic budget.
+        await SharingPersonAction.run {
+            guard case let .pending(request) = phase, let client, !isWorking else { return }
+            isWorking = true
+            defer { isWorking = false }
+            do {
+                try await client.cancel(requestID: request.id, operationID: UUID())
+                phase = .cancelled
+                errorMessage = nil
+            } catch {
+                errorMessage = GroupWindowPresentation.message(for: error)
+            }
         }
     }
 
@@ -1364,8 +1387,8 @@ struct GroupJoinView: View {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(8))
                 guard !Task.isCancelled else { return }
-                // 11/15 (1115q): automatic, within this iPhone's call budget.
-                await SharingAutoCallBudget.$isAutomatic.withValue(true) { await model.refresh() }
+                // 11/15 (1115q): automatic (unmarked), within this iPhone's call budget.
+                await model.refresh()
             }
         }
         .refreshable { await model.refresh(reportsFailure: true) }

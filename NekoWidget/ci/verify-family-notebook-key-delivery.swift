@@ -250,7 +250,7 @@ private actor Relay: GroupHTTPTransport {
 
 private final class SimClock: @unchecked Sendable {
     var seconds: Double = 0
-    var date: Date { Date(timeIntervalSince1970: 1_800_000_000 + seconds) }
+    var date: Date { Date(timeIntervalSince1970: seconds) }
 }
 
 /// The most calls in any 60 seconds.
@@ -266,21 +266,27 @@ private func maxPerMinute(_ times: [Double]) -> Int {
 /// One iPhone's calls. Automatic ones pass the app's own budget gate.
 private final class Meter: @unchecked Sendable {
     let clock: SimClock
-    let budget = SharingAutoCallBudget(limit: SharingAutoCallBudget.perMinute)
+    private(set) var budget = SharingAutoCallBudget()
     var times: [Double] = []
     init(clock: SimClock) { self.clock = clock }
+    /// One call through the app's own gate; unmarked calls are automatic.
     func call() throws {
-        try SharingAutoCallBudget.admitIfAutomatic(budget, at: clock.date)
-        times.append(clock.seconds); clock.seconds += 0.05
+        try SharingAutoCallBudget.admit(budget, at: clock.date)
+        times.append(clock.seconds); clock.seconds += 0.0625
     }
     func calls(_ count: Int) throws { for _ in 0..<count { try call() } }
+    func reset() { times.removeAll(); budget = SharingAutoCallBudget() }
 }
 
+/// The relay behind the app's real gate (`SharingAutoCallBudget.gated`), as
+/// GroupURLSessionTransport sends: refused calls never reach the relay.
 private struct MeteredTransport: GroupHTTPTransport {
     let relay: Relay, meter: Meter
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
-        try meter.call()
-        return try await relay.send(request, maximumBytes: maximumBytes)
+        try await SharingAutoCallBudget.gated(meter.budget, at: { meter.clock.date }) { _ in
+            meter.times.append(meter.clock.seconds); meter.clock.seconds += 0.0625
+            return try await relay.send(request, maximumBytes: maximumBytes)
+        }
     }
 }
 
@@ -326,6 +332,12 @@ private enum CallBudgetChecks {
         let waiting = try awaitingApproval()
         let purchase = try purchaseWaits()
         let (twoDevices, seconds) = try await approvalToReading(directory: directory, endpoint: endpoint)
+        let gate = try await unmarkedEntrancesAreHeld()
+        let reopened = try foregroundEvery5Seconds()
+        let wifi = try twoIPhonesOnOneAddress()
+        print("Budget gate (1115s): after 30 automatic calls \(gate.afterBudget) sent from \(gate.entrances) entrances; "
+            + "within 60 s of a 429 \(gate.afterRateLimit); taps sent \(gate.taps), refused after \(SharingAutoCallBudget.devicePerMinute); "
+            + "reopened every 5 s for 2 min: \(reopened.before) -> \(reopened.after) a minute; two iPhones on one address \(wifi) a minute")
         print("Call budget (most calls in any 60 s, one iPhone): keys missing 10 min \(keysMissing.before) -> \(keysMissing.after); "
             + "notebook open + reopened every 15 s \(reopening.before) -> \(reopening.after); awaiting approval \(waiting); "
             + "purchase wait POST \(purchase.beforePost) -> \(purchase.afterPost), GET \(purchase.beforeGet) -> \(purchase.afterGet); "
@@ -351,9 +363,7 @@ private enum CallBudgetChecks {
         schedule.notebookOpen = true
         while let at = schedule.plannedAt, at < 600 {
             clock.seconds = max(clock.seconds, at)
-            try? SharingAutoCallBudget.$isAutomatic.withValue(true) {
-                try meter.calls(loadState + state + min(8, FamilyNotebookKeyCoordinator.keyReadsPerPass))
-            }
+            try? meter.calls(loadState + state + min(8, FamilyNotebookKeyCoordinator.keyReadsPerPass))
             schedule.passed(.full, at: at, mark: "same", keysMove: true, awaiting: true, inFamily: false)
         }
         let after = maxPerMinute(meter.times)
@@ -384,7 +394,7 @@ private enum CallBudgetChecks {
             if let at = schedule.plannedAt, at <= nextForeground {
                 clock.seconds = max(clock.seconds, at)
                 let pass = schedule.plannedPass
-                try? SharingAutoCallBudget.$isAutomatic.withValue(true) { try meter.calls(pass == .full ? full : requests) }
+                try? meter.calls(pass == .full ? full : requests)
                 schedule.passed(pass, at: at, mark: "steady", keysMove: false, awaiting: false, inFamily: true)
             } else {
                 clock.seconds = nextForeground
@@ -403,7 +413,7 @@ private enum CallBudgetChecks {
         var schedule = SimSchedule()
         while let at = schedule.plannedAt, at < 600 {
             clock.seconds = max(clock.seconds, at)
-            try? SharingAutoCallBudget.$isAutomatic.withValue(true) { try meter.calls(1) }
+            try? meter.calls(1)
             schedule.passed(.full, at: at, mark: "pending", keysMove: false, awaiting: true, inFamily: false)
         }
         let most = maxPerMinute(meter.times)
@@ -462,7 +472,7 @@ private enum CallBudgetChecks {
         try await keysB.registerInvitation(invitation)
         try await relay.admit(b)
         try await keysA.confirmApprovedAddition(family: family, personID: b.personID, identityPublicKey: b.personPublicKey)
-        meterA.times.removeAll(); meterB.times.removeAll(); clock.seconds = 0
+        meterA.reset(); meterB.reset(); clock.seconds = 0
         var scheduleA = SimSchedule(), scheduleB = SimSchedule()
         var bReadsAt: Double?
         while bReadsAt == nil {
@@ -473,11 +483,9 @@ private enum CallBudgetChecks {
             let keys = isA ? keysA : keysB, meter = isA ? meterA : meterB
             var material: FamilyNotebookKeyMaterial?
             do {
-                material = try await SharingAutoCallBudget.$isAutomatic.withValue(true) {
-                    try meter.calls(3)   // directory, members, payer
-                    return try await keys.prepare(family: family)
-                }
-            } catch is SharingCallDeferred { material = nil }
+                try meter.calls(3)   // directory, members, payer
+                material = try await keys.prepare(family: family)
+            } catch GroupClientError.unavailable { material = nil }
             let ready = material?.ready == true && material?.moreWork == false
             if !isA, ready { bReadsAt = clock.seconds; break }
             let mark = await keys.observation
@@ -491,5 +499,125 @@ private enum CallBudgetChecks {
         try check(most <= SharingAutoCallBudget.perMinute, "two iPhones: \(most) calls in a minute")
         try check(bReadsAt! <= 30, "two iPhones: B reads after \(bReadsAt!) s")
         return (most, bReadsAt!)
+    }
+}
+
+
+// MARK: - 1115s: unmarked calls are automatic, at the app's real gate
+
+private extension CallBudgetChecks {
+    /// The automatic ways in that 1115s found unmarked: none of them marks
+    /// itself, so each goes through the gate as automatic.
+    static let unmarkedEntrances = [
+        "app comes to the front (admission check, notification registration)",
+        "notification registration (device token)", "a notification arrives",
+        "background Widget refresh", "まど list on coming to the front",
+        "trust-anchor receipts", "family notebook schedule", "まど waiting lists",
+        "a call added later that nobody marked",
+    ]
+
+    static func unmarkedEntrancesAreHeld() async throws -> (afterBudget: Int, entrances: Int, afterRateLimit: Int, taps: Int) {
+        let clock = SimClock(), budget = SharingAutoCallBudget()
+        var sent = 0
+        func send(status: Int = 200, retryAfter: String? = nil) async -> Bool {
+            do {
+                _ = try await SharingAutoCallBudget.gated(budget, at: { clock.date }) { replied in
+                    sent += 1; replied(status, retryAfter)
+                    return GroupHTTPReply(status: status, data: Data())
+                }
+                return true
+            } catch { return false }
+        }
+        // 30 automatic calls use the minute.
+        for _ in 0..<SharingAutoCallBudget.perMinute { _ = await send(); clock.seconds += 0.5 }
+        try check(budget.automaticCalls(at: clock.date) == SharingAutoCallBudget.perMinute, "gate: unmarked calls are counted as automatic")
+        let before = sent
+        for _ in unmarkedEntrances { _ = await send() }
+        let afterBudget = sent - before
+        try check(afterBudget == 0, "gate: \(afterBudget) automatic calls sent after the budget")
+        // A tap still goes, and refuses itself at the iPhone's limit.
+        var taps = 0
+        while await SharingPersonAction.run({ await send() }) { taps += 1; guard taps < 100 else { break } }
+        try check(taps == SharingAutoCallBudget.devicePerMinute - SharingAutoCallBudget.perMinute,
+                  "gate: taps sent \(taps) beside 30 automatic calls")
+        // A 429: nothing automatic for 60 s, then again.
+        let paused = SharingAutoCallBudget(), pausedClock = SimClock()
+        var afterRateLimit = 0
+        _ = try? await SharingAutoCallBudget.gated(paused, at: { pausedClock.date }) { replied in
+            replied(429, nil); return GroupHTTPReply(status: 429, data: Data())
+        }
+        while pausedClock.seconds < 55 {
+            pausedClock.seconds += 5
+            for _ in unmarkedEntrances {
+                if (try? await SharingAutoCallBudget.gated(paused, at: { pausedClock.date }) { _ in
+                    GroupHTTPReply(status: 200, data: Data()) }) != nil { afterRateLimit += 1 }
+            }
+        }
+        try check(afterRateLimit == 0, "gate: \(afterRateLimit) automatic calls within 60 s of a 429")
+        pausedClock.seconds = 61
+        try check((try? await SharingAutoCallBudget.gated(paused, at: { pausedClock.date }) { _ in
+            GroupHTTPReply(status: 200, data: Data()) }) != nil, "gate: automatic calls go again after the pause")
+        // Retry-After as an HTTP date is read too.
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let later = SharingAutoCallBudget.retryAfterSeconds("Fri, 15 Jan 2027 08:02:00 GMT", now: now)
+        try check(later.map { abs($0 - 120) < 1 } == true, "gate: Retry-After date read as \(String(describing: later)) s")
+        try check(SharingAutoCallBudget.retryAfterSeconds("90", now: now) == 90, "gate: Retry-After seconds")
+        return (afterBudget, unmarkedEntrances.count, afterRateLimit, taps)
+    }
+
+    /// The app sent away and back every 5 s for 2 minutes, in a family with
+    /// one まど: each way in that comes with the front runs at most every
+    /// 20 s, and all of it passes the gate.
+    static func foregroundEvery5Seconds() throws -> (before: Int, after: Int) {
+        // Calls per run: admission check (list, joins, pending) 3; the
+        // notification registration 1 more list before 1115s, 0 after (shared
+        // list, cached registration); まど list 2; anchor receipts 2;
+        // the notebook's whole read 10.
+        let admission = 3, push = 1, list = 2, anchor = 2, notebook = 10
+        var before: [Double] = []
+        var t = 0.0
+        while t < 120 {
+            // Before: the root and didBecomeActive both checked admissions
+            // (each with its own list), nothing kept a gap, no gate for them.
+            let calls = 2 * (admission + push) + list + anchor + notebook
+            for i in 0..<calls { before.append(t + Double(i) * 0.05) }
+            t += 5
+        }
+        let clock = SimClock(), meter = Meter(clock: clock)
+        var last: [String: Double] = [:]
+        t = 0
+        while t < 120 {
+            clock.seconds = max(clock.seconds, t)
+            for (name, cost) in [("admission", admission), ("list", list), ("anchor", anchor), ("notebook", notebook)] {
+                guard SharingForegroundGap.allows(since: last[name].map { Date(timeIntervalSince1970: $0) },
+                                                  now: clock.date) else { continue }
+                last[name] = clock.seconds
+                try? meter.calls(cost)
+            }
+            t += 5
+        }
+        let after = maxPerMinute(meter.times)
+        try check(after <= SharingAutoCallBudget.perMinute, "reopened every 5 s: \(after) calls in a minute")
+        return (maxPerMinute(before), after)
+    }
+
+    /// Two iPhones on one Wi-Fi, each tapping as fast as it can while its
+    /// automatic checks run: together under the relay's 120.
+    static func twoIPhonesOnOneAddress() throws -> Int {
+        let clock = SimClock()
+        let phones = [Meter(clock: clock), Meter(clock: clock)]
+        var all: [Double] = []
+        while clock.seconds < 180 {
+            for phone in phones {
+                if (try? phone.call()) != nil { all.append(clock.seconds) }   // automatic
+                let tapped: Bool = SharingAutoCallBudget.$isPersonAction.withValue(true) { (try? phone.call()) != nil }
+                if tapped { all.append(clock.seconds) }
+            }
+            clock.seconds += 0.25
+        }
+        for phone in phones { try check(maxPerMinute(phone.times) <= SharingAutoCallBudget.devicePerMinute, "one iPhone over its limit") }
+        let together = maxPerMinute(all)
+        try check(together < 120, "two iPhones: \(together) calls in a minute")
+        return together
     }
 }
