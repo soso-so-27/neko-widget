@@ -98,6 +98,22 @@ private enum VerifyFamilyNotebookCrypto {
         try rejects("device certificate is family-bound") { _ = try wrongFamily.canonicalBytes() }
         try tampering(encrypted, envelope: envelope, roster: r1, context: oldContext, key: key1, person: b)
         try frontier(a, b)
+        let jpeg = Data([0xff, 0xd8, 0xff, 0xd9]) // Cipher fixture, not a decoded image.
+        let photo = try FamilyNotebookRepresentativePhotoCrypto.seal(jpeg: jpeg, width: 1, height: 1,
+            familyID: family, slotID: cat, assetID: UUID(), revision: 1, roster: r1)
+        try check(try FamilyNotebookRepresentativePhotoCrypto.open(photo.ciphertext, reference: photo.reference,
+            familyID: family, roster: r1) == jpeg, "representative photo roundtrip")
+        var changed = photo.ciphertext; changed[0] ^= 1
+        try rejects("representative photo tamper") {
+            _ = try FamilyNotebookRepresentativePhotoCrypto.open(changed, reference: photo.reference, familyID: family, roster: r1)
+        }
+        try rejects("representative photo wrong family") {
+            _ = try FamilyNotebookRepresentativePhotoCrypto.open(photo.ciphertext, reference: photo.reference, familyID: UUID(), roster: r1)
+        }
+        try rejects("representative photo wrong epoch") {
+            _ = try FamilyNotebookRepresentativePhotoCrypto.open(photo.ciphertext, reference: photo.reference, familyID: family, roster: r2)
+        }
+
 
         // Public synthetic fixture only: the fixed test key encrypts invented
         // data above. No identity private keys or application files are read.

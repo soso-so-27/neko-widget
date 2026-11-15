@@ -260,3 +260,66 @@ enum FamilyNotebookOperationCrypto {
         return try FamilyNotebookReceivedOperation.decode(plaintext)
     }
 }
+
+/// This reference is only serialized inside the E2EE notebook operation.
+/// It must never be used as a plaintext request, URL, analytics event or log.
+struct FamilyNotebookRepresentativePhotoReference: Codable, Equatable, Sendable {
+    let schemaVersion: Int
+    let assetID: UUID
+    let slotID: UUID
+    let revision: Int
+    let keyEpoch: Int
+    let rosterHash: Data
+    let ciphertextSHA256: Data
+    let ciphertextBytes: Int
+    let contentKey: Data
+    let mediaType: String
+    let pixelWidth: Int
+    let pixelHeight: Int
+    func validate() throws {
+        guard schemaVersion == 1, (1...1_000_000_000).contains(revision),
+              (1...1_000_000_000).contains(keyEpoch), rosterHash.count == 32,
+              ciphertextSHA256.count == 32, contentKey.count == 32,
+              (29...200_028).contains(ciphertextBytes), mediaType == "image/jpeg",
+              (1...1024).contains(pixelWidth), (1...1024).contains(pixelHeight)
+        else { throw FamilyNotebookCryptoError.invalid }
+    }
+}
+
+enum FamilyNotebookRepresentativePhotoCrypto {
+    private static func aad(familyID: UUID, slotID: UUID, assetID: UUID, revision: Int,
+                            keyEpoch: Int, rosterHash: Data, size: Int) throws -> Data {
+        try GroupCanonical.fields([GroupCanonical.text("FNB1.REPRESENTATIVE-PHOTO.1"),
+            GroupCanonical.text(familyID.uuidString.lowercased()), GroupCanonical.text(slotID.uuidString.lowercased()),
+            GroupCanonical.text(assetID.uuidString.lowercased()), GroupCanonical.text(String(revision)),
+            GroupCanonical.text(String(keyEpoch)), rosterHash, GroupCanonical.text(String(size))])
+    }
+    static func seal(jpeg: Data, width: Int, height: Int, familyID: UUID, slotID: UUID,
+                     assetID: UUID, revision: Int, roster: VerifiedFamilyNotebookRoster) throws
+        -> (reference: FamilyNotebookRepresentativePhotoReference, ciphertext: Data) {
+        guard !jpeg.isEmpty, jpeg.count <= 200_000, (1...1024).contains(width), (1...1024).contains(height),
+              roster.roster.familyID == familyID, (1...1_000_000_000).contains(revision)
+        else { throw FamilyNotebookCryptoError.tooLarge }
+        let key = SymmetricKey(size: .bits256)
+        let context = try aad(familyID: familyID, slotID: slotID, assetID: assetID, revision: revision,
+            keyEpoch: roster.roster.epoch, rosterHash: roster.hash, size: jpeg.count)
+        guard let bytes = try AES.GCM.seal(jpeg, using: key, authenticating: context).combined
+        else { throw FamilyNotebookCryptoError.invalid }
+        let reference = FamilyNotebookRepresentativePhotoReference(schemaVersion: 1, assetID: assetID,
+            slotID: slotID, revision: revision, keyEpoch: roster.roster.epoch, rosterHash: roster.hash,
+            ciphertextSHA256: GroupCanonical.hash(bytes), ciphertextBytes: bytes.count,
+            contentKey: key.withUnsafeBytes { Data($0) }, mediaType: "image/jpeg", pixelWidth: width, pixelHeight: height)
+        try reference.validate()
+        return (reference, bytes)
+    }
+    static func open(_ bytes: Data, reference: FamilyNotebookRepresentativePhotoReference,
+                     familyID: UUID, roster: VerifiedFamilyNotebookRoster) throws -> Data {
+        try reference.validate()
+        guard roster.roster.familyID == familyID, roster.roster.epoch == reference.keyEpoch,
+              roster.hash == reference.rosterHash, bytes.count == reference.ciphertextBytes,
+              GroupCanonical.hash(bytes) == reference.ciphertextSHA256 else { throw FamilyNotebookCryptoError.untrusted }
+        let context = try aad(familyID: familyID, slotID: reference.slotID, assetID: reference.assetID,
+            revision: reference.revision, keyEpoch: reference.keyEpoch, rosterHash: reference.rosterHash, size: bytes.count - 28)
+        return try AES.GCM.open(AES.GCM.SealedBox(combined: bytes), using: SymmetricKey(data: reference.contentKey), authenticating: context)
+    }
+}

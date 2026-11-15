@@ -100,6 +100,7 @@ const expectedMigrationNames = [
   "0080_group_recovery_catalog.sql",
   "0081_group_anchor_receipts.sql",
   "0082_group_recovery_pending.sql",
+  "0084_family_representative_photos.sql",
 ];
 
 const databaseGateColumns = [

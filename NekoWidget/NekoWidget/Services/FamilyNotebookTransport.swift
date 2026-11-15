@@ -1,8 +1,32 @@
 import Foundation
 
+/// Contract metadata is available even when representative-photo UI/runtime is OFF.
+/// An unknown contract never turns a queued edit into an acknowledgement.
+enum FamilyNotebookWriteContract {
+    static let supportedVersion = 1
+    struct Capability: Codable, Equatable, Sendable {
+        let supportedVersion: Int
+        let requiredVersion: Int
+        var canWrite: Bool {
+            supportedVersion == FamilyNotebookWriteContract.supportedVersion
+                && (0...FamilyNotebookWriteContract.supportedVersion).contains(requiredVersion)
+        }
+    }
+    struct Envelope: Codable, Equatable, Sendable {
+        let version: Int
+        let effects: [Effect]
+        init(effects: [Effect] = []) { self.version = supportedVersion; self.effects = effects }
+    }
+    struct Effect: Codable, Equatable, Sendable {
+        let kind: String
+        let slotID: UUID
+    }
+}
+
+
 enum FamilyNotebookTransportError: Error, Equatable {
     case invalidResponse, authenticationRequired, notMember, paused, unavailable
-    case stale, unknownOutcome, idempotencyConflict, operationInFlight
+    case stale, unknownOutcome, idempotencyConflict, operationInFlight, upgradeRequired
     case server(code: String, status: Int)
 }
 
@@ -104,6 +128,27 @@ actor FamilyNotebookTransport {
         catch { throw FamilyNotebookTransportError.unknownOutcome }
         let response: Data
         do { response = try Self.check(reply) }
+        catch FamilyNotebookTransportError.upgradeRequired {
+            // Only an explicit, parsed 409 permits adding the new envelope to
+            // the original rejected request. Preserve its ciphertext and ID.
+            // An unknown outcome never rewrites a queued operation.
+            guard var retained = try JSONSerialization.jsonObject(with: record.body) as? [String: Any],
+                  retained["writeContract"] == nil,
+                  let candidate = try JSONSerialization.jsonObject(with: body) as? [String: Any],
+                  let contract = candidate["writeContract"] as? [String: Any],
+                  contract["version"] as? Int == FamilyNotebookWriteContract.supportedVersion,
+                  path.hasSuffix("/crypto/operations") else {
+                throw FamilyNotebookTransportError.upgradeRequired
+            }
+            retained["writeContract"] = contract
+            record.body = try JSONSerialization.data(withJSONObject: retained, options: [.sortedKeys])
+            try journal.write(GroupWire.encode(record), account: account, createOnly: false)
+            let upgraded = try GroupHTTPRequest.make(endpoint: endpoint, path: record.path, body: record.body, identity: identity)
+            let upgradedReply: GroupHTTPReply
+            do { upgradedReply = try await transport.send(upgraded, maximumBytes: 262_144) }
+            catch { throw FamilyNotebookTransportError.unknownOutcome }
+            response = try Self.check(upgradedReply)
+        }
         catch FamilyNotebookTransportError.stale {
             record.rejectedAsStale = true
             try journal.write(GroupWire.encode(record), account: account, createOnly: false)
@@ -146,6 +191,9 @@ actor FamilyNotebookTransport {
             case "family_notebook_stale_generation", "family_notebook_crypto_stale":
                 guard reply.status == 409 else { throw FamilyNotebookTransportError.unknownOutcome }
                 throw FamilyNotebookTransportError.stale
+            case "photo_protocol_upgrade_required":
+                guard reply.status == 409 else { throw FamilyNotebookTransportError.unknownOutcome }
+                throw FamilyNotebookTransportError.upgradeRequired
             case "idempotency_conflict": throw FamilyNotebookTransportError.idempotencyConflict
             case "family_notebook_disabled", "family_notebook_unavailable": throw FamilyNotebookTransportError.unavailable
             default: throw FamilyNotebookTransportError.server(code: error.code, status: reply.status)
