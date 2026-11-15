@@ -39,7 +39,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           REQUESTED_ROUTE: ${{ inputs.route }}
           TEST_FILTER: ${{ inputs.test_filter }}
-          BASE: ${{ github.event.before || github.event.pull_request.base.sha }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         shell: bash
         run: |
           python3 - <<'PY'
