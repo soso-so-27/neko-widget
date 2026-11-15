@@ -1,5 +1,63 @@
 import Foundation
 
+// P3 state exposed to the recovery UI. It never generates or deletes keys.
+// Catalogs must come from a root-authenticated successful server response.
+enum GroupRootSyncObservation: Equatable, Sendable {
+    case checking, unavailable, missing, candidates([String])
+}
+struct GroupRootMembershipSummary: Equatable, Sendable {
+    let rootID: String
+    let windowIDs: [String]
+    let notebookIDs: [String]
+    var isEmpty: Bool { windowIDs.isEmpty && notebookIDs.isEmpty }
+}
+enum GroupRootSelection: Equatable, Sendable {
+    case checking, unavailable, mayCreate, use(String), choose([String])
+}
+enum GroupRootSelectionPolicy {
+    static func resolve(local: String?, sync: GroupRootSyncObservation,
+                        catalogs: [String: GroupRootMembershipSummary]) -> GroupRootSelection {
+        switch sync {
+        case .checking: return .checking
+        case .unavailable: return .unavailable
+        case .missing: return local.map { .use($0) } ?? .mayCreate
+        case .candidates(let candidates):
+            let synced = Array(Set(candidates)).sorted()
+            guard !synced.isEmpty, synced.allSatisfy({ !$0.isEmpty }) else { return .unavailable }
+            let all = Array(Set(synced + (local.map { [$0] } ?? []))).sorted()
+            if all.count == 1 { return .use(all[0]) }
+            // Sorting is for display only. Never pick a winner by order/date.
+            guard all.allSatisfy({ catalogs[$0]?.rootID == $0 }) else { return .checking }
+            if synced.count == 1, all.allSatisfy({ catalogs[$0]?.isEmpty == true }) {
+                return .use(synced[0])
+            }
+            return .choose(all)
+        }
+    }
+}
+
+enum GroupRecoveryRegistrationState: Equatable, Sendable {
+    case checking(operationID: UUID)
+    case notStarted(operationID: UUID)
+    case registeredWaitingForKeys(operationID: UUID, deviceID: String)
+    case ready(operationID: UUID, deviceID: String)
+    case revoked(operationID: UUID)
+}
+enum GroupRecoveryRetryAction: Equatable, Sendable {
+    case queryStatus(UUID), submitSameOperation(UUID), waitForKeys, complete, stop
+}
+extension GroupRecoveryRegistrationState {
+    var nextAction: GroupRecoveryRetryAction {
+        switch self {
+        case .checking(let id): return .queryStatus(id)
+        case .notStarted(let id): return .submitSameOperation(id)
+        case .registeredWaitingForKeys: return .waitForKeys
+        case .ready: return .complete
+        case .revoked: return .stop
+        }
+    }
+}
+
 // UI-facing draft contract. No network, cryptography, persistence, or billing authority.
 // Names here are display values resolved by the production adapter after verification.
 // The wire protocol in the companion specification uses encrypted names instead.
