@@ -1,3 +1,4 @@
+import {eraseFamilyIdentityPhotos,familyIdentityPhotos} from './family-photo-erasure';
 import type { Env } from './env';
 import { ApiError } from './errors';
 import { readPersonIdentityFence } from './group-identity-fence';
@@ -222,6 +223,7 @@ export async function eraseGroupIdentityData(env:Env, claim:IdentityErasureClaim
     await env.DB.batch(statements);
     if(photos.length===8)return {morePhotos:true};
   }
+  if(await eraseFamilyIdentityPhotos(env,claim.personId))return {morePhotos:true};
   await eraseGroupIdentityCredentials(env,claim);
   await env.DB.batch(ownershipStatements(env.DB,claim));
   if(!await identityErasureDataIsClear(env.DB,claim.personId))throw new ApiError(503,'unavailable','The deletion could not be verified.');
@@ -231,6 +233,7 @@ export async function eraseGroupIdentityData(env:Env, claim:IdentityErasureClaim
 // Positive readback of this phase only. Report/fence/receipt and late-write
 // checks are separate obligations of the coordinator.
 export async function identityErasureDataIsClear(db:D1Database,personId:string):Promise<boolean> {
+  if((await familyIdentityPhotos({DB:db},personId)).length)return false;
   const residual=[
     "SELECT 1 FROM group_person_devices WHERE person_id=p.id AND (state<>'revoked' OR signing_public_key<>'deleted:'||id OR hpke_public_key<>'deleted:'||id OR authorization<>'')",
     'SELECT 1 FROM group_moments m WHERE m.sender_participant_id IN (SELECT participant_id FROM members) OR m.sender_device_id IN (SELECT id FROM devices)',

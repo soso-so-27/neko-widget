@@ -12,7 +12,9 @@ export async function cleanupDissolvedFamilyRosters(env: Pick<Env, 'DB'>,
   const erasedDeadline=await env.DB.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='group_erased_family_dissolutions'").first();
   const deadlines=`SELECT family_id,resulting_generation,recorded_at FROM family_notebook_governance_events WHERE action='dissolve'
     ${erasedDeadline?'UNION ALL SELECT family_id,generation,closed_at FROM group_erased_family_dissolutions':''}`;
-  const eligible = `f.state='closed' AND EXISTS (
+  const photos=!!await env.DB.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='family_representative_assets'").first();
+  const photoSafe=photos?"AND NOT EXISTS(SELECT 1 FROM family_representative_assets a WHERE a.family_id=f.id AND a.state<>'deleted')":"";
+  const eligible = `f.state='closed' ${photoSafe} AND EXISTS (
     SELECT 1 FROM (${deadlines}) e WHERE e.family_id=f.id AND e.resulting_generation=f.generation AND e.recorded_at<=?
       AND (e.recorded_at<=? OR NOT EXISTS (SELECT 1 FROM family_notebook_crypto_operations o WHERE o.family_id=f.id)))`;
   const times = [nowSeconds, nowSeconds - retentionSeconds];
@@ -25,6 +27,11 @@ export async function cleanupDissolvedFamilyRosters(env: Pick<Env, 'DB'>,
   const selected = `SELECT f.id FROM family_notebook_spaces f WHERE ${eligible}
     AND f.id IN (${ids.map(() => '?').join(',')})`;
   const statements=tables.map(t => env.DB.prepare(`DELETE FROM ${t} WHERE family_id IN (${selected})`).bind(...times, ...ids));
+  if(photos){
+    statements.push(env.DB.prepare(`DELETE FROM family_representative_assets WHERE family_id IN (${selected})`).bind(...times,...ids));
+    for(const table of ['family_representative_slots','family_representative_daily_usage','family_notebook_write_policy'])
+      statements.push(env.DB.prepare(`DELETE FROM ${table} WHERE family_id IN (${selected})`).bind(...times,...ids));
+  }
   if(erasedDeadline)statements.push(env.DB.prepare(`DELETE FROM group_erased_family_dissolutions WHERE family_id IN (${selected})`).bind(...times,...ids));
   await env.DB.batch(statements);
 }

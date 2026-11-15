@@ -1,3 +1,4 @@
+import {advanceIdentityDeletion} from '../src/group-identity-service';
 import {cleanupFamilyRepresentativePhotos} from '../src/family-representative-photo';
 import { cleanupDissolvedFamilyRosters } from '../src/family-notebook-roster-cleanup';
 import { describe, expect, it } from 'vitest';
@@ -441,6 +442,65 @@ describe('representative photo reservation and exchange',()=>{
   expect((await db.prepare('SELECT state FROM family_representative_assets WHERE asset_id=?').bind(assetId).first())?.state).toBe('retired');
   await cleanupFamilyRepresentativePhotos(photos);
   expect(await photos.MEDIA!.get(`family-representative/v1/${f}/${assetId}`)).toBeNull();
+ });
+
+ it('clears a photo atomically without retiring the cat slot',async()=>{
+  const p=await plusOwner(),f=await create(p),{r}=await initialize(p,f),a=await upload(p,f,r);
+  ok(await invoke(p,a.rootPath+'/uploads/'+a.assetId+'/commit',a.commit,photos));
+  const packet=await operation(p,r);
+  ok(await invoke(p,`${root}/${f}/crypto/operations`,{...body(packet,1,1,packet.operationId),writeContract:{version:1,effects:[{kind:'clearPhoto',slotId:a.slot}]}}));
+  expect(await db.prepare('SELECT state,revision,asset_id FROM family_representative_slots WHERE slot_id=?').bind(a.slot).first()).toEqual({state:'active',revision:2,asset_id:null});
+  await cleanupFamilyRepresentativePhotos(photos);
+  const next=await upload(p,f,r,a.slot,2);ok(await invoke(p,next.rootPath+'/uploads/'+next.assetId+'/commit',next.commit,photos));
+ });
+ it('releases an expired never-committed slot and can reuse the same cat slot',async()=>{
+  const p=await plusOwner(),f=await create(p),{r}=await initialize(p,f),a=await upload(p,f,r);
+  await db.prepare('UPDATE family_representative_assets SET expires_at=1 WHERE asset_id=?').bind(a.assetId).run();
+  await cleanupFamilyRepresentativePhotos(photos);
+  expect((await db.prepare('SELECT state FROM family_representative_slots WHERE slot_id=?').bind(a.slot).first())?.state).toBe('retired');
+  const next=await upload(p,f,r,a.slot,0);ok(await invoke(p,next.rootPath+'/uploads/'+next.assetId+'/commit',next.commit,photos));
+ });
+ it('retains dissolved photos for thirty days and keeps signed history until physical deletion succeeds',async()=>{
+  const p=await plusOwner(),f=await create(p),{r}=await initialize(p,f),a=await upload(p,f,r);
+  ok(await invoke(p,a.rootPath+'/uploads/'+a.assetId+'/commit',a.commit,photos));
+  ok(await invoke(p,`${root}/${f}/dissolve`,{operationId:crypto.randomUUID(),expectedGeneration:1}));
+  const now=(await db.prepare("SELECT recorded_at FROM family_notebook_governance_events WHERE family_id=? AND action='dissolve'").bind(f).first<number>('recorded_at'))!;
+  await cleanupFamilyRepresentativePhotos(photos,now+30*86400-1);await cleanupDissolvedFamilyRosters(photos,now+30*86400-1);
+  expect(await photos.MEDIA!.head(`family-representative/v1/${f}/${a.assetId}`)).not.toBeNull();
+  const failing={...photos,MEDIA:new Proxy(photos.MEDIA!,{get(target,key){if(key==='delete')return async()=>{throw Error('synthetic deletion failure')};const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}})};
+  await cleanupFamilyRepresentativePhotos(failing,now+30*86400);await cleanupDissolvedFamilyRosters(photos,now+30*86400);
+  expect((await db.prepare('SELECT COUNT(*) n FROM family_notebook_crypto_operations WHERE family_id=?').bind(f).first())?.n).toBe(1);
+  await cleanupFamilyRepresentativePhotos(photos,now+30*86400);await cleanupDissolvedFamilyRosters(photos,now+30*86400);
+  expect(await photos.MEDIA!.head(`family-representative/v1/${f}/${a.assetId}`)).toBeNull();
+  expect((await db.prepare('SELECT COUNT(*) n FROM family_notebook_crypto_operations WHERE family_id=?').bind(f).first())?.n).toBe(0);
+  expect((await db.prepare('SELECT COUNT(*) n FROM family_representative_assets WHERE family_id=?').bind(f).first())?.n).toBe(0);
+ });
+
+ it('cannot restore representative bytes after identity deletion finishes during a PUT',async()=>{
+  await photos.MEDIA!.put('group-identity-deletions/v1/control',JSON.stringify({sequence:0,requestId:''}));
+  const p=await plusOwner(),f=await create(p),{r}=await initialize(p,f),bytes=new Uint8Array(100).fill(8),assetId=crypto.randomUUID();
+  const path=`${root}/${f}/representative-photos/uploads`,objectKey=`family-representative/v1/${f}/${assetId}`;
+  ok(await invoke(p,path,{schemaVersion:1,operationId:crypto.randomUUID(),slotId:crypto.randomUUID(),assetId,expectedRevision:0,expectedGeneration:1,keyEpoch:1,rosterHash:r.hash,ciphertextBytes:bytes.length,ciphertextSHA256:await sha256Base64url(bytes)},photos),201);
+  let reached!:()=>void,resume!:()=>void;
+  const atBytes=new Promise<void>(r=>{reached=r;}),continueBytes=new Promise<void>(r=>{resume=r;});
+  const racing={...photos,GROUP_IDENTITY_ERASURE_ENABLED:'YES',MEDIA:new Proxy(photos.MEDIA!,{get(target,key){
+   if(key==='put')return async(...args:Parameters<R2Bucket['put']>)=>{
+    if(args[0]===objectKey && !args[2]?.customMetadata?.scope){reached();await continueBytes;}
+    return target.put(...args);
+   };
+   const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;
+  }})};
+  const uploadResult=(async()=>{try{return await route(await signed(p,path+'/'+assetId,bytes,undefined,'PUT'),racing)}catch(e){return errorResponse(e)}})();
+  await atBytes;
+  const deletion={...photos,GROUP_IDENTITY_ERASURE_ENABLED:'YES'},operationId=crypto.randomUUID(),receipt=randomBase64url(32);
+  try{
+   ok(await invoke(p,'/v3/group-identities/deletion-requests',{operationId,receipt},deletion),202);
+   await advanceIdentityDeletion(deletion);
+   const response=await route(new Request(`https://group.invalid/v3/group-identities/deletion-requests/${operationId}/status`,{headers:{Authorization:'Bearer '+receipt}}),deletion);
+   expect((await response.json() as {state:string}).state).toBe('completed');
+  }finally{resume();}
+  expect((await uploadResult).status).toBeGreaterThanOrEqual(400);
+  expect(await photos.MEDIA!.head(objectKey)).toBeNull();
  });
 
 });

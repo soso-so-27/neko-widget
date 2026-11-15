@@ -1,3 +1,5 @@
+import {putGroupUpload} from './group-identity-upload';
+import {requireCurrentIdentity} from './group-identity-service';
 import {authenticateGroupRequest,groupAuthorizationStatements} from './group-auth';
 import {familyUUID,verifyFamilyOperation} from './family-notebook-crypto';
 import {state,checks,roster} from './family-notebook-history';
@@ -58,6 +60,9 @@ export async function familyRepresentativePhoto(request:Request,env:Env):Promise
    const expires=actor.now+86400,key=`family-representative/v1/${family}/${assetId}`;
    await env.DB.batch([...guards('operation'),
     env.DB.prepare(`INSERT INTO family_representative_slots VALUES (?,?,0,NULL,'active') ON CONFLICT(family_id,slot_id) DO NOTHING`).bind(family,slot),
+    env.DB.prepare(`SELECT json(CASE WHEN EXISTS(SELECT 1 FROM family_representative_slots WHERE family_id=? AND slot_id=? AND revision=0 AND state='retired')
+     AND (SELECT COUNT(*) FROM family_representative_slots WHERE family_id=? AND state='active')>=10 THEN 'photo_slots_full' ELSE 'true' END)`).bind(family,slot,family),
+    env.DB.prepare("UPDATE family_representative_slots SET state='active' WHERE family_id=? AND slot_id=? AND revision=0 AND state='retired' AND NOT EXISTS(SELECT 1 FROM family_representative_assets WHERE family_id=? AND slot_id=? AND state<>'deleted')").bind(family,slot,family,slot),
     env.DB.prepare(`INSERT INTO family_representative_assets VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'reserved',?,?,?)`).bind(assetId,family,slot,operation,actor.personId,actor.deviceId,revision+1,epoch,b.rosterHash,key,size,b.ciphertextSHA256,actor.now,expires,actor.requestHash)]);
    return jsonResponse(receipt(await asset(env,family,assetId)),201);
   }
@@ -76,7 +81,10 @@ export async function familyRepresentativePhoto(request:Request,env:Env):Promise
    if(request.method==='PUT'&&!commit){
     if(bytes.length!==a.bytes||await sha256Base64url(bytes)!==a.hash)fail('invalid_photo_payload',422);
     await env.DB.batch(guards('operation'));
-    const stored=await env.MEDIA.put(a.object_key,bytes,{sha256:base64urlDecode(a.hash).slice().buffer});
+    const stored=await putGroupUpload(env,env.MEDIA,a.object_key,bytes,{sha256:base64urlDecode(a.hash).slice().buffer},async()=>{
+      await requireCurrentIdentity(env,actor.personId);
+      await env.DB.batch([...guards('operation'),...photoChecks(env,a,'upload')]);
+    })??await env.MEDIA.head(a.object_key);
     if(!stored||stored.size!==a.bytes||!stored.checksums.sha256||base64urlEncode(new Uint8Array(stored.checksums.sha256))!==a.hash)fail('temporarily_unavailable',503);
     // A late PUT must not resurrect a retired object: cleanup remains pending until checked.
     try { await env.DB.batch([...checks(env,actor,family,current.generation,current.epoch,'operation'),...photoChecks(env,a,'upload'),env.DB.prepare(`UPDATE family_representative_assets SET state='uploaded' WHERE asset_id=? AND state IN ('reserved','uploaded')`).bind(id)]); }
@@ -129,14 +137,25 @@ export async function familyRepresentativePhoto(request:Request,env:Env):Promise
 export async function cleanupFamilyRepresentativePhotos(env:Env,now=Math.floor(Date.now()/1000)):Promise<number>{
  if(!env.MEDIA)return 0;
  if(!await env.DB.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='family_representative_assets'").first())return 0;
+ const deadlines=`SELECT family_id,resulting_generation AS generation,recorded_at AS closed_at FROM family_notebook_governance_events WHERE action='dissolve'
+ UNION ALL SELECT family_id,generation,closed_at FROM group_erased_family_dissolutions`;
+ await env.DB.batch([
+  env.DB.prepare(`UPDATE family_representative_assets SET state='retired',expires_at=? WHERE state<>'deleted' AND family_id IN
+   (SELECT f.id FROM family_notebook_spaces f JOIN (${deadlines}) d ON d.family_id=f.id AND d.generation=f.generation WHERE f.state='closed' AND d.closed_at<=?)`).bind(now,now-30*86400),
+  env.DB.prepare('DELETE FROM family_representative_daily_usage WHERE day<?').bind(Math.floor((now+32400)/86400)-1),
+ ]);
  const rows=await env.DB.prepare(`SELECT * FROM family_representative_assets WHERE state='retired' OR (state IN ('reserved','uploaded') AND expires_at<=?) ORDER BY expires_at LIMIT 20`).bind(now).all<Asset>();
  let removed=0;
  for(const a of rows.results){
   // Expired reservations cannot commit. Keep quota charged until deletion succeeds.
   await env.DB.prepare(`UPDATE family_representative_assets SET state='retired' WHERE asset_id=? AND (state='retired' OR (state IN ('reserved','uploaded') AND expires_at<=?))`).bind(a.asset_id,now).run();
   const current=await asset(env,a.family_id,a.asset_id);if(current.state!=='retired')continue;
-  try {await env.MEDIA.delete(a.object_key);}catch{continue;}
+  try {await env.MEDIA.delete(a.object_key);if(await env.MEDIA.head(a.object_key))continue;}catch{continue;}
   await env.DB.prepare("UPDATE family_representative_assets SET state='deleted' WHERE asset_id=? AND state='retired'").bind(a.asset_id).run();removed++;
  }
+ // Release never-committed reservations only after all physical cleanup.
+ // Cat removal advances revision, so it cannot be mistaken for this state.
+ await env.DB.prepare(`UPDATE family_representative_slots SET state='retired' WHERE revision=0 AND asset_id IS NULL
+  AND NOT EXISTS(SELECT 1 FROM family_representative_assets a WHERE a.family_id=family_representative_slots.family_id AND a.slot_id=family_representative_slots.slot_id AND a.state<>'deleted')`).run();
  return removed;
 }
