@@ -118,6 +118,55 @@ struct GroupTrustAnchor: Codable, Equatable, Sendable {
     let ownerIdentityPublicKey: Data
 }
 
+/// Immutable personal attestation of a pin learned locally/from an invitation.
+/// No timestamp ranking: different owner pins for one scope are a conflict.
+struct GroupAnchorReceipt: Codable, Equatable, Sendable {
+    let environment: String
+    let personID: String
+    let anchor: GroupTrustAnchor
+    let rootSignature: Data
+
+    private static func identifier(_ key: Data) -> String {
+        GroupCanonical.hash(key).base64EncodedString().replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+    }
+    func transcript() throws -> Data {
+        guard ["production", "staging"].contains(environment), GroupCanonical.validID(personID),
+              GroupCanonical.validID(anchor.windowID), anchor.ownerIdentityPublicKey.count == 32,
+              anchor.ownerPersonID == Self.identifier(anchor.ownerIdentityPublicKey)
+        else { throw GroupProtocolError.invalidSignature }
+        return try GroupCanonical.fields(["NW3.ANCHOR.RECEIPT.V1", environment, personID,
+            anchor.windowID, anchor.ownerPersonID].map(GroupCanonical.text) + [anchor.ownerIdentityPublicKey])
+    }
+    static func make(environment: String, anchor: GroupTrustAnchor, root: Curve25519.Signing.PrivateKey) throws -> Self {
+        let unsigned = Self(environment: environment, personID: identifier(root.publicKey.rawRepresentation),
+            anchor: anchor, rootSignature: Data())
+        return try Self(environment: environment, personID: unsigned.personID, anchor: anchor,
+            rootSignature: root.signature(for: unsigned.transcript()))
+    }
+    func verifies(root: Data, environment: String, windowID: String) -> Bool {
+        guard root.count == 32, self.environment == environment, anchor.windowID == windowID,
+              personID == Self.identifier(root), rootSignature.count == 64,
+              let message = try? transcript(), let key = try? Curve25519.Signing.PublicKey(rawRepresentation: root)
+        else { return false }
+        return key.isValidSignature(rootSignature, for: message)
+    }
+    enum Resolution: Equatable {
+        case trusted(GroupTrustAnchor)
+        case needsOriginalDeviceOrInvitation
+        case conflictingAnchors
+        case revoked
+    }
+    static func resolve(_ receipts: [Self], root: Data, environment: String, windowID: String,
+                        rootIsCurrent: Bool) -> Resolution {
+        guard rootIsCurrent else { return .revoked }
+        let valid = receipts.filter { $0.verifies(root: root, environment: environment, windowID: windowID) }
+        guard let first = valid.first else { return .needsOriginalDeviceOrInvitation }
+        guard valid.allSatisfy({ $0.anchor == first.anchor }) else { return .conflictingAnchors }
+        return .trusted(first.anchor)
+    }
+}
+
 struct SignedGroupRoster: Codable, Equatable, Sendable {
     let roster: GroupRoster
     let signerDeviceID: String

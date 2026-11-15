@@ -97,6 +97,7 @@ const expectedMigrationNames = [
   "0077_family_notebook_join_proof.sql",
   "0079_group_push_coalescing_indexes.sql",
   "0080_group_recovery_catalog.sql",
+  "0081_group_anchor_receipts.sql",
 ];
 
 const databaseGateColumns = [

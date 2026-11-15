@@ -42,6 +42,8 @@ enum GroupRecoveryRegistrationState: Equatable, Sendable {
     case registeredWaitingForKeys(operationID: UUID, deviceID: String)
     case ready(operationID: UUID, deviceID: String)
     case revoked(operationID: UUID)
+    /// 元の端末で一度アプリを開くか、もう一度招待が必要。Never create another person.
+    case needsOriginalDeviceOrInvitation(operationID: UUID)
 }
 enum GroupRecoveryRetryAction: Equatable, Sendable {
     case queryStatus(UUID), submitSameOperation(UUID), waitForKeys, complete, stop
@@ -53,7 +55,7 @@ extension GroupRecoveryRegistrationState {
         case .notStarted(let id): return .submitSameOperation(id)
         case .registeredWaitingForKeys: return .waitForKeys
         case .ready: return .complete
-        case .revoked: return .stop
+        case .revoked, .needsOriginalDeviceOrInvitation: return .stop
         }
     }
 }

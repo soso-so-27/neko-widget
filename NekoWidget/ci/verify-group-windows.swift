@@ -237,6 +237,25 @@ private enum GroupWindowChecks {
 }
 
 private func checkRecoverySelection() throws {
+    func rootID(_ bytes: Data) -> String {
+        GroupCanonical.hash(bytes).base64EncodedString().replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+    }
+    let root = Curve25519.Signing.PrivateKey(), owner = Curve25519.Signing.PrivateKey()
+    let anchor = GroupTrustAnchor(windowID: "room", ownerPersonID: rootID(owner.publicKey.rawRepresentation),
+        ownerIdentityPublicKey: owner.publicKey.rawRepresentation)
+    let receipt = try GroupAnchorReceipt.make(environment: "staging", anchor: anchor, root: root)
+    let publicRoot = root.publicKey.rawRepresentation
+    try check(receipt == GroupAnchorReceipt.make(environment: "staging", anchor: anchor, root: root), "retry receipt is deterministic")
+    try check(GroupAnchorReceipt.resolve([receipt, receipt], root: publicRoot, environment: "staging", windowID: "room", rootIsCurrent: true) == .trusted(anchor), "identical receipts have one anchor")
+    try check(GroupAnchorReceipt.resolve([receipt], root: publicRoot, environment: "production", windowID: "room", rootIsCurrent: true) == .needsOriginalDeviceOrInvitation, "receipt is environment scoped")
+    try check(GroupAnchorReceipt.resolve([receipt], root: publicRoot, environment: "staging", windowID: "other", rootIsCurrent: true) == .needsOriginalDeviceOrInvitation, "receipt is window scoped")
+    try check(GroupAnchorReceipt.resolve([receipt], root: publicRoot, environment: "staging", windowID: "room", rootIsCurrent: false) == .revoked, "revoked root cannot recover")
+    let replacement = GroupTrustAnchor(windowID: "room", ownerPersonID: rootID(publicRoot), ownerIdentityPublicKey: publicRoot)
+    let conflicting = try GroupAnchorReceipt.make(environment: "staging", anchor: replacement, root: root)
+    try check(GroupAnchorReceipt.resolve([receipt, conflicting], root: publicRoot, environment: "staging", windowID: "room", rootIsCurrent: true) == .conflictingAnchors, "two correctly signed different pins never select by date")
+    let forged = GroupAnchorReceipt(environment: "staging", personID: receipt.personID, anchor: replacement, rootSignature: receipt.rootSignature)
+    try check(!forged.verifies(root: publicRoot, environment: "staging", windowID: "room"), "relay cannot swap the owner key")
     let emptyA = GroupRootMembershipSummary(rootID: "a", windowIDs: [], notebookIDs: [])
     let emptyB = GroupRootMembershipSummary(rootID: "b", windowIDs: [], notebookIDs: [])
     try check(GroupRootSelectionPolicy.resolve(local: nil, sync: .checking, catalogs: [:]) == .checking, "no identity creation while sync is pending")
@@ -252,6 +271,7 @@ private func checkRecoverySelection() throws {
     try check(GroupRecoveryRegistrationState.notStarted(operationID: id).nextAction == .submitSameOperation(id), "retry keeps operation id")
     try check(GroupRecoveryRegistrationState.registeredWaitingForKeys(operationID: id, deviceID: "d").nextAction == .waitForKeys, "registration is not decryption")
     try check(GroupRecoveryRegistrationState.revoked(operationID: id).nextAction == .stop, "revocation cannot retry registration")
+    try check(GroupRecoveryRegistrationState.needsOriginalDeviceOrInvitation(operationID: id).nextAction == .stop, "missing anchor never creates a new person")
     print("P3 root selection and recovery retry states passed")
 }
 

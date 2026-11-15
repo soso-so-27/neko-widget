@@ -1,4 +1,5 @@
 import { ApiError } from './errors';
+import { storeAnchorReceipt } from './group-anchor-receipts';
 import { groupRecoveryCatalogAPI } from './group-recovery-catalog';
 import type { Env } from './env';
 import { authenticateGroupRequest,groupId } from './group-auth';
@@ -90,6 +91,7 @@ async function dispatchGroup(request:Request,env:Env):Promise<Response> {
   const key=suffix.match(/^keys\/([1-9][0-9]{0,14})$/u);
   if(key && request.method==='GET') return getGroupKey(env,actor,windowId,Number(key[1]));
   if(!body) throw new ApiError(404,'not_found','The endpoint was not found.');
+  if(suffix==='anchor-receipt')return storeAnchorReceipt(env,actor,windowId,body);
   if(suffix==='name')return manageGroupWindow(env,actor,windowId,body);
   if(suffix==='close')return manageGroupWindow(env,actor,windowId,body,true);
   if(suffix==='join-push-subscription')return registerGroupJoinPush(env,actor,windowId,body);

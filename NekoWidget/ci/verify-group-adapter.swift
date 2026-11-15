@@ -34,6 +34,20 @@ private struct SyntheticBillingSigner: GroupBillingSigner {
     }
 }
 
+private actor ReceiptTransport: GroupHTTPTransport {
+    private var bodies: [Data] = []
+    func sent() -> [Data] { bodies }
+    func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
+        guard let url = request.url, url.path.hasSuffix("/anchor-receipt"), let body = request.httpBody else {
+            throw Failure.check("backfill must not register a person or fetch a roster")
+        }
+        bodies.append(body)
+        if bodies.count == 1 { throw GroupClientError.offline }
+        let window = url.path.split(separator: "/")[2]
+        return .init(status: 200, data: try JSONSerialization.data(withJSONObject: ["state": "stored", "windowId": String(window)]))
+    }
+}
+
 /// Request/response echo, not a second relay implementation. Real permissions,
 /// DB races and quotas are checked by Worker integration tests. This fixture
 /// exercises native persistence ordering, request bytes and HPKE round trips.
@@ -597,6 +611,20 @@ private struct GroupAdapterChecks {
         let room = try await client.createWindow(name: "うちのまど", operationID: op)
         try check(room.name == "うちのまど" && room.memberCount == 1 && room.deviceCount == 1 && room.members[0].displayName == "自分", "real adapter owner round trip")
         try check(room.deliveryStatus == .active && room.deliveryReason == .ownerPlus && room.ownerParticipantID == room.myParticipantID, "verified server policy reaches UI contract")
+        let receiptRelay = ReceiptTransport()
+        let backfill = try ProductionGroupWindowClient(endpoint: URL(string: "https://api.nekonomado.com")!,
+            secrets: memory, transport: receiptRelay, outboxDirectory: folder.appendingPathComponent("receipts"))
+        let originalIdentity = try memory.read("identity")
+        await backfill.backfillAnchorReceipts()
+        try check(memory.read("anchor-receipt:" + room.id) == nil, "failed receipt has no completion marker")
+        await backfill.backfillAnchorReceipts()
+        let storedReceipt = try GroupWire.decode(GroupAnchorReceipt.self, memory.read("anchor-receipt:" + room.id)!)
+        let receiptIdentity = try GroupWire.decode(GroupDeviceIdentity.self, originalIdentity!)
+        try check(storedReceipt.verifies(root: receiptIdentity.personPublicKey, environment: "production", windowID: room.id), "backfill signs the existing pin with the existing root")
+        await backfill.backfillAnchorReceipts()
+        let sentReceipts = await receiptRelay.sent()
+        try check(sentReceipts.count == 2 && sentReceipts[0] == sentReceipts[1], "foreground retries same receipt and successful receipt is not resent")
+        try check(memory.read("identity") == originalIdentity, "backfill never replaces identity")
         await relay.setDelivery("paused")
         let paused = try await client.window(id: room.id)
         try check(paused.deliveryStatus == .paused && paused.deliveryReason == .ownerPlusRequired && paused.state == .active && paused.canManage,
