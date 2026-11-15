@@ -6,6 +6,20 @@ cd "$(dirname "$0")/.."
 check_mode="${1:-all}"
 case "$check_mode" in all|public|public-build|owner) ;; *) echo "Use all, public, public-build, or owner" >&2; exit 2 ;; esac
 
+# P2 synthetic adapter checks precede expensive builds. No real Keychain calls.
+if [[ "$check_mode" != owner ]]; then
+python3 ci/test-root-sync-boundary.py
+xcrun --sdk macosx swiftc -D INTERNAL_PRESENTATION -parse-as-library \
+  NekoWidget/Services/RootSyncStore.swift ci/verify-root-sync-store.swift \
+  -o "$RUNNER_TEMP/root-sync-tests"
+"$RUNNER_TEMP/root-sync-tests"
+printf 'let p2ProductionBoundary = RootSyncStore.self\n' > "$RUNNER_TEMP/root-sync-public.swift"
+if xcrun --sdk macosx swiftc -typecheck NekoWidget/Services/RootSyncStore.swift "$RUNNER_TEMP/root-sync-public.swift" 2> "$RUNNER_TEMP/root-sync-public-error.txt"; then
+  echo "P2 store unexpectedly exists in production" >&2; exit 1
+fi
+grep -F "cannot find 'RootSyncStore' in scope" "$RUNNER_TEMP/root-sync-public-error.txt" > /dev/null
+fi
+
 # Shared photo/memo fixtures remain available after removing the pair-window UI.
 # Parse DEBUG sources too: the shipping Release build does not compile these branches.
 xcrun swiftc -frontend -parse -D DEBUG \
