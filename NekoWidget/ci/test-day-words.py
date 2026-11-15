@@ -141,6 +141,23 @@ class CountTests(unittest.TestCase):
         self.assertNotIn("UNUserNotificationCenter", host)
 
 
+class DepartedTests(unittest.TestCase):
+    def test_departed_cats_never_make_a_date_day(self) -> None:
+        self.assertIn("var departedProfileIDs: Set<String>? = nil", CLOUDY)
+        only = section(CLOUDY, "private static func showsOnlyDeparted(", "private func quality(")
+        self.assertIn("guard let cats = metadata?.profileIDs, !cats.isEmpty", only)
+        self.assertIn("return cats.isSubset(of: departed)", only)
+        choose = section(CLOUDY, "private func choose(state:", "private func similar(")
+        self.assertIn("!(profile.map { state.departedProfileIDs?.contains($0) == true } ?? false)", choose)
+        self.assertIn("&& !Self.showsOnlyDeparted(state.metadata[photo.photoID], in: state)", choose)
+        prep = section(CLOUDY, "func preparation(now: Date", "func publish(")
+        self.assertIn("!Self.showsOnlyDeparted(state.metadata[candidate.item.localIdentifier], in: state)", prep)
+        self.assertIn("departed: cloudyWindowDepartedProfileIDs())", VIEW_MODEL)
+        self.assertIn(".union(cloudyWindowDatePhotoIDs(cats))", VIEW_MODEL)
+        self.assertIn("return !profiles.isSubset(of: departed)", VIEW_MODEL)
+        self.assertIn("        try departedCatsAndDateDays()\n", VERIFY)
+
+
 class RegistrationTests(unittest.TestCase):
     def test_checks_run(self) -> None:
         self.assertIn("        try milestoneDays()\n", VERIFY)

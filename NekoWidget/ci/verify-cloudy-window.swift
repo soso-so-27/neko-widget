@@ -112,6 +112,7 @@ private enum CloudyWindowVerifier {
         try dailyShooterSixtyDays()
         try milestoneDays()
         try dayWords()
+        try departedCatsAndDateDays()
         print("Cloudy window: daily reveal, stale actions, restart, rotation, cats, permission, public mode and publication checks passed")
     }
 
@@ -812,6 +813,47 @@ private enum CloudyWindowVerifier {
                   == "きょうは " + String(repeating: "な", count: 20) + "の誕生日", "a name is 20 letters at most")
         try check(CloudyWindowDayText.tag(selection("milestone", revealed: false, milestone: single, album: "2026-10")) == nil,
                   "a monthly work's tag stays the work's")
+    }
+
+    /// 11/15: a photo of only cats that have died never makes a date day; one
+    /// with a living cat too may; a dead cat's own window has no date day.
+    private static func departedCatsAndDateDays() throws {
+        let formatter = ISO8601DateFormatter()
+        let household = CloudyWindowStore.personalScope
+
+        var only = try Fixture(count: 40, cats: 2)
+        defer { only.cleanup() }
+        takenLongAgo(&only)
+        only.metadata["photo-10"]?.creationDate = formatter.date(from: "2025-10-24T12:00:00+09:00")
+        only.metadata["photo-12"]?.creationDate = formatter.date(from: "2025-10-25T12:00:00+09:00")
+        only.metadata["photo-13"]?.creationDate = formatter.date(from: "2025-10-26T12:00:00+09:00")
+        try only.store.synchronize(metadata: only.metadata, profiles: only.profiles, departed: ["cat-0"], now: baseline)
+        let skipped = try only.store.timeline(scopeID: household, now: baseline)[0]
+        try check(skipped.selection.kind == .date && skipped.photo.photoID == "photo-13",
+                  "a photo of only a cat that has died is not a date day's")
+
+        var together = try Fixture(count: 40, cats: 2)
+        defer { together.cleanup() }
+        takenLongAgo(&together)
+        together.metadata["photo-10"]?.creationDate = formatter.date(from: "2025-10-24T12:00:00+09:00")
+        together.metadata["photo-12"]?.creationDate = formatter.date(from: "2025-10-25T12:00:00+09:00")
+        together.metadata["photo-12"]?.profileIDs = ["cat-0", "cat-1"]
+        try together.store.synchronize(metadata: together.metadata, profiles: together.profiles,
+                                       departed: ["cat-0"], now: baseline)
+        let shared = try together.store.timeline(scopeID: household, now: baseline)[0]
+        try check(shared.selection.kind == .date && shared.photo.photoID == "photo-12",
+                  "a photo with a living cat too may be a date day's")
+
+        func catWindow(departed: Set<String>) throws -> CloudyWindowSelection {
+            var f = try Fixture(count: 70, cats: 2)
+            defer { f.cleanup() }
+            takenLongAgo(&f)
+            f.metadata["photo-10"]?.creationDate = formatter.date(from: "2025-10-24T12:00:00+09:00")
+            try f.store.synchronize(metadata: f.metadata, profiles: f.profiles, departed: departed, now: baseline)
+            return try f.store.timeline(scopeID: CloudyWindowStore.profilePrefix + "cat-0", now: baseline)[0].selection
+        }
+        try check(try catWindow(departed: []).kind == .date, "a living cat's own window has date days")
+        try check(try catWindow(departed: ["cat-0"]).kind != .date, "a cat that has died: no date day in its window")
     }
 
     /// Long ago, a day apart each, so nearby captures are not taken as one.

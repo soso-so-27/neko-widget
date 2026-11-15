@@ -3620,7 +3620,7 @@ final class AppViewModel: ObservableObject {
                 let cats = input.assets.lazy.filter { $0.isCatCandidate && !$0.isScreenshot }
                 cloudyPriorityPhotos = CloudyWindowStore.newPhotoIDs(cats.filter { $0.lastShownAt == nil },
                     id: { $0.localIdentifier }, takenAt: { $0.creationDate })
-                    .union(CloudyWindowStore.datePhotoIDs(cats, id: { $0.localIdentifier }, takenAt: { $0.creationDate }))
+                    .union(cloudyWindowDatePhotoIDs(cats))
                     .union(cloudyWindowMilestonePhotoIDs(cloudyWindowMilestones()))
             } else {
                 cloudyPriorityPhotos = []
@@ -3929,7 +3929,8 @@ final class AppViewModel: ObservableObject {
         // current candidates need, and a Widget refill adds candidates.
         try CloudyWindowStore.shared.synchronize(metadata: cloudyWindowMetadata(input: input),
             profiles: Dictionary(uniqueKeysWithValues: catProfiles.map { ($0.id.uuidString.lowercased(), $0.displayName) }),
-            milestones: cloudyWindowMilestones())
+            milestones: cloudyWindowMilestones(),
+            departed: cloudyWindowDepartedProfileIDs())
     }
 
     private func cloudyWindowMetadata(input: LibrarySnapshot? = nil) -> [String: CloudyWindowPhotoMetadata] {
@@ -3981,6 +3982,26 @@ final class AppViewModel: ObservableObject {
             if !marks.isEmpty { result[profile.id.uuidString.lowercased()] = marks }
         }
         return result
+    }
+
+    /// 11/15: cats whose 旅立った日 is recorded, as the store's profile keys.
+    private func cloudyWindowDepartedProfileIDs() -> Set<String> {
+        guard Version1.isOn else { return [] }
+        let departed = CatFarewell.departedIdentifiers()
+        return Set(catProfiles.filter { departed.contains($0.id.uuidString) }.map { $0.id.uuidString.lowercased() })
+    }
+
+    /// 11/15: the coming week's date photos for the pool, never a photo of
+    /// only cats that have died (it would never be chosen on a date day).
+    private func cloudyWindowDatePhotoIDs<S: Sequence>(_ cats: S) -> Set<String> where S.Element == AssetRecord {
+        let departed = cloudyWindowDepartedProfileIDs()
+        let picks = CloudyWindowStore.datePhotoIDs(cats, id: { $0.localIdentifier }, takenAt: { $0.creationDate })
+        guard !departed.isEmpty, !picks.isEmpty else { return picks }
+        let metadata = cloudyWindowMetadata()
+        return picks.filter { id in
+            guard let profiles = metadata[id]?.profileIDs, !profiles.isEmpty else { return true }
+            return !profiles.isSubset(of: departed)
+        }
     }
 
     /// 11/15 節目: photos of the cats whose day comes within the week, so

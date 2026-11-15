@@ -77,7 +77,7 @@ class ChooseOrderTests(unittest.TestCase):
 
     def test_new_then_date_then_ordinary(self) -> None:
         new = CHOOSE.index("if !hadKind(.new, within: splits ? Self.newDayGap : 2, before: date, in: previous) {")
-        date = CHOOSE.index("if splits, !hadKind(.date, within: Self.dateDayGap, before: date, in: previous) {")
+        date = CHOOSE.index("if splits, !hadKind(.date, within: Self.dateDayGap, before: date, in: previous),")
         ordinary = CHOOSE.index("// Ordinary day. With enough older photos, only those.")
         turns = CHOOSE.index("var selectedProfile = profile")
         self.assertLess(new, date)
@@ -106,7 +106,7 @@ class ChooseOrderTests(unittest.TestCase):
 
     def test_date_day_prefers_same_day_and_unshown_years(self) -> None:
         date = section(CHOOSE, "if splits, !hadKind(.date,", "// Ordinary day.")
-        self.assertIn("for photo in candidates where !recent.contains(photo.photoID) {", date)
+        self.assertIn("for photo in candidates where !recent.contains(photo.photoID)\n", date)
         self.assertIn("let rank = [match.offset > 0 ? 1 : 0, datedYears.contains(year) ? 1 : 0,", date)
         match = section(CLOUDY, "static func dateMatch(capturedDay: Int, targetDay: Int)", "static func dateMatch(takenAt")
         self.assertIn("if offset <= dateWindowDays", match)
@@ -145,7 +145,8 @@ class TomorrowTests(unittest.TestCase):
         self.assertIn("(planned.chosenAt ?? .distantPast) < changed", swap)
         self.assertLess(timeline.index("selection?.albumPeriod != arrival.period"), timeline.index(swap))
         sync = section(CLOUDY, "func synchronize(metadata:", "func synchronizeAlbumArrival(")
-        self.assertIn("if state.metadata != kept || state.profiles != profiles || (state.profileMilestones ?? [:]) != coming {", sync)
+        self.assertIn("if state.metadata != kept || state.profiles != profiles || (state.profileMilestones ?? [:]) != coming\n", sync)
+        self.assertIn("|| (state.departedProfileIDs ?? []) != gone {", sync)
         publish = section(CLOUDY, "func publish(_ photo:", "func timeline(")
         self.assertIn("state.libraryChangedAt = now", publish)
 
@@ -163,7 +164,8 @@ class PoolTests(unittest.TestCase):
     def test_the_pool_of_100_gets_them_from_loaded_dates(self) -> None:
         rebuild = section(VIEW_MODEL, "private func performRebuildWidgetCache(", "private func clearAlbumAndWidgetOutputs(")
         self.assertIn("CloudyWindowStore.newPhotoIDs(cats.filter { $0.lastShownAt == nil },", rebuild)
-        self.assertIn(".union(CloudyWindowStore.datePhotoIDs(cats,", rebuild)
+        self.assertIn(".union(cloudyWindowDatePhotoIDs(cats))", rebuild)
+        self.assertIn("CloudyWindowStore.datePhotoIDs(cats, id: { $0.localIdentifier }, takenAt: { $0.creationDate })", VIEW_MODEL)
         self.assertEqual(rebuild.count("albumPriorityPhotoIDs().union(cloudyPriorityPhotos)"), 2)
         dates = section(CLOUDY, "static func datePhotoIDs<", "func configuration()")
         self.assertNotIn("calendar", dates.lower().replace("no calendar", ""))

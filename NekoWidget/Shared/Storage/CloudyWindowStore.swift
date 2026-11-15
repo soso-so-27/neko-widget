@@ -251,6 +251,10 @@ private struct CloudyWindowState: Codable {
     /// 11/15 節目: each cat's coming birthdays and days it came home, by
     /// profile ID (the same keys as `profiles`). Optional: older saves.
     var profileMilestones: [String: [CloudyWindowMilestoneDay]]? = nil
+    /// 11/15: cats whose 旅立った日 is recorded (profile IDs, as `profiles`).
+    /// A photo of only such cats never makes a date day. Optional: older
+    /// saves have none.
+    var departedProfileIDs: Set<String>? = nil
 }
 
 /// All experiment metadata and derived files are local. Every operation is
@@ -468,7 +472,8 @@ struct CloudyWindowStore: Sendable {
     /// Metadata contains only known personal candidates. Imported received
     /// photos are excluded by the host, so a hidden sender cannot reappear.
     func synchronize(metadata: [String: CloudyWindowPhotoMetadata], profiles: [String: String],
-                     milestones: [String: [CloudyWindowMilestoneDay]] = [:], now: Date = .now) throws {
+                     milestones: [String: [CloudyWindowMilestoneDay]] = [:], departed: Set<String> = [],
+                     now: Date = .now) throws {
         guard internalPresentation else { return }
         try authorityStore.withAuthoritySnapshot(now: now) { authority in
             var state = try read()
@@ -477,12 +482,15 @@ struct CloudyWindowStore: Sendable {
                 .union(state.albumArrival.map { [$0.photoID] } ?? [])
             let kept = metadata.filter { relevant.contains($0.key) }
             let coming = milestones.filter { profiles[$0.key] != nil }
-            if state.metadata != kept || state.profiles != profiles || (state.profileMilestones ?? [:]) != coming {
+            let gone = departed.filter { profiles[$0] != nil }
+            if state.metadata != kept || state.profiles != profiles || (state.profileMilestones ?? [:]) != coming
+                || (state.departedProfileIDs ?? []) != gone {
                 state.libraryChangedAt = now
             }
             state.profiles = profiles
             state.metadata = kept
             state.profileMilestones = coming.isEmpty ? nil : coming
+            state.departedProfileIDs = gone.isEmpty ? nil : gone
             reconcile(&state, authority: authority, now: now)
             try write(state)
             collectFiles(keeping: Set(state.photos.flatMap(\.filenames)))
@@ -659,6 +667,7 @@ struct CloudyWindowStore: Sendable {
                 day = Self.nextDay(after: day)
                 let best = available.compactMap { candidate -> (candidate: PersonalRediscoveryCandidate, offset: Int)? in
                     guard !shownRecently.contains(candidate.item.localIdentifier),
+                          !Self.showsOnlyDeparted(state.metadata[candidate.item.localIdentifier], in: state),
                           let match = Self.dateMatch(takenAt: taken(candidate), on: day) else { return nil }
                     return (candidate: candidate, offset: match.offset)
                 }.min { $0.offset < $1.offset }
@@ -979,6 +988,14 @@ struct CloudyWindowStore: Sendable {
         return Self.isNewPhoto(takenAt: metadata.creationDate, previouslyShown: metadata.previouslyShown, at: date)
     }
 
+    /// 11/15: a photo whose cats have all died, so a date day never says
+    /// 「1年前のきょう」 over it. A photo with no cat, or with a living cat
+    /// too, is not.
+    private static func showsOnlyDeparted(_ metadata: CloudyWindowPhotoMetadata?, in state: CloudyWindowState) -> Bool {
+        guard let cats = metadata?.profileIDs, !cats.isEmpty, let departed = state.departedProfileIDs else { return false }
+        return cats.isSubset(of: departed)
+    }
+
     /// 11/15: the app's heart, then the Photos app's favorite, then a cat
     /// that fits every Widget size. Smaller comes first.
     private func quality(_ photo: CloudyWindowPreparedPhoto, in state: CloudyWindowState) -> Int {
@@ -1120,11 +1137,14 @@ struct CloudyWindowStore: Sendable {
         // Date day: the same month and day of an earlier year first, then
         // within 3 days; a year not yet shown on a date day first. Never a
         // photo shown in the last 30 days.
-        if splits, !hadKind(.date, within: Self.dateDayGap, before: date, in: previous) {
+        // 11/15: never a date day in the window of a cat that has died.
+        if splits, !hadKind(.date, within: Self.dateDayGap, before: date, in: previous),
+           !(profile.map { state.departedProfileIDs?.contains($0) == true } ?? false) {
             let datedYears = state.datedYears ?? []
             let datedPhotos = Set(previous.filter { $0.kind == .date }.map(\.photoID))
             var best: (photo: CloudyWindowPreparedPhoto, offset: Int, yearsAgo: Int, rank: [Int])?
-            for photo in candidates where !recent.contains(photo.photoID) {
+            for photo in candidates where !recent.contains(photo.photoID)
+                && !Self.showsOnlyDeparted(state.metadata[photo.photoID], in: state) {
                 guard let captured = state.metadata[photo.photoID]?.creationDate,
                       let match = Self.dateMatch(takenAt: captured, on: date) else { continue }
                 let year = Self.civil(dayNumber: Self.dayNumber(captured)).year
