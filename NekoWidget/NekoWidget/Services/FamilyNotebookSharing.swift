@@ -16,6 +16,9 @@ final class FamilyNotebookSharing: ObservableObject {
     @Published var failure: FamilySharingError?
     @Published private(set) var isWorking = false
     private var refreshing = false
+    /// The last whole-family read that finished, by a tap or by the schedule
+    /// (11/15, 1115q: an automatic pass does not repeat one just made).
+    private(set) var lastReadAt: Date?
     @Published private(set) var requests: [FamilyNotebookJoinRequest] = []
     @Published private(set) var ownJoinResults: [FamilyNotebookAdmissionClient.JoinResult] = []
     let service: any FamilyNotebookSharingService
@@ -81,6 +84,7 @@ final class FamilyNotebookSharing: ObservableObject {
                 let nextRequests = next.membership == nil ? [] : try await real.pendingRequests()
                 if nextRequests != requests { requests = nextRequests }
             }
+            lastReadAt = Date()
             return true
         } catch is CancellationError {
             // Leaving the screen is not a service failure.
@@ -121,6 +125,8 @@ final class FamilyNotebookSharing: ObservableObject {
         do {
             try await operation(UUID())
             if readsAfter { await refreshAfterChange() }
+            // A made family, a join or an approval: the schedule takes over.
+            FamilyNotebookAutoCheck.shared.nudge()
             return true
         } catch is CancellationError {
             return false
@@ -140,6 +146,22 @@ final class FamilyNotebookSharing: ObservableObject {
         await refresh()
     }
 
+    /// 11/15 (1115q): 「参加を待っている人」 only, for the open notebook's
+    /// 20-second check; not the whole family (directory and requests).
+    @discardableResult
+    func refreshRequests() async -> Bool {
+        guard !refreshing, state.membership != nil,
+              let real = service as? ProductionFamilyNotebookSharingService else { return false }
+        refreshing = true; defer { refreshing = false }
+        do {
+            let next = try await real.pendingRequests()
+            if next != requests { requests = next }
+            return true
+        } catch {
+            return false
+        }
+    }
+
     /// 11/15: an approved or declined request leaves the list as soon as the
     /// relay took the answer, before the next read.
     func forgetRequest(_ id: UUID) {
@@ -151,8 +173,144 @@ final class FamilyNotebookSharing: ObservableObject {
     /// without leaving the mark. One read settles it either way.
     static var awaitingApprovalUnknown: Bool { UserDefaults.standard.object(forKey: FamilyNotebookAwaitingApproval.key) == nil }
     private static func noteAwaitingApproval(_ value: Bool) {
-        guard awaitingApproval != value else { return }
+        guard awaitingApproval != value || awaitingApprovalUnknown else { return }
         UserDefaults.standard.set(value, forKey: FamilyNotebookAwaitingApproval.key)
+        if value { FamilyNotebookAutoCheck.shared.nudge() }
+    }
+}
+
+/// 11/15 (1115q): the family notebook's one automatic schedule. Coming to
+/// the front, the notebook's screen and a shared tool's screen used to run
+/// three loops of their own (the notebook's every 5 s without end while keys
+/// moved); now they only say what is on screen, and this one loop decides
+/// when to read again (`FamilyAutoCheckPolicy`). Its calls are automatic:
+/// the transport keeps them within this iPhone's budget.
+@MainActor
+final class FamilyNotebookAutoCheck {
+    static let shared = FamilyNotebookAutoCheck()
+
+    enum Screen { case notebook, tool }
+
+    private var notebookScreens = 0
+    private var toolScreens = 0
+    private var active = false
+    /// A sheet is open over the notebook: the list is not redrawn under it.
+    var holdsRedraw = false
+    private var loop: Task<Void, Never>?
+    private var sleeping = false
+    private var plannedAt: Date?
+    private var plannedPass: FamilyAutoCheckPolicy.Pass = .full
+    private var lastPassAt: Date?
+    private var lastFullAt: Date?
+    private var lastMark: String?
+    private var quietKeyPasses = 0
+
+    private var sharing: FamilyNotebookSharing { .shared }
+    private var model: FamilyNotebookPrototype { .shared }
+
+    private var eligible: Bool {
+        model.isReal && (model.hasFamily || FamilyNotebookSharing.awaitingApproval
+            || FamilyNotebookSharing.awaitingApprovalUnknown)
+    }
+
+    func setActive(_ value: Bool) {
+        active = value
+        if value { wake(gap: FamilyAutoCheckPolicy.wakeGap) }
+        // The plan is kept: coming back soon keeps its pass (a 20 s list read
+        // stays a list read); a plan already past becomes a whole read.
+        else { loop?.cancel(); loop = nil; sleeping = false }
+    }
+
+    /// After an operation, or when this iPhone starts waiting to be let in.
+    func nudge() { wake(gap: FamilyAutoCheckPolicy.nudgeGap) }
+
+    func appeared(_ screen: Screen) {
+        switch screen { case .notebook: notebookScreens += 1; case .tool: toolScreens += 1 }
+        wake(gap: FamilyAutoCheckPolicy.wakeGap)
+    }
+
+    func disappeared(_ screen: Screen) {
+        switch screen {
+        case .notebook: notebookScreens = max(0, notebookScreens - 1)
+        case .tool: toolScreens = max(0, toolScreens - 1)
+        }
+    }
+
+    /// Something changed what the next pass should be. A loop asleep keeps
+    /// its planned pass when sooner, else waits `gap` after the last pass; a
+    /// loop mid-pass reads the screens again when its pass ends. Never two loops.
+    private func wake(gap: TimeInterval) {
+        guard active else { return }
+        if loop != nil && !sleeping { return }
+        let now = Date()
+        let plan = plannedAt.flatMap { $0 >= now ? $0 : nil }
+        let delay = FamilyAutoCheckPolicy.wakeDelay(now: now, lastPassAt: lastPassAt, plannedAt: plan, gap: gap)
+        let keepsPlan = plan.map { $0.timeIntervalSince(now) <= delay } == true
+        let pass = keepsPlan ? plannedPass : .full
+        loop?.cancel()
+        sleeping = false
+        loop = Task { [weak self] in await self?.run(pass: pass, delay: delay) }
+    }
+
+    private func situation(now: Date) -> FamilyAutoCheckPolicy.Situation {
+        let real = sharing.service as? ProductionFamilyNotebookSharingService
+        return .init(notebookOpen: notebookScreens > 0, toolOpen: toolScreens > 0,
+                     keysMove: real?.needsAnotherPass == true,
+                     awaitingApproval: FamilyNotebookSharing.awaitingApproval,
+                     inFamily: sharing.state.membership != nil,
+                     quietKeyPasses: quietKeyPasses,
+                     secondsSinceFull: lastFullAt.map { now.timeIntervalSince($0) } ?? .infinity)
+    }
+
+    private func run(pass first: FamilyAutoCheckPolicy.Pass, delay firstDelay: TimeInterval) async {
+        var pass = first, delay = firstDelay
+        while !Task.isCancelled {
+            guard eligible else { break }
+            // The budget is paused after a 429: wait it out, at least a minute.
+            if let paused = SharingAutoCallBudget.shared.pausedUntil() {
+                delay = max(delay, paused.timeIntervalSinceNow)
+            }
+            if delay > 0 {
+                plannedAt = Date().addingTimeInterval(delay); plannedPass = pass
+                sleeping = true
+                do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+                sleeping = false
+            }
+            plannedAt = nil
+            // A whole-family read by a tap meanwhile stands for this pass.
+            var read = false
+            if pass == .full, let at = sharing.lastReadAt, Date().timeIntervalSince(at) < FamilyAutoCheckPolicy.keyBackoff[0],
+               lastPassAt.map({ at > $0 }) ?? true {
+                lastPassAt = at; lastFullAt = at; read = true
+            } else if !holdsRedraw && !sharing.isWorking {
+                await SharingAutoCallBudget.$isAutomatic.withValue(true) {
+                    switch pass {
+                    case .full:
+                        await sharing.refresh()
+                        if let membership = sharing.state.membership { model.rememberShown(membership) }
+                        if model.hasFamily { try? await model.copyTools(); model.applyFamilyWrites() }
+                    case .requestsOnly:
+                        await sharing.refreshRequests()
+                    }
+                }
+                let now = Date()
+                lastPassAt = now
+                if pass == .full { lastFullAt = now; read = true }
+            }
+            if read {
+                // Progress: anything the key pass saw changed. Quiet passes
+                // in a row lengthen the wait (5, 10, 20, 40, 60 s).
+                let real = sharing.service as? ProductionFamilyNotebookSharingService
+                let mark = "\(sharing.state)|\(real?.lastKeyObservation ?? "")|\(real?.needsAnotherPass == true)"
+                quietKeyPasses = mark == lastMark ? quietKeyPasses + 1 : 0
+                lastMark = mark
+            }
+            guard !Task.isCancelled else { return }
+            guard let decision = FamilyAutoCheckPolicy.next(situation(now: Date())) else { break }
+            pass = decision.pass
+            delay = decision.after
+        }
+        if !Task.isCancelled { loop = nil; sleeping = false; plannedAt = nil }
     }
 }
 

@@ -186,7 +186,8 @@ private actor Relay: GroupHTTPTransport {
         try await rejected { _ = try await coordinator(b).prepare(family: family) }
         try check(await relay.deviceBodies().count == beforeInvalid, "a certificate signed for another family is rejected, not treated as registration")
         try await approvedBeforeNewcomerRegisters(directory: directory, endpoint: endpoint)
-        print("Family notebook key delivery: real HPKE, pinned invitation, durable roster/key retry, explicit admission, pre-join keys, departure rotation, rejected-key isolation and approval-before-registration passed")
+        try await CallBudgetChecks.run(directory: directory, endpoint: endpoint)
+        print("Family notebook key delivery: real HPKE, pinned invitation, durable roster/key retry, explicit admission, pre-join keys, departure rotation, rejected-key isolation, approval-before-registration and call budget passed")
     }
 
     /// 11/15 (TestFlight 378): the family approved the newcomer before the
@@ -241,5 +242,254 @@ private actor Relay: GroupHTTPTransport {
         // B opens again: reads the notebook, old and new keys.
         guard let joined = try await opens(b), joined.ready else { throw Failure.check("late: newcomer cannot read") }
         try check(joined.keys[1] == original.keys[1] && joined.keys[2] != nil, "late: newcomer has the pre-join and current keys")
+    }
+}
+
+
+// MARK: - 11/15 (1115q): calls per minute, counted on a synthetic clock
+
+private final class SimClock: @unchecked Sendable {
+    var seconds: Double = 0
+    var date: Date { Date(timeIntervalSince1970: 1_800_000_000 + seconds) }
+}
+
+/// The most calls in any 60 seconds.
+private func maxPerMinute(_ times: [Double]) -> Int {
+    let sorted = times.sorted(); var best = 0, start = 0
+    for end in sorted.indices {
+        while sorted[end] - sorted[start] >= 60 { start += 1 }
+        best = max(best, end - start + 1)
+    }
+    return best
+}
+
+/// One iPhone's calls. Automatic ones pass the app's own budget gate.
+private final class Meter: @unchecked Sendable {
+    let clock: SimClock
+    let budget = SharingAutoCallBudget(limit: SharingAutoCallBudget.perMinute)
+    var times: [Double] = []
+    init(clock: SimClock) { self.clock = clock }
+    func call() throws {
+        try SharingAutoCallBudget.admitIfAutomatic(budget, at: clock.date)
+        times.append(clock.seconds); clock.seconds += 0.05
+    }
+    func calls(_ count: Int) throws { for _ in 0..<count { try call() } }
+}
+
+private struct MeteredTransport: GroupHTTPTransport {
+    let relay: Relay, meter: Meter
+    func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
+        try meter.call()
+        return try await relay.send(request, maximumBytes: maximumBytes)
+    }
+}
+
+/// The schedule as FamilyNotebookAutoCheck runs it, on the synthetic clock.
+private struct SimSchedule {
+    var plannedAt: Double? = 0
+    var plannedPass = FamilyAutoCheckPolicy.Pass.full
+    var lastPassAt: Double?, lastFullAt: Double?, lastMark: String?
+    var quiet = 0
+    var notebookOpen = false, toolOpen = false
+
+    /// The app went to the background and came back at `now`.
+    mutating func foreground(at now: Double) {
+        let plan = plannedAt.flatMap { $0 >= now ? $0 : nil }
+        let delay = FamilyAutoCheckPolicy.wakeDelay(now: Date(timeIntervalSince1970: now),
+            lastPassAt: lastPassAt.map { Date(timeIntervalSince1970: $0) },
+            plannedAt: plan.map { Date(timeIntervalSince1970: $0) }, gap: FamilyAutoCheckPolicy.wakeGap)
+        let keepsPlan = plan.map { $0 - now <= delay } == true
+        plannedAt = now + delay
+        if !keepsPlan { plannedPass = .full }
+    }
+
+    mutating func passed(_ pass: FamilyAutoCheckPolicy.Pass, at now: Double, mark: String, keysMove: Bool,
+                         awaiting: Bool, inFamily: Bool) {
+        lastPassAt = now
+        if pass == .full {
+            lastFullAt = now
+            quiet = mark == lastMark ? quiet + 1 : 0
+            lastMark = mark
+        }
+        let next = FamilyAutoCheckPolicy.next(.init(notebookOpen: notebookOpen, toolOpen: toolOpen, keysMove: keysMove,
+            awaitingApproval: awaiting, inFamily: inFamily, quietKeyPasses: quiet,
+            secondsSinceFull: lastFullAt.map { now - $0 } ?? .infinity))
+        plannedAt = next.map { now + $0.after }
+        plannedPass = next?.pass ?? .full
+    }
+}
+
+private enum CallBudgetChecks {
+    static func run(directory: URL, endpoint: URL) async throws {
+        let keysMissing = try keysNeverArrive()
+        let reopening = try notebookOpenAndReopened()
+        let waiting = try awaitingApproval()
+        let purchase = try purchaseWaits()
+        let (twoDevices, seconds) = try await approvalToReading(directory: directory, endpoint: endpoint)
+        print("Call budget (most calls in any 60 s, one iPhone): keys missing 10 min \(keysMissing.before) -> \(keysMissing.after); "
+            + "notebook open + reopened every 15 s \(reopening.before) -> \(reopening.after); awaiting approval \(waiting); "
+            + "purchase wait POST \(purchase.beforePost) -> \(purchase.afterPost), GET \(purchase.beforeGet) -> \(purchase.afterGet); "
+            + "two iPhones \(twoDevices) per iPhone, B reads after \(seconds) s")
+    }
+
+    /// 8 epochs whose keys never come, the notebook open, the app in front, 10 minutes.
+    static func keysNeverArrive() throws -> (before: Int, after: Int) {
+        let loadState = 3, state = 1
+        // Before: the notebook's 5 s loop without end and the opening check's
+        // 12 passes, each reading all 8 empty epochs.
+        var before: [Double] = []
+        var t = 0.0
+        while t < 600 {
+            for i in 0..<(loadState + state + 8) { before.append(t + Double(i) * 0.05) }
+            t += 5
+        }
+        for pass in 0..<13 {
+            for i in 0..<(loadState + state + 8) { before.append(Double(pass) * 5 + 1 + Double(i) * 0.05) }
+        }
+        let clock = SimClock(), meter = Meter(clock: clock)
+        var schedule = SimSchedule()
+        schedule.notebookOpen = true
+        while let at = schedule.plannedAt, at < 600 {
+            clock.seconds = max(clock.seconds, at)
+            try? SharingAutoCallBudget.$isAutomatic.withValue(true) {
+                try meter.calls(loadState + state + min(8, FamilyNotebookKeyCoordinator.keyReadsPerPass))
+            }
+            schedule.passed(.full, at: at, mark: "same", keysMove: true, awaiting: true, inFamily: false)
+        }
+        let after = maxPerMinute(meter.times)
+        try check(after <= SharingAutoCallBudget.perMinute, "keys missing: \(after) calls in a minute")
+        // Without a screen it stops (once per coming to the front).
+        var closed = SimSchedule()
+        for _ in 0..<6 { closed.passed(.full, at: 0, mark: "same", keysMove: true, awaiting: true, inFamily: false) }
+        try check(closed.plannedAt == nil, "keys missing without a screen: no endless passes")
+        return (maxPerMinute(before), after)
+    }
+
+    /// In a family, the notebook open, the app sent away and back every 15 s, 10 minutes.
+    static func notebookOpenAndReopened() throws -> (before: Int, after: Int) {
+        let full = 10, requests = 2
+        // Before: each coming back restarted the notebook's loop with a full
+        // read and the opening check read once more.
+        var before: [Double] = []
+        var fg = 0.0
+        while fg < 600 {
+            for i in 0..<(2 * full) { before.append(fg + Double(i) * 0.05) }
+            fg += 15
+        }
+        let clock = SimClock(), meter = Meter(clock: clock)
+        var schedule = SimSchedule()
+        schedule.notebookOpen = true
+        var nextForeground = 15.0
+        while clock.seconds < 600 {
+            if let at = schedule.plannedAt, at <= nextForeground {
+                clock.seconds = max(clock.seconds, at)
+                let pass = schedule.plannedPass
+                try? SharingAutoCallBudget.$isAutomatic.withValue(true) { try meter.calls(pass == .full ? full : requests) }
+                schedule.passed(pass, at: at, mark: "steady", keysMove: false, awaiting: false, inFamily: true)
+            } else {
+                clock.seconds = nextForeground
+                schedule.foreground(at: nextForeground)
+                nextForeground += 15
+            }
+        }
+        let after = maxPerMinute(meter.times)
+        try check(after <= SharingAutoCallBudget.perMinute, "notebook open and reopened: \(after) calls in a minute")
+        return (maxPerMinute(before), after)
+    }
+
+    /// Asked to join, not let in yet, the app in front for 10 minutes: one directory read a pass.
+    static func awaitingApproval() throws -> Int {
+        let clock = SimClock(), meter = Meter(clock: clock)
+        var schedule = SimSchedule()
+        while let at = schedule.plannedAt, at < 600 {
+            clock.seconds = max(clock.seconds, at)
+            try? SharingAutoCallBudget.$isAutomatic.withValue(true) { try meter.calls(1) }
+            schedule.passed(.full, at: at, mark: "pending", keysMove: false, awaiting: true, inFamily: false)
+        }
+        let most = maxPerMinute(meter.times)
+        try check(most <= 3, "awaiting approval: \(most) calls in a minute")
+        return most
+    }
+
+    /// A purchase the server confirms only after 10 minutes, the app reopened
+    /// every 15 s and 「購入を復元」 pressed once: POST and GET each.
+    static func purchaseWaits() throws -> (beforePost: Int, afterPost: Int, beforeGet: Int, afterGet: Int) {
+        func simulate(delays: [Double], gated: Bool) -> (Int, Int) {
+            var posts: [Double] = [0], gets: [Double] = [0.5]   // the purchase itself
+            func recent(_ times: [Double], _ now: Double) -> Int { times.filter { now - $0 < 60 && $0 <= now }.count }
+            var events: [(at: Double, automatic: Bool)] = []
+            var t = 0.0
+            for delay in delays { t += delay; events.append((t, true)) }
+            while t + 30 < 600 { t += 30; events.append((t, true)) }
+            var fg = 15.0
+            while fg < 600 { events.append((fg, true)); fg += 15 }   // coming to the front
+            events.append((30, false))                                // 購入を復元 (a tap)
+            for event in events.sorted(by: { $0.at < $1.at }) {
+                if event.automatic && gated && !PlusConfirmationSchedule.allowsAutomaticCheck(
+                    transactions: recent(posts, event.at), entitlements: recent(gets, event.at)) { continue }
+                posts.append(event.at); gets.append(event.at + 0.5)
+            }
+            return (maxPerMinute(posts), maxPerMinute(gets))
+        }
+        let before = simulate(delays: [2, 4, 8, 15, 30], gated: false)
+        let after = simulate(delays: PlusConfirmationSchedule.firstMinuteDelays.map { Double($0.components.seconds) }, gated: true)
+        try check(after.0 <= 6 && after.1 <= 6, "purchase wait: \(after) calls in a minute")
+        return (before.0, after.0, before.1, after.1)
+    }
+
+    /// 申込み → 承認 (before B registered) → both apps in front, no screen
+    /// open: A and B each run the schedule with real HPKE and the relay.
+    /// Returns the most calls of one iPhone in any 60 s and when B reads.
+    static func approvalToReading(directory: URL, endpoint: URL) async throws -> (Int, Double) {
+        var a = GroupDeviceIdentity.firstDevice(), b = GroupDeviceIdentity.firstDevice()
+        a.registered = true; b.registered = true
+        let family = UUID(), relay = try Relay(family: family, creator: a), clock = SimClock()
+        let meterA = Meter(clock: clock), meterB = Meter(clock: clock)
+        func coordinator(_ who: GroupDeviceIdentity, _ meter: Meter) throws -> FamilyNotebookKeyCoordinator {
+            let folder = directory.appendingPathComponent("budget-" + who.personID)
+            let journal = try GroupOperationStore(directory: folder.appendingPathComponent("journal"), maximumRecordBytes: 2_100_000)
+            let secrets = try GroupOperationStore(directory: folder.appendingPathComponent("synthetic-secrets"))
+            let transport = MeteredTransport(relay: relay, meter: meter)
+            return try .init(endpoint: endpoint, identity: who, network: .init(endpoint: endpoint, identity: who, transport: transport, journal: journal), secrets: secrets, journal: journal)
+        }
+        let keysA = try coordinator(a, meterA), keysB = try coordinator(b, meterB)
+        try await keysA.registerCreatedFamily(family)
+        guard let original = try await keysA.prepare(family: family), original.ready else { throw Failure.check("budget: creator not ready") }
+        let now = Date(), (capability, cipher) = try FamilyNotebookInvitationCrypto.create(roster: original.current, generation: 1, identity: a,
+            payerPersonID: a.personID, invitationID: UUID(), inviterName: "synthetic", catNames: [], now: now)
+        let invitation = try FamilyNotebookInvitationCrypto.open(cipher, capability: capability, serverInviterPersonID: a.personID,
+            serverInviterDeviceID: a.deviceID, serverGeneration: 1, serverExpiresAt: Int64(now.timeIntervalSince1970) + 86400, now: now)
+        try await keysB.registerInvitation(invitation)
+        try await relay.admit(b)
+        try await keysA.confirmApprovedAddition(family: family, personID: b.personID, identityPublicKey: b.personPublicKey)
+        meterA.times.removeAll(); meterB.times.removeAll(); clock.seconds = 0
+        var scheduleA = SimSchedule(), scheduleB = SimSchedule()
+        var bReadsAt: Double?
+        while bReadsAt == nil {
+            let aAt = scheduleA.plannedAt ?? .infinity, bAt = scheduleB.plannedAt ?? .infinity
+            let isA = aAt <= bAt, at = min(aAt, bAt)
+            guard at < 600 else { throw Failure.check("budget: B never reads within 10 minutes") }
+            clock.seconds = max(clock.seconds, at)
+            let keys = isA ? keysA : keysB, meter = isA ? meterA : meterB
+            var material: FamilyNotebookKeyMaterial?
+            do {
+                material = try await SharingAutoCallBudget.$isAutomatic.withValue(true) {
+                    try meter.calls(3)   // directory, members, payer
+                    return try await keys.prepare(family: family)
+                }
+            } catch is SharingCallDeferred { material = nil }
+            let ready = material?.ready == true && material?.moreWork == false
+            if !isA, ready { bReadsAt = clock.seconds; break }
+            let mark = await keys.observation
+            if isA {
+                scheduleA.passed(.full, at: clock.seconds, mark: mark, keysMove: !ready, awaiting: false, inFamily: true)
+            } else {
+                scheduleB.passed(.full, at: clock.seconds, mark: mark, keysMove: !ready, awaiting: true, inFamily: false)
+            }
+        }
+        let most = max(maxPerMinute(meterA.times), maxPerMinute(meterB.times))
+        try check(most <= SharingAutoCallBudget.perMinute, "two iPhones: \(most) calls in a minute")
+        try check(bReadsAt! <= 30, "two iPhones: B reads after \(bReadsAt!) s")
+        return (most, bReadsAt!)
     }
 }

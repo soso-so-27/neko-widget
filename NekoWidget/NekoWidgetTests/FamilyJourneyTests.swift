@@ -79,14 +79,54 @@ final class FamilyJourneyTests: XCTestCase {
     }
 
     func testServerConfirmationIsAskedAgainAFewTimesWithinTwoMinutes() {
+        // 1115q: three tries in the first minute (5, 20 and 45 s after the
+        // purchase); the billing relay allows 10 calls a minute.
         let delays = PlusPurchaseStore.serverConfirmationRecheckDelays
-        XCTAssertEqual(delays.count, 5)
-        XCTAssertEqual(delays.reduce(.zero, +), .seconds(59))
-        XCTAssertEqual(delays, delays.sorted())
+        XCTAssertEqual(delays.count, 3)
+        XCTAssertEqual(delays.reduce(.zero, +), .seconds(45))
         // Then every 30 s until 10 minutes after the purchase (11/15: the
         // server confirmed one about 4 minutes after it).
         XCTAssertEqual(PlusPurchaseStore.serverConfirmationFollowUpInterval, .seconds(30))
         XCTAssertEqual(PlusPurchaseStore.serverConfirmationWindow, 600)
+        // An automatic try needs room for itself and a tap: at most 4 of
+        // each kind in the last 60 s.
+        XCTAssertTrue(PlusConfirmationSchedule.allowsAutomaticCheck(transactions: 4, entitlements: 4))
+        XCTAssertFalse(PlusConfirmationSchedule.allowsAutomaticCheck(transactions: 5, entitlements: 0))
+        XCTAssertFalse(PlusConfirmationSchedule.allowsAutomaticCheck(transactions: 0, entitlements: 5))
+    }
+
+    func testFamilyScheduleBacksOffAndStopsWhenOnlyTheOtherIPhoneCanMoveIt() {
+        var s = FamilyAutoCheckPolicy.Situation(keysMove: true, awaitingApproval: true)
+        let delays = (0..<5).map { quiet -> TimeInterval? in
+            s.quietKeyPasses = quiet; s.notebookOpen = true
+            return FamilyAutoCheckPolicy.next(s)?.after
+        }
+        XCTAssertEqual(delays, [5, 10, 20, 40, 60])
+        s.notebookOpen = false; s.quietKeyPasses = 4
+        XCTAssertNil(FamilyAutoCheckPolicy.next(s), "no screen: once per coming to the front")
+        // Waiting to be let in: one light read every 30 s.
+        XCTAssertEqual(FamilyAutoCheckPolicy.next(.init(awaitingApproval: true))?.after, 30)
+        // The open notebook: the list every 20 s, the whole family every 60 s.
+        XCTAssertEqual(FamilyAutoCheckPolicy.next(.init(notebookOpen: true, inFamily: true, secondsSinceFull: 0)),
+                       .init(pass: .requestsOnly, after: 20))
+        XCTAssertEqual(FamilyAutoCheckPolicy.next(.init(notebookOpen: true, inFamily: true, secondsSinceFull: 40))?.pass, .full)
+        // A burst of openings is one pass; a sooner plan is kept.
+        let now = Date()
+        XCTAssertEqual(FamilyAutoCheckPolicy.wakeDelay(now: now, lastPassAt: now.addingTimeInterval(-5), plannedAt: nil, gap: 20), 15)
+        XCTAssertEqual(FamilyAutoCheckPolicy.wakeDelay(now: now, lastPassAt: now.addingTimeInterval(-5),
+                                                       plannedAt: now.addingTimeInterval(3), gap: 20), 3)
+    }
+
+    func testAutomaticCallsStayWithin30AMinuteAndPauseAfter429() throws {
+        let budget = SharingAutoCallBudget(limit: 30), start = Date()
+        for i in 0..<30 { XCTAssertNoThrow(try budget.admitAutomatic(at: start.addingTimeInterval(Double(i)))) }
+        XCTAssertThrowsError(try budget.admitAutomatic(at: start.addingTimeInterval(59)))
+        XCTAssertNoThrow(try budget.admitAutomatic(at: start.addingTimeInterval(60.5)))
+        budget.noteRateLimited(retryAfter: nil, at: start.addingTimeInterval(61))
+        XCTAssertThrowsError(try budget.admitAutomatic(at: start.addingTimeInterval(120)))
+        XCTAssertNoThrow(try budget.admitAutomatic(at: start.addingTimeInterval(122)))
+        // A tap is never held back by the budget.
+        XCTAssertNoThrow(try SharingAutoCallBudget.admitIfAutomatic(budget, at: start.addingTimeInterval(122)))
     }
 
     // MARK: - A5: one press makes and sends the family invitation

@@ -182,7 +182,9 @@ struct ProductionAppRootView: View {
                 }
                 guard newPhase == .active else { return }
                 Task {
-                    await plusPurchases.refreshAfterForegroundEntry()
+                    // 1115q: skipped only when this minute's billing calls are
+                    // near the relay's limit (a burst of openings).
+                    await plusPurchases.refreshOnForegroundEntry()
                     // 11/15: a purchase still waiting for the server is
                     // checked again for the rest of its 10 minutes.
                     plusPurchases.resumeServerConfirmationRechecksIfDue()

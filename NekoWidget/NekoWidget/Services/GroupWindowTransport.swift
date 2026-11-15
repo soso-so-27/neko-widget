@@ -56,6 +56,91 @@ struct GroupHostBillingSigner: GroupBillingSigner {
     }
 }
 
+/// 11/15 (1115q): the relay allows 120 calls a minute per address (two
+/// iPhones on one Wi-Fi share it). Every automatic call of the まど and the
+/// family notebook on this iPhone counts here: 30 in any 60 seconds at most,
+/// and none for at least a minute after a 429. What the person pressed is
+/// never counted or held back here.
+struct SharingCallWindow: Sendable {
+    let limit: Int
+    let seconds: TimeInterval
+    private(set) var times: [Date] = []
+
+    init(limit: Int, seconds: TimeInterval = 60) { self.limit = limit; self.seconds = seconds }
+
+    func count(at now: Date) -> Int { times.filter { now.timeIntervalSince($0) < seconds }.count }
+
+    /// Takes one call when the last `seconds` hold fewer than `limit`.
+    mutating func admit(at now: Date) -> Bool {
+        times.removeAll { now.timeIntervalSince($0) >= seconds }
+        guard times.count < limit else { return false }
+        times.append(now)
+        return true
+    }
+
+    /// Counts a call that was made anyway (a tap), so automatic ones wait.
+    mutating func record(at now: Date) {
+        times.removeAll { now.timeIntervalSince($0) >= seconds }
+        times.append(now)
+    }
+}
+
+/// An automatic call that was not sent: over the budget, or paused after a
+/// 429. Nothing reached the relay; the next scheduled pass tries again.
+struct SharingCallDeferred: Error, Sendable { let until: Date }
+
+final class SharingAutoCallBudget: @unchecked Sendable {
+    static let shared = SharingAutoCallBudget()
+    static let perMinute = 30
+    /// No Retry-After: at least this long after a 429.
+    static let rateLimitedPause: TimeInterval = 60
+    /// Set by the automatic passes only (the family notebook's one schedule,
+    /// the まど's waiting lists). Taps and pull-to-refresh leave it false.
+    @TaskLocal static var isAutomatic = false
+
+    private let lock = NSLock()
+    private var window: SharingCallWindow
+    private var pausedUntil: Date?
+
+    init(limit: Int = SharingAutoCallBudget.perMinute) { window = SharingCallWindow(limit: limit) }
+
+    func admitAutomatic(at now: Date = Date()) throws {
+        lock.lock(); defer { lock.unlock() }
+        if let pausedUntil, now < pausedUntil { throw SharingCallDeferred(until: pausedUntil) }
+        guard window.admit(at: now) else { throw SharingCallDeferred(until: now.addingTimeInterval(1)) }
+    }
+
+    func noteRateLimited(retryAfter: TimeInterval?, at now: Date = Date()) {
+        lock.lock(); defer { lock.unlock() }
+        let until = now.addingTimeInterval(max(Self.rateLimitedPause, retryAfter ?? 0))
+        pausedUntil = max(pausedUntil ?? until, until)
+    }
+
+    /// When the automatic passes may call again (nil: now).
+    func pausedUntil(at now: Date = Date()) -> Date? {
+        lock.lock(); defer { lock.unlock() }
+        guard let pausedUntil, now < pausedUntil else { return nil }
+        return pausedUntil
+    }
+
+    func automaticCalls(at now: Date = Date()) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return window.count(at: now)
+    }
+
+    /// The gate every transport puts in front of a request.
+    static func admitIfAutomatic(_ budget: SharingAutoCallBudget = .shared, at now: Date = Date()) throws {
+        guard isAutomatic else { return }
+        try budget.admitAutomatic(at: now)
+    }
+
+    /// What a 429 reply sets, whoever made the call.
+    static func noteReply(status: Int, retryAfter: String?, _ budget: SharingAutoCallBudget = .shared, at now: Date = Date()) {
+        guard status == 429 else { return }
+        budget.noteRateLimited(retryAfter: retryAfter.flatMap { TimeInterval($0.trimmingCharacters(in: .whitespaces)) }, at: now)
+    }
+}
+
 private final class GroupNoRedirect: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
@@ -73,6 +158,8 @@ final class GroupURLSessionTransport: GroupHTTPTransport, Sendable {
     }
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
         try ClientUpgradeRequirement.shared.checkAllowed()
+        // 11/15 (1115q): automatic passes stay within this iPhone's budget.
+        try SharingAutoCallBudget.admitIfAutomatic()
         var request = request
         request.setValue(ClientUpgradeRequirement.buildHeader, forHTTPHeaderField: "X-Neko-App-Build")
         do {
@@ -87,6 +174,7 @@ final class GroupURLSessionTransport: GroupHTTPTransport, Sendable {
                 guard data.count < maximumBytes else { throw GroupClientError.invalidResponse }
                 data.append(byte)
             }
+            SharingAutoCallBudget.noteReply(status: http.statusCode, retryAfter: http.value(forHTTPHeaderField: "Retry-After"))
             try ClientUpgradeRequirement.shared.checkResponse(status: http.statusCode, data: data)
             return .init(status: http.statusCode, data: data)
         } catch let error as URLError {
