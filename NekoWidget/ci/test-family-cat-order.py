@@ -45,7 +45,7 @@ def block(source: str, marker: str) -> str:
 class OneField(unittest.TestCase):
     def test_position_is_one_cat_field_like_adoption_day(self):
         self.assertIn("case position", CORE)
-        self.assertIn("static let compatibility: Set<FamilyNotebookField> = [.adoptionDay, .position]", CORE)
+        self.assertIn("static let compatibility: Set<FamilyNotebookField> = [.adoptionDay, .position, .representativePhoto]", CORE)
         self.assertIn("static let positionRange = 0...100_000", CORE)
         self.assertIn(".vetName, .vetPhone, .vetNote, .farewellDay, .position, .representativePhoto]", CORE)
         self.assertIn("|| (field == .position && FamilyNotebookField.positionRange.contains(number))", CORE)
