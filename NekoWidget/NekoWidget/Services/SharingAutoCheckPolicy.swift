@@ -171,13 +171,15 @@ struct BillingCallDeferred: Error, Sendable {}
 /// (`ManagedPreservationClient.authenticated`, and the deletion request).
 /// The server allows 30 such calls per owner in each fixed UTC minute, and
 /// two iPhones of one owner share them. Counted here over any 60 s, so no
-/// fixed minute can hold more either:
-/// - automatic (a call nobody marked): 10 on this iPhone, and none for at
-///   least a minute after a 429 (counted from when it came back);
-/// - with the person's own (`SharingPersonAction.run`): 14 on this iPhone,
-///   so two iPhones stay at 28;
-/// - while the person's own restore or export runs (`PreservationBulkRead`):
-///   20 on this iPhone (with the other iPhone's 10 automatic ones, 30).
+/// fixed minute can hold more either. One iPhone alone may use most of them;
+/// a 429 says another iPhone (or something else) shares the minute:
+/// - usually: automatic (a call nobody marked) 24, with the person's own
+///   (`SharingPersonAction.run`) 28 on this iPhone (under 30 with a margin);
+/// - after a 429: no automatic call for at least a minute from when it came
+///   back, then for 10 minutes automatic 10, with the person's own 14 (two
+///   iPhones: 28), the person's restore or export (`PreservationBulkRead`)
+///   20 (with the other iPhone's 10 automatic ones, 30). Ten minutes without
+///   another 429 and it is back to the usual numbers.
 /// A full window waits for its first free place (at most 60 s). Only an
 /// automatic call during the pause is held: it is never sent, and the caller
 /// sees the server's own 「少し待って」 answer, so the work stays unsent.
@@ -190,10 +192,15 @@ final class PreservationCallBudget: @unchecked Sendable {
     }
 
     static let shared = PreservationCallBudget()
-    static let automaticPerMinute = 10
-    static let devicePerMinute = 14
-    static let bulkPerMinute = 20
+    static let automaticPerMinute = 24
+    static let devicePerMinute = 28
+    static let bulkPerMinute = 28
+    static let automaticAfterRateLimit = 10
+    static let deviceAfterRateLimit = 14
+    static let bulkAfterRateLimit = 20
     static let rateLimitedPause: TimeInterval = 60
+    /// After the pause, the lower numbers hold this long past the last 429.
+    static let slowerAfterRateLimit: TimeInterval = 600
     /// Set only by `PreservationBulkRead.run`, inside the person's own action.
     @TaskLocal static var isBulkRead = false
 
@@ -201,7 +208,23 @@ final class PreservationCallBudget: @unchecked Sendable {
     private var automatic = SharingCallWindow(limit: automaticPerMinute)
     private var all = SharingCallWindow(limit: bulkPerMinute)
     private var pausedUntil: Date?
+    private var slowerUntil: Date?
     private var admitted = 0
+
+    struct Limits: Equatable, Sendable { let automatic: Int; let device: Int; let bulk: Int }
+    static let usual = Limits(automatic: automaticPerMinute, device: devicePerMinute, bulk: bulkPerMinute)
+    static let afterRateLimit = Limits(automatic: automaticAfterRateLimit, device: deviceAfterRateLimit, bulk: bulkAfterRateLimit)
+
+    private func limitsLocked(at now: Date) -> Limits {
+        if let slowerUntil, now < slowerUntil { return Self.afterRateLimit }
+        return Self.usual
+    }
+
+    /// The numbers in force now.
+    func limits(at now: Date = Date()) -> Limits {
+        lock.lock(); defer { lock.unlock() }
+        return limitsLocked(at: now)
+    }
 
     init() {}
 
@@ -210,9 +233,10 @@ final class PreservationCallBudget: @unchecked Sendable {
     func decide(personAction: Bool, bulk: Bool = false, at now: Date = Date()) -> Decision {
         lock.lock(); defer { lock.unlock() }
         if !personAction, let pausedUntil, now < pausedUntil { return .held }
-        let deviceLimit = personAction && bulk ? Self.bulkPerMinute : Self.devicePerMinute
+        let limits = limitsLocked(at: now)
+        let deviceLimit = personAction && bulk ? limits.bulk : limits.device
         var free = Self.freeAt(all, limit: deviceLimit, now: now)
-        if !personAction { free = [free, Self.freeAt(automatic, limit: Self.automaticPerMinute, now: now)].compactMap { $0 }.max() }
+        if !personAction { free = [free, Self.freeAt(automatic, limit: limits.automatic, now: now)].compactMap { $0 }.max() }
         if let free { return .wait(until: free) }
         if !personAction { automatic.record(at: now) }
         all.record(at: now)
@@ -232,6 +256,8 @@ final class PreservationCallBudget: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         let until = now.addingTimeInterval(max(Self.rateLimitedPause, retryAfter ?? 0))
         pausedUntil = max(pausedUntil ?? until, until)
+        let slower = pausedUntil!.addingTimeInterval(Self.slowerAfterRateLimit)
+        slowerUntil = max(slowerUntil ?? slower, slower)
     }
 
     /// When an automatic call may go again (nil: now).
@@ -239,8 +265,9 @@ final class PreservationCallBudget: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         var next: Date?
         if let pausedUntil, now < pausedUntil { next = pausedUntil }
-        for free in [Self.freeAt(automatic, limit: Self.automaticPerMinute, now: now),
-                     Self.freeAt(all, limit: Self.devicePerMinute, now: now)].compactMap({ $0 }) {
+        let limits = limitsLocked(at: now)
+        for free in [Self.freeAt(automatic, limit: limits.automatic, now: now),
+                     Self.freeAt(all, limit: limits.device, now: now)].compactMap({ $0 }) {
             next = max(next ?? free, free)
         }
         return next

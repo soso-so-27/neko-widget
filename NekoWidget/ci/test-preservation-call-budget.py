@@ -33,11 +33,16 @@ QUICK = read("ci/run-quick-ios-checks.sh")
 class GateTests(unittest.TestCase):
     def test_numbers_fit_the_server(self):
         values = {name: int(re.search(r"static let %s = (\d+)" % name, section(POLICY, "final class PreservationCallBudget", "struct PreservationCallHeld")).group(1))
-                  for name in ("automaticPerMinute", "devicePerMinute", "bulkPerMinute")}
-        self.assertEqual(values, {"automaticPerMinute": 10, "devicePerMinute": 14, "bulkPerMinute": 20})
-        # Two iPhones of one owner under the server's 30; a restore with the other's automatic too.
-        self.assertLessEqual(2 * values["devicePerMinute"], 30)
-        self.assertLessEqual(values["bulkPerMinute"] + values["automaticPerMinute"], 30)
+                  for name in ("automaticPerMinute", "devicePerMinute", "bulkPerMinute",
+                               "automaticAfterRateLimit", "deviceAfterRateLimit", "bulkAfterRateLimit")}
+        self.assertEqual(values, {"automaticPerMinute": 24, "devicePerMinute": 28, "bulkPerMinute": 28,
+                                  "automaticAfterRateLimit": 10, "deviceAfterRateLimit": 14, "bulkAfterRateLimit": 20})
+        # One iPhone under the server's 30 with a margin.
+        self.assertLess(max(values["devicePerMinute"], values["bulkPerMinute"]), 30)
+        # After a 429: two iPhones under 30; a restore with the other's automatic too.
+        self.assertLessEqual(2 * values["deviceAfterRateLimit"], 30)
+        self.assertLessEqual(values["bulkAfterRateLimit"] + values["automaticAfterRateLimit"], 30)
+        self.assertIn("static let slowerAfterRateLimit: TimeInterval = 600", POLICY)
         self.assertIn("static let rateLimitedPause: TimeInterval = 60", section(POLICY, "final class PreservationCallBudget", "struct PreservationCallHeld"))
         self.assertIn("static let quietBackoff: [TimeInterval] = [10, 20, 40, 60]", POLICY)
 
