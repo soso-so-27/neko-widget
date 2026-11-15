@@ -216,25 +216,41 @@ jobs:
           xcrun simctl status_bar "$simulator_udid" override \
             --time 09:41 --batteryLevel 100 --batteryState charged || true
 
+          xcode_arguments=(
+            -project NekoWidget.xcodeproj
+            -scheme NekoWidget
+            -configuration Debug
+            -sdk iphonesimulator
+            -destination "platform=iOS Simulator,id=$simulator_udid"
+            -derivedDataPath "$derived_data_directory"
+            "-only-testing:$test_selector"
+            -parallel-testing-enabled NO
+            -testLanguage ja
+            -testRegion JP
+            COMPILER_INDEX_STORE_ENABLE=NO
+            CODE_SIGNING_ALLOWED=YES
+            CODE_SIGN_IDENTITY=-
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
+            "WIDGET_SCREENSHOT_FIXTURE_CONDITION=$fixture_condition"
+          )
+          xcode_action=test
+          if [[ "$CAPTURE_SCENARIO" == day-words ]]; then
+            # Install and run the app once before the test, so SpringBoard's
+            # Widget Gallery already lists its extension (as the runtime matrix does).
+            xcodebuild "${xcode_arguments[@]}" build-for-testing \
+              > "$artifact_directory/xcodebuild-build.log" 2>&1 \
+              || { tail -n 80 "$artifact_directory/xcodebuild-build.log"; exit 1; }
+            app_path="$derived_data_directory/Build/Products/Debug-iphonesimulator/NekoWidget.app"
+            app_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_path/Info.plist")
+            xcrun simctl install "$simulator_udid" "$app_path"
+            xcrun simctl launch "$simulator_udid" "$app_id"
+            sleep 20
+            xcrun simctl terminate "$simulator_udid" "$app_id" || true
+            xcode_action=test-without-building
+          fi
           set +e
-          xcodebuild \
-            -project NekoWidget.xcodeproj \
-            -scheme NekoWidget \
-            -configuration Debug \
-            -sdk iphonesimulator \
-            -destination "platform=iOS Simulator,id=$simulator_udid" \
-            -derivedDataPath "$derived_data_directory" \
-            -resultBundlePath "$result_bundle" \
-            "-only-testing:$test_selector" \
-            -parallel-testing-enabled NO \
-            -testLanguage ja \
-            -testRegion JP \
-            COMPILER_INDEX_STORE_ENABLE=NO \
-            CODE_SIGNING_ALLOWED=YES \
-            CODE_SIGN_IDENTITY=- \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES \
-            "WIDGET_SCREENSHOT_FIXTURE_CONDITION=$fixture_condition" \
-            test 2>&1 | tee "$artifact_directory/xcodebuild-test.log"
+          xcodebuild "${xcode_arguments[@]}" -resultBundlePath "$result_bundle" \
+            "$xcode_action" 2>&1 | tee "$artifact_directory/xcodebuild-test.log"
           test_status=${PIPESTATUS[0]}
           set -e
           printf '%s\n' "$test_status" > "$artifact_directory/test-exit-code.txt"

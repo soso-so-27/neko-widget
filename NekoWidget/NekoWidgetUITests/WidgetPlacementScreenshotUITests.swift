@@ -246,9 +246,11 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         app.launchArguments += ["-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        sleep(5)
         XCUIDevice.shared.press(.home)
         let springboard = XCUIApplication(bundleIdentifier: springboardBundleIdentifier)
         XCTAssertTrue(springboard.wait(for: .runningForeground, timeout: 15))
+        sleep(5)
         // Large first, then Small: six rows on the first Home Screen page.
         for desiredPage in [3, 1] {
             guard try addWidgetFromGallery(page: desiredPage, in: springboard) else { return }
