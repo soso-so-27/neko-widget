@@ -67,6 +67,9 @@ final class FamilyNotebookPrototype: ObservableObject {
 
     struct FamilyCat: Identifiable { let id: UUID; let toolID: UUID; let name: String }
     var familyCats: [FamilyCat] {
+#if DEBUG
+        if let fixtureCats { return fixtureCats.map { FamilyCat(id: $0.id, toolID: $0.toolID, name: $0.name) } }
+#endif
         guard let snapshot else { return [] }
         var seen = Set<UUID>()
         return snapshot.activeMappings.compactMap { mapping in
@@ -74,6 +77,178 @@ final class FamilyNotebookPrototype: ObservableObject {
                   snapshot.fieldState(for: .init(familyCatID: mapping.familyCatID, field: nil))?.isDeleted != true else { return nil }
             return FamilyCat(id: mapping.familyCatID, toolID: toolID, name: name(of: mapping.familyCatID))
         }
+    }
+
+    /// The family cats while this iPhone is in the family. 11/15: after
+    /// leaving (or the family ending) the kept copy stays for the notebook's
+    /// own screens, but no page of another home's cat stays in この子.
+    var activeFamilyCats: [FamilyCat] {
+#if DEBUG
+        if fixtureCats != nil { return familyCats }
+#endif
+        return hasFamily ? familyCats : []
+    }
+
+    // MARK: The same cat on this iPhone (11/15, FamilyNotebookCatLink)
+
+    private static let linkAnswersKey = "familyNotebook.catLinkAnswered.v1"
+    /// Asked and closed without an answer: not asked again until next launch.
+    private var closedLinkQuestions = Set<UUID>()
+    /// This iPhone's cats as この子 last drew them (their photos), for the
+    /// question asked from the notebook too. Not saved.
+    var deviceCats: [CatProfilePresentation] = []
+#if DEBUG
+    /// Review captures only: family cats without a notebook (sample names).
+    private(set) var fixtureCats: [FamilyNotebookCatLink.Unlinked]?
+    func useFixtureFamilyCats(_ names: [String], scenario: Int) {
+        fixtureCats = names.enumerated().map { index, name in
+            let id = UUID(uuidString: String(format: "FA417000-%04X-4000-8000-%012X", scenario & 0xFFFF, index))!
+            let tool = UUID(uuidString: String(format: "FA417001-%04X-4000-8000-%012X", scenario & 0xFFFF, index))!
+            return .init(id: id, toolID: tool, name: name)
+        }
+        objectWillChange.send()
+    }
+#endif
+
+    /// Family cats with no cat of this iPhone (each shows as its own page).
+    /// Worked out when the notebook or 「この子のこと」 is read again, never
+    /// per drawing (the この子 pages are drawn while they move).
+    @Published private(set) var unlinkedCats: [FamilyNotebookCatLink.Unlinked] = []
+    var unlinkedFamilyCats: [FamilyNotebookCatLink.Unlinked] {
+#if DEBUG
+        if let fixtureCats { return fixtureCats }
+#endif
+        return unlinkedCats
+    }
+
+    private func refreshUnlinked() {
+        var next: [FamilyNotebookCatLink.Unlinked] = []
+        if isReal, hasFamily, let snapshot {
+            next = FamilyNotebookCatLink.unlinked(snapshot, care: CatCareStore.shared.state) { name(of: $0) }
+        }
+        if next != unlinkedCats { unlinkedCats = next }
+    }
+
+    /// The family cat a cat of this iPhone is linked to, if any.
+    func linkedFamilyCat(profile: String) -> UUID? {
+        guard hasFamily, let snapshot, let id = UUID(uuidString: profile) else { return nil }
+        return snapshot.activeMappings.first { $0.recordID == nil && $0.profileID == id }?.familyCatID
+    }
+
+    /// 「家族の手帳とのつながりを外す」 is offered for a cat this iPhone linked
+    /// by an answer (never for the creator's own cats, which went in whole).
+    func unlinkOffered(profile: String) -> Bool {
+        guard isReal, let cat = linkedFamilyCat(profile: profile), let key = answerKey(cat) else { return false }
+        return answeredLinks.contains(key)
+    }
+
+    /// Profiles already linked to a family cat.
+    var linkedProfiles: Set<UUID> {
+        guard hasFamily, let snapshot else { return [] }
+        return FamilyNotebookCatLink.linkedProfiles(in: snapshot)
+    }
+
+    private var answeredLinks: Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: Self.linkAnswersKey) ?? [])
+    }
+
+    private func answerKey(_ cat: UUID) -> String? {
+#if DEBUG
+        if fixtureCats != nil { return "fixture:" + cat.uuidString.lowercased() }
+#endif
+        return snapshot.map { FamilyNotebookCatLink.answerKey(family: $0.familyID, cat: cat) }
+    }
+
+    /// The person answered for this family cat (same cat, or another cat):
+    /// it is never asked again. Written once per answer, never while drawing.
+    func rememberLinkAnswer(_ cat: UUID) {
+        guard let key = answerKey(cat), !answeredLinks.contains(key) else { return }
+        UserDefaults.standard.set(Array(answeredLinks.union([key])).sorted(), forKey: Self.linkAnswersKey)
+        objectWillChange.send()
+    }
+
+    func closeLinkQuestion(_ cat: UUID) {
+        closedLinkQuestions.insert(cat)
+        objectWillChange.send()
+    }
+
+    /// The one family cat to ask about now: arrived, not answered, and this
+    /// iPhone has a cat it could be.
+    func pendingLinkQuestion(profiles: [String]) -> FamilyNotebookCatLink.Unlinked? {
+        let linked = linkedProfiles
+        guard profiles.contains(where: { UUID(uuidString: $0).map { !linked.contains($0) } ?? false }) else { return nil }
+        let answered = answeredLinks
+        return unlinkedFamilyCats.first { cat in
+            !closedLinkQuestions.contains(cat.id) && !(answerKey(cat.id).map { answered.contains($0) } ?? true)
+        }
+    }
+
+    /// The profile's birthday is copied into 「この子のこと」 (CatCareStore.
+    /// importBirthdays), so a linked profile without one takes the family's
+    /// day; an empty one would clear it for everyone. Set by AppRootView.
+    var fillProfileBirthday: ((UUID, CatCareDay) async -> Void)?
+
+    /// Links a family cat to a cat of this iPhone: one page from now on.
+    func link(_ cat: UUID, toProfile profile: UUID) async throws {
+#if DEBUG
+        if fixtureCats != nil { rememberLinkAnswer(cat); return }
+#endif
+        guard isReal, hasFamily, let store, let snapshot, let author = realAuthor,
+              let mapping = FamilyNotebookCatLink.catMapping(cat, in: snapshot), mapping.profileID == nil,
+              let tool = mapping.toolCatID, CatCareStore.shared.canSave else { throw FamilySharingError.notAllowed }
+        // The family's writing is in the record before this iPhone fills it.
+        applyFamilyWrites()
+        guard CatCareStore.shared.state?.record(catID: tool) != nil else { throw FamilyNotebookError.storageUnavailable }
+        _ = try store.setLocalProfile(profile, forFamilyCat: cat)
+        reload()
+        // A normal save: what this iPhone had written goes into the notebook
+        // the way any edit of a shared cat does (willSave, saveRealChanges).
+        let saved = CatCareStore.shared.update { state in
+            if let next = try? FamilyNotebookCatLink.linking(state, toolCatID: tool, profile: profile, now: Date()) { state = next }
+        }
+        guard saved, CatCareStore.shared.state?.record(catID: tool)?.profileID == profile else {
+            _ = try? store.setLocalProfile(nil, forFamilyCat: cat)
+            reload()
+            throw FamilyNotebookError.storageUnavailable
+        }
+        // 預けるとき and 病院 of the cat go in as when a cat is added to the
+        // notebook. If that fails, they join with their next edit.
+        do {
+            var handoff = CareHandoffStore.shared.loadError == nil ? CareHandoffStore.shared.plan : nil
+            handoff?.cats.removeAll { $0.familyDetached == true || $0.profileID.flatMap(UUID.init(uuidString:)) != profile }
+            let visits = try await VeterinaryVisitStore.shared.visits().filter { $0.catID == profile && $0.familyDetached != true }
+            if !(handoff?.cats.isEmpty ?? true) || !visits.isEmpty, let current = try? store.snapshot() {
+                let source = try FamilyNotebookMigrationSource(handoff: handoff?.cats.isEmpty == false ? handoff : nil, visits: visits)
+                let prepared = try FamilyNotebookMigration.prepare(source: source, familyID: current.familyID,
+                                                                   mappings: current.activeMappings)
+                _ = try store.applyImport(prepared.plan, author: author)
+            }
+        } catch {}
+        rememberLinkAnswer(cat)
+        reload(); applyFamilyWrites()
+        if let birthday = CatCareStore.shared.state?.record(catID: tool)?.birthday?.value ?? nil {
+            await fillProfileBirthday?(profile, birthday)
+        }
+    }
+
+    /// 「家族の手帳とのつながりを外す」: the family cat is its own page again;
+    /// this iPhone's cat keeps its photos and a copy of what was written.
+    func unlink(profile: String) throws {
+        guard isReal, hasFamily, let store, let snapshot, let id = UUID(uuidString: profile),
+              let mapping = snapshot.activeMappings.first(where: { $0.recordID == nil && $0.profileID == id }),
+              let tool = mapping.toolCatID, CatCareStore.shared.canSave else { throw FamilySharingError.notAllowed }
+        _ = try store.setLocalProfile(nil, forFamilyCat: mapping.familyCatID)
+        let saved = CatCareStore.shared.update { state in
+            if let next = try? FamilyNotebookCatLink.unlinking(state, toolCatID: tool, profile: id) { state = next }
+        }
+        guard saved, CatCareStore.shared.state?.record(catID: tool)?.profileID == nil else {
+            _ = try? store.setLocalProfile(id, forFamilyCat: mapping.familyCatID)
+            reload()
+            throw FamilyNotebookError.storageUnavailable
+        }
+        // Unlinked on purpose: not asked about again.
+        rememberLinkAnswer(mapping.familyCatID)
+        reload()
     }
 
     /// Called after a service pass, including a failed network pass when a
@@ -188,6 +363,7 @@ final class FamilyNotebookPrototype: ObservableObject {
         // published again, so the open list is not redrawn for nothing (11/5).
         do { let next = try store?.snapshot(); if next != snapshot { snapshot = next } }
         catch { message = "家族の手帳を読み込めませんでした。少し待ってから、もう一度お試しください。" }
+        refreshUnlinked()
     }
 
     // MARK: Making the family, and copying the tools in
@@ -894,6 +1070,7 @@ struct FamilyNotebookView: View {
         .onChange(of: presentsSheet, initial: true) { _, open in FamilyNotebookAutoCheck.shared.holdsRedraw = open }
         .onAppear { model.markSeen() }
         .onDisappear { model.markSeen() }
+        .modifier(FamilyNotebookLinkAsk())
     }
 
     /// Who is in the family, and what they wrote lately (like the activity of
@@ -1836,6 +2013,16 @@ struct FamilyNotebookCatSelectionView: View {
     /// Fixed while the sheet is open, so a cat being shared does not drop out
     /// of the list under the person's finger (11/5: the list jumped).
     @State private var shown: [CatCareRecord]?
+    /// 11/15: a chosen cat with the name of a family cat not on this iPhone:
+    /// 「家族の手帳の「むぎ」と同じ子ですか。」 before anything is added.
+    @State private var sameNameQuestion: SameName?
+    @State private var linkedCats: [UUID: UUID] = [:]
+    @State private var answeredDifferent: Set<UUID> = []
+    struct SameName: Identifiable {
+        let record: CatCareRecord
+        let family: FamilyNotebookCatLink.Unlinked
+        var id: UUID { record.catID }
+    }
     private var available: [CatCareRecord] {
         let linked = Set(model.familyCats.map(\.toolID))
         return (care.state?.cats ?? []).filter { $0.deletedAt == nil && !linked.contains($0.catID) }
@@ -1866,8 +2053,33 @@ struct FamilyNotebookCatSelectionView: View {
             }
             .alert("追加できませんでした", isPresented: $failed) { Button("閉じる", role: .cancel) {} }
                 message: { Text("少し待ってから、もう一度お試しください。") }
+            .alert(sameNameQuestion.map { "家族の手帳の「" + $0.family.name + "」と同じ子ですか。" } ?? "",
+                   isPresented: Binding(get: { sameNameQuestion != nil }, set: { if !$0 { sameNameQuestion = nil } }),
+                   presenting: sameNameQuestion) { question in
+                Button("同じ子（つなぐ）") { answer(question, same: true) }
+                Button("べつの子（手帳に足す）") { answer(question, same: false) }
+                Button("キャンセル", role: .cancel) { saving = false }
+            }
         }
         .onAppear { if shown == nil { shown = available } }
+    }
+
+    /// The next chosen cat with a family cat's name, not answered yet.
+    private func nextSameName() -> SameName? {
+        let unlinked = model.unlinkedFamilyCats.filter { cat in !linkedCats.values.contains(cat.id) }
+        for record in (shown ?? available) where selected.contains(record.catID) && linkedCats[record.catID] == nil {
+            guard record.profileID != nil, !answeredDifferent.contains(record.catID),
+                  let family = FamilyNotebookCatLink.sameName(record.name?.value ?? "", in: unlinked) else { continue }
+            return SameName(record: record, family: family)
+        }
+        return nil
+    }
+
+    private func answer(_ question: SameName, same: Bool) {
+        sameNameQuestion = nil
+        if same { linkedCats[question.record.catID] = question.family.id }
+        else { answeredDifferent.insert(question.record.catID) }
+        add()
     }
 
     private func selection(_ cats: [CatCareRecord]) -> some View {
@@ -1887,13 +2099,112 @@ struct FamilyNotebookCatSelectionView: View {
 
     private func add() {
         saving = true
+        if let question = nextSameName() { sameNameQuestion = question; return }
         Task {
             do {
-                try await model.sharePersonalCats(selected)
+                // 「同じ子」: linked to the family cat, never a second one.
+                for (record, family) in linkedCats {
+                    guard let profile = shown?.first(where: { $0.catID == record })?.profileID else { continue }
+                    try await model.link(family, toProfile: profile)
+                }
+                let rest = selected.subtracting(linkedCats.keys)
+                if !rest.isEmpty { try await model.sharePersonalCats(rest) }
                 await FamilyNotebookSharing.shared.refresh(); dismiss()
             } catch { failed = true }
             saving = false
         }
+    }
+}
+
+/// 11/15: 「家族の手帳の「むぎ」」 / 「このiPhoneの子と同じですか。」, this
+/// iPhone's cats with their photos (the same name first) and 「べつの子」.
+/// Asked once per family cat; an answer is never asked again.
+struct FamilyNotebookLinkQuestionView: View {
+    let cat: FamilyNotebookCatLink.Unlinked
+    let cats: [CatProfilePresentation]
+    let choose: (CatProfilePresentation) -> Void
+    let other: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(cats) { profile in
+                        Button { choose(profile) } label: {
+                            HStack(spacing: 14) {
+                                CatProfileThumbnail(photo: profile.coverPhoto)
+                                    .frame(width: 52, height: 52)
+                                    .accessibilityHidden(true)
+                                Text(profile.displayName)
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(minHeight: 52)
+                            .contentShape(Rectangle())
+                        }
+                        .accessibilityLabel(profile.displayName + "と同じ子")
+                        .accessibilityIdentifier("family-link-same")
+                    }
+                } header: {
+                    Text("このiPhoneの子と同じですか。")
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                        .textCase(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Section {
+                    Button("べつの子") { other() }
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .accessibilityIdentifier("family-link-other")
+                }
+            }
+            .navigationTitle("家族の手帳の「" + cat.name + "」")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
+        }
+        .presentationDetents([.medium, .large])
+        .accessibilityIdentifier("family-link-question")
+    }
+}
+
+/// 11/15: the same question when the notebook is opened (the この子 tab
+/// asks it too). This iPhone's cats are the ones この子 last drew.
+struct FamilyNotebookLinkAsk: ViewModifier {
+    @ObservedObject private var model = FamilyNotebookPrototype.shared
+    @State private var question: FamilyNotebookCatLink.Unlinked?
+    @State private var unanswered: UUID?
+
+    func body(content: Content) -> some View {
+        content
+            .task(id: model.unlinkedFamilyCats.map(\.id)) {
+                try? await Task.sleep(for: .milliseconds(900))
+                guard !Task.isCancelled, question == nil,
+                      let cat = model.pendingLinkQuestion(profiles: model.deviceCats.map(\.identifier)) else { return }
+                unanswered = cat.id
+                question = cat
+            }
+            .sheet(item: $question, onDismiss: {
+                if let unanswered { model.closeLinkQuestion(unanswered) }
+                unanswered = nil
+            }) { cat in
+                FamilyNotebookLinkQuestionView(
+                    cat: cat,
+                    cats: FamilyNotebookCatLink.candidates(for: cat.name, among: model.deviceCats,
+                        id: { UUID(uuidString: $0.identifier) }, name: { $0.displayName }, linked: model.linkedProfiles),
+                    choose: { profile in
+                        unanswered = nil
+                        question = nil
+                        guard let id = UUID(uuidString: profile.identifier) else { return }
+                        Task { _ = try? await model.link(cat.id, toProfile: id) }
+                    },
+                    other: {
+                        unanswered = nil
+                        model.rememberLinkAnswer(cat.id)
+                        question = nil
+                    })
+            }
     }
 }
 

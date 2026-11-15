@@ -375,8 +375,15 @@ class NameIsTheCatMenu(unittest.TestCase):
         self.assertIn("var householdTools = true", empty)
         self.assertIn("if householdTools {", empty)
         self.assertIn('.accessibilityIdentifier("cat-home-add")', empty)
-        self.assertIn("pageActions.add = { addsCat = true }", HOME)
-        self.assertEqual(HOME.count("addsCat = true"), 2)
+        # 11/15: both starts go through startAdding(), which offers the
+        # family notebook's cats first when some are not on this iPhone.
+        self.assertIn("pageActions.add = { startAdding() }", HOME)
+        self.assertIn("openSettings: openSettings) {\n                        startAdding()\n                    }", HOME.replace("\r\n", "\n"))
+        start = block(HOME, "private func startAdding() {")
+        self.assertIn("if familyNotebook.unlinkedFamilyCats.isEmpty { addsCat = true } else { choosesFamilyCat = true }", start)
+        # The other two: 「新しい子を追加」 in that choice, and registering a family cat here.
+        self.assertEqual(HOME.count("addsCat = true"), 3)
+        self.assertIn('Button("新しい子を追加") { registeringFamilyCat = nil; addsCat = true }', HOME)
         self.assertIn("pageCount: cats.count + 1,", HOME)
         dots = block(HOME, "private struct CatHomePageDots: View {")
         self.assertIn("if dot.index == count - 1 {", dots)

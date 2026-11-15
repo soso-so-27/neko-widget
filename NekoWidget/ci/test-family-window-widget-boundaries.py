@@ -5408,7 +5408,8 @@ class WorkingFeedbackTests(unittest.TestCase):
 class CatPageSharedLabelTests(unittest.TestCase):
     def test_only_a_cat_in_the_notebook_says_it_is_shared(self) -> None:
         care = source("NekoWidget/Views/CatCareView.swift")
-        self.assertIn("familyNotebook.familyCats.contains { $0.toolID == catID }", care)
+        # 11/15: only while this iPhone is in the family (not a left copy).
+        self.assertIn("familyNotebook.activeFamilyCats.contains { $0.toolID == catID }", care)
         # Faces, not a sentence: in the notebook as a picture, elsewhere as the way in.
         self.assertIn("FamilyFaces(names: familyNotebook.members.map(\\.displayName))", care)
         self.assertIn("FamilyNotebookButton(sharedNames: familyNotebook.members.map(\\.displayName))", care)
@@ -9000,11 +9001,14 @@ class CatHomeTab1112Tests(unittest.TestCase):
         self.assertIn("toolsShown: CatHomeTool.household", empty)
         self.assertIn("static let household: [CatHomeTool] = [.evacuation, .showcase]", self.home)
         # 11/13: 設定 scrolls with the no-cat page too (was a bar pinned over it).
+        # 11/15: through startAdding(), which offers the family's cats first.
         self.assertIn("CatHomeNoCatPage(metrics: metrics, tools: tools, openSettings: openSettings) {\n"
-                      "                        addsCat = true", self.home)
+                      "                        startAdding()", self.home)
         # No key photo: a calm gradient, no placeholder icon.
         hero = section(self.home, "private struct CatHomeHero: View {", "/// The tools under the photo:")
-        self.assertIn("LinearGradient(colors: [Color(red: 0.56, green: 0.57, blue: 0.60)", hero)
+        # 11/15: a warm neutral with のわ on it (CatHomeNoPhotoArt), one picture.
+        self.assertIn("LinearGradient(colors: [Color(red: 0.62, green: 0.59, blue: 0.55)", hero)
+        self.assertIn("if cat.profile?.coverPhoto == nil {", hero)
         self.assertNotIn("cat.fill", hero)
         # Departed: name and the farewell line, この子のこと, no tools.
         page = section(self.home, "private struct CatHomePage: View {", "/// The cat's key photo from the very top")

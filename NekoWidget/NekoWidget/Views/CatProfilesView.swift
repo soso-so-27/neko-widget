@@ -522,6 +522,8 @@ private struct CatProfileCreationFlow: ViewModifier {
     @Binding var isStarted: Bool
     let presentation: CatProfilesPresentation
     let actions: CatProfilesViewActions
+    /// 11/15: a family cat's name, when this registers that cat here.
+    var initialName: String? = nil
     let created: (String) -> Void
 
     private struct CreationRequest: Identifiable {
@@ -590,6 +592,7 @@ private struct CatProfileCreationFlow: ViewModifier {
                     referenceCandidates: presentation.profileCreationPhotos,
                     initialLifeReference: presentation.legacyLifeReference,
                     initialPhotoIdentifier: request.photoIdentifier,
+                    initialName: initialName,
                     createProfile: actions.createProfile,
                     onCreated: { createdProfileIdentifier = $0 }
                 )
@@ -603,9 +606,10 @@ private struct CatProfileCreationFlow: ViewModifier {
 
 extension View {
     func addingCatProfile(isStarted: Binding<Bool>, presentation: CatProfilesPresentation,
-                          actions: CatProfilesViewActions, created: @escaping (String) -> Void) -> some View {
+                          actions: CatProfilesViewActions, initialName: String? = nil,
+                          created: @escaping (String) -> Void) -> some View {
         modifier(CatProfileCreationFlow(isStarted: isStarted, presentation: presentation,
-                                        actions: actions, created: created))
+                                        actions: actions, initialName: initialName, created: created))
     }
 }
 
@@ -625,13 +629,14 @@ private struct AddCatProfileView: View {
         referenceCandidates: [CatProfilePhotoPresentation],
         initialLifeReference: CatProfileLifeReferencePresentation?,
         initialPhotoIdentifier: String? = nil,
+        initialName: String? = nil,
         createProfile: @escaping (CatProfileDraftPresentation) async -> String?,
         onCreated: @escaping (String) -> Void
     ) {
         self.referenceCandidates = referenceCandidates
         self.createProfile = createProfile
         self.onCreated = onCreated
-        let initial = CatProfileDraftPresentation(lifeReference: initialLifeReference,
+        let initial = CatProfileDraftPresentation(name: initialName ?? "", lifeReference: initialLifeReference,
             referencePhotoIdentifier: initialPhotoIdentifier)
         initialDraft = initial
         _draft = State(initialValue: initial)

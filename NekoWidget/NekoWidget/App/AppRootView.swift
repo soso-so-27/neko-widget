@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Photos
 import SwiftUI
@@ -86,6 +87,15 @@ struct AppRootView: View {
         // 11/15: a family member, or someone waiting to be let in, reads the
         // family when the app opens, before any screen of it is opened.
         .familyNotebookOpeningCheck()
+        // 11/15: a family cat not linked to a cat of this iPhone turns the
+        // single-cat rule off (its photos may be in the library). Only when
+        // that changes, never while drawing.
+        .onReceive(familyNotebook.$unlinkedCats.map { !$0.isEmpty }.removeDuplicates()) { outside in
+            familyNotebook.fillProfileBirthday = { [viewModel] profile, day in
+                await viewModel.fillCatProfileBirthday(profileID: profile, day: day)
+            }
+            Task { await viewModel.setFamilyCatsOutsideProfiles(outside) }
+        }
         // An invitation link opened before the first-run guide ends: join at once,
         // then land in the まど tab. The guide can be finished later from 設定.
         .onChange(of: invitationInbox.pending?.id, initial: true) { _, _ in
