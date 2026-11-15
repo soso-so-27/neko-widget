@@ -384,10 +384,10 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn("--app-store-screenshot-fixture", self.ui_test)
         self.assertIn("app.wait(for: .runningForeground", self.widget_ui_test)
         self.assertIn(
-            "このiPhoneで見つけた猫写真",
+            "このiPhoneで見つけた猫の写真",
             self.widget_view,
         )
-        self.assertNotIn("このiPhoneで見つけた猫写真", self.widget_ui_test)
+        self.assertNotIn("このiPhoneで見つけた猫の写真", self.widget_ui_test)
         self.assertIn("waitForFixturePalette(timeout: 15)", self.widget_ui_test)
         self.assertIn("fixturePaletteIsVisible", self.widget_ui_test)
         self.assertIn("pixels.withUnsafeMutableBytes", self.widget_ui_test)

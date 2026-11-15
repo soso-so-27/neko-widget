@@ -37,6 +37,7 @@ FAMILY = read(VIEWS + "FamilyNotebookView.swift")
 TESTS = read("NekoWidgetTests/AccessibilitySpeechTests.swift")
 PROJECT = read("NekoWidget.xcodeproj/project.pbxproj")
 QUICK = read("ci/run-quick-ios-checks.sh")
+WIDGET = read("NekoWidgetWidget/NekoWidgetView.swift")
 
 
 def block(source, marker):
@@ -157,6 +158,37 @@ class Words(unittest.TestCase):
         self.assertIn('"\\(creationDate.formatted(.dateTime.year().month().day()))の猫の写真"', HOME_PHOTOS)
         self.assertNotIn("2回タップ", DETAIL)
         self.assertGreaterEqual(FAMILY.count(".accessibilityHidden(true)"), 2)
+
+
+class WidgetPhoto(unittest.TestCase):
+    """The Widget's photo says what it is, not how to tap it (11/15)."""
+
+    def label(self):
+        return block(WIDGET, "private var loadedPhotoAccessibilityLabel: String {")
+
+    def test_a_group_sender_is_read_as_the_app_tile_reads_it(self):
+        label = self.label()
+        # 「ママから」 is the sender, never read as a ひとこと.
+        self.assertIn('if let sender = familyCaption { return "\\(entry.windowDisplayName)。\\(sender)の写真" }', label)
+        self.assertIn('"\\(entry.windowDisplayName)。自分が届けた写真"', label)
+        self.assertLess(label.index("GroupWidgetCache.isGroupSourceID"), label.index("ひとこと、"))
+        self.assertNotIn("ひとこと。", label)
+
+    def test_cloudy_says_its_state_and_the_capsule_what_clearing_shows(self):
+        label = self.label()
+        self.assertLess(label.index("selection.revealedAt == nil"), label.index("entry.officialPhoto"))
+        self.assertIn('"くもりのまど" : "くもりのまど。作品がとどきました"', label)
+        self.assertIn('? "くもりを晴らして、きょうの1枚を見る" : "くもりを晴らして、作品を見る")', WIDGET)
+        self.assertNotIn("きょうのまどのくもりを晴らす", WIDGET)
+        # The visible words stay.
+        self.assertIn('"タップで、きょうの1枚" : "作品がとどきました"', WIDGET)
+
+    def test_photos_read_as_cat_photos_without_how_to_tap(self):
+        label = self.label()
+        self.assertIn('"このiPhoneで見つけた猫の写真"', label)
+        self.assertIn('"\\(entry.windowDisplayName)に届いた猫の写真"', label)
+        for word in ("タップ", "2回", "開く"):
+            self.assertNotIn(word, label)
 
 
 class Registration(unittest.TestCase):
