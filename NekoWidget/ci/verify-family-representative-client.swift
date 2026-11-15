@@ -84,7 +84,11 @@ private actor Relay: GroupHTTPTransport {
         try await client().deliver(pending)
         try check(await relay.counts().2 == count.2, "completed retry does not send")
         try check(count.0 == 1, "lost commit reply does not PUT again")
-        let operation = try FamilyNotebookOperationCrypto.open(pending.operation, roster: roster, key: key)
+        let notebook = try FamilyNotebookStore(directory: root.appendingPathComponent("notebook"), familyID: family, deviceID: device)
+        try notebook.receiveRetaining([FamilyNotebookOperationCrypto.openRetaining(pending.operation, roster: roster, key: key)])
+        guard let operation = try notebook.snapshot().operations.first(where: { $0.id == pending.operation.operationID }) else {
+            throw Failure.check("authenticated compatibility reference is promoted by the store")
+        }
         guard case .some(.text(let text)) = operation.value else { throw Failure.check("encrypted reference") }
         let reference = try GroupWire.decode(FamilyNotebookRepresentativePhotoReference.self, Data(text.utf8))
         let slot = try await resumed.slots()[0]
