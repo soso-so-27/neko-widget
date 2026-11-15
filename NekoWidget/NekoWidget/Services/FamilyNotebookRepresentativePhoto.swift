@@ -22,11 +22,34 @@ enum FamilyNotebookRepresentativePhotoImage {
                 else { throw FamilyNotebookCryptoError.invalid }
                 CGImageDestinationAddImage(encoder, image, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
                 if CGImageDestinationFinalize(encoder), output.length <= 200_000 {
-                    return .init(jpeg: output as Data, width: image.width, height: image.height)
+                    return .init(jpeg: try withoutMetadata(output as Data), width: image.width, height: image.height)
                 }
             }
         }
         throw FamilyNotebookCryptoError.tooLarge
+    }
+    /// ImageIO can generate a fresh EXIF block even when source properties are
+    /// not copied. Drop EXIF/XMP, IPTC and comments without touching scan bytes.
+    private static func withoutMetadata(_ data: Data) throws -> Data {
+        let bytes = [UInt8](data)
+        guard bytes.count >= 4, bytes[0] == 0xff, bytes[1] == 0xd8 else { throw FamilyNotebookCryptoError.invalid }
+        var result = Data(bytes.prefix(2)), offset = 2
+        while offset < bytes.count {
+            let start = offset
+            guard bytes[offset] == 0xff else { throw FamilyNotebookCryptoError.invalid }
+            while offset < bytes.count && bytes[offset] == 0xff { offset += 1 }
+            guard offset < bytes.count else { throw FamilyNotebookCryptoError.invalid }
+            let marker = bytes[offset]; offset += 1
+            if marker == 0xda || marker == 0xd9 {
+                result.append(contentsOf: bytes[start...]); return result
+            }
+            guard offset + 1 < bytes.count else { throw FamilyNotebookCryptoError.invalid }
+            let length = Int(bytes[offset]) * 256 + Int(bytes[offset + 1])
+            guard length >= 2, offset + length <= bytes.count else { throw FamilyNotebookCryptoError.invalid }
+            offset += length
+            if marker != 0xe1 && marker != 0xed && marker != 0xfe { result.append(contentsOf: bytes[start..<offset]) }
+        }
+        throw FamilyNotebookCryptoError.invalid
     }
     static func validate(_ jpeg: Data, reference: FamilyNotebookRepresentativePhotoReference) throws {
         guard jpeg.count <= 200_000, let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
@@ -35,6 +58,7 @@ enum FamilyNotebookRepresentativePhotoImage {
               properties[kCGImagePropertyPixelWidth] as? Int == reference.pixelWidth,
               properties[kCGImagePropertyPixelHeight] as? Int == reference.pixelHeight,
               properties[kCGImagePropertyGPSDictionary] == nil,
+              properties[kCGImagePropertyExifDictionary] == nil,
               CGImageSourceCreateImageAtIndex(source, 0, nil) != nil
         else { throw FamilyNotebookCryptoError.invalid }
     }

@@ -19,6 +19,10 @@ on:
         description: Run isolated family notebook models only
         type: boolean
         default: false
+      photo_models_only:
+        description: Run only representative image and cryptographic checks
+        type: boolean
+        default: false
       notebook_network_only:
         description: Preserve successful model checks and run only family transport/service probes
         type: boolean
@@ -130,8 +134,12 @@ jobs:
       - name: Check isolated stores, encrypted sync, membership and private record preservation
         working-directory: NekoWidget
         run: |
-          if [[ "${{ inputs.notebook_network_only }}" != "true" ]]; then bash ci/run-family-notebook-checks.sh; fi
-          bash ci/run-family-notebook-network-checks.sh
+          if [[ "${{ inputs.photo_models_only }}" == "true" ]]; then
+            bash ci/run-family-representative-photo-checks.sh
+          else
+            if [[ "${{ inputs.notebook_network_only }}" != "true" ]]; then bash ci/run-family-notebook-checks.sh; fi
+            bash ci/run-family-notebook-network-checks.sh
+          fi
 
   recovery-models:
     if: github.event_name == 'workflow_dispatch' && inputs.recovery_models
