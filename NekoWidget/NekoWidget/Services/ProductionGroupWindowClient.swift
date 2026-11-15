@@ -50,6 +50,10 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         anchorReceiptForeground = active
     }
 
+    /// Checks only (verify-group-adapter): the next pass may run at once,
+    /// as it would 20 s later.
+    func forgetAnchorBackfillGap() { lastAnchorBackfillAt = nil }
+
     /// Called after a foreground delay. Reads only existing local pins/identity;
     /// no registration, new identity, roster fetch, or key recovery.
     func backfillAnchorReceipts() async {

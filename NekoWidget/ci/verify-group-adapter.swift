@@ -645,6 +645,11 @@ private struct GroupAdapterChecks {
         try check(memory.read("anchor-receipt:" + room.id) == nil, "lost successful response is not marked complete")
         await backfill.setAnchorReceiptForeground(false)
         await backfill.setAnchorReceiptForeground(true)
+        // 1115s: not again within 20 s of the last pass, whatever the foreground did.
+        let beforeGap = await receiptRelay.sent().count
+        await backfill.backfillAnchorReceipts()
+        try check(await receiptRelay.sent().count == beforeGap, "anchor receipts keep a 20 s gap")
+        await backfill.forgetAnchorBackfillGap()
         await backfill.backfillAnchorReceipts()
         let storedReceipt = try GroupWire.decode(GroupAnchorReceipt.self, memory.read("anchor-receipt:" + room.id)!)
         let receiptIdentity = try GroupWire.decode(GroupDeviceIdentity.self, originalIdentity!)
