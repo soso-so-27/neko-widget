@@ -743,6 +743,10 @@ final class AppRecordPersistence: ObservableObject {
     private var waitingForEditor = false
     private var nextAttempt = Date.distantPast
     private var transientFailures = 0
+    /// 1115v-4: passes in a row that ended on RATE_LIMITED having sent nothing.
+    private var rateLimitedQuietPasses = 0
+    /// Whether the pass being reported let any call through the gate.
+    private var lastPassProgressed = false
     private var firstEditAt: Date?
     private var saveAfter = Date.distantPast
     private var cleanupTask: Task<Void, Never>?
@@ -935,19 +939,19 @@ final class AppRecordPersistence: ObservableObject {
         saveLifetime.setForeground(value)
         if !value {
             loop?.cancel(); loop = nil
-            if requested, enabled { Task { [weak self] in await self?.synchronize(background: true) } }
+            if requested, enabled { Task { [weak self] in await SharingPersonAction.automatic { await self?.synchronize(background: true) } } }
             return
         }
         guard loop == nil, configuration.isEnabled else { return }
         requested = true
         nextAttempt = .distantPast; cleanupNextAttempt = .distantPast
-        loop = Task { [weak self] in
+        loop = Task { [weak self] in await SharingPersonAction.automatic {
             while !Task.isCancelled {
                 guard let self, self.active else { return }
                 await self.synchronize()
                 do { try await Task.sleep(for: .seconds(1)) } catch { return }
             }
-        }
+        } }
     }
     private func yieldCleanup() async {
         if let cleanupTask {
@@ -1167,13 +1171,14 @@ final class AppRecordPersistence: ObservableObject {
         cleanupYield = false; cleanupPending = true
         cleanupRequiredForCapacity = requiredForCapacity
         let intent = saveIntent.ticket()
-        cleanupTask = Task { [weak self] in
+        // 1115v-4: tidying is the app's own work, even after a tap.
+        cleanupTask = Task { [weak self] in await SharingPersonAction.automatic {
             await Task.yield()
             guard let self else { return }
             await self.runCleanup(initial, remote: remote, checkpoint: checkpoint, retainedIndex: retainedIndex, intent: intent)
             self.cleanupTask = nil
             self.cleanupRequiredForCapacity = false
-        }
+        } }
     }
     private func runCleanup(_ initial: Binding, remote: (ManagedPreservationRecord, AppRecordHead)?,
                             checkpoint: ManagedPreservationClient.SessionCheckpoint,
@@ -1256,6 +1261,8 @@ final class AppRecordPersistence: ObservableObject {
         var phase = "保存設定を確認"
         var accepted: AcceptedSave?
         var cleanup = false
+        // 1115v-4: whether this pass moved anything, for a RATE_LIMITED end.
+        let admittedAtStart = await client.admittedCalls()
         do {
             guard var value = try starting.get() else { return }
             try AppRecordEditingLease.requireIdle()
@@ -1362,7 +1369,7 @@ final class AppRecordPersistence: ObservableObject {
             if value.fingerprint == currentFingerprint, value.pending == nil, !value.needsNotebookBackupUpdate {
                 guard await stillSaved(accepted) else { throw ToolBackupError.changed }
                 try saveIntent.require(intent)
-                title = "保存済み"; detail = nil; transientFailures = 0
+                title = "保存済み"; detail = nil; transientFailures = 0; rateLimitedQuietPasses = 0
                 enqueueCleanup(value, remote: remote, checkpoint: checkpoint)
                 return
             }
@@ -1395,7 +1402,7 @@ final class AppRecordPersistence: ObservableObject {
                 try saveIntent.require(intent)
                 value.filteredNotebookSnapshotID = previous.snapshotID
                 try write(value, intent: intent)
-                title = "保存済み"; detail = nil; transientFailures = 0
+                title = "保存済み"; detail = nil; transientFailures = 0; rateLimitedQuietPasses = 0
                 enqueueCleanup(value, remote: remote, checkpoint: checkpoint)
                 return
             }
@@ -1475,7 +1482,7 @@ final class AppRecordPersistence: ObservableObject {
             let isSaved = await stillSaved(accepted)
             try saveIntent.require(intent)
             title = isSaved ? "保存済み" : "保存待ちの変更があります"
-            detail = nil; transientFailures = 0
+            detail = nil; transientFailures = 0; rateLimitedQuietPasses = 0
             if !isSaved { requested = true }
             // The already validated immutable index belongs to this exact CAS.
             cachedIndex = (try indexKey(value, revision: revision, head: head), saved.index)
@@ -1496,7 +1503,10 @@ final class AppRecordPersistence: ObservableObject {
         }
           catch {
             guard (try? saveIntent.require(intent)) != nil else { return }
+            let admittedNow = await client.admittedCalls()
+            lastPassProgressed = admittedAtStart.map { start in admittedNow.map { $0 > start } ?? false } ?? false
             await reportSyncFailure(error, cleanup: cleanup, accepted: accepted, intent: intent)
+            lastPassProgressed = false
         }
     }
     static func needsAuthenticatedWork(_ value: Binding, fingerprint: String, requested: Bool) -> Bool {
@@ -1511,7 +1521,14 @@ final class AppRecordPersistence: ObservableObject {
         }
         cachedIndex = nil; cachedMembership = nil
         let transient = Self.isConnectionFailure(error)
-        if transient {
+        if error as? ManagedPreservationError == .rateLimited {
+            // 1115v-4: the server's minute (or this iPhone's gate) is full.
+            // Moved something: again as soon as the gate opens. Nothing
+            // moved: 10, 20, 40, then 60 s, never before the gate opens.
+            rateLimitedQuietPasses = lastPassProgressed ? 0 : rateLimitedQuietPasses + 1
+            nextAttempt = PreservationRetrySchedule.next(now: Date(), progressed: lastPassProgressed,
+                quietPasses: rateLimitedQuietPasses, opensAt: PreservationCallBudget.shared.nextAutomatic())
+        } else if transient {
             transientFailures += 1
             nextAttempt = Date().addingTimeInterval(transientFailures == 1 ? 5 : transientFailures == 2 ? 15 : 60)
         } else { nextAttempt = Date().addingTimeInterval(60) }
@@ -1875,14 +1892,14 @@ struct AppRecordSettingsView: View {
         .confirmationDialog("このiPhoneの記録で保存を続けますか？", isPresented: $confirmsLocal, titleVisibility: .visible) {
             Button("このiPhoneの記録を使う") {
                 running = "このiPhoneの記録を使う"
-                Task { await persistence.resolveConflict(useRemote: false) }
+                Task { await SharingPersonAction.run { await persistence.resolveConflict(useRemote: false) } }
             }
         } message: { Text("このiPhoneの記録で、これからの保存を続けます。ほかのiPhoneで保存した記録は、使わなくなります。") }
         .confirmationDialog("ほかのiPhoneで保存した記録に切り替えますか？", isPresented: $confirmsRemote, titleVisibility: .visible) {
             // 11/7: this iPhone's records are replaced; say so and mark it red.
             Button("ほかのiPhoneの記録を使う", role: .destructive) {
                 running = "ほかのiPhoneの記録を使う"
-                Task { await persistence.resolveConflict(useRemote: true) }
+                Task { await SharingPersonAction.run { await persistence.resolveConflict(useRemote: true) } }
             }
         } message: { Text("このiPhoneのいまの記録は、ほかのiPhoneで保存した記録に置き換わります。このiPhoneの記録は元に戻せません。") }
         .onChange(of: persistence.busy) { _, busy in if !busy { running = nil } }
@@ -2064,7 +2081,7 @@ struct AppRecordSettingsView: View {
             .disabled(persistence.busy)
         }
         if persistence.needsAttention && !persistence.conflict && !plusEnded {
-            Button("もう一度試す") { Task { await persistence.retry() } }
+            Button("もう一度試す") { Task { await SharingPersonAction.run { await persistence.retry() } } }
                 .disabled(persistence.busy)
                 .accessibilityIdentifier("app-record-retry")
         }
@@ -2112,7 +2129,8 @@ struct AppRecordSettingsView: View {
         }
         guard membership.canSave else { return }
         starting = false
-        Task { await persistence.enable() }
+        // 1115v-4: after the person's 「保存を始める」 (or the Plus they just bought).
+        Task { await SharingPersonAction.run { await persistence.enable() } }
     }
 }
 

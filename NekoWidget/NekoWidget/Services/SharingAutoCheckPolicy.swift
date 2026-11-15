@@ -165,3 +165,145 @@ final class BillingCallBudget: @unchecked Sendable {
 
 /// A billing call the gate held back. Nothing was sent; the work is kept.
 struct BillingCallDeferred: Error, Sendable {}
+
+/// 11/15 (1115v-4, 1115w): the one gate in front of every call to the
+/// automatic-save server that its owner limit counts
+/// (`ManagedPreservationClient.authenticated`, and the deletion request).
+/// The server allows 30 such calls per owner in each fixed UTC minute, and
+/// two iPhones of one owner share them. Counted here over any 60 s, so no
+/// fixed minute can hold more either:
+/// - automatic (a call nobody marked): 10 on this iPhone, and none for at
+///   least a minute after a 429 (counted from when it came back);
+/// - with the person's own (`SharingPersonAction.run`): 14 on this iPhone,
+///   so two iPhones stay at 28;
+/// - while the person's own restore or export runs (`PreservationBulkRead`):
+///   20 on this iPhone (with the other iPhone's 10 automatic ones, 30).
+/// A full window waits for its first free place (at most 60 s). Only an
+/// automatic call during the pause is held: it is never sent, and the caller
+/// sees the server's own 「少し待って」 answer, so the work stays unsent.
+final class PreservationCallBudget: @unchecked Sendable {
+    enum Decision: Equatable, Sendable {
+        case send
+        case wait(until: Date)
+        /// Automatic, within the pause after a 429.
+        case held
+    }
+
+    static let shared = PreservationCallBudget()
+    static let automaticPerMinute = 10
+    static let devicePerMinute = 14
+    static let bulkPerMinute = 20
+    static let rateLimitedPause: TimeInterval = 60
+    /// Set only by `PreservationBulkRead.run`, inside the person's own action.
+    @TaskLocal static var isBulkRead = false
+
+    private let lock = NSLock()
+    private var automatic = SharingCallWindow(limit: automaticPerMinute)
+    private var all = SharingCallWindow(limit: bulkPerMinute)
+    private var pausedUntil: Date?
+    private var admitted = 0
+
+    init() {}
+
+    /// Takes one place now, or says when to ask again. Nothing is sent
+    /// unless this returns `.send`.
+    func decide(personAction: Bool, bulk: Bool = false, at now: Date = Date()) -> Decision {
+        lock.lock(); defer { lock.unlock() }
+        if !personAction, let pausedUntil, now < pausedUntil { return .held }
+        let deviceLimit = personAction && bulk ? Self.bulkPerMinute : Self.devicePerMinute
+        var free = Self.freeAt(all, limit: deviceLimit, now: now)
+        if !personAction { free = [free, Self.freeAt(automatic, limit: Self.automaticPerMinute, now: now)].compactMap { $0 }.max() }
+        if let free { return .wait(until: free) }
+        if !personAction { automatic.record(at: now) }
+        all.record(at: now)
+        admitted += 1
+        return .send
+    }
+
+    /// When a window holding `limit` calls has room again (nil: now).
+    private static func freeAt(_ window: SharingCallWindow, limit: Int, now: Date) -> Date? {
+        let recent = window.times.filter { now.timeIntervalSince($0) < window.seconds }.sorted()
+        guard recent.count >= limit else { return nil }
+        return recent[recent.count - limit].addingTimeInterval(window.seconds)
+    }
+
+    /// `now` is when the 429 came back.
+    func noteRateLimited(retryAfter: TimeInterval? = nil, at now: Date = Date()) {
+        lock.lock(); defer { lock.unlock() }
+        let until = now.addingTimeInterval(max(Self.rateLimitedPause, retryAfter ?? 0))
+        pausedUntil = max(pausedUntil ?? until, until)
+    }
+
+    /// When an automatic call may go again (nil: now).
+    func nextAutomatic(at now: Date = Date()) -> Date? {
+        lock.lock(); defer { lock.unlock() }
+        var next: Date?
+        if let pausedUntil, now < pausedUntil { next = pausedUntil }
+        for free in [Self.freeAt(automatic, limit: Self.automaticPerMinute, now: now),
+                     Self.freeAt(all, limit: Self.devicePerMinute, now: now)].compactMap({ $0 }) {
+            next = max(next ?? free, free)
+        }
+        return next
+    }
+
+    /// Calls let through so far (never decreases): a pass that moved nothing.
+    var admittedCalls: Int { lock.lock(); defer { lock.unlock() }; return admitted }
+
+    func automaticCalls(at now: Date = Date()) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return automatic.count(at: now)
+    }
+
+    func allCalls(at now: Date = Date()) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return all.count(at: now)
+    }
+
+    /// The gate itself: returns when the call may be sent, waiting for a free
+    /// place; throws `PreservationCallHeld` (nothing sent) for an automatic
+    /// call during the pause after a 429.
+    static func admit(_ budget: PreservationCallBudget, personAction: Bool = SharingAutoCallBudget.isPersonAction,
+                      bulk: Bool = PreservationCallBudget.isBulkRead,
+                      now: () -> Date = { Date() },
+                      sleep: (TimeInterval) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }) async throws {
+        while true {
+            try Task.checkCancellation()
+            switch budget.decide(personAction: personAction, bulk: bulk, at: now()) {
+            case .send: return
+            case .held: throw PreservationCallHeld()
+            case .wait(let until): try await sleep(max(0.05, until.timeIntervalSince(now())))
+            }
+        }
+    }
+}
+
+/// 1115v-4: the next automatic save after one that ended on RATE_LIMITED. The
+/// unsent work stays where it is (the binding's pending snapshot and its sent
+/// receipts); only when to try again is decided here. It moved something:
+/// again as soon as the gate opens. It moved nothing: 10, 20, 40, then every
+/// 60 s, and never before the gate opens.
+enum PreservationRetrySchedule {
+    static let quietBackoff: [TimeInterval] = [10, 20, 40, 60]
+
+    /// `quietPasses`: passes in a row, this one included, that sent nothing.
+    static func next(now: Date, progressed: Bool, quietPasses: Int, opensAt: Date?) -> Date {
+        let delay = progressed ? 0 : quietBackoff[min(max(quietPasses, 1), quietBackoff.count) - 1]
+        let planned = now.addingTimeInterval(delay)
+        guard let opensAt else { return planned }
+        return max(planned, opensAt)
+    }
+}
+
+/// An automatic call to the automatic-save server the gate held back after a
+/// 429. Nothing was sent; the client answers it as the server's RATE_LIMITED.
+struct PreservationCallHeld: Error, Sendable {}
+
+/// The person's own restore or export: its reads may use 20 places a minute
+/// on this iPhone. Marks the person's action too.
+enum PreservationBulkRead {
+    static func run<T>(_ work: () async throws -> T) async rethrows -> T {
+        try await PreservationCallBudget.$isBulkRead.withValue(true) {
+            try await SharingPersonAction.run(work)
+        }
+    }
+}
