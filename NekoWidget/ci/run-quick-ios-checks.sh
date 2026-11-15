@@ -182,6 +182,7 @@ python3 ci/test-when-stuck.py
 python3 ci/test-launch-work.py
 python3 ci/test-review-eye.py
 python3 ci/test-a11y-voiceover-type.py
+python3 ci/test-group-recovery-screens.py
 
 xcrun --sdk macosx swiftc -D DEBUG -parse-as-library \
   -target "$(uname -m)-apple-macos14.0" \
@@ -190,6 +191,8 @@ xcrun --sdk macosx swiftc -D DEBUG -parse-as-library \
   NekoWidget/Services/GroupWindowFixture.swift ci/verify-group-windows.swift \
   -o "$RUNNER_TEMP/group-window-tests"
 "$RUNNER_TEMP/group-window-tests" ci/fixtures/group-roster-v3.json
+xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0"   Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift   NekoWidget/Views/GroupRecoveryPresentation.swift ci/verify-group-recovery-presentation.swift   -o "$RUNNER_TEMP/group-recovery-presentation"
+"$RUNNER_TEMP/group-recovery-presentation"
 
 xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
   Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \

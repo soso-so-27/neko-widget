@@ -40,6 +40,15 @@ FAMILY_LINK_SCREENS = (
     "47_home_family_link_question", "47b_home_family_cat_no_photo", "47c_home_add_from_family",
     "48_cat_order_mixed", "48b_family_link_confirm", "48c_home_family_farewell",
 )
+# 機種変更の画面 on sample states (test17RecoveryScreens): light and dark.
+RECOVERY_SCREENS = (
+    "92_recovery_gallery", "92b_recovery_checking", "92c_recovery_unavailable", "92d_recovery_found",
+    "92e_recovery_waiting", "92f_recovery_no_provider", "92g_recovery_fresh_name", "92h_recovery_needs_original",
+    "92i_recovery_device_limit", "92j_recovery_device_remove", "92k_recovery_revoked", "92l_recovery_choose",
+    "92m_recovery_choose_confirm", "92n_recovery_windows",
+    "93_recovery_found_ax5", "93b_recovery_waiting_ax5", "93c_recovery_no_provider_ax5",
+    "93d_recovery_needs_original_ax5", "93e_recovery_device_limit_ax5", "93f_recovery_choose_ax5",
+)
 # Every screen ReviewScreenshotUITests captures, in review order.
 FULL_SCREENS = (
     "01_photos_top", "01_photos_scrolled", "02_photo_detail", "03_memo_editor",
@@ -57,7 +66,7 @@ FULL_SCREENS = (
     "28_onboarding_5_widget_guide",
     "29_widget_guide_1", "29_widget_guide_2", "29_widget_guide_3", "29_widget_guide_4", "29_widget_guide_5",
     "90_error_vet_field_page", "90_error_vet_row", "91_error_plus_product_unavailable",
-) + STRESS_SCREENS + FAMILY_LINK_SCREENS
+) + STRESS_SCREENS + FAMILY_LINK_SCREENS + RECOVERY_SCREENS
 SE_SCREENS = (
     "10_cat_home", "10b_cat_home_second_cat", "10c_cat_home_no_cat", "10d_cat_home_no_photo",
     "11_cat_care_top", "12_vet_bottom", "14_lost_bottom", "16_care_bottom",
