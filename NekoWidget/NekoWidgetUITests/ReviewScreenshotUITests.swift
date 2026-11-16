@@ -878,16 +878,7 @@ final class ReviewScreenshotUITests: XCTestCase {
     /// 旅立った日 the family shared. Sample names only.
     @MainActor
     func test16FamilyOrderAndFarewell() {
-        var app = launchStress(70, names: ["ソラ", "コテツ"], ["--cat-home-stress-family", "ミケ", "--cat-home-stress-order"])
-        shot("48_cat_order_mixed", app) {
-            guard app.descendants(matching: .any)["cat-order"].firstMatch.waitForExistence(timeout: 20) else {
-                return "order screen did not appear"
-            }
-            settle(1.5)
-            return nil
-        }
-        app.terminate()
-        app = launchStress(71, names: ["ソラ", "コテツ"], ["--cat-home-stress-family", "ソラ", "--cat-home-stress-link-differs"])
+        var app = launchStress(71, names: ["ソラ", "コテツ"], ["--cat-home-stress-family", "ソラ", "--cat-home-stress-link-differs"])
         shot("48b_family_link_confirm", app) {
             if let reason = reachStressHome(app) { return reason }
             let same = app.buttons["family-link-same"].firstMatch
@@ -902,6 +893,39 @@ final class ReviewScreenshotUITests: XCTestCase {
         shot("48c_home_family_farewell", app) {
             if let reason = reachStressHome(app) { return reason }
             guard !app.buttons["tools-care-open"].exists else { return "family farewell not shown (tool buttons still there)" }
+            return nil
+        }
+        app.terminate()
+    }
+
+    /// 11/16: 「並べ替え」 reached the way the app reaches it: the この子 tab,
+    /// a cat's 「この子のこと」, its 「…」, then 「並べ替え」 (never a shortcut).
+    @MainActor
+    func test18CatOrderEntry() {
+        let app = launchStress(73, names: ["ソラ", "コテツ"], ["--cat-home-stress-family", "ミケ"])
+        shot("48a_cat_menu_reorder", app) {
+            if let reason = reachStressHome(app) { return reason }
+            // The family cat is not one of these: answered once, as a person would.
+            let other = app.buttons["family-link-other"].firstMatch
+            if other.waitForExistence(timeout: 6) { other.tap(); settle(1.5) }
+            let about = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "tools-cat-")).firstMatch
+            guard about.waitForExistence(timeout: 10), reveal(about, app) else { return "この子のこと not found" }
+            about.tap()
+            let more = app.buttons["cat-care-more-menu"].firstMatch
+            guard more.waitForExistence(timeout: 10) else { return "「…」 not found" }
+            more.tap()
+            guard app.buttons["cat-care-reorder"].waitForExistence(timeout: 6) else { return "並べ替え not in 「…」" }
+            settle(1)
+            return nil
+        }
+        shot("48_cat_order_mixed", app) {
+            let reorder = app.buttons["cat-care-reorder"].firstMatch
+            guard reorder.exists else { return "並べ替え not in 「…」" }
+            reorder.tap()
+            guard app.descendants(matching: .any)["cat-order"].firstMatch.waitForExistence(timeout: 10) else {
+                return "order screen did not appear"
+            }
+            settle(1.5)
             return nil
         }
         app.terminate()

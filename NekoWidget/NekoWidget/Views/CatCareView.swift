@@ -159,6 +159,16 @@ extension EnvironmentValues {
         get { self[CatCareInsideCatPageKey.self] }
         set { self[CatCareInsideCatPageKey.self] = newValue }
     }
+    /// 11/16: this iPhone's cats, set where the この子 tab opens a cat's
+    /// 「この子のこと」, so its 「…」 offers 「並べ替え」. Nil elsewhere.
+    var catOrderProfiles: [CatProfilePresentation]? {
+        get { self[CatOrderProfilesKey.self] }
+        set { self[CatOrderProfilesKey.self] = newValue }
+    }
+}
+
+private struct CatOrderProfilesKey: EnvironmentKey {
+    static let defaultValue: [CatProfilePresentation]? = nil
 }
 
 struct CatCareDetailView: View {
@@ -167,6 +177,9 @@ struct CatCareDetailView: View {
     @Binding var selectedProfileID: String?
     @ObservedObject private var store = CatCareStore.shared
     @Environment(\.toolProfileActions) private var profileActions
+    @Environment(\.catOrderProfiles) private var orderProfiles
+    /// 11/16: 「並べ替え」 in 「…」 (the この子 tab's one way in).
+    @State private var reorders = false
     /// The cat this page last loaded, so coming back from a list does not
     /// reload over what is on screen.
     @State private var loadedKey: String?
@@ -262,6 +275,9 @@ struct CatCareDetailView: View {
             }
             .alert("つながりを外せませんでした", isPresented: $unlinkFailed) { Button("閉じる", role: .cancel) {} }
                 message: { Text("少し待ってから、もう一度お試しください。") }
+            .sheet(isPresented: $reorders) {
+                NavigationStack { CatOrderView(profiles: orderProfiles ?? [], actions: profileActions) }
+            }
     }
 
     var body: some View {
@@ -294,6 +310,17 @@ struct CatCareDetailView: View {
             // in every tool (it was the page's last red row).
             if isProfile {
                 ToolbarItem(placement: .topBarTrailing) { moreMenu }
+            } else if canReorder {
+                // A family cat's page: nothing to delete here, only the order.
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        reorderButton
+                    } label: {
+                        Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityLabel("その他")
+                    .accessibilityIdentifier("cat-care-more-menu")
+                }
             }
             // The family, at the top right like sharing in Notes, so it is
             // out of the way for anyone who keeps to themselves.
@@ -859,6 +886,7 @@ struct CatCareDetailView: View {
             deleteFailed = false
             showsDeleteConfirmation = true
         } extra: {
+            if canReorder { reorderButton }
             // 11/15: only a cat this iPhone linked to a family cat; the one
             // place to undo 「同じ子」.
             if case let .profile(profile) = subject, familyNotebook.unlinkOffered(profile: profile.identifier) {
@@ -867,6 +895,17 @@ struct CatCareDetailView: View {
             }
         }
         .disabled(isDeleting)
+    }
+
+    /// From two cats, the family notebook's included (CatOrderView).
+    private var canReorder: Bool {
+        guard let orderProfiles else { return false }
+        return orderProfiles.count + familyNotebook.unlinkedFamilyCats.count >= 2
+    }
+
+    private var reorderButton: some View {
+        Button("並べ替え", systemImage: "arrow.up.arrow.down") { reorders = true }
+            .accessibilityIdentifier("cat-care-reorder")
     }
 
     private func unlinkFromFamily() {

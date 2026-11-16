@@ -105,8 +105,9 @@ class Order(unittest.TestCase):
         self.assertEqual(view.count("rows($"), 2)
         self.assertIn("try familyNotebook.reorderFamilyCats(familyOrder)", view)
         self.assertIn("await actions.reorderProfiles(ownOrder)", view)
-        # The one way in: 「並べ替え」 in the cat list's menu.
-        self.assertIn('Label("並べ替え", systemImage: "arrow.up.arrow.down")', PROFILES)
+        # 11/16: the one way in is the cat's 「…」 in 「この子のこと」 (この子 tab).
+        self.assertIn('Button("並べ替え", systemImage: "arrow.up.arrow.down") { reorders = true }', CARE)
+        self.assertNotIn("並べ替え", block(PROFILES, "struct CatProfilesView: View {"))
         self.assertEqual(sum(text.count("CatOrderView(profiles:") for text in (PROFILES, HOME, NOTEBOOK, CARE)), 1)
         reorder = block(NOTEBOOK, "func reorderFamilyCats(_ order: [UUID]) throws {")
         self.assertIn("SharingPersonAction.run", reorder)
@@ -139,6 +140,56 @@ class LinkFollowUps(unittest.TestCase):
         self.assertIn("fill(&own, from: &copy)", unlink)
         link = block(LINK, "static func linking(")
         self.assertNotIn("own.profileID = nil", link)
+
+
+MAIN_TAB = read("NekoWidget/Views/MainTabView.swift")
+HOME_VIEW = read("NekoWidget/Views/HomeView.swift")
+SETTINGS = read("NekoWidget/Views/SettingsView.swift")
+FIXTURE = read("NekoWidget/App/AppStoreScreenshotFixture.swift")
+UI_TEST = read("NekoWidgetUITests/ReviewScreenshotUITests.swift")
+
+
+class ReachedFromTheApp(unittest.TestCase):
+    """11/16: an entry must be on a path the shipped app opens, not only on a
+    capture or sample path (「並べ替え」 sat in a list the app never opens)."""
+
+    def test_the_photo_tab_never_opens_the_cat_list(self):
+        # So nothing may be added only to CatProfilesView.
+        self.assertIn("showsCatProfileNavigation: false,", MAIN_TAB)
+        profiles = block(PROFILES, "struct CatProfilesView: View {")
+        for identifier in ("cat-care-reorder", "cat-profiles-reorder", "family-link-question", "cat-profile-family-unlink"):
+            self.assertNotIn(identifier, profiles)
+
+    def test_reorder_is_reached_from_the_kono_ko_tab(self):
+        self.assertIn("CatHomeView(presentation: catProfilesPresentation, actions: catProfilesActions,", MAIN_TAB)
+        self.assertIn(".navigationDestination(for: CatHomeAboutRoute.self)", HOME)
+        profile_page = block(HOME, "private func profilePage(_ profile: CatProfilePresentation) -> some View {")
+        self.assertIn(".environment(\.catOrderProfiles, presentation.profiles)", profile_page)
+        care_page = block(HOME, "private func carePage(_ cat: CatHomeCat) -> some View {")
+        self.assertIn(".environment(\.catOrderProfiles, presentation.profiles)", care_page)
+        self.assertIn("if canReorder { reorderButton }", CARE)
+        # The capture goes the same way: no shortcut opens the screen directly.
+        self.assertNotIn("--cat-home-stress-order", FIXTURE + UI_TEST)
+        entry = block(UI_TEST, "func test18CatOrderEntry() {")
+        for step in ('"cat-care-more-menu"', '"cat-care-reorder"', '"tools-cat-"'):
+            self.assertIn(step, entry)
+
+    def test_the_other_new_entries_are_on_app_paths(self):
+        # 同じ子ですか: the この子 tab and the notebook (both opened by the app).
+        self.assertIn("FamilyNotebookLinkQuestionView(", HOME)
+        self.assertIn(".modifier(FamilyNotebookLinkAsk())", NOTEBOOK)
+        self.assertIn("FamilyNotebookView()", read("NekoWidget/App/AppRootView.swift"))
+        # 家族の手帳の子から選ぶ and 写真を選ぶ: the この子 tab.
+        self.assertIn('.confirmationDialog("家族の手帳の子から選ぶ"', HOME)
+        self.assertIn("CatHomeChoosePhotoButton(", HOME)
+        # つながりを外す: the cat's 「…」 in 「この子のこと」.
+        self.assertIn("cat-profile-family-unlink", CARE)
+        # Adding one's own cat to the notebook: the notebook's 「手帳に入れる猫を選ぶ」.
+        self.assertIn("FamilyNotebookCatSelectionView()", NOTEBOOK)
+        # 機種変更 stays out of the shipped app (a sample only in test builds).
+        gallery = SETTINGS.index("GroupRecoveryGallery()")
+        self.assertGreater(gallery, SETTINGS.rindex("#if DEBUG || INTERNAL_PRESENTATION", 0, gallery))
+        self.assertNotIn("#endif", SETTINGS[SETTINGS.rindex("#if DEBUG || INTERNAL_PRESENTATION", 0, gallery):gallery])
 
 
 if __name__ == "__main__":

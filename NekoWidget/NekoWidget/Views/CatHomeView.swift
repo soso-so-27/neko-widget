@@ -593,6 +593,9 @@ struct CatHomeView: View {
                 CatCareDetailView(toolCatID: toolID, name: cat.name)
                     .navigationTitle(cat.name.isEmpty ? "この子のこと" : cat.name)
                     .navigationBarTitleDisplayMode(.inline)
+                    // 11/16: 「…」→「並べ替え」 on a family cat's page too.
+                    .environment(\.catOrderProfiles, presentation.profiles)
+                    .environment(\.toolProfileActions, actions)
             }
         }
     }
@@ -616,6 +619,8 @@ struct CatHomeView: View {
             photoAlbumOptions: presentation.photoAlbumOptions,
             actions: actions
         )
+        // 11/16: the cat's 「…」 offers 「並べ替え」 (the one way in).
+        .environment(\.catOrderProfiles, presentation.profiles)
     }
 
     private func show(_ id: String) {
