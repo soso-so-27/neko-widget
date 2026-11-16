@@ -31,7 +31,8 @@ final class CatCareStore: ObservableObject {
         reload()
         #if os(iOS)
         if directory == nil {
-            datasetObserver = NotificationCenter.default.addObserver(forName: .appRecordDatasetChanged, object: nil, queue: .main) { [weak self] _ in
+            // Queue nil: a queue makes the poster wait for the main thread (11/16).
+            datasetObserver = NotificationCenter.default.addObserver(forName: .appRecordDatasetChanged, object: nil, queue: nil) { [weak self] _ in
                 Task { @MainActor in self?.reload() }
             }
         }

@@ -431,6 +431,18 @@ final class FamilyNotebookStore: @unchecked Sendable {
     }
 
     private func transaction<T>(expectedRevision: UInt64? = nil, _ body: (inout State) throws -> T) throws -> T {
+        let (result, wrote) = try lockedTransaction(expectedRevision: expectedRevision, body)
+        // 11/16: told only after both locks are released. The family sync (an
+        // actor, off the main thread) writes here too; a listener that waits
+        // for the main thread while this thread holds the locks, and a main
+        // thread waiting for them, stopped the app for good.
+        #if os(iOS)
+        if wrote { AppRecordDataset.committed(stateURL) }
+        #endif
+        return result
+    }
+
+    private func lockedTransaction<T>(expectedRevision: UInt64?, _ body: (inout State) throws -> T) throws -> (T, Bool) {
         #if os(iOS)
         AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
         #endif
@@ -439,20 +451,16 @@ final class FamilyNotebookStore: @unchecked Sendable {
         if let expectedRevision, original.revision != expectedRevision { throw FamilyNotebookError.staleRevision }
         var next = original
         let result = try body(&next)
-        if next != original {
-            guard original.revision < UInt64.max else { throw FamilyNotebookError.clockOverflow }
-            next.revision = original.revision + 1
-            try Self.validate(next, familyID: familyID)
-            let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-            let bytes = try encoder.encode(next)
-            // A writer must either throw before commit (preserve the old file),
-            // or commit atomically and return. Production uses that contract.
-            try write(bytes, stateURL)
-            #if os(iOS)
-            AppRecordDataset.committed(stateURL)
-            #endif
-        }
-        return result
+        guard next != original else { return (result, false) }
+        guard original.revision < UInt64.max else { throw FamilyNotebookError.clockOverflow }
+        next.revision = original.revision + 1
+        try Self.validate(next, familyID: familyID)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let bytes = try encoder.encode(next)
+        // A writer must either throw before commit (preserve the old file),
+        // or commit atomically and return. Production uses that contract.
+        try write(bytes, stateURL)
+        return (result, true)
     }
 
     private func load() throws -> State {

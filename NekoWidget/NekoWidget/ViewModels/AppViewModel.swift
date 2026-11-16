@@ -597,7 +597,10 @@ final class AppViewModel: ObservableObject {
                 )
             }
         }
-        adoptionDayObserver = NotificationCenter.default.addObserver(forName: .appRecordsCommitted, object: nil, queue: .main) { [weak self] note in
+        // 11/16: queue nil. With a queue, posting waits until the main thread
+        // runs this; a save off the main thread (the family sync) then held
+        // the record locks while the main thread waited for them (a hang).
+        adoptionDayObserver = NotificationCenter.default.addObserver(forName: .appRecordsCommitted, object: nil, queue: nil) { [weak self] note in
             guard let url = note.object as? URL, url.deletingLastPathComponent().lastPathComponent == "CatCare" else { return }
             Task { @MainActor [weak self] in self?.objectWillChange.send() }
         }
