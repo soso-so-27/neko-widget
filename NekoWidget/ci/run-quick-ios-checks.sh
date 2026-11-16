@@ -172,6 +172,7 @@ python3 ci/test-single-cat-photos.py
 python3 ci/test-cat-home-care.py
 python3 ci/test-family-cat-link.py
 python3 ci/test-family-cat-order.py
+python3 ci/test-record-commit-notice-hang.py
 python3 ci/test-album-link-followups.py
 python3 ci/test-cat-threshold.py
 python3 ci/test-confident-cats.py
