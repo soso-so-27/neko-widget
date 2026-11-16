@@ -81,9 +81,6 @@ struct CatProfilesView: View {
     @State private var openedProfileIdentifier: String?
     @State private var organizationDestination: OrganizationDestination?
     @State private var showsAbout = false
-    /// 11/15: 「並べ替え」, the one place the order of the cats is changed.
-    @State private var reorders = false
-    @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
 
     var body: some View {
         Form {
@@ -142,9 +139,6 @@ struct CatProfilesView: View {
         }
         .addingCatProfile(isStarted: $addsCat, presentation: presentation, actions: actions) {
             openedProfileIdentifier = $0
-        }
-        .sheet(isPresented: $reorders) {
-            NavigationStack { CatOrderView(profiles: presentation.profiles, actions: actions) }
         }
         .navigationDestination(item: $openedProfileIdentifier) { identifier in
             if let profile = presentation.profiles.first(where: { $0.identifier == identifier }) {
@@ -211,15 +205,6 @@ struct CatProfilesView: View {
                     Label("未分類の写真", systemImage: "photo.on.rectangle")
                 }
                 .accessibilityIdentifier("cat-profiles-unassigned")
-            }
-            // 11/15: from two cats (the family's included).
-            if presentation.profiles.count + familyNotebook.unlinkedFamilyCats.count >= 2 {
-                Button {
-                    reorders = true
-                } label: {
-                    Label("並べ替え", systemImage: "arrow.up.arrow.down")
-                }
-                .accessibilityIdentifier("cat-profiles-reorder")
             }
             Button {
                 showsAbout = true
