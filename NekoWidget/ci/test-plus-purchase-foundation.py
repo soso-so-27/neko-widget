@@ -664,6 +664,33 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertNotIn("synchronize", resume)
         self.assertIn("stoppedForPlus = stop == .membershipRequired || stop == .accessUnconfirmed", persistence)
 
+    def test_save_intake_pause_is_its_own_state(self) -> None:
+        # 11/16: S08 (PRESERVATION_INTAKE_PAUSED / PILOT_WRITES_PAUSED /
+        # PRESERVATION_DISABLED) is the save server's pause, not Plus.
+        client = source("NekoWidget/Services/ManagedPreservationClient.swift")
+        self.assertIn('case "PILOT_WRITES_PAUSED", "PRESERVATION_INTAKE_PAUSED", "PRESERVATION_DISABLED":\n'
+                      "                    throw ManagedPreservationError.servicePaused", client)
+        self.assertIn('case "NEW_SAVE_REQUIRES_MEMBERSHIP": throw ManagedPreservationError.membershipRequired', client)
+        persistence = source("NekoWidget/Services/AppRecordPersistence.swift")
+        self.assertIn('static let intakePausedTitle = "いまは新しく保存できません"', persistence)
+        self.assertIn('static let intakePausedDetail = "保存の受付を一時的に止めています。保存した記録は開けます。受付が戻ると、自動で続けます。"', persistence)
+        self.assertIn('static let intakePausedRowValue = "受付を停止中"', persistence)
+        self.assertIn("intakePaused = stop == .servicePaused", persistence)
+        self.assertIn("failing = false; retriesByItself = false; intakePaused = false", persistence)
+        self.assertIn("var needsAttention: Bool { (failing && !retriesByItself && !intakePaused) || conflict }", persistence)
+        self.assertIn("if failing && intakePaused { return Self.intakePausedTitle }", persistence)
+        self.assertIn("if failing && intakePaused { return Self.intakePausedDetail }", persistence)
+        # ［もう一度試す］ only for what the person can resolve (needsAttention).
+        self.assertIn("if persistence.needsAttention && !persistence.conflict && !plusEnded {\n"
+                      '            Button("もう一度試す")', persistence)
+        # The loop still tries again by itself (every 300 s, at once on coming to the front).
+        self.assertIn("[.membershipRequired, .servicePaused, .capacityReached, .authenticationRequired, .staleSession].contains(failure) {\n"
+                      "            nextAttempt = Date().addingTimeInterval(300)", persistence)
+        self.assertIn("if error == .servicePaused {", section(persistence, "func verifySchedulingForFixture()", "func stopLoopForFixture()"))
+        settings = source("NekoWidget/Views/SettingsView.swift")
+        row = section(settings, "struct AutoSaveSettingsRow: View {", "struct SettingsView: View {")
+        self.assertIn("persistence.showsIntakePaused ? AppRecordPersistence.intakePausedRowValue", row)
+
     def test_cancelled_member_sees_until_when_plus_lasts(self) -> None:
         # 11/9: auto-renewal off but still active shows its end date, so the
         # cancellation visibly worked; renewing stays 「Plus（利用中）」.
