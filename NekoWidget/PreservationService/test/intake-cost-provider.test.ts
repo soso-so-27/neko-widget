@@ -98,6 +98,7 @@ it('emits one fixed diagnostic without changing failures or exposing provider da
   expect(events[0].provider).toBe(scenario.startsWith('aws')?'aws':'cloudflare');
   expect(events[0].stage).toBe(scenario.split('-')[1]==='fetch'?'fetch':scenario.split('-')[1]);
   expect(events[0].costs).toBeUndefined();
+  if (scenario === 'aws-coverage') { expect(events[0].awsDays).toBe(29); expect(events[0].awsPreviousDayPresent).toBe(false); }
   expect(JSON.stringify(events)).not.toMatch(/private|synthetic|123456789012|test-subscription/);
  }
 });

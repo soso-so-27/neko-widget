@@ -70,7 +70,7 @@ async function collect(env: CostEnv, now: () => number, fetcher: CostFetch, diag
       const from = time(period.TimePeriod?.Start), to = time(period.TimePeriod?.End);
       if (from < start || to > end || to - from !== day || typeof period.Estimated !== 'boolean'
           || !Array.isArray(period.Groups)) throw unavailable();
-      dates.add(iso(from)); diagnostic.days = dates.size;
+      dates.add(iso(from)); diagnostic.days = dates.size; diagnostic.previousDayPresent = dates.has(iso(end - day));
       for (const g of period.Groups) {
         if (!Array.isArray(g.Keys) || g.Keys.length !== 1 || typeof g.Keys[0] !== 'string'
             || !g.Keys[0].length || g.Metrics?.UnblendedCost?.Unit !== 'USD') throw unavailable();

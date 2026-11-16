@@ -8,7 +8,7 @@ export interface CostDiagnosticEvent {
   reason: 'missing_configuration' | 'signing' | 'transport' | 'http' | 'invalid_body' | 'invalid_json'
     | 'invalid_evidence' | 'invalid_page' | 'missing_days_or_services' | 'invalid_period'
     | 'duplicate_or_invalid_amount' | 'short_or_stale_period' | 'ok';
-  httpStatus: number | null; awsPages: number; awsDays: number;
+  httpStatus: number | null; awsPages: number; awsDays: number; awsPreviousDayPresent: boolean;
   costs?: { aws30DayUsd: Record<'kms' | 's3' | 'costExplorer' | 'other', number>;
     cloudflareCycleUsd: Record<'workers' | 'r2' | 'd1' | 'logs' | 'other', number>;
     awsMonthlyUsd: number; cloudflareMonthlyUsd: number };
@@ -18,7 +18,7 @@ export class CostDiagnostic {
   stage: CostDiagnosticEvent['stage'] = 'configuration';
   reason: CostDiagnosticEvent['reason'] = 'missing_configuration';
   httpStatus: number | null = null;
-  pages = 0; days = 0; succeeded = false;
+  pages = 0; days = 0; previousDayPresent = false; succeeded = false;
   awsMonthlyUsd = 0; cloudflareMonthlyUsd = 0;
   private aws = { kms: 0, s3: 0, costExplorer: 0, other: 0 };
   private cloudflare = { workers: 0, r2: 0, d1: 0, logs: 0, other: 0 };
@@ -38,7 +38,7 @@ export class CostDiagnostic {
     try {
       log({ event: 'preservation_cost_check_v1', outcome: this.succeeded ? 'success' : 'failure',
         provider: this.provider, stage: this.stage, reason: this.succeeded ? 'ok' : this.reason,
-        httpStatus: this.httpStatus, awsPages: this.pages, awsDays: this.days,
+        httpStatus: this.httpStatus, awsPages: this.pages, awsDays: this.days, awsPreviousDayPresent: this.previousDayPresent,
         ...(this.succeeded ? { costs: { aws30DayUsd: this.aws, cloudflareCycleUsd: this.cloudflare,
           awsMonthlyUsd: this.awsMonthlyUsd, cloudflareMonthlyUsd: this.cloudflareMonthlyUsd } } : {}) });
     } catch { /* Preserve the original result, including the original exception. */ }
