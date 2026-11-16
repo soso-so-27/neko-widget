@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // The family notebook between iPhones, as the screens see it (1028c, Codex's
 // proposed contract). The screens talk only to `FamilyNotebookSharing`; behind
@@ -238,8 +241,44 @@ final class FamilyNotebookAutoCheck {
         if value { wake(gap: FamilyAutoCheckPolicy.wakeGap) }
         // The plan is kept: coming back soon keeps its pass (a 20 s list read
         // stays a list read); a plan already past becomes a whole read.
-        else { loop?.cancel(); loop = nil; sleeping = false }
+        else { loop?.cancel(); loop = nil; sleeping = false; sendBeforeLeaving() }
     }
+
+    #if canImport(UIKit)
+    private var leavingSend: Task<Void, Never>?
+    private var leavingHandle: UIBackgroundTaskIdentifier = .invalid
+
+    /// 11/16: the app leaves the screen with writing of this iPhone not sent
+    /// yet (written, then the iPhone locked at once). It used to wait until
+    /// the app came back; now one pass runs in the time iOS gives a leaving
+    /// app. Automatic, within the budget; nothing when all was sent.
+    private func sendBeforeLeaving() {
+        guard leavingSend == nil, eligible, model.hasFamily, model.snapshot?.outbox.isEmpty == false,
+              !sharing.isWorking else { return }
+        // UIKit calls the expiration on the main thread.
+        let handle = UIApplication.shared.beginBackgroundTask(withName: "Send family notebook") { [weak self] in
+            MainActor.assumeIsolated {
+                self?.leavingSend?.cancel()
+                self?.endLeaving()
+            }
+        }
+        guard handle != .invalid else { return }
+        leavingHandle = handle
+        leavingSend = Task { [weak self] in
+            await SharingPersonAction.automatic { _ = await self?.sharing.refresh() }
+            self?.endLeaving()
+        }
+    }
+
+    private func endLeaving() {
+        leavingSend = nil
+        guard leavingHandle != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(leavingHandle)
+        leavingHandle = .invalid
+    }
+    #else
+    private func sendBeforeLeaving() {}
+    #endif
 
     /// After an operation, or when this iPhone starts waiting to be let in.
     func nudge() { wake(gap: FamilyAutoCheckPolicy.nudgeGap) }

@@ -210,6 +210,12 @@ class ReadingTheFamily(unittest.TestCase):
         self.assertIn("FamilyNotebookAutoCheck.shared.sendSoon()", observer)
         # No loop of its own.
         self.assertEqual(SHARING.count("Task.sleep(for: .seconds(delay))"), 1)
+        # Written, then the iPhone locked at once: one automatic pass on leaving.
+        self.assertIn("else { loop?.cancel(); loop = nil; sleeping = false; sendBeforeLeaving() }", SHARING)
+        leaving = block(SHARING, "private func sendBeforeLeaving() {")
+        self.assertIn("model.snapshot?.outbox.isEmpty == false", leaving)
+        self.assertIn("SharingPersonAction.automatic", leaving)
+        self.assertIn("beginBackgroundTask", leaving)
 
     def test_a_closed_notebook_does_not_hold_the_reads(self):
         self.assertIn(".onDisappear { FamilyNotebookAutoCheck.shared.holdsRedraw = false }", NOTEBOOK)
