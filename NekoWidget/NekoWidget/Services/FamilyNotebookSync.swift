@@ -48,6 +48,31 @@ enum FamilyNotebookSendFailure: String, Codable, CaseIterable, Sendable {
     case invalid
     case other
 
+    /// 11/16: the short code shown under the unsent line when asked
+    /// (「コード：RJ-3」): meaningless to most people, said to support.
+    var code: String {
+        switch self {
+        case .network: "NW"
+        case .authentication: "AU"
+        case .membership: "MB"
+        case .keys: "KY"
+        case .generation: "GN"
+        case .conflict: "CF"
+        case .rateLimited: "RL"
+        case .paused: "PS"
+        case .unavailable: "UA"
+        case .upgrade: "UP"
+        case .rejected: "RJ"
+        case .invalid: "IV"
+        case .other: "OT"
+        }
+    }
+
+    /// The code with the number not sent yet; 「00」 when no failure is known.
+    static func code(kind: String?, unsent: Int) -> String {
+        (kind.flatMap(Self.init(rawValue:))?.code ?? "00") + "-" + String(unsent)
+    }
+
     /// What the upload does with the failed operation.
     enum Disposition: Equatable, Sendable {
         /// The family, the network or the keys: the same for every operation.

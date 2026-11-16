@@ -254,6 +254,10 @@ private enum VerifyFamilyNotebookSync {
         try check(FamilyNotebookSendFailure.kind(of: FamilyNotebookTransportError.server(code: "rate_limited", status: 429)) == .rateLimited, "429")
         try check(FamilyNotebookSendFailure.kind(of: FamilyNotebookTransportError.stale) == .generation, "stale generation")
         try check(FamilyNotebookSendFailure.kind(of: FamilyNotebookSyncError.missingKey(epoch: 2)) == .keys, "keys")
+        try check(FamilyNotebookSendFailure.code(kind: "rejected", unsent: 3) == "RJ-3"
+                  && FamilyNotebookSendFailure.code(kind: nil, unsent: 1) == "00-1",
+                  "the code: the kind's short symbol and the number unsent")
+        try check(Set(FamilyNotebookSendFailure.allCases.map(\.code)).count == FamilyNotebookSendFailure.allCases.count, "one code per kind")
     }
 
     /// (e) The line 「家族に届けられていない書き込みがあります。」, on a synthetic clock.

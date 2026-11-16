@@ -259,7 +259,19 @@ class SendingFailures(unittest.TestCase):
         self.assertIn('WorkingLabel(title: "もう一度", workingTitle: "もう一度", working: resending)', section)
         self.assertIn("await sharing.resendUnsent()", section)
         words = {w for w in __import__("re").findall(r'"([^"]*)"', section) if any(ord(c) > 127 for c in w)}
-        self.assertEqual(words, {"家族に届けられていない書き込みがあります。", "もう一度"})
+        self.assertEqual(words, {"家族に届けられていない書き込みがあります。", "もう一度", "コード："})
+        # The code only when asked: the line held, or もう一度 did not get it sent.
+        self.assertIn(".onLongPressGesture { showsSendCode = true }", section)
+        self.assertIn("if sharing.showsUnsentLine { showsSendCode = true }", section)
+        self.assertIn('Text("コード：" + sharing.sendCode)', section)
+        self.assertIn("FamilyNotebookSendFailure.code(kind: sendHealth.last?.kind, unsent: unsentCount)", SHARING)
+
+    def test_own_writing_not_sent_has_a_mark_without_words(self):
+        note = block(NOTEBOOK, "struct FamilyNotebookNote: ViewModifier {")
+        self.assertIn("} else if FamilyNotebookNote.waitsToBeSent(state, now: Date()) {", note)
+        self.assertIn('Image(systemName: "icloud.slash")', note)
+        self.assertIn("state.status == .pendingShared && now.timeIntervalSince(state.operation.editedAt) > 60", note)
+        self.assertNotIn("Text(", note)
         resend = block(SHARING, "func resendUnsent() async {")
         self.assertIn("SharingPersonAction.run", resend)
         self.assertIn("retriesHeldOnce = true", resend)
