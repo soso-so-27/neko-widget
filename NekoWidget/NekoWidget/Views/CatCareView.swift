@@ -2687,7 +2687,13 @@ extension CatCareFormat {
         let maxSide: CGFloat = 2048
         let scale = min(1, maxSide / max(image.size.width, image.size.height))
         let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-        let renderer = UIGraphicsImageRenderer(size: size)
+        // Scale 1 and standard range: 2048 points must stay 2048 pixels (the
+        // screen scale made 6144, which the save server refuses) and carry no
+        // HDR second picture.
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.preferredRange = .standard
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
         let resized = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
         return resized.jpegData(compressionQuality: 0.85)
     }

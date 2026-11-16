@@ -634,17 +634,25 @@ enum ToolBackupFiles {
                     files.append(reusable); continue
                 }
                 let sourceFile = name.hasSuffix(".jpg") ? sourcePhotoURL(tool: tool, directory: toolDirectory, name: name) : toolDirectory.appendingPathComponent(name)
-                let data = name == manifest ? metadata : try read(sourceFile, maximum: 20 * 1024 * 1024)
+                let original = name == manifest ? metadata : try read(sourceFile, maximum: 20 * 1024 * 1024)
+                // 11/16: a photo the server would refuse (larger than 4096 px,
+                // a second picture, trailing bytes) goes as one plain JPEG copy.
+                // The photo on this iPhone stays as it is.
+                guard let data = name.hasSuffix(".jpg") ? PreservationJPEGEnvelope.conforming(original) : original
+                else { throw ManagedPreservationError.invalidRecord }
                 let count = name.hasSuffix(".jpg") ? 1 : (data.count + ToolBackupIndex.chunkSize - 1) / ToolBackupIndex.chunkSize
                 let hash = ToolBackupIndex.hash(data)
                 if indexVersion >= 3 || name.hasSuffix(".jpg"), let reusable = reusableByPath[path],
                    reusable.bytes == data.count, reusable.sha256 == hash, reusable.records.count == count, reusable.sourceSnapshotID != nil { files.append(reusable) }
                 else { files.append(.init(path: path, bytes: data.count, sha256: hash, records: (0..<count).map { _ in UUID() })) }
                 let target = destination.appendingPathComponent(path)
-                if consumePreparedPhotos && name.hasSuffix(".jpg") {
+                if consumePreparedPhotos && name.hasSuffix(".jpg") && data == original {
                     try protect(target.deletingLastPathComponent())
                     try FileManager.default.moveItem(at: sourceFile, to: target)
-                } else { try write(data, to: target) }
+                } else {
+                    try write(data, to: target)
+                    if consumePreparedPhotos && name.hasSuffix(".jpg") { try? FileManager.default.removeItem(at: sourceFile) }
+                }
             }
         }
         guard !files.isEmpty else { throw ToolBackupError.empty }

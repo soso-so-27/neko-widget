@@ -21,6 +21,10 @@ fi
 grep -F "cannot find 'RootSyncStore' in scope" "$RUNNER_TEMP/root-sync-public-error.txt" > /dev/null
 fi
 
+# 11/16: tool photos must pass the save server's JPEG rule (max 4096 px, no MPF).
+xcrun --sdk macosx swiftc -parse-as-library NekoWidget/Services/PreservationJPEGEnvelope.swift   ci/verify-preservation-jpeg-envelope.swift -o "$RUNNER_TEMP/preservation-jpeg-envelope"
+"$RUNNER_TEMP/preservation-jpeg-envelope" .
+
 # Shared photo/memo fixtures remain available after removing the pair-window UI.
 # Parse DEBUG sources too: the shipping Release build does not compile these branches.
 xcrun swiftc -frontend -parse -D DEBUG \
