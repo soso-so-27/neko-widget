@@ -1011,6 +1011,10 @@ struct FamilyNotebookView: View {
     @State private var running: String?
     /// 「もう一度確認」 was pressed and its check is running (11/6).
     @State private var rechecking = false
+    /// 11/16: 「もう一度」 under the unsent line is sending.
+    @State private var resending = false
+    /// The line was held, or 「もう一度」 did not get it sent: its code shows.
+    @State private var showsSendCode = false
 
     private var prototypeInvitationAction: (@MainActor () -> Void)? {
 #if DEBUG || INTERNAL_PRESENTATION
@@ -1158,6 +1162,8 @@ struct FamilyNotebookView: View {
         List {
             if let pause = sharing.pause {
                 pausedSection(pause)
+            } else if sharing.showsUnsentLine {
+                unsentSection
             }
             Section {
                 ForEach(model.members, id: \.personID) { member in
@@ -1254,6 +1260,7 @@ struct FamilyNotebookView: View {
                 }
             }
 #if DEBUG || INTERNAL_PRESENTATION
+            if model.isReal { sendDiagnosticsSection }
             if !model.isReal { Section {
                 DisclosureGroup("テスト用") {
                     Button("家族が書いたときを試す") { model.tryFamilyWrite() }
@@ -1352,6 +1359,54 @@ extension FamilyNotebookView {
                 .accessibilityIdentifier("family-notebook-awaits-plus")
         }
     }
+
+    /// 11/16: writing of this iPhone has not reached the family for a while
+    /// (FamilyNotebookSendHealth). One line and 「もう一度」, nothing about why;
+    /// gone once it is sent. Never while all is sent.
+    private var unsentSection: some View {
+        Section {
+            Label("家族に届けられていない書き込みがあります。", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+                .accessibilityIdentifier("family-notebook-unsent")
+                // Held: the code to tell support (no explanation on screen).
+                .onLongPressGesture { showsSendCode = true }
+            if showsSendCode {
+                Text("コード：" + sharing.sendCode)
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("family-notebook-unsent-code")
+            }
+            Button {
+                resending = true
+                Task {
+                    defer { resending = false }
+                    await sharing.resendUnsent()
+                    if sharing.showsUnsentLine { showsSendCode = true }
+                }
+            } label: {
+                WorkingLabel(title: "もう一度", workingTitle: "もう一度", working: resending)
+            }
+            .disabled(resending || sharing.isWorking)
+            .accessibilityIdentifier("family-notebook-unsent-retry")
+        }
+    }
+
+#if DEBUG || INTERNAL_PRESENTATION
+    /// Internal builds only (11/16): why this iPhone's writing last failed to
+    /// go, when, and how much waits. The kind only; never in the App Store app.
+    private var sendDiagnosticsSection: some View {
+        Section {
+            DisclosureGroup("テスト用：送信") {
+                LabeledContent("未送信", value: "\(sharing.unsentCount)")
+                LabeledContent("最後の失敗", value: sharing.sendHealth.last?.kind ?? "なし")
+                if let at = sharing.sendHealth.last?.at {
+                    LabeledContent("時刻", value: at.formatted(date: .numeric, time: .standard))
+                }
+                LabeledContent("続けて失敗", value: "\(sharing.sendHealth.failures)")
+            }
+            .accessibilityIdentifier("family-notebook-send-diagnostics")
+        }
+    }
+#endif
 
     /// Shown while new writing does not reach the family (1029e). Everything
     /// written stays; only sharing stops. After the payer left, anyone with
@@ -2651,6 +2706,12 @@ enum FamilyNotebookWords {
 struct FamilyNotebookNote: ViewModifier {
     let toolCatID: UUID?
     let field: FamilyNotebookField
+
+    /// This iPhone's writing still in the outbox a minute after it was
+    /// written (a normal send takes one pass, 30 s at most on these pages).
+    static func waitsToBeSent(_ state: FamilyNotebookFieldState, now: Date) -> Bool {
+        state.status == .pendingShared && now.timeIntervalSince(state.operation.editedAt) > 60
+    }
     @ObservedObject private var model = FamilyNotebookPrototype.shared
 
     @ViewBuilder
@@ -2661,10 +2722,18 @@ struct FamilyNotebookNote: ViewModifier {
         } else {
             VStack(alignment: .leading, spacing: 4) {
                 content
-                if let state = model.state(toolCatID: toolCatID, field),
-                   !model.isMe(state.operation.author) {
-                    Label(FamilyNotebookWords.byline(state.operation), systemImage: "person.2")
-                        .font(.caption).foregroundStyle(.secondary)
+                if let state = model.state(toolCatID: toolCatID, field) {
+                    if !model.isMe(state.operation.author) {
+                        Label(FamilyNotebookWords.byline(state.operation), systemImage: "person.2")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else if FamilyNotebookNote.waitsToBeSent(state, now: Date()) {
+                        // 11/16: written here, not sent to the family for over
+                        // a minute. A mark, no words (support asks about it).
+                        Image(systemName: "icloud.slash")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .accessibilityLabel("未送信")
+                            .accessibilityIdentifier("family-notebook-note-unsent")
+                    }
                 }
             }
         }

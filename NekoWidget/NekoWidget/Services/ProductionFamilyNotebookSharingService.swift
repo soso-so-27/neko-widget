@@ -91,6 +91,12 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     private(set) var needsAnotherPass = false
     /// 11/15 (1115q): what the last key pass saw; a changed value is progress.
     private(set) var lastKeyObservation = ""
+    /// 11/16: what the last whole read did about this iPhone's writing (nil:
+    /// it did not get as far as sending, e.g. paused or keys still moving
+    /// without an error). Kinds only (FamilyNotebookSendHealth).
+    private(set) var lastSend: FamilyNotebookSendHealth.Outcome?
+    /// The person's 「もう一度」: the next read tries the set-aside writing too.
+    var retriesHeldOnce = false
     private(set) var currentFamilyID: UUID?
     private(set) var memberNames: [String: String] = [:]
     private(set) var lastJoinResults: [FamilyNotebookAdmissionClient.JoinResult] = []
@@ -155,7 +161,11 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
             currentFamilyID = nil; lastMembers = []; session = nil
             return .notInFamily
         }
+        lastSend = nil
+        let retryHeld = retriesHeldOnce
+        retriesHeldOnce = false
         return try await run { context in
+          do {
             needsAnotherPass = false
             try await context.admission.resumePending()
             try await context.membership.resumePending(notebook: context.notebook)
@@ -188,10 +198,18 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
             guard material.ready, !material.moreWork else { needsAnotherPass = true; return .waitingForKeys }
             let sync = try FamilyNotebookSync(familyID: family.familyID, identity: context.identity, store: store,
                 network: context.wire, journal: context.journal, endpointID: context.endpoint.absoluteString)
-            let result = try await sync.synchronize(current: material.current, history: material.history, keys: material.keys)
+            let result = try await sync.synchronize(current: material.current, history: material.history,
+                                                    keys: material.keys, retryHeld: retryHeld)
+            lastSend = result.paused || result.needsRotation ? nil
+                : .sent(heldBack: result.heldBack, failure: result.heldFailure?.rawValue)
             needsAnotherPass = result.moreHistory || result.needsRotation
             if needsAnotherPass { return .waitingForKeys }
             return .inFamily(.init(role: state.role == .payer ? .payer : .member))
+          } catch {
+            // 11/16: the kind, before it becomes the screens' error.
+            lastSend = .failed(FamilyNotebookSendFailure.kind(of: error).rawValue)
+            throw error
+          }
         }
     }
     func loadPause() async throws -> FamilySharingPause? {

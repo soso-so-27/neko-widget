@@ -221,5 +221,73 @@ class ReadingTheFamily(unittest.TestCase):
         self.assertIn(".onDisappear { FamilyNotebookAutoCheck.shared.holdsRedraw = false }", NOTEBOOK)
 
 
+
+SYNC = read("NekoWidget/Services/FamilyNotebookSync.swift")
+SERVICE = read("NekoWidget/Services/ProductionFamilyNotebookSharingService.swift")
+SETTINGS = read("NekoWidget/Views/SettingsView.swift")
+
+
+class SendingFailures(unittest.TestCase):
+    """11/16: the joined iPhone's writing never reached the server, without a trace."""
+
+    def test_a_failure_to_send_is_kept_not_dropped(self):
+        loop = SYNC.split("for operation in try store.pendingOperations().filter({ !aside.contains($0.id) }).prefix(64) {", 1)[1]
+        loop = loop.split("heldBack = aside.count", 1)[0]
+        self.assertIn("} catch {", loop)
+        self.assertIn("== .setAside else { throw error }", loop)
+        self.assertIn("aside.insert(operation.id)", loop)
+        # The service keeps the kind before the screens' error replaces it.
+        self.assertIn("lastSend = .failed(FamilyNotebookSendFailure.kind(of: error).rawValue)", SERVICE)
+        self.assertIn("throw error", SERVICE.split("lastSend = .failed(", 1)[1][:200])
+        read_block = block(SHARING, "private func read(reportsFailure: Bool) async -> Bool {")
+        self.assertIn("noteSend(); notedSend = true", read_block)
+        self.assertIn("if !notedSend { noteSend() }", read_block)
+
+    def test_only_the_kind_and_time_are_kept(self):
+        failure = block(SYNC, "struct Failure: Codable, Equatable, Sendable {")
+        self.assertIn("let kind: String", failure)
+        self.assertIn("let at: Date", failure)
+        self.assertEqual(failure.count("let "), 2)
+        self.assertIn('"op:fnb-held:" + familyID.uuidString.lowercased()', SYNC)
+        self.assertIn("JSONEncoder().encode(sorted)", SYNC)
+
+    def test_the_line_and_its_one_button(self):
+        notebook = block(NOTEBOOK, "private func notebook(_ membership: FamilyMembership) -> some View {")
+        self.assertIn("} else if sharing.showsUnsentLine {\n                unsentSection", notebook)
+        section = block(NOTEBOOK, "private var unsentSection: some View {")
+        self.assertIn('Label("家族に届けられていない書き込みがあります。"', section)
+        self.assertIn('WorkingLabel(title: "もう一度", workingTitle: "もう一度", working: resending)', section)
+        self.assertIn("await sharing.resendUnsent()", section)
+        words = {w for w in __import__("re").findall(r'"([^"]*)"', section) if any(ord(c) > 127 for c in w)}
+        self.assertEqual(words, {"家族に届けられていない書き込みがあります。", "もう一度", "コード："})
+        # The code only when asked: the line held, or もう一度 did not get it sent.
+        self.assertIn(".onLongPressGesture { showsSendCode = true }", section)
+        self.assertIn("if sharing.showsUnsentLine { showsSendCode = true }", section)
+        self.assertIn('Text("コード：" + sharing.sendCode)', section)
+        self.assertIn("FamilyNotebookSendFailure.code(kind: sendHealth.last?.kind, unsent: unsentCount)", SHARING)
+
+    def test_own_writing_not_sent_has_a_mark_without_words(self):
+        note = block(NOTEBOOK, "struct FamilyNotebookNote: ViewModifier {")
+        self.assertIn("} else if FamilyNotebookNote.waitsToBeSent(state, now: Date()) {", note)
+        self.assertIn('Image(systemName: "icloud.slash")', note)
+        self.assertIn("state.status == .pendingShared && now.timeIntervalSince(state.operation.editedAt) > 60", note)
+        self.assertNotIn("Text(", note)
+        resend = block(SHARING, "func resendUnsent() async {")
+        self.assertIn("SharingPersonAction.run", resend)
+        self.assertIn("retriesHeldOnce = true", resend)
+        self.assertIn("let retryHeld = retriesHeldOnce", SERVICE)
+        self.assertIn("retryHeld: retryHeld", SERVICE)
+
+    def test_the_kind_shows_in_internal_builds_only(self):
+        start = NOTEBOOK.index("private var sendDiagnosticsSection: some View {")
+        before = NOTEBOOK[:start]
+        self.assertTrue(before.rstrip().splitlines()[-3].strip().startswith("#if DEBUG || INTERNAL_PRESENTATION"))
+        self.assertIn("#if DEBUG || INTERNAL_PRESENTATION\n            if model.isReal { sendDiagnosticsSection }", NOTEBOOK)
+
+    def test_the_notebook_opens_from_the_app(self):
+        self.assertIn(".sheet(isPresented: $showsFamilyNotebook) { FamilyNotebookView() }", ROOT_VIEW)
+        self.assertIn(".sheet(isPresented: $showsFamilyNotebook) { FamilyNotebookView() }", SETTINGS)
+        self.assertIn(".familyNotebookOpeningCheck()", ROOT_VIEW)
+
 if __name__ == "__main__":
     unittest.main()
