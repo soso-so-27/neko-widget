@@ -158,5 +158,68 @@ class Boundaries(unittest.TestCase):
         self.assertIn("familyNotebook.$unlinkedCats.map { !$0.isEmpty }.removeDuplicates()", ROOT_VIEW)
 
 
+SHARING = read("NekoWidget/Services/FamilyNotebookSharing.swift")
+BRIDGE = read("NekoWidget/Services/FamilyNotebookCatCareBridge.swift")
+TABS = read("NekoWidget/Views/MainTabView.swift")
+
+
+class ReadingTheFamily(unittest.TestCase):
+    """11/16: what the joined iPhone wrote did not show on the creator's."""
+
+    def test_one_way_to_save_for_every_family_cat(self):
+        save = block(NOTEBOOK, "private func saveRealChanges(_ before: CatCareState, _ after: CatCareState) throws {")
+        self.assertIn("FamilyNotebookCatCareBridge.localChanges(before, after, snapshot: snapshot)", save)
+        self.assertIn("try store.applyLocalChanges(local.changes, author: writer())", save)
+        changes = block(BRIDGE, "static func localChanges(")
+        # Every cat of the notebook, linked or the family's own page.
+        self.assertIn("compactMap(\\.toolCatID)", changes)
+        self.assertNotIn("profileID", changes.split("let now")[0])
+
+    def test_the_cat_pages_are_read_in_the_real_app(self):
+        # The この子 tab of the app (MainTabView → CatHomeView).
+        self.assertIn("NavigationStack {\n            toolsView\n        }", TABS)
+        self.assertIn("CatHomeView(presentation: catProfilesPresentation", block(TABS, "private var toolsView: some View {"))
+        self.assertIn(".familyNotebookToolSync(enabled: current.map { isFamilyCat(record(for: $0)) } ?? false)", HOME)
+        self.assertIn("inFamilyNotebook: isFamilyCat(record),", HOME)
+        page = block(HOME, "private struct CatHomePage: View {")
+        self.assertIn(".familyNotebookPullToRead(enabled: inFamilyNotebook)", page)
+        self.assertIn("lhs.inFamilyNotebook == rhs.inFamilyNotebook", HOME)
+        # 「この子のこと」, wherever it opens from.
+        detail = block(CARE, "struct CatCareDetailView: View {")
+        self.assertIn(".familyNotebookPullToRead(enabled: sharedWithFamily)", detail)
+        self.assertIn(".familyNotebookToolSync(enabled: sharedWithFamily)", detail)
+        self.assertIn(".onChange(of: familyNotebook.familyWritesToCatCare) { _, _ in takeFamilyWrites() }", detail)
+
+    def test_pulling_is_the_persons_one_read(self):
+        pulled = block(SHARING, "func readPulled() async {")
+        self.assertIn("guard FamilyNotebookPrototype.shared.isReal, FamilyNotebookPrototype.shared.hasFamily else { return }", pulled)
+        self.assertIn("SharingPersonAction.run", pulled)
+        modifier = block(NOTEBOOK, "private struct FamilyNotebookPullToRead: ViewModifier {")
+        self.assertIn("content.refreshable { await FamilyNotebookSharing.shared.readPulled() }", modifier)
+        # Nothing to pull outside the family; no words, no button.
+        self.assertIn("} else {\n            content\n        }", modifier)
+        self.assertNotIn("Text(", modifier)
+        self.assertNotIn("Button", modifier)
+
+    def test_writing_here_is_sent_soon_by_the_one_schedule(self):
+        self.assertIn("func sendSoon() { wake(gap: FamilyAutoCheckPolicy.sendGap) }", SHARING)
+        observer = NOTEBOOK.split("notebookObserver = NotificationCenter.default.addObserver(", 1)[1].split("\n    }\n", 1)[0]
+        self.assertIn("queue: nil", observer)
+        self.assertIn("Task { @MainActor in", observer)
+        self.assertIn("self.snapshot?.outbox.isEmpty == false", observer)
+        self.assertIn("FamilyNotebookAutoCheck.shared.sendSoon()", observer)
+        # No loop of its own.
+        self.assertEqual(SHARING.count("Task.sleep(for: .seconds(delay))"), 1)
+        # Written, then the iPhone locked at once: one automatic pass on leaving.
+        self.assertIn("else { loop?.cancel(); loop = nil; sleeping = false; sendBeforeLeaving() }", SHARING)
+        leaving = block(SHARING, "private func sendBeforeLeaving() {")
+        self.assertIn("model.snapshot?.outbox.isEmpty == false", leaving)
+        self.assertIn("SharingPersonAction.automatic", leaving)
+        self.assertIn("beginBackgroundTask", leaving)
+
+    def test_a_closed_notebook_does_not_hold_the_reads(self):
+        self.assertIn(".onDisappear { FamilyNotebookAutoCheck.shared.holdsRedraw = false }", NOTEBOOK)
+
+
 if __name__ == "__main__":
     unittest.main()

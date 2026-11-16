@@ -25,6 +25,7 @@ enum FamilyNotebookCatLinkVerifier {
         try linkingKeepsEveryRecord()
         try unlinkingKeepsEveryRecord()
         try linkedCatIsOneFamilyCat(root: root.appendingPathComponent("one"))
+        try bothWays(root: root.appendingPathComponent("both-ways"))
         try whoIsAsked()
         try afterLeaving(root: root.appendingPathComponent("left"))
         try singleCatRule()
@@ -238,6 +239,129 @@ enum FamilyNotebookCatLinkVerifier {
         _ = try joinerStore.setLocalProfile(nil, forFamilyCat: familyCat)
         let kept = try FamilyNotebookToolBridge.apply(joinerStore.snapshot(), to: handoff)
         try require(kept.cats.first { $0.id == mine.id }?.water == "自分の記録", "an unlinked cat's own 預けるとき stays as it is")
+    }
+
+    // MARK: Two phones, both ways (11/16)
+
+    /// One iPhone of each kind, as in the app: the creator's cat is linked to
+    /// a cat of that iPhone; the joined iPhone has no cat of its own and shows
+    /// the family cat on its own page. Each save goes the app's way
+    /// (CatCareStore.update: willSave → localChanges, then the file with its
+    /// personal layer); each read goes the app's way (attachReal: mappings,
+    /// then applyFamilyWrites: Bridge.apply over the same file). Sending is
+    /// the outbox to the other iPhone's store (the server only relays).
+    struct Device {
+        let store: FamilyNotebookStore
+        let author: FamilyNotebookAuthor
+        var care: CatCareState
+        var bytes: Data?
+
+        /// 「この子のこと」 saved on this iPhone.
+        mutating func write(_ cat: UUID, _ change: (inout CatCareRecord) -> Void) throws {
+            var next = care
+            guard let index = next.cats.firstIndex(where: { $0.catID == cat && $0.deletedAt == nil }) else {
+                throw FamilyNotebookMigrationVerifier.Failure.assertion("cat link: the page's record is there")
+            }
+            change(&next.cats[index])
+            let local = try FamilyNotebookCatCareBridge.localChanges(care, next, snapshot: store.snapshot())
+            if let initial = local.initial { try store.applyImport(initial, author: author) }
+            try store.applyLocalChanges(local.changes, author: author)
+            let written = try FamilyNotebookRecordOrigin.recording(CatCareDecoding.encode(next), over: bytes, tool: "CatCare", family: false)
+            bytes = written
+            care = try CatCareDecoding.decode(written).state
+        }
+
+        /// What the family wrote, put into 「この子のこと」.
+        mutating func read() throws {
+            let snapshot = try store.snapshot()
+            let rows = try FamilyNotebookCatCareBridge.mappings(for: snapshot, existingLocalIDs: Set(care.cats.map(\.catID)))
+            if rows != snapshot.activeMappings {
+                try store.applyImport(.init(familyID: snapshot.familyID, entries: [], mappings: rows), author: author)
+            }
+            let next = try FamilyNotebookCatCareBridge.apply(store.snapshot(), to: care)
+            guard next != care else { return }
+            let written = try FamilyNotebookRecordOrigin.recording(CatCareDecoding.encode(next), over: bytes, tool: "CatCare", family: true)
+            bytes = written
+            care = try CatCareDecoding.decode(written).state
+        }
+
+        func record(_ cat: UUID) -> CatCareRecord? { care.cats.first { $0.catID == cat && $0.deletedAt == nil } }
+    }
+
+    /// Everything waiting on `from` reaches `to` (and is acknowledged).
+    @discardableResult
+    static func deliver(_ from: Device, _ to: Device) throws -> Int {
+        let sent = try from.store.pendingOperations()
+        guard !sent.isEmpty else { return 0 }
+        try to.store.receive(sent)
+        for operation in sent {
+            _ = try from.store.acknowledge(.init(familyID: operation.familyID, operationID: operation.id, version: operation.version))
+        }
+        return sent.count
+    }
+
+    static func bothWays(root: URL) throws {
+        let family = UUID(), familyCat = UUID(), creatorTool = UUID(), creatorProfile = UUID()
+        var mine = CatCareRecord(catID: creatorTool, profileID: creatorProfile)
+        mine.name = stamp("ソラ", "creator-device"); mine.water = stamp("お皿の水", "creator-device")
+        var creatorCare = CatCareState(deviceID: "creator-device", now: then)
+        creatorCare.cats = [mine]
+        var a = Device(store: try FamilyNotebookStore(directory: root.appendingPathComponent("creator"), familyID: family, deviceID: "creator"),
+                       author: creator, care: creatorCare, bytes: try CatCareDecoding.encode(creatorCare))
+        let link = FamilyNotebookLocalMapping(sourceKey: "cat:" + creatorTool.uuidString.lowercased(), familyCatID: familyCat,
+                                              profileID: creatorProfile, toolCatID: creatorTool)
+        try a.store.applyImport(try plan(creatorCare, try a.store.snapshot(), mappings: [link]), author: creator)
+        var b = Device(store: try FamilyNotebookStore(directory: root.appendingPathComponent("joiner"), familyID: family, deviceID: "joiner"),
+                       author: joiner, care: CatCareState(deviceID: "joiner-device", now: then), bytes: nil)
+        try require(try deliver(a, b) > 0, "the creator's cat is sent")
+        try b.read()
+        guard let tool = FamilyNotebookCatLink.catMapping(familyCat, in: try b.store.snapshot())?.toolCatID else {
+            throw FamilyNotebookMigrationVerifier.Failure.assertion("cat link: the joined iPhone has the family cat's record")
+        }
+        try require(FamilyNotebookCatLink.unlinked(try b.store.snapshot(), care: b.care, name: { _ in "" }).map(\.id) == [familyCat],
+                    "the joined iPhone shows the family cat on its own page")
+        try require(b.record(tool)?.water?.value == "お皿の水", "the creator's writing reaches the joined iPhone")
+
+        // The joined iPhone writes on the family cat's own page.
+        try b.write(tool) { record in
+            record.water = .init(value: "流れる水", editedAt: then.addingTimeInterval(60), editedBy: "joiner-device")
+            record.weights.append(CatCareWeight(measuredOn: CatCareDay(year: 2026, month: 11, day: 1)!, grams: 4_300,
+                                                editedAt: then.addingTimeInterval(60), editedBy: "joiner-device"))
+        }
+        let waiting = try b.store.pendingOperations()
+        try require(waiting.contains { $0.target == .init(familyCatID: familyCat, field: .water) && $0.value == .text("流れる水") },
+                    "a save on the family cat's own page waits to be sent as the family's")
+        try require(waiting.contains { $0.target.familyCatID == familyCat && $0.target.collection == .weight },
+                    "a weight added there waits to be sent too")
+        try require(b.record(tool)?.water?.value == "流れる水", "the joined iPhone keeps what it wrote")
+        try deliver(b, a)
+        try a.read()
+        try require(a.record(creatorTool)?.water?.value == "流れる水",
+                    "what the joined iPhone wrote shows in the creator's 「この子のこと」 (the linked cat)")
+        try require(a.record(creatorTool)?.weights.map(\.grams) == [4_300], "its weight shows there too")
+        try require(a.care.cats.filter { $0.deletedAt == nil }.count == 1, "no second cat on the creator's iPhone")
+        try b.read()
+        try require(b.record(tool)?.water?.value == "流れる水", "reading again keeps the joined iPhone's writing")
+
+        // The creator writes the same item afterwards, then the joined iPhone again.
+        try a.write(creatorTool) { $0.water = .init(value: "ぬるま湯", editedAt: then.addingTimeInterval(120), editedBy: "creator-device") }
+        try require(try deliver(a, b) > 0, "the creator's change is sent")
+        try b.read()
+        try require(b.record(tool)?.water?.value == "ぬるま湯", "the creator's later change reaches the joined iPhone")
+        try b.write(tool) { $0.water = .init(value: "冷たい水", editedAt: then.addingTimeInterval(180), editedBy: "joiner-device") }
+        try require(try deliver(b, a) > 0, "the joined iPhone's second change is sent")
+        try a.read()
+        try require(a.record(creatorTool)?.water?.value == "冷たい水", "and the joined iPhone's later change reaches the creator")
+
+        // Both write before either reads: the two iPhones end with one value.
+        try a.write(creatorTool) { $0.temperament = .init(value: "あまえんぼう", editedAt: then.addingTimeInterval(240), editedBy: "creator-device") }
+        try b.write(tool) { $0.temperament = .init(value: "マイペース", editedAt: then.addingTimeInterval(240), editedBy: "joiner-device") }
+        try deliver(a, b); try deliver(b, a)
+        try a.read(); try b.read()
+        let left = a.record(creatorTool)?.temperament?.value, right = b.record(tool)?.temperament?.value
+        try require(left != nil && left == right, "writing at the same time ends with one value on both iPhones")
+        try require(Set(try a.store.snapshot().operations.map(\.id)) == Set(try b.store.snapshot().operations.map(\.id)),
+                    "both notebooks hold the same writing")
     }
 
     // MARK: Who is asked

@@ -282,6 +282,9 @@ struct CatCareDetailView: View {
 
     var body: some View {
         form
+        // 11/16: a cat in the family notebook: pull down to read the family
+        // once; what came shows here at once (takeFamilyWrites).
+        .familyNotebookPullToRead(enabled: sharedWithFamily)
         .disabled(isDeleting)
         .navigationBarBackButtonHidden(isDeleting || isSavingName)
         // 11/12 (round 2): a pushed page like the tools, so the tab bar is
