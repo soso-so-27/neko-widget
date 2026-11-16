@@ -58,6 +58,45 @@ enum FamilyNotebookCatCareBridge {
 
     static let lists: [FamilyNotebookCollection] = [.weight, .medication, .vaccination, .meal]
 
+    /// 11/16: what one save of 「この子のこと」 puts into the notebook (the app's
+    /// CatCareStore.willSave): the items of the family's cats that changed, a
+    /// linked cat and a cat this iPhone shows only as the family's alike.
+    /// `initial`: an 迎えた日 first copied from the cat's profile (an import,
+    /// so the family's own value is not replaced); `changes`: everything else.
+    struct LocalChanges: Equatable, Sendable {
+        let initial: FamilyNotebookImportPlan?
+        let changes: FamilyNotebookImportPlan
+    }
+
+    static func localChanges(_ before: CatCareState, _ after: CatCareState,
+                             snapshot: FamilyNotebookSnapshot) throws -> LocalChanges {
+        let linked = Set(snapshot.activeMappings.filter { $0.recordID == nil }.compactMap(\.toolCatID))
+        var selectedBefore = before, selectedAfter = after
+        selectedBefore.cats = before.cats.filter { linked.contains($0.catID) }
+        selectedAfter.cats = after.cats.filter { linked.contains($0.catID) }
+        func plan(_ state: CatCareState, _ mappings: [FamilyNotebookLocalMapping]) throws -> FamilyNotebookImportPlan {
+            let source = try FamilyNotebookMigrationSource(catCare: CatCareDecoding.Result(state: state, unreadableCatCount: 0))
+            return try FamilyNotebookMigration.prepare(source: source, familyID: snapshot.familyID, mappings: mappings).plan
+        }
+        let now = try plan(selectedAfter, snapshot.activeMappings)
+        let then = try plan(selectedBefore, now.mappings)
+        let entries = now.entries.filter { entry in
+            guard let previous = then.entries.first(where: { $0.target == entry.target }) else { return true }
+            return previous.value != entry.value
+        }
+        let initialAdoption = entries.filter { entry in
+            guard entry.target.field == .adoptionDay,
+                  let mapping = snapshot.activeMappings.first(where: { $0.familyCatID == entry.target.familyCatID && $0.recordID == nil }),
+                  let local = mapping.toolCatID,
+                  let stamp = after.cats.first(where: { $0.catID == local })?.adoptionDay else { return false }
+            return stamp.editedBy == "import:Profile"
+        }
+        let initialTargets = Set(initialAdoption.map(\.target))
+        return LocalChanges(
+            initial: initialAdoption.isEmpty ? nil : .init(familyID: snapshot.familyID, entries: initialAdoption, mappings: now.mappings),
+            changes: .init(familyID: snapshot.familyID, entries: entries.filter { !initialTargets.contains($0.target) }, mappings: now.mappings))
+    }
+
     static func mappings(for snapshot: FamilyNotebookSnapshot, existingLocalIDs: Set<UUID> = [], makeID: () -> UUID = UUID.init) throws -> [FamilyNotebookLocalMapping] {
         var result = snapshot.activeMappings
         for cat in Set(snapshot.operations.map { $0.target.familyCatID }).sorted(by: { $0.uuidString < $1.uuidString }) {

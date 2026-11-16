@@ -339,6 +339,9 @@ struct CatHomeView: View {
         // menu is the name on the photo.
         // No title on this page: the photo runs under the status bar.
         .toolbar(.hidden, for: .navigationBar)
+        // 11/16: the page of a cat in the family notebook is read like a
+        // shared tool's screen (the one schedule, every 30 s while shown).
+        .familyNotebookToolSync(enabled: current.map { isFamilyCat(record(for: $0)) } ?? false)
         .addingCatProfile(isStarted: $addsCat, presentation: presentation, actions: actions,
                           initialName: registeringFamilyCat?.name) { identifier in
             if let family = registeringFamilyCat {
@@ -575,7 +578,15 @@ struct CatHomeView: View {
                            menuCats: cats.count >= Self.menuMinimumCats
                                ? cats.map { CatHomeMenuCat(id: $0.id, name: $0.name) } : nil,
                            choosesPhoto: unlinkedToolIDs.contains(cat.id),
+                           inFamilyNotebook: isFamilyCat(record),
                            actions: pageActions)
+    }
+
+    /// 11/16: the page's cat is in the family notebook (linked to a cat of
+    /// this iPhone, or the family's own page).
+    private func isFamilyCat(_ record: CatCareRecord?) -> Bool {
+        guard let record else { return false }
+        return familyNotebook.activeFamilyCats.contains { $0.toolID == record.catID }
     }
 
     /// The page 「この子のこと」 opens: the cat's own page (CatProfileDetailView)
@@ -858,6 +869,10 @@ private struct CatHomePage: View {
     let menuCats: [CatHomeMenuCat]?
     /// 11/15: a family cat with no cat of this iPhone: 「写真を選ぶ」.
     var choosesPhoto = false
+    /// 11/16: a cat in the family notebook: pulled down, the family is read
+    /// once (when the page is taller than the screen; a page that fits does
+    /// not move up and down, 11/14).
+    var inFamilyNotebook = false
     /// 設定, 写真を見せる, the cat menu and the birthday editor's save.
     let actions: CatHomePageActions
 
@@ -894,6 +909,7 @@ private struct CatHomePage: View {
             }
         }
         .scrollIndicators(.hidden)
+        .familyNotebookPullToRead(enabled: inFamilyNotebook)
         // 11/14: a page that fits the screen does not move up and down at
         // all, so a slightly slanted swipe between cats stays sideways; a
         // taller page (iPhone SE, large text, 迷子) still scrolls.
@@ -913,7 +929,8 @@ extension CatHomePage: Equatable {
             && lhs.pageIndex == rhs.pageIndex && lhs.pageCount == rhs.pageCount
             && lhs.vetUnfinished == rhs.vetUnfinished && lhs.searching == rhs.searching
             && lhs.care == rhs.care && lhs.careLinks.catID == rhs.careLinks.catID
-            && lhs.menuCats == rhs.menuCats && lhs.choosesPhoto == rhs.choosesPhoto && lhs.actions === rhs.actions
+            && lhs.menuCats == rhs.menuCats && lhs.choosesPhoto == rhs.choosesPhoto
+            && lhs.inFamilyNotebook == rhs.inFamilyNotebook && lhs.actions === rhs.actions
     }
 }
 

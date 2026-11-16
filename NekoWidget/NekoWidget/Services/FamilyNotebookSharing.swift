@@ -116,6 +116,16 @@ final class FamilyNotebookSharing: ObservableObject {
         return await refresh(reportsFailure: reportsFailure)
     }
 
+    /// 11/16: pulled down on a page of a cat in the family notebook (「この子の
+    /// こと」, the cat's page in この子). The person's own read of the notebook,
+    /// once: it waits for a pass already running instead of being dropped
+    /// behind it, and what it brings goes into 「この子のこと」 (attachReal).
+    /// Quiet, as the pages say nothing about the notebook's state.
+    func readPulled() async {
+        guard FamilyNotebookPrototype.shared.isReal, FamilyNotebookPrototype.shared.hasFamily else { return }
+        await SharingPersonAction.run { _ = await refreshAfterPlusChange(reportsFailure: false) }
+    }
+
     /// Runs one operation with a fresh ID, then reads the state again.
     /// `readsAfter: false` only where nothing on screen waits for that read
     /// (an invitation link: the share sheet opens first, 11/15).
@@ -233,6 +243,12 @@ final class FamilyNotebookAutoCheck {
 
     /// After an operation, or when this iPhone starts waiting to be let in.
     func nudge() { wake(gap: FamilyAutoCheckPolicy.nudgeGap) }
+
+    /// 11/16: something written on this iPhone waits to be sent. It used to
+    /// wait for the next pass of an open screen, or for the app to come to
+    /// the front again; now one pass follows (not sooner than 20 s after the
+    /// last, so typing never adds more than the wake of a screen would).
+    func sendSoon() { wake(gap: FamilyAutoCheckPolicy.wakeGap) }
 
     func appeared(_ screen: Screen) {
         switch screen { case .notebook: notebookScreens += 1; case .tool: toolScreens += 1 }

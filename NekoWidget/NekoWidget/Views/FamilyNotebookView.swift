@@ -412,7 +412,16 @@ final class FamilyNotebookPrototype: ObservableObject {
         CatCareStore.shared.didSave = { [weak self] before, after in self?.catCareDidSave(before, after) }
         notebookObserver = NotificationCenter.default.addObserver(forName: .appRecordsCommitted, object: nil, queue: nil) { [weak self] note in
             guard (note.object as? URL)?.lastPathComponent == "family-notebook.json" else { return }
-            Task { @MainActor in self?.reload(); self?.applyFamilyWrites() }
+            Task { @MainActor in
+                guard let self else { return }
+                self.reload(); self.applyFamilyWrites()
+                // 11/16: written here and not sent yet (「この子のこと」, 病院,
+                // 預けるとき): sent by the one schedule soon, also when the
+                // page closes right after.
+                if self.isReal, self.hasFamily, self.snapshot?.outbox.isEmpty == false {
+                    FamilyNotebookAutoCheck.shared.sendSoon()
+                }
+            }
         }
     }
 
@@ -601,28 +610,11 @@ final class FamilyNotebookPrototype: ObservableObject {
             }
             return
         }
-        let linked = Set(snapshot.activeMappings.filter { $0.recordID == nil }.compactMap(\.toolCatID))
-        var selectedBefore = before, selectedAfter = after
-        selectedBefore.cats = before.cats.filter { linked.contains($0.catID) }
-        selectedAfter.cats = after.cats.filter { linked.contains($0.catID) }
-        let now = try Self.plan(selectedAfter, family: snapshot.familyID, mappings: snapshot.activeMappings)
-        let then = try Self.plan(selectedBefore, family: snapshot.familyID, mappings: now.mappings)
-        let entries = now.entries.filter { entry in
-            guard let previous = then.entries.first(where: { $0.target == entry.target }) else { return true }
-            return previous.value != entry.value
-        }
-        let initialAdoption = entries.filter { entry in
-            guard entry.target.field == .adoptionDay,
-                  let mapping = snapshot.activeMappings.first(where: { $0.familyCatID == entry.target.familyCatID && $0.recordID == nil }),
-                  let local = mapping.toolCatID,
-                  let stamp = after.cats.first(where: { $0.catID == local })?.adoptionDay else { return false }
-            return stamp.editedBy == "import:Profile"
-        }
-        if !initialAdoption.isEmpty {
-            try store.applyImport(.init(familyID: snapshot.familyID, entries: initialAdoption, mappings: now.mappings), author: writer())
-        }
-        let initialTargets = Set(initialAdoption.map(\.target))
-        try store.applyLocalChanges(.init(familyID: snapshot.familyID, entries: entries.filter { !initialTargets.contains($0.target) }, mappings: now.mappings), author: writer())
+        // 11/16: the same for a linked cat and a family cat shown on its own
+        // (FamilyNotebookCatCareBridge.localChanges, checked with two phones).
+        let local = try FamilyNotebookCatCareBridge.localChanges(before, after, snapshot: snapshot)
+        if let initial = local.initial { try store.applyImport(initial, author: writer()) }
+        try store.applyLocalChanges(local.changes, author: writer())
         reload()
     }
 
@@ -1152,6 +1144,9 @@ struct FamilyNotebookView: View {
         }
         .onDisappear { FamilyNotebookAutoCheck.shared.disappeared(.notebook) }
         .onChange(of: presentsSheet, initial: true) { _, open in FamilyNotebookAutoCheck.shared.holdsRedraw = open }
+        // 11/16: the notebook gone, nothing on screen waits for a sheet; a
+        // hold left on would stop every automatic read until it opens again.
+        .onDisappear { FamilyNotebookAutoCheck.shared.holdsRedraw = false }
         .onAppear { model.markSeen() }
         .onDisappear { model.markSeen() }
         .modifier(FamilyNotebookLinkAsk())
@@ -2456,6 +2451,28 @@ extension View {
     /// Put once at the app's root (11/15).
     func familyNotebookOpeningCheck() -> some View {
         modifier(FamilyNotebookOpeningCheck())
+    }
+
+    /// 11/16: pull down to read the family's notebook once, on a page of a
+    /// cat in the notebook. Anywhere else (no family, a cat of this iPhone
+    /// only) the page is not pulled at all.
+    func familyNotebookPullToRead(enabled: Bool) -> some View {
+        modifier(FamilyNotebookPullToRead(enabled: enabled))
+    }
+}
+
+/// `enabled` already says the cat is one of the family's (activeFamilyCats,
+/// empty outside a family); nothing is observed here, so the この子 pages
+/// are not drawn again for the notebook's changes (11/14).
+private struct FamilyNotebookPullToRead: ViewModifier {
+    var enabled: Bool
+
+    func body(content: Content) -> some View {
+        if enabled && FamilyNotebookPrototype.shared.isReal {
+            content.refreshable { await FamilyNotebookSharing.shared.readPulled() }
+        } else {
+            content
+        }
     }
 }
 
