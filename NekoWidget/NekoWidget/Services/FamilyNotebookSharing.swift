@@ -277,7 +277,7 @@ final class FamilyNotebookAutoCheck {
         leavingHandle = .invalid
     }
     #else
-    private func sendBeforeLeaving() {}
+    private func sendBeforeLeaving() -> Void {}  // no UIKit: nothing leaves
     #endif
 
     /// After an operation, or when this iPhone starts waiting to be let in.
