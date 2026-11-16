@@ -108,6 +108,18 @@ enum PlusSettingsRowStatus: Equatable, Sendable {
     static func steady(_ current: Self, lastAnswer: Self?) -> Self {
         current == .checking ? (lastAnswer ?? .checking) : current
     }
+
+    /// 11/16: the row from the store's answer. A usable server answer is Plus
+    /// even when it will not renew (cancelled, still in its period). Only a
+    /// missing answer is 「確認できません」; an ended Plus is `.notMember`,
+    /// which offers Plus again.
+    static func live(usableServerAnswer: Bool, firstCheck: Bool, answerMissing: Bool,
+                     purchaseWaiting: Bool) -> Self {
+        if usableServerAnswer { return .member }
+        if firstCheck { return .checking }
+        if answerMissing || purchaseWaiting { return .unknown }
+        return .notMember
+    }
 }
 
 /// When the Plus screen re-reads its price (11/10: it reloaded over and over,

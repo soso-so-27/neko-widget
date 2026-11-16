@@ -142,6 +142,12 @@ struct ProductionAppRootView: View {
                 membershipNow = .now
                 let access = MembershipAccessContext(entitlement: plusPurchases.entitlementState)
                 try? PersonalWidgetMembershipStore.publish(access.personal)
+                // 11/16: Plus confirmed again by the server: saving that
+                // stopped for want of Plus goes again by itself (automatic).
+                if case .serverConfirmed = plusPurchases.entitlementState,
+                   plusPurchases.entitlementState.grantsPlus {
+                    AppRecordPersistence.shared.noteServerConfirmedPlus()
+                }
                 if let expiration = plusPurchases.entitlementState.lastServerConfirmed?.expirationDate,
                    expiration > .now {
                     do { try await Task.sleep(for: .seconds(expiration.timeIntervalSinceNow)) }

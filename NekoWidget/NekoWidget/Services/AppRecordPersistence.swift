@@ -1546,6 +1546,8 @@ final class AppRecordPersistence: ObservableObject {
         failing = true
         retriesByItself = Self.isConnectionFailure(error)
         if error as? ManagedPreservationError == .membershipRequired { planEnded = true }
+        let stop = error as? ManagedPreservationError
+        stoppedForPlus = stop == .membershipRequired || stop == .accessUnconfirmed
     }
 
     private static func isConnectionFailure(_ error: Error) -> Bool {
@@ -1570,6 +1572,19 @@ final class AppRecordPersistence: ObservableObject {
 
     /// The account screen learns about the plan before a save is tried.
     func notePlanEnded(_ ended: Bool) { planEnded = ended }
+
+    /// The last pass stopped because the server did not see Plus.
+    private var stoppedForPlus = false
+
+    /// 11/16: this iPhone's Plus was confirmed again by the billing server
+    /// (after a cancellation was undone, or Plus started again). Saving that
+    /// stopped for want of Plus goes again by itself at the next pass of the
+    /// loop: an automatic call through the preservation gate, never a tap's.
+    /// Nothing happens for any other stop (an intake pause, a full storage).
+    func noteServerConfirmedPlus() {
+        guard enabled, failing || planEnded, stoppedForPlus || planEnded else { return }
+        requested = true; nextAttempt = .distantPast
+    }
 
     /// The shared wording points at a list to reload; automatic saving retries by itself.
     private static func failureDetail(_ error: Error) -> String {
