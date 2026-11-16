@@ -202,7 +202,7 @@ class ReadingTheFamily(unittest.TestCase):
         self.assertNotIn("Button", modifier)
 
     def test_writing_here_is_sent_soon_by_the_one_schedule(self):
-        self.assertIn("func sendSoon() { wake(gap: FamilyAutoCheckPolicy.wakeGap) }", SHARING)
+        self.assertIn("func sendSoon() { wake(gap: FamilyAutoCheckPolicy.sendGap) }", SHARING)
         observer = NOTEBOOK.split("notebookObserver = NotificationCenter.default.addObserver(", 1)[1].split("\n    }\n", 1)[0]
         self.assertIn("queue: nil", observer)
         self.assertIn("Task { @MainActor in", observer)

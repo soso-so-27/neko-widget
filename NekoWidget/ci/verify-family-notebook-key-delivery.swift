@@ -299,11 +299,11 @@ private struct SimSchedule {
     var notebookOpen = false, toolOpen = false
 
     /// The app went to the background and came back at `now`.
-    mutating func foreground(at now: Double) {
+    mutating func foreground(at now: Double, gap: TimeInterval = FamilyAutoCheckPolicy.wakeGap) {
         let plan = plannedAt.flatMap { $0 >= now ? $0 : nil }
         let delay = FamilyAutoCheckPolicy.wakeDelay(now: Date(timeIntervalSince1970: now),
             lastPassAt: lastPassAt.map { Date(timeIntervalSince1970: $0) },
-            plannedAt: plan.map { Date(timeIntervalSince1970: $0) }, gap: FamilyAutoCheckPolicy.wakeGap)
+            plannedAt: plan.map { Date(timeIntervalSince1970: $0) }, gap: gap)
         let keepsPlan = plan.map { $0 - now <= delay } == true
         plannedAt = now + delay
         if !keepsPlan { plannedPass = .full }
@@ -337,6 +337,9 @@ private enum CallBudgetChecks {
         let wifi = try twoIPhonesOnOneAddress()
         let pause = try await pauseCountsFromTheReply()
         let billing = try billingGate()
+        let writing = try writingOnTheCatPage()
+        print("11/16: typing on a family cat's page for 2 min: \(writing.perMinute) calls a minute at most; "
+            + "a save shows on the other iPhone's open cat page within \(writing.worstSeconds) s")
         print("1115v: a 429 that came back after 10 s holds automatic calls until \(pause.silentUntil) s, again at \(pause.resumesAt) s; "
             + "billing ways in every 5 s for 10 min: automatic POST \(billing.transactions), GET \(billing.entitlements) a minute, "
             + "\(billing.afterRateLimit) within 60 s of a 429, 購入を復元 went: \(billing.tapWent)")
@@ -604,6 +607,50 @@ private extension CallBudgetChecks {
         let after = maxPerMinute(meter.times)
         try check(after <= SharingAutoCallBudget.perMinute, "reopened every 5 s: \(after) calls in a minute")
         return (maxPerMinute(before), after)
+    }
+
+    /// 11/16: the joined iPhone types in 「この子のこと」 of a family cat for 2
+    /// minutes (a save every 2 s, each asking to send soon: sendGap), the creator has
+    /// the cat's page open. Within the budget; returns the longest time from a
+    /// save to the creator's read after it was sent, over every phase of the
+    /// creator's 30 s, and the calls of the busiest minute.
+    static func writingOnTheCatPage() throws -> (perMinute: Int, worstSeconds: Double) {
+        let full = 10
+        let clock = SimClock(), meter = Meter(clock: clock)
+        var writer = SimSchedule()
+        writer.toolOpen = true
+        var saves = Array(stride(from: 3.0, through: 123.0, by: 2.0))
+        var sentAt: [Double: Double] = [:]
+        let end = 200.0
+        while clock.seconds < end {
+            let pass = writer.plannedAt ?? .infinity, save = saves.first ?? .infinity
+            guard min(pass, save) < end else { break }
+            if save < pass {
+                clock.seconds = max(clock.seconds, save)
+                saves.removeFirst()
+                writer.foreground(at: save, gap: FamilyAutoCheckPolicy.sendGap)  // sendSoon
+            } else {
+                clock.seconds = max(clock.seconds, pass)
+                try? meter.calls(full)
+                for written in stride(from: 3.0, through: 123.0, by: 2.0) where written <= pass && sentAt[written] == nil {
+                    sentAt[written] = pass
+                }
+                writer.passed(.full, at: pass, mark: "steady", keysMove: false, awaiting: false, inFamily: true)
+            }
+        }
+        let perMinute = maxPerMinute(meter.times)
+        try check(perMinute <= 2 * full, "writing on the cat page: \(perMinute) calls in a minute")
+        var worst = 0.0
+        for phase in 0..<30 {
+            // The creator's page reads every 30 s, starting at `phase`.
+            for (written, sent) in sentAt {
+                let read = Double(phase) + (max(0, sent - Double(phase)) / 30).rounded(.up) * 30
+                worst = max(worst, read - written)
+            }
+        }
+        try check(sentAt.count == 61, "every save is sent")
+        try check(worst <= 60, "a save shows on the open cat page within 60 s (was \(worst))")
+        return (perMinute, worst)
     }
 
     /// Two iPhones on one Wi-Fi, each tapping as fast as it can while its

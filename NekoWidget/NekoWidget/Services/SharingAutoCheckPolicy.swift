@@ -45,6 +45,10 @@ enum FamilyAutoCheckPolicy {
     static let wakeGap: TimeInterval = 20
     /// After the person's own operation (a join, an approval): keys follow fast.
     static let nudgeGap: TimeInterval = 5
+    /// 11/16: written on this iPhone, not sent yet: one pass, not sooner than
+    /// this after the last (typing never reads more often than a shared
+    /// tool's screen does).
+    static let sendGap: TimeInterval = toolFullInterval
 
     /// When the next pass runs after a wake: the planned pass if it is sooner,
     /// else `gap` after the last pass (at once when none was recent).

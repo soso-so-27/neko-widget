@@ -285,9 +285,9 @@ final class FamilyNotebookAutoCheck {
 
     /// 11/16: something written on this iPhone waits to be sent. It used to
     /// wait for the next pass of an open screen, or for the app to come to
-    /// the front again; now one pass follows (not sooner than 20 s after the
-    /// last, so typing never adds more than the wake of a screen would).
-    func sendSoon() { wake(gap: FamilyAutoCheckPolicy.wakeGap) }
+    /// the front again; now one pass follows (not sooner than 30 s after the
+    /// last, so typing never reads more often than a shared tool's screen).
+    func sendSoon() { wake(gap: FamilyAutoCheckPolicy.sendGap) }
 
     func appeared(_ screen: Screen) {
         switch screen { case .notebook: notebookScreens += 1; case .tool: toolScreens += 1 }
