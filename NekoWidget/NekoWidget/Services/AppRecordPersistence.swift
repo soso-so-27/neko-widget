@@ -717,7 +717,14 @@ final class AppRecordPersistence: ObservableObject {
         }
     }
     nonisolated static let consentVersion = "app-records-automatic-v1"
-    @Published private(set) var title = "自動保存はオフです" { didSet { failing = false; retriesByItself = false } }
+    @Published private(set) var title = "自動保存はオフです" { didSet { failing = false; retriesByItself = false; intakePaused = false } }
+    /// 11/16: the save server has paused new saves for everyone (S08:
+    /// PRESERVATION_INTAKE_PAUSED and its kind). Not about Plus, nothing the
+    /// person can do; the loop goes on by itself and continues once it opens.
+    @Published private(set) var intakePaused = false
+    static let intakePausedTitle = "いまは新しく保存できません"
+    static let intakePausedDetail = "保存の受付を一時的に止めています。保存した記録は開けます。受付が戻ると、自動で続けます。"
+    static let intakePausedRowValue = "受付を停止中"
     /// The last attempt failed and nothing has been saved since.
     @Published private(set) var failing = false
     /// The failure was the connection, so the next attempt comes without anyone pressing anything.
@@ -1546,6 +1553,9 @@ final class AppRecordPersistence: ObservableObject {
         failing = true
         retriesByItself = Self.isConnectionFailure(error)
         if error as? ManagedPreservationError == .membershipRequired { planEnded = true }
+        let stop = error as? ManagedPreservationError
+        stoppedForPlus = stop == .membershipRequired || stop == .accessUnconfirmed
+        intakePaused = stop == .servicePaused
     }
 
     private static func isConnectionFailure(_ error: Error) -> Bool {
@@ -1557,19 +1567,36 @@ final class AppRecordPersistence: ObservableObject {
     /// Three states for the person: saved, saving, or something only they can resolve.
     /// Steps inside a save and failures that retry by themselves all read as saving.
     var shownTitle: String {
+        if failing && intakePaused { return Self.intakePausedTitle }
         if failing { return retriesByItself ? "保存中…" : title }
         return ["保存待ちの変更があります", "保存の準備中…", "保存の途中です"].contains(title) ? "保存中…" : title
     }
     var shownDetail: String? {
+        if failing && intakePaused { return Self.intakePausedDetail }
         if failing && retriesByItself { return "通信が戻ると、自動で続けます。" }
         if shownTitle == "保存中…" { return "アプリを閉じても、次に開いたときに自動で続けます。" }
         // Tidying older saves is the app's own work, not something to read about.
         return title == "保存済み" ? nil : detail
     }
-    var needsAttention: Bool { (failing && !retriesByItself) || conflict }
+    /// An intake pause is not the person's to resolve: no ［もう一度試す］, no dot.
+    var needsAttention: Bool { (failing && !retriesByItself && !intakePaused) || conflict }
+    var showsIntakePaused: Bool { enabled && failing && intakePaused && !conflict }
 
     /// The account screen learns about the plan before a save is tried.
     func notePlanEnded(_ ended: Bool) { planEnded = ended }
+
+    /// The last pass stopped because the server did not see Plus.
+    private var stoppedForPlus = false
+
+    /// 11/16: this iPhone's Plus was confirmed again by the billing server
+    /// (after a cancellation was undone, or Plus started again). Saving that
+    /// stopped for want of Plus goes again by itself at the next pass of the
+    /// loop: an automatic call through the preservation gate, never a tap's.
+    /// Nothing happens for any other stop (an intake pause, a full storage).
+    func noteServerConfirmedPlus() {
+        guard enabled, failing || planEnded, stoppedForPlus || planEnded else { return }
+        requested = true; nextAttempt = .distantPast
+    }
 
     /// The shared wording points at a list to reload; automatic saving retries by itself.
     private static func failureDetail(_ error: Error) -> String {
@@ -1614,6 +1641,15 @@ final class AppRecordPersistence: ObservableObject {
         for error in [ManagedPreservationError.membershipRequired, .servicePaused, .capacityReached, .authenticationRequired, .staleSession] {
             let began = Date(); report(error)
             guard (299.9...301).contains(nextAttempt.timeIntervalSince(began)) else { throw ToolBackupError.storage }
+            // 11/16: the intake pause (S08) is its own state: its words, no
+            // ［もう一度試す］; every other stop keeps 「まだ保存していない変更があります」.
+            if error == .servicePaused {
+                guard intakePaused, !needsAttention, shownTitle == Self.intakePausedTitle,
+                      shownDetail == Self.intakePausedDetail else { throw ToolBackupError.storage }
+            } else {
+                guard !intakePaused, needsAttention, shownTitle == "まだ保存していない変更があります",
+                      shownDetail != Self.intakePausedDetail else { throw ToolBackupError.storage }
+            }
         }
         transientFailures = 0; nextAttempt = .distantPast; planEnded = false
     }
@@ -2090,6 +2126,7 @@ struct AppRecordSettingsView: View {
     private var statusSymbol: String {
         guard persistence.enabled else { return "icloud.slash" }
         if persistence.needsAttention { return "exclamationmark.icloud" }
+        if persistence.showsIntakePaused { return "icloud.slash" }
         // The check only once everything is in; while saving or after an interruption, a plain cloud.
         return persistence.title == "保存済み" ? "checkmark.icloud" : "icloud"
     }

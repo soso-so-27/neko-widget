@@ -105,7 +105,9 @@ struct AutoSaveSettingsRow: View {
         LabeledContent {
             Text(!persistence.enabled ? "オフ"
                 : persistence.planEnded ? "止まっています"
-                : persistence.needsAttention ? "保存できていません" : "オン")
+                : persistence.needsAttention ? "保存できていません"
+                // 11/16: the save server's pause for everyone, not this iPhone's failure.
+                : persistence.showsIntakePaused ? AppRecordPersistence.intakePausedRowValue : "オン")
         } label: {
             Label("自動保存", systemImage: "icloud")
         }

@@ -149,6 +149,14 @@ enum PlusEntitlementState: Equatable, Sendable {
     /// Personal UI/access may use the existing bounded fallback. This does
     /// not turn an offline cache into a new server confirmation or purchase.
     var permitsPersonalPlus: Bool { lastServerConfirmed?.isUsable() == true }
+
+    /// 11/16: 「購入状況を確認できません」 only here: no usable server answer
+    /// could be had (no connection, no answer, a broken signature). An ended
+    /// Plus (`.inactive`) and the first check (`.checking`) are not this.
+    var cannotBeConfirmed: Bool {
+        if case .indeterminate = self { return !permitsPersonalPlus }
+        return false
+    }
 }
 
 enum PlusProductAvailability: Equatable, Sendable {
@@ -247,6 +255,8 @@ final class PlusPurchaseStore: ObservableObject {
     private let fetchAuthoritativeEntitlement: PlusAuthoritativeEntitlementFetcher?
     private var transactionUpdatesTask: Task<Void, Never>?
     private var storefrontUpdatesTask: Task<Void, Never>?
+    /// 11/16: cancelling, undoing it, and the end date change no transaction.
+    private var subscriptionStatusUpdatesTask: Task<Void, Never>?
     private var productLoadGeneration: UInt64 = 0
     private var productStorefrontID: String?
     private var hasStarted = false
@@ -301,6 +311,7 @@ final class PlusPurchaseStore: ObservableObject {
     deinit {
         transactionUpdatesTask?.cancel()
         storefrontUpdatesTask?.cancel()
+        subscriptionStatusUpdatesTask?.cancel()
         authorityExpiryTask?.cancel()
         serverConfirmationRecheckTask?.cancel()
     }
@@ -347,6 +358,7 @@ final class PlusPurchaseStore: ObservableObject {
 
         startTransactionUpdatesListener()
         startStorefrontUpdatesListener()
+        startSubscriptionStatusUpdatesListener()
         await refreshWorkHistory()
         await reconcileCurrentEntitlements()
         await refreshRenewal()
@@ -460,6 +472,22 @@ final class PlusPurchaseStore: ObservableObject {
         await loadProducts()
     }
 
+    /// 11/16: the words only (whether Plus renews, its end, the price), read
+    /// again from StoreKit on this iPhone when Settings opens and on every
+    /// coming to the front, even when the billing check is skipped there.
+    /// No billing call; never grants, withdraws or offers anything.
+    func refreshForDisplay() async {
+        await start()
+        guard configuration.isConfigured else { return }
+        await refreshRenewal()
+        // A catalog from another storefront is read again (11/16: ¥980 on
+        // Apple's screen beside a price in dollars in the app).
+        let storefrontID = await Storefront.current?.id
+        if productAvailability != .loading, !isPurchasing, storefrontID != productStorefrontID {
+            await loadProducts()
+        }
+    }
+
     func stop() {
         authorityExpiryTask?.cancel()
         startTask?.cancel()
@@ -472,6 +500,8 @@ final class PlusPurchaseStore: ObservableObject {
         transactionUpdatesTask = nil
         storefrontUpdatesTask?.cancel()
         storefrontUpdatesTask = nil
+        subscriptionStatusUpdatesTask?.cancel()
+        subscriptionStatusUpdatesTask = nil
         productLoadGeneration &+= 1
         products = []
         productStorefrontID = nil
@@ -621,7 +651,22 @@ final class PlusPurchaseStore: ObservableObject {
     /// An automatic authority read the gate held back (a deadline, the
     /// Widget's background pass): read once when the gate opens.
     private var deferredAuthorityRead = false
+    /// 11/16: a check that ended without an answer about Plus (held at the
+    /// gate, no connection, the relay's minute full, a server error): the
+    /// whole check runs once more, by itself, when the gate opens.
+    private var deferredReconcile = false
     private var deferredBillingTask: Task<Void, Never>?
+
+    /// 11/16: a failure that says nothing about Plus. The last server answer
+    /// stays (never extended), and the check is tried once more by itself.
+    static func isTransientBillingFailure(_ error: Error) -> Bool {
+        if error is BillingCallDeferred { return true }
+        switch error {
+        case BillingClientError.transportUnavailable: return true
+        case BillingClientError.requestRejected(let status, _): return status == 429 || status >= 500
+        default: return false
+        }
+    }
 
     /// An automatic billing check fits: not paused after a 429, and each
     /// kind of call has room for one more automatic call.
@@ -649,7 +694,9 @@ final class PlusPurchaseStore: ObservableObject {
             // 1115v: automatic even when a tap started it.
             await SharingPersonAction.automatic {
                 while !Task.isCancelled {
-                    guard let store = self, !store.deferredUpdates.isEmpty || store.deferredAuthorityRead else { break }
+                    guard let store = self,
+                          !store.deferredUpdates.isEmpty || store.deferredAuthorityRead || store.deferredReconcile
+                    else { break }
                     let now = Date()
                     let opens = [store.billingBudget.nextAutomatic(.transaction, at: now),
                                  store.billingBudget.nextAutomatic(.entitlement, at: now)].compactMap { $0 }.max()
@@ -659,6 +706,14 @@ final class PlusPurchaseStore: ObservableObject {
                     let updates = store.deferredUpdates
                     store.deferredUpdates.removeAll()
                     for update in updates { await store.handleTransactionUpdate(update) }
+                    if store.deferredReconcile {
+                        // Once: a failure inside this pass is not held again.
+                        store.deferredReconcile = false
+                        store.deferredAuthorityRead = false
+                        store.retriesDeferredAuthorityRead = false
+                        if !store.isPurchasing, !store.isRestoring { await store.reconcileCurrentEntitlements() }
+                        store.retriesDeferredAuthorityRead = true
+                    }
                     if store.deferredAuthorityRead {
                         store.deferredAuthorityRead = false
                         store.retriesDeferredAuthorityRead = false
@@ -676,7 +731,8 @@ final class PlusPurchaseStore: ObservableObject {
     /// Coming to the front (1115q): the usual refresh, unless this minute's
     /// billing calls are already near the relay's limit (a burst of openings).
     func refreshOnForegroundEntry() async {
-        guard allowsAutomaticBillingCheck() else { return }
+        // 11/16: the words are read again either way (no billing call).
+        guard allowsAutomaticBillingCheck() else { await refreshForDisplay(); return }
         await refreshAfterForegroundEntry()
     }
 
@@ -845,6 +901,29 @@ final class PlusPurchaseStore: ObservableObject {
         }
     }
 
+    /// 11/16 (TestFlight 384): undoing a cancellation in Apple's screen is no
+    /// new transaction, and Settings kept 「Plus（11月16日まで）」 until the
+    /// app was closed. StoreKit's subscription status updates re-read the
+    /// words. Only an ended or revoked status asks the server, once, as an
+    /// automatic call through the billing gate.
+    private func startSubscriptionStatusUpdatesListener() {
+        guard subscriptionStatusUpdatesTask == nil else { return }
+        subscriptionStatusUpdatesTask = Task { @MainActor [weak self] in
+            await SharingPersonAction.automatic {
+                for await status in Product.SubscriptionInfo.Status.updates {
+                    guard !Task.isCancelled, let store = self else { return }
+                    guard case let .verified(transaction) = status.transaction,
+                          store.configuration.plan(for: transaction.productID) != nil else { continue }
+                    await store.refreshRenewal()
+                    if status.state == .expired || status.state == .revoked,
+                       store.entitlementState.permitsPersonalPlus {
+                        await store.refreshOnForegroundEntry()
+                    }
+                }
+            }
+        }
+    }
+
     private func startTransactionUpdatesListener() {
         guard transactionUpdatesTask == nil else { return }
         transactionUpdatesTask = Task { @MainActor [weak self] in
@@ -991,6 +1070,11 @@ final class PlusPurchaseStore: ObservableObject {
             // Do not fetch after a newer StoreKit event failed to reach the
             // server; that could revive an older, now-revoked status.
             markServerConfirmationIndeterminate()
+            // 11/16: the whole check (the event first) once more by itself.
+            if Self.isTransientBillingFailure(error), retriesDeferredAuthorityRead {
+                deferredReconcile = true
+                scheduleDeferredBillingWork()
+            }
         }
     }
 
@@ -1085,11 +1169,18 @@ final class PlusPurchaseStore: ObservableObject {
                 switch error {
                 case BillingClientError.transportUnavailable, BillingClientError.protectedDataUnavailable,
                      BillingClientError.keychainUnavailable, BillingClientError.localStateUnavailable: break
-                case BillingClientError.requestRejected(let status, _) where status >= 500: break
+                // 11/16: a 429 (the relay's minute is full, e.g. two iPhones
+                // on one Wi-Fi) says nothing about Plus either; it emptied the
+                // last answer and Settings said 「購入状況を確認できません」.
+                case BillingClientError.requestRejected(let status, _) where status >= 500 || status == 429: break
                 default: discardCachedAuthority()
                 }
             }
             markServerConfirmationIndeterminate()
+            if Self.isTransientBillingFailure(error), retriesDeferredAuthorityRead {
+                deferredAuthorityRead = true
+                scheduleDeferredBillingWork()
+            }
             return .indeterminate
         }
     }

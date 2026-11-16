@@ -203,5 +203,41 @@ private func check(_ condition: Bool, _ message: String) throws {
         try check(S.steady(.unknown, lastAnswer: .notMember) == .unknown, "a real answer always wins")
         try check(S.steady(.member, lastAnswer: .notMember) == .member, "a purchase shows at once")
         print("Plus screen: one offer read per settled catalog; price kept through refresh; Settings rows steady while re-checking")
+        try verifyCancelledEndedAndUnknownRows()
+    }
+
+    /// 11/16 (TestFlight 384): cancelled within its period is Plus with its
+    /// end date, an ended Plus offers Plus again, and only a missing answer
+    /// says 「購入状況を確認できません」. Undoing the cancellation shows the trial.
+    static func verifyCancelledEndedAndUnknownRows() throws {
+        typealias S = PlusSettingsRowStatus
+        typealias P = PlusRenewalPresentation
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        let now = calendar.date(from: DateComponents(year: 2026, month: 11, day: 16, hour: 13))!
+        let end = calendar.date(from: DateComponents(year: 2026, month: 11, day: 16, hour: 20))!
+        // Cancelled, still in its period: the server's answer is usable Plus.
+        try check(S.live(usableServerAnswer: true, firstCheck: false, answerMissing: false, purchaseWaiting: false)
+                  == .member, "cancelled within period is Plus")
+        try check(P.settingsHeader(willAutoRenew: false, expiration: end, now: now, calendar: calendar,
+                                   trialEndsAt: end, displayPrice: "¥980") == "Plus（11月16日まで）",
+                  "cancelled within period shows its end, no restore")
+        // The cancellation undone: the next status update renews.
+        try check(P.settingsHeader(willAutoRenew: true, expiration: end, now: now, calendar: calendar,
+                                   trialEndsAt: end, displayPrice: "¥980") == "Plus（お試し中・11月16日から月額¥980）",
+                  "undone cancellation shows the trial and the current price")
+        // Ended: the server says expired → not a member, offered again.
+        try check(S.live(usableServerAnswer: false, firstCheck: false, answerMissing: false, purchaseWaiting: false)
+                  == .notMember, "an ended Plus offers Plus, not 確認できません")
+        // No answer at all (no connection, no answer, a broken signature).
+        try check(S.live(usableServerAnswer: false, firstCheck: false, answerMissing: true, purchaseWaiting: false)
+                  == .unknown, "a missing answer is 確認できません")
+        try check(S.live(usableServerAnswer: true, firstCheck: false, answerMissing: false, purchaseWaiting: true)
+                  == .member, "a usable answer wins over a waiting flag")
+        try check(S.live(usableServerAnswer: false, firstCheck: true, answerMissing: false, purchaseWaiting: false)
+                  == .checking, "the first check is 確認しています")
+        try check(S.live(usableServerAnswer: false, firstCheck: false, answerMissing: false, purchaseWaiting: true)
+                  == .unknown, "a purchase the server has not confirmed keeps 購入を復元")
+        print("Plus rows (11/16): cancelled-in-period Plus, ended offers Plus, only a missing answer asks to restore")
     }
 }

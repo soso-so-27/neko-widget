@@ -594,6 +594,103 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertIn("generation == offerLoadGeneration", model)
         self.assertIn("store.productCatalogRevision", model)
 
+    def test_cancel_undo_and_end_show_without_a_tap(self) -> None:
+        # 11/16 (TestFlight 384): a cancellation in its period, its undoing,
+        # an ended Plus and the price, each shown without the person's tap.
+        authority = section(self.store, "private func refreshServerAuthority() async", "private func markServerConfirmationIndeterminate()")
+        catch = authority[authority.index("} catch {"):]
+        # A 429 / 5xx / no connection keeps the last answer (never extends it)
+        # and is asked again once by itself, through the gate.
+        self.assertIn("where status >= 500 || status == 429: break", catch)
+        self.assertIn("if Self.isTransientBillingFailure(error), retriesDeferredAuthorityRead {", catch)
+        self.assertIn("deferredAuthorityRead = true", catch)
+        transient = section(self.store, "static func isTransientBillingFailure(", "\n    }\n")
+        self.assertIn("if error is BillingCallDeferred { return true }", transient)
+        self.assertIn("return status == 429 || status >= 500", transient)
+        self.assertNotIn("invalidServerResponse", transient)
+        reconcile = section(self.store, "private func performCurrentEntitlementReconciliation()", "@discardableResult")
+        reconcile_catch = reconcile[reconcile.index("} catch {"):]
+        self.assertIn("deferredReconcile = true", reconcile_catch)
+        self.assertNotIn("refreshServerAuthority", reconcile_catch)
+        deferred = section(self.store, "private func scheduleDeferredBillingWork() {", "private var retriesDeferredAuthorityRead")
+        self.assertIn("store.deferredReconcile = false", deferred)
+        self.assertLess(deferred.index("store.retriesDeferredAuthorityRead = false"),
+                        deferred.index("await store.reconcileCurrentEntitlements()"))
+        self.assertIn("await SharingPersonAction.automatic {", deferred)
+        # Undoing a cancellation is no transaction: StoreKit's status updates.
+        status = section(self.store, "private func startSubscriptionStatusUpdatesListener() {", "private func startTransactionUpdatesListener()")
+        self.assertIn("for await status in Product.SubscriptionInfo.Status.updates", status)
+        self.assertIn("await store.refreshRenewal()", status)
+        self.assertIn("await SharingPersonAction.automatic {", status)
+        self.assertIn("await store.refreshOnForegroundEntry()", status)
+        self.assertNotIn("refreshAfterForegroundEntry", status)
+        self.assertIn("startSubscriptionStatusUpdatesListener()", section(self.store, "private func performStart() async {", "func refreshAfterForegroundEntry()"))
+        self.assertIn("subscriptionStatusUpdatesTask?.cancel()", section(self.store, "    func stop() {", "\n    }\n"))
+        # Front and Settings re-read the words and the catalog's storefront,
+        # with no billing call, even when the billing check is skipped.
+        display = section(self.store, "func refreshForDisplay() async {", "func stop()")
+        self.assertIn("await refreshRenewal()", display)
+        self.assertIn("storefrontID != productStorefrontID", display)
+        self.assertIn("await loadProducts()", display)
+        for forbidden in ("refreshServerAuthority", "recordVerifiedTransactionEvent", "reconcileCurrentEntitlements",
+                          "entitlementState =", "canStartNewPurchase", "AppStore.sync"):
+            self.assertNotIn(forbidden, display)
+        front = section(self.store, "func refreshOnForegroundEntry() async {", "\n    }\n")
+        self.assertIn("guard allowsAutomaticBillingCheck() else { await refreshForDisplay(); return }", front)
+        model = source("NekoWidget/Services/MembershipOfferModel.swift")
+        settings = section(model, "struct PlusSettingsSection: View {", "#if DEBUG || INTERNAL_PRESENTATION")
+        self.assertIn(".task { await purchases.refreshForDisplay() }", settings)
+        self.assertIn("answerMissing: purchases.entitlementState.cannotBeConfirmed", settings)
+        # The price is the current Product's displayPrice, never a saved one.
+        self.assertIn("displayPrice: purchases.products.first { $0.id == purchases.renewal?.productID }?.displayPrice)", settings)
+        # 「確認できません」 only without an answer; an ended Plus is offered.
+        state = section(model, "    private func updateMembershipState() {", "#if DEBUG || INTERNAL_PRESENTATION\n    /// After the re-check")
+        self.assertIn("verificationRequired = !isMember && !isWaiting && purchases.entitlementState.cannotBeConfirmed", state)
+        self.assertNotIn("!purchases.canStartNewPurchase", state)
+        self.assertIn("verificationRequired = fixtureStatus == .unknown\n", state)
+        self.assertIn("fixtureAllowsPurchase = fixtureStatus == .fresh || fixtureStatus == .expired", state)
+        cannot = section(self.store, "var cannotBeConfirmed: Bool {", "\n    }\n")
+        self.assertIn("if case .indeterminate = self { return !permitsPersonalPlus }", cannot)
+        # Plus confirmed again: saving that stopped for want of Plus resumes
+        # at the loop's next pass (automatic), for no other stop.
+        app = source("NekoWidget/App/NekoWidgetApp.swift")
+        root = section(app, ".task(id: plusPurchases.entitlementState) {", ".onReceive(")
+        self.assertIn("AppRecordPersistence.shared.noteServerConfirmedPlus()", root)
+        self.assertIn("plusPurchases.entitlementState.grantsPlus", root)
+        persistence = source("NekoWidget/Services/AppRecordPersistence.swift")
+        resume = section(persistence, "func noteServerConfirmedPlus() {", "\n    }\n")
+        self.assertIn("guard enabled, failing || planEnded, stoppedForPlus || planEnded else { return }", resume)
+        self.assertIn("requested = true; nextAttempt = .distantPast", resume)
+        self.assertNotIn("synchronize", resume)
+        self.assertIn("stoppedForPlus = stop == .membershipRequired || stop == .accessUnconfirmed", persistence)
+
+    def test_save_intake_pause_is_its_own_state(self) -> None:
+        # 11/16: S08 (PRESERVATION_INTAKE_PAUSED / PILOT_WRITES_PAUSED /
+        # PRESERVATION_DISABLED) is the save server's pause, not Plus.
+        client = source("NekoWidget/Services/ManagedPreservationClient.swift")
+        self.assertIn('case "PILOT_WRITES_PAUSED", "PRESERVATION_INTAKE_PAUSED", "PRESERVATION_DISABLED":\n'
+                      "                    throw ManagedPreservationError.servicePaused", client)
+        self.assertIn('case "NEW_SAVE_REQUIRES_MEMBERSHIP": throw ManagedPreservationError.membershipRequired', client)
+        persistence = source("NekoWidget/Services/AppRecordPersistence.swift")
+        self.assertIn('static let intakePausedTitle = "いまは新しく保存できません"', persistence)
+        self.assertIn('static let intakePausedDetail = "保存の受付を一時的に止めています。保存した記録は開けます。受付が戻ると、自動で続けます。"', persistence)
+        self.assertIn('static let intakePausedRowValue = "受付を停止中"', persistence)
+        self.assertIn("intakePaused = stop == .servicePaused", persistence)
+        self.assertIn("failing = false; retriesByItself = false; intakePaused = false", persistence)
+        self.assertIn("var needsAttention: Bool { (failing && !retriesByItself && !intakePaused) || conflict }", persistence)
+        self.assertIn("if failing && intakePaused { return Self.intakePausedTitle }", persistence)
+        self.assertIn("if failing && intakePaused { return Self.intakePausedDetail }", persistence)
+        # ［もう一度試す］ only for what the person can resolve (needsAttention).
+        self.assertIn("if persistence.needsAttention && !persistence.conflict && !plusEnded {\n"
+                      '            Button("もう一度試す")', persistence)
+        # The loop still tries again by itself (every 300 s, at once on coming to the front).
+        self.assertIn("[.membershipRequired, .servicePaused, .capacityReached, .authenticationRequired, .staleSession].contains(failure) {\n"
+                      "            nextAttempt = Date().addingTimeInterval(300)", persistence)
+        self.assertIn("if error == .servicePaused {", section(persistence, "func verifySchedulingForFixture()", "func stopLoopForFixture()"))
+        settings = source("NekoWidget/Views/SettingsView.swift")
+        row = section(settings, "struct AutoSaveSettingsRow: View {", "struct SettingsView: View {")
+        self.assertIn("persistence.showsIntakePaused ? AppRecordPersistence.intakePausedRowValue", row)
+
     def test_cancelled_member_sees_until_when_plus_lasts(self) -> None:
         # 11/9: auto-renewal off but still active shows its end date, so the
         # cancellation visibly worked; renewing stays 「Plus（利用中）」.

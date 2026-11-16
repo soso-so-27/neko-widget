@@ -576,7 +576,9 @@ final class MembershipOfferModel: ObservableObject {
         if let purchases {
             isMember = purchases.entitlementState.permitsPersonalPlus
             isWaiting = purchases.pendingProductID != nil || purchases.awaitingServerConfirmation
-            verificationRequired = !isMember && !isWaiting && !purchases.canStartNewPurchase
+            // 11/16: only when no answer could be had. An ended Plus is not
+            // 「確認できません」: it is offered again like a first purchase.
+            verificationRequired = !isMember && !isWaiting && purchases.entitlementState.cannotBeConfirmed
             if isMember, let expiry = purchases.entitlementState.lastServerConfirmed?.expirationDate {
                 expiryTask = Task { [weak self] in
                     do { try await Task.sleep(for: .seconds(max(0, expiry.timeIntervalSinceNow))) }
@@ -603,8 +605,10 @@ final class MembershipOfferModel: ObservableObject {
                 }
                 isMember = fixtureStatus == .active
                 isWaiting = fixtureStatus == .applePending || fixtureStatus == .authorityPending
-                verificationRequired = fixtureStatus == .unknown || fixtureStatus == .expired
-                fixtureAllowsPurchase = fixtureStatus == .fresh
+                // 11/16: an ended Plus can be started again; only an unknown
+                // state asks for 「購入を復元」.
+                verificationRequired = fixtureStatus == .unknown
+                fixtureAllowsPurchase = fixtureStatus == .fresh || fixtureStatus == .expired
             } else { return }
 #else
             return
@@ -1292,12 +1296,11 @@ struct PlusSettingsSection: View {
     private var status: Status { Status.steady(liveStatus, lastAnswer: lastAnswer) }
 
     private var liveStatus: Status {
-        if purchases.entitlementState.permitsPersonalPlus { return .member }
         // Just after launch: neither the offer nor restore until the answer is in (11/5).
-        if purchases.entitlementState == .checking { return .checking }
-        if case .indeterminate = purchases.entitlementState { return .unknown }
-        if purchases.pendingProductID != nil || purchases.awaitingServerConfirmation { return .unknown }
-        return .notMember
+        Status.live(usableServerAnswer: purchases.entitlementState.permitsPersonalPlus,
+                    firstCheck: purchases.entitlementState == .checking,
+                    answerMissing: purchases.entitlementState.cannotBeConfirmed,
+                    purchaseWaiting: purchases.pendingProductID != nil || purchases.awaitingServerConfirmation)
     }
 
     var body: some View {
@@ -1363,6 +1366,9 @@ struct PlusSettingsSection: View {
                 .onChange(of: liveStatus, initial: true) { _, answer in
                     if answer != .checking { lastAnswer = answer }
                 }
+                // 11/16: opening Settings re-reads whether Plus renews, its
+                // end and the price from StoreKit (no billing call).
+                .task { await purchases.refreshForDisplay() }
         }
     }
 
