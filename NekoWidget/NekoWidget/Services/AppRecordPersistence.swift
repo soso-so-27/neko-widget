@@ -1316,7 +1316,12 @@ final class AppRecordPersistence: ObservableObject {
             let replacePendingNotebook = pendingCapture.map {
                 $0.index.containsFamilyNotebookProjections && $0.filteredFamilyNotebook != true
             } ?? false
-            if let pending = value.pending, !replacePendingNotebook {
+            // 11/16: a snapshot prepared by an earlier version can hold a photo
+            // the server refuses (INVALID_JPEG). Resuming it would stop every
+            // later save, so it is abandoned and prepared again from the live
+            // records, where such a photo goes as a plain copy.
+            let replacePendingPhoto = pendingCapture.map(AppRecordCapture.holdsRefusedPhoto) ?? false
+            if let pending = value.pending, !replacePendingNotebook, !replacePendingPhoto {
                 phase = "中断した送信を再開"
                 try await ToolBackupTransfer.resumeMetadataBatchIfNeeded(snapshotID: pending, owner: value.owner,
                     client: client, checkpoint: checkpoint)
@@ -1415,7 +1420,7 @@ final class AppRecordPersistence: ObservableObject {
             }
             accepted = nil
             let saved: ToolBackupFiles.Saved
-            if let pending = value.pending, pendingCapture == nil || replacePendingNotebook {
+            if let pending = value.pending, pendingCapture == nil || replacePendingNotebook || replacePendingPhoto {
                 // OS backup deliberately excludes transport staging. A head
                 // accepted before its reply was lost was reconciled above;
                 // otherwise recapture current live records under a fresh ID.
@@ -2188,6 +2193,18 @@ struct AppRecordProductionRoot: View {
 }
 
 enum AppRecordCapture {
+    /// A staged, not yet acknowledged photo of a prepared snapshot that the
+    /// server's JPEG rule refuses. Sent photos are already accepted.
+    static func holdsRefusedPhoto(_ saved: ToolBackupFiles.Saved) -> Bool {
+        let folder = ToolBackupFiles.directory(saved.id)
+        return saved.index.files.contains { file in
+            guard file.path.hasSuffix(".jpg"), file.sourceSnapshotID == nil || file.sourceSnapshotID == saved.id else { return false }
+            let url = folder.appendingPathComponent(file.path)
+            guard FileManager.default.fileExists(atPath: url.path),
+                  let bytes = try? ToolBackupFiles.read(url, maximum: 20 * 1024 * 1024) else { return false }
+            return !PreservationJPEGEnvelope.accepts(bytes)
+        }
+    }
     static func prepare(owner: String, origin: String, previous: ToolBackupIndex?, indexVersion: Int = 3) async throws -> ToolBackupFiles.Saved {
         try await AppRecordBackground.run {
             try await prepareInBackground(owner: owner, origin: origin, previous: previous, indexVersion: indexVersion)
