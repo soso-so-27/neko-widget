@@ -11,6 +11,177 @@ struct FamilyNotebookSyncResult: Equatable, Sendable {
     let moreHistory: Bool
     let paused: Bool
     let needsRotation: Bool
+    /// 11/16: writing of this iPhone set aside (kept, not sent): the server
+    /// will not take it, or it can never be sent from here.
+    var heldBack = 0
+    /// Why the last one was set aside in this pass (the kind only).
+    var heldFailure: FamilyNotebookSendFailure? = nil
+}
+
+/// 11/16: why writing of this iPhone did not reach the family. The kind only:
+/// no operation, person, device or content. Every failure used to be dropped
+/// without a trace, and one that could never be sent stopped all after it.
+enum FamilyNotebookSendFailure: String, Codable, CaseIterable, Sendable {
+    /// No answer, or an answer that did not arrive (the outcome is unknown).
+    case network
+    /// This iPhone could not prove who it is.
+    case authentication
+    /// Not (or no longer) in the family on the server.
+    case membership
+    /// Keys or the roster are not there yet, or do not match.
+    case keys
+    /// The family's generation or key epoch moved (409 stale).
+    case generation
+    /// A 409 other than stale: the same ID with other content.
+    case conflict
+    /// 429.
+    case rateLimited
+    /// The payer's Plus is not confirmed: sharing is paused.
+    case paused
+    /// The service is off or could not answer (5xx).
+    case unavailable
+    /// The family needs a newer app to write.
+    case upgrade
+    /// The server refused this writing (400, 413, 422).
+    case rejected
+    /// The writing is not in a shape that can be sent (too large, invalid).
+    case invalid
+    case other
+
+    /// What the upload does with the failed operation.
+    enum Disposition: Equatable, Sendable {
+        /// The family, the network or the keys: the same for every operation.
+        /// Stop, keep the order, try again on a later pass.
+        case waitInOrder
+        /// Only this operation: keep it in the outbox with a mark and send
+        /// the ones after it. The person's 「もう一度」 tries it again.
+        case setAside
+    }
+
+    static func kind(of error: Error) -> Self {
+        switch error {
+        case let error as FamilyNotebookTransportError:
+            switch error {
+            case .unknownOutcome, .operationInFlight: return .network
+            case .authenticationRequired: return .authentication
+            case .notMember: return .membership
+            case .paused: return .paused
+            case .unavailable: return .unavailable
+            case .stale: return .generation
+            case .idempotencyConflict: return .conflict
+            case .upgradeRequired: return .upgrade
+            case .invalidResponse: return .other
+            case let .server(_, status):
+                switch status {
+                case 429: return .rateLimited
+                case 409: return .conflict
+                case 400, 413, 422: return .rejected
+                case 401: return .authentication
+                case 403, 404: return .membership
+                case 500...599: return .unavailable
+                default: return .other
+                }
+            }
+        case let error as FamilyNotebookSyncError:
+            switch error { case .missingKey, .missingRoster: return .keys }
+        case let error as FamilyNotebookCryptoError:
+            switch error {
+            case .untrusted, .stale: return .keys
+            case .invalid, .tooLarge: return .invalid
+            }
+        case let error as FamilyNotebookError:
+            switch error {
+            case .invalidValue, .invalidTarget, .invalidOperation: return .invalid
+            case .sharingEnded: return .membership
+            default: return .other
+            }
+        case is URLError: return .network
+        default: return .other
+        }
+    }
+
+    /// One operation that failed to go. Only a reason that belongs to this
+    /// operation alone sets it aside; anything about the family, the network,
+    /// the keys or the budget keeps the order (the next pass tries again).
+    static func disposition(of error: Error, operation: FamilyNotebookOperation,
+                            deviceID: String, personID: String) -> Disposition {
+        if case FamilyNotebookCryptoError.untrusted = error {
+            // Written by another device or person than this one: it can never
+            // be signed here. This device not in the roster yet: wait.
+            let foreign = operation.version.deviceID != deviceID || operation.author.personID != personID
+            return foreign ? .setAside : .waitInOrder
+        }
+        if case FamilyNotebookTransportError.idempotencyConflict = error { return .setAside }
+        switch kind(of: error) {
+        case .rejected, .invalid: return .setAside
+        default: return .waitInOrder
+        }
+    }
+}
+
+/// 11/16: whether this iPhone's writing has been failing to reach the
+/// family. Kept on this iPhone only: the last failure's kind and time, when
+/// the failing began and how many reads in a row failed. Pure, so the line's
+/// rule is checked on a synthetic clock.
+struct FamilyNotebookSendHealth: Codable, Equatable, Sendable {
+    /// What one whole read did about this iPhone's writing.
+    enum Outcome: Equatable, Sendable {
+        /// It got to sending: `heldBack` operations stay set aside.
+        case sent(heldBack: Int, failure: String?)
+        /// It stopped with this kind (FamilyNotebookSendFailure.rawValue).
+        case failed(String)
+    }
+    struct Failure: Codable, Equatable, Sendable {
+        let kind: String
+        let at: Date
+    }
+
+    /// The line shows after this many failed reads in a row, the first at
+    /// least a minute ago (a key change after joining fails a few times in
+    /// seconds), or after 10 minutes of failing whatever the count.
+    static let failuresBeforeLine = 3
+    static let shortestBeforeLine: TimeInterval = 60
+    static let longestBeforeLine: TimeInterval = 600
+
+    private(set) var last: Failure?
+    private(set) var failingSince: Date?
+    private(set) var failures = 0
+
+    init() {}
+
+    /// What is worth saving: the kind and the start of the failing.
+    var persisted: String { "\(last?.kind ?? "")|\(failingSince?.timeIntervalSince1970 ?? 0)" }
+
+    /// After a whole read. `unsent`: the outbox after it, set-aside included.
+    /// nil: the read did not get as far as sending, without an error (sharing
+    /// paused, keys still moving): nothing changes, unless all was sent.
+    mutating func record(_ outcome: Outcome?, unsent: Int, at now: Date) {
+        switch outcome {
+        case nil:
+            if unsent == 0 { clear() }
+        case let .failed(kind):
+            last = .init(kind: kind, at: now)
+            fail(unsent: unsent, at: now)
+        case let .sent(heldBack, failure):
+            if let failure { last = .init(kind: failure, at: now) }
+            if heldBack > 0 { fail(unsent: unsent, at: now) } else { clear() }
+        }
+    }
+
+    private mutating func fail(unsent: Int, at now: Date) {
+        guard unsent > 0 else { clear(); return }
+        failures += 1
+        if failingSince == nil { failingSince = now }
+    }
+
+    private mutating func clear() { failures = 0; failingSince = nil }
+
+    /// 「家族に届けられていない書き込みがあります。」 Never while all is sent.
+    func showsLine(unsent: Int, now: Date) -> Bool {
+        guard unsent > 0, let since = failingSince else { return false }
+        let waited = now.timeIntervalSince(since)
+        return (failures >= Self.failuresBeforeLine && waited >= Self.shortestBeforeLine) || waited >= Self.longestBeforeLine
+    }
 }
 
 /// Authenticated, encrypted transport over the retained local notebook. Trust
@@ -63,7 +234,7 @@ actor FamilyNotebookSync {
     /// pass; no head/cursor is marked complete until all preceding edits land.
     /// The caller retains trusted rosters/keys across calls and app restarts.
     func synchronize(current: VerifiedFamilyNotebookRoster, history: [Int: SignedFamilyNotebookRoster],
-                     keys: [Int: Data]) async throws -> FamilyNotebookSyncResult {
+                     keys: [Int: Data], retryHeld: Bool = false) async throws -> FamilyNotebookSyncResult {
         guard !isRunning else { throw FamilyNotebookTransportError.operationInFlight }
         isRunning = true; defer { isRunning = false }
         guard try !store.snapshot().sharingEnded else { throw FamilyNotebookError.sharingEnded }
@@ -98,6 +269,7 @@ actor FamilyNotebookSync {
             }
         }
         var downloaded = 0, uploaded = 0, more = false
+        var heldBack = 0, heldFailure: FamilyNotebookSendFailure?
         var contexts: [Int: FamilyNotebookKeyContext] = [current.roster.epoch: .current(current)]
         func source(_ epoch: Int) throws -> VerifiedFamilyNotebookRoster {
             guard epoch > 0, epoch <= current.roster.epoch else { throw FamilyNotebookCryptoError.untrusted }
@@ -142,11 +314,18 @@ actor FamilyNotebookSync {
                 throw FamilyNotebookTransportError.upgradeRequired
             }
             guard let key = keys[current.roster.epoch] else { throw FamilyNotebookSyncError.missingKey(epoch: current.roster.epoch) }
-            for operation in try store.pendingOperations().prefix(64) {
+            // 11/16: set aside earlier (kept in the outbox): skipped, unless
+            // the person asked to send them again.
+            let waiting = Set(try store.pendingOperations().map(\.id))
+            var aside: Set<UUID> = try retryHeld ? [] : held().intersection(waiting)
+            let thisDevice = try identity.deviceID
+            try saveHeld(aside)
+            for operation in try store.pendingOperations().filter({ !aside.contains($0.id) }).prefix(64) {
                 guard try !store.snapshot().sharingEnded else { throw FamilyNotebookError.sharingEnded }
                 // Recheck the live outbox, not only the earlier array: consent
                 // may have been withdrawn while another operation was in flight.
                 guard try store.pendingOperations().contains(where: { $0.id == operation.id }) else { continue }
+                do {
                 let encrypted = try FamilyNotebookOperationCrypto.seal(operation, roster: current, key: key, signingKey: identity.signingKey)
                 let body = try GroupWire.encode(Upload(operationID: operation.id.uuidString.lowercased(), expectedGeneration: state.generation,
                     expectedEpoch: current.roster.epoch, payload: encrypted,
@@ -173,9 +352,37 @@ actor FamilyNotebookSync {
                 } catch FamilyNotebookTransportError.paused { paused = true; break }
                 _ = try store.acknowledge(.init(familyID: familyID, operationID: operationID, version: operation.version))
                 uploaded += 1
+                } catch {
+                    guard FamilyNotebookSendFailure.disposition(of: error, operation: operation,
+                            deviceID: thisDevice, personID: identity.personID) == .setAside else { throw error }
+                    aside.insert(operation.id)
+                    try saveHeld(aside)
+                    heldFailure = FamilyNotebookSendFailure.kind(of: error)
+                }
             }
+            heldBack = aside.count
         }
-        return .init(downloaded: downloaded, uploaded: uploaded, pending: try store.pendingOperations().count,
+        var result = FamilyNotebookSyncResult(downloaded: downloaded, uploaded: uploaded, pending: try store.pendingOperations().count,
             moreHistory: more, paused: paused, needsRotation: !state.ready)
+        result.heldBack = heldBack; result.heldFailure = heldFailure
+        return result
+    }
+
+    // MARK: Set aside (11/16)
+
+    private var heldAccount: String { "op:fnb-held:" + familyID.uuidString.lowercased() }
+
+    /// Operations of the outbox set aside on this iPhone. Only their IDs are
+    /// kept (no content); the operations stay in the outbox.
+    func held() throws -> Set<UUID> {
+        guard let bytes = try journal.read(heldAccount) else { return [] }
+        return Set(try JSONDecoder().decode([UUID].self, from: bytes))
+    }
+
+    private func saveHeld(_ ids: Set<UUID>) throws {
+        guard try held() != ids else { return }
+        if ids.isEmpty { try journal.remove(heldAccount); return }
+        let sorted = ids.sorted { $0.uuidString < $1.uuidString }
+        try journal.write(JSONEncoder().encode(sorted), account: heldAccount, createOnly: false)
     }
 }

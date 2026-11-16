@@ -24,6 +24,13 @@ final class FamilyNotebookSharing: ObservableObject {
     private(set) var lastReadAt: Date?
     @Published private(set) var requests: [FamilyNotebookJoinRequest] = []
     @Published private(set) var ownJoinResults: [FamilyNotebookAdmissionClient.JoinResult] = []
+    /// 11/16: writing of this iPhone has not reached the family for a while
+    /// (FamilyNotebookSendHealth): the notebook shows one line and 「もう一度」.
+    @Published private(set) var showsUnsentLine = false
+    /// Not sent yet, set-aside writing included (internal builds show it).
+    @Published private(set) var unsentCount = 0
+    private(set) var sendHealth = FamilyNotebookSharing.savedSendHealth()
+    private static let sendHealthKey = "familyNotebook.sendHealth.v1"
     let service: any FamilyNotebookSharingService
 
     init(service: any FamilyNotebookSharingService) {
@@ -59,8 +66,10 @@ final class FamilyNotebookSharing: ObservableObject {
     private func read(reportsFailure: Bool) async -> Bool {
         guard !refreshing else { return false }
         refreshing = true; defer { refreshing = false }
+        var notedSend = false
         do {
             let loaded = try await service.loadState()
+            noteSend(); notedSend = true
             // A further pass of a notebook already on screen (more history, a
             // key rotation) keeps it there instead of flipping to 「準備しています」
             // and back every few seconds (11/5: the open notebook jolted).
@@ -100,6 +109,7 @@ final class FamilyNotebookSharing: ObservableObject {
             // Leaving the screen is not a service failure.
             return false
         } catch {
+            if !notedSend { noteSend() }
             if reportsFailure { failure = error as? FamilySharingError ?? .serviceUnavailable }
             return false
         }
@@ -127,6 +137,45 @@ final class FamilyNotebookSharing: ObservableObject {
     func readPulled() async {
         guard FamilyNotebookPrototype.shared.isReal, FamilyNotebookPrototype.shared.hasFamily else { return }
         await SharingPersonAction.run { _ = await refreshAfterPlusChange(reportsFailure: false) }
+    }
+
+    // MARK: Writing that did not reach the family (11/16)
+
+    private static func savedSendHealth() -> FamilyNotebookSendHealth {
+        guard let data = UserDefaults.standard.data(forKey: sendHealthKey),
+              let saved = try? JSONDecoder().decode(FamilyNotebookSendHealth.self, from: data) else { return .init() }
+        return saved
+    }
+
+    /// After each whole read: what it did about this iPhone's writing. Kept
+    /// on this iPhone only, the kind and the time (no content, no IDs).
+    private func noteSend(now: Date = Date()) {
+        guard let real = service as? ProductionFamilyNotebookSharingService else { return }
+        let unsent = (try? real.notebook?.snapshot().outbox.count) ?? 0
+        var next = sendHealth
+        next.record(real.lastSend, unsent: unsent, at: now)
+        if next.persisted != sendHealth.persisted, let data = try? JSONEncoder().encode(next) {
+            // Only when the kind or the start of the failing changes.
+            UserDefaults.standard.set(data, forKey: Self.sendHealthKey)
+        }
+        sendHealth = next
+        if unsent != unsentCount { unsentCount = unsent }
+        let shows = next.showsLine(unsent: unsent, now: now)
+        if shows != showsUnsentLine { showsUnsentLine = shows }
+    }
+
+    /// 「もう一度」 under 「家族に届けられていない書き込みがあります。」: the
+    /// person's own read, which tries the set-aside writing again too. Quiet:
+    /// the line stays while it still does not go, and goes once it has.
+    func resendUnsent() async {
+        await SharingPersonAction.run {
+            while refreshing {
+                do { try await Task.sleep(for: .milliseconds(100)) }
+                catch { return }
+            }
+            (service as? ProductionFamilyNotebookSharingService)?.retriesHeldOnce = true
+            _ = await read(reportsFailure: false)
+        }
     }
 
     /// Runs one operation with a fresh ID, then reads the state again.

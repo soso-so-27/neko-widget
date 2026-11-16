@@ -8,6 +8,12 @@ private actor Relay: GroupHTTPTransport {
     var packets: [EncryptedFamilyNotebookOperation]
     var bodies: [UUID: Data] = [:]
     var paused = true, loseNext = false, tamper = false
+    /// 11/16: every upload gets no answer; or the server refuses one operation.
+    var failUploads = false, refused: UUID?
+    var uploadedIDs: [UUID] = []
+    func setFailUploads(_ value: Bool) { failUploads = value }
+    func refuse(_ id: UUID?) { refused = id }
+    func uploads() -> [UUID] { uploadedIDs }
     var requiredVersion: Int? = nil
     var requests = 0
     func requireVersion(_ version: Int) { requiredVersion = version }
@@ -58,6 +64,10 @@ private actor Relay: GroupHTTPTransport {
         }
         struct Upload: Decodable { let operationID: UUID; let expectedGeneration: Int; let expectedEpoch: Int; let payload: EncryptedFamilyNotebookOperation }
         let body = request.httpBody!, upload = try GroupWire.decode(Upload.self, body)
+        if failUploads { throw Failure.lostReply }
+        if upload.operationID == refused {
+            return .init(status: 400, data: Data("{\"error\":{\"code\":\"family_notebook_invalid_operation\"}}".utf8))
+        }
         if requiredVersion == nil {
             let object = try JSONSerialization.jsonObject(with: body) as! [String: Any]
             try check(Set(object.keys) == Set(["operationId", "expectedGeneration", "expectedEpoch", "payload"]), "old Worker accepts only the pre-contract fields")
@@ -70,7 +80,7 @@ private actor Relay: GroupHTTPTransport {
         }
         _ = try FamilyNotebookOperationCrypto.openRetaining(upload.payload, roster: current, key: key)
         if let old = bodies[upload.operationID] { try check(old == body, "restart sent different ciphertext for an unknown outcome") }
-        else { bodies[upload.operationID] = body; packets.append(upload.payload) }
+        else { bodies[upload.operationID] = body; packets.append(upload.payload); uploadedIDs.append(upload.operationID) }
         if loseNext { loseNext = false; throw Failure.lostReply }
         struct Receipt: Encodable {
             let schemaVersion = 1; let familyID: UUID; let operationID: UUID; let action = "operation"
@@ -117,6 +127,8 @@ private enum VerifyFamilyNotebookSync {
             return try .init(familyID: family, identity: identity, store: store, network: network, journal: journal, endpointID: "https://family.invalid")
         }
         try await verifyFuture(root: root, identity: identity, current: current, key: key, author: author)
+        try await sendFailures(root: root, identity: identity, current: current, key: key, author: author)
+        try sendHealthRule()
         let sync = try engine(local)
         let paused = try await sync.synchronize(current: current, history: [:], keys: [1: key])
         try check(paused.paused && paused.downloaded == 1 && paused.uploaded == 0 && paused.pending == 1, "Plus pause retains pending edits and permits reading")
@@ -160,6 +172,124 @@ private enum VerifyFamilyNotebookSync {
         try check(try local.snapshot().operations.count == 3, "departure retains every original")
         print("Family notebook sync: authenticated encrypted merge, pause/resume, lost ACK restart, older-copy refill, tamper and departure retention passed")
     }
+    /// 11/16: a failure to send was dropped without a trace, and one that
+    /// could never go stopped everything after it.
+    private static func sendFailures(root: URL, identity: GroupDeviceIdentity, current: VerifiedFamilyNotebookRoster,
+                                     key: Data, author: FamilyNotebookAuthor) async throws {
+        let family = current.roster.familyID, device = try identity.deviceID
+        let fromFamily = FamilyNotebookOperation(familyID: family, target: .init(familyCatID: UUID(), field: .name),
+            value: .text("合成の家族が書いた"), version: .init(clock: 1, deviceID: device, operationID: UUID()),
+            author: author, editedAt: Date())
+        let relay = try Relay(family: family, identity: identity, current: current, key: key,
+            packets: [FamilyNotebookOperationCrypto.seal(fromFamily, roster: current, key: key, signingKey: identity.signingKey)])
+        await relay.activate()
+        let store = try FamilyNotebookStore(directory: root.appendingPathComponent("send-failures"), familyID: family, deviceID: device)
+        func engine() throws -> FamilyNotebookSync {
+            let journal = try GroupOperationStore(directory: root.appendingPathComponent("send-failures-journal"), maximumRecordBytes: 2_100_000)
+            let network = try FamilyNotebookTransport(endpoint: URL(string: "https://family.invalid")!, identity: identity, transport: relay, journal: journal)
+            return try .init(familyID: family, identity: identity, store: store, network: network, journal: journal, endpointID: "https://family.invalid")
+        }
+        let cat = UUID()
+        let first = try store.edit(target: .init(familyCatID: cat, field: .water), value: .text("合成の1つ目"), author: author)
+        let second = try store.edit(target: .init(familyCatID: cat, field: .litter), value: .text("合成の2つ目"), author: author)
+
+        // (d) No answer to any upload: the order is kept, nothing is lost.
+        await relay.setFailUploads(true)
+        do { _ = try await engine().synchronize(current: current, history: [:], keys: [1: key]); throw Failure.check("a lost upload passed") }
+        catch FamilyNotebookTransportError.unknownOutcome {
+            try check(FamilyNotebookSendFailure.kind(of: FamilyNotebookTransportError.unknownOutcome) == .network, "no answer is the network")
+        }
+        // (a) What the family wrote still came in before the sending failed.
+        try check(try store.snapshot().operations.contains { $0.id == fromFamily.id }, "the family's writing arrives while sending fails")
+        // (b) This iPhone's writing stays, in its order.
+        try check(try store.pendingOperations().map(\.id) == [first.id, second.id], "unsent writing stays in the outbox, in order")
+        try check(await relay.uploads().isEmpty, "nothing after the failed one was tried")
+        await relay.setFailUploads(false)
+        let fixed = try await engine().synchronize(current: current, history: [:], keys: [1: key])
+        try check(fixed.uploaded == 2 && fixed.heldBack == 0 && fixed.pending == 0, "once it answers, everything goes")
+        try check(await relay.uploads() == [first.id, second.id], "and in the order it was written")
+
+        // (c) The server refuses one: it is set aside (kept), the next goes.
+        let third = try store.edit(target: .init(familyCatID: cat, field: .temperament), value: .text("合成の3つ目"), author: author)
+        let fourth = try store.edit(target: .init(familyCatID: cat, field: .coat), value: .text("合成の4つ目"), author: author)
+        await relay.refuse(third.id)
+        let refused = try await engine().synchronize(current: current, history: [:], keys: [1: key])
+        try check(refused.uploaded == 1 && refused.heldBack == 1 && refused.heldFailure == .rejected,
+                  "one refused writing is set aside and the next is sent")
+        try check(try store.pendingOperations().map(\.id) == [third.id], "the refused writing is kept, not dropped")
+        try check(try await engine().held() == [third.id], "the mark keeps only its ID")
+        let later = try await engine().synchronize(current: current, history: [:], keys: [1: key])
+        try check(later.uploaded == 0 && later.heldBack == 1, "a later pass leaves it aside (no repeated refusals)")
+        let fifth = try store.edit(target: .init(familyCatID: cat, field: .marks), value: .text("合成の5つ目"), author: author)
+        let around = try await engine().synchronize(current: current, history: [:], keys: [1: key])
+        let sentSoFar = await relay.uploads()
+        try check(around.uploaded == 1 && sentSoFar.last == fifth.id, "new writing goes around it")
+        // The person's 「もう一度」, and the server takes it now.
+        await relay.refuse(nil)
+        let retried = try await engine().synchronize(current: current, history: [:], keys: [1: key], retryHeld: true)
+        try check(retried.uploaded == 1 && retried.heldBack == 0 && retried.pending == 0, "もう一度 sends the set-aside writing")
+        try check(try await engine().held().isEmpty, "and the mark goes")
+        _ = fourth
+
+        // Which failures wait in order, which set one aside.
+        let mine = first
+        let wait: [Error] = [FamilyNotebookTransportError.unknownOutcome, FamilyNotebookTransportError.authenticationRequired,
+            FamilyNotebookTransportError.notMember, FamilyNotebookTransportError.unavailable, FamilyNotebookTransportError.stale,
+            FamilyNotebookTransportError.upgradeRequired, FamilyNotebookTransportError.server(code: "rate_limited", status: 429),
+            FamilyNotebookTransportError.server(code: "x", status: 503), FamilyNotebookTransportError.server(code: "x", status: 403),
+            FamilyNotebookSyncError.missingKey(epoch: 1), FamilyNotebookCryptoError.untrusted, FamilyNotebookError.sharingEnded]
+        for error in wait {
+            try check(FamilyNotebookSendFailure.disposition(of: error, operation: mine, deviceID: device, personID: identity.personID) == .waitInOrder,
+                      "waits in order: \(error)")
+        }
+        let aside: [Error] = [FamilyNotebookTransportError.server(code: "x", status: 400), FamilyNotebookTransportError.server(code: "x", status: 413),
+            FamilyNotebookTransportError.idempotencyConflict, FamilyNotebookCryptoError.tooLarge, FamilyNotebookError.invalidOperation]
+        for error in aside {
+            try check(FamilyNotebookSendFailure.disposition(of: error, operation: mine, deviceID: device, personID: identity.personID) == .setAside,
+                      "set aside: \(error)")
+        }
+        try check(FamilyNotebookSendFailure.disposition(of: FamilyNotebookCryptoError.untrusted, operation: mine,
+                                                        deviceID: "another-device", personID: identity.personID) == .setAside,
+                  "writing of another device can never be signed here: set aside")
+        try check(FamilyNotebookSendFailure.kind(of: FamilyNotebookTransportError.server(code: "rate_limited", status: 429)) == .rateLimited, "429")
+        try check(FamilyNotebookSendFailure.kind(of: FamilyNotebookTransportError.stale) == .generation, "stale generation")
+        try check(FamilyNotebookSendFailure.kind(of: FamilyNotebookSyncError.missingKey(epoch: 2)) == .keys, "keys")
+    }
+
+    /// (e) The line 「家族に届けられていない書き込みがあります。」, on a synthetic clock.
+    private static func sendHealthRule() throws {
+        let t = Date(timeIntervalSince1970: 1_800_000_000)
+        var health = FamilyNotebookSendHealth()
+        health.record(.sent(heldBack: 0, failure: nil), unsent: 0, at: t)
+        try check(!health.showsLine(unsent: 0, now: t), "nothing while all is sent")
+        health.record(.failed("network"), unsent: 2, at: t)
+        health.record(.failed("network"), unsent: 2, at: t.addingTimeInterval(5))
+        health.record(.failed("network"), unsent: 2, at: t.addingTimeInterval(10))
+        try check(!health.showsLine(unsent: 2, now: t.addingTimeInterval(10)), "three quick failures (a key change) do not show it yet")
+        health.record(.failed("network"), unsent: 2, at: t.addingTimeInterval(70))
+        try check(health.showsLine(unsent: 2, now: t.addingTimeInterval(70)), "failing for a minute, three times: the line shows")
+        try check(health.last == FamilyNotebookSendHealth.Failure(kind: "network", at: t.addingTimeInterval(70)), "the last kind and time only")
+        health.record(nil, unsent: 2, at: t.addingTimeInterval(80))
+        try check(health.showsLine(unsent: 2, now: t.addingTimeInterval(80)), "a read that did not get to sending changes nothing")
+        health.record(.sent(heldBack: 0, failure: nil), unsent: 0, at: t.addingTimeInterval(90))
+        try check(!health.showsLine(unsent: 0, now: t.addingTimeInterval(90)) && health.failures == 0, "sent: the line goes")
+        // Ten minutes of failing, whatever the count.
+        health.record(.failed("keys"), unsent: 1, at: t.addingTimeInterval(100))
+        try check(!health.showsLine(unsent: 1, now: t.addingTimeInterval(100)), "one failure: nothing yet")
+        health.record(.failed("keys"), unsent: 1, at: t.addingTimeInterval(700))
+        try check(health.showsLine(unsent: 1, now: t.addingTimeInterval(700)), "ten minutes: the line shows")
+        // Set aside counts as not reaching the family.
+        var aside = FamilyNotebookSendHealth()
+        for second in [0.0, 30, 60] { aside.record(.sent(heldBack: 1, failure: "rejected"), unsent: 1, at: t.addingTimeInterval(second)) }
+        try check(aside.showsLine(unsent: 1, now: t.addingTimeInterval(60)) && aside.last?.kind == "rejected", "set-aside writing shows the line")
+        aside.record(.sent(heldBack: 0, failure: nil), unsent: 0, at: t.addingTimeInterval(90))
+        try check(!aside.showsLine(unsent: 0, now: t.addingTimeInterval(90)), "sent again: gone")
+        let saved = try JSONDecoder().decode(FamilyNotebookSendHealth.self, from: JSONEncoder().encode(health))
+        try check(saved == health, "kept on this iPhone as it was")
+        let text = String(decoding: try JSONEncoder().encode(health), as: UTF8.self)
+        try check(!text.contains("合成"), "no content is kept")
+    }
+
     // The shell runs this identical fixture with the actual pre-change and new binaries.
     private static func adoptionCompatibility(_ phase: String) async throws {
         let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["ADOPTION_ROOT"]!)
