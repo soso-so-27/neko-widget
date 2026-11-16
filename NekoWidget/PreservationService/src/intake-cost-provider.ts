@@ -1,3 +1,4 @@
+import { CostDiagnostic, type CostDiagnosticEvent } from './intake-cost-diagnostic';
 import { AwsV4Signer } from 'aws4fetch';
 import { readBoundedBody } from './bounded-body';
 import { ServiceError } from './contracts';
@@ -9,13 +10,19 @@ export interface CostEnv {
 export type CostFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 const day = 86400000;
 const unavailable = () => new ServiceError('COST_EVIDENCE_UNAVAILABLE', 503);
-async function json(fetcher: CostFetch, url: RequestInfo | URL, init: RequestInit): Promise<any> {
+async function json(fetcher: CostFetch, url: RequestInfo | URL, init: RequestInit, diagnostic: CostDiagnostic): Promise<any> {
   const signal = AbortSignal.timeout(8000);
+  diagnostic.stage = 'fetch'; diagnostic.reason = 'transport'; diagnostic.httpStatus = null;
   const response = await fetcher(url, { ...init, signal, redirect: 'manual' });
+  diagnostic.httpStatus = response.status; diagnostic.reason = 'http';
   if (response.status === 401 || response.status === 403) throw new ServiceError('COST_CREDENTIAL_REJECTED', 503);
   if (response.status !== 200 || !response.body) throw unavailable();
+  diagnostic.stage = 'body'; diagnostic.reason = 'invalid_body';
   const bytes = await readBoundedBody(response.body, 2 * 1024 * 1024, unavailable, signal);
-  return JSON.parse(new TextDecoder().decode(bytes));
+  diagnostic.stage = 'json'; diagnostic.reason = 'invalid_json';
+  const result = JSON.parse(new TextDecoder().decode(bytes));
+  diagnostic.stage = 'integrity'; diagnostic.reason = 'invalid_evidence';
+  return result;
 }
 function positive(value: unknown): number {
   if ((typeof value !== 'string' && typeof value !== 'number') || value === '') throw unavailable();
@@ -29,7 +36,16 @@ function time(value: unknown): number {
 }
 /** Full account totals are conservative: no unverified resource allocation,
  * credit, refund, free plan, or missing provider is treated as zero. */
-export async function collectCosts(env: CostEnv, now: () => number, fetcher: CostFetch = fetch): Promise<CostObservation> {
+export async function collectCosts(env: CostEnv, now: () => number, fetcher: CostFetch = fetch,
+  log: (event: CostDiagnosticEvent) => void = () => {}): Promise<CostObservation> {
+  const diagnostic = new CostDiagnostic();
+  try {
+    const result = await collect(env, now, fetcher, diagnostic);
+    diagnostic.succeeded = true;
+    return result;
+  } finally { diagnostic.emit(log); }
+}
+async function collect(env: CostEnv, now: () => number, fetcher: CostFetch, diagnostic: CostDiagnostic): Promise<CostObservation> {
   if (!/^\d{12}$/.test(env.COST_AWS_ACCOUNT_ID ?? '')
       || !/^[0-9a-f]{32}$/.test(env.COST_CLOUDFLARE_ACCOUNT_ID ?? '')
       || !env.COST_AWS_ACCESS_KEY_ID || !env.COST_AWS_SECRET_ACCESS_KEY || !env.COST_CLOUDFLARE_TOKEN) throw unavailable();
@@ -43,34 +59,39 @@ export async function collectCosts(env: CostEnv, now: () => number, fetcher: Cos
       Filter: { And: [{ Dimensions: { Key: 'LINKED_ACCOUNT', Values: [env.COST_AWS_ACCOUNT_ID] } },
         { Not: { Dimensions: { Key: 'RECORD_TYPE', Values: ['Credit', 'Refund'] } } }] },
       ...(pageToken ? { NextPageToken: pageToken } : {}) });
+    diagnostic.provider = 'aws'; diagnostic.stage = 'sign'; diagnostic.reason = 'signing';
     const signed = await new AwsV4Signer({ url: 'https://ce.us-east-1.amazonaws.com/', service: 'ce', region: 'us-east-1',
       method: 'POST', body, accessKeyId: env.COST_AWS_ACCESS_KEY_ID, secretAccessKey: env.COST_AWS_SECRET_ACCESS_KEY,
       headers: { 'content-type': 'application/x-amz-json-1.1', 'x-amz-target': 'AWSInsightsIndexService.GetCostAndUsage' } }).sign();
-    pages++;
-    const data = await json(fetcher, signed.url, { method: signed.method, headers: signed.headers, body: signed.body ?? null });
+    pages++; diagnostic.pages = pages;
+    const data = await json(fetcher, signed.url, { method: signed.method, headers: signed.headers, body: signed.body ?? null }, diagnostic);
     if (!Array.isArray(data.ResultsByTime) || !data.ResultsByTime.length) throw unavailable();
     for (const period of data.ResultsByTime) {
       const from = time(period.TimePeriod?.Start), to = time(period.TimePeriod?.End);
       if (from < start || to > end || to - from !== day || typeof period.Estimated !== 'boolean'
           || !Array.isArray(period.Groups)) throw unavailable();
-      dates.add(iso(from));
+      dates.add(iso(from)); diagnostic.days = dates.size;
       for (const g of period.Groups) {
         if (!Array.isArray(g.Keys) || g.Keys.length !== 1 || typeof g.Keys[0] !== 'string'
             || !g.Keys[0].length || g.Metrics?.UnblendedCost?.Unit !== 'USD') throw unavailable();
         const key = iso(from) + ':' + g.Keys[0]; if (seen.has(key)) throw unavailable(); seen.add(key);
-        aws += positive(g.Metrics.UnblendedCost.Amount);
+        const amount = positive(g.Metrics.UnblendedCost.Amount);
+        aws += amount; diagnostic.addAWS(g.Keys[0], amount);
       }
     }
+    diagnostic.stage = 'pagination'; diagnostic.reason = 'invalid_page';
     if (data.NextPageToken !== undefined && (typeof data.NextPageToken !== 'string' || !data.NextPageToken)) throw unavailable();
     pageToken = data.NextPageToken;
     if (pageToken && (pages >= p.maxCostPages || tokens.has(pageToken))) throw unavailable();
     if (pageToken) tokens.add(pageToken);
   } while (pageToken);
+  diagnostic.stage = 'coverage'; diagnostic.reason = 'missing_days_or_services';
   if (dates.size !== 30 || !seen.size) throw unavailable();
   // Omitting dates intentionally uses the current billing cycle: a calendar
   // range without the subscription anchor can return a misleading empty set.
+  diagnostic.provider = 'cloudflare';
   const cf = await json(fetcher, `https://api.cloudflare.com/client/v4/accounts/${env.COST_CLOUDFLARE_ACCOUNT_ID}/billable-usage`,
-    { headers: { Authorization: `Bearer ${env.COST_CLOUDFLARE_TOKEN}` } });
+    { headers: { Authorization: `Bearer ${env.COST_CLOUDFLARE_TOKEN}` } }, diagnostic);
   if (cf.success !== true || (cf.errors?.length ?? 0) > 0 || (cf.messages?.length ?? 0) > 0
       || !Array.isArray(cf.result) || !cf.result.length || cf.result_info) throw unavailable();
   const periods = new Map<string, { start: number; end: number; cost: number }>();
@@ -79,20 +100,25 @@ export async function collectCosts(env: CostEnv, now: () => number, fetcher: Cos
     if (row.BillingAccountId !== env.COST_CLOUDFLARE_ACCOUNT_ID || row.BillingCurrency !== 'USD'
         || row.ChargeCategory !== 'Usage' || typeof row.ServiceName !== 'string' || !row.ServiceName
         || typeof row.SubscriptionId !== 'string' || !row.SubscriptionId) throw unavailable();
+    diagnostic.stage = 'period'; diagnostic.reason = 'invalid_period';
     const from = time(row.BillingPeriodStart), usageFrom = time(row.ChargePeriodStart), to = time(row.ChargePeriodEnd);
     if (from > usageFrom || usageFrom >= to || to > started || from < started - 32 * day) throw unavailable();
+    diagnostic.stage = 'integrity'; diagnostic.reason = 'duplicate_or_invalid_amount';
     const identity = JSON.stringify([row.SubscriptionId, row.ServiceName, row.ChargeDescription, row.ZoneId, row.PricingUnit, usageFrom, to]);
     if (cfSeen.has(identity)) throw unavailable(); cfSeen.add(identity);
     const key = row.SubscriptionId + ':' + row.ServiceName + ':' + from;
     const item = periods.get(key) ?? { start: from, end: to, cost: 0 };
     item.end = Math.max(item.end, to); item.cost += positive(row.ContractedCost); periods.set(key, item);
+    diagnostic.addCloudflare(row.ServiceName, positive(row.ContractedCost));
   }
   let cloudflare = 0, covered = end;
+  diagnostic.stage = 'freshness'; diagnostic.reason = 'short_or_stale_period';
   for (const period of periods.values()) {
     if (period.end - period.start < day || period.end < started - 2 * day) throw unavailable();
     covered = Math.min(covered, period.end);
     cloudflare += period.cost * 31 * day / (period.end - period.start);
   }
+  diagnostic.awsMonthlyUsd = aws * 31 / 30; diagnostic.cloudflareMonthlyUsd = cloudflare;
   return { collectedAt: now(), awsMonthlyUsd: aws * 31 / 30, cloudflareMonthlyUsd: cloudflare,
     awsPages: pages, oldestCoveredAt: covered, includesEntireAccounts: true };
 }

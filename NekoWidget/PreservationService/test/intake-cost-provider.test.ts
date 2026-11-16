@@ -73,3 +73,50 @@ it('missing credentials make no provider requests',async()=>{
 it('401 and 403 classify rejected credentials without retaining provider diagnostics',async()=>{
  for(const status of [401,403]) await expect(collectCosts(config,()=>now,async()=>new Response('secret diagnostic',{status}))).rejects.toMatchObject({code:'COST_CREDENTIAL_REJECTED'});
 });
+
+it('emits one fixed diagnostic without changing failures or exposing provider data', async () => {
+ for (const scenario of ['aws-fetch','aws-json','aws-integrity','aws-coverage','cf-fetch','cf-integrity','cf-freshness']) {
+  const events: any[] = [];
+  const fetcher: CostFetch = async input => {
+   const aws = String(input).includes('amazonaws.com');
+   if (scenario === (aws ? 'aws-fetch' : 'cf-fetch')) return new Response('private body token', {status:503});
+   if (aws) {
+    if (scenario === 'aws-json') return new Response('private invalid json');
+    const rows=periods();
+    if (scenario === 'aws-coverage') rows.pop();
+    if (scenario === 'aws-integrity') rows[0]!.Groups[0]!.Metrics.UnblendedCost.Unit='PRIVATE';
+    return Response.json({ResultsByTime:rows});
+   }
+   const data=cf();
+   if (scenario==='cf-integrity') data.result[0]!.BillingAccountId='private-account';
+   if (scenario==='cf-freshness') data.result[0]!.ChargePeriodEnd='2026-11-02T00:00:00Z';
+   return Response.json(data);
+  };
+  await expect(collectCosts(config,()=>now,fetcher,e=>events.push(e))).rejects.toThrow();
+  expect(events).toHaveLength(1);
+  expect(events[0].outcome).toBe('failure');
+  expect(events[0].provider).toBe(scenario.startsWith('aws')?'aws':'cloudflare');
+  expect(events[0].stage).toBe(scenario.split('-')[1]==='fetch'?'fetch':scenario.split('-')[1]);
+  expect(events[0].costs).toBeUndefined();
+  expect(JSON.stringify(events)).not.toMatch(/private|synthetic|123456789012|test-subscription/);
+ }
+});
+it('successful aggregates use fixed categories and logging cannot change the result or exception', async () => {
+ const events:any[]=[];
+ const fetcher:CostFetch=async input=>{
+  if(String(input).includes('amazonaws.com')) {
+   const rows=periods(); rows[0]!.Groups.push({Keys:['private-service-name'],Metrics:{UnblendedCost:{Amount:'0.02',Unit:'USD'}}});
+   return Response.json({ResultsByTime:rows});
+  }
+  return Response.json(cf());
+ };
+ const result=await collectCosts(config,()=>now,fetcher,e=>events.push(e));
+ expect(events).toHaveLength(1); expect(events[0].outcome).toBe('success');
+ expect(events[0].costs.aws30DayUsd.s3).toBeCloseTo(0.30);
+ expect(events[0].costs.aws30DayUsd.other).toBeCloseTo(0.02);
+ expect(events[0].costs.cloudflareCycleUsd.workers).toBeCloseTo(0.01);
+ expect(JSON.stringify(events)).not.toContain('private-service-name');
+ expect(await collectCosts(config,()=>now,fetcher,()=>{throw Error('logger');})).toEqual(result);
+ const original=new Error('private transport failure');
+ await expect(collectCosts(config,()=>now,async()=>{throw original;},()=>{throw Error('logger');})).rejects.toBe(original);
+});

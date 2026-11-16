@@ -9,7 +9,7 @@ export default {
   async scheduled(_event: ScheduledController, env: IntakeRenewalEnv): Promise<void> {
     if (env.ENVIRONMENT !== 'production' || env.INTAKE_RENEWAL_ENABLED !== 'YES') return;
     try {
-      await renewIntake(env.DB, Date.now, () => collectCosts(env, Date.now));
+      await renewIntake(env.DB, Date.now, () => collectCosts(env, Date.now, fetch, event => console.log(JSON.stringify(event))));
     } finally {
       await notifyIntakeState(env);
     }
