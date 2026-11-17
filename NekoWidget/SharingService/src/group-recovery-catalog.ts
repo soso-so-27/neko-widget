@@ -6,6 +6,8 @@ import { enforceRateLimit, parseJsonBody, readBody, transientNetworkKey } from '
 import { binaryField, exactKeys, uuidField } from './validation';
 import { protectedGroupRead, requireCurrentIdentity } from './group-identity-service';
 import { groupRecoveryPendingAPI } from './group-recovery-pending';
+import { removeRecoveryDevice } from './group-recovery-devices';
+import { freshRecovery } from './group-recovery-fresh';
 
 export interface RecoveryChallenge {
   id: string; person_id: string; identity_public_key: string; operation_id: string;
@@ -28,7 +30,8 @@ export async function groupRecoveryCatalogAPI(request: Request, env: Env): Promi
   const url = new URL(request.url);
   if (request.method !== 'POST' || url.search) throw new ApiError(400, 'invalid_request', 'Invalid recovery request.');
   await enforceRateLimit(env, env.MEMBER_RATE_LIMITER, transientNetworkKey(request, 'group-recovery'));
-  const body = parseJsonBody(request, await readBody(request, 4096));
+  const fresh=url.pathname.match(/^\/v3\/group-recovery\/operations\/([0-9a-f-]{36})\/fresh$/u);
+  const body = parseJsonBody(request, await readBody(request, fresh ? 32_768 : 4096));
   const now = Math.floor(Date.now() / 1000);
   if (url.pathname === '/v3/group-recovery/challenges') {
     exactKeys(body, ['identityPublicKey', 'operationId', 'purpose']);
@@ -49,6 +52,8 @@ export async function groupRecoveryCatalogAPI(request: Request, env: Env): Promi
     // This response does not disclose whether the root is registered.
     return jsonResponse({ challenge }, 201);
   }
+  if (url.pathname === '/v3/group-recovery/devices/remove') return removeRecoveryDevice(env, body, now);
+  if (fresh) return freshRecovery(env,body,fresh[1]!,now);
   if (url.pathname.startsWith('/v3/group-recovery/operations/')) return groupRecoveryPendingAPI(env, body, url.pathname, now);
   if (url.pathname !== '/v3/group-recovery/catalog') throw new ApiError(404, 'not_found', 'Endpoint unavailable.');
   exactKeys(body, ['challengeId', 'rootSignature']);
@@ -80,7 +85,11 @@ export async function groupRecoveryCatalogAPI(request: Request, env: Env): Promi
         env.DB.prepare(`SELECT d.id AS deviceId,l.model,d.created_at AS registeredAt
           FROM group_person_devices d LEFT JOIN group_recovery_device_labels l ON l.device_id=d.id
           JOIN group_people p ON p.id=d.person_id
-          WHERE d.person_id=? AND d.state='active' AND p.state='active' ORDER BY d.id`).bind(c.person_id),
+          WHERE d.person_id=? AND d.state='active' AND p.state='active'
+          UNION SELECT r.device_id AS deviceId,MIN(r.model) AS model,MIN(r.created_at) AS registeredAt
+          FROM group_recovery_pending r JOIN group_people p ON p.id=r.person_id AND p.state='active'
+          WHERE r.person_id=? AND NOT EXISTS(SELECT 1 FROM group_person_devices d WHERE d.id=r.device_id AND d.state='active')
+          GROUP BY r.device_id ORDER BY deviceId`).bind(c.person_id,c.person_id),
         env.DB.prepare('DELETE FROM group_recovery_read_checks WHERE id=?').bind(claim),
       ]);
       return jsonResponse({ personId: c.person_id, windows: rows[2]!.results, notebooks: rows[3]!.results,

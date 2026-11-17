@@ -57,11 +57,13 @@ actor GroupRecoveryClient {
     private let root: Curve25519.Signing.PrivateKey
     private let transport: any GroupHTTPTransport
     private let journal: any GroupSecretStore
+    private let secrets: (any GroupSecretStore)?
     private let enabled: Bool
+    private var heads: [String: (SignedGroupRoster, GroupTrustAnchor)] = [:]
     private var personID: String { GroupWire.base64(GroupCanonical.hash(root.publicKey.rawRepresentation)) }
 
     init(endpoint: URL, environment: String, root: Data, transport: any GroupHTTPTransport,
-         journal: any GroupSecretStore, enabled: Bool = false) throws {
+         journal: any GroupSecretStore, secrets: (any GroupSecretStore)? = nil, enabled: Bool = false) throws {
         guard ["production", "staging"].contains(environment), endpoint.scheme == "https",
               endpoint.user == nil, endpoint.password == nil, endpoint.query == nil, endpoint.fragment == nil,
               endpoint.path.isEmpty || endpoint.path == "/" else { throw Failure.invalidResponse }
@@ -70,7 +72,7 @@ actor GroupRecoveryClient {
 #endif
         self.endpoint = endpoint; self.environment = environment
         self.root = try Curve25519.Signing.PrivateKey(rawRepresentation: root)
-        self.transport = transport; self.journal = journal; self.enabled = enabled
+        self.transport = transport; self.journal = journal; self.secrets = secrets; self.enabled = enabled
     }
     private func post(_ path: String, _ body: [String: Any]) async throws -> Data {
         guard enabled else { throw Failure.disabled }
@@ -146,6 +148,129 @@ actor GroupRecoveryClient {
     func register(_ draft: Draft, signingKey: Data) async throws -> Registration {
         try await pending(draft, signingKey: Curve25519.Signing.PrivateKey(rawRepresentation: signingKey))
     }
+    func removeDevice(_ deviceID: String, operationID: UUID) async throws {
+        let c = try await challenge(operationID, purpose: "register")
+        let transcript = try GroupCanonical.fields([GroupCanonical.text("NW3.RECOVERY.REMOVE-DEVICE.V1"),
+            c.transcript(), GroupWire.bytes(deviceID, count: 32)])
+        struct Reply: Decodable { let personID: String; let operationID: String; let deviceID: String; let state: String }
+        let reply = try GroupWire.decode(Reply.self, await post("v3/group-recovery/devices/remove", ["challengeId": c.id,
+            "deviceId": deviceID, "rootSignature": GroupWire.base64(root.signature(for: transcript))]))
+        guard reply.personID == personID, reply.operationID == operationID.uuidString.lowercased(),
+              reply.deviceID == deviceID, reply.state == "revoked" else { throw Failure.invalidResponse }
+    }
+
+    private struct FreshMaterial: Codable {
+        let previous: SignedGroupRoster; let anchor: GroupTrustAnchor
+        let packet: SignedGroupRoster; let envelopes: [GroupKeyEnvelope]
+        let encryptedName: Data; let encryptedMemberNames: [String: Data]
+        let nameDigest: Data
+        let requestedName: String
+        func hash() throws -> Data {
+            let r = packet.roster
+            guard r.members.count == 1, envelopes.count == 1, encryptedMemberNames.count == 1,
+                  let name = encryptedMemberNames[r.members[0].participantID] else { throw Failure.invalidResponse }
+            let e = envelopes[0]
+            var fields = ["NW3.RECOVERY.FRESH-MATERIAL.V1", r.windowID, String(r.revision), String(r.keyEpoch)].map(GroupCanonical.text)
+            fields += [r.previousHash, GroupCanonical.text(packet.signerDeviceID), packet.signature,
+                GroupCanonical.text(GroupWire.base64(encryptedName)), GroupCanonical.text(r.members[0].participantID), GroupCanonical.text(GroupWire.base64(name))]
+            fields += [e.windowID, String(e.keyEpoch), GroupWire.base64(e.rosterHash), e.deviceID, GroupWire.base64(e.encapsulatedKey),
+                       GroupWire.base64(e.ciphertext), e.signerDeviceID, GroupWire.base64(e.signature)].map(GroupCanonical.text)
+            return try GroupCanonical.hash(GroupCanonical.fields(fields))
+        }
+    }
+    func resumeFreshGeneration(_ draft: Draft, identity: GroupDeviceIdentity) async throws -> Registration? {
+        guard let saved = try journal.read(freshAccount(draft.windowID)) else { return nil }
+        let material = try GroupWire.decode(FreshMaterial.self, saved)
+        return try await freshGeneration(draft, identity: identity, newName: material.requestedName)
+    }
+    private func freshAccount(_ window: String) -> String {
+        "op:rf:" + GroupWire.base64(GroupCanonical.hash(Data(account(window).utf8)))
+    }
+    /// Caller supplies this root's dedicated local Keychain store and exact
+    /// device keys. An existing identity/window is never overwritten by another.
+    func freshGeneration(_ draft: Draft, identity: GroupDeviceIdentity, newName: String) async throws -> Registration {
+        guard let secrets else { throw Failure.disabled }
+        let deviceID = try identity.deviceID
+        guard enabled, identity.personPublicKey == root.publicKey.rawRepresentation,
+              try identity.signingKey.publicKey.rawRepresentation == draft.signingPublicKey,
+              try identity.agreementKey.publicKey.rawRepresentation == draft.hpkePublicKey else { throw Failure.invalidResponse }
+        let name = try GroupWire.name(newName), key = freshAccount(draft.windowID)
+        let saved = try journal.read(key)
+        let material: FreshMaterial
+        if let saved {
+            material = try GroupWire.decode(FreshMaterial.self, saved)
+            guard material.nameDigest == GroupCanonical.hash(Data(name.utf8)) else { throw Failure.invalidResponse }
+        } else {
+            let state = try await status(draft).state
+            guard case .noKeyProvider = state, let (oldPacket, anchor) = heads[draft.windowID],
+                  oldPacket.roster.members.count == 1 else { throw Failure.invalidResponse }
+            let old = oldPacket.roster, member = old.members[0], device = try identity.certificate(windowID: draft.windowID)
+            let next = GroupRoster(windowID: old.windowID, revision: old.revision + 1, keyEpoch: old.keyEpoch + 1,
+                previousHash: GroupCanonical.hash(try old.canonicalBytes()), ownerPersonID: personID,
+                members: [.init(participantID: member.participantID, personID: personID, identityPublicKey: root.publicKey.rawRepresentation, role: .owner, devices: [device])])
+            let packet = try GroupRosterVerifier.sign(next, deviceID: device.id, privateKey: identity.signingKey)
+            // This locally constructed packet is pinned only for creating its
+            // ciphertexts; it is not installed or treated as server membership.
+            let verified = try GroupRosterVerifier.restoreLocalCheckpoint(packet, anchor: anchor,
+                pinnedRevision: next.revision, pinnedHash: GroupCanonical.hash(next.canonicalBytes()))
+            let roomKey = SymmetricKey(size: .bits256)
+            material = try .init(previous: oldPacket, anchor: anchor, packet: packet,
+                envelopes: [GroupHPKE.wrap(roomKey: roomKey, for: device.id, roster: verified, signerID: device.id, signingKey: identity.signingKey)],
+                encryptedName: GroupNameCrypto.seal(name, slot: "window", key: roomKey, roster: verified, signerID: device.id, signingKey: identity.signingKey),
+                encryptedMemberNames: [member.participantID: GroupNameCrypto.seal("自分", slot: "member:" + member.participantID,
+                    key: roomKey, roster: verified, signerID: device.id, signingKey: identity.signingKey)], nameDigest: GroupCanonical.hash(Data(name.utf8)), requestedName: name)
+            try Task.checkCancellation()
+            try journal.write(GroupWire.encode(material), account: key, createOnly: true)
+        }
+        let c = try await challenge(draft.operationID, purpose: "register"), old = material.previous.roster, next = material.packet.roster
+        let previous = try GroupRosterVerifier.restoreLocalCheckpoint(material.previous, anchor: material.anchor,
+            pinnedRevision: old.revision, pinnedHash: GroupCanonical.hash(old.canonicalBytes()))
+        guard old.windowID == draft.windowID, old.members.count == 1, old.ownerPersonID == personID,
+              material.anchor.ownerIdentityPublicKey == root.publicKey.rawRepresentation,
+              next.members.first?.devices.first?.id == deviceID else { throw Failure.invalidResponse }
+        let claim = try GroupRecoveryClaim(version: 1, environment: environment, windowID: draft.windowID, personID: personID,
+            participantID: old.members[0].participantID, recoveryGeneration: old.revision, previousRevision: old.revision,
+            previousHash: previous.hash, nextHash: GroupCanonical.hash(next.canonicalBytes()), newDevice: next.members[0].devices[0],
+            replacedDeviceIDs: old.members[0].devices.map(\.id), operationID: draft.operationID.uuidString.lowercased(),
+            challenge: GroupWire.bytes(c.nonce, count: 32), issuedAt: c.issued_at, expiresAt: c.expires_at)
+        let proof = try GroupRecoveryProof(claim: claim, rootSignature: root.signature(for: claim.signatureBytes(root: true)),
+            deviceSignature: identity.signingKey.signature(for: claim.signatureBytes(root: false)))
+        let ledger = GroupRecoveryLedger(environment: environment, windowID: draft.windowID, personID: personID,
+            participantID: claim.participantID, identityPublicKey: root.publicKey.rawRepresentation, revision: old.revision,
+            hash: previous.hash, recoveryGeneration: old.revision, state: .active, newDeviceWasRevoked: false,
+            challenge: .init(value: claim.challenge, operationID: claim.operationID, issuedAt: c.issued_at, expiresAt: c.expires_at, consumed: false))
+        let verified = try GroupRosterVerifier.verifySoloRecovery(material.packet, previous: previous, proof: proof, ledger: ledger, now: Int(Date().timeIntervalSince1970))
+        struct Input: Encodable { let challengeID: String; let proof: GroupRecoveryProof; let packet: SignedGroupRoster
+            let envelopes: [GroupKeyEnvelope]; let encryptedName: Data; let encryptedMemberNames: [String: Data]; let consentSignature: Data }
+        let consent = try GroupCanonical.fields([GroupCanonical.text("NW3.RECOVERY.FRESH-CONSENT.V1"), c.transcript(), material.hash()])
+        let input = try Input(challengeID: c.id, proof: proof, packet: material.packet, envelopes: material.envelopes,
+            encryptedName: material.encryptedName, encryptedMemberNames: material.encryptedMemberNames, consentSignature: root.signature(for: consent))
+        let body = try JSONSerialization.jsonObject(with: GroupWire.encode(input)) as! [String: Any]
+        struct Reply: Decodable { let personID: String; let operationID: String; let windowID: String; let deviceID: String
+            let revision: Int; let rosterHash: Data; let state: String }
+        let reply = try GroupWire.decode(Reply.self, await post("v3/group-recovery/operations/" + claim.operationID + "/fresh", body))
+        guard reply.personID == personID, reply.operationID == claim.operationID, reply.windowID == draft.windowID,
+              reply.deviceID == deviceID, reply.revision == next.revision, reply.rosterHash == verified.hash,
+              reply.state == "freshGenerationCommitted" else { throw Failure.invalidResponse }
+        let roomKey = try GroupHPKE.unwrap(material.envelopes[0], deviceID: identity.deviceID, agreementKey: identity.agreementKey, roster: verified)
+        try Task.checkCancellation()
+        if let value = try secrets.read("identity") {
+            let local = try GroupWire.decode(GroupDeviceIdentity.self, value)
+            guard local.personPublicKey == identity.personPublicKey, try local.deviceID == identity.deviceID else { throw Failure.invalidResponse }
+        }
+        var local = try secrets.read("window:" + draft.windowID).map { try GroupWire.decode(GroupLocalWindow.self, $0) } ?? .empty(anchor: material.anchor)
+        guard local.anchor == material.anchor, !local.left, local.closed != true,
+              local.pinnedRevision <= next.revision,
+              local.pinnedRevision != next.revision || local.pinnedHash == verified.hash else { throw Failure.invalidResponse }
+        local.packet = material.packet; local.pinnedRevision = next.revision; local.pinnedHash = verified.hash
+        local.keys[String(next.keyEpoch)] = roomKey.withUnsafeBytes { Data($0) }
+        local.rosterHashes[String(next.revision)] = verified.hash
+        local.minimumAdmissionRevision = next.revision; local.nameCheckpoint = nil
+        var registered = identity; registered.registered = true
+        try secrets.write(GroupWire.encode(registered), account: "identity", createOnly: false)
+        try secrets.write(GroupWire.encode(local), account: "window:" + draft.windowID, createOnly: false)
+        return Registration(state: .ready(operationID: draft.operationID, deviceID: reply.deviceID), model: draft.model, registeredAt: nil)
+    }
     private func pending(_ draft: Draft, signingKey: Curve25519.Signing.PrivateKey?) async throws -> Registration {
         guard let saved = try journal.read(account(draft.windowID)), try GroupWire.decode(Draft.self, saved) == draft,
               signingKey.map({ $0.publicKey.rawRepresentation == draft.signingPublicKey }) ?? true else { throw Failure.invalidResponse }
@@ -174,6 +299,7 @@ actor GroupRecoveryClient {
                 anchor: .init(windowID: a.windowID, ownerPersonID: a.ownerPersonID, ownerIdentityPublicKey: a.ownerPublicKey), rootSignature: a.rootSignature)
             verified = try GroupRosterVerifier.verifyRecoveryHead(packet, receipts: [receipt], root: root.publicKey.rawRepresentation,
                 environment: environment, windowID: draft.windowID, currentRevision: revision, currentHash: hash, rootIsCurrent: true)
+            if verified != nil { heads[draft.windowID] = (packet, receipt.anchor) }
         }
         let deviceID = try GroupWire.base64(GroupCanonical.hash(GroupCanonical.fields([draft.signingPublicKey, draft.hpkePublicKey])))
         let state = try GroupRecoveryPendingStateResolver.resolve(operationID: draft.operationID, state: result.state,
