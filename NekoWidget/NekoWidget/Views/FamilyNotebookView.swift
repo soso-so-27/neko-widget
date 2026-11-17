@@ -1081,6 +1081,10 @@ struct FamilyNotebookView: View {
                         } else if model.isReal { showsName = true }
                         else { Task { if await sharing.perform({ try await sharing.service.createFamily(operationID: $0) }) { UsageCounter.shared.count(.familyCreated) } } }
                     }, tryInvitation: prototypeInvitationAction)
+                    // 11/18: replies stay readable after leaving the family.
+                    .safeAreaInset(edge: .bottom) {
+                        if sentPhotoReport || FamilyReportReplies.showsFixture { FamilyReportRepliesRow() }
+                    }
                 case .pendingApproval:
                     ContentUnavailableView("参加を待っています", systemImage: "hourglass",
                                            description: Text("家族が参加を受け入れると、ここに手帳が表示されます。"))
@@ -2846,6 +2850,33 @@ enum FamilyReportReplies {
         if showsFixture { return fixtureReplies }
 #endif
         return try await FamilyNotebookServiceFactory.reportReplies()
+    }
+}
+
+/// The same 「通報への返答」 row under the notebook's intro, for someone
+/// who reported and is no longer in a family.
+private struct FamilyReportRepliesRow: View {
+    var body: some View {
+        NavigationLink { FamilyReportRepliesView() } label: {
+            HStack {
+                Label("通報への返答", systemImage: "exclamationmark.bubble")
+                    .foregroundStyle(Color.primary)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Color(uiColor: .tertiaryLabel))
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 16)
+            .frame(minHeight: 44)
+            .background(Color(uiColor: .secondarySystemBackground),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 24)
+        .padding(.bottom, 12)
+        .accessibilityIdentifier("family-notebook-report-replies")
     }
 }
 
