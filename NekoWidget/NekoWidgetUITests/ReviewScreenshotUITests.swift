@@ -960,7 +960,11 @@ final class ReviewScreenshotUITests: XCTestCase {
             guard reason.waitForExistence(timeout: 8) else { return "report sheet did not open" }
             reason.tap()
             app.buttons["family-photo-report-send"].firstMatch.tap()
-            guard app.descendants(matching: .any)["family-photo-report-number"].firstMatch.waitForExistence(timeout: 15) else {
+            // Received (a number), or, in a build without the pinned team
+            // key, 「いまは通報できません。」: never a send to another key.
+            let number = app.descendants(matching: .any)["family-photo-report-number"].firstMatch
+            let unavailable = app.staticTexts["いまは通報できません。"].firstMatch
+            guard number.waitForExistence(timeout: 15) || unavailable.exists else {
                 let failure = app.descendants(matching: .any)["family-photo-report-failure"].firstMatch
                 return "report was not received" + (failure.exists ? ": " + String(describing: failure.value ?? "") : "")
             }

@@ -38,14 +38,16 @@ enum FamilyNotebookServiceFactory {
             guard let client = GroupWindowClientProvider.production else { throw FamilySharingError.serviceUnavailable }
             return try await client.hasExistingIdentity()
         }, photoRuntimeEnabled: representativePhotoRuntimeEnabled, photoTransport: GroupURLSessionTransport(),
-        moderationRecipient: {
-            // The same reviewed recipient as a まど report, pinned in the
-            // app's configuration; never one from a server reply.
-            let configuration = SharingAPIConfiguration.current
-            guard let keyID = configuration.moderationKeyID, let key = configuration.moderationPublicKey,
-                  GroupReportCrypto.acceptsRecipient(keyID: keyID, publicKey: key, configuration: configuration) else { return nil }
-            return (keyID, key)
-        })
+        moderationRecipient: { FamilyNotebookServiceFactory.moderationRecipient() })
+    }
+
+    /// The same reviewed recipient as a まど report, pinned in the app's
+    /// configuration; never one from a server reply.
+    static func moderationRecipient() -> (keyID: String, publicKey: Data)? {
+        let configuration = SharingAPIConfiguration.current
+        guard let keyID = configuration.moderationKeyID, let key = configuration.moderationPublicKey,
+              GroupReportCrypto.acceptsRecipient(keyID: keyID, publicKey: key, configuration: configuration) else { return nil }
+        return (keyID, key)
     }
 
     /// 11/17: the family's representative photo. No setting turns it on:
@@ -196,8 +198,11 @@ final class FamilyRepresentativePhotoFixture: FamilyRepresentativePhotoBackend {
     }
     func report(assetID: UUID, reason: GroupReportReason) async throws -> String {
         guard let jpeg = shownJPEG[assetID] else { throw FamilyNotebookPhotoFailure.unavailable }
+        // The same pinned recipient as a real build: none in this
+        // configuration means 「いまは通報できません」, never another key.
+        guard let recipient = FamilyNotebookServiceFactory.moderationRecipient() else { throw FamilyNotebookPhotoFailure.unavailable }
         let pending = try await client.prepareReport(canonicalJPEG: jpeg, assetID: assetID, reasonCode: reason.rawValue,
-            moderationKeyID: GroupReportCrypto.moderationKeyID, moderationPublicKey: GroupReportCrypto.moderationPublicKey)
+            moderationKeyID: recipient.keyID, moderationPublicKey: recipient.publicKey)
         return try await client.report(pending).reportID
     }
     func hide(_ personID: String) async throws { try await client.hideAuthor(personID) }
