@@ -1,5 +1,6 @@
 import { clientUpgradeResponse } from '../../SharingService/src/client-upgrade-required';
 import { ServiceError, sha256, type IdentityVerifier } from './contracts';
+import { logPutRefusal } from './put-refusal';
 import { DurableAuth } from './auth';
 import { deviceSessionCleanupStatements } from './device-sessions';
 import { ArchiveStore, cleanupArchive } from './storage';
@@ -457,7 +458,7 @@ export default {
   async fetch(request: Request, env: Env, context?: ExecutionContext): Promise<Response> {
     try {
       const upgrade = clientUpgradeResponse(request, env);
-      if (upgrade) return upgrade;
+      if (upgrade) { logPutRefusal(request,new ServiceError('CLIENT_UPGRADE_REQUIRED',upgrade.status)); return upgrade; }
       if (env.PRESERVATION_ENABLED !== 'YES') throw new ServiceError('PRESERVATION_DISABLED', 503);
       const ip = request.headers.get('CF-Connecting-IP');
       if (!ip) throw new ServiceError('REQUEST_IDENTITY_UNCONFIRMED', 403);
@@ -485,6 +486,7 @@ export default {
       return await route(request, services, context);
     } catch (error) {
       // Finite private-pilot probe: first fixed failure only. Never retain tokens,
+      logPutRefusal(request,error);
       // subjects, email, request bodies, IP, nonce or raw exception text.
       const until = Number(env.APPLE_AUTH_DIAGNOSTICS_UNTIL);
       const now = Date.now();
