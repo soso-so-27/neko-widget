@@ -2,6 +2,16 @@ import Foundation
 import CryptoKit
 private enum TestFailure: Error { case failed }
 private func check(_ value: Bool) throws { if !value { throw TestFailure.failed } }
+private final class RecoverySecrets: GroupSecretStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: Data] = [:]
+    func read(_ account: String) throws -> Data? { lock.lock(); defer { lock.unlock() }; return values[account] }
+    func write(_ data: Data, account: String, createOnly: Bool) throws {
+        lock.lock(); defer { lock.unlock() }
+        if createOnly && values[account] != nil { throw TestFailure.failed }; values[account] = data
+    }
+    func remove(_ account: String) throws { lock.lock(); defer { lock.unlock() }; values.removeValue(forKey: account) }
+}
 private actor Relay: GroupHTTPTransport {
     enum Mode { case normal, wrongEnvironment, ready, offline }
     var mode: Mode = .normal
@@ -85,11 +95,11 @@ private actor Relay: GroupHTTPTransport {
     static func main() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let journal = try GroupOperationStore(directory: directory), relay = Relay()
+        let journal = try GroupOperationStore(directory: directory), relay = Relay(), secrets = RecoverySecrets()
         let root = Curve25519.Signing.PrivateKey(), device = Curve25519.Signing.PrivateKey(), hpke = Curve25519.KeyAgreement.PrivateKey()
         func client(_ enabled: Bool = true) throws -> GroupRecoveryClient {
             try GroupRecoveryClient(endpoint: URL(string: "https://recovery.invalid")!, environment: "staging", root: root.rawRepresentation,
-                transport: relay, journal: journal, enabled: enabled)
+                transport: relay, journal: journal, secrets: secrets, enabled: enabled)
         }
         let c = try client(), window = GroupWire.randomID()
         let draft = try await c.prepare(windowID: window, signingPublicKey: device.publicKey.rawRepresentation, hpkePublicKey: hpke.publicKey.rawRepresentation, model: "iPhone")
@@ -131,10 +141,10 @@ private actor Relay: GroupHTTPTransport {
         try await relay.installProof(JSONSerialization.data(withJSONObject: proof))
         await relay.loseNextFreshReply()
         do { _ = try await c.freshGeneration(draft, identity: identity, newName: "新しいまど"); throw GroupRecoveryClient.Failure.invalidResponse } catch is TestFailure {}
-        try check(journal.read("window:" + window) == nil)
+        try check(secrets.read("window:" + window) == nil)
         let resumed = try await reopened.resumeFreshGeneration(draft, identity: identity)
         try check(resumed?.state == .ready(operationID: draft.operationID, deviceID: pendingID))
-        let installed = try GroupWire.decode(GroupLocalWindow.self, journal.read("window:" + window)!)
+        let installed = try GroupWire.decode(GroupLocalWindow.self, secrets.read("window:" + window)!)
         try check(installed.pinnedRevision == 2 && installed.keys.count == 1 && installed.keys["1"] == nil)
         try check(await relay.freshCount() == 2)
         try await c.removeDevice(ownerID, operationID: UUID())
