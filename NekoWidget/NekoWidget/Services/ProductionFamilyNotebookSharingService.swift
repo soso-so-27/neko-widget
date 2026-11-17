@@ -101,6 +101,19 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     private(set) var memberNames: [String: String] = [:]
     private(set) var lastJoinResults: [FamilyNotebookAdmissionClient.JoinResult] = []
     private(set) var lastMembers: [FamilyNotebookAdmissionClient.Member] = []
+    // 11/17: the family's representative photo (FamilyNotebookRepresentativePhoto).
+    // The roster and keys of the last read stay in this service; the screens
+    // get only pixels to show and what happened (the extension below).
+    fileprivate struct PhotoMaterial { let familyID: UUID; let generation: Int64; let material: FamilyNotebookKeyMaterial }
+    fileprivate var photoMaterial: PhotoMaterial?
+    private var photoClient: (familyID: UUID, client: FamilyNotebookRepresentativePhotoClient, journal: any GroupSecretStore)?
+    /// The pixels last shown for each asset: a report sends exactly these.
+    private var shownPhotos: [UUID: Data] = [:]
+    /// This session's delivery of each cat, sent again by 「もう一度」.
+    private var photoRetries: [UUID: UUID] = [:]
+    private let photoRuntimeEnabled: Bool
+    private let photoTransport: any GroupHTTPTransport
+    private let moderationRecipient: @MainActor () -> (keyID: String, publicKey: Data)?
     var notebook: FamilyNotebookStore? { session?.notebook }
     var author: FamilyNotebookAuthor? {
         guard let identity = session?.identity, let name = try? displayName() else { return nil }
@@ -113,10 +126,14 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
          privateFarewellDay: @escaping @MainActor (UUID, UUID?) throws -> String? = { _, _ in nil },
          now: @escaping @MainActor () -> Date = { Date() },
          hasPersonalPlus: @escaping @MainActor () -> Bool = { false },
-         hasExistingIdentity: @escaping @MainActor () async throws -> Bool = { true }) {
+         hasExistingIdentity: @escaping @MainActor () async throws -> Bool = { true },
+         photoRuntimeEnabled: Bool = false, photoTransport: any GroupHTTPTransport = GroupURLSessionTransport(),
+         moderationRecipient: @escaping @MainActor () -> (keyID: String, publicKey: Data)? = { nil }) {
         self.provider = provider; self.billing = billing; self.displayName = displayName; self.catNames = catNames
         self.privateFarewellDay = privateFarewellDay; self.now = now
         self.hasPersonalPlus = hasPersonalPlus; self.hasExistingIdentity = hasExistingIdentity
+        self.photoRuntimeEnabled = photoRuntimeEnabled; self.photoTransport = photoTransport
+        self.moderationRecipient = moderationRecipient
     }
     private func run<T>(_ action: (FamilyNotebookSession) async throws -> T) async throws -> T {
         guard !working else { throw FamilySharingError.unknownOutcome }
@@ -158,7 +175,7 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     }
     func loadState() async throws -> FamilySharingState {
         guard try await hasExistingIdentity() else {
-            currentFamilyID = nil; lastMembers = []; session = nil
+            currentFamilyID = nil; lastMembers = []; session = nil; photoMaterial = nil; photoClient = nil
             return .notInFamily
         }
         lastSend = nil
@@ -172,7 +189,7 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
             let directory = try await context.admission.directory()
             lastJoinResults = directory.joinRequests ?? []
             guard let family = directory.family else {
-                currentFamilyID = nil; lastMembers = []
+                currentFamilyID = nil; lastMembers = []; photoMaterial = nil
                 try context.confirmedOutsideFamily()
                 return directory.pendingRequests.isEmpty ? .notInFamily : .pendingApproval
             }
@@ -196,6 +213,7 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
             lastKeyObservation = await context.keys.observation
             guard let material = prepared else { needsAnotherPass = true; return .waitingForKeys }
             guard material.ready, !material.moreWork else { needsAnotherPass = true; return .waitingForKeys }
+            photoMaterial = .init(familyID: family.familyID, generation: members.generation, material: material)
             let sync = try FamilyNotebookSync(familyID: family.familyID, identity: context.identity, store: store,
                 network: context.wire, journal: context.journal, endpointID: context.endpoint.absoluteString)
             let result = try await sync.synchronize(current: material.current, history: material.history,
@@ -435,6 +453,207 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
             guard let request = result.requests.first(where: { $0.requestID == requestID }) else { throw FamilySharingError.staleRoster }
             try await context.admission.decide(family: family.familyID, request: request, generation: result.generation, approve: approve, operation: operationID)
         }
+    }
+}
+
+/// 11/17: one family cat's representative photo, as the screens get it.
+enum FamilyNotebookPhotoLoad: Equatable, Sendable {
+    /// Pixels to show on the cat's page only: never the photo list, a
+    /// widget, the archive or the library.
+    case shown(assetID: UUID, authorID: String, jpeg: Data)
+    /// This person chose not to show this author's photos here.
+    case hidden(authorID: String)
+    /// None, cleared, reported, stopped or replaced: のわ again.
+    case none
+}
+
+enum FamilyNotebookPhotoFailure: Error, Equatable {
+    /// 「家族の手帳の写真が上限です」.
+    case limited
+    case failed
+    /// Off, or nothing to send (no shown photo, no moderation recipient).
+    case unavailable
+}
+
+/// 11/17: the representative photo (FamilyNotebookRepresentativePhotoClient
+/// behind it). Every call starts from a person's tap or a page that is shown;
+/// nothing here sends a photo by itself. Off (`photoRuntimeEnabled` false),
+/// every call throws before any network.
+@available(iOS 17.0, macOS 14.0, *)
+extension ProductionFamilyNotebookSharingService {
+    var representativePhotosEnabled: Bool { photoRuntimeEnabled }
+    var personID: String? { session?.identity.personID }
+
+    fileprivate func photoContext() throws -> (session: FamilyNotebookSession, store: FamilyNotebookStore, material: PhotoMaterial,
+                                          client: FamilyNotebookRepresentativePhotoClient, journal: any GroupSecretStore) {
+        guard photoRuntimeEnabled else { throw FamilyNotebookPhotoFailure.unavailable }
+        guard let session, let store = session.notebook, let material = photoMaterial,
+              let snapshot = try? store.snapshot(), !snapshot.sharingEnded, snapshot.familyID == material.familyID
+        else { throw FamilySharingError.membershipChecking }
+        if let photoClient, photoClient.familyID == material.familyID {
+            return (session, store, material, photoClient.client, photoClient.journal)
+        }
+        // Its own journal beside the notebook's: ciphertext, receipts and this
+        // person's 「表示しない」, never the notebook's keys.
+        let journal = try GroupOperationStore(directory: session.directory.deletingLastPathComponent()
+            .appendingPathComponent("representative-photo", isDirectory: true), maximumRecordBytes: 2_100_000)
+        let client = FamilyNotebookRepresentativePhotoClient(familyID: material.familyID, endpoint: session.endpoint,
+            identity: session.identity, transport: photoTransport, journal: journal, runtimeEnabled: photoRuntimeEnabled)
+        photoClient = (material.familyID, client, journal)
+        return (session, store, material, client, journal)
+    }
+
+    /// The reference in the verified notebook and who wrote it; nil: none or cleared.
+    private func photoReference(_ snapshot: FamilyNotebookSnapshot, cat: UUID, familyID: UUID) throws
+        -> (reference: FamilyNotebookRepresentativePhotoReference, authorID: String)? {
+        guard let field = snapshot.fieldState(for: .init(familyCatID: cat, field: .representativePhoto)),
+              !field.isDeleted, case .text(let text) = field.operation.value else { return nil }
+        let reference = try GroupWire.decode(FamilyNotebookRepresentativePhotoReference.self, Data(text.utf8))
+        try reference.validate()
+        guard reference.slotID == FamilyNotebookRepresentativePhotoCrypto.slotID(familyID: familyID, catID: cat)
+        else { throw FamilyNotebookCryptoError.untrusted }
+        return (reference, field.operation.author.personID)
+    }
+
+    /// The roster of an earlier key epoch, through the chain to the current one.
+    private func photoRoster(_ material: FamilyNotebookKeyMaterial, epoch: Int) throws -> VerifiedFamilyNotebookRoster {
+        var context = FamilyNotebookKeyContext.current(material.current)
+        while context.source.roster.epoch > epoch {
+            guard let previous = material.history[context.source.roster.epoch - 1] else { throw FamilyNotebookCryptoError.untrusted }
+            context = try context.previous(previous)
+        }
+        guard context.source.roster.epoch == epoch else { throw FamilyNotebookCryptoError.untrusted }
+        return context.source
+    }
+
+    /// Who delivered the cat's photo, from this copy only (no network).
+    func representativePhotoAuthor(familyCatID: UUID) -> String? {
+        guard photoRuntimeEnabled, let familyID = photoMaterial?.familyID,
+              let snapshot = try? session?.notebook?.snapshot() else { return nil }
+        do { return try photoReference(snapshot, cat: familyCatID, familyID: familyID)?.authorID } catch { return nil }
+    }
+
+    /// The photos to show. A cat missing from the answer could not be read
+    /// this time: the screen keeps what it shows. Thrown: nothing was read.
+    func representativePhotos(familyCatIDs: [UUID]) async throws -> [UUID: FamilyNotebookPhotoLoad] {
+        let context = try photoContext()
+        let snapshot = try context.store.snapshot()
+        var result: [UUID: FamilyNotebookPhotoLoad] = [:]
+        var references: [UUID: (reference: FamilyNotebookRepresentativePhotoReference, authorID: String)] = [:]
+        for cat in familyCatIDs {
+            do {
+                if let found = try photoReference(snapshot, cat: cat, familyID: context.material.familyID) { references[cat] = found }
+                else { result[cat] = FamilyNotebookPhotoLoad.none }
+            } catch { continue }
+        }
+        guard !references.isEmpty else { return result }
+        let hidden = try await context.client.hiddenAuthors()
+        let slots = try await context.client.slots()
+        for (cat, found) in references {
+            if hidden.contains(found.authorID) { result[cat] = .hidden(authorID: found.authorID); continue }
+            guard let slot = slots.first(where: { $0.slotID == found.reference.slotID }), let asset = slot.assetID else {
+                result[cat] = FamilyNotebookPhotoLoad.none; continue
+            }
+            // A newer photo than this copy has read: keep what is shown until the next read.
+            guard asset == found.reference.assetID else { continue }
+            do {
+                let roster = try photoRoster(context.material.material, epoch: found.reference.keyEpoch)
+                if let jpeg = try await context.client.image(slot: slot, reference: found.reference, roster: roster,
+                                                             verifiedAuthorID: found.authorID) {
+                    shownPhotos[asset] = jpeg
+                    result[cat] = .shown(assetID: asset, authorID: found.authorID, jpeg: jpeg)
+                } else {
+                    shownPhotos[asset] = nil
+                    result[cat] = FamilyNotebookPhotoLoad.none
+                }
+            } catch is CancellationError { throw CancellationError() } catch { continue }
+        }
+        return result
+    }
+
+    /// Only after 「家族に写真を届けますか」→［届ける］. The client keeps the
+    /// encrypted delivery for 「もう一度」, which sends the same one.
+    func deliverRepresentativePhoto(familyCatID: UUID, source: Data) async throws {
+        let context = try photoContext()
+        guard let author else { throw FamilySharingError.signInExpired }
+        let snapshot = try context.store.snapshot()
+        guard snapshot.activeMappings.contains(where: { $0.familyCatID == familyCatID }) else { throw FamilySharingError.notAllowed }
+        let current = context.material.material.current
+        guard let key = context.material.material.keys[current.roster.epoch] else { throw FamilySharingError.membershipChecking }
+        let slotID = FamilyNotebookRepresentativePhotoCrypto.slotID(familyID: context.material.familyID, catID: familyCatID)
+        let revision: Int
+        do { revision = try await context.client.slots().first { $0.slotID == slotID }?.revision ?? 0 }
+        catch { throw Self.photoFailure(error) }
+        let target = FamilyNotebookTarget(familyCatID: familyCatID, field: .representativePhoto)
+        let pending = try FamilyNotebookRepresentativePhotoClient.prepare(source: source, familyID: context.material.familyID,
+            catID: familyCatID, expectedRevision: revision, generation: context.material.generation,
+            nextClock: snapshot.clock + 1, author: author, identity: context.session.identity, roster: current,
+            epochKey: key, observedOperationIDs: FamilyNotebookCore.observedFrontier(target: target, operations: snapshot.operations))
+        photoRetries[familyCatID] = pending.reservation.operationID
+        try await send(pending, context.client, context.store, context.material.material)
+        photoRetries[familyCatID] = nil
+    }
+
+    /// 「もう一度」: the same encrypted delivery, never a second one.
+    func retryRepresentativePhoto(familyCatID: UUID) async throws {
+        let context = try photoContext()
+        guard let id = photoRetries[familyCatID],
+              let pending = try await context.client.pendingDeliveries().first(where: { $0.reservation.operationID == id })
+        else { throw FamilyNotebookPhotoFailure.failed }
+        try await send(pending, context.client, context.store, context.material.material)
+        photoRetries[familyCatID] = nil
+    }
+
+    private func send(_ pending: FamilyNotebookRepresentativePhotoClient.Pending, _ client: FamilyNotebookRepresentativePhotoClient,
+                      _ store: FamilyNotebookStore, _ material: FamilyNotebookKeyMaterial) async throws {
+        do { try await client.deliver(pending) } catch { throw Self.photoFailure(error) }
+        // Into this copy at once, as a received operation: its clock moves
+        // past it, and the next read finds the reference here.
+        if let key = material.keys[pending.reservation.keyEpoch],
+           let roster = try? photoRoster(material, epoch: pending.reservation.keyEpoch),
+           let received = try? FamilyNotebookOperationCrypto.openRetaining(pending.operation, roster: roster, key: key) {
+            try? store.receiveRetaining([received])
+        }
+    }
+
+    private static func photoFailure(_ error: Error) -> Error {
+        if error is CancellationError { return error }
+        if case FamilyNotebookTransportError.server(let code, _) = error, code == "photo_slots_full" {
+            return FamilyNotebookPhotoFailure.limited
+        }
+        return FamilyNotebookPhotoFailure.failed
+    }
+
+    /// 「家族に届けた写真を消す」: an ordinary notebook write (the sync sends
+    /// it with its clearPhoto effect). The next read sends it.
+    func clearRepresentativePhoto(familyCatID: UUID) throws {
+        let context = try photoContext()
+        guard let author else { throw FamilySharingError.signInExpired }
+        _ = try context.store.edit(target: .init(familyCatID: familyCatID, field: .representativePhoto), value: .clear, author: author)
+    }
+
+    func hideRepresentativePhotos(of personID: String) async throws { try await photoContext().client.hideAuthor(personID) }
+    func showRepresentativePhotos(of personID: String) async throws { try await photoContext().client.unhideAuthor(personID) }
+
+    /// The photo shown, encrypted for the team only after the person chose a
+    /// reason and 「送る」. The encrypted report is kept until it is received,
+    /// so 「もう一度送る」 sends the same one. Returns the report's number.
+    func reportRepresentativePhoto(assetID: UUID, reasonCode: String) async throws -> String {
+        let context = try photoContext()
+        let account = "op:fp:report:" + assetID.uuidString.lowercased()
+        let pending: FamilyNotebookRepresentativePhotoClient.PendingReport
+        if let saved = try context.journal.read(account) {
+            pending = try GroupWire.decode(FamilyNotebookRepresentativePhotoClient.PendingReport.self, saved)
+        } else {
+            guard let jpeg = shownPhotos[assetID], let recipient = moderationRecipient() else { throw FamilyNotebookPhotoFailure.unavailable }
+            pending = try await context.client.prepareReport(canonicalJPEG: jpeg, assetID: assetID, reasonCode: reasonCode,
+                moderationKeyID: recipient.keyID, moderationPublicKey: recipient.publicKey)
+            try context.journal.write(GroupWire.encode(pending), account: account, createOnly: true)
+        }
+        let receipt = try await context.client.report(pending)
+        try? context.journal.remove(account)
+        shownPhotos[assetID] = nil
+        return receipt.reportID
     }
 }
 

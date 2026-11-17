@@ -82,7 +82,9 @@ class Words(unittest.TestCase):
         choose = block(HOME, "private func choosePhoto(for cat: FamilyNotebookCatLink.Unlinked) {")
         self.assertIn("if linkCandidates(for: cat).isEmpty { register(cat) }", choose)
         self.assertIn("CatHomeLinkQuestion(cat: cat, registersOther: true)", choose)
-        self.assertIn("if cat.profile?.coverPhoto == nil {\n                CatHomeNoPhotoArt(metrics: metrics)", HOME)
+        # 11/17: a photo the family delivered takes のわ's place; none: のわ.
+        self.assertIn("if cat.profile?.coverPhoto == nil {\n                if let familyPhoto {", HOME)
+        self.assertIn("} else {\n                    CatHomeNoPhotoArt(metrics: metrics)\n                }", HOME)
 
     def test_unlinking_is_in_the_cat_menu_only(self):
         self.assertIn('Button("家族の手帳とのつながりを外す", systemImage: "link") { confirmsUnlink = true }', CARE)
