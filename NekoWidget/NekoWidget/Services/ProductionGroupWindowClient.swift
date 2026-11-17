@@ -165,7 +165,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     private func recoveryBoundaries(packet: SignedGroupRoster, anchor: GroupTrustAnchor,
         previous: VerifiedGroupRoster?, identity: GroupDeviceIdentity, newAdmissions: Set<String> = []) async throws -> [GroupParticipationBoundary]? {
         guard recoveryEnabled, let environment = recoveryEnvironment else { return nil }
-#if DEBUG || INTERNAL_PRESENTATION
+#if (DEBUG || INTERNAL_PRESENTATION) && !NEKO_SHARE_EXTENSION
         let next = try GroupRosterVerifier.verify(packet, anchor: anchor, previous: previous)
         var old: [GroupParticipationBoundary] = []
         if previous != nil {
@@ -185,7 +185,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         return nil
 #endif
     }
-#if DEBUG || INTERNAL_PRESENTATION
+#if (DEBUG || INTERNAL_PRESENTATION) && !NEKO_SHARE_EXTENSION
     private var recoveryWindowAttempts: [String: Date] = [:]
     private func recoverAfterLoad(_ windows: [GroupWindow]) async {
         guard let window = windows.min(by: {
@@ -438,7 +438,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
                     otherID: $1.id, otherReceived: received[$1.id], otherCreated: created[$1.id] ?? nil)
             }
             recentWindows = (Date(), sorted)
-#if DEBUG || INTERNAL_PRESENTATION
+#if (DEBUG || INTERNAL_PRESENTATION) && !NEKO_SHARE_EXTENSION
             if recoveryEnabled { Task { await self.recoverAfterLoad(sorted) } }
 #endif
             return sorted
@@ -606,7 +606,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             personID: identity.personID, deviceID: myDeviceID)
 #if !NEKO_SHARE_EXTENSION
         Task { await self.publishAnchorReceipt(windowID: windowID) }
-#if DEBUG || INTERNAL_PRESENTATION
+#if (DEBUG || INTERNAL_PRESENTATION) && !NEKO_SHARE_EXTENSION
         if recoveryEnabled { Task { await self.recoverAfterLoad(result) } }
 #endif
 #endif
