@@ -89,8 +89,10 @@ struct GroupRecoveryLiveBuilder: Sendable {
                     signingPublicKey: identity.signingKey.publicKey.rawRepresentation,
                     hpkePublicKey: identity.agreementKey.publicKey.rawRepresentation, model: model))
             }
-            let session = GroupRecoveryClientSession(client: client, identity: identity,
+            let base = GroupRecoveryClientSession(client: client, identity: identity,
                 drafts: Dictionary(drafts.map { ($0.operationID, $0) }, uniquingKeysWith: { first, _ in first }))
+            // P5: a waiting まど receives its keys on the same Draft and operation.
+            let session = GroupRecoveryKeyDeliverySession(base: base, source: GroupRecoveryClientKeySource(base: base))
             let devices = catalog.devices.map {
                 GroupRecoveryDevice(id: $0.deviceID, modelName: $0.model ?? "iPhone",
                                     registeredAt: Date(timeIntervalSince1970: TimeInterval($0.registeredAt)))
@@ -132,6 +134,202 @@ struct GroupRecoveryLiveBuilder: Sendable {
             windowCertificates: [:], registered: false)
         try secrets.write(GroupWire.encode(identity), account: "identity", createOnly: true)
         return identity
+    }
+}
+
+// MARK: - P5 on the new iPhone: receiving keys (Codex 1117c・1117d の接続表)
+
+/// One receiveKeys page as the new iPhone sees it.
+struct GroupRecoveryKeyPage: Equatable, Sendable {
+    let state: String
+    let nextAfterEpoch: Int?
+}
+
+/// What one page means for the screen. The relay's words never open a まど:
+/// `.finish` only asks finishKeyDelivery, which verifies and installs, for ready.
+/// States of the original iPhone (noPendingDevice, outsideParticipation,
+/// keyNotHeld) and anything unknown are only "keep waiting" here.
+enum GroupRecoveryKeyStep: Equatable, Sendable {
+    case wait(nextAfterEpoch: Int?)
+    case finish
+    case needsProof
+
+    init(_ page: GroupRecoveryKeyPage) {
+        switch page.state {
+        case "recoveryCommitted": self = .finish
+        case "needsParticipationProof": self = .needsProof
+        default: self = .wait(nextAfterEpoch: page.nextAfterEpoch)
+        }
+    }
+}
+
+/// The calls the new iPhone makes for one operation. The real one is the P3/P5
+/// client with the saved Draft; captures use GroupRecoverySyntheticKeySource.
+protocol GroupRecoveryKeySource: Sendable {
+    func resume(_ operationID: UUID) async throws -> GroupRecoveryRegistrationState?
+    func status(_ operationID: UUID) async throws -> GroupRecoveryRegistrationState
+    func receive(_ operationID: UUID, afterEpoch: Int) async throws -> GroupRecoveryKeyPage
+    func finish(_ operationID: UUID) async throws -> GroupRecoveryRegistrationState
+}
+
+struct GroupRecoveryClientKeySource: GroupRecoveryKeySource {
+    let base: GroupRecoveryClientSession
+    private func draft(_ id: UUID) throws -> GroupRecoveryClient.Draft {
+        guard let draft = base.drafts[id] else { throw GroupRecoveryClient.Failure.invalidResponse }
+        return draft
+    }
+    func resume(_ id: UUID) async throws -> GroupRecoveryRegistrationState? {
+        try await base.client.resumeFreshGeneration(draft(id), identity: base.identity)?.state
+    }
+    func status(_ id: UUID) async throws -> GroupRecoveryRegistrationState {
+        try await base.client.status(draft(id)).state
+    }
+    func receive(_ id: UUID, afterEpoch: Int) async throws -> GroupRecoveryKeyPage {
+        let progress = try await base.client.receiveKeys(draft(id), identity: base.identity, afterEpoch: afterEpoch)
+        return .init(state: progress.state, nextAfterEpoch: progress.nextAfterEpoch)
+    }
+    func finish(_ id: UUID) async throws -> GroupRecoveryRegistrationState {
+        try await base.client.finishKeyDelivery(draft(id), identity: base.identity).state
+    }
+}
+
+/// The query of a まど on the new iPhone. While it is registeredWaitingForKeys,
+/// one bounded page per check (the next one starts at nextAfterEpoch); after the
+/// owner's switch, ready only once finishKeyDelivery has verified and installed.
+/// A failed call or a refused budget keeps the waiting state; the Draft and the
+/// received keys stay where the client saved them, and nothing here removes them.
+actor GroupRecoveryKeyDeliverySession: GroupRecoverySession {
+    private let base: any GroupRecoverySession
+    private let source: any GroupRecoveryKeySource
+    /// Where the next page starts, per operation. 0 after a full pass, so an
+    /// epoch offered later is not skipped.
+    private var cursor: [UUID: Int] = [:]
+    /// Committed by the owner but not yet installed here: the waiting state to keep.
+    private var committed: [UUID: GroupRecoveryRegistrationState] = [:]
+
+    init(base: any GroupRecoverySession, source: any GroupRecoveryKeySource) {
+        self.base = base; self.source = source
+    }
+    func catalog() async throws -> GroupRecoveryClient.Catalog { try await base.catalog() }
+    func remove(_ device: String, operationID: UUID) async throws {
+        try await base.remove(device, operationID: operationID)
+    }
+    func run(_ action: GroupRecoveryRetryAction) async throws -> GroupRecoveryRegistrationState {
+        guard case .queryStatus(let id) = action else { return try await base.run(action) }
+        // Resumes a saved fresh generation first; never creates another.
+        if let resumed = try await source.resume(id) { return resumed }
+        let state = try await source.status(id)
+        switch state {
+        case .registeredWaitingForKeys:
+            return try await receive(id, waiting: state)
+        case .notStarted:
+            // After the owner's switch the pending row is gone. Ready only from
+            // the verified install; without received keys this is notStarted.
+            return try await finishAfterSwitch(id, notStarted: state)
+        default:
+            return state
+        }
+    }
+
+    private func receive(_ id: UUID, waiting: GroupRecoveryRegistrationState) async throws -> GroupRecoveryRegistrationState {
+        let page: GroupRecoveryKeyPage
+        do {
+            page = try await source.receive(id, afterEpoch: cursor[id] ?? 0)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // Offline, the budget or a lost receipt: the same page at the next check.
+            return waiting
+        }
+        switch GroupRecoveryKeyStep(page) {
+        case .wait(let next):
+            cursor[id] = next
+            return waiting
+        case .needsProof:
+            // No participation proof: the existing 「前の iPhone が必要です」.
+            cursor[id] = nil
+            return .needsOriginalDeviceOrInvitation(operationID: id)
+        case .finish:
+            cursor[id] = nil; committed[id] = waiting
+            return try await install(id, keeping: waiting)
+        }
+    }
+
+    private func finishAfterSwitch(_ id: UUID, notStarted: GroupRecoveryRegistrationState) async throws -> GroupRecoveryRegistrationState {
+        if let waiting = committed[id] { return try await install(id, keeping: waiting) }
+        do {
+            return try await source.finish(id)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch GroupRecoveryClient.Failure.invalidResponse {
+            // No keys were received for this operation here.
+            return notStarted
+        } catch GroupRecoveryClient.Failure.authentication {
+            return notStarted
+        }
+    }
+
+    private func install(_ id: UUID, keeping waiting: GroupRecoveryRegistrationState) async throws -> GroupRecoveryRegistrationState {
+        do {
+            let state = try await source.finish(id)
+            if case .ready = state { committed[id] = nil }
+            return state
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // The same Draft runs finishKeyDelivery again at the next check.
+            return waiting
+        }
+    }
+}
+
+/// Captures and the probe: the AutoRelay pages of ci/verify-group-recovery-client.swift
+/// as state values only (sent and received, waiting for the owner, the owner's
+/// switch). No relay, no keys, no copies of keys.
+actor GroupRecoverySyntheticKeySource: GroupRecoveryKeySource {
+    static let device = "synthetic-new"
+    private var pages: [GroupRecoveryKeyPage]
+    private let delay: Duration
+    private var installed = false
+    private(set) var afterEpochs: [Int] = []
+
+    init(pages: [GroupRecoveryKeyPage] = GroupRecoverySyntheticKeySource.flow, delay: Duration = .milliseconds(600)) {
+        self.pages = pages; self.delay = delay
+    }
+    /// Received the first 16 (more to come), received the rest, the owner switched.
+    static let flow: [GroupRecoveryKeyPage] = [
+        .init(state: "receivedWaitingForOwner", nextAfterEpoch: 16),
+        .init(state: "receivedWaitingForOwner", nextAfterEpoch: nil),
+        .init(state: "recoveryCommitted", nextAfterEpoch: nil),
+    ]
+    func resume(_ id: UUID) async throws -> GroupRecoveryRegistrationState? { nil }
+    func status(_ id: UUID) async throws -> GroupRecoveryRegistrationState {
+        try await Task.sleep(for: delay)
+        return installed ? .ready(operationID: id, deviceID: Self.device)
+            : .registeredWaitingForKeys(operationID: id, deviceID: Self.device)
+    }
+    func receive(_ id: UUID, afterEpoch: Int) async throws -> GroupRecoveryKeyPage {
+        try await Task.sleep(for: delay)
+        afterEpochs.append(afterEpoch)
+        return pages.count > 1 ? pages.removeFirst() : pages.first ?? .init(state: "receivedWaitingForOwner", nextAfterEpoch: nil)
+    }
+    func finish(_ id: UUID) async throws -> GroupRecoveryRegistrationState {
+        try await Task.sleep(for: delay)
+        installed = true
+        return .ready(operationID: id, deviceID: Self.device)
+    }
+
+    /// One root with one まど that is receiving its keys.
+    static func context(delay: Duration = .milliseconds(600)) -> GroupRecoveryAdapter.Context {
+        let id = UUID()
+        let session = GroupRecoveryKeyDeliverySession(
+            base: GroupRecoverySyntheticSession(states: [:], devices: [], delay: delay),
+            source: GroupRecoverySyntheticKeySource(delay: delay))
+        return .init(candidate: .init(summary: .init(rootID: "synthetic-root-keys", windowIDs: ["synthetic-window-keys"], notebookIDs: []),
+                                      openableWindowNames: ["実家のまど"]),
+                     session: session,
+                     items: [.init(windowID: "synthetic-window-keys", name: "実家のまど",
+                                   state: .registeredWaitingForKeys(operationID: id, deviceID: device))])
     }
 }
 

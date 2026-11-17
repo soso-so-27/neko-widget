@@ -347,7 +347,118 @@ private actor AutoRelay: GroupHTTPTransport {
         await relay.set(.normal)
         try await verifyRecoveryLive(relay: relay, root: root)
         try await verifyRecoveryAdapter()
+        try await verifyRecoveryKeyDelivery()
     }
+}
+
+/// The new iPhone's P5 calls, scripted with the AutoRelay states (state values only).
+private actor ScriptedKeys: GroupRecoveryKeySource {
+    private var statuses: [GroupRecoveryRegistrationState]
+    private var pages: [Result<GroupRecoveryKeyPage, Error>]
+    private var finishes: [Result<GroupRecoveryRegistrationState, Error>]
+    private(set) var afterEpochs: [Int] = []
+    private(set) var finishCalls = 0
+    private(set) var personMarks: [Bool] = []
+    init(statuses: [GroupRecoveryRegistrationState], pages: [Result<GroupRecoveryKeyPage, Error>],
+         finishes: [Result<GroupRecoveryRegistrationState, Error>]) {
+        self.statuses = statuses; self.pages = pages; self.finishes = finishes
+    }
+    func resume(_ id: UUID) async throws -> GroupRecoveryRegistrationState? { nil }
+    func status(_ id: UUID) async throws -> GroupRecoveryRegistrationState {
+        personMarks.append(SharingAutoCallBudget.isPersonAction)
+        return statuses.count > 1 ? statuses.removeFirst() : statuses[0]
+    }
+    func receive(_ id: UUID, afterEpoch: Int) async throws -> GroupRecoveryKeyPage {
+        afterEpochs.append(afterEpoch)
+        guard !pages.isEmpty else { throw TestFailure.failed }
+        return try pages.removeFirst().get()
+    }
+    func finish(_ id: UUID) async throws -> GroupRecoveryRegistrationState {
+        finishCalls += 1
+        guard !finishes.isEmpty else { throw TestFailure.failed }
+        return try finishes.removeFirst().get()
+    }
+}
+@MainActor private func verifyRecoveryKeyDelivery() async throws {
+    let id = UUID(), device = "synthetic-new"
+    let waiting = GroupRecoveryRegistrationState.registeredWaitingForKeys(operationID: id, deviceID: device)
+    let ready = GroupRecoveryRegistrationState.ready(operationID: id, deviceID: device)
+    let base = GroupRecoverySyntheticSession(states: [:], devices: [], delay: .zero)
+    func context(_ keys: ScriptedKeys) -> GroupRecoveryAdapter.Context {
+        .init(candidate: .init(summary: .init(rootID: "keys", windowIDs: ["keys"], notebookIDs: []), openableWindowNames: []),
+              session: GroupRecoveryKeyDeliverySession(base: base, source: keys),
+              items: [.init(windowID: "keys", name: nil, state: waiting)])
+    }
+
+    // Pages follow nextAfterEpoch on the same operation; a lost call keeps waiting and
+    // repeats the same page; after a full pass the next check starts again at 0.
+    let keys = ScriptedKeys(statuses: [waiting, waiting, waiting, waiting, .notStarted(operationID: id)],
+        pages: [.success(.init(state: "receivedWaitingForOwner", nextAfterEpoch: 16)),
+                .failure(GroupClientError.offline),
+                .success(.init(state: "receivedWaitingForOwner", nextAfterEpoch: nil)),
+                .success(.init(state: "recoveryCommitted", nextAfterEpoch: nil))],
+        finishes: [.failure(GroupClientError.offline), .success(ready)])
+    let session = GroupRecoveryKeyDeliverySession(base: base, source: keys)
+    for _ in 0..<4 { try check(try await session.run(.queryStatus(id)) == waiting) }
+    try check(await keys.afterEpochs == [0, 16, 16, 0])
+    // The owner switched (the pending row is gone): ready only from the verified install.
+    try check(try await session.run(.queryStatus(id)) == ready)
+    try check(await keys.finishCalls == 2)
+    try check(await keys.afterEpochs.count == 4)
+
+    // No participation proof: the existing 「前の iPhone が必要です」, nothing installed.
+    let proofKeys = ScriptedKeys(statuses: [waiting],
+        pages: [.success(.init(state: "needsParticipationProof", nextAfterEpoch: nil))], finishes: [])
+    let proof = GroupRecoveryKeyDeliverySession(base: base, source: proofKeys)
+    try check(try await proof.run(.queryStatus(id)) == .needsOriginalDeviceOrInvitation(operationID: id))
+    try check(await proofKeys.finishCalls == 0)
+    // States of the original iPhone only keep the new one waiting.
+    for state in ["noPendingDevice", "outsideParticipation", "keyNotHeld", "waitingForReceipt", "receivedWaitingForOwner"] {
+        try check(GroupRecoveryKeyStep(.init(state: state, nextAfterEpoch: nil)) == .wait(nextAfterEpoch: nil))
+    }
+    try check(GroupRecoveryKeyStep(.init(state: "recoveryCommitted", nextAfterEpoch: 3)) == .finish)
+
+    // Never registered here: no received keys, so still notStarted; a lost call is unavailable.
+    let fresh = ScriptedKeys(statuses: [.notStarted(operationID: id)], pages: [],
+        finishes: [.failure(GroupRecoveryClient.Failure.invalidResponse), .failure(GroupClientError.offline)])
+    let freshSession = GroupRecoveryKeyDeliverySession(base: base, source: fresh)
+    try check(try await freshSession.run(.queryStatus(id)) == .notStarted(operationID: id))
+    do { _ = try await freshSession.run(.queryStatus(id)); throw TestFailure.failed } catch is GroupClientError {}
+    try check(await fresh.afterEpochs.isEmpty)
+
+    // The screen checks again on its own: automatic even inside a tap, waiting kept on failure.
+    let auto = ScriptedKeys(statuses: [waiting],
+        pages: [.failure(GroupClientError.unavailable), .success(.init(state: "recoveryCommitted", nextAfterEpoch: nil))],
+        finishes: [.success(ready)])
+    let adapter = GroupRecoveryAdapter(contexts: [context(auto)])
+    await SharingPersonAction.run { await adapter.checkWaiting() }
+    try check(adapter.items[0].state == waiting)
+    await SharingPersonAction.run { await adapter.checkWaiting() }
+    try check(adapter.items[0].state == ready)
+    try check(await auto.personMarks == [false, false])
+    await adapter.checkWaiting()
+    try check(await auto.personMarks.count == 2)
+
+    // Bounded: at most waitingCheckLimit checks while the screen is open.
+    let many = ScriptedKeys(statuses: [waiting],
+        pages: Array(repeating: .success(.init(state: "receivedWaitingForOwner", nextAfterEpoch: nil)), count: 40), finishes: [])
+    let bounded = GroupRecoveryAdapter(contexts: [context(many)])
+    await bounded.keepCheckingWaiting(every: .zero)
+    try check(await many.afterEpochs.count == GroupRecoveryAdapter.waitingCheckLimit && bounded.items[0].state == waiting)
+    // Closed: nothing more is sent.
+    let closed = ScriptedKeys(statuses: [waiting], pages: [], finishes: [])
+    let dismissed = GroupRecoveryAdapter(contexts: [context(closed)])
+    await dismissed.handle(.dismiss); await dismissed.checkWaiting()
+    try check(await closed.personMarks.isEmpty)
+
+    // The capture fixture: the AutoRelay pages, then the owner's switch, then ready.
+    let shown = GroupRecoveryAdapter(contexts: [GroupRecoverySyntheticKeySource.context(delay: .zero)])
+    guard case .registeredWaitingForKeys = shown.items[0].state else { throw TestFailure.failed }
+    for _ in 0..<2 { await shown.checkWaiting() }
+    guard case .registeredWaitingForKeys = shown.items[0].state else { throw TestFailure.failed }
+    await shown.checkWaiting()
+    guard case .ready = shown.items[0].state else { throw TestFailure.failed }
+    print("recovery key delivery screen: PASS (pages, lost call, proof, owner switch, verified ready, automatic bounded checks)")
 }
 
 private actor DelayedRecovery: GroupRecoverySession {
