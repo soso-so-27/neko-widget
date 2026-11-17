@@ -41,3 +41,11 @@ CREATE TRIGGER group_recovery_fresh_check BEFORE INSERT ON group_recovery_fresh_
   OR EXISTS(SELECT 1 FROM group_recovery_device_removals WHERE device_id=NEW.device_id)
  THEN RAISE(ABORT,'group_recovery_fresh_state_changed') END);
 END;
+
+-- Same root lifecycle as catalog challenges and anchor receipts (0080/0081).
+CREATE TRIGGER group_recovery_completion_root_cleanup AFTER UPDATE OF state ON group_people WHEN NEW.state='revoked'
+BEGIN
+ DELETE FROM group_recovery_device_removals WHERE person_id=NEW.id;
+ DELETE FROM group_recovery_fresh_generations WHERE person_id=NEW.id;
+ DELETE FROM group_recovery_fresh_checks WHERE person_id=NEW.id;
+END;

@@ -36,6 +36,9 @@ it('explicit solo recovery atomically replaces the epoch, retries without advanc
  expect((await db.prepare('SELECT revision FROM group_rosters WHERE space_id=? ORDER BY revision').bind(f.w.windowId).all()).results).toEqual([{revision:1},{revision:2}]);
  expect(await db.prepare('SELECT 1 FROM group_key_envelopes WHERE space_id=? AND epoch=1').bind(f.w.windowId).first()).not.toBeNull();
  expect(await db.prepare('SELECT 1 FROM group_recovery_pending WHERE operation_id=?').bind(f.op).first()).toBeNull();
+ await db.prepare("UPDATE group_people SET state='revoked' WHERE id=?").bind(f.p.id).run();
+ expect(await db.prepare('SELECT 1 FROM group_recovery_fresh_generations WHERE person_id=?').bind(f.p.id).first()).toBeNull();
+ await expect((await f.prepare()).call()).rejects.toThrow();
 });
 it('effective old device or newly appearing family member prevents issuance and rolls back the challenge and all new rows',async()=>{
  const f=await fixture(),r=await f.prepare();await expect(r.call()).rejects.toThrow('group_recovery_fresh_state_changed');
