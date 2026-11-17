@@ -86,11 +86,15 @@ async function drainObjects(env:Env,f:IdentityReportFence,allowed:ReadonlyMap<st
    if(!work.results.length)return;
    if(!env.MODERATION_MEDIA)throw unavailable();
    for(const {report_id,object_key} of work.results) {
-     if(!allowed.has(await digest(f,report_id)) || !GROUP_REPORT_OBJECT_KEY.test(object_key)
-       ||object_key.split('/')[3]!==report_id)throw unavailable();
+     const family=report_id.startsWith('family:'),sourceID=family?report_id.slice(7):report_id;
+     const validObject=family?/^family\/reports\/v1\/[A-Za-z0-9_-]{22}\/[A-Za-z0-9_-]{32}$/.test(object_key):GROUP_REPORT_OBJECT_KEY.test(object_key);
+     if(!allowed.has(await digest(f,report_id)) || !validObject ||object_key.split('/')[3]!==sourceID)throw unavailable();
      // Any restored report/case means this work no longer reflects the
      // atomic D1 erasure. Leave its evidence in place behind the restore barrier.
-     const live=await env.DB.prepare(`SELECT 1 FROM group_reports WHERE id=?
+     const live=family?await env.DB.prepare(`SELECT 1 FROM family_photo_reports WHERE report_id=?
+       UNION ALL SELECT 1 FROM family_photo_report_records WHERE report_id=?
+       UNION ALL SELECT 1 FROM family_photo_moderation_cases WHERE report_id=? LIMIT 1`)
+       .bind(sourceID,sourceID,sourceID).first():await env.DB.prepare(`SELECT 1 FROM group_reports WHERE id=?
        UNION ALL SELECT 1 FROM group_report_records WHERE report_id=?
        UNION ALL SELECT 1 FROM group_moderation_cases WHERE report_id=?
        UNION ALL SELECT 1 FROM group_moderation_restrictions WHERE active=1 AND case_reference='deadline:'||? LIMIT 1`)

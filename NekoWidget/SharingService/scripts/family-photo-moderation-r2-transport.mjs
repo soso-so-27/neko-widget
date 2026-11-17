@@ -1,0 +1,47 @@
+import {createOwnerR2TransportForReviewHost} from './moderation-owner-r2-transport.mjs';
+import {familyPhotoModerationReviewSourceBinding, withBoundFamilyPhotoModerationReview} from './family-photo-moderation-bound-review-lib.mjs';
+const fail = () => {throw new Error('family_photo_moderation_review_unavailable');};
+
+/** Fixed v3 factory for trusted startup code. The common transport alone owns
+ * R2 scope, Windows custody checks, restricted key reads and owned-buffer wipes.
+ * Neither a browser nor a JSON setting can choose this factory or its sink. */
+export function createLocalFamilyPhotoOwnerReviewHost(adapters) {
+  const readCiphertext = adapters?.readCiphertext, readReviewedKey = adapters?.readReviewedKey;
+  if (typeof readCiphertext !== 'function' || typeof readReviewedKey !== 'function') fail();
+  return async function review(input) {
+    const signal = input?.signal, readCurrentSource = input?.readCurrentSource, audit = input?.audit;
+    let output;
+    const active = () => {if (!(signal instanceof AbortSignal) || signal.aborted) fail();};
+    try {
+      active();
+      if (typeof readCurrentSource !== 'function' || typeof audit !== 'function') fail();
+      const ref = Object.freeze({caseReferenceHmac: input.source.caseReferenceHmac,
+        caseReferenceHmacKeyVersion: input.source.caseReferenceHmacKeyVersion});
+      const expected = familyPhotoModerationReviewSourceBinding(input.source, ref).sourceSHA256;
+      if (expected !== input.sourceSHA256) fail();
+      await withBoundFamilyPhotoModerationReview(ref, {
+        async readCurrentSource() {
+          active(); const current = await readCurrentSource(); active();
+          if (familyPhotoModerationReviewSourceBinding(current, ref).sourceSHA256 !== expected) fail();
+          return current;
+        },
+        readCiphertext,
+        readReviewedKey,
+        async audit(event) {
+          active();
+          if (event.phase === 'started' || event.phase === 'disclosure_ready') await audit(event.phase);
+          // The authenticated server handler records its own receipt only after
+          // this host returns; a local sink copy is not delivery to the browser.
+          active();
+        },
+      }, ({jpeg}) => {active(); output = Uint8Array.from(jpeg);}, {signal, onFailure: adapters.onReviewFailure});
+      active();
+      if (!output) fail();
+      return output;
+    } catch {output?.fill(0); fail();}
+  };
+}
+
+export function createFamilyPhotoOwnerR2Transport(config) {
+  return createOwnerR2TransportForReviewHost(config, createLocalFamilyPhotoOwnerReviewHost);
+}

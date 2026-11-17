@@ -27,8 +27,11 @@ private actor Relay: GroupHTTPTransport {
             return try reply(["schemaVersion": 1, "slots": current ? [slot] : []])
         }
         if path.contains("/assets/") {
-            gets += 1
             if !current { return .init(status: 410, data: Data("{\"error\":{\"code\":\"photo_retired\"}}".utf8)) }
+            if path.hasSuffix("/status") {
+                return try reply(["schemaVersion": 1, "assetId": r.assetID.uuidString, "available": true])
+            }
+            gets += 1
             return .init(status: 200, data: pending.ciphertext)
         }
         if path.hasSuffix("/uploads") {
@@ -99,7 +102,19 @@ private actor Relay: GroupHTTPTransport {
             verifiedAuthorID: identity.personID, hiddenAuthors: [identity.personID])
         let afterHidden = await relay.counts()
         try check(hidden == nil && afterHidden.1 == 1, "hidden author does not download or display")
-        await relay.retire(); _ = try await resumed.slots()
+        try await resumed.hideAuthor(identity.personID)
+        let restarted = client()
+        try check(try await restarted.hiddenAuthors().contains(identity.personID), "hidden author survives restart")
+        let localHidden = try await restarted.image(slot: slot, reference: reference, roster: roster, verifiedAuthorID: identity.personID)
+        let hiddenCount = await relay.counts()
+        try check(localHidden == nil && hiddenCount.1 == 1, "persisted hide denies cached and remote image")
+        try await restarted.unhideAuthor(identity.personID)
+        _ = try await restarted.image(slot: slot, reference: reference, roster: roster, verifiedAuthorID: identity.personID)
+        try check(await relay.counts().1 == 2, "explicit unhide resumes image fetch")
+        await relay.retire()
+        let stopped = try await resumed.image(slot: slot, reference: reference, roster: roster, verifiedAuthorID: identity.personID)
+        try check(stopped == nil, "a server stop suppresses already cached pixels")
+        _ = try await resumed.slots()
         try check(try journal.accounts(prefix: "op:fp:c:").isEmpty, "retired cache is removed on refresh")
         let before = await relay.counts().2
         do { _ = try await client(false).slots(); throw Failure.check("gate OFF sent traffic") }

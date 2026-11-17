@@ -1,5 +1,6 @@
 import { familyPushRegistration } from './family-notebook-push';
 import {familyRepresentativePhoto} from './family-representative-photo';
+import {familyPhotoReportAPI} from './family-photo-reports';
 import { ApiError } from './errors';
 import type { Env } from './env';
 import { familyNotebookAdmission } from './family-notebook-admission';
@@ -24,6 +25,7 @@ export async function familyNotebookAPI(request: Request, env: Env): Promise<Res
   if (!match) throw new ApiError(404, 'not_found', 'Unknown family endpoint.');
   const family = match[1]!, action = match[2]!;
   if (method === 'POST' && ['push-subscription','push-subscription/remove'].includes(action)) return familyPushRegistration(request,env,family,action.endsWith('/remove'));
+  if(action==='representative-photos/reports')return familyPhotoReportAPI(request,env,family);
   if(action.startsWith('representative-photos/')) return familyRepresentativePhoto(request,env);
   if (method === 'GET' && ['members', 'requests', 'invitations'].includes(action)) {
     return familyNotebookDirectory(request, env);

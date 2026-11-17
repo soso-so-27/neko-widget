@@ -1,4 +1,5 @@
 import {putGroupUpload} from './group-identity-upload';
+import {familyPhotoStopped} from './family-photo-report-operations';
 import {requireCurrentIdentity} from './group-identity-service';
 import {authenticateGroupRequest,groupAuthorizationStatements} from './group-auth';
 import {familyUUID,verifyFamilyOperation} from './family-notebook-crypto';
@@ -25,9 +26,11 @@ export async function familyRepresentativePhoto(request:Request,env:Env):Promise
  try{
   await gate(env);
   if(env.FAMILY_REPRESENTATIVE_PHOTO_RUNTIME_ENABLED!=='YES'||!env.MEDIA) fail('photo_feature_disabled',503);
-  const match=/^\/v3\/family-notebooks\/([0-9a-f-]+)\/representative-photos\/(slots|uploads|assets)(?:\/([0-9a-f-]+))?(?:\/(commit))?$/.exec(new URL(request.url).pathname);
+  const match=/^\/v3\/family-notebooks\/([0-9a-f-]+)\/representative-photos\/(slots|uploads|assets)(?:\/([0-9a-f-]+))?(?:\/(commit|status))?$/.exec(new URL(request.url).pathname);
   if(!match) fail('access_unavailable',404);
-  const family=familyUUID(match[1]),route=match[2],id=match[3]===undefined?undefined:familyUUID(match[3]),commit=match[4]!==undefined;
+  const family=familyUUID(match[1]),route=match[2],id=match[3]===undefined?undefined:familyUUID(match[3]),commit=match[4]==='commit';
+  const statusOnly=match[4]==='status';
+  if((statusOnly&&(route!=='assets'||request.method!=='GET'))||(commit&&route!=='uploads'))fail('access_unavailable',404);
   const {actor,body:bytes}=await authenticateGroupRequest(request,env,1_500_000);
   const current=await state(env,actor,family);
   const guards=(mode:'read'|'operation')=>[...groupAuthorizationStatements(env,actor),...checks(env,actor,family,current.generation,current.epoch,mode)];
@@ -38,12 +41,25 @@ export async function familyRepresentativePhoto(request:Request,env:Env):Promise
     const rows=await env.DB.prepare(`SELECT s.slot_id AS slotId,s.revision,s.asset_id AS assetId,a.hash AS ciphertextSHA256,a.bytes AS ciphertextBytes,a.key_epoch AS keyEpoch,a.person_id AS authorId FROM family_representative_slots s LEFT JOIN family_representative_assets a ON a.asset_id=s.asset_id WHERE s.family_id=? AND s.state='active' ORDER BY s.slot_id LIMIT 10`).bind(family).all();
     return jsonResponse({schemaVersion:1,slots:rows.results});
    }
-   if(route==='assets'&&id){
+   if(route==='assets'&&id&&!commit){
     const a=await asset(env,family,id);if(a.state!=='active')fail('photo_retired',410);
+    if(await familyPhotoStopped(env.DB,family,id))fail('photo_moderated',410);
+    if(statusOnly){
+     await env.DB.batch([...guards('read'),env.DB.prepare(`SELECT json(CASE WHEN EXISTS(
+      SELECT 1 FROM family_representative_slots WHERE family_id=? AND asset_id=? AND state='active')
+      AND NOT EXISTS(SELECT 1 FROM family_photo_report_records WHERE family_id=? AND asset_id=? AND outcome='photo')
+      THEN 'true' ELSE 'photo_unavailable' END)`).bind(family,id,family,id)]);
+     return jsonResponse({schemaVersion:1,assetId:id,available:true});
+    }
     const object=await env.MEDIA.get(a.object_key);if(!object)fail('temporarily_unavailable',503);
     // Fetch first, then recheck membership, epoch and current pointer before returning bytes.
     const batch=await env.DB.batch([...guards('read'),env.DB.prepare(`SELECT 1 ok FROM family_representative_slots s JOIN family_representative_assets a ON a.asset_id=s.asset_id WHERE s.family_id=? AND s.asset_id=? AND s.state='active' AND a.state='active'`).bind(family,id)]);
     if(batch.at(-1)!.results.length!==1)fail('photo_retired',410);
+    if(await familyPhotoStopped(env.DB,family,id))fail('photo_moderated',410);
+    await env.DB.batch([...guards('read'),env.DB.prepare(`INSERT INTO family_photo_report_deliveries
+     (family_id,asset_id,person_id,device_id,author_id,expires_at) VALUES(?,?,?,?,?,unixepoch()+604800)
+     ON CONFLICT(family_id,asset_id,device_id) DO UPDATE SET expires_at=MAX(expires_at,excluded.expires_at)`)
+     .bind(family,id,actor.personId,actor.deviceId,a.person_id)]);
     return new Response(object.body,{headers:{'content-type':'application/octet-stream','cache-control':'private, no-store'}});
    }
    fail('access_unavailable',404);

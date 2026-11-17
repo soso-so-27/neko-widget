@@ -1276,7 +1276,9 @@ describe("APNs durable notification delivery", () => {
       scheduledEnv,
       context,
     );
-    expect(waits).toHaveLength(2);
+    // APNs, window-report mail and selected-family-photo mail are isolated;
+    // a failed drain must not prevent either of the other two from running.
+    expect(waits).toHaveLength(3);
     await Promise.all(waits);
 
     const ignoredWaits: Promise<unknown>[] = [];
