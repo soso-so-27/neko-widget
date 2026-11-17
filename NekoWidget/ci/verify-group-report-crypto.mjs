@@ -3,6 +3,7 @@ import {createHash, createPrivateKey, createPublicKey, diffieHellman, hkdfSync, 
 import {readFileSync, writeFileSync} from 'node:fs';
 import {createGroupModerationFixture, SYNTHETIC_CANONICAL_JPEG} from '../SharingService/test/fixtures/group-moderation.mjs';
 import {decryptGroupModerationReport} from '../SharingService/scripts/group-moderation-report-lib.mjs';
+import {decryptFamilyPhotoModerationReport} from '../SharingService/scripts/family-photo-moderation-report-lib.mjs';
 import {deriveRawModerationPublicKey, parseBinaryPlist, validateCanonicalJPEG} from '../SharingService/scripts/moderation-report-lib.mjs';
 
 // Reuse only the existing repository's public TEST seed. No real key, image,
@@ -88,6 +89,15 @@ if (process.argv[2] === '--write-fixture') {
   if (process.argv[2] === '--swift-stdin') {
     const native = JSON.parse(readFileSync(0, 'utf8'));
     assert.equal(native.schema, 'jp.nekowidget.group-report-swift-interop.v1');
+    const familyBytes=Buffer.from(native.family.envelopeBase64,'base64');
+    const now=Math.floor(Date.now()/1000);
+    const familyMetadata={schema:'jp.nekowidget.family-photo-moderation-export.v1',protocolVersion:1,
+      envelopeDomain:'NW3.FAMILY-PHOTO.MODERATION-REPORT',algorithm:'X25519-HKDF-SHA256-CHACHA20POLY1305',
+      reportId:Buffer.alloc(16,1).toString('base64url'),familyId:native.family.familyId,assetId:native.family.assetId,
+      reporterPersonId:native.family.reporterPersonId,reasonCode:'privacy',moderationKeyId:'moderation-v2',
+      ciphertextSize:familyBytes.length,ciphertextSHA256:createHash('sha256').update(familyBytes).digest('base64url'),
+      committedAt:now,contentExpiresAt:now+604800};
+    assert.deepEqual(decryptFamilyPhotoModerationReport(familyMetadata,familyBytes,testSeed).canonicalJPEG,SYNTHETIC_CANONICAL_JPEG);
     assert.equal(native.envelopes.length, 4);
     for (const [index, reasonCode] of ['objectionable', 'harassment', 'privacy', 'other'].entries()) {
       assert.equal(native.envelopes[index].reasonCode, reasonCode);

@@ -9,6 +9,7 @@ import { requireBillingRetentionSnapshot } from './billing-retention-journal';
 import { runBillingTransactionDeletion } from './billing-retention-executor';
 import { ApiError, errorResponse, jsonResponse } from "./errors";
 import {runGroupReportOperations,drainGroupReportMail} from './group-report-operations';
+import {advanceFamilyPhotoReportDeadlines,drainFamilyPhotoReportMail,cleanupFamilyPhotoReportEvidence} from './family-photo-report-operations';
 import {
   apnsRuntimeEnabled,
   billingAccountBootstrapRuntimeEnabled,
@@ -700,6 +701,8 @@ export default {
       // the ordinary seven-day evidence cleanup.
       ctx.waitUntil(advanceIdentityDeletion(env));
       ctx.waitUntil(protectedGroupRead(env,()=>runGroupReportOperations(env)));
+      ctx.waitUntil(protectedGroupRead(env,()=>advanceFamilyPhotoReportDeadlines(env.DB,env.GROUP_MODERATION_RUNTIME_ENABLED==='YES')));
+      ctx.waitUntil(cleanupFamilyPhotoReportEvidence(env));
       ctx.waitUntil(runMomentCleanup(env));
       // Withdrawals remain cleanup-eligible even when the pilot gate is off.
       ctx.waitUntil(runFamilyRecordCleanup(env));
@@ -712,6 +715,8 @@ export default {
         .then(pending=>pending?advanceIdentityDeletion(env):undefined));
       ctx.waitUntil(env.GROUP_REPORT_EMAIL_ENABLED==='YES'
         ? protectedGroupRead(env,()=>drainGroupReportMail(env)) : drainGroupReportMail(env));
+      ctx.waitUntil(env.GROUP_REPORT_EMAIL_ENABLED==='YES'
+        ? protectedGroupRead(env,()=>drainFamilyPhotoReportMail(env)) : drainFamilyPhotoReportMail(env));
       ctx.waitUntil(drainNotificationOutbox(env));
       if(env.FAMILY_NOTEBOOK_APNS_RUNTIME_ENABLED === 'YES') ctx.waitUntil(protectedGroupRead(env,async()=>{ await cleanupExpiredFamilyPush(env,Math.floor(Date.now()/1000));return drainFamilyNotifications(env); }));
       if(env.GROUP_APNS_RUNTIME_ENABLED === 'YES') ctx.waitUntil(protectedGroupRead(env,()=>Promise.all([drainGroupNotifications(env),drainGroupAdmissionNotifications(env)])));

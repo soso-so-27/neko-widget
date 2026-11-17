@@ -127,6 +127,81 @@ actor FamilyNotebookRepresentativePhotoClient {
     private var contextKey: String {
         GroupWire.base64(Data(GroupCanonical.hash(Data((endpoint.absoluteString + "|" + familyID.uuidString + "|" + identity.personID).utf8)).prefix(16)))
     }
+    private struct Visibility: Codable {
+        var hiddenAuthors: Set<String> = []
+        var reportedAssets: Set<UUID> = []
+    }
+    private var visibilityAccount: String {
+        "op:fp:v:" + GroupWire.base64(GroupCanonical.hash(Data((endpoint.absoluteString + "|" + identity.personID).utf8)))
+    }
+    private func visibility() throws -> Visibility {
+        guard let data = try journal.read(visibilityAccount) else { return Visibility() }
+        return try GroupWire.decode(Visibility.self, data)
+    }
+    /// Local only: never changes notebook membership or text sharing.
+    func hideAuthor(_ personID: String) throws {
+        guard (try? GroupWire.bytes(personID, count: 32).count) == 32 else { throw FamilyNotebookCryptoError.invalid }
+        var value = try visibility(); value.hiddenAuthors.insert(personID)
+        try journal.write(try GroupWire.encode(value), account: visibilityAccount, createOnly: false)
+        // Persist the deny rule before discarding caches. A failed removal must
+        // not restore visibility after restart.
+        for account in try journal.accounts(prefix: cachePrefix) { try journal.remove(account) }
+    }
+    func unhideAuthor(_ personID: String) throws {
+        var value = try visibility(); value.hiddenAuthors.remove(personID)
+        try journal.write(try GroupWire.encode(value), account: visibilityAccount, createOnly: false)
+    }
+    func hiddenAuthors() throws -> Set<String> { try visibility().hiddenAuthors }
+    struct PendingReport: Codable, Sendable {
+        let schemaVersion: Int
+        let operationID: UUID
+        let assetID: UUID
+        let reasonCode: String
+        let moderationKeyID: String
+        let ciphertext: Data
+        let ciphertextSHA256: Data
+        let consentedAt: Int64
+    }
+    struct ReportReceipt: Decodable, Sendable {
+        let schemaVersion: Int
+        let reportID: String
+        let familyID: UUID
+        let assetID: UUID
+        let state: String
+        let committedAt: Int64
+        let contentExpiresAt: Int64
+    }
+    /// Call only after displaying exactly this image and obtaining explicit consent.
+    /// Persist the returned encrypted value for retries; no family key is included.
+    func prepareReport(canonicalJPEG: Data, assetID: UUID, reasonCode: String,
+                       moderationKeyID: String, moderationPublicKey: Data) throws -> PendingReport {
+        let encrypted = try GroupReportCrypto.encryptFamilyPhoto(canonicalJPEG: canonicalJPEG,
+            familyID: familyID, assetID: assetID, reporterPersonID: identity.personID,
+            reasonCode: reasonCode, keyID: moderationKeyID, publicKey: moderationPublicKey)
+        return PendingReport(schemaVersion: 1, operationID: UUID(), assetID: assetID,
+            reasonCode: reasonCode, moderationKeyID: moderationKeyID, ciphertext: encrypted,
+            ciphertextSHA256: GroupCanonical.hash(encrypted), consentedAt: Int64(Date().timeIntervalSince1970))
+    }
+    func report(_ pending: PendingReport) async throws -> ReportReceipt {
+        guard pending.schemaVersion == 1, pending.ciphertext.count <= GroupReportCrypto.maximumEnvelopeBytes,
+              GroupCanonical.hash(pending.ciphertext) == pending.ciphertextSHA256 else {
+            throw FamilyNotebookCryptoError.invalid
+        }
+        let receipt = try GroupWire.decode(ReportReceipt.self, await call("/reports", body: GroupWire.encode(pending)))
+        guard receipt.schemaVersion == 1, receipt.familyID == familyID, receipt.assetID == pending.assetID,
+              receipt.state == "committed", receipt.committedAt > 0,
+              receipt.committedAt <= Int64.max - 604_800,
+              receipt.contentExpiresAt == receipt.committedAt + 604_800 else {
+            throw FamilyNotebookTransportError.invalidResponse
+        }
+        try markReported(pending.assetID)
+        return receipt
+    }
+    private func markReported(_ assetID: UUID) throws {
+        var value = try visibility(); value.reportedAssets.insert(assetID)
+        try journal.write(try GroupWire.encode(value), account: visibilityAccount, createOnly: false)
+        for account in try journal.accounts(prefix: cachePrefix) { try journal.remove(account) }
+    }
     private var pendingPrefix: String { "op:fp:p:" + contextKey + ":" }
     private var cachePrefix: String { "op:fp:c:" + contextKey + ":" }
     private func cacheAccount(assetID: UUID, hash: Data) -> String {
@@ -209,22 +284,46 @@ actor FamilyNotebookRepresentativePhotoClient {
         // Retain only the digest after completion. A lost local completion still retries the same ciphertext.
         try journal.write(GroupWire.encode(Journal(digest: digest, pending: nil, completed: true)), account: account, createOnly: false)
     }
+    private func visiblePhotoBytes(_ suffix: String, maximum: Int = 262_144) async throws -> Data? {
+        do { return try await call(suffix, maximum: maximum) }
+        catch FamilyNotebookTransportError.server(let code, let status)
+            where status == 410 && ["photo_moderated", "photo_retired"].contains(code) {
+            for account in try journal.accounts(prefix: cachePrefix) { try journal.remove(account) }
+            return nil
+        }
+    }
     func image(slot: Slot, reference: FamilyNotebookRepresentativePhotoReference,
                roster: VerifiedFamilyNotebookRoster, verifiedAuthorID: String, hiddenAuthors: Set<String> = []) async throws -> Data? {
         guard runtimeEnabled else { throw FamilyNotebookTransportError.unavailable }
-        guard !hiddenAuthors.contains(verifiedAuthorID) else { return nil }
+        let local = try visibility()
+        guard !hiddenAuthors.contains(verifiedAuthorID), !local.hiddenAuthors.contains(verifiedAuthorID),
+              !local.reportedAssets.contains(reference.assetID) else { return nil }
         guard slot.authorID == verifiedAuthorID else { throw FamilyNotebookCryptoError.untrusted }
         try reference.validate()
         guard slot.slotID == reference.slotID, slot.assetID == reference.assetID, slot.revision == reference.revision,
               slot.ciphertextSHA256 == reference.ciphertextSHA256 else { throw FamilyNotebookCryptoError.untrusted }
         let cacheKey = cacheAccount(assetID: reference.assetID, hash: reference.ciphertextSHA256)
         let ciphertext: Data
-        if let cached = try journal.read(cacheKey), GroupCanonical.hash(cached) == reference.ciphertextSHA256 { ciphertext = cached }
+        if let cached = try journal.read(cacheKey), GroupCanonical.hash(cached) == reference.ciphertextSHA256 {
+            // Cached pixels are not authority to keep displaying a stopped asset.
+            struct Status: Decodable { let schemaVersion: Int; let assetID: UUID; let available: Bool }
+            guard let bytes = try await visiblePhotoBytes("/assets/" + reference.assetID.uuidString.lowercased() + "/status") else { return nil }
+            let status = try GroupWire.decode(Status.self, bytes)
+            guard status.schemaVersion == 1, status.assetID == reference.assetID, status.available else {
+                throw FamilyNotebookTransportError.invalidResponse
+            }
+            ciphertext = cached
+        }
         else {
-            ciphertext = try await call("/assets/" + reference.assetID.uuidString.lowercased(), maximum: 200_028)
+            guard let bytes = try await visiblePhotoBytes("/assets/" + reference.assetID.uuidString.lowercased(), maximum: 200_028) else { return nil }
+            ciphertext = bytes
             guard GroupCanonical.hash(ciphertext) == reference.ciphertextSHA256 else { throw FamilyNotebookCryptoError.untrusted }
             try journal.write(ciphertext, account: cacheKey, createOnly: false)
         }
+        // A hide/report action may finish while the network request is pending.
+        let latestVisibility = try visibility()
+        guard !latestVisibility.hiddenAuthors.contains(verifiedAuthorID),
+              !latestVisibility.reportedAssets.contains(reference.assetID) else { return nil }
         let jpeg = try FamilyNotebookRepresentativePhotoCrypto.open(ciphertext, reference: reference, familyID: familyID, roster: roster)
         try FamilyNotebookRepresentativePhotoImage.validate(jpeg, reference: reference)
         return jpeg

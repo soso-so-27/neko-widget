@@ -45,6 +45,7 @@ enum VerifyGroupReportCrypto {
     private struct Output: Encodable {
         let schema = "jp.nekowidget.group-report-swift-interop.v1"
         let envelopes: [OutputEnvelope]
+        let family: [String: String]
     }
     private struct OutputEnvelope: Encodable {
         let reasonCode: String
@@ -64,6 +65,34 @@ enum VerifyGroupReportCrypto {
         // not generated credentials and never a key accepted by the app API.
         let testPrivate = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: Data(repeating: 0x42, count: 32))
         try check(testPrivate.publicKey.rawRepresentation == testPublic, "X25519 public key interop")
+        let familyID = UUID(), assetID = UUID()
+        let person = Data(repeating: 7, count: 32).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        let familyEnvelope = try GroupReportCrypto.encryptFamilyForInteroperability(canonicalJPEG: jpeg,
+            familyID: familyID, assetID: assetID, reporterPersonID: person, reasonCode: "privacy", publicKey: testPublic)
+        let familyFields = try PropertyListSerialization.propertyList(from: familyEnvelope, format: nil) as! [String: Any]
+        try check(familyFields["domain"] as? String == "NW3.FAMILY-PHOTO.MODERATION-REPORT", "family domain")
+        let familyAAD = makeAAD(["NW3.FAMILY-PHOTO.MODERATION-REPORT", "1", familyID.uuidString.lowercased(),
+            assetID.uuidString.lowercased(), person, "privacy", "moderation-v2"])
+        let ephemeral = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: familyFields["ephemeralPublicKey"] as! Data)
+        let shared = try testPrivate.sharedSecretFromKeyAgreement(with: ephemeral)
+        let familyKey = shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: Data(SHA256.hash(data: familyAAD)),
+            sharedInfo: Data("jp.nekowidget.family-photo.report.v1".utf8), outputByteCount: 32)
+        let sealed = try ChaChaPoly.SealedBox(combined: familyFields["ciphertext"] as! Data)
+        let plaintext = try ChaChaPoly.open(sealed, using: familyKey, authenticating: familyAAD)
+        let fields = try PropertyListSerialization.propertyList(from: plaintext, format: nil) as! [String: Any]
+        try check(Set(fields.keys) == Set(["protocolVersion", "familyID", "assetID", "reporterPersonID", "reason", "reportedAt", "canonicalJPEG"]), "selected evidence only")
+        try check(fields["canonicalJPEG"] as? Data == jpeg, "exact selected JPEG")
+        try rejects("family ciphertext must reject another asset") {
+            _ = try ChaChaPoly.open(sealed, using: familyKey, authenticating: makeAAD([
+                "NW3.FAMILY-PHOTO.MODERATION-REPORT", "1", familyID.uuidString.lowercased(),
+                UUID().uuidString.lowercased(), person, "privacy", "moderation-v2"]))
+        }
+        try rejects("family production API must reject test recipient") {
+            _ = try GroupReportCrypto.encryptFamilyPhoto(canonicalJPEG: jpeg, familyID: familyID,
+                assetID: assetID, reporterPersonID: person, reasonCode: "privacy", keyID: "moderation-v2", publicKey: testPublic)
+        }
         let aad = makeAAD(["NW3.MODERATION-REPORT", "3", fixture.windowID,
             fixture.momentID, fixture.reporterParticipantID, fixture.reasonCode, "moderation-v2"])
         try check(aad.map { String(format: "%02x", $0) }.joined() == fixture.aadHex, "four-byte AAD")
@@ -163,7 +192,10 @@ enum VerifyGroupReportCrypto {
         }
         // stdout is only synthetic ciphertext for the Node receiver. No secret
         // key or private photo is written to a file or the process output.
-        print(String(decoding: try JSONEncoder().encode(Output(envelopes: outputs)), as: UTF8.self))
+        print(String(decoding: try JSONEncoder().encode(Output(envelopes: outputs, family: [
+            "familyId": familyID.uuidString.lowercased(), "assetId": assetID.uuidString.lowercased(),
+            "reporterPersonId": person, "envelopeBase64": familyEnvelope.base64EncodedString()
+        ])), as: UTF8.self))
     }
 
     private static func makeAAD(_ fields: [String]) -> Data {

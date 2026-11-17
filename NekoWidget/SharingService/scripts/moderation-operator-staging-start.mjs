@@ -7,6 +7,7 @@ import {getPlatformProxy} from 'wrangler';
 import {validateLocalOperatorConfig} from './moderation-operator-local-start.mjs';
 import {createOwnerR2Transport,verifyWindowsKeyCustody} from './moderation-owner-r2-transport.mjs';
 import {createGroupOwnerR2Transport} from './group-moderation-r2-transport.mjs';
+import {createFamilyPhotoOwnerR2Transport} from './family-photo-moderation-r2-transport.mjs';
 import {startLoopbackOperatorServer} from './moderation-operator-local-server.mjs';
 process.env.WRANGLER_LOG='none';process.env.WRANGLER_SEND_METRICS='false';
 const service=path.resolve(import.meta.dirname,'..'),repo=path.resolve(service,'../..');
@@ -82,7 +83,9 @@ export async function main(args,expectedMode){
   const onReviewFailure=event=>console.error(JSON.stringify(event));
   const localHost=createLocalModerationOperatorHost({environment:'local',runtimeEnabled:'YES',db,origin:original.origin,rpId:original.rpId,access,
    ...(config.groupModerationEnabled===true?{group:{runtimeEnabled:'YES',caseHmacKey:caseKey,
-    reviewEvidence:createGroupOwnerR2Transport({bucket:proxy.env.REPORT_MEDIA,keyDirectory:config.keyDirectory,publicKeySHA256:config.scope.publicKeySHA256,pipeName:config.pipeName,brokerRecordFile:config.brokerRecordFile,assertScope,onReviewFailure})}}:{}),
+    reviewEvidence:createGroupOwnerR2Transport({bucket:proxy.env.REPORT_MEDIA,keyDirectory:config.keyDirectory,publicKeySHA256:config.scope.publicKeySHA256,pipeName:config.pipeName,brokerRecordFile:config.brokerRecordFile,assertScope,onReviewFailure})},
+    familyPhoto:{runtimeEnabled:'YES',caseHmacKey:caseKey,
+    reviewEvidence:createFamilyPhotoOwnerR2Transport({bucket:proxy.env.REPORT_MEDIA,keyDirectory:config.keyDirectory,publicKeySHA256:config.scope.publicKeySHA256,pipeName:config.pipeName,brokerRecordFile:config.brokerRecordFile,assertScope,onReviewFailure})}}:{}),
    enrollment:{...original.enrollment,scope:{accountID:config.scope.accountID,databaseID:config.scope.databaseID,serviceIdentity:config.scope.serviceIdentity,
     accessIssuer:access.issuer,accessAudience:access.audience,expectedOrigin:original.origin,expectedRPID:original.rpId}},
    syntheticCaseReferences:config.verificationCaseReferences,
