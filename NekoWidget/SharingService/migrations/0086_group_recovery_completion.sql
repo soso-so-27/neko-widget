@@ -2,8 +2,9 @@
 CREATE TABLE group_recovery_device_removals (
  person_id TEXT NOT NULL REFERENCES group_people(id), operation_id TEXT NOT NULL,
  device_id TEXT NOT NULL, created_at INTEGER NOT NULL,
- PRIMARY KEY(person_id,operation_id), UNIQUE(person_id,device_id)
+ PRIMARY KEY(person_id,operation_id)
 ) STRICT;
+CREATE INDEX group_recovery_removed_target ON group_recovery_device_removals(device_id,person_id);
 CREATE TRIGGER group_recovery_removed_device_insert BEFORE INSERT ON group_person_devices
 WHEN EXISTS(SELECT 1 FROM group_recovery_device_removals WHERE device_id=NEW.id)
 BEGIN SELECT RAISE(ABORT,'group_recovery_device_removed'); END;
