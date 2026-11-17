@@ -47,7 +47,7 @@ RECOVERY_SCREENS = (
     "92_recovery_gallery", "92b_recovery_checking", "92c_recovery_unavailable", "92d_recovery_found",
     "92e_recovery_waiting", "92f_recovery_no_provider", "92g_recovery_fresh_name", "92h_recovery_needs_original",
     "92i_recovery_device_limit", "92j_recovery_device_remove", "92k_recovery_revoked", "92l_recovery_choose",
-    "92m_recovery_choose_confirm", "92n_recovery_windows",
+    "92m_recovery_choose_confirm", "92n_recovery_windows", "92o_recovery_keys_waiting",
     "93_recovery_found_ax5", "93b_recovery_waiting_ax5", "93c_recovery_no_provider_ax5",
     "93d_recovery_needs_original_ax5", "93e_recovery_device_limit_ax5", "93f_recovery_choose_ax5",
 )

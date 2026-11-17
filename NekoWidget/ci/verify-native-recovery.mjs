@@ -19,7 +19,7 @@ const material=fields(['NW3.RECOVERY.FRESH-MATERIAL.V1',r.windowId,r.revision,r.
  b.encryptedName,r.members[0].participantId,b.encryptedMemberNames[r.members[0].participantId],e.windowId,e.keyEpoch,e.rosterHash,e.deviceId,e.encapsulatedKey,e.ciphertext,e.signerDeviceId,e.signature]);
 assert(valid(c.identity_public_key,b.consentSignature,fields(['NW3.RECOVERY.FRESH-CONSENT.V1',challenge,sha(material)])));
 assert(!valid(c.identity_public_key,b.consentSignature,fields(['NW3.RECOVERY.FRESH-CONSENT.V1',challenge,sha(Buffer.concat([material,Buffer.from([1])]))])));
-assert(out.includes('recovery client: PASS'));assert(out.includes('recovery adapter: PASS'));
+assert(out.includes('recovery client: PASS'));assert(out.includes('recovery adapter: PASS'));assert(out.includes('recovery key delivery screen: PASS'));
 const boundary=JSON.parse(out.split('\n').find(s=>s.startsWith('PARTICIPATION_WIRE=')).slice('PARTICIPATION_WIRE='.length));
 const boundaryKey=out.split('\n').find(s=>s.startsWith('PARTICIPATION_KEY=')).slice('PARTICIPATION_KEY='.length);
 const boundaryBytes=fields(['NW3.RECOVERY.PARTICIPATION.V1',boundary.environment,boundary.windowId,boundary.personId,

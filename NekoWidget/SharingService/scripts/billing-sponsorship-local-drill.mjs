@@ -106,6 +106,7 @@ const expectedMigrationNames = [
   "0086_group_recovery_completion.sql",
   "0087_group_recovery_participation.sql",
   "0088_group_recovery_key_delivery.sql",
+  "0089_family_photo_report_replies_index.sql",
 ];
 
 const databaseGateColumns = [

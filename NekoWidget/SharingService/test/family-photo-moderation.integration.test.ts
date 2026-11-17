@@ -41,6 +41,32 @@ async function fixture(){
  return {family,asset,report,body,path,reporter,author,dispatch,issue,prove,local};
 }
 describe('family photo reports and operator boundary',()=>{
+ it('lists only the reporting person’s retained replies, independent of membership and intake', async () => {
+  const f = await fixture(), path = '/v3/family-notebooks/report-replies';
+  const reading = {...settings, FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED:'NO', FAMILY_REPRESENTATIVE_PHOTO_RUNTIME_ENABLED:'NO',
+    GROUP_REPORT_RUNTIME_ENABLED:'NO', REPORT_INGESTION_RUNTIME_ENABLED:'NO'};
+  const read = async (p = f.reporter) => send(await signed(p, path), reading);
+  const record = {receiptNumber:f.report.reportId, receivedAt:f.report.committedAt, status:'received'};
+  // Receipt remains available to the same person on a registered replacement
+  // device. The synthetic report is deliberately outside any family membership.
+  expect(ok(await read())).toEqual({schemaVersion:1, replies:[record]});
+  expect(ok(await read(await person(f.reporter.identity))).replies).toEqual([record]);
+  expect(ok(await read(f.author)).replies).toEqual([]);
+  expect(ok(await read(await person())).replies).toEqual([]);
+  const unsigned = await send(new Request('https://group.invalid'+path), reading);
+  expect(unsigned.status).toBe(401);
+  const prefix = '/operator/family-photo/v1';
+  const queue = await f.prove(await f.issue(prefix+'/queue'));
+  const {cases} = await queue.json() as {cases:{caseReference:string}[]};
+  const current = prefix+'/cases/'+cases[0]!.caseReference;
+  const opened = await f.prove(await f.issue(current+'/read'));
+  expect((await f.prove(await f.issue(current+'/photo/'+opened.headers.get('X-Moderation-Read-Receipt')))).status).toBe(200);
+  expect(ok(await read()).replies).toEqual([{...record,status:'photo_stopped'}]);
+  expect((await f.prove(await f.issue(current+'/release'))).status).toBe(200);
+  expect(ok(await read()).replies).toEqual([{...record,status:'reviewed'}]);
+  await db.prepare('UPDATE family_photo_report_records SET retention_until=unixepoch() WHERE report_id=?').bind(f.report.reportId).run();
+  expect(ok(await read()).replies).toEqual([]);
+ });
  it('includes only eligible family evidence in the existing sealed identity erasure',async()=>{
  const f=await fixture(),now=Math.floor(Date.now()/1000),subject=f.author.id;
  const object=await db.prepare('SELECT object_key FROM family_photo_reports WHERE report_id=?').bind(f.report.reportId).first<string>('object_key');
