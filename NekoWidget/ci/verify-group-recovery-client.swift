@@ -140,6 +140,53 @@ private actor Relay: GroupHTTPTransport {
         let newAdmission = try GroupParticipationBoundary.forNewAdmission(head: rotated, environment: "staging", personID: person,
             signerID: ownerID, key: ownerDevice)
         try check(!newAdmission.verified(head: rotated, environment: "staging", personID: person)!.permits(epoch: boundaryHead, current: rotated))
+        let keyNow = Int(Date().timeIntervalSince1970)
+        let pc = GroupRecoveryRecipientProof.Challenge(id: UUID().uuidString.lowercased(), person_id: person,
+            identity_public_key: GroupWire.base64(root.publicKey.rawRepresentation), operation_id: draft.operationID.uuidString.lowercased(),
+            purpose: "register", environment: "staging", nonce: GroupWire.base64(Data(repeating: 7, count: 32)),
+            issued_at: keyNow, expires_at: keyNow + 300, consumed_at: nil)
+        let pi = GroupRecoveryRecipientProof.Intent(windowID: window, signingPublicKey: device.publicKey.rawRepresentation,
+            hpkePublicKey: hpke.publicKey.rawRepresentation, model: "iPhone")
+        let unsignedProof = GroupRecoveryRecipientProof(challenge: pc, intent: pi, rootSignature: Data(), deviceSignature: Data())
+        let recipientProof = GroupRecoveryRecipientProof(challenge: pc, intent: pi,
+            rootSignature: try root.signature(for: unsignedProof.transcript(signer: "root")),
+            deviceSignature: try device.signature(for: unsignedProof.transcript(signer: "device")))
+        guard let recipient = recipientProof.verified(head: boundaryHead, environment: "staging") else { throw TestFailure.failed }
+        try check(recipientProof.verified(head: boundaryHead, environment: "production") == nil)
+        let contentKey = SymmetricKey(size: .bits256)
+        let offer = try GroupRecoveryKeyCrypto.wrap(contentKey, recipient: recipient, participation: participation!,
+            current: boundaryHead, epoch: boundaryHead, signerID: ownerID, signingKey: ownerDevice,
+            offerID: UUID(), expiresAt: keyNow + 3600, now: keyNow)
+        let recoveredKey = try GroupRecoveryKeyCrypto.unwrap(offer, recipient: recipient, participation: participation!,
+            current: boundaryHead, epoch: boundaryHead, key: hpke, now: keyNow)
+        try check(contentKey.withUnsafeBytes { Data($0) } == recoveredKey.withUnsafeBytes { Data($0) })
+        do {
+            _ = try GroupRecoveryKeyCrypto.unwrap(offer, recipient: recipient, participation: participation!,
+                current: boundaryHead, epoch: boundaryHead, key: Curve25519.KeyAgreement.PrivateKey(), now: keyNow)
+            throw TestFailure.failed
+        } catch is GroupProtocolError {}
+        do {
+            _ = try GroupRecoveryKeyCrypto.wrap(contentKey, recipient: recipient,
+                participation: newAdmission.verified(head: rotated, environment: "staging", personID: person)!,
+                current: rotated, epoch: boundaryHead, signerID: ownerID, signingKey: ownerDevice,
+                offerID: UUID(), expiresAt: keyNow + 3600, now: keyNow)
+            throw TestFailure.failed
+        } catch is GroupProtocolError {}
+        let p5Store = RecoverySecrets(), p5 = GroupRecoveryKeyJournal(store: RecoverySecrets())
+        let durable = GroupRecoveryKeyJournal(store: p5Store)
+        let sent = try await p5.offer(key: contentKey, recipient: recipient, participation: participation!, current: boundaryHead,
+            epoch: boundaryHead, signerID: ownerID, signingKey: ownerDevice, now: keyNow)
+        let resent = try await p5.offer(key: contentKey, recipient: recipient, participation: participation!, current: boundaryHead,
+            epoch: boundaryHead, signerID: ownerID, signingKey: ownerDevice, now: keyNow)
+        try check(sent == resent)
+        let received = try await durable.receive(sent, recipient: recipient, participation: participation!, current: boundaryHead,
+            epoch: boundaryHead, agreementKey: hpke, signingKey: device, now: keyNow)
+        let reopenedP5 = GroupRecoveryKeyJournal(store: p5Store)
+        let receivedAgain = try await reopenedP5.receive(sent, recipient: recipient, participation: participation!, current: boundaryHead,
+            epoch: boundaryHead, agreementKey: hpke, signingKey: device, now: keyNow)
+        try check(received.receiptSignature == receivedAgain.receiptSignature && received.key == receivedAgain.key)
+        print("RECOVERY_KEY_WIRE=" + String(data: try GroupWire.encode(offer), encoding: .utf8)!)
+        print("RECOVERY_RECIPIENT_WIRE=" + String(data: try GroupWire.encode(recipientProof), encoding: .utf8)!)
         print("PARTICIPATION_WIRE=" + String(data: try GroupWire.encode(boundary), encoding: .utf8)!)
         print("PARTICIPATION_KEY=" + GroupWire.base64(ownerDevice.publicKey.rawRepresentation))
         let anchor = try GroupAnchorReceipt.make(environment: "staging", anchor: .init(windowID: window, ownerPersonID: person,

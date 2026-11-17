@@ -311,4 +311,57 @@ actor GroupRecoveryClient {
         return Registration(state: state, model: result.model, registeredAt: result.registeredAt.map { Date(timeIntervalSince1970: TimeInterval($0)) })
     }
 }
+/// Keychain-backed P5 journal. Persist before network send; a receipt is returned
+/// only after the decrypted key and receipt have been written together.
+actor GroupRecoveryKeyJournal {
+    struct Received: Codable, Sendable {
+        let offer: GroupRecoveryKeyOffer
+        let key: Data
+        let receiptSignature: Data
+    }
+    private let store: any GroupSecretStore
+    init(store: any GroupSecretStore) { self.store = store }
+    private func account(_ direction: String, _ recipient: VerifiedGroupRecoveryRecipient, _ epoch: Int, _ hash: Data) throws -> String {
+        let bytes = try GroupCanonical.fields([direction, recipient.environment, recipient.windowID, recipient.personID,
+            recipient.deviceID, recipient.operationID, String(epoch)].map(GroupCanonical.text) + [hash])
+        return "p5:" + GroupWire.base64(GroupCanonical.hash(bytes))
+    }
+    func offer(key: SymmetricKey, recipient: VerifiedGroupRecoveryRecipient, participation: VerifiedGroupParticipation,
+               current: VerifiedGroupRoster, epoch: VerifiedGroupRoster, signerID: String,
+               signingKey: Curve25519.Signing.PrivateKey, now: Int) throws -> GroupRecoveryKeyOffer {
+        let slot = try account("send", recipient, epoch.roster.keyEpoch, current.hash)
+        if let bytes = try store.read(slot) {
+            let saved = try GroupWire.decode(GroupRecoveryKeyOffer.self, bytes)
+            guard saved.senderDeviceID == signerID, saved.epochRosterHash == epoch.hash,
+                  saved.recipientDeviceID == recipient.deviceID, saved.operationID == recipient.operationID,
+                  participation.permits(epoch: epoch, current: current) else { throw GroupProtocolError.invalidEnvelope }
+            // An expired attempt is replaced explicitly by the caller's next offer operation.
+            if saved.expiresAt > now { return saved }
+        }
+        let offer = try GroupRecoveryKeyCrypto.wrap(key, recipient: recipient, participation: participation,
+            current: current, epoch: epoch, signerID: signerID, signingKey: signingKey,
+            offerID: UUID(), expiresAt: now + 86_400, now: now)
+        try store.write(GroupWire.encode(offer), account: slot, createOnly: false)
+        return offer
+    }
+    func receive(_ offer: GroupRecoveryKeyOffer, recipient: VerifiedGroupRecoveryRecipient,
+                 participation: VerifiedGroupParticipation, current: VerifiedGroupRoster, epoch: VerifiedGroupRoster,
+                 agreementKey: Curve25519.KeyAgreement.PrivateKey, signingKey: Curve25519.Signing.PrivateKey,
+                 now: Int) throws -> Received {
+        guard signingKey.publicKey.rawRepresentation == recipient.signingPublicKey else { throw GroupProtocolError.invalidEnvelope }
+        // Revalidate eligibility and signature even when a prior response was lost.
+        let key = try GroupRecoveryKeyCrypto.unwrap(offer, recipient: recipient, participation: participation,
+            current: current, epoch: epoch, key: agreementKey, now: now)
+        let slot = try account("receive", recipient, epoch.roster.keyEpoch, current.hash)
+        if let bytes = try store.read(slot) {
+            let prior = try GroupWire.decode(Received.self, bytes)
+            if prior.offer == offer { return prior }
+            guard prior.offer.expiresAt <= now else { throw GroupProtocolError.invalidEnvelope }
+        }
+        let received = Received(offer: offer, key: key.withUnsafeBytes { Data($0) },
+            receiptSignature: try signingKey.signature(for: offer.receiptBytes()))
+        try store.write(GroupWire.encode(received), account: slot, createOnly: false)
+        return received
+    }
+}
 #endif

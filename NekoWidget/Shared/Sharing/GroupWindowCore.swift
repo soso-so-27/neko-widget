@@ -417,6 +417,125 @@ struct VerifiedGroupParticipation: Sendable {
     }
 }
 
+struct GroupRecoveryRecipientProof: Codable, Sendable {
+    struct Challenge: Codable, Sendable {
+        let id: String; let person_id: String; let identity_public_key: String
+        let operation_id: String; let purpose: String; let environment: String
+        let nonce: String; let issued_at: Int; let expires_at: Int; let consumed_at: Int?
+    }
+    struct Intent: Codable, Sendable {
+        let windowID: String; let signingPublicKey: Data; let hpkePublicKey: Data; let model: String
+    }
+    let challenge: Challenge
+    let intent: Intent
+    let rootSignature: Data
+    let deviceSignature: Data
+    private func decode(_ value: String) throws -> Data {
+        let s = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        guard let d = Data(base64Encoded: s + String(repeating: "=", count: (4 - s.count % 4) % 4)), d.count == 32
+        else { throw GroupProtocolError.invalidSignature }; return d
+    }
+    func transcript(signer: String) throws -> Data {
+        let c = challenge, i = intent
+        let challengeBytes = try GroupCanonical.fields(["NW3.RECOVERY.CATALOG.V1", c.environment, c.purpose, c.id, c.person_id].map(GroupCanonical.text)
+            + [decode(c.identity_public_key), GroupCanonical.text(c.operation_id), decode(c.nonce),
+               GroupCanonical.text(String(c.issued_at)), GroupCanonical.text(String(c.expires_at))])
+        let intentBytes = try GroupCanonical.fields([GroupCanonical.text("NW3.RECOVERY.PENDING.INTENT.V1"), GroupCanonical.text(i.windowID),
+            i.signingPublicKey, i.hpkePublicKey, GroupCanonical.text(i.model)])
+        return try GroupCanonical.fields([GroupCanonical.text("NW3.RECOVERY.PENDING.REGISTER.V1"), GroupCanonical.text(signer),
+            challengeBytes, GroupCanonical.text(i.windowID), intentBytes])
+    }
+    func verified(head: VerifiedGroupRoster, environment: String) -> VerifiedGroupRecoveryRecipient? {
+        let c = challenge, i = intent
+        guard ["staging", "production"].contains(environment), c.environment == environment, c.purpose == "register",
+              i.windowID == head.roster.windowID, i.signingPublicKey.count == 32, i.hpkePublicKey.count == 32,
+              !i.model.isEmpty, i.model.utf16.count <= 80, !i.model.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }),
+              c.issued_at >= 0, c.expires_at >= 300, c.expires_at - 300 == c.issued_at,
+              UUID(uuidString: c.id)?.uuidString.lowercased() == c.id,
+              UUID(uuidString: c.operation_id)?.uuidString.lowercased() == c.operation_id,
+              let member = head.roster.members.first(where: { $0.personID == c.person_id }),
+              let rootBytes = try? decode(c.identity_public_key), rootBytes == member.identityPublicKey,
+              let root = try? Curve25519.Signing.PublicKey(rawRepresentation: rootBytes),
+              let device = try? Curve25519.Signing.PublicKey(rawRepresentation: i.signingPublicKey),
+              let rootMessage = try? transcript(signer: "root"), let deviceMessage = try? transcript(signer: "device"),
+              root.isValidSignature(rootSignature, for: rootMessage), device.isValidSignature(deviceSignature, for: deviceMessage),
+              let deviceBytes = try? GroupCanonical.fields([i.signingPublicKey, i.hpkePublicKey]) else { return nil }
+        func identifier(_ bytes: Data) -> String { GroupCanonical.hash(bytes).base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "") }
+        guard c.person_id == identifier(rootBytes) else { return nil }
+        return VerifiedGroupRecoveryRecipient(environment: environment, windowID: i.windowID, operationID: c.operation_id,
+            personID: c.person_id, deviceID: identifier(deviceBytes), signingPublicKey: i.signingPublicKey, hpkePublicKey: i.hpkePublicKey)
+    }
+}
+struct VerifiedGroupRecoveryRecipient: Sendable {
+    let environment: String; let windowID: String; let operationID: String; let personID: String
+    let deviceID: String; let signingPublicKey: Data; let hpkePublicKey: Data
+    fileprivate init(environment: String, windowID: String, operationID: String, personID: String,
+                     deviceID: String, signingPublicKey: Data, hpkePublicKey: Data) {
+        self.environment = environment; self.windowID = windowID; self.operationID = operationID; self.personID = personID
+        self.deviceID = deviceID; self.signingPublicKey = signingPublicKey; self.hpkePublicKey = hpkePublicKey
+    }
+}
+struct GroupRecoveryKeyOffer: Codable, Equatable, Sendable {
+    let environment: String; let windowID: String; let operationID: String; let offerID: String; let keyEpoch: Int
+    let epochRosterHash: Data; let currentRosterHash: Data; let recipientDeviceID: String; let senderDeviceID: String
+    let encapsulatedKey: Data; let ciphertext: Data; let expiresAt: Int; let signature: Data
+    func context() throws -> Data {
+        try GroupCanonical.fields(["NW3.RECOVERY.KEY.V1", environment, windowID, operationID, offerID, String(keyEpoch)].map(GroupCanonical.text)
+            + [epochRosterHash, currentRosterHash] + [recipientDeviceID, senderDeviceID, String(expiresAt)].map(GroupCanonical.text))
+    }
+    func signatureBytes() throws -> Data {
+        try GroupCanonical.fields([GroupCanonical.text("NW3.RECOVERY.KEY.SIGN.V1"), context(), encapsulatedKey, GroupCanonical.hash(ciphertext)])
+    }
+    func receiptBytes() throws -> Data {
+        try GroupCanonical.fields([GroupCanonical.text("NW3.RECOVERY.KEY.RECEIPT.V1"), context(), GroupCanonical.hash(signatureBytes()), signature])
+    }
+}
+enum GroupRecoveryKeyCrypto {
+    private static func allowed(recipient: VerifiedGroupRecoveryRecipient, participation: VerifiedGroupParticipation,
+                                current: VerifiedGroupRoster, epoch: VerifiedGroupRoster, signerID: String) -> GroupRosterDevice? {
+        guard participation.proof.personID == recipient.personID, participation.proof.environment == recipient.environment,
+              participation.permits(epoch: epoch, current: current), recipient.windowID == current.roster.windowID,
+              let sender = current.device(id: signerID)?.device, let old = epoch.device(id: signerID)?.device,
+              sender.signingPublicKey == old.signingPublicKey else { return nil }; return sender
+    }
+    static func wrap(_ key: SymmetricKey, recipient: VerifiedGroupRecoveryRecipient, participation: VerifiedGroupParticipation,
+                     current: VerifiedGroupRoster, epoch: VerifiedGroupRoster, signerID: String, signingKey: Curve25519.Signing.PrivateKey,
+                     offerID: UUID, expiresAt: Int, now: Int) throws -> GroupRecoveryKeyOffer {
+        guard key.bitCount == 256, now >= 0, expiresAt > now, expiresAt - now <= 86_400,
+              let signer = allowed(recipient: recipient, participation: participation, current: current, epoch: epoch, signerID: signerID),
+              signer.signingPublicKey == signingKey.publicKey.rawRepresentation else { throw GroupProtocolError.invalidEnvelope }
+        func value(_ enc: Data, _ cipher: Data, _ sig: Data) -> GroupRecoveryKeyOffer {
+            .init(environment: recipient.environment, windowID: recipient.windowID, operationID: recipient.operationID,
+                offerID: offerID.uuidString.lowercased(), keyEpoch: epoch.roster.keyEpoch, epochRosterHash: epoch.hash,
+                currentRosterHash: current.hash, recipientDeviceID: recipient.deviceID, senderDeviceID: signerID,
+                encapsulatedKey: enc, ciphertext: cipher, expiresAt: expiresAt, signature: sig)
+        }
+        let info = try value(Data(), Data(), Data()).context()
+        var sender = try HPKE.Sender(recipientKey: Curve25519.KeyAgreement.PublicKey(rawRepresentation: recipient.hpkePublicKey),
+            ciphersuite: .Curve25519_SHA256_ChachaPoly, info: info)
+        let cipher = try sender.seal(key.withUnsafeBytes { Data($0) }, authenticating: info)
+        let unsigned = value(sender.encapsulatedKey, cipher, Data())
+        return try value(sender.encapsulatedKey, cipher, signingKey.signature(for: unsigned.signatureBytes()))
+    }
+    static func unwrap(_ offer: GroupRecoveryKeyOffer, recipient: VerifiedGroupRecoveryRecipient, participation: VerifiedGroupParticipation,
+                       current: VerifiedGroupRoster, epoch: VerifiedGroupRoster, key: Curve25519.KeyAgreement.PrivateKey, now: Int) throws -> SymmetricKey {
+        guard offer.environment == recipient.environment, offer.windowID == recipient.windowID, offer.operationID == recipient.operationID,
+              UUID(uuidString: offer.offerID)?.uuidString.lowercased() == offer.offerID,
+              offer.keyEpoch == epoch.roster.keyEpoch, offer.epochRosterHash == epoch.hash, offer.currentRosterHash == current.hash,
+              offer.recipientDeviceID == recipient.deviceID, key.publicKey.rawRepresentation == recipient.hpkePublicKey,
+              now >= 0, offer.expiresAt > now, offer.expiresAt - now <= 86_400,
+              offer.encapsulatedKey.count == 32, offer.ciphertext.count == 48, offer.signature.count == 64,
+              let signer = allowed(recipient: recipient, participation: participation, current: current, epoch: epoch, signerID: offer.senderDeviceID)
+        else { throw GroupProtocolError.invalidEnvelope }
+        let publicKey = try Curve25519.Signing.PublicKey(rawRepresentation: signer.signingPublicKey)
+        guard publicKey.isValidSignature(offer.signature, for: try offer.signatureBytes()) else { throw GroupProtocolError.invalidSignature }
+        let info = try offer.context()
+        var receiver = try HPKE.Recipient(privateKey: key, ciphersuite: .Curve25519_SHA256_ChachaPoly, info: info, encapsulatedKey: offer.encapsulatedKey)
+        let bytes = try receiver.open(offer.ciphertext, authenticating: info)
+        guard bytes.count == 32 else { throw GroupProtocolError.invalidEnvelope }; return SymmetricKey(data: bytes)
+    }
+}
+
 struct GroupEncryptedPhoto: Codable, Equatable, Sendable {
     let clientMomentID: String
     let senderDeviceID: String
