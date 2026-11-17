@@ -55,6 +55,8 @@
 /* Begin PBXBuildFile section */
 		B1115E000000000000000001 /* RootSyncStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1115E000000000000000002 /* RootSyncStore.swift */; };
 		B11600000000000000000002 /* GroupRecoveryClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11600000000000000000001 /* GroupRecoveryClient.swift */; };
+		B11700000000000000000002 /* GroupRecoveryAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11700000000000000000001 /* GroupRecoveryAdapter.swift */; };
+		B11700000000000000000004 /* GroupRecoveryLiveSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11700000000000000000003 /* GroupRecoveryLiveSession.swift */; };
         C02610150000000000000001 /* AppRecordPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02610150000000000000002 /* AppRecordPersistence.swift */; };
 		C02610140000000000000001 /* ToolPreservation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02610140000000000000002 /* ToolPreservation.swift */; };
 		C02611160000000000000001 /* PreservationJPEGEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02611160000000000000002 /* PreservationJPEGEnvelope.swift */; };
@@ -417,6 +419,8 @@
 /* Begin PBXFileReference section */
 		B1115E000000000000000002 /* RootSyncStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootSyncStore.swift; sourceTree = "<group>"; };
 		B11600000000000000000001 /* GroupRecoveryClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupRecoveryClient.swift; sourceTree = "<group>"; };
+		B11700000000000000000001 /* GroupRecoveryAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupRecoveryAdapter.swift; sourceTree = "<group>"; };
+		B11700000000000000000003 /* GroupRecoveryLiveSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupRecoveryLiveSession.swift; sourceTree = "<group>"; };
         C02610150000000000000002 /* AppRecordPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRecordPersistence.swift; sourceTree = "<group>"; };
 		C02610140000000000000002 /* ToolPreservation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolPreservation.swift; sourceTree = "<group>"; };
 		C02611160000000000000002 /* PreservationJPEGEnvelope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreservationJPEGEnvelope.swift; sourceTree = "<group>"; };
@@ -990,6 +994,8 @@
 				AB2610200000000000000067 /* GroupWindowStorage.swift */,
 				B1115E000000000000000002 /* RootSyncStore.swift */,
 				B11600000000000000000001 /* GroupRecoveryClient.swift */,
+				B11700000000000000000001 /* GroupRecoveryAdapter.swift */,
+				B11700000000000000000003 /* GroupRecoveryLiveSession.swift */,
 				AB2610200000000000000065 /* GroupWindowWire.swift */,
 				CC2610200000000000000003 /* GroupInvitationLink.swift */,
 				CC2610200000000000000007 /* GroupWindowLocalPhotoStore.swift */,
@@ -1483,6 +1489,8 @@
 				B1115C000000000000000003 /* GroupRecoveryView.swift in Sources */,
 				B1115E000000000000000001 /* RootSyncStore.swift in Sources */,
 				B11600000000000000000002 /* GroupRecoveryClient.swift in Sources */,
+				B11700000000000000000002 /* GroupRecoveryAdapter.swift in Sources */,
+				B11700000000000000000004 /* GroupRecoveryLiveSession.swift in Sources */,
 				C02609290000000000000019 /* CareHandoffFixtureView.swift in Sources */,
 				100000000000000000000168 /* MomentSharingCore.swift in Sources */,
 				AA2610200000000000000006 /* GroupWindowFixture.swift in Sources */,

@@ -42,6 +42,7 @@ enum GroupRecoveryWords {
     static let deviceLimitTitle = "使える iPhone は 3 台までです"
     static let deviceLimitMessage = "外す iPhone を選んでください。"
     static let removeDevice = "外す"
+    static let keepDevice = "やめる"
     static let removeDeviceMessage = "外した iPhone では、この人として入っているまどと家族の手帳が見られなくなります。"
     static func removeDeviceQuestion(_ modelName: String) -> String { "\(modelName) を外しますか" }
     static func registered(_ date: String) -> String { "\(date) に登録" }
