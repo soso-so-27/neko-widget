@@ -283,6 +283,8 @@ struct CatHomeView: View {
     /// Shared cats with no profile on this iPhone (an invited family) have a
     /// page too, so 「この子のこと」 has one place for everyone (11/7).
     @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
+    /// 11/17: the photo a family delivered for such a cat (off: none).
+    @ObservedObject private var familyPhotos = FamilyRepresentativePhotos.shared
     @StateObject private var states = CatHomeToolStates()
     @AppStorage(CatFarewell.key) private var farewellJSON = ""
     /// The cat whose page is shown, and the cat the tools open for.
@@ -396,6 +398,13 @@ struct CatHomeView: View {
             if let cat = self.cats.first(where: { $0.id == route.catID }) { carePage(cat) }
         }
         .onAppear { Task { await states.refresh() } }
+        // 11/17: the family's photos of the family cats with no cat here, read
+        // when the tab shows them and when the notebook brings something
+        // (at most once a minute per cat; never while off).
+        .task(id: familyPhotoReadKey) {
+            guard familyPhotos.isOn else { return }
+            await familyPhotos.read(familyNotebook.unlinkedFamilyCats.map(\.id))
+        }
         // Kept once the pages rest, never while they move.
         .task(id: pageID) {
             guard let pageID, pageID != Self.addPageID, pageID != storedCatID else { return }
@@ -579,7 +588,20 @@ struct CatHomeView: View {
                                ? cats.map { CatHomeMenuCat(id: $0.id, name: $0.name) } : nil,
                            choosesPhoto: unlinkedToolIDs.contains(cat.id),
                            inFamilyNotebook: isFamilyCat(record),
+                           familyPhoto: familyPhoto(for: cat),
                            actions: pageActions)
+    }
+
+    private var familyPhotoReadKey: String {
+        "\(familyPhotos.isOn)|\(familyNotebook.unlinkedFamilyCats.map(\.id))|\(familyNotebook.snapshot?.revision ?? 0)"
+    }
+
+    /// The family's photo in place of のわ: only a family cat with no cat of
+    /// this iPhone (a cat of this iPhone keeps its own photo).
+    private func familyPhoto(for cat: CatHomeCat) -> FamilyRepresentativePhotos.Shown? {
+        guard familyPhotos.isOn, cat.profile == nil, case let .toolCat(toolID) = cat.kind,
+              let family = familyNotebook.unlinkedFamilyCats.first(where: { $0.toolID == toolID }) else { return nil }
+        return familyPhotos.shown[family.id]
     }
 
     /// 11/16: the page's cat is in the family notebook (linked to a cat of
@@ -878,6 +900,8 @@ private struct CatHomePage: View {
     /// once (when the page is taller than the screen; a page that fits does
     /// not move up and down, 11/14).
     var inFamilyNotebook = false
+    /// 11/17: the photo the family delivered, shown in place of のわ.
+    var familyPhoto: FamilyRepresentativePhotos.Shown?
     /// 設定, 写真を見せる, the cat menu and the birthday editor's save.
     let actions: CatHomePageActions
 
@@ -886,7 +910,7 @@ private struct CatHomePage: View {
             VStack(spacing: 0) {
                 CatHomeHero(cat: cat, facts: facts, metrics: metrics, pageIndex: pageIndex, pageCount: pageCount,
                             menuCats: menuCats, choose: { actions.choose($0) },
-                            turn: { [pageIndex] by in actions.turn(pageIndex, by) })
+                            turn: { [pageIndex] by in actions.turn(pageIndex, by) }, familyPhoto: familyPhoto)
                 // 18 (was 22): the page fits one screen on a standard iPhone (11/14).
                 VStack(spacing: 18) {
                     if choosesPhoto { CatHomeChoosePhotoButton(name: cat.name) { actions.choosePhoto(cat.id) } }
@@ -935,7 +959,8 @@ extension CatHomePage: Equatable {
             && lhs.vetUnfinished == rhs.vetUnfinished && lhs.searching == rhs.searching
             && lhs.care == rhs.care && lhs.careLinks.catID == rhs.careLinks.catID
             && lhs.menuCats == rhs.menuCats && lhs.choosesPhoto == rhs.choosesPhoto
-            && lhs.inFamilyNotebook == rhs.inFamilyNotebook && lhs.actions === rhs.actions
+            && lhs.inFamilyNotebook == rhs.inFamilyNotebook && lhs.familyPhoto == rhs.familyPhoto
+            && lhs.actions === rhs.actions
     }
 }
 
@@ -956,6 +981,8 @@ private struct CatHomeHero: View {
     let choose: (String) -> Void
     /// VoiceOver's 「次の子」「前の子」 (pages by -1 or 1).
     let turn: (Int) -> Void
+    /// 11/17: a family cat with no cat of this iPhone: the family's photo.
+    var familyPhoto: FamilyRepresentativePhotos.Shown? = nil
     @Environment(\.displayScale) private var displayScale
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.colorScheme) private var colorScheme
@@ -1024,7 +1051,17 @@ private struct CatHomeHero: View {
             LinearGradient(colors: [Color(red: 0.62, green: 0.59, blue: 0.55), Color(red: 0.36, green: 0.34, blue: 0.32)],
                            startPoint: .top, endPoint: .bottom)
             if cat.profile?.coverPhoto == nil {
-                CatHomeNoPhotoArt(metrics: metrics)
+                if let familyPhoto {
+                    // Shown only: never the photo list, a widget or the archive.
+                    Image(uiImage: familyPhoto.image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: metrics.width, height: metrics.heroHeight)
+                        .clipped()
+                        .accessibilityHidden(true)
+                } else {
+                    CatHomeNoPhotoArt(metrics: metrics)
+                }
             }
             if let photo = cat.profile?.coverPhoto {
                 PhotoAssetImageView(

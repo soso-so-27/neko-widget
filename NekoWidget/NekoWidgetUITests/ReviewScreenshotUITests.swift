@@ -931,6 +931,81 @@ final class ReviewScreenshotUITests: XCTestCase {
         app.terminate()
     }
 
+    /// 11/17: the family's representative photo, reached the way the app
+    /// reaches it: the この子 tab (the family cat's page shows the photo
+    /// another family member delivered, in place of のわ), its 「この子のこと」,
+    /// its 「…」. A synthetic photo and relay (`--cat-home-stress-family-photo`);
+    /// sample names only.
+    @MainActor
+    func test19FamilyRepresentativePhoto() {
+        var app = launchStress(74, names: ["-"], ["--cat-home-stress-family", "ミケ", "--cat-home-stress-family-photo"])
+        shot("48d_home_family_photo", app) {
+            if let reason = reachStressHome(app, waitingFor: "cat-home-choose-photo") { return reason }
+            // The page reads the family's photo once it shows.
+            settle(2)
+            return nil
+        }
+        shot("48e_family_photo_menu", app) {
+            if let reason = openFamilyPhotoMenu(app) { return reason }
+            guard app.buttons["family-photo-report"].waitForExistence(timeout: 8) else { return "この写真を通報 not in 「…」" }
+            guard app.buttons["family-photo-hide"].exists else { return "表示しない not in 「…」" }
+            settle(1)
+            return nil
+        }
+        shot("48f_family_photo_report", app) {
+            let report = app.buttons["family-photo-report"].firstMatch
+            guard report.exists else { return "この写真を通報 not in 「…」" }
+            report.tap()
+            let reason = app.buttons["family-photo-report-reason-other"].firstMatch
+            guard reason.waitForExistence(timeout: 8) else { return "report sheet did not open" }
+            reason.tap()
+            app.buttons["family-photo-report-send"].firstMatch.tap()
+            guard app.descendants(matching: .any)["family-photo-report-number"].firstMatch.waitForExistence(timeout: 15) else {
+                return "report was not received"
+            }
+            settle(1)
+            return nil
+        }
+        app.terminate()
+        app = launchStress(75, names: ["-"], ["--cat-home-stress-family", "ミケ", "--cat-home-stress-family-photo"])
+        shot("48g_family_photo_hide", app) {
+            if let reason = reachStressHome(app, waitingFor: "cat-home-choose-photo") { return reason }
+            settle(2)
+            if let reason = openFamilyPhotoMenu(app) { return reason }
+            let hide = app.buttons["family-photo-hide"].firstMatch
+            guard hide.waitForExistence(timeout: 8) else { return "表示しない not in 「…」" }
+            hide.tap()
+            guard app.buttons["family-photo-hide-confirm"].waitForExistence(timeout: 6) else { return "hide question did not appear" }
+            settle(1)
+            return nil
+        }
+        shot("48h_family_photo_unhide", app) {
+            let confirm = app.buttons["family-photo-hide-confirm"].firstMatch
+            guard confirm.exists else { return "hide question did not appear" }
+            confirm.tap()
+            settle(1.5)
+            let more = app.buttons["cat-care-more-menu"].firstMatch
+            guard more.waitForExistence(timeout: 10) else { return "「…」 not found after hiding" }
+            more.tap()
+            guard app.buttons["family-photo-unhide"].waitForExistence(timeout: 8) else { return "表示する not in 「…」" }
+            settle(1)
+            return nil
+        }
+        app.terminate()
+    }
+
+    /// 「この子のこと」 of the family cat on screen, then its 「…」 open.
+    @MainActor
+    private func openFamilyPhotoMenu(_ app: XCUIApplication) -> String? {
+        let about = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "tools-family-cat-")).firstMatch
+        guard about.waitForExistence(timeout: 10), reveal(about, app) else { return "この子のこと not found" }
+        about.tap()
+        let more = app.buttons["cat-care-more-menu"].firstMatch
+        guard more.waitForExistence(timeout: 15) else { return "「…」 not found" }
+        more.tap()
+        return nil
+    }
+
     /// One stress scenario (AppStoreScreenshotFixture.CatHomeStress).
     @MainActor
     private func launchStress(_ scenario: Int, names: [String], _ extra: [String] = []) -> XCUIApplication {
