@@ -20,4 +20,11 @@ const material=fields(['NW3.RECOVERY.FRESH-MATERIAL.V1',r.windowId,r.revision,r.
 assert(valid(c.identity_public_key,b.consentSignature,fields(['NW3.RECOVERY.FRESH-CONSENT.V1',challenge,sha(material)])));
 assert(!valid(c.identity_public_key,b.consentSignature,fields(['NW3.RECOVERY.FRESH-CONSENT.V1',challenge,sha(Buffer.concat([material,Buffer.from([1])]))])));
 assert(out.includes('recovery client: PASS'));assert(out.includes('recovery adapter: PASS'));
+const boundary=JSON.parse(out.split('\n').find(s=>s.startsWith('PARTICIPATION_WIRE=')).slice('PARTICIPATION_WIRE='.length));
+const boundaryKey=out.split('\n').find(s=>s.startsWith('PARTICIPATION_KEY=')).slice('PARTICIPATION_KEY='.length);
+const boundaryBytes=fields(['NW3.RECOVERY.PARTICIPATION.V1',boundary.environment,boundary.windowId,boundary.personId,
+ boundary.participantId,boundary.admissionRevision,raw(boundary.rosterHash),boundary.signerDeviceId]);
+assert(valid(boundaryKey,boundary.signature,boundaryBytes));
+assert(!valid(boundaryKey,boundary.signature,fields(['NW3.RECOVERY.PARTICIPATION.V1','production',boundary.windowId,boundary.personId,
+ boundary.participantId,boundary.admissionRevision,raw(boundary.rosterHash),boundary.signerDeviceId])));
 console.log('recovery client, adapter and independent native proof/consent wire: PASS');

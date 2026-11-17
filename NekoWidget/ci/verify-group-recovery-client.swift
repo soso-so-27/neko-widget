@@ -122,6 +122,26 @@ private actor Relay: GroupHTTPTransport {
             ownerPersonID: person, members: [.init(participantID: GroupWire.randomID(), personID: person,
                 identityPublicKey: root.publicKey.rawRepresentation, role: .owner, devices: [authorized])])
         let packet = try GroupRosterVerifier.sign(roster, deviceID: ownerID, privateKey: ownerDevice)
+        let boundaryHead = try GroupRosterVerifier.verify(packet, anchor: .init(windowID: window, ownerPersonID: person,
+            ownerIdentityPublicKey: root.publicKey.rawRepresentation))
+        let boundary = try GroupParticipationBoundary.forNewAdmission(head: boundaryHead, environment: "staging",
+            personID: person, signerID: ownerID, key: ownerDevice)
+        let participation = boundary.verified(head: boundaryHead, environment: "staging", personID: person)
+        try check(participation != nil && participation!.permits(epoch: boundaryHead, current: boundaryHead))
+        try check(boundary.verified(head: boundaryHead, environment: "production", personID: person) == nil)
+        try check(boundary.verified(head: boundaryHead, environment: "staging", personID: "another-person") == nil)
+        let rotatedRoster = GroupRoster(windowID: window, revision: 2, keyEpoch: 2, previousHash: boundaryHead.hash,
+            ownerPersonID: person, members: roster.members)
+        let rotated = try GroupRosterVerifier.verify(GroupRosterVerifier.sign(rotatedRoster, deviceID: ownerID, privateKey: ownerDevice),
+            anchor: .init(windowID: window, ownerPersonID: person, ownerIdentityPublicKey: root.publicKey.rawRepresentation), previous: boundaryHead)
+        try check(boundary.verified(head: rotated, environment: "staging", personID: person) == nil)
+        let carried = try GroupParticipationBoundary.carry(participation!, previous: boundaryHead, next: rotated, signerID: ownerID, key: ownerDevice)
+        try check(carried.verified(head: rotated, environment: "staging", personID: person)!.permits(epoch: boundaryHead, current: rotated))
+        let newAdmission = try GroupParticipationBoundary.forNewAdmission(head: rotated, environment: "staging", personID: person,
+            signerID: ownerID, key: ownerDevice)
+        try check(!newAdmission.verified(head: rotated, environment: "staging", personID: person)!.permits(epoch: boundaryHead, current: rotated))
+        print("PARTICIPATION_WIRE=" + String(data: try GroupWire.encode(boundary), encoding: .utf8)!)
+        print("PARTICIPATION_KEY=" + GroupWire.base64(ownerDevice.publicKey.rawRepresentation))
         let anchor = try GroupAnchorReceipt.make(environment: "staging", anchor: .init(windowID: window, ownerPersonID: person,
             ownerIdentityPublicKey: root.publicKey.rawRepresentation), root: root)
         let pendingID = GroupWire.base64(try GroupCanonical.hash(GroupCanonical.fields([device.publicKey.rawRepresentation, hpke.publicKey.rawRepresentation])))

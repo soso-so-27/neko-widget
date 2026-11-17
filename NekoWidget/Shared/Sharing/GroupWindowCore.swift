@@ -341,6 +341,82 @@ enum GroupHPKE {
     }
 }
 
+/// The owner's signature covers the admission boundary AND the current head.
+/// It is deliberately separate from legacy roster encoding. Missing proof is
+/// not repaired by copying a joined_revision from the relay.
+struct GroupParticipationBoundary: Codable, Equatable, Sendable {
+    let environment: String
+    let windowID: String
+    let personID: String
+    let participantID: String
+    let admissionRevision: Int
+    let rosterHash: Data
+    let signerDeviceID: String
+    let signature: Data
+
+    /// Call only for the locally prepared create/admit command, never when
+    /// merely discovering a membership through the recovery catalog.
+    static func forNewAdmission(head: VerifiedGroupRoster, environment: String, personID: String,
+                                signerID: String, key: Curve25519.Signing.PrivateKey) throws -> Self {
+        try sign(head: head, environment: environment, personID: personID,
+                 admissionRevision: head.roster.revision, signerID: signerID, key: key)
+    }
+    static func carry(_ prior: VerifiedGroupParticipation, previous: VerifiedGroupRoster,
+                      next: VerifiedGroupRoster, signerID: String, key: Curve25519.Signing.PrivateKey) throws -> Self {
+        guard prior.proof.rosterHash == previous.hash, next.roster.previousHash == previous.hash,
+              next.roster.revision == previous.roster.revision + 1,
+              next.roster.members.contains(where: { $0.personID == prior.proof.personID && $0.participantID == prior.proof.participantID })
+        else { throw GroupProtocolError.invalidSignature }
+        return try sign(head: next, environment: prior.proof.environment, personID: prior.proof.personID,
+                        admissionRevision: prior.proof.admissionRevision, signerID: signerID, key: key)
+    }
+    private static func sign(head: VerifiedGroupRoster, environment: String, personID: String,
+                             admissionRevision: Int, signerID: String, key: Curve25519.Signing.PrivateKey) throws -> Self {
+        guard let member = head.roster.members.first(where: { $0.personID == personID }),
+              let signer = head.device(id: signerID), signer.member.role == .owner,
+              signer.device.signingPublicKey == key.publicKey.rawRepresentation else { throw GroupProtocolError.invalidSignature }
+        let value = Self(environment: environment, windowID: head.roster.windowID, personID: personID,
+            participantID: member.participantID, admissionRevision: admissionRevision,
+            rosterHash: head.hash, signerDeviceID: signerID, signature: Data())
+        return try Self(environment: environment, windowID: value.windowID, personID: personID,
+            participantID: member.participantID, admissionRevision: admissionRevision,
+            rosterHash: head.hash, signerDeviceID: signerID, signature: key.signature(for: value.transcript()))
+    }
+
+    func transcript() throws -> Data {
+        guard ["production", "staging"].contains(environment),
+              [windowID, personID, participantID, signerDeviceID].allSatisfy(GroupCanonical.validID),
+              (1...9_007_199_254_740_991).contains(admissionRevision), rosterHash.count == 32
+        else { throw GroupProtocolError.invalidSignature }
+        return try GroupCanonical.fields(["NW3.RECOVERY.PARTICIPATION.V1", environment,
+            windowID, personID, participantID, String(admissionRevision)].map(GroupCanonical.text)
+            + [rosterHash, GroupCanonical.text(signerDeviceID)])
+    }
+
+    func verified(head: VerifiedGroupRoster, environment: String, personID: String) -> VerifiedGroupParticipation? {
+        guard self.environment == environment, self.personID == personID,
+              windowID == head.roster.windowID, rosterHash == head.hash,
+              admissionRevision <= head.roster.revision, signature.count == 64,
+              head.roster.members.contains(where: { $0.personID == personID && $0.participantID == participantID }),
+              let signer = head.device(id: signerDeviceID), signer.member.role == .owner,
+              let key = try? Curve25519.Signing.PublicKey(rawRepresentation: signer.device.signingPublicKey),
+              let bytes = try? transcript(), key.isValidSignature(signature, for: bytes) else { return nil }
+        return VerifiedGroupParticipation(proof: self)
+    }
+}
+
+struct VerifiedGroupParticipation: Sendable {
+    let proof: GroupParticipationBoundary
+    fileprivate init(proof: GroupParticipationBoundary) { self.proof = proof }
+    func permits(epoch: VerifiedGroupRoster, current: VerifiedGroupRoster) -> Bool {
+        proof.rosterHash == current.hash && proof.windowID == current.roster.windowID
+            && epoch.roster.windowID == proof.windowID
+            && epoch.roster.revision >= proof.admissionRevision
+            && epoch.roster.revision <= current.roster.revision
+            && epoch.roster.members.contains { $0.personID == proof.personID && $0.participantID == proof.participantID }
+    }
+}
+
 struct GroupEncryptedPhoto: Codable, Equatable, Sendable {
     let clientMomentID: String
     let senderDeviceID: String

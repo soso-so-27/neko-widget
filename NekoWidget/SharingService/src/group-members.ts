@@ -1,4 +1,5 @@
 import {groupPushRevocationStatements} from './group-push-revocation';
+import {participationStatements} from './group-recovery-participation-store';
 import { base64urlDecode, verifyEd25519 } from "./encoding";
 import { ApiError, jsonResponse } from "./errors";
 import type { Env } from "./env";
@@ -19,7 +20,7 @@ function membershipShape(members:readonly GroupRosterMember[]):string {
 }
 export async function transitionGroupMembership(env:Env,actor:GroupActor,windowId:string,kind:Kind,targetId:string,body:JsonRecord):Promise<Response> {
   exactKeys(body,["operationId","expectedRevision","kind","targetId","packet","envelopes","encryptedName","encryptedMemberNames",
-    ...(kind==='addDevice'?["personSponsorSignature"]:[])]);
+    ...(kind==='addDevice'?["personSponsorSignature"]:[]),...(body.participationProofs!==undefined?['participationProofs']:[])]);
   if(body.kind!==kind || body.targetId!==targetId) fail('invalid_request',400);
   const operationId=uuidField(body,'operationId'),revision=groupExpected(body),scope={windowId,owner:true,expectedRevision:revision};
   await requireGroupMember(env,actor,windowId,true);
@@ -42,6 +43,7 @@ export async function transitionGroupMembership(env:Env,actor:GroupActor,windowI
       .map(d=>({id:d.device_id,signingPublicKey:d.signing_public_key,hpkePublicKey:d.hpke_public_key,personAuthorization:''}))}));
   const statements:D1PreparedStatement[]=[];
   let admittedParticipantId:string|undefined;
+  let newAdmission:string|undefined;
   if(kind==='admit' || kind==='addDevice') {
     let personId:string,deviceId:string,authorization:string;
     if(kind==='admit') {
@@ -70,6 +72,7 @@ export async function transitionGroupMembership(env:Env,actor:GroupActor,windowI
     const history=members.results.find(m=>m.person_id===personId);
     let current=expected.find(m=>m.personId===personId);
     if(!current) {
+      newAdmission=proposed.participantId;
       opaqueId(proposed.participantId,'participant');
       if(history && history.participant_id!==proposed.participantId) fail('invalid_roster',400);
       current={participantId:proposed.participantId,personId,identityPublicKey:registered.identity_public_key,role:'member',devices:[]};
@@ -110,6 +113,7 @@ export async function transitionGroupMembership(env:Env,actor:GroupActor,windowI
   statements.push(...groupPacketStatements(env,next,envelopes,actor,operationId,kind,revision),
     env.DB.prepare("UPDATE group_window_metadata SET encrypted_name=?,key_epoch=?,roster_revision=? WHERE space_id=?")
       .bind(encryptedName,r.keyEpoch,r.revision,windowId));
+  statements.push(...await participationStatements(env,body.participationProofs,next,previous,newAdmission));
   const response={operationId,windowId,revision:r.revision,keyEpoch:r.keyEpoch,rotationRequired:false,
     ...(kind==='admit'?{requestState:'approved',participantId:admittedParticipantId}:{}),serverNow:actor.now};
   await env.DB.batch([...groupAuthorizationStatements(env,actor,scope),...statements,groupMutationStatement(env,actor,operationId,response)]);
