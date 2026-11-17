@@ -283,7 +283,7 @@ actor GroupRecoveryClient {
         var keys: [String: Data]; var rosterHashes: [String: Data]
     }
     private func receivedAccount(_ draft: Draft) throws -> String {
-        "p5-ready:" + GroupWire.base64(GroupCanonical.hash(GroupCanonical.fields([
+        try "p5-ready:" + GroupWire.base64(GroupCanonical.hash(GroupCanonical.fields([
             environment, personID, draft.windowID, draft.operationID.uuidString.lowercased()].map(GroupCanonical.text))))
     }
     private struct KeyPage: Decodable {
@@ -310,7 +310,7 @@ actor GroupRecoveryClient {
     func receiveKeys(_ draft: Draft, identity: GroupDeviceIdentity, afterEpoch: Int = 0) async throws -> KeyDeliveryProgress {
         guard let secrets, afterEpoch >= 0, identity.personPublicKey == root.publicKey.rawRepresentation,
               try identity.signingKey.publicKey.rawRepresentation == draft.signingPublicKey,
-              identity.agreementKey.publicKey.rawRepresentation == draft.hpkePublicKey,
+              try identity.agreementKey.publicKey.rawRepresentation == draft.hpkePublicKey,
               let saved = try journal.read(account(draft.windowID)), try GroupWire.decode(Draft.self, saved) == draft
         else { throw Failure.invalidResponse }
         _ = try await status(draft)
@@ -372,7 +372,7 @@ actor GroupRecoveryClient {
         let bundle = try GroupWire.decode(ReceivedKeys.self, bytes)
         let deviceID = try identity.deviceID
         guard bundle.deviceID == deviceID, try identity.signingKey.publicKey.rawRepresentation == draft.signingPublicKey,
-              identity.agreementKey.publicKey.rawRepresentation == draft.hpkePublicKey else { throw Failure.invalidResponse }
+              try identity.agreementKey.publicKey.rawRepresentation == draft.hpkePublicKey else { throw Failure.invalidResponse }
         let response = try await keyAction(draft, action: "offers", payload: GroupCanonical.fields([GroupCanonical.text("0")]), fields: ["afterEpoch": 0])
         struct Done: Decodable {
             let state: String; let deviceID: String; let previousHash: Data
@@ -525,7 +525,7 @@ actor GroupRecoveryProviderClient {
         guard enabled, let id = try secrets.read("identity"), let w = try secrets.read("window:" + window) else { throw GroupRecoveryClient.Failure.disabled }
         let identity = try GroupWire.decode(GroupDeviceIdentity.self, id), local = try GroupWire.decode(GroupLocalWindow.self, w)
         guard identity.registered, !local.left, local.closed != true, let head = try local.verified(),
-              let member = head.device(id: identity.deviceID), member.member.personID == identity.personID
+              let member = head.device(id: try identity.deviceID), member.member.personID == identity.personID
         else { throw GroupRecoveryClient.Failure.invalidResponse }; return (identity, local, head)
     }
     private func request(_ path: String, body: Data?, identity: GroupDeviceIdentity) async throws -> Data {
@@ -572,7 +572,7 @@ actor GroupRecoveryProviderClient {
     func complete(window: GroupWindow, operationID: UUID) async throws -> String {
         let (identity, local, head) = try context(window.id)
         guard window.canManage, window.revision == head.roster.revision,
-              head.device(id: identity.deviceID)?.member.role == .owner else { throw GroupRecoveryClient.Failure.invalidResponse }
+              head.device(id: try identity.deviceID)?.member.role == .owner else { throw GroupRecoveryClient.Failure.invalidResponse }
         let operation = operationID.uuidString.lowercased()
         let slot = "p5-complete:" + GroupWire.base64(GroupCanonical.hash(Data((environment + window.id + operation).utf8)))
         let body: Data
