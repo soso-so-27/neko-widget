@@ -2,7 +2,7 @@ import {parseFamilyWriteContract,familyWriteCapability,familyWriteCheck,familyWr
 import { authenticateGroupRequest, groupAuthorizationStatements, type GroupActor } from './group-auth';
 import { base64urlDecode, verifyEd25519 } from './encoding';
 import { groupDeviceAuthorization } from './group-protocol';
-import { familyUUID, verifyFamilyRoster, verifyFamilyEnvelope, verifyFamilyOperation, type VerifiedFamilyCryptoRoster } from './family-notebook-crypto';
+import { familyUUID, validateFamilyParticipationTransition, verifyFamilyRoster, verifyFamilyEnvelope, verifyFamilyOperation, type VerifiedFamilyCryptoRoster } from './family-notebook-crypto';
 import { gate, safeFailure, familyStorePolicy } from './family-notebook-payer';
 import { ApiError, jsonResponse } from './errors';
 import { parseJsonBody, requireEmptyBody } from './http';
@@ -101,6 +101,7 @@ export async function familyNotebookHistory(request: Request, env: Env): Promise
     } else if (action === 'roster') {
       const prior = epoch === 0 ? undefined : await roster(env, family, epoch);
       const verified = await verifyFamilyRoster(payload, prior), r = verified.packet.roster;
+      await validateFamilyParticipationTransition(verified,prior,env.ENVIRONMENT,env.GROUP_RECOVERY_CATALOG_ENABLED);
       if (familyUUID(r.familyId) !== family || r.epoch !== epoch + 1 || verified.packet.signerDeviceId !== actor.deviceId) unavailable();
       if (epoch === 0) {
         const creator = await env.DB.prepare("SELECT actor_person_id FROM family_notebook_admission_events WHERE family_id=? AND operation='create'")

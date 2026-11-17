@@ -7,6 +7,9 @@ import Foundation
 @available(iOS 17.0, macOS 14.0, *)
 actor ProductionGroupWindowClient: GroupWindowClient {
     private let endpoint: URL
+    private let recoveryEnabled: Bool
+    private var recoveryRunning = false
+    private var lastRecoveryAt: Date?
     private let secrets: any GroupSecretStore
     private let operations: any GroupSecretStore
     private let transport: any GroupHTTPTransport
@@ -119,8 +122,8 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         }
     }
 
-    init(endpoint: URL, namespace: String, ownerDisplayName: String = "自分", outboxDirectory: URL? = nil) throws {
-        self.endpoint = endpoint
+    init(endpoint: URL, namespace: String, ownerDisplayName: String = "自分", outboxDirectory: URL? = nil, recoveryEnabled: Bool = false) throws {
+        self.endpoint = endpoint; self.recoveryEnabled = recoveryEnabled
         let privateStore = try GroupKeychainStore(namespace: namespace)
 #if os(iOS) && !NEKO_SHARE_EXTENSION
         if Bundle.main.object(forInfoDictionaryKey: "GroupShareExtensionEnabled") as? String == "YES",
@@ -144,14 +147,59 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         _ = try GroupHTTPRequest.make(endpoint: endpoint, path: "/v3/group-identities/challenges", body: Data(), identity: nil)
     }
     // Test injection uses the same production signing/verification state machine.
-    init(endpoint: URL, secrets: any GroupSecretStore, transport: any GroupHTTPTransport, ownerDisplayName: String = "自分", outboxDirectory: URL, billingSigner: any GroupBillingSigner = GroupHostBillingSigner()) throws {
-        self.endpoint = endpoint; self.secrets = secrets; self.transport = transport
+    init(endpoint: URL, secrets: any GroupSecretStore, transport: any GroupHTTPTransport, ownerDisplayName: String = "自分", outboxDirectory: URL, billingSigner: any GroupBillingSigner = GroupHostBillingSigner(), recoveryEnabled: Bool = false) throws {
+        self.endpoint = endpoint; self.recoveryEnabled = recoveryEnabled; self.secrets = secrets; self.transport = transport
         self.ownerDisplayName = try GroupWire.name(ownerDisplayName)
         self.billingSigner = billingSigner
         self.outboxDirectory = try Self.outboxURL(outboxDirectory, context: endpoint.absoluteString)
         self.operations = try GroupOperationStore(directory: self.outboxDirectory.appendingPathComponent("http-operations", isDirectory: true))
         _ = try GroupHTTPRequest.make(endpoint: endpoint, path: "/v3/group-identities/challenges", body: Data(), identity: nil)
     }
+    private var recoveryEnvironment: String? {
+        switch endpoint.host {
+        case "api.nekonomado.com": return "production"
+        case "neko-window-sharing-staging.nakanishisoya.workers.dev", "recovery.invalid": return "staging"
+        default: return nil
+        }
+    }
+    private func recoveryBoundaries(packet: SignedGroupRoster, anchor: GroupTrustAnchor,
+        previous: VerifiedGroupRoster?, identity: GroupDeviceIdentity, newAdmissions: Set<String> = []) async throws -> [GroupParticipationBoundary]? {
+        guard recoveryEnabled, let environment = recoveryEnvironment else { return nil }
+#if DEBUG || INTERNAL_PRESENTATION
+        let next = try GroupRosterVerifier.verify(packet, anchor: anchor, previous: previous)
+        var old: [GroupParticipationBoundary] = []
+        if previous != nil {
+            let provider = try GroupRecoveryProviderClient(endpoint: endpoint, environment: environment, secrets: secrets, transport: transport, enabled: true)
+            old = try await provider.pending(windowID: next.roster.windowID).participationProofs
+        }
+        return try next.roster.members.compactMap { member in
+            if newAdmissions.contains(member.personID) || previous?.roster.members.contains(where: { $0.personID == member.personID }) != true {
+                return try GroupParticipationBoundary.forNewAdmission(head: next, environment: environment,
+                    personID: member.personID, signerID: identity.deviceID, key: identity.signingKey)
+            }
+            guard let previous, let proof = old.first(where: { $0.personID == member.personID }),
+                  let verified = proof.verified(head: previous, environment: environment, personID: member.personID) else { return nil }
+            return try GroupParticipationBoundary.carry(verified, previous: previous, next: next, signerID: identity.deviceID, key: identity.signingKey)
+        }
+#else
+        return nil
+#endif
+    }
+#if DEBUG || INTERNAL_PRESENTATION
+    private func recoverAfterLoad(_ window: GroupWindow) async {
+        guard recoveryEnabled, !recoveryRunning, anchorReceiptForeground,
+              SharingForegroundGap.allows(since: lastRecoveryAt), let environment = recoveryEnvironment else { return }
+        recoveryRunning = true; lastRecoveryAt = Date(); defer { recoveryRunning = false }
+        await SharingPersonAction.automatic {
+            do {
+                let provider = try GroupRecoveryProviderClient(endpoint: endpoint, environment: environment,
+                    secrets: secrets, transport: transport, enabled: true)
+                _ = try await provider.advanceAutomatically(window: window)
+            } catch { /* Existing foreground/read schedule retries; never a new loop. */ }
+        }
+    }
+#endif
+
     private static func outboxURL(_ supplied: URL?, context: String) throws -> URL {
         if let supplied {
             guard supplied.isFileURL else { throw GroupClientError.invalidResponse }; return supplied
@@ -545,6 +593,9 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             personID: identity.personID, deviceID: myDeviceID)
 #if !NEKO_SHARE_EXTENSION
         Task { await self.publishAnchorReceipt(windowID: windowID) }
+#if DEBUG || INTERNAL_PRESENTATION
+        if recoveryEnabled { Task { await self.recoverAfterLoad(result) } }
+#endif
 #endif
         return result
     }
@@ -633,8 +684,10 @@ actor ProductionGroupWindowClient: GroupWindowClient {
                 role: .owner, devices: [identity.certificate(windowID: windowID)])
             let roster = GroupRoster(windowID: windowID, revision: 1, keyEpoch: 1, previousHash: Data(repeating: 0, count: 32), ownerPersonID: identity.personID, members: [member])
             let data = try material(roster: roster, names: [participantID: creatorName], windowName: text, identity: identity, previous: nil, anchor: anchor)
-            body = try GroupWire.encode(GroupAPIModel.CreateInput(operationID: operationID.uuidString.lowercased(), packet: data.packet,
-                envelopes: data.envelopes, encryptedName: data.encryptedName, encryptedMemberNames: data.encryptedMemberNames))
+            var input = GroupAPIModel.CreateInput(operationID: operationID.uuidString.lowercased(), packet: data.packet,
+                envelopes: data.envelopes, encryptedName: data.encryptedName, encryptedMemberNames: data.encryptedMemberNames)
+            input.participationProofs = try await recoveryBoundaries(packet: data.packet, anchor: anchor, previous: nil, identity: identity)
+            body = try GroupWire.encode(input)
             try pin(anchor)
         }
         let result = try GroupWire.decode(GroupAPIModel.MutationReply.self, await mutation(operationID: operationID, intent: intent, path: path, body: body))
@@ -1100,9 +1153,12 @@ extension ProductionGroupWindowClient {
             let roster = GroupRoster(windowID: windowID, revision: current.revision + 1, keyEpoch: current.keyEpoch + 1, previousHash: previous.hash,
                 ownerPersonID: previous.roster.ownerPersonID, members: members)
             let material = try material(roster: roster, names: names, windowName: current.name, identity: identity, previous: previous, anchor: record.anchor)
-            body = try GroupWire.encode(GroupAPIModel.Transition(operationID: operation.id.uuidString.lowercased(), expectedRevision: operation.expectedRevision,
+            var input = GroupAPIModel.Transition(operationID: operation.id.uuidString.lowercased(), expectedRevision: operation.expectedRevision,
                 kind: kind, targetID: targetID, packet: material.packet, envelopes: material.envelopes, encryptedName: material.encryptedName,
-                encryptedMemberNames: material.encryptedMemberNames, personSponsorSignature: kind == "addDevice" ? candidate?.personAuthorization : nil))
+                encryptedMemberNames: material.encryptedMemberNames, personSponsorSignature: kind == "addDevice" ? candidate?.personAuthorization : nil)
+            input.participationProofs = try await recoveryBoundaries(packet: material.packet, anchor: record.anchor, previous: previous, identity: identity,
+                newAdmissions: Set(candidate.map { c in current.activeMembers.contains(where: { $0.personID == c.personID }) ? [] : [c.personID] } ?? []))
+            body = try GroupWire.encode(input)
         }
         let reply = try GroupWire.decode(GroupAPIModel.MutationReply.self, await mutation(operationID: operation.id, intent: intent, path: path, body: body))
         guard reply.operationID == operation.id.uuidString.lowercased(), reply.revision == operation.expectedRevision + 1 else { throw GroupClientError.invalidResponse }

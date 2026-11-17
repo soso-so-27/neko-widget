@@ -249,7 +249,7 @@ xcrun --sdk macosx swiftc -D INTERNAL_PRESENTATION -parse-as-library -target "$(
   NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupInvitationLink.swift NekoWidget/Services/GroupWindowStorage.swift \
   NekoWidget/Services/GroupWindowOperationStore.swift Shared/Sharing/ClientUpgradeRequirement.swift NekoWidget/Services/GroupWindowTransport.swift \
   NekoWidget/Services/GroupWindowAPIModels.swift NekoWidget/Services/GroupWindowPhotoValidation.swift \
-  NekoWidget/Services/ProductionGroupWindowClient.swift ci/verify-group-adapter.swift \
+  NekoWidget/Services/ProductionGroupWindowClient.swift NekoWidget/Services/GroupRecoveryClient.swift NekoWidget/Views/GroupRecoveryPresentation.swift ci/verify-group-adapter.swift \
   -o "$RUNNER_TEMP/group-adapter-tests"
 "$RUNNER_TEMP/group-adapter-tests" ci/fixtures/group-http-v3.json ci/fixtures/group-roster-v3.json | node ci/verify-native-group-http.mjs
 xcrun --sdk macosx swiftc -D GROUP_REPORT_CRYPTO_CHECKS -parse-as-library -target "$(uname -m)-apple-macos14.0" \

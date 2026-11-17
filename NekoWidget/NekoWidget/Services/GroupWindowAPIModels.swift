@@ -61,6 +61,7 @@ enum GroupAPIModel {
     struct CreateInput: Codable {
         let operationID: String; let packet: SignedGroupRoster; let envelopes: [GroupKeyEnvelope]
         let encryptedName: Data; let encryptedMemberNames: [String: Data]
+        var participationProofs: [GroupParticipationBoundary]? = nil
     }
     struct Mutation: Codable { let operationID: String; let expectedRevision: Int }
     struct MutationReply: Decodable { let operationID: String; let windowID: String?; let revision: Int?; let keyEpoch: Int? }
@@ -101,6 +102,7 @@ enum GroupAPIModel {
         let operationID: String; let expectedRevision: Int; let kind: String; let targetID: String
         let packet: SignedGroupRoster; let envelopes: [GroupKeyEnvelope]
         let encryptedName: Data; let encryptedMemberNames: [String: Data]; let personSponsorSignature: Data?
+        var participationProofs: [GroupParticipationBoundary]? = nil
     }
     struct CancelInput: Codable { let operationID: String }
     struct LeaveInput: Codable { let operationID: String; let expectedRevision: Int; let selfSignature: Data }

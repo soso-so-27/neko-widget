@@ -252,6 +252,11 @@ private actor EchoTransport: GroupHTTPTransport {
         guard let creation, let packet = creation["packet"] as? [String: Any], let r = packet["roster"] as? [String: Any],
               let windowID = r["windowId"] as? String, let members = r["members"] as? [[String: Any]], let owner = members.first else { throw Failure.check("echo created window") }
         let root = "/v3/group-windows/" + windowID
+        if path == root + "/recovery/pending" {
+            let packetValue = try GroupWire.decode(SignedGroupRoster.self, JSONSerialization.data(withJSONObject: packet))
+            return try reply(["roster":packet,"rosterHash":GroupWire.base64(GroupCanonical.hash(packetValue.roster.canonicalBytes())),
+                "items":[],"participationProofs":creation["participationProofs"] ?? []])
+        }
         if path == root + "/invitations" {
             if invited == nil {
                 invited = ["operationId": try text("operationId"), "invitationId": GroupWire.randomID(), "expiresAt": Int(Date().timeIntervalSince1970) + 86400, "revision": r["revision"]!]
@@ -833,6 +838,22 @@ private struct GroupAdapterChecks {
         let afterInvalidName = await nameRelay.stats()
         try check(namedStats.1.count == afterInvalidName.1.count, "invalid creator name makes no creation request")
         try await verifyManagement(endpoint: endpoint, folder: folder.appendingPathComponent("management"))
+        let recoveryRelay = EchoTransport(), recoverySecrets = MemorySecrets()
+        let recoveryClient = try ProductionGroupWindowClient(endpoint: URL(string: "https://recovery.invalid")!,
+            secrets: recoverySecrets, transport: recoveryRelay, outboxDirectory: folder.appendingPathComponent("recovery"),
+            billingSigner: SyntheticBillingSigner(), recoveryEnabled: true)
+        let recoveryOperation = UUID()
+        do { _ = try await recoveryClient.createWindow(name: "合成", operationID: recoveryOperation) } catch GroupClientError.offline {}
+        _ = try await recoveryClient.createWindow(name: "合成", operationID: recoveryOperation)
+        let recoveryBodies = await recoveryRelay.stats().1
+        try check(recoveryBodies.count == 2 && recoveryBodies[0] == recoveryBodies[1], "new boundary freezes with operation")
+        let recoveryInput = try GroupWire.decode(GroupAPIModel.CreateInput.self, recoveryBodies[0])
+        let recoveryMember = recoveryInput.packet.roster.members[0]
+        let recoveryHead = try GroupRosterVerifier.verify(recoveryInput.packet, anchor: .init(windowID: recoveryInput.packet.roster.windowID,
+            ownerPersonID: recoveryMember.personID, ownerIdentityPublicKey: recoveryMember.identityPublicKey))
+        try check(recoveryInput.participationProofs?.count == 1 && recoveryInput.participationProofs?[0].verified(head: recoveryHead,
+            environment: "staging", personID: recoveryMember.personID) != nil, "create attaches actual signed participation")
+
         try await verifyOutboxHousekeeping(endpoint: endpoint, folder: folder.appendingPathComponent("outbox-housekeeping"))
         print("Group adapter: wire, signed names, HPKE, durable retries and device-root separation passed")
     }

@@ -7,7 +7,7 @@ export interface FamilyCryptoMember { personId: string; identityPublicKey: strin
 export interface FamilyCryptoRoster {
   familyId: string; epoch: number; previousHash: string; keyCommitment: string; members: FamilyCryptoMember[];
 }
-export interface SignedFamilyCryptoRoster { roster: FamilyCryptoRoster; signerDeviceId: string; signature: string }
+export interface SignedFamilyCryptoRoster { roster: FamilyCryptoRoster; signerDeviceId: string; signature: string; participationProofs?: FamilyParticipation[] }
 export interface VerifiedFamilyCryptoRoster { packet: SignedFamilyCryptoRoster; hash: string }
 export interface FamilyKeyEnvelope {
   familyId: string; keyEpoch: number; keyRosterHash: string; recipientRosterHash: string;
@@ -70,7 +70,7 @@ export function familyRosterBytes(value: unknown): Uint8Array {
   const result = groupFields(fields); if (result.length > 65535) invalid(); return result;
 }
 export async function verifyFamilyRoster(value: unknown, previous?: VerifiedFamilyCryptoRoster): Promise<VerifiedFamilyCryptoRoster> {
-  const raw = asObject(value); exactKeys(raw, ['roster', 'signerDeviceId', 'signature']);
+  const raw = asObject(value); exactKeys(raw, ['roster', 'signerDeviceId', 'signature', ...(raw.participationProofs!==undefined?['participationProofs']:[])]);
   id(raw.signerDeviceId); binaryField(raw, 'signature', 64);
   const bytes = familyRosterBytes(raw.roster), packet = raw as unknown as SignedFamilyCryptoRoster, r = packet.roster;
   const signer = familyDevice(r, packet.signerDeviceId); if (!signer) invalid();
@@ -92,7 +92,13 @@ export async function verifyFamilyRoster(value: unknown, previous?: VerifiedFami
       }
     }
   }
-  return { packet, hash: await sha256Base64url(bytes) };
+  const verified={ packet, hash: await sha256Base64url(bytes) };
+  if(packet.participationProofs!==undefined){
+    if(!Array.isArray(packet.participationProofs)||packet.participationProofs.length>64)invalid();
+    unique(packet.participationProofs.map(p=>p.personId));
+    for(const proof of packet.participationProofs)await verifyFamilyParticipation(proof,verified);
+  }
+  return verified;
 }
 function sameDevice(a: GroupRosterDevice, b: GroupRosterDevice): boolean {
   return a.id === b.id && a.signingPublicKey === b.signingPublicKey && a.hpkePublicKey === b.hpkePublicKey && a.personAuthorization === b.personAuthorization;
@@ -131,4 +137,32 @@ export async function verifyFamilyOperation(value: unknown, roster: VerifiedFami
   if (!await verifyEd25519(signer.device.signingPublicKey, stringField(raw, 'signature'),
     groupFields(['FNB1.OPERATION.SIGN', aad, base64urlDecode(await sha256Base64url(ciphertext), 32)]))) invalid();
   return raw as unknown as FamilyEncryptedOperation;
+}
+
+export interface FamilyParticipation {environment:string;familyId:string;personId:string;admissionEpoch:number;rosterHash:string;signerDeviceId:string;signature:string}
+export function familyParticipationBytes(p:FamilyParticipation):Uint8Array {
+ return groupFields(['FNB1.RECOVERY.PARTICIPATION.V1',p.environment,familyUUID(p.familyId),p.personId,String(p.admissionEpoch),base64urlDecode(p.rosterHash,32),p.signerDeviceId]);
+}
+async function verifyFamilyParticipation(value:unknown,head:VerifiedFamilyCryptoRoster):Promise<FamilyParticipation>{
+ const p=asObject(value);exactKeys(p,['environment','familyId','personId','admissionEpoch','rosterHash','signerDeviceId','signature']);
+ if(!['staging','production'].includes(p.environment as string)||familyUUID(p.familyId)!==familyUUID(head.packet.roster.familyId)
+   ||p.rosterHash!==head.hash||p.signerDeviceId!==head.packet.signerDeviceId)invalid();
+ const person=id(p.personId);integerField(p,'admissionEpoch',1,head.packet.roster.epoch);binaryField(p,'signature',64);binaryField(p,'rosterHash',32);
+ const signer=familyDevice(head.packet.roster,id(p.signerDeviceId));
+ if(!signer||!head.packet.roster.members.some(m=>m.personId===person)||!await verifyEd25519(signer.device.signingPublicKey,p.signature as string,familyParticipationBytes(p as unknown as FamilyParticipation)))invalid();
+ return p as unknown as FamilyParticipation;
+}
+export async function validateFamilyParticipationTransition(next:VerifiedFamilyCryptoRoster,previous:VerifiedFamilyCryptoRoster|undefined,environment:string|undefined,enabled:string|undefined):Promise<void>{
+ const proofs=next.packet.participationProofs;if(proofs===undefined)return;
+ if(enabled!=='YES')invalid();
+ for(const proof of proofs){
+  if(proof.environment!==environment)invalid();
+  if(!previous?.packet.roster.members.some(m=>m.personId===proof.personId)){
+   if(proof.admissionEpoch!==next.packet.roster.epoch)invalid();
+  }else{
+   const old=previous.packet.participationProofs?.find(p=>p.personId===proof.personId);
+   if(!old||old.environment!==environment||old.admissionEpoch!==proof.admissionEpoch)invalid();
+   await verifyFamilyParticipation(old,previous);
+  }
+ }
 }
