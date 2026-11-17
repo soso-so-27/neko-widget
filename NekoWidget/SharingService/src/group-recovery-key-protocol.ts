@@ -59,7 +59,7 @@ export async function verifyRecoveryOffer(value:unknown,current:VerifiedGroupRos
   const sender=current.packet.roster.members.flatMap(m=>m.devices).find(d=>d.id===o.senderDeviceId);
   const pastSender=epoch.packet.roster.members.flatMap(m=>m.devices).find(d=>d.id===o.senderDeviceId);
   if(!sender||!pastSender||sender.signingPublicKey!==pastSender.signingPublicKey
-   ||boundary.personId!==recipient.personId||!participationAllowsEpoch(boundary,current,epoch)
+   ||boundary.personId!==recipient.personId||boundary.environment!==recipient.environment||!participationAllowsEpoch(boundary,current,epoch)
    ||o.environment!==recipient.environment||o.windowId!==recipient.windowId||o.operationId!==recipient.operationId
    ||o.keyEpoch!==epoch.packet.roster.keyEpoch||o.epochRosterHash!==epoch.hash||o.currentRosterHash!==current.hash
    ||o.recipientDeviceId!==recipient.deviceId||o.expiresAt<=now||o.expiresAt>now+86400)return null;

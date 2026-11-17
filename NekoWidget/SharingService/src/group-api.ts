@@ -1,6 +1,8 @@
 import { ApiError } from './errors';
 import { storeAnchorReceipt } from './group-anchor-receipts';
 import { groupRecoveryCatalogAPI } from './group-recovery-catalog';
+import { providerRecoveryAPI } from './group-recovery-key-delivery';
+import { completeRecoveryKeys } from './group-recovery-key-completion';
 import type { Env } from './env';
 import { authenticateGroupRequest,groupId } from './group-auth';
 import { createGroupIdentityChallenge,registerGroupIdentity } from './group-identities';
@@ -91,6 +93,9 @@ async function dispatchGroup(request:Request,env:Env):Promise<Response> {
   const key=suffix.match(/^keys\/([1-9][0-9]{0,14})$/u);
   if(key && request.method==='GET') return getGroupKey(env,actor,windowId,Number(key[1]));
   if(!body) throw new ApiError(404,'not_found','The endpoint was not found.');
+  const recoveryCompletion=suffix.match(/^recovery\/([0-9a-f-]{36})\/complete$/u);
+  if(recoveryCompletion)return completeRecoveryKeys(env,actor,windowId,recoveryCompletion[1]!,body);
+  if(suffix.startsWith('recovery/'))return providerRecoveryAPI(env,actor,windowId,suffix,body);
   if(suffix==='anchor-receipt')return storeAnchorReceipt(env,actor,windowId,body);
   if(suffix==='name')return manageGroupWindow(env,actor,windowId,body);
   if(suffix==='close')return manageGroupWindow(env,actor,windowId,body,true);
