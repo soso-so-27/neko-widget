@@ -1756,6 +1756,13 @@ extension AppStoreScreenshotFixture {
         static func seedIfRequested() async {
             if isRequested, !familyNames.isEmpty {
                 FamilyNotebookPrototype.shared.useFixtureFamilyCats(familyNames, scenario: scenario)
+                // 11/17: a photo another family member delivered for the
+                // first family cat (synthetic, through the real client).
+                if CommandLine.arguments.contains(FamilyRepresentativePhotoFixture.argument),
+                   let first = FamilyNotebookPrototype.shared.unlinkedFamilyCats.first,
+                   let fixture = try? await FamilyRepresentativePhotoFixture.make(cat: first.id) {
+                    FamilyRepresentativePhotos.shared.installFixture(fixture)
+                }
             }
             guard isRequested, rows != "none" else { return }
             let calendar = Calendar.nekoGregorian, now = Date()

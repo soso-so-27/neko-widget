@@ -204,6 +204,10 @@ struct CatCareDetailView: View {
     @State private var unlinkFailed = false
     @State private var isDeleting = false
     @State private var deleteFailed = false
+    /// 11/17: the family's representative photo, in 「…」 (off: nothing).
+    @ObservedObject private var familyPhotos = FamilyRepresentativePhotos.shared
+    @State private var familyPhotoQuestion: FamilyPhotoQuestion?
+    @State private var familyPhotoReport: FamilyPhotoReportTarget?
     /// Opened from inside the family notebook: no second notebook on top of it.
     private var insideFamilyNotebook = false
 
@@ -307,17 +311,25 @@ struct CatCareDetailView: View {
                           || showsNameEditor || isSavingName || showsKeyPhotoPicker
                           || photoRole != nil || cropRequest != nil)
         .familyNotebookToolSync(enabled: sharedWithFamily)
+        .modifier(FamilyPhotoDialogs(cat: familyPhotoCatID, keyPhoto: ownKeyPhoto,
+                                     question: $familyPhotoQuestion, reportTarget: $familyPhotoReport))
+        .task(id: familyPhotoCatID) {
+            // The photo 「…」 offers to report is the one this page's cat shows.
+            if let cat = familyPhotoCatID, showsFamilyPhoto { await familyPhotos.read([cat]) }
+        }
         .onChange(of: familyNotebook.familyWritesToCatCare) { _, _ in takeFamilyWrites() }
         .toolbar {
             // 11/12 (round 2): deleting the cat sits in 「…」, as deleting does
             // in every tool (it was the page's last red row).
             if isProfile {
                 ToolbarItem(placement: .topBarTrailing) { moreMenu }
-            } else if canReorder {
-                // A family cat's page: nothing to delete here, only the order.
+            } else if canReorder || familyPhotoCatID.map({ FamilyPhotoMenuItems.hasItems(cat: $0, ownPhoto: false) }) == true {
+                // A family cat's page: nothing to delete here, only the order
+                // (and the family's photo, 11/17).
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        reorderButton
+                        if canReorder { reorderButton }
+                        familyPhotoItems
                     } label: {
                         Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44)
                     }
@@ -896,8 +908,41 @@ struct CatCareDetailView: View {
                 Button("家族の手帳とのつながりを外す", systemImage: "link") { confirmsUnlink = true }
                     .accessibilityIdentifier("cat-profile-family-unlink")
             }
+            familyPhotoItems
         }
         .disabled(isDeleting)
+    }
+
+    // MARK: The family's representative photo (11/17)
+
+    /// The family notebook's cat this page is (nil: not in it, or the photo is off).
+    private var familyPhotoCatID: UUID? {
+        guard familyPhotos.isOn else { return nil }
+        let tool: UUID?
+        if case let .toolCat(id, _) = subject { tool = id } else { tool = catID }
+        guard let tool else { return nil }
+        return familyNotebook.activeFamilyCats.first { $0.toolID == tool }?.id
+    }
+
+    /// This iPhone's key photo of the cat: the one 「家族に写真を届ける」 sends.
+    private var ownKeyPhoto: String? {
+        if case let .profile(profile) = subject { return profile.coverPhoto?.localIdentifier }
+        return nil
+    }
+
+    /// A family cat with no cat of this iPhone: its page shows the family's photo.
+    private var showsFamilyPhoto: Bool {
+        if case .toolCat = subject { return true }
+        return false
+    }
+
+    /// With a key photo here: deliver it. A family cat's own page: the
+    /// photo it shows (report, not show this person's photos).
+    @ViewBuilder private var familyPhotoItems: some View {
+        if let cat = familyPhotoCatID, ownKeyPhoto != nil || showsFamilyPhoto {
+            FamilyPhotoMenuItems(cat: cat, ownPhoto: ownKeyPhoto != nil,
+                                 question: $familyPhotoQuestion, reportTarget: $familyPhotoReport)
+        }
     }
 
     /// From two cats, the family notebook's included (CatOrderView).
@@ -2729,4 +2774,422 @@ extension CatCareSummary {
         return profileIdentifier.flatMap { record(profileIdentifier: $0) }
     }
 
+}
+
+// MARK: - The family's representative photo (11/17)
+
+/// What the screens need from the family's representative photo. Behind it
+/// is the real service (FamilyNotebookServiceFactory) only while it is on,
+/// or, in review captures, a synthetic relay; otherwise there is none and
+/// the screens show nothing of it.
+@MainActor
+protocol FamilyRepresentativePhotoBackend: AnyObject {
+    var myPersonID: String? { get }
+    func displayName(of personID: String) -> String?
+    /// Who delivered the cat's photo, from this iPhone's copy (no network).
+    func author(of cat: UUID) -> String?
+    func load(_ cats: [UUID]) async throws -> [UUID: FamilyNotebookPhotoLoad]
+    func deliver(_ cat: UUID, source: Data) async throws
+    func retry(_ cat: UUID) async throws
+    func clear(_ cat: UUID) async throws
+    func report(assetID: UUID, reason: GroupReportReason) async throws -> String
+    func hide(_ personID: String) async throws
+    func unhide(_ personID: String) async throws
+}
+
+/// The photos a family cat page shows instead of のわ, and what is being
+/// delivered. Shown only: never the photo list, a widget, the archive or
+/// the library. A read that fails keeps what is on screen (only an answer
+/// of 「none」 brings のわ back).
+@MainActor
+final class FamilyRepresentativePhotos: ObservableObject {
+    static let shared = FamilyRepresentativePhotos()
+
+    struct Shown: Equatable {
+        let assetID: UUID
+        let authorID: String
+        let image: UIImage
+        static func == (lhs: Shown, rhs: Shown) -> Bool { lhs.assetID == rhs.assetID && lhs.authorID == rhs.authorID }
+    }
+    /// The small line under the item in 「…」 (only while delivering, or when it failed).
+    enum Line: Equatable { case sending, failed, limited }
+
+    /// By the family cat's ID.
+    @Published private(set) var shown: [UUID: Shown] = [:]
+    /// Cats whose photo is from someone this person chose not to show.
+    @Published private(set) var hiddenAuthors: [UUID: String] = [:]
+    @Published private(set) var lines: [UUID: Line] = [:]
+    @Published private(set) var backend: (any FamilyRepresentativePhotoBackend)?
+    private var readAt: [UUID: Date] = [:]
+    private var reading = false
+    /// A page that stays open reads its photo at most once a minute.
+    static let automaticGap: TimeInterval = 60
+
+    init() { backend = FamilyNotebookServiceFactory.representativePhotoBackend() }
+
+    var isOn: Bool { backend != nil }
+
+#if DEBUG
+    /// Review captures only (AppStoreScreenshotFixture.CatHomeStress).
+    func installFixture(_ backend: any FamilyRepresentativePhotoBackend) { self.backend = backend }
+#endif
+
+    func name(of personID: String) -> String {
+        GroupDisplayName.withSan(backend?.displayName(of: personID) ?? "家族の人")
+    }
+
+    func isMine(_ personID: String?) -> Bool {
+        guard let personID, let me = backend?.myPersonID else { return false }
+        return personID == me
+    }
+
+    /// The photos of the cats on screen. Not marked as the person's: the
+    /// calls count toward the automatic budget like any page that reads.
+    func read(_ cats: [UUID], force: Bool = false) async {
+        guard let backend, !cats.isEmpty, !reading else { return }
+        let now = Date()
+        let due = force ? cats : cats.filter { readAt[$0].map { now.timeIntervalSince($0) >= Self.automaticGap } ?? true }
+        guard !due.isEmpty else { return }
+        reading = true; defer { reading = false }
+        for cat in due { readAt[cat] = now }
+        guard let loaded = try? await backend.load(due) else { return }
+        for (cat, load) in loaded { apply(load, to: cat) }
+    }
+
+    private func apply(_ load: FamilyNotebookPhotoLoad, to cat: UUID) {
+        switch load {
+        case let .shown(assetID, authorID, jpeg):
+            if hiddenAuthors[cat] != nil { hiddenAuthors[cat] = nil }
+            guard shown[cat]?.assetID != assetID, let image = UIImage(data: jpeg) else { return }
+            shown[cat] = Shown(assetID: assetID, authorID: authorID, image: image)
+        case let .hidden(authorID):
+            if shown[cat] != nil { shown[cat] = nil }
+            if hiddenAuthors[cat] != authorID { hiddenAuthors[cat] = authorID }
+        case .none:
+            if shown[cat] != nil { shown[cat] = nil }
+            if hiddenAuthors[cat] != nil { hiddenAuthors[cat] = nil }
+        }
+    }
+
+    /// After 「家族に写真を届けますか」→［届ける］ only.
+    func deliver(_ cat: UUID, source: @escaping @MainActor () async -> Data?) async {
+        guard let backend, lines[cat] != .sending else { return }
+        await SharingPersonAction.run {
+            lines[cat] = .sending
+            guard let data = await source() else { lines[cat] = .failed; return }
+            do { try await backend.deliver(cat, source: data); lines[cat] = nil }
+            catch FamilyNotebookPhotoFailure.limited { lines[cat] = .limited }
+            catch { lines[cat] = .failed }
+        }
+    }
+
+    /// 「もう一度」: the same delivery again.
+    func retry(_ cat: UUID) async {
+        guard let backend, lines[cat] != .sending else { return }
+        await SharingPersonAction.run {
+            lines[cat] = .sending
+            do { try await backend.retry(cat); lines[cat] = nil }
+            catch FamilyNotebookPhotoFailure.limited { lines[cat] = .limited }
+            catch { lines[cat] = .failed }
+        }
+    }
+
+    func clear(_ cat: UUID) async {
+        guard let backend else { return }
+        _ = await SharingPersonAction.run { try? await backend.clear(cat) }
+        lines[cat] = nil
+    }
+
+    /// The photo shown when 「この写真を通報」 was chosen; once received it
+    /// is not shown on this iPhone again.
+    func report(cat: UUID, assetID: UUID, reason: GroupReportReason) async throws -> String {
+        guard let backend else { throw FamilyNotebookPhotoFailure.unavailable }
+        let number = try await SharingPersonAction.run { try await backend.report(assetID: assetID, reason: reason) }
+        if shown[cat]?.assetID == assetID { shown[cat] = nil }
+        return number
+    }
+
+    /// This iPhone only; the other person is not told.
+    func hide(_ personID: String) async -> Bool {
+        guard let backend else { return false }
+        do { try await SharingPersonAction.run { try await backend.hide(personID) } } catch { return false }
+        for (cat, photo) in shown where photo.authorID == personID {
+            shown[cat] = nil
+            hiddenAuthors[cat] = personID
+        }
+        return true
+    }
+
+    func unhide(_ personID: String) async {
+        guard let backend else { return }
+        do { try await SharingPersonAction.run { try await backend.unhide(personID) } } catch { return }
+        let cats = hiddenAuthors.filter { $0.value == personID }.map(\.key)
+        for cat in cats { hiddenAuthors[cat] = nil }
+        await SharingPersonAction.run { await read(cats, force: true) }
+    }
+
+    /// The cat's key photo of this iPhone, chosen to be delivered (the
+    /// client re-encodes it without metadata).
+    static func keyPhotoJPEG(_ localIdentifier: String) async -> Data? {
+#if DEBUG
+        if let image = AppStoreScreenshotFixture.CatHomeStress.image(for: localIdentifier) {
+            return image.jpegData(compressionQuality: 0.9)
+        }
+#endif
+        return await Task.detached(priority: .userInitiated) {
+            PhotoImageLoader().image(localIdentifier: localIdentifier, targetSize: CGSize(width: 2048, height: 2048))?
+                .jpegData(compressionQuality: 0.9)
+        }.value
+    }
+}
+
+/// A question about the family's photo, asked from 「…」.
+enum FamilyPhotoQuestion: Identifiable, Equatable {
+    case deliver
+    case hide(personID: String)
+    var id: String {
+        switch self {
+        case .deliver: "deliver"
+        case let .hide(personID): "hide-" + personID
+        }
+    }
+}
+
+struct FamilyPhotoReportTarget: Identifiable, Equatable {
+    let cat: UUID
+    let assetID: UUID
+    var id: UUID { assetID }
+}
+
+/// 「…」's items for the family's photo of one cat. Nothing while it is off.
+@MainActor
+struct FamilyPhotoMenuItems: View {
+    let cat: UUID
+    /// This iPhone has its own key photo of the cat (a cat linked to the notebook).
+    let ownPhoto: Bool
+    @Binding var question: FamilyPhotoQuestion?
+    @Binding var reportTarget: FamilyPhotoReportTarget?
+    @ObservedObject private var photos = FamilyRepresentativePhotos.shared
+
+    init(cat: UUID, ownPhoto: Bool, question: Binding<FamilyPhotoQuestion?>, reportTarget: Binding<FamilyPhotoReportTarget?>) {
+        self.cat = cat; self.ownPhoto = ownPhoto; _question = question; _reportTarget = reportTarget
+    }
+
+    static func hasItems(cat: UUID, ownPhoto: Bool) -> Bool {
+        let photos = FamilyRepresentativePhotos.shared
+        guard photos.isOn else { return false }
+        if ownPhoto { return true }
+        if let shown = photos.shown[cat], !photos.isMine(shown.authorID) { return true }
+        return photos.hiddenAuthors[cat] != nil
+    }
+
+    var body: some View {
+        if photos.isOn {
+            if ownPhoto { deliverItems } else { receivedItems }
+        }
+    }
+
+    @ViewBuilder private var deliverItems: some View {
+        let line = photos.lines[cat]
+        let delivered = photos.isMine(photos.backend?.author(of: cat))
+        Button { question = .deliver } label: {
+            Text(delivered ? "家族に届けた写真を替える" : "家族に写真を届ける")
+            switch line {
+            case .sending: Text("届けています")
+            case .failed: Text("届けられませんでした。")
+            case .limited: Text("家族の手帳の写真が上限です")
+            case nil: EmptyView()
+            }
+            Image(systemName: "paperplane")
+        }
+        .disabled(line == .sending)
+        .accessibilityIdentifier("family-photo-deliver")
+        if line == .failed {
+            Button("もう一度", systemImage: "arrow.clockwise") { Task { await photos.retry(cat) } }
+                .accessibilityIdentifier("family-photo-retry")
+        }
+        if delivered {
+            Button("家族に届けた写真を消す", systemImage: "xmark.circle", role: .destructive) {
+                Task { await photos.clear(cat) }
+            }
+            .disabled(line == .sending)
+            .accessibilityIdentifier("family-photo-clear")
+        }
+    }
+
+    @ViewBuilder private var receivedItems: some View {
+        if let shown = photos.shown[cat], !photos.isMine(shown.authorID) {
+            Button("この写真を通報", systemImage: "exclamationmark.bubble") {
+                reportTarget = FamilyPhotoReportTarget(cat: cat, assetID: shown.assetID)
+            }
+            .accessibilityIdentifier("family-photo-report")
+            Button(photos.name(of: shown.authorID) + "の写真を表示しない", systemImage: "eye.slash") {
+                question = .hide(personID: shown.authorID)
+            }
+            .accessibilityIdentifier("family-photo-hide")
+        }
+        if let hidden = photos.hiddenAuthors[cat] {
+            Button(photos.name(of: hidden) + "の写真を表示する", systemImage: "eye") {
+                Task { await photos.unhide(hidden) }
+            }
+            .accessibilityIdentifier("family-photo-unhide")
+        }
+    }
+}
+
+/// The questions and the report sheet of FamilyPhotoMenuItems, on the page.
+@MainActor
+struct FamilyPhotoDialogs: ViewModifier {
+    let cat: UUID?
+    /// The key photo to deliver (this iPhone's own), or nil.
+    let keyPhoto: String?
+    @Binding var question: FamilyPhotoQuestion?
+    @Binding var reportTarget: FamilyPhotoReportTarget?
+    @ObservedObject private var photos = FamilyRepresentativePhotos.shared
+
+    init(cat: UUID?, keyPhoto: String?, question: Binding<FamilyPhotoQuestion?>, reportTarget: Binding<FamilyPhotoReportTarget?>) {
+        self.cat = cat; self.keyPhoto = keyPhoto; _question = question; _reportTarget = reportTarget
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .alert("家族に写真を届けますか", isPresented: asksDeliver) {
+                Button("届ける") { deliver() }
+                    .accessibilityIdentifier("family-photo-deliver-confirm")
+                Button("やめる", role: .cancel) {}
+            } message: {
+                Text("この写真を、家族の手帳のみんなに見せます。")
+            }
+            .confirmationDialog(hideTitle, isPresented: asksHide, titleVisibility: .visible) {
+                Button("表示しない", role: .destructive) { hide() }
+                    .accessibilityIdentifier("family-photo-hide-confirm")
+                Button("キャンセル", role: .cancel) {}
+            } message: {
+                Text("この手帳で、" + hideName + "が届けた写真がこのiPhoneに出なくなります。相手には知らせません。")
+            }
+            .sheet(item: $reportTarget) { target in
+                FamilyPhotoReportSheet(target: target)
+            }
+    }
+
+    private var asksDeliver: Binding<Bool> {
+        Binding(get: { question == .deliver }, set: { if !$0, question == .deliver { question = nil } })
+    }
+
+    private var hiddenPerson: String? {
+        if case let .hide(personID) = question { return personID }
+        return nil
+    }
+    private var asksHide: Binding<Bool> {
+        Binding(get: { hiddenPerson != nil }, set: { if !$0, hiddenPerson != nil { question = nil } })
+    }
+    private var hideName: String { hiddenPerson.map { photos.name(of: $0) } ?? "" }
+    private var hideTitle: String { hideName + "の写真を表示しませんか" }
+
+    private func deliver() {
+        guard let cat, let keyPhoto else { return }
+        Task { await photos.deliver(cat) { await FamilyRepresentativePhotos.keyPhotoJPEG(keyPhoto) } }
+    }
+
+    private func hide() {
+        guard let personID = hiddenPerson else { return }
+        Task { _ = await photos.hide(personID) }
+    }
+}
+
+/// Reporting the family's photo shown on this page, as a まど photo is
+/// reported (GroupReportSheet): why, and only this one photo is sent.
+struct FamilyPhotoReportSheet: View {
+    let target: FamilyPhotoReportTarget
+    @ObservedObject private var photos = FamilyRepresentativePhotos.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var reason: GroupReportReason?
+    @State private var number: String?
+    @State private var sending = false
+    @State private var failure: GroupSafetyError?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let number {
+                    Section {
+                        Label("通報しました", systemImage: "checkmark.circle.fill")
+                            .font(.headline)
+                    } footer: {
+                        Text("この写真は、このiPhoneではもう表示されません。")
+                    }
+                    Section {
+                        LabeledContent("通報番号") {
+                            Text(number).font(.body.monospaced()).textSelection(.enabled)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("family-photo-report-number")
+                    } footer: {
+                        Text("問い合わせるときは、この番号を添えてください。")
+                    }
+                } else {
+                    Section {
+                        ForEach(GroupReportReason.allCases, id: \.self) { candidate in
+                            Button {
+                                reason = candidate
+                            } label: {
+                                HStack {
+                                    Text(candidate.title).foregroundStyle(.primary)
+                                    Spacer()
+                                    if reason == candidate { Image(systemName: "checkmark").foregroundStyle(Color.accentColor) }
+                                }
+                            }
+                            .disabled(sending || failure == .unknownOutcome)
+                            .accessibilityIdentifier("family-photo-report-reason-" + candidate.rawValue)
+                        }
+                    } header: {
+                        Text("理由")
+                    } footer: {
+                        Text("運営に送るのはこの写真1枚だけです。送ると、この写真はこのiPhoneでは見えなくなります。")
+                    }
+                    if let failure {
+                        Section {
+                            Text(failure.message).font(.footnote).foregroundStyle(.secondary)
+                                .accessibilityIdentifier("family-photo-report-failure")
+                        }
+                    }
+                }
+            }
+            .navigationTitle("この写真を通報")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(number != nil ? "閉じる" : "やめる") { dismiss() }
+                        .disabled(sending)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if sending {
+                        ProgressView()
+                            .accessibilityLabel("送っています")
+                    } else if number == nil {
+                        Button(failure == .unknownOutcome ? "もう一度送る" : "送る") { Task { await send() } }
+                            .disabled(reason == nil)
+                            .accessibilityIdentifier("family-photo-report-send")
+                    }
+                }
+            }
+        }
+        .interactiveDismissDisabled(sending)
+    }
+
+    /// The first tap fixes the photo and the reason; 「もう一度送る」 sends
+    /// the same encrypted report again (kept by the service until received).
+    private func send() async {
+        guard let reason else { return }
+        sending = true
+        defer { sending = false }
+        do {
+            number = try await photos.report(cat: target.cat, assetID: target.assetID, reason: reason)
+            failure = nil
+        } catch FamilyNotebookPhotoFailure.unavailable {
+            failure = .disabled
+        } catch {
+            failure = .unknownOutcome
+        }
+    }
 }

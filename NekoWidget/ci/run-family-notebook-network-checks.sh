@@ -17,6 +17,7 @@ xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0
   NekoWidget/Services/FamilyNotebookInvitationCrypto.swift NekoWidget/Services/FamilyNotebookKeyCoordinator.swift \
   NekoWidget/Services/FamilyNotebookSharingContract.swift NekoWidget/Services/FamilyNotebookMembershipClient.swift \
   NekoWidget/Services/FamilyNotebookSync.swift NekoWidget/Services/FamilyNotebookAdmissionClient.swift \
+  NekoWidget/Services/FamilyNotebookRepresentativePhoto.swift Shared/Sharing/GroupReportCrypto.swift \
   NekoWidget/Services/ProductionFamilyNotebookSharingService.swift ci/verify-family-notebook-service.swift \
   -o "$RUNNER_TEMP/family-notebook-service-tests"
 "$RUNNER_TEMP/family-notebook-service-tests"
