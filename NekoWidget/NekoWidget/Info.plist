@@ -130,6 +130,10 @@
 	<string>$(SHARING_SUPPORT_URL)</string>
 	<key>SharingCommunityStandardsURL</key>
 	<string>$(SHARING_COMMUNITY_STANDARDS_URL)</string>
+	<key>RootSyncKeychainAccessGroup</key>
+	<string>$(AppIdentifierPrefix)$(APP_BUNDLE_IDENTIFIER)</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>機種変更の試験で、このiPhoneの本人情報を同期する前に本人を確認します。</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

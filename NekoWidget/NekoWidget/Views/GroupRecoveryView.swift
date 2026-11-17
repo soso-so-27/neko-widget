@@ -457,8 +457,11 @@ struct GroupRecoveryLiveScreen: View {
     }
 
     private var waiting: GroupRecoveryRegistrationState {
-        if model.phase == .unavailable { return .unavailable(operationID: Self.local) }
-        return .checking(operationID: Self.local)
+        switch model.phase {
+        case .serverDisabled: return .serverDisabled(operationID: Self.local)
+        case .unavailable: return .unavailable(operationID: Self.local)
+        default: return .checking(operationID: Self.local)
+        }
     }
 
     var body: some View {
@@ -468,7 +471,14 @@ struct GroupRecoveryLiveScreen: View {
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                 .listRowBackground(Color.clear)
                 .accessibilityIdentifier("group-recovery-live-entry")
+                .disabled(model.publishingRoot)
+            if model.canPublishRoot {
+                Button(GroupRecoveryWords.syncAction) { model.syncThisDevice() }
+                    .disabled(model.publishingRoot)
+                if let message = model.rootSyncMessage { Text(message) }
+            }
         }
+        .onDisappear { model.cancelRootPublication() }
         .navigationTitle(GroupRecoveryWords.entry)
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: Binding(get: { model.phase != .idle }, set: { if !$0 { model.close() } })) {
@@ -476,9 +486,15 @@ struct GroupRecoveryLiveScreen: View {
                 GroupRecoveryLiveAdapterView(adapter: adapter) { model.close() }
             } else {
                 NavigationStack {
-                    GroupRecoveryStateView(state: .registration(waiting), send: { command in
-                        if command == .dismiss { model.close() } else { model.begin() }
-                    })
+                    Group {
+                        if model.phase == .noRoots {
+                            Text(GroupRecoveryWords.noRootsTitle)
+                        } else {
+                            GroupRecoveryStateView(state: .registration(waiting), send: { command in
+                                if command == .dismiss { model.close() } else { model.begin() }
+                            })
+                        }
+                    }
                     .toolbar { ToolbarItem(placement: .topBarTrailing) { SheetCloseButton { model.close() } } }
                 }
             }

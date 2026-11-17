@@ -31,7 +31,7 @@ struct SyncedRoot: Sendable, Equatable, CustomStringConvertible, CustomDebugStri
     }
 }
 enum RootSyncFailure: Error, Equatable, Sendable {
-    case invalidInput, invalidRecord, updateRequired, temporarilyUnavailable, keychain(OSStatus), conflict
+    case invalidInput, invalidRecord, updateRequired, temporarilyUnavailable, keychain(OSStatus), conflict, verificationDeclined
     var diagnosticCode: String {
         switch self {
         case .invalidInput: return "invalid-input"
@@ -40,6 +40,7 @@ enum RootSyncFailure: Error, Equatable, Sendable {
         case .temporarilyUnavailable: return "temporarily-unavailable"
         case .keychain(let status): return "keychain-status-\(status)"
         case .conflict: return "conflict"
+        case .verificationDeclined: return "verification-declined"
         }
     }
 }
@@ -63,19 +64,30 @@ actor RootSyncStore {
     }
     private let service: String
     private let environment: Environment
+    private let accessGroup: String?
     private let keychain: any RootSyncKeychain
 
-    init(bundleID: String, environment: Environment, keychain: any RootSyncKeychain = SystemRootSyncKeychain()) throws {
+    init(bundleID: String, environment: Environment, accessGroup: String? = nil,
+         keychain: any RootSyncKeychain = SystemRootSyncKeychain()) throws {
         guard !bundleID.isEmpty, bundleID.utf8.count <= 180,
               bundleID.utf8.allSatisfy({ ($0 == 45 || $0 == 46 || (48...57).contains($0)) || (65...90).contains($0) || (97...122).contains($0) })
         else { throw RootSyncFailure.invalidInput }
+        if let accessGroup {
+            let suffix = "." + bundleID
+            let prefix = accessGroup.dropLast(suffix.count)
+            guard accessGroup.hasSuffix(suffix), !prefix.isEmpty,
+                  prefix.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) })
+            else { throw RootSyncFailure.invalidInput }
+        }
         self.service = bundleID + "." + environment.rawValue + ".root-sync.v1"
         self.environment = environment
+        self.accessGroup = accessGroup
         self.keychain = keychain
     }
     private func query(_ id: String? = nil) -> [String: Any] {
         var q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service, kSecAttrSynchronizable as String: true]
+        if let accessGroup { q[kSecAttrAccessGroup as String] = accessGroup }
         if let id { q[kSecAttrAccount as String] = id }
         return q
     }
@@ -111,6 +123,17 @@ actor RootSyncStore {
         guard status == errSecSuccess else { return .failed(failure(status)) }
         return decode(value, id: id)
     }
+    /// Authentication is requested by the explicitly tapped setup action.
+    /// Load the existing root after that check. A cancelled action writes nothing.
+    func publishCurrentRoot(authenticate: @Sendable () async throws -> Bool,
+                            load: @Sendable () throws -> Data) async throws {
+        guard try await authenticate() else { throw RootSyncFailure.verificationDeclined }
+        try Task.checkCancellation()
+        let root = try load()
+        try Task.checkCancellation()
+        if case .failed(let error) = storeIfAbsent(explicitRoot: root) { throw error }
+    }
+
     func storeIfAbsent(explicitRoot bytes: Data) -> RootSyncWrite {
         guard bytes.count == 32, let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: bytes) else {
             return .failed(.invalidInput)
@@ -130,31 +153,43 @@ actor RootSyncStore {
         default: return .failed(.conflict)
         }
     }
-    func candidates() -> RootSyncCandidates {
+    /// Return the roots only after all candidate records have been validated.
+    /// A locked Keychain or a disappearing record must not become an empty list.
+    func availableRoots() throws -> [SyncedRoot] {
         var q = query()
         q[kSecReturnAttributes as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitAll
         let (status, value) = keychain.copy(q)
-        if status == errSecItemNotFound { return .none }
-        guard status == errSecSuccess else { return .failed(failure(status)) }
-        guard let rows = value as? [[String: Any]] else { return .failed(.invalidRecord) }
-        var ids: [String] = []
+        if status == errSecItemNotFound { return [] }
+        guard status == errSecSuccess else { throw failure(status) }
+        guard let rows = value as? [[String: Any]] else { throw RootSyncFailure.invalidRecord }
+        var roots: [SyncedRoot] = []
+        var seen: Set<String> = []
         for row in rows {
             guard row[kSecAttrService as String] as? String == service,
                   row[kSecAttrSynchronizable as String] as? Bool == true,
-                  let id = row[kSecAttrAccount as String] as? String, validID(id), !ids.contains(id)
-            else { return .failed(.invalidRecord) }
-            // Validate each candidate; never choose by creation time or enumeration order.
+                  let id = row[kSecAttrAccount as String] as? String, validID(id), seen.insert(id).inserted
+            else { throw RootSyncFailure.invalidRecord }
             switch read(expectedRootID: id) {
-            case .found: ids.append(id)
-            case .failed(let error): return .failed(error)
-            case .missing: return .failed(.conflict)
+            case .found(let root): roots.append(root)
+            case .failed(let error): throw error
+            case .missing: throw RootSyncFailure.conflict
             }
         }
-        ids.sort()
-        if ids.isEmpty { return .none }
-        if ids.count == 1 { return .one(ids[0]) }
-        return .unresolved(ids)
+        return roots.sorted { $0.id < $1.id }
+    }
+
+    func candidates() -> RootSyncCandidates {
+        do {
+            let ids = try availableRoots().map(\.id)
+            if ids.isEmpty { return .none }
+            if ids.count == 1 { return .one(ids[0]) }
+            return .unresolved(ids)
+        } catch let error as RootSyncFailure {
+            return .failed(error)
+        } catch {
+            return .failed(.invalidRecord)
+        }
     }
     func removeExact(expectedRootID id: String) -> RootSyncRemoval {
         guard validID(id) else { return .failed(.invalidInput) }
