@@ -36,12 +36,12 @@ export async function verifyRecoveryRecipient(value:unknown,head:VerifiedGroupRo
 }
 
 export interface RecoveryKeyOffer {
- environment:'production'|'staging';windowId:string;operationId:string;keyEpoch:number;
+ environment:'production'|'staging';windowId:string;operationId:string;offerId:string;keyEpoch:number;
  epochRosterHash:string;currentRosterHash:string;recipientDeviceId:string;senderDeviceId:string;
  encapsulatedKey:string;ciphertext:string;expiresAt:number;signature:string;
 }
 export function recoveryKeyContext(o:RecoveryKeyOffer):Uint8Array {
- return groupFields(['NW3.RECOVERY.KEY.V1',o.environment,o.windowId,o.operationId,String(o.keyEpoch),
+ return groupFields(['NW3.RECOVERY.KEY.V1',o.environment,o.windowId,o.operationId,o.offerId,String(o.keyEpoch),
   base64urlDecode(o.epochRosterHash,32),base64urlDecode(o.currentRosterHash,32),o.recipientDeviceId,o.senderDeviceId,String(o.expiresAt)]);
 }
 export async function recoveryOfferBytes(o:RecoveryKeyOffer):Promise<Uint8Array>{
@@ -51,9 +51,10 @@ export async function recoveryOfferBytes(o:RecoveryKeyOffer):Promise<Uint8Array>
 export async function verifyRecoveryOffer(value:unknown,current:VerifiedGroupRoster,epoch:VerifiedGroupRoster,
  recipient:VerifiedRecoveryRecipient,boundary:VerifiedParticipation,now:number):Promise<RecoveryKeyOffer|null>{
  try{
-  const raw=asObject(value);exactKeys(raw,['environment','windowId','operationId','keyEpoch','epochRosterHash','currentRosterHash',
+  const raw=asObject(value);exactKeys(raw,['environment','windowId','operationId','offerId','keyEpoch','epochRosterHash','currentRosterHash',
    'recipientDeviceId','senderDeviceId','encapsulatedKey','ciphertext','expiresAt','signature']);
   const o=raw as unknown as RecoveryKeyOffer;
+  uuidField(raw,'offerId');uuidField(raw,'operationId');
   integerField(raw,'keyEpoch',1,Number.MAX_SAFE_INTEGER);integerField(raw,'expiresAt',1,Number.MAX_SAFE_INTEGER);
   const sender=current.packet.roster.members.flatMap(m=>m.devices).find(d=>d.id===o.senderDeviceId);
   const pastSender=epoch.packet.roster.members.flatMap(m=>m.devices).find(d=>d.id===o.senderDeviceId);
