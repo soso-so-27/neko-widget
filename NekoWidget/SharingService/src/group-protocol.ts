@@ -1,5 +1,6 @@
 import { base64urlDecode, base64urlEncode, sha256Base64url, verifyEd25519 } from "./encoding";
 import { ApiError } from "./errors";
+import {validateGroupRecoveryProof,type GroupRecoveryProof,type GroupRecoveryLedger} from './group-recovery-proof';
 
 export interface GroupRosterDevice {
   id: string;
@@ -142,6 +143,18 @@ function freezePacket<T>(value: T): T {
 export async function verifyGroupRoster(packet: SignedGroupRoster, anchor: GroupTrustAnchor,
   previous?: VerifiedGroupRoster): Promise<VerifiedGroupRoster> {
   return verifyRoster(packet,anchor,previous,false);
+}
+
+/** Explicit solo recovery only; ordinary transition verification is unchanged.
+ * Caller MUST atomically recheck the no-provider ledger before committing. */
+export async function verifySoloRecoveryRoster(packet:SignedGroupRoster,previous:VerifiedGroupRoster,
+ proof:GroupRecoveryProof,ledger:GroupRecoveryLedger,now:number):Promise<VerifiedGroupRoster>{
+ const owner=previous.packet.roster.members[0];
+ if(previous.packet.roster.members.length!==1||!owner||owner.role!=='owner'||owner.personId!==ledger.personId
+ ||packet.roster.members.length!==1||packet.roster.members[0]!.devices.length!==1
+ ||packet.signerDeviceId!==proof.claim.newDevice.id)invalid('invalid_recovery_proof');
+ await validateGroupRecoveryProof(proof,previous,packet.roster,ledger,now);
+ return verifyRoster(packet,{windowId:ledger.windowId,ownerPersonId:owner.personId,ownerIdentityPublicKey:owner.identityPublicKey},undefined,true);
 }
 
 async function verifyRoster(packet: SignedGroupRoster, anchor: GroupTrustAnchor,
