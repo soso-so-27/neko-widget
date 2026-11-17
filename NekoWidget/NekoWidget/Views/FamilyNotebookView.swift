@@ -984,6 +984,8 @@ struct FamilyNotebookView: View {
     @State private var showsName = false
     /// 「家族の手帳から抜ける」 at the bottom of the notebook (11/7).
     @State private var confirmsLeave = false
+    /// This iPhone sent a family photo report: 「通報への返答」 shows.
+    @AppStorage(FamilyReportReplies.sentKey) private var sentPhotoReport = false
     @State private var showsCats = false
     /// The server's answer, or before it comes, the family as last shown here.
     private var shownMembership: FamilyMembership? {
@@ -1257,6 +1259,15 @@ struct FamilyNotebookView: View {
                         .accessibilityIdentifier("family-notebook-leave")
                 } footer: {
                     Text(FamilyNotebookWords.leaveDetail(payer: membership.role == .payer))
+                }
+            }
+            // 11/18: only on an iPhone that sent a family photo report.
+            if sentPhotoReport || FamilyReportReplies.showsFixture {
+                Section {
+                    NavigationLink { FamilyReportRepliesView() } label: {
+                        Label("通報への返答", systemImage: "exclamationmark.bubble")
+                    }
+                    .accessibilityIdentifier("family-notebook-report-replies")
                 }
             }
 #if DEBUG || INTERNAL_PRESENTATION
@@ -2786,5 +2797,114 @@ struct FamilyHiddenOperationsView: View {
         var ids = Set(hiddenOperationIDs.split(separator: ",").map(String.init))
         ids.remove(String(describing: operation.id))
         hiddenOperationIDs = ids.sorted().joined(separator: ",")
+    }
+}
+
+/// 11/18: the reporter's own answers to family photo reports. The row shows
+/// only on an iPhone that sent one; nothing about the family is read here.
+@MainActor
+enum FamilyReportReplies {
+    nonisolated static let sentKey = "family.photoReport.sent.v1"
+
+    /// After a family photo report was received.
+    static func markSent() { UserDefaults.standard.set(true, forKey: sentKey) }
+
+    /// Review captures only: the row and three sample answers.
+    static var showsFixture: Bool {
+#if DEBUG
+        CommandLine.arguments.contains("--app-store-screenshot-fixture")
+            && CommandLine.arguments.contains(fixtureArgument)
+#else
+        false
+#endif
+    }
+
+#if DEBUG
+    nonisolated static let fixtureArgument = "--family-report-replies-fixture"
+
+    /// Sample receipts, one of each answer. Synthetic numbers only.
+    static var fixtureReplies: [FamilyPhotoReportReply] {
+        let now = Int64(Date().timeIntervalSince1970)
+        return [
+            FamilyPhotoReportReply(receiptNumber: "FP-0000-0003", receivedAt: now - 3_600, status: .received),
+            FamilyPhotoReportReply(receiptNumber: "FP-0000-0002", receivedAt: now - 3 * 86_400, status: .reviewed),
+            FamilyPhotoReportReply(receiptNumber: "FP-0000-0001", receivedAt: now - 9 * 86_400, status: .photoStopped),
+        ]
+    }
+
+    /// A family on this iPhone alone (the test builds' notebook), so the
+    /// row is reached from 設定 → 家族の手帳 as a person reaches it.
+    static func seedFixtureIfRequested() async {
+        guard showsFixture, !FamilyNotebookPrototype.shared.isReal else { return }
+        await FamilyNotebookPrototype.shared.create()
+        await FamilyNotebookSharing.shared.refresh()
+    }
+#endif
+
+    static func load() async throws -> [FamilyPhotoReportReply] {
+#if DEBUG
+        if showsFixture { return fixtureReplies }
+#endif
+        return try await FamilyNotebookServiceFactory.reportReplies()
+    }
+}
+
+/// 「通報への返答」: one line per report, newest first.
+struct FamilyReportRepliesView: View {
+    private enum Phase: Equatable {
+        case loading, loaded([FamilyPhotoReportReply]), failed
+    }
+    @State private var phase: Phase = .loading
+
+    var body: some View {
+        Group {
+            switch phase {
+            case .loading:
+                ProgressView()
+            case .failed:
+                ContentUnavailableView {
+                    Label("つながりませんでした", systemImage: "wifi.exclamationmark")
+                } description: {
+                    EmptyView()
+                } actions: {
+                    Button("もう一度") { Task { await load() } }
+                        .accessibilityIdentifier("family-report-replies-retry")
+                }
+            case let .loaded(replies) where replies.isEmpty:
+                ContentUnavailableView("返答はまだありません", systemImage: "exclamationmark.bubble")
+            case let .loaded(replies):
+                List(replies) { reply in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("通報番号 \(reply.receiptNumber)")
+                                .font(.subheadline.monospaced().weight(.semibold))
+                                .textSelection(.enabled)
+                            Spacer()
+                            Text(reply.receivedDate.formatted(.dateTime.month().day()))
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                        Text(reply.status.message).font(.footnote).foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 2)
+                    .accessibilityElement(children: .combine)
+                }
+                .refreshable { await load(showsProgress: false) }
+            }
+        }
+        .accessibilityIdentifier("family-report-replies")
+        .navigationTitle("通報への返答")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+    }
+
+    /// Opened or 「もう一度」 by the person: the person's call budget.
+    private func load(showsProgress: Bool = true) async {
+        if showsProgress { phase = .loading }
+        do {
+            let replies = try await SharingPersonAction.run { try await FamilyReportReplies.load() }
+            phase = .loaded(replies.sorted { $0.receivedAt > $1.receivedAt })
+        } catch {
+            phase = .failed
+        }
     }
 }

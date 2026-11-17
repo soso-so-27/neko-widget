@@ -51,6 +51,8 @@ RECOVERY_SCREENS = (
     "93_recovery_found_ax5", "93b_recovery_waiting_ax5", "93c_recovery_no_provider_ax5",
     "93d_recovery_needs_original_ax5", "93e_recovery_device_limit_ax5", "93f_recovery_choose_ax5",
 )
+# 家族の手帳の「通報への返答」 on sample answers (test20FamilyReportReplies): light and dark.
+FAMILY_REPORT_SCREENS = ("92p_family_report_replies",)
 # Every screen ReviewScreenshotUITests captures, in review order.
 FULL_SCREENS = (
     "01_photos_top", "01_photos_scrolled", "02_photo_detail", "03_memo_editor",
@@ -68,7 +70,7 @@ FULL_SCREENS = (
     "28_onboarding_5_widget_guide",
     "29_widget_guide_1", "29_widget_guide_2", "29_widget_guide_3", "29_widget_guide_4", "29_widget_guide_5",
     "90_error_vet_field_page", "90_error_vet_row", "91_error_plus_product_unavailable",
-) + STRESS_SCREENS + FAMILY_LINK_SCREENS + RECOVERY_SCREENS
+) + STRESS_SCREENS + FAMILY_LINK_SCREENS + RECOVERY_SCREENS + FAMILY_REPORT_SCREENS
 SE_SCREENS = (
     "10_cat_home", "10b_cat_home_second_cat", "10c_cat_home_no_cat", "10d_cat_home_no_photo",
     "11_cat_care_top", "12_vet_bottom", "14_lost_bottom", "16_care_bottom",
