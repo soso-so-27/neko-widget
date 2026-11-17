@@ -227,6 +227,12 @@ enum GroupRosterVerifier {
         }
     }
 
+    /// Verifies historical signatures only. P5 must additionally check current
+    /// participation; this does not establish current membership or old-key access.
+    static func verifyHistoricalRecoveryRoster(_ packet: SignedGroupRoster, anchor: GroupTrustAnchor) throws -> VerifiedGroupRoster {
+        try verifyPacket(packet, anchor: anchor, previous: nil, restoredPin: GroupCanonical.hash(packet.roster.canonicalBytes()))
+    }
+
     static func verify(_ packet: SignedGroupRoster, anchor: GroupTrustAnchor,
                        previous: VerifiedGroupRoster? = nil) throws -> VerifiedGroupRoster {
         try verifyPacket(packet, anchor: anchor, previous: previous, restoredPin: nil)

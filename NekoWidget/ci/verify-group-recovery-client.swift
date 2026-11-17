@@ -18,6 +18,11 @@ private actor Relay: GroupHTTPTransport {
     var challenges: [String: [String: Any]] = [:]
     var operations: [String] = []
     var proof: [String: Any]?
+    var keyPage: [String: Any] = [:]
+    var keyReceipts: [String] = []
+    var loseReceipt = true
+    func installKeyPage(_ bytes: Data) throws { keyPage = try JSONSerialization.jsonObject(with: bytes) as! [String: Any] }
+    func receiptCount() -> Int { keyReceipts.count }
     var freshHashes: [String] = []
     var loseFreshReply = false
     func loseNextFreshReply() { loseFreshReply = true }
@@ -48,6 +53,20 @@ private actor Relay: GroupHTTPTransport {
                 GroupCanonical.text(c["operation_id"] as! String), GroupWire.bytes(c["nonce"] as! String),
                 GroupCanonical.text(String(c["issued_at"] as! Int)), GroupCanonical.text(String(c["expires_at"] as! Int))])
         let publicKey = try Curve25519.Signing.PublicKey(rawRepresentation: GroupWire.bytes(c["identity_public_key"] as! String))
+        if path.hasSuffix("/key-offers") || path.hasSuffix("/key-receipts") {
+            let receipt = path.hasSuffix("/key-receipts"), window = b["windowId"] as! String
+            let payload = receipt ? try GroupCanonical.fields([GroupCanonical.text(b["offerId"] as! String),
+                GroupCanonical.text(String(b["keyEpoch"] as! Int)), GroupWire.bytes(b["receiptSignature"] as! String), GroupWire.bytes(b["personAuthorization"] as! String)])
+                : try GroupCanonical.fields([GroupCanonical.text(String(b["afterEpoch"] as! Int))])
+            let bytes = try GroupCanonical.fields([GroupCanonical.text("NW3.RECOVERY.KEY.ACTION.V1"),
+                GroupCanonical.text(receipt ? "receipt" : "offers"), transcript, GroupCanonical.text(window), payload])
+            try check(publicKey.isValidSignature(GroupWire.bytes(b["rootSignature"] as! String), for: bytes))
+            if !receipt { return try reply(keyPage) }
+            let signature = b["receiptSignature"] as! String
+            if let first = keyReceipts.first { try check(first == signature) }; keyReceipts.append(signature)
+            if loseReceipt { loseReceipt = false; throw TestFailure.failed }
+            return try reply(["state": "receivedWaitingForOwner", "operationId": c["operation_id"]!, "offerId": b["offerId"]!])
+        }
         if path.hasSuffix("/devices/remove") {
             let device = b["deviceId"] as! String
             let bytes = try GroupCanonical.fields([GroupCanonical.text("NW3.RECOVERY.REMOVE-DEVICE.V1"), transcript, GroupWire.bytes(device, count: 32)])
@@ -204,6 +223,38 @@ private actor Relay: GroupHTTPTransport {
         try check(!waiting.state.canOpen && !waiting.state.canSend && waiting.model == "iPhone")
         let identity = GroupDeviceIdentity(personPrivateKey: root.rawRepresentation, personPublicKey: root.publicKey.rawRepresentation,
             signingPrivateKey: device.rawRepresentation, agreementPrivateKey: hpke.rawRepresentation, windowCertificates: [:], registered: false)
+        let deliverySecrets = RecoverySecrets()
+        let deliveryClient = try GroupRecoveryClient(endpoint: URL(string: "https://recovery.invalid")!, environment: "staging",
+            root: root.rawRepresentation, transport: relay, journal: journal, secrets: deliverySecrets, enabled: true)
+        func object<T: Encodable>(_ value: T) throws -> Any { try JSONSerialization.jsonObject(with: GroupWire.encode(value)) }
+        try await relay.installKeyPage(JSONSerialization.data(withJSONObject: ["state": "waitingForReceipt",
+            "roster": object(packet), "participation": object(boundary), "recipientProof": object(recipientProof),
+            "items": [["offer": object(offer), "epochRoster": object(packet)]], "nextAfterEpoch": NSNull()]))
+        do { _ = try await deliveryClient.receiveKeys(draft, identity: identity); throw GroupRecoveryClient.Failure.invalidResponse } catch is TestFailure {}
+        try check(deliverySecrets.read("window:" + window) == nil)
+        let receivedPage = try await deliveryClient.receiveKeys(draft, identity: identity)
+        try check(receivedPage.receivedEpochs == [1] && !receivedPage.canSend)
+        try check(await relay.receiptCount() == 2)
+        let recoveredUnsigned = GroupRosterDevice(id: pendingID, signingPublicKey: device.publicKey.rawRepresentation,
+            hpkePublicKey: hpke.publicKey.rawRepresentation, personAuthorization: Data())
+        let recoveredDevice = GroupRosterDevice(id: pendingID, signingPublicKey: recoveredUnsigned.signingPublicKey,
+            hpkePublicKey: recoveredUnsigned.hpkePublicKey,
+            personAuthorization: try root.signature(for: recoveredUnsigned.authorizationBytes(windowID: window, personID: person)))
+        let recoveryRoster = GroupRoster(windowID: window, revision: 2, keyEpoch: 2, previousHash: boundaryHead.hash,
+            ownerPersonID: person, members: [.init(participantID: roster.members[0].participantID, personID: person,
+                identityPublicKey: root.publicKey.rawRepresentation, role: .owner, devices: [authorized, recoveredDevice])])
+        let recoveryPacket = try GroupRosterVerifier.sign(recoveryRoster, deviceID: ownerID, privateKey: ownerDevice)
+        let recoveryHead = try GroupRosterVerifier.verify(recoveryPacket, anchor: anchor.anchor, previous: boundaryHead)
+        let recoveryEnvelope = try GroupHPKE.wrap(roomKey: SymmetricKey(size: .bits256), for: pendingID,
+            roster: recoveryHead, signerID: ownerID, signingKey: ownerDevice)
+        try await relay.installKeyPage(JSONSerialization.data(withJSONObject: ["state": "recoveryCommitted", "deviceId": pendingID,
+            "previousHash": GroupWire.base64(boundaryHead.hash), "revision": 2, "rosterHash": GroupWire.base64(recoveryHead.hash),
+            "roster": object(recoveryPacket), "envelopeForThisDevice": object(recoveryEnvelope)]))
+        let readyDelivery = try await deliveryClient.finishKeyDelivery(draft, identity: identity)
+        try check(readyDelivery.state == .ready(operationID: draft.operationID, deviceID: pendingID))
+        let installedDelivery = try GroupWire.decode(GroupLocalWindow.self, deliverySecrets.read("window:" + window)!)
+        try check(installedDelivery.keys["1"] == contentKey.withUnsafeBytes { Data($0) } && installedDelivery.keys["2"] != nil)
+        try check(installedDelivery.minimumAdmissionRevision == 1)
         proof["state"] = "noKeyProvider"; proof["canRequestFreshGeneration"] = true
         try await relay.installProof(JSONSerialization.data(withJSONObject: proof))
         await relay.loseNextFreshReply()
