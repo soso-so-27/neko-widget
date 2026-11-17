@@ -1,6 +1,7 @@
 import {describe,it,expect} from 'vitest';
-import {db} from './group-fixture';
-import {advanceFamilyPhotoReportDeadlines,familyPhotoStopped} from '../src/family-photo-report-operations';
+import {db,testEnv} from './group-fixture';
+import {advanceFamilyPhotoReportDeadlines,familyPhotoStopped,drainFamilyPhotoReportMail,cleanupFamilyPhotoReportEvidence} from '../src/family-photo-report-operations';
+import type {Env} from '../src/env';
 
 async function report(age:number,outcome='received') {
  const id=crypto.randomUUID(),family=crypto.randomUUID(),asset=crypto.randomUUID();
@@ -11,6 +12,26 @@ async function report(age:number,outcome='received') {
  return {id,family,asset};
 }
 describe('family photo report deadlines',()=>{
+ it('sends fixed reminder text only, leaves failures retryable and sends nothing when email is OFF',async()=>{
+  const a=await report(5*86400+1);await advanceFamilyPhotoReportDeadlines(db,false);
+  const sent:unknown[]=[],env={...testEnv,GROUP_REPORT_EMAIL_ENABLED:'YES',GROUP_REPORT_EMAIL_TO:'owner@example.test',
+   GROUP_REPORT_EMAIL_FROM:'reports@example.test',GROUP_REPORT_EMAIL:{send:async(value:unknown)=>{sent.push(value);}}} as unknown as Env;
+  await drainFamilyPhotoReportMail({...env,GROUP_REPORT_EMAIL_ENABLED:'NO'});expect(sent).toHaveLength(0);
+  // Other tests may leave synthetic obligations; isolate just this case's queue.
+  await db.prepare("UPDATE family_photo_report_reminders SET state='cancelled' WHERE report_id<>?").bind(a.id).run();
+  await drainFamilyPhotoReportMail(env);await drainFamilyPhotoReportMail(env);expect(sent).toHaveLength(2);
+  for(const mail of sent){expect(JSON.stringify(mail)).not.toContain(a.id);expect(JSON.stringify(mail)).not.toContain(a.family);}
+  expect((await db.prepare('SELECT state FROM family_photo_report_reminders WHERE report_id=?').bind(a.id).all()).results)
+   .toEqual([{state:'sent'},{state:'sent'}]);
+ });
+ it('purges terminal metadata only after its deadline and retains a stopped asset record',async()=>{
+  const terminal=await report(100,'no_action'),stopped=await report(100,'photo');
+  await db.prepare('UPDATE family_photo_report_records SET retention_until=unixepoch()-1 WHERE report_id IN (?,?)')
+   .bind(terminal.id,stopped.id).run();
+  await cleanupFamilyPhotoReportEvidence(testEnv);
+  expect(await db.prepare('SELECT 1 FROM family_photo_report_records WHERE report_id=?').bind(terminal.id).first()).toBeNull();
+  expect(await familyPhotoStopped(db,stopped.family,stopped.asset)).toBe(true);
+ });
  it('keeps enforcement OFF, then stops only the original asset once at seven days',async()=>{
   const a=await report(604801),replacement=crypto.randomUUID();
   await advanceFamilyPhotoReportDeadlines(db,false);

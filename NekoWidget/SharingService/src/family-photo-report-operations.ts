@@ -36,6 +36,19 @@ export async function drainFamilyPhotoReportMail(env:Env):Promise<void>{
 }
 /** Expiry is independent of operator-PC availability and of intake switches. */
 export async function cleanupFamilyPhotoReportEvidence(env:Env):Promise<void>{
+ const late=await env.DB.prepare(`SELECT d.report_id,d.object_key FROM family_photo_report_object_deletions d
+ WHERE d.available_at<=unixepoch() AND NOT EXISTS(SELECT 1 FROM family_photo_reports r
+ WHERE r.report_id=d.report_id AND r.object_key=d.object_key AND r.state<>'expired'
+ AND COALESCE(r.content_expires_at,r.upload_expires_at)>unixepoch()) ORDER BY d.available_at LIMIT 50`)
+ .all<{report_id:string;object_key:string}>();
+ if(late.results.length&&!env.MODERATION_MEDIA)throw Error('family_report_cleanup_unavailable');
+ for(const row of late.results){
+  if(!/^family\/reports\/v1\/[A-Za-z0-9_-]{22}\/[A-Za-z0-9_-]{32}$/.test(row.object_key)
+   ||row.object_key.split('/')[3]!==row.report_id)throw Error('family_report_cleanup_scope');
+  await env.MODERATION_MEDIA!.delete(row.object_key);
+  if(!await env.MODERATION_MEDIA!.head(row.object_key))await env.DB.prepare(
+   'DELETE FROM family_photo_report_object_deletions WHERE object_key=? AND report_id=?').bind(row.object_key,row.report_id).run();
+ }
  const rows=await env.DB.prepare(`SELECT report_id,object_key FROM family_photo_reports
  WHERE next_cleanup_at<=unixepoch() AND ((state='reserved' AND upload_expires_at<=unixepoch()) OR
  (state IN('committed','expired') AND COALESCE(content_expires_at,upload_expires_at)<=unixepoch()))

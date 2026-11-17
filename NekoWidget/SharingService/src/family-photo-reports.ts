@@ -69,8 +69,9 @@ export async function familyPhotoReportAPI(request:Request,env:Env,familyValue:s
   await env.DB.batch(guards());const r=await load();
   if(!r||r.state!=='reserved'||r.object_key!==reserved.object_key||r.upload_expires_at<=Math.floor(Date.now()/1000))fail('reservation_expired',410);
  };
+ try{
  await current();
- const stored=await putGroupUpload(env,storage,row.object_key,cipher,{sha256:base64urlDecode(hash).slice().buffer},current)
+ const stored=await putGroupUpload(env,storage,row.object_key,cipher,{sha256:base64urlDecode(hash).slice().buffer},current,true)
   ??await storage.head(row.object_key);
  if(!stored||stored.size!==cipher.length||!stored.checksums.sha256
   ||base64urlEncode(new Uint8Array(stored.checksums.sha256))!==hash)fail('stored_object_unavailable',503);
@@ -79,4 +80,11 @@ export async function familyPhotoReportAPI(request:Request,env:Env,familyValue:s
   WHERE report_id=? AND state='reserved' AND upload_expires_at>unixepoch()` ).bind(row.report_id)]);
  row=await load();if(!row||row.state!=='committed')fail('reservation_expired',410);
  return reply(row);
+ }catch(error){
+  const after=await load();
+  if(!after||after.state==='expired'||(after.state!=='committed'&&after.upload_expires_at<=Math.floor(Date.now()/1000)))
+   await env.DB.prepare(`INSERT INTO family_photo_report_object_deletions(object_key,report_id)
+    VALUES(?,?) ON CONFLICT(object_key) DO NOTHING`).bind(reserved.object_key,reserved.report_id).run();
+  throw error;
+ }
 }

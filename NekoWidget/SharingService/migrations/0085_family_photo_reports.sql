@@ -5,6 +5,9 @@ CREATE TABLE family_photo_report_deliveries (
  device_id TEXT NOT NULL, author_id TEXT NOT NULL, expires_at INTEGER NOT NULL,
  PRIMARY KEY(family_id,asset_id,device_id)
 ) STRICT;
+CREATE TABLE family_photo_report_object_deletions (
+ object_key TEXT PRIMARY KEY, report_id TEXT NOT NULL, available_at INTEGER NOT NULL DEFAULT(unixepoch())
+) STRICT;
 CREATE TABLE family_photo_reports (
  report_id TEXT PRIMARY KEY, family_id TEXT NOT NULL, asset_id TEXT NOT NULL,
  reporter_person_id TEXT NOT NULL, reporter_device_id TEXT NOT NULL, author_id TEXT NOT NULL,
