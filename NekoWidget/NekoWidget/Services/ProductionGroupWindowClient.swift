@@ -297,6 +297,24 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         try await registeredIdentity()
     }
 
+    func familyPhotoReportReplies() async throws -> [FamilyPhotoReportReply] {
+        guard let identity = try load(GroupDeviceIdentity.self, "identity"), identity.registered else {
+            throw GroupClientError.authenticationRequired
+        }
+        struct Page: Decodable { let schemaVersion: Int; let replies: [FamilyPhotoReportReply] }
+        let data = try await raw("/v3/family-notebooks/report-replies", body: nil, identity: identity)
+        let page = try GroupWire.decode(Page.self, data)
+        guard page.schemaVersion == 1, page.replies.count <= 100,
+              Set(page.replies.map(\.receiptNumber)).count == page.replies.count else {
+            throw GroupClientError.invalidResponse
+        }
+        for reply in page.replies {
+            _ = try GroupWire.bytes(reply.receiptNumber, count: 16)
+            guard reply.receivedAt > 0 else { throw GroupClientError.invalidResponse }
+        }
+        return page.replies
+    }
+
     private func register(_ initial: GroupDeviceIdentity) async throws -> GroupDeviceIdentity {
         var value = initial
         var body = try secrets.read("registration-request")

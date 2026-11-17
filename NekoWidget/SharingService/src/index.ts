@@ -122,6 +122,7 @@ import { getWindowName, putWindowName } from "./window-name";
 import { familyRecords, runFamilyRecordCleanup } from "./family-records";
 import { groupAPI } from './group-api';
 import { familyNotebookAPI } from './family-notebook-api';
+import { familyPhotoReportReplies, familyPhotoReportRepliesPath } from './family-photo-report-replies';
 import { runGroupRelayCleanup } from './group-cleanup';
 import { isGroupReportPath } from './group-reports';
 import { groupReplyPath } from './group-moderation-replies';
@@ -172,6 +173,10 @@ async function dispatch(request:Request,env:Env,ctx?:ExecutionContext):Promise<R
     billingRuntimeGatePromise ??= loadBillingRuntimeGate(env);
     return billingRuntimeGatePromise;
   };
+
+  if (pathname === familyPhotoReportRepliesPath) {
+    return protectedGroupRead(env, () => familyPhotoReportReplies(request, env));
+  }
 
   // A separate opt-in is required even when lower family/payer pilot gates
   // are open. Absent/NO retains the previous unreachable public surface.

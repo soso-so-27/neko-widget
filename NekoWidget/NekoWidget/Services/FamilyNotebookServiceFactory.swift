@@ -57,6 +57,14 @@ enum FamilyNotebookServiceFactory {
     /// (AppStoreScreenshotFixture.CatHomeStress, `--cat-home-stress-family-photo`).
     static let representativePhotoRuntimeEnabled = false
 
+    /// The reporter's private receipt list, without loading family membership.
+    static func reportReplies() async throws -> [FamilyPhotoReportReply] {
+        guard productionRequested, let client = GroupWindowClientProvider.production else {
+            throw FamilyNotebookTransportError.unavailable
+        }
+        return try await client.familyPhotoReportReplies()
+    }
+
     /// The screens' way to the photo; nil while it is off.
     static func representativePhotoBackend() -> (any FamilyRepresentativePhotoBackend)? {
         guard representativePhotoRuntimeEnabled, productionRequested,
