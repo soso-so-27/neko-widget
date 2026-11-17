@@ -289,32 +289,47 @@ private actor Relay: GroupHTTPTransport {
 
 private actor DelayedRecovery: GroupRecoverySession {
     let operation: UUID
-    let delay: Duration
-    init(_ operation: UUID, _ delay: Duration) { self.operation = operation; self.delay = delay }
+    private var callbacks: [CheckedContinuation<Void, Never>] = []
+    private(set) var finished = 0
+    init(_ operation: UUID) { self.operation = operation }
     func catalog() async throws -> GroupRecoveryClient.Catalog { throw TestFailure.failed }
     func remove(_ device: String, operationID: UUID) async throws {}
     func run(_ action: GroupRecoveryRetryAction) async throws -> GroupRecoveryRegistrationState {
-        // Deliberately ignores cancellation like a delayed network callback.
-        await withCheckedContinuation { continuation in
-            Task { try? await Task.sleep(for: delay); continuation.resume() }
-        }
+        // Explicitly release after timeout/root switch; ignore cancellation like a late response.
+        await withCheckedContinuation { callbacks.append($0) }
+        finished += 1
         return .registeredWaitingForKeys(operationID: operation, deviceID: "synthetic")
     }
+    var waiting: Bool { !callbacks.isEmpty }
+    func release() { let pending = callbacks; callbacks = []; pending.forEach { $0.resume() } }
 }
 @MainActor private func verifyRecoveryAdapter() async throws {
     let a = UUID(), b = UUID()
-    func context(_ root: String, _ id: UUID) -> GroupRecoveryAdapter.Context {
+    let first = DelayedRecovery(a), second = DelayedRecovery(b)
+    func context(_ root: String, _ id: UUID, _ session: DelayedRecovery) -> GroupRecoveryAdapter.Context {
         .init(candidate: .init(summary: .init(rootID: root, windowIDs: [root], notebookIDs: []), openableWindowNames: []),
-            session: DelayedRecovery(id, .milliseconds(150)), items: [.init(windowID: root, name: nil, state: .notStarted(operationID: id))])
+            session: session, items: [.init(windowID: root, name: nil, state: .notStarted(operationID: id))])
     }
-    let model = GroupRecoveryAdapter(contexts: [context("a", a), context("b", b)], timeout: .milliseconds(30))
+    func eventually(_ predicate: () async -> Bool, line: UInt = #line) async throws {
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !(await predicate()) {
+            try check(ContinuousClock.now < deadline, line: line)
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+    let model = GroupRecoveryAdapter(contexts: [context("a", a, first), context("b", b, second)], timeout: .milliseconds(30))
     await model.handle(.chooseRoot("a")); await model.handle(.perform(.submitSameOperation(a)))
-    try await Task.sleep(for: .milliseconds(60))
+    try await eventually { await first.waiting }
+    try await eventually { model.items[0].state == .unavailable(operationID: a) }
+    await first.release()
+    try await eventually { await first.finished == 1 }
+    try await Task.sleep(for: .milliseconds(20))
     try check(model.items[0].state == .unavailable(operationID: a))
-    try await Task.sleep(for: .milliseconds(160))
-    try check(model.items[0].state == .unavailable(operationID: a))
-    await model.handle(.perform(.queryStatus(a))); await model.handle(.chooseRoot("b"))
-    try await Task.sleep(for: .milliseconds(200))
+    await model.handle(.perform(.queryStatus(a)))
+    try await eventually { await first.waiting }
+    await model.handle(.chooseRoot("b")); await first.release()
+    try await eventually { await first.finished == 2 }
+    try await Task.sleep(for: .milliseconds(20))
     try check(model.selectedRootID == "b" && model.items[0].state == .notStarted(operationID: b))
     await model.handle(.chooseRoot("absent")); try check(model.selectedRootID == "b")
     await model.handle(.dismiss); try check(model.dismissed)
