@@ -230,7 +230,7 @@ actor GroupRecoveryClient {
               next.members.first?.devices.first?.id == deviceID else { throw Failure.invalidResponse }
         let claim = try GroupRecoveryClaim(version: 1, environment: environment, windowID: draft.windowID, personID: personID,
             participantID: old.members[0].participantID, recoveryGeneration: old.revision, previousRevision: old.revision,
-            previousHash: previous.hash, nextHash: GroupCanonical.hash(next.canonicalBytes()), newDevice: identity.certificate(windowID: draft.windowID),
+            previousHash: previous.hash, nextHash: GroupCanonical.hash(next.canonicalBytes()), newDevice: next.members[0].devices[0],
             replacedDeviceIDs: old.members[0].devices.map(\.id), operationID: draft.operationID.uuidString.lowercased(),
             challenge: GroupWire.bytes(c.nonce, count: 32), issuedAt: c.issued_at, expiresAt: c.expires_at)
         let proof = try GroupRecoveryProof(claim: claim, rootSignature: root.signature(for: claim.signatureBytes(root: true)),

@@ -30,7 +30,8 @@ export async function removeRecoveryDevice(env:Env,body:Record<string,unknown>,n
   await env.DB.batch([
    env.DB.prepare('UPDATE group_recovery_challenges SET consumed_at=?,consumed_by=? WHERE id=? AND consumed_at IS NULL AND expires_at>?').bind(now,claim,c.id,now),
    env.DB.prepare('INSERT INTO group_recovery_read_checks VALUES (?,?,?,?)').bind(claim,c.person_id,c.id,now),
-   env.DB.prepare('INSERT INTO group_recovery_device_removals VALUES (?,?,?,?) ON CONFLICT(person_id,device_id) DO NOTHING').bind(c.person_id,c.operation_id,device,now),
+   env.DB.prepare('INSERT INTO group_recovery_device_removals VALUES (?,?,?,?) ON CONFLICT(person_id,operation_id) DO NOTHING').bind(c.person_id,c.operation_id,device,now),
+   env.DB.prepare(`SELECT json(CASE WHEN EXISTS(SELECT 1 FROM group_recovery_device_removals WHERE person_id=? AND operation_id=? AND device_id=?) THEN 'true' ELSE 'conflicting removal intent' END)`).bind(c.person_id,c.operation_id,device),
    env.DB.prepare(`UPDATE group_windows SET rotation_required=1 WHERE mode='active' AND space_id IN
     (SELECT space_id FROM group_window_devices WHERE device_id=? AND state='active')`).bind(device),
    env.DB.prepare(`UPDATE group_window_devices SET state='revoked',removed_revision=(SELECT revision FROM group_windows WHERE space_id=group_window_devices.space_id)

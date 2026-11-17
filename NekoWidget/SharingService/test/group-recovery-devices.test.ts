@@ -18,6 +18,8 @@ it('root removes only its selected device, prevents re-registration, leaves memb
  expect(await (await r.call()).json()).toMatchObject({state:'revoked',deviceId:p.deviceId});
  await expect(r.call()).rejects.toMatchObject({status:401});
  expect(await (await (await removal(p,p.deviceId,operation)).call()).json()).toMatchObject({state:'revoked'});
+ const repeatOperation=crypto.randomUUID();await (await removal(p,p.deviceId,repeatOperation)).call();
+ await expect((await removal(p,other.deviceId,repeatOperation)).call()).rejects.toMatchObject({code:'idempotency_conflict'});
  expect((await db.prepare('SELECT * FROM group_members WHERE space_id=?').bind(w.windowId).all()).results).toEqual(members);
  expect(await db.prepare('SELECT mode,revision,rotation_required FROM group_windows WHERE space_id=?').bind(w.windowId).first()).toMatchObject({mode:'active',revision:1,rotation_required:1});
  expect(await db.prepare('SELECT state FROM group_person_devices WHERE id=?').bind(other.deviceId).first()).toMatchObject({state:'active'});
