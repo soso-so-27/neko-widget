@@ -5,7 +5,7 @@ import CryptoKit
 /// P3 only: root-authenticated discovery and pending registration. Never installs
 /// a roster/key, grants access, creates an identity, or chooses a root for the UI.
 actor GroupRecoveryClient {
-    enum Failure: Error { case disabled, invalidResponse, unavailable, authentication, deviceLimit, updateRequired }
+    enum Failure: Error { case disabled, serverDisabled, invalidResponse, unavailable, authentication, deviceLimit, updateRequired }
     struct Device: Decodable, Sendable { let deviceID: String; let model: String?; let registeredAt: Int }
     struct Catalog: Decodable, Sendable {
         struct Window: Decodable, Sendable { let windowID: String }
@@ -84,6 +84,7 @@ actor GroupRecoveryClient {
         guard (200...299).contains(reply.status) else {
             let value = try? JSONSerialization.jsonObject(with: reply.data) as? [String: Any]
             let code = (value?["error"] as? [String: Any])?["code"] as? String
+            if reply.status == 503 && code == "recovery_disabled" { throw Failure.serverDisabled }
             if code == "device_limit" { throw Failure.deviceLimit }
             if code == "client_upgrade_required" { throw Failure.updateRequired }
             if reply.status == 401 || reply.status == 403 { throw Failure.authentication }

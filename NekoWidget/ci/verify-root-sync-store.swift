@@ -52,6 +52,15 @@ private final class FakeKeychain: RootSyncKeychain, @unchecked Sendable {
         let other = SyncedRoot(privateKey: Data(repeating: 8, count: 32))
         try check(await store.read(expectedRootID: root.id) == .missing, "missing distinguished")
         try check(fake.addCount == 0, "read does not create")
+        do {
+            try await store.publishCurrentRoot(authenticate: { false }, load: { throw Failure.check("read before verifying") })
+            throw Failure.check("explicit verification was bypassed")
+        } catch RootSyncFailure.verificationDeclined { }
+        try check(fake.addCount == 0, "declined verification writes nothing")
+        try await store.publishCurrentRoot(authenticate: { true }, load: { raw })
+        try check(await store.read(expectedRootID: root.id) == .found(root), "approved publish added the current root")
+        try check(await store.removeExact(expectedRootID: root.id) == .removedLocally, "clear in-memory test fixture")
+        fake.deleteCount = 0
         try check(await store.storeIfAbsent(explicitRoot: raw) == .created, "create")
         try check(await store.read(expectedRootID: root.id) == .found(root), "validated read")
         try check(await store.storeIfAbsent(explicitRoot: raw) == .existing, "equal duplicate")
@@ -85,8 +94,16 @@ private final class FakeKeychain: RootSyncKeychain, @unchecked Sendable {
         fake.adds = nil
         try check(await store.storeIfAbsent(explicitRoot: other.privateKey) == .created, "second root retained")
         try check(await store.candidates() == .unresolved([root.id, other.id].sorted()), "no automatic choice")
+        try check(try await store.availableRoots().map(\.id) == [root.id, other.id].sorted(), "read both verified root keys")
+        fake.reads = errSecInteractionNotAllowed
+        do {
+            _ = try await store.availableRoots()
+            throw Failure.check("locked enumeration became an empty list")
+        } catch RootSyncFailure.temporarilyUnavailable { }
+        fake.reads = nil
         let staging = try RootSyncStore(bundleID: "jp.synthetic", environment: .staging, keychain: fake)
         try check(await staging.candidates() == .none, "environment scoped")
+        try check(try await staging.availableRoots().isEmpty, "empty production input is not a keychain failure")
         try check(await staging.read(expectedRootID: root.id) == .missing, "no cross-environment read")
         fake.injectedRows = [[kSecAttrAccount as String: root.id, kSecAttrService as String: "other", kSecAttrSynchronizable as String: true]]
         try check(await store.candidates() == .failed(.invalidRecord), "foreign enumeration rejected")
@@ -111,6 +128,19 @@ private final class FakeKeychain: RootSyncKeychain, @unchecked Sendable {
                 try check(q[kSecAttrAccessible as String] as? String == kSecAttrAccessibleWhenUnlocked as String, "unlocked access only")
             }
         }
+        let privateGroup = "EXAMPLETEAM.jp.synthetic"
+        let scopedFake = FakeKeychain()
+        let privateStore = try RootSyncStore(bundleID: "jp.synthetic", environment: .production,
+                                             accessGroup: privateGroup, keychain: scopedFake)
+        try check(await privateStore.storeIfAbsent(explicitRoot: raw) == .created, "private production write")
+        try check(try await privateStore.availableRoots() == [root], "private production read")
+        try check(scopedFake.queries.allSatisfy { $0[kSecAttrAccessGroup as String] as? String == privateGroup }, "only the private app group is queried")
+        try check(scopedFake.items.keys.allSatisfy { $0.hasPrefix("jp.synthetic.production.root-sync.v1|") }, "stable production service name")
+        do {
+            _ = try RootSyncStore(bundleID: "jp.synthetic", environment: .production,
+                                  accessGroup: privateGroup + ".group-share", keychain: scopedFake)
+            throw Failure.check("shared access group accepted")
+        } catch RootSyncFailure.invalidInput { }
         print("PASS: P2 synthetic adapter, validation, no overwrite, scoped reads/removal, unavailable != missing")
     }
 }
