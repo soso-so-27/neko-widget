@@ -1,7 +1,12 @@
 import Foundation
 import CryptoKit
 private enum TestFailure: Error { case failed }
-private func check(_ value: Bool) throws { if !value { throw TestFailure.failed } }
+private func check(_ value: Bool, line: UInt = #line) throws {
+    if !value {
+        FileHandle.standardError.write(Data("Recovery fixture assertion failed at line \(line)\n".utf8))
+        throw TestFailure.failed
+    }
+}
 private final class RecoverySecrets: GroupSecretStore, @unchecked Sendable {
     private let lock = NSLock()
     private var values: [String: Data] = [:]
