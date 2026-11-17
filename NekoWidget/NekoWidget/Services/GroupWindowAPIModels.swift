@@ -150,3 +150,24 @@ struct GroupLocalInvitation: Codable, Sendable {
     let windowID: String; let operationID: UUID; let privateKey: Data
     var invitationID: String?; var expiresAt: Date?
 }
+
+/// A receipt owned by the reporting person, separate from the shared notebook.
+struct FamilyPhotoReportReply: Decodable, Equatable, Identifiable, Sendable {
+    enum Status: String, Decodable, Sendable {
+        case received, reviewed, photoStopped = "photo_stopped"
+
+        var message: String {
+            switch self {
+            case .received: "受け付けました"
+            case .reviewed: "確認しました"
+            case .photoStopped: "この写真の表示を止めました"
+            }
+        }
+    }
+
+    let receiptNumber: String
+    let receivedAt: Int64
+    let status: Status
+    var id: String { receiptNumber }
+    var receivedDate: Date { Date(timeIntervalSince1970: TimeInterval(receivedAt)) }
+}
