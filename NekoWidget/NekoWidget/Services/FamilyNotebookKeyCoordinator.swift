@@ -243,7 +243,9 @@ actor FamilyNotebookKeyCoordinator {
         let key = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
         let roster = FamilyNotebookCryptoRoster(familyID: state.familyID, epoch: state.currentEpoch + 1,
             previousHash: previous?.hash ?? Data(repeating: 0, count: 32), keyCommitment: GroupCanonical.hash(key), members: members)
-        var signed = try FamilyNotebookRosterCrypto.sign(roster, deviceID: identity.deviceID, signingKey: identity.signingKey)
+        let packet = try FamilyNotebookRosterCrypto.sign(roster, deviceID: identity.deviceID, signingKey: identity.signingKey)
+#if (DEBUG || INTERNAL_PRESENTATION) && !NEKO_SHARE_EXTENSION
+        var signed = packet
         if recoveryEnabled {
             let environment: String
             switch URL(string: endpoint)?.host {
@@ -265,6 +267,9 @@ actor FamilyNotebookKeyCoordinator {
                     signerID: identity.deviceID, key: identity.signingKey)
             }
         }
+#else
+        let signed = packet
+#endif
         if let previous { _ = try FamilyNotebookRosterCrypto.advance(signed, previous: previous) }
         else { _ = try roster.canonicalBytes() }
         // Secret first, pending body second, network last. Unknown outcomes

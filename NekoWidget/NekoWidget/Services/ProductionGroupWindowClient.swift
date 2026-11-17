@@ -155,6 +155,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         self.operations = try GroupOperationStore(directory: self.outboxDirectory.appendingPathComponent("http-operations", isDirectory: true))
         _ = try GroupHTTPRequest.make(endpoint: endpoint, path: "/v3/group-identities/challenges", body: Data(), identity: nil)
     }
+#if (DEBUG || INTERNAL_PRESENTATION) && !NEKO_SHARE_EXTENSION
     private var recoveryEnvironment: String? {
         switch endpoint.host {
         case "api.nekonomado.com": return "production"
@@ -162,10 +163,11 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         default: return nil
         }
     }
+#endif
     private func recoveryBoundaries(packet: SignedGroupRoster, anchor: GroupTrustAnchor,
         previous: VerifiedGroupRoster?, identity: GroupDeviceIdentity, newAdmissions: Set<String> = []) async throws -> [GroupParticipationBoundary]? {
-        guard recoveryEnabled, let environment = recoveryEnvironment else { return nil }
 #if (DEBUG || INTERNAL_PRESENTATION) && !NEKO_SHARE_EXTENSION
+        guard recoveryEnabled, let environment = recoveryEnvironment else { return nil }
         let next = try GroupRosterVerifier.verify(packet, anchor: anchor, previous: previous)
         var old: [GroupParticipationBoundary] = []
         if previous != nil {
