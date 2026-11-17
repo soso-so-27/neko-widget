@@ -49,6 +49,7 @@ class GroupRecoveryScreenTests(unittest.TestCase):
             "deviceLimitTitle": "使える iPhone は 3 台までです",
             "deviceLimitMessage": "外す iPhone を選んでください。",
             "removeDevice": "外す",
+            "keepDevice": "やめる",
             "removeDeviceMessage": "外した iPhone では、この人として入っているまどと家族の手帳が見られなくなります。",
             "revokedTitle": "このまどには戻れません",
             "chooseTitle": "どちらを使いますか",
@@ -116,6 +117,35 @@ class GroupRecoveryScreenTests(unittest.TestCase):
         self.assertIn(".nekoPrimaryButton()", view)
         self.assertIn("ContentUnavailableView {", view)
         self.assertIn("SheetCloseButton", view)
+
+    def test_live_connection_is_internal_and_tap_only(self):
+        # The real P3 client is enabled only by the internal test screen, after a tap.
+        live = ROOT / "NekoWidget/Services/GroupRecoveryLiveSession.swift"
+        text = live.read_text(encoding="utf-8")
+        self.assertEqual(internal.selected_source(text).strip(), "")
+        for path, source in internal.InternalPresentationBoundaryTests().sources().items():
+            for token in ("GroupRecoveryLiveModel", "GroupRecoveryLiveScreen", "GroupRecoveryAdapter(",
+                          "GroupRecoveryLiveBuilder", "GroupRecoverySyntheticSession", "GroupRecoveryClient("):
+                with self.subTest(path=path, token=token):
+                    self.assertNotIn(token, source)
+        code = "\n".join(line.split("//", 1)[0] for line in text.splitlines())
+        self.assertEqual(code.count("enabled: true"), 1)
+        self.assertEqual(code.count("SharingPersonAction.run"), 1)
+        self.assertNotIn("SharingPersonAction.automatic", code)
+        self.assertIn("let catalog = try await client.catalog()", code)
+        # Each root has its own journal and Keychain namespace; nothing is removed locally.
+        self.assertIn('namespace + ".recovery-journal." + scope', code)
+        self.assertIn('namespace + ".recovery." + scope', code)
+        self.assertNotIn(".remove(", code.split("actor GroupRecoverySyntheticSession", 1)[0])
+        view = VIEW.read_text(encoding="utf-8")
+        self.assertIn("GroupRecoveryLiveScreen(model: .connected())", internal.selected_source(view, {"INTERNAL_PRESENTATION"}))
+        self.assertIn("GroupRecoverySheet(rootChoice: adapter.rootChoice, items: adapter.items, handler: adapter)", view)
+        project = (ROOT / "NekoWidget.xcodeproj/project.pbxproj").read_text(encoding="utf-8")
+        for name in ("GroupRecoveryAdapter.swift", "GroupRecoveryLiveSession.swift"):
+            self.assertEqual(project.count(name + " in Sources */ ="), 1)
+            self.assertEqual(project.count(name + " in Sources */,"), 1)
+        probe = (ROOT / "ci/run-group-recovery-client-checks.sh").read_text(encoding="utf-8")
+        self.assertIn("NekoWidget/Services/GroupRecoveryLiveSession.swift", probe)
 
     def test_verifier_and_tests_run_in_quick_checks(self):
         quick = (ROOT / "ci/run-quick-ios-checks.sh").read_text(encoding="utf-8")

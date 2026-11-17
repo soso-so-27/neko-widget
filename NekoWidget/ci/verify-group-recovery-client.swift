@@ -283,6 +283,8 @@ private actor Relay: GroupHTTPTransport {
         await relay.set(.offline)
         do { _ = try await c.catalog(); throw GroupRecoveryClient.Failure.invalidResponse } catch is TestFailure {}
         print("recovery client: PASS (stable journal, root/device signatures, environment, no unverified ready, OFF, offline)")
+        await relay.set(.normal)
+        try await verifyRecoveryLive(relay: relay, root: root)
         try await verifyRecoveryAdapter()
     }
 }
@@ -334,4 +336,72 @@ private actor DelayedRecovery: GroupRecoverySession {
     await model.handle(.chooseRoot("absent")); try check(model.selectedRootID == "b")
     await model.handle(.dismiss); try check(model.dismissed)
     print("recovery adapter: PASS (timeout, late completion, root switch, unknown root, dismissal)")
+}
+
+private actor LateRecoveryCatalog {
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+    private(set) var finished = 0
+    var isWaiting: Bool { !waiting.isEmpty }
+    // Ignores cancellation like a late relay answer.
+    func contexts() async -> [GroupRecoveryAdapter.Context] {
+        await withCheckedContinuation { waiting.append($0) }
+        finished += 1
+        return GroupRecoverySyntheticSession.contexts(delay: .zero)
+    }
+    func release() { let pending = waiting; waiting = []; pending.forEach { $0.resume() } }
+}
+@MainActor private func verifyRecoveryLive(relay: Relay, root: Curve25519.Signing.PrivateKey) async throws {
+    func eventually(_ predicate: () async -> Bool, line: UInt = #line) async throws {
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !(await predicate()) {
+            try check(ContinuousClock.now < deadline, line: line)
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+    // The test screen's builder: catalog first, one identity per root namespace, reused.
+    let journal = RecoverySecrets(), secrets = RecoverySecrets()
+    let builder = GroupRecoveryLiveBuilder(endpoint: URL(string: "https://recovery.invalid")!, environment: "staging",
+        transport: relay, model: "iPhone", stores: { _ in (journal, secrets) })
+    let built = try await builder.contexts(roots: [root.rawRepresentation, root.rawRepresentation])
+    let person = GroupWire.base64(GroupCanonical.hash(root.publicKey.rawRepresentation))
+    try check(built.count == 1 && built[0].candidate.id == person && built[0].items.isEmpty)
+    let identity = try GroupWire.decode(GroupDeviceIdentity.self, secrets.read("identity")!)
+    _ = try await builder.contexts(roots: [root.rawRepresentation])
+    let again = try GroupWire.decode(GroupDeviceIdentity.self, secrets.read("identity")!)
+    try check(identity.personPublicKey == root.publicKey.rawRepresentation && !identity.registered
+        && again.signingPrivateKey == identity.signingPrivateKey && again.agreementPrivateKey == identity.agreementPrivateKey)
+    do { _ = try await builder.contexts(roots: [Curve25519.Signing.PrivateKey().rawRepresentation]); throw TestFailure.failed }
+    catch is GroupRecoveryClient.Failure {}
+
+    // Timeout shows unavailable; the late answer is not applied.
+    let late = LateRecoveryCatalog()
+    let model = GroupRecoveryLiveModel(timeout: .milliseconds(30)) { await late.contexts() }
+    try check(model.phase == .idle && model.adapter == nil)
+    model.begin(); try check(model.phase == .checking)
+    try await eventually { await late.isWaiting }
+    try await eventually { model.phase == .unavailable }
+    await late.release()
+    try await eventually { await late.finished == 1 }
+    try await Task.sleep(for: .milliseconds(20))
+    try check(model.phase == .unavailable && model.adapter == nil)
+
+    // Synthetic relay: root choice, 3-iPhone limit and removal, explicit fresh generation, close.
+    let quick = GroupRecoveryLiveModel { GroupRecoverySyntheticSession.contexts(delay: .zero) }
+    quick.begin()
+    try await eventually { quick.phase == .ready }
+    guard let adapter = quick.adapter else { throw TestFailure.failed }
+    try check(adapter.rootChoice.count == 2 && adapter.selectedRootID == nil)
+    await adapter.handle(.chooseRoot("synthetic-root-a"))
+    try check(adapter.selectedRootID == "synthetic-root-a" && adapter.items.count == 2)
+    guard case .notStarted(let limited) = adapter.items[0].state,
+          case .noKeyProvider(let alone, _) = adapter.items[1].state else { throw TestFailure.failed }
+    await adapter.handle(.perform(.submitSameOperation(limited)))
+    try await eventually { adapter.items[0].state == .deviceLimit(operationID: limited) && adapter.items[0].devices.count == 3 }
+    await adapter.handle(.removeDevice(operationID: limited, deviceID: "synthetic-device-2"))
+    try await eventually { adapter.items[0].state == .registeredWaitingForKeys(operationID: limited, deviceID: "synthetic-new") }
+    await adapter.handle(.perform(.prepareFreshGeneration(alone, newName: "新しいまど")))
+    try await eventually { adapter.items[1].state == .ready(operationID: alone, deviceID: "synthetic-new") }
+    quick.close()
+    try check(quick.phase == .idle && quick.adapter == nil)
+    print("recovery live screen model: PASS (builder catalog/identity, timeout, late answer, synthetic flow, close)")
 }

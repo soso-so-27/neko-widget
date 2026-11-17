@@ -131,6 +131,16 @@ struct GroupRecoveryStateView: View {
                 GroupRecoveryFreshNameForm(state: registration, send: send)
             }
         }
+        // 状態が進んだら（確認中・つながらない・ready）、名前の欄と確認を閉じて今の状態を見せる。
+        .onChange(of: state) { _, _ in
+            if !offersFreshName { asksName = false }
+            removing = nil; choosing = nil
+        }
+    }
+
+    private var offersFreshName: Bool {
+        if case .registration(let registration) = state, case .noKeyProvider = registration { return true }
+        return false
     }
 
     // MARK: 状態 1 つ＋ 1 文＋ボタン（家族の手帳の「参加を待っています」と同じ作り）
@@ -218,6 +228,7 @@ struct GroupRecoveryStateView: View {
                 }
             }
             .accessibilityIdentifier("group-recovery-remove-confirm")
+            Button(GroupRecoveryWords.keepDevice, role: .cancel) {}
         } message: { _ in
             Text(GroupRecoveryWords.removeDeviceMessage)
         }
@@ -417,6 +428,12 @@ struct GroupRecoveryGallery: View {
                     .accessibilityIdentifier("group-recovery-case-\(sample.id)")
                 }
             } header: { Text("状態ごとの画面") }
+            Section {
+                NavigationLink("見本の状態で動かす") { GroupRecoveryLiveScreen(model: .synthetic()) }
+                    .accessibilityIdentifier("group-recovery-live-synthetic")
+                NavigationLink("この iPhone の本人で動かす") { GroupRecoveryLiveScreen(model: .connected()) }
+                    .accessibilityIdentifier("group-recovery-live-connected")
+            } header: { Text("押したときだけ通信します") }
             if let last = recorder.last {
                 Section { Text(last) } header: { Text("最後に押したボタン（何も送っていません）") }
             }
@@ -428,11 +445,62 @@ struct GroupRecoveryGallery: View {
         }
     }
 }
+
+/// 入口を押すと、Adapter の状態をそのまま同じ画面で見せる。押すまで何も送らない。
+struct GroupRecoveryLiveScreen: View {
+    @StateObject private var model: GroupRecoveryLiveModel
+    /// 確かめ中・つながらないの画面だけに使う印。外へは出ない。
+    private static let local = UUID(uuidString: "00000000-0000-4000-8000-000000001117")!
+
+    init(model: @escaping @autoclosure () -> GroupRecoveryLiveModel) {
+        _model = StateObject(wrappedValue: model())
+    }
+
+    private var waiting: GroupRecoveryRegistrationState {
+        if model.phase == .unavailable { return .unavailable(operationID: Self.local) }
+        return .checking(operationID: Self.local)
+    }
+
+    var body: some View {
+        List {
+            Button { model.begin() } label: { GroupRecoveryEntryRow() }
+                .buttonStyle(.plain)
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                .listRowBackground(Color.clear)
+                .accessibilityIdentifier("group-recovery-live-entry")
+        }
+        .navigationTitle(GroupRecoveryWords.entry)
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: Binding(get: { model.phase != .idle }, set: { if !$0 { model.close() } })) {
+            if model.phase == .ready, let adapter = model.adapter {
+                GroupRecoveryLiveAdapterView(adapter: adapter) { model.close() }
+            } else {
+                NavigationStack {
+                    GroupRecoveryStateView(state: .registration(waiting), send: { command in
+                        if command == .dismiss { model.close() } else { model.begin() }
+                    })
+                    .toolbar { ToolbarItem(placement: .topBarTrailing) { SheetCloseButton { model.close() } } }
+                }
+            }
+        }
+    }
+}
+
+/// Adapter が公開する本人の候補・まど・閉じたかを見て、#1029 の画面にそのまま渡す。
+private struct GroupRecoveryLiveAdapterView: View {
+    @ObservedObject var adapter: GroupRecoveryAdapter
+    let close: () -> Void
+
+    var body: some View {
+        GroupRecoverySheet(rootChoice: adapter.rootChoice, items: adapter.items, handler: adapter)
+            .onChange(of: adapter.dismissed) { _, dismissed in if dismissed { close() } }
+    }
+}
 #endif
 
 #if DEBUG
 /// 撮影用（--group-recovery-ui-fixture）。`--group-recovery-case <id>` でその画面を、
-/// `windows` でまどが複数の一覧を、指定なしで見本の一覧を出す。`--group-recovery-text ax5` でいちばん大きい文字。
+/// `windows` でまどが複数の一覧を、`live` で合成の Adapter につないだ入口を、指定なしで見本の一覧を出す。`--group-recovery-text ax5` でいちばん大きい文字。
 struct GroupRecoveryFixtureRoot: View {
     static let launchArgument = "--group-recovery-ui-fixture"
     @StateObject private var recorder = GroupRecoveryGalleryRecorder()
@@ -452,6 +520,9 @@ struct GroupRecoveryFixtureRoot: View {
         let requested = Self.value("--group-recovery-case")
         if requested == "windows" {
             GroupRecoverySheet(rootChoice: [], items: GroupRecoverySamples.windows, handler: recorder)
+        } else if requested == "live" {
+            // 合成の本人 2 つ・3 台の上限・1 人のまど。入口を押すと Adapter の状態で動く。
+            NavigationStack { GroupRecoveryLiveScreen(model: .synthetic()) }
         } else if let sample = GroupRecoverySamples.cases.first(where: { $0.id == requested }) {
             NavigationStack {
                 GroupRecoveryStateView(state: sample.state, devices: GroupRecoverySamples.devices, send: { recorder.record($0) })
