@@ -57,12 +57,13 @@ actor GroupRecoveryClient {
     private let root: Curve25519.Signing.PrivateKey
     private let transport: any GroupHTTPTransport
     private let journal: any GroupSecretStore
+    private let secrets: (any GroupSecretStore)?
     private let enabled: Bool
     private var heads: [String: (SignedGroupRoster, GroupTrustAnchor)] = [:]
     private var personID: String { GroupWire.base64(GroupCanonical.hash(root.publicKey.rawRepresentation)) }
 
     init(endpoint: URL, environment: String, root: Data, transport: any GroupHTTPTransport,
-         journal: any GroupSecretStore, enabled: Bool = false) throws {
+         journal: any GroupSecretStore, secrets: (any GroupSecretStore)? = nil, enabled: Bool = false) throws {
         guard ["production", "staging"].contains(environment), endpoint.scheme == "https",
               endpoint.user == nil, endpoint.password == nil, endpoint.query == nil, endpoint.fragment == nil,
               endpoint.path.isEmpty || endpoint.path == "/" else { throw Failure.invalidResponse }
@@ -71,7 +72,7 @@ actor GroupRecoveryClient {
 #endif
         self.endpoint = endpoint; self.environment = environment
         self.root = try Curve25519.Signing.PrivateKey(rawRepresentation: root)
-        self.transport = transport; self.journal = journal; self.enabled = enabled
+        self.transport = transport; self.journal = journal; self.secrets = secrets; self.enabled = enabled
     }
     private func post(_ path: String, _ body: [String: Any]) async throws -> Data {
         guard enabled else { throw Failure.disabled }
@@ -178,18 +179,22 @@ actor GroupRecoveryClient {
         }
     }
     func resumeFreshGeneration(_ draft: Draft, identity: GroupDeviceIdentity) async throws -> Registration? {
-        guard let saved = try journal.read(account(draft.windowID) + ":fresh") else { return nil }
+        guard let saved = try journal.read(freshAccount(draft.windowID)) else { return nil }
         let material = try GroupWire.decode(FreshMaterial.self, saved)
         return try await freshGeneration(draft, identity: identity, newName: material.requestedName)
+    }
+    private func freshAccount(_ window: String) -> String {
+        "op:rf:" + GroupWire.base64(GroupCanonical.hash(Data(account(window).utf8)))
     }
     /// Caller supplies this root's dedicated local Keychain store and exact
     /// device keys. An existing identity/window is never overwritten by another.
     func freshGeneration(_ draft: Draft, identity: GroupDeviceIdentity, newName: String) async throws -> Registration {
+        guard let secrets else { throw Failure.disabled }
         let deviceID = try identity.deviceID
         guard enabled, identity.personPublicKey == root.publicKey.rawRepresentation,
               try identity.signingKey.publicKey.rawRepresentation == draft.signingPublicKey,
               try identity.agreementKey.publicKey.rawRepresentation == draft.hpkePublicKey else { throw Failure.invalidResponse }
-        let name = try GroupWire.name(newName), key = account(draft.windowID) + ":fresh"
+        let name = try GroupWire.name(newName), key = freshAccount(draft.windowID)
         let saved = try journal.read(key)
         let material: FreshMaterial
         if let saved {
@@ -249,11 +254,11 @@ actor GroupRecoveryClient {
               reply.state == "freshGenerationCommitted" else { throw Failure.invalidResponse }
         let roomKey = try GroupHPKE.unwrap(material.envelopes[0], deviceID: identity.deviceID, agreementKey: identity.agreementKey, roster: verified)
         try Task.checkCancellation()
-        if let value = try journal.read("identity") {
+        if let value = try secrets.read("identity") {
             let local = try GroupWire.decode(GroupDeviceIdentity.self, value)
             guard local.personPublicKey == identity.personPublicKey, try local.deviceID == identity.deviceID else { throw Failure.invalidResponse }
         }
-        var local = try journal.read("window:" + draft.windowID).map { try GroupWire.decode(GroupLocalWindow.self, $0) } ?? .empty(anchor: material.anchor)
+        var local = try secrets.read("window:" + draft.windowID).map { try GroupWire.decode(GroupLocalWindow.self, $0) } ?? .empty(anchor: material.anchor)
         guard local.anchor == material.anchor, !local.left, local.closed != true,
               local.pinnedRevision <= next.revision,
               local.pinnedRevision != next.revision || local.pinnedHash == verified.hash else { throw Failure.invalidResponse }
@@ -262,8 +267,8 @@ actor GroupRecoveryClient {
         local.rosterHashes[String(next.revision)] = verified.hash
         local.minimumAdmissionRevision = next.revision; local.nameCheckpoint = nil
         var registered = identity; registered.registered = true
-        try journal.write(GroupWire.encode(registered), account: "identity", createOnly: false)
-        try journal.write(GroupWire.encode(local), account: "window:" + draft.windowID, createOnly: false)
+        try secrets.write(GroupWire.encode(registered), account: "identity", createOnly: false)
+        try secrets.write(GroupWire.encode(local), account: "window:" + draft.windowID, createOnly: false)
         return Registration(state: .ready(operationID: draft.operationID, deviceID: reply.deviceID), model: draft.model, registeredAt: nil)
     }
     private func pending(_ draft: Draft, signingKey: Curve25519.Signing.PrivateKey?) async throws -> Registration {
