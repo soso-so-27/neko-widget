@@ -31,8 +31,11 @@ test('current/newer builds, Apple/service calls, invalid minimum do not change b
   }
 });
 test('both real Worker fetch boundaries use the same policy; operational flag remains absent', () => {
-  for (const file of ['src/index.ts', '../PreservationService/src/index.ts']) {
-    assert.match(readFileSync(new URL('../' + file, import.meta.url), 'utf8'),
-      /const upgrade = clientUpgradeResponse\(request, env\);\s*if \(upgrade\) return upgrade;/);
-  }
+  assert.match(readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8'),
+    /const upgrade = clientUpgradeResponse\(request, env\);\s*if \(upgrade\) return upgrade;/);
+  // Preservation adds the fixed refusal event, but must still return this exact
+  // policy response before any business processing (including storage/auth).
+  assert.match(readFileSync(new URL('../../PreservationService/src/index.ts', import.meta.url), 'utf8'),
+    /const upgrade = clientUpgradeResponse\(request, env\);\s*if \(upgrade\) \{ logPutRefusal\(request,new ServiceError\('CLIENT_UPGRADE_REQUIRED',upgrade.status\)\); return upgrade; \}\s*if \(env.PRESERVATION_ENABLED/);
+
 });
