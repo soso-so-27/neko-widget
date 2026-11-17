@@ -160,9 +160,9 @@ class GroupRecoveryScreenTests(unittest.TestCase):
         # Draft, ready only from finishKeyDelivery, and waiting kept on failure.
         live = (ROOT / "NekoWidget/Services/GroupRecoveryLiveSession.swift").read_text(encoding="utf-8")
         code = "\n".join(line.split("//", 1)[0] for line in live.splitlines())
-        self.assertIn("base.client.receiveKeys(draft(id), identity: base.identity, afterEpoch: afterEpoch)", code)
+        self.assertIn("base.client.receiveKeys(draft(id), identity: base.identity, status: registration, afterEpoch: afterEpoch)", code)
         self.assertIn("base.client.finishKeyDelivery(draft(id), identity: base.identity)", code)
-        self.assertIn("page = try await source.receive(id, afterEpoch: cursor[id] ?? 0)", code)
+        self.assertIn("page = try await source.receive(id, status: status, afterEpoch: cursor[id] ?? 0)", code)
         self.assertIn('case "recoveryCommitted": self = .finish', code)
         self.assertIn('case "needsParticipationProof": self = .needsProof', code)
         self.assertIn("return .needsOriginalDeviceOrInvitation(operationID: id)", code)

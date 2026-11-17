@@ -2,8 +2,8 @@
 import Foundation
 import CryptoKit
 
-/// P3 only: root-authenticated discovery and pending registration. Never installs
-/// a roster/key, grants access, creates an identity, or chooses a root for the UI.
+/// Root-authenticated discovery, pending registration and key delivery.
+/// Installation requires the owner's verified switch and a key for this device.
 actor GroupRecoveryClient {
     enum Failure: Error { case disabled, serverDisabled, invalidResponse, unavailable, authentication, deviceLimit, updateRequired }
     struct Device: Decodable, Sendable { let deviceID: String; let model: String?; let registeredAt: Int }
@@ -29,6 +29,20 @@ actor GroupRecoveryClient {
         let state: GroupRecoveryRegistrationState
         let model: String?
         let registeredAt: Date?
+        fileprivate let delivery: VerifiedDelivery?
+
+        fileprivate init(state: GroupRecoveryRegistrationState, model: String?, registeredAt: Date?,
+                         delivery: VerifiedDelivery? = nil) {
+            self.state = state
+            self.model = model
+            self.registeredAt = registeredAt
+            self.delivery = delivery
+        }
+    }
+    fileprivate struct VerifiedDelivery: Sendable {
+        let draft: Draft
+        let receipt: GroupAnchorReceipt
+        let head: VerifiedGroupRoster
     }
     private struct Challenge: Decodable {
         let id: String; let person_id: String; let identity_public_key: String
@@ -59,6 +73,7 @@ actor GroupRecoveryClient {
     private let journal: any GroupSecretStore
     private let secrets: (any GroupSecretStore)?
     private let enabled: Bool
+    private var deliveryInFlight: Set<UUID> = []
     private var heads: [String: (SignedGroupRoster, GroupTrustAnchor)] = [:]
     private var personID: String { GroupWire.base64(GroupCanonical.hash(root.publicKey.rawRepresentation)) }
 
@@ -282,13 +297,20 @@ actor GroupRecoveryClient {
         let anchor: GroupTrustAnchor; let previousHash: Data; let previousRevision: Int
         let admissionRevision: Int; let deviceID: String
         var keys: [String: Data]; var rosterHashes: [String: Data]
+        // Older journals have the keys and receipt signatures but no local
+        // acknowledgement. The relay's per-offer flag can confirm those.
+        var acknowledgedOffers: [String: String]? = nil
     }
     private func receivedAccount(_ draft: Draft) throws -> String {
         try "p5-ready:" + GroupWire.base64(GroupCanonical.hash(GroupCanonical.fields([
             environment, personID, draft.windowID, draft.operationID.uuidString.lowercased()].map(GroupCanonical.text))))
     }
     private struct KeyPage: Decodable {
-        struct Item: Decodable { let offer: GroupRecoveryKeyOffer; let epochRoster: SignedGroupRoster }
+        struct Item: Decodable {
+            let offer: GroupRecoveryKeyOffer
+            let epochRoster: SignedGroupRoster
+            let received: Bool?
+        }
         let state: String
         let roster: SignedGroupRoster?
         let participation: GroupParticipationBoundary?
@@ -306,17 +328,43 @@ actor GroupRecoveryClient {
         return try await post("v3/group-recovery/operations/" + draft.operationID.uuidString.lowercased()
             + (action == "offers" ? "/key-offers" : "/key-receipts"), body)
     }
-    /// A bounded page; repeat with nextAfterEpoch and the SAME draft. Keys are
-    /// persisted in the dedicated journal before receipts, not in the active window.
-    func receiveKeys(_ draft: Draft, identity: GroupDeviceIdentity, afterEpoch: Int = 0) async throws -> KeyDeliveryProgress {
-        guard let secrets, afterEpoch >= 0, identity.personPublicKey == root.publicKey.rawRepresentation,
+    private func recoveryDevice(_ draft: Draft, identity: GroupDeviceIdentity) throws -> String {
+        guard enabled else { throw Failure.disabled }
+        guard identity.personPublicKey == root.publicKey.rawRepresentation,
               try identity.signingKey.publicKey.rawRepresentation == draft.signingPublicKey,
               try identity.agreementKey.publicKey.rawRepresentation == draft.hpkePublicKey,
               let saved = try journal.read(account(draft.windowID)), try GroupWire.decode(Draft.self, saved) == draft
         else { throw Failure.invalidResponse }
-        _ = try await status(draft)
-        guard let (packet, anchor) = heads[draft.windowID] else { throw Failure.invalidResponse }
-        let current = try GroupRosterVerifier.verifyHistoricalRecoveryRoster(packet, anchor: anchor)
+        return try identity.deviceID
+    }
+
+    private func receivedKeys(_ draft: Draft, deviceID: String) throws -> ReceivedKeys? {
+        guard let bytes = try secrets?.read(receivedAccount(draft)) else { return nil }
+        let bundle = try GroupWire.decode(ReceivedKeys.self, bytes)
+        guard bundle.deviceID == deviceID, bundle.anchor.windowID == draft.windowID,
+              bundle.previousHash.count == 32, bundle.admissionRevision > 0,
+              bundle.previousRevision >= bundle.admissionRevision,
+              !bundle.keys.isEmpty, bundle.keys.values.allSatisfy({ $0.count == 32 })
+        else { throw Failure.invalidResponse }
+        return bundle
+    }
+
+    /// A local hint to resume installation. Access still requires finishKeyDelivery.
+    func hasReceivedKeys(_ draft: Draft, identity: GroupDeviceIdentity) throws -> Bool {
+        try receivedKeys(draft, deviceID: recoveryDevice(draft, identity: identity)) != nil
+    }
+
+    /// Uses the verified result of this check's status call.
+    func receiveKeys(_ draft: Draft, identity: GroupDeviceIdentity, status: Registration,
+                     afterEpoch: Int = 0) async throws -> KeyDeliveryProgress {
+        let deviceID = try recoveryDevice(draft, identity: identity)
+        guard let secrets, afterEpoch >= 0, let delivery = status.delivery, delivery.draft == draft,
+              delivery.receipt.environment == environment, delivery.receipt.personID == personID,
+              status.state == .registeredWaitingForKeys(operationID: draft.operationID, deviceID: deviceID)
+        else { throw Failure.invalidResponse }
+        guard deliveryInFlight.insert(draft.operationID).inserted else { throw Failure.unavailable }
+        defer { deliveryInFlight.remove(draft.operationID) }
+        let (current, anchor) = (delivery.head, delivery.receipt.anchor)
         let bytes = try await keyAction(draft, action: "offers", payload: GroupCanonical.fields([GroupCanonical.text(String(afterEpoch))]),
             fields: ["afterEpoch": afterEpoch])
         let page = try GroupWire.decode(KeyPage.self, bytes)
@@ -327,27 +375,41 @@ actor GroupRecoveryClient {
               try GroupCanonical.hash(returned.roster.canonicalBytes()) == current.hash,
               let boundary = page.participation?.verified(head: current, environment: environment, personID: personID),
               let recipient = page.recipientProof?.verified(head: current, environment: environment),
-              recipient.personID == personID, recipient.deviceID == (try identity.deviceID),
+              recipient.personID == personID, recipient.deviceID == deviceID,
               recipient.operationID == draft.operationID.uuidString.lowercased(), let items = page.items, items.count <= 16
         else { throw Failure.invalidResponse }
+        let epochs = items.map { $0.offer.keyEpoch }
+        guard epochs.allSatisfy({ $0 > afterEpoch }), epochs == epochs.sorted(),
+              Set(epochs).count == epochs.count,
+              page.nextAfterEpoch.map({ epochs.last == $0 }) ?? true
+        else { throw Failure.invalidResponse }
+
         let storage = GroupRecoveryKeyJournal(store: secrets)
-        var received: [Int] = []
+        let slot = try receivedAccount(draft)
+        var bundle = try receivedKeys(draft, deviceID: deviceID)
+            ?? ReceivedKeys(anchor: anchor, previousHash: current.hash, previousRevision: current.roster.revision,
+                admissionRevision: boundary.proof.admissionRevision, deviceID: deviceID, keys: [:], rosterHashes: [:])
+        guard bundle.anchor == anchor, bundle.previousHash == current.hash,
+              bundle.previousRevision == current.roster.revision,
+              bundle.admissionRevision == boundary.proof.admissionRevision else { throw Failure.invalidResponse }
         for item in items {
             try Task.checkCancellation()
             let old = try GroupRosterVerifier.verifyHistoricalRecoveryRoster(item.epochRoster, anchor: anchor)
-            guard item.offer.keyEpoch > afterEpoch, !received.contains(item.offer.keyEpoch) else { throw Failure.invalidResponse }
+            let epoch = String(item.offer.keyEpoch)
+            let revision = String(old.roster.revision)
+            let confirmed = item.received == true || bundle.acknowledgedOffers?[epoch] == item.offer.offerID
             let key = try await storage.receive(item.offer, recipient: recipient, participation: boundary,
                 current: current, epoch: old, agreementKey: identity.agreementKey, signingKey: identity.signingKey,
                 now: Int(Date().timeIntervalSince1970))
-            let slot = try receivedAccount(draft)
-            var bundle = try secrets.read(slot).map { try GroupWire.decode(ReceivedKeys.self, $0) }
-                ?? ReceivedKeys(anchor: anchor, previousHash: current.hash, previousRevision: current.roster.revision,
-                    admissionRevision: boundary.proof.admissionRevision, deviceID: recipient.deviceID, keys: [:], rosterHashes: [:])
-            guard bundle.anchor == anchor, bundle.previousHash == current.hash, bundle.deviceID == recipient.deviceID,
-                  bundle.admissionRevision == boundary.proof.admissionRevision else { throw Failure.invalidResponse }
-            bundle.keys[String(old.roster.keyEpoch)] = key.key
-            bundle.rosterHashes[String(old.roster.revision)] = old.hash
-            try secrets.write(GroupWire.encode(bundle), account: slot, createOnly: false)
+            try Task.checkCancellation()
+            guard bundle.keys[epoch].map({ $0 == key.key }) ?? true,
+                  bundle.rosterHashes[revision].map({ $0 == old.hash }) ?? true else { throw Failure.invalidResponse }
+            if bundle.keys[epoch] == nil || bundle.rosterHashes[revision] == nil {
+                bundle.keys[epoch] = key.key
+                bundle.rosterHashes[revision] = old.hash
+                try secrets.write(GroupWire.encode(bundle), account: slot, createOnly: false)
+            }
+            if confirmed { continue }
             let d = GroupRosterDevice(id: recipient.deviceID, signingPublicKey: draft.signingPublicKey,
                 hpkePublicKey: draft.hpkePublicKey, personAuthorization: Data())
             let authorization = try root.signature(for: d.authorizationBytes(windowID: draft.windowID, personID: personID))
@@ -360,20 +422,19 @@ actor GroupRecoveryClient {
             let ack = try GroupWire.decode(Ack.self, response)
             guard ack.state == "receivedWaitingForOwner", ack.operationID == recipient.operationID, ack.offerID == item.offer.offerID
             else { throw Failure.invalidResponse }
-            received.append(item.offer.keyEpoch)
+            if bundle.acknowledgedOffers == nil { bundle.acknowledgedOffers = [:] }
+            bundle.acknowledgedOffers?[epoch] = item.offer.offerID
+            try secrets.write(GroupWire.encode(bundle), account: slot, createOnly: false)
         }
-        if let next = page.nextAfterEpoch { guard next == received.last else { throw Failure.invalidResponse } }
-        return .init(state: "receivedWaitingForOwner", receivedEpochs: received, nextAfterEpoch: page.nextAfterEpoch)
+        return .init(state: "receivedWaitingForOwner", receivedEpochs: epochs, nextAfterEpoch: page.nextAfterEpoch)
     }
 
     /// Poll after the owner commits. Server status alone never installs a key.
     func finishKeyDelivery(_ draft: Draft, identity: GroupDeviceIdentity) async throws -> Registration {
-        guard let secrets, identity.personPublicKey == root.publicKey.rawRepresentation,
-              let bytes = try secrets.read(receivedAccount(draft)) else { throw Failure.invalidResponse }
-        let bundle = try GroupWire.decode(ReceivedKeys.self, bytes)
-        let deviceID = try identity.deviceID
-        guard bundle.deviceID == deviceID, try identity.signingKey.publicKey.rawRepresentation == draft.signingPublicKey,
-              try identity.agreementKey.publicKey.rawRepresentation == draft.hpkePublicKey else { throw Failure.invalidResponse }
+        let deviceID = try recoveryDevice(draft, identity: identity)
+        guard let secrets, let bundle = try receivedKeys(draft, deviceID: deviceID) else { throw Failure.invalidResponse }
+        guard deliveryInFlight.insert(draft.operationID).inserted else { throw Failure.unavailable }
+        defer { deliveryInFlight.remove(draft.operationID) }
         let response = try await keyAction(draft, action: "offers", payload: GroupCanonical.fields([GroupCanonical.text("0")]), fields: ["afterEpoch": 0])
         struct Done: Decodable {
             let state: String; let deviceID: String; let previousHash: Data
@@ -427,6 +488,7 @@ actor GroupRecoveryClient {
         guard result.operationID == draft.operationID.uuidString.lowercased(), result.personID == personID,
               result.windowID == draft.windowID, !result.canOpen, !result.canSend, result.exists else { throw Failure.invalidResponse }
         var verified: VerifiedGroupRoster?
+        var delivery: VerifiedDelivery?
         if result.state != "needsOriginalDeviceOrInvitation" {
             guard let a = result.anchorReceipt, a.personID == personID, a.environment == environment, a.windowID == draft.windowID,
                   let packet = result.roster, let revision = result.revision, let hash = result.rosterHash else { throw Failure.invalidResponse }
@@ -434,7 +496,10 @@ actor GroupRecoveryClient {
                 anchor: .init(windowID: a.windowID, ownerPersonID: a.ownerPersonID, ownerIdentityPublicKey: a.ownerPublicKey), rootSignature: a.rootSignature)
             verified = try GroupRosterVerifier.verifyRecoveryHead(packet, receipts: [receipt], root: root.publicKey.rawRepresentation,
                 environment: environment, windowID: draft.windowID, currentRevision: revision, currentHash: hash, rootIsCurrent: true)
-            if verified != nil { heads[draft.windowID] = (packet, receipt.anchor) }
+            if let verified {
+                heads[draft.windowID] = (packet, receipt.anchor)
+                delivery = VerifiedDelivery(draft: draft, receipt: receipt, head: verified)
+            }
         }
         let deviceID = try GroupWire.base64(GroupCanonical.hash(GroupCanonical.fields([draft.signingPublicKey, draft.hpkePublicKey])))
         let state = try GroupRecoveryPendingStateResolver.resolve(operationID: draft.operationID, state: result.state,
@@ -443,7 +508,9 @@ actor GroupRecoveryClient {
             canRequestFreshGeneration: result.canRequestFreshGeneration == true)
         if let date = result.registeredAt { guard date > 0, date <= Int(Date().timeIntervalSince1970) + 30 else { throw Failure.invalidResponse } }
         if let model = result.model { guard model == draft.model else { throw Failure.invalidResponse } }
-        return Registration(state: state, model: result.model, registeredAt: result.registeredAt.map { Date(timeIntervalSince1970: TimeInterval($0)) })
+        return Registration(state: state, model: result.model,
+                            registeredAt: result.registeredAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+                            delivery: delivery)
     }
 }
 /// Keychain-backed P5 journal. Persist before network send; a receipt is returned
@@ -488,15 +555,20 @@ actor GroupRecoveryKeyJournal {
                  agreementKey: Curve25519.KeyAgreement.PrivateKey, signingKey: Curve25519.Signing.PrivateKey,
                  now: Int) throws -> Received {
         guard signingKey.publicKey.rawRepresentation == recipient.signingPublicKey else { throw GroupProtocolError.invalidEnvelope }
-        // Revalidate eligibility and signature even when a prior response was lost.
-        let key = try GroupRecoveryKeyCrypto.unwrap(offer, recipient: recipient, participation: participation,
-            current: current, epoch: epoch, key: agreementKey, now: now)
         let slot = try account("receive", recipient, epoch.roster.keyEpoch, current.hash)
         if let bytes = try store.read(slot) {
             let prior = try GroupWire.decode(Received.self, bytes)
-            if prior.offer == offer { return prior }
+            if prior.offer == offer {
+                try GroupRecoveryKeyCrypto.validateOffer(offer, recipient: recipient, participation: participation,
+                    current: current, epoch: epoch, recipientPublicKey: agreementKey.publicKey.rawRepresentation, now: now)
+                guard prior.key.count == 32, signingKey.publicKey.isValidSignature(prior.receiptSignature, for: try offer.receiptBytes())
+                else { throw GroupProtocolError.invalidEnvelope }
+                return prior
+            }
             guard prior.offer.expiresAt <= now else { throw GroupProtocolError.invalidEnvelope }
         }
+        let key = try GroupRecoveryKeyCrypto.unwrap(offer, recipient: recipient, participation: participation,
+            current: current, epoch: epoch, key: agreementKey, now: now)
         let received = Received(offer: offer, key: key.withUnsafeBytes { Data($0) },
             receiptSignature: try signingKey.signature(for: offer.receiptBytes()))
         try store.write(GroupWire.encode(received), account: slot, createOnly: false)

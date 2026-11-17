@@ -24,10 +24,21 @@ private actor Relay: GroupHTTPTransport {
     var operations: [String] = []
     var proof: [String: Any]?
     var keyPage: [String: Any] = [:]
-    var keyReceipts: [String] = []
-    var loseReceipt = true
+    var keyReceipts: [Int] = []
+    var receiptSignatures: [String: String] = [:]
+    var loseReceipt: Bool
+    private let budget: SharingAutoCallBudget?
+    private var budgetTime = Date()
+
+    init(loseReceipt: Bool = true, enforceBudget: Bool = false) {
+        self.loseReceipt = loseReceipt
+        budget = enforceBudget ? SharingAutoCallBudget() : nil
+    }
+    func advanceBudget() { budgetTime = budgetTime.addingTimeInterval(61) }
+    func callsThisMinute() -> Int { budget?.automaticCalls(at: budgetTime) ?? 0 }
     func installKeyPage(_ bytes: Data) throws { keyPage = try JSONSerialization.jsonObject(with: bytes) as! [String: Any] }
     func receiptCount() -> Int { keyReceipts.count }
+    func receiptEpochs() -> [Int] { keyReceipts }
     var freshHashes: [String] = []
     var loseFreshReply = false
     func loseNextFreshReply() { loseFreshReply = true }
@@ -36,6 +47,7 @@ private actor Relay: GroupHTTPTransport {
     func set(_ mode: Mode) { self.mode = mode }
     func seen() -> [String] { operations }
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
+        if let budget { try SharingAutoCallBudget.admit(budget, at: budgetTime) }
         if mode == .offline { throw TestFailure.failed }
         let b = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
         let path = request.url!.path, now = Int(Date().timeIntervalSince1970)
@@ -68,7 +80,10 @@ private actor Relay: GroupHTTPTransport {
             try check(publicKey.isValidSignature(GroupWire.bytes(b["rootSignature"] as! String), for: bytes))
             if !receipt { return try reply(keyPage) }
             let signature = b["receiptSignature"] as! String
-            if let first = keyReceipts.first { try check(first == signature) }; keyReceipts.append(signature)
+            let offerID = b["offerId"] as! String
+            if let first = receiptSignatures[offerID] { try check(first == signature) }
+            receiptSignatures[offerID] = signature
+            keyReceipts.append(b["keyEpoch"] as! Int)
             if loseReceipt { loseReceipt = false; throw TestFailure.failed }
             return try reply(["state": "receivedWaitingForOwner", "operationId": c["operation_id"]!, "offerId": b["offerId"]!])
         }
@@ -290,17 +305,102 @@ private actor AutoRelay: GroupHTTPTransport {
         let identity = GroupDeviceIdentity(personPrivateKey: root.rawRepresentation, personPublicKey: root.publicKey.rawRepresentation,
             signingPrivateKey: device.rawRepresentation, agreementPrivateKey: hpke.rawRepresentation, windowCertificates: [:], registered: false)
         let deliverySecrets = RecoverySecrets()
-        let deliveryClient = try GroupRecoveryClient(endpoint: URL(string: "https://recovery.invalid")!, environment: "staging",
-            root: root.rawRepresentation, transport: relay, journal: journal, secrets: deliverySecrets, enabled: true)
+        func deliveryClient(_ transport: Relay, secrets: RecoverySecrets) throws -> GroupRecoveryClient {
+            try GroupRecoveryClient(endpoint: URL(string: "https://recovery.invalid")!, environment: "staging",
+                root: root.rawRepresentation, transport: transport, journal: journal, secrets: secrets, enabled: true)
+        }
         func object<T: Encodable>(_ value: T) throws -> Any { try JSONSerialization.jsonObject(with: GroupWire.encode(value)) }
-        try await relay.installKeyPage(JSONSerialization.data(withJSONObject: ["state": "waitingForReceipt",
-            "roster": object(packet), "participation": object(boundary), "recipientProof": object(recipientProof),
-            "items": [["offer": object(offer), "epochRoster": object(packet)]], "nextAfterEpoch": NSNull()]))
-        do { _ = try await deliveryClient.receiveKeys(draft, identity: identity); throw GroupRecoveryClient.Failure.invalidResponse } catch is TestFailure {}
+        func singlePage(received: Bool) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["state": "waitingForReceipt",
+                "roster": object(packet), "participation": object(boundary), "recipientProof": object(recipientProof),
+                "items": [["offer": object(offer), "epochRoster": object(packet), "received": received]], "nextAfterEpoch": NSNull()])
+        }
+        let delivery = try deliveryClient(relay, secrets: deliverySecrets)
+        try await relay.installKeyPage(singlePage(received: false))
+        try check(try await delivery.hasReceivedKeys(draft, identity: identity) == false)
+        let firstStatus = try await delivery.status(draft)
+        do {
+            _ = try await delivery.receiveKeys(draft, identity: identity, status: firstStatus)
+            throw GroupRecoveryClient.Failure.invalidResponse
+        } catch is TestFailure {}
         try check(deliverySecrets.read("window:" + window) == nil)
-        let receivedPage = try await deliveryClient.receiveKeys(draft, identity: identity)
+        try check(try await delivery.hasReceivedKeys(draft, identity: identity))
+        let receivedPage = try await delivery.receiveKeys(draft, identity: identity, status: firstStatus)
         try check(receivedPage.receivedEpochs == [1] && !receivedPage.canSend)
+        _ = try await delivery.receiveKeys(draft, identity: identity, status: firstStatus)
+        try check(await relay.receiptEpochs() == [1, 1])
+
+        // A relay receipt still leaves the fresh device responsible for validating
+        // and storing its own key. It must not send a second receipt.
+        let restoredLocal = try deliveryClient(relay, secrets: RecoverySecrets())
+        try await relay.installKeyPage(singlePage(received: true))
+        let relayConfirmed = try await restoredLocal.status(draft)
+        let restoredPage = try await restoredLocal.receiveKeys(draft, identity: identity, status: relayConfirmed)
+        try check(restoredPage.receivedEpochs == [1])
+        try check(try await restoredLocal.hasReceivedKeys(draft, identity: identity))
         try check(await relay.receiptCount() == 2)
+
+        // An actual 16-offer page under the real 30-call automatic budget.
+        // Hold the relay flags false to exercise acknowledgement across app restart.
+        var rosters = [(packet, boundaryHead)]
+        var currentBoundary = boundary
+        for epoch in 2...16 {
+            let previous = rosters.last!.1
+            let nextRoster = GroupRoster(windowID: window, revision: epoch, keyEpoch: epoch,
+                previousHash: previous.hash, ownerPersonID: person, members: roster.members)
+            let signed = try GroupRosterVerifier.sign(nextRoster, deviceID: ownerID, privateKey: ownerDevice)
+            let next = try GroupRosterVerifier.verify(signed, anchor: anchor.anchor, previous: previous)
+            guard let verified = currentBoundary.verified(head: previous, environment: "staging", personID: person)
+            else { throw TestFailure.failed }
+            currentBoundary = try GroupParticipationBoundary.carry(verified, previous: previous, next: next,
+                signerID: ownerID, key: ownerDevice)
+            rosters.append((signed, next))
+        }
+        let (latestPacket, latestHead) = rosters.last!
+        guard let latestRecipient = recipientProof.verified(head: latestHead, environment: "staging"),
+              let latestBoundary = currentBoundary.verified(head: latestHead, environment: "staging", personID: person)
+        else { throw TestFailure.failed }
+        let items: [[String: Any]] = try rosters.map { signed, epoch in
+            let wrapped = try GroupRecoveryKeyCrypto.wrap(SymmetricKey(size: .bits256), recipient: latestRecipient,
+                participation: latestBoundary, current: latestHead, epoch: epoch, signerID: ownerID, signingKey: ownerDevice,
+                offerID: UUID(), expiresAt: keyNow + 3600, now: keyNow)
+            return ["offer": try object(wrapped), "epochRoster": try object(signed), "received": false]
+        }
+        let metered = Relay(loseReceipt: false, enforceBudget: true)
+        var latestProof = proof
+        latestProof["revision"] = 16; latestProof["rosterHash"] = GroupWire.base64(latestHead.hash)
+        latestProof["roster"] = try object(latestPacket)
+        try await metered.installProof(JSONSerialization.data(withJSONObject: latestProof))
+        try await metered.installKeyPage(JSONSerialization.data(withJSONObject: ["state": "waitingForReceipt",
+            "roster": object(latestPacket), "participation": object(currentBoundary), "recipientProof": object(recipientProof),
+            "items": items, "nextAfterEpoch": NSNull()]))
+        let budgetSecrets = RecoverySecrets()
+        let first = try deliveryClient(metered, secrets: budgetSecrets)
+        let budgetStatus = try await first.status(draft)
+        do {
+            _ = try await first.receiveKeys(draft, identity: identity, status: budgetStatus)
+            throw TestFailure.failed
+        } catch GroupClientError.unavailable {}
+        try check(await metered.callsThisMinute() == 30)
+        try check(await metered.seen().count == 1)
+        try check(await metered.receiptEpochs() == Array(1...13))
+
+        await metered.advanceBudget()
+        let restarted = try deliveryClient(metered, secrets: budgetSecrets)
+        try check(try await restarted.hasReceivedKeys(draft, identity: identity))
+        try check(await metered.callsThisMinute() == 0)
+        let resumedStatus = try await restarted.status(draft)
+        let resumedPage = try await restarted.receiveKeys(draft, identity: identity, status: resumedStatus)
+        try check(resumedPage.receivedEpochs == Array(1...16) && resumedPage.nextAfterEpoch == nil)
+        try check(await metered.callsThisMinute() == 10)
+        try check(await metered.seen().count == 2)
+        try check(await metered.receiptEpochs() == Array(1...16))
+        let repeatedStatus = try await restarted.status(draft)
+        _ = try await restarted.receiveKeys(draft, identity: identity, status: repeatedStatus)
+        try check(await metered.callsThisMinute() == 14)
+        try check(await metered.receiptEpochs() == Array(1...16))
+        try check(budgetSecrets.read("window:" + window) == nil)
+        print("recovery receipt budget: PASS (30 then 10 calls, 16 distinct receipts; repeat check 4 calls, no receipts)")
         let recoveredUnsigned = GroupRosterDevice(id: pendingID, signingPublicKey: device.publicKey.rawRepresentation,
             hpkePublicKey: hpke.publicKey.rawRepresentation, personAuthorization: Data())
         let recoveredDevice = GroupRosterDevice(id: pendingID, signingPublicKey: recoveredUnsigned.signingPublicKey,
@@ -313,11 +413,23 @@ private actor AutoRelay: GroupHTTPTransport {
         let recoveryHead = try GroupRosterVerifier.verify(recoveryPacket, anchor: anchor.anchor, previous: boundaryHead)
         let recoveryEnvelope = try GroupHPKE.wrap(roomKey: SymmetricKey(size: .bits256), for: pendingID,
             roster: recoveryHead, signerID: ownerID, signingKey: ownerDevice)
+        var switched = proof
+        switched["state"] = "notStarted"; switched["deviceId"] = NSNull()
+        switched["registeredAt"] = NSNull(); switched["model"] = NSNull()
+        switched["roster"] = try object(recoveryPacket); switched["revision"] = 2
+        switched["rosterHash"] = GroupWire.base64(recoveryHead.hash)
+        try await relay.installProof(JSONSerialization.data(withJSONObject: switched))
+        let reopenedDelivery = try deliveryClient(relay, secrets: deliverySecrets)
+        let base = GroupRecoveryClientSession(client: reopenedDelivery, identity: identity, drafts: [draft.operationID: draft])
+        let session = GroupRecoveryKeyDeliverySession(base: base, source: GroupRecoveryClientKeySource(base: base))
+        // The pending row vanished, but the unverified install keeps this same operation waiting.
+        let checkStatus = GroupRecoveryRetryAction.queryStatus(draft.operationID)
+        try check(try await session.run(checkStatus) == waiting.state)
+        try check(deliverySecrets.read("window:" + window) == nil)
         try await relay.installKeyPage(JSONSerialization.data(withJSONObject: ["state": "recoveryCommitted", "deviceId": pendingID,
             "previousHash": GroupWire.base64(boundaryHead.hash), "revision": 2, "rosterHash": GroupWire.base64(recoveryHead.hash),
             "roster": object(recoveryPacket), "envelopeForThisDevice": object(recoveryEnvelope)]))
-        let readyDelivery = try await deliveryClient.finishKeyDelivery(draft, identity: identity)
-        try check(readyDelivery.state == .ready(operationID: draft.operationID, deviceID: pendingID))
+        try check(try await session.run(checkStatus) == .ready(operationID: draft.operationID, deviceID: pendingID))
         let installedDelivery = try GroupWire.decode(GroupLocalWindow.self, deliverySecrets.read("window:" + window)!)
         try check(installedDelivery.keys["1"] == contentKey.withUnsafeBytes { Data($0) } && installedDelivery.keys["2"] != nil)
         try check(installedDelivery.minimumAdmissionRevision == 1)
@@ -356,19 +468,21 @@ private actor ScriptedKeys: GroupRecoveryKeySource {
     private var statuses: [GroupRecoveryRegistrationState]
     private var pages: [Result<GroupRecoveryKeyPage, Error>]
     private var finishes: [Result<GroupRecoveryRegistrationState, Error>]
+    private let localDeviceID: String?
     private(set) var afterEpochs: [Int] = []
     private(set) var finishCalls = 0
     private(set) var personMarks: [Bool] = []
     init(statuses: [GroupRecoveryRegistrationState], pages: [Result<GroupRecoveryKeyPage, Error>],
-         finishes: [Result<GroupRecoveryRegistrationState, Error>]) {
-        self.statuses = statuses; self.pages = pages; self.finishes = finishes
+         finishes: [Result<GroupRecoveryRegistrationState, Error>], localDeviceID: String? = nil) {
+        self.statuses = statuses; self.pages = pages; self.finishes = finishes; self.localDeviceID = localDeviceID
     }
     func resume(_ id: UUID) async throws -> GroupRecoveryRegistrationState? { nil }
-    func status(_ id: UUID) async throws -> GroupRecoveryRegistrationState {
+    func status(_ id: UUID) async throws -> GroupRecoveryKeyStatus {
         personMarks.append(SharingAutoCallBudget.isPersonAction)
-        return statuses.count > 1 ? statuses.removeFirst() : statuses[0]
+        return .init(statuses.count > 1 ? statuses.removeFirst() : statuses[0])
     }
-    func receive(_ id: UUID, afterEpoch: Int) async throws -> GroupRecoveryKeyPage {
+    func receivedDeviceID(_ id: UUID) async throws -> String? { localDeviceID }
+    func receive(_ id: UUID, status: GroupRecoveryKeyStatus, afterEpoch: Int) async throws -> GroupRecoveryKeyPage {
         afterEpochs.append(afterEpoch)
         guard !pages.isEmpty else { throw TestFailure.failed }
         return try pages.removeFirst().get()
@@ -397,7 +511,7 @@ private actor ScriptedKeys: GroupRecoveryKeySource {
                 .failure(GroupClientError.offline),
                 .success(.init(state: "receivedWaitingForOwner", nextAfterEpoch: nil)),
                 .success(.init(state: "recoveryCommitted", nextAfterEpoch: nil))],
-        finishes: [.failure(GroupClientError.offline), .success(ready)])
+        finishes: [.failure(GroupClientError.offline), .success(ready)], localDeviceID: device)
     let session = GroupRecoveryKeyDeliverySession(base: base, source: keys)
     for _ in 0..<4 { try check(try await session.run(.queryStatus(id)) == waiting) }
     try check(await keys.afterEpochs == [0, 16, 16, 0])
@@ -418,13 +532,12 @@ private actor ScriptedKeys: GroupRecoveryKeySource {
     }
     try check(GroupRecoveryKeyStep(.init(state: "recoveryCommitted", nextAfterEpoch: 3)) == .finish)
 
-    // Never registered here: no received keys, so still notStarted; a lost call is unavailable.
-    let fresh = ScriptedKeys(statuses: [.notStarted(operationID: id)], pages: [],
-        finishes: [.failure(GroupRecoveryClient.Failure.invalidResponse), .failure(GroupClientError.offline)])
+    // No saved keys: still notStarted, without an install call.
+    let fresh = ScriptedKeys(statuses: [.notStarted(operationID: id)], pages: [], finishes: [])
     let freshSession = GroupRecoveryKeyDeliverySession(base: base, source: fresh)
     try check(try await freshSession.run(.queryStatus(id)) == .notStarted(operationID: id))
-    do { _ = try await freshSession.run(.queryStatus(id)); throw TestFailure.failed } catch is GroupClientError {}
     try check(await fresh.afterEpochs.isEmpty)
+    try check(await fresh.finishCalls == 0)
 
     // The screen checks again on its own: automatic even inside a tap, waiting kept on failure.
     let auto = ScriptedKeys(statuses: [waiting],
