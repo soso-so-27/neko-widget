@@ -193,6 +193,18 @@ struct VerifiedGroupRoster: Sendable {
 }
 
 enum GroupRosterVerifier {
+    /// P3's explicit solo exception. It cannot authorize recovery into a
+    /// multi-person roster and does not relax the normal transition verifier.
+    static func verifySoloRecovery(_ packet: SignedGroupRoster, previous: VerifiedGroupRoster,
+                                   proof: GroupRecoveryProof, ledger: GroupRecoveryLedger, now: Int) throws -> VerifiedGroupRoster {
+        guard previous.roster.members.count == 1, let owner = previous.roster.members.first,
+              owner.role == .owner, owner.personID == ledger.personID,
+              packet.roster.members.count == 1, packet.roster.members[0].devices.count == 1,
+              packet.signerDeviceID == proof.claim.newDevice.id else { throw GroupRecoveryProofError.invalidProof }
+        try GroupRecoveryProofVerifier.validate(proof, previous: previous, next: packet.roster, ledger: ledger, now: now)
+        return try verifyPacket(packet, anchor: .init(windowID: ledger.windowID, ownerPersonID: owner.personID,
+            ownerIdentityPublicKey: owner.identityPublicKey), previous: nil, restoredPin: proof.claim.nextHash)
+    }
     /// Recovery-only entry: server authority is limited to current head/closure.
     /// The owner anchor still comes exclusively from the personal root signature.
     /// Returning a verified roster grants neither membership nor any photo key.
@@ -477,7 +489,12 @@ enum GroupRecoveryProofError: Error, LocalizedError {
         }
     }
 }
-struct GroupRecoveryClaim: Equatable, Sendable {
+struct GroupRecoveryClaim: Codable, Equatable, Sendable {
+    enum CodingKeys: String, CodingKey {
+        case version, environment, windowID, personID, participantID, recoveryGeneration, previousRevision
+        case previousHash, nextHash, newDevice, operationID, challenge, issuedAt, expiresAt
+        case replacedDeviceIDs = "replacedDeviceIds"
+    }
     var version: Int
     var environment: String
     var windowID: String
@@ -520,7 +537,7 @@ struct GroupRecoveryClaim: Equatable, Sendable {
         try GroupCanonical.fields([GroupCanonical.text(root ? "NW3.RECOVER_DEVICE.ROOT.V1" : "NW3.RECOVER_DEVICE.DEVICE.V1"), canonicalBytes()])
     }
 }
-struct GroupRecoveryProof: Sendable {
+struct GroupRecoveryProof: Codable, Sendable {
     var claim: GroupRecoveryClaim
     var rootSignature: Data
     var deviceSignature: Data

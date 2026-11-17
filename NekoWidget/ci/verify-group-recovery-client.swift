@@ -8,6 +8,10 @@ private actor Relay: GroupHTTPTransport {
     var challenges: [String: [String: Any]] = [:]
     var operations: [String] = []
     var proof: [String: Any]?
+    var freshHashes: [String] = []
+    var loseFreshReply = false
+    func loseNextFreshReply() { loseFreshReply = true }
+    func freshCount() -> Int { freshHashes.count }
     func installProof(_ bytes: Data) throws { proof = try JSONSerialization.jsonObject(with: bytes) as? [String: Any] }
     func set(_ mode: Mode) { self.mode = mode }
     func seen() -> [String] { operations }
@@ -34,6 +38,24 @@ private actor Relay: GroupHTTPTransport {
                 GroupCanonical.text(c["operation_id"] as! String), GroupWire.bytes(c["nonce"] as! String),
                 GroupCanonical.text(String(c["issued_at"] as! Int)), GroupCanonical.text(String(c["expires_at"] as! Int))])
         let publicKey = try Curve25519.Signing.PublicKey(rawRepresentation: GroupWire.bytes(c["identity_public_key"] as! String))
+        if path.hasSuffix("/devices/remove") {
+            let device = b["deviceId"] as! String
+            let bytes = try GroupCanonical.fields([GroupCanonical.text("NW3.RECOVERY.REMOVE-DEVICE.V1"), transcript, GroupWire.bytes(device, count: 32)])
+            try check(publicKey.isValidSignature(GroupWire.bytes(b["rootSignature"] as! String), for: bytes))
+            return try reply(["personId": person, "operationId": c["operation_id"]!, "deviceId": device, "state": "revoked"])
+        }
+        if path.hasSuffix("/fresh") {
+            let packet = try GroupWire.decode(SignedGroupRoster.self, JSONSerialization.data(withJSONObject: b["packet"]!))
+            let hash = GroupWire.base64(try GroupCanonical.hash(packet.roster.canonicalBytes()))
+            if let first = freshHashes.first { try check(first == hash) }
+            freshHashes.append(hash)
+            if freshHashes.count == 1 {
+                print("RECOVERY_FRESH_WIRE=" + String(data: try JSONSerialization.data(withJSONObject: ["body": b, "challenge": c]), encoding: .utf8)!)
+            }
+            if loseFreshReply { loseFreshReply = false; throw TestFailure.failed }
+            return try reply(["personId": person, "operationId": c["operation_id"]!, "windowId": packet.roster.windowID,
+                "deviceId": packet.signerDeviceID, "revision": packet.roster.revision, "rosterHash": hash, "state": "freshGenerationCommitted"])
+        }
         if path.hasSuffix("/catalog") {
             try check(publicKey.isValidSignature(GroupWire.bytes(b["rootSignature"] as! String), for: transcript))
             return try reply(["personId": person, "windows": [], "notebooks": [], "devices": [], "windowCount": 0, "notebookCount": 0, "serverNow": now])
@@ -103,6 +125,19 @@ private actor Relay: GroupHTTPTransport {
         let waiting = try await c.status(draft)
         try check(waiting.state == .registeredWaitingForKeys(operationID: draft.operationID, deviceID: pendingID))
         try check(!waiting.state.canOpen && !waiting.state.canSend && waiting.model == "iPhone")
+        let identity = GroupDeviceIdentity(personPrivateKey: root.rawRepresentation, personPublicKey: root.publicKey.rawRepresentation,
+            signingPrivateKey: device.rawRepresentation, agreementPrivateKey: hpke.rawRepresentation, windowCertificates: [:], registered: false)
+        proof["state"] = "noKeyProvider"; proof["canRequestFreshGeneration"] = true
+        try await relay.installProof(JSONSerialization.data(withJSONObject: proof))
+        await relay.loseNextFreshReply()
+        do { _ = try await c.freshGeneration(draft, identity: identity, newName: "新しいまど"); throw GroupRecoveryClient.Failure.invalidResponse } catch is TestFailure {}
+        try check(journal.read("window:" + window) == nil)
+        let resumed = try await reopened.resumeFreshGeneration(draft, identity: identity)
+        try check(resumed?.state == .ready(operationID: draft.operationID, deviceID: pendingID))
+        let installed = try GroupWire.decode(GroupLocalWindow.self, journal.read("window:" + window)!)
+        try check(installed.pinnedRevision == 2 && installed.keys.count == 1 && installed.keys["1"] == nil)
+        try check(await relay.freshCount() == 2)
+        try await c.removeDevice(ownerID, operationID: UUID())
         proof["rosterHash"] = GroupWire.base64(Data(repeating: 0, count: 32))
         try await relay.installProof(JSONSerialization.data(withJSONObject: proof))
         do { _ = try await c.status(draft); throw TestFailure.failed } catch is GroupRecoveryProofError {}
@@ -115,5 +150,40 @@ private actor Relay: GroupHTTPTransport {
         await relay.set(.offline)
         do { _ = try await c.catalog(); throw GroupRecoveryClient.Failure.invalidResponse } catch is TestFailure {}
         print("recovery client: PASS (stable journal, root/device signatures, environment, no unverified ready, OFF, offline)")
+        try await verifyRecoveryAdapter()
     }
+}
+
+private actor DelayedRecovery: GroupRecoverySession {
+    let operation: UUID
+    let delay: Duration
+    init(_ operation: UUID, _ delay: Duration) { self.operation = operation; self.delay = delay }
+    func catalog() async throws -> GroupRecoveryClient.Catalog { throw TestFailure.failed }
+    func remove(_ device: String, operationID: UUID) async throws {}
+    func run(_ action: GroupRecoveryRetryAction) async throws -> GroupRecoveryRegistrationState {
+        // Deliberately ignores cancellation like a delayed network callback.
+        await withCheckedContinuation { continuation in
+            Task { try? await Task.sleep(for: delay); continuation.resume() }
+        }
+        return .registeredWaitingForKeys(operationID: operation, deviceID: "synthetic")
+    }
+}
+@MainActor private func verifyRecoveryAdapter() async throws {
+    let a = UUID(), b = UUID()
+    func context(_ root: String, _ id: UUID) -> GroupRecoveryAdapter.Context {
+        .init(candidate: .init(summary: .init(rootID: root, windowIDs: [root], notebookIDs: []), openableWindowNames: []),
+            session: DelayedRecovery(id, .milliseconds(150)), items: [.init(windowID: root, name: nil, state: .notStarted(operationID: id))])
+    }
+    let model = GroupRecoveryAdapter(contexts: [context("a", a), context("b", b)], timeout: .milliseconds(30))
+    await model.handle(.chooseRoot("a")); await model.handle(.perform(.submitSameOperation(a)))
+    try await Task.sleep(for: .milliseconds(60))
+    try check(model.items[0].state == .unavailable(operationID: a))
+    try await Task.sleep(for: .milliseconds(160))
+    try check(model.items[0].state == .unavailable(operationID: a))
+    await model.handle(.perform(.queryStatus(a))); await model.handle(.chooseRoot("b"))
+    try await Task.sleep(for: .milliseconds(200))
+    try check(model.selectedRootID == "b" && model.items[0].state == .notStarted(operationID: b))
+    await model.handle(.chooseRoot("absent")); try check(model.selectedRootID == "b")
+    await model.handle(.dismiss); try check(model.dismissed)
+    print("recovery adapter: PASS (timeout, late completion, root switch, unknown root, dismissal)")
 }
