@@ -1000,6 +1000,36 @@ final class ReviewScreenshotUITests: XCTestCase {
         app.terminate()
     }
 
+    /// 11/18: 設定 → 家族の手帳 → 「通報への返答」, reached the way the app
+    /// reaches it, on a family of this iPhone alone and three sample answers
+    /// (`--family-report-replies-fixture`; synthetic receipt numbers only).
+    @MainActor
+    func test20FamilyReportReplies() {
+        let app = launch(fixture + ["--family-report-replies-fixture"], tools: true)
+        shot("92p_family_report_replies", app) {
+            guard tapTab(app, "main-tab-tools", "この子") else { return "この子 tab not found" }
+            let settings = app.buttons["tools-settings-button"]
+            guard settings.waitForExistence(timeout: 15) else { return "settings button not found" }
+            settings.tap()
+            guard app.navigationBars["設定"].waitForExistence(timeout: 10) else { return "settings did not open" }
+            let family = app.buttons["settings-family-notebook"]
+            guard reveal(family, app, maximumSwipes: 14) else { return "家族の手帳 row not found" }
+            family.tap()
+            guard app.navigationBars["家族の手帳"].waitForExistence(timeout: 10) else { return "family notebook did not open" }
+            let row = app.buttons["family-notebook-report-replies"].firstMatch
+            guard reveal(row, app, maximumSwipes: 14) else { return "通報への返答 row not found" }
+            row.tap()
+            guard app.navigationBars["通報への返答"].waitForExistence(timeout: 10) else { return "通報への返答 did not open" }
+            let sample = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "FP-0000-0003")).firstMatch
+            guard sample.waitForExistence(timeout: 10) else {
+                return "sample answers did not appear"
+            }
+            settle(1)
+            return nil
+        }
+        app.terminate()
+    }
+
     /// 「この子のこと」 of the family cat on screen, then its 「…」 open.
     @MainActor
     private func openFamilyPhotoMenu(_ app: XCUIApplication) -> String? {

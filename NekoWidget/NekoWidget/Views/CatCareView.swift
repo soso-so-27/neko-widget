@@ -2905,6 +2905,7 @@ final class FamilyRepresentativePhotos: ObservableObject {
     func report(cat: UUID, assetID: UUID, reason: GroupReportReason) async throws -> String {
         guard let backend else { throw FamilyNotebookPhotoFailure.unavailable }
         let number = try await SharingPersonAction.run { try await backend.report(assetID: assetID, reason: reason) }
+        FamilyReportReplies.markSent()
         if shown[cat]?.assetID == assetID { shown[cat] = nil }
         return number
     }

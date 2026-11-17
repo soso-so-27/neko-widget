@@ -656,6 +656,7 @@ struct AppStoreScreenshotFixtureRootView: View {
             OwnerStoreCaptureFixture.prepareWidgets()
             await AppStoreScreenshotFixture.seedCatHomeCareIfRequested()
             await AppStoreScreenshotFixture.CatHomeStress.seedIfRequested()
+            await FamilyReportReplies.seedFixtureIfRequested()
         }
         .task { await AppStoreScreenshotFixture.CatHomeStress.parkMidSwipeIfRequested() }
 
