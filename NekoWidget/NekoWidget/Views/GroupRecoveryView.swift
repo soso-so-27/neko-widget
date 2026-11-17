@@ -8,11 +8,6 @@ import SwiftUI
 
 /// 押したものを受け取って、状態モデルに渡す側（Codex のアダプタ）。
 /// 画面からは、本人が押したものだけが本人の操作の印つきで届く（GroupRecoveryCommandRoute）。
-@MainActor
-protocol GroupRecoveryCommandHandling: AnyObject {
-    func handle(_ command: GroupRecoveryCommand) async
-}
-
 /// まどのタブの入口。参加の手続き中の行と同じ形。
 struct GroupRecoveryEntryRow: View {
     var body: some View {
