@@ -8,6 +8,7 @@ import { protectedGroupRead, requireCurrentIdentity } from './group-identity-ser
 import { groupRecoveryPendingAPI } from './group-recovery-pending';
 import { removeRecoveryDevice } from './group-recovery-devices';
 import { freshRecovery } from './group-recovery-fresh';
+import { recipientRecoveryKeys } from './group-recovery-key-recipient';
 
 export interface RecoveryChallenge {
   id: string; person_id: string; identity_public_key: string; operation_id: string;
@@ -54,6 +55,8 @@ export async function groupRecoveryCatalogAPI(request: Request, env: Env): Promi
   }
   if (url.pathname === '/v3/group-recovery/devices/remove') return removeRecoveryDevice(env, body, now);
   if (fresh) return freshRecovery(env,body,fresh[1]!,now);
+  const keys=url.pathname.match(/^\/v3\/group-recovery\/operations\/([0-9a-f-]{36})\/(key-offers|key-receipts)$/u);
+  if(keys)return recipientRecoveryKeys(env,body,keys[1]!,keys[2]==='key-receipts',now);
   if (url.pathname.startsWith('/v3/group-recovery/operations/')) return groupRecoveryPendingAPI(env, body, url.pathname, now);
   if (url.pathname !== '/v3/group-recovery/catalog') throw new ApiError(404, 'not_found', 'Endpoint unavailable.');
   exactKeys(body, ['challengeId', 'rootSignature']);

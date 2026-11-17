@@ -1,0 +1,38 @@
+import {it,expect} from 'vitest';
+import {plusOwner} from './group-billing-fixture';
+import {create,person,invitation,apply,transition,ok,call,sign,db,packet} from './group-fixture';
+import {groupFields,groupRosterBytes,verifyGroupRoster} from '../src/group-protocol';
+import {participationBytes,verifyParticipation,participationAllowsEpoch,type ParticipationBoundary} from '../src/group-recovery-participation';
+it('observes re-admission without a signed-roster absence',async()=>{
+ const owner=await plusOwner(),p=await person(),w=await create(owner),invite=await invitation(owner,w),join=await apply(p,w,invite);ok(join.response,201);
+ const admitted=await transition(owner,w,'admit',join.id,[...w.roster.members,join.member]);ok(admitted.response);
+ const before=admitted.next,op=crypto.randomUUID();
+ ok(await call(p,`/v3/group-windows/${w.windowId}/leave`,{operationId:op,expectedRevision:2,selfSignature:await sign(p.signing.privateKey,groupFields(['NW3.LEAVE',w.windowId,join.member.participantId,'2',op]))}));
+ expect(await db.prepare('SELECT revision FROM group_windows WHERE space_id=?').bind(w.windowId).first()).toEqual({revision:2});
+ const again=await apply(p,before,await invitation(owner,before));ok(again.response,201);
+ const sameMember={...again.member,participantId:join.member.participantId};
+ const rejoined=await transition(owner,before,'admit',again.id,[before.roster.members[0]!,sameMember]);ok(rejoined.response);
+ expect(sameMember).toEqual(join.member);
+ const rotationOnly={...before.roster,revision:3,keyEpoch:3,previousHash:before.hash};
+ expect(groupRosterBytes(rejoined.next.roster)).toEqual(groupRosterBytes(rotationOnly));
+ expect(await db.prepare('SELECT joined_revision FROM group_members WHERE participant_id=?').bind(join.member.participantId).first()).toEqual({joined_revision:3});
+ const anchor={windowId:w.windowId,ownerPersonId:owner.id,ownerIdentityPublicKey:owner.identity.publicKey};
+ const first=await verifyGroupRoster((await packet(owner,w.roster)).packet,anchor);
+ const old=await verifyGroupRoster((await packet(owner,before.roster)).packet,anchor,first);
+ const current=await verifyGroupRoster((await packet(owner,rejoined.next.roster)).packet,anchor,old);
+ const unsigned:Omit<ParticipationBoundary,'signature'>={environment:'staging',windowId:w.windowId,personId:p.id,
+  participantId:join.member.participantId,admissionRevision:3,rosterHash:current.hash,signerDeviceId:owner.deviceId};
+ const proof={...unsigned,signature:await sign(owner.signing.privateKey,participationBytes(unsigned))};
+ const verified=await verifyParticipation(proof,current,'staging',p.id);
+ expect(verified).not.toBeNull();
+ expect(participationAllowsEpoch(verified!,current,old)).toBe(false);
+ expect(participationAllowsEpoch(verified!,current,current)).toBe(true);
+ expect(await verifyParticipation(null,current,'staging',p.id)).toBeNull();
+ expect(await verifyParticipation(proof,current,'production',p.id)).toBeNull();
+ expect(await verifyParticipation(proof,current,'staging',owner.id)).toBeNull();
+ expect(await verifyParticipation({...proof,admissionRevision:2},current,'staging',p.id)).toBeNull();
+ const stale={...unsigned,admissionRevision:2,rosterHash:old.hash};
+ expect(await verifyParticipation({...stale,signature:await sign(owner.signing.privateKey,participationBytes(stale))},current,'staging',p.id)).toBeNull();
+ const forged={...unsigned,signerDeviceId:p.deviceId};
+ expect(await verifyParticipation({...forged,signature:await sign(p.signing.privateKey,participationBytes(forged))},current,'staging',p.id)).toBeNull();
+});

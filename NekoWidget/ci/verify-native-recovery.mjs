@@ -20,4 +20,23 @@ const material=fields(['NW3.RECOVERY.FRESH-MATERIAL.V1',r.windowId,r.revision,r.
 assert(valid(c.identity_public_key,b.consentSignature,fields(['NW3.RECOVERY.FRESH-CONSENT.V1',challenge,sha(material)])));
 assert(!valid(c.identity_public_key,b.consentSignature,fields(['NW3.RECOVERY.FRESH-CONSENT.V1',challenge,sha(Buffer.concat([material,Buffer.from([1])]))])));
 assert(out.includes('recovery client: PASS'));assert(out.includes('recovery adapter: PASS'));
+const boundary=JSON.parse(out.split('\n').find(s=>s.startsWith('PARTICIPATION_WIRE=')).slice('PARTICIPATION_WIRE='.length));
+const boundaryKey=out.split('\n').find(s=>s.startsWith('PARTICIPATION_KEY=')).slice('PARTICIPATION_KEY='.length);
+const boundaryBytes=fields(['NW3.RECOVERY.PARTICIPATION.V1',boundary.environment,boundary.windowId,boundary.personId,
+ boundary.participantId,boundary.admissionRevision,raw(boundary.rosterHash),boundary.signerDeviceId]);
+assert(valid(boundaryKey,boundary.signature,boundaryBytes));
+assert(!valid(boundaryKey,boundary.signature,fields(['NW3.RECOVERY.PARTICIPATION.V1','production',boundary.windowId,boundary.personId,
+ boundary.participantId,boundary.admissionRevision,raw(boundary.rosterHash),boundary.signerDeviceId])));
 console.log('recovery client, adapter and independent native proof/consent wire: PASS');
+
+const delivery=JSON.parse(out.split('\n').find(s=>s.startsWith('RECOVERY_KEY_WIRE=')).slice('RECOVERY_KEY_WIRE='.length));
+const recipient=JSON.parse(out.split('\n').find(s=>s.startsWith('RECOVERY_RECIPIENT_WIRE=')).slice('RECOVERY_RECIPIENT_WIRE='.length));
+const dc=recipient.challenge,di=recipient.intent;
+const dcBytes=fields(['NW3.RECOVERY.CATALOG.V1',dc.environment,dc.purpose,dc.id,dc.person_id,raw(dc.identity_public_key),dc.operation_id,raw(dc.nonce),dc.issued_at,dc.expires_at]);
+const diBytes=fields(['NW3.RECOVERY.PENDING.INTENT.V1',di.windowId,raw(di.signingPublicKey),raw(di.hpkePublicKey),di.model]);
+for(const [role,key,sig] of [['root',dc.identity_public_key,recipient.rootSignature],['device',di.signingPublicKey,recipient.deviceSignature]])
+ assert(valid(key,sig,fields(['NW3.RECOVERY.PENDING.REGISTER.V1',role,dcBytes,di.windowId,diBytes])));
+const ctx=fields(['NW3.RECOVERY.KEY.V1',delivery.environment,delivery.windowId,delivery.operationId,delivery.offerId,delivery.keyEpoch,
+ raw(delivery.epochRosterHash),raw(delivery.currentRosterHash),delivery.recipientDeviceId,delivery.senderDeviceId,delivery.expiresAt]);
+assert(valid(boundaryKey,delivery.signature,fields(['NW3.RECOVERY.KEY.SIGN.V1',ctx,raw(delivery.encapsulatedKey),sha(raw(delivery.ciphertext))])));
+console.log('recovery HPKE and independent recipient / offer signatures: PASS');

@@ -145,6 +145,13 @@ export async function verifyGroupRoster(packet: SignedGroupRoster, anchor: Group
   return verifyRoster(packet,anchor,previous,false);
 }
 
+/** Authenticate a historical packet against an already pinned owner. This is
+ * not a statement that the packet is current, or that its members are active.
+ * Recovery must separately check its current head and participation boundary. */
+export async function verifyHistoricalRecoveryRoster(packet: SignedGroupRoster, anchor: GroupTrustAnchor): Promise<VerifiedGroupRoster> {
+  return verifyRoster(packet,anchor,undefined,true);
+}
+
 /** Explicit solo recovery only; ordinary transition verification is unchanged.
  * Caller MUST atomically recheck the no-provider ledger before committing. */
 export async function verifySoloRecoveryRoster(packet:SignedGroupRoster,previous:VerifiedGroupRoster,

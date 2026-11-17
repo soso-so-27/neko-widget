@@ -1,4 +1,5 @@
 import { base64urlDecode, randomBase64url } from "./encoding";
+import {participationStatements} from './group-recovery-participation-store';
 import { ApiError, jsonResponse } from "./errors";
 import type { Env } from "./env";
 import { groupId,groupAuthorizationStatements,groupMutationStatement,requireGroupMember,storedGroupMutation,
@@ -38,7 +39,7 @@ export function groupEnvelopes(body:JsonRecord):GroupKeyEnvelope[] {
 export function groupExpected(body:JsonRecord):number { return integerField(body,"expectedRevision",1,Number.MAX_SAFE_INTEGER); }
 
 export async function createGroupWindow(env:Env,actor:GroupActor,body:JsonRecord):Promise<Response> {
-  exactKeys(body,["operationId","packet","envelopes","encryptedName","encryptedMemberNames"]);
+  exactKeys(body,["operationId","packet","envelopes","encryptedName","encryptedMemberNames",...(body.participationProofs!==undefined?['participationProofs']:[])]);
   const operationId=uuidField(body,"operationId");
   const prior=await storedGroupMutation(env,actor,operationId);
   if(prior!==null) return jsonResponse(prior);
@@ -58,6 +59,7 @@ export async function createGroupWindow(env:Env,actor:GroupActor,body:JsonRecord
   // The first window already needs verified Plus, including Apple's active
   // introductory offer. Owned five and total ten are independent limits.
   const ownedLimit=5;
+  const participation=await participationStatements(env,body.participationProofs,roster);
   await env.DB.batch([...groupAuthorizationStatements(env,actor),
     env.DB.prepare("INSERT INTO group_windows(space_id,owner_person_id,mode,created_at,updated_at) VALUES (?,?,'preparing',?,?)")
       .bind(r.windowId,actor.personId,actor.now,actor.now),
@@ -65,6 +67,7 @@ export async function createGroupWindow(env:Env,actor:GroupActor,body:JsonRecord
       .bind(member.participantId,r.windowId,actor.personId,memberNames[member.participantId]),
     env.DB.prepare("INSERT INTO group_window_devices VALUES (?,?,?,'active',1,NULL)").bind(r.windowId,actor.deviceId,member.participantId),
     ...groupPacketStatements(env,roster,envelopes,actor,operationId,"create",0),
+    ...participation,
     env.DB.prepare("INSERT INTO group_window_metadata VALUES (?,?,1,1)").bind(r.windowId,encryptedName),
     env.DB.prepare("INSERT INTO group_window_creation_checks VALUES (?,?,?,?,?)").bind(operationId,r.windowId,actor.personId,ownedLimit,actor.now),
     ...groupCreationPolicyStatements(env,r.windowId,actor.personId,operationId),
