@@ -281,6 +281,9 @@ private actor AutoRelay: GroupHTTPTransport {
         try check(await automatic.counts().2 == 0)
         try check(try await provider.advanceAutomatically(window:providerView) == "waitingForReceipt")
         try check(await automatic.counts().1 == 1)
+        // Expired, unacknowledged offers must restart without a manual action.
+        try check(try await provider.advanceAutomatically(window:providerView, now:Int(Date().timeIntervalSince1970) + 86_401) == "waitingForReceipt")
+        try check(await automatic.counts().1 == 2)
         try await automatic.install(autoPage(received:true))
         try check(try await provider.advanceAutomatically(window:providerView) == "recoveryCommitted")
         try check(await automatic.counts().2 == 1)

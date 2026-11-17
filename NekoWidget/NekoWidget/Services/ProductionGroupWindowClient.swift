@@ -186,10 +186,19 @@ actor ProductionGroupWindowClient: GroupWindowClient {
 #endif
     }
 #if DEBUG || INTERNAL_PRESENTATION
+    private var recoveryWindowAttempts: [String: Date] = [:]
+    private func recoverAfterLoad(_ windows: [GroupWindow]) async {
+        guard let window = windows.min(by: {
+            let left = recoveryWindowAttempts[$0.id] ?? .distantPast
+            let right = recoveryWindowAttempts[$1.id] ?? .distantPast
+            return left == right ? $0.id < $1.id : left < right
+        }) else { return }
+        await recoverAfterLoad(window)
+    }
     private func recoverAfterLoad(_ window: GroupWindow) async {
         guard recoveryEnabled, !recoveryRunning, anchorReceiptForeground,
               SharingForegroundGap.allows(since: lastRecoveryAt), let environment = recoveryEnvironment else { return }
-        recoveryRunning = true; lastRecoveryAt = Date(); defer { recoveryRunning = false }
+        recoveryRunning = true; lastRecoveryAt = Date(); recoveryWindowAttempts[window.id] = lastRecoveryAt; defer { recoveryRunning = false }
         await SharingPersonAction.automatic {
             do {
                 let provider = try GroupRecoveryProviderClient(endpoint: endpoint, environment: environment,
@@ -405,6 +414,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
                 if closedWindows.contains(item.windowID) { continue }
                 if let cached = try cachedListWindow(item, identity: identity) {
                     result.append(cached)
+
                 } else {
                     let fresh = try await window(id: item.windowID)
                     guard fresh.revision >= (item.revision ?? 0), fresh.keyEpoch >= (item.keyEpoch ?? 0) else {
@@ -428,6 +438,9 @@ actor ProductionGroupWindowClient: GroupWindowClient {
                     otherID: $1.id, otherReceived: received[$1.id], otherCreated: created[$1.id] ?? nil)
             }
             recentWindows = (Date(), sorted)
+#if DEBUG || INTERNAL_PRESENTATION
+            if recoveryEnabled { Task { await self.recoverAfterLoad(sorted) } }
+#endif
             return sorted
         } catch {
             verifiedListEntries.removeAll()

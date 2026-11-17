@@ -540,7 +540,7 @@ describe('signed notebook participation boundaries',()=>{
   await expect(validateFamilyParticipationTransition(next,first,'production','YES')).rejects.toThrow();
   next.packet.participationProofs=[await proof(next,b.id,1)];
   await expect(validateFamilyParticipationTransition(next,first,'staging','YES')).rejects.toThrow();
-  const legacy={...first,packet:{...first.packet,participationProofs:undefined}};
+  const legacy:VerifiedFamilyCryptoRoster={...first,packet:{...first.packet}};delete legacy.packet.participationProofs;
   next.packet.participationProofs=[await proof(next,a.id,1)];
   await expect(validateFamilyParticipationTransition(next,legacy,'staging','YES')).rejects.toThrow();
   next.packet.participationProofs=[];await validateFamilyParticipationTransition(next,legacy,'staging','YES');
