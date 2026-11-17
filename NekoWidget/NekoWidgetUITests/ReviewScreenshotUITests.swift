@@ -961,7 +961,8 @@ final class ReviewScreenshotUITests: XCTestCase {
             reason.tap()
             app.buttons["family-photo-report-send"].firstMatch.tap()
             guard app.descendants(matching: .any)["family-photo-report-number"].firstMatch.waitForExistence(timeout: 15) else {
-                return "report was not received"
+                let failure = app.descendants(matching: .any)["family-photo-report-failure"].firstMatch
+                return "report was not received" + (failure.exists ? ": " + String(describing: failure.value ?? "") : "")
             }
             settle(1)
             return nil
