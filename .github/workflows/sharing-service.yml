@@ -45,6 +45,8 @@ concurrency:
 jobs:
   plan:
     name: Select backend checks
+    # A same-repository push validates this head; fork PRs have no local push.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
