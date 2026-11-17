@@ -965,8 +965,7 @@ final class ReviewScreenshotUITests: XCTestCase {
             let number = app.descendants(matching: .any)["family-photo-report-number"].firstMatch
             let unavailable = app.staticTexts["いまは通報できません。"].firstMatch
             guard number.waitForExistence(timeout: 15) || unavailable.exists else {
-                let failure = app.descendants(matching: .any)["family-photo-report-failure"].firstMatch
-                return "report was not received" + (failure.exists ? ": " + String(describing: failure.value ?? "") : "")
+                return "report was not received"
             }
             settle(1)
             return nil

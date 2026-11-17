@@ -3107,7 +3107,6 @@ struct FamilyPhotoReportSheet: View {
     @State private var number: String?
     @State private var sending = false
     @State private var failure: GroupSafetyError?
-    @State private var failureDetail = ""
 
     var body: some View {
         NavigationStack {
@@ -3152,10 +3151,6 @@ struct FamilyPhotoReportSheet: View {
                         Section {
                             Text(failure.message).font(.footnote).foregroundStyle(.secondary)
                                 .accessibilityIdentifier("family-photo-report-failure")
-#if DEBUG
-                                // Review captures: which step failed (never shown).
-                                .accessibilityValue(failureDetail)
-#endif
                         }
                     }
                 }
@@ -3194,7 +3189,6 @@ struct FamilyPhotoReportSheet: View {
         } catch FamilyNotebookPhotoFailure.unavailable {
             failure = .disabled
         } catch {
-            failureDetail = String(describing: error)
             failure = .unknownOutcome
         }
     }
