@@ -35,6 +35,9 @@ enum GroupRecoveryPresentationVerifier {
         try check(checking.primary == nil && checking.secondary == nil, "checking has no buttons")
 
         // 通信できない：［もう一度］は同じ手続きの問い合わせだけ。登録なしとは扱わない。
+        let disabled = try screen(.serverDisabled(operationID: id))
+        try check(disabled.title == "機種変更の確認はいま使えません" && disabled.message == nil
+                  && disabled.primary == nil && disabled.secondary == nil, "disabled is one line")
         let unavailable = try screen(.unavailable(operationID: id))
         try check(unavailable.primary == GroupRecoveryButton(title: "もう一度", step: .send(.perform(.queryStatus(id)))),
                   "retry queries the same operation")

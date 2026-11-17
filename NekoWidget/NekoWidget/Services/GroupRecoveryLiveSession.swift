@@ -2,6 +2,9 @@
 import Foundation
 import Combine
 import CryptoKit
+#if os(iOS)
+import LocalAuthentication
+#endif
 
 // 機種変更の試験画面（設定 → テスト用）だけが使う接続。通常の版には入らない。
 // 押したとき（本人の操作）にだけ client を有効で作り、最初の catalog が通った
@@ -9,23 +12,58 @@ import CryptoKit
 
 /// The internal test screen's state. Construction alone sends nothing.
 @MainActor final class GroupRecoveryLiveModel: ObservableObject {
-    enum Phase: Equatable { case idle, checking, unavailable, ready }
+    enum Phase: Equatable { case idle, checking, noRoots, unavailable, serverDisabled, ready }
     typealias Factory = @Sendable () async throws -> [GroupRecoveryAdapter.Context]
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var adapter: GroupRecoveryAdapter?
+    @Published private(set) var publishingRoot = false
+    @Published private(set) var rootSyncMessage: String?
+    private let publishRoot: (@Sendable () async throws -> Void)?
+    private var publication: Task<Void, Never>?
     private let factory: Factory
     private let timeout: Duration
     private var generation = UUID()
     private var task: Task<Void, Never>?
     private var timer: Task<Void, Never>?
 
-    init(timeout: Duration = .seconds(30), factory: @escaping Factory) {
-        self.timeout = timeout; self.factory = factory
+    init(timeout: Duration = .seconds(30), publishRoot: (@Sendable () async throws -> Void)? = nil,
+         factory: @escaping Factory) {
+        self.timeout = timeout
+        self.publishRoot = publishRoot
+        self.factory = factory
+    }
+
+    var canPublishRoot: Bool { publishRoot != nil }
+
+    func syncThisDevice() {
+        guard phase == .idle, !publishingRoot, let publishRoot else { return }
+        publishingRoot = true
+        rootSyncMessage = nil
+        publication = Task { [weak self] in
+            let message: String
+            do {
+                try await publishRoot()
+                message = GroupRecoveryWords.syncSaved
+            } catch {
+                message = GroupRecoveryWords.syncFailed
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.rootSyncMessage = message
+            self.publishingRoot = false
+            self.publication = nil
+        }
+    }
+
+    func cancelRootPublication() {
+        publication?.cancel()
+        publication = nil
+        publishingRoot = false
     }
 
     /// Only from the person's tap. Its calls are the person's (SharingPersonAction);
     /// a late answer after the timeout, a retry or closing is never applied.
     func begin() {
+        guard !publishingRoot else { return }
         cancel(); let token = generation
         adapter = nil; phase = .checking
         timer = Task { [weak self, timeout] in
@@ -34,14 +72,19 @@ import CryptoKit
             self.cancel(); self.phase = .unavailable
         }
         task = Task { [weak self, factory] in
-            let contexts: [GroupRecoveryAdapter.Context]?
-            do { contexts = try await SharingPersonAction.run { try await factory() } } catch { contexts = nil }
+            let result: Result<[GroupRecoveryAdapter.Context], Error>
+            do { result = .success(try await SharingPersonAction.run { try await factory() }) }
+            catch { result = .failure(error) }
             guard let self, !Task.isCancelled, self.generation == token else { return }
             self.timer?.cancel(); self.timer = nil; self.task = nil
-            if let contexts, !contexts.isEmpty {
+            switch result {
+            case .success(let contexts) where !contexts.isEmpty:
                 self.adapter = GroupRecoveryAdapter(contexts: contexts); self.phase = .ready
-            } else {
-                self.phase = .unavailable
+            case .success:
+                self.phase = .noRoots
+            case .failure(let error):
+                if case GroupRecoveryClient.Failure.serverDisabled = error { self.phase = .serverDisabled }
+                else { self.phase = .unavailable }
             }
         }
     }
@@ -105,6 +148,8 @@ struct GroupRecoveryLiveBuilder: Sendable {
                     state = try await session.run(.queryStatus(draft.operationID))
                 } catch is CancellationError {
                     throw CancellationError()
+                } catch GroupRecoveryClient.Failure.serverDisabled {
+                    throw GroupRecoveryClient.Failure.serverDisabled
                 } catch {
                     state = .unavailable(operationID: draft.operationID)
                 }
@@ -237,6 +282,8 @@ actor GroupRecoveryKeyDeliverySession: GroupRecoverySession {
             page = try await source.receive(id, afterEpoch: cursor[id] ?? 0)
         } catch is CancellationError {
             throw CancellationError()
+        } catch GroupRecoveryClient.Failure.serverDisabled {
+            throw GroupRecoveryClient.Failure.serverDisabled
         } catch {
             // Offline, the budget or a lost receipt: the same page at the next check.
             return waiting
@@ -276,6 +323,8 @@ actor GroupRecoveryKeyDeliverySession: GroupRecoverySession {
             return state
         } catch is CancellationError {
             throw CancellationError()
+        } catch GroupRecoveryClient.Failure.serverDisabled {
+            throw GroupRecoveryClient.Failure.serverDisabled
         } catch {
             // The same Draft runs finishKeyDelivery again at the next check.
             return waiting
@@ -416,27 +465,58 @@ extension GroupRecoveryLiveModel {
 }
 
 #if os(iOS)
+private func currentRegisteredRoot(namespace: String) throws -> Data? {
+    guard let saved = try GroupKeychainStore(namespace: namespace).read("identity") else { return nil }
+    let identity = try GroupWire.decode(GroupDeviceIdentity.self, saved)
+    guard identity.registered, let raw = identity.personPrivateKey else { return nil }
+    guard try Curve25519.Signing.PrivateKey(rawRepresentation: raw).publicKey.rawRepresentation == identity.personPublicKey else {
+        throw RootSyncFailure.invalidRecord
+    }
+    return raw
+}
+
 extension GroupRecoveryLiveModel {
-    /// This iPhone's own root on the configured relay. Read only from the existing
-    /// identity; recovery keys and journals live in the root's own namespace.
     static func connected() -> GroupRecoveryLiveModel {
-        GroupRecoveryLiveModel {
-            let configuration = SharingAPIConfiguration.current
-            guard configuration.isGroupRuntimeAvailable, let endpoint = configuration.baseURL else {
-                throw GroupRecoveryClient.Failure.disabled
-            }
-            let namespace = GroupWindowClientProvider.namespace
-            guard let saved = try GroupKeychainStore(namespace: namespace).read("identity"),
-                  let root = try GroupWire.decode(GroupDeviceIdentity.self, saved).personPrivateKey else {
-                throw GroupRecoveryClient.Failure.disabled
-            }
-            let builder = GroupRecoveryLiveBuilder(endpoint: endpoint,
-                environment: configuration.releaseMode == "production" ? "production" : "staging",
+        let configuration = SharingAPIConfiguration.current
+        guard configuration.isGroupRuntimeAvailable, let endpoint = configuration.baseURL,
+              let bundleID = Bundle.main.bundleIdentifier else {
+            return GroupRecoveryLiveModel { throw GroupRecoveryClient.Failure.disabled }
+        }
+        let environment: RootSyncStore.Environment
+        switch configuration.releaseMode {
+        case "production": environment = .production
+        case "media-staging": environment = .staging
+        default: return GroupRecoveryLiveModel { throw GroupRecoveryClient.Failure.disabled }
+        }
+        guard let accessGroup = Bundle.main.object(forInfoDictionaryKey: "RootSyncKeychainAccessGroup") as? String,
+              let sync = try? RootSyncStore(bundleID: bundleID, environment: environment, accessGroup: accessGroup) else {
+            return GroupRecoveryLiveModel { throw RootSyncFailure.invalidInput }
+        }
+        let namespace = GroupWindowClientProvider.namespace
+        let publish: @Sendable () async throws -> Void = {
+            try await sync.publishCurrentRoot(authenticate: {
+                let context = LAContext()
+                defer { context.invalidate() }
+                return try await context.evaluatePolicy(.deviceOwnerAuthentication,
+                    localizedReason: GroupRecoveryWords.syncAction)
+            }, load: {
+                guard let root = try currentRegisteredRoot(namespace: namespace) else {
+                    throw GroupRecoveryClient.Failure.authentication
+                }
+                return root
+            })
+        }
+        return GroupRecoveryLiveModel(publishRoot: publish) {
+            // If the Keychain cannot be read, preserve the error. Only a
+            // successful empty read plus no local identity means no candidates.
+            var roots = try await sync.availableRoots().map(\.privateKey)
+            if let local = try currentRegisteredRoot(namespace: namespace) { roots.append(local) }
+            let builder = GroupRecoveryLiveBuilder(endpoint: endpoint, environment: environment.rawValue,
                 transport: GroupURLSessionTransport(), model: "iPhone", stores: { scope in
                     (try GroupKeychainStore(namespace: namespace + ".recovery-journal." + scope),
                      try GroupKeychainStore(namespace: namespace + ".recovery." + scope))
                 })
-            return try await builder.contexts(roots: [root])
+            return try await builder.contexts(roots: roots)
         }
     }
 }

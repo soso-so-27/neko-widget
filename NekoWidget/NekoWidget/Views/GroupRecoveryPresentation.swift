@@ -20,6 +20,11 @@ enum GroupRecoveryWords {
 
     static let checkingTitle = "確認しています"
     static let unavailableTitle = "つながりませんでした"
+    static let serverDisabledTitle = "機種変更の確認はいま使えません"
+    static let noRootsTitle = "引き継げる本人がまだ見つかりません"
+    static let syncAction = "このiPhoneの本人情報を同期する"
+    static let syncSaved = "このiPhoneで同期の準備ができました。"
+    static let syncFailed = "本人情報を同期できませんでした。"
     static let retry = "もう一度"
 
     static let foundTitle = "前の iPhone のまどがあります"
@@ -170,6 +175,9 @@ struct GroupRecoveryPresentation: Equatable, Sendable {
         case .checking:
             // 確かめている間は押すものを出さない（二重の問い合わせにしない）。
             return Self(title: GroupRecoveryWords.checkingTitle, message: nil, icon: .progress,
+                        layout: .message, primary: nil, secondary: nil)
+        case .serverDisabled:
+            return Self(title: GroupRecoveryWords.serverDisabledTitle, message: nil, icon: .offline,
                         layout: .message, primary: nil, secondary: nil)
         case .unavailable:
             return Self(title: GroupRecoveryWords.unavailableTitle, message: nil, icon: .offline, layout: .message,

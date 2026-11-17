@@ -47,6 +47,7 @@ enum GroupRecoveryRegistrationState: Equatable, Sendable {
     case noKeyProvider(operationID: UUID, deviceID: String)
     case deviceLimit(operationID: UUID)
     case unavailable(operationID: UUID)
+    case serverDisabled(operationID: UUID)
 }
 enum GroupRecoveryRetryAction: Equatable, Sendable {
     case queryStatus(UUID), submitSameOperation(UUID), waitForKeys, complete, stop
@@ -63,7 +64,7 @@ extension GroupRecoveryRegistrationState {
         case .noKeyProvider: return .askFreshGenerationConsent
         case .deviceLimit: return .manageDevices
         case .unavailable(let id): return .queryStatus(id)
-        case .revoked, .needsOriginalDeviceOrInvitation: return .stop
+        case .revoked, .needsOriginalDeviceOrInvitation, .serverDisabled: return .stop
         }
     }
     var canOpen: Bool { if case .ready = self { return true }; return false }

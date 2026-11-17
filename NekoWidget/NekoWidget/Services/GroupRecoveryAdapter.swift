@@ -89,6 +89,8 @@ struct GroupRecoveryClientSession: GroupRecoverySession {
             let result: GroupRecoveryRegistrationState
             do {
                 result = try await SharingPersonAction.automatic { try await session.run(.queryStatus(id)) }
+            } catch GroupRecoveryClient.Failure.serverDisabled {
+                result = .serverDisabled(operationID: id)
             } catch {
                 continue
             }
@@ -100,10 +102,15 @@ struct GroupRecoveryClientSession: GroupRecoverySession {
     }
     private func operation(_ state: GroupRecoveryRegistrationState) -> UUID {
         switch state {
-        case .checking(let id), .notStarted(let id), .revoked(let id), .needsOriginalDeviceOrInvitation(let id), .deviceLimit(let id), .unavailable(let id): id
+        case .checking(let id), .notStarted(let id), .revoked(let id), .needsOriginalDeviceOrInvitation(let id), .deviceLimit(let id), .unavailable(let id), .serverDisabled(let id): id
         case .registeredWaitingForKeys(let id, _), .ready(let id, _), .noKeyProvider(let id, _): id
         }
     }
+    private func failureState(_ error: Error, id: UUID) -> GroupRecoveryRegistrationState {
+        if case GroupRecoveryClient.Failure.serverDisabled = error { return .serverDisabled(operationID: id) }
+        return .unavailable(operationID: id)
+    }
+
     private func set(_ id: UUID, state: GroupRecoveryRegistrationState, devices: [GroupRecoveryDevice]? = nil) {
         guard let index = items.firstIndex(where: { operation($0.state) == id }) else { return }
         let old = items[index]
@@ -166,9 +173,9 @@ struct GroupRecoveryClientSession: GroupRecoverySession {
                         self.timer?.cancel(); self.set(id, state: .deviceLimit(operationID: id), devices: devices)
                     } catch {
                         guard !Task.isCancelled, self.generation == token, self.selectedRootID == root else { return }
-                        self.timer?.cancel(); self.set(id, state: .unavailable(operationID: id))
+                        self.timer?.cancel(); self.set(id, state: self.failureState(error, id: id))
                     }
-                } else { self.timer?.cancel(); self.set(id, state: .unavailable(operationID: id)) }
+                } else { self.timer?.cancel(); self.set(id, state: self.failureState(error, id: id)) }
             }
         }
     }

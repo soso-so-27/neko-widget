@@ -451,6 +451,14 @@ private actor ScriptedKeys: GroupRecoveryKeySource {
     await dismissed.handle(.dismiss); await dismissed.checkWaiting()
     try check(await closed.personMarks.isEmpty)
 
+    let stopped = ScriptedKeys(statuses: [waiting],
+        pages: [.failure(GroupRecoveryClient.Failure.serverDisabled)], finishes: [])
+    let stoppedAdapter = GroupRecoveryAdapter(contexts: [context(stopped)])
+    await stoppedAdapter.checkWaiting()
+    try check(stoppedAdapter.items[0].state == .serverDisabled(operationID: id))
+    await stoppedAdapter.checkWaiting()
+    try check(await stopped.afterEpochs.count == 1)
+
     // The capture fixture: the AutoRelay pages, then the owner's switch, then ready.
     let shown = GroupRecoveryAdapter(contexts: [GroupRecoverySyntheticKeySource.context(delay: .zero)])
     guard case .registeredWaitingForKeys = shown.items[0].state else { throw TestFailure.failed }
@@ -522,6 +530,21 @@ private actor LateRecoveryCatalog {
     }
     func release() { let pending = waiting; waiting = []; pending.forEach { $0.resume() } }
 }
+private struct RecoveryCatalogRefusal: GroupHTTPTransport {
+    let relay: Relay
+    let disabledRoot: String
+    let status: Int
+    let code: String?
+    func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
+        if request.url?.path == "/v3/group-recovery/challenges", let body = request.httpBody,
+           let object = try JSONSerialization.jsonObject(with: body) as? [String: String],
+           object["identityPublicKey"] == disabledRoot {
+            guard let code else { throw URLError(.notConnectedToInternet) }
+            return .init(status: status, data: try JSONSerialization.data(withJSONObject: ["error": ["code": code]]))
+        }
+        return try await relay.send(request, maximumBytes: maximumBytes)
+    }
+}
 @MainActor private func verifyRecoveryLive(relay: Relay, root: Curve25519.Signing.PrivateKey) async throws {
     func eventually(_ predicate: () async -> Bool, line: UInt = #line) async throws {
         let deadline = ContinuousClock.now + .seconds(2)
@@ -544,6 +567,34 @@ private actor LateRecoveryCatalog {
         && again.signingPrivateKey == identity.signingPrivateKey && again.agreementPrivateKey == identity.agreementPrivateKey)
     do { _ = try await builder.contexts(roots: [Curve25519.Signing.PrivateKey().rawRepresentation]); throw TestFailure.failed }
     catch is GroupRecoveryClient.Failure {}
+
+    let other = Curve25519.Signing.PrivateKey()
+    let refusals: [(Int, String?, GroupRecoveryLiveModel.Phase)] = [
+        (503, "recovery_disabled", .serverDisabled),
+        (503, "maintenance", .unavailable),
+        (401, "recovery_disabled", .unavailable),
+        (0, nil, .unavailable),
+    ]
+    for (status, code, expected) in refusals {
+        let transport = RecoveryCatalogRefusal(relay: relay,
+            disabledRoot: GroupWire.base64(other.publicKey.rawRepresentation), status: status, code: code)
+        let builder = GroupRecoveryLiveBuilder(endpoint: URL(string: "https://recovery.invalid")!, environment: "staging",
+            transport: transport, model: "iPhone", stores: { _ in (journal, secrets) })
+        let refusal = GroupRecoveryLiveModel {
+            try await builder.contexts(roots: [root.rawRepresentation, other.rawRepresentation])
+        }
+        refusal.begin()
+        try await eventually { refusal.phase == expected }
+        try check(refusal.adapter == nil)
+    }
+    let absent = GroupRecoveryLiveModel { [] }
+    absent.begin()
+    try await eventually { absent.phase == .noRoots }
+    try check(absent.adapter == nil)
+    let locked = GroupRecoveryLiveModel { throw RootSyncFailure.temporarilyUnavailable }
+    locked.begin()
+    try await eventually { locked.phase == .unavailable }
+    try check(locked.adapter == nil)
 
     // Timeout shows unavailable; the late answer is not applied.
     let late = LateRecoveryCatalog()
