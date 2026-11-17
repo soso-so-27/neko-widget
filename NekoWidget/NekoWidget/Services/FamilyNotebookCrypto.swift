@@ -60,6 +60,7 @@ struct SignedFamilyNotebookRoster: Codable, Equatable, Sendable {
     let roster: FamilyNotebookCryptoRoster
     let signerDeviceID: String
     let signature: Data
+    var participationProofs: [FamilyNotebookParticipationBoundary]? = nil
 }
 
 /// Must come from local creation, a verified invitation, or a previously
@@ -328,5 +329,44 @@ enum FamilyNotebookRepresentativePhotoCrypto {
         let context = try aad(familyID: familyID, slotID: reference.slotID, assetID: reference.assetID,
             revision: reference.revision, keyEpoch: reference.keyEpoch, rosterHash: reference.rosterHash, size: bytes.count - 28)
         return try AES.GCM.open(AES.GCM.SealedBox(combined: bytes), using: SymmetricKey(data: reference.contentKey), authenticating: context)
+    }
+}
+
+/// Participation evidence only. It does NOT restrict the notebook's existing
+/// complete-history sharing with newly admitted family members.
+struct FamilyNotebookParticipationBoundary: Codable, Equatable, Sendable {
+    let environment: String; let familyID: UUID; let personID: String
+    let admissionEpoch: Int; let rosterHash: Data; let signerDeviceID: String; let signature: Data
+    func signedBytes() throws -> Data {
+        try GroupCanonical.fields(["FNB1.RECOVERY.PARTICIPATION.V1", environment, familyID.uuidString.lowercased(),
+            personID, String(admissionEpoch)].map(GroupCanonical.text) + [rosterHash, GroupCanonical.text(signerDeviceID)])
+    }
+    func verifies(in head: VerifiedFamilyNotebookRoster, environment: String) -> Bool {
+        guard ["staging", "production"].contains(environment), self.environment == environment,
+              familyID == head.roster.familyID, rosterHash == head.hash,
+              (1...head.roster.epoch).contains(admissionEpoch),
+              head.roster.members.contains(where: { $0.personID == personID }),
+              signerDeviceID == head.packet.signerDeviceID,
+              let signer = head.roster.device(signerDeviceID), let bytes = try? signedBytes(),
+              let key = try? Curve25519.Signing.PublicKey(rawRepresentation: signer.device.signingPublicKey) else { return false }
+        return key.isValidSignature(signature, for: bytes)
+    }
+    static func forNewAdmission(head: VerifiedFamilyNotebookRoster, environment: String, personID: String,
+        signerID: String, key: Curve25519.Signing.PrivateKey) throws -> Self {
+        try make(head: head, environment: environment, personID: personID, epoch: head.roster.epoch, signerID: signerID, key: key)
+    }
+    static func carry(_ proof: Self, previous: VerifiedFamilyNotebookRoster, next: VerifiedFamilyNotebookRoster,
+        environment: String, signerID: String, key: Curve25519.Signing.PrivateKey) throws -> Self {
+        guard proof.verifies(in: previous, environment: environment), next.roster.previousHash == previous.hash,
+              next.roster.epoch == previous.roster.epoch + 1 else { throw FamilyNotebookCryptoError.untrusted }
+        return try make(head: next, environment: environment, personID: proof.personID, epoch: proof.admissionEpoch, signerID: signerID, key: key)
+    }
+    private static func make(head: VerifiedFamilyNotebookRoster, environment: String, personID: String, epoch: Int,
+        signerID: String, key: Curve25519.Signing.PrivateKey) throws -> Self {
+        let value = Self(environment: environment, familyID: head.roster.familyID, personID: personID,
+            admissionEpoch: epoch, rosterHash: head.hash, signerDeviceID: signerID, signature: Data())
+        let signed = Self(environment: environment, familyID: value.familyID, personID: personID, admissionEpoch: epoch,
+            rosterHash: head.hash, signerDeviceID: signerID, signature: try key.signature(for: value.signedBytes()))
+        guard signed.verifies(in: head, environment: environment) else { throw FamilyNotebookCryptoError.untrusted }; return signed
     }
 }

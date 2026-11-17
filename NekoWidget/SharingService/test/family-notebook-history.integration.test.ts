@@ -4,7 +4,7 @@ import { cleanupDissolvedFamilyRosters } from '../src/family-notebook-roster-cle
 import { describe, expect, it } from 'vitest';
 import { route } from '../src/index';
 import { familyInvitationProof } from '../src/family-notebook-admission';
-import { familyRosterBytes, verifyFamilyRoster, type FamilyCryptoMember, type VerifiedFamilyCryptoRoster } from '../src/family-notebook-crypto';
+import { familyRosterBytes, familyParticipationBytes, validateFamilyParticipationTransition, verifyFamilyRoster, type FamilyCryptoMember, type VerifiedFamilyCryptoRoster } from '../src/family-notebook-crypto';
 import { groupDeviceAuthorization, groupFields } from '../src/group-protocol';
 import { base64urlDecode, base64urlEncode, randomBase64url, sha256Base64url } from '../src/encoding';
 import { errorResponse } from '../src/errors';
@@ -520,4 +520,29 @@ describe('representative photo reservation and exchange',()=>{
   expect(await photos.MEDIA!.head(objectKey)).toBeNull();
  });
 
+});
+
+
+describe('signed notebook participation boundaries',()=>{
+ it('carries verified admissions, rejects backfill and environment substitution without restricting old history',async()=>{
+  const a=await person(),b=await person(),f=crypto.randomUUID(),ma=await member(a,f),mb=await member(b,f);
+  const first=await packet(a,f,[ma]);
+  async function proof(r:VerifiedFamilyCryptoRoster,personId:string,admissionEpoch:number){
+   const p={environment:'staging',familyId:f,personId,admissionEpoch,rosterHash:r.hash,signerDeviceId:a.deviceId,signature:''};
+   p.signature=await sign(a.signing.privateKey,familyParticipationBytes(p));return p;
+  }
+  first.packet.participationProofs=[await proof(first,a.id,1)];
+  await verifyFamilyRoster(first.packet);await validateFamilyParticipationTransition(first,undefined,'staging','YES');
+  await expect(validateFamilyParticipationTransition(first,undefined,'staging','NO')).rejects.toThrow();
+  const next=await packet(a,f,[ma,mb],first);
+  next.packet.participationProofs=[await proof(next,a.id,1),await proof(next,b.id,2)];
+  await verifyFamilyRoster(next.packet,first);await validateFamilyParticipationTransition(next,first,'staging','YES');
+  await expect(validateFamilyParticipationTransition(next,first,'production','YES')).rejects.toThrow();
+  next.packet.participationProofs=[await proof(next,b.id,1)];
+  await expect(validateFamilyParticipationTransition(next,first,'staging','YES')).rejects.toThrow();
+  const legacy:VerifiedFamilyCryptoRoster={...first,packet:{...first.packet}};delete legacy.packet.participationProofs;
+  next.packet.participationProofs=[await proof(next,a.id,1)];
+  await expect(validateFamilyParticipationTransition(next,legacy,'staging','YES')).rejects.toThrow();
+  next.packet.participationProofs=[];await validateFamilyParticipationTransition(next,legacy,'staging','YES');
+ });
 });

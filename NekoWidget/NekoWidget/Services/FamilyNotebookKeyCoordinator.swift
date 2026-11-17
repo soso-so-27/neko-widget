@@ -52,6 +52,7 @@ actor FamilyNotebookKeyCoordinator {
     }
     private let endpoint: String, identity: GroupDeviceIdentity, network: FamilyNotebookTransport
     private let secrets: any GroupSecretStore, journal: any GroupSecretStore
+    private let recoveryEnabled: Bool
     private var working = false
     /// 11/15 (1115q): what the last pass saw (the relay's generation, epoch,
     /// devices, readiness, and the keys held). A pass that changes it moved;
@@ -66,10 +67,10 @@ actor FamilyNotebookKeyCoordinator {
     }
 
     init(endpoint: URL, identity: GroupDeviceIdentity, network: FamilyNotebookTransport,
-         secrets: any GroupSecretStore, journal: any GroupSecretStore) throws {
+         secrets: any GroupSecretStore, journal: any GroupSecretStore, recoveryEnabled: Bool = false) throws {
         guard identity.registered else { throw FamilyNotebookTransportError.authenticationRequired }
         self.endpoint = endpoint.absoluteString; self.identity = identity; self.network = network
-        self.secrets = secrets; self.journal = journal
+        self.secrets = secrets; self.journal = journal; self.recoveryEnabled = recoveryEnabled
     }
     private func account(_ kind: String, _ family: UUID, _ epoch: Int? = nil) -> String {
         "op:fnb-" + kind + ":" + family.uuidString.lowercased() + (epoch.map { ":" + String($0) } ?? "")
@@ -242,7 +243,33 @@ actor FamilyNotebookKeyCoordinator {
         let key = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
         let roster = FamilyNotebookCryptoRoster(familyID: state.familyID, epoch: state.currentEpoch + 1,
             previousHash: previous?.hash ?? Data(repeating: 0, count: 32), keyCommitment: GroupCanonical.hash(key), members: members)
-        let signed = try FamilyNotebookRosterCrypto.sign(roster, deviceID: identity.deviceID, signingKey: identity.signingKey)
+        let packet = try FamilyNotebookRosterCrypto.sign(roster, deviceID: identity.deviceID, signingKey: identity.signingKey)
+#if (DEBUG || INTERNAL_PRESENTATION) && !NEKO_SHARE_EXTENSION
+        var signed = packet
+        if recoveryEnabled {
+            let environment: String
+            switch URL(string: endpoint)?.host {
+            case "api.nekonomado.com": environment = "production"
+            case "neko-window-sharing-staging.nakanishisoya.workers.dev", "recovery.invalid": environment = "staging"
+            default: throw FamilyNotebookCryptoError.untrusted
+            }
+            let next = try previous.map { try FamilyNotebookRosterCrypto.advance(signed, previous: $0) }
+                ?? FamilyNotebookRosterCrypto.restore(signed, trustedPin: .init(familyID: roster.familyID, epoch: roster.epoch,
+                    hash: GroupCanonical.hash(roster.canonicalBytes())))
+            signed.participationProofs = try roster.members.compactMap { member in
+                if previous?.roster.members.contains(where: { $0.personID == member.personID }) != true {
+                    return try FamilyNotebookParticipationBoundary.forNewAdmission(head: next, environment: environment,
+                        personID: member.personID, signerID: identity.deviceID, key: identity.signingKey)
+                }
+                guard let previous, let old = previous.packet.participationProofs?.first(where: { $0.personID == member.personID }),
+                      old.verifies(in: previous, environment: environment) else { return nil }
+                return try FamilyNotebookParticipationBoundary.carry(old, previous: previous, next: next, environment: environment,
+                    signerID: identity.deviceID, key: identity.signingKey)
+            }
+        }
+#else
+        let signed = packet
+#endif
         if let previous { _ = try FamilyNotebookRosterCrypto.advance(signed, previous: previous) }
         else { _ = try roster.canonicalBytes() }
         // Secret first, pending body second, network last. Unknown outcomes

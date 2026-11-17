@@ -115,6 +115,27 @@ private actor Relay: GroupHTTPTransport {
             "canSend": mode == .ready, "exists": true])
     }
 }
+private actor AutoRelay: GroupHTTPTransport {
+    var page: Data; let packet: SignedGroupRoster; var calls = 0; var offers = 0; var completions = 0
+    init(page: Data, packet: SignedGroupRoster) { self.page = page; self.packet = packet }
+    func install(_ bytes: Data) { page = bytes }
+    func counts() -> (Int, Int, Int) { (calls, offers, completions) }
+    func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
+        calls += 1
+        let path = request.url!.path
+        if path.hasSuffix("/pending") { return .init(status: 200, data: page) }
+        func reply(_ fields: [String: Any]) throws -> GroupHTTPReply { .init(status: 200, data: try JSONSerialization.data(withJSONObject: fields)) }
+        if path.contains("/keys/") { return try reply(["roster": JSONSerialization.jsonObject(with: GroupWire.encode(packet))]) }
+        let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+        if path.hasSuffix("/key-offers") {
+            offers += 1; let offer = body["offer"] as! [String: Any]
+            return try reply(["operationId": offer["operationId"]!, "offerId": offer["offerId"]!, "state":"waitingForReceipt"])
+        }
+        guard path.hasSuffix("/complete") else { throw TestFailure.failed }
+        completions += 1
+        return try reply(["operationId":body["operationId"]!, "windowId":packet.roster.windowID, "state":"recoveryCommitted"])
+    }
+}
 @main enum VerifyRecoveryClient {
     static func main() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -226,6 +247,46 @@ private actor Relay: GroupHTTPTransport {
         let waiting = try await c.status(draft)
         try check(waiting.state == .registeredWaitingForKeys(operationID: draft.operationID, deviceID: pendingID))
         try check(!waiting.state.canOpen && !waiting.state.canSend && waiting.model == "iPhone")
+        let providerSecrets = RecoverySecrets()
+        let providerIdentity = GroupDeviceIdentity(personPrivateKey: root.rawRepresentation, personPublicKey: root.publicKey.rawRepresentation,
+            signingPrivateKey: ownerDevice.rawRepresentation, agreementPrivateKey: ownerHPKE.rawRepresentation, windowCertificates: [:], registered: true)
+        try providerSecrets.write(GroupWire.encode(providerIdentity), account: "identity", createOnly: true)
+        var providerLocal = GroupLocalWindow.empty(anchor: anchor.anchor)
+        providerLocal.packet = packet; providerLocal.pinnedRevision = 1; providerLocal.pinnedHash = boundaryHead.hash
+        providerLocal.keys["1"] = contentKey.withUnsafeBytes { Data($0) }
+        try providerSecrets.write(GroupWire.encode(providerLocal), account: "window:" + window, createOnly: true)
+        let providerView = GroupWindow(id: window, name: "合成", revision: 1, keyEpoch: 1,
+            myParticipantID: roster.members[0].participantID, myRole: .owner, state: .active,
+            members: [.init(id: roster.members[0].participantID, personID: person, displayName: "合成", role: .owner,
+                state: .active, devices: [.init(id: ownerID, displayName: "iPhone", isThisDevice: true)])])
+        func autoPage(received: Bool, boundaryPresent: Bool = true) throws -> Data {
+            let certificate = GroupRosterDevice(id: pendingID, signingPublicKey: device.publicKey.rawRepresentation,
+                hpkePublicKey: hpke.publicKey.rawRepresentation, personAuthorization: Data())
+            let authorization = try root.signature(for: certificate.authorizationBytes(windowID: window, personID: person))
+            return try JSONSerialization.data(withJSONObject: ["roster": JSONSerialization.jsonObject(with: GroupWire.encode(packet)),
+                "rosterHash": GroupWire.base64(boundaryHead.hash), "participationProofs": [JSONSerialization.jsonObject(with: GroupWire.encode(boundary))],
+                "items":[["operationId":draft.operationID.uuidString.lowercased(),"personId":person,"deviceId":pendingID,
+                    "proof":JSONSerialization.jsonObject(with: GroupWire.encode(recipientProof)),
+                    "participation":boundaryPresent ? JSONSerialization.jsonObject(with: GroupWire.encode(boundary)) : NSNull(),
+                    "state":"waitingForReceipt", "receipts":received ? [["keyEpoch":1,"personAuthorization":GroupWire.base64(authorization)]] : []]]])
+        }
+        let automatic = try AutoRelay(page: autoPage(received: false), packet: packet)
+        let disabledProvider = try GroupRecoveryProviderClient(endpoint: URL(string:"https://recovery.invalid")!, environment:"staging",
+            secrets:providerSecrets,transport:automatic)
+        do { _ = try await disabledProvider.advanceAutomatically(window:providerView); throw TestFailure.failed } catch GroupRecoveryClient.Failure.disabled {}
+        try check(await automatic.counts().0 == 0)
+        let provider = try GroupRecoveryProviderClient(endpoint:URL(string:"https://recovery.invalid")!,environment:"staging",
+            secrets:providerSecrets,transport:automatic,enabled:true)
+        try check(try await provider.advanceAutomatically(window:providerView) == "waitingForReceipt")
+        try check(await automatic.counts().2 == 0)
+        try check(try await provider.advanceAutomatically(window:providerView) == "waitingForReceipt")
+        try check(await automatic.counts().1 == 1)
+        // Expired, unacknowledged offers must restart without a manual action.
+        try check(try await provider.advanceAutomatically(window:providerView, now:Int(Date().timeIntervalSince1970) + 86_401) == "waitingForReceipt")
+        try check(await automatic.counts().1 == 2)
+        try await automatic.install(autoPage(received:true))
+        try check(try await provider.advanceAutomatically(window:providerView) == "recoveryCommitted")
+        try check(await automatic.counts().2 == 1)
         let identity = GroupDeviceIdentity(personPrivateKey: root.rawRepresentation, personPublicKey: root.publicKey.rawRepresentation,
             signingPrivateKey: device.rawRepresentation, agreementPrivateKey: hpke.rawRepresentation, windowCertificates: [:], registered: false)
         let deliverySecrets = RecoverySecrets()

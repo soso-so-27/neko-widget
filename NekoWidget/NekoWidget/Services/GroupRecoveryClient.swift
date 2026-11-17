@@ -478,6 +478,10 @@ actor GroupRecoveryKeyJournal {
         try store.write(GroupWire.encode(offer), account: slot, createOnly: false)
         return offer
     }
+    func offerExpiresAt(recipient: VerifiedGroupRecoveryRecipient, epoch: Int, head: Data) throws -> Int? {
+        guard let bytes = try store.read(account("send", recipient, epoch, head)) else { return nil }
+        return try GroupWire.decode(GroupRecoveryKeyOffer.self, bytes).expiresAt
+    }
     func receive(_ offer: GroupRecoveryKeyOffer, recipient: VerifiedGroupRecoveryRecipient,
                  participation: VerifiedGroupParticipation, current: VerifiedGroupRoster, epoch: VerifiedGroupRoster,
                  agreementKey: Curve25519.KeyAgreement.PrivateKey, signingKey: Curve25519.Signing.PrivateKey,
@@ -547,7 +551,7 @@ actor GroupRecoveryProviderClient {
         return reply
     }
     /// Call for the locally held epochs only. Missing participation is an explicit wait.
-    func offer(windowID: String, operationID: UUID, epoch: Int) async throws -> String {
+    func offer(windowID: String, operationID: UUID, epoch: Int, now: Int = Int(Date().timeIntervalSince1970)) async throws -> String {
         let (identity, local, head) = try context(windowID), list = try await pending(windowID: windowID)
         guard let item = list.items.first(where: { $0.operationID == operationID.uuidString.lowercased() }) else { throw GroupRecoveryClient.Failure.invalidResponse }
         guard let boundary = item.participation?.verified(head: head, environment: environment, personID: item.personID) else { return "needsParticipationProof" }
@@ -557,9 +561,10 @@ actor GroupRecoveryProviderClient {
         let old = try GroupWire.decode(Epoch.self, await request("/v3/group-windows/" + windowID + "/keys/" + String(epoch), body: nil, identity: identity))
         let verified = try GroupRosterVerifier.verifyHistoricalRecoveryRoster(old.roster, anchor: local.anchor)
         guard verified.roster.keyEpoch == epoch else { throw GroupRecoveryClient.Failure.invalidResponse }
+        guard boundary.permits(epoch: verified, current: head) else { return "outsideParticipation" }
         let offer = try await GroupRecoveryKeyJournal(store: secrets).offer(key: SymmetricKey(data: bytes), recipient: recipient,
             participation: boundary, current: head, epoch: verified, signerID: identity.deviceID, signingKey: identity.signingKey,
-            now: Int(Date().timeIntervalSince1970))
+            now: now)
         struct Input: Encodable { let offer: GroupRecoveryKeyOffer }
         struct Reply: Decodable { let state: String; let operationID: String; let offerID: String }
         let reply = try GroupWire.decode(Reply.self, await request("/v3/group-windows/" + windowID + "/recovery/" + recipient.operationID + "/key-offers",
@@ -567,6 +572,53 @@ actor GroupRecoveryProviderClient {
         guard reply.operationID == recipient.operationID, reply.offerID == offer.offerID, reply.state == "waitingForReceipt"
         else { throw GroupRecoveryClient.Failure.invalidResponse }; return reply.state
     }
+    /// One bounded step on the existing foreground/read cadence. The shared
+    /// transport counts each call; no timer or UI action is introduced.
+    func advanceAutomatically(window: GroupWindow, now: Int = Int(Date().timeIntervalSince1970)) async throws -> String {
+        let (_, local, head) = try context(window.id)
+        guard window.revision == head.roster.revision else { throw GroupRecoveryClient.Failure.invalidResponse }
+        let list = try await pending(windowID: window.id)
+        let eligible = list.items.filter {
+            $0.participation?.verified(head: head, environment: environment, personID: $0.personID) != nil
+        }.sorted { $0.operationID < $1.operationID }
+        let cursorSlot = "p5-auto-next:" + GroupWire.base64(GroupCanonical.hash(Data((environment + window.id).utf8)))
+        let lastOperation = try secrets.read(cursorSlot).flatMap { String(data: $0, encoding: .utf8) }
+        guard let item = eligible.first(where: { $0.operationID > (lastOperation ?? "") }) ?? eligible.first,
+              let operation = UUID(uuidString: item.operationID) else {
+            return list.items.isEmpty ? "noPendingDevice" : "needsParticipationProof"
+        }
+        try secrets.write(Data(item.operationID.utf8), account: cursorSlot, createOnly: false)
+        struct Progress: Codable { let head: Data; var visited: [Int]; var offered: [Int] }
+        let slot = "p5-auto:" + GroupWire.base64(GroupCanonical.hash(Data((environment + window.id + item.operationID).utf8)))
+        var progress = try secrets.read(slot).map { try GroupWire.decode(Progress.self, $0) }
+            ?? Progress(head: head.hash, visited: [], offered: [])
+        if progress.head != head.hash { progress = Progress(head: head.hash, visited: [], offered: []) }
+        // Retry only unacknowledged expired offers, with the same bounded cadence.
+        guard let recipient = item.proof.verified(head: head, environment: environment) else { throw GroupRecoveryClient.Failure.invalidResponse }
+        let journal = GroupRecoveryKeyJournal(store: secrets)
+        var expired: Set<Int> = []
+        for epoch in progress.offered where !item.receipts.contains(where: { $0.keyEpoch == epoch }) {
+            if try await journal.offerExpiresAt(recipient: recipient, epoch: epoch, head: head.hash).map({ $0 <= now }) != false {
+                expired.insert(epoch)
+            }
+        }
+        progress.visited.removeAll { expired.contains($0) }
+        progress.offered.removeAll { expired.contains($0) }
+        let epochs = local.keys.keys.compactMap(Int.init).sorted()
+        if let epoch = epochs.first(where: { !progress.visited.contains($0) }) {
+            let state = try await offer(windowID: window.id, operationID: operation, epoch: epoch, now: now)
+            guard state == "waitingForReceipt" || state == "outsideParticipation" else { return state }
+            progress.visited.append(epoch)
+            if state == "waitingForReceipt" { progress.offered.append(epoch) }
+            try secrets.write(GroupWire.encode(progress), account: slot, createOnly: false)
+            return state
+        }
+        guard progress.offered.contains(head.roster.keyEpoch),
+              progress.offered.allSatisfy({ epoch in item.receipts.contains { $0.keyEpoch == epoch } }) else { return "waitingForReceipt" }
+        guard window.canManage else { return "receivedWaitingForOwner" }
+        return try await complete(window: window, operationID: operation)
+    }
+
     /// The window is the existing client's freshly verified names/membership view.
     /// Only its owner may rotate, and transport retries reuse the saved full body.
     func complete(window: GroupWindow, operationID: UUID) async throws -> String {

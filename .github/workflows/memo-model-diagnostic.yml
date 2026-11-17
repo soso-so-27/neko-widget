@@ -48,7 +48,7 @@ jobs:
   anchor-receipts:
     if: github.event_name == 'workflow_dispatch' && inputs.anchor_receipts
     name: Native receipt retry probe - not release evidence
-    runs-on: macos-15-intel
+    runs-on: macos-15
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -63,7 +63,7 @@ jobs:
             NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupInvitationLink.swift NekoWidget/Services/GroupWindowStorage.swift \
             NekoWidget/Services/GroupWindowOperationStore.swift Shared/Sharing/ClientUpgradeRequirement.swift NekoWidget/Services/GroupWindowTransport.swift \
             NekoWidget/Services/GroupWindowAPIModels.swift NekoWidget/Services/GroupWindowPhotoValidation.swift \
-            NekoWidget/Services/ProductionGroupWindowClient.swift ci/verify-group-adapter.swift \
+            NekoWidget/Services/ProductionGroupWindowClient.swift NekoWidget/Services/GroupRecoveryClient.swift NekoWidget/Views/GroupRecoveryPresentation.swift ci/verify-group-adapter.swift \
             -o "$RUNNER_TEMP/group-adapter-tests"
           "$RUNNER_TEMP/group-adapter-tests" ci/fixtures/group-http-v3.json ci/fixtures/group-roster-v3.json | node ci/verify-native-group-http.mjs
   private-models:
@@ -158,3 +158,26 @@ jobs:
           xcrun --sdk macosx swiftc -D DEBUG -parse-as-library -target "$(uname -m)-apple-macos14.0" Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift NekoWidget/Services/GroupWindowFixture.swift ci/verify-group-windows.swift -o "$RUNNER_TEMP/recovery-models"
           "$RUNNER_TEMP/recovery-models" ci/fixtures/group-roster-v3.json
           bash ci/run-group-recovery-client-checks.sh
+          xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+            Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
+            NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/FamilyNotebookCore.swift \
+            NekoWidget/Services/FamilyNotebookCrypto.swift ci/verify-family-notebook-crypto.swift \
+            -o "$RUNNER_TEMP/family-notebook-crypto-tests"
+          "$RUNNER_TEMP/family-notebook-crypto-tests" | node ci/verify-family-notebook-crypto.mjs
+          xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+            Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
+            NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupInvitationLink.swift NekoWidget/Services/GroupWindowStorage.swift \
+            NekoWidget/Services/FamilyNotebookCore.swift NekoWidget/Services/FamilyNotebookCrypto.swift \
+            NekoWidget/Services/FamilyNotebookInvitationCrypto.swift ci/verify-family-notebook-invitation.swift \
+            -o "$RUNNER_TEMP/family-notebook-invitation-tests"
+          "$RUNNER_TEMP/family-notebook-invitation-tests"
+          xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+            Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
+            NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupInvitationLink.swift NekoWidget/Services/GroupWindowStorage.swift \
+            NekoWidget/Services/GroupWindowOperationStore.swift Shared/Sharing/ClientUpgradeRequirement.swift NekoWidget/Services/GroupWindowTransport.swift \
+            NekoWidget/Services/FamilyNotebookCore.swift NekoWidget/Services/FamilyNotebookCrypto.swift \
+            NekoWidget/Services/FamilyNotebookTransport.swift NekoWidget/Services/FamilyNotebookInvitationCrypto.swift \
+            NekoWidget/Services/FamilyNotebookKeyCoordinator.swift NekoWidget/Services/SharingAutoCheckPolicy.swift \
+            ci/verify-family-notebook-key-delivery.swift \
+            -o "$RUNNER_TEMP/family-notebook-key-delivery-tests"
+          "$RUNNER_TEMP/family-notebook-key-delivery-tests"
