@@ -494,13 +494,16 @@ private struct GroupRecoveryLiveAdapterView: View {
     var body: some View {
         GroupRecoverySheet(rootChoice: adapter.rootChoice, items: adapter.items, handler: adapter)
             .onChange(of: adapter.dismissed) { _, dismissed in if dismissed { close() } }
+            // 鍵を待つまどは、開いている間だけ自動で確かめ直す（回数と間隔は Adapter が決める）。
+            .task { await adapter.keepCheckingWaiting() }
     }
 }
 #endif
 
 #if DEBUG
 /// 撮影用（--group-recovery-ui-fixture）。`--group-recovery-case <id>` でその画面を、
-/// `windows` でまどが複数の一覧を、`live` で合成の Adapter につないだ入口を、指定なしで見本の一覧を出す。`--group-recovery-text ax5` でいちばん大きい文字。
+/// `windows` でまどが複数の一覧を、`live` で合成の Adapter につないだ入口を、
+/// `keys-waiting` で鍵を受け取っている途中の新しい iPhone を、指定なしで見本の一覧を出す。`--group-recovery-text ax5` でいちばん大きい文字。
 struct GroupRecoveryFixtureRoot: View {
     static let launchArgument = "--group-recovery-ui-fixture"
     @StateObject private var recorder = GroupRecoveryGalleryRecorder()
@@ -520,6 +523,9 @@ struct GroupRecoveryFixtureRoot: View {
         let requested = Self.value("--group-recovery-case")
         if requested == "windows" {
             GroupRecoverySheet(rootChoice: [], items: GroupRecoverySamples.windows, handler: recorder)
+        } else if requested == "keys-waiting" {
+            // 新しい iPhone が鍵を受け取っている途中（合成の AutoRelay の状態だけ）。
+            GroupRecoveryKeysFixture()
         } else if requested == "live" {
             // 合成の本人 2 つ・3 台の上限・1 人のまど。入口を押すと Adapter の状態で動く。
             NavigationStack { GroupRecoveryLiveScreen(model: .synthetic()) }
@@ -532,5 +538,12 @@ struct GroupRecoveryFixtureRoot: View {
             NavigationStack { GroupRecoveryGallery() }
         }
     }
+}
+
+/// 合成の P5：1 つのまどが鍵を受け取っている途中。確かめ直すたびに次のページ、
+/// 管理者の切替、確認してから ready へ進む。実通信・実鍵はない。
+private struct GroupRecoveryKeysFixture: View {
+    @StateObject private var adapter = GroupRecoveryAdapter(contexts: [GroupRecoverySyntheticKeySource.context()])
+    var body: some View { GroupRecoveryLiveAdapterView(adapter: adapter) {} }
 }
 #endif

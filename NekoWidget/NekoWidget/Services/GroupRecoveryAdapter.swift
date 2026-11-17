@@ -60,6 +60,44 @@ struct GroupRecoveryClientSession: GroupRecoverySession {
         }
     }
     private func cancel() { generation = UUID(); task?.cancel(); timer?.cancel(); task = nil; timer = nil }
+
+    // P5: while this screen is open, a まど that waits for its keys is checked
+    // again on its own, every SharingForegroundGap.seconds and at most
+    // waitingCheckLimit times. These calls are automatic (the automatic budget),
+    // never the person's. A failure keeps the waiting screen; a tap wins.
+    static let waitingCheckLimit = 30
+    private var waitingChecks = 0
+
+    func keepCheckingWaiting(every interval: Duration = .seconds(SharingForegroundGap.seconds)) async {
+        while waitingChecks < Self.waitingCheckLimit, !dismissed {
+            do { try await Task.sleep(for: interval) } catch { return }
+            await checkWaiting()
+        }
+    }
+
+    func checkWaiting() async {
+        guard !dismissed, waitingChecks < Self.waitingCheckLimit,
+              let root = selectedRootID, let session = contexts[root]?.session else { return }
+        let waiting = items.compactMap { item -> UUID? in
+            if case .registeredWaitingForKeys(let id, _) = item.state { return id }
+            return nil
+        }
+        guard !waiting.isEmpty else { return }
+        waitingChecks += 1
+        let token = generation
+        for id in waiting {
+            let result: GroupRecoveryRegistrationState
+            do {
+                result = try await SharingPersonAction.automatic { try await session.run(.queryStatus(id)) }
+            } catch {
+                continue
+            }
+            guard !Task.isCancelled, !dismissed, generation == token, selectedRootID == root else { return }
+            guard operation(result) == id, let item = items.first(where: { operation($0.state) == id }),
+                  case .registeredWaitingForKeys = item.state else { continue }
+            set(id, state: result)
+        }
+    }
     private func operation(_ state: GroupRecoveryRegistrationState) -> UUID {
         switch state {
         case .checking(let id), .notStarted(let id), .revoked(let id), .needsOriginalDeviceOrInvitation(let id), .deviceLimit(let id), .unavailable(let id): id

@@ -38,7 +38,7 @@ class GroupRecoveryScreenTests(unittest.TestCase):
             "continueButton": "続ける",
             "notNow": "今はしない",
             "waitingTitle": "もう少しで見られます",
-            "waitingMessage": "前の iPhone か、メンバーがアプリを開くと、続きが見られます。",
+            "waitingMessage": "前の iPhone でアプリを開くと、続きが届きます。",
             "noProviderTitle": "前の写真は開けません",
             "noProviderMessage": "新しく続けることはできます。まどの名前は付け直します。",
             "freshContinue": "新しく続ける",
@@ -136,7 +136,10 @@ class GroupRecoveryScreenTests(unittest.TestCase):
         # Each root has its own journal and Keychain namespace; nothing is removed locally.
         self.assertIn('namespace + ".recovery-journal." + scope', code)
         self.assertIn('namespace + ".recovery." + scope', code)
-        self.assertNotIn(".remove(", code.split("actor GroupRecoverySyntheticSession", 1)[0])
+        # The only removal is forwarding the person's 3-iPhone choice to the relay.
+        self.assertEqual(code.count(".remove("), 1)
+        self.assertIn("try await base.remove(device, operationID: operationID)", code)
+        self.assertIsNone(re.search(r"(journal|secrets|store|Keychain\w*)\S*\.remove", code))
         view = VIEW.read_text(encoding="utf-8")
         self.assertIn("GroupRecoveryLiveScreen(model: .connected())", internal.selected_source(view, {"INTERNAL_PRESENTATION"}))
         self.assertIn("GroupRecoverySheet(rootChoice: adapter.rootChoice, items: adapter.items, handler: adapter)", view)
@@ -146,6 +149,61 @@ class GroupRecoveryScreenTests(unittest.TestCase):
             self.assertEqual(project.count(name + " in Sources */,"), 1)
         probe = (ROOT / "ci/run-group-recovery-client-checks.sh").read_text(encoding="utf-8")
         self.assertIn("NekoWidget/Services/GroupRecoveryLiveSession.swift", probe)
+
+    def test_new_iphone_receives_keys_on_the_same_operation(self):
+        # P5 (Codex 1117c/1117d): one bounded page from nextAfterEpoch on the saved
+        # Draft, ready only from finishKeyDelivery, and waiting kept on failure.
+        live = (ROOT / "NekoWidget/Services/GroupRecoveryLiveSession.swift").read_text(encoding="utf-8")
+        code = "\n".join(line.split("//", 1)[0] for line in live.splitlines())
+        self.assertIn("base.client.receiveKeys(draft(id), identity: base.identity, afterEpoch: afterEpoch)", code)
+        self.assertIn("base.client.finishKeyDelivery(draft(id), identity: base.identity)", code)
+        self.assertIn("page = try await source.receive(id, afterEpoch: cursor[id] ?? 0)", code)
+        self.assertIn('case "recoveryCommitted": self = .finish', code)
+        self.assertIn('case "needsParticipationProof": self = .needsProof', code)
+        self.assertIn("return .needsOriginalDeviceOrInvitation(operationID: id)", code)
+        self.assertIn("GroupRecoveryKeyDeliverySession(base: base, source: GroupRecoveryClientKeySource(base: base))", code)
+        delivery = code.split("actor GroupRecoveryKeyDeliverySession", 1)[1].split("actor GroupRecoverySyntheticKeySource", 1)[0]
+        # The relay's words never open a まど here; only the verified install does.
+        self.assertNotIn(".ready(", delivery)
+        for token in ("write(", "createOnly", "Keychain", "URLRequest", "Transport", "while ", "repeat "):
+            with self.subTest(token=token):
+                self.assertNotIn(token, delivery)
+        # States of the original iPhone are not shown on the new one.
+        for path in (PRESENTATION, VIEW, ROOT / "NekoWidget/Services/GroupRecoveryAdapter.swift",
+                     ROOT / "NekoWidget/Services/GroupRecoveryLiveSession.swift"):
+            text = "\n".join(line.split("//", 1)[0] for line in path.read_text(encoding="utf-8").splitlines())
+            for token in ('"noPendingDevice"', '"outsideParticipation"', '"keyNotHeld"', '"waitingForKeys"'):
+                with self.subTest(path=path.name, token=token):
+                    self.assertNotIn(token, text)
+        # Waiting: one state, one sentence, no button, no percentage or count.
+        found, block = words()
+        self.assertEqual(found["waitingMessage"], "前の iPhone でアプリを開くと、続きが届きます。")
+        for token in ("%", "％", "枚", "件", "割", "残り"):
+            with self.subTest(token=token):
+                self.assertNotIn(token, found["waitingTitle"] + found["waitingMessage"])
+        # Checking again is automatic, spaced by the existing gap, bounded, and
+        # only for a まど that waits for its keys.
+        adapter = (ROOT / "NekoWidget/Services/GroupRecoveryAdapter.swift").read_text(encoding="utf-8")
+        self.assertIn("SharingPersonAction.automatic { try await session.run(.queryStatus(id)) }", adapter)
+        self.assertIn("every interval: Duration = .seconds(SharingForegroundGap.seconds)", adapter)
+        self.assertIn("static let waitingCheckLimit = 30", adapter)
+        self.assertIn("while waitingChecks < Self.waitingCheckLimit, !dismissed {", adapter)
+        self.assertIn("if case .registeredWaitingForKeys(let id, _) = item.state { return id }", adapter)
+        self.assertNotIn("SharingPersonAction.run", adapter)
+        view = VIEW.read_text(encoding="utf-8")
+        self.assertEqual(view.count(".task { await adapter.keepCheckingWaiting() }"), 1)
+        self.assertNotIn("keepCheckingWaiting", internal.selected_source(view))
+        # The capture is synthetic and DEBUG only.
+        self.assertIn("GroupRecoveryKeysFixture()", internal.selected_source(view, {"DEBUG"}))
+        self.assertNotIn("GroupRecoveryKeysFixture", internal.selected_source(view, {"INTERNAL_PRESENTATION"}))
+        self.assertIn('requested == "keys-waiting"', view)
+        shots = (ROOT / "NekoWidgetUITests/ReviewScreenshotUITests.swift").read_text(encoding="utf-8")
+        self.assertIn('stateScreenshot("92o_recovery_keys_waiting", "keys-waiting", "group-recovery-screen")', shots)
+        for path, source in internal.InternalPresentationBoundaryTests().sources().items():
+            for token in ("GroupRecoveryKeyDeliverySession", "GroupRecoverySyntheticKeySource", "GroupRecoveryClientKeySource",
+                          "keepCheckingWaiting", "receiveKeys(", "finishKeyDelivery("):
+                with self.subTest(path=path, token=token):
+                    self.assertNotIn(token, source)
 
     def test_verifier_and_tests_run_in_quick_checks(self):
         quick = (ROOT / "ci/run-quick-ios-checks.sh").read_text(encoding="utf-8")

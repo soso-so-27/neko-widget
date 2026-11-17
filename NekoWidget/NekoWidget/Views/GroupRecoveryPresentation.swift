@@ -28,7 +28,7 @@ enum GroupRecoveryWords {
     static let notNow = "今はしない"
 
     static let waitingTitle = "もう少しで見られます"
-    static let waitingMessage = "前の iPhone か、メンバーがアプリを開くと、続きが見られます。"
+    static let waitingMessage = "前の iPhone でアプリを開くと、続きが届きます。"
 
     static let noProviderTitle = "前の写真は開けません"
     static let noProviderMessage = "新しく続けることはできます。まどの名前は付け直します。"

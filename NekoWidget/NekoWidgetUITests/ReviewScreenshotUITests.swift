@@ -807,6 +807,8 @@ final class ReviewScreenshotUITests: XCTestCase {
         app.terminate()
 
         stateScreenshot("92n_recovery_windows", "windows", "group-recovery-window-sample-window-1")
+        // 新しい iPhone が鍵を受け取っている途中（合成の P5 の状態。割合や枚数は出さない）
+        stateScreenshot("92o_recovery_keys_waiting", "keys-waiting", "group-recovery-screen")
 
         // いちばん大きい文字
         stateScreenshot("93_recovery_found_ax5", "notStarted", "group-recovery-primary", largest: true)
