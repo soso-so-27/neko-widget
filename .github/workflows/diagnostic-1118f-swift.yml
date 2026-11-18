@@ -1,0 +1,33 @@
+name: 1118f focused Swift
+on:
+  push:
+    branches: ['diagnostic/1118f-swift']
+permissions:
+  contents: read
+jobs:
+  swift:
+    runs-on: macos-15
+    timeout-minutes: 7
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Check owner and public configuration plus updated Swift syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun swiftc -D INTERNAL_PRESENTATION -parse-as-library \
+            NekoWidget/Shared/Sharing/SharingAPIConfiguration.swift \
+            NekoWidget/ci/verify-production-configuration.swift \
+            -o "$RUNNER_TEMP/test-two-device"
+          "$RUNNER_TEMP/test-two-device"
+          xcrun swiftc -D INTERNAL_PRESENTATION -D NEKO_SHARE_EXTENSION -parse-as-library \
+            -typecheck NekoWidget/Shared/Sharing/SharingAPIConfiguration.swift
+          git diff --name-only HEAD^ HEAD -- 'NekoWidget/*.swift' \
+            | while read -r source; do
+                xcrun swiftc -frontend -parse -D INTERNAL_PRESENTATION \
+                  -target arm64-apple-ios17.1 -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" "$source"
+              done
