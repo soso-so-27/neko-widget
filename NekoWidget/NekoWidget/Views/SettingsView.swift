@@ -448,16 +448,16 @@ struct SettingsView: View {
                         }
                         NavigationLink("機種変更の小さな試験") { KeychainSyncProbeView() }
                             .accessibilityIdentifier("settings-keychain-sync-probe")
-#if INTERNAL_PRESENTATION
-                        if OwnerTwoDeviceTrialConfiguration.current != nil {
-                            NavigationLink("2台試験の端末確認") { OwnerTwoDeviceEnrollmentView() }
-                        }
-#endif
                         // 機種変更の画面を、見本の状態で見る（発行が OFF の間の入口はここだけ）。
                         NavigationLink("機種変更の画面（見本）") { GroupRecoveryGallery() }
                             .accessibilityIdentifier("settings-group-recovery-gallery")
                         NavigationLink("猫の見分けを測る（テスト用）") { CatIdentityMeasureView() }
                             .accessibilityIdentifier("settings-cat-identity-measure")
+#if INTERNAL_PRESENTATION
+                        if OwnerTwoDeviceTrialConfiguration.current != nil {
+                            NavigationLink("2台試験の端末確認") { OwnerTwoDeviceEnrollmentView() }
+                        }
+#endif
                         NavigationLink {
                             advancedDiagnosticsView
                         } label: {

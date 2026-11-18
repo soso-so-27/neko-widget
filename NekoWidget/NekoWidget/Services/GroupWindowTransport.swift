@@ -237,7 +237,7 @@ final class GroupURLSessionTransport: GroupHTTPTransport, Sendable {
                          replied: (_ status: Int, _ retryAfter: String?) -> Void) async throws -> GroupHTTPReply {
         var request = request
         request.setValue(ClientUpgradeRequirement.buildHeader, forHTTPHeaderField: "X-Neko-App-Build")
-#if os(iOS) && INTERNAL_PRESENTATION
+#if os(iOS) && INTERNAL_PRESENTATION && !NEKO_SHARE_EXTENSION
         OwnerTwoDeviceTrialConfiguration.current?.authorize(&request)
 #endif
         do {

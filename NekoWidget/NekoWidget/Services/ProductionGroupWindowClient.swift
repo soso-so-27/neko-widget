@@ -711,7 +711,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             }
             body = stored.body
         } else {
-#if os(iOS) && INTERNAL_PRESENTATION
+#if os(iOS) && INTERNAL_PRESENTATION && !NEKO_SHARE_EXTENSION
             let windowID = OwnerTwoDeviceTrialConfiguration.current?.window ?? GroupWire.randomID()
 #else
             let windowID = GroupWire.randomID()
