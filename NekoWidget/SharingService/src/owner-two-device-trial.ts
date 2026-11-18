@@ -132,7 +132,12 @@ export async function ownerTrialRequest(request: Request, env: Env): Promise<Env
       ...(body.length?{body:body.slice().buffer}:{})}));
   }
   if (scope.phase === 'OFF' || scope.phaseUntilMs <= now || scope.phaseUntilMs - now > 3_600_000) {
-    if (path === notebooks+'/me' || path === group+'/list'
+    // The app ends its local participation on a successful empty directory.
+    // A closed trial is a temporary read failure for trial clients.
+    if (path === notebooks+'/me') {
+      throw new ApiError(503, 'owner_trial_unavailable', 'The trial notebook is temporarily unavailable.');
+    }
+    if (path === group+'/list'
         || path === '/v3/group-identities' || path === '/v3/group-identities/challenges') return {...env,reservedTrial:scope};
     throw trialDenied();
   }

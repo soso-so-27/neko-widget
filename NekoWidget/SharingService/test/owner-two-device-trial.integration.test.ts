@@ -118,6 +118,19 @@ describe('owner-only staging trial',()=>{
     expect((await db.prepare('SELECT report_ingestion_enabled FROM personal_staging_runtime_gate WHERE singleton=1').first())?.report_ingestion_enabled).toBe(0);
   });
 
+  it('does not tell an enrolled device that it left the notebook when the trial closes',async()=>{
+    const f=await fixture(), path=familyRoot+'/me';
+    ok(await f.call(f.a,familyRoot,'PREPARE',{operationId:crypto.randomUUID(),familyId:f.scope.family}));
+    expect(ok(await f.call(f.a,path,'PHOTO')).family.familyId).toBe(f.scope.family);
+
+    const closed=await f.call(f.a,path,'OFF');
+    expect({status:closed.status,family:closed.data.family}).toEqual({status:503,family:undefined});
+    const expired=await send(f.mark(await signed(f.a,path)),f.env('PHOTO',{phaseUntilMs:Date.now()-1}));
+    expect(expired.status).toBe(503);
+    expect(ok(await f.call(f.a,path,'OFF',undefined,null)).family).toBeNull();
+    expect(ok(await f.call(f.a,path,'PHOTO')).family.familyId).toBe(f.scope.family);
+  });
+
   it('only discovers the new window and binds key delivery to its approved root and recovery device',async()=>{
     const f=await fixture(), {a,b,outside,recovery,scope,call,env}=f;
     const neighbor=await create(a,201,'',settings);
