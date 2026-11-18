@@ -153,7 +153,7 @@ async function routeInternal(
   const { pathname } = url;
   const scoped = await ownerTrialRequest(request, env);
   if (scoped instanceof Response) return scoped;
-  env = scoped;
+  if (scoped) env = scoped;
   if(pathname.startsWith('/v3/group-')||pathname.startsWith('/v3/family-notebooks'))env=scopeIdentityCheck(env);
   if(isIdentityDeletionPath(pathname)){
     try {return await identityDeletionAPI(request,env,ctx);}
