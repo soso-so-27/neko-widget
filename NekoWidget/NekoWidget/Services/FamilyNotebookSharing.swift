@@ -416,7 +416,12 @@ final class FamilyNotebookAutoCheck {
                     if !model.hasFamily && model.mayResumeEndedNotebook { lastResumeProbeAt = Date() }
                     await sharing.refresh()
                     if let membership = sharing.state.membership { model.rememberShown(membership) }
-                    if model.hasFamily { try? await model.copyTools(); model.applyFamilyWrites() }
+                    if model.hasFamily {
+                        try? await model.copyTools(); model.applyFamilyWrites()
+                        // 11/19: the creator's key photos, and a try again of
+                        // one that did not go (its own wait), on this schedule.
+                        await FamilyRepresentativePhotos.shared.syncCreatorPhotos()
+                    }
                 case .requestsOnly:
                     await sharing.refreshRequests()
                 }

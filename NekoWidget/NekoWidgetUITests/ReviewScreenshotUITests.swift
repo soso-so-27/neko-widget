@@ -937,7 +937,8 @@ final class ReviewScreenshotUITests: XCTestCase {
     /// reaches it: the この子 tab (the family cat's page shows the photo
     /// another family member delivered, in place of のわ), its 「この子のこと」,
     /// its 「…」. A synthetic photo and relay (`--cat-home-stress-family-photo`);
-    /// sample names only.
+    /// sample names only. 11/19: the photo is the notebook creator's, sent by
+    /// itself, so no screen delivers it or says how it is going.
     @MainActor
     func test19FamilyRepresentativePhoto() {
         var app = launchStress(74, names: ["-"], ["--cat-home-stress-family", "ミケ", "--cat-home-stress-family-photo"])
@@ -994,20 +995,6 @@ final class ReviewScreenshotUITests: XCTestCase {
             guard more.waitForExistence(timeout: 10) else { return "「…」 not found after hiding" }
             more.tap()
             guard app.buttons["family-photo-unhide"].waitForExistence(timeout: 8) else { return "表示する not in 「…」" }
-            settle(1)
-            return nil
-        }
-        app.terminate()
-        // 11/18: how 「家族に写真を届ける」 is going shows on the page, not in
-        // 「…」 (`--cat-home-stress-family-photo-line` holds the line).
-        app = launchStress(76, names: ["-"], ["--cat-home-stress-family", "ミケ", "--cat-home-stress-family-photo",
-                                              "--cat-home-stress-family-photo-line", "failed"])
-        shot("48i_family_photo_failed", app) {
-            if let reason = reachStressHome(app, waitingFor: "cat-home-choose-photo") { return reason }
-            let about = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "tools-family-cat-")).firstMatch
-            guard about.waitForExistence(timeout: 10), reveal(about, app) else { return "この子のこと not found" }
-            about.tap()
-            guard app.buttons["family-photo-retry"].waitForExistence(timeout: 15) else { return "もう一度 not on the page" }
             settle(1)
             return nil
         }

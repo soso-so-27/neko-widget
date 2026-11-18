@@ -1757,20 +1757,12 @@ extension AppStoreScreenshotFixture {
         static func seedIfRequested() async {
             if isRequested, !familyNames.isEmpty {
                 FamilyNotebookPrototype.shared.useFixtureFamilyCats(familyNames, scenario: scenario)
-                // 11/17: a photo another family member delivered for the
-                // first family cat (synthetic, through the real client).
+                // 11/17: the notebook creator's photo of the first family cat,
+                // from another iPhone (synthetic, through the real client).
                 if CommandLine.arguments.contains(FamilyRepresentativePhotoFixture.argument),
                    let first = FamilyNotebookPrototype.shared.unlinkedFamilyCats.first,
                    let fixture = try? await FamilyRepresentativePhotoFixture.make(cat: first.id) {
                     FamilyRepresentativePhotos.shared.installFixture(fixture)
-                    // 11/18: 「届けています」/「届けられませんでした」/上限, held on the page.
-                    let line: FamilyRepresentativePhotos.Line? = switch value("--cat-home-stress-family-photo-line") {
-                    case "sending": .sending
-                    case "failed": .failed
-                    case "limited": .limited
-                    default: nil
-                    }
-                    if let line { FamilyRepresentativePhotos.shared.installFixtureLine(line, for: first.id) }
                 }
             }
             guard isRequested, rows != "none" else { return }

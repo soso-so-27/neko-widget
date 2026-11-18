@@ -40,7 +40,7 @@ FAMILY_LINK_SCREENS = (
     "47_home_family_link_question", "47b_home_family_cat_no_photo", "47c_home_add_from_family",
     "48a_cat_menu_reorder", "48_cat_order_mixed", "48b_family_link_confirm", "48c_home_family_farewell",
     "48d_home_family_photo", "48e_family_photo_menu", "48f_family_photo_report", "48g_family_photo_hide",
-    "48h_family_photo_unhide", "48i_family_photo_failed",
+    "48h_family_photo_unhide",
 )
 # 機種変更の画面 on sample states (test17RecoveryScreens): light and dark.
 RECOVERY_SCREENS = (

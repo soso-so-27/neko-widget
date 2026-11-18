@@ -53,6 +53,10 @@ struct AppRootView: View {
     @State private var onboardingScanErrorMessage: String?
     @StateObject private var widgetShowcaseStore = ShowcasePhotoStore.shared
     @State private var widgetShowcasePhoto: WidgetShowcasePhoto?
+    /// 11/19: what the creator's key photos depend on besides the cats: this
+    /// iPhone is the payer, and which of its cats are linked to the notebook.
+    @State private var familyPhotoCreator = false
+    @State private var familyPhotoLinks: [UUID] = []
 
     var body: some View {
         WidgetPhotoPresentationHost(onOtherURL: handleNonPhotoURL) {
@@ -93,6 +97,21 @@ struct AppRootView: View {
         // 11/15: the order of this iPhone's cats (the first family places),
         // and a 旅立った日 the family shared, for the widget too.
         .task(id: viewModel.catProfiles.map(\.id)) { familyNotebook.profileOrder = viewModel.catProfiles.map(\.id) }
+        // 11/19: the notebook creator's key photos go to the family by
+        // themselves: when the notebook becomes the creator's, a cat is
+        // linked, a key photo changes, and on coming to the front. Unchanged
+        // is decided on this iPhone (no network).
+        .onReceive(familyPhotoCreatorChanges) { familyPhotoCreator = $0 }
+        .onReceive(familyPhotoLinkChanges) { familyPhotoLinks = $0 }
+        // Not cancelled by the next change: a send under way finishes, and a
+        // change meanwhile is checked right after it.
+        .onChange(of: familyPhotoSyncKey, initial: true) { _, _ in
+            guard scenePhase == .active, familyPhotoCreator else { return }
+            let keyPhotos = Dictionary(viewModel.catProfiles.map { ($0.id, $0.keyPhotoLocalIdentifier) },
+                                       uniquingKeysWith: { first, _ in first })
+            // Unmarked, so automatic (within this iPhone's call budget).
+            Task { await FamilyRepresentativePhotos.shared.ownKeyPhotosChanged(keyPhotos) }
+        }
         .onReceive(familyNotebook.$familyFarewellDays.dropFirst().removeDuplicates()) { _ in
             viewModel.familyFarewellsChanged()
         }
@@ -269,6 +288,31 @@ struct AppRootView: View {
                     }
             }
         }
+    }
+
+    /// 11/19: this iPhone is the family notebook's creator (the payer).
+    private var familyPhotoCreatorChanges: AnyPublisher<Bool, Never> {
+        FamilyNotebookSharing.shared.$state
+            .map { (state: FamilySharingState) -> Bool in state.membership?.role == .payer }
+            .removeDuplicates()
+            .eraseToAnyPublisher()
+    }
+
+    /// 11/19: this iPhone's cats linked to the notebook's cats.
+    private var familyPhotoLinkChanges: AnyPublisher<[UUID], Never> {
+        familyNotebook.$snapshot
+            .map { (snapshot: FamilyNotebookSnapshot?) -> [UUID] in
+                guard let snapshot else { return [] }
+                return FamilyNotebookCatLink.linkedProfiles(in: snapshot).sorted { $0.uuidString < $1.uuidString }
+            }
+            .removeDuplicates()
+            .eraseToAnyPublisher()
+    }
+
+    /// 11/19 (the creator's key photos): changes when anything they depend on does.
+    private var familyPhotoSyncKey: String {
+        let photos = viewModel.catProfiles.map { $0.id.uuidString + "=" + ($0.keyPhotoLocalIdentifier ?? "") }
+        return "\(scenePhase == .active)|\(familyPhotoCreator)|\(familyPhotoLinks)|\(photos)"
     }
 
     private func handleNonPhotoURL(_ incoming: URL) {
