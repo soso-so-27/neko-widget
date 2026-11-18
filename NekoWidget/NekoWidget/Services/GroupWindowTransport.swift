@@ -237,7 +237,9 @@ final class GroupURLSessionTransport: GroupHTTPTransport, Sendable {
                          replied: (_ status: Int, _ retryAfter: String?) -> Void) async throws -> GroupHTTPReply {
         var request = request
         request.setValue(ClientUpgradeRequirement.buildHeader, forHTTPHeaderField: "X-Neko-App-Build")
+#if os(iOS) && INTERNAL_PRESENTATION
         OwnerTwoDeviceTrialConfiguration.current?.authorize(&request)
+#endif
         do {
             let (bytes, response) = try await session.bytes(for: request)
             guard let http = response as? HTTPURLResponse, response.url == request.url,
