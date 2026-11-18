@@ -6,7 +6,7 @@ import {recoveryCatalogTranscript, type RecoveryChallenge} from '../src/group-re
 import {recoveryDeliveryState, type RecoveryPendingRow} from '../src/group-recovery-key-delivery';
 import {route} from '../src/index';
 import {ownerTrialRequest, type OwnerTrial} from '../src/owner-two-device-trial';
-import {plusOwner, settings} from './group-billing-fixture';
+import {billing, plusOwner, settings} from './group-billing-fixture';
 import {cipher, create, db, key, member, ok, packet, person, send, sign, signed, type Person} from './group-fixture';
 import type {Env} from '../src/env';
 
@@ -68,13 +68,15 @@ describe('owner-only staging trial',()=>{
     await expect(ownerTrialRequest(f.mark(req(path)),{...f.env('OFF'),ENVIRONMENT:'production'})).rejects.toMatchObject({status:404});
     await expect(ownerTrialRequest(f.mark(req('/v1/billing/accounts/recover')),f.env('OFF'))).rejects.toMatchObject({status:404});
     await expect(ownerTrialRequest(f.mark(req(path)),f.env('OFF'))).rejects.toMatchObject({status:401});
-    const {id:billingAccountId,keyId:billingKeyId,billingKey}=f.a.account;
-    const timestamp=Math.floor(Date.now()/1000),nonce=randomBase64url(16);
-    const signature=await sign(billingKey.privateKey,billingSignedRequestTranscript({billingAccountId,billingKeyId,timestamp,nonce,
-      method:'GET',pathname:path,bodySHA256:await sha256Base64url(new Uint8Array())}));
-    const signed=new Request(req(path),{headers:{'neko-billing-protocol-version':'1','neko-billing-account-id':billingAccountId,
-      'neko-billing-key-id':billingKeyId,'neko-billing-timestamp':String(timestamp),'neko-billing-nonce':nonce,'neko-billing-signature':signature}});
-    expect(await ownerTrialRequest(f.mark(signed),f.env('OFF'))).toBeInstanceOf(Response);
+    const billingRequest=async({id:billingAccountId,keyId:billingKeyId,billingKey}:Awaited<ReturnType<typeof billing>>)=>{
+      const timestamp=Math.floor(Date.now()/1000),nonce=randomBase64url(16);
+      const signature=await sign(billingKey.privateKey,billingSignedRequestTranscript({billingAccountId,billingKeyId,timestamp,nonce,
+        method:'GET',pathname:path,bodySHA256:await sha256Base64url(new Uint8Array())}));
+      return f.mark(new Request(req(path),{headers:{'neko-billing-protocol-version':'1','neko-billing-account-id':billingAccountId,
+        'neko-billing-key-id':billingKeyId,'neko-billing-timestamp':String(timestamp),'neko-billing-nonce':nonce,'neko-billing-signature':signature}}));
+    };
+    await expect(ownerTrialRequest(await billingRequest(await billing()),f.env('OFF'))).rejects.toMatchObject({status:403});
+    expect(await ownerTrialRequest(await billingRequest(f.a.account),f.env('OFF'))).toBeInstanceOf(Response);
     expect(f.forwarded).toEqual(['/v1/billing/health',path]);
     expect(f.unscoped.BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED).toBe('NO');
   });
@@ -104,8 +106,15 @@ describe('owner-only staging trial',()=>{
     expect((await call(b,familyRoot+'/'+crypto.randomUUID()+'/representative-photos/slots','PHOTO')).status).toBe(404);
     expect((await call(a,photo+'/reports','REPORT',{})).status).toBe(503);
     expect((await call(b,photo+'/reports','PHOTO',{})).status).toBe(404);
-    const report = await call(b,photo+'/reports','REPORT',{});
-    expect(report.status).toBe(400);
+    const asset=crypto.randomUUID(),bytes=new Uint8Array(100).fill(7);
+    await db.prepare('INSERT INTO family_photo_report_deliveries VALUES (?,?,?,?,?,unixepoch()+604800)')
+      .bind(scope.family,asset,b.id,b.deviceId,a.id).run();
+    const report=ok(await call(b,photo+'/reports','REPORT',{schemaVersion:1,operationId:crypto.randomUUID(),assetId:asset,
+      reasonCode:'privacy',moderationKeyId:'moderation-v2',ciphertext:base64urlEncode(bytes),
+      ciphertextSHA256:await sha256Base64url(bytes),consentedAt:Math.floor(Date.now()/1000)}));
+    expect(report).toMatchObject({familyId:scope.family,state:'committed'});
+    expect(ok(await call(b,familyRoot+'/report-replies','REPORT')).replies).toHaveLength(1);
+    expect((await call(outside,familyRoot+'/report-replies','REPORT')).status).toBe(404);
     expect((await db.prepare('SELECT report_ingestion_enabled FROM personal_staging_runtime_gate WHERE singleton=1').first())?.report_ingestion_enabled).toBe(0);
   });
 
