@@ -55,7 +55,7 @@ on:
         default: false
         type: boolean
       billing_sandbox:
-        description: "実商品の内部Sandbox通し確認。通常配布には使わず、別のprotected承認とpreservation_pilotが必要"
+        description: "内部Sandbox課金。protected承認と保管pilot、または本人2台専用の事前確認が必要"
         required: true
         default: false
         type: boolean
@@ -114,6 +114,7 @@ jobs:
       GROUP_WINDOWS_REQUESTED: ${{ inputs.group_windows || false }}
       FAMILY_NOTEBOOK_STAGING_REQUESTED: ${{ inputs.family_notebook_staging || false }}
       TWO_DEVICE_STAGING_REQUESTED: ${{ inputs.two_device_staging || false }}
+      BILLING_SANDBOX_REQUESTED: ${{ inputs.billing_sandbox }}
       GROUP_WINDOWS_APPROVAL: ${{ vars.GROUP_WINDOWS_STAGING_ENABLED }}
 
     steps:
@@ -775,6 +776,7 @@ jobs:
           python3 "$PROJECT_DIRECTORY/ci/group-window-release.py" \
             --requested "${GROUP_WINDOWS_REQUESTED:-false}" \
             --family-requested "${FAMILY_NOTEBOOK_STAGING_REQUESTED:-false}" --two-device-requested "${TWO_DEVICE_STAGING_REQUESTED:-false}" --profile "$DISTRIBUTION_PROFILE" \
+            --sandbox-billing-requested "${BILLING_SANDBOX_REQUESTED:-false}" \
             --mode "$SHARING_EXPECTED_MODE" \
             --approval "${GROUP_WINDOWS_APPROVAL:-}" \
             --env-file "$GITHUB_ENV"
@@ -791,7 +793,12 @@ jobs:
           test "$RELEASE_SHARING_API_ORIGIN" = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
           if [[ "${TWO_DEVICE_STAGING_REQUESTED:-false}" == "true" ]]; then
             test "$INTERNAL_REPORTS_REQUESTED" = "false"
-            test "$BILLING_SANDBOX_REQUESTED" = "false"
+            if [[ "$BILLING_SANDBOX_REQUESTED" == "true" ]]; then
+              test "$DISTRIBUTION_PROFILE" = "owner-internal"
+              node scripts/check-owner-two-device-billing-readiness.mjs "$RELEASE_SHARING_API_ORIGIN"
+            else
+              test "$BILLING_SANDBOX_REQUESTED" = "false"
+            fi
             NEKO_STAGING_API_ORIGIN="$RELEASE_SHARING_API_ORIGIN" \
               node scripts/check-staging-runtime.mjs --expected owner-two-device-staging
           elif [[ "$INTERNAL_REPORTS_REQUESTED" == "true" && "$BILLING_SANDBOX_REQUESTED" == "true" ]]; then
@@ -836,6 +843,11 @@ jobs:
             --billing-requested "${BILLING_REQUESTED:-false}" \
             --billing-approval "${BILLING_APPROVAL:-}" \
             --billing-scope "${BILLING_SCOPE:-}" \
+            --distribution-profile "$DISTRIBUTION_PROFILE" \
+            --two-device "${TWO_DEVICE_STAGING_REQUESTED:-false}" \
+            --group-windows "${GROUP_WINDOWS_REQUESTED:-false}" \
+            --family-notebook "${FAMILY_NOTEBOOK_STAGING_REQUESTED:-false}" \
+            --internal-reports "${INTERNAL_REPORTS_REQUESTED:-false}" \
             --settings-file "$RUNNER_TEMP/preservation-release-settings.json" \
             --env-file "$GITHUB_ENV" \
             --app-source-info-plist "$PROJECT_DIRECTORY/NekoWidget/Info.plist" \
@@ -1408,6 +1420,11 @@ jobs:
             --billing-requested "${BILLING_REQUESTED:-false}" \
             --billing-approval "${BILLING_APPROVAL:-}" \
             --billing-scope "${BILLING_SCOPE:-}" \
+            --distribution-profile "$DISTRIBUTION_PROFILE" \
+            --two-device "${TWO_DEVICE_STAGING_REQUESTED:-false}" \
+            --group-windows "${GROUP_WINDOWS_REQUESTED:-false}" \
+            --family-notebook "${FAMILY_NOTEBOOK_STAGING_REQUESTED:-false}" \
+            --internal-reports "${INTERNAL_REPORTS_REQUESTED:-false}" \
             --settings-file "$RUNNER_TEMP/preservation-release-settings.json" \
             --privacy-manifest "$app_path/PrivacyInfo.xcprivacy" \
             --widget-info-plist "$widget_path/Info.plist" \
@@ -1600,6 +1617,11 @@ jobs:
             --billing-requested "${BILLING_REQUESTED:-false}" \
             --billing-approval "${BILLING_APPROVAL:-}" \
             --billing-scope "${BILLING_SCOPE:-}" \
+            --distribution-profile "$DISTRIBUTION_PROFILE" \
+            --two-device "${TWO_DEVICE_STAGING_REQUESTED:-false}" \
+            --group-windows "${GROUP_WINDOWS_REQUESTED:-false}" \
+            --family-notebook "${FAMILY_NOTEBOOK_STAGING_REQUESTED:-false}" \
+            --internal-reports "${INTERNAL_REPORTS_REQUESTED:-false}" \
             --settings-file "$RUNNER_TEMP/preservation-release-settings.json" \
             --export-options-plist "$RUNNER_TEMP/ExportOptions.plist"
           python3 "$PROJECT_DIRECTORY/ci/internal_report_release.py" \
@@ -1614,6 +1636,7 @@ jobs:
           python3 "$PROJECT_DIRECTORY/ci/group-window-release.py" \
             --requested "${GROUP_WINDOWS_REQUESTED:-false}" \
             --family-requested "${FAMILY_NOTEBOOK_STAGING_REQUESTED:-false}" --two-device-requested "${TWO_DEVICE_STAGING_REQUESTED:-false}" --profile "$DISTRIBUTION_PROFILE" \
+            --sandbox-billing-requested "${BILLING_SANDBOX_REQUESTED:-false}" \
             --mode "$SHARING_EXPECTED_MODE" \
             --approval "${GROUP_WINDOWS_APPROVAL:-}" \
             --app-info-plist "$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app/Info.plist" \
@@ -1651,6 +1674,7 @@ jobs:
           python3 "$PROJECT_DIRECTORY/ci/group-window-release.py" \
             --requested "${GROUP_WINDOWS_REQUESTED:-false}" \
             --family-requested "${FAMILY_NOTEBOOK_STAGING_REQUESTED:-false}" --two-device-requested "${TWO_DEVICE_STAGING_REQUESTED:-false}" --profile "$DISTRIBUTION_PROFILE" \
+            --sandbox-billing-requested "${BILLING_SANDBOX_REQUESTED:-false}" \
             --mode "$SHARING_EXPECTED_MODE" \
             --approval "${GROUP_WINDOWS_APPROVAL:-}" \
             --ipa "$ipa_path" \

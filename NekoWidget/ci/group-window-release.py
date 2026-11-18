@@ -35,13 +35,25 @@ def resolve_two_device(requested: bool, profile: str, mode: str, family_expected
 
 
 def verify_info(info: dict, expected: str, family_expected: str | None = None,
-                two_device_expected: str | None = None) -> None:
+                two_device_expected: str | None = None, *, sandbox_billing: bool = False) -> None:
     if two_device_expected is not None:
         if info.get(TWO_DEVICE_KEY, "NO") != two_device_expected:
             raise ValueError("Compiled two-device exercise must match the explicit request.")
         if two_device_expected == "YES" and (family_expected != "YES"
                 or info.get("OwnerInternalReportsDisabled") != "YES"):
             raise ValueError("Two-device exercise requires family access with general reporting disabled.")
+        if two_device_expected == "YES":
+            billing = "YES" if sandbox_billing else "NO"
+            if info.get("PlusBillingClientEnabled", "NO") != billing or info.get("PlusStorefrontEnabled", "NO") != billing:
+                raise ValueError("Two-device archive billing must match the explicit Sandbox request.")
+            if sandbox_billing and (info.get("PlusBillingAPIBaseURL") != ORIGIN
+                    or info.get("PlusMonthlyProductID") != "jp.nekowidget.plus.monthly"
+                    or info.get("PlusAnnualProductID") != ""
+                    or info.get("PlusBillingRecoveryEnabled") != "YES"
+                    or info.get("PlusWindowSponsorshipClientEnabled") != "NO"
+                    or info.get("ManagedPreservationEnabled") != "NO"
+                    or info.get("MembershipAccessEnforced") is not True):
+                raise ValueError("Two-device billing must use only the reviewed staging Sandbox and product.")
     if info.get(KEY) != expected:
         raise ValueError("Compiled GroupWindowsEnabled must match the explicit YES/NO request.")
     if family_expected is not None:
@@ -59,12 +71,13 @@ def verify_info(info: dict, expected: str, family_expected: str | None = None,
 
 
 def verify_ipa(path: Path, expected: str, family_expected: str | None = None,
-               two_device_expected: str | None = None) -> None:
+               two_device_expected: str | None = None, *, sandbox_billing: bool = False) -> None:
     name = "Payload/NekoWidget.app/Info.plist"
     with zipfile.ZipFile(path) as archive:
         if archive.namelist().count(name) != 1 or archive.getinfo(name).file_size > 1024 * 1024:
             raise ValueError("IPA app Info.plist is missing, duplicate or oversized.")
-        verify_info(plistlib.loads(archive.read(name)), expected, family_expected, two_device_expected)
+        verify_info(plistlib.loads(archive.read(name)), expected, family_expected, two_device_expected,
+                    sandbox_billing=sandbox_billing)
 
 
 def prepare_export(options: dict, expected: str) -> dict:
@@ -96,6 +109,7 @@ def main():
     parser.add_argument("--approval", default="")
     parser.add_argument("--family-requested", choices=("true", "false"), default="false")
     parser.add_argument("--two-device-requested", choices=("true", "false"), default="false")
+    parser.add_argument("--sandbox-billing-requested", choices=("true", "false"), default="false")
     parser.add_argument("--profile", default="")
     parser.add_argument("--env-file", type=Path)
     parser.add_argument("--app-info-plist", type=Path)
@@ -112,12 +126,14 @@ def main():
             output.write("RELEASE_FAMILY_NOTEBOOK_ENABLED=" + family_expected + "\n")
             output.write("RELEASE_TWO_DEVICE_STAGING_ENABLED=" + two_device + "\n")
     if args.app_info_plist:
-        verify_info(plistlib.loads(args.app_info_plist.read_bytes()), expected, family_expected, two_device)
+        verify_info(plistlib.loads(args.app_info_plist.read_bytes()), expected, family_expected, two_device,
+                    sandbox_billing=args.sandbox_billing_requested == "true")
     if args.export_options_plist:
         options = prepare_export(plistlib.loads(args.export_options_plist.read_bytes()), expected)
         args.export_options_plist.write_bytes(plistlib.dumps(options))
     if args.ipa:
-        verify_ipa(args.ipa, expected, family_expected, two_device)
+        verify_ipa(args.ipa, expected, family_expected, two_device,
+                   sandbox_billing=args.sandbox_billing_requested == "true")
     if args.verify_export_options_plist:
         verify_export(plistlib.loads(args.verify_export_options_plist.read_bytes()), expected)
     print("PASS group staging release boundary: " + expected + "; family: " + family_expected)

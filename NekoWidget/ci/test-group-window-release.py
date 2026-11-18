@@ -79,6 +79,33 @@ class GroupWindowReleaseTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 release.verify_ipa(ipa, "YES", "NO")
 
+    def test_two_device_billing_is_part_of_the_archive_and_ipa_boundary(self):
+        signed = {**info(), "FamilyNotebookProductionEnabled": "YES",
+                  "OwnerInternalReportsDisabled": "YES", release.TWO_DEVICE_KEY: "YES",
+                  "PlusBillingClientEnabled": "YES", "PlusStorefrontEnabled": "YES",
+                  "PlusBillingAPIBaseURL": release.ORIGIN, "PlusMonthlyProductID": "jp.nekowidget.plus.monthly",
+                  "PlusAnnualProductID": "", "PlusBillingRecoveryEnabled": "YES",
+                  "PlusWindowSponsorshipClientEnabled": "NO",
+                  "ManagedPreservationEnabled": "NO", "MembershipAccessEnforced": True}
+        release.verify_info(signed, "YES", "YES", "YES", sandbox_billing=True)
+        with self.assertRaises(ValueError):
+            release.verify_info(signed, "YES", "YES", "YES")
+        for key, value in (("PlusBillingClientEnabled", "NO"), ("PlusStorefrontEnabled", "NO"),
+                           ("PlusBillingAPIBaseURL", "https://api.nekonomado.com"),
+                           ("PlusMonthlyProductID", "wrong"), ("ManagedPreservationEnabled", "YES"),
+                           ("PlusAnnualProductID", "annual"), ("PlusBillingRecoveryEnabled", "NO"),
+                           ("PlusWindowSponsorshipClientEnabled", "YES"),
+                           ("MembershipAccessEnforced", False)):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                release.verify_info({**signed, key: value}, "YES", "YES", "YES", sandbox_billing=True)
+        with tempfile.TemporaryDirectory() as directory:
+            ipa = Path(directory) / "owner.ipa"
+            with zipfile.ZipFile(ipa, "w") as archive:
+                archive.writestr("Payload/NekoWidget.app/Info.plist", plistlib.dumps(signed))
+            release.verify_ipa(ipa, "YES", "YES", "YES", sandbox_billing=True)
+            with self.assertRaises(ValueError):
+                release.verify_ipa(ipa, "YES", "YES", "YES")
+
     def test_default_never_follows_media_or_protected_approval(self):
         for mode in ("disabled", "review-preview", "pairing-only", "media-staging"):
             self.assertEqual(release.resolve(False, mode, "YES"), "NO")

@@ -219,11 +219,43 @@ class PreservationReleaseTests(unittest.TestCase):
             invocation = "\n".join(command)
             for value in ('--billing-requested "${BILLING_REQUESTED:-false}"',
                           '--billing-approval "${BILLING_APPROVAL:-}"',
-                          '--billing-scope "${BILLING_SCOPE:-}"'):
+                          '--billing-scope "${BILLING_SCOPE:-}"',
+                          '--distribution-profile "$DISTRIBUTION_PROFILE"',
+                          '--two-device "${TWO_DEVICE_STAGING_REQUESTED:-false}"',
+                          '--group-windows "${GROUP_WINDOWS_REQUESTED:-false}"',
+                          '--family-notebook "${FAMILY_NOTEBOOK_STAGING_REQUESTED:-false}"',
+                          '--internal-reports "${INTERNAL_REPORTS_REQUESTED:-false}"'):
                 self.assertEqual(invocation.count(value), 1, (name, value))
         self.assertIn('--app-source-info-plist "$PROJECT_DIRECTORY/NekoWidget/Info.plist"', source)
         self.assertIn('--widget-source-info-plist "$PROJECT_DIRECTORY/NekoWidgetWidget/Info.plist"', source)
         self.assertIn('--widget-info-plist "$widget_path/Info.plist"', source)
+
+    def test_owner_two_device_billing_without_preservation(self):
+        request = dict(billing_requested=True, billing_approval="YES", billing_scope="internal",
+                       two_device=True, distribution_profile="owner-internal", group_windows=True,
+                       family_notebook=True, internal_reports=False)
+        expected = pilot.settings(False, "media-staging", "", "", **request)
+        self.assertEqual(expected["PLUS_BILLING_CLIENT_ENABLED"], "YES")
+        self.assertEqual(expected["PLUS_BILLING_API_BASE_URL"], pilot.BILLING_ORIGIN)
+        self.assertEqual(expected["MANAGED_PRESERVATION_ENABLED"], "NO")
+        self.assertEqual(pilot.release_collections(expected), {pilot.PURCHASE_HISTORY})
+        info = {pilot.INFO_KEYS[key]: value for key, value in expected.items()}
+        info.update(SharingReleaseMode="media-staging", MembershipAccessEnforced=True)
+        manifest = pilot.add_privacy(self.privacy(), pilot.release_collections(expected))
+        widget = {"MembershipAccessEnforced": True}
+        pilot.verify(info, expected, manifest, widget)
+        with self.assertRaises(ValueError):
+            pilot.verify(info, expected, self.privacy(), widget)
+        self.assertTrue(pilot.prepare_export_options({}, expected)["testFlightInternalTestingOnly"])
+        for override in ({"distribution_profile": "existing-reviewed"}, {"distribution_profile": "app-store-candidate"},
+                         {"two_device": False}, {"internal_reports": True}, {"family_notebook": False},
+                         {"group_windows": False}, {"billing_approval": ""}, {"billing_scope": ""}):
+            with self.subTest(override=override), self.assertRaises(ValueError):
+                pilot.settings(False, "media-staging", "", "", **{**request, **override})
+        with self.assertRaises(ValueError):
+            pilot.settings(False, "production", "", "", **request)
+        with self.assertRaises(ValueError):
+            pilot.settings(True, "media-staging", "YES", "internal", **request)
 
 
 if __name__ == "__main__":
