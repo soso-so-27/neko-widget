@@ -2799,6 +2799,9 @@ protocol FamilyRepresentativePhotoBackend: AnyObject {
     func displayName(of personID: String) -> String?
     /// Who delivered the cat's photo, from this iPhone's copy (no network).
     func author(of cat: UUID) -> String?
+    /// The photo the cat's reference in this iPhone's copy points to (no
+    /// network); nil: none, cleared or unreadable.
+    func referencedAsset(of cat: UUID) -> UUID?
     func load(_ cats: [UUID]) async throws -> [UUID: FamilyNotebookPhotoLoad]
     func deliver(_ cat: UUID, source: Data) async throws
     /// An encrypted delivery waits for 「もう一度」 (it was reserved before it stopped).
@@ -2834,9 +2837,13 @@ final class FamilyRepresentativePhotos: ObservableObject {
     @Published private(set) var hiddenAuthors: [UUID: String] = [:]
     @Published private(set) var lines: [UUID: Line] = [:]
     @Published private(set) var backend: (any FamilyRepresentativePhotoBackend)?
-    private var readAt: [UUID: Date] = [:]
+    /// The photo each cat's page last read, and when.
+    private var readAt: [UUID: (asset: UUID, at: Date)] = [:]
     private var reading = false
-    /// A page that stays open reads its photo at most once a minute.
+    /// Calls that came while reading: read once more right after.
+    private var queued: (cats: [UUID], force: Bool)?
+    /// A page that stays open reads the same photo at most once a minute; a
+    /// new photo in the copy is read at once.
     static let automaticGap: TimeInterval = 60
 
     init() { backend = FamilyNotebookServiceFactory.representativePhotoBackend() }
@@ -2861,14 +2868,36 @@ final class FamilyRepresentativePhotos: ObservableObject {
 
     /// The photos of the cats on screen. Not marked as the person's: the
     /// calls count toward the automatic budget like any page that reads.
+    /// A cat with no reference in the copy is still passed on (the answer
+    /// 「none」 is made without the network) but uses up no minute.
     func read(_ cats: [UUID], force: Bool = false) async {
-        guard let backend, !cats.isEmpty, !reading else { return }
+        guard backend != nil, !cats.isEmpty else { return }
+        if reading {
+            let waiting = queued?.cats ?? []
+            queued = (cats: waiting + cats.filter { !waiting.contains($0) }, force: (queued?.force ?? false) || force)
+            return
+        }
+        reading = true
+        var next: (cats: [UUID], force: Bool)? = (cats: cats, force: force)
+        while let call = next, let backend {
+            await readOnce(call.cats, force: call.force, backend: backend)
+            next = queued; queued = nil
+        }
+        queued = nil
+        reading = false
+    }
+
+    private func readOnce(_ cats: [UUID], force: Bool, backend: any FamilyRepresentativePhotoBackend) async {
         let now = Date()
-        let due = force ? cats : cats.filter { readAt[$0].map { now.timeIntervalSince($0) >= Self.automaticGap } ?? true }
-        guard !due.isEmpty else { return }
-        reading = true; defer { reading = false }
-        for cat in due { readAt[cat] = now }
-        guard let loaded = try? await backend.load(due) else { return }
+        var due: [UUID] = []
+        for cat in cats {
+            guard let asset = backend.referencedAsset(of: cat) else { due.append(cat); continue }
+            if !force, let last = readAt[cat], last.asset == asset,
+               now.timeIntervalSince(last.at) < Self.automaticGap { continue }
+            readAt[cat] = (asset: asset, at: now)
+            due.append(cat)
+        }
+        guard !due.isEmpty, let loaded = try? await backend.load(due) else { return }
         for (cat, load) in loaded { apply(load, to: cat) }
     }
 

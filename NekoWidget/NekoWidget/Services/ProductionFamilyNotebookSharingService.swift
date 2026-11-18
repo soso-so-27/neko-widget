@@ -605,6 +605,13 @@ extension ProductionFamilyNotebookSharingService {
         do { return try photoReference(snapshot, cat: familyCatID, familyID: familyID)?.authorID } catch { return nil }
     }
 
+    /// The photo the cat's reference points to, from this copy only (no network).
+    func representativePhotoAsset(familyCatID: UUID) -> UUID? {
+        guard photoRuntimeEnabled, let familyID = photoMaterial?.familyID,
+              let snapshot = try? session?.notebook?.snapshot() else { return nil }
+        do { return try photoReference(snapshot, cat: familyCatID, familyID: familyID)?.reference.assetID } catch { return nil }
+    }
+
     /// The photos to show. A cat missing from the answer could not be read
     /// this time: the screen keeps what it shows. Thrown: nothing was read.
     func representativePhotos(familyCatIDs: [UUID]) async throws -> [UUID: FamilyNotebookPhotoLoad] {

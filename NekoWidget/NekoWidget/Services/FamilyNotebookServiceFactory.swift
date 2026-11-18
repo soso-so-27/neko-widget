@@ -98,6 +98,7 @@ final class ProductionFamilyRepresentativePhotoBackend: FamilyRepresentativePhot
         FamilyNotebookPrototype.shared.members.first { $0.personID == personID }?.displayName
     }
     func author(of cat: UUID) -> String? { service.representativePhotoAuthor(familyCatID: cat) }
+    func referencedAsset(of cat: UUID) -> UUID? { service.representativePhotoAsset(familyCatID: cat) }
     func load(_ cats: [UUID]) async throws -> [UUID: FamilyNotebookPhotoLoad] {
         try await service.representativePhotos(familyCatIDs: cats)
     }
@@ -181,6 +182,7 @@ final class FamilyRepresentativePhotoFixture: FamilyRepresentativePhotoBackend {
     var myPersonID: String? { me.personID }
     func displayName(of personID: String) -> String? { personID == other.personID ? Self.otherName : nil }
     func author(of cat: UUID) -> String? { delivered[cat] != nil ? me.personID : references[cat]?.authorID }
+    func referencedAsset(of cat: UUID) -> UUID? { references[cat]?.reference.assetID }
 
     func load(_ cats: [UUID]) async throws -> [UUID: FamilyNotebookPhotoLoad] {
         let hidden = try await client.hiddenAuthors()

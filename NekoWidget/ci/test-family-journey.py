@@ -613,5 +613,29 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(membership.count("endSharing(reason: saved.intent.action == .dissolve ? .dissolved : .left)"), 1)
 
 
+class FamilyPhotoReadOnNewAsset1119Tests(unittest.TestCase):
+    """11/19: a photo delivered while the page was open is read at once."""
+
+    def test_minute_is_per_photo_and_calls_while_reading_wait(self):
+        care = read("NekoWidget/Views/CatCareView.swift")
+        model = section(care, "final class FamilyRepresentativePhotos: ObservableObject {", "private func apply(")
+        self.assertIn("func referencedAsset(of cat: UUID) -> UUID?", care)
+        self.assertIn("private var readAt: [UUID: (asset: UUID, at: Date)] = [:]", model)
+        # No reference: no minute used up; a new photo: at once; the same: a minute.
+        self.assertIn("guard let asset = backend.referencedAsset(of: cat) else { due.append(cat); continue }", model)
+        self.assertIn("if !force, let last = readAt[cat], last.asset == asset,", model)
+        self.assertIn("now.timeIntervalSince(last.at) < Self.automaticGap { continue }", model)
+        self.assertIn("static let automaticGap: TimeInterval = 60", model)
+        self.assertNotIn("!reading else { return }", model)
+        self.assertIn("next = queued; queued = nil", model)
+        # Every backend answers from this iPhone's copy.
+        factory = read("NekoWidget/Services/FamilyNotebookServiceFactory.swift")
+        self.assertEqual(factory.count("func referencedAsset(of cat: UUID) -> UUID?"), 2)
+        service = read("NekoWidget/Services/ProductionFamilyNotebookSharingService.swift")
+        asset = section(service, "func representativePhotoAsset(familyCatID: UUID) -> UUID? {", "func representativePhotos(")
+        self.assertNotIn("await", asset)
+        self.assertIn("?.reference.assetID", asset)
+
+
 if __name__ == "__main__":
     unittest.main()
