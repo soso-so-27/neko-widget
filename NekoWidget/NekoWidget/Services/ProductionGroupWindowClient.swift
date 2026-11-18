@@ -711,7 +711,11 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             }
             body = stored.body
         } else {
+#if os(iOS) && INTERNAL_PRESENTATION
             let windowID = OwnerTwoDeviceTrialConfiguration.current?.window ?? GroupWire.randomID()
+#else
+            let windowID = GroupWire.randomID()
+#endif
             let participantID = GroupWire.randomID()
             let anchor = GroupTrustAnchor(windowID: windowID, ownerPersonID: identity.personID, ownerIdentityPublicKey: identity.personPublicKey)
             let member = try GroupRosterMember(participantID: participantID, personID: identity.personID, identityPublicKey: identity.personPublicKey,

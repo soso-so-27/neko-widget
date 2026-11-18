@@ -31,3 +31,11 @@ jobs:
                 xcrun swiftc -frontend -parse -D INTERNAL_PRESENTATION \
                   -target arm64-apple-ios17.1 -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" "$source"
               done
+      - name: Verify the changed recovery client and internal boundaries
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 ci/test-root-sync-boundary.py
+          python3 ci/test-group-recovery-screens.py
+          bash ci/run-group-recovery-client-checks.sh
