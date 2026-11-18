@@ -73,7 +73,7 @@ enum FamilyNotebookServiceFactory {
     }
 }
 
-/// 11/18 (TestFlight 388): each stage of 「家族に写真を届ける」 in the unified
+/// 11/18 (TestFlight 388): each stage of a family photo delivery in the unified
 /// log and, in the owner's trial builds, in 診断ログ (設定 → ログ): a stage
 /// name, the relay's HTTP status and a fixed code only.
 enum FamilyPhotoDeliveryDiagnostics {
@@ -94,6 +94,7 @@ final class ProductionFamilyRepresentativePhotoBackend: FamilyRepresentativePhot
     private let service: ProductionFamilyNotebookSharingService
     init(service: ProductionFamilyNotebookSharingService) { self.service = service }
     var myPersonID: String? { service.personID }
+    var canWrite: Bool { service.representativePhotoWritable }
     func displayName(of personID: String) -> String? {
         FamilyNotebookPrototype.shared.members.first { $0.personID == personID }?.displayName
     }
@@ -107,8 +108,9 @@ final class ProductionFamilyRepresentativePhotoBackend: FamilyRepresentativePhot
     func retry(_ cat: UUID) async throws { try await service.retryRepresentativePhoto(familyCatID: cat) }
     func clear(_ cat: UUID) async throws {
         try service.clearRepresentativePhoto(familyCatID: cat)
-        // The person's own read sends it (the caller marks the tap).
-        _ = await FamilyNotebookSharing.shared.refreshAfterPlusChange(reportsFailure: false)
+        // 11/19: automatic, as the rest of the creator's photo: the
+        // notebook's next pass sends it.
+        FamilyNotebookAutoCheck.shared.sendSoon()
     }
     func report(assetID: UUID, reason: GroupReportReason) async throws -> String {
         try await service.reportRepresentativePhoto(assetID: assetID, reasonCode: reason.rawValue)
@@ -180,6 +182,7 @@ final class FamilyRepresentativePhotoFixture: FamilyRepresentativePhotoBackend {
     }
 
     var myPersonID: String? { me.personID }
+    var canWrite: Bool { true }
     func displayName(of personID: String) -> String? { personID == other.personID ? Self.otherName : nil }
     func author(of cat: UUID) -> String? { delivered[cat] != nil ? me.personID : references[cat]?.authorID }
     func referencedAsset(of cat: UUID) -> UUID? { references[cat]?.reference.assetID }
@@ -213,7 +216,7 @@ final class FamilyRepresentativePhotoFixture: FamilyRepresentativePhotoBackend {
         try await client.deliver(pending)
         delivered[cat] = pending
     }
-    /// Nothing waits here: 「もう一度」 delivers from the photo again.
+    /// Nothing waits here: a second try delivers from the photo again.
     func hasPending(_ cat: UUID) -> Bool { false }
     func retry(_ cat: UUID) async throws {
         guard let pending = delivered[cat] else { throw FamilyNotebookPhotoFailure.failed }

@@ -299,7 +299,7 @@ enum DiagnosticLogPrivacy {
     /// A caller-controlled value using one of these keys is still discarded
     /// unless it is exactly one of the values below.
     private static let finiteMetadataValues: [String: Set<String>] = [
-        // 11/18: 「家族に写真を届ける」 (FamilyPhotoDeliveryLog).
+        // 11/18: the family's representative photo (FamilyPhotoDeliveryLog).
         "familyPhotoStage": [
             "authorMissing", "catNotInNotebook", "commitStatus", "committed", "contextUnavailable",
             "deliveryFailed", "imagePrepared", "keyMissing", "keyReady", "prepareFailed", "reserveSent",

@@ -3,7 +3,7 @@ import ImageIO
 import os
 import UniformTypeIdentifiers
 
-/// 11/18 (TestFlight 388): where 「家族に写真を届ける」 stopped, one line per
+/// 11/18 (TestFlight 388): where a family photo delivery stopped, one line per
 /// stage. Only a stage name, an HTTP status and a fixed error code: never a
 /// photo, an identifier, a key or a URL.
 enum FamilyPhotoDeliveryStage: String, Sendable {

@@ -554,6 +554,11 @@ enum FamilyNotebookPhotoFailure: Error, Equatable {
 @available(iOS 17.0, macOS 14.0, *)
 extension ProductionFamilyNotebookSharingService {
     var representativePhotosEnabled: Bool { photoRuntimeEnabled }
+    /// 11/19: the creator's photo can be written now (the family's keys of
+    /// the last pass are here); no network.
+    var representativePhotoWritable: Bool {
+        photoRuntimeEnabled && photoMaterial != nil && session?.notebook != nil
+    }
     var personID: String? { session?.identity.personID }
 
     fileprivate func photoContext() throws -> (session: FamilyNotebookSession, store: FamilyNotebookStore, material: PhotoMaterial,
@@ -650,8 +655,9 @@ extension ProductionFamilyNotebookSharingService {
         return result
     }
 
-    /// Only after 「家族に写真を届けますか」→［届ける］. The client keeps the
-    /// encrypted delivery for 「もう一度」, which sends the same one.
+    /// 11/19: the creator's iPhone only, by itself (FamilyRepresentativePhotos
+    /// .syncCreatorPhotos). The client keeps the encrypted delivery, and the
+    /// next try sends the same one.
     func deliverRepresentativePhoto(familyCatID: UUID, source: Data) async throws {
         let trace = photoTrace
         let context: (session: FamilyNotebookSession, store: FamilyNotebookStore, material: PhotoMaterial,
@@ -690,11 +696,11 @@ extension ProductionFamilyNotebookSharingService {
         photoRetries[familyCatID] = nil
     }
 
-    /// A delivery stopped after it was prepared: 「もう一度」 sends that one.
+    /// A delivery stopped after it was prepared: the next try sends that one.
     func hasPendingRepresentativePhoto(familyCatID: UUID) -> Bool { photoRetries[familyCatID] != nil }
 
-    /// 「もう一度」: the same encrypted delivery, never a second one. When it
-    /// is no longer waiting, it is forgotten (the next 「もう一度」 starts over).
+    /// The same encrypted delivery, never a second one. When it is no longer
+    /// waiting, it is forgotten (the next try starts over from the photo).
     func retryRepresentativePhoto(familyCatID: UUID) async throws {
         let context = try photoContext()
         guard let id = photoRetries[familyCatID] else {
@@ -757,8 +763,8 @@ extension ProductionFamilyNotebookSharingService {
         return FamilyNotebookPhotoFailure.failed
     }
 
-    /// 「家族に届けた写真を消す」: an ordinary notebook write (the sync sends
-    /// it with its clearPhoto effect). The next read sends it.
+    /// 11/19: the creator took the key photo away: an ordinary notebook write
+    /// (the sync sends it with its clearPhoto effect). The next pass sends it.
     func clearRepresentativePhoto(familyCatID: UUID) throws {
         let context = try photoContext()
         guard let author else { throw FamilySharingError.signInExpired }

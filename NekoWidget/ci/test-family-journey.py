@@ -637,5 +637,59 @@ class FamilyPhotoReadOnNewAsset1119Tests(unittest.TestCase):
         self.assertIn("?.reference.assetID", asset)
 
 
+class FamilyPhotoCreatorAuto1119Tests(unittest.TestCase):
+    """11/19: the notebook creator's key photo goes to the family by itself."""
+
+    def setUp(self):
+        self.care = read("NekoWidget/Views/CatCareView.swift")
+        self.model = section(self.care, "final class FamilyRepresentativePhotos: ObservableObject {",
+                             "/// A question about the family's photo")
+
+    def test_no_delivery_screens_or_words_remain(self):
+        for gone in ("FamilyPhotoDeliveryStatus", "FamilyPhotoDeliverSheet", "deliverItems", "installFixtureLine",
+                     "family-photo-deliver", "family-photo-clear", "family-photo-retry", "family-photo-status",
+                     "家族に写真を届ける", "家族に届けた写真", "届けています", "届けられませんでした",
+                     "家族の手帳の写真が上限です", "keyPhotoPreview", "enum Line"):
+            self.assertNotIn(gone, self.care, gone)
+        menu = section(self.care, "struct FamilyPhotoMenuItems: View {", "/// The questions and the report sheet")
+        self.assertIn("この写真を通報", menu)
+        self.assertIn("の写真を表示しない", menu)
+        self.assertNotIn("ownPhoto", menu)
+        fixture = read("NekoWidget/App/AppStoreScreenshotFixture.swift")
+        self.assertNotIn("--cat-home-stress-family-photo-line", fixture)
+        self.assertNotIn("48i_family_photo_failed", read("NekoWidgetUITests/ReviewScreenshotUITests.swift"))
+        self.assertNotIn("48i_family_photo_failed", read("ci/collect-review-screenshots.py"))
+
+    def test_only_the_payer_writes_and_unchanged_is_local(self):
+        sync = section(self.model, "func syncCreatorPhotos() async {", "private func syncOne(")
+        self.assertIn("FamilyNotebookSharing.shared.state.membership?.role == .payer", sync)
+        self.assertIn("backend.canWrite", sync)
+        self.assertIn("notebook.linkedFamilyCat(profile: profile.uuidString)", sync)
+        one = section(self.model, "private func syncOne(", "private func deliver(")
+        # Unchanged: the copy and what this iPhone sent, no network.
+        self.assertIn("if referenced, isMine(backend.author(of: cat)), sent[key] == photo { return }", one)
+        self.assertIn("try await backend.clear(cat)", one)
+        self.assertIn("catch FamilyNotebookPhotoFailure.limited", one)
+        self.assertLess(one.index("if referenced, isMine("), one.index("try await deliver("))
+        self.assertIn("static let retryBackoff: [TimeInterval] = [60, 5 * 60, 15 * 60, 60 * 60]", self.model)
+
+    def test_triggers_are_automatic(self):
+        app = read("NekoWidget/App/AppRootView.swift")
+        hook = section(app, ".onChange(of: familyPhotoSyncKey, initial: true)", "\n        }\n")
+        self.assertIn("guard scenePhase == .active, familyPhotoCreator else { return }", hook)
+        self.assertNotIn("SharingPersonAction", hook)
+        self.assertIn("Task { await FamilyRepresentativePhotos.shared.ownKeyPhotosChanged(keyPhotos) }", hook)
+        self.assertIn("$0.keyPhotoLocalIdentifier", hook)
+        key = section(app, "private var familyPhotoSyncKey: String {", "\n    }\n")
+        for part in ("scenePhase == .active", "familyPhotoCreator", "familyPhotoLinks", "keyPhotoLocalIdentifier"):
+            self.assertIn(part, key)
+        auto = section(SHARING, "final class FamilyNotebookAutoCheck {", "/// 11/15: this iPhone asked to join")
+        self.assertIn("await FamilyRepresentativePhotos.shared.syncCreatorPhotos()", auto)
+        factory = read("NekoWidget/Services/FamilyNotebookServiceFactory.swift")
+        self.assertEqual(factory.count("var canWrite: Bool"), 2)
+        self.assertIn("FamilyNotebookAutoCheck.shared.sendSoon()", factory)
+        self.assertNotIn("refreshAfterPlusChange", section(factory, "func clear(_ cat: UUID) async throws {", "func report("))
+
+
 if __name__ == "__main__":
     unittest.main()
