@@ -73,6 +73,7 @@ struct AppPublicLinksConfiguration: Equatable, Sendable {
 
 /// A credential for one owner-only staging trial. Business authorization still
 /// requires the registered device, root or billing signature at the server.
+#if INTERNAL_PRESENTATION && !NEKO_SHARE_EXTENSION
 struct OwnerTwoDeviceTrialConfiguration {
     static let infoKey = "OwnerTwoDeviceTrial"
     static let origin = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
@@ -115,6 +116,7 @@ struct OwnerTwoDeviceTrialConfiguration {
         request.setValue(proof, forHTTPHeaderField: "Neko-Owner-Trial-Proof")
     }
 }
+#endif
 
 /// Build-time boundary shared by the host app and its capture-only Share
 /// Extension. The direct-send flag is retained only as a release tombstone:

@@ -82,15 +82,20 @@ const notebooks = '/v3/family-notebooks';
 // A request-scoped copy is the only place where pilot gates can become YES.
 // The Worker variables and general report intake are never changed by a request.
 export async function ownerTrialRequest(request: Request, env: Env): Promise<Env | Response> {
-  const path = new URL(request.url).pathname;
   const proof = request.headers.get(proofHeader);
-  const isHealth = path === '/v1/billing/health' && request.method === 'GET';
-  if (!proof && !isHealth && !env.OWNER_TWO_DEVICE_TRIAL) return env;
+  // Unrelated deployments must not even read a trial binding before their own
+  // request gate. A credential presented there cannot enable staging behavior.
+  if (!Object.hasOwn(env, 'OWNER_TWO_DEVICE_TRIAL')) {
+    if (proof) throw trialDenied();
+    return env;
+  }
   const scope = stagePolicy(env);
   if (!scope) {
     if (proof) throw trialDenied();
     return env;
   }
+  const path = new URL(request.url).pathname;
+  const isHealth = path === '/v1/billing/health' && request.method === 'GET';
   const family = notebooks + '/' + scope.family, window = group + '/' + scope.window;
   const onFamily = path === family || path.startsWith(family + '/');
   const onWindow = path === window || path.startsWith(window + '/');

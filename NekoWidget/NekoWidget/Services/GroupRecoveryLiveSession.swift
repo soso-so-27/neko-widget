@@ -489,6 +489,7 @@ private func currentRegisteredRoot(namespace: String) throws -> Data? {
 }
 
 extension GroupRecoveryLiveModel {
+#if INTERNAL_PRESENTATION
     static func ownerTrialEnrollment() async throws -> String {
         guard let trial = OwnerTwoDeviceTrialConfiguration.current,
               let client = GroupWindowClientProvider.production
@@ -516,6 +517,7 @@ extension GroupRecoveryLiveModel {
         guard let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: raw) else { return false }
         return GroupWire.base64(GroupCanonical.hash(key.publicKey.rawRepresentation)) == owner
     }
+#endif
 
     static func connected() -> GroupRecoveryLiveModel {
         let configuration = SharingAPIConfiguration.current
@@ -550,9 +552,11 @@ extension GroupRecoveryLiveModel {
             // successful empty read plus no local identity means no candidates.
             var roots = try await sync.availableRoots().map(\.privateKey)
             if let local = try currentRegisteredRoot(namespace: namespace) { roots.append(local) }
+#if INTERNAL_PRESENTATION
             if let trial = OwnerTwoDeviceTrialConfiguration.current {
                 roots = roots.filter { matchesTrialOwner($0, owner: trial.owner) }
             }
+#endif
             let builder = GroupRecoveryLiveBuilder(endpoint: endpoint, environment: environment.rawValue,
                 transport: GroupURLSessionTransport(), model: "iPhone", stores: { scope in
                     (try GroupKeychainStore(namespace: namespace + ".recovery-journal." + scope),
