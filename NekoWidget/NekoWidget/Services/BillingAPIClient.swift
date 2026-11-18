@@ -1358,6 +1358,7 @@ actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
 
         try ClientUpgradeRequirement.shared.checkAllowed()
         request.setValue(ClientUpgradeRequirement.buildHeader, forHTTPHeaderField: "X-Neko-App-Build")
+        OwnerTwoDeviceTrialConfiguration.current?.authorize(&request)
         let bytes: URLSession.AsyncBytes
         let response: URLResponse
         do {

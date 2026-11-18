@@ -771,6 +771,8 @@ jobs:
       - name: Prepare internal group window switch
         if: ${{ inputs.distribution_profile != 'app-store-candidate' }}
         shell: bash
+        env:
+          OWNER_TWO_DEVICE_TRIAL_CONFIG: ${{ secrets.OWNER_TWO_DEVICE_TRIAL_CONFIG }}
         run: |
           set -euo pipefail
           python3 "$PROJECT_DIRECTORY/ci/group-window-release.py" \
@@ -779,6 +781,7 @@ jobs:
             --sandbox-billing-requested "${BILLING_SANDBOX_REQUESTED:-false}" \
             --mode "$SHARING_EXPECTED_MODE" \
             --approval "${GROUP_WINDOWS_APPROVAL:-}" \
+            --app-source-info-plist "$PROJECT_DIRECTORY/NekoWidget/Info.plist" \
             --env-file "$GITHUB_ENV"
 
       - name: Validate the exact runtime embedded in the limited external beta
@@ -1584,6 +1587,7 @@ jobs:
         shell: bash
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          OWNER_TWO_DEVICE_TRIAL_CONFIG: ${{ secrets.OWNER_TWO_DEVICE_TRIAL_CONFIG }}
           PRESERVATION_REQUESTED: ${{ inputs.preservation_pilot }}
           PRESERVATION_APPROVAL: ${{ vars.PRESERVATION_PILOT_ENABLED }}
           PRESERVATION_SCOPE: ${{ vars.PRESERVATION_PILOT_SCOPE }}
@@ -1652,6 +1656,7 @@ jobs:
         shell: bash
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          OWNER_TWO_DEVICE_TRIAL_CONFIG: ${{ secrets.OWNER_TWO_DEVICE_TRIAL_CONFIG }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/Export"

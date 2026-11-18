@@ -129,6 +129,7 @@ import { groupReplyPath } from './group-moderation-replies';
 import { groupReportingAvailabilityPath } from './group-reporting-availability';
 import { drainGroupAdmissionNotifications } from './group-admission-push';
 import { drainGroupNotifications } from './group-push';
+import { ownerTrialRequest } from './owner-two-device-trial';
 
 export async function route(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   beginReadDiagnostic(request);
@@ -150,6 +151,9 @@ async function routeInternal(
   const url = new URL(request.url);
   rejectQuery(url);
   const { pathname } = url;
+  const scoped = await ownerTrialRequest(request, env);
+  if (scoped instanceof Response) return scoped;
+  env = scoped;
   if(pathname.startsWith('/v3/group-')||pathname.startsWith('/v3/family-notebooks'))env=scopeIdentityCheck(env);
   if(isIdentityDeletionPath(pathname)){
     try {return await identityDeletionAPI(request,env,ctx);}

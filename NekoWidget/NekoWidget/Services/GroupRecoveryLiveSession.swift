@@ -460,6 +460,36 @@ actor GroupRecoverySyntheticSession: GroupRecoverySession {
 }
 
 extension GroupRecoveryLiveModel {
+    static func ownerTrialEnrollment() async throws -> String {
+        guard let trial = OwnerTwoDeviceTrialConfiguration.current,
+              let client = GroupWindowClientProvider.production,
+              let bundleID = Bundle.main.bundleIdentifier,
+              let accessGroup = Bundle.main.object(forInfoDictionaryKey: "RootSyncKeychainAccessGroup") as? String
+        else { throw GroupRecoveryClient.Failure.disabled }
+        let identity = try await SharingPersonAction.run { try await client.familyNotebookIdentity() }
+        let person = identity.personID
+        var lines = ["本人　" + person, "端末　" + (try identity.deviceID)]
+        if person != trial.owner {
+            let sync = try RootSyncStore(bundleID: bundleID, environment: .staging, accessGroup: accessGroup)
+            let roots = try await sync.availableRoots().map(\.privateKey)
+            if let raw = roots.first(where: { matchesTrialOwner($0, owner: trial.owner) }) {
+                let root = try Curve25519.Signing.PrivateKey(rawRepresentation: raw)
+                let scope = GroupCanonical.hash(root.publicKey.rawRepresentation).map { String(format: "%02x", $0) }.joined()
+                let secrets = try GroupKeychainStore(namespace: GroupWindowClientProvider.namespace + ".recovery." + scope)
+                let recovery = try GroupRecoveryLiveBuilder.deviceIdentity(root: root, secrets: secrets)
+                lines.append("引き継ぎ先　" + (try recovery.deviceID))
+            } else {
+                lines.append("Aの本人情報が届いたら、もう一度確認してください。")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private nonisolated static func matchesTrialOwner(_ raw: Data, owner: String) -> Bool {
+        guard let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: raw) else { return false }
+        return GroupWire.base64(GroupCanonical.hash(key.publicKey.rawRepresentation)) == owner
+    }
+
     /// Captures and the internal gallery: the same screens over synthetic state.
     static func synthetic() -> GroupRecoveryLiveModel {
         GroupRecoveryLiveModel { GroupRecoverySyntheticSession.contexts() }
@@ -513,6 +543,9 @@ extension GroupRecoveryLiveModel {
             // successful empty read plus no local identity means no candidates.
             var roots = try await sync.availableRoots().map(\.privateKey)
             if let local = try currentRegisteredRoot(namespace: namespace) { roots.append(local) }
+            if let trial = OwnerTwoDeviceTrialConfiguration.current {
+                roots = roots.filter { matchesTrialOwner($0, owner: trial.owner) }
+            }
             let builder = GroupRecoveryLiveBuilder(endpoint: endpoint, environment: environment.rawValue,
                 transport: GroupURLSessionTransport(), model: "iPhone", stores: { scope in
                     (try GroupKeychainStore(namespace: namespace + ".recovery-journal." + scope),

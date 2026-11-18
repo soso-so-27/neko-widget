@@ -60,7 +60,7 @@ def settings(requested: bool, mode: str, approval: str, scope: str, *,
         values.update({
             "PLUS_STOREFRONT_ENABLED": "YES", "PLUS_MONTHLY_PRODUCT_ID": MONTHLY_PRODUCT,
             "PLUS_BILLING_CLIENT_ENABLED": "YES", "PLUS_BILLING_API_BASE_URL": BILLING_ORIGIN,
-            "PLUS_BILLING_RECOVERY_ENABLED": "YES",
+            "PLUS_BILLING_RECOVERY_ENABLED": "NO" if owner_two_device_billing else "YES",
         })
     return values
 

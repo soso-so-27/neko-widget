@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise staging/public release isolation against real plist/IPA inputs."""
 import importlib.util
+import json
 import plistlib
 import subprocess
 import sys
@@ -80,31 +81,37 @@ class GroupWindowReleaseTests(unittest.TestCase):
                 release.verify_ipa(ipa, "YES", "NO")
 
     def test_two_device_billing_is_part_of_the_archive_and_ipa_boundary(self):
+        trial = release.trial_config(json.dumps({"proof": "A" * 43, "owner": "A" * 43, "window": "A" * 22,
+                                                  "family": "98b47c5f-0dc4-4ed2-a2c2-26d0173db946"}))
         signed = {**info(), "FamilyNotebookProductionEnabled": "YES",
                   "OwnerInternalReportsDisabled": "YES", release.TWO_DEVICE_KEY: "YES",
                   "PlusBillingClientEnabled": "YES", "PlusStorefrontEnabled": "YES",
                   "PlusBillingAPIBaseURL": release.ORIGIN, "PlusMonthlyProductID": "jp.nekowidget.plus.monthly",
-                  "PlusAnnualProductID": "", "PlusBillingRecoveryEnabled": "YES",
+                  "PlusAnnualProductID": "", "PlusBillingRecoveryEnabled": "NO",
                   "PlusWindowSponsorshipClientEnabled": "NO",
-                  "ManagedPreservationEnabled": "NO", "MembershipAccessEnforced": True}
-        release.verify_info(signed, "YES", "YES", "YES", sandbox_billing=True)
+                  "ManagedPreservationEnabled": "NO", "MembershipAccessEnforced": True, release.TRIAL_KEY: trial}
+        release.verify_info(signed, "YES", "YES", "YES", sandbox_billing=True, trial=trial)
         with self.assertRaises(ValueError):
             release.verify_info(signed, "YES", "YES", "YES")
         for key, value in (("PlusBillingClientEnabled", "NO"), ("PlusStorefrontEnabled", "NO"),
                            ("PlusBillingAPIBaseURL", "https://api.nekonomado.com"),
                            ("PlusMonthlyProductID", "wrong"), ("ManagedPreservationEnabled", "YES"),
-                           ("PlusAnnualProductID", "annual"), ("PlusBillingRecoveryEnabled", "NO"),
+                           ("PlusAnnualProductID", "annual"), ("PlusBillingRecoveryEnabled", "YES"),
                            ("PlusWindowSponsorshipClientEnabled", "YES"),
                            ("MembershipAccessEnforced", False)):
             with self.subTest(key=key), self.assertRaises(ValueError):
-                release.verify_info({**signed, key: value}, "YES", "YES", "YES", sandbox_billing=True)
+                release.verify_info({**signed, key: value}, "YES", "YES", "YES", sandbox_billing=True, trial=trial)
         with tempfile.TemporaryDirectory() as directory:
             ipa = Path(directory) / "owner.ipa"
             with zipfile.ZipFile(ipa, "w") as archive:
                 archive.writestr("Payload/NekoWidget.app/Info.plist", plistlib.dumps(signed))
-            release.verify_ipa(ipa, "YES", "YES", "YES", sandbox_billing=True)
+            release.verify_ipa(ipa, "YES", "YES", "YES", sandbox_billing=True, trial=trial)
             with self.assertRaises(ValueError):
                 release.verify_ipa(ipa, "YES", "YES", "YES")
+        with self.assertRaises(ValueError):
+            release.prepare_trial_info(signed, None)
+        with self.assertRaises(ValueError):
+            release.trial_config(json.dumps({**trial, "proof": "B" * 43}))
 
     def test_default_never_follows_media_or_protected_approval(self):
         for mode in ("disabled", "review-preview", "pairing-only", "media-staging"):

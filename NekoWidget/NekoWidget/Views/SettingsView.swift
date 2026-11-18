@@ -448,6 +448,9 @@ struct SettingsView: View {
                         }
                         NavigationLink("機種変更の小さな試験") { KeychainSyncProbeView() }
                             .accessibilityIdentifier("settings-keychain-sync-probe")
+                        if OwnerTwoDeviceTrialConfiguration.current != nil {
+                            NavigationLink("2台試験の端末確認") { OwnerTwoDeviceEnrollmentView() }
+                        }
                         // 機種変更の画面を、見本の状態で見る（発行が OFF の間の入口はここだけ）。
                         NavigationLink("機種変更の画面（見本）") { GroupRecoveryGallery() }
                             .accessibilityIdentifier("settings-group-recovery-gallery")
@@ -1518,3 +1521,28 @@ extension View {
     /// The owner's 外観 choice, for the app's real root only.
     func appAppearance() -> some View { modifier(AppAppearanceModifier()) }
 }
+
+#if DEBUG || INTERNAL_PRESENTATION
+private struct OwnerTwoDeviceEnrollmentView: View {
+    @State private var result = ""
+    @State private var checking = false
+
+    var body: some View {
+        Form {
+            Button("この端末を確認") {
+                checking = true
+                Task {
+                    defer { checking = false }
+                    do { result = try await GroupRecoveryLiveModel.ownerTrialEnrollment() }
+                    catch { result = "端末情報を確認できませんでした。" }
+                }
+            }
+            .disabled(checking)
+            if !result.isEmpty {
+                Text(result).font(.footnote.monospaced()).textSelection(.enabled)
+            }
+        }
+        .navigationTitle("2台試験の端末確認")
+    }
+}
+#endif

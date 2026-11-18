@@ -20,6 +20,7 @@ import { registerGroupPush } from './group-push';
 import { groupReportStatus,groupReplyPath } from './group-moderation-replies';
 import { groupReportingAvailability,groupReportingAvailabilityPath } from './group-reporting-availability';
 import { manageGroupWindow } from './group-management';
+import {checkTrialActor} from './owner-two-device-trial';
 
 export async function groupAPI(request:Request,env:Env):Promise<Response> {
   try { return await dispatchGroup(request,env); }
@@ -77,7 +78,10 @@ async function dispatchGroup(request:Request,env:Env):Promise<Response> {
   if(request.method==='GET') requireEmptyBody(bytes);
   else if(request.method!=='POST' && !upload) throw new ApiError(405,'method_not_allowed','The method is not supported.');
   const body=request.method==='POST'?parseJsonBody(request,bytes):undefined;
-  if(path==='/v3/group-windows/billing-connection' && body)return connectGroupBilling(request,env,actor,bytes,body);
+  if(path==='/v3/group-windows/billing-connection' && body){
+    checkTrialActor(env,actor.personId,actor.deviceId,true);
+    return connectGroupBilling(request,env,actor,bytes,body);
+  }
   if(path==='/v3/group-windows' && body) return createGroupWindow(env,actor,body);
   if(path==='/v3/group-windows/list' && body) return listGroupWindows(env,actor,body);
   const match=path.match(/^\/v3\/group-windows\/([A-Za-z0-9_-]{1,128})(?:\/(.*))?$/u);
@@ -94,6 +98,7 @@ async function dispatchGroup(request:Request,env:Env):Promise<Response> {
   if(key && request.method==='GET') return getGroupKey(env,actor,windowId,Number(key[1]));
   if(!body) throw new ApiError(404,'not_found','The endpoint was not found.');
   const recoveryCompletion=suffix.match(/^recovery\/([0-9a-f-]{36})\/complete$/u);
+  if(suffix.startsWith('recovery/') || suffix==='close')checkTrialActor(env,actor.personId,actor.deviceId,true);
   if(recoveryCompletion)return completeRecoveryKeys(env,actor,windowId,recoveryCompletion[1]!,body);
   if(suffix.startsWith('recovery/'))return providerRecoveryAPI(env,actor,windowId,suffix,body);
   if(suffix==='anchor-receipt')return storeAnchorReceipt(env,actor,windowId,body);
