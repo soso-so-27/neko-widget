@@ -998,6 +998,20 @@ final class ReviewScreenshotUITests: XCTestCase {
             return nil
         }
         app.terminate()
+        // 11/18: how 「家族に写真を届ける」 is going shows on the page, not in
+        // 「…」 (`--cat-home-stress-family-photo-line` holds the line).
+        app = launchStress(76, names: ["-"], ["--cat-home-stress-family", "ミケ", "--cat-home-stress-family-photo",
+                                              "--cat-home-stress-family-photo-line", "failed"])
+        shot("48i_family_photo_failed", app) {
+            if let reason = reachStressHome(app, waitingFor: "cat-home-choose-photo") { return reason }
+            let about = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "tools-family-cat-")).firstMatch
+            guard about.waitForExistence(timeout: 10), reveal(about, app) else { return "この子のこと not found" }
+            about.tap()
+            guard app.buttons["family-photo-retry"].waitForExistence(timeout: 15) else { return "もう一度 not on the page" }
+            settle(1)
+            return nil
+        }
+        app.terminate()
     }
 
     /// 11/18: 設定 → 家族の手帳 → 「通報への返答」, reached the way the app

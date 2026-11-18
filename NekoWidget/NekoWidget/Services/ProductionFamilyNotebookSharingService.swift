@@ -614,12 +614,20 @@ extension ProductionFamilyNotebookSharingService {
         photoRetries[familyCatID] = nil
     }
 
-    /// 「もう一度」: the same encrypted delivery, never a second one.
+    /// A delivery stopped after it was prepared: 「もう一度」 sends that one.
+    func hasPendingRepresentativePhoto(familyCatID: UUID) -> Bool { photoRetries[familyCatID] != nil }
+
+    /// 「もう一度」: the same encrypted delivery, never a second one. When it
+    /// is no longer waiting, it is forgotten (the next 「もう一度」 starts over).
     func retryRepresentativePhoto(familyCatID: UUID) async throws {
         let context = try photoContext()
-        guard let id = photoRetries[familyCatID],
-              let pending = try await context.client.pendingDeliveries().first(where: { $0.reservation.operationID == id })
-        else { photoTrace(.init(stage: .retryNothingPending)); throw FamilyNotebookPhotoFailure.failed }
+        guard let id = photoRetries[familyCatID] else {
+            photoTrace(.init(stage: .retryNothingPending)); throw FamilyNotebookPhotoFailure.failed
+        }
+        guard let pending = try await context.client.pendingDeliveries().first(where: { $0.reservation.operationID == id }) else {
+            photoRetries[familyCatID] = nil
+            photoTrace(.init(stage: .retryNothingPending)); throw FamilyNotebookPhotoFailure.failed
+        }
         try await send(pending, context.client, context.store, context.material.material)
         photoRetries[familyCatID] = nil
     }
