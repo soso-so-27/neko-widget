@@ -38,7 +38,8 @@ enum FamilyNotebookServiceFactory {
             guard let client = GroupWindowClientProvider.production else { throw FamilySharingError.serviceUnavailable }
             return try await client.hasExistingIdentity()
         }, photoRuntimeEnabled: representativePhotoRuntimeEnabled, photoTransport: GroupURLSessionTransport(),
-        moderationRecipient: { FamilyNotebookServiceFactory.moderationRecipient() })
+        moderationRecipient: { FamilyNotebookServiceFactory.moderationRecipient() },
+        photoTrace: { FamilyPhotoDeliveryDiagnostics.note($0) })
     }
 
     /// The same reviewed recipient as a まど report, pinned in the app's
@@ -69,6 +70,21 @@ enum FamilyNotebookServiceFactory {
               let service = FamilyNotebookSharing.shared.service as? ProductionFamilyNotebookSharingService,
               service.representativePhotosEnabled else { return nil }
         return ProductionFamilyRepresentativePhotoBackend(service: service)
+    }
+}
+
+/// 11/18 (TestFlight 388): each stage of 「家族に写真を届ける」 in the unified
+/// log and, in the owner's trial builds, in 診断ログ (設定 → ログ): a stage
+/// name, the relay's HTTP status and a fixed code only.
+enum FamilyPhotoDeliveryDiagnostics {
+    static func note(_ note: FamilyPhotoDeliveryNote) {
+        FamilyPhotoDeliveryLog.system(note)
+#if INTERNAL_PRESENTATION && !NEKO_SHARE_EXTENSION
+        var metadata = ["familyPhotoStage": note.stage.rawValue]
+        if let status = note.status { metadata["familyPhotoStatus"] = String(status) }
+        if let code = note.code { metadata["familyPhotoCode"] = code }
+        SharedLog.app.info("family-photo", "Family photo delivery stage", metadata: metadata)
+#endif
     }
 }
 

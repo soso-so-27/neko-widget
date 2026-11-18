@@ -113,6 +113,8 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     private var photoRetries: [UUID: UUID] = [:]
     private let photoRuntimeEnabled: Bool
     private let photoTransport: any GroupHTTPTransport
+    /// 11/18: one line per stage of a delivery (FamilyPhotoDeliveryLog).
+    private let photoTrace: FamilyPhotoDeliveryTrace
     private let moderationRecipient: @MainActor () -> (keyID: String, publicKey: Data)?
     var notebook: FamilyNotebookStore? { session?.notebook }
     var author: FamilyNotebookAuthor? {
@@ -128,11 +130,12 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
          hasPersonalPlus: @escaping @MainActor () -> Bool = { false },
          hasExistingIdentity: @escaping @MainActor () async throws -> Bool = { true },
          photoRuntimeEnabled: Bool = false, photoTransport: any GroupHTTPTransport = GroupURLSessionTransport(),
-         moderationRecipient: @escaping @MainActor () -> (keyID: String, publicKey: Data)? = { nil }) {
+         moderationRecipient: @escaping @MainActor () -> (keyID: String, publicKey: Data)? = { nil },
+         photoTrace: @escaping FamilyPhotoDeliveryTrace = { FamilyPhotoDeliveryLog.system($0) }) {
         self.provider = provider; self.billing = billing; self.displayName = displayName; self.catNames = catNames
         self.privateFarewellDay = privateFarewellDay; self.now = now
         self.hasPersonalPlus = hasPersonalPlus; self.hasExistingIdentity = hasExistingIdentity
-        self.photoRuntimeEnabled = photoRuntimeEnabled; self.photoTransport = photoTransport
+        self.photoRuntimeEnabled = photoRuntimeEnabled; self.photoTransport = photoTransport; self.photoTrace = photoTrace
         self.moderationRecipient = moderationRecipient
     }
     private func run<T>(_ action: (FamilyNotebookSession) async throws -> T) async throws -> T {
@@ -574,21 +577,38 @@ extension ProductionFamilyNotebookSharingService {
     /// Only after 「家族に写真を届けますか」→［届ける］. The client keeps the
     /// encrypted delivery for 「もう一度」, which sends the same one.
     func deliverRepresentativePhoto(familyCatID: UUID, source: Data) async throws {
-        let context = try photoContext()
-        guard let author else { throw FamilySharingError.signInExpired }
+        let trace = photoTrace
+        let context: (session: FamilyNotebookSession, store: FamilyNotebookStore, material: PhotoMaterial,
+                      client: FamilyNotebookRepresentativePhotoClient, journal: any GroupSecretStore)
+        do { context = try photoContext() }
+        catch { trace(.init(stage: .contextUnavailable, code: Self.photoTraceCode(error))); throw error }
+        guard let author else { trace(.init(stage: .authorMissing)); throw FamilySharingError.signInExpired }
         let snapshot = try context.store.snapshot()
-        guard snapshot.activeMappings.contains(where: { $0.familyCatID == familyCatID }) else { throw FamilySharingError.notAllowed }
+        guard snapshot.activeMappings.contains(where: { $0.familyCatID == familyCatID }) else {
+            trace(.init(stage: .catNotInNotebook)); throw FamilySharingError.notAllowed
+        }
         let current = context.material.material.current
-        guard let key = context.material.material.keys[current.roster.epoch] else { throw FamilySharingError.membershipChecking }
+        guard let key = context.material.material.keys[current.roster.epoch] else {
+            trace(.init(stage: .keyMissing)); throw FamilySharingError.membershipChecking
+        }
+        trace(.init(stage: .keyReady))
         let slotID = FamilyNotebookRepresentativePhotoCrypto.slotID(familyID: context.material.familyID, catID: familyCatID)
         let revision: Int
         do { revision = try await context.client.slots().first { $0.slotID == slotID }?.revision ?? 0 }
-        catch { throw Self.photoFailure(error) }
+        catch {
+            trace(.init(stage: .stateListFailed, status: Self.photoTraceStatus(error), code: FamilyPhotoDeliveryLog.code(of: error)))
+            throw Self.photoFailure(error)
+        }
+        trace(.init(stage: .stateListed))
         let target = FamilyNotebookTarget(familyCatID: familyCatID, field: .representativePhoto)
-        let pending = try FamilyNotebookRepresentativePhotoClient.prepare(source: source, familyID: context.material.familyID,
-            catID: familyCatID, expectedRevision: revision, generation: context.material.generation,
-            nextClock: snapshot.clock + 1, author: author, identity: context.session.identity, roster: current,
-            epochKey: key, observedOperationIDs: FamilyNotebookCore.observedFrontier(target: target, operations: snapshot.operations))
+        let pending: FamilyNotebookRepresentativePhotoClient.Pending
+        do {
+            pending = try FamilyNotebookRepresentativePhotoClient.prepare(source: source, familyID: context.material.familyID,
+                catID: familyCatID, expectedRevision: revision, generation: context.material.generation,
+                nextClock: snapshot.clock + 1, author: author, identity: context.session.identity, roster: current,
+                epochKey: key, observedOperationIDs: FamilyNotebookCore.observedFrontier(target: target, operations: snapshot.operations))
+        } catch { trace(.init(stage: .prepareFailed, code: FamilyPhotoDeliveryLog.code(of: error))); throw error }
+        trace(.init(stage: .imagePrepared))
         photoRetries[familyCatID] = pending.reservation.operationID
         try await send(pending, context.client, context.store, context.material.material)
         photoRetries[familyCatID] = nil
@@ -599,14 +619,18 @@ extension ProductionFamilyNotebookSharingService {
         let context = try photoContext()
         guard let id = photoRetries[familyCatID],
               let pending = try await context.client.pendingDeliveries().first(where: { $0.reservation.operationID == id })
-        else { throw FamilyNotebookPhotoFailure.failed }
+        else { photoTrace(.init(stage: .retryNothingPending)); throw FamilyNotebookPhotoFailure.failed }
         try await send(pending, context.client, context.store, context.material.material)
         photoRetries[familyCatID] = nil
     }
 
     private func send(_ pending: FamilyNotebookRepresentativePhotoClient.Pending, _ client: FamilyNotebookRepresentativePhotoClient,
                       _ store: FamilyNotebookStore, _ material: FamilyNotebookKeyMaterial) async throws {
-        do { try await client.deliver(pending) } catch { throw Self.photoFailure(error) }
+        do { try await client.deliver(pending, trace: photoTrace) }
+        catch {
+            photoTrace(.init(stage: .deliveryFailed, status: Self.photoTraceStatus(error), code: FamilyPhotoDeliveryLog.code(of: error)))
+            throw Self.photoFailure(error)
+        }
         // Into this copy at once, as a received operation: its clock moves
         // past it, and the next read finds the reference here.
         if let key = material.keys[pending.reservation.keyEpoch],
@@ -614,6 +638,31 @@ extension ProductionFamilyNotebookSharingService {
            let received = try? FamilyNotebookOperationCrypto.openRetaining(pending.operation, roster: roster, key: key) {
             try? store.receiveRetaining([received])
         }
+    }
+
+    private static func photoTraceStatus(_ error: Error) -> Int? {
+        if case FamilyNotebookTransportError.server(_, let status) = error { return status }
+        return nil
+    }
+
+    /// The fixed word for a local failure before the network (FamilyPhotoDeliveryLog).
+    private static func photoTraceCode(_ error: Error) -> String {
+        if let error = error as? FamilySharingError {
+            switch error {
+            case .membershipChecking: return "membership_checking"
+            case .signInExpired: return "sign_in_expired"
+            case .notAllowed: return "not_allowed"
+            default: return "sharing_other"
+            }
+        }
+        if let error = error as? FamilyNotebookPhotoFailure {
+            switch error {
+            case .unavailable: return "photo_off"
+            case .failed: return "photo_failed"
+            case .limited: return "photo_limited"
+            }
+        }
+        return FamilyPhotoDeliveryLog.code(of: error)
     }
 
     private static func photoFailure(_ error: Error) -> Error {
