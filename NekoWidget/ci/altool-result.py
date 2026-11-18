@@ -13,10 +13,15 @@ def verify(stage: str, log: str) -> None:
         raise ValueError('Unknown altool stage')
     lines = [line.strip() for line in log.splitlines()]
     marker = 'VERIFY SUCCEEDED with no errors' if stage == 'validate' else 'UPLOAD SUCCEEDED with no errors'
-    successes = [i for i, line in enumerate(lines) if line == marker]
+    success_pattern = re.compile(re.escape(marker) + r'(?:, ([1-9][0-9]*) warnings?)?')
+    successes = [(i, match) for i, line in enumerate(lines) if (match := success_pattern.fullmatch(line))]
     if not successes:
         raise ValueError(f'altool {stage} did not emit its final success marker')
-    last = successes[-1]
+    last, result = successes[-1]
+    if stage == 'validate' and (warnings := result[1]) is not None:
+        summary = re.compile(rf"No errors, {warnings} warnings?, validating archive at '.+'\.")
+        if not any(summary.fullmatch(line) for line in lines[last + 1:]):
+            raise ValueError('altool validate warning result has no matching final summary')
     # Upload retries may log a transient ERROR before recovering. Errors after
     # the final success remain failures; validation retains its strict policy.
     checked = lines if stage == 'validate' else lines[last + 1:]
