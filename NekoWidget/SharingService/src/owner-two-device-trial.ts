@@ -131,7 +131,12 @@ export async function ownerTrialRequest(request: Request, env: Env): Promise<Env
     return env.PRIVATE_BILLING_GATEWAY.fetch(new Request(request.url,{method:request.method,headers,
       ...(body.length?{body:body.slice().buffer}:{})}));
   }
-  if (scope.phase === 'OFF' || scope.phaseUntilMs <= now || scope.phaseUntilMs - now > 3_600_000) {
+  // An explicitly configured two-device photo trial can run to the existing
+  // Sandbox admission expiry. Other phases retain the short expiry guard.
+  const photoUntilAdmissionExpiry = scope.phase === 'PHOTO' && scope.recoveryDevice === null
+    && scope.phaseUntilMs === scope.expiresAtMs;
+  if (scope.phase === 'OFF' || scope.phaseUntilMs <= now
+      || (!photoUntilAdmissionExpiry && scope.phaseUntilMs - now > 3_600_000)) {
     // The app ends its local participation on a successful empty directory.
     // A closed trial is a temporary read failure for trial clients.
     if (path === notebooks+'/me') {
