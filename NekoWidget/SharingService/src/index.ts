@@ -175,7 +175,7 @@ async function dispatch(request:Request,env:Env,ctx?:ExecutionContext):Promise<R
   };
 
   if (pathname === familyPhotoReportRepliesPath) {
-    return protectedGroupRead(env, () => familyPhotoReportReplies(request, env));
+    return familyPhotoReportReplies(request, env);
   }
 
   // A separate opt-in is required even when lower family/payer pilot gates

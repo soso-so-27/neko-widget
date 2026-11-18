@@ -2,6 +2,9 @@ import { authenticateGroupRequest, groupAuthorizationStatements } from './group-
 import { requireEmptyBody } from './http';
 import { ApiError, jsonResponse } from './errors';
 import type { Env } from './env';
+import { familyPhotoReportGateEnabled } from './family-photo-reports';
+import { protectedGroupRead } from './group-identity-service';
+import { loadRuntimeGate, reportIngestionGateOpen } from './runtime-gate';
 
 export const familyPhotoReportRepliesPath = '/v3/family-notebooks/report-replies';
 
@@ -15,9 +18,14 @@ type Reply = {
  * Report replies do not add a copy of the reporter ID or extend its retention. */
 export async function familyPhotoReportReplies(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'GET') throw new ApiError(405, 'method_not_allowed', 'Only GET is supported.');
-  if (env.FAMILY_NOTEBOOK_API_RUNTIME_ENABLED !== 'YES' || env.GROUP_MODERATION_RUNTIME_ENABLED !== 'YES') {
+  if (env.FAMILY_NOTEBOOK_API_RUNTIME_ENABLED !== 'YES' || !familyPhotoReportGateEnabled(env)
+      || !reportIngestionGateOpen(await loadRuntimeGate(env))) {
     throw new ApiError(503, 'family_photo_replies_disabled', 'Report replies are unavailable.');
   }
+  return protectedGroupRead(env, () => readFamilyPhotoReportReplies(request, env));
+}
+
+async function readFamilyPhotoReportReplies(request: Request, env: Env): Promise<Response> {
   const { actor, body } = await authenticateGroupRequest(request, env, 0);
   requireEmptyBody(body);
   const results = await env.DB.batch<Reply>([
