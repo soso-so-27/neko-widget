@@ -39,3 +39,13 @@ jobs:
           python3 ci/test-root-sync-boundary.py
           python3 ci/test-group-recovery-screens.py
           bash ci/run-group-recovery-client-checks.sh
+      - name: Inspect the compiled public and share configuration binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          source=NekoWidget/Shared/Sharing/SharingAPIConfiguration.swift
+          xcrun swiftc -O -emit-library "$source" -o "$RUNNER_TEMP/public.dylib"
+          xcrun swiftc -O -D INTERNAL_PRESENTATION -D NEKO_SHARE_EXTENSION -emit-library "$source" -o "$RUNNER_TEMP/share.dylib"
+          strings "$RUNNER_TEMP/public.dylib" > "$RUNNER_TEMP/config-strings.txt"
+          strings "$RUNNER_TEMP/share.dylib" >> "$RUNNER_TEMP/config-strings.txt"
+          ! grep -E 'workers\.dev|Neko-Owner-Trial-Proof|OwnerTwoDeviceTrial' "$RUNNER_TEMP/config-strings.txt"
