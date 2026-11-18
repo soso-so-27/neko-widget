@@ -208,12 +208,23 @@ enum GroupRecoveryKeyStep: Equatable, Sendable {
     }
 }
 
+struct GroupRecoveryKeyStatus: Sendable {
+    let state: GroupRecoveryRegistrationState
+    let registration: GroupRecoveryClient.Registration?
+
+    init(_ state: GroupRecoveryRegistrationState, registration: GroupRecoveryClient.Registration? = nil) {
+        self.state = state
+        self.registration = registration
+    }
+}
+
 /// The calls the new iPhone makes for one operation. The real one is the P3/P5
 /// client with the saved Draft; captures use GroupRecoverySyntheticKeySource.
 protocol GroupRecoveryKeySource: Sendable {
     func resume(_ operationID: UUID) async throws -> GroupRecoveryRegistrationState?
-    func status(_ operationID: UUID) async throws -> GroupRecoveryRegistrationState
-    func receive(_ operationID: UUID, afterEpoch: Int) async throws -> GroupRecoveryKeyPage
+    func status(_ operationID: UUID) async throws -> GroupRecoveryKeyStatus
+    func receivedDeviceID(_ operationID: UUID) async throws -> String?
+    func receive(_ operationID: UUID, status: GroupRecoveryKeyStatus, afterEpoch: Int) async throws -> GroupRecoveryKeyPage
     func finish(_ operationID: UUID) async throws -> GroupRecoveryRegistrationState
 }
 
@@ -226,11 +237,17 @@ struct GroupRecoveryClientKeySource: GroupRecoveryKeySource {
     func resume(_ id: UUID) async throws -> GroupRecoveryRegistrationState? {
         try await base.client.resumeFreshGeneration(draft(id), identity: base.identity)?.state
     }
-    func status(_ id: UUID) async throws -> GroupRecoveryRegistrationState {
-        try await base.client.status(draft(id)).state
+    func status(_ id: UUID) async throws -> GroupRecoveryKeyStatus {
+        let registration = try await base.client.status(draft(id))
+        return .init(registration.state, registration: registration)
     }
-    func receive(_ id: UUID, afterEpoch: Int) async throws -> GroupRecoveryKeyPage {
-        let progress = try await base.client.receiveKeys(draft(id), identity: base.identity, afterEpoch: afterEpoch)
+    func receivedDeviceID(_ id: UUID) async throws -> String? {
+        guard try await base.client.hasReceivedKeys(draft(id), identity: base.identity) else { return nil }
+        return try base.identity.deviceID
+    }
+    func receive(_ id: UUID, status: GroupRecoveryKeyStatus, afterEpoch: Int) async throws -> GroupRecoveryKeyPage {
+        guard let registration = status.registration else { throw GroupRecoveryClient.Failure.invalidResponse }
+        let progress = try await base.client.receiveKeys(draft(id), identity: base.identity, status: registration, afterEpoch: afterEpoch)
         return .init(state: progress.state, nextAfterEpoch: progress.nextAfterEpoch)
     }
     func finish(_ id: UUID) async throws -> GroupRecoveryRegistrationState {
@@ -249,8 +266,6 @@ actor GroupRecoveryKeyDeliverySession: GroupRecoverySession {
     /// Where the next page starts, per operation. 0 after a full pass, so an
     /// epoch offered later is not skipped.
     private var cursor: [UUID: Int] = [:]
-    /// Committed by the owner but not yet installed here: the waiting state to keep.
-    private var committed: [UUID: GroupRecoveryRegistrationState] = [:]
 
     init(base: any GroupRecoverySession, source: any GroupRecoveryKeySource) {
         self.base = base; self.source = source
@@ -263,23 +278,25 @@ actor GroupRecoveryKeyDeliverySession: GroupRecoverySession {
         guard case .queryStatus(let id) = action else { return try await base.run(action) }
         // Resumes a saved fresh generation first; never creates another.
         if let resumed = try await source.resume(id) { return resumed }
-        let state = try await source.status(id)
-        switch state {
+        let status = try await source.status(id)
+        switch status.state {
         case .registeredWaitingForKeys:
-            return try await receive(id, waiting: state)
+            return try await receive(id, status: status)
         case .notStarted:
-            // After the owner's switch the pending row is gone. Ready only from
-            // the verified install; without received keys this is notStarted.
-            return try await finishAfterSwitch(id, notStarted: state)
+            // The owner's switch removes the pending row. The local journal
+            // lets this same operation continue even after an app restart.
+            guard let deviceID = try await source.receivedDeviceID(id) else { return status.state }
+            return try await install(id, keeping: .registeredWaitingForKeys(operationID: id, deviceID: deviceID))
         default:
-            return state
+            return status.state
         }
     }
 
-    private func receive(_ id: UUID, waiting: GroupRecoveryRegistrationState) async throws -> GroupRecoveryRegistrationState {
+    private func receive(_ id: UUID, status: GroupRecoveryKeyStatus) async throws -> GroupRecoveryRegistrationState {
+        let waiting = status.state
         let page: GroupRecoveryKeyPage
         do {
-            page = try await source.receive(id, afterEpoch: cursor[id] ?? 0)
+            page = try await source.receive(id, status: status, afterEpoch: cursor[id] ?? 0)
         } catch is CancellationError {
             throw CancellationError()
         } catch GroupRecoveryClient.Failure.serverDisabled {
@@ -297,30 +314,14 @@ actor GroupRecoveryKeyDeliverySession: GroupRecoverySession {
             cursor[id] = nil
             return .needsOriginalDeviceOrInvitation(operationID: id)
         case .finish:
-            cursor[id] = nil; committed[id] = waiting
+            cursor[id] = nil
             return try await install(id, keeping: waiting)
-        }
-    }
-
-    private func finishAfterSwitch(_ id: UUID, notStarted: GroupRecoveryRegistrationState) async throws -> GroupRecoveryRegistrationState {
-        if let waiting = committed[id] { return try await install(id, keeping: waiting) }
-        do {
-            return try await source.finish(id)
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch GroupRecoveryClient.Failure.invalidResponse {
-            // No keys were received for this operation here.
-            return notStarted
-        } catch GroupRecoveryClient.Failure.authentication {
-            return notStarted
         }
     }
 
     private func install(_ id: UUID, keeping waiting: GroupRecoveryRegistrationState) async throws -> GroupRecoveryRegistrationState {
         do {
-            let state = try await source.finish(id)
-            if case .ready = state { committed[id] = nil }
-            return state
+            return try await source.finish(id)
         } catch is CancellationError {
             throw CancellationError()
         } catch GroupRecoveryClient.Failure.serverDisabled {
@@ -352,12 +353,13 @@ actor GroupRecoverySyntheticKeySource: GroupRecoveryKeySource {
         .init(state: "recoveryCommitted", nextAfterEpoch: nil),
     ]
     func resume(_ id: UUID) async throws -> GroupRecoveryRegistrationState? { nil }
-    func status(_ id: UUID) async throws -> GroupRecoveryRegistrationState {
+    func status(_ id: UUID) async throws -> GroupRecoveryKeyStatus {
         try await Task.sleep(for: delay)
-        return installed ? .ready(operationID: id, deviceID: Self.device)
-            : .registeredWaitingForKeys(operationID: id, deviceID: Self.device)
+        return .init(installed ? .ready(operationID: id, deviceID: Self.device)
+            : .registeredWaitingForKeys(operationID: id, deviceID: Self.device))
     }
-    func receive(_ id: UUID, afterEpoch: Int) async throws -> GroupRecoveryKeyPage {
+    func receivedDeviceID(_ id: UUID) async throws -> String? { nil }
+    func receive(_ id: UUID, status: GroupRecoveryKeyStatus, afterEpoch: Int) async throws -> GroupRecoveryKeyPage {
         try await Task.sleep(for: delay)
         afterEpochs.append(afterEpoch)
         return pages.count > 1 ? pages.removeFirst() : pages.first ?? .init(state: "receivedWaitingForOwner", nextAfterEpoch: nil)

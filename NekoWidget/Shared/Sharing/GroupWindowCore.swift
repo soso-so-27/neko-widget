@@ -523,18 +523,25 @@ enum GroupRecoveryKeyCrypto {
         let unsigned = value(sender.encapsulatedKey, cipher, Data())
         return try value(sender.encapsulatedKey, cipher, signingKey.signature(for: unsigned.signatureBytes()))
     }
-    static func unwrap(_ offer: GroupRecoveryKeyOffer, recipient: VerifiedGroupRecoveryRecipient, participation: VerifiedGroupParticipation,
-                       current: VerifiedGroupRoster, epoch: VerifiedGroupRoster, key: Curve25519.KeyAgreement.PrivateKey, now: Int) throws -> SymmetricKey {
+    static func validateOffer(_ offer: GroupRecoveryKeyOffer, recipient: VerifiedGroupRecoveryRecipient,
+                              participation: VerifiedGroupParticipation, current: VerifiedGroupRoster, epoch: VerifiedGroupRoster,
+                              recipientPublicKey: Data, now: Int) throws {
         guard offer.environment == recipient.environment, offer.windowID == recipient.windowID, offer.operationID == recipient.operationID,
               UUID(uuidString: offer.offerID)?.uuidString.lowercased() == offer.offerID,
               offer.keyEpoch == epoch.roster.keyEpoch, offer.epochRosterHash == epoch.hash, offer.currentRosterHash == current.hash,
-              offer.recipientDeviceID == recipient.deviceID, key.publicKey.rawRepresentation == recipient.hpkePublicKey,
+              offer.recipientDeviceID == recipient.deviceID, recipientPublicKey == recipient.hpkePublicKey,
               now >= 0, offer.expiresAt > now, offer.expiresAt - now <= 86_400,
               offer.encapsulatedKey.count == 32, offer.ciphertext.count == 48, offer.signature.count == 64,
               let signer = allowed(recipient: recipient, participation: participation, current: current, epoch: epoch, signerID: offer.senderDeviceID)
         else { throw GroupProtocolError.invalidEnvelope }
         let publicKey = try Curve25519.Signing.PublicKey(rawRepresentation: signer.signingPublicKey)
         guard publicKey.isValidSignature(offer.signature, for: try offer.signatureBytes()) else { throw GroupProtocolError.invalidSignature }
+    }
+
+    static func unwrap(_ offer: GroupRecoveryKeyOffer, recipient: VerifiedGroupRecoveryRecipient, participation: VerifiedGroupParticipation,
+                       current: VerifiedGroupRoster, epoch: VerifiedGroupRoster, key: Curve25519.KeyAgreement.PrivateKey, now: Int) throws -> SymmetricKey {
+        try validateOffer(offer, recipient: recipient, participation: participation, current: current, epoch: epoch,
+                          recipientPublicKey: key.publicKey.rawRepresentation, now: now)
         let info = try offer.context()
         var receiver = try HPKE.Recipient(privateKey: key, ciphersuite: .Curve25519_SHA256_ChachaPoly, info: info, encapsulatedKey: offer.encapsulatedKey)
         let bytes = try receiver.open(offer.ciphertext, authenticating: info)
