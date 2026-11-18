@@ -120,6 +120,9 @@ test('internal-only evidence is authenticated first and bound to the exact uploa
     await save({ ...metadata, ...patch });
     await assert.rejects(verifyInternalOnlyArtifact(root, ipa, authenticate));
   }
+  await save({...metadata, buildNumber:'387'});
+  assert.equal(await verifyInternalOnlyArtifact(root, ipa, authenticate, '387'), true);
+  await assert.rejects(verifyInternalOnlyArtifact(root, ipa, authenticate, '319'), /match the authenticated artifact/);
   await save(metadata);
   await assert.rejects(verifyInternalOnlyArtifact(root, ipa, async () => { throw Error('authentication failed'); }), /authentication failed/);
   await writeFile(ipa, 'different bytes');
@@ -134,10 +137,12 @@ test('delivery requires valid Internal Only build, IN_BETA_TESTING and pinned gr
       assert.equal(options.single, true);
       return { type: 'buildBetaDetails', attributes: { internalBuildState: state } };
     }
-    if (url.includes('/betaGroups/')) return assigned ? [build] : [];
-    return [{ ...build, attributes: { ...build.attributes, ...patch } }];
+    const current = { ...build, attributes: { ...build.attributes, ...patch } };
+    if (url.includes('/betaGroups/')) return assigned ? [current] : [];
+    return [current];
   };
   assert.equal(await confirmRetainedBuild(get(), groupID, '319'), true);
+  assert.equal(await confirmRetainedBuild(get({version:'387'}), groupID, '387'), true);
   await assert.rejects(confirmRetainedBuild(get(), groupID, '387'), /identity is ambiguous/);
   await assert.rejects(confirmRetainedBuild(get(), groupID, '388'), /Unapproved retained build number/);
   assert.equal(await confirmRetainedBuild(async () => [], groupID, '319'), false);
