@@ -24,11 +24,12 @@ struct CatPreparednessRecord: Codable, Equatable {
 
 @MainActor
 final class CatPreparednessStore: ObservableObject {
-    private static var sharedCache: (URL, CatPreparednessStore)?
+    private static var sharedCache: (String, CatPreparednessStore)?
     static var shared: CatPreparednessStore {
         let root = AppRecordDataset.directory("CatPreparedness")
-        if let cached = sharedCache, cached.0 == root { return cached.1 }
-        let value = CatPreparednessStore(); sharedCache = (root, value); return value
+        let key = AppRecordDataset.sharedStoreKey(root)
+        if let cached = sharedCache, cached.0 == key { return cached.1 }
+        let value = CatPreparednessStore(); sharedCache = (key, value); return value
     }
     enum PhotoRole { case face, body }
 
@@ -150,11 +151,12 @@ struct LostCatSavedInformation {
 
 @MainActor
 final class LostCatDraftStore: ObservableObject {
-    private static var sharedCache: (URL, LostCatDraftStore)?
+    private static var sharedCache: (String, LostCatDraftStore)?
     static var shared: LostCatDraftStore {
         let root = AppRecordDataset.directory("LostCatDrafts")
-        if let cached = sharedCache, cached.0 == root { return cached.1 }
-        let value = LostCatDraftStore(); sharedCache = (root, value); return value
+        let key = AppRecordDataset.sharedStoreKey(root)
+        if let cached = sharedCache, cached.0 == key { return cached.1 }
+        let value = LostCatDraftStore(); sharedCache = (key, value); return value
     }
     @Published private(set) var drafts: [String: LostCatDraft] = [:]
     private let directory: URL

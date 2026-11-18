@@ -6,11 +6,12 @@ import UserNotifications
 
 @MainActor
 final class EvacuationStore: ObservableObject {
-    private static var sharedCache: (URL, EvacuationStore)?
+    private static var sharedCache: (String, EvacuationStore)?
     static var shared: EvacuationStore {
         let root = AppRecordDataset.directory("EvacuationPreparation")
-        if let cached = sharedCache, cached.0 == root { return cached.1 }
-        let value = EvacuationStore(schedulesNotices: true); sharedCache = (root, value); return value
+        let key = AppRecordDataset.sharedStoreKey(root)
+        if let cached = sharedCache, cached.0 == key { return cached.1 }
+        let value = EvacuationStore(schedulesNotices: true); sharedCache = (key, value); return value
     }
     @Published private(set) var plan = EvacuationPlan()
     @Published private(set) var loadError: String?

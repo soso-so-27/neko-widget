@@ -745,7 +745,7 @@ final class AppViewModel: ObservableObject {
             currentAsset = nil
             hasFinishedSnapshotLoad = true
             discardPendingDeepLink(reason: "candidate-state-unavailable")
-            await clearAlbumAndWidgetOutputs(reportErrors: false)
+            await clearOutputsAfterStartupFailure()
             return
         }
 
@@ -777,7 +777,7 @@ final class AppViewModel: ObservableObject {
                 currentAsset = nil
                 hasFinishedSnapshotLoad = true
                 discardPendingDeepLink(reason: "snapshot-state-unavailable")
-                await clearAlbumAndWidgetOutputs(reportErrors: false)
+                await clearOutputsAfterStartupFailure()
                 return
             }
         } else if let storeInitializationError {
@@ -787,7 +787,7 @@ final class AppViewModel: ObservableObject {
             currentAsset = nil
             hasFinishedSnapshotLoad = true
             discardPendingDeepLink(reason: "snapshot-store-unavailable")
-            await clearAlbumAndWidgetOutputs(reportErrors: false)
+            await clearOutputsAfterStartupFailure()
             return
         }
         guard await loadCatHouseholdIdentity() else {
@@ -796,7 +796,7 @@ final class AppViewModel: ObservableObject {
             currentAsset = nil
             hasFinishedSnapshotLoad = true
             discardPendingDeepLink(reason: "cat-identity-state-unavailable")
-            await clearAlbumAndWidgetOutputs(reportErrors: false)
+            await clearOutputsAfterStartupFailure()
             return
         }
         // The snapshot was selected before the identity ledger loaded. Apply
@@ -3778,6 +3778,17 @@ final class AppViewModel: ObservableObject {
             Self.logError(error, category: "widget-cache", operation: "rebuild_cache")
             if reportErrors { setError(error) }
         }
+    }
+
+    /// Unreadable records fail closed, except when they could not be read only
+    /// because the iPhone was locked (prewarm, background launch): the album
+    /// and Widget made from them stay, and the start runs again after unlock.
+    private func clearOutputsAfterStartupFailure() async {
+        guard !startupFailureMayBeLockedFiles else {
+            SharedLog.app.info("lifecycle", "Kept album and Widget outputs after a locked startup failure")
+            return
+        }
+        await clearAlbumAndWidgetOutputs(reportErrors: false)
     }
 
     private func clearAlbumAndWidgetOutputs(reportErrors: Bool) async {

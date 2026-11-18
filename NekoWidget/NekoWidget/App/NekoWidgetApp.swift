@@ -13,6 +13,9 @@ struct NekoWidgetApp: App {
 #if DEBUG
         LaunchWorkMeter.shared.startIfRequested()
 #endif
+        // Before any store opens its records: a store opened while the iPhone
+        // is locked is opened again after unlock (11/18).
+        AppRecordDataset.trackProtectedData()
         ClientUpgradePresenter.shared.start()
         ShowcaseAppShortcuts.updateAppShortcutParameters()
 #if DEBUG

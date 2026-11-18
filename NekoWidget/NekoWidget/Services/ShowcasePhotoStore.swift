@@ -6,12 +6,13 @@ import Vision
 /// Device-local photos deliberately prepared for showing in person.
 @MainActor
 final class ShowcasePhotoStore: ObservableObject {
-    private static var sharedCache: (URL, ShowcasePhotoStore)?
+    private static var sharedCache: (String, ShowcasePhotoStore)?
     static var shared: ShowcasePhotoStore {
         let root = AppRecordDataset.directory("ShowcasePhotos")
-        if let cached = sharedCache, cached.0 == root { return cached.1 }
+        let key = AppRecordDataset.sharedStoreKey(root)
+        if let cached = sharedCache, cached.0 == key { return cached.1 }
         let value = ShowcasePhotoStore(directory: root)
-        sharedCache = (root, value)
+        sharedCache = (key, value)
         return value
     }
     static let maximumCount = 9
