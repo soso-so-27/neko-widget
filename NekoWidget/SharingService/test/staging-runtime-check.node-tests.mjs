@@ -566,3 +566,28 @@ test('release workflow chooses combined preflight only when both requests are tr
     assert.equal(output.trim(),`scripts/check-staging-runtime.mjs --expected ${expected}`);
   }
 });
+
+test("owner two-device preflight requires the closed features without relaxing beta checks", async () => {
+  const ready = runtimeFetch({momentStatus:401,momentCode:"invalid_authentication",
+    reactionStatus:503,reactionCode:"reaction_runtime_disabled"});
+  const closed = new Map([
+    ["/v3/family-notebooks/11111111-1111-4111-8111-111111111111/representative-photos/slots","photo_feature_disabled"],
+    ["/v3/family-notebooks/report-replies","family_photo_replies_disabled"],
+    ["/v3/group-recovery/challenges","recovery_disabled"],
+  ]);
+  let opened = null;
+  const fetcher = async (url, options) => {
+    const route = new URL(url).pathname;
+    if (closed.has(route)) return jsonResponse(route === opened ? 401 : 503, {error:{code:closed.get(route)}});
+    const response = await ready(url, options);
+    if (route === "/health") response.headers.set("Neko-Runtime-Media", "OFF");
+    return response;
+  };
+  const options = {origin,expected:"owner-two-device-staging",fetchImpl:fetcher};
+  assert.equal((await checkStagingRuntime(options)).expected,"owner-two-device-staging");
+  for (const route of closed.keys()) {
+    opened = route;
+    await assert.rejects(checkStagingRuntime(options),/returned HTTP 401; expected 503/);
+  }
+  await assert.rejects(checkStagingRuntime({origin,expected:"limited-external-beta",fetchImpl:ready}),/reaction returned HTTP 503/);
+});

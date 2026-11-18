@@ -32,6 +32,27 @@ class GroupWindowReleaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             release.resolve_family("true", "owner-internal", "media-staging", "YES")
 
+    def test_two_device_staging_requires_the_reviewed_owner_profile(self):
+        self.assertEqual(release.resolve_two_device(True, "owner-internal", "media-staging", "YES"), "YES")
+        for profile, mode, family in (("existing-reviewed", "media-staging", "YES"),
+                                      ("app-store-candidate", "production", "YES"),
+                                      ("owner-internal", "production", "YES"),
+                                      ("owner-internal", "media-staging", "NO")):
+            with self.subTest(profile=profile, mode=mode, family=family), self.assertRaises(ValueError):
+                release.resolve_two_device(True, profile, mode, family)
+        enabled = {**info(), "FamilyNotebookProductionEnabled": "YES",
+                   "OwnerInternalReportsDisabled": "YES", release.TWO_DEVICE_KEY: "YES"}
+        release.verify_info(enabled, "YES", "YES", "YES")
+        for changed in ({"OwnerInternalReportsDisabled": "NO"},
+                        {"SharingAPIBaseURL": "https://api.nekonomado.com"},
+                        {release.TWO_DEVICE_KEY: "NO"}):
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                release.verify_info({**enabled, **changed}, "YES", "YES", "YES")
+        with self.assertRaises(ValueError):
+            release.verify_info(enabled, "YES", "YES", "NO")
+        with self.assertRaisesRegex(ValueError, "Public candidate carries"):
+            release.validate_production(enabled, {}, {})
+
     def test_family_archive_ipa_and_export_are_checked(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

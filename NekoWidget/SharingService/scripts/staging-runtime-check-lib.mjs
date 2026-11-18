@@ -155,7 +155,25 @@ const REPORT_AUTH_BOUNDARY_EXPECTATIONS = Object.freeze([
   }),
 ]);
 
+const TWO_DEVICE_STAGING_EXPECTATIONS = Object.freeze([
+  ...BASE_EXPECTATIONS.on.map(probe => {
+    if (probe.name === "health") return Object.freeze({ ...probe,
+      runtime: Object.freeze({ ...probe.runtime, media: "OFF" }) });
+    if (probe.name === "reaction") return Object.freeze({ ...probe,
+      status: 503, errorCode: "reaction_runtime_disabled" });
+    return probe;
+  }),
+  ...REPORT_AUTH_BOUNDARY_EXPECTATIONS,
+  Object.freeze({ name: "family-photo", path: "/v3/family-notebooks/11111111-1111-4111-8111-111111111111/representative-photos/slots",
+    status: 503, errorCode: "photo_feature_disabled" }),
+  Object.freeze({ name: "family-photo-replies", path: "/v3/family-notebooks/report-replies",
+    status: 503, errorCode: "family_photo_replies_disabled" }),
+  Object.freeze({ name: "recovery", method: "POST", path: "/v3/group-recovery/challenges",
+    status: 503, errorCode: "recovery_disabled" }),
+]);
+
 const EXPECTATIONS = Object.freeze({
+  "owner-two-device-staging": TWO_DEVICE_STAGING_EXPECTATIONS,
   ...BASE_EXPECTATIONS,
   "limited-external-beta": Object.freeze([
     BASE_EXPECTATIONS.on[0],

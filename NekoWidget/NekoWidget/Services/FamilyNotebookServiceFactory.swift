@@ -50,12 +50,10 @@ enum FamilyNotebookServiceFactory {
         return (keyID, key)
     }
 
-    /// 11/17: the family's representative photo. No setting turns it on:
-    /// the server's gate is off, and the client stays off with it in every
-    /// build. While false, no 「…」 item appears and no photo call is made.
-    /// Review captures use a synthetic relay instead
-    /// (AppStoreScreenshotFixture.CatHomeStress, `--cat-home-stress-family-photo`).
-    static let representativePhotoRuntimeEnabled = false
+    /// Actual representative-photo calls are confined to the owner staging exercise.
+    static var representativePhotoRuntimeEnabled: Bool {
+        SharingAPIConfiguration.ownerStagingTwoDeviceEnabled
+    }
 
     /// The reporter's private receipt list, without loading family membership.
     static func reportReplies() async throws -> [FamilyPhotoReportReply] {

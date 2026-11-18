@@ -44,6 +44,20 @@ enum ProductionConfigurationVerifier {
         let owner = SharingAPIConfiguration.from(info: internalInfo)
         precondition(!owner.isEncryptedReportAvailable && owner.isMediaAvailable)
         precondition(!owner.requiresLocalSharingPurge, "report OFF must not purge photos or pending reports")
+        var exercise = internalInfo
+        exercise["SharingInternalEncryptedReportEnabled"] = false
+        exercise["SharingInternalEncryptedReportScope"] = ""
+        exercise["GroupReportingProductionEnabled"] = "NO"
+        exercise["OwnerStagingTwoDeviceEnabled"] = "YES"
+        exercise["GroupWindowsEnabled"] = "YES"
+        exercise["FamilyNotebookProductionEnabled"] = "YES"
+        precondition(SharingAPIConfiguration.ownerStagingTwoDeviceEnabled(info: exercise))
+        for (key, value) in [("SharingAPIBaseURL", "https://api.nekonomado.com"), ("SharingReleaseMode", "production"),
+                             ("OwnerStagingTwoDeviceEnabled", "NO"), ("OwnerInternalReportsDisabled", "NO"),
+                             ("FamilyNotebookProductionEnabled", "NO"), ("GroupWindowsEnabled", "NO")] {
+            var invalid = exercise; invalid[key] = value
+            precondition(!SharingAPIConfiguration.ownerStagingTwoDeviceEnabled(info: invalid), key)
+        }
         print("PASS production configuration: complete configuration required; no staging recipient or internal report bypass")
     }
 }
