@@ -301,8 +301,16 @@ final class AppViewModel: ObservableObject {
     private let storeInitializationError: String?
     private let curationStore: CatCandidateCurationStore?
     private let curationStoreInitializationError: String?
-    private let identityStore: CatHouseholdIdentityStore?
-    private let identityStoreInitializationError: String?
+    // var: the ledger's path is fixed when the store is made. Made while the
+    // iPhone was locked, it points at the "unavailable" path for good, so a
+    // retry after unlock makes it again (11/18, TestFlight 388).
+    private var identityStore: CatHouseholdIdentityStore?
+    private var identityStoreInitializationError: String?
+    /// The stores were made, or the start failed, while protected data could
+    /// not be read (locked iPhone, prewarm, background launch). Such a failure
+    /// is retried by itself once the iPhone is unlocked.
+    private var identityStoreMadeWithoutProtectedData = false
+    private var startupFailureMayBeLockedFiles = false
 
     private var hasStarted = false
     private var todayPhotoSelectionState: TodayPhotoSelectionState?
@@ -317,7 +325,14 @@ final class AppViewModel: ObservableObject {
     /// The start could not read the app's own records (snapshot, curation,
     /// or the cat ledger). The Photos request cannot begin, so the screens
     /// offer 「もう一度」 (`retryStartup`) instead of a button that does nothing.
-    @Published private(set) var startupLoadFailed = false
+    @Published private(set) var startupLoadFailed = false {
+        didSet {
+            guard startupLoadFailed, !oldValue else { return }
+            if identityStoreMadeWithoutProtectedData || !UIApplication.shared.isProtectedDataAvailable {
+                startupFailureMayBeLockedFiles = true
+            }
+        }
+    }
     private var candidatePhotoRouteGate = CandidatePhotoRouteGate()
     private var libraryChangePending = false
     private var lastActivationSyncAt: Date?
@@ -384,6 +399,7 @@ final class AppViewModel: ObservableObject {
     private var isManualRescanRequestPending = false
     private var receivedMemoryImportObserver: NSObjectProtocol?
     private var todayDayChangeObserver: NSObjectProtocol?
+    private var protectedDataObserver: NSObjectProtocol?
     private var adoptionDayObserver: NSObjectProtocol?
     /// nil means no additional in-memory source filter. When an album is
     /// selected this is refreshed from PhotoKit before a scan, so old snapshot
@@ -566,15 +582,8 @@ final class AppViewModel: ObservableObject {
             Self.logError(error, category: "curation", operation: "initialize_store")
         }
 
-        do {
-            identityStore = try CatHouseholdIdentityStore()
-            identityStoreInitializationError = nil
-            SharedLog.app.info("cat-identity", "Cat household identity store initialized")
-        } catch {
-            identityStore = nil
-            identityStoreInitializationError = Self.userFacingMessage(for: error)
-            Self.logError(error, category: "cat-identity", operation: "initialize_store")
-        }
+        (identityStore, identityStoreInitializationError, identityStoreMadeWithoutProtectedData)
+            = Self.makeIdentityStore()
 
         SharedLog.app.info(
             "lifecycle",
@@ -604,6 +613,13 @@ final class AppViewModel: ObservableObject {
             guard let url = note.object as? URL, url.deletingLastPathComponent().lastPathComponent == "CatCare" else { return }
             Task { @MainActor [weak self] in self?.objectWillChange.send() }
         }
+        protectedDataObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.protectedDataDidBecomeAvailableNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in await self?.retryStartupAfterUnlock() }
+        }
         todayDayChangeObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.significantTimeChangeNotification,
             object: nil,
@@ -626,6 +642,20 @@ final class AppViewModel: ObservableObject {
         }
         if let todayDayChangeObserver {
             NotificationCenter.default.removeObserver(todayDayChangeObserver)
+        }
+        if let protectedDataObserver { NotificationCenter.default.removeObserver(protectedDataObserver) }
+    }
+
+    /// (store, initialization error, made without protected data)
+    private static func makeIdentityStore() -> (CatHouseholdIdentityStore?, String?, Bool) {
+        let withoutProtectedData = !UIApplication.shared.isProtectedDataAvailable
+        do {
+            let store = try CatHouseholdIdentityStore()
+            SharedLog.app.info("cat-identity", "Cat household identity store initialized")
+            return (store, nil, withoutProtectedData)
+        } catch {
+            Self.logError(error, category: "cat-identity", operation: "initialize_store")
+            return (nil, Self.userFacingMessage(for: error), withoutProtectedData)
         }
     }
 
@@ -808,10 +838,24 @@ final class AppViewModel: ObservableObject {
     func retryStartup() async {
         guard startupLoadFailed else { return }
         startupLoadFailed = false
+        startupFailureMayBeLockedFiles = false
         errorMessage = nil
         catIdentityLoadState = .loading
+        // Nothing uses the ledger while the start has failed. Make the store
+        // again so its path is chosen now, not while the iPhone was locked.
+        (identityStore, identityStoreInitializationError, identityStoreMadeWithoutProtectedData)
+            = Self.makeIdentityStore()
         hasStarted = false
         await start()
+    }
+
+    /// A start that failed only because the iPhone was locked loads again by
+    /// itself after unlock. Nothing is written until the load succeeds.
+    private func retryStartupAfterUnlock() async {
+        guard startupLoadFailed, startupFailureMayBeLockedFiles,
+              UIApplication.shared.isProtectedDataAvailable else { return }
+        SharedLog.app.info("lifecycle", "Startup retried after protected data became available")
+        await retryStartup()
     }
 
     func requestAccess() async {
@@ -844,6 +888,11 @@ final class AppViewModel: ObservableObject {
     }
 
     func syncOnActive() async {
+        if startupLoadFailed {
+            await retryStartupAfterUnlock()
+            // A successful retry already ran the activation sync in start().
+            if !startupLoadFailed { return }
+        }
         await synchronizeOnActive(refreshLimitedAccess: true, refreshesWidgetsWhenUnchanged: true)
     }
 
@@ -4206,8 +4255,20 @@ final class AppViewModel: ObservableObject {
     }
 
     private func setError(_ error: Error) {
+        if Self.isProtectedDataReadFailure(error) { startupFailureMayBeLockedFiles = true }
         errorMessage = Self.userFacingMessage(for: error)
         Self.logError(error, category: "error", operation: "present_to_user")
+    }
+
+    /// NSFileReadNoPermissionError (257): a Data Protection file read while
+    /// the iPhone was locked. Underlying errors are checked too.
+    static func isProtectedDataReadFailure(_ error: Error) -> Bool {
+        var current: NSError? = error as NSError
+        while let value = current {
+            if value.domain == NSCocoaErrorDomain, value.code == NSFileReadNoPermissionError { return true }
+            current = value.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return false
     }
 
     /// One sentence for the alert. A cause is named only when the error type
