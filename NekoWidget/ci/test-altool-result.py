@@ -25,6 +25,18 @@ class AltoolResultTests(unittest.TestCase):
         verify('upload', SUCCESS_315)
         verify('validate', 'VERIFY SUCCEEDED with no errors\n')
 
+    def test_success_with_sdk_warning_still_requires_a_complete_zero_error_result(self):
+        # Apple's exact result shape from retained build 387.
+        validated = ("VERIFY SUCCEEDED with no errors, 1 warning\n"
+                     "WARN: SDK version issue. (90725)\n"
+                     "No errors, 1 warnings, validating archive at '/tmp/Neko.ipa'.\n")
+        verify('validate', validated)
+        verify('upload', SUCCESS_315.replace('with no errors', 'with no errors, 1 warning'))
+        for log in (validated.split('No errors')[0], validated.replace('No errors, 1', 'No errors, 2'),
+                    validated + 'ERROR: validation failed\n', validated.replace('with no errors', 'with 1 error')):
+            with self.subTest(log=log), self.assertRaises(ValueError):
+                verify('validate', log)
+
     def test_incomplete_or_failed_upload_remains_failure(self):
         for log in (
             '', RECOVERED_314.split('UPLOAD SUCCEEDED')[0],

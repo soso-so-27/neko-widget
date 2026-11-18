@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkRecipient, reader, failureMessage, groupDiagnostics, verifyInternalOnlyArtifact, confirmBuild319 } from './check-owner-testflight-recipient.mjs';
+import { checkRecipient, reader, failureMessage, groupDiagnostics, verifyInternalOnlyArtifact, confirmRetainedBuild } from './check-owner-testflight-recipient.mjs';
 import { createHash } from 'node:crypto';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -137,12 +137,14 @@ test('delivery requires valid Internal Only build, IN_BETA_TESTING and pinned gr
     if (url.includes('/betaGroups/')) return assigned ? [build] : [];
     return [{ ...build, attributes: { ...build.attributes, ...patch } }];
   };
-  assert.equal(await confirmBuild319(get(), groupID), true);
-  assert.equal(await confirmBuild319(async () => [], groupID), false);
-  assert.equal(await confirmBuild319(get({}, 'READY_FOR_BETA_TESTING'), groupID), false);
-  assert.equal(await confirmBuild319(get({}, 'IN_BETA_TESTING', false), groupID), false);
+  assert.equal(await confirmRetainedBuild(get(), groupID, '319'), true);
+  await assert.rejects(confirmRetainedBuild(get(), groupID, '387'), /identity is ambiguous/);
+  await assert.rejects(confirmRetainedBuild(get(), groupID, '388'), /Unapproved retained build number/);
+  assert.equal(await confirmRetainedBuild(async () => [], groupID, '319'), false);
+  assert.equal(await confirmRetainedBuild(get({}, 'READY_FOR_BETA_TESTING'), groupID, '319'), false);
+  assert.equal(await confirmRetainedBuild(get({}, 'IN_BETA_TESTING', false), groupID, '319'), false);
   for (const patch of [{ processingState: 'INVALID' }, { buildAudienceType: 'APP_STORE_ELIGIBLE' }, { expired: true }])
-    await assert.rejects(confirmBuild319(get(patch), groupID));
+    await assert.rejects(confirmRetainedBuild(get(patch), groupID, '319'));
   const one = { type: 'buildBetaDetails', id: 'synthetic-detail', attributes: {} };
   assert.deepEqual(await reader('synthetic', async () => ({ status: 200, json: async () => ({ data: one, links: {} }) }))('/v1/example', { single: true }), one);
   await assert.rejects(reader('synthetic', async () => ({ status: 200, json: async () => ({ data: [], links: {} }) }))('/v1/example', { single: true }));

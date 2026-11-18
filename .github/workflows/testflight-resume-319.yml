@@ -1,6 +1,12 @@
-name: Resume retained owner-only build 319
+name: Resume retained owner-only TestFlight build
 on:
   workflow_dispatch:
+    inputs:
+      build:
+        description: Approved retained build to resume
+        type: choice
+        options: ['319', '387']
+        default: '319'
 permissions:
   contents: read
   actions: read
@@ -15,6 +21,7 @@ jobs:
     environment: testflight
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      RETAINED_BUILD: ${{ inputs.build }}
       GROUP_WINDOWS_APPROVAL: ${{ vars.GROUP_WINDOWS_STAGING_ENABLED }}
       PRESERVATION_APPROVAL: ${{ vars.PRESERVATION_PILOT_ENABLED }}
       PRESERVATION_SCOPE: ${{ vars.PRESERVATION_PILOT_SCOPE }}
@@ -38,7 +45,15 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          node NekoWidget/ci/check-retained-319-runtime.mjs
+          case "$RETAINED_BUILD" in
+            319) node NekoWidget/ci/check-retained-319-runtime.mjs ;;
+            387)
+              test "$GROUP_WINDOWS_APPROVAL" = YES
+              node NekoWidget/SharingService/scripts/check-staging-runtime.mjs --expected owner-two-device-staging \
+                --origin https://neko-window-sharing-staging.nakanishisoya.workers.dev
+              node NekoWidget/SharingService/scripts/check-owner-internal-report-off.mjs ;;
+            *) exit 1 ;;
+          esac
           mkdir -p "$HOME/.appstoreconnect/private_keys"
           printf '%s' "$APP_STORE_CONNECT_PRIVATE_KEY_BASE64" | base64 --decode > "$HOME/.appstoreconnect/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
       - name: Restore and upload the authenticated retained build without rebuilding
@@ -49,9 +64,15 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          gh run download 41113053231 --repo soso-so-27/neko-widget \
-            --name nekowidget-signed-artifacts-41113053231-2 --dir "$RUNNER_TEMP/retained-319"
-          python3 NekoWidget/ci/restore-owner-319.py "$RUNNER_TEMP/retained-319"
+          case "$RETAINED_BUILD" in
+            319) source_run=41113053231; attempt=2 ;;
+            387) source_run=44225338689; attempt=1 ;;
+            *) exit 1 ;;
+          esac
+          directory="$RUNNER_TEMP/retained-$RETAINED_BUILD"
+          gh run download "$source_run" --repo soso-so-27/neko-widget \
+            --name "nekowidget-signed-artifacts-$source_run-$attempt" --dir "$directory"
+          python3 NekoWidget/ci/restore-owner-319.py "$directory" "$RETAINED_BUILD"
       - name: Remove the existing API credential from the ephemeral runner
         if: always()
         shell: bash

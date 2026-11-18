@@ -1,4 +1,4 @@
-"""Resume the authenticated, already-signed owner-only build 319; never rebuild."""
+"""Resume the specifically approved authenticated owner-only TestFlight artifacts."""
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -9,9 +9,10 @@ import tarfile
 import tempfile
 import time
 
-SOURCE = 'b1c2c9a2c6f1ecfb4f3074edd85a307e9b5f2f9f'
-RUN = '41113053231'
-ATTEMPT = '2'
+RETAINED_BUILDS = {
+    '319': ('b1c2c9a2c6f1ecfb4f3074edd85a307e9b5f2f9f', '41113053231', '2'),
+    '387': ('03286dca26380e75409df0c61524dfc05be297b6', '44225338689', '1'),
+}
 
 
 def run(*args):
@@ -42,6 +43,12 @@ def extract_payload(bundle, target):
 
 
 def main():
+    if len(sys.argv) not in (2, 3):
+        raise ValueError('Expected the retained artifact directory and its approved build number')
+    build = sys.argv[2] if len(sys.argv) == 3 else '319'
+    if build not in RETAINED_BUILDS:
+        raise ValueError('Unapproved retained build')
+    source, run_id, attempt_number = RETAINED_BUILDS[build]
     ci = Path(__file__).resolve().parent
     retained = Path(sys.argv[1]).resolve()
     metadata = retained / 'moderation-release-metadata.json'
@@ -49,7 +56,7 @@ def main():
     authentication = retained / 'signed-artifact-authentication.json'
     run(sys.executable, str(ci / 'signed-artifact-authentication.py'), 'verify',
         '--ciphertext', str(ciphertext), '--metadata', str(metadata), '--authentication', str(authentication))
-    with tempfile.TemporaryDirectory(prefix='owner-319-', dir=os.environ['RUNNER_TEMP']) as temporary:
+    with tempfile.TemporaryDirectory(prefix=f'owner-{build}-', dir=os.environ['RUNNER_TEMP']) as temporary:
         target = Path(temporary)
         bundle = target / 'bundle.tar.gz'
         run('openssl', 'enc', '-d', '-aes-256-cbc', '-pbkdf2', '-iter', '200000',
@@ -60,15 +67,23 @@ def main():
             '--external-metadata', str(metadata), '--external-ipa', str(ipa), '--release-mode', 'media-staging',
             '--external-trust-manifest', str(trust), '--expected-trust-manifest-sha256', expected['moderationTrustManifestSha256'])
         run(sys.executable, str(ci / 'verify-moderation-upload-payload.py'), '--metadata', str(metadata), '--ipa', str(ipa),
-            '--expected-source-commit', SOURCE, '--expected-build-number', '319', '--expected-github-run-id', RUN,
-            '--expected-github-run-attempt', ATTEMPT, '--expected-distribution-profile', 'owner-internal',
+            '--expected-source-commit', source, '--expected-build-number', build, '--expected-github-run-id', run_id,
+            '--expected-github-run-attempt', attempt_number, '--expected-distribution-profile', 'owner-internal',
             '--expected-release-mode', 'media-staging', '--expected-internal-reports', 'false')
         run(sys.executable, str(ci / 'distribution_profile.py'), '--profile', 'owner-internal',
             '--mode', 'media-staging', '--internal-reports', 'false', '--ipa', str(ipa))
+        two_device = ('--family-requested', 'true', '--two-device-requested', 'true',
+                      '--profile', 'owner-internal') if build == '387' else ()
         run(sys.executable, str(ci / 'group-window-release.py'), '--requested', 'true', '--mode', 'media-staging',
-            '--approval', os.environ['GROUP_WINDOWS_APPROVAL'], '--ipa', str(ipa))
-        # Both are repeated immediately before upload, after decrypt/verification.
-        run('node', str(ci / 'check-retained-319-runtime.mjs'))
+            '--approval', os.environ['GROUP_WINDOWS_APPROVAL'], '--ipa', str(ipa), *two_device)
+        # Check current runtime and recipient immediately after artifact verification.
+        if build == '387':
+            scripts = ci.parent / 'SharingService' / 'scripts'
+            run('node', str(scripts / 'check-staging-runtime.mjs'), '--expected', 'owner-two-device-staging',
+                '--origin', 'https://neko-window-sharing-staging.nakanishisoya.workers.dev')
+            run('node', str(scripts / 'check-owner-internal-report-off.mjs'))
+        else:
+            run('node', str(ci / 'check-retained-319-runtime.mjs'))
         run('node', str(ci / 'check-owner-testflight-recipient.mjs'),
             '--authenticated-artifact', str(retained), '--ipa', str(ipa))
         for stage in ['validate', 'upload']:
@@ -80,17 +95,17 @@ def main():
             if result.returncode:
                 raise RuntimeError('Apple ' + stage + ' failed; upload is not confirmed')
             run(sys.executable, str(ci / 'altool-result.py'), stage, str(log))
-        print('PASS retained build 319 upload; checking Apple processing and owner group delivery', flush=True)
+        print(f'PASS retained build {build} upload; checking Apple processing and owner group delivery', flush=True)
         for attempt in range(20):
             result = subprocess.run(['node', str(ci / 'check-owner-testflight-recipient.mjs'),
-                '--authenticated-artifact', str(retained), '--ipa', str(ipa), '--confirm-build', '319'])
+                '--authenticated-artifact', str(retained), '--ipa', str(ipa), '--confirm-build', build])
             if result.returncode == 0:
                 return
             if result.returncode != 3:
-                raise RuntimeError('319 upload succeeded, but read-only delivery confirmation failed; do not repeat upload')
+                raise RuntimeError(f'{build} upload succeeded, but read-only delivery confirmation failed; do not repeat upload')
             if attempt < 19:
                 time.sleep(30)
-        raise RuntimeError('319 upload succeeded; Apple delivery was not confirmed within 10 minutes; do not repeat upload')
+        raise RuntimeError(f'{build} upload succeeded; Apple delivery was not confirmed within 10 minutes; do not repeat upload')
 
 
 if __name__ == '__main__':
