@@ -114,6 +114,7 @@ enum DiagnosticLogPrivacy {
         "existingRecords",
         "explicit_preheat_pages",
         "failed",
+        "familyPhotoStatus",
         "files",
         "generation",
         "generatedFiles",
@@ -298,6 +299,27 @@ enum DiagnosticLogPrivacy {
     /// A caller-controlled value using one of these keys is still discarded
     /// unless it is exactly one of the values below.
     private static let finiteMetadataValues: [String: Set<String>] = [
+        // 11/18: 「家族に写真を届ける」 (FamilyPhotoDeliveryLog).
+        "familyPhotoStage": [
+            "authorMissing", "catNotInNotebook", "commitStatus", "committed", "contextUnavailable",
+            "deliveryFailed", "imagePrepared", "keyMissing", "keyReady", "prepareFailed", "reserveSent",
+            "reserveStatus", "retryNothingPending", "sourceLoaded", "sourceMissing", "stateListFailed",
+            "stateListed", "uploadStatus", "uploaded",
+        ],
+        "familyPhotoCode": [
+            "access_unavailable", "authentication_required", "cancelled", "client_authentication_required",
+            "client_invalid_response", "client_other", "client_unavailable", "client_upgrade_required",
+            "crypto_invalid", "crypto_stale", "crypto_too_large", "crypto_untrusted", "decoding",
+            "family_notebook_disabled", "family_notebook_quota_unavailable", "idempotency_conflict",
+            "invalid_authentication", "invalid_photo_payload", "invalid_response", "key_epoch_pending",
+            "local_idempotency_conflict", "membership_checking", "not_allowed", "not_found", "not_member",
+            "offline", "operation_in_flight", "other", "owner_trial_unavailable", "paused", "photo_failed",
+            "photo_feature_disabled", "photo_limited", "photo_moderated", "photo_off",
+            "photo_protocol_upgrade_required", "photo_retired", "photo_slots_full", "rate_limited",
+            "revision_conflict", "server_other", "sharing_other", "sign_in_expired", "stale",
+            "temporarily_unavailable", "transport_unavailable", "unknown_outcome", "unparsed_body",
+            "upgrade_required",
+        ],
         "deliveryStage": [
             "load-outbox", "reserve", "save-reservation", "read-ciphertext",
             "upload", "save-upload", "begin-commit", "commit", "save-commit", "cleanup",

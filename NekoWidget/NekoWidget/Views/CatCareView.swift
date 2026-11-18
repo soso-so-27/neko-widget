@@ -2876,7 +2876,11 @@ final class FamilyRepresentativePhotos: ObservableObject {
         guard let backend, lines[cat] != .sending else { return }
         await SharingPersonAction.run {
             lines[cat] = .sending
-            guard let data = await source() else { lines[cat] = .failed; return }
+            guard let data = await source() else {
+                FamilyPhotoDeliveryDiagnostics.note(.init(stage: .sourceMissing))
+                lines[cat] = .failed; return
+            }
+            FamilyPhotoDeliveryDiagnostics.note(.init(stage: .sourceLoaded))
             do { try await backend.deliver(cat, source: data); lines[cat] = nil }
             catch FamilyNotebookPhotoFailure.limited { lines[cat] = .limited }
             catch { lines[cat] = .failed }

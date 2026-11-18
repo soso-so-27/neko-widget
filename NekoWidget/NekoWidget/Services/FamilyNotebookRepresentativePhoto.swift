@@ -1,6 +1,90 @@
 import Foundation
 import ImageIO
+import os
 import UniformTypeIdentifiers
+
+/// 11/18 (TestFlight 388): where 「家族に写真を届ける」 stopped, one line per
+/// stage. Only a stage name, an HTTP status and a fixed error code: never a
+/// photo, an identifier, a key or a URL.
+enum FamilyPhotoDeliveryStage: String, Sendable {
+    case sourceLoaded, sourceMissing
+    case contextUnavailable, authorMissing, catNotInNotebook, keyMissing, keyReady
+    case stateListed, stateListFailed
+    case imagePrepared, prepareFailed
+    case reserveSent, reserveStatus, uploadStatus, uploaded, commitStatus, committed
+    case deliveryFailed, retryNothingPending
+}
+
+struct FamilyPhotoDeliveryNote: Sendable, Equatable {
+    let stage: FamilyPhotoDeliveryStage
+    /// The relay's HTTP status, when there was a reply.
+    var status: Int? = nil
+    /// FamilyPhotoDeliveryLog.code(of:) or the relay's code, from a fixed list.
+    var code: String? = nil
+}
+
+typealias FamilyPhotoDeliveryTrace = @Sendable (FamilyPhotoDeliveryNote) -> Void
+
+enum FamilyPhotoDeliveryLog {
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "NekoWidget", category: "family-photo")
+
+    /// The unified log (Console, sysdiagnose). The app also keeps it in 診断ログ.
+    static func system(_ note: FamilyPhotoDeliveryNote) {
+        let status = note.status.map(String.init) ?? "-"
+        let code = note.code ?? "-"
+        logger.notice("family-photo stage \(note.stage.rawValue, privacy: .public) status \(status, privacy: .public) code \(code, privacy: .public)")
+    }
+
+    /// The relay's codes this client knows; anything else is 「server_other」.
+    static let serverCodes: Set<String> = [
+        "access_unavailable", "family_notebook_disabled", "family_notebook_quota_unavailable",
+        "idempotency_conflict", "invalid_authentication", "invalid_photo_payload", "key_epoch_pending",
+        "not_found", "owner_trial_unavailable", "photo_feature_disabled", "photo_moderated",
+        "photo_protocol_upgrade_required", "photo_retired", "photo_slots_full", "rate_limited",
+        "revision_conflict", "temporarily_unavailable", "upgrade_required",
+    ]
+
+    static func serverCode(_ code: String) -> String { serverCodes.contains(code) ? code : "server_other" }
+
+    /// A fixed word for an error of the photo path (no text from the error itself).
+    static func code(of error: Error) -> String {
+        if error is CancellationError { return "cancelled" }
+        if let error = error as? FamilyNotebookTransportError {
+            switch error {
+            case let .server(code, _): return serverCode(code)
+            case .invalidResponse: return "invalid_response"
+            case .authenticationRequired: return "authentication_required"
+            case .notMember: return "not_member"
+            case .paused: return "paused"
+            case .unavailable: return "transport_unavailable"
+            case .stale: return "stale"
+            case .unknownOutcome: return "unknown_outcome"
+            case .idempotencyConflict: return "local_idempotency_conflict"
+            case .operationInFlight: return "operation_in_flight"
+            case .upgradeRequired: return "client_upgrade_required"
+            }
+        }
+        if let error = error as? GroupClientError {
+            switch error {
+            case .offline: return "offline"
+            case .unavailable: return "client_unavailable"
+            case .invalidResponse: return "client_invalid_response"
+            case .authenticationRequired: return "client_authentication_required"
+            default: return "client_other"
+            }
+        }
+        if let error = error as? FamilyNotebookCryptoError {
+            switch error {
+            case .invalid: return "crypto_invalid"
+            case .untrusted: return "crypto_untrusted"
+            case .stale: return "crypto_stale"
+            case .tooLarge: return "crypto_too_large"
+            }
+        }
+        if error is DecodingError { return "decoding" }
+        return "other"
+    }
+}
 
 /// Re-encode pixels only after explicit selection. Source metadata is never copied.
 enum FamilyNotebookRepresentativePhotoImage {
@@ -219,17 +303,26 @@ actor FamilyNotebookRepresentativePhotoClient {
         }
     }
     private var base: String { "/v3/family-notebooks/" + familyID.uuidString.lowercased() + "/representative-photos" }
-    private func call(_ suffix: String, body: Data? = nil, method: String? = nil, maximum: Int = 262_144) async throws -> Data {
+    /// `trace` (a delivery only): the reply's status as `traced`, or the
+    /// fixed code of a send that got no reply.
+    private func call(_ suffix: String, body: Data? = nil, method: String? = nil, maximum: Int = 262_144,
+                      trace: FamilyPhotoDeliveryTrace? = nil, traced: FamilyPhotoDeliveryStage = .reserveStatus) async throws -> Data {
         guard runtimeEnabled else { throw FamilyNotebookTransportError.unavailable }
         var request = try GroupHTTPRequest.make(endpoint: endpoint, path: base + suffix, body: body, identity: identity, method: method)
         if method == "PUT" { request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type") }
-        let response = try await transport.send(request, maximumBytes: maximum)
+        let response: GroupHTTPReply
+        do { response = try await transport.send(request, maximumBytes: maximum) }
+        catch { trace?(.init(stage: traced, code: FamilyPhotoDeliveryLog.code(of: error))); throw error }
         guard response.status == 200 || response.status == 201 else {
             struct Failure: Decodable { struct Detail: Decodable { let code: String }; let error: Detail }
-            guard let failure = try? GroupWire.decode(Failure.self, response.data) else { throw FamilyNotebookTransportError.unknownOutcome }
+            let parsed = try? GroupWire.decode(Failure.self, response.data)
+            trace?(.init(stage: traced, status: response.status,
+                         code: parsed.map { FamilyPhotoDeliveryLog.serverCode($0.error.code) } ?? "unparsed_body"))
+            guard let failure = parsed else { throw FamilyNotebookTransportError.unknownOutcome }
             if response.status == 409 && failure.error.code == "photo_protocol_upgrade_required" { throw FamilyNotebookTransportError.upgradeRequired }
             throw FamilyNotebookTransportError.server(code: failure.error.code, status: response.status)
         }
+        trace?(.init(stage: traced, status: response.status))
         return response.data
     }
     func slots() async throws -> [Slot] {
@@ -246,7 +339,7 @@ actor FamilyNotebookRepresentativePhotoClient {
     }
     /// Invoke only after explicit consent; caller retains the Pending value for retries.
     /// This operation bypasses the ordinary text outbox: publish the reference atomically with the asset.
-    func deliver(_ pending: Pending) async throws {
+    func deliver(_ pending: Pending, trace: FamilyPhotoDeliveryTrace? = nil) async throws {
         guard runtimeEnabled else { throw FamilyNotebookTransportError.unavailable }
         guard !inFlight else { throw FamilyNotebookTransportError.operationInFlight }
         inFlight = true; defer { inFlight = false }
@@ -264,25 +357,28 @@ actor FamilyNotebookRepresentativePhotoClient {
             if value.completed { return }
         } else { try journal.write(GroupWire.encode(Journal(digest: digest, pending: pending, completed: false)), account: account, createOnly: true) }
         struct Lease: Decodable { let schemaVersion: Int; let assetID: UUID; let uploadID: UUID; let reservedRevision: Int; let state: String }
-        let lease = try GroupWire.decode(Lease.self, await call("/uploads", body: GroupWire.encode(r)))
+        trace?(.init(stage: .reserveSent))
+        let lease = try GroupWire.decode(Lease.self, await call("/uploads", body: GroupWire.encode(r), trace: trace, traced: .reserveStatus))
         guard lease.schemaVersion == 1, lease.assetID == r.assetID, lease.uploadID == r.assetID,
               lease.reservedRevision == r.expectedRevision + 1 else { throw FamilyNotebookTransportError.invalidResponse }
         let path = "/uploads/" + r.assetID.uuidString.lowercased()
         guard ["reserved", "uploaded", "active", "retired", "deleted"].contains(lease.state) else { throw FamilyNotebookTransportError.invalidResponse }
         if lease.state == "reserved" || lease.state == "uploaded" {
-            _ = try await call(path, body: pending.ciphertext, method: "PUT")
+            _ = try await call(path, body: pending.ciphertext, method: "PUT", trace: trace, traced: .uploadStatus)
         }
+        trace?(.init(stage: .uploaded))
         struct Commit: Encodable {
             let operationID: UUID; let expectedGeneration: Int64; let expectedRevision: Int; let payload: EncryptedFamilyNotebookOperation
         }
         struct Receipt: Decodable { let schemaVersion: Int; let assetID: UUID; let revision: Int; let operationID: UUID }
         let receipt = try GroupWire.decode(Receipt.self, await call(path + "/commit", body: GroupWire.encode(
             Commit(operationID: pending.operation.operationID, expectedGeneration: r.expectedGeneration,
-                   expectedRevision: r.expectedRevision, payload: pending.operation))))
+                   expectedRevision: r.expectedRevision, payload: pending.operation)), trace: trace, traced: .commitStatus))
         guard receipt.schemaVersion == 1, receipt.assetID == r.assetID, receipt.revision == r.expectedRevision + 1,
               receipt.operationID == pending.operation.operationID else { throw FamilyNotebookTransportError.invalidResponse }
         // Retain only the digest after completion. A lost local completion still retries the same ciphertext.
         try journal.write(GroupWire.encode(Journal(digest: digest, pending: nil, completed: true)), account: account, createOnly: false)
+        trace?(.init(stage: .committed))
     }
     private func visiblePhotoBytes(_ suffix: String, maximum: Int = 262_144) async throws -> Data? {
         do { return try await call(suffix, maximum: maximum) }
