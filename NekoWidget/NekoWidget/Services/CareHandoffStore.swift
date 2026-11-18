@@ -5,11 +5,12 @@ import ImageIO
 
 @MainActor
 final class CareHandoffStore: ObservableObject {
-    private static var sharedCache: (URL, CareHandoffStore)?
+    private static var sharedCache: (String, CareHandoffStore)?
     static var shared: CareHandoffStore {
         let root = AppRecordDataset.directory("CareHandoff")
-        if let cached = sharedCache, cached.0 == root { return cached.1 }
-        let value = CareHandoffStore(); sharedCache = (root, value); return value
+        let key = AppRecordDataset.sharedStoreKey(root)
+        if let cached = sharedCache, cached.0 == key { return cached.1 }
+        let value = CareHandoffStore(); sharedCache = (key, value); return value
     }
     @Published private(set) var plan = CareHandoffPlan()
     @Published private(set) var loadError: String?

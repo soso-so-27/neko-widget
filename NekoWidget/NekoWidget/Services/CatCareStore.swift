@@ -16,6 +16,7 @@ final class CatCareStore: ObservableObject {
     private let directoryOverride: URL?
     private var loadedURL: URL?
     private var datasetObserver: NSObjectProtocol?
+    private var readableObserver: NSObjectProtocol?
     private var fileURL: URL? {
         if let directoryOverride { return directoryOverride.appendingPathComponent("state.json") }
         #if os(iOS)
@@ -34,6 +35,14 @@ final class CatCareStore: ObservableObject {
             // Queue nil: a queue makes the poster wait for the main thread (11/16).
             datasetObserver = NotificationCenter.default.addObserver(forName: .appRecordDatasetChanged, object: nil, queue: nil) { [weak self] _ in
                 Task { @MainActor in self?.reload() }
+            }
+            // A read while the iPhone was locked failed (11/18): read again
+            // after unlock. A loaded state is left as it is.
+            readableObserver = NotificationCenter.default.addObserver(forName: .appRecordsReadableAgain, object: nil, queue: nil) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, self.loadError != nil || self.loadedURL != self.fileURL else { return }
+                    self.reload()
+                }
             }
         }
         #endif

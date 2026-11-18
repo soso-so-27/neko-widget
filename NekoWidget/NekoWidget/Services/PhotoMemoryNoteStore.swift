@@ -898,12 +898,13 @@ enum PhotoMemoryNoteLibraryPolicy {
 #if os(iOS)
 private final class PhotoMemoryNoteStoreCache: @unchecked Sendable {
     private let lock = NSLock()
-    private var value: (URL, PhotoMemoryNoteStore)?
+    private var value: (String, PhotoMemoryNoteStore)?
     func current() -> PhotoMemoryNoteStore {
         lock.lock(); defer { lock.unlock() }
         let url = AppRecordDataset.directory("PhotoMemoryNotes").appendingPathComponent("state.json")
-        if let value, value.0 == url { return value.1 }
-        let store = PhotoMemoryNoteStore(fileURL: url); value = (url, store); return store
+        let key = AppRecordDataset.sharedStoreKey(url)
+        if let value, value.0 == key { return value.1 }
+        let store = PhotoMemoryNoteStore(fileURL: url); value = (key, store); return store
     }
 }
 #endif

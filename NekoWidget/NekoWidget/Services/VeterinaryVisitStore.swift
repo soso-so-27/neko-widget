@@ -720,12 +720,13 @@ actor VeterinaryVisitStore {
 #if os(iOS)
 private final class VeterinaryVisitStoreCache: @unchecked Sendable {
     private let lock = NSLock()
-    private var value: (URL, VeterinaryVisitStore)?
+    private var value: (String, VeterinaryVisitStore)?
     func current() -> VeterinaryVisitStore {
         lock.lock(); defer { lock.unlock() }
         let root = AppRecordDataset.directory("VeterinaryVisits")
-        if let value, value.0 == root { return value.1 }
-        let store = VeterinaryVisitStore(directory: root); value = (root, store); return store
+        let key = AppRecordDataset.sharedStoreKey(root)
+        if let value, value.0 == key { return value.1 }
+        let store = VeterinaryVisitStore(directory: root); value = (key, store); return store
     }
 }
 #endif

@@ -54,6 +54,9 @@ extension Notification.Name {
     static let appRecordsCommitted = Notification.Name("neko.app-records.committed.v1")
     static let appRecordDatasetChanged = Notification.Name("neko.app-records.dataset.v1")
     static let appRecordEditingFinished = Notification.Name("neko.app-records.editing-finished.v1")
+    /// Posted on the main thread each time the iPhone is unlocked. Stores that
+    /// could not read their records while it was locked read them again.
+    static let appRecordsReadableAgain = Notification.Name("neko.app-records.readable-again.v1")
 }
 
 enum AppRecordEditingError: Error { case inProgress }
@@ -270,6 +273,36 @@ enum AppRecordDataset {
             guard knownManifestPaths.contains(path), FileManager.default.fileExists(atPath: root.appendingPathComponent(path).path) else { throw ToolBackupError.invalid }
         }
         return root
+    }
+    // A launch while the iPhone is locked (prewarm, background) cannot read
+    // `.completeFileProtection` files: root() fails and stores fall back to
+    // `unavailable/`, or read nothing. A shared store made then is keyed apart
+    // and made again after unlock; one made unlocked is kept (11/18).
+    private static let protectedDataLock = NSLock()
+    private static var protectedDataUnavailable = false
+    private static var protectedDataObservers: [NSObjectProtocol] = []
+    @MainActor static func trackProtectedData() {
+        guard protectedDataObservers.isEmpty else { return }
+        setProtectedDataUnavailable(!UIApplication.shared.isProtectedDataAvailable)
+        let center = NotificationCenter.default
+        protectedDataObservers = [
+            center.addObserver(forName: UIApplication.protectedDataWillBecomeUnavailableNotification,
+                               object: nil, queue: .main) { _ in setProtectedDataUnavailable(true) },
+            center.addObserver(forName: UIApplication.protectedDataDidBecomeAvailableNotification,
+                               object: nil, queue: .main) { _ in
+                setProtectedDataUnavailable(false)
+                center.post(name: .appRecordsReadableAgain, object: nil)
+            }
+        ]
+    }
+    private static func setProtectedDataUnavailable(_ value: Bool) {
+        protectedDataLock.lock(); defer { protectedDataLock.unlock() }
+        protectedDataUnavailable = value
+    }
+    /// Cache key for a shared store of `root`.
+    static func sharedStoreKey(_ root: URL) -> String {
+        protectedDataLock.lock(); defer { protectedDataLock.unlock() }
+        return root.standardizedFileURL.path + (protectedDataUnavailable ? "#locked" : "")
     }
     static var knownManifestPaths: Set<String> {
         Set(ToolBackupIndex.manifests.map { $0.key + "/" + $0.value })
@@ -746,6 +779,7 @@ final class AppRecordPersistence: ObservableObject {
     private var observer: NSObjectProtocol?
     private var datasetObserver: NSObjectProtocol?
     private var editingObserver: NSObjectProtocol?
+    private var readableObserver: NSObjectProtocol?
     private var requested = true
     private var waitingForEditor = false
     private var nextAttempt = Date.distantPast
@@ -875,9 +909,23 @@ final class AppRecordPersistence: ObservableObject {
                 self?.nextAttempt = .distantPast
             }
         }
-        do { enabled = try binding()?.enabled == true }
-        catch { detail = "自動保存の設定を読み込めません。このiPhoneの記録は残っています。" }
+        readableObserver = NotificationCenter.default.addObserver(forName: .appRecordsReadableAgain, object: nil, queue: nil) { [weak self] _ in
+            Task { @MainActor in self?.loadBindingIfUnread() }
+        }
+        loadBindingIfUnread()
     }
+    /// binding.json is `.complete`: a launch while locked cannot read it. Read
+    /// it again after unlock instead of keeping 「読み込めません」 (11/18).
+    private func loadBindingIfUnread() {
+        guard !bindingRead else { return }
+        do {
+            enabled = try binding()?.enabled == true
+            bindingRead = true
+            if detail == Self.bindingUnreadableDetail { detail = nil }
+        } catch { detail = Self.bindingUnreadableDetail }
+    }
+    private static let bindingUnreadableDetail = "自動保存の設定を読み込めません。このiPhoneの記録は残っています。"
+    private var bindingRead = false
     nonisolated private func binding() throws -> Binding? {
         AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
         try AppRecordRebinding.recover(at: bindingURL.deletingLastPathComponent())
