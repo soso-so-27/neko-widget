@@ -276,6 +276,28 @@ struct FamilyNotebookFarewellDecision: Codable, Equatable, Sendable {
     let decidedAt: Date
 }
 
+/// 11/18: why this iPhone stopped sharing a notebook. Only this iPhone's
+/// own leaving or ending, or a newer admission, is final. A directory that
+/// stopped listing the family (`family: null`) is not authenticated proof:
+/// a server mistake must not end every member's notebook for good (TestFlight
+/// 389, staging), so that end can come back (`mayResume`).
+enum FamilyNotebookEndReason: String, Codable, Equatable, Sendable {
+    /// This person left, acknowledged by the server.
+    case left
+    /// The payer ended the family, acknowledged by the server.
+    case dissolved
+    /// A newer admission (another family or generation) replaced this copy.
+    case superseded
+    /// The directory kept answering `family: null` across two checks apart in
+    /// time (removal by the payer looks like this; so does a server mistake).
+    case absentFromDirectory
+
+    /// Whether the same family, listing this person and device again in a
+    /// roster that verifies against this iPhone's pin, may reopen it. An end
+    /// saved before 11/18 has no reason; it follows the same rule.
+    static func mayResume(_ reason: Self?) -> Bool { reason == nil || reason == .absentFromDirectory }
+}
+
 struct FamilyNotebookSnapshot: Equatable, Sendable {
     let familyID: UUID
     let revision: UInt64
@@ -289,6 +311,8 @@ struct FamilyNotebookSnapshot: Equatable, Sendable {
     let sharingEnded: Bool
     var farewellDecisions: [FamilyNotebookFarewellDecision] = []
     var opaqueOperations: [FamilyNotebookOpaqueOperation] = []
+    /// Set only together with `sharingEnded` (nil: active, or ended before 11/18).
+    var endedReason: FamilyNotebookEndReason? = nil
     var retainedOperationCount: Int { operations.count + opaqueOperations.count }
 
     var unsharedCatIDs: Set<UUID> {

@@ -54,6 +54,11 @@ final class FamilyNotebookPrototype: ObservableObject {
         .vetName, .vetPhone, .vetNote]
 
     var hasFamily: Bool { snapshot.map { !$0.sharingEnded } ?? false }
+    /// 11/18: ended without proof (FamilyNotebookEndReason.mayResume): the
+    /// schedule still asks the family, and a verified answer reopens it.
+    var mayResumeEndedNotebook: Bool {
+        isReal && snapshot.map { $0.sharingEnded && FamilyNotebookEndReason.mayResume($0.endedReason) } == true
+    }
 
     /// This iPhone joined someone's family instead of making one. Everyone
     /// can invite and leave; only the payer removes others or dissolves it.
@@ -539,7 +544,7 @@ final class FamilyNotebookPrototype: ObservableObject {
         guard !isReal else { throw FamilySharingError.notAllowed }
         guard let store, let snapshot else { throw FamilySharingError.notAllowed }
         if snapshot.sharingEnded { return }
-        self.snapshot = try store.endSharing()
+        self.snapshot = try store.endSharing(reason: .left)
     }
 
     /// Test builds only: end the tried family on this iPhone. What the test

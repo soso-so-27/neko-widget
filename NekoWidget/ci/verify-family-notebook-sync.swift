@@ -164,7 +164,14 @@ private enum VerifyFamilyNotebookSync {
         catch FamilyNotebookCryptoError.untrusted { }
         try check(try tampered.snapshot().operations.isEmpty, "forged page never partially merges")
 
-        _ = try local.endSharing()
+        // The ended file itself, so this check also builds against the older
+        // stores in ci/fixtures (11/18: the current one records a reason).
+        let localFile = local.localDirectory.appendingPathComponent("family-notebook.json")
+        var endedState = try JSONSerialization.jsonObject(with: Data(contentsOf: localFile)) as! [String: Any]
+        if endedState["schemaVersion"] as? Int == 1 { endedState["schemaVersion"] = 2 }
+        endedState["sharingEnded"] = true
+        try JSONSerialization.data(withJSONObject: endedState, options: .sortedKeys).write(to: localFile, options: .atomic)
+        try check(try local.snapshot().sharingEnded, "the departed file reads as ended")
         let requestCount = await relay.count()
         do { _ = try await sync.synchronize(current: current, history: [:], keys: [1: key]); throw Failure.check("departed notebook sent traffic") }
         catch FamilyNotebookError.sharingEnded { }

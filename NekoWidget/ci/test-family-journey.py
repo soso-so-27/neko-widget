@@ -588,5 +588,30 @@ class RegistrationTests(unittest.TestCase):
         self.assertIn("python3 ci/test-family-journey.py\n", read("ci/run-quick-ios-checks.sh"))
 
 
+    def test_one_family_null_does_not_end_the_notebook(self):
+        # 11/18 (TestFlight 389): a bare `family: null` is not proof of leaving.
+        service = read("NekoWidget/Services/ProductionFamilyNotebookSharingService.swift")
+        load = section(service, "func loadState() async throws -> FamilySharingState {", "func loadPause()")
+        self.assertIn("guard try context.observedOutsideFamily(now: now()) else { throw FamilySharingError.serviceUnavailable }", load)
+        self.assertNotIn("confirmedOutsideFamily", service)
+        self.assertIn("static let absenceConfirmationGap: TimeInterval = 60 * 60", service)
+        # Reopening needs the verified roster of this same admission.
+        self.assertIn("try context.resume(family: family.familyID, admittedGeneration: own.admittedGeneration, roster: material.current)", load)
+        self.assertLess(load.index("try context.resume("), load.index("let store = try context.activate("))
+        # Photo deliveries waiting before the end start again only from the
+        # person's 「もう一度」, never by themselves after reopening.
+        self.assertIn("photoRetries = [:]", load)
+        self.assertNotIn("pendingDeliveries", load)
+        self.assertNotIn("retryRepresentativePhoto", load)
+        # Ended without proof: the one schedule still asks, at most hourly.
+        auto = section(SHARING, "final class FamilyNotebookAutoCheck {", "/// 11/15: this iPhone asked to join")
+        self.assertIn("|| FamilyNotebookSharing.awaitingApprovalUnknown) || resumeProbeDue", auto)
+        self.assertIn("static let resumeProbeGap: TimeInterval = 60 * 60", POLICY)
+        # Own leaving and ending record a final reason.
+        membership = read("NekoWidget/Services/FamilyNotebookMembershipClient.swift")
+        self.assertEqual(membership.count("endSharing(reason: action == .dissolve ? .dissolved : .left)"), 1)
+        self.assertEqual(membership.count("endSharing(reason: saved.intent.action == .dissolve ? .dissolved : .left)"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

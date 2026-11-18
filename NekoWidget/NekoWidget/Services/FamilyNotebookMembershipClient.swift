@@ -143,7 +143,7 @@ actor FamilyNotebookMembershipClient {
         guard try notebook.snapshot().familyID == familyID else { throw FamilySharingError.notAllowed }
         do {
             try await perform(.init(familyID: familyID, action: action, personID: nil, nominationID: nil), generation: generation,
-                              operationID: operationID, afterAcknowledgement: { _ = try notebook.endSharing() })
+                              operationID: operationID, afterAcknowledgement: { _ = try notebook.endSharing(reason: action == .dissolve ? .dissolved : .left) })
             return .confirmed
         } catch FamilySharingError.unknownOutcome { return .pending }
     }
@@ -159,7 +159,7 @@ actor FamilyNotebookMembershipClient {
                 throw FamilySharingError.unknownOutcome
             }
             try await perform(saved.intent, generation: saved.expectedGeneration, operationID: saved.operationID,
-                              afterAcknowledgement: { _ = try notebook.endSharing() })
+                              afterAcknowledgement: { _ = try notebook.endSharing(reason: saved.intent.action == .dissolve ? .dissolved : .left) })
         } else {
             try await perform(saved.intent, generation: saved.expectedGeneration, operationID: saved.operationID)
         }

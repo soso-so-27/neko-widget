@@ -282,9 +282,19 @@ final class FamilyNotebookAutoCheck {
     private var sharing: FamilyNotebookSharing { .shared }
     private var model: FamilyNotebookPrototype { .shared }
 
+    private var lastResumeProbeAt: Date?
+
     private var eligible: Bool {
         model.isReal && (model.hasFamily || FamilyNotebookSharing.awaitingApproval
-            || FamilyNotebookSharing.awaitingApprovalUnknown)
+            || FamilyNotebookSharing.awaitingApprovalUnknown) || resumeProbeDue
+    }
+
+    /// 11/18: a notebook that ended only because the directory stopped listing
+    /// the family (FamilyNotebookEndReason.mayResume) is read again on coming
+    /// to the front, at most once per `resumeProbeGap`, so it can come back.
+    private var resumeProbeDue: Bool {
+        !model.hasFamily && model.mayResumeEndedNotebook
+            && (lastResumeProbeAt.map { Date().timeIntervalSince($0) >= FamilyAutoCheckPolicy.resumeProbeGap } ?? true)
     }
 
     func setActive(_ value: Bool) {
@@ -403,6 +413,7 @@ final class FamilyNotebookAutoCheck {
                 // Unmarked: automatic, within this iPhone's call budget (1115s).
                 switch pass {
                 case .full:
+                    if !model.hasFamily && model.mayResumeEndedNotebook { lastResumeProbeAt = Date() }
                     await sharing.refresh()
                     if let membership = sharing.state.membership { model.rememberShown(membership) }
                     if model.hasFamily { try? await model.copyTools(); model.applyFamilyWrites() }

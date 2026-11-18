@@ -36,6 +36,8 @@ final class FamilyNotebookStore: @unchecked Sendable {
         var sharingEnded: Bool?
         var farewellDecisions: [FamilyNotebookFarewellDecision]?
         var opaqueOperations: [FamilyNotebookOpaqueOperation]?
+        // 11/18: absent before; an older reader ignores it.
+        var endedReason: FamilyNotebookEndReason?
         // Runtime only. On disk these stay in the old reader's opaque array.
         var adoptionPlaintexts: [UUID: Data] = [:]
         static let pendingAdoptionPrefix = "compat-adoption-v1:pending:"
@@ -51,7 +53,7 @@ final class FamilyNotebookStore: @unchecked Sendable {
 
         private enum CodingKeys: String, CodingKey {
             case schemaVersion, familyID, revision, clock, operations, outboxIDs
-            case acknowledgements, mappings, ledgerKeys, sharingEnded, farewellDecisions, opaqueOperations
+            case acknowledgements, mappings, ledgerKeys, sharingEnded, farewellDecisions, opaqueOperations, endedReason
         }
 
         // Backup fingerprints compare encoded bytes. Set iteration order can
@@ -84,6 +86,7 @@ final class FamilyNotebookStore: @unchecked Sendable {
             try values.encodeIfPresent(sharingEnded, forKey: .sharingEnded)
             try values.encodeIfPresent(farewellDecisions, forKey: .farewellDecisions)
             try values.encodeIfPresent(retained.isEmpty ? opaqueOperations : retained, forKey: .opaqueOperations)
+            try values.encodeIfPresent(endedReason, forKey: .endedReason)
         }
 
         func promotingAdoptionOperations() throws -> State {
@@ -119,7 +122,8 @@ final class FamilyNotebookStore: @unchecked Sendable {
             .init(familyID: familyID, revision: revision, clock: clock, operations: operations,
                   mappings: mappings, ledgerKeys: ledgerKeys, outbox: operations.filter { outboxIDs.contains($0.id) },
                   acknowledgements: acknowledgements, sharingEnded: sharingEnded == true,
-                  farewellDecisions: farewellDecisions ?? [], opaqueOperations: opaqueOperations ?? [])
+                  farewellDecisions: farewellDecisions ?? [], opaqueOperations: opaqueOperations ?? [],
+                  endedReason: sharingEnded == true ? endedReason : nil)
         }
     }
 
@@ -154,11 +158,31 @@ final class FamilyNotebookStore: @unchecked Sendable {
 
     /// Preserve the complete notebook, including its unsent operations. No
     /// transport or membership claim is made by this local prototype boundary.
+    /// The first reason is kept: a later end never turns a final one into one
+    /// that may come back (or the other way round).
     @discardableResult
-    func endSharing() throws -> FamilyNotebookSnapshot {
+    func endSharing(reason: FamilyNotebookEndReason) throws -> FamilyNotebookSnapshot {
         try transaction { state in
+            if state.sharingEnded != true { state.endedReason = reason }
             state.schemaVersion = state.opaqueOperations?.isEmpty == false ? 3 : 2
             state.sharingEnded = true
+        }
+        return try snapshot()
+    }
+
+    /// 11/18: reopen a copy that ended only because the directory stopped
+    /// listing the family (or ended before reasons were kept). The caller has
+    /// verified the family again. History, mappings and acknowledgements stay;
+    /// what was waiting to be sent does not start again by itself: those edits
+    /// stay in this iPhone's history, and only new writing is sent.
+    @discardableResult
+    func resumeSharingAfterUnconfirmedEnd() throws -> FamilyNotebookSnapshot {
+        try transaction { state in
+            guard state.sharingEnded == true, FamilyNotebookEndReason.mayResume(state.endedReason)
+            else { throw FamilyNotebookError.sharingEnded }
+            state.sharingEnded = nil; state.endedReason = nil
+            state.schemaVersion = state.opaqueOperations?.isEmpty == false ? 3 : 1
+            state.outboxIDs = []
         }
         return try snapshot()
     }
@@ -491,6 +515,7 @@ final class FamilyNotebookStore: @unchecked Sendable {
                 || (state.schemaVersion == 2 && state.sharingEnded == true)
                 || state.schemaVersion == 3
         else { throw FamilyNotebookError.corruptStorage }
+        guard state.endedReason == nil || state.sharingEnded == true else { throw FamilyNotebookError.corruptStorage }
         guard state.familyID == familyID, state.operations.allSatisfy({ $0.familyID == familyID })
         else { throw FamilyNotebookError.familyMismatch }
         let opaque = state.opaqueOperations ?? []

@@ -149,6 +149,10 @@ private final class SwitchWriter: @unchecked Sendable {
         try check(try await client().leaveFamily(familyID: family, expectedGeneration: 6, operationID: UUID(), notebook: notebook) == .confirmed, "retry cached receipt completes local leave")
         let after = try notebook.snapshot()
         try check(after.sharingEnded && after.operations == before.operations && after.outbox == before.outbox, "leave retains all data and unsent copy")
+        // 11/18: this person's own acknowledged leave is final; never reopened.
+        try check(after.endedReason == .left, "acknowledged leave records its reason")
+        do { _ = try notebook.resumeSharingAfterUnconfirmedEnd(); throw Failure.check("a left notebook must not reopen") }
+        catch FamilyNotebookError.sharingEnded { }
         try check(await relay.sent().count == countBefore, "local retry uses cached receipt without network")
 
         let beforeBroken = await relay.sent().count
@@ -156,6 +160,12 @@ private final class SwitchWriter: @unchecked Sendable {
         try check(await relay.sent().count == beforeBroken, "storage failure sends no request")
         let otherFamily = try FamilyNotebookStore(directory: root.appendingPathComponent("other"), familyID: UUID(), deviceID: identity.deviceID)
         try await rejects(.notAllowed) { _ = try await reopened.dissolveFamily(familyID: family, expectedGeneration: 7, operationID: UUID(), notebook: otherFamily) }
+        let dissolving = try FamilyNotebookStore(directory: root.appendingPathComponent("dissolving"), familyID: family, deviceID: identity.deviceID)
+        try check(try await client().dissolveFamily(familyID: family, expectedGeneration: 7, operationID: UUID(), notebook: dissolving) == .confirmed,
+                  "acknowledged dissolve completes")
+        try check(try dissolving.snapshot().sharingEnded && dissolving.snapshot().endedReason == .dissolved, "acknowledged dissolve records its reason")
+        do { _ = try dissolving.resumeSharingAfterUnconfirmedEnd(); throw Failure.check("a dissolved notebook must not reopen") }
+        catch FamilyNotebookError.sharingEnded { }
         print("Family notebook membership: signed governance, durable UI retries, validated pause/handover, losing claims, ACK-only leave and local-copy retention passed")
     }
 }

@@ -295,6 +295,68 @@ private actor Relay: GroupHTTPTransport {
         let next = try reopened.activate(family: family, admittedGeneration: 4)
         try check(try next.snapshot().operations.isEmpty && store.snapshot().operations.count == 1, "readmission uses separate copy without resending prior outbox")
         try check(try next.snapshot().mappings == [retainedLink], "readmission retains only same-family local ID correspondence")
+        try check(try store.snapshot().endedReason == .left && !reopened.mayResume(family: family, admittedGeneration: 2),
+                  "an acknowledged leave stays final")
+        try check(try next.snapshot().endedReason == nil, "the new admission is active")
+
+        // 11/18 (TestFlight 389): the directory answering `family: null` to a
+        // member whose copy is active. Once is not proof; it must stay so.
+        var clock = Date(timeIntervalSince1970: 1_800_000_000)
+        let watcher = ProductionFamilyNotebookSharingService(provider: { reopened }, billing: {},
+            displayName: { "合成の参加者" }, catNames: { [] }, now: { clock })
+        let queued = try next.edit(target: .init(familyCatID: UUID(), field: .name), value: .text("届ける前"),
+                                   author: .init(personID: b.personID, displayName: "合成の参加者"))
+        func stillChecking(_ message: String) async throws {
+            do { _ = try await watcher.loadState(); throw Failure.check(message + ": expected a retry, not a settled state") }
+            catch FamilySharingError.serviceUnavailable { }
+            try check(try !next.snapshot().sharingEnded, message)
+            try check(try next.pendingOperations().map(\.id) == [queued.id], message + " (queued edit)")
+        }
+        try await stillChecking("one family:null keeps the notebook and its queued edit")
+        clock = clock.addingTimeInterval(FamilyNotebookSession.absenceConfirmationGap - 60)
+        try await stillChecking("a second family:null too soon keeps the notebook")
+        try reopened.observedInFamily()
+        clock = clock.addingTimeInterval(120)
+        try await stillChecking("being listed in between starts the wait over")
+        clock = clock.addingTimeInterval(FamilyNotebookSession.absenceConfirmationGap)
+        let outside = try await watcher.loadState()
+        try check(outside == .notInFamily || outside == .pendingApproval, "family:null across the gap settles outside the family")
+        let gone = try next.snapshot()
+        try check(gone.sharingEnded && gone.endedReason == .absentFromDirectory && gone.outbox.map(\.id) == [queued.id],
+                  "a confirmed absence ends sharing, keeps the copy and records why")
+        try check(try reopened.mayResume(family: family, admittedGeneration: 4), "an absence end may come back")
+        try check(try !reopened.mayResume(family: family, admittedGeneration: 5), "only the same admission comes back")
+        try check(try !reopened.mayResume(family: UUID(), admittedGeneration: 4), "only the same family comes back")
+
+        // Coming back needs a roster, verified against this iPhone's pin, that
+        // lists this person and this device.
+        func verified(_ people: [GroupDeviceIdentity], family id: UUID) throws -> VerifiedFamilyNotebookRoster {
+            let raw = try FamilyNotebookCryptoRoster(familyID: id, epoch: 1, previousHash: Data(repeating: 0, count: 32),
+                keyCommitment: GroupCanonical.hash(Data(repeating: 9, count: 32)), members: try people.map {
+                    .init(personID: $0.personID, identityPublicKey: $0.personPublicKey, devices: [try $0.certificate(windowID: id.uuidString.lowercased())])
+                })
+            return try FamilyNotebookRosterCrypto.restore(FamilyNotebookRosterCrypto.sign(raw, deviceID: a.deviceID, signingKey: a.signingKey),
+                trustedPin: .init(familyID: id, epoch: 1, hash: GroupCanonical.hash(raw.canonicalBytes())))
+        }
+        let withoutMe = try verified([a], family: family), otherFamily = try verified([a, b], family: UUID())
+        for (roster, what) in [(withoutMe, "a roster without this person"), (otherFamily, "another family's roster")] {
+            do { try reopened.resume(family: family, admittedGeneration: 4, roster: roster); throw Failure.check(what + " must not reopen") }
+            catch FamilySharingError.removedOrDissolved { }
+            try check(try next.snapshot().sharingEnded, what + " leaves the notebook ended")
+        }
+        try reopened.resume(family: family, admittedGeneration: 4, roster: try verified([a, b], family: family))
+        let back = try next.snapshot()
+        try check(!back.sharingEnded && back.endedReason == nil && back.operations == gone.operations && back.mappings == gone.mappings,
+                  "a verified roster reopens the same copy with its history")
+        try check(back.outbox.isEmpty, "what waited before the end leaves the outbox")
+        try check(try next.pendingOperations().isEmpty, "what waited before the end is not sent by itself")
+        try check(try reopened.activate(family: family, admittedGeneration: 4).snapshot() == back, "the reopened participation activates again")
+        try check(try !reopened.mayResume(family: family, admittedGeneration: 4), "an active notebook has nothing to reopen")
+        // A leave after reopening is final again.
+        _ = try next.endSharing(reason: .left)
+        do { try reopened.resume(family: family, admittedGeneration: 4, roster: try verified([a, b], family: family)); throw Failure.check("left after reopening must stay final") }
+        catch FamilySharingError.removedOrDissolved { }
+        print("Family notebook absence: one family:null keeps the copy, a confirmed one ends it, a verified roster reopens it without resending, a leave stays final")
         let cap = try FamilyNotebookInvitationCapability(url: invitation.link)
         for suffix in ["/invitations", "/preview", "/join", "/approve"] {
             for body in await relay.bodies(suffix) {

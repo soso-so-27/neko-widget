@@ -37,6 +37,7 @@ struct VerifyFamilyNotebook {
         try acknowledgements(root.appendingPathComponent("ack"))
         try persistence(root.appendingPathComponent("persistence"))
         try participationEnd(root.appendingPathComponent("participation-end"))
+        try endReasons(root.appendingPathComponent("end-reasons"))
         try payerStateContract()
         try boundaries(root.appendingPathComponent("boundaries"))
         try farewellConsent(root.appendingPathComponent("farewell"))
@@ -192,7 +193,7 @@ struct VerifyFamilyNotebook {
         try check(try reopened.snapshot().fieldState(for: target)?.operation.value == .day("2026-10-27"), "revocation preserves another person's newer date")
         try check(try reopened.pendingOperations().isEmpty, "old own date not sent after another member wins")
         try check(try reopened.snapshot().operations.contains(firstOp), "history is retained, not falsely recalled")
-        _ = try reopened.endSharing()
+        _ = try reopened.endSharing(reason: .left)
         try rejects("ended participation cannot consent") {
             try reopened.consentFarewell(cat: cat, day: "2026-10-29", author: a, previewID: UUID(), expectedSharedOperationID: nil, actionID: UUID())
         }
@@ -241,6 +242,71 @@ struct VerifyFamilyNotebook {
         try rejects("cross-family state") { _ = try read(family: "other-family") }
         try rejects("stale generation") { _ = try read(minimum: 4) }
         try rejects("other person's payer authority") { _ = try read(active, person: "person-b") }
+    }
+
+    /// 11/18 (TestFlight 389): only an end without proof (`family: null`, or
+    /// one saved before reasons were kept) can be reopened, and reopening never
+    /// sends what was waiting by itself. Leaving, ending and a newer admission stay final.
+    private static func endReasons(_ root: URL) throws {
+        func prepared(_ folder: String) throws -> (FamilyNotebookStore, FamilyNotebookOperation, FamilyNotebookOperation) {
+            let value = try store(root.appendingPathComponent(folder), "device-a")
+            let sent = try value.edit(target: water, value: .text("届いた"), author: a, editedAt: day)
+            _ = try value.acknowledge(.init(familyID: family, operationID: sent.id, version: sent.version))
+            let queued = try value.edit(target: name, value: .text("送る前"), author: a, editedAt: day)
+            return (value, sent, queued)
+        }
+        for reason in [FamilyNotebookEndReason.left, .dissolved, .superseded] {
+            let (value, _, _) = try prepared("final-" + reason.rawValue)
+            let ended = try value.endSharing(reason: reason)
+            try check(ended.endedReason == reason && !FamilyNotebookEndReason.mayResume(reason), "final end is recorded: " + reason.rawValue)
+            try rejects("final end cannot reopen: " + reason.rawValue) { _ = try value.resumeSharingAfterUnconfirmedEnd() }
+            try check(try store(root.appendingPathComponent("final-" + reason.rawValue), "device-a").snapshot() == ended,
+                      "refused reopening leaves the ended copy as it was: " + reason.rawValue)
+            try check(try value.endSharing(reason: .absentFromDirectory).endedReason == reason,
+                      "a later end never turns a final end into one that may come back")
+        }
+        let (active, _, _) = try prepared("active")
+        try rejects("an active notebook has nothing to reopen") { _ = try active.resumeSharingAfterUnconfirmedEnd() }
+        try check(try active.snapshot().endedReason == nil, "an active notebook has no end reason")
+
+        let (absent, sent, queued) = try prepared("absent")
+        let before = try absent.snapshot()
+        let ended = try absent.endSharing(reason: .absentFromDirectory)
+        try check(ended.endedReason == .absentFromDirectory && ended.outbox.map(\.id) == [queued.id], "absence end keeps the queued edit")
+        let reopenedFile = try store(root.appendingPathComponent("absent"), "device-a")
+        try check(try reopenedFile.snapshot().endedReason == .absentFromDirectory, "the end reason survives restart")
+        let resumed = try reopenedFile.resumeSharingAfterUnconfirmedEnd()
+        try check(!resumed.sharingEnded && resumed.endedReason == nil, "absence end reopens")
+        try check(resumed.operations == before.operations && resumed.mappings == before.mappings
+                  && resumed.acknowledgements == before.acknowledgements && resumed.clock == before.clock,
+                  "reopening keeps history, links, receipts and clock")
+        try check(resumed.acknowledgements.contains { $0.operationID == sent.id }, "reopening keeps what was confirmed")
+        try check(resumed.outbox.isEmpty && (try reopenedFile.pendingOperations().isEmpty),
+                  "reopening does not send what was waiting by itself")
+        struct Header: Decodable { let schemaVersion: Int }
+        try check(try JSONDecoder().decode(Header.self, from: Data(contentsOf: root.appendingPathComponent("absent/family-notebook.json"))).schemaVersion == 1,
+                  "a reopened notebook is an active schema-1 file again")
+        let fresh = try reopenedFile.edit(target: water, value: .text("戻ってから"), author: a, editedAt: day)
+        try check(try reopenedFile.pendingOperations().map(\.id) == [fresh.id], "new writing after reopening is sent")
+
+        // Ended before 11/18: no reason saved. The same rule as an absence end.
+        let (legacy, _, _) = try prepared("legacy")
+        _ = try legacy.endSharing(reason: .left)
+        let file = root.appendingPathComponent("legacy/family-notebook.json")
+        var raw = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as! [String: Any]
+        try check(raw["endedReason"] as? String == "left", "the reason is saved beside the end")
+        raw.removeValue(forKey: "endedReason")
+        try JSONSerialization.data(withJSONObject: raw, options: .sortedKeys).write(to: file)
+        let old = try store(root.appendingPathComponent("legacy"), "device-a")
+        try check(try old.snapshot().sharingEnded && old.snapshot().endedReason == nil, "an end saved without a reason still reads")
+        try check(try !old.resumeSharingAfterUnconfirmedEnd().sharingEnded, "an end saved without a reason may reopen")
+
+        // A reason on an active file is malformed, never a silent repair.
+        var activeRaw = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as! [String: Any]
+        activeRaw["endedReason"] = "left"
+        try JSONSerialization.data(withJSONObject: activeRaw, options: .sortedKeys).write(to: file)
+        try rejects("a reason without an end is refused") { _ = try store(root.appendingPathComponent("legacy"), "device-a") }
+        print("Family notebook end reasons: final ends stay final, absence and older ends reopen without resending queued edits")
     }
 
     private static func store(_ path: URL, _ device: String, writer: Writer = Writer()) throws -> FamilyNotebookStore {
@@ -391,12 +457,12 @@ struct VerifyFamilyNotebook {
         // only a newly initialized reader of the persisted stop.
         let otherInstance = try store(path, "device-a")
         writer.fail = true
-        try rejects("failed departure save is surfaced") { _ = try value.endSharing() }
+        try rejects("failed departure save is surfaced") { _ = try value.endSharing(reason: .left) }
         try check(try Data(contentsOf: stateFile) == beforeBytes, "failed departure preserves original bytes")
         try check(try otherInstance.snapshot() == before, "failed departure does not mark sharing stopped")
         try check(try otherInstance.pendingOperations() == before.outbox, "failed departure preserves pending work")
         writer.fail = false
-        let ended = try value.endSharing()
+        let ended = try value.endSharing(reason: .left)
         try check(ended.sharingEnded && ended.revision == before.revision + 1, "departure commits once")
         try check(ended.operations == before.operations && ended.outbox == before.outbox
                   && ended.mappings == before.mappings && ended.ledgerKeys == before.ledgerKeys
@@ -413,7 +479,7 @@ struct VerifyFamilyNotebook {
         let restarted = try store(path, "device-a")
         try check(try restarted.snapshot() == ended, "departure and the full notebook survive restart")
         try check(try restarted.pendingOperations().isEmpty, "restart cannot resume transmission")
-        try check(try restarted.endSharing() == ended, "repeated departure is idempotent")
+        try check(try restarted.endSharing(reason: .left) == ended, "repeated departure is idempotent")
         let delayed = FamilyNotebookOperation(familyID: family, target: name, value: .text("遅れて到着"),
             version: .init(clock: ended.clock + 100, deviceID: "device-b", operationID: UUID()), author: b, editedAt: day)
         do {
