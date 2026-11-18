@@ -387,12 +387,21 @@ def validate_enabled_release(
     if media_enabled:
         required_collections.update(MEDIA_COLLECTIONS)
         required_collections.update(MEDIA_INTERACTION_COLLECTIONS)
-    if truthy(info.get("ManagedPreservationEnabled")):
+    managed_preservation = truthy(info.get("ManagedPreservationEnabled"))
+    owner_two_device_billing = (
+        media_enabled
+        and info.get("SharingReleaseMode") == "media-staging"
+        and info.get("OwnerStagingTwoDeviceEnabled") == "YES"
+        and info.get("PlusStorefrontEnabled") == "YES"
+        and info.get("PlusBillingClientEnabled") == "YES"
+    )
+    if managed_preservation:
         required_collections.update({
             "NSPrivacyCollectedDataTypeEmailAddress",
-            "NSPrivacyCollectedDataTypePurchaseHistory",
             "NSPrivacyCollectedDataTypeOtherUserContent",
         })
+    if managed_preservation or owner_two_device_billing:
+        required_collections.add("NSPrivacyCollectedDataTypePurchaseHistory")
     validate_privacy_manifest(
         privacy,
         required_collections,

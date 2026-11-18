@@ -20,6 +20,7 @@ PHOTOS = "NSPrivacyCollectedDataTypePhotosorVideos"
 TEXT_MESSAGES = "NSPrivacyCollectedDataTypeEmailsOrTextMessages"
 DEVICE_ID = "NSPrivacyCollectedDataTypeDeviceID"
 PRODUCT_INTERACTION = "NSPrivacyCollectedDataTypeProductInteraction"
+PURCHASE_HISTORY = "NSPrivacyCollectedDataTypePurchaseHistory"
 PURPOSE = "NSPrivacyCollectedDataTypePurposeAppFunctionality"
 MODERATION_KEY_ID = "moderation-v1"
 MODERATION_PUBLIC_KEY = "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo"
@@ -548,6 +549,36 @@ class SharingReleasePreflightTests(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Could not read plist", result.stderr)
+
+    def test_owner_two_device_sandbox_requires_purchase_history_only(self) -> None:
+        app = info("YES", "YES", ENDPOINT, release_mode="media-staging")
+        app.update({
+            "ManagedPreservationEnabled": "NO",
+            "OwnerStagingTwoDeviceEnabled": "YES",
+            "PlusStorefrontEnabled": "YES",
+            "PlusBillingClientEnabled": "YES",
+        })
+        sharing_data = (USER_ID, PHOTOS, TEXT_MESSAGES, DEVICE_ID, PRODUCT_INTERACTION)
+        declared = privacy(*sharing_data, PURCHASE_HISTORY)
+        result = self.run_preflight(app, declared, expected_mode="media-staging")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        result = self.run_preflight(app, privacy(*sharing_data), expected_mode="media-staging")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"PrivacyInfo is missing {PURCHASE_HISTORY}", result.stderr)
+
+        for switch in ("OwnerStagingTwoDeviceEnabled", "PlusStorefrontEnabled", "PlusBillingClientEnabled"):
+            with self.subTest(switch=switch):
+                result = self.run_preflight(
+                    {**app, switch: "NO"}, declared, expected_mode="media-staging",
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"PrivacyInfo declares {PURCHASE_HISTORY}, which is not enabled", result.stderr)
+
+        declared["NSPrivacyCollectedDataTypes"][-1]["NSPrivacyCollectedDataTypeTracking"] = True
+        result = self.run_preflight(app, declared, expected_mode="media-staging")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{PURCHASE_HISTORY} must declare tracking=false.", result.stderr)
 
     def test_widget_privacy_manifest_must_be_valid_plist(self) -> None:
         result = self.run_preflight(
