@@ -7,6 +7,7 @@ import { anchorReceiptTranscript } from './group-anchor-receipts';
 import { protectedGroupRead, requireCurrentIdentity } from './group-identity-service';
 import { binaryField, exactKeys, opaqueId, stringField, uuidField } from './validation';
 import { recoveryCatalogTranscript, type RecoveryChallenge } from './group-recovery-catalog';
+import {checkTrialRecovery} from './owner-two-device-trial';
 
 export interface PendingIntent { windowId:string; signingPublicKey:string; hpkePublicKey:string; model:string }
 export function pendingIntentBytes(i:PendingIntent):Uint8Array {
@@ -56,19 +57,22 @@ export async function groupRecoveryPendingAPI(env:Env,body:Record<string,unknown
   intent={windowId,signingPublicKey:binaryField(body,'signingPublicKey',32),hpkePublicKey:binaryField(body,'hpkePublicKey',32),model};}
  if(!await verifyEd25519(c.identity_public_key,rootSignature,pendingAuthentication(c,windowId,intent)))throw denied();
  if(intent&&!await verifyEd25519(intent.signingPublicKey,binaryField(body,'deviceSignature',64),pendingAuthentication(c,windowId,intent,'device')))throw denied();
+ const candidateDevice=intent?await groupDeviceKeyHash(intent.signingPublicKey,intent.hpkePublicKey):undefined;
+ checkTrialRecovery(env,c.person_id,windowId,candidateDevice);
  await requireCurrentIdentity(env,c.person_id);
  return protectedGroupRead(env,async()=>{
   const membership=await env.DB.prepare(`SELECT 1 FROM group_members m JOIN group_windows w ON w.space_id=m.space_id JOIN group_people p ON p.id=m.person_id
    WHERE m.person_id=? AND m.space_id=? AND m.state='active' AND w.mode='active' AND p.state='active'`).bind(c.person_id,windowId).first();if(!membership)throw denied();
   const previous=await env.DB.prepare('SELECT * FROM group_recovery_pending WHERE person_id=? AND operation_id=?').bind(c.person_id,c.operation_id).first<PendingRow & {window_id:string}>();
   if(previous&&previous.window_id!==windowId)throw new ApiError(409,'idempotency_conflict','Different recovery intent.');
+  if(previous)checkTrialRecovery(env,c.person_id,windowId,previous.device_id);
   const state=await readState(env,c,windowId,previous);
   const claim=crypto.randomUUID();const statements=[
    env.DB.prepare('UPDATE group_recovery_challenges SET consumed_at=?,consumed_by=? WHERE id=? AND consumed_at IS NULL AND expires_at>?').bind(now,claim,c.id,now),
    env.DB.prepare('INSERT INTO group_recovery_read_checks VALUES (?,?,?,?)').bind(claim,c.person_id,c.id,now),
   ];
   if(intent&&state.state!=='needsOriginalDeviceOrInvitation'){
-   const device=await groupDeviceKeyHash(intent.signingPublicKey,intent.hpkePublicKey),hash=await sha256Base64url(pendingIntentBytes(intent));
+   const device=candidateDevice!,hash=await sha256Base64url(pendingIntentBytes(intent));
    if(previous&&previous.request_hash!==hash)throw new ApiError(409,'idempotency_conflict','Different recovery intent.');
    if(!previous)statements.push(env.DB.prepare('INSERT INTO group_recovery_pending VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(person_id,operation_id) DO NOTHING')
     .bind(c.person_id,c.operation_id,windowId,c.environment,device,intent.signingPublicKey,intent.hpkePublicKey,intent.model,hash,JSON.stringify({challenge:c,rootSignature,deviceSignature:body.deviceSignature,intent}),now));

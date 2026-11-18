@@ -248,9 +248,14 @@ actor FamilyNotebookAdmissionClient {
         if let value = try pending() { _ = try await execute(value) }
     }
     func create(operation: UUID) async throws {
+#if os(iOS) && INTERNAL_PRESENTATION
+        let family = OwnerTwoDeviceTrialConfiguration.current?.family ?? operation
+#else
+        let family = operation
+#endif
         _ = try await perform(action: "create", family: nil) {
-            try prepare("create", family: operation, generation: 0, operation: operation,
-                        body: .init(operationID: operation.uuidString.lowercased(), familyID: operation.uuidString.lowercased()))
+            try prepare("create", family: family, generation: 0, operation: operation,
+                        body: .init(operationID: operation.uuidString.lowercased(), familyID: family.uuidString.lowercased()))
         }
     }
     func invite(family: UUID, generation: Int64, roster: VerifiedFamilyNotebookRoster, payer: String?,

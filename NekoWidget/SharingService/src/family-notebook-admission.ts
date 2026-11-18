@@ -5,6 +5,7 @@ import { gate, safeFailure, familyStorePolicy } from './family-notebook-payer';
 import { ApiError, jsonResponse } from './errors';
 import { parseJsonBody } from './http';
 import { binaryField, exactKeys, integerField, stringField, uuidField } from './validation';
+import {checkTrialCreation} from './owner-two-device-trial';
 import type { Env } from './env';
 
 // Admission is deliberately not installed in the public router yet. Encrypted
@@ -66,6 +67,7 @@ export async function familyNotebookAdmission(request: Request, env: Env): Promi
     const body = parseJsonBody(request, bytes);
     const operationId = uuidField(body, 'operationId');
     const familyId = match[1] ? groupId(match[1]) : uuidField(body, 'familyId');
+    if (!match[1]) checkTrialCreation(env,'family',familyId,actor.personId,actor.deviceId);
     const operation = path === '/v3/family-notebooks' ? 'create'
       : match[2] === 'invitations' && !match[3] ? 'invite'
       : match[2] === 'invitations' && ['preview', 'join', 'revoke'].includes(match[4] ?? '') ? match[4]

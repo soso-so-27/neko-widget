@@ -1,4 +1,5 @@
 import { resolveReportRuntimeExpected } from '../scripts/check-staging-runtime.mjs';
+import { checkOwnerTwoDeviceBilling } from '../scripts/check-owner-two-device-billing-readiness.mjs';
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { execFileSync } from 'node:child_process';
@@ -10,6 +11,43 @@ import {
 } from "../scripts/staging-runtime-check-lib.mjs";
 
 const origin = "https://neko-window-sharing-staging.example.com";
+
+test("two-device billing requires the scoped ready policy, closed features and a valid expiry", async () => {
+  const staging = "https://neko-window-sharing-staging.nakanishisoya.workers.dev";
+  const now = 1794974400000;
+  const expires = now + 7 * 86400000;
+  const valid = {
+    "neko-owner-two-device-readiness": "READY",
+    "neko-owner-two-device-feature-gates": "OFF",
+    "neko-runtime-billing-owner-admission": "READY",
+    "neko-runtime-billing-transaction-ingestion": "ON",
+    "neko-runtime-billing-effective-entitlement": "ON",
+    "neko-owner-two-device-admission-expires-at-ms": String(expires),
+  };
+  function response(headers, status = 200) {
+    return async (url, options) => {
+      assert.equal(url, staging + "/v1/billing/health");
+      assert.equal(options.redirect, "error");
+      return new Response(null, {status, headers});
+    };
+  }
+  assert.equal(await checkOwnerTwoDeviceBilling(staging, {now, fetchImpl:response(valid)}),
+    new Date(expires).toISOString());
+  await assert.rejects(checkOwnerTwoDeviceBilling("https://api.nekonomado.com", {now,
+    fetchImpl: () => assert.fail("A non-staging origin must never receive a request")}), /staging endpoint/);
+  await assert.rejects(checkOwnerTwoDeviceBilling(staging, {now, fetchImpl:response(valid, 404)}), /HTTP 404/);
+  for (const [key, value] of [
+    ["neko-owner-two-device-readiness", ""],
+    ["neko-owner-two-device-feature-gates", "ON"],
+    ["neko-runtime-billing-owner-admission", "CLOSED"],
+    ["neko-runtime-billing-transaction-ingestion", "OFF"],
+    ["neko-runtime-billing-effective-entitlement", "OFF"],
+    ["neko-owner-two-device-admission-expires-at-ms", String(now)],
+    ["neko-owner-two-device-admission-expires-at-ms", String(expires + 1)],
+  ]) {
+    await assert.rejects(checkOwnerTwoDeviceBilling(staging, {now, fetchImpl:response({...valid, [key]:value})}));
+  }
+});
 
 function jsonResponse(status, body, headers = {}) {
   return new Response(JSON.stringify(body), {

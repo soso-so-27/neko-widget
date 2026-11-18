@@ -1,5 +1,8 @@
 import Foundation
 import CoreFoundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Public policy links for the app itself. These values never participate in
 /// sharing availability or authorization; the local-only release keeps them
@@ -67,6 +70,53 @@ struct AppPublicLinksConfiguration: Equatable, Sendable {
         return url
     }
 }
+
+/// A credential for one owner-only staging trial. Business authorization still
+/// requires the registered device, root or billing signature at the server.
+#if INTERNAL_PRESENTATION && !NEKO_SHARE_EXTENSION
+struct OwnerTwoDeviceTrialConfiguration {
+    static let infoKey = "OwnerTwoDeviceTrial"
+    static let origin = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
+    let proof: String
+    let family: UUID
+    let window: String
+    let owner: String
+
+    static var current: Self? { from(info: Bundle.main.infoDictionary ?? [:]) }
+
+    static func from(info: [String: Any]) -> Self? {
+        guard SharingAPIConfiguration.ownerStagingTwoDeviceEnabled(info: info),
+              info["PlusBillingClientEnabled"] as? String == "YES",
+              info["PlusBillingAPIBaseURL"] as? String == Self.origin,
+              let value = info[infoKey] as? [String: String],
+              Set(value.keys) == Set(["proof", "family", "window", "owner"]),
+              let proof = value["proof"], isBase64URL(proof, count: 43),
+              let owner = value["owner"], isBase64URL(owner, count: 43),
+              let window = value["window"], isBase64URL(window, count: 22),
+              let rawFamily = value["family"], let family = UUID(uuidString: rawFamily),
+              family.uuidString.lowercased() == rawFamily
+        else { return nil }
+        return Self(proof: proof, family: family, window: window, owner: owner)
+    }
+
+    private static func isBase64URL(_ value: String, count: Int) -> Bool {
+        value.utf8.count == count && value.utf8.allSatisfy {
+            (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || $0 == 45 || $0 == 95
+        }
+    }
+
+    func authorize(_ request: inout URLRequest) {
+        guard let url = request.url, let destination = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              destination.scheme == "https", destination.host == URL(string: Self.origin)?.host,
+              destination.port == nil, destination.user == nil, destination.password == nil,
+              destination.query == nil, destination.fragment == nil,
+              url.path.hasPrefix("/v3/group-") || url.path.hasPrefix("/v3/family-notebooks")
+                || url.path == "/v1/billing/transactions" || url.path == "/v1/billing/entitlement"
+        else { return }
+        request.setValue(proof, forHTTPHeaderField: "Neko-Owner-Trial-Proof")
+    }
+}
+#endif
 
 /// Build-time boundary shared by the host app and its capture-only Share
 /// Extension. The direct-send flag is retained only as a release tombstone:

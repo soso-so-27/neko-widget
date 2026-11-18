@@ -5,6 +5,7 @@ import { ApiError } from "./errors";
 import type { Env } from "./env";
 import { groupFields } from "./group-protocol";
 import { enforceRateLimit, readBody, transientNetworkKey } from "./http";
+import {checkTrialActor} from './owner-two-device-trial';
 
 export interface GroupActor {
   deviceId: string;
@@ -55,6 +56,7 @@ export async function authenticateGroupRequest(request: Request, env: Env,maximu
   const message = groupFields(["NW3.REQUEST","3",deviceId,timestamp,nonce,request.method,pathname,base64urlDecode(bodyHash,32)]);
   readStage(request, 'auth_signature');
   if (!await verifyEd25519(row.signingPublicKey,signature,message)) throw new ApiError(401,"invalid_authentication","Group authentication failed.");
+  checkTrialActor(env,row.personId,row.deviceId);
   readStage(request, 'auth_identity');
   if(!isIdentityDeletionPath(pathname)) await requireCurrentIdentity(env,row.personId);
   readStage(request, 'auth_device_rate_limit');

@@ -6,6 +6,7 @@ import {verifyParticipation} from './group-recovery-participation';
 import {verifyRecoveryRecipient,verifyRecoveryOffer,recoveryOfferBytes} from './group-recovery-key-protocol';
 import {base64urlEncode,sha256Base64url} from './encoding';
 import {exactKeys,uuidField,type JsonRecord} from './validation';
+import {checkTrialRecovery} from './owner-two-device-trial';
 
 export interface RecoveryPendingRow {person_id:string;operation_id:string;window_id:string;device_id:string;
  signing_public_key:string;hpke_public_key:string;model:string;proof_json:string}
@@ -15,6 +16,7 @@ export function requireRecoveryGate(env:Env):asserts env is Env & {ENVIRONMENT:'
 }
 export async function recoveryDeliveryState(env:Env,row:RecoveryPendingRow,head:VerifiedGroupRoster){
  requireRecoveryGate(env);
+ checkTrialRecovery(env,row.person_id,row.window_id,row.device_id);
  const recipient=await verifyRecoveryRecipient(JSON.parse(row.proof_json),head,env.ENVIRONMENT);
  if(!recipient||recipient.deviceId!==row.device_id||recipient.personId!==row.person_id||recipient.operationId!==row.operation_id)
   throw new ApiError(409,'recovery_proof_invalid','Recovery proof is invalid.');
@@ -46,7 +48,9 @@ export async function providerRecoveryAPI(env:Env,actor:GroupActor,windowId:stri
    JOIN group_people p ON p.id=r.person_id WHERE r.window_id=? AND m.state='active' AND p.state='active' ORDER BY r.created_at LIMIT 18`)
    .bind(windowId).all<RecoveryPendingRow>();
   const items=[];
-  for(const row of rows.results){const {boundary}=await recoveryDeliveryState(env,row,head);
+  for(const row of rows.results){
+   if(env.ownerTrial && (row.person_id!==env.ownerTrial.aPerson || row.device_id!==env.ownerTrial.recoveryDevice))continue;
+   const {boundary}=await recoveryDeliveryState(env,row,head);
    const receipts=await env.DB.prepare('SELECT key_epoch AS keyEpoch,person_authorization AS personAuthorization FROM group_recovery_key_offers WHERE person_id=? AND operation_id=? AND roster_hash=? AND received_at IS NOT NULL AND expires_at>? ORDER BY key_epoch')
     .bind(row.person_id,row.operation_id,head.hash,actor.now).all<{keyEpoch:number;personAuthorization:string}>();
    items.push({operationId:row.operation_id,receipts:receipts.results,

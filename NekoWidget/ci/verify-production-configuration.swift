@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 @main
 enum ProductionConfigurationVerifier {
@@ -58,6 +61,23 @@ enum ProductionConfigurationVerifier {
             var invalid = exercise; invalid[key] = value
             precondition(!SharingAPIConfiguration.ownerStagingTwoDeviceEnabled(info: invalid), key)
         }
+        exercise["PlusBillingClientEnabled"] = "YES"
+        exercise["PlusBillingAPIBaseURL"] = OwnerTwoDeviceTrialConfiguration.origin
+        exercise["OwnerTwoDeviceTrial"] = ["proof": key, "owner": key, "window": String(repeating: "A", count: 22),
+                                            "family": "98b47c5f-0dc4-4ed2-a2c2-26d0173db946"]
+        let trial = OwnerTwoDeviceTrialConfiguration.from(info: exercise)!
+        var allowed = URLRequest(url: URL(string: OwnerTwoDeviceTrialConfiguration.origin + "/v1/billing/entitlement")!)
+        trial.authorize(&allowed)
+        precondition(allowed.value(forHTTPHeaderField: "Neko-Owner-Trial-Proof") == key)
+        for url in ["https://api.nekonomado.com/v1/billing/entitlement",
+                    OwnerTwoDeviceTrialConfiguration.origin + "/v1/billing/accounts/recover",
+                    OwnerTwoDeviceTrialConfiguration.origin + "/v3/group-windows?unexpected=1"] {
+            var denied = URLRequest(url: URL(string: url)!)
+            trial.authorize(&denied)
+            precondition(denied.value(forHTTPHeaderField: "Neko-Owner-Trial-Proof") == nil)
+        }
+        exercise["OwnerInternalReportsDisabled"] = "NO"
+        precondition(OwnerTwoDeviceTrialConfiguration.from(info: exercise) == nil)
         print("PASS production configuration: complete configuration required; no staging recipient or internal report bypass")
     }
 }

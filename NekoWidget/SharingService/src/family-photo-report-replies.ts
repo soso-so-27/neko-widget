@@ -19,7 +19,7 @@ type Reply = {
 export async function familyPhotoReportReplies(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'GET') throw new ApiError(405, 'method_not_allowed', 'Only GET is supported.');
   if (env.FAMILY_NOTEBOOK_API_RUNTIME_ENABLED !== 'YES' || !familyPhotoReportGateEnabled(env)
-      || !reportIngestionGateOpen(await loadRuntimeGate(env))) {
+      || !env.ownerTrial && !reportIngestionGateOpen(await loadRuntimeGate(env))) {
     throw new ApiError(503, 'family_photo_replies_disabled', 'Report replies are unavailable.');
   }
   return protectedGroupRead(env, () => readFamilyPhotoReportReplies(request, env));
@@ -28,6 +28,9 @@ export async function familyPhotoReportReplies(request: Request, env: Env): Prom
 async function readFamilyPhotoReportReplies(request: Request, env: Env): Promise<Response> {
   const { actor, body } = await authenticateGroupRequest(request, env, 0);
   requireEmptyBody(body);
+  const family=env.ownerTrial?.family??null;
+  if (env.ownerTrial && actor.deviceId!==env.ownerTrial.bDevice)
+    throw new ApiError(404,'owner_trial_unavailable','The endpoint is unavailable.');
   const results = await env.DB.batch<Reply>([
     ...groupAuthorizationStatements(env, actor),
     env.DB.prepare(`SELECT e.report_id AS receiptNumber, r.committed_at AS receivedAt,
@@ -35,9 +38,10 @@ async function readFamilyPhotoReportReplies(request: Request, env: Env): Promise
           WHEN 'photo' THEN 'photo_stopped' ELSE 'reviewed' END AS status
       FROM family_photo_reports e JOIN family_photo_report_records r USING (report_id)
       WHERE e.reporter_person_id = ? AND e.committed_at IS NOT NULL
+        AND (? IS NULL OR e.family_id=?)
         AND e.content_expires_at + 172800 > unixepoch()
         AND (r.retention_until IS NULL OR r.retention_until > unixepoch())
-      ORDER BY e.committed_at DESC, e.report_id DESC LIMIT 100`).bind(actor.personId),
+      ORDER BY e.committed_at DESC, e.report_id DESC LIMIT 100`).bind(actor.personId,family,family),
   ]);
   return jsonResponse({ schemaVersion: 1, replies: results[results.length - 1]!.results });
 }

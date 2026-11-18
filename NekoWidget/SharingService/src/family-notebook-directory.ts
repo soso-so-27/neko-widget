@@ -59,19 +59,24 @@ export async function familyNotebookDirectory(request: Request, env: Env): Promi
 }
 
 async function ownFamilies(env: Env, actor: GroupActor): Promise<Response> {
+  const only=env.ownerTrial?.family??null, excluded=env.reservedTrial?.family??null;
   const batch = await env.DB.batch<Record<string, unknown>>([...groupAuthorizationStatements(env, actor),
     env.DB.prepare('SELECT enabled FROM family_notebook_runtime_gate WHERE singleton=1'),
     env.DB.prepare(`SELECT f.id AS familyId,f.generation,(CASE WHEN f.payer_person_id=m.person_id THEN 'payer' ELSE 'member' END) AS role
       FROM family_notebook_members m JOIN family_notebook_spaces f ON f.id=m.family_id
-      WHERE m.person_id=? AND m.state='active' AND f.state='active' LIMIT 2`).bind(actor.personId),
+      WHERE m.person_id=? AND m.state='active' AND f.state='active'
+        AND (? IS NULL OR f.id=?) AND (? IS NULL OR f.id<>?) LIMIT 2`).bind(actor.personId,only,only,excluded,excluded),
     env.DB.prepare(`SELECT j.family_id AS familyId,j.id AS requestId,j.invitation_id AS invitationId,j.expires_at AS expiresAt
       FROM family_notebook_join_requests j JOIN family_notebook_spaces f ON f.id=j.family_id AND f.state='active'
-      WHERE j.person_id=? AND j.state='pending' AND j.expires_at>unixepoch() ORDER BY j.created_at DESC,j.id LIMIT 64`).bind(actor.personId),
+      WHERE j.person_id=? AND j.state='pending' AND j.expires_at>unixepoch()
+        AND (? IS NULL OR f.id=?) AND (? IS NULL OR f.id<>?)
+      ORDER BY j.created_at DESC,j.id LIMIT 64`).bind(actor.personId,only,only,excluded,excluded),
     env.DB.prepare(`SELECT j.family_id AS familyId,j.id AS requestId,j.invitation_id AS invitationId,j.expires_at AS expiresAt,
       CASE WHEN j.state='pending' AND j.expires_at<=unixepoch() THEN 'expired'
            WHEN j.state='pending' AND f.state<>'active' THEN 'cancelled' ELSE j.state END AS state
       FROM family_notebook_join_requests j JOIN family_notebook_spaces f ON f.id=j.family_id
-      WHERE j.person_id=? ORDER BY j.created_at DESC,j.id LIMIT 64`).bind(actor.personId)]);
+      WHERE j.person_id=? AND (? IS NULL OR f.id=?) AND (? IS NULL OR f.id<>?)
+      ORDER BY j.created_at DESC,j.id LIMIT 64`).bind(actor.personId,only,only,excluded,excluded)]);
   if (batch.at(-4)?.results[0]?.enabled !== 1) throw new ApiError(503, 'family_notebook_disabled', 'Family notebooks are unavailable.');
   const families = batch.at(-3)!.results;
   if (families.length > 1) throw new ApiError(503, 'family_notebook_unavailable', 'The current family could not be confirmed.');

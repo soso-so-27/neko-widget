@@ -453,6 +453,11 @@ struct SettingsView: View {
                             .accessibilityIdentifier("settings-group-recovery-gallery")
                         NavigationLink("猫の見分けを測る（テスト用）") { CatIdentityMeasureView() }
                             .accessibilityIdentifier("settings-cat-identity-measure")
+#if INTERNAL_PRESENTATION
+                        if OwnerTwoDeviceTrialConfiguration.current != nil {
+                            NavigationLink("2台試験の端末確認") { OwnerTwoDeviceEnrollmentView() }
+                        }
+#endif
                         NavigationLink {
                             advancedDiagnosticsView
                         } label: {
@@ -1518,3 +1523,28 @@ extension View {
     /// The owner's 外観 choice, for the app's real root only.
     func appAppearance() -> some View { modifier(AppAppearanceModifier()) }
 }
+
+#if INTERNAL_PRESENTATION
+private struct OwnerTwoDeviceEnrollmentView: View {
+    @State private var result = ""
+    @State private var checking = false
+
+    var body: some View {
+        Form {
+            Button("この端末を確認") {
+                checking = true
+                Task {
+                    defer { checking = false }
+                    do { result = try await GroupRecoveryLiveModel.ownerTrialEnrollment() }
+                    catch { result = "端末情報を確認できませんでした。" }
+                }
+            }
+            .disabled(checking)
+            if !result.isEmpty {
+                Text(result).font(.footnote.monospaced()).textSelection(.enabled)
+            }
+        }
+        .navigationTitle("2台試験の端末確認")
+    }
+}
+#endif

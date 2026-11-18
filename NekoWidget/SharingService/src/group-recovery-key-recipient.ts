@@ -9,6 +9,7 @@ import {protectedGroupRead,requireCurrentIdentity} from './group-identity-servic
 import {exactKeys,binaryField,stringField,integerField,uuidField,type JsonRecord} from './validation';
 import {recoveryDeliveryState,recoveryEpoch,recoveryKeyChecks,requireRecoveryGate,type RecoveryPendingRow} from './group-recovery-key-delivery';
 import {verifyRecoveryOffer,recoveryReceiptBytes,type RecoveryKeyOffer} from './group-recovery-key-protocol';
+import {checkTrialRecovery} from './owner-two-device-trial';
 
 export function recoveryRecipientAction(c:RecoveryChallenge,windowId:string,action:string,payload:Uint8Array):Uint8Array{
  return groupFields(['NW3.RECOVERY.KEY.ACTION.V1',action,recoveryCatalogTranscript(c),windowId,payload]);
@@ -27,6 +28,7 @@ export async function recipientRecoveryKeys(env:Env,body:JsonRecord,operation:st
  const denied=()=>new ApiError(401,'recovery_authentication_failed','Recovery authentication failed.');
  if(!c||c.operation_id!==operation||c.purpose!=='status'||c.environment!==env.ENVIRONMENT||c.consumed_at!==null||now<c.issued_at||now>=c.expires_at
   ||!await verifyEd25519(c.identity_public_key,rootSignature,recoveryRecipientAction(c,windowId,receipt?'receipt':'offers',payload)))throw denied();
+ checkTrialRecovery(env,c.person_id,windowId);
  await requireCurrentIdentity(env,c.person_id);
  return protectedGroupRead(env,async()=>{
   const row=await env.DB.prepare('SELECT * FROM group_recovery_pending WHERE person_id=? AND operation_id=? AND window_id=?')
@@ -35,6 +37,7 @@ export async function recipientRecoveryKeys(env:Env,body:JsonRecord,operation:st
    if(receipt)throw denied();
    const done=await env.DB.prepare('SELECT device_id,previous_hash FROM group_recovery_key_completions WHERE person_id=? AND operation_id=? AND window_id=?')
     .bind(c.person_id,operation,windowId).first<{device_id:string;previous_hash:string}>();if(!done)throw denied();
+   checkTrialRecovery(env,c.person_id,windowId,done.device_id);
    const d=await env.DB.prepare("SELECT signing_public_key,hpke_public_key FROM group_person_devices WHERE id=? AND person_id=? AND state='active'")
     .bind(done.device_id,c.person_id).first<{signing_public_key:string;hpke_public_key:string}>();if(!d)throw denied();
    const claim=crypto.randomUUID();

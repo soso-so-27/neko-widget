@@ -1,7 +1,12 @@
 import type {GroupReportMailEnv} from './group-report-mail';
+import type {OwnerTrial} from './owner-two-device-trial';
 
 export interface Env extends GroupReportMailEnv {
   GROUP_RECOVERY_CATALOG_ENABLED?: string;
+  OWNER_TWO_DEVICE_TRIAL?: string;
+  ownerTrial?: OwnerTrial;
+  reservedTrial?: Pick<OwnerTrial,'family'|'window'>;
+  PRIVATE_BILLING_GATEWAY?: Fetcher;
   CLIENT_UPGRADE_REQUIRED_ENABLED?: string;
   MINIMUM_SUPPORTED_IOS_BUILD?: string;
   BILLING_TRANSACTION_RETENTION_REQUIRED?: string;

@@ -13,9 +13,10 @@ PRESERVATION_ORIGIN = "https://neko-preservation-staging-disabled.nakanishisoya.
 BILLING_ORIGIN = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
 AUDIENCE = "neko-preservation-staging"
 MONTHLY_PRODUCT = "jp.nekowidget.plus.monthly"
+PURCHASE_HISTORY = "NSPrivacyCollectedDataTypePurchaseHistory"
 EXTRA_COLLECTIONS = {
     "NSPrivacyCollectedDataTypeEmailAddress",
-    "NSPrivacyCollectedDataTypePurchaseHistory",
+    PURCHASE_HISTORY,
     "NSPrivacyCollectedDataTypeOtherUserContent",
 }
 INFO_KEYS = {
@@ -35,11 +36,19 @@ FLAGS = {key for key in INFO_KEYS if key.endswith("_ENABLED")}
 
 def settings(requested: bool, mode: str, approval: str, scope: str, *,
              billing_requested: bool = False, billing_approval: str = "",
-             billing_scope: str = "") -> dict[str, str]:
+             billing_scope: str = "", two_device: bool = False,
+             distribution_profile: str = "", group_windows: bool = False,
+             family_notebook: bool = False, internal_reports: bool = False) -> dict[str, str]:
     if requested and (mode != "media-staging" or approval != "YES" or scope != "internal"):
         raise ValueError("Preservation requires media-staging and the protected, internal-only pilot approval.")
-    if billing_requested and (not requested or billing_approval != "YES" or billing_scope != "internal"):
-        raise ValueError("Billing requires the internal preservation pilot and a separate protected Sandbox approval.")
+    owner_two_device_billing = two_device and billing_requested
+    if owner_two_device_billing and (
+            distribution_profile != "owner-internal" or mode != "media-staging"
+            or not group_windows or not family_notebook or requested or internal_reports):
+        raise ValueError("Two-device Sandbox billing requires only approved owner-staging group and family access.")
+    if billing_requested and (
+            not (requested or owner_two_device_billing) or billing_approval != "YES" or billing_scope != "internal"):
+        raise ValueError("Billing requires a permitted internal release and separate protected Sandbox approval.")
     values = {key: "NO" if key in FLAGS else "" for key in INFO_KEYS}
     if requested:
         values["MANAGED_PRESERVATION_ENABLED"] = "YES"
@@ -51,7 +60,7 @@ def settings(requested: bool, mode: str, approval: str, scope: str, *,
         values.update({
             "PLUS_STOREFRONT_ENABLED": "YES", "PLUS_MONTHLY_PRODUCT_ID": MONTHLY_PRODUCT,
             "PLUS_BILLING_CLIENT_ENABLED": "YES", "PLUS_BILLING_API_BASE_URL": BILLING_ORIGIN,
-            "PLUS_BILLING_RECOVERY_ENABLED": "YES",
+            "PLUS_BILLING_RECOVERY_ENABLED": "NO" if owner_two_device_billing else "YES",
         })
     return values
 
@@ -75,7 +84,13 @@ def prepare_membership_info(info: dict, expected: dict[str, str]) -> dict:
     return {**info, "MembershipAccessEnforced": billing_enabled(expected)}
 
 
-def add_privacy(privacy: dict) -> dict:
+def release_collections(expected: dict[str, str]) -> set[str]:
+    if expected["MANAGED_PRESERVATION_ENABLED"] == "YES":
+        return EXTRA_COLLECTIONS
+    return {PURCHASE_HISTORY} if billing_enabled(expected) else set()
+
+
+def add_privacy(privacy: dict, required_collections: set[str] = EXTRA_COLLECTIONS) -> dict:
     if privacy.get("NSPrivacyTracking") is not False:
         raise ValueError("Pilot must preserve no tracking.")
     entries = privacy.get("NSPrivacyCollectedDataTypes")
@@ -84,7 +99,7 @@ def add_privacy(privacy: dict) -> dict:
     names = [entry.get("NSPrivacyCollectedDataType") for entry in entries if isinstance(entry, dict)]
     if len(names) != len(entries) or len(set(names)) != len(names):
         raise ValueError("Malformed or duplicate collected-data declarations.")
-    for name in sorted(EXTRA_COLLECTIONS - set(names)):
+    for name in sorted(required_collections - set(names)):
         entries.append({"NSPrivacyCollectedDataType": name,
                         "NSPrivacyCollectedDataTypeLinked": True,
                         "NSPrivacyCollectedDataTypeTracking": False,
@@ -102,20 +117,21 @@ def verify(info: dict, expected: dict[str, str], privacy: dict, widget_info: dic
         raise ValueError("Sandbox billing requires verification of the widget membership boundary.")
     if widget_info is not None and widget_info.get("MembershipAccessEnforced") is not billing_enabled(expected):
         raise ValueError("Archived widget membership boundary does not match the release settings.")
-    if expected["MANAGED_PRESERVATION_ENABLED"] == "YES":
+    required_collections = release_collections(expected)
+    if required_collections:
         if info.get("SharingReleaseMode") != "media-staging":
-            raise ValueError("Archived preservation must remain in media-staging.")
+            raise ValueError("Archived preservation or Sandbox billing must remain in media-staging.")
         declarations = {entry.get("NSPrivacyCollectedDataType"): entry for entry in privacy.get("NSPrivacyCollectedDataTypes", [])}
-        if not EXTRA_COLLECTIONS <= declarations.keys():
-            raise ValueError("Archived preservation privacy declarations are incomplete.")
-        for name in EXTRA_COLLECTIONS:
+        if not required_collections <= declarations.keys():
+            raise ValueError("Archived internal pilot privacy declarations are incomplete.")
+        for name in required_collections:
             entry = declarations[name]
             if entry.get("NSPrivacyCollectedDataTypeLinked") is not True or entry.get("NSPrivacyCollectedDataTypeTracking") is not False:
                 raise ValueError("Archived preservation privacy declaration changed.")
 
 
 def prepare_export_options(options: dict, expected: dict[str, str]) -> dict:
-    if expected["MANAGED_PRESERVATION_ENABLED"] == "YES":
+    if internal_only(expected):
         options["testFlightInternalTestingOnly"] = True
     elif options.get("testFlightInternalTestingOnly", False) is not False:
         raise ValueError("Ordinary export unexpectedly contains the preservation pilot restriction.")
@@ -123,9 +139,13 @@ def prepare_export_options(options: dict, expected: dict[str, str]) -> dict:
 
 
 def verify_export_options(options: dict, expected: dict[str, str]) -> None:
-    required = expected["MANAGED_PRESERVATION_ENABLED"] == "YES"
+    required = internal_only(expected)
     if options.get("testFlightInternalTestingOnly", False) is not required:
         raise ValueError("Export internal-testing restriction does not match the release settings.")
+
+
+def internal_only(expected: dict[str, str]) -> bool:
+    return expected["MANAGED_PRESERVATION_ENABLED"] == "YES" or billing_enabled(expected)
 
 
 def validate_production(app: dict, widget: dict, expected: dict) -> None:
@@ -145,6 +165,9 @@ def main() -> None:
     parser.add_argument("--billing-requested", choices=("true", "false"), default="false")
     parser.add_argument("--billing-approval", default="")
     parser.add_argument("--billing-scope", default="")
+    for selection in ("two-device", "group-windows", "family-notebook", "internal-reports"):
+        parser.add_argument("--" + selection, choices=("true", "false"), default="false")
+    parser.add_argument("--distribution-profile", default="")
     parser.add_argument("--env-file", type=Path)
     parser.add_argument("--settings-file", type=Path, required=True)
     parser.add_argument("--privacy-manifest", type=Path)
@@ -156,7 +179,10 @@ def main() -> None:
     args = parser.parse_args()
     expected = settings(args.requested == "true", args.mode, args.approval, args.scope,
                         billing_requested=args.billing_requested == "true",
-                        billing_approval=args.billing_approval, billing_scope=args.billing_scope)
+                        billing_approval=args.billing_approval, billing_scope=args.billing_scope,
+                        two_device=args.two_device == "true", distribution_profile=args.distribution_profile,
+                        group_windows=args.group_windows == "true", family_notebook=args.family_notebook == "true",
+                        internal_reports=args.internal_reports == "true")
     if args.export_options_plist:
         if json.loads(args.settings_file.read_text()) != expected:
             raise ValueError("Prepared preservation settings changed before exporting.")
@@ -196,9 +222,10 @@ def main() -> None:
         for path, info in prepared:
             with path.open("wb") as handle:
                 plistlib.dump(info, handle)
-        if expected["MANAGED_PRESERVATION_ENABLED"] == "YES":
+        required_collections = release_collections(expected)
+        if required_collections:
             with args.privacy_manifest.open("wb") as handle:
-                plistlib.dump(add_privacy(privacy), handle)
+                plistlib.dump(add_privacy(privacy, required_collections), handle)
         args.settings_file.write_text(json.dumps(expected, indent=2) + "\n")
         with args.env_file.open("a") as handle:
             for key, value in expected.items():

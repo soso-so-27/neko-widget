@@ -9,6 +9,7 @@ import { loadStoredGroupRoster,verifyGroupEnvelopes,verifyGroupRoster,
 import { asObject,binaryField,exactKeys,integerField,opaqueId,stringField,uuidField,type JsonRecord } from "./validation";
 import { groupCursor,groupPage } from './group-reads';
 import { groupCreationPolicyStatements,groupDeliveryPolicies } from './group-owner-plus';
+import {checkTrialCreation} from './owner-two-device-trial';
 
 export function groupCipher(body:JsonRecord,key:string,maximum=8192):string {
   const value=stringField(body,key),bytes=base64urlDecode(value);
@@ -41,10 +42,11 @@ export function groupExpected(body:JsonRecord):number { return integerField(body
 export async function createGroupWindow(env:Env,actor:GroupActor,body:JsonRecord):Promise<Response> {
   exactKeys(body,["operationId","packet","envelopes","encryptedName","encryptedMemberNames",...(body.participationProofs!==undefined?['participationProofs']:[])]);
   const operationId=uuidField(body,"operationId");
-  const prior=await storedGroupMutation(env,actor,operationId);
-  if(prior!==null) return jsonResponse(prior);
   const signed=asObject(body.packet) as unknown as SignedGroupRoster;
   const windowId=stringField(asObject(signed.roster),"windowId");
+  checkTrialCreation(env,'window',windowId,actor.personId,actor.deviceId);
+  const prior=await storedGroupMutation(env,actor,operationId);
+  if(prior!==null) return jsonResponse(prior);
   const roster=await verifyGroupRoster(signed,{windowId,ownerPersonId:actor.personId,ownerIdentityPublicKey:actor.identityPublicKey});
   const r=roster.packet.roster,member=r.members[0];
   opaqueId(r.windowId,"window");
@@ -77,13 +79,15 @@ export async function createGroupWindow(env:Env,actor:GroupActor,body:JsonRecord
 
 export async function listGroupWindows(env:Env,actor:GroupActor,body:JsonRecord):Promise<Response> {
   const cursorScope=`windows:${actor.deviceId}`,page=groupPage(body,cursorScope);
+  const only=env.ownerTrial?.window??null, excluded=env.reservedTrial?.window??null;
   const result=await env.DB.prepare(`SELECT w.space_id AS windowId,w.revision,w.key_epoch AS keyEpoch,w.rotation_required AS rotationRequired,
       m.participant_id AS myParticipantId,m.role AS myRole,n.encrypted_name AS encryptedName,w.created_at AS createdAt
       FROM group_windows w JOIN group_members m ON m.space_id=w.space_id
       JOIN group_window_devices d ON d.space_id=w.space_id AND d.participant_id=m.participant_id
       JOIN group_window_metadata n ON n.space_id=w.space_id
       WHERE m.person_id=? AND m.state='active' AND d.device_id=? AND d.state='active' AND w.mode='active' AND w.space_id>?
-      ORDER BY w.space_id LIMIT ?`).bind(actor.personId,actor.deviceId,page.after,page.limit+1)
+        AND (? IS NULL OR w.space_id=?) AND (? IS NULL OR w.space_id<>?)
+      ORDER BY w.space_id LIMIT ?`).bind(actor.personId,actor.deviceId,page.after,only,only,excluded,excluded,page.limit+1)
     .all<{windowId:string;revision:number;rotationRequired:number}>();
   const items=result.results.slice(0,page.limit),checks=groupAuthorizationStatements(env,actor);
   for(const item of items) checks.push(...groupAuthorizationStatements(env,actor,

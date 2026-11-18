@@ -10,6 +10,10 @@ import LocalAuthentication
 // 押したとき（本人の操作）にだけ client を有効で作り、最初の catalog が通った
 // （サーバーの発行の gate が開いている）ときだけ Adapter を作る。起動時・自動の通信はしない。
 
+private func recoveryPersonAction<T>(_ work: () async throws -> T) async rethrows -> T {
+    try await SharingPersonAction.run(work)
+}
+
 /// The internal test screen's state. Construction alone sends nothing.
 @MainActor final class GroupRecoveryLiveModel: ObservableObject {
     enum Phase: Equatable { case idle, checking, noRoots, unavailable, serverDisabled, ready }
@@ -73,7 +77,7 @@ import LocalAuthentication
         }
         task = Task { [weak self, factory] in
             let result: Result<[GroupRecoveryAdapter.Context], Error>
-            do { result = .success(try await SharingPersonAction.run { try await factory() }) }
+            do { result = .success(try await recoveryPersonAction { try await factory() }) }
             catch { result = .failure(error) }
             guard let self, !Task.isCancelled, self.generation == token else { return }
             self.timer?.cancel(); self.timer = nil; self.task = nil
@@ -467,6 +471,13 @@ extension GroupRecoveryLiveModel {
 }
 
 #if os(iOS)
+private func makeRootSyncStore(environment: RootSyncStore.Environment) throws -> RootSyncStore {
+    guard let bundleID = Bundle.main.bundleIdentifier,
+          let accessGroup = Bundle.main.object(forInfoDictionaryKey: "RootSyncKeychainAccessGroup") as? String
+    else { throw RootSyncFailure.invalidInput }
+    return try RootSyncStore(bundleID: bundleID, environment: environment, accessGroup: accessGroup)
+}
+
 private func currentRegisteredRoot(namespace: String) throws -> Data? {
     guard let saved = try GroupKeychainStore(namespace: namespace).read("identity") else { return nil }
     let identity = try GroupWire.decode(GroupDeviceIdentity.self, saved)
@@ -478,10 +489,39 @@ private func currentRegisteredRoot(namespace: String) throws -> Data? {
 }
 
 extension GroupRecoveryLiveModel {
+#if INTERNAL_PRESENTATION
+    static func ownerTrialEnrollment() async throws -> String {
+        guard let trial = OwnerTwoDeviceTrialConfiguration.current,
+              let client = GroupWindowClientProvider.production
+        else { throw GroupRecoveryClient.Failure.disabled }
+        let identity = try await recoveryPersonAction { try await client.familyNotebookIdentity() }
+        let person = identity.personID
+        var lines = ["本人　" + person, "端末　" + (try identity.deviceID)]
+        if person != trial.owner {
+            let sync = try makeRootSyncStore(environment: .staging)
+            let roots = try await sync.availableRoots().map(\.privateKey)
+            if let raw = roots.first(where: { matchesTrialOwner($0, owner: trial.owner) }) {
+                let root = try Curve25519.Signing.PrivateKey(rawRepresentation: raw)
+                let scope = GroupCanonical.hash(root.publicKey.rawRepresentation).map { String(format: "%02x", $0) }.joined()
+                let secrets = try GroupKeychainStore(namespace: GroupWindowClientProvider.namespace + ".recovery." + scope)
+                let recovery = try GroupRecoveryLiveBuilder.deviceIdentity(root: root, secrets: secrets)
+                lines.append("引き継ぎ先　" + (try recovery.deviceID))
+            } else {
+                lines.append("Aの本人情報が届いたら、もう一度確認してください。")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private nonisolated static func matchesTrialOwner(_ raw: Data, owner: String) -> Bool {
+        guard let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: raw) else { return false }
+        return GroupWire.base64(GroupCanonical.hash(key.publicKey.rawRepresentation)) == owner
+    }
+#endif
+
     static func connected() -> GroupRecoveryLiveModel {
         let configuration = SharingAPIConfiguration.current
-        guard configuration.isGroupRuntimeAvailable, let endpoint = configuration.baseURL,
-              let bundleID = Bundle.main.bundleIdentifier else {
+        guard configuration.isGroupRuntimeAvailable, let endpoint = configuration.baseURL else {
             return GroupRecoveryLiveModel { throw GroupRecoveryClient.Failure.disabled }
         }
         let environment: RootSyncStore.Environment
@@ -490,8 +530,7 @@ extension GroupRecoveryLiveModel {
         case "media-staging": environment = .staging
         default: return GroupRecoveryLiveModel { throw GroupRecoveryClient.Failure.disabled }
         }
-        guard let accessGroup = Bundle.main.object(forInfoDictionaryKey: "RootSyncKeychainAccessGroup") as? String,
-              let sync = try? RootSyncStore(bundleID: bundleID, environment: environment, accessGroup: accessGroup) else {
+        guard let sync = try? makeRootSyncStore(environment: environment) else {
             return GroupRecoveryLiveModel { throw RootSyncFailure.invalidInput }
         }
         let namespace = GroupWindowClientProvider.namespace
@@ -513,6 +552,11 @@ extension GroupRecoveryLiveModel {
             // successful empty read plus no local identity means no candidates.
             var roots = try await sync.availableRoots().map(\.privateKey)
             if let local = try currentRegisteredRoot(namespace: namespace) { roots.append(local) }
+#if INTERNAL_PRESENTATION
+            if let trial = OwnerTwoDeviceTrialConfiguration.current {
+                roots = roots.filter { matchesTrialOwner($0, owner: trial.owner) }
+            }
+#endif
             let builder = GroupRecoveryLiveBuilder(endpoint: endpoint, environment: environment.rawValue,
                 transport: GroupURLSessionTransport(), model: "iPhone", stores: { scope in
                     (try GroupKeychainStore(namespace: namespace + ".recovery-journal." + scope),

@@ -20,7 +20,9 @@ const reply=(r:Report)=>jsonResponse({schemaVersion:1,reportId:r.report_id,famil
  assetId:r.asset_id,state:r.state,committedAt:r.committed_at,contentExpiresAt:r.content_expires_at});
 
 export function familyPhotoReportGateEnabled(env: Env): boolean {
- return env.FAMILY_REPRESENTATIVE_PHOTO_RUNTIME_ENABLED==='YES' && env.GROUP_REPORT_RUNTIME_ENABLED==='YES'
+ const trial=env.ownerTrial;
+ const open=trial?trial.phase==='REPORT' && Date.now()<trial.phaseUntilMs:env.GROUP_REPORT_RUNTIME_ENABLED==='YES';
+ return env.FAMILY_REPRESENTATIVE_PHOTO_RUNTIME_ENABLED==='YES' && open
   && env.GROUP_MODERATION_RUNTIME_ENABLED==='YES' && env.REPORT_INGESTION_RUNTIME_ENABLED==='YES';
 }
 /** One consented encrypted envelope, with an immutable operation ID across retries.
@@ -30,8 +32,10 @@ export async function familyPhotoReportAPI(request:Request,env:Env,familyValue:s
  if(request.method!=='POST')fail('method_not_allowed',405);
  if(!familyPhotoReportGateEnabled(env)||!env.MODERATION_MEDIA)fail('family_photo_reports_disabled',503);
  const family=familyUUID(familyValue),{actor,body:bytes}=await authenticateGroupRequest(request,env,1_450_000);
+ const trial=env.ownerTrial;
+ if(trial&&(family!==trial.family||actor.deviceId!==trial.bDevice))fail('family_photo_reports_disabled',503);
  const runtime=await loadRuntimeGate(env);
- if(!reportIngestionGateOpen(runtime))fail('report_ingestion_runtime_disabled',503);
+ if(!runtime||(!trial&&!reportIngestionGateOpen(runtime)))fail('report_ingestion_runtime_disabled',503);
  const b=parseJsonBody(request,bytes);
  exactKeys(b,['schemaVersion','operationId','assetId','reasonCode','moderationKeyId','ciphertext','ciphertextSHA256','consentedAt']);
  if(b.schemaVersion!==1)fail('invalid_report',400);
@@ -43,9 +47,13 @@ export async function familyPhotoReportAPI(request:Request,env:Env,familyValue:s
  if(cipher.length<29||cipher.length>1048576||await sha256Base64url(cipher)!==hash)fail('invalid_report',400);
  const load=()=>env.DB.prepare('SELECT * FROM family_photo_reports WHERE reporter_device_id=? AND operation_id=?')
   .bind(actor.deviceId,operation).first<Report>();
- const guards=()=>[...groupAuthorizationStatements(env,actor),env.DB.prepare(`SELECT json(CASE WHEN EXISTS(
+ const intake=trial?env.DB.prepare(`SELECT json(CASE WHEN ? > unixepoch('subsec') * 1000 AND EXISTS(
+  SELECT 1 FROM personal_staging_runtime_gate WHERE singleton=1 AND generation=? AND report_ingestion_enabled=0)
+  THEN 'true' ELSE 'report_gate_changed' END)`).bind(trial.phaseUntilMs,runtime.generation)
+  :env.DB.prepare(`SELECT json(CASE WHEN EXISTS(
   SELECT 1 FROM personal_staging_runtime_gate WHERE singleton=1 AND generation=? AND report_ingestion_enabled=1)
-  THEN 'true' ELSE 'report_gate_changed' END)`).bind(runtime!.generation)];
+  THEN 'true' ELSE 'report_gate_changed' END)`).bind(runtime.generation);
+ const guards=()=>[...groupAuthorizationStatements(env,actor),intake];
  let row=await load();
  if(row&&row.request_hash!==actor.requestHash)fail('idempotency_conflict');
  if(!row){
