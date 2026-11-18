@@ -46,6 +46,7 @@ jobs:
           source=NekoWidget/Shared/Sharing/SharingAPIConfiguration.swift
           xcrun swiftc -O -emit-library "$source" -o "$RUNNER_TEMP/public.dylib"
           xcrun swiftc -O -D INTERNAL_PRESENTATION -D NEKO_SHARE_EXTENSION -emit-library "$source" -o "$RUNNER_TEMP/share.dylib"
-          strings "$RUNNER_TEMP/public.dylib" > "$RUNNER_TEMP/config-strings.txt"
-          strings "$RUNNER_TEMP/share.dylib" >> "$RUNNER_TEMP/config-strings.txt"
-          ! grep -E 'workers\.dev|Neko-Owner-Trial-Proof|OwnerTwoDeviceTrial' "$RUNNER_TEMP/config-strings.txt"
+          strings "$RUNNER_TEMP/public.dylib" > "$RUNNER_TEMP/public-strings.txt"
+          strings "$RUNNER_TEMP/share.dylib" > "$RUNNER_TEMP/share-strings.txt"
+          ! grep -E 'workers\.dev|Neko-Owner-Trial-Proof|OwnerTwoDeviceTrial' "$RUNNER_TEMP/public-strings.txt"
+          ! grep -E 'Neko-Owner-Trial-Proof|OwnerTwoDeviceTrial' "$RUNNER_TEMP/share-strings.txt"
