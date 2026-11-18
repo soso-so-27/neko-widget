@@ -69,6 +69,11 @@ on:
         required: false
         default: false
         type: boolean
+      two_device_staging:
+        description: "持ち主の2台用。staging家族の手帳とまどの鍵受け渡しを検査する際だけ指定。"
+        required: false
+        default: false
+        type: boolean
       upload_to_testflight:
         description: "署名・IPA export後にApp Store Connectへ検証・アップロードする"
         required: true
@@ -108,6 +113,7 @@ jobs:
       INTERNAL_REPORTS_REQUESTED: ${{ inputs.internal_reports }}
       GROUP_WINDOWS_REQUESTED: ${{ inputs.group_windows || false }}
       FAMILY_NOTEBOOK_STAGING_REQUESTED: ${{ inputs.family_notebook_staging || false }}
+      TWO_DEVICE_STAGING_REQUESTED: ${{ inputs.two_device_staging || false }}
       GROUP_WINDOWS_APPROVAL: ${{ vars.GROUP_WINDOWS_STAGING_ENABLED }}
 
     steps:
@@ -768,7 +774,7 @@ jobs:
           set -euo pipefail
           python3 "$PROJECT_DIRECTORY/ci/group-window-release.py" \
             --requested "${GROUP_WINDOWS_REQUESTED:-false}" \
-            --family-requested "${FAMILY_NOTEBOOK_STAGING_REQUESTED:-false}" --profile "$DISTRIBUTION_PROFILE" \
+            --family-requested "${FAMILY_NOTEBOOK_STAGING_REQUESTED:-false}" --two-device-requested "${TWO_DEVICE_STAGING_REQUESTED:-false}" --profile "$DISTRIBUTION_PROFILE" \
             --mode "$SHARING_EXPECTED_MODE" \
             --approval "${GROUP_WINDOWS_APPROVAL:-}" \
             --env-file "$GITHUB_ENV"
@@ -783,7 +789,12 @@ jobs:
         run: |
           set -euo pipefail
           test "$RELEASE_SHARING_API_ORIGIN" = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
-          if [[ "$INTERNAL_REPORTS_REQUESTED" == "true" && "$BILLING_SANDBOX_REQUESTED" == "true" ]]; then
+          if [[ "${TWO_DEVICE_STAGING_REQUESTED:-false}" == "true" ]]; then
+            test "$INTERNAL_REPORTS_REQUESTED" = "false"
+            test "$BILLING_SANDBOX_REQUESTED" = "false"
+            NEKO_STAGING_API_ORIGIN="$RELEASE_SHARING_API_ORIGIN" \
+              node scripts/check-staging-runtime.mjs --expected owner-two-device-staging
+          elif [[ "$INTERNAL_REPORTS_REQUESTED" == "true" && "$BILLING_SANDBOX_REQUESTED" == "true" ]]; then
             NEKO_STAGING_API_ORIGIN="$RELEASE_SHARING_API_ORIGIN" \
               node scripts/check-staging-runtime.mjs --expected internal-purchase-sandbox-report-ui-continuation
           elif [[ "$INTERNAL_REPORTS_REQUESTED" == "true" ]]; then
@@ -1340,6 +1351,7 @@ jobs:
             SHARING_FEATURE_ENABLED="$RELEASE_SHARING_FEATURE_ENABLED" \
             GROUP_WINDOWS_ENABLED="$RELEASE_GROUP_WINDOWS_ENABLED" \
             FAMILY_NOTEBOOK_PRODUCTION_ENABLED="$RELEASE_FAMILY_NOTEBOOK_ENABLED" \
+            OWNER_STAGING_TWO_DEVICE_ENABLED="${RELEASE_TWO_DEVICE_STAGING_ENABLED:-NO}" \
             SHARING_MEDIA_ENABLED="$RELEASE_SHARING_MEDIA_ENABLED" \
             PERSONAL_ARCHIVE_ENABLED="$RELEASE_SHARING_MEDIA_ENABLED" \
             MANAGED_PRESERVATION_ENABLED="$RELEASE_MANAGED_PRESERVATION_ENABLED" \
@@ -1601,7 +1613,7 @@ jobs:
             --export-options-plist "$RUNNER_TEMP/ExportOptions.plist"
           python3 "$PROJECT_DIRECTORY/ci/group-window-release.py" \
             --requested "${GROUP_WINDOWS_REQUESTED:-false}" \
-            --family-requested "${FAMILY_NOTEBOOK_STAGING_REQUESTED:-false}" --profile "$DISTRIBUTION_PROFILE" \
+            --family-requested "${FAMILY_NOTEBOOK_STAGING_REQUESTED:-false}" --two-device-requested "${TWO_DEVICE_STAGING_REQUESTED:-false}" --profile "$DISTRIBUTION_PROFILE" \
             --mode "$SHARING_EXPECTED_MODE" \
             --approval "${GROUP_WINDOWS_APPROVAL:-}" \
             --app-info-plist "$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app/Info.plist" \
@@ -1638,7 +1650,7 @@ jobs:
           fi
           python3 "$PROJECT_DIRECTORY/ci/group-window-release.py" \
             --requested "${GROUP_WINDOWS_REQUESTED:-false}" \
-            --family-requested "${FAMILY_NOTEBOOK_STAGING_REQUESTED:-false}" --profile "$DISTRIBUTION_PROFILE" \
+            --family-requested "${FAMILY_NOTEBOOK_STAGING_REQUESTED:-false}" --two-device-requested "${TWO_DEVICE_STAGING_REQUESTED:-false}" --profile "$DISTRIBUTION_PROFILE" \
             --mode "$SHARING_EXPECTED_MODE" \
             --approval "${GROUP_WINDOWS_APPROVAL:-}" \
             --ipa "$ipa_path" \

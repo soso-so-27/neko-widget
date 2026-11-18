@@ -7,6 +7,7 @@ from pathlib import Path
 
 ORIGIN = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
 KEY = "GroupWindowsEnabled"
+TWO_DEVICE_KEY = "OwnerStagingTwoDeviceEnabled"
 
 
 def resolve(requested: bool, mode: str, approval: str) -> str:
@@ -25,7 +26,22 @@ def resolve_family(requested: bool, profile: str, mode: str, group_expected: str
     return "YES" if requested else "NO"
 
 
-def verify_info(info: dict, expected: str, family_expected: str | None = None) -> None:
+def resolve_two_device(requested: bool, profile: str, mode: str, family_expected: str) -> str:
+    if type(requested) is not bool:
+        raise ValueError("Two-device exercise request must be an explicit boolean.")
+    if requested and (profile != "owner-internal" or mode != "media-staging" or family_expected != "YES"):
+        raise ValueError("Two-device exercise requires owner-internal, media-staging and approved family access.")
+    return "YES" if requested else "NO"
+
+
+def verify_info(info: dict, expected: str, family_expected: str | None = None,
+                two_device_expected: str | None = None) -> None:
+    if two_device_expected is not None:
+        if info.get(TWO_DEVICE_KEY, "NO") != two_device_expected:
+            raise ValueError("Compiled two-device exercise must match the explicit request.")
+        if two_device_expected == "YES" and (family_expected != "YES"
+                or info.get("OwnerInternalReportsDisabled") != "YES"):
+            raise ValueError("Two-device exercise requires family access with general reporting disabled.")
     if info.get(KEY) != expected:
         raise ValueError("Compiled GroupWindowsEnabled must match the explicit YES/NO request.")
     if family_expected is not None:
@@ -42,12 +58,13 @@ def verify_info(info: dict, expected: str, family_expected: str | None = None) -
                 raise ValueError("Group build requires sharing/media capability.")
 
 
-def verify_ipa(path: Path, expected: str, family_expected: str | None = None) -> None:
+def verify_ipa(path: Path, expected: str, family_expected: str | None = None,
+               two_device_expected: str | None = None) -> None:
     name = "Payload/NekoWidget.app/Info.plist"
     with zipfile.ZipFile(path) as archive:
         if archive.namelist().count(name) != 1 or archive.getinfo(name).file_size > 1024 * 1024:
             raise ValueError("IPA app Info.plist is missing, duplicate or oversized.")
-        verify_info(plistlib.loads(archive.read(name)), expected, family_expected)
+        verify_info(plistlib.loads(archive.read(name)), expected, family_expected, two_device_expected)
 
 
 def prepare_export(options: dict, expected: str) -> dict:
@@ -64,6 +81,7 @@ def verify_export(options: dict, expected: str) -> None:
 
 def validate_production(app: dict, share: dict, expected: dict) -> None:
     from production_candidate import match_info, require
+    require(app.get(TWO_DEVICE_KEY, "NO") == "NO", "Public candidate carries the two-device exercise")
     match_info(app, {"SharingReleaseMode": "SHARING_RELEASE_MODE", "GroupWindowsEnabled": "GROUP_WINDOWS_ENABLED",
                      "SharingAPIBaseURL": "SHARING_API_BASE_URL", "FamilyNotebookProductionEnabled": "FAMILY_NOTEBOOK_PRODUCTION_ENABLED"}, expected)
     match_info(share, {"SharingReleaseMode": "SHARING_RELEASE_MODE", "GroupWindowsEnabled": "GROUP_WINDOWS_ENABLED",
@@ -77,6 +95,7 @@ def main():
     parser.add_argument("--mode", required=True)
     parser.add_argument("--approval", default="")
     parser.add_argument("--family-requested", choices=("true", "false"), default="false")
+    parser.add_argument("--two-device-requested", choices=("true", "false"), default="false")
     parser.add_argument("--profile", default="")
     parser.add_argument("--env-file", type=Path)
     parser.add_argument("--app-info-plist", type=Path)
@@ -86,17 +105,19 @@ def main():
     args = parser.parse_args()
     expected = resolve(args.requested == "true", args.mode, args.approval)
     family_expected = resolve_family(args.family_requested == "true", args.profile, args.mode, expected)
+    two_device = resolve_two_device(args.two_device_requested == "true", args.profile, args.mode, family_expected)
     if args.env_file:
         with args.env_file.open("a") as output:
             output.write("RELEASE_GROUP_WINDOWS_ENABLED=" + expected + "\n")
             output.write("RELEASE_FAMILY_NOTEBOOK_ENABLED=" + family_expected + "\n")
+            output.write("RELEASE_TWO_DEVICE_STAGING_ENABLED=" + two_device + "\n")
     if args.app_info_plist:
-        verify_info(plistlib.loads(args.app_info_plist.read_bytes()), expected, family_expected)
+        verify_info(plistlib.loads(args.app_info_plist.read_bytes()), expected, family_expected, two_device)
     if args.export_options_plist:
         options = prepare_export(plistlib.loads(args.export_options_plist.read_bytes()), expected)
         args.export_options_plist.write_bytes(plistlib.dumps(options))
     if args.ipa:
-        verify_ipa(args.ipa, expected, family_expected)
+        verify_ipa(args.ipa, expected, family_expected, two_device)
     if args.verify_export_options_plist:
         verify_export(plistlib.loads(args.verify_export_options_plist.read_bytes()), expected)
     print("PASS group staging release boundary: " + expected + "; family: " + family_expected)

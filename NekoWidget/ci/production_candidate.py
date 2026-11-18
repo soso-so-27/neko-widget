@@ -112,6 +112,7 @@ def settings(contract, *, synthetic=False):
             "Official feed must use base /catalog.json; the app appends each channel path")
     result.update({"INTERNAL_PRESENTATION_CONDITION": "",
                    "OWNER_INTERNAL_REPORTS_DISABLED": "NO",
+                   "OWNER_STAGING_TWO_DEVICE_ENABLED": "NO",
                    "SHARE_EXTENSION_INFOPLIST_FILE": "NekoWidgetShareExtension/Info.plist",
                    "PHOTO_LIBRARY_USAGE_DESCRIPTION": "猫の写真を端末内で解析し、アルバムとウィジェットに表示します。共有では選んだ1枚を最大2,048pxに縮小し、位置情報を除いて暗号化して届けます。自動保存をオンにすると、記録に足した写真のコピーも暗号化して保存します。それ以外の写真は送りません。"})
     for name in result:
@@ -329,7 +330,7 @@ def main():
                 (owner_only == "true" and os.environ.get("PRODUCTION_CANDIDATE_OWNER_UPLOAD_APPROVED") == "YES"),
                 "Candidate upload requires protected owner-only approval")
         require(all(os.environ.get(k, "false") == "false" for k in
-                    ("INTERNAL_REPORTS_REQUESTED", "GROUP_WINDOWS_REQUESTED", "FAMILY_NOTEBOOK_STAGING_REQUESTED", "PRESERVATION_REQUESTED", "BILLING_REQUESTED")), "Candidate cannot use internal switches")
+                    ("INTERNAL_REPORTS_REQUESTED", "GROUP_WINDOWS_REQUESTED", "FAMILY_NOTEBOOK_STAGING_REQUESTED", "TWO_DEVICE_STAGING_REQUESTED", "PRESERVATION_REQUESTED", "BILLING_REQUESTED")), "Candidate cannot use internal switches")
         args.contract.write_text(json.dumps(contract), encoding="utf-8")
         with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
             destination = "owner-only internal TestFlight" if owner_only == "true" else "archive and export only"

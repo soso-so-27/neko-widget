@@ -215,6 +215,29 @@ struct SharingAPIConfiguration: Equatable, Sendable {
         from(info: Bundle.main.infoDictionary ?? [:])
     }
 
+    /// Only the signed owner staging build can opt in to the two-device exercise.
+    static var ownerStagingTwoDeviceEnabled: Bool {
+        ownerStagingTwoDeviceEnabled(info: Bundle.main.infoDictionary ?? [:])
+    }
+
+    static func ownerStagingTwoDeviceEnabled(info: [String: Any]) -> Bool {
+#if INTERNAL_PRESENTATION && !NEKO_SHARE_EXTENSION
+        let configuration = from(info: info)
+        return info["OwnerStagingTwoDeviceEnabled"] as? String == "YES"
+            && info["FamilyNotebookProductionEnabled"] as? String == "YES"
+            && info["GroupWindowsEnabled"] as? String == "YES"
+            && configuration.releaseMode == "media-staging"
+            && configuration.baseURL?.absoluteString == "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
+            && configuration.isGroupRuntimeAvailable
+            && configuration.hasOperationalSafetyConfiguration
+            && configuration.isOwnerInternalReportsDisabled
+            && !configuration.isInternalEncryptedReportEnabled
+            && !configuration.isProductionReportingEnabled
+#else
+        return false
+#endif
+    }
+
     static func from(info: [String: Any]) -> Self {
         let enabled = explicitFlag(info["SharingFeatureEnabled"])
         let mediaEnabled = explicitFlag(info["SharingMediaEnabled"])
