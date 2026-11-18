@@ -104,6 +104,24 @@ describe('owner-only staging trial',()=>{
     expect((await call(outside,photo+'/slots','PHOTO')).status).toBe(404);
     expect((await call(b,photo+'/slots','PHOTO',undefined,null)).status).toBe(404);
     expect((await call(b,familyRoot+'/'+crypto.randomUUID()+'/representative-photos/slots','PHOTO')).status).toBe(404);
+    const end=scope.expiresAtMs, longPhoto=f.env('PHOTO',{phaseUntilMs:end,recoveryDevice:null});
+    const scopedRead=async(p:Person,path:string,stage=longPhoto)=>send(f.mark(await signed(p,path)),stage);
+    expect(ok(await scopedRead(a,familyRoot+'/me')).family.familyId).toBe(scope.family);
+    expect((await scopedRead(a,photo+'/slots')).status).toBe(200);
+    expect((await scopedRead(b,photo+'/slots')).status).toBe(200);
+    expect((await scopedRead(outside,photo+'/slots')).status).toBe(404);
+    expect((await scopedRead(f.recovery,photo+'/slots')).status).toBe(404);
+    expect((await scopedRead(b,familyRoot+'/'+crypto.randomUUID()+'/representative-photos/slots')).status).toBe(404);
+    expect((await send(f.mark(await signed(b,photo+'/reports',{})),longPhoto)).status).toBe(404);
+    expect((await scopedRead(b,recoveryRoot+'catalog')).status).toBe(404);
+    for(const stage of [f.env('PHOTO',{phaseUntilMs:end}),f.env('PHOTO',{phaseUntilMs:end-1,recoveryDevice:null}),
+      f.env('PREPARE',{phaseUntilMs:end}),f.env('REPORT',{phaseUntilMs:end}),f.env('RECOVERY',{phaseUntilMs:end})]) {
+      expect((await scopedRead(a,familyRoot+'/me',stage)).status).toBe(503);
+    }
+    expect((await scopedRead(a,familyRoot+'/me',f.env('PHOTO',{phaseUntilMs:end+1,recoveryDevice:null}))).status).toBe(404);
+    expect((await scopedRead(a,familyRoot+'/me',f.env('PHOTO',{
+      phaseUntilMs:Date.now()-1,expiresAtMs:Date.now()-1,recoveryDevice:null,
+    }))).status).toBe(404);
     expect((await call(a,photo+'/reports','REPORT',{})).status).toBe(503);
     expect((await call(b,photo+'/reports','PHOTO',{})).status).toBe(404);
     const asset=crypto.randomUUID(),bytes=new Uint8Array(100).fill(7);

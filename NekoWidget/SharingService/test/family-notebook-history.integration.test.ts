@@ -364,18 +364,22 @@ describe('representative photo reservation and exchange',()=>{
  async function upload(p:Person,family:string,r:VerifiedFamilyCryptoRoster,slot=crypto.randomUUID(),revision=0){
   const bytes=new Uint8Array(100).fill(7),assetId=crypto.randomUUID();
   const rootPath=`${root}/${family}/representative-photos`;
-  const reservation={schemaVersion:1,operationId:crypto.randomUUID(),slotId:slot,assetId,expectedRevision:revision,expectedGeneration:1,keyEpoch:1,rosterHash:r.hash,ciphertextBytes:bytes.length,ciphertextSHA256:await sha256Base64url(bytes)};
+  // Foundation encodes UUID values in uppercase; request paths are lowercase.
+  const reservation={schemaVersion:1,operationId:crypto.randomUUID().toUpperCase(),slotId:slot.toUpperCase(),assetId:assetId.toUpperCase(),expectedRevision:revision,expectedGeneration:1,keyEpoch:1,rosterHash:r.hash,ciphertextBytes:bytes.length,ciphertextSHA256:await sha256Base64url(bytes)};
   ok(await invoke(p,rootPath+'/uploads',reservation,photos),201);
   const req=await signed(p,rootPath+'/uploads/'+assetId,bytes,undefined,'PUT');
   const reply=await route(req,photos);expect(reply.status).toBe(200);
-  const packet=await operation(p,r),commit={operationId:packet.operationId,expectedGeneration:1,expectedRevision:revision,payload:packet};
+  const packet=await operation(p,r),commit={operationId:packet.operationId.toUpperCase(),expectedGeneration:1,expectedRevision:revision,
+    payload:{...packet,familyId:packet.familyId.toUpperCase(),operationId:packet.operationId.toUpperCase()}};
   const objectKey=(await db.prepare('SELECT object_key FROM family_representative_assets WHERE asset_id=?').bind(assetId).first<{object_key:string}>())!.object_key;
   return {rootPath,reservation,assetId,slot,commit,objectKey};
  }
  it('requires explicit ON and authenticates download; commits one current photo and keeps reads compatible',async()=>{
   const p=await plusOwner(),f=await create(p),{r}=await initialize(p,f);
   expect((await invoke(p,`${root}/${f}/representative-photos/slots`)).data.error.code).toBe('photo_feature_disabled');
-  const a=await upload(p,f,r);const path=a.rootPath+'/uploads/'+a.assetId+'/commit';
+  // The iPhone derives a stable version-8 slot from the family and cat IDs.
+  const slot='01234567-89ab-8cde-8fab-0123456789ab';
+  const a=await upload(p,f,r,slot);const path=a.rootPath+'/uploads/'+a.assetId+'/commit';
   ok(await invoke(p,path,a.commit,photos));ok(await invoke(p,path,a.commit,photos));
   const download=await route(await signed(p,a.rootPath+'/assets/'+a.assetId),photos);
   expect(download.status).toBe(200);expect((await download.arrayBuffer()).byteLength).toBe(100);
@@ -383,6 +387,17 @@ describe('representative photo reservation and exchange',()=>{
   const state=ok(await invoke(p,`${root}/${f}/crypto/state`));expect(state.writeContract.requiredVersion).toBe(1);
   const next=await upload(p,f,r,a.slot,1);ok(await invoke(p,next.rootPath+'/uploads/'+next.assetId+'/commit',next.commit,photos));
   expect((await invoke(p,a.rootPath+'/assets/'+a.assetId,undefined,photos)).data.error.code).toBe('photo_retired');
+  const clear=await operation(p,r);
+  ok(await invoke(p,`${root}/${f}/crypto/operations`,{...body(clear,1,1,clear.operationId),
+    writeContract:{version:1,effects:[{kind:'clearPhoto',slotId:slot.toUpperCase()}]}},photos));
+  expect(ok(await invoke(p,a.rootPath+'/slots',undefined,photos)).slots).toEqual([
+    expect.objectContaining({slotId:slot,revision:3,assetId:null}),
+  ]);
+  expect((await invoke(p,a.rootPath+'/assets/'+next.assetId,undefined,photos)).data.error.code).toBe('photo_retired');
+  // The staging cron frees the retired objects before another upload to the slot.
+  await cleanupFamilyRepresentativePhotos(photos);
+  const resent=await upload(p,f,r,slot,3);
+  ok(await invoke(p,resent.rootPath+'/uploads/'+resent.assetId+'/commit',resent.commit,photos));
   expect((await db.prepare("SELECT COUNT(*) n FROM family_representative_assets WHERE family_id=? AND state='active'").bind(f).first())?.n).toBe(1);
  });
  it('does not publish when the expected slot revision changes before commit',async()=>{

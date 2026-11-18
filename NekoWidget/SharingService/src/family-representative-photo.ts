@@ -3,10 +3,11 @@ import {familyPhotoStopped} from './family-photo-report-operations';
 import {requireCurrentIdentity} from './group-identity-service';
 import {authenticateGroupRequest,groupAuthorizationStatements} from './group-auth';
 import {familyUUID,verifyFamilyOperation} from './family-notebook-crypto';
+import {familyPhotoSlotId} from './family-notebook-write-contract';
 import {state,checks,roster} from './family-notebook-history';
 import {gate,safeFailure} from './family-notebook-payer';
 import {sha256Base64url,base64urlDecode,base64urlEncode,randomBase64url} from './encoding';
-import {asObject,exactKeys,integerField,uuidField,binaryField} from './validation';
+import {asObject,exactKeys,integerField,binaryField} from './validation';
 import {parseJsonBody,requireEmptyBody} from './http';
 import {ApiError,jsonResponse} from './errors';
 import type {Env} from './env';
@@ -67,7 +68,7 @@ export async function familyRepresentativePhoto(request:Request,env:Env):Promise
   if(request.method==='POST'&&route==='uploads'&&!id){
    const b=parseJsonBody(request,bytes);exactKeys(b,['schemaVersion','operationId','slotId','assetId','expectedRevision','expectedGeneration','keyEpoch','rosterHash','ciphertextBytes','ciphertextSHA256']);
    if(b.schemaVersion!==1)fail('photo_protocol_upgrade_required');
-   const operation=uuidField(b,'operationId'),slot=uuidField(b,'slotId'),assetId=uuidField(b,'assetId');
+   const operation=familyUUID(b.operationId),slot=familyPhotoSlotId(b),assetId=familyUUID(b.assetId);
    const revision=integerField(b,'expectedRevision',0,1_000_000_000),epoch=integerField(b,'keyEpoch',1,1_000_000_000),generation=integerField(b,'expectedGeneration',1,1_000_000_000);
    binaryField(b,'rosterHash',32);binaryField(b,'ciphertextSHA256',32);const size=integerField(b,'ciphertextBytes',29,200028);
    const old=await env.DB.prepare('SELECT * FROM family_representative_assets WHERE family_id=? AND operation_id=?').bind(family,operation).first<Asset>();
@@ -88,7 +89,7 @@ export async function familyRepresentativePhoto(request:Request,env:Env):Promise
    // A committed retry remains a receipt read even after its upload lease or epoch ended.
    if(request.method==='POST'&&commit){
     const b=parseJsonBody(request,bytes);exactKeys(b,['operationId','expectedGeneration','expectedRevision','payload']);
-    const operationId=uuidField(b,'operationId');
+    const operationId=familyUUID(b.operationId);
     const old=await env.DB.prepare('SELECT request_hash,result FROM family_notebook_crypto_receipts WHERE actor_device_id=? AND operation_id=?').bind(actor.deviceId,operationId).first<{request_hash:string;result:string}>();
     if(old){if(old.request_hash!==actor.requestHash)fail('idempotency_conflict');await env.DB.batch(guards('read'));return jsonResponse(JSON.parse(old.result));}
    }
@@ -119,7 +120,7 @@ export async function familyRepresentativePhoto(request:Request,env:Env):Promise
    }
    if(request.method==='POST'&&commit){
     const b=parseJsonBody(request,bytes);exactKeys(b,['operationId','expectedGeneration','expectedRevision','payload']);
-    const operationId=uuidField(b,'operationId'),generation=integerField(b,'expectedGeneration',1,1_000_000_000),prior=integerField(b,'expectedRevision',0,1_000_000_000);
+    const operationId=familyUUID(b.operationId),generation=integerField(b,'expectedGeneration',1,1_000_000_000),prior=integerField(b,'expectedRevision',0,1_000_000_000);
     if(generation!==current.generation||prior!==a.revision-1)fail('revision_conflict');
     const r=await roster(env,family,current.epoch),packet=await verifyFamilyOperation(asObject(b.payload),r);
     if(packet.operationId.toLowerCase()!==operationId||packet.deviceId!==actor.deviceId||packet.personId!==actor.personId)fail('invalid_photo_payload',422);
