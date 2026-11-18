@@ -38,6 +38,9 @@ enum FamilyAutoCheckPolicy {
     static let requestsInterval: TimeInterval = 20
     static let notebookFullInterval: TimeInterval = 60
     static let toolFullInterval: TimeInterval = 30
+    /// 11/18: a notebook ended only by `family: null` is read again at most
+    /// this often (one directory read when the app comes to the front).
+    static let resumeProbeGap: TimeInterval = 60 * 60
 
     static var waitsOnOthers: TimeInterval { keyBackoff.last! }
     /// The app came to the front or a screen opened: not sooner than this

@@ -184,7 +184,7 @@ enum FamilyNotebookCatCareBridgeVerifier {
         _ = try reopened.edit(target: .init(familyCatID: cat, collection: .weight, recordID: remoteRecord, field: nil), value: nil, author: author)
         let deleted = try FamilyNotebookCatCareBridge.apply(reopened.snapshot(), to: recovered)
         try require(deleted.cats[1].activeWeights.isEmpty && !deleted.cats[1].weights.isEmpty, "deletion must keep the underlying record")
-        _ = try reopened.endSharing()
+        _ = try reopened.endSharing(reason: .left)
         try FamilyNotebookMigrationVerifier.rejects("departed participation must not create a new shared outbox") {
             try reopened.applyLocalChanges(delta, author: author)
         }

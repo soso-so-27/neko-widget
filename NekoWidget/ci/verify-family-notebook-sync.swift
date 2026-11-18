@@ -164,7 +164,7 @@ private enum VerifyFamilyNotebookSync {
         catch FamilyNotebookCryptoError.untrusted { }
         try check(try tampered.snapshot().operations.isEmpty, "forged page never partially merges")
 
-        _ = try local.endSharing()
+        _ = try local.endSharing(reason: .left)
         let requestCount = await relay.count()
         do { _ = try await sync.synchronize(current: current, history: [:], keys: [1: key]); throw Failure.check("departed notebook sent traffic") }
         catch FamilyNotebookError.sharingEnded { }

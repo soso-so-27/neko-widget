@@ -394,7 +394,7 @@ enum FamilyNotebookCatLinkVerifier {
         var care = CatCareState(deviceID: "joiner-device", now: then)
         care = try FamilyNotebookCatCareBridge.apply(try store.snapshot(), to: care)
         try require(FamilyNotebookCatLink.unlinked(try store.snapshot(), care: care, name: { _ in "ミケ" }).count == 1, "in the family, its page shows")
-        let left = try store.endSharing()
+        let left = try store.endSharing(reason: .left)
         try require(FamilyNotebookCatLink.unlinked(left, care: care, name: { _ in "ミケ" }).isEmpty,
                     "after leaving, no page of another home's cat stays")
         try require(care.cats.contains { $0.catID == tool && $0.deletedAt == nil } && left.operations.count == 1,

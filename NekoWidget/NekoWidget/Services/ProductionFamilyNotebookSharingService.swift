@@ -39,7 +39,7 @@ final class FamilyNotebookSession {
         }
         // A new admission is a new local participation. Never reopen a departed
         // copy's unsent outbox, overwrite it, or delete its records.
-        if let notebook { _ = try notebook.endSharing() }
+        if let notebook { _ = try notebook.endSharing(reason: .superseded) }
         let next = Participation(familyID: family, admittedGeneration: admittedGeneration), store = try open(next)
         guard try !store.snapshot().sharingEnded else { throw FamilySharingError.removedOrDissolved }
         if participation?.familyID == family, let notebook {
@@ -53,10 +53,61 @@ final class FamilyNotebookSession {
         participation = next; notebook = store
         return store
     }
-    func confirmedOutsideFamily() throws {
-        if let notebook { _ = try notebook.endSharing() }
-        // Keep the pointer and full copy for the reader. It is no longer an
-        // active membership, and synchronize refuses its terminal outbox.
+    /// 11/18 (TestFlight 389): how far apart two `family: null` answers must be
+    /// before this iPhone stops sharing. One answer is not proof: a staging
+    /// gate answered it to a member still in the signed roster, and the
+    /// notebook ended for good. Removal by the payer reaches the removed
+    /// person only as this answer (no signed roster says it), so it still
+    /// ends the copy, once it has stayed so across this gap.
+    static let absenceConfirmationGap: TimeInterval = 60 * 60
+    private struct Absence: Codable { let familyID: UUID; let admittedGeneration: Int64; let firstSeen: Int64 }
+    private let absenceAccount = "op:fnb-directory-absence"
+
+    /// The directory answered `family: null`. Returns whether this iPhone is
+    /// now outside the family (no active copy, or the absence was confirmed
+    /// and the copy ended); false: not proven yet, keep everything and check
+    /// again on the normal schedule.
+    func observedOutsideFamily(now: Date) throws -> Bool {
+        guard let notebook, let participation, try !notebook.snapshot().sharingEnded else {
+            try forgetAbsence(); return true
+        }
+        let seconds = Int64(now.timeIntervalSince1970.rounded(.down))
+        if let bytes = try journal.read(absenceAccount),
+           let saved = try? GroupWire.decode(Absence.self, bytes),
+           saved.familyID == participation.familyID, saved.admittedGeneration == participation.admittedGeneration {
+            guard seconds - saved.firstSeen >= Int64(Self.absenceConfirmationGap) else { return false }
+            // Keep the pointer and full copy for the reader. It is no longer an
+            // active membership, and synchronize refuses its terminal outbox.
+            _ = try notebook.endSharing(reason: .absentFromDirectory)
+            try journal.remove(absenceAccount)
+            return true
+        }
+        try journal.write(GroupWire.encode(Absence(familyID: participation.familyID,
+            admittedGeneration: participation.admittedGeneration, firstSeen: seconds)), account: absenceAccount, createOnly: false)
+        return false
+    }
+    /// The directory lists the family again with this person in it.
+    func observedInFamily() throws { try forgetAbsence() }
+    private func forgetAbsence() throws {
+        if try journal.read(absenceAccount) != nil { try journal.remove(absenceAccount) }
+    }
+    /// The local copy of this participation ended without proof (see
+    /// `FamilyNotebookEndReason.mayResume`), so a verified roster may reopen it.
+    func mayResume(family: UUID, admittedGeneration: Int64) throws -> Bool {
+        guard matchesParticipation(family: family, admittedGeneration: admittedGeneration), let notebook else { return false }
+        let snapshot = try notebook.snapshot()
+        return snapshot.sharingEnded && FamilyNotebookEndReason.mayResume(snapshot.endedReason)
+    }
+    /// Reopen it once `roster` (verified against this iPhone's pin) lists this
+    /// person and this device. Queued sends do not start again by themselves.
+    func resume(family: UUID, admittedGeneration: Int64, roster: VerifiedFamilyNotebookRoster) throws {
+        guard try mayResume(family: family, admittedGeneration: admittedGeneration), let notebook,
+              roster.roster.familyID == family,
+              let own = roster.roster.device(try identity.deviceID),
+              own.person.personID == identity.personID,
+              own.person.identityPublicKey == identity.personPublicKey else { throw FamilySharingError.removedOrDissolved }
+        _ = try notebook.resumeSharingAfterUnconfirmedEnd()
+        try observedInFamily()
     }
     func matchesParticipation(family: UUID, admittedGeneration: Int64) -> Bool {
         participation?.familyID == family && participation?.admittedGeneration == admittedGeneration
@@ -192,8 +243,11 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
             let directory = try await context.admission.directory()
             lastJoinResults = directory.joinRequests ?? []
             guard let family = directory.family else {
+                // 11/18: one `family: null` is not proof (observedOutsideFamily).
+                // Until it is, nothing changes here: the copy, the screens and
+                // what waits to be sent stay, and the next pass asks again.
+                guard try context.observedOutsideFamily(now: now()) else { throw FamilySharingError.serviceUnavailable }
                 currentFamilyID = nil; lastMembers = []; photoMaterial = nil
-                try context.confirmedOutsideFamily()
                 return directory.pendingRequests.isEmpty ? .notInFamily : .pendingApproval
             }
             // Both reads use fresh signed requests. Validate the combined generation
@@ -206,13 +260,28 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
                   own.identityPublicKey == context.identity.personPublicKey else { throw FamilyNotebookTransportError.invalidResponse }
             let state = try await payerRead.validated(family: family.familyID.uuidString.lowercased(),
                 person: context.identity.personID, minimumGeneration: members.generation)
+            try context.observedInFamily()
+            // 11/18: a copy that ended only on `family: null` comes back when the
+            // same family, at this admission, lists this person and device in a
+            // roster that verifies against this iPhone's pin. Leaving, ending
+            // the family and a newer admission stay final.
+            var resumedMaterial: FamilyNotebookKeyMaterial?
+            if try context.mayResume(family: family.familyID, admittedGeneration: own.admittedGeneration) {
+                guard let material = try await context.keys.prepare(family: family.familyID) else {
+                    throw FamilySharingError.removedOrDissolved
+                }
+                try context.resume(family: family.familyID, admittedGeneration: own.admittedGeneration, roster: material.current)
+                photoRetries = [:]
+                resumedMaterial = material
+            }
             let store = try context.activate(family: family.familyID, admittedGeneration: own.admittedGeneration)
             currentFamilyID = family.familyID; lastMembers = members.members
             memberNames = try await context.admission.knownNames(family: family.familyID)
             // Paused sharing still has a real membership and a retained local
             // notebook. Do not turn a write-gate rejection into an endless spinner.
             if state.sharingStatus == .paused { return .inFamily(.init(role: state.role == .payer ? .payer : .member)) }
-            let prepared = try await context.keys.prepare(family: family.familyID)
+            let prepared: FamilyNotebookKeyMaterial?
+            if let resumedMaterial { prepared = resumedMaterial } else { prepared = try await context.keys.prepare(family: family.familyID) }
             lastKeyObservation = await context.keys.observation
             guard let material = prepared else { needsAnotherPass = true; return .waitingForKeys }
             guard material.ready, !material.moreWork else { needsAnotherPass = true; return .waitingForKeys }
