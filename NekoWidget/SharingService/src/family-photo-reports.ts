@@ -19,14 +19,16 @@ function fail(code:string,status=409):never {throw new ApiError(status,code,'The
 const reply=(r:Report)=>jsonResponse({schemaVersion:1,reportId:r.report_id,familyId:r.family_id,
  assetId:r.asset_id,state:r.state,committedAt:r.committed_at,contentExpiresAt:r.content_expires_at});
 
+export function familyPhotoReportGateEnabled(env: Env): boolean {
+ return env.FAMILY_REPRESENTATIVE_PHOTO_RUNTIME_ENABLED==='YES' && env.GROUP_REPORT_RUNTIME_ENABLED==='YES'
+  && env.GROUP_MODERATION_RUNTIME_ENABLED==='YES' && env.REPORT_INGESTION_RUNTIME_ENABLED==='YES';
+}
 /** One consented encrypted envelope, with an immutable operation ID across retries.
  * Historical delivery authorizes reporting after leaving; it never authorizes
  * retrieving family content or passing a family key to the operator. */
 export async function familyPhotoReportAPI(request:Request,env:Env,familyValue:string):Promise<Response>{
  if(request.method!=='POST')fail('method_not_allowed',405);
- if(env.FAMILY_REPRESENTATIVE_PHOTO_RUNTIME_ENABLED!=='YES'||env.GROUP_REPORT_RUNTIME_ENABLED!=='YES'
-  ||env.GROUP_MODERATION_RUNTIME_ENABLED!=='YES'||env.REPORT_INGESTION_RUNTIME_ENABLED!=='YES'
-  ||!env.MODERATION_MEDIA)fail('family_photo_reports_disabled',503);
+ if(!familyPhotoReportGateEnabled(env)||!env.MODERATION_MEDIA)fail('family_photo_reports_disabled',503);
  const family=familyUUID(familyValue),{actor,body:bytes}=await authenticateGroupRequest(request,env,1_450_000);
  const runtime=await loadRuntimeGate(env);
  if(!reportIngestionGateOpen(runtime))fail('report_ingestion_runtime_disabled',503);

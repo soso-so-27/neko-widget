@@ -41,10 +41,23 @@ async function fixture(){
  return {family,asset,report,body,path,reporter,author,dispatch,issue,prove,local};
 }
 describe('family photo reports and operator boundary',()=>{
- it('lists only the reporting person’s retained replies, independent of membership and intake', async () => {
+ it('closes replies before authentication when the representative photo report gates close', async () => {
+  const path = 'https://group.invalid/v3/family-notebooks/report-replies';
+  const expectClosed = async (gates: typeof settings) => {
+   const response = await send(new Request(path), gates);
+   expect(response.status).toBe(503);
+   expect(response.data).toMatchObject({error:{code:'family_photo_replies_disabled'}});
+  };
+  for (const gate of ['FAMILY_NOTEBOOK_API_RUNTIME_ENABLED', 'FAMILY_REPRESENTATIVE_PHOTO_RUNTIME_ENABLED',
+    'GROUP_REPORT_RUNTIME_ENABLED', 'GROUP_MODERATION_RUNTIME_ENABLED', 'REPORT_INGESTION_RUNTIME_ENABLED']) {
+   await expectClosed({...settings,[gate]:'NO'});
+  }
+  await db.prepare('UPDATE personal_staging_runtime_gate SET generation=generation+1,report_ingestion_enabled=0,updated_at=unixepoch() WHERE singleton=1').run();
+  await expectClosed(settings);
+ });
+ it('lists only the reporting person’s retained replies, independent of membership', async () => {
   const f = await fixture(), path = '/v3/family-notebooks/report-replies';
-  const reading = {...settings, FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED:'NO', FAMILY_REPRESENTATIVE_PHOTO_RUNTIME_ENABLED:'NO',
-    GROUP_REPORT_RUNTIME_ENABLED:'NO', REPORT_INGESTION_RUNTIME_ENABLED:'NO'};
+  const reading = {...settings, FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED:'NO'};
   const read = async (p = f.reporter) => send(await signed(p, path), reading);
   const record = {receiptNumber:f.report.reportId, receivedAt:f.report.committedAt, status:'received'};
   // Receipt remains available to the same person on a registered replacement
