@@ -431,6 +431,14 @@ struct CatCareDetailView: View {
         // 11/7: the photo and name lead the page, so whose page it is shows first.
         if case let .profile(profile) = subject {
             profileHeading(profile)
+        } else if showsFamilyPhoto, let cat = familyPhotoCatID, familyPhotos.lines[cat] != nil {
+            // A family cat's own page has no heading; nothing is delivered
+            // from it, so this shows only in a review capture's held line.
+            Section {
+                FamilyPhotoDeliveryStatus(cat: cat, keyPhoto: nil)
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
+            }
         }
         if otherProfiles.count > 1 {
             Section {
@@ -819,6 +827,9 @@ struct CatCareDetailView: View {
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .accessibilityIdentifier("cat-care-summary")
+                }
+                if let cat = familyPhotoCatID {
+                    FamilyPhotoDeliveryStatus(cat: cat, keyPhoto: ownKeyPhoto)
                 }
                 if nameSaveFailed {
                     Text("名前を保存できませんでした。もう一度お試しください。")
@@ -2790,6 +2801,8 @@ protocol FamilyRepresentativePhotoBackend: AnyObject {
     func author(of cat: UUID) -> String?
     func load(_ cats: [UUID]) async throws -> [UUID: FamilyNotebookPhotoLoad]
     func deliver(_ cat: UUID, source: Data) async throws
+    /// An encrypted delivery waits for 「もう一度」 (it was reserved before it stopped).
+    func hasPending(_ cat: UUID) -> Bool
     func retry(_ cat: UUID) async throws
     func clear(_ cat: UUID) async throws
     func report(assetID: UUID, reason: GroupReportReason) async throws -> String
@@ -2811,7 +2824,8 @@ final class FamilyRepresentativePhotos: ObservableObject {
         let image: UIImage
         static func == (lhs: Shown, rhs: Shown) -> Bool { lhs.assetID == rhs.assetID && lhs.authorID == rhs.authorID }
     }
-    /// The small line under the item in 「…」 (only while delivering, or when it failed).
+    /// The small line under the cat's name on 「この子のこと」 (only while
+    /// delivering, or when it did not arrive; FamilyPhotoDeliveryStatus).
     enum Line: Equatable { case sending, failed, limited }
 
     /// By the family cat's ID.
@@ -2832,6 +2846,8 @@ final class FamilyRepresentativePhotos: ObservableObject {
 #if DEBUG
     /// Review captures only (AppStoreScreenshotFixture.CatHomeStress).
     func installFixture(_ backend: any FamilyRepresentativePhotoBackend) { self.backend = backend }
+    /// Review captures only: the page's line held as it is (`--cat-home-stress-family-photo-line`).
+    func installFixtureLine(_ line: Line, for cat: UUID) { lines[cat] = line }
 #endif
 
     func name(of personID: String) -> String {
@@ -2874,28 +2890,40 @@ final class FamilyRepresentativePhotos: ObservableObject {
     /// After 「家族に写真を届けますか」→［届ける］ only.
     func deliver(_ cat: UUID, source: @escaping @MainActor () async -> Data?) async {
         guard let backend, lines[cat] != .sending else { return }
+        // 「届けています」 on the page at once, before the photo is read.
+        lines[cat] = .sending
+        await SharingPersonAction.run { await send(cat, backend: backend, source: source) }
+    }
+
+    /// 「もう一度」: the same encrypted delivery when one waits; when it
+    /// stopped before that (the photo, the keys, the first call), the whole
+    /// delivery again from the photo. 「届けています」 at once either way.
+    func retry(_ cat: UUID, source: @escaping @MainActor () async -> Data?) async {
+        guard let backend, lines[cat] != .sending else { return }
+        lines[cat] = .sending
         await SharingPersonAction.run {
-            lines[cat] = .sending
-            guard let data = await source() else {
-                FamilyPhotoDeliveryDiagnostics.note(.init(stage: .sourceMissing))
-                lines[cat] = .failed; return
+            if backend.hasPending(cat) {
+                do { try await backend.retry(cat); lines[cat] = nil; return }
+                catch FamilyNotebookPhotoFailure.limited { lines[cat] = .limited; return }
+                catch {
+                    // Still waiting: it failed again. Gone: start over below.
+                    if backend.hasPending(cat) { lines[cat] = .failed; return }
+                }
             }
-            FamilyPhotoDeliveryDiagnostics.note(.init(stage: .sourceLoaded))
-            do { try await backend.deliver(cat, source: data); lines[cat] = nil }
-            catch FamilyNotebookPhotoFailure.limited { lines[cat] = .limited }
-            catch { lines[cat] = .failed }
+            await send(cat, backend: backend, source: source)
         }
     }
 
-    /// 「もう一度」: the same delivery again.
-    func retry(_ cat: UUID) async {
-        guard let backend, lines[cat] != .sending else { return }
-        await SharingPersonAction.run {
-            lines[cat] = .sending
-            do { try await backend.retry(cat); lines[cat] = nil }
-            catch FamilyNotebookPhotoFailure.limited { lines[cat] = .limited }
-            catch { lines[cat] = .failed }
+    private func send(_ cat: UUID, backend: any FamilyRepresentativePhotoBackend,
+                      source: @MainActor () async -> Data?) async {
+        guard let data = await source() else {
+            FamilyPhotoDeliveryDiagnostics.note(.init(stage: .sourceMissing))
+            lines[cat] = .failed; return
         }
+        FamilyPhotoDeliveryDiagnostics.note(.init(stage: .sourceLoaded))
+        do { try await backend.deliver(cat, source: data); lines[cat] = nil }
+        catch FamilyNotebookPhotoFailure.limited { lines[cat] = .limited }
+        catch { lines[cat] = .failed }
     }
 
     func clear(_ cat: UUID) async {
@@ -2944,6 +2972,16 @@ final class FamilyRepresentativePhotos: ObservableObject {
         return await Task.detached(priority: .userInitiated) {
             PhotoImageLoader().image(localIdentifier: localIdentifier, targetSize: CGSize(width: 2048, height: 2048))?
                 .jpegData(compressionQuality: 0.9)
+        }.value
+    }
+
+    /// The same photo, smaller, for 「家族に写真を届けますか」.
+    static func keyPhotoPreview(_ localIdentifier: String) async -> UIImage? {
+#if DEBUG
+        if let image = AppStoreScreenshotFixture.CatHomeStress.image(for: localIdentifier) { return image }
+#endif
+        return await Task.detached(priority: .userInitiated) {
+            PhotoImageLoader().image(localIdentifier: localIdentifier, targetSize: CGSize(width: 800, height: 800))
         }.value
     }
 }
@@ -2997,22 +3035,12 @@ struct FamilyPhotoMenuItems: View {
     @ViewBuilder private var deliverItems: some View {
         let line = photos.lines[cat]
         let delivered = photos.isMine(photos.backend?.author(of: cat))
-        Button { question = .deliver } label: {
-            Text(delivered ? "家族に届けた写真を替える" : "家族に写真を届ける")
-            switch line {
-            case .sending: Text("届けています")
-            case .failed: Text("届けられませんでした。")
-            case .limited: Text("家族の手帳の写真が上限です")
-            case nil: EmptyView()
-            }
-            Image(systemName: "paperplane")
+        // How it is going shows on the page (FamilyPhotoDeliveryStatus), not here.
+        Button(delivered ? "家族に届けた写真を替える" : "家族に写真を届ける", systemImage: "paperplane") {
+            question = .deliver
         }
         .disabled(line == .sending)
         .accessibilityIdentifier("family-photo-deliver")
-        if line == .failed {
-            Button("もう一度", systemImage: "arrow.clockwise") { Task { await photos.retry(cat) } }
-                .accessibilityIdentifier("family-photo-retry")
-        }
         if delivered {
             Button("家族に届けた写真を消す", systemImage: "xmark.circle", role: .destructive) {
                 Task { await photos.clear(cat) }
@@ -3058,12 +3086,11 @@ struct FamilyPhotoDialogs: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .alert("家族に写真を届けますか", isPresented: asksDeliver) {
-                Button("届ける") { deliver() }
-                    .accessibilityIdentifier("family-photo-deliver-confirm")
-                Button("やめる", role: .cancel) {}
-            } message: {
-                Text("この写真を、家族の手帳のみんなに見せます。")
+            // 11/18: the question shows the photo it sends.
+            .sheet(isPresented: asksDeliver) {
+                if let keyPhoto {
+                    FamilyPhotoDeliverSheet(keyPhoto: keyPhoto) { deliver() }
+                }
             }
             .confirmationDialog(hideTitle, isPresented: asksHide, titleVisibility: .visible) {
                 Button("表示しない", role: .destructive) { hide() }
@@ -3099,6 +3126,119 @@ struct FamilyPhotoDialogs: ViewModifier {
     private func hide() {
         guard let personID = hiddenPerson else { return }
         Task { _ = await photos.hide(personID) }
+    }
+}
+
+/// 「家族に写真を届けますか」 with the photo it sends (this iPhone's key photo
+/// of the cat), large enough to see which one.
+struct FamilyPhotoDeliverSheet: View {
+    let keyPhoto: String
+    let deliver: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var preview: UIImage?
+    @State private var loaded = false
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Group {
+                if let preview {
+                    Image(uiImage: preview)
+                        .resizable()
+                        .scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 13))
+                        .accessibilityLabel("届ける写真")
+                } else if loaded {
+                    Image(systemName: "photo").font(.largeTitle).foregroundStyle(.secondary)
+                } else {
+                    ProgressView()
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 120, maxHeight: 240)
+            .accessibilityIdentifier("family-photo-deliver-preview")
+            VStack(spacing: 6) {
+                Text("家族に写真を届けますか")
+                    .font(.headline)
+                Text("この写真を、家族の手帳のみんなに見せます。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .multilineTextAlignment(.center)
+            VStack(spacing: 4) {
+                Button {
+                    dismiss()
+                    deliver()
+                } label: {
+                    Text("届ける").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .accessibilityIdentifier("family-photo-deliver-confirm")
+                Button("やめる") { dismiss() }
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .accessibilityIdentifier("family-photo-deliver-cancel")
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 24)
+        .padding(.bottom, 8)
+        .presentationDetents([.medium])
+        .presentationDragIndicator(.visible)
+        .task {
+            preview = await FamilyRepresentativePhotos.keyPhotoPreview(keyPhoto)
+            loaded = true
+        }
+    }
+}
+
+/// 「家族に写真を届ける」 on the page, under the cat's name: only while it is
+/// on its way or did not arrive. Nothing when it arrived or was never sent.
+@MainActor
+struct FamilyPhotoDeliveryStatus: View {
+    let cat: UUID
+    /// The key photo 「もう一度」 reads again when nothing is waiting.
+    let keyPhoto: String?
+    @ObservedObject private var photos = FamilyRepresentativePhotos.shared
+
+    var body: some View {
+        Group {
+            switch photos.lines[cat] {
+            case .sending:
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("届けています")
+                }
+                .foregroundStyle(.secondary)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("family-photo-status-sending")
+            case .failed:
+                HStack(spacing: 8) {
+                    Text("届けられませんでした")
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("family-photo-status-failed")
+                    Button("もう一度") { retry() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityIdentifier("family-photo-retry")
+                }
+            case .limited:
+                Text("家族の手帳の写真が上限です")
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("family-photo-status-limited")
+            case nil:
+                EmptyView()
+            }
+        }
+        .font(.footnote)
+    }
+
+    private func retry() {
+        let keyPhoto = keyPhoto
+        Task {
+            await photos.retry(cat) {
+                guard let keyPhoto else { return nil }
+                return await FamilyRepresentativePhotos.keyPhotoJPEG(keyPhoto)
+            }
+        }
     }
 }
 

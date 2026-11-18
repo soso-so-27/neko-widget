@@ -1763,6 +1763,14 @@ extension AppStoreScreenshotFixture {
                    let first = FamilyNotebookPrototype.shared.unlinkedFamilyCats.first,
                    let fixture = try? await FamilyRepresentativePhotoFixture.make(cat: first.id) {
                     FamilyRepresentativePhotos.shared.installFixture(fixture)
+                    // 11/18: 「届けています」/「届けられませんでした」/上限, held on the page.
+                    let line: FamilyRepresentativePhotos.Line? = switch value("--cat-home-stress-family-photo-line") {
+                    case "sending": .sending
+                    case "failed": .failed
+                    case "limited": .limited
+                    default: nil
+                    }
+                    if let line { FamilyRepresentativePhotos.shared.installFixtureLine(line, for: first.id) }
                 }
             }
             guard isRequested, rows != "none" else { return }

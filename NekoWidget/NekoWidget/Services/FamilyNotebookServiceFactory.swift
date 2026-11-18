@@ -102,6 +102,7 @@ final class ProductionFamilyRepresentativePhotoBackend: FamilyRepresentativePhot
         try await service.representativePhotos(familyCatIDs: cats)
     }
     func deliver(_ cat: UUID, source: Data) async throws { try await service.deliverRepresentativePhoto(familyCatID: cat, source: source) }
+    func hasPending(_ cat: UUID) -> Bool { service.hasPendingRepresentativePhoto(familyCatID: cat) }
     func retry(_ cat: UUID) async throws { try await service.retryRepresentativePhoto(familyCatID: cat) }
     func clear(_ cat: UUID) async throws {
         try service.clearRepresentativePhoto(familyCatID: cat)
@@ -210,6 +211,8 @@ final class FamilyRepresentativePhotoFixture: FamilyRepresentativePhotoBackend {
         try await client.deliver(pending)
         delivered[cat] = pending
     }
+    /// Nothing waits here: 「もう一度」 delivers from the photo again.
+    func hasPending(_ cat: UUID) -> Bool { false }
     func retry(_ cat: UUID) async throws {
         guard let pending = delivered[cat] else { throw FamilyNotebookPhotoFailure.failed }
         try await client.deliver(pending)
