@@ -31,6 +31,7 @@ async function fixture() {
     startsAtMs:now-1000,expiresAtMs});
   const digest=Array.from(await sha256(new TextEncoder().encode(billingAdmission)),byte=>byte.toString(16).padStart(2,'0')).join('');
   const privateGateway={fetch:async(request:Request)=>{
+    expect(request.headers.has('neko-owner-trial-proof')).toBe(false);
     forwarded.push(new URL(request.url).pathname);
     return Response.json({status:'ok',protocolVersion:1},{headers:{'neko-runtime-billing-owner-admission':'READY',
       'neko-runtime-billing-owner-policy-sha256':digest,

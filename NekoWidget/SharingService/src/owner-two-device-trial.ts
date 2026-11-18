@@ -119,10 +119,12 @@ export async function ownerTrialRequest(request: Request, env: Env): Promise<Env
   if (billingPaths.get(path) === request.method) {
     if (!env.PRIVATE_BILLING_GATEWAY) throw trialDenied();
     const billing = await verifiedBillingScope(env, scope, now);
-    const untouched = request.clone();
     const body = await readBody(request,request.method==='GET'?0:131_072);
     await authenticateBillingSignedRequest(request,billing,body);
-    return env.PRIVATE_BILLING_GATEWAY.fetch(untouched);
+    const headers = new Headers(request.headers);
+    headers.delete(proofHeader);
+    return env.PRIVATE_BILLING_GATEWAY.fetch(new Request(request.url,{method:request.method,headers,
+      ...(body.length?{body:body.slice().buffer}:{})}));
   }
   if (scope.phase === 'OFF' || scope.phaseUntilMs <= now || scope.phaseUntilMs - now > 3_600_000) {
     if (path === notebooks+'/me' || path === group+'/list'
