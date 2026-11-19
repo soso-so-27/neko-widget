@@ -173,7 +173,9 @@ class PublicPolicySiteTests(unittest.TestCase):
         year, month, day = (int(part) for part in next(iter(revisions.values())).split("-"))
         visible_revision = f"最終更新日：{year}年{month}月{day}日"
         for page in PAGES[1:]:
-            expected = "最終更新日：2026年11月11日" if page.parent.name in ("privacy", "support", "guide") else visible_revision
+            # 11/19: the privacy page describes the family notebook's representative photo.
+            pinned = {"privacy": "最終更新日：2026年11月19日", "support": "最終更新日：2026年11月11日", "guide": "最終更新日：2026年11月11日"}
+            expected = pinned.get(page.parent.name, visible_revision)
             self.assertIn(expected, "".join(self.parsed(page).text), page)
 
     def test_private_window_capability_boundary_is_consistent(self):
