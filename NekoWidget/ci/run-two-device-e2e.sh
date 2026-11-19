@@ -13,8 +13,10 @@ mkdir -p "$build"
 
 # The app's own sources: the family notebook's (run-family-notebook-network-checks.sh)
 # with the usual client and the recovery builder (verify-group-adapter /
-# run-group-recovery-client-checks.sh). INTERNAL_PRESENTATION as those two
-# macOS compiles use it; no branch it selects is on the paths driven here.
+# run-group-recovery-client-checks.sh) and the cat bridge (run-family-notebook-checks.sh).
+# No -D INTERNAL_PRESENTATION or DEBUG: the App Store build's branches. (The
+# owner-trial narrowing of recovery candidates is in GroupRecoveryLiveModel.connected(),
+# iOS only, and not compiled here either way.)
 sources=(
   Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift
   NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupInvitationLink.swift NekoWidget/Services/GroupWindowStorage.swift
@@ -36,9 +38,14 @@ sources=(
   NekoWidget/Services/GroupRecoveryClient.swift NekoWidget/Views/GroupRecoveryPresentation.swift
   NekoWidget/Services/GroupRecoveryAdapter.swift NekoWidget/Services/GroupRecoveryLiveSession.swift
   NekoWidget/Services/RootSyncStore.swift
+  NekoWidget/Services/FamilyNotebookRecordOrigin.swift NekoWidget/Services/CatCareCore.swift
+  NekoWidget/Services/CareHandoffPlan.swift NekoWidget/Services/PhotoMemoryNoteStore.swift
+  NekoWidget/Services/VeterinaryVisitStore.swift NekoWidget/Services/FamilyNotebookMigration.swift
+  NekoWidget/Services/FamilyNotebookCatCareBridge.swift NekoWidget/Services/FamilyNotebookToolBridge.swift
+  NekoWidget/Services/FamilyNotebookCatLink.swift
   ci/two-device/Harness.swift ci/two-device/Scenarios.swift
 )
 echo "Compiling the two-device driver (${#sources[@]} files)" >&2
-xcrun --sdk macosx swiftc -D INTERNAL_PRESENTATION -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
   "${sources[@]}" -o "$build/two-device-e2e"
 "$build/two-device-e2e"

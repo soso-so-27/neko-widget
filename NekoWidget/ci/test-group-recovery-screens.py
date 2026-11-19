@@ -257,7 +257,11 @@ class GroupRecoveryScreenTests(unittest.TestCase):
         self.assertIn("builder.notebook = { context in GroupRecoveryLiveModel.notebookSteps(", code)
         steps = code.split("static func notebookSteps(", 1)[1].split("static func connected()", 1)[0]
         # The link is written after any registration, then the notebook restarts.
-        self.assertLess(steps.index("client.familyNotebookIdentity()"), steps.index("FamilyNotebookIdentityChoice.linkAccount,"))
+        self.assertIn("FamilyNotebookIdentityChoice.confirmLink(", steps)
+        self.assertIn("client.familyNotebookIdentity()", steps)
+        keys = (ROOT / "NekoWidget/Services/FamilyNotebookKeyCoordinator.swift").read_text(encoding="utf-8")
+        confirm = keys.split("static func confirmLink(", 1)[1].split("\n    }\n", 1)[0]
+        self.assertLess(confirm.index("try await register()"), confirm.index("account: linkAccount"))
         self.assertIn("restartSession()", steps)
         # 11/19 (TestFlight 392): ready only from a read of the recovered
         # identity that finished now; the state before the switch is not kept.

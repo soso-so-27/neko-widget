@@ -1,22 +1,22 @@
 import Foundation
 
-// The five two-device scenarios. Each one makes its own family with fresh
+// The six two-device scenarios. Each one makes its own family with fresh
 // synthetic people, so a failure in one does not leave state for the next.
 //
-// Not driven anywhere here (they need UIKit, a singleton or a route the
-// local Worker does not offer); each scenario's PASS line names its gap:
+// Not driven anywhere here (UIKit, a singleton, PhotoKit or Apple's servers);
+// each scenario's PASS line names its gap:
 // - FamilyNotebookSharing.shared / FamilyNotebookAutoCheck.shared /
-//   FamilyRepresentativePhotos.shared (UIKit, UserDefaults.standard):
-//   reads are driven as their passes call the service, one at a time.
-// - The recovery catalog (POST /v3/group-recovery/catalog): the Worker
-//   refuses it unless ENVIRONMENT is production or staging, and the local
-//   one runs as `local`. The catalog's answer (scope, person, family) is
-//   computed here from the same key; the device keys, the registration,
-//   the link and the identity choice are the app's own code.
+//   FamilyRepresentativePhotos.shared and FamilyNotebookPrototype (UIKit,
+//   UserDefaults.standard): their reads and the notebook view's cat sharing
+//   are driven as they call the service and the bridge, one step at a time.
+// - RootSyncStore (iCloud Keychain): the person keys it would list are kept
+//   in PersonCloud and handed to the real GroupRecoveryLiveBuilder.
 
 struct Family {
     let a: Device, b: Device
     let id: UUID, cat: UUID
+    /// The page (profile) and tool cat A put the cat in from.
+    let profile: UUID, tool: UUID
     /// After B's first device registered in the notebook (the relay sends
     /// one device wake-up per family per 2-minute window).
     let joinedAt: Date
@@ -29,12 +29,13 @@ struct Family {
         ("S2", "representative photo: read, replace, cancelled read", s2),
         ("S3", "the creator's second iPhone", s3),
         ("S4", "member B deletes and reinstalls the app (PR #1090)", s4),
-        ("S5", "member B changes iPhone, then reports A's photo", s5),
+        ("S5", "member B changes iPhone, reports A's photo, the operator stops it", s5),
+        ("S6", "A reinstalls and adds the same cat page again (PR #1089)", s6),
     ]
 
     // MARK: Common steps
 
-    static func makeFamily(_ relay: Relay) async throws -> Family {
+    static func makeFamily(_ relay: Relay, notifications: Bool = false) async throws -> Family {
         Log.step("A: a Sandbox billing account with test Plus")
         let billing = try await relay.bootstrapBilling()
         try await relay.grantPlus(billing)
@@ -47,13 +48,10 @@ struct Family {
         try expect(a.service.currentFamilyID == id, "A's notebook is the one it created")
         a.cloud.publish(a.notebookIdentity?.personPrivateKey)
 
-        Log.step("A shares one cat")
+        Log.step("A puts one cat page into the notebook")
+        let profile = UUID(), tool = UUID()
+        let cat = try shareCat(a, name: "合成のしろ", profile: profile, tool: tool)
         let store = try required(a.service.notebook, "A has no notebook copy")
-        let author = try required(a.service.author, "A has no author")
-        let cat = UUID()
-        try store.applyLocalChanges(.init(familyID: id, entries: [
-            .init(ledgerKey: "cat:e2e:name", target: .init(familyCatID: cat, field: .name), value: .text("合成のしろ"), editedAt: Date()),
-        ], mappings: [.init(sourceKey: "cat:e2e", familyCatID: cat, toolCatID: UUID())]), author: author)
         try await settle("A's cat sent", [a]) { try store.pendingOperations().isEmpty }
 
         Log.step("A invites; B opens the link and asks to join")
@@ -65,6 +63,11 @@ struct Family {
         let waiting = await b.pass()
         try expect(waiting == .pendingApproval, "B waits for approval (got \(String(describing: waiting)))")
         b.cloud.publish(b.notebookIdentity?.personPrivateKey)
+        if notifications {
+            Log.step("A is told that B asks to join (the relay holds it up to 4 minutes; the drain clock runs ahead)")
+            try await relay.drain(advance: 240)
+            try expect(relay.pushCount(to: a, kind: "family_join_requested") == 1, "A got one join request push")
+        }
 
         Log.step("A approves B")
         let requests = try await a.service.pendingRequests()
@@ -74,7 +77,51 @@ struct Family {
 
         Log.step("The keys reach both iPhones")
         try await settle("both in the family with keys", [b, a]) { a.inFamily && b.inFamily }
-        return Family(a: a, b: b, id: id, cat: cat, joinedAt: Date())
+        if notifications {
+            Log.step("B is told it was let in")
+            try await relay.drain(advance: 240)
+            try expect(relay.pushCount(to: b, kind: "family_join_approved") == 1, "B got one approval push")
+        }
+        return Family(a: a, b: b, id: id, cat: cat, profile: profile, tool: tool, joinedAt: Date())
+    }
+
+    /// 「手帳に入れる猫」 for one page, as FamilyNotebookPrototype.sharePersonalCats
+    /// does it: FamilyNotebookCatOrigin.cats finds a family cat this person
+    /// already put in from the page; its catMappings rule (private in the
+    /// view, mirrored here) reuses a link or that cat before a new family cat;
+    /// FamilyNotebookCatRelink.preserving and FamilyNotebookCatOrigin.marking
+    /// as there. FamilyNotebookMigration.prepare would copy the page's records
+    /// from CatCareStore; the cat's name stands in for them.
+    static func shareCat(_ device: Device, name: String, profile: UUID, tool: UUID) throws -> UUID {
+        let store = try required(device.service.notebook, "\(device.name) has no notebook copy")
+        let author = try required(device.service.author, "\(device.name) has no author")
+        let snapshot = try store.snapshot()
+        let origins = FamilyNotebookCatOrigin.cats(in: snapshot, person: author.personID, profiles: [profile])
+        var mappings = snapshot.activeMappings
+        let cat: UUID
+        if let known = mappings.first(where: { $0.recordID == nil && ($0.toolCatID == tool || $0.profileID == tool
+            || $0.profileID == profile || $0.toolCatID == profile) }) {
+            cat = known.familyCatID
+        } else {
+            if let origin = origins[profile], !mappings.contains(where: { $0.familyCatID == origin && $0.recordID == nil }) {
+                cat = origin
+            } else { cat = UUID() }
+            mappings.append(.init(sourceKey: "cat:" + tool.uuidString.lowercased(), familyCatID: cat, profileID: profile, toolCatID: tool))
+        }
+        let plan = FamilyNotebookImportPlan(familyID: snapshot.familyID, entries: [
+            .init(ledgerKey: "cat:" + tool.uuidString.lowercased() + ":name", target: .init(familyCatID: cat, field: .name),
+                  value: .text(name), editedAt: Date()),
+        ], mappings: mappings)
+        let relinked = try FamilyNotebookCatRelink.preserving(plan, previous: snapshot)
+        let marked = FamilyNotebookCatOrigin.marking(relinked, previous: snapshot, person: author.personID)
+        _ = try store.applyImport(marked, author: author)
+        return cat
+    }
+
+    /// The family cats in `device`'s copy (every row a family cat has).
+    static func familyCats(_ device: Device) throws -> Set<UUID> {
+        let snapshot = try required(device.service.notebook, "\(device.name) has no notebook copy").snapshot()
+        return Set(snapshot.operations.map(\.target.familyCatID)).subtracting(snapshot.unsharedCatIDs)
     }
 
     /// `device` sends a new photo of the cat, then reads it back.
@@ -102,10 +149,22 @@ struct Family {
         return (author, jpeg)
     }
 
+    /// 機種変更 on `device` with one candidate (its iCloud holds only `person`).
+    static func recoverAlone(_ device: Device, person: String, family: UUID) async throws -> GroupDeviceIdentity {
+        let screen = try await device.openRecoveryScreen()
+        try expect(screen.rootChoice.isEmpty && screen.selectedRootID == person, "one candidate, the person's own")
+        let state = try await device.confirmNotebook(on: screen, rootID: person)
+        Log.note("notebook row: \(state)")
+        let recovered = try required(try await device.recoveredIdentity(), "the identity choice picks the recovered identity")
+        try expect(recovered.personID == person && recovered.registered, "a registered device of the person")
+        if case .registeredWaitingForKeys(_, let shown) = state { try expect(shown == (try recovered.deviceID), "the row names the new device") }
+        return recovered
+    }
+
     // MARK: S1
 
     static func s1(_ relay: Relay) async throws -> String? {
-        let f = try await makeFamily(relay)
+        let f = try await makeFamily(relay, notifications: true)
 
         Log.step("Both iPhones hold the notebook key")
         // .inFamily is returned only when the key material is ready.
@@ -120,9 +179,8 @@ struct Family {
         }
 
         Log.step("B sees exactly one cat row")
-        let snapshot = try required(f.b.service.notebook, "B has no notebook copy").snapshot()
-        let cats = Set(snapshot.operations.filter { $0.target.collection == .cat && $0.target.field == .name }.map(\.target.familyCatID))
-        try expect(cats == [f.cat], "B's notebook has \(cats.count) cat rows")
+        let cats = try familyCats(f.b)
+        try expect(cats == [f.cat], "B's notebook has \(cats.count) cats")
         return nil
     }
 
@@ -177,10 +235,8 @@ struct Family {
         let entrance = await a2.pass()
         try expect(entrance == .notInFamily, "nothing of the notebook before 機種変更 (got \(String(describing: entrance)))")
 
-        Log.step("機種変更 on A2 with A's person key")
-        let root = try required(f.a.cloud.roots.first, "A's person key is in its iCloud Keychain")
-        let recovered = try await a2.recoverNotebook(root: root, family: f.id)
-        try expect(recovered.personID == creator && recovered.registered, "A2 is A's person on a registered device")
+        Log.step("機種変更 on A2: the signed catalog, the notebook row, 続ける")
+        let recovered = try await recoverAlone(a2, person: creator, family: f.id)
 
         Log.step("A2 registers its device; A sends it the keys")
         await a2.pass()
@@ -207,7 +263,7 @@ struct Family {
         let mine = try await deliver(a2, f.cat, shade: 4)
         let replaced = try await seePhoto(f.b, f.cat, asset: mine.asset)
         try expect(replaced.author == creator && replaced.jpeg == mine.jpeg, "B gets A2's photo, by the same person")
-        return "service level; the sent/seen rule of FamilyRepresentativePhotos.syncOne is not driven; catalog not driven"
+        return "service level; the sent/seen rule of FamilyRepresentativePhotos.syncOne is not driven"
     }
 
     // MARK: S4
@@ -222,6 +278,9 @@ struct Family {
         let oldDevice = try required(f.b.notebookDeviceID, "B has no device")
         let person = try required(f.b.notebookIdentity?.personID, "B has no person")
 
+        Log.step("B's iCloud Keychain also holds A's person key, listed first (the owner's two-iPhone trial)")
+        f.b.cloud.publish(try required(f.a.cloud.roots.first, "A's person key"), first: true)
+
         Log.step("Earlier wake-ups are sent; the next one starts a new 2-minute window")
         try await relay.drain()
         let window = Double((Int(f.joinedAt.timeIntervalSince1970) / 120 + 1) * 120) + 1 - Date().timeIntervalSince1970
@@ -234,14 +293,27 @@ struct Family {
         Log.step("B deletes the app and installs it again")
         try await f.b.reinstall()
         let mark = relay.transport.log.count
-        let root = try required(try f.b.usualRoot(), "B's old identity is still in the device-only Keychain")
+        try expect(try f.b.usualRoot() != nil, "B's old identity is still in the device-only Keychain")
 
-        Log.step("機種変更 on B with B's own person (the one used on this iPhone)")
-        let recovered = try await f.b.recoverNotebook(root: root, family: f.id)
+        Log.step("機種変更 on B: two candidates, B's own first and marked 「このiPhoneで使っていた」")
+        let screen = try await f.b.openRecoveryScreen()
+        let choice = screen.rootChoice
+        Log.note("candidates: " + choice.map { ($0.id == person ? "B" : $0.id == creator ? "A" : "?") + ($0.usedOnThisIPhone ? "(used here)" : "") }
+            .joined(separator: ", "))
+        try expect(choice.count == 2, "two candidates (got \(choice.count))")
+        try expect(choice[0].id == person && choice[0].usedOnThisIPhone, "B's own candidate first, marked as used on this iPhone")
+        try expect(choice[1].id == creator && !choice[1].usedOnThisIPhone, "A's candidate second, not marked")
+        try expect(choice.allSatisfy { $0.summary.notebookIDs.contains(f.id.uuidString.lowercased()) }, "both catalogs list the notebook")
+
+        Log.step("B picks its own person and taps 続ける on the notebook row")
+        let state = try await f.b.confirmNotebook(on: screen, rootID: person)
+        Log.note("notebook row: \(state)")
+        let recovered = try required(try await f.b.recoveredIdentity(),
+                                     "FamilyNotebookIdentityChoice keeps the leftover device (the bug of PR #1090)")
         let newDevice = try recovered.deviceID
         try expect(recovered.personID == person && recovered.registered && newDevice != oldDevice, "a new device of B is registered")
 
-        Log.step("B's notebook opens with the new device (FamilyNotebookIdentityChoice, PR #1090)")
+        Log.step("B's notebook opens with the new device")
         await f.b.pass()
         let opened = f.b.notebookDeviceID
         try expect(opened == newDevice,
@@ -263,13 +335,14 @@ struct Family {
         Log.step("B's new device reads the current photo")
         let seen = try await seePhoto(f.b, f.cat, asset: photo.asset)
         try expect(seen.jpeg == photo.jpeg && seen.author == creator, "B reads A's current pixels again")
-        return "the recovery catalog read is computed, not driven"
+        return "RootSyncStore's list is PersonCloud; recovery signs in the staging domain"
     }
 
     // MARK: S5
 
     static func s5(_ relay: Relay) async throws -> String? {
         let f = try await makeFamily(relay)
+        let person = try required(f.b.notebookIdentity?.personID, "B has no person")
 
         Log.step("A puts a photo; B sees it")
         let photo = try await deliver(f.a, f.cat, shade: 6)
@@ -280,10 +353,8 @@ struct Family {
         let entrance = await b2.pass()
         try expect(entrance == .notInFamily, "nothing of the notebook before 機種変更 (got \(String(describing: entrance)))")
 
-        Log.step("機種変更 on B2 with B's person key from iCloud")
-        let root = try required(f.b.cloud.roots.first, "B's person key is in its iCloud Keychain")
-        let recovered = try await b2.recoverNotebook(root: root, family: f.id)
-        try expect(recovered.personID == f.b.notebookIdentity?.personID && recovered.registered, "B2 is B's person on a registered device")
+        Log.step("機種変更 on B2: the signed catalog, the notebook row, 続ける")
+        let recovered = try await recoverAlone(b2, person: person, family: f.id)
 
         Log.step("B2 opens the notebook without going back to the entrance")
         let opened = await b2.pass()
@@ -298,25 +369,79 @@ struct Family {
         Log.step("B2 reports A's photo")
         let receipt = try await b2.service.reportRepresentativePhoto(assetID: photo.asset, reasonCode: "other")
         try expect(!receipt.isEmpty, "the relay committed the report")
-        Log.note("report received: \(receipt.prefix(6))…")
-
-        Log.step("B2 no longer shows it; A keeps its own")
         let hidden = try await b2.photo(f.cat)
         try expect(hidden == FamilyNotebookPhotoLoad.none, "B2 shows nothing after reporting (got \(String(describing: hidden)))")
-        let own = try await f.a.photo(f.cat)
-        guard case .shown(let asset, _, _)? = own, asset == photo.asset else {
-            throw E2EFailure(description: "\(Log.location): A reads its own photo as \(String(describing: own))")
+
+        Log.step("The operator stops the photo (review and decision routes, test operator)")
+        try await relay.stopPhoto(reportID: receipt)
+
+        Log.step("The reporter reads the reply: photo_stopped")
+        let replies = try await b2.repliesAsNotebookIdentity()
+        try expect(replies.contains { $0.status == .photoStopped }, "the reply list shows the photo stopped (got \(replies.map(\.status)))")
+        var finding: String?
+        do {
+            let usual = try await b2.client.familyPhotoReportReplies()
+            Log.note("the app's reply wiring (usual client) lists \(usual.count) replies")
+        } catch {
+            // FamilyNotebookServiceFactory.reportReplies reads with the usual
+            // identity; an iPhone recovered only through the notebook has none.
+            finding = "the app's reply list (usual identity) fails on B2: \(error)"
+            print("::warning title=Two-device S5::\(finding!)")
+            Log.note("FINDING: " + finding!)
         }
 
-        Log.step("Operator: stop delivery and reply (not driven)")
-        Log.note("The operator routes need Cloudflare Access and WebAuthn; the fixtures give only the report key pair.")
-        Log.note("Missing: a loopback test route that applies the operator's photo decision and reply to a report ID.")
-        do {
-            let replies = try await b2.client.familyPhotoReportReplies()
-            Log.note("(information) B2's usual client lists \(replies.count) replies")
-        } catch {
-            Log.note("(information) B2's usual client cannot list replies: \(error)")
+        Log.step("Another receiving iPhone of the family (B's first) gets 410 for that photo")
+        let bDevice = try required(f.b.notebookDeviceID, "B has no device")
+        let mark = relay.transport.log.count
+        let other = try await f.b.photo(f.cat)
+        try expect(other == FamilyNotebookPhotoLoad.none, "B's first iPhone shows nothing (got \(String(describing: other)))")
+        let gone = relay.transport.log.dropFirst(mark).filter {
+            $0.device == bDevice && $0.path.contains(photo.asset.uuidString.lowercased()) && $0.status == 410
         }
-        return "up to the report receipt; operator stop/reply and B's reply not driven"
+        try expect(!gone.isEmpty, "the relay answered 410 for the stopped photo")
+
+        Log.step("The sender (A)")
+        let own = try await f.a.photo(f.cat)
+        Log.note("A's read of the shared copy: \(String(describing: own).prefix(60)); A's own key photo is in its library (PhotoKit, not driven)")
+        return "A's local original (PhotoKit) not driven" + (finding.map { "; FINDING: " + $0 } ?? "")
+    }
+
+    // MARK: S6
+
+    static func s6(_ relay: Relay) async throws -> String? {
+        let f = try await makeFamily(relay)
+        let creator = try required(f.a.notebookIdentity?.personID, "A has no person")
+        try expect(try familyCats(f.b) == [f.cat], "B starts with one cat")
+
+        Log.step("A deletes the app and installs it again (same person and device; the page is kept)")
+        try await f.a.reinstall()
+        try await settle("A reads the notebook again", [f.a]) { f.a.inFamily }
+        try expect(try f.a.service.notebook?.snapshot().activeMappings.isEmpty == true, "A's new copy has no local links")
+
+        Log.step("A opens the notebook: CatCareBridge.mappings finds the page by its origin")
+        let store = try required(f.a.service.notebook, "A has no notebook copy")
+        let author = try required(f.a.service.author, "A has no author")
+        let snapshot = try store.snapshot()
+        let mappings = try FamilyNotebookCatCareBridge.mappings(for: snapshot, existingLocalIDs: [f.tool],
+                                                               person: creator, profiles: [f.profile])
+        if mappings != snapshot.activeMappings {
+            _ = try store.applyImport(.init(familyID: f.id, entries: [], mappings: mappings), author: author)
+        }
+        let rows = try store.snapshot().activeMappings.filter { $0.recordID == nil }
+        try expect(rows.count == 1 && rows[0].familyCatID == f.cat && rows[0].profileID == f.profile,
+                   "the cat comes back as A's page (got \(rows.count) rows)")
+
+        Log.step("A adds the same cat page again")
+        let again = try shareCat(f.a, name: "合成のしろ", profile: f.profile, tool: f.tool)
+        try expect(again == f.cat, "the page is the same family cat, not a new one")
+        let origins = try store.snapshot().operations.filter { $0.target == FamilyNotebookCatOrigin.target(cat: f.cat) }
+        try expect(origins.count == 1, "one origin marker (got \(origins.count))")
+        try await settle("A's writes sent", [f.a]) { try store.pendingOperations().isEmpty }
+
+        Log.step("B still sees exactly one cat row")
+        await f.b.pass(); await f.b.pass()
+        let cats = try familyCats(f.b)
+        try expect(cats == [f.cat], "B's notebook has \(cats.count) cats")
+        return "the notebook view's reload/sharePersonalCats are mirrored around the real CatOrigin and CatCareBridge"
     }
 }

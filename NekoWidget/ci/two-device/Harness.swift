@@ -80,7 +80,11 @@ final class DeviceKeychain: @unchecked Sendable {
     let pins = MemorySecrets()
     private(set) var roots: [Data] = []
     /// 「このiPhoneを同期」 (RootSyncStore.publishCurrentRoot).
-    func publish(_ root: Data?) { if let root, !roots.contains(root) { roots.append(root) } }
+    /// `first`: listed before the others (RootSyncStore's order is not ours to pick).
+    func publish(_ root: Data?, first: Bool = false) {
+        guard let root, !roots.contains(root) else { return }
+        if first { roots.insert(root, at: 0) } else { roots.append(root) }
+    }
 }
 
 // MARK: - Network
@@ -256,13 +260,27 @@ struct Drained: Decodable {
 
     /// /__e2e/drain-notifications: one pass of the family push queue; the
     /// destinations are recorded instead of sent to APNs.
-    @discardableResult func drain() async throws -> [(token: String, kind: String)] {
-        let (status, data) = try await transport.post("/__e2e/drain-notifications", json: [:], headers: testHeaders)
+    /// `advance`: seconds the drain's clock runs ahead (0...240), for the
+    /// join and approval pushes the relay holds back; the 2-minute window of
+    /// device wake-ups is fixed when the device registers and does not move.
+    @discardableResult func drain(advance: Int = 0) async throws -> [(token: String, kind: String)] {
+        let body: [String: Any] = advance > 0 ? ["advanceSeconds": advance] : [:]
+        let (status, data) = try await transport.post("/__e2e/drain-notifications", json: body, headers: testHeaders)
         try expect(status == 200, "/__e2e/drain-notifications answered \(status) \(String(decoding: data, as: UTF8.self))")
         let now = try JSONDecoder().decode(Drained.self, from: data).destinations.map { (token: $0.tokenSHA256, kind: $0.kind) }
         pushes += now
         Log.note("drained: " + (now.isEmpty ? "nothing" : now.map { $0.kind }.joined(separator: ", ")))
         return now
+    }
+
+    /// /__e2e/family-photo/stop: the operator's real review and decision
+    /// routes with a test operator; the outcome is "photo" (delivery stopped).
+    func stopPhoto(reportID: String) async throws {
+        let (status, data) = try await transport.post("/__e2e/family-photo/stop", json: ["reportId": reportID], headers: testHeaders)
+        struct Reply: Decodable { let reportId: String; let outcome: String; let replyAvailable: Bool }
+        let reply = try? JSONDecoder().decode(Reply.self, from: data)
+        try expect(status == 200 && reply?.reportId == reportID && reply?.outcome == "photo" && reply?.replyAvailable == true,
+                   "/__e2e/family-photo/stop answered \(status) \(String(decoding: data, as: UTF8.self))")
     }
 
     func pushCount(to device: Device, kind: String) -> Int {
@@ -276,9 +294,9 @@ struct Drained: Decodable {
 /// client and a new notebook service over the same storage.
 @MainActor final class Device {
     /// GroupWindowClientProvider.namespace on an iPhone.
-    static let namespace = "jp.nekowidget.e2e"
+    nonisolated static let namespace = "jp.nekowidget.e2e"
     /// FamilyNotebookServiceFactory.recoveryLinkSuffix (in a UIKit file).
-    static let recoveryLinkSuffix = ".notebook-recovery"
+    nonisolated static let recoveryLinkSuffix = ".notebook-recovery"
 
     let name: String
     let relay: Relay
@@ -377,27 +395,96 @@ struct Drained: Decodable {
         return identity.registered ? identity.personPrivateKey : nil
     }
 
-    /// 機種変更 on this iPhone for one person key, through its notebook row:
-    /// GroupRecoveryLiveBuilder's device keys in the root's own namespace,
-    /// then 続ける (GroupRecoveryLiveModel.notebookSteps.confirm): with no まど,
-    /// the usual registration with the person key; the link; the notebook
-    /// opens again. The catalog read before it is not driven (see Scenarios).
-    func recoverNotebook(root: Data, family: UUID) async throws -> GroupDeviceIdentity {
-        let key = try Curve25519.Signing.PrivateKey(rawRepresentation: root)
-        let scope = GroupCanonical.hash(key.publicKey.rawRepresentation).map { String(format: "%02x", $0) }.joined()
-        let recovery = keychain.store(Self.namespace + ".recovery." + scope)
-        var identity = try GroupRecoveryLiveBuilder.deviceIdentity(root: key, secrets: recovery)
-        if !identity.registered {
-            let registrar = try ProductionGroupWindowClient(endpoint: relay.endpoint, secrets: recovery, transport: relay.transport,
-                outboxDirectory: support.appendingPathComponent("GroupTransport-v3", isDirectory: true)
-                    .appendingPathComponent("recovery-" + scope, isDirectory: true).appendingPathComponent("outbox", isDirectory: true))
-            identity = try await registrar.familyNotebookIdentity()
+    /// The local Worker signs recovery challenges in the staging domain (the
+    /// App Store build uses production; the same client code either way).
+    nonisolated static let recoveryEnvironment = "staging"
+
+    /// 機種変更 opened on this iPhone: the factory of GroupRecoveryLiveModel.connected()
+    /// (the person keys of its iCloud Keychain, then this iPhone's usual one,
+    /// `usualRoot` for 「このiPhoneで使っていた」) through the real
+    /// GroupRecoveryLiveBuilder (signed catalog per root, device keys in the
+    /// root's own namespace, the notebook row) and the screen's GroupRecoveryAdapter.
+    func openRecoveryScreen() async throws -> GroupRecoveryAdapter {
+        var roots = cloud.roots
+        let local = try usualRoot()
+        if let local { roots.append(local) }
+        let keychain = self.keychain, namespace = Self.namespace, endpoint = relay.endpoint
+        let transport = relay.transport, support = self.support, device = self
+        var builder = GroupRecoveryLiveBuilder(endpoint: endpoint, environment: Self.recoveryEnvironment, transport: transport,
+            model: "iPhone", stores: { scope in
+                (journal: keychain.store(namespace + ".recovery-journal." + scope) as any GroupSecretStore,
+                 secrets: keychain.store(namespace + ".recovery." + scope) as any GroupSecretStore)
+            })
+        builder.notebook = { context in
+            Device.notebookSteps(context, keychain: keychain, endpoint: endpoint, transport: transport, support: support, device: device)
         }
-        let link = FamilyNotebookIdentityChoice.Link(version: 1, scope: scope, personID: identity.personID, familyIDs: [family])
-        try keychain.store(Self.namespace + Self.recoveryLinkSuffix).write(GroupWire.encode(link),
-            account: FamilyNotebookIdentityChoice.linkAccount, createOnly: false)
-        service.restartSession()
-        return identity
+        builder.usualRoot = local
+        let ready = builder, candidates = roots
+        let contexts = try await SharingPersonAction.run { try await ready.contexts(roots: candidates) }
+        return GroupRecoveryAdapter(contexts: contexts)
+    }
+
+    /// GroupRecoveryLiveModel.notebookSteps with this iPhone's stores: the
+    /// row's logic is FamilyNotebookIdentityChoice's (isLinked, confirmLink,
+    /// recoveredRegistered); only the stores, the transport and the
+    /// notebook's restart and read (FamilyNotebookSharing.shared in the app)
+    /// are this harness's.
+    nonisolated static func notebookSteps(_ context: GroupRecoveryNotebookContext, keychain: DeviceKeychain, endpoint: URL,
+                                          transport: LoopbackTransport, support: URL, device: Device) -> GroupRecoveryNotebookSteps {
+        let links = keychain.store(namespace + recoveryLinkSuffix), recovery = keychain.store(namespace + ".recovery." + context.scope)
+        return GroupRecoveryNotebookSteps(linked: {
+            try FamilyNotebookIdentityChoice.isLinked(links: links, scope: context.scope,
+                                                      personID: context.personID, familyIDs: context.familyIDs)
+        }, confirm: {
+            try await FamilyNotebookIdentityChoice.confirmLink(links: links, recovery: recovery, scope: context.scope,
+                personID: context.personID, familyIDs: context.familyIDs, hasWindows: context.hasWindows) {
+                let client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: recovery, transport: transport,
+                    outboxDirectory: support.appendingPathComponent("GroupTransport-v3", isDirectory: true)
+                        .appendingPathComponent("recovery-" + context.scope, isDirectory: true).appendingPathComponent("outbox", isDirectory: true))
+                _ = try await client.familyNotebookIdentity()
+            }
+            await device.notebookRestarted()
+        }, reads: {
+            guard (try? FamilyNotebookIdentityChoice.recoveredRegistered(recovery)) == true else { return false }
+            return await device.notebookReads()
+        })
+    }
+
+    /// FamilyNotebookSharing.restartSession, then its one read.
+    func notebookRestarted() async { service.restartSession(); await pass() }
+    /// One read; ready only when the notebook is in the family with its keys.
+    func notebookReads() async -> Bool { await pass(); return inFamily }
+
+    /// The report replies read as the identity the notebook uses (for a
+    /// recovered one, a client over its root's recovery store). The app's
+    /// own wiring (FamilyNotebookServiceFactory.reportReplies) uses `client`.
+    func repliesAsNotebookIdentity() async throws -> [FamilyPhotoReportReply] {
+        let identity = try required(notebookIdentity, "\(name) has no notebook identity")
+        let scope = GroupCanonical.hash(identity.personPublicKey).map { String(format: "%02x", $0) }.joined()
+        let store = keychain.store(Self.namespace + ".recovery." + scope)
+        let saved = try store.read("identity").map { try GroupWire.decode(GroupDeviceIdentity.self, $0) }
+        try expect(try saved?.deviceID == identity.deviceID, "\(name)'s notebook identity is the recovered one")
+        let reader = try ProductionGroupWindowClient(endpoint: relay.endpoint, secrets: store, transport: relay.transport,
+            outboxDirectory: support.appendingPathComponent("replies-" + scope, isDirectory: true))
+        return try await reader.familyPhotoReportReplies()
+    }
+
+    /// The person picks `rootID` (when two are offered) and taps 続ける on
+    /// the notebook row; returns the row's state once the tap is answered.
+    func confirmNotebook(on screen: GroupRecoveryAdapter, rootID: String) async throws -> GroupRecoveryRegistrationState {
+        if !screen.rootChoice.isEmpty { await screen.handle(.chooseRoot(rootID)) }
+        try expect(screen.selectedRootID == rootID, "the recovery screen selected \(String(describing: screen.selectedRootID))")
+        let row = try required(screen.items.first { $0.notebook }, "the recovery screen has no notebook row")
+        guard case .notStarted(let id) = row.state else {
+            throw E2EFailure(description: "\(Log.location): the notebook row starts as \(row.state)")
+        }
+        await SharingPersonAction.run { await screen.handle(.perform(.submitSameOperation(id))) }
+        for _ in 0..<600 {
+            guard let item = screen.items.first(where: { $0.notebook }) else { break }
+            if case .checking = item.state { try await Task.sleep(for: .milliseconds(100)); continue }
+            return item.state
+        }
+        throw E2EFailure(description: "\(Log.location): the notebook row did not answer")
     }
 
     /// One notebook read (FamilyNotebookAutoCheck's pass). Failures are

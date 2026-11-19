@@ -488,6 +488,32 @@ enum FamilyNotebookIdentityChoice {
         let identity = try recoveryStore(link.scope).read("identity").map { try GroupWire.decode(GroupDeviceIdentity.self, $0) }
         return recovered(link: link, recovered: identity, usualPersonID: usualPersonID, usualDeviceID: usualDeviceID)
     }
+
+    // The notebook row of the recovery screen (GroupRecoveryLiveModel.notebookSteps),
+    // over the stores it is given: the app passes its Keychain namespaces, the
+    // two-device test (ci/two-device) in-memory ones.
+
+    /// This iPhone linked this person's notebook (one of `familyIDs`).
+    static func isLinked(links: any GroupSecretStore, scope: String, personID: String, familyIDs: [UUID]) throws -> Bool {
+        guard let bytes = try links.read(linkAccount) else { return false }
+        let link = try GroupWire.decode(Link.self, bytes)
+        return link.scope == scope && link.personID == personID && !Set(link.familyIDs).isDisjoint(with: familyIDs)
+    }
+
+    /// The identity kept in the root's own store is registered.
+    static func recoveredRegistered(_ recovery: any GroupSecretStore) throws -> Bool {
+        try recovery.read("identity").map { try GroupWire.decode(GroupDeviceIdentity.self, $0).registered } ?? false
+    }
+
+    /// 続ける: a まど being recovered registers this iPhone as the person; with
+    /// none, `register` does it with the person key (the usual registration,
+    /// over `recovery`). Then the link, which FamilyNotebookIdentityChoice reads.
+    static func confirmLink(links: any GroupSecretStore, recovery: any GroupSecretStore, scope: String, personID: String,
+                            familyIDs: [UUID], hasWindows: Bool, register: () async throws -> Void) async throws {
+        if !hasWindows, try !recoveredRegistered(recovery) { try await register() }
+        let link = Link(version: 1, scope: scope, personID: personID, familyIDs: familyIDs)
+        try links.write(GroupWire.encode(link), account: linkAccount, createOnly: false)
+    }
 }
 
 /// The iCloud Keychain item of the pin: synchronizable, with the same access
