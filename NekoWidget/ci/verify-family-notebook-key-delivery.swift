@@ -481,6 +481,7 @@ private enum CallBudgetChecks {
         let pause = try await pauseCountsFromTheReply()
         let billing = try billingGate()
         let writing = try writingOnTheCatPage()
+        try photoScreenReadsOnceAMinute()
         print("11/16: typing on a family cat's page for 2 min: \(writing.perMinute) calls a minute at most; "
             + "a save shows on the other iPhone's open cat page within \(writing.worstSeconds) s")
         print("1115v: a 429 that came back after 10 s holds automatic calls until \(pause.silentUntil) s, again at \(pause.resumesAt) s; "
@@ -493,6 +494,27 @@ private enum CallBudgetChecks {
             + "notebook open + reopened every 15 s \(reopening.before) -> \(reopening.after); awaiting approval \(waiting); "
             + "purchase wait POST \(purchase.beforePost) -> \(purchase.afterPost), GET \(purchase.beforeGet) -> \(purchase.afterGet); "
             + "two iPhones \(twoDevices) per iPhone, B reads after \(seconds) s")
+    }
+
+    /// 11/19 (TestFlight 392): この子 showing a family photo reads the whole
+    /// notebook once a minute (a new photo came 7 minutes late); without the
+    /// family, or with nothing on screen, nothing more is read.
+    static func photoScreenReadsOnceAMinute() throws {
+        let full = FamilyAutoCheckPolicy.Decision(pass: .full, after: FamilyAutoCheckPolicy.notebookFullInterval)
+        try check(FamilyAutoCheckPolicy.next(.init(photoOpen: true, inFamily: true)) == full, "photo screen: a full pass a minute")
+        try check(FamilyAutoCheckPolicy.next(.init(inFamily: true)) == nil, "nothing on screen: no pass")
+        try check(FamilyAutoCheckPolicy.next(.init(photoOpen: true, inFamily: false)) == nil, "no family: no pass")
+        try check(FamilyAutoCheckPolicy.next(.init(toolOpen: true, photoOpen: true, inFamily: true))
+                  == .init(pass: .full, after: FamilyAutoCheckPolicy.toolFullInterval), "a tool keeps its own interval")
+        let notebook = FamilyAutoCheckPolicy.next(.init(notebookOpen: true, photoOpen: true, inFamily: true, secondsSinceFull: 0))
+        try check(notebook == .init(pass: .requestsOnly, after: FamilyAutoCheckPolicy.requestsInterval), "an open notebook keeps its own schedule")
+        var minute = 0.0, passes = 0
+        while minute < 600 {
+            guard let next = FamilyAutoCheckPolicy.next(.init(photoOpen: true, inFamily: true)) else { break }
+            minute += next.after; passes += 1
+        }
+        try check(passes == 10, "10 minutes on この子: 10 passes")
+        print("11/19: この子 with a family photo: a full pass every \(Int(full.after)) s (\(passes) in 10 min); none without the family")
     }
 
     /// 8 epochs whose keys never come, the notebook open, the app in front, 10 minutes.

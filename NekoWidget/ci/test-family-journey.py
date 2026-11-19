@@ -628,6 +628,14 @@ class FamilyPhotoReadOnNewAsset1119Tests(unittest.TestCase):
         self.assertIn("static let automaticGap: TimeInterval = 60", model)
         self.assertNotIn("!reading else { return }", model)
         self.assertIn("next = queued; queued = nil", model)
+        # 11/19 (TestFlight 392): the read is owned here, not by the page's
+        # task, and only a photo that reached the screen counts as read.
+        self.assertIn("let task = Task { @MainActor in await self.readAll(cats, force: force) }", model)
+        self.assertIn("if let running = readTask {", model)
+        self.assertNotIn("reading = true", model)
+        once = model.split("private func readOnce(", 1)[1]
+        self.assertLess(once.index("apply(load, to: cat)"), once.index("readAt[cat] = (asset: asset, at: now)"))
+        self.assertEqual(once.count("readAt[cat] = "), 1)
         # Every backend answers from this iPhone's copy.
         factory = read("NekoWidget/Services/FamilyNotebookServiceFactory.swift")
         self.assertEqual(factory.count("func referencedAsset(of cat: UUID) -> UUID?"), 2)

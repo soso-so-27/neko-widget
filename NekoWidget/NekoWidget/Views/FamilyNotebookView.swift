@@ -2490,6 +2490,25 @@ private struct FamilyNotebookToolSyncModifier: ViewModifier {
         if on { FamilyNotebookAutoCheck.shared.appeared(.tool) } else { FamilyNotebookAutoCheck.shared.disappeared(.tool) }
     }
 }
+/// 11/19 (TestFlight 392): この子 shows a photo the family delivered. The
+/// photo comes with the notebook, so the one schedule reads the family once a
+/// minute meanwhile (FamilyAutoCheckPolicy), as an open notebook does.
+private struct FamilyNotebookPhotoScreenModifier: ViewModifier {
+    var enabled: Bool
+    @State private var counted = false
+    func body(content: Content) -> some View {
+        content
+            .onAppear { update(enabled) }
+            .onChange(of: enabled) { _, on in update(on) }
+            .onDisappear { update(false) }
+    }
+    private func update(_ on: Bool) {
+        guard on != counted else { return }
+        counted = on
+        if on { FamilyNotebookAutoCheck.shared.appeared(.photo) } else { FamilyNotebookAutoCheck.shared.disappeared(.photo) }
+    }
+}
+
 /// 11/15 (TestFlight 378): the person let in learned it only by opening the
 /// notebook, so their device never registered for the key. Coming to the
 /// front starts the one schedule (FamilyNotebookAutoCheck): someone in a
@@ -2521,6 +2540,11 @@ extension View {
     /// The sharing service still enforces participation, pause and entitlement.
     func familyNotebookToolSync(enabled: Bool = true) -> some View {
         modifier(FamilyNotebookToolSyncModifier(enabled: enabled))
+    }
+
+    /// 11/19: この子 while it shows a photo the family delivered.
+    func familyNotebookPhotoScreen(enabled: Bool) -> some View {
+        modifier(FamilyNotebookPhotoScreenModifier(enabled: enabled))
     }
 
     /// Put once at the app's root (11/15).

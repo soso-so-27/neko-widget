@@ -195,12 +195,81 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     /// FamilyNotebookIdentityChoice now picks.
     private var restartRequested = false
     func restartSession() { restartRequested = true }
+    /// A restart was asked and no read has opened the new session yet: a
+    /// read that ends now belongs to the identity before it.
+    var restartPending: Bool { restartRequested }
+
+    // MARK: The notebook's own push registration (11/19)
+
+    /// What GroupAdmissionService last saw: the token (nil: notifications are
+    /// not allowed, so the registration is removed) and the APNs environment.
+    private var pushPreference: (token: Data?, environment: String)?
+    /// Sent this launch, per family: the token's digest, its environment and
+    /// when it is sent again (the relay's lease is renewed as a まど's is).
+    private var pushRegistered: [UUID: (digest: Data, environment: String, renewAt: Date)] = [:]
+    private var pushRemoved = Set<UUID>()
+    private var pushing = false
+    private var pushAgain: [UUID]?
+    /// The families the last read says this iPhone's push is for: its own,
+    /// or the ones it asked to join. Empty: nothing to register.
+    private(set) var pushFamilies: [UUID] = []
+    /// No permission or token has reached the notebook yet this launch.
+    var needsPushPreference: Bool { pushPreference == nil && !pushFamilies.isEmpty }
+
+    /// GroupAdmissionService, with the same permission and environment as the
+    /// まど: allowed with a token registers it, not allowed removes it. The
+    /// notebook's reads register it too once the family is known.
+    func updatePushSubscription(token: Data?, environment: String) async {
+        pushPreference = (token, environment)
+        guard let session, !restartRequested, !pushFamilies.isEmpty else { return }
+        await syncPush(session, families: pushFamilies)
+    }
+    /// Push is optional: a failure never stops a read, and the next read or
+    /// token tries again.
+    private func syncPush(_ context: FamilyNotebookSession, families: [UUID]) async {
+        pushFamilies = families
+        guard pushPreference != nil, !families.isEmpty else { return }
+        if pushing { pushAgain = families; return }
+        pushing = true; defer { pushing = false }
+        var next: [UUID]? = families
+        while let current = next, let preference = pushPreference {
+            pushAgain = nil
+            for family in current {
+                if Task.isCancelled { return }
+                do {
+                    if let token = preference.token {
+                        let digest = GroupCanonical.hash(token)
+                        if let saved = pushRegistered[family], saved.digest == digest, saved.environment == preference.environment,
+                           saved.renewAt > now() { continue }
+                        try await context.wire.pushSubscription(family: family, token: token, environment: preference.environment)
+                        pushRegistered[family] = (digest, preference.environment, now().addingTimeInterval(3600))
+                        pushRemoved.remove(family)
+                    } else {
+                        guard !pushRemoved.contains(family) else { continue }
+                        try await context.wire.pushSubscription(family: family, token: nil, environment: preference.environment)
+                        pushRegistered[family] = nil; pushRemoved.insert(family)
+                    }
+                } catch { continue }
+            }
+            next = pushAgain
+        }
+    }
+    /// Leaving or ending the family: its registration goes, whatever the permission.
+    private func removePush(_ context: FamilyNotebookSession, family: UUID) async {
+        pushRegistered[family] = nil; pushFamilies.removeAll { $0 == family }
+        do {
+            try await context.wire.pushSubscription(family: family, token: nil, environment: pushPreference?.environment ?? "")
+            pushRemoved.insert(family)
+        } catch {}
+    }
     private func run<T>(_ action: (FamilyNotebookSession) async throws -> T) async throws -> T {
         guard !working else { throw FamilySharingError.unknownOutcome }
         working = true; defer { working = false }
         if restartRequested {
             restartRequested = false
             session = nil; currentFamilyID = nil; lastMembers = []; photoMaterial = nil; photoClient = nil
+            // Another identity is another device to the relay.
+            pushRegistered = [:]; pushRemoved = []; pushFamilies = []
         }
         do {
             let context: FamilyNotebookSession
@@ -239,7 +308,7 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     }
     func loadState() async throws -> FamilySharingState {
         guard try await hasExistingIdentity() else {
-            currentFamilyID = nil; lastMembers = []; session = nil; photoMaterial = nil; photoClient = nil
+            currentFamilyID = nil; lastMembers = []; session = nil; photoMaterial = nil; photoClient = nil; pushFamilies = []
             return .notInFamily
         }
         lastSend = nil
@@ -257,7 +326,10 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
                 // Until it is, nothing changes here: the copy, the screens and
                 // what waits to be sent stay, and the next pass asks again.
                 guard try context.observedOutsideFamily(now: now()) else { throw FamilySharingError.serviceUnavailable }
+                if let left = currentFamilyID { await removePush(context, family: left) }
                 currentFamilyID = nil; lastMembers = []; photoMaterial = nil
+                // 11/19: waiting to be let in, the relay tells this iPhone so.
+                await syncPush(context, families: Array(Set(directory.pendingRequests.map(\.familyID)).sorted { $0.uuidString < $1.uuidString }.prefix(4)))
                 return directory.pendingRequests.isEmpty ? .notInFamily : .pendingApproval
             }
             // Both reads use fresh signed requests. Validate the combined generation
@@ -287,6 +359,9 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
             let store = try context.activate(family: family.familyID, admittedGeneration: own.admittedGeneration)
             currentFamilyID = family.familyID; lastMembers = members.members
             memberNames = try await context.admission.knownNames(family: family.familyID)
+            // 11/19: before the keys: a device still waiting for them is the
+            // one the others' pushes are for once they are its.
+            await syncPush(context, families: [family.familyID])
             // Paused sharing still has a real membership and a retained local
             // notebook. Do not turn a write-gate rejection into an endless spinner.
             if state.sharingStatus == .paused { return .inFamily(.init(role: state.role == .payer ? .payer : .member)) }
@@ -506,14 +581,20 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
                 do { try await context.membership.resumePending(notebook: context.notebook) }
                 catch FamilySharingError.unknownOutcome { return .pending }
                 // A resumed management action may have been a different one.
-                if try context.notebook?.snapshot().sharingEnded == true { return .confirmed }
+                if try context.notebook?.snapshot().sharingEnded == true {
+                    if let left = try context.notebook?.snapshot().familyID { await removePush(context, family: left) }
+                    return .confirmed
+                }
             }
             let family = try await family(context), members = try await context.admission.members(family.familyID)
             guard let own = members.members.first(where: { $0.personID == context.identity.personID }) else { throw FamilySharingError.notAllowed }
             let store = try context.activate(family: family.familyID, admittedGeneration: own.admittedGeneration)
-            return try await (dissolve
+            let result = try await (dissolve
                 ? context.membership.dissolveFamily(familyID: family.familyID, expectedGeneration: members.generation, operationID: operation, notebook: store)
                 : context.membership.leaveFamily(familyID: family.familyID, expectedGeneration: members.generation, operationID: operation, notebook: store))
+            // 11/19: out of the family, its pushes stop for this iPhone.
+            if result == .confirmed { await removePush(context, family: family.familyID) }
+            return result
         }
     }
     func pendingRequests() async throws -> [FamilyNotebookJoinRequest] {

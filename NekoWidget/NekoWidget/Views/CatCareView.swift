@@ -2821,7 +2821,8 @@ final class FamilyRepresentativePhotos: ObservableObject {
     @Published private(set) var backend: (any FamilyRepresentativePhotoBackend)?
     /// The photo each cat's page last read, and when.
     private var readAt: [UUID: (asset: UUID, at: Date)] = [:]
-    private var reading = false
+    /// The one read under way (11/19: owned here, not by the page that asked).
+    private var readTask: Task<Void, Never>?
     /// Calls that came while reading: read once more right after.
     private var queued: (cats: [UUID], force: Bool)?
     /// A page that stays open reads the same photo at most once a minute; a
@@ -2850,35 +2851,55 @@ final class FamilyRepresentativePhotos: ObservableObject {
     /// calls count toward the automatic budget like any page that reads.
     /// A cat with no reference in the copy is still passed on (the answer
     /// 「none」 is made without the network) but uses up no minute.
+    ///
+    /// 11/19 (TestFlight 392): the read runs in a task of its own, as the
+    /// creator's sync does. It used to run in the page's `.task(id:)`, which
+    /// SwiftUI cancels when the notebook's copy changes again (one pass
+    /// changes it more than once); the cancelled read had already marked the
+    /// new photo as read, and the read queued behind it ran in that same
+    /// cancelled task, so the photo fetched from the relay was never shown
+    /// until the app started again. Now only a photo that reached the screen
+    /// counts as read.
     func read(_ cats: [UUID], force: Bool = false) async {
         guard backend != nil, !cats.isEmpty else { return }
-        if reading {
+        if let running = readTask {
             let waiting = queued?.cats ?? []
             queued = (cats: waiting + cats.filter { !waiting.contains($0) }, force: (queued?.force ?? false) || force)
+            await running.value
             return
         }
-        reading = true
+        let task = Task { @MainActor in await self.readAll(cats, force: force) }
+        readTask = task
+        await task.value
+    }
+
+    private func readAll(_ cats: [UUID], force: Bool) async {
         var next: (cats: [UUID], force: Bool)? = (cats: cats, force: force)
+        // Nothing is awaited between taking the queue and clearing the task,
+        // so a call that comes as the last read ends is not lost.
         while let call = next, let backend {
             await readOnce(call.cats, force: call.force, backend: backend)
             next = queued; queued = nil
         }
         queued = nil
-        reading = false
+        readTask = nil
     }
 
     private func readOnce(_ cats: [UUID], force: Bool, backend: any FamilyRepresentativePhotoBackend) async {
         let now = Date()
-        var due: [UUID] = []
+        var due: [UUID] = [], assets: [UUID: UUID] = [:]
         for cat in cats {
             guard let asset = backend.referencedAsset(of: cat) else { due.append(cat); continue }
             if !force, let last = readAt[cat], last.asset == asset,
                now.timeIntervalSince(last.at) < Self.automaticGap { continue }
-            readAt[cat] = (asset: asset, at: now)
+            assets[cat] = asset
             due.append(cat)
         }
         guard !due.isEmpty, let loaded = try? await backend.load(due) else { return }
-        for (cat, load) in loaded { apply(load, to: cat) }
+        for (cat, load) in loaded {
+            apply(load, to: cat)
+            if let asset = assets[cat] { readAt[cat] = (asset: asset, at: now) }
+        }
     }
 
     private func apply(_ load: FamilyNotebookPhotoLoad, to cat: UUID) {

@@ -404,8 +404,12 @@ final class GroupAdmissionService: ObservableObject {
         running = true; defer { running = false }
         repeat {
             rerun = false
-            guard !Task.isCancelled, let client = GroupWindowClientProvider.production,
-                  (try? await client.hasLocalGroupState()) == true else { return }
+            guard !Task.isCancelled, let client = GroupWindowClientProvider.production else { return }
+            // 11/19: the family notebook registers its own push (a device of
+            // the family registered); it needs no まど on this iPhone.
+            let notebook = FamilyNotebookSharing.shared.service as? ProductionFamilyNotebookSharingService
+            let windows = (try? await client.hasLocalGroupState()) == true
+            guard windows || notebook?.pushFamilies.isEmpty == false else { return }
             var settings = await UNUserNotificationCenter.current().notificationSettings()
             if permissionRequested, settings.authorizationStatus == .notDetermined {
                 _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge])
@@ -414,14 +418,19 @@ final class GroupAdmissionService: ObservableObject {
             permissionRequested = false
             let allowed = [.authorized, .provisional, .ephemeral].contains(settings.authorizationStatus)
             if allowed && token == nil { UIApplication.shared.registerForRemoteNotifications() }
-            if let refreshed = try? await client.reconcileAdmissions(), !refreshed.isEmpty { results = refreshed }
 #if DEBUG
             let environment = "development"
 #else
             let environment = "production"
 #endif
-            if allowed, let token { try? await client.updatePushSubscriptions(deviceToken: token, environment: environment) }
-            else if !allowed { try? await client.updatePushSubscriptions(deviceToken: nil, environment: environment) }
+            if windows {
+                if let refreshed = try? await client.reconcileAdmissions(), !refreshed.isEmpty { results = refreshed }
+                if allowed, let token { try? await client.updatePushSubscriptions(deviceToken: token, environment: environment) }
+                else if !allowed { try? await client.updatePushSubscriptions(deviceToken: nil, environment: environment) }
+            }
+            // The same rule for the notebook's own registration.
+            if allowed, let token { await notebook?.updatePushSubscription(token: token, environment: environment) }
+            else if !allowed { await notebook?.updatePushSubscription(token: nil, environment: environment) }
         } while rerun && !Task.isCancelled
     }
     /// Use the same verified receive/moderation/cache path as an open window.

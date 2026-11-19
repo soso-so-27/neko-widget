@@ -647,13 +647,15 @@ extension GroupRecoveryLiveModel {
 
     /// The notebook opens again with the identity FamilyNotebookIdentityChoice now picks.
     private static func notebookRestarted() async -> Bool {
-        (FamilyNotebookSharing.shared.service as? ProductionFamilyNotebookSharingService)?.restartSession()
-        return await FamilyNotebookSharing.shared.refresh()
+        FamilyNotebookSharing.shared.restartSession()
+        return await FamilyNotebookSharing.shared.refreshAfterPlusChange(reportsFailure: false)
     }
 
     /// One quiet read of the notebook (its own schedule keeps going after this).
+    /// 11/19: ready only from a read of the recovered identity's notebook that
+    /// finished now: a pass already running is waited for, never stood in for.
     private static func notebookReads() async -> Bool {
-        _ = await FamilyNotebookSharing.shared.refresh()
+        guard await FamilyNotebookSharing.shared.refreshAfterPlusChange(reportsFailure: false) else { return false }
         if case .inFamily = FamilyNotebookSharing.shared.state { return true }
         return false
     }

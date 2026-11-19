@@ -83,6 +83,13 @@ private actor Relay: GroupHTTPTransport {
         }
         sent.append((path, body))
         let value = try JSONSerialization.jsonObject(with: body) as! [String: Any], op = value["operationId"] as! String
+        // 11/19: the notebook's own push registration (family-notebook-push.ts).
+        if path.hasSuffix("/push-subscription") || path.hasSuffix("/push-subscription/remove") {
+            let remove = path.hasSuffix("/remove")
+            try check(Set(value.keys) == (remove ? ["operationId"] : ["operationId", "token", "environment"]), "push body keys")
+            try check(op == op.lowercased() && path == path.lowercased(), "push IDs are lowercase")
+            return try reply(["operationId": op, "familyId": familyString, "notifications": !remove])
+        }
         let key = device + op
         if let saved = receipts[key] {
             try check(body == saved.0, "retry preserves encrypted bytes and operation ID")
@@ -364,6 +371,25 @@ private actor Relay: GroupHTTPTransport {
                 try check(!text.contains(GroupWire.base64(cap.secret)) && !text.contains("合成ねこ") && !text.contains("合成の参加者"), "HTTP contains no capability secret or plaintext records")
             }
         }
+        // 11/19: the notebook registers this iPhone's push once the family is
+        // known, with the permission's token; not allowed removes it once.
+        let pusher = ProductionFamilyNotebookSharingService(provider: { try context(a) }, billing: {},
+            displayName: { "合成の本人" }, catNames: { [] })
+        let token = Data((0..<32).map { UInt8($0) })
+        await pusher.updatePushSubscription(token: token, environment: "development")
+        try check(await relay.bodies("/push-subscription").isEmpty, "nothing is sent before a read knows the family")
+        _ = try? await pusher.loadState()
+        let registered = await relay.bodies("/push-subscription")
+        try check(registered.count == 1 && pusher.pushFamilies == [family], "a read in the family registers the token once")
+        let sentBody = try JSONSerialization.jsonObject(with: registered[0]) as! [String: Any]
+        try check(sentBody["token"] as? String == GroupWire.base64(token) && sentBody["environment"] as? String == "development",
+                  "the registration carries the token and environment")
+        await pusher.updatePushSubscription(token: token, environment: "development")
+        try check(await relay.bodies("/push-subscription").count == 1, "the same token within the hour is not sent again")
+        await pusher.updatePushSubscription(token: nil, environment: "development")
+        await pusher.updatePushSubscription(token: nil, environment: "development")
+        try check(await relay.bodies("/push-subscription/remove").count == 1, "not allowed: removed once")
+        print("Family push registration: after the family is known, once per token, removed once when not allowed")
         print("Family notebook service: signed HTTP admission, private preview, restart retry, malformed ACK, explicit approval, retained departure and isolated readmission passed")
     }
 }

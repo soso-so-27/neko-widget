@@ -24,6 +24,23 @@ enum FamilyNotebookWriteContract {
 }
 
 
+/// 11/19: the relay's family push registration (family-notebook-push.ts):
+/// `{operationId, token, environment}` to `.../push-subscription`, and
+/// `{operationId}` to `.../push-subscription/remove`. IDs are lowercase.
+/// A まど subscription never stands for it.
+enum FamilyNotebookPushSubscription {
+    struct Registration: Encodable { let operationID: String; let token: Data; let environment: String }
+    struct Removal: Encodable { let operationID: String }
+    static func path(family: UUID, remove: Bool) -> String {
+        "/v3/family-notebooks/" + family.uuidString.lowercased() + "/push-subscription" + (remove ? "/remove" : "")
+    }
+    static func body(token: Data?, environment: String, operationID: UUID) throws -> Data {
+        let id = operationID.uuidString.lowercased()
+        guard let token else { return try GroupWire.encode(Removal(operationID: id)) }
+        return try GroupWire.encode(Registration(operationID: id, token: token, environment: environment))
+    }
+}
+
 enum FamilyNotebookTransportError: Error, Equatable {
     case invalidResponse, authenticationRequired, notMember, paused, unavailable
     case stale, unknownOutcome, idempotencyConflict, operationInFlight, upgradeRequired
@@ -159,6 +176,21 @@ actor FamilyNotebookTransport {
         record.response = response
         try journal.write(GroupWire.encode(record), account: account, createOnly: false)
         return response
+    }
+
+    /// 11/19: this iPhone's APNs token for the notebook's own pushes (nil:
+    /// remove it). Not journaled: every send has a fresh operation ID and
+    /// sending it again changes nothing on the relay.
+    func pushSubscription(family: UUID, token: Data?, environment: String, operationID: UUID = UUID()) async throws {
+        let path = FamilyNotebookPushSubscription.path(family: family, remove: token == nil)
+        try pathAllowed(path)
+        let body = try FamilyNotebookPushSubscription.body(token: token, environment: environment, operationID: operationID)
+        let request = try GroupHTTPRequest.make(endpoint: endpoint, path: path, body: body, identity: identity)
+        let reply: GroupHTTPReply
+        do { reply = try await transport.send(request, maximumBytes: 16_384) }
+        catch is CancellationError { throw CancellationError() }
+        catch { throw FamilyNotebookTransportError.unavailable }
+        _ = try Self.check(reply)
     }
 
     static func requestHash(path: String, body: Data) throws -> Data {

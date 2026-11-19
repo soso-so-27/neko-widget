@@ -77,6 +77,32 @@ private actor ReadRelay: GroupHTTPTransport {
         return .init(status: 200, data: Data("{}".utf8))
     }
 }
+/// 11/19: the relay's push registration (family-notebook-push.ts): exact keys,
+/// lowercase IDs, a base64url token, and a signed POST. Synthetic token only.
+private actor PushRelay: GroupHTTPTransport {
+    let identity: GroupDeviceIdentity
+    var requests: [(path: String, body: Data)] = []
+    var failNext: Int?
+    init(identity: GroupDeviceIdentity) { self.identity = identity }
+    func fail(_ status: Int) { failNext = status }
+    func sent() -> [(path: String, body: Data)] { requests }
+    func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
+        let path = request.url!.path, body = request.httpBody ?? Data()
+        try check(request.httpMethod == "POST", "push registration is a POST")
+        let message = try GroupCanonical.fields(["NW3.REQUEST", "3", identity.deviceID,
+            request.value(forHTTPHeaderField: "Neko-Timestamp")!, request.value(forHTTPHeaderField: "Neko-Nonce")!,
+            "POST", path].map(GroupCanonical.text) + [GroupCanonical.hash(body)])
+        try check(try identity.signingKey.publicKey.isValidSignature(
+            GroupWire.bytes(request.value(forHTTPHeaderField: "Neko-Signature")!, count: 64), for: message), "push registration is signed")
+        requests.append((path, body))
+        if let status = failNext {
+            failNext = nil
+            return .init(status: status, data: Data("{\"error\":{\"code\":\"family_notifications_disabled\"}}".utf8))
+        }
+        return .init(status: 200, data: Data("{}".utf8))
+    }
+}
+
 private final class BrokenJournal: GroupSecretStore, @unchecked Sendable {
     func read(_ account: String) throws -> Data? { nil }
     func write(_ data: Data, account: String, createOnly: Bool) throws { throw Failure.storage }
@@ -103,6 +129,31 @@ private enum VerifyFamilyNotebookTransport {
         try await rejects(.authenticationRequired) { _ = try await deniedReader.read("/v3/family-notebooks/me") }
         try check(await denied.sent().count == 2, "persistent authentication rejection stays blocked without a loop")
         print("Family reads: fresh nonce/signature retry and persistent authentication rejection passed")
+
+        // 11/19: the notebook's own push registration. Foundation's UUID is
+        // uppercase; the relay's paths and operation IDs are lowercase.
+        let pushRelay = PushRelay(identity: identity), pushFamily = UUID(), token = Data((0..<32).map { UInt8($0 * 7 % 256) })
+        let pusher = try FamilyNotebookTransport(endpoint: URL(string: "https://family.invalid")!, identity: identity,
+            transport: pushRelay, journal: GroupOperationStore(directory: root.appendingPathComponent("push")))
+        let registerOp = UUID(), removeOp = UUID()
+        try await pusher.pushSubscription(family: pushFamily, token: token, environment: "development", operationID: registerOp)
+        try await pusher.pushSubscription(family: pushFamily, token: nil, environment: "development", operationID: removeOp)
+        let pushes = try await pushRelay.sent().map { (path: $0.path, body: try JSONSerialization.jsonObject(with: $0.body) as! [String: Any]) }
+        let base = "/v3/family-notebooks/" + pushFamily.uuidString.lowercased() + "/push-subscription"
+        try check(pushes.count == 2 && pushes[0].path == base && pushes[1].path == base + "/remove", "register and remove paths, lowercase family")
+        try check(Set(pushes[0].body.keys) == ["operationId", "token", "environment"], "registration body has exactly the relay's keys")
+        try check(pushes[0].body["operationId"] as? String == registerOp.uuidString.lowercased(), "registration operation ID is lowercase")
+        try check(pushes[0].body["token"] as? String == GroupWire.base64(token), "token is base64url")
+        try check(pushes[0].body["environment"] as? String == "development", "APNs environment is sent")
+        try check(Set(pushes[1].body.keys) == ["operationId"] && pushes[1].body["operationId"] as? String == removeOp.uuidString.lowercased(),
+                  "removal body has only a lowercase operation ID")
+        try check(pushFamily.uuidString != pushFamily.uuidString.lowercased(), "the synthetic family ID really is uppercase in Foundation")
+        await pushRelay.fail(503)
+        do { try await pusher.pushSubscription(family: pushFamily, token: token, environment: "development"); throw Failure.check("503 accepted") }
+        catch FamilyNotebookTransportError.server(let code, let status) { try check(code == "family_notifications_disabled" && status == 503, "relay refusal surfaces") }
+        try check(try GroupOperationStore(directory: root.appendingPathComponent("push")).accounts(prefix: "").isEmpty,
+                  "push registration keeps nothing in the journal")
+        print("Family push registration: signed POST, exact body, lowercase IDs, base64url token, removal and refusal passed")
 
         let family = UUID(), path = "/v3/family-notebooks/\(family.uuidString.lowercased())/crypto/operations"
         let relay = Relay(family: family, identity: identity), intent = GroupCanonical.hash(Data("synthetic logical edit".utf8))
