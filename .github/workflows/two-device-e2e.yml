@@ -27,7 +27,7 @@ jobs:
   two-device:
     name: Run Swift against the local SharingService Worker
     runs-on: macos-15
-    timeout-minutes: 18
+    timeout-minutes: 12
     defaults:
       run:
         shell: bash
