@@ -1,5 +1,12 @@
 import type {Env} from './env';
 import {sendGroupReportMail} from './group-report-mail';
+
+// Both the decision receipt and the app's reply list use this retention window.
+// e is the evidence descriptor and r is the durable report record.
+export const familyPhotoReplyRetainedSQL = `e.committed_at IS NOT NULL
+ AND e.content_expires_at + 172800 > unixepoch()
+ AND (r.retention_until IS NULL OR r.retention_until > unixepoch())`;
+
 /** Only the immutable reported asset is selected. A replacement asset, local
  * original, notebook operations and membership are never touched here. */
 export async function advanceFamilyPhotoReportDeadlines(db:D1Database, enforcementEnabled:boolean):Promise<void>{

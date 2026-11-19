@@ -5,7 +5,7 @@ import {fixture as operatorFixture} from './fixtures/moderation-operator';
 import {db,person,signed,testEnv,send,ok} from './group-fixture';
 import {base64urlEncode,sha256Base64url,randomBase64url} from '../src/encoding';
 import {routeFamilyPhotoOperator,type FamilyPhotoOperatorEnvironment} from '../src/family-photo-moderation-operator';
-import {familyPhotoStopped} from '../src/family-photo-report-operations';
+import {advanceFamilyPhotoReportDeadlines,familyPhotoStopped} from '../src/family-photo-report-operations';
 import {acceptIdentityFence} from '../src/group-identity-fence';
 import {prepareReportManifest,installReportManifest,sealIdentityReportAcceptance,runIdentityReportErasure} from '../src/group-identity-report-erasure';
 const settings={...testEnv,FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED:'YES',FAMILY_NOTEBOOK_API_RUNTIME_ENABLED:'YES',FAMILY_REPRESENTATIVE_PHOTO_RUNTIME_ENABLED:'YES',
@@ -15,7 +15,7 @@ beforeEach(async()=>{
  await db.prepare(`UPDATE personal_staging_runtime_gate SET generation=generation+1,media_enabled=1,
  apns_enabled=1,report_ingestion_enabled=1,updated_at=unixepoch() WHERE singleton=1 AND generation=0`).run();
 });
-async function fixture(){
+async function fixture(ageDays=0){
  const reporter=await person(),author=await person(),family=crypto.randomUUID(),asset=crypto.randomUUID();
  await db.prepare('INSERT INTO family_photo_report_deliveries VALUES (?,?,?,?,?,unixepoch()+604800)')
  .bind(family,asset,reporter.id,reporter.deviceId,author.id).run();
@@ -23,7 +23,27 @@ async function fixture(){
  reasonCode:'privacy',moderationKeyId:'moderation-v2',ciphertext:base64urlEncode(bytes),
  ciphertextSHA256:await sha256Base64url(bytes),consentedAt:Math.floor(Date.now()/1000)};
  const path=`/v3/family-notebooks/${family}/representative-photos/reports`;
- const report=ok(await send(await signed(reporter,path,body),settings));
+ let report:{reportId:string;committedAt:number};
+ if (ageDays) {
+  // Age the synthetic evidence at creation because its timestamps are immutable after commit.
+  const reportId=base64urlEncode(crypto.getRandomValues(new Uint8Array(16)));
+  const committedAt=Math.floor(Date.now()/1000)-ageDays*86400;
+  await db.batch([
+   db.prepare(`INSERT INTO family_photo_reports
+    (report_id,family_id,asset_id,reporter_person_id,reporter_device_id,author_id,operation_id,request_hash,
+    reason_code,moderation_key_id,ciphertext_size,ciphertext_sha256,object_key,state,created_at,upload_expires_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'reserved',?,?)`)
+    .bind(reportId,family,asset,reporter.id,reporter.deviceId,author.id,body.operationId,body.ciphertextSHA256,
+     body.reasonCode,body.moderationKeyId,bytes.length,body.ciphertextSHA256,`synthetic/${reportId}`,committedAt,committedAt+3600),
+   db.prepare(`UPDATE family_photo_reports SET state='committed',committed_at=?,content_expires_at=? WHERE report_id=?`)
+    .bind(committedAt,committedAt+604800,reportId),
+  ]);
+  await advanceFamilyPhotoReportDeadlines(db,true);
+  await db.prepare(`UPDATE family_photo_reports SET state='expired' WHERE report_id=?`).bind(reportId).run();
+  report={reportId,committedAt};
+ } else {
+  report=ok(await send(await signed(reporter,path,body),settings)) as typeof report;
+ }
  const operator=await operatorFixture();
  await db.prepare(`INSERT INTO moderation_owner_policies(policy_revision,owner_operator_id,enrollment_admission_id,session_rowid_floor)
  SELECT COALESCE((SELECT MAX(policy_revision) FROM moderation_owner_policies),0)+1,?,enrollment_admission_id,
@@ -108,11 +128,42 @@ describe('family photo reports and operator boundary',()=>{
  const read=await f.prove(await f.issue(`${prefix}/cases/${ref}/read`));expect(read.status,await read.clone().text()).toBe(200);
  const receipt=read.headers.get('X-Moderation-Read-Receipt')!;
  const stop=await f.issue(`${prefix}/cases/${ref}/photo/${receipt}`);
- expect((await f.prove(stop)).status).toBe(200);expect(await familyPhotoStopped(db,f.family,f.asset)).toBe(true);
+ const stopped=await f.prove(stop);
+ expect(stopped.status).toBe(200);
+ expect(await stopped.json()).toMatchObject({outcome:'photo',revision:1,replyAvailable:true});
+ expect(await familyPhotoStopped(db,f.family,f.asset)).toBe(true);
  expect((await f.prove(stop)).status).toBe(409);
  expect((await f.dispatch(`${prefix}/cases/${ref}/no_action/${receipt}`)).status).toBe(409);
  const release=await f.issue(`${prefix}/cases/${ref}/release`);
- expect((await f.prove(release)).status).toBe(200);expect(await familyPhotoStopped(db,f.family,f.asset)).toBe(false);
+ const released=await f.prove(release);
+ expect(released.status).toBe(200);
+ expect(await released.json()).toMatchObject({outcome:'release',revision:2,replyAvailable:true});
+ expect(await familyPhotoStopped(db,f.family,f.asset)).toBe(false);
+ });
+ it.each([[8,true],[10,false]] as const)('releases a stop on a %i-day-old report with reply availability %s',async(ageDays,replyAvailable)=>{
+  const f=await fixture(ageDays),prefix='/operator/family-photo/v1';
+  const queue=await f.prove(await f.issue(prefix+'/queue'));
+  const {cases}=await queue.json() as {cases:{caseReference:string;outcome:string;evidenceAvailable:number}[]};
+  expect(cases).toHaveLength(1);
+  expect(cases[0]).toMatchObject({outcome:'photo',evidenceAvailable:0});
+
+  const released=await f.prove(await f.issue(`${prefix}/cases/${cases[0]!.caseReference}/release`));
+  expect(released.status).toBe(200);
+  expect(await released.json()).toMatchObject({outcome:'release',revision:2,replyAvailable});
+  expect(await familyPhotoStopped(db,f.family,f.asset)).toBe(false);
+  const replies=ok(await send(await signed(f.reporter,'/v3/family-notebooks/report-replies'),settings));
+  expect(replies.replies).toEqual(replyAvailable?[{receiptNumber:f.report.reportId,receivedAt:f.report.committedAt,status:'reviewed'}]:[]);
+ });
+ it('keeps the reply available when the operator saves no action',async()=>{
+  const f=await fixture(),prefix='/operator/family-photo/v1';
+  const queue=await f.prove(await f.issue(prefix+'/queue'));
+  const {cases}=await queue.json() as {cases:{caseReference:string}[]};
+  const current=`${prefix}/cases/${cases[0]!.caseReference}`;
+  const opened=await f.prove(await f.issue(current+'/read'));
+  const decided=await f.prove(await f.issue(current+'/no_action/'+opened.headers.get('X-Moderation-Read-Receipt')));
+  expect(decided.status).toBe(200);
+  expect(await decided.json()).toMatchObject({outcome:'no_action',revision:1,replyAvailable:true});
+  expect(await familyPhotoStopped(db,f.family,f.asset)).toBe(false);
  });
  it('rejects intake when any reviewed upper gate is OFF',async()=>{
  const f=await fixture();
