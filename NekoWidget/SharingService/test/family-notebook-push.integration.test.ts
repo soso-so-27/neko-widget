@@ -120,12 +120,49 @@ describe('family admission notifications',()=>{
 });
 
 describe('family device registration notifications',()=>{
- async function registerCertificate(p:Person,f:Awaited<ReturnType<typeof setupPush>>,signer=p,operationId=crypto.randomUUID()) {
+ async function registerCertificate(p:Person,f:Awaited<ReturnType<typeof setupPush>>,signer=p,operationId=crypto.randomUUID(),config=f.config) {
   const device={id:p.deviceId,signingPublicKey:p.signing.publicKey,hpkePublicKey:p.hpke,personAuthorization:''};
   const personAuthorization=await sign(signer.identity.privateKey,groupDeviceAuthorization(f.f.id,p.id,device));
   return call(p,`${root}/${f.f.id}/crypto/devices`,{operationId,expectedGeneration:2,expectedEpoch:0,
-    payload:{personAuthorization}},f.config);
+    payload:{personAuthorization}},config);
  }
+ it('sends only the recovery device wake-up to A and B in the selected staging notebook',async()=>{
+  const f=await setupPush(),foreign=await setupPush();
+  ok(await approve(f.owner,f.f.id,f.j.id));
+  ok(await approve(foreign.owner,foreign.f.id,foreign.j.id));
+  const recovery=await person(f.owner.identity), unlisted=await person(f.owner.identity);
+  const outsideAdded=await person(foreign.owner.identity);
+  for(const p of [f.owner,f.guest,unlisted]) ok(await registerCertificate(p,f));
+  // Separate tokens make the exact physical recipients observable in the fake provider.
+  for(const [p,byte] of [[f.owner,1],[f.guest,2],[unlisted,3],[recovery,4]] as const)
+    ok(await f.register(p,base64urlEncode(new Uint8Array(32).fill(byte))));
+  ok(await registerCertificate(foreign.owner,foreign));ok(await foreign.register(foreign.owner));
+  ok(await registerCertificate(outsideAdded,foreign));
+  const queuedOutside=await db.prepare(`INSERT INTO family_notification_deliveries
+    (event_id,device_id,token_digest,subscription_generation,state,available_at)
+    SELECT event_id,device_id,token_digest,subscription_generation,'pending',available_at
+    FROM family_notification_candidates WHERE space_id=? AND kind='device_registered'`).bind(foreign.f.id).run();
+  expect(queuedOutside.meta.changes).toBe(1);
+
+  const config:Env={...f.config,ENVIRONMENT:'staging',MEMBER_RATE_LIMITER:{limit:async()=>({success:true})},
+    ownerTrial:{phase:'RECOVERY',family:f.f.id,
+    phaseUntilMs:Date.now()+120_000,expiresAtMs:Date.now()+3_600_000,proofHash:randomBase64url(32),window:randomBase64url(16),
+    aPerson:f.owner.id,aDevice:f.owner.deviceId,bPerson:f.guest.id,bDevice:f.guest.deviceId,recoveryDevice:recovery.deviceId}};
+  const attempt=await registerCertificate(recovery,f,recovery,crypto.randomUUID(),config);
+  ok(attempt);
+  const sent:string[]=[];
+  const transport:typeof fetch=async(url,init)=>{
+    expect(new Headers(init?.headers).get('apns-push-type')).toBe('background');
+    expect(JSON.parse(init!.body as string)).toEqual({aps:{'content-available':1},neko:{v:3,kind:'family_device_registered'}});
+    sent.push(String(url).split('/').at(-1)!);
+    return new Response(null,{status:200});
+  };
+  expect((await drainFamilyNotifications(config,f.now,transport)).accepted).toBe(2);
+  expect(sent.sort()).toEqual(['01'.repeat(32),'02'.repeat(32)]);
+  expect((await db.prepare(`SELECT state,attempts FROM family_notification_deliveries WHERE device_id=?`)
+    .bind(foreign.owner.deviceId).first())).toEqual({state:'pending',attempts:0});
+  expect((await drainFamilyNotifications(config,f.now,transport)).accepted).toBe(0);
+ });
  it('wakes only opted-in existing notebook devices, once, with an empty background update',async()=>{
   const f=await setupPush();ok(await approve(f.owner,f.f.id,f.j.id));
   const added=await person(f.owner.identity),unlinked=await person(f.owner.identity),stranger=await plusOwner();

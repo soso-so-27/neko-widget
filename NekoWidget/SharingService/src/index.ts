@@ -129,7 +129,7 @@ import { groupReplyPath } from './group-moderation-replies';
 import { groupReportingAvailabilityPath } from './group-reporting-availability';
 import { drainGroupAdmissionNotifications } from './group-admission-push';
 import { drainGroupNotifications } from './group-push';
-import { ownerTrialRequest } from './owner-two-device-trial';
+import { ownerTrialFamilyPushEnvironment, ownerTrialRequest } from './owner-two-device-trial';
 
 export async function route(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   beginReadDiagnostic(request);
@@ -728,6 +728,12 @@ export default {
         ? protectedGroupRead(env,()=>drainFamilyPhotoReportMail(env)) : drainFamilyPhotoReportMail(env));
       ctx.waitUntil(drainNotificationOutbox(env));
       if(env.FAMILY_NOTEBOOK_APNS_RUNTIME_ENABLED === 'YES') ctx.waitUntil(protectedGroupRead(env,async()=>{ await cleanupExpiredFamilyPush(env,Math.floor(Date.now()/1000));return drainFamilyNotifications(env); }));
+      else if (env.ENVIRONMENT === 'staging' && env.OWNER_TWO_DEVICE_TRIAL) {
+        ctx.waitUntil(protectedGroupRead(env, async () => {
+          const scoped = await ownerTrialFamilyPushEnvironment(env);
+          if (scoped) await drainFamilyNotifications(scoped);
+        }));
+      }
       if(env.GROUP_APNS_RUNTIME_ENABLED === 'YES') ctx.waitUntil(protectedGroupRead(env,()=>Promise.all([drainGroupNotifications(env),drainGroupAdmissionNotifications(env)])));
     } else if (controller.cron === LEGACY_CLEANUP_CRON) {
       ctx.waitUntil(runLegacyScheduledCleanup(env));
