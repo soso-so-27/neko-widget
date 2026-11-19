@@ -1100,6 +1100,8 @@ struct FamilyNotebookView: View {
     @State private var confirmsDissolve = false
     /// This iPhone sent a family photo report: 「通報への返答」 shows.
     @AppStorage(FamilyReportReplies.sentKey) private var sentPhotoReport = false
+    /// 11/20: this open already asked for replies after 機種変更.
+    @State private var askedReportReplies = false
     @State private var showsCats = false
     /// The server's answer, or before it comes, the family as last shown here.
     private var shownMembership: FamilyMembership? {
@@ -1260,7 +1262,14 @@ struct FamilyNotebookView: View {
             // Test builds (the family on this iPhone alone) send nothing.
             if !model.isReal { Task { await sharing.refresh() } }
         }
-        .onDisappear { FamilyNotebookAutoCheck.shared.disappeared(.notebook) }
+        .onDisappear { FamilyNotebookAutoCheck.shared.disappeared(.notebook); askedReportReplies = false }
+        // 11/20: after 機種変更, replies to reports from the previous iPhone
+        // (at most one read per open; none once the row shows).
+        .task(id: model.hasFamily) {
+            guard model.isReal, model.hasFamily, !askedReportReplies else { return }
+            askedReportReplies = true
+            await FamilyReportReplies.discoverAfterRecovery(notebookLoaded: model.hasFamily)
+        }
         .onChange(of: presentsSheet, initial: true) { _, open in FamilyNotebookAutoCheck.shared.holdsRedraw = open }
         // 11/16: the notebook gone, nothing on screen waits for a sheet; a
         // hold left on would stop every automatic read until it opens again.
@@ -3096,6 +3105,16 @@ enum FamilyReportReplies {
         await FamilyNotebookSharing.shared.refresh()
     }
 #endif
+
+    /// 11/20: one silent read when the notebook opens on a recovered iPhone
+    /// without the flag (FamilyReportRepliesDiscovery); a reply sets it.
+    @MainActor static func discoverAfterRecovery(notebookLoaded: Bool) async {
+        guard FamilyReportRepliesDiscovery.shouldRead(flagSet: UserDefaults.standard.bool(forKey: sentKey),
+            recoveryLinked: FamilyNotebookServiceFactory.hasRecoveryLink(), notebookLoaded: notebookLoaded,
+            gateOpen: FamilyNotebookServiceFactory.representativePhotoBackend() != nil),
+              let replies = try? await FamilyNotebookServiceFactory.reportReplies(), !replies.isEmpty else { return }
+        markSent()
+    }
 
     static func load() async throws -> [FamilyPhotoReportReply] {
 #if DEBUG

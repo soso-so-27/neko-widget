@@ -106,11 +106,13 @@ enum FamilyNotebookServiceFactory {
     }
 
     /// The reporter's private receipt list, without loading family membership.
+    /// 11/20: signed by the identity the notebook session uses (the report was
+    /// sent with it): the recovered one after 機種変更, else the usual one.
     static func reportReplies() async throws -> [FamilyPhotoReportReply] {
         guard productionRequested, let client = GroupWindowClientProvider.production else {
             throw FamilyNotebookTransportError.unavailable
         }
-        return try await client.familyPhotoReportReplies()
+        return try await client.familyPhotoReportReplies(as: recoveredIdentity(client))
     }
 
     /// The screens' way to the photo; nil while it is off.
