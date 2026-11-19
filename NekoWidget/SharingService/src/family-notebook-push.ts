@@ -16,11 +16,24 @@ function enabled(env:Env):boolean {
     && env.APNS_RUNTIME_ENABLED==='YES' && env.MOMENT_RUNTIME_ENABLED==='YES';
 }
 export async function cleanupExpiredFamilyPush(env:Env,now:number):Promise<void> {
+  await env.DB.prepare(`DELETE FROM family_device_notification_events WHERE rowid IN (
+    SELECT rowid FROM family_device_notification_events WHERE recorded_at<=? LIMIT 500)`).bind(now-86400).run();
   await env.DB.prepare(`DELETE FROM family_notification_deliveries WHERE rowid IN (SELECT rowid FROM family_notification_deliveries WHERE available_at<? AND state<>'leased' LIMIT 500)`).bind(now-172800).run();
   // Preserve the generation tombstone, but not expired physical tokens.
   await env.DB.prepare(`UPDATE family_push_subscriptions SET token_ciphertext='',token_nonce='',token_digest=''
     WHERE rowid IN (SELECT rowid FROM family_push_subscriptions WHERE expires_at<=? AND token_ciphertext<>'' LIMIT 100)`)
     .bind(now).run();
+}
+export function familyDeviceNotification(env:Env,family:string,device:string):D1PreparedStatement[] {
+  if(!enabled(env))return [];
+  return [env.DB.prepare(`INSERT INTO family_device_notification_events(family_id,source_device_id,recipient_device_id,recorded_at)
+    SELECT c.family_id,?,c.device_id,unixepoch() FROM family_notebook_crypto_live_devices c
+    JOIN family_push_subscriptions s ON s.space_id=c.family_id AND s.device_id=c.device_id
+      AND s.expires_at>unixepoch() AND s.token_ciphertext<>''
+    WHERE c.family_id=? AND c.device_id<>?
+      AND NOT EXISTS(SELECT 1 FROM family_notebook_crypto_devices WHERE family_id=c.family_id AND device_id=?)
+      AND EXISTS(SELECT 1 FROM personal_staging_runtime_gate WHERE singleton=1 AND media_enabled=1 AND apns_enabled=1)
+    ON CONFLICT(family_id,source_device_id,recipient_device_id) DO NOTHING`).bind(device,family,device,device)];
 }
 function gateCheck(env:Env,generation:number):D1PreparedStatement[] {
   const id=crypto.randomUUID();return [env.DB.prepare('INSERT INTO group_push_checks VALUES (?,?)').bind(id,generation),
@@ -80,10 +93,12 @@ interface Queued {
   event_id:string;device_id:string;token_digest:string;subscription_generation:number;attempts:number;
 }
 interface Current extends Queued {
-  space_id:string;kind:'join_requested'|'join_approved';expires_at:number;
+  space_id:string;kind:'join_requested'|'join_approved'|'device_registered';expires_at:number;
   token_ciphertext:string;token_nonce:string;encryption_key_id:string;environment:'production'|'development';
 }
 export function familyNotificationPayload(row:Pick<Current,'kind'|'space_id'>):string {
+  if(row.kind==='device_registered')
+    return JSON.stringify({aps:{'content-available':1},neko:{v:3,kind:'family_device_registered'}});
   return JSON.stringify({aps:{alert:{title:'ねこのまど',body:row.kind==='join_requested'?'家族の手帳に、入りたい人がいます。':'家族の手帳に入りました。'},
     'content-available':1},neko:{v:3,kind:'family_'+row.kind,familyId:row.space_id}});
 }
@@ -94,8 +109,9 @@ async function finish(env:Env,row:Queued,leaseId:string,state:'accepted'|'skippe
 }
 async function current(env:Env,row:Queued,leaseId:string,generation:number):Promise<Current|null> {
   const policy=familyStorePolicy(env);
-  return env.DB.prepare(`SELECT v.*,q.attempts FROM family_live_notification_deliveries v
+  return env.DB.prepare(`SELECT v.*,q.attempts FROM family_notification_candidates v
     JOIN family_notification_deliveries q ON q.event_id=v.event_id AND q.device_id=v.device_id
+      AND q.token_digest=v.token_digest AND q.subscription_generation=v.subscription_generation
     JOIN group_person_devices recipient ON recipient.id=v.device_id
     JOIN personal_staging_runtime_gate g ON g.singleton=1
     WHERE q.event_id=? AND q.device_id=? AND q.token_digest=? AND q.subscription_generation=?
@@ -117,10 +133,10 @@ export async function drainFamilyNotifications(env:Env,now=Math.floor(Date.now()
   catch { summary.configurationUnavailable=true;return summary; }
   await env.DB.prepare(`INSERT OR IGNORE INTO family_notification_deliveries
     (event_id,device_id,token_digest,subscription_generation,state,available_at)
-    SELECT event_id,device_id,token_digest,subscription_generation,'pending',MAX(?,v.available_at) FROM family_notification_recipients v WHERE NOT EXISTS (SELECT 1 FROM family_notification_deliveries q WHERE q.event_id=v.event_id AND q.device_id=v.device_id) LIMIT 500`).bind(now).run();
+    SELECT event_id,device_id,token_digest,subscription_generation,'pending',MAX(?,v.available_at) FROM family_notification_candidates v WHERE NOT EXISTS (SELECT 1 FROM family_notification_deliveries q WHERE q.event_id=v.event_id AND q.device_id=v.device_id) LIMIT 500`).bind(now).run();
   // A rotated token can retry an unsent event. Accepted events remain deduplicated.
   await env.DB.prepare(`UPDATE family_notification_deliveries SET token_digest=v.token_digest,subscription_generation=v.subscription_generation,
-    state='pending',available_at=MAX(?,v.available_at),lease_id=NULL,lease_expires_at=NULL FROM family_notification_recipients v
+    state='pending',available_at=MAX(?,v.available_at),lease_id=NULL,lease_expires_at=NULL FROM family_notification_candidates v
     WHERE family_notification_deliveries.event_id=v.event_id AND family_notification_deliveries.device_id=v.device_id
       AND family_notification_deliveries.state<>'accepted'
       AND (family_notification_deliveries.token_digest<>v.token_digest OR family_notification_deliveries.subscription_generation<>v.subscription_generation)`).bind(now).run();
@@ -151,10 +167,11 @@ export async function drainFamilyNotifications(env:Env,now=Math.floor(Date.now()
       await finish(env,row,leaseId,'skipped',now);summary.skipped++;continue;
     }
     const hex=[...token].map(b=>b.toString(16).padStart(2,'0')).join('');
+    const background=live.kind==='device_registered';
     let response:Response;
     try {
       response=await fetchImpl(`https://${credential.environment==='production'?'api':'api.sandbox'}.push.apple.com/3/device/${hex}`,{
-        method:'POST',headers:{authorization:`bearer ${authorization}`,'apns-push-type':'alert','apns-priority':'10',
+        method:'POST',headers:{authorization:`bearer ${authorization}`,'apns-push-type':background?'background':'alert','apns-priority':background?'5':'10',
           'apns-topic':credential.bundleId,'apns-expiration':String(live.expires_at),'apns-collapse-id':`family-${collapseId}`,
           'content-type':'application/json'},body:familyNotificationPayload(live),signal:AbortSignal.timeout(10000)});
     } catch { await finish(env,row,leaseId,'pending',now);summary.retried++;continue; }

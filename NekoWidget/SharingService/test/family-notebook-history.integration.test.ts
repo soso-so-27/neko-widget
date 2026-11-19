@@ -6,6 +6,8 @@ import { route } from '../src/index';
 import { familyInvitationProof } from '../src/family-notebook-admission';
 import { familyRosterBytes, familyParticipationBytes, validateFamilyParticipationTransition, verifyFamilyRoster, type FamilyCryptoMember, type VerifiedFamilyCryptoRoster } from '../src/family-notebook-crypto';
 import { groupDeviceAuthorization, groupFields } from '../src/group-protocol';
+import { type RecoveryChallenge } from '../src/group-recovery-catalog';
+import { recoveryDeviceRemovalTranscript } from '../src/group-recovery-devices';
 import { base64urlDecode, base64urlEncode, randomBase64url, sha256Base64url } from '../src/encoding';
 import { errorResponse } from '../src/errors';
 import type { Env } from '../src/env';
@@ -88,6 +90,39 @@ function beforeCommit(action: () => Promise<void>): Env {
 }
 
 describe('family encrypted history transaction boundary', () => {
+  it('returns device_limit for a fourth device and rekeys the notebook after root-signed removal', async () => {
+    const a = await plusOwner(), f = await create(a), {m,r} = await initialize(a,f);
+    const old = await person(a.identity), spare = await person(a.identity);
+    const mOld = await register(old,f,1,1), mSpare = await register(spare,f,1,1);
+    const r2 = await packet(a,f,[{...m,devices:[...m.devices,...mOld.devices,...mSpare.devices]}],r);
+    ok(await invoke(a,`${root}/${f}/crypto/rosters`,body(r2.packet,1,1)));
+    expect(ok(await invoke(a,`${root}/${f}/crypto/state`)).ready).toBe(true);
+    await person(a.identity,409); // Fixture checks the public error body as well as the status.
+
+    const recoverySettings:Env = {...enabled,ENVIRONMENT:'staging',GROUP_RECOVERY_CATALOG_ENABLED:'YES',
+      MEMBER_RATE_LIMITER:{limit:async()=>({success:true})}};
+    const post = (path:string,value:unknown) => send(new Request('https://group.invalid/v3/group-recovery/'+path,
+      {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(value)}),recoverySettings);
+    const {challenge} = ok(await post('challenges',{identityPublicKey:a.identity.publicKey,
+      operationId:crypto.randomUUID(),purpose:'register'}),201) as {challenge:RecoveryChallenge};
+    ok(await post('devices/remove',{challengeId:challenge.id,deviceId:old.deviceId,
+      rootSignature:await sign(a.identity.privateKey,recoveryDeviceRemovalTranscript(challenge,old.deviceId))}));
+    expect((await invoke(old,`${root}/${f}/crypto/state`)).status).toBe(401);
+    const state=ok(await invoke(a,`${root}/${f}/crypto/state`));
+    expect(state).toMatchObject({people:[a.id],ready:false,currentEpoch:2});
+    expect(state.devices.map((d:{device_id:string})=>d.device_id).sort()).toEqual([a.deviceId,spare.deviceId].sort());
+
+    const replacement=await person(a.identity), mNew=await register(replacement,f,1,2);
+    const r3=await packet(a,f,[{...m,devices:[...m.devices,...mSpare.devices,...mNew.devices]}],r2);
+    ok(await invoke(a,`${root}/${f}/crypto/rosters`,body(r3.packet,1,2)));
+    expect(ok(await invoke(replacement,`${root}/${f}/crypto/state`))).toMatchObject({people:[a.id],ready:true,currentEpoch:3});
+    for(const past of [r,r2,r3]) {
+      const e=await envelope(a,replacement,r3,past);
+      ok(await invoke(a,`${root}/${f}/crypto/keys`,body(e,1,3)));
+      expect(ok(await invoke(replacement,`${root}/${f}/crypto/keys/${past.packet.roster.epoch}`)).envelopes).toEqual([e]);
+    }
+    expect((await invoke(old,`${root}/${f}/crypto/keys/2`)).status).toBe(401);
+  });
   it('keeps public routes off, requires membership and an explicit family certificate', async () => {
     const a = await plusOwner(), stranger = await person(), f = await create(a);
     expect((await send(await signed(a, `${root}/${f}/crypto/state`), { ...enabled, FAMILY_NOTEBOOK_API_RUNTIME_ENABLED: 'NO' })).status).toBe(404);

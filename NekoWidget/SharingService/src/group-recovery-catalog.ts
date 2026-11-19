@@ -88,8 +88,9 @@ export async function groupRecoveryCatalogAPI(request: Request, env: Env): Promi
           ORDER BY w.space_id`).bind(c.person_id,trial?.window??null,trial?.window??null),
         env.DB.prepare(`SELECT f.id AS familyId FROM family_notebook_members m
           JOIN family_notebook_spaces f ON f.id=m.family_id JOIN group_people p ON p.id=m.person_id
-          WHERE m.person_id=? AND m.state='active' AND f.state='active' AND p.state='active' AND ?=0
-          ORDER BY f.id`).bind(c.person_id,trial?1:0),
+          WHERE m.person_id=? AND m.state='active' AND f.state='active' AND p.state='active'
+            AND (? IS NULL OR f.id=?)
+          ORDER BY f.id`).bind(c.person_id,trial?.family??null,trial?.family??null),
         env.DB.prepare(`SELECT d.id AS deviceId,l.model,d.created_at AS registeredAt
           FROM group_person_devices d LEFT JOIN group_recovery_device_labels l ON l.device_id=d.id
           JOIN group_people p ON p.id=d.person_id

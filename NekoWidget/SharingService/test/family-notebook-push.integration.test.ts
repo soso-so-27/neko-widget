@@ -4,6 +4,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import { route } from '../src/index';
 import { familyInvitationProof } from '../src/family-notebook-admission';
 import { familyNotebookPayer } from '../src/family-notebook-payer';
+import { groupDeviceAuthorization } from '../src/group-protocol';
 import { base64urlEncode } from '../src/encoding';
 import { errorResponse } from '../src/errors';
 import type { Env } from '../src/env';
@@ -115,6 +116,59 @@ describe('family admission notifications',()=>{
  it('requires exact opt-in before any new schema access',async()=>{
  const dbNoAccess=new Proxy(db,{get(){throw Error('unexpected database access');}});
  for(const value of [undefined,'NO','yes'])expect((await drainFamilyNotifications({...enabled,DB:dbNoAccess,FAMILY_NOTEBOOK_APNS_RUNTIME_ENABLED:value} as Env)).leased).toBe(0);
+ });
+});
+
+describe('family device registration notifications',()=>{
+ async function registerCertificate(p:Person,f:Awaited<ReturnType<typeof setupPush>>,signer=p,operationId=crypto.randomUUID()) {
+  const device={id:p.deviceId,signingPublicKey:p.signing.publicKey,hpkePublicKey:p.hpke,personAuthorization:''};
+  const personAuthorization=await sign(signer.identity.privateKey,groupDeviceAuthorization(f.f.id,p.id,device));
+  return call(p,`${root}/${f.f.id}/crypto/devices`,{operationId,expectedGeneration:2,expectedEpoch:0,
+    payload:{personAuthorization}},f.config);
+ }
+ it('wakes only opted-in existing notebook devices, once, with an empty background update',async()=>{
+  const f=await setupPush();ok(await approve(f.owner,f.f.id,f.j.id));
+  const added=await person(f.owner.identity),unlinked=await person(f.owner.identity),stranger=await plusOwner();
+  const foreign=await family(stranger);
+  for(const p of [f.owner,f.guest])ok(await registerCertificate(p,f));
+  const tOwner=new Uint8Array(32).fill(1),tGuest=new Uint8Array(32).fill(2);
+  for(const [p,t] of [[f.owner,base64urlEncode(tOwner)],[f.guest,base64urlEncode(tGuest)],
+    [added,randomBase64url(32)],[unlinked,randomBase64url(32)]] as const) ok(await f.register(p,t));
+  ok(await call(stranger,`${root}/${foreign.id}/push-subscription`,{operationId:crypto.randomUUID(),token:randomBase64url(32),environment:'production'},f.config));
+
+  expect((await registerCertificate(added,f,f.guest)).data.error.code).toBe('invalid_family_proof');
+  const op=crypto.randomUUID();
+  ok(await registerCertificate(added,f,added,op));
+  ok(await registerCertificate(added,f,added,op));
+  ok(await registerCertificate(added,f));
+  expect((await db.prepare('SELECT recipient_device_id FROM family_device_notification_events WHERE family_id=?').bind(f.f.id).all()).results
+    .map(x=>x.recipient_device_id).sort()).toEqual([f.owner.deviceId,f.guest.deviceId].sort());
+  const sent:string[]=[];
+  const transport:typeof fetch=async(url,init)=>{
+   const headers=new Headers(init?.headers);
+   if(headers.get('apns-push-type')==='background') {
+    expect(headers.get('apns-priority')).toBe('5');
+    expect(JSON.parse(init!.body as string)).toEqual({aps:{'content-available':1},neko:{v:3,kind:'family_device_registered'}});
+    sent.push(String(url).split('/').at(-1)!);
+   }
+   return new Response(null,{status:200});
+  };
+  await Promise.all([drainFamilyNotifications(f.config,f.now,transport),drainFamilyNotifications(f.config,f.now,transport)]);
+  await drainFamilyNotifications(f.config,f.now,transport);
+  expect(sent.sort()).toEqual(['01'.repeat(tOwner.length),'02'.repeat(tGuest.length)]);
+ });
+ it('drops a wake-up when the newly registered device is revoked before dispatch',async()=>{
+  const f=await setupPush();ok(await approve(f.owner,f.f.id,f.j.id));
+  ok(await registerCertificate(f.owner,f));ok(await f.register(f.owner));
+  const added=await person(f.owner.identity);ok(await registerCertificate(added,f));
+  let sends=0;
+  await drainFamilyNotifications(f.config,f.now,async(_url,init)=>{
+   if(new Headers(init?.headers).get('apns-push-type')==='background')sends++;
+   return new Response(null,{status:200});
+  },{beforeSend:async row=>{
+   if(row.event_id.includes(':device_registered:')) await db.prepare("UPDATE group_person_devices SET state='revoked',revoked_at=unixepoch() WHERE id=?").bind(added.deviceId).run();
+  }});
+  expect(sends).toBe(0);
  });
 });
 
