@@ -22,6 +22,9 @@ enum FamilyAutoCheckPolicy {
     struct Situation: Equatable, Sendable {
         var notebookOpen = false
         var toolOpen = false
+        /// 11/19: この子 shows a photo the family delivered (a family cat
+        /// with no cat of this iPhone). The photo arrives with the notebook.
+        var photoOpen = false
         /// The keys still move (`needsAnotherPass`).
         var keysMove = false
         /// Asked to join, not let in yet.
@@ -79,6 +82,9 @@ enum FamilyAutoCheckPolicy {
             let full = s.secondsSinceFull + requestsInterval >= notebookFullInterval
             return .init(pass: full ? .full : .requestsOnly, after: requestsInterval)
         }
+        // 11/19 (TestFlight 392): a new photo waited for the app to come to
+        // the front again (7 minutes) while この子 stayed open.
+        if s.photoOpen { return .init(pass: .full, after: notebookFullInterval) }
         return nil
     }
 }

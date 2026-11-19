@@ -19,6 +19,9 @@ final class FamilyNotebookSharing: ObservableObject {
     @Published var failure: FamilySharingError?
     @Published private(set) var isWorking = false
     private var refreshing = false
+    /// 11/19: once a launch, the first read that knows the family asks for
+    /// the notification permission and token it registers.
+    private var askedForPushPreference = false
     /// The last whole-family read that finished, by a tap or by the schedule
     /// (11/15, 1115q: an automatic pass does not repeat one just made).
     private(set) var lastReadAt: Date?
@@ -71,6 +74,9 @@ final class FamilyNotebookSharing: ObservableObject {
         var notedSend = false
         do {
             let loaded = try await service.loadState()
+            // 11/19 (機種変更 水準2): a read that began before the notebook
+            // switched to the recovered identity says nothing about it.
+            if (service as? ProductionFamilyNotebookSharingService)?.restartPending == true { return false }
             noteSend(); notedSend = true
             // A further pass of a notebook already on screen (more history, a
             // key rotation) keeps it there instead of flipping to 「準備しています」
@@ -104,6 +110,14 @@ final class FamilyNotebookSharing: ObservableObject {
                 // list at once (11/15: they stayed with 受け入れる under them).
                 let nextRequests = next.membership == nil ? [] : try await real.pendingRequests()
                 if nextRequests != requests { requests = nextRequests }
+                // 11/19: the family is known: the notebook's push registration
+                // follows the notification permission and token (GroupAdmissionService).
+                #if canImport(UIKit)
+                if real.needsPushPreference, !askedForPushPreference {
+                    askedForPushPreference = true
+                    Task { await GroupAdmissionService.shared.refresh(force: true) }
+                }
+                #endif
             }
             lastReadAt = Date()
             return true
@@ -115,6 +129,16 @@ final class FamilyNotebookSharing: ObservableObject {
             if reportsFailure { failure = error as? FamilySharingError ?? .serviceUnavailable }
             return false
         }
+    }
+
+    /// 11/19 (機種変更 水準2): the recovery screen linked this iPhone to the
+    /// person's notebook. The next read opens it with the recovered identity;
+    /// what the identity before it showed is not kept as that notebook's
+    /// state (it used to be: a member's 「in the family」 stood for the new
+    /// device still waiting for its keys, and the recovery screen closed).
+    func restartSession() {
+        (service as? ProductionFamilyNotebookSharingService)?.restartSession()
+        state = .checking; pause = nil; requests = []; ownJoinResults = []
     }
 
     /// 11/15 (TestFlight 378): after Plus was bought or confirmed on this
@@ -263,10 +287,11 @@ final class FamilyNotebookSharing: ObservableObject {
 final class FamilyNotebookAutoCheck {
     static let shared = FamilyNotebookAutoCheck()
 
-    enum Screen { case notebook, tool }
+    enum Screen { case notebook, tool, photo }
 
     private var notebookScreens = 0
     private var toolScreens = 0
+    private var photoScreens = 0
     private var active = false
     /// A sheet is open over the notebook: the list is not redrawn under it.
     var holdsRedraw = false
@@ -351,7 +376,7 @@ final class FamilyNotebookAutoCheck {
     func sendSoon() { wake(gap: FamilyAutoCheckPolicy.sendGap) }
 
     func appeared(_ screen: Screen) {
-        switch screen { case .notebook: notebookScreens += 1; case .tool: toolScreens += 1 }
+        switch screen { case .notebook: notebookScreens += 1; case .tool: toolScreens += 1; case .photo: photoScreens += 1 }
         wake(gap: FamilyAutoCheckPolicy.wakeGap)
     }
 
@@ -359,6 +384,7 @@ final class FamilyNotebookAutoCheck {
         switch screen {
         case .notebook: notebookScreens = max(0, notebookScreens - 1)
         case .tool: toolScreens = max(0, toolScreens - 1)
+        case .photo: photoScreens = max(0, photoScreens - 1)
         }
     }
 
@@ -381,7 +407,7 @@ final class FamilyNotebookAutoCheck {
 
     private func situation(now: Date) -> FamilyAutoCheckPolicy.Situation {
         let real = sharing.service as? ProductionFamilyNotebookSharingService
-        return .init(notebookOpen: notebookScreens > 0, toolOpen: toolScreens > 0,
+        return .init(notebookOpen: notebookScreens > 0, toolOpen: toolScreens > 0, photoOpen: photoScreens > 0,
                      keysMove: real?.needsAnotherPass == true,
                      awaitingApproval: FamilyNotebookSharing.awaitingApproval,
                      inFamily: sharing.state.membership != nil,

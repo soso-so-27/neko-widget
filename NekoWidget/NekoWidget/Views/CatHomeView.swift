@@ -405,6 +405,9 @@ struct CatHomeView: View {
             guard familyPhotos.isOn else { return }
             await familyPhotos.read(familyNotebook.unlinkedFamilyCats.map(\.id))
         }
+        // 11/19: and the notebook is read while they are on screen, so a new
+        // photo comes without the app leaving the front first.
+        .familyNotebookPhotoScreen(enabled: familyPhotos.isOn && !familyNotebook.unlinkedFamilyCats.isEmpty)
         // Kept once the pages rest, never while they move.
         .task(id: pageID) {
             guard let pageID, pageID != Self.addPageID, pageID != storedCatID else { return }

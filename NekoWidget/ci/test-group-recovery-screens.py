@@ -227,6 +227,16 @@ class GroupRecoveryScreenTests(unittest.TestCase):
         # The link is written after any registration, then the notebook restarts.
         self.assertLess(steps.index("client.familyNotebookIdentity()"), steps.index("FamilyNotebookIdentityChoice.linkAccount,"))
         self.assertIn("restartSession()", steps)
+        # 11/19 (TestFlight 392): ready only from a read of the recovered
+        # identity that finished now; the state before the switch is not kept.
+        self.assertIn("FamilyNotebookSharing.shared.restartSession()", steps)
+        self.assertIn("guard await FamilyNotebookSharing.shared.refreshAfterPlusChange(reportsFailure: false) else { return false }", steps)
+        sharing = (ROOT / "NekoWidget/Services/FamilyNotebookSharing.swift").read_text(encoding="utf-8")
+        restart = sharing.split("func restartSession() {", 1)[1].split("\n    }\n", 1)[0]
+        self.assertIn("?.restartSession()", restart)
+        self.assertIn("state = .checking", restart)
+        read = sharing.split("private func read(reportsFailure: Bool) async -> Bool {", 1)[1].split("\n    }\n", 1)[0]
+        self.assertLess(read.index("restartPending == true { return false }"), read.index("let syncing = "))
         found, _ = words()
         self.assertEqual(found["notebookWaiting"], "家族の誰かがアプリを開くと戻ります")
         presentation = PRESENTATION.read_text(encoding="utf-8")
