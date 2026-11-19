@@ -11,6 +11,67 @@ enum FamilyNotebookAttachmentLink {
     }
 }
 
+/// 11/19: where a family cat came from: who put it into the notebook, from
+/// which page of their iPhone. Kept in the notebook as the predecessor link
+/// is (FamilyNotebookCatRelink: an encrypted reserved vaccination row with
+/// only `kind`, which older readers skip), as a hash of the family, the
+/// person and the page's profile ID: no name, and no ID a member can read.
+/// The person's own iPhone, also with an empty store after a reinstall or on
+/// a new iPhone, finds its page again instead of adding the cat twice.
+enum FamilyNotebookCatOrigin {
+    static let prefix = "family-cat-origin:"
+    static func recordID(cat: UUID) -> UUID {
+        var bytes = cat.uuid; bytes.0 ^= 0x10; return UUID(uuid: bytes)
+    }
+    static func target(cat: UUID) -> FamilyNotebookTarget {
+        .init(familyCatID: cat, collection: .vaccination, recordID: recordID(cat: cat), field: .kind)
+    }
+    static func marker(family: UUID, person: String, profile: UUID) -> String {
+        let material = ["neko-family-cat-origin-v1", family.uuidString.lowercased(), person,
+                        profile.uuidString.lowercased()].joined(separator: "/")
+        return SHA256.hash(data: Data(material.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The plan with an origin for each cat it puts into the notebook for
+    /// the first time from a page (a profile). Older than every other entry
+    /// of the import (its ledger key sorts first, its source time is 1970),
+    /// so no reader takes it for a newer vaccination than a 「受けていない」.
+    static func marking(_ plan: FamilyNotebookImportPlan, previous: FamilyNotebookSnapshot,
+                        person: String) -> FamilyNotebookImportPlan {
+        var entries = plan.entries
+        for mapping in plan.mappings where mapping.recordID == nil && mapping.toolCatID != nil {
+            guard let profile = mapping.profileID, !previous.mappings.contains(mapping),
+                  !previous.operations.contains(where: { $0.target.familyCatID == mapping.familyCatID }),
+                  plan.entries.contains(where: { $0.target.familyCatID == mapping.familyCatID }),
+                  !entries.contains(where: { $0.target == Self.target(cat: mapping.familyCatID) }) else { continue }
+            entries.append(.init(ledgerKey: "cat-origin:" + mapping.familyCatID.uuidString.lowercased(),
+                target: target(cat: mapping.familyCatID),
+                value: .text(prefix + marker(family: plan.familyID, person: person, profile: profile)),
+                editedAt: Date(timeIntervalSince1970: 0)))
+        }
+        return .init(familyID: plan.familyID, entries: entries, mappings: plan.mappings)
+    }
+
+    /// The family cats in the notebook that this person put in from these
+    /// pages: by profile. A removed cat is not one; for two, the first.
+    static func cats(in snapshot: FamilyNotebookSnapshot, person: String, profiles: [UUID]) -> [UUID: UUID] {
+        guard !profiles.isEmpty else { return [:] }
+        let markers = Dictionary(profiles.map { (prefix + marker(family: snapshot.familyID, person: person, profile: $0), $0) },
+                                 uniquingKeysWith: { first, _ in first })
+        var result: [UUID: (cat: UUID, version: FamilyNotebookVersion)] = [:]
+        let removed = snapshot.unsharedCatIDs
+        for cat in Set(snapshot.operations.map(\.target.familyCatID)) where !removed.contains(cat) {
+            guard snapshot.fieldState(for: .init(familyCatID: cat, field: nil))?.isDeleted != true,
+                  let state = snapshot.fieldState(for: target(cat: cat)), !state.isDeleted,
+                  state.operation.author.personID == person,
+                  case .text(let text) = state.operation.value, let profile = markers[text] else { continue }
+            if let known = result[profile], known.version < state.operation.version { continue }
+            result[profile] = (cat, state.operation.version)
+        }
+        return result.mapValues { $0.cat }
+    }
+}
+
 /// Local IDs stay local. Received cats never match an existing personal cat by
 /// name, and family writes never change household-wide contacts or vet details.
 enum FamilyNotebookCatCareBridge {
@@ -97,8 +158,14 @@ enum FamilyNotebookCatCareBridge {
             changes: .init(familyID: snapshot.familyID, entries: entries.filter { !initialTargets.contains($0.target) }, mappings: now.mappings))
     }
 
-    static func mappings(for snapshot: FamilyNotebookSnapshot, existingLocalIDs: Set<UUID> = [], makeID: () -> UUID = UUID.init) throws -> [FamilyNotebookLocalMapping] {
+    /// `person` and `profiles`: this iPhone's person and its cats' pages. A
+    /// family cat this person put in from one of these pages
+    /// (FamilyNotebookCatOrigin) comes back as that page, not as a second cat.
+    static func mappings(for snapshot: FamilyNotebookSnapshot, existingLocalIDs: Set<UUID> = [],
+                         person: String? = nil, profiles: [UUID] = [],
+                         makeID: () -> UUID = UUID.init) throws -> [FamilyNotebookLocalMapping] {
         var result = snapshot.activeMappings
+        let own = person.map { FamilyNotebookCatOrigin.cats(in: snapshot, person: $0, profiles: profiles) } ?? [:]
         for cat in Set(snapshot.operations.map { $0.target.familyCatID }).sorted(by: { $0.uuidString < $1.uuidString }) {
             if !result.contains(where: { $0.familyCatID == cat && $0.recordID == nil && $0.toolCatID != nil }) {
                 // A tombstone without a local copy need not create an empty cat.
@@ -106,17 +173,22 @@ enum FamilyNotebookCatCareBridge {
                 let previous = FamilyNotebookCatRelink.previousCat(cat, in: snapshot).flatMap { prior in
                     snapshot.mappings.first { $0.familyCatID == prior && $0.recordID == nil && $0.toolCatID != nil }
                 }
+                var profile = previous?.profileID
+                if previous == nil, let page = own.first(where: { $0.value == cat })?.key,
+                   !result.contains(where: { $0.recordID == nil && ($0.profileID == page || $0.toolCatID == page) }) {
+                    profile = page
+                }
                 let local = previous?.toolCatID ?? makeID()
                 guard (previous != nil || !existingLocalIDs.contains(local)),
                       !result.contains(where: { $0.toolCatID == local }) else { throw FamilyNotebookError.mappingConflict }
                 result.append(.init(sourceKey: "cat:" + local.uuidString.lowercased(), familyCatID: cat,
-                                    profileID: previous?.profileID, toolCatID: local))
+                                    profileID: profile, toolCatID: local))
             }
             guard let local = result.first(where: { $0.familyCatID == cat && $0.recordID == nil && $0.toolCatID != nil })?.toolCatID else { continue }
             for collection in lists {
                 let ids = Set(snapshot.operations.filter { $0.target.familyCatID == cat && $0.target.collection == collection }.compactMap { $0.target.recordID })
                 for record in ids.sorted(by: { $0.uuidString < $1.uuidString }) {
-                    if collection == .vaccination && [FamilyNotebookVaccinationAnswer.recordID(cat: cat), FamilyNotebookMicrochipAnswer.recordID(cat: cat), FamilyNotebookCatRelink.recordID(cat: cat)].contains(record) { continue }
+                    if collection == .vaccination && [FamilyNotebookVaccinationAnswer.recordID(cat: cat), FamilyNotebookMicrochipAnswer.recordID(cat: cat), FamilyNotebookCatRelink.recordID(cat: cat), FamilyNotebookCatOrigin.recordID(cat: cat)].contains(record) { continue }
                     let prefix = sourcePrefix(local, collection)
                     if result.contains(where: { $0.familyCatID == cat && $0.recordID == record && $0.sourceKey.hasPrefix(prefix) }) { continue }
                     let retained = try FamilyNotebookCatRelink.retainedMapping(cat: cat, record: record, in: snapshot)
@@ -156,7 +228,7 @@ enum FamilyNotebookCatCareBridge {
             for collection in lists {
                 for item in snapshot.activeMappings where item.familyCatID == cat && item.recordID != nil {
                     guard let record = item.recordID, let localID = localRecordID(item, cat: local, collection: collection) else { continue }
-                    if collection == .vaccination && [FamilyNotebookVaccinationAnswer.recordID(cat: cat), FamilyNotebookMicrochipAnswer.recordID(cat: cat), FamilyNotebookCatRelink.recordID(cat: cat)].contains(record) { continue }
+                    if collection == .vaccination && [FamilyNotebookVaccinationAnswer.recordID(cat: cat), FamilyNotebookMicrochipAnswer.recordID(cat: cat), FamilyNotebookCatRelink.recordID(cat: cat), FamilyNotebookCatOrigin.recordID(cat: cat)].contains(record) { continue }
                     let values = Values(snapshot: snapshot, cat: cat, collection: collection, record: record)
                     try apply(values, localID: localID, into: &state.cats[index])
                 }
@@ -192,7 +264,8 @@ enum FamilyNotebookCatCareBridge {
                 let invalidatingEdit = snapshot.operations.filter { operation in
                     guard operation.target.familyCatID == cat, operation.target.collection == .vaccination,
                           operation.target.recordID != FamilyNotebookVaccinationAnswer.recordID(cat: cat),
-                          operation.target.recordID != FamilyNotebookMicrochipAnswer.recordID(cat: cat) else { return false }
+                          operation.target.recordID != FamilyNotebookMicrochipAnswer.recordID(cat: cat),
+                          operation.target.recordID != FamilyNotebookCatOrigin.recordID(cat: cat) else { return false }
                     if let source = operation.importedSourceEditedAt, let answerSource = answer.operation.importedSourceEditedAt,
                        operation.editedAt == answer.operation.editedAt {
                         return source > answerSource
