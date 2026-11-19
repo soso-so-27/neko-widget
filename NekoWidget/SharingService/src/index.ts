@@ -23,6 +23,7 @@ import {
   legacySharingRuntimeEnabled,
   momentRuntimeEnabled,
   reactionRuntimeEnabled,
+  reportIngestionRuntimeEnabled,
   windowNameRuntimeEnabled,
   type Env,
 } from "./env";
@@ -52,6 +53,7 @@ import {
   loadBillingRuntimeGate,
   loadRuntimeGate,
   mediaGateOpen,
+  reportIngestionGateOpen,
 } from "./runtime-gate";
 import {
   approveEnrollment,
@@ -125,6 +127,7 @@ import { groupAPI } from './group-api';
 import { familyNotebookAPI } from './family-notebook-api';
 import { familyPhotoReportReplies, familyPhotoReportRepliesPath } from './family-photo-report-replies';
 import { runGroupRelayCleanup } from './group-cleanup';
+import { runGroupReportCleanup } from './group-report-cleanup';
 import { isGroupReportPath } from './group-reports';
 import { groupReplyPath } from './group-moderation-replies';
 import { groupReportingAvailabilityPath } from './group-reporting-availability';
@@ -710,7 +713,14 @@ export default {
   async scheduled(controller, env, ctx): Promise<void> {
     if (productionIntakeClosed(env)) return;
     if (controller.cron === FAMILY_PHOTO_MAINTENANCE_CRON) {
-      if (env.ENVIRONMENT === 'production') scheduleFamilyPhotoMaintenance(env, ctx);
+      if (env.ENVIRONMENT !== 'production') return;
+      scheduleFamilyPhotoMaintenance(env, ctx);
+      if (env.GROUP_REPORT_RUNTIME_ENABLED === 'YES' && env.GROUP_MODERATION_RUNTIME_ENABLED === 'YES'
+          && reportIngestionRuntimeEnabled(env)) {
+        const open = loadRuntimeGate(env).then(reportIngestionGateOpen);
+        ctx.waitUntil(open.then(enabled => enabled ? protectedGroupRead(env, () => runGroupReportOperations(env)) : undefined));
+        ctx.waitUntil(open.then(enabled => enabled ? runGroupReportCleanup(env) : undefined));
+      }
       return;
     }
     // Independent cleanup keeps its existing deadline even when billing recovery is unavailable.
@@ -721,9 +731,11 @@ export default {
       // Independent promises: an operations/mail failure must never postpone
       // the ordinary seven-day evidence cleanup.
       ctx.waitUntil(advanceIdentityDeletion(env));
-      ctx.waitUntil(protectedGroupRead(env,()=>runGroupReportOperations(env)));
       // Staging retains its existing schedule. Production uses the dedicated trigger.
-      if (env.ENVIRONMENT !== 'production') scheduleFamilyPhotoMaintenance(env, ctx);
+      if (env.ENVIRONMENT !== 'production') {
+        ctx.waitUntil(protectedGroupRead(env, () => runGroupReportOperations(env)));
+        scheduleFamilyPhotoMaintenance(env, ctx);
+      }
       ctx.waitUntil(runMomentCleanup(env));
       // Withdrawals remain cleanup-eligible even when the pilot gate is off.
       ctx.waitUntil(runFamilyRecordCleanup(env));

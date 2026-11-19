@@ -67,7 +67,7 @@ export async function runGroupRelayCleanup(env:Env,now=Math.floor(Date.now()/100
       WHERE q.state='completed' AND q.available_at<=? AND NOT EXISTS (SELECT 1 FROM group_moments m WHERE m.id=q.moment_id) LIMIT 100)`)
       .bind(now-RECEIPT_SECONDS),
   ]);
-  await runGroupReportCleanup(env,now);
+  if(env.ENVIRONMENT!=='production')await runGroupReportCleanup(env,now);
   await cleanupExpiredGroupPush(env,now);
   await cleanupExpiredGroupAdmissionPush(env,now);
   await env.DB.prepare("DELETE FROM group_admission_deliveries WHERE available_at<? AND state<>'leased'").bind(now-7*86400).run();

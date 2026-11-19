@@ -2,8 +2,7 @@ import { dailyQuotaDay } from './daily-quota-day';
 import type { Env } from './env';
 import { GROUP_REPORT_OBJECT_KEY } from './group-reports';
 
-/** Separate private moderation bucket/prefix; never follows a group photo key.
- * Uses the existing cleanup invocation even with report/media gates OFF. */
+/** Separate private moderation bucket/prefix; the caller controls scheduling. */
 export async function runGroupReportCleanup(env:Env,now=Math.floor(Date.now()/1000)):Promise<void> {
   if(!await env.DB.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='group_reports'").first())return;
   const rows=await env.DB.prepare(`SELECT id FROM group_reports WHERE
