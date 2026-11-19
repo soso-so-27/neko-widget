@@ -151,7 +151,7 @@ private enum VerifyFamilyNotebookTransport {
         await pushRelay.fail(503)
         do { try await pusher.pushSubscription(family: pushFamily, token: token, environment: "development"); throw Failure.check("503 accepted") }
         catch FamilyNotebookTransportError.server(let code, let status) { try check(code == "family_notifications_disabled" && status == 503, "relay refusal surfaces") }
-        try check(try GroupOperationStore(directory: root.appendingPathComponent("push")).accounts(prefix: "").isEmpty,
+        try check(try GroupOperationStore(directory: root.appendingPathComponent("push")).accounts(prefix: "op:").isEmpty,
                   "push registration keeps nothing in the journal")
         print("Family push registration: signed POST, exact body, lowercase IDs, base64url token, removal and refusal passed")
 
