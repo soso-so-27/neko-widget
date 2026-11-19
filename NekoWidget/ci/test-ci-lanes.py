@@ -1235,19 +1235,21 @@ final class UnrelatedUITests: XCTestCase {
             "safety-check": ("Privacy, saved data, and sharing checks", "run-cheap-safety-checks.sh", 20),
         }
         self.assertEqual(set(jobs), set(normal_jobs) | {
-            "quick-launch", "launch-attempt-1", "launch-attempt-2", "launch-attempt-3",
+            "ordinary-scope", "quick-launch", "launch-attempt-1", "launch-attempt-2", "launch-attempt-3",
             "plan", "build-without-signing", "simulator-smoke-test", "sharing-app-ui",
             "sharing-runtime-matrix", "sharing-runtime-deferred", "sharing-gallery-early",
         })
         normal_condition = "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository"
+        self.assertIn("    if: " + normal_condition + "\n", jobs["ordinary-scope"])
+        self.assertIn("    runs-on: ubuntu-24.04\n", jobs["ordinary-scope"])
         for identifier, (name, runner, timeout) in normal_jobs.items():
             body = jobs[identifier]
             self.assertIn("    name: " + name + "\n", body)
-            self.assertIn("    if: " + normal_condition + "\n", body)
+            self.assertIn("    if: needs.ordinary-scope.outputs.mac == 'true'\n", body)
+            self.assertIn("    needs: ordinary-scope\n", body)
             self.assertIn("    runs-on: macos-15\n", body)
             self.assertIn("    timeout-minutes: " + str(timeout) + "\n", body)
             self.assertIn("bash NekoWidget/ci/" + runner + "\n", body)
-            self.assertNotRegex(body, r"(?m)^    needs:")
             self.assertNotIn("continue-on-error", body)
         self.assertIn("    needs: [quick-check, quick-launch, safety-check, owner-products]\n", jobs["plan"])
         self.assertIn("    if: always() && github.event_name == 'workflow_dispatch' && inputs.extended_checks\n", jobs["plan"])
@@ -1263,9 +1265,13 @@ final class UnrelatedUITests: XCTestCase {
             self.assertIn("uses: ./.github/workflows/quick-launch-attempt.yml", body)
             if number > 1:
                 previous = f"launch-attempt-{number-1}"
-                self.assertIn(f"needs: {previous}", body)
                 self.assertIn(f"needs.{previous}.result == 'success'", body)
-                self.assertIn(f"needs.{previous}.outputs.result == 'install_timeout'", body)
+                self.assertIn(f"contains(fromJSON('[\"install_timeout\",\"launch_timeout\"]'), needs.{previous}.outputs.result)", body)
+            if number == 2:
+                self.assertIn("needs: launch-attempt-1\n", body)
+            if number == 3:
+                self.assertIn("needs: [launch-attempt-1, launch-attempt-2]\n", body)
+                self.assertIn("needs.launch-attempt-1.outputs.result == 'install_timeout'", body)
         # Normal and extended Mac jobs are separate phases, including failures.
         normal_running = len(normal_jobs) + 1  # At most one sequential launch Mac
         for selected in scope.SCOPES:

@@ -29,10 +29,40 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  quick-check:
-    name: Build and unit tests
+  ordinary-scope:
+    name: Select native checks and verify site or Worker changes
     # Same-repository push already validates the PR head; forks use PR CI.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    outputs:
+      mac: ${{ steps.scope.outputs.mac }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: scope
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 NekoWidget/ci/ordinary_ci_scope.py
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        if: steps.scope.outputs.docs == 'true'
+        with:
+          node-version: '22.17.0'
+      - name: Verify the public policy and invitation site
+        if: steps.scope.outputs.docs == 'true'
+        run: python3 NekoWidget/ci/test-public-policy-site.py
+      - name: Verify the iOS and Worker contracts
+        if: steps.scope.outputs.sharing == 'true'
+        run: |
+          python3 NekoWidget/ci/test-app-limits.py
+          python3 NekoWidget/ci/test-family-journey.py
+          python3 NekoWidget/ci/test-family-window-widget-boundaries.py
+
+  quick-check:
+    name: Build and unit tests
+    needs: ordinary-scope
+    if: needs.ordinary-scope.outputs.mac == 'true'
     runs-on: macos-15
     # Public launch and owner-only products have independent budgets. Run
     # every check, but do not discard a passed public launch while rebuilding
@@ -92,7 +122,8 @@ jobs:
 
   owner-products:
     name: Build and inspect owner-only products
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    needs: ordinary-scope
+    if: needs.ordinary-scope.outputs.mac == 'true'
     runs-on: macos-15
     timeout-minutes: 25
     env:
@@ -106,7 +137,8 @@ jobs:
 
   safety-check:
     name: Privacy, saved data, and sharing checks
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    needs: ordinary-scope
+    if: needs.ordinary-scope.outputs.mac == 'true'
     runs-on: macos-15
     # Execution budget only: hosted-runner acquisition failures are separate.
     # Keep every safety check and the independent 90s launch bound unchanged.
