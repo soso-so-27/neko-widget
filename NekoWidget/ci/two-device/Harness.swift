@@ -261,7 +261,7 @@ struct Drained: Decodable {
         try expect(status == 200, "/__e2e/drain-notifications answered \(status) \(String(decoding: data, as: UTF8.self))")
         let now = try JSONDecoder().decode(Drained.self, from: data).destinations.map { (token: $0.tokenSHA256, kind: $0.kind) }
         pushes += now
-        Log.note("drained: " + (now.isEmpty ? "nothing" : now.map(\.kind).joined(separator: ", ")))
+        Log.note("drained: " + (now.isEmpty ? "nothing" : now.map { $0.kind }.joined(separator: ", ")))
         return now
     }
 
