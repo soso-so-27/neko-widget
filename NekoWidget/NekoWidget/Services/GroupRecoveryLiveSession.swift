@@ -661,20 +661,18 @@ extension GroupRecoveryLiveModel {
                                                   namespace: String) -> GroupRecoveryNotebookSteps {
         let links = namespace + FamilyNotebookServiceFactory.recoveryLinkSuffix
         let recovery = namespace + ".recovery." + context.scope
-        @Sendable func registered() throws -> Bool {
-            try GroupKeychainStore(namespace: recovery).read("identity")
-                .map { try GroupWire.decode(GroupDeviceIdentity.self, $0).registered } ?? false
-        }
+        // The row's logic is FamilyNotebookIdentityChoice's (the two-device
+        // test drives the same functions over in-memory stores).
         return GroupRecoveryNotebookSteps(linked: {
-            guard let bytes = try GroupKeychainStore(namespace: links).read(FamilyNotebookIdentityChoice.linkAccount) else { return false }
-            let link = try GroupWire.decode(FamilyNotebookIdentityChoice.Link.self, bytes)
-            return link.scope == context.scope && link.personID == context.personID
-                && !Set(link.familyIDs).isDisjoint(with: context.familyIDs)
+            try FamilyNotebookIdentityChoice.isLinked(links: GroupKeychainStore(namespace: links), scope: context.scope,
+                                                      personID: context.personID, familyIDs: context.familyIDs)
         }, confirm: {
             // A まど being recovered registers this iPhone as the person; with
             // none, the notebook does it with the person key (the usual
             // registration, signed by the person and this iPhone).
-            if !context.hasWindows, try !registered() {
+            try await FamilyNotebookIdentityChoice.confirmLink(links: GroupKeychainStore(namespace: links),
+                recovery: GroupKeychainStore(namespace: recovery), scope: context.scope, personID: context.personID,
+                familyIDs: context.familyIDs, hasWindows: context.hasWindows) {
                 guard let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
                     throw GroupRecoveryClient.Failure.unavailable
                 }
@@ -683,13 +681,9 @@ extension GroupRecoveryLiveModel {
                         .appendingPathComponent("recovery-" + context.scope, isDirectory: true).appendingPathComponent("outbox", isDirectory: true))
                 _ = try await client.familyNotebookIdentity()
             }
-            let link = FamilyNotebookIdentityChoice.Link(version: 1, scope: context.scope, personID: context.personID,
-                                                         familyIDs: context.familyIDs)
-            try GroupKeychainStore(namespace: links).write(GroupWire.encode(link), account: FamilyNotebookIdentityChoice.linkAccount,
-                                                           createOnly: false)
             _ = await notebookRestarted()
         }, reads: {
-            guard (try? registered()) == true else { return false }
+            guard (try? FamilyNotebookIdentityChoice.recoveredRegistered(GroupKeychainStore(namespace: recovery))) == true else { return false }
             return await notebookReads()
         })
     }

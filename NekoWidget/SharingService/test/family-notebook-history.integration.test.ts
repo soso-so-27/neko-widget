@@ -164,6 +164,53 @@ describe('family encrypted history transaction boundary', () => {
     expect(ok(await invoke(a, path, request))).toEqual(receipt);
     expect((await db.prepare('SELECT COUNT(*) n FROM family_notebook_crypto_operations WHERE family_id=?').bind(f).first())?.n).toBe(1);
   });
+  it('recovers the same member on a fresh device and delivers the history keys and R2 photo', async () => {
+    const a = await plusOwner(), b = await person(), family = await create(a);
+    const { m: owner, r: first } = await initialize(a, family);
+    await admit(a, b, family);
+    const guest = await register(b, family, 2, 1);
+    const joined = await packet(a, family, [owner, guest], first);
+    const path = `${root}/${family}`;
+    ok(await invoke(a, path + '/crypto/rosters', body(joined.packet, 2, 1)));
+
+    // Reinstallation retains B's person key but creates a new signing and
+    // agreement key. Identity registration by itself doesn't join the roster.
+    const replacement = await person(b.identity);
+    expect(replacement.id).toBe(b.id);
+    expect(replacement.deviceId).not.toBe(b.deviceId);
+    const joinedState = ok(await invoke(a, path + '/crypto/state'));
+    expect(joinedState.devices.map((device: { device_id: string }) => device.device_id)).not.toContain(replacement.deviceId);
+    const newDevice = await register(replacement, family, 2, 2);
+    const recovered = await packet(a, family, [owner, { ...guest, devices: [...guest.devices, ...newDevice.devices] }], joined);
+    ok(await invoke(a, path + '/crypto/rosters', body(recovered.packet, 2, 2)));
+    expect(ok(await invoke(replacement, path + '/crypto/state'))).toMatchObject({
+      ready: true, currentEpoch: 3, people: [a.id, b.id].sort(),
+    });
+    for (const epoch of [first, joined, recovered]) {
+      const key = await envelope(a, replacement, recovered, epoch);
+      ok(await invoke(a, path + '/crypto/keys', body(key, 2, 3)));
+      expect(ok(await invoke(replacement, path + '/crypto/keys/' + epoch.packet.roster.epoch)).envelopes).toEqual([key]);
+    }
+
+    const photos = path + '/representative-photos';
+    const photoEnv = { ...enabled, FAMILY_REPRESENTATIVE_PHOTO_RUNTIME_ENABLED: 'YES' };
+    const bytes = crypto.getRandomValues(new Uint8Array(48));
+    const assetId = crypto.randomUUID();
+    const payload = await operation(a, recovered);
+    ok(await invoke(a, photos + '/uploads', {
+      schemaVersion: 1, operationId: payload.operationId, slotId: crypto.randomUUID(), assetId,
+      expectedRevision: 0, expectedGeneration: 2, keyEpoch: 3, rosterHash: recovered.hash,
+      ciphertextBytes: bytes.length, ciphertextSHA256: await sha256Base64url(bytes),
+    }, photoEnv), 201);
+    const upload = photos + '/uploads/' + assetId;
+    ok(await send(await signed(a, upload, bytes, undefined, 'PUT'), photoEnv));
+    ok(await invoke(a, upload + '/commit', {
+      operationId: payload.operationId, expectedGeneration: 2, expectedRevision: 0, payload,
+    }, photoEnv));
+    const download = await route(await signed(replacement, photos + '/assets/' + assetId), photoEnv);
+    expect(download.status).toBe(200);
+    expect(new Uint8Array(await download.arrayBuffer())).toEqual(bytes);
+  });
 
   it('retains history but denies departed people; remaining members rotate without payer private keys', async () => {
     const a = await plusOwner(), b = await person(), f = await create(a), { m, r } = await initialize(a, f);

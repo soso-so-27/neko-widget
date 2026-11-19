@@ -1,0 +1,87 @@
+name: Family notebook two-device E2E
+
+on:
+  pull_request:
+    paths:
+      - 'NekoWidget/NekoWidget/**/*Family*.swift'
+      - 'NekoWidget/NekoWidget/**/*Group*.swift'
+      - 'NekoWidget/NekoWidget/**/RootSyncStore.swift'
+      - 'NekoWidget/SharingService/src/**'
+      - 'NekoWidget/SharingService/migrations/**'
+      - 'NekoWidget/SharingService/scripts/e2e-*'
+      - 'NekoWidget/SharingService/test/fixtures/moderation-operator.ts'
+      - 'NekoWidget/SharingService/package-lock.json'
+      - 'NekoWidget/ci/two-device/**'
+      - 'NekoWidget/ci/run-two-device-e2e.sh'
+      - '.github/workflows/two-device-e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: two-device-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  two-device:
+    name: Run Swift against the local SharingService Worker
+    runs-on: macos-15
+    timeout-minutes: 12
+    defaults:
+      run:
+        shell: bash
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+      NEKO_TWO_DEVICE_ORIGIN: http://127.0.0.1:8787
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: NekoWidget/SharingService/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: NekoWidget/SharingService
+      - name: Prepare local D1 and run the two-device driver
+        run: |
+          set -euo pipefail
+          scratch="$(mktemp -d "${RUNNER_TEMP}/neko-two-device.XXXXXX")"
+          worker_pid=
+          cleanup() {
+            local status="$?"
+            if [[ -n "$worker_pid" ]]; then
+              kill "$worker_pid" 2>/dev/null || true
+              wait "$worker_pid" 2>/dev/null || true
+            fi
+            if [[ "$status" -ne 0 && -f "$scratch/worker.log" ]]; then
+              echo '::group::Local SharingService Worker log'
+              cat "$scratch/worker.log"
+              echo '::endgroup::'
+            fi
+            return "$status"
+          }
+          trap cleanup EXIT
+          node NekoWidget/SharingService/scripts/e2e-seed.mjs "$scratch"
+          export NEKO_TWO_DEVICE_FIXTURES="$scratch/fixtures.json"
+          node NekoWidget/SharingService/node_modules/wrangler/bin/wrangler.js dev \
+            --local --config "$scratch/wrangler.json" --persist-to "$scratch/state" \
+            --ip 127.0.0.1 --port 8787 >"$scratch/worker.log" 2>&1 &
+          worker_pid=$!
+          for attempt in {1..60}; do
+            if curl --fail --silent --max-time 1 "$NEKO_TWO_DEVICE_ORIGIN/health" >/dev/null; then
+              break
+            fi
+            if ! kill -0 "$worker_pid" 2>/dev/null || [[ "$attempt" == 60 ]]; then
+              exit 1
+            fi
+            sleep 1
+          done
+          if [[ ! -f NekoWidget/ci/run-two-device-e2e.sh ]]; then
+            echo '::notice::Local Worker started and responded. Swift two-device scenarios did not run because the driver is not in this revision.'
+            echo 'Local Worker started. Swift two-device scenarios did not run because the driver is not in this revision.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          bash NekoWidget/ci/run-two-device-e2e.sh

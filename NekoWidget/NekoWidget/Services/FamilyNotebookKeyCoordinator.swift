@@ -401,8 +401,18 @@ actor FamilyNotebookKeyCoordinator {
                 signerID: identity.deviceID, signingKey: identity.signingKey)
             let intent = GroupCanonical.hash(try GroupCanonical.fields([current.hash, contexts[epoch]!.source.hash,
                 GroupCanonical.text(recipient.id), GroupCanonical.text(identity.deviceID)]))
-            try await post(family: family, action: "key", route: "keys", operation: operationID([intent]), intent: intent,
-                generation: currentState.generation, epoch: current.roster.epoch, payload: wrapped, replaceStale: true)
+            do {
+                try await post(family: family, action: "key", route: "keys", operation: operationID([intent]), intent: intent,
+                    generation: currentState.generation, epoch: current.roster.epoch, payload: wrapped, replaceStale: true)
+            } catch FamilyNotebookTransportError.idempotencyConflict {
+                // 11/20 (入れ直し): the operation ID is this exact delivery (this
+                // roster head, this epoch, this recipient, this signer), and the
+                // relay keeps a receipt only for an envelope it accepted. Its
+                // first body went with the app's files; HPKE wraps afresh, so
+                // the resend differs and the relay answers idempotency_conflict.
+                // That envelope was delivered: go on. Nothing new is trusted
+                // here, and recipients verify every envelope as before.
+            }
             dispatch.index += 1
             try journal.write(GroupWire.encode(dispatch), account: dispatchAccount, createOnly: false)
         }
@@ -487,6 +497,32 @@ enum FamilyNotebookIdentityChoice {
               link.scope.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { return nil }
         let identity = try recoveryStore(link.scope).read("identity").map { try GroupWire.decode(GroupDeviceIdentity.self, $0) }
         return recovered(link: link, recovered: identity, usualPersonID: usualPersonID, usualDeviceID: usualDeviceID)
+    }
+
+    // The notebook row of the recovery screen (GroupRecoveryLiveModel.notebookSteps),
+    // over the stores it is given: the app passes its Keychain namespaces, the
+    // two-device test (ci/two-device) in-memory ones.
+
+    /// This iPhone linked this person's notebook (one of `familyIDs`).
+    static func isLinked(links: any GroupSecretStore, scope: String, personID: String, familyIDs: [UUID]) throws -> Bool {
+        guard let bytes = try links.read(linkAccount) else { return false }
+        let link = try GroupWire.decode(Link.self, bytes)
+        return link.scope == scope && link.personID == personID && !Set(link.familyIDs).isDisjoint(with: familyIDs)
+    }
+
+    /// The identity kept in the root's own store is registered.
+    static func recoveredRegistered(_ recovery: any GroupSecretStore) throws -> Bool {
+        try recovery.read("identity").map { try GroupWire.decode(GroupDeviceIdentity.self, $0).registered } ?? false
+    }
+
+    /// 続ける: a まど being recovered registers this iPhone as the person; with
+    /// none, `register` does it with the person key (the usual registration,
+    /// over `recovery`). Then the link, which FamilyNotebookIdentityChoice reads.
+    static func confirmLink(links: any GroupSecretStore, recovery: any GroupSecretStore, scope: String, personID: String,
+                            familyIDs: [UUID], hasWindows: Bool, register: () async throws -> Void) async throws {
+        if !hasWindows, try !recoveredRegistered(recovery) { try await register() }
+        let link = Link(version: 1, scope: scope, personID: personID, familyIDs: familyIDs)
+        try links.write(GroupWire.encode(link), account: linkAccount, createOnly: false)
     }
 }
 
