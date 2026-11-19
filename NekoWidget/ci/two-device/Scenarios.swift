@@ -376,20 +376,27 @@ struct Family {
         Log.step("The operator stops the photo (review and decision routes, test operator)")
         try await relay.stopPhoto(reportID: receipt)
 
-        Log.step("The reporter reads the reply: photo_stopped")
-        let replies = try await b2.repliesAsNotebookIdentity()
+        Log.step("B2 opens the notebook: one reply read after 機種変更 (FamilyReportRepliesDiscovery)")
+        // FamilyReportReplies.discoverAfterRecovery (in a UIKit file) with B2's
+        // own inputs: no 「通報への返答」 flag yet on this iPhone (UserDefaults
+        // after 機種変更), the recovery link, the notebook loaded, the photo gate.
+        var sentFlag = false
+        let linked = try b2.keychain.store(Device.namespace + Device.recoveryLinkSuffix)
+            .read(FamilyNotebookIdentityChoice.linkAccount) != nil
+        let shouldRead = FamilyReportRepliesDiscovery.shouldRead(flagSet: sentFlag, recoveryLinked: linked,
+            notebookLoaded: b2.inFamily, gateOpen: b2.service.representativePhotosEnabled)
+        try expect(shouldRead, "a recovered iPhone without the flag reads the replies once")
+        // FamilyNotebookServiceFactory.reportReplies: the usual client, as the
+        // notebook's identity (FamilyNotebookIdentityChoice's recovered one).
+        let replies = try await b2.client.familyPhotoReportReplies(as: try await b2.recoveredIdentity())
+        if !replies.isEmpty { sentFlag = true }
+        try expect(sentFlag, "the reply sets the 「通報への返答」 row flag")
+        try expect(!FamilyReportRepliesDiscovery.shouldRead(flagSet: sentFlag, recoveryLinked: linked, notebookLoaded: true,
+                                                            gateOpen: true), "no second read once the row shows")
+
+        Log.step("The reporter reads the reply through the app's path: photo_stopped")
         try expect(replies.contains { $0.status == .photoStopped }, "the reply list shows the photo stopped (got \(replies.map(\.status)))")
-        var finding: String?
-        do {
-            let usual = try await b2.client.familyPhotoReportReplies()
-            Log.note("the app's reply wiring (usual client) lists \(usual.count) replies")
-        } catch {
-            // FamilyNotebookServiceFactory.reportReplies reads with the usual
-            // identity; an iPhone recovered only through the notebook has none.
-            finding = "the app's reply list (usual identity) fails on B2: \(error)"
-            print("::warning title=Two-device S5::\(finding!)")
-            Log.note("FINDING: " + finding!)
-        }
+        try expect(replies.contains { $0.receiptNumber == receipt }, "the reply is for this report")
 
         Log.step("Another receiving iPhone of the family (B's first) gets 410 for that photo")
         let bDevice = try required(f.b.notebookDeviceID, "B has no device")
@@ -404,7 +411,7 @@ struct Family {
         Log.step("The sender (A)")
         let own = try await f.a.photo(f.cat)
         Log.note("A's read of the shared copy: \(String(describing: own).prefix(60)); A's own key photo is in its library (PhotoKit, not driven)")
-        return "A's local original (PhotoKit) not driven" + (finding.map { "; FINDING: " + $0 } ?? "")
+        return "A's local original (PhotoKit) not driven; discoverAfterRecovery's UserDefaults flag mirrored around FamilyReportRepliesDiscovery"
     }
 
     // MARK: S6
