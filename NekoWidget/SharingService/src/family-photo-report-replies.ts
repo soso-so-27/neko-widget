@@ -2,6 +2,7 @@ import { authenticateGroupRequest, groupAuthorizationStatements } from './group-
 import { requireEmptyBody } from './http';
 import { ApiError, jsonResponse } from './errors';
 import type { Env } from './env';
+import { familyPhotoReplyRetainedSQL } from './family-photo-report-operations';
 import { familyPhotoReportGateEnabled } from './family-photo-reports';
 import { protectedGroupRead } from './group-identity-service';
 import { loadRuntimeGate, reportIngestionGateOpen } from './runtime-gate';
@@ -37,10 +38,9 @@ async function readFamilyPhotoReportReplies(request: Request, env: Env): Promise
         CASE r.outcome WHEN 'received' THEN 'received'
           WHEN 'photo' THEN 'photo_stopped' ELSE 'reviewed' END AS status
       FROM family_photo_reports e JOIN family_photo_report_records r USING (report_id)
-      WHERE e.reporter_person_id = ? AND e.committed_at IS NOT NULL
+      WHERE e.reporter_person_id = ?
         AND (? IS NULL OR e.family_id=?)
-        AND e.content_expires_at + 172800 > unixepoch()
-        AND (r.retention_until IS NULL OR r.retention_until > unixepoch())
+        AND ${familyPhotoReplyRetainedSQL}
       ORDER BY e.committed_at DESC, e.report_id DESC LIMIT 100`).bind(actor.personId,family,family),
   ]);
   return jsonResponse({ schemaVersion: 1, replies: results[results.length - 1]!.results });

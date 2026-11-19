@@ -26,7 +26,21 @@ export function familyPhotoModerationConsole():Response {
  el('read').onclick=()=>run(async generation=>{erase();const result=await authorize('/operator/family-photo/v1/cases/'+selected.caseReference+'/read','read',generation);const r=result.response,id=r.headers.get('X-Moderation-Read-Receipt'),expires=Number(r.headers.get('X-Moderation-Review-Expires-At'))*1000;if(generation!==epoch)return;if(!/^[0-9a-f-]{36}$/.test(id??'')||r.headers.get('Content-Type')!=='image/jpeg'||r.headers.get('X-Moderation-Source-SHA256')!==result.challenge.sourceSHA256||!Number.isSafeInteger(expires)||expires<=Date.now())throw Error('資料を確認できません');const blob=await r.blob();if(generation!==epoch||blob.size>950244||Date.now()>=expires)return;imageURL=URL.createObjectURL(blob);photo.src=imageURL;await photo.decode();if(generation!==epoch)return;receipt=id;photo.hidden=false;el('decision').hidden=false;timer=setTimeout(()=>{cancel();status.textContent='確認の有効期限が終了しました。';},Math.min(expires-Date.now(),2147483647));status.textContent='資料を確認し、対応範囲を選んでください。';});
  el('close').onclick=cancel;el('confirmed').onchange=()=>lock(busy);el('release-confirmed').onchange=()=>lock(busy);
  el('action').onchange=()=>{el('confirmed').checked=false;el('reply').textContent=el('action').value==='no_action'?'通報いただいた内容を確認しました。今回は追加の対応は行いません。':'通報いただいた内容を確認し、このまどで必要な配信の制限を行いました。';lock(busy);};
- function decide(action){return run(async generation=>{const path='/operator/family-photo/v1/cases/'+selected.caseReference+'/'+action+(action==='release'?'':'/'+receipt);const result=await authorize(path,action,generation),value=await result.response.json();if(generation!==epoch)return;if(value.caseReference!==selected.caseReference||value.outcome!==action||typeof value.replyAvailable!=='boolean')throw Error('保存結果を確認できません');selected={...selected,outcome:value.outcome,revision:value.revision,decisionOrigin:'operator'};erase();state();status.textContent=value.replyAvailable?'対応を保存しました。通報者がアプリで返答を確認できます。閲覧済みかは分かりません。':'停止を解除しました。通報の保存期間が終了しているため、新しい返答はアプリから取得できません。';});}
+ const savedDecisionMessages={
+  photo:'この写真の配信を停止しました。',
+  release:'この写真の配信停止を解除しました。',
+  no_action:'追加の対応は不要として保存しました。'
+ };
+ function decide(action){return run(async generation=>{
+  const path='/operator/family-photo/v1/cases/'+selected.caseReference+'/'+action+(action==='release'?'':'/'+receipt);
+  const result=await authorize(path,action,generation),value=await result.response.json();
+  if(generation!==epoch)return;
+  if(value.caseReference!==selected.caseReference||value.outcome!==action||typeof value.replyAvailable!=='boolean')throw Error('保存結果を確認できません');
+  selected={...selected,outcome:value.outcome,revision:value.revision,decisionOrigin:'operator'};
+  erase();state();
+  const replyStatus=value.replyAvailable?'通報者がアプリで返答を確認できます。':'通報者がアプリで確認できる返答は残っていません。';
+  status.textContent=savedDecisionMessages[action]+replyStatus;
+ });}
  el('decide').onclick=()=>{if(receipt&&el('confirmed').checked)void decide(el('action').value);};el('release').onclick=()=>{if(el('release-confirmed').checked)void decide('release');};
  function showInvitation(value){if(typeof value.paused!=='boolean'||!Number.isSafeInteger(value.revision)||value.revision<0)throw Error('招待の状態を確認できません');invitationState=value;el('invitation-confirmed').checked=false;el('invitation-state').textContent=(value.paused?'新しい招待と参加確定を一時停止しています。':'新しい招待と参加確定を受け付けています。')+(value.changedAt?' 最終変更: '+new Date(value.changedAt*1000).toLocaleString()+' ／ 運営者: '+value.operatorId:'');el('invitation-change').textContent=value.paused?'認証して招待を再開':'認証して招待を一時停止';}
  function invitationAction(action){return run(async generation=>{erase();try{const result=await authorize('/operator/family-photo/v1/invitations/'+action,action,generation),value=await result.response.json();if(generation!==epoch)return;showInvitation(value);status.textContent=action==='status'?'招待の状態を確認しました。':'招待の設定を保存しました。';}catch(error){if(generation===epoch){invitationState=null;el('invitation-confirmed').checked=false;el('invitation-state').textContent='操作結果は未確認です。本人認証して状態を確認してください。';el('invitation-change').textContent='状態を確認してください';}throw error;}});}

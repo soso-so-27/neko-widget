@@ -6,6 +6,7 @@ import { verifyPreparedModerationOperatorWebAuthnAssertion } from './moderation-
 import type { LocalModerationTriageEnvironment } from './moderation-operator-triage-local';
 import { familyPhotoCaseReference,familyPhotoModerationSHA,familyPhotoSourceSHA,familyPhotoSourceSQL,readFamilyPhotoModerationSource,type FamilyPhotoModerationSource } from './family-photo-moderation-source';
 import { familyPhotoModerationConsole } from './family-photo-moderation-console';
+import { familyPhotoReplyRetainedSQL } from './family-photo-report-operations';
 
 
 
@@ -121,11 +122,17 @@ async function decide(env:FamilyPhotoOperatorEnvironment,access:Access,actor:Act
  if(c.action!=='release'&&await familyPhotoSourceSHA(await readFamilyPhotoModerationSource(env.db,c.case_reference!))!==c.source_sha256)fail();
  const id=crypto.randomUUID(),revision=c.case_revision!+1;
  const reply=c.action==='no_action'?'review_no_action_v1':c.action==='release'?'review_released_v1':'review_restricted_v1';
- await env.db.batch([...current(env,access,actor,c),consume,
- env.db.prepare(`INSERT INTO family_photo_moderation_decisions
- (id,challenge_id,case_reference,revision,outcome,reply_template) VALUES(?,?,?,?,?,?)`)
- .bind(id,c.id,c.case_reference,revision,c.action,reply)]);
- return json({caseReference:c.case_reference,revision,outcome:c.action,replyTemplate:reply,replyAvailable:false});
+ const saved=await env.db.batch<{available:number}>([...current(env,access,actor,c),consume,
+  env.db.prepare(`INSERT INTO family_photo_moderation_decisions
+   (id,challenge_id,case_reference,revision,outcome,reply_template) VALUES(?,?,?,?,?,?)`)
+   .bind(id,c.id,c.case_reference,revision,c.action,reply),
+  env.db.prepare(`SELECT EXISTS(SELECT 1 FROM family_photo_moderation_cases c
+   JOIN family_photo_report_records r ON r.report_id=c.report_id
+   JOIN family_photo_reports e ON e.report_id=c.report_id
+   WHERE c.case_reference=? AND ${familyPhotoReplyRetainedSQL}) AS available`).bind(c.case_reference),
+ ]);
+ const available=saved.at(-1)!.results[0]!.available===1;
+ return json({caseReference:c.case_reference,revision,outcome:c.action,replyTemplate:reply,replyAvailable:available});
 }
 
 async function prove(request:Request,env:FamilyPhotoOperatorEnvironment,access:Access,actor:Actor,id:string):Promise<Response> {
