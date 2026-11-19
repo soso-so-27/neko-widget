@@ -401,8 +401,18 @@ actor FamilyNotebookKeyCoordinator {
                 signerID: identity.deviceID, signingKey: identity.signingKey)
             let intent = GroupCanonical.hash(try GroupCanonical.fields([current.hash, contexts[epoch]!.source.hash,
                 GroupCanonical.text(recipient.id), GroupCanonical.text(identity.deviceID)]))
-            try await post(family: family, action: "key", route: "keys", operation: operationID([intent]), intent: intent,
-                generation: currentState.generation, epoch: current.roster.epoch, payload: wrapped, replaceStale: true)
+            do {
+                try await post(family: family, action: "key", route: "keys", operation: operationID([intent]), intent: intent,
+                    generation: currentState.generation, epoch: current.roster.epoch, payload: wrapped, replaceStale: true)
+            } catch FamilyNotebookTransportError.idempotencyConflict {
+                // 11/20 (入れ直し): the operation ID is this exact delivery (this
+                // roster head, this epoch, this recipient, this signer), and the
+                // relay keeps a receipt only for an envelope it accepted. Its
+                // first body went with the app's files; HPKE wraps afresh, so
+                // the resend differs and the relay answers idempotency_conflict.
+                // That envelope was delivered: go on. Nothing new is trusted
+                // here, and recipients verify every envelope as before.
+            }
             dispatch.index += 1
             try journal.write(GroupWire.encode(dispatch), account: dispatchAccount, createOnly: false)
         }

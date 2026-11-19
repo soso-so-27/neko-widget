@@ -1,6 +1,6 @@
 import Foundation
 
-// The six two-device scenarios. Each one makes its own family with fresh
+// The seven two-device scenarios. Each one makes its own family with fresh
 // synthetic people, so a failure in one does not leave state for the next.
 //
 // Not driven anywhere here (UIKit, a singleton, PhotoKit or Apple's servers);
@@ -31,6 +31,7 @@ struct Family {
         ("S4", "member B deletes and reinstalls the app (PR #1090)", s4),
         ("S5", "member B changes iPhone, reports A's photo, the operator stops it", s5),
         ("S6", "A reinstalls and adds the same cat page again (PR #1089)", s6),
+        ("S7", "member B reinstalls without 機種変更", s7),
     ]
 
     // MARK: Common steps
@@ -414,8 +415,12 @@ struct Family {
         try expect(try familyCats(f.b) == [f.cat], "B starts with one cat")
 
         Log.step("A deletes the app and installs it again (same person and device; the page is kept)")
+        let oldDevice = try required(f.a.notebookDeviceID, "A has no device")
         try await f.a.reinstall()
+        let first = await f.a.pass()
+        try expect(first != nil, "the first read after the reinstall answers a state, not a failure")
         try await settle("A reads the notebook again", [f.a]) { f.a.inFamily }
+        try expect(f.a.notebookDeviceID == oldDevice, "A keeps its device (no 機種変更)")
         try expect(try f.a.service.notebook?.snapshot().activeMappings.isEmpty == true, "A's new copy has no local links")
 
         Log.step("A opens the notebook: CatCareBridge.mappings finds the page by its origin")
@@ -443,5 +448,33 @@ struct Family {
         let cats = try familyCats(f.b)
         try expect(cats == [f.cat], "B's notebook has \(cats.count) cats")
         return "the notebook view's reload/sharePersonalCats are mirrored around the real CatOrigin and CatCareBridge"
+    }
+
+    // MARK: S7
+
+    static func s7(_ relay: Relay) async throws -> String? {
+        let f = try await makeFamily(relay)
+        let creator = try required(f.a.notebookIdentity?.personID, "A has no person")
+
+        Log.step("A puts a photo; B sees it")
+        let photo = try await deliver(f.a, f.cat, shade: 7)
+        _ = try await seePhoto(f.b, f.cat, asset: photo.asset)
+        let oldDevice = try required(f.b.notebookDeviceID, "B has no device")
+
+        Log.step("B deletes the app and installs it again; no 機種変更")
+        try await f.b.reinstall()
+        let first = await f.b.pass()
+        try expect(first != nil, "the first read after the reinstall answers a state, not a failure")
+
+        Log.step("B's notebook comes back with its own device")
+        try await settle("B reads the notebook again", [f.b, f.a]) { f.b.inFamily }
+        try expect(f.b.notebookDeviceID == oldDevice, "B keeps its device")
+        let cats = try familyCats(f.b)
+        try expect(cats == [f.cat], "B's notebook has \(cats.count) cats")
+
+        Log.step("B reads the current photo again")
+        let seen = try await seePhoto(f.b, f.cat, asset: photo.asset)
+        try expect(seen.jpeg == photo.jpeg && seen.author == creator, "B reads A's current pixels again")
+        return nil
     }
 }
