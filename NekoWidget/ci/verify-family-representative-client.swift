@@ -95,9 +95,29 @@ private actor Relay: GroupHTTPTransport {
         guard case .some(.text(let text)) = operation.value else { throw Failure.check("encrypted reference") }
         let reference = try GroupWire.decode(FamilyNotebookRepresentativePhotoReference.self, Data(text.utf8))
         let slot = try await resumed.slots()[0]
-        _ = try await resumed.image(slot: slot, reference: reference, roster: roster, verifiedAuthorID: identity.personID)
+        let received = try await resumed.image(slot: slot, reference: reference, roster: roster, verifiedAuthorID: identity.personID)
         _ = try await resumed.image(slot: slot, reference: reference, roster: roster, verifiedAuthorID: identity.personID)
         try check(await relay.counts().1 == 1, "second open uses ciphertext cache")
+        // 11/19 (TestFlight 391): a received photo with a standard JFIF APP0
+        // can be reported. The report's own check stays strict: the same
+        // bytes given to it directly are still refused.
+        guard let shown = received, shown.count > 4 else { throw Failure.check("received photo") }
+        let jfif: [UInt8] = [0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00]
+        let withJFIF = shown[shown.startIndex + 2] == 0xFF && shown[shown.startIndex + 3] == 0xE0
+            ? shown : Data(shown.prefix(2)) + Data(jfif) + Data(shown.dropFirst(2))
+        try check(withJFIF.count > 20 && withJFIF[withJFIF.startIndex + 3] == 0xE0, "synthetic JFIF APP0 header")
+        do {
+            _ = try GroupReportCrypto.encryptFamilyPhoto(canonicalJPEG: withJFIF, familyID: family, assetID: reference.assetID,
+                reporterPersonID: identity.personID, reasonCode: "other",
+                keyID: GroupReportCrypto.moderationKeyID, publicKey: GroupReportCrypto.moderationPublicKey)
+            throw Failure.check("report check accepted an APP0 segment")
+        } catch GroupReportCryptoError.invalidCanonicalJPEG { }
+        let report = try await resumed.prepareReport(canonicalJPEG: withJFIF, assetID: reference.assetID, reasonCode: "other",
+            moderationKeyID: GroupReportCrypto.moderationKeyID, moderationPublicKey: GroupReportCrypto.moderationPublicKey)
+        try check(report.assetID == reference.assetID && !report.ciphertext.isEmpty
+            && GroupCanonical.hash(report.ciphertext) == report.ciphertextSHA256, "received JFIF photo can be reported")
+        try check(JPEGPrivateMetadata.strippingAll(from: withJFIF).map { $0[$0.startIndex + 3] } != 0xE0,
+            "shared sanitizer removes APP0")
         let hidden = try await resumed.image(slot: slot, reference: reference, roster: roster,
             verifiedAuthorID: identity.personID, hiddenAuthors: [identity.personID])
         let afterHidden = await relay.counts()
@@ -120,6 +140,6 @@ private actor Relay: GroupHTTPTransport {
         do { _ = try await client(false).slots(); throw Failure.check("gate OFF sent traffic") }
         catch FamilyNotebookTransportError.unavailable { }
         try check(await relay.counts().2 == before, "gate OFF sends nothing")
-        print("Family representative client: consent preparation, lost reply/reopen, durable receipts, cache, hide and OFF passed")
+        print("Family representative client: consent preparation, lost reply/reopen, durable receipts, cache, JFIF report, hide and OFF passed")
     }
 }
