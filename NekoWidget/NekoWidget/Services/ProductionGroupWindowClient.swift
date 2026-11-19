@@ -322,6 +322,11 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         try load(GroupDeviceIdentity.self, "identity")?.personID
     }
 
+    /// 11/19: the device of the usual identity, without creating one.
+    func existingDeviceID() throws -> String? {
+        try load(GroupDeviceIdentity.self, "identity")?.deviceID
+    }
+
     func familyNotebookIdentity() async throws -> GroupDeviceIdentity {
         try await registeredIdentity()
     }

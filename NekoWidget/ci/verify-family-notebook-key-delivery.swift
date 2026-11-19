@@ -19,12 +19,15 @@ private actor Relay: GroupHTTPTransport {
     var envelopes: [String: FamilyNotebookKeyEnvelope] = [:], receipts: [String: (Data, Data)] = [:]
     var loseRoster = false, rejectRoster = false, loseKey = false, sentKeys: [FamilyNotebookKeyEnvelope] = []
     var loseDeviceBeforeCommit = false, deviceRequests: [Data] = []
+    /// Every write (POST) in order: the device that sent it and its path.
+    var writeLog: [(device: String, path: String)] = []
     init(family: UUID, creator: GroupDeviceIdentity) throws { self.family = family; identities[try creator.deviceID] = creator; members.insert(creator.personID) }
     func loseNextRoster() { loseRoster = true }
     func rejectNextRoster() { rejectRoster = true }
     func loseNextKey() { loseKey = true }
     func loseNextDeviceBeforeCommit() { loseDeviceBeforeCommit = true }
     func deviceBodies() -> [Data] { deviceRequests }
+    func writes(by device: String) -> [String] { writeLog.filter { $0.device == device }.map(\.path) }
     func replaceCertificateForTest(_ value: GroupRosterDevice) { certificates[value.id] = value }
     func admit(_ identity: GroupDeviceIdentity, certified: Bool = false) throws {
         identities[try identity.deviceID] = identity; members.insert(identity.personID); generation += 1
@@ -72,6 +75,7 @@ private actor Relay: GroupHTTPTransport {
             } else { return try failure("not_found", 404) }
             return try reply(result)
         }
+        writeLog.append((device: deviceID, path: path))
         let value = try JSONSerialization.jsonObject(with: body) as! [String: Any], op = value["operationId"] as! String
         let receiptKey = deviceID + ":" + op
         if let saved = receipts[receiptKey] { try check(saved.0 == body, "durable resend uses exact ciphertext"); return .init(status: 200, data: saved.1) }
@@ -188,6 +192,7 @@ private actor Relay: GroupHTTPTransport {
         try await approvedBeforeNewcomerRegisters(directory: directory, endpoint: endpoint)
         try await newIPhoneFromSyncedPin(directory: directory, endpoint: endpoint)
         try identityChoice()
+        try await reinstalledIPhoneRegistersItsNewDevice(directory: directory, endpoint: endpoint)
         try deviceRegisteredPush()
         try await CallBudgetChecks.run(directory: directory, endpoint: endpoint)
         print("Family notebook key delivery: real HPKE, pinned invitation, durable roster/key retry, explicit admission, pre-join keys, departure rotation, rejected-key isolation, approval-before-registration, synced-pin new iPhone, identity choice and call budget passed")
@@ -359,33 +364,96 @@ extension VerifyFamilyNotebookKeyDelivery {
     }
 
     /// FamilyNotebookIdentityChoice: the recovered identity only when it is
-    /// registered, linked to a listed notebook, and not this iPhone's own person.
+    /// registered and linked to a listed notebook. With a link, the recovered
+    /// device wins unless it already is this iPhone's usual device (11/19:
+    /// the app deleted and installed again keeps the old device in the Keychain).
     fileprivate static func identityChoice() throws {
         stage("Key delivery stage: identity choice")
         var recovered = GroupDeviceIdentity.firstDevice(); recovered.registered = true
         let usual = GroupDeviceIdentity.firstDevice()
+        let usualDevice = try usual.deviceID, recoveredDevice = try recovered.deviceID
         let link = FamilyNotebookIdentityChoice.Link(version: 1, scope: String(repeating: "a", count: 64),
                                                      personID: recovered.personID, familyIDs: [UUID()])
         typealias Choice = FamilyNotebookIdentityChoice
-        try check(Choice.recovered(link: link, recovered: recovered, usualPersonID: usual.personID)?.personID == recovered.personID,
+        // (a) No link: the usual identity, also for the same person (the original iPhone).
+        try check(Choice.recovered(link: nil, recovered: recovered, usualPersonID: usual.personID, usualDeviceID: usualDevice) == nil,
+                  "choice: no link")
+        try check(Choice.recovered(link: nil, recovered: recovered, usualPersonID: recovered.personID, usualDeviceID: usualDevice) == nil,
+                  "choice: no link keeps the original iPhone's own identity")
+        // (b) Link, another person: the recovered identity.
+        try check(Choice.recovered(link: link, recovered: recovered, usualPersonID: usual.personID,
+                                   usualDeviceID: usualDevice)?.personID == recovered.personID,
                   "choice: linked and registered recovered identity is used")
-        try check(Choice.recovered(link: link, recovered: recovered, usualPersonID: nil) != nil, "choice: no usual identity yet")
+        try check(Choice.recovered(link: link, recovered: recovered, usualPersonID: nil, usualDeviceID: nil) != nil,
+                  "choice: no usual identity yet")
+        // (c) Link, the same person on another device (the app installed again): the recovered device.
+        try check(try Choice.recovered(link: link, recovered: recovered, usualPersonID: recovered.personID,
+                                       usualDeviceID: usualDevice)?.deviceID == recoveredDevice,
+                  "choice: the recovered device wins over a leftover usual device of the same person")
+        // (d) Link, the same person and device: unchanged (the usual identity).
+        try check(Choice.recovered(link: link, recovered: recovered, usualPersonID: recovered.personID,
+                                   usualDeviceID: recoveredDevice) == nil,
+                  "choice: the usual device already is the recovered one")
         var unregistered = recovered; unregistered.registered = false
-        try check(Choice.recovered(link: link, recovered: unregistered, usualPersonID: usual.personID) == nil, "choice: not registered")
-        try check(Choice.recovered(link: nil, recovered: recovered, usualPersonID: usual.personID) == nil, "choice: no link")
+        try check(Choice.recovered(link: link, recovered: unregistered, usualPersonID: usual.personID, usualDeviceID: usualDevice) == nil,
+                  "choice: not registered")
         let empty = Choice.Link(version: 1, scope: link.scope, personID: link.personID, familyIDs: [])
-        try check(Choice.recovered(link: empty, recovered: recovered, usualPersonID: usual.personID) == nil, "choice: catalog listed no notebook")
+        try check(Choice.recovered(link: empty, recovered: recovered, usualPersonID: usual.personID, usualDeviceID: usualDevice) == nil,
+                  "choice: catalog listed no notebook")
         let elsewhere = Choice.Link(version: 1, scope: link.scope, personID: usual.personID, familyIDs: link.familyIDs)
-        try check(Choice.recovered(link: elsewhere, recovered: recovered, usualPersonID: nil) == nil, "choice: link names another person")
-        try check(Choice.recovered(link: link, recovered: recovered, usualPersonID: recovered.personID) == nil,
-                  "choice: the original iPhone keeps its own identity")
+        try check(Choice.recovered(link: elsewhere, recovered: recovered, usualPersonID: nil, usualDeviceID: nil) == nil,
+                  "choice: link names another person")
         let links = MemorySecrets(), recovery = MemorySecrets()
-        try check(try Choice.load(links: links, recoveryStore: { _ in recovery }, usualPersonID: nil) == nil, "choice: nothing saved")
+        try check(try Choice.load(links: links, recoveryStore: { _ in recovery }, usualPersonID: nil, usualDeviceID: nil) == nil,
+                  "choice: nothing saved")
         try links.write(GroupWire.encode(link), account: Choice.linkAccount, createOnly: true)
         try recovery.write(GroupWire.encode(recovered), account: "identity", createOnly: true)
         var scopes: [String] = []
-        let loaded = try Choice.load(links: links, recoveryStore: { scopes.append($0); return recovery }, usualPersonID: usual.personID)
+        let loaded = try Choice.load(links: links, recoveryStore: { scopes.append($0); return recovery },
+                                     usualPersonID: usual.personID, usualDeviceID: usualDevice)
         try check(loaded?.personID == recovered.personID && scopes == [link.scope], "choice: loaded from the link's own scope")
+        let reinstalled = try Choice.load(links: links, recoveryStore: { _ in recovery },
+                                          usualPersonID: recovered.personID, usualDeviceID: usualDevice)
+        try check(try reinstalled?.deviceID == recoveredDevice, "choice: loaded for the same person on another device")
+    }
+
+    /// 11/19 (入れ直し): the app deleted and installed again keeps the old
+    /// device of the person in the Keychain; 機種変更 registered a new device
+    /// and linked the notebook. The new device is chosen, and its first write
+    /// to the notebook is its own registration, so the family's iPhones can
+    /// sign it in and send it the key.
+    fileprivate static func reinstalledIPhoneRegistersItsNewDevice(directory: URL, endpoint: URL) async throws {
+        stage("Key delivery stage: reinstalled iPhone registers its new device")
+        var old = GroupDeviceIdentity.firstDevice(); old.registered = true
+        let new = GroupDeviceIdentity(personPrivateKey: old.personPrivateKey, personPublicKey: old.personPublicKey,
+            signingPrivateKey: Curve25519.Signing.PrivateKey().rawRepresentation,
+            agreementPrivateKey: Curve25519.KeyAgreement.PrivateKey().rawRepresentation, windowCertificates: [:], registered: true)
+        let family = UUID(), relay = try Relay(family: family, creator: old)
+        let root = directory.appendingPathComponent("reinstall-" + UUID().uuidString)
+        // A synthetic stand-in for the person's iCloud Keychain item.
+        let pins = FamilyNotebookStoredPinSync(store: MemorySecrets())
+        func coordinator(_ who: GroupDeviceIdentity, _ name: String) throws -> FamilyNotebookKeyCoordinator {
+            let folder = root.appendingPathComponent(name)
+            let journal = try GroupOperationStore(directory: folder.appendingPathComponent("journal"), maximumRecordBytes: 2_100_000)
+            let secrets = try GroupOperationStore(directory: folder.appendingPathComponent("synthetic-secrets"))
+            return try .init(endpoint: endpoint, identity: who, network: .init(endpoint: endpoint, identity: who, transport: relay, journal: journal),
+                             secrets: secrets, journal: journal, pinSync: pins)
+        }
+        let creator = try coordinator(old, "old")
+        try await creator.registerCreatedFamily(family)
+        guard let first = try await creator.prepare(family: family), first.ready else { throw Failure.check("reinstall: old device not ready") }
+        let link = FamilyNotebookIdentityChoice.Link(version: 1, scope: String(repeating: "b", count: 64),
+                                                     personID: new.personID, familyIDs: [family])
+        let oldDevice = try old.deviceID, newDevice = try new.deviceID
+        guard let chosen = FamilyNotebookIdentityChoice.recovered(link: link, recovered: new, usualPersonID: old.personID,
+                                                                  usualDeviceID: oldDevice),
+              try chosen.deviceID == newDevice else { throw Failure.check("reinstall: the new device is not chosen") }
+        try await relay.admit(new)
+        let waiting = try await coordinator(chosen, "new").prepare(family: family)
+        try check(waiting?.ready != true, "reinstall: the new device waits for the family's key")
+        let writes = await relay.writes(by: newDevice)
+        try check(writes.first?.hasSuffix("/devices") == true, "reinstall: the first write is the new device's registration")
+        try check(first.current.roster.epoch == 1, "reinstall: the old device's notebook is unchanged")
     }
 }
 

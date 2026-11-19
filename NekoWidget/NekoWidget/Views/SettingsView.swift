@@ -179,7 +179,14 @@ struct SettingsView: View {
     /// この子のこと (11/10: one place to start it).
     /// 11/15: asked to join and waiting to be let in (set by FamilyNotebookSharing).
     @AppStorage(FamilyNotebookAwaitingApproval.key) private var awaitsFamilyApproval = false
-    private var showsFamilyNotebookRow: Bool { familyNotebook.hasFamily || awaitsFamilyApproval }
+    /// 11/19: 機種変更 linked the notebook on this iPhone (FamilyNotebookServiceFactory).
+    @State private var notebookRecoveryLinked = false
+    private var showsFamilyNotebookRow: Bool { familyNotebook.hasFamily || awaitsFamilyApproval || awaitsRecoveredNotebook }
+    /// 11/19: the notebook's key has not reached this iPhone yet, or 機種変更
+    /// linked it and its copy has not arrived (the app installed again).
+    private var awaitsRecoveredNotebook: Bool {
+        familySharing.state == .waitingForKeys || (notebookRecoveryLinked && familySharing.state != .notInFamily)
+    }
 
     private var canOpenMembershipOffer: Bool {
         PlusOfferAvailability.isConfigured
@@ -316,7 +323,7 @@ struct SettingsView: View {
                                 // the wait it is in, never the approval wait
                                 // while the notebook is being received.
                                 if !familyNotebook.hasFamily {
-                                    Text(familySharing.state == .waitingForKeys
+                                    Text(awaitsRecoveredNotebook
                                          ? FamilyNotebookWords.receiving : FamilyNotebookWords.awaitingApproval)
                                         .foregroundStyle(Color(uiColor: .secondaryLabel))
                                 }
@@ -340,7 +347,7 @@ struct SettingsView: View {
                         // 11/19: the same screen as the owner's trial; shown
                         // only while the relay's 機種変更 gate is open.
                         NavigationLink { GroupRecoveryLiveScreen(model: .connected()) } label: {
-                            Label(GroupRecoveryWords.entry, systemImage: "iphone.and.arrow.forward")
+                            Label(GroupRecoveryWords.settingsEntry, systemImage: "iphone.and.arrow.forward")
                         }
                         .accessibilityIdentifier("settings-device-change")
                     }
@@ -493,6 +500,7 @@ struct SettingsView: View {
         .sheet(isPresented: $showsFamilyNotebook) { FamilyNotebookView() }
         // 11/19: nothing while 機種変更 is closed at the relay or not known.
         .task { deviceChangeOpen = await GroupRecoveryAvailability.isOpen() }
+        .task(id: familySharing.state) { notebookRecoveryLinked = FamilyNotebookServiceFactory.hasRecoveryLink() }
 #if DEBUG || INTERNAL_PRESENTATION
         .sheet(isPresented: $showsMembershipPreview) {
             MembershipOfferSheet(model: .preview(), context: .settings) { _ in

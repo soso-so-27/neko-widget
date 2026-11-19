@@ -689,6 +689,10 @@ private struct RecoveryCatalogRefusal: GroupHTTPTransport {
     let again = try GroupWire.decode(GroupDeviceIdentity.self, secrets.read("identity")!)
     try check(identity.personPublicKey == root.publicKey.rawRepresentation && !identity.registered
         && again.signingPrivateKey == identity.signingPrivateKey && again.agreementPrivateKey == identity.agreementPrivateKey)
+    // 11/19: the root of this iPhone's usual identity is marked (shown first).
+    var usual = builder; usual.usualRoot = root.rawRepresentation
+    let marked = try await usual.contexts(roots: [root.rawRepresentation])
+    try check(marked.count == 1 && marked[0].candidate.usedOnThisIPhone && !built[0].candidate.usedOnThisIPhone)
     do { _ = try await builder.contexts(roots: [Curve25519.Signing.PrivateKey().rawRepresentation]); throw TestFailure.failed }
     catch is GroupRecoveryClient.Failure {}
 

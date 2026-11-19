@@ -55,9 +55,10 @@ enum FamilyNotebookServiceFactory {
         // 11/19: the App Store build carries 機種変更 (the relay decides).
         guard recoveryRuntimeCarried else { return nil }
         let namespace = GroupWindowClientProvider.namespace
-        let usual = try await client.existingPersonID()
+        let usual = try await client.existingPersonID(), usualDevice = try await client.existingDeviceID()
         return try FamilyNotebookIdentityChoice.load(links: GroupKeychainStore(namespace: namespace + recoveryLinkSuffix),
-            recoveryStore: { try GroupKeychainStore(namespace: namespace + ".recovery." + $0) }, usualPersonID: usual)
+            recoveryStore: { try GroupKeychainStore(namespace: namespace + ".recovery." + $0) },
+            usualPersonID: usual, usualDeviceID: usualDevice)
     }
     /// 11/19: internal builds as before; the App Store build only with 機種変更's
     /// client (SharingAPIConfiguration.groupRecoveryRuntimeEnabled).
@@ -70,6 +71,13 @@ enum FamilyNotebookServiceFactory {
     }
     /// Where the recovery screen keeps FamilyNotebookIdentityChoice.Link.
     static let recoveryLinkSuffix = ".notebook-recovery"
+    /// 11/19: the recovery screen linked the notebook on this iPhone (設定
+    /// keeps the notebook's row while its copy has not arrived).
+    static func hasRecoveryLink() -> Bool {
+        guard productionRequested, recoveryRuntimeCarried else { return false }
+        let links = try? GroupKeychainStore(namespace: GroupWindowClientProvider.namespace + recoveryLinkSuffix)
+        return (try? links?.read(FamilyNotebookIdentityChoice.linkAccount)) != nil
+    }
 
     /// 11/19: the roster pin next to the person key in iCloud Keychain, in the
     /// builds that sync the person key (the same access group); nil elsewhere.
