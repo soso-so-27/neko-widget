@@ -490,6 +490,18 @@ enum FamilyNotebookIdentityChoice {
     }
 }
 
+/// 11/20: 「通報への返答」 shows only on an iPhone that sent a family photo
+/// report, but the relay answers replies by person. After 機種変更 the
+/// notebook asks once when it opens, so a report sent from the previous
+/// iPhone still finds its reply. A reinstall without the recovery screen
+/// cannot be told apart from "never reported" without a read, so it is not
+/// asked.
+enum FamilyReportRepliesDiscovery {
+    static func shouldRead(flagSet: Bool, recoveryLinked: Bool, notebookLoaded: Bool, gateOpen: Bool) -> Bool {
+        !flagSet && recoveryLinked && notebookLoaded && gateOpen
+    }
+}
+
 /// The iCloud Keychain item of the pin: synchronizable, with the same access
 /// class and group as the person key's item (available while unlocked).
 struct FamilyNotebookSyncedKeychainStore: GroupSecretStore {

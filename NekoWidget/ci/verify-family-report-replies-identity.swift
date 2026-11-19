@@ -110,6 +110,20 @@ enum FamilyReportRepliesIdentityChecks {
                 try await check(relay.signers == [usualDevice, usualDevice], "both reads are signed by the usual device")
             }
 
+            // 5. After 機種変更 the notebook asks once for replies sent from the
+            //    previous iPhone; never when the row already shows or the gate is off.
+            let read = FamilyReportRepliesDiscovery.shouldRead
+            try check(read(false, true, true, true), "recovered without the flag: one read")
+            try check(!read(true, true, true, true), "the flag set: no extra read")
+            try check(!read(false, true, true, false), "the gate off: no read")
+            try check(!read(false, true, false, true), "the notebook not loaded: no read")
+            try check(!read(false, false, true, true), "no recovery: no read")
+            let view = try String(contentsOfFile: "NekoWidget/Views/FamilyNotebookView.swift", encoding: .utf8)
+            try check(view.contains("gateOpen: FamilyNotebookServiceFactory.representativePhotoBackend() != nil"),
+                      "the view passes the relay's photo gate")
+            try check(view.contains("guard model.isReal, model.hasFamily, !askedReportReplies else { return }"),
+                      "at most one read per notebook open")
+
             // 4. The app's wiring passes the notebook's choice (FamilyNotebookServiceFactory
             //    needs UIKit, so its one line is checked as text).
             let factory = try String(contentsOfFile: "NekoWidget/Services/FamilyNotebookServiceFactory.swift", encoding: .utf8)
