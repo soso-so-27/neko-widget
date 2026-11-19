@@ -25,7 +25,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ios-build-${{ github.workflow }}-${{ github.ref }}
+  # Preserve a queued main validation when a later push takes the Ubuntu-only path.
+  group: ios-build-${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && format('{0}/{1}', github.ref, github.run_id) || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:

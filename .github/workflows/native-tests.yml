@@ -21,7 +21,8 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: native-tests-${{ github.ref }}-${{ inputs.route || github.event_name }}
+  # A lightweight main push must not replace a queued native check for older app inputs.
+  group: native-tests-${{ github.ref == 'refs/heads/main' && format('{0}/{1}', github.ref, github.run_id) || github.ref }}-${{ inputs.route || github.event_name }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   scope:
