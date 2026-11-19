@@ -72,6 +72,16 @@ async function verifiedBillingScope(env: Env, scope: OwnerTrial, now: number): P
   return scoped;
 }
 
+export async function ownerTrialFamilyPushEnvironment(env: Env): Promise<Env | undefined> {
+  const scope = stagePolicy(env);
+  const now = Date.now();
+  if (!scope || scope.phase !== 'RECOVERY' || scope.phaseUntilMs <= now
+    || scope.phaseUntilMs - now > 3_600_000) return;
+  const billing = await verifiedBillingScope(env, scope, now);
+  return {...billing, ownerTrial:scope, BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED:'YES',
+    FAMILY_NOTEBOOK_APNS_RUNTIME_ENABLED:'YES'};
+}
+
 const billingPaths = new Map([
   ['/v1/billing/transactions','POST'],
   ['/v1/billing/entitlement','GET'],
@@ -174,6 +184,7 @@ export async function ownerTrialRequest(request: Request, env: Env): Promise<Env
   const billing = await verifiedBillingScope(env, scope, now);
   return {...billing,ownerTrial:scope,BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED:'YES',
     FAMILY_REPRESENTATIVE_PHOTO_RUNTIME_ENABLED:photos||recovery?'YES':'NO',
+    ...(recovery ? {FAMILY_NOTEBOOK_APNS_RUNTIME_ENABLED:'YES'} : {}),
     GROUP_RECOVERY_CATALOG_ENABLED:recovery?'YES':'NO'};
 }
 

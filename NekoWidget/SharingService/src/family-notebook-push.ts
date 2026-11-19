@@ -15,6 +15,23 @@ function enabled(env:Env):boolean {
     && env.FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED==='YES' && env.GROUP_RUNTIME_ENABLED==='YES'
     && env.APNS_RUNTIME_ENABLED==='YES' && env.MOMENT_RUNTIME_ENABLED==='YES';
 }
+
+function trialWindowOpen(env: Env): boolean {
+  const trial = env.ownerTrial;
+  return !trial || (env.ENVIRONMENT === 'staging' && trial.phase === 'RECOVERY' && Date.now() < trial.phaseUntilMs);
+}
+
+function trialDeliveryRestriction(env: Env) {
+  const trial = env.ownerTrial;
+  if (!trial) return {sql:'', params:[]};
+  return {
+    sql:` AND v.space_id=? AND v.kind='device_registered' AND v.device_id IN (?,?)
+      AND EXISTS (SELECT 1 FROM family_device_notification_events e WHERE e.family_id=v.space_id
+        AND e.recipient_device_id=v.device_id AND e.source_device_id=?
+        AND v.event_id=e.family_id||':device_registered:'||CAST(e.recorded_at/120 AS INTEGER))`,
+    params:[trial.family,trial.aDevice,trial.bDevice,trial.recoveryDevice],
+  };
+}
 export async function cleanupExpiredFamilyPush(env:Env,now:number):Promise<void> {
   await env.DB.prepare(`DELETE FROM family_device_notification_events WHERE rowid IN (
     SELECT rowid FROM family_device_notification_events WHERE recorded_at<=? LIMIT 500)`).bind(now-86400).run();
@@ -25,15 +42,18 @@ export async function cleanupExpiredFamilyPush(env:Env,now:number):Promise<void>
     .bind(now).run();
 }
 export function familyDeviceNotification(env:Env,family:string,device:string):D1PreparedStatement[] {
-  if(!enabled(env))return [];
+  const trial = env.ownerTrial;
+  if (!enabled(env) || !trialWindowOpen(env)
+    || (trial && (trial.family !== family || trial.recoveryDevice !== device))) return [];
+  const recipients = trial ? [trial.aDevice,trial.bDevice] : [];
   return [env.DB.prepare(`INSERT INTO family_device_notification_events(family_id,source_device_id,recipient_device_id,recorded_at)
     SELECT c.family_id,?,c.device_id,unixepoch() FROM family_notebook_crypto_live_devices c
     JOIN family_push_subscriptions s ON s.space_id=c.family_id AND s.device_id=c.device_id
       AND s.expires_at>unixepoch() AND s.token_ciphertext<>''
-    WHERE c.family_id=? AND c.device_id<>?
+    WHERE c.family_id=? AND c.device_id<>? ${trial ? 'AND c.device_id IN (?,?)' : ''}
       AND NOT EXISTS(SELECT 1 FROM family_notebook_crypto_devices WHERE family_id=c.family_id AND device_id=?)
       AND EXISTS(SELECT 1 FROM personal_staging_runtime_gate WHERE singleton=1 AND media_enabled=1 AND apns_enabled=1)
-    ON CONFLICT(family_id,source_device_id,recipient_device_id) DO NOTHING`).bind(device,family,device,device)];
+    ON CONFLICT(family_id,source_device_id,recipient_device_id) DO NOTHING`).bind(device,family,device,...recipients,device)];
 }
 function gateCheck(env:Env,generation:number):D1PreparedStatement[] {
   const id=crypto.randomUUID();return [env.DB.prepare('INSERT INTO group_push_checks VALUES (?,?)').bind(id,generation),
@@ -109,6 +129,7 @@ async function finish(env:Env,row:Queued,leaseId:string,state:'accepted'|'skippe
 }
 async function current(env:Env,row:Queued,leaseId:string,generation:number):Promise<Current|null> {
   const policy=familyStorePolicy(env);
+  const restriction=trialDeliveryRestriction(env);
   return env.DB.prepare(`SELECT v.*,q.attempts FROM family_notification_candidates v
     JOIN family_notification_deliveries q ON q.event_id=v.event_id AND q.device_id=v.device_id
       AND q.token_digest=v.token_digest AND q.subscription_generation=v.subscription_generation
@@ -119,31 +140,34 @@ async function current(env:Env,row:Queued,leaseId:string,generation:number):Prom
       AND g.generation=? AND g.media_enabled=1 AND g.apns_enabled=1
       AND EXISTS(SELECT 1 FROM family_notebook_runtime_gate WHERE singleton=1 AND enabled=1)
       AND (v.kind='join_approved' OR EXISTS(SELECT 1 FROM family_notebook_spaces f JOIN group_verified_plus_people p ON p.person_id=f.payer_person_id
-        WHERE f.id=v.space_id AND (p.environment=? OR (?='Production' AND ?=1 AND p.environment='Sandbox'))))`)
-    .bind(row.event_id,row.device_id,row.token_digest,row.subscription_generation,leaseId,generation,policy.environment,policy.environment,policy.acceptSandbox).first<Current>();
+        WHERE f.id=v.space_id AND (p.environment=? OR (?='Production' AND ?=1 AND p.environment='Sandbox'))))${restriction.sql}`)
+    .bind(row.event_id,row.device_id,row.token_digest,row.subscription_generation,leaseId,generation,policy.environment,policy.environment,policy.acceptSandbox,...restriction.params).first<Current>();
 }
 export async function drainFamilyNotifications(env:Env,now=Math.floor(Date.now()/1000),fetchImpl:typeof fetch=fetch,
   hooks:{afterLease?:(row:Queued)=>Promise<void>;beforeSend?:(row:Queued)=>Promise<void>}={}):Promise<APNsDrainSummary> {
   const summary:APNsDrainSummary={leased:0,accepted:0,retried:0,invalidated:0,skipped:0,configurationUnavailable:false};
-  if(!enabled(env))return summary;
+  if(!enabled(env) || !trialWindowOpen(env))return summary;
   const gate=await loadRuntimeGate(env);if(!apnsGateOpen(gate))return summary;
   const family=await env.DB.prepare('SELECT enabled FROM family_notebook_runtime_gate WHERE singleton=1').first<{enabled:number}>();if(family?.enabled!==1)return summary;
   let credential,keyring,authorization:string;
   try { credential=parseProviderCredential(env);keyring=parseTokenKeyring(env);authorization=await providerJWT(credential,now); }
   catch { summary.configurationUnavailable=true;return summary; }
+  const restriction=trialDeliveryRestriction(env);
   await env.DB.prepare(`INSERT OR IGNORE INTO family_notification_deliveries
     (event_id,device_id,token_digest,subscription_generation,state,available_at)
-    SELECT event_id,device_id,token_digest,subscription_generation,'pending',MAX(?,v.available_at) FROM family_notification_candidates v WHERE NOT EXISTS (SELECT 1 FROM family_notification_deliveries q WHERE q.event_id=v.event_id AND q.device_id=v.device_id) LIMIT 500`).bind(now).run();
+    SELECT event_id,device_id,token_digest,subscription_generation,'pending',MAX(?,v.available_at) FROM family_notification_candidates v WHERE NOT EXISTS (SELECT 1 FROM family_notification_deliveries q WHERE q.event_id=v.event_id AND q.device_id=v.device_id)${restriction.sql} LIMIT 500`).bind(now,...restriction.params).run();
   // A rotated token can retry an unsent event. Accepted events remain deduplicated.
   await env.DB.prepare(`UPDATE family_notification_deliveries SET token_digest=v.token_digest,subscription_generation=v.subscription_generation,
     state='pending',available_at=MAX(?,v.available_at),lease_id=NULL,lease_expires_at=NULL FROM family_notification_candidates v
     WHERE family_notification_deliveries.event_id=v.event_id AND family_notification_deliveries.device_id=v.device_id
       AND family_notification_deliveries.state<>'accepted'
-      AND (family_notification_deliveries.token_digest<>v.token_digest OR family_notification_deliveries.subscription_generation<>v.subscription_generation)`).bind(now).run();
-  const candidates=await env.DB.prepare(`SELECT event_id,device_id,token_digest,subscription_generation,attempts FROM family_notification_deliveries
-    WHERE (state='pending' AND available_at<=?) OR (state='leased' AND lease_expires_at<=?) ORDER BY available_at,event_id,device_id LIMIT 50`)
-    .bind(now,now).all<Queued>();
+      AND (family_notification_deliveries.token_digest<>v.token_digest OR family_notification_deliveries.subscription_generation<>v.subscription_generation)${restriction.sql}`).bind(now,...restriction.params).run();
+  const candidates=await env.DB.prepare(`SELECT event_id,device_id,token_digest,subscription_generation,attempts FROM family_notification_deliveries q
+    WHERE ((state='pending' AND available_at<=?) OR (state='leased' AND lease_expires_at<=?))
+    ${env.ownerTrial ? `AND EXISTS (SELECT 1 FROM family_notification_candidates v WHERE v.event_id=q.event_id AND v.device_id=q.device_id${restriction.sql})` : ''}
+    ORDER BY available_at,event_id,device_id LIMIT 50`).bind(now,now,...restriction.params).all<Queued>();
   for(const row of candidates.results) {
+    if (!trialWindowOpen(env)) break;
     const leaseId=randomBase64url(16),leased=await env.DB.prepare(`UPDATE family_notification_deliveries SET state='leased',lease_id=?,lease_expires_at=?
       WHERE event_id=? AND device_id=? AND token_digest=? AND subscription_generation=?
         AND ((state='pending' AND available_at<=?) OR (state='leased' AND lease_expires_at<=?))`)
@@ -162,7 +186,7 @@ export async function drainFamilyNotifications(env:Env,now=Math.floor(Date.now()
     // Fresh family role/request, lease, token and gate checks after ALL awaits.
     // No name or notebook content ever leaves in the APNs payload.
     const live=await current(env,row,leaseId,gate!.generation);
-    if(!live || live.environment!==snapshot.environment || live.token_ciphertext!==snapshot.token_ciphertext
+    if(!trialWindowOpen(env) || !live || live.environment!==snapshot.environment || live.token_ciphertext!==snapshot.token_ciphertext
       || live.token_nonce!==snapshot.token_nonce || live.encryption_key_id!==snapshot.encryption_key_id) {
       await finish(env,row,leaseId,'skipped',now);summary.skipped++;continue;
     }

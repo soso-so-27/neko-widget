@@ -5,7 +5,7 @@ import {billingSignedRequestTranscript} from '../src/billing-protocol';
 import {recoveryCatalogTranscript, type RecoveryChallenge} from '../src/group-recovery-catalog';
 import {recoveryDeliveryState, type RecoveryPendingRow} from '../src/group-recovery-key-delivery';
 import {route} from '../src/index';
-import {ownerTrialRequest, type OwnerTrial} from '../src/owner-two-device-trial';
+import {ownerTrialFamilyPushEnvironment, ownerTrialRequest, type OwnerTrial} from '../src/owner-two-device-trial';
 import {billing, plusOwner, settings} from './group-billing-fixture';
 import {cipher, create, db, key, member, ok, packet, person, send, sign, signed, type Person} from './group-fixture';
 import type {Env} from '../src/env';
@@ -56,6 +56,22 @@ async function fixture() {
 }
 
 describe('owner-only staging trial',()=>{
+  it('opens family push only in the verified recovery scope',async()=>{
+    const f=await fixture(), path=`${familyRoot}/${f.scope.family}/push-subscription`;
+    const req=()=>new Request('https://group.invalid'+path,{method:'POST'});
+    for(const phase of ['OFF','PREPARE','PHOTO','REPORT'] as const) {
+      expect(await ownerTrialFamilyPushEnvironment(f.env(phase))).toBeUndefined();
+    }
+    expect(await ownerTrialFamilyPushEnvironment(f.env('RECOVERY',{phaseUntilMs:Date.now()-1}))).toBeUndefined();
+    expect(await ownerTrialFamilyPushEnvironment({...f.env('RECOVERY'),ENVIRONMENT:'production'})).toBeUndefined();
+    const cron=await ownerTrialFamilyPushEnvironment(f.env('RECOVERY'));
+    expect(cron).toMatchObject({FAMILY_NOTEBOOK_APNS_RUNTIME_ENABLED:'YES',
+      BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED:'YES',ownerTrial:{family:f.scope.family,recoveryDevice:f.recovery.deviceId}});
+    expect(await ownerTrialRequest(f.mark(req()),f.env('RECOVERY'))).toMatchObject({FAMILY_NOTEBOOK_APNS_RUNTIME_ENABLED:'YES'});
+    await expect(ownerTrialRequest(req(),f.env('RECOVERY'))).rejects.toMatchObject({status:404});
+    expect(f.unscoped.FAMILY_NOTEBOOK_APNS_RUNTIME_ENABLED).not.toBe('YES');
+  });
+
   it('reports readiness while closed and sends only proved transaction/entitlement calls to the private verifier',async()=>{
     const f=await fixture(),path='/v1/billing/entitlement';
     const req=(path:string)=>new Request('https://group.invalid'+path);
