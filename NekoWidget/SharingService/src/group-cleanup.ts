@@ -68,9 +68,6 @@ export async function runGroupRelayCleanup(env:Env,now=Math.floor(Date.now()/100
       .bind(now-RECEIPT_SECONDS),
   ]);
   if(env.ENVIRONMENT!=='production')await runGroupReportCleanup(env,now);
-  if(await env.DB.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='group_deleted_deliveries'").first()) {
-    await env.DB.prepare('DELETE FROM group_deleted_deliveries WHERE rowid IN (SELECT rowid FROM group_deleted_deliveries WHERE expires_at<=? ORDER BY expires_at LIMIT 100)').bind(now).run();
-  }
   await cleanupExpiredGroupPush(env,now);
   await cleanupExpiredGroupAdmissionPush(env,now);
   await env.DB.prepare("DELETE FROM group_admission_deliveries WHERE available_at<? AND state<>'leased'").bind(now-7*86400).run();
