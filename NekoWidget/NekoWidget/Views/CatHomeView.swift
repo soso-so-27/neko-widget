@@ -407,7 +407,8 @@ struct CatHomeView: View {
         }
         // 11/19: and the notebook is read while they are on screen, so a new
         // photo comes without the app leaving the front first.
-        .familyNotebookPhotoScreen(enabled: familyPhotos.isOn && !familyNotebook.unlinkedFamilyCats.isEmpty)
+        // 11/19: only once the relay said its photo is open.
+        .familyNotebookPhotoScreen(enabled: familyPhotos.readsForPhotos && !familyNotebook.unlinkedFamilyCats.isEmpty)
         // Kept once the pages rest, never while they move.
         .task(id: pageID) {
             guard let pageID, pageID != Self.addPageID, pageID != storedCatID else { return }

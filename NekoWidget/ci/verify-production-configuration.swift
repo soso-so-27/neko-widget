@@ -61,6 +61,24 @@ enum ProductionConfigurationVerifier {
             var invalid = exercise; invalid[key] = value
             precondition(!SharingAPIConfiguration.ownerStagingTwoDeviceEnabled(info: invalid), key)
         }
+        // 11/19: the representative photo and 機種変更 are carried by the App
+        // Store build (the relay's own gates decide) and by the owner's trial,
+        // never by an ordinary staging build, a disabled build or a production
+        // build pointed anywhere but the reviewed production relay.
+        precondition(SharingAPIConfiguration.serverGatedFamilyFeaturesEnabled(info: exercise))
+        var store = valid
+        store["FamilyNotebookProductionEnabled"] = "YES"; store["GroupWindowsEnabled"] = "YES"
+        precondition(SharingAPIConfiguration.serverGatedFamilyFeaturesEnabled(info: store))
+        for (key, value) in [("SharingAPIBaseURL", "https://neko-window-sharing-staging.nakanishisoya.workers.dev"),
+                             ("SharingAPIBaseURL", "https://api.nekonomado.com.example"), ("SharingAPIBaseURL", ""),
+                             ("SharingReleaseMode", "disabled"), ("SharingReleaseMode", "media-staging"),
+                             ("FamilyNotebookProductionEnabled", "NO"), ("GroupWindowsEnabled", "NO"),
+                             ("SharingMediaEnabled", "NO"), ("SharingModerationPublicKey", "")] {
+            var invalid = store; invalid[key] = value
+            precondition(!SharingAPIConfiguration.serverGatedFamilyFeaturesEnabled(info: invalid), key)
+        }
+        var ordinaryStaging = exercise; ordinaryStaging["OwnerStagingTwoDeviceEnabled"] = "NO"
+        precondition(!SharingAPIConfiguration.serverGatedFamilyFeaturesEnabled(info: ordinaryStaging))
         exercise["PlusBillingClientEnabled"] = "YES"
         exercise["PlusBillingAPIBaseURL"] = OwnerTwoDeviceTrialConfiguration.origin
         exercise["OwnerTwoDeviceTrial"] = ["proof": key, "owner": key, "window": String(repeating: "A", count: 22),

@@ -725,7 +725,7 @@ class FamilyNotebookDeviceChange1119Tests(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             if "notebook-recovery-link" in text:
                 self.assertEqual(path.name, "FamilyNotebookKeyCoordinator.swift")
-        choice = section(KEYS, "enum FamilyNotebookIdentityChoice {", "#if DEBUG || INTERNAL_PRESENTATION")
+        choice = section(KEYS, "enum FamilyNotebookIdentityChoice {", "/// The iCloud Keychain item of the pin")
         self.assertIn("recovered.registered", choice)
         self.assertIn("usualPersonID != link.personID", choice)
         self.assertIn("!link.familyIDs.isEmpty", choice)
@@ -741,7 +741,7 @@ class FamilyNotebookDeviceChange1119Tests(unittest.TestCase):
         self.assertLess(prepare.index("try adoptSyncedPin(family)"), prepare.index("var trusted = try trust(family)"))
         stored = section(KEYS, "struct FamilyNotebookStoredPinSync: FamilyNotebookPinSync {", "enum FamilyNotebookIdentityChoice {")
         self.assertIn("saved.epoch >= pin.epoch { return }", stored)
-        keychain = section(KEYS, "struct FamilyNotebookSyncedKeychainStore: GroupSecretStore {", "\n#endif")
+        keychain = section(KEYS, "struct FamilyNotebookSyncedKeychainStore: GroupSecretStore {", "func remove(_ account: String)")
         self.assertIn("kSecAttrSynchronizable as String: true", keychain)
         self.assertIn("kSecAttrAccessibleWhenUnlocked", keychain)
         self.assertNotIn("ThisDeviceOnly", keychain)

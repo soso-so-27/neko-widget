@@ -2794,6 +2794,16 @@ protocol FamilyRepresentativePhotoBackend: AnyObject {
     func report(assetID: UUID, reason: GroupReportReason) async throws -> String
     func hide(_ personID: String) async throws
     func unhide(_ personID: String) async throws
+    /// 11/19: what the relay said about the photo (its own gate) in this process.
+    var relayAnswer: FamilyPhotoServerState { get }
+    /// One question to the relay while its answer is not known.
+    func probe() async
+}
+
+extension FamilyRepresentativePhotoBackend {
+    /// Review captures: a synthetic relay that is always open.
+    var relayAnswer: FamilyPhotoServerState { .on }
+    func probe() async {}
 }
 
 /// The photos a family cat page shows instead of のわ. Shown only: never the
@@ -2831,11 +2841,22 @@ final class FamilyRepresentativePhotos: ObservableObject {
 
     init() { backend = FamilyNotebookServiceFactory.representativePhotoBackend() }
 
-    var isOn: Bool { backend != nil }
+    /// 11/19: the relay's own gate, as last answered. Closed: nothing of the
+    /// photo is shown or asked for again in this process (as before 1.0).
+    @Published private(set) var relayAnswer: FamilyPhotoServerState = .unknown
+
+    var isOn: Bool { backend != nil && relayAnswer != .off }
+    /// The notebook is read more often for a photo only once the relay said open.
+    var readsForPhotos: Bool { isOn && relayAnswer == .on }
+
+    private func noteRelay() {
+        guard let answer = backend?.relayAnswer, answer != relayAnswer else { return }
+        relayAnswer = answer
+    }
 
 #if DEBUG
     /// Review captures only (AppStoreScreenshotFixture.CatHomeStress).
-    func installFixture(_ backend: any FamilyRepresentativePhotoBackend) { self.backend = backend }
+    func installFixture(_ backend: any FamilyRepresentativePhotoBackend) { self.backend = backend; noteRelay() }
 #endif
 
     func name(of personID: String) -> String {
@@ -2886,6 +2907,10 @@ final class FamilyRepresentativePhotos: ObservableObject {
     }
 
     private func readOnce(_ cats: [UUID], force: Bool, backend: any FamilyRepresentativePhotoBackend) async {
+        defer { noteRelay() }
+        // 11/19: not known yet whether the relay's photo is open: one question.
+        if backend.relayAnswer == .unknown { await backend.probe(); noteRelay() }
+        guard backend.relayAnswer != .off else { return }
         let now = Date()
         var due: [UUID] = [], assets: [UUID: UUID] = [:]
         for cat in cats {
@@ -2974,6 +2999,7 @@ final class FamilyRepresentativePhotos: ObservableObject {
             // awaited between this check and clearing the task.
             repeat {
                 await SharingPersonAction.automatic { await self.runSync() }
+                self.noteRelay()
             } while syncAgain && !Task.isCancelled
             syncTask = nil
             endSyncBackground()

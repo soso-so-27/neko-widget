@@ -162,6 +162,8 @@ struct SettingsView: View {
 #endif
     @State private var isRescanning = false
     @State private var showsFamilyNotebook = false
+    /// 11/19: 機種変更, only once the relay's gate answered open (GroupRecoveryAvailability).
+    @State private var deviceChangeOpen = false
     @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
 #if DEBUG || INTERNAL_PRESENTATION
     @State private var isExporting = false
@@ -295,7 +297,7 @@ struct SettingsView: View {
             // Cats are added and opened from the ツール tab's row of faces only
             // (11/7: 猫のプロフィール here was a second door). The notebook and
             // the people hidden in まど are the two things shared with others.
-            if showsFamilyNotebookRow || GroupWindowClientProvider.ui != nil {
+            if showsFamilyNotebookRow || GroupWindowClientProvider.ui != nil || deviceChangeOpen {
                 Section {
                     if showsFamilyNotebookRow {
                         // The notebook from 設定 too, where leaving it is looked for (11/7).
@@ -327,6 +329,14 @@ struct SettingsView: View {
                             Label("ブロックした人", systemImage: "hand.raised")
                         }
                         .accessibilityIdentifier("settings-group-hidden-members")
+                    }
+                    if deviceChangeOpen {
+                        // 11/19: the same screen as the owner's trial; shown
+                        // only while the relay's 機種変更 gate is open.
+                        NavigationLink { GroupRecoveryLiveScreen(model: .connected()) } label: {
+                            Label(GroupRecoveryWords.entry, systemImage: "iphone.and.arrow.forward")
+                        }
+                        .accessibilityIdentifier("settings-device-change")
                     }
                 } header: {
                     Text("家族とまど")
@@ -475,6 +485,8 @@ struct SettingsView: View {
         }
         .navigationTitle("設定")
         .sheet(isPresented: $showsFamilyNotebook) { FamilyNotebookView() }
+        // 11/19: nothing while 機種変更 is closed at the relay or not known.
+        .task { deviceChangeOpen = await GroupRecoveryAvailability.isOpen() }
 #if DEBUG || INTERNAL_PRESENTATION
         .sheet(isPresented: $showsMembershipPreview) {
             MembershipOfferSheet(model: .preview(), context: .settings) { _ in

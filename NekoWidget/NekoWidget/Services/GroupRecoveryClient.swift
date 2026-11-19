@@ -1,6 +1,31 @@
-#if DEBUG || INTERNAL_PRESENTATION
 import Foundation
 import CryptoKit
+
+/// 11/19: what the relay last said about 機種変更 (device change), in this
+/// process. The App Store build carries the client; the relay's own gate
+/// (503 `recovery_disabled`) decides whether it does anything. Learned only
+/// from answers to recovery calls (and at most one probe where nothing else
+/// asks); never a schedule of its own.
+final class GroupRecoveryServerGate: @unchecked Sendable {
+    enum State: Equatable, Sendable { case unknown, on, off }
+    static let shared = GroupRecoveryServerGate()
+    private let lock = NSLock()
+    private var value: State
+    init(state: State = .unknown) { value = state }
+    var state: State { lock.lock(); defer { lock.unlock() }; return value }
+    /// A recovery call was answered (2xx): the relay's gate is open.
+    func served() { set(.on) }
+    /// The relay answered 503 `recovery_disabled`.
+    func disabled() { set(.off) }
+    private func set(_ new: State) { lock.lock(); value = new; lock.unlock() }
+}
+
+/// What a probe (GroupRecoveryClient.probe) is given to keep: nothing.
+struct GroupRecoveryNoStore: GroupSecretStore {
+    func read(_ account: String) throws -> Data? { nil }
+    func write(_ data: Data, account: String, createOnly: Bool) throws { throw GroupRecoveryClient.Failure.disabled }
+    func remove(_ account: String) throws {}
+}
 
 /// Root-authenticated discovery, pending registration and key delivery.
 /// Installation requires the owner's verified switch and a key for this device.
@@ -78,7 +103,8 @@ actor GroupRecoveryClient {
     private var personID: String { GroupWire.base64(GroupCanonical.hash(root.publicKey.rawRepresentation)) }
 
     init(endpoint: URL, environment: String, root: Data, transport: any GroupHTTPTransport,
-         journal: any GroupSecretStore, secrets: (any GroupSecretStore)? = nil, enabled: Bool = false) throws {
+         journal: any GroupSecretStore, secrets: (any GroupSecretStore)? = nil, enabled: Bool = false,
+         gate: GroupRecoveryServerGate = .shared) throws {
         guard ["production", "staging"].contains(environment), endpoint.scheme == "https",
               endpoint.user == nil, endpoint.password == nil, endpoint.query == nil, endpoint.fragment == nil,
               endpoint.path.isEmpty || endpoint.path == "/" else { throw Failure.invalidResponse }
@@ -88,7 +114,9 @@ actor GroupRecoveryClient {
         self.endpoint = endpoint; self.environment = environment
         self.root = try Curve25519.Signing.PrivateKey(rawRepresentation: root)
         self.transport = transport; self.journal = journal; self.secrets = secrets; self.enabled = enabled
+        self.gate = gate
     }
+    private let gate: GroupRecoveryServerGate
     private func post(_ path: String, _ body: [String: Any]) async throws -> Data {
         guard enabled else { throw Failure.disabled }
         var request = URLRequest(url: endpoint.appendingPathComponent(path))
@@ -99,14 +127,18 @@ actor GroupRecoveryClient {
         guard (200...299).contains(reply.status) else {
             let value = try? JSONSerialization.jsonObject(with: reply.data) as? [String: Any]
             let code = (value?["error"] as? [String: Any])?["code"] as? String
-            if reply.status == 503 && code == "recovery_disabled" { throw Failure.serverDisabled }
+            if reply.status == 503 && code == "recovery_disabled" { gate.disabled(); throw Failure.serverDisabled }
             if code == "device_limit" { throw Failure.deviceLimit }
             if code == "client_upgrade_required" { throw Failure.updateRequired }
             if reply.status == 401 || reply.status == 403 { throw Failure.authentication }
             throw Failure.unavailable
         }
+        gate.served()
         return reply.data
     }
+    /// 11/19: one challenge, only to learn whether the relay's gate is open
+    /// (nothing is registered; the challenge expires unused).
+    func probe() async throws { _ = try await challenge(UUID(), purpose: "catalog") }
     private func challenge(_ operation: UUID, purpose: String) async throws -> Challenge {
         let bytes = try await post("v3/group-recovery/challenges", ["identityPublicKey": GroupWire.base64(root.publicKey.rawRepresentation),
             "operationId": operation.uuidString.lowercased(), "purpose": purpose])
@@ -589,7 +621,9 @@ actor GroupRecoveryProviderClient {
     }
     private let endpoint: URL; private let environment: String; private let enabled: Bool
     private let secrets: any GroupSecretStore; private let transport: any GroupHTTPTransport
-    init(endpoint: URL, environment: String, secrets: any GroupSecretStore, transport: any GroupHTTPTransport, enabled: Bool = false) throws {
+    private let gate: GroupRecoveryServerGate
+    init(endpoint: URL, environment: String, secrets: any GroupSecretStore, transport: any GroupHTTPTransport, enabled: Bool = false,
+         gate: GroupRecoveryServerGate = .shared) throws {
         guard ["staging", "production"].contains(environment), endpoint.scheme == "https", endpoint.user == nil,
               endpoint.password == nil, endpoint.query == nil, endpoint.fragment == nil, endpoint.path.isEmpty || endpoint.path == "/"
         else { throw GroupRecoveryClient.Failure.invalidResponse }
@@ -597,6 +631,7 @@ actor GroupRecoveryProviderClient {
         guard endpoint == SharingAPIConfiguration.current.baseURL else { throw GroupRecoveryClient.Failure.invalidResponse }
 #endif
         self.endpoint = endpoint; self.environment = environment; self.secrets = secrets; self.transport = transport; self.enabled = enabled
+        self.gate = gate
     }
     private func context(_ window: String) throws -> (GroupDeviceIdentity, GroupLocalWindow, VerifiedGroupRoster) {
         guard enabled, let id = try secrets.read("identity"), let w = try secrets.read("window:" + window) else { throw GroupRecoveryClient.Failure.disabled }
@@ -610,7 +645,16 @@ actor GroupRecoveryProviderClient {
         let request = try GroupHTTPRequest.make(endpoint: endpoint, path: path, body: body, identity: identity)
         let reply = try await transport.send(request, maximumBytes: 1_500_000)
         guard reply.data.count <= 1_500_000 else { throw GroupRecoveryClient.Failure.invalidResponse }
-        return try GroupHTTPRequest.check(reply)
+        if reply.status == 503, Self.code(reply.data) == "recovery_disabled" {
+            gate.disabled(); throw GroupRecoveryClient.Failure.serverDisabled
+        }
+        let data = try GroupHTTPRequest.check(reply)
+        gate.served()
+        return data
+    }
+    private static func code(_ data: Data) -> String? {
+        let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return (value?["error"] as? [String: Any])?["code"] as? String
     }
     func pending(windowID: String) async throws -> Pending {
         let (identity, _, head) = try context(windowID)
@@ -760,4 +804,3 @@ actor GroupRecoveryProviderClient {
     }
 
 }
-#endif

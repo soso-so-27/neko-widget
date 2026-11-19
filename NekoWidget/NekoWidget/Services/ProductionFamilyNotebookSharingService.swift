@@ -164,6 +164,9 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     /// This session's delivery of each cat, sent again by 「もう一度」.
     private var photoRetries: [UUID: UUID] = [:]
     private let photoRuntimeEnabled: Bool
+    /// 11/19: what the relay said about the photo in this process. Closed
+    /// (503 `photo_feature_disabled`): nothing more is asked or shown.
+    fileprivate(set) var photoServer: FamilyPhotoServerState = .unknown
     private let photoTransport: any GroupHTTPTransport
     /// 11/18: one line per stage of a delivery (FamilyPhotoDeliveryLog).
     private let photoTrace: FamilyPhotoDeliveryTrace
@@ -630,6 +633,9 @@ enum FamilyNotebookPhotoLoad: Equatable, Sendable {
     case none
 }
 
+/// 11/19: the relay's answer about the representative photo (its own gate).
+enum FamilyPhotoServerState: Equatable, Sendable { case unknown, on, off }
+
 enum FamilyNotebookPhotoFailure: Error, Equatable {
     /// 「家族の手帳の写真が上限です」.
     case limited
@@ -644,17 +650,34 @@ enum FamilyNotebookPhotoFailure: Error, Equatable {
 /// every call throws before any network.
 @available(iOS 17.0, macOS 14.0, *)
 extension ProductionFamilyNotebookSharingService {
-    var representativePhotosEnabled: Bool { photoRuntimeEnabled }
+    var representativePhotosEnabled: Bool { photoRuntimeEnabled && photoServer != .off }
     /// 11/19: the creator's photo can be written now (the family's keys of
     /// the last pass are here); no network.
     var representativePhotoWritable: Bool {
-        photoRuntimeEnabled && photoMaterial != nil && session?.notebook != nil
+        representativePhotosEnabled && photoMaterial != nil && session?.notebook != nil
+    }
+
+    /// 11/19: an answer from the relay's photo routes. A served call opens
+    /// it; only its own 503 `photo_feature_disabled` closes it; anything else
+    /// leaves what was known.
+    fileprivate func notePhotoServer(_ error: Error?) {
+        guard let error else { photoServer = .on; return }
+        if case FamilyNotebookTransportError.server(let code, let status) = error,
+           code == "photo_feature_disabled", status == 503 { photoServer = .off }
+    }
+
+    /// 11/19: one read of the slots, only while the relay's answer is not
+    /// known (FamilyRepresentativePhotos, once a family cat is on screen).
+    func probeRepresentativePhotos() async {
+        guard photoServer == .unknown, let context = try? photoContext() else { return }
+        do { _ = try await context.client.slots(); notePhotoServer(nil) }
+        catch { notePhotoServer(error) }
     }
     var personID: String? { session?.identity.personID }
 
     fileprivate func photoContext() throws -> (session: FamilyNotebookSession, store: FamilyNotebookStore, material: PhotoMaterial,
                                           client: FamilyNotebookRepresentativePhotoClient, journal: any GroupSecretStore) {
-        guard photoRuntimeEnabled else { throw FamilyNotebookPhotoFailure.unavailable }
+        guard representativePhotosEnabled else { throw FamilyNotebookPhotoFailure.unavailable }
         guard let session, let store = session.notebook, let material = photoMaterial,
               let snapshot = try? store.snapshot(), !snapshot.sharingEnded, snapshot.familyID == material.familyID
         else { throw FamilySharingError.membershipChecking }
@@ -723,7 +746,9 @@ extension ProductionFamilyNotebookSharingService {
         }
         guard !references.isEmpty else { return result }
         let hidden = try await context.client.hiddenAuthors()
-        let slots = try await context.client.slots()
+        let slots: [FamilyNotebookRepresentativePhotoClient.Slot]
+        do { slots = try await context.client.slots(); notePhotoServer(nil) }
+        catch { notePhotoServer(error); throw error }
         for (cat, found) in references {
             if hidden.contains(found.authorID) { result[cat] = .hidden(authorID: found.authorID); continue }
             guard let slot = slots.first(where: { $0.slotID == found.reference.slotID }), let asset = slot.assetID else {
@@ -767,8 +792,9 @@ extension ProductionFamilyNotebookSharingService {
         trace(.init(stage: .keyReady))
         let slotID = FamilyNotebookRepresentativePhotoCrypto.slotID(familyID: context.material.familyID, catID: familyCatID)
         let revision: Int
-        do { revision = try await context.client.slots().first { $0.slotID == slotID }?.revision ?? 0 }
+        do { revision = try await context.client.slots().first { $0.slotID == slotID }?.revision ?? 0; notePhotoServer(nil) }
         catch {
+            notePhotoServer(error)
             trace(.init(stage: .stateListFailed, status: Self.photoTraceStatus(error), code: FamilyPhotoDeliveryLog.code(of: error)))
             throw Self.photoFailure(error)
         }
@@ -809,6 +835,7 @@ extension ProductionFamilyNotebookSharingService {
                       _ store: FamilyNotebookStore, _ material: FamilyNotebookKeyMaterial) async throws {
         do { try await client.deliver(pending, trace: photoTrace) }
         catch {
+            notePhotoServer(error)
             photoTrace(.init(stage: .deliveryFailed, status: Self.photoTraceStatus(error), code: FamilyPhotoDeliveryLog.code(of: error)))
             throw Self.photoFailure(error)
         }

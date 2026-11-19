@@ -838,6 +838,8 @@ private struct GroupAdapterChecks {
         let afterInvalidName = await nameRelay.stats()
         try check(namedStats.1.count == afterInvalidName.1.count, "invalid creator name makes no creation request")
         try await verifyManagement(endpoint: endpoint, folder: folder.appendingPathComponent("management"))
+        // 11/19: proofs go only to a relay whose recovery gate answered open.
+        GroupRecoveryServerGate.shared.served()
         let recoveryRelay = EchoTransport(), recoverySecrets = MemorySecrets()
         let recoveryClient = try ProductionGroupWindowClient(endpoint: URL(string: "https://recovery.invalid")!,
             secrets: recoverySecrets, transport: recoveryRelay, outboxDirectory: folder.appendingPathComponent("recovery"),
