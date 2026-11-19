@@ -101,6 +101,7 @@ import {
   scheduleNotificationDrain,
 } from "./push";
 import {
+  FAMILY_PHOTO_MAINTENANCE_CRON,
   LEGACY_CLEANUP_CRON,
   MOMENT_CLEANUP_CRON,
   runLegacyScheduledCleanup,
@@ -686,6 +687,13 @@ function productionIntakeClosed(env: Env): boolean {
   return env.ENVIRONMENT === "production" && env.INTAKE_ENABLED !== "YES";
 }
 
+function scheduleFamilyPhotoMaintenance(env: Env, ctx: ExecutionContext): void {
+  // Keep each cleanup eligible even if another job fails or report intake is closed.
+  ctx.waitUntil(protectedGroupRead(env, () => advanceFamilyPhotoReportDeadlines(env.DB, env.GROUP_MODERATION_RUNTIME_ENABLED === 'YES')));
+  ctx.waitUntil(cleanupFamilyPhotoReportEvidence(env));
+  ctx.waitUntil(cleanupFamilyRepresentativePhotos(env));
+}
+
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     if (productionIntakeClosed(env)) {
@@ -701,6 +709,10 @@ export default {
   },
   async scheduled(controller, env, ctx): Promise<void> {
     if (productionIntakeClosed(env)) return;
+    if (controller.cron === FAMILY_PHOTO_MAINTENANCE_CRON) {
+      if (env.ENVIRONMENT === 'production') scheduleFamilyPhotoMaintenance(env, ctx);
+      return;
+    }
     // Independent cleanup keeps its existing deadline even when billing recovery is unavailable.
     if(env.BILLING_TRANSACTION_RETENTION_REQUIRED==='YES') ctx.waitUntil(runBillingTransactionDeletion(env).then(async()=>{
       if(controller.cron===LEGACY_CLEANUP_CRON) await scheduleBillingTransactionRetention(env);
@@ -710,12 +722,11 @@ export default {
       // the ordinary seven-day evidence cleanup.
       ctx.waitUntil(advanceIdentityDeletion(env));
       ctx.waitUntil(protectedGroupRead(env,()=>runGroupReportOperations(env)));
-      ctx.waitUntil(protectedGroupRead(env,()=>advanceFamilyPhotoReportDeadlines(env.DB,env.GROUP_MODERATION_RUNTIME_ENABLED==='YES')));
-      ctx.waitUntil(cleanupFamilyPhotoReportEvidence(env));
+      // Staging retains its existing schedule. Production uses the dedicated trigger.
+      if (env.ENVIRONMENT !== 'production') scheduleFamilyPhotoMaintenance(env, ctx);
       ctx.waitUntil(runMomentCleanup(env));
       // Withdrawals remain cleanup-eligible even when the pilot gate is off.
       ctx.waitUntil(runFamilyRecordCleanup(env));
-      ctx.waitUntil(cleanupFamilyRepresentativePhotos(env));
       ctx.waitUntil(cleanupDissolvedFamilyRosters(env));
       ctx.waitUntil(env.DB.prepare('DELETE FROM family_notebook_daily_usage WHERE day<(unixepoch()+32400)/86400-1').run());
       ctx.waitUntil(runGroupRelayCleanup(env));

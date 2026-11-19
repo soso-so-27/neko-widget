@@ -29,6 +29,7 @@ export const R2_DELETE_BATCH_SIZE = 1_000;
 export const CLEANUP_SUBREQUEST_GUARD = 980;
 export const LEGACY_CLEANUP_CRON = "*/5 * * * *";
 export const MOMENT_CLEANUP_CRON = "2,7,12,17,22,27,32,37,42,47,52,57 * * * *";
+export const FAMILY_PHOTO_MAINTENANCE_CRON = "3,8,13,18,23,28,33,38,43,48,53,58 * * * *";
 // Each CAS tuple has two bindings: (object_key, attempts). 48 tuples use 96
 // parameters, leaving four below D1's hard ceiling.
 export const OBJECT_DELETE_CAS_TUPLE_LIMIT = 48;
