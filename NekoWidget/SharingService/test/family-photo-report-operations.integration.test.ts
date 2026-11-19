@@ -1,6 +1,11 @@
-import {describe,it,expect} from 'vitest';
+import {describe,it,expect,vi} from 'vitest';
 import {db,testEnv} from './group-fixture';
 import {advanceFamilyPhotoReportDeadlines,familyPhotoStopped,drainFamilyPhotoReportMail,cleanupFamilyPhotoReportEvidence} from '../src/family-photo-report-operations';
+import * as reportOperations from '../src/family-photo-report-operations';
+import * as representative from '../src/family-representative-photo';
+import * as billingRetention from '../src/billing-retention-executor';
+import worker from '../src/index';
+import {FAMILY_PHOTO_MAINTENANCE_CRON} from '../src/scheduled';
 import type {Env} from '../src/env';
 
 async function report(age:number,outcome='received') {
@@ -12,6 +17,41 @@ async function report(age:number,outcome='received') {
  return {id,family,asset};
 }
 describe('family photo report deadlines',()=>{
+ it('uses the dedicated production cron with intake closed for reports, and isolates cleanup failures',async()=>{
+  const due=await report(5*86400+5),expired=await report(7*86400+5);
+  const early=await report(86400-60),decided=await report(7*86400+5,'no_action');
+  const deadlines=vi.spyOn(reportOperations,'advanceFamilyPhotoReportDeadlines');
+  const evidence=vi.spyOn(reportOperations,'cleanupFamilyPhotoReportEvidence');
+  const photos=vi.spyOn(representative,'cleanupFamilyRepresentativePhotos');
+  const billing=vi.spyOn(billingRetention,'runBillingTransactionDeletion');
+  const settings:Env={...testEnv,ENVIRONMENT:'production',INTAKE_ENABLED:'YES',
+   REPORT_INGESTION_RUNTIME_ENABLED:'NO',GROUP_MODERATION_RUNTIME_ENABLED:'YES',
+   BILLING_TRANSACTION_RETENTION_REQUIRED:'YES'};
+  async function scheduled(env:Env){
+   const pending:Promise<unknown>[]=[];
+   const ctx={waitUntil(job:Promise<unknown>){pending.push(job.catch(error=>error));}} as ExecutionContext;
+   await worker.scheduled({cron:FAMILY_PHOTO_MAINTENANCE_CRON} as ScheduledController,env,ctx);
+   return Promise.all(pending);
+  }
+  try {
+   expect(await scheduled({...settings,INTAKE_ENABLED:'NO'})).toEqual([]);
+   expect(await scheduled({...settings,ENVIRONMENT:'staging'})).toEqual([]);
+   evidence.mockRejectedValueOnce(new Error('synthetic object deletion failure'));
+   const [failed,retry]=await Promise.all([scheduled(settings),scheduled(settings)]);
+   expect(failed).toContainEqual(expect.objectContaining({message:'synthetic object deletion failure'}));
+   expect(retry).toEqual([undefined,undefined,0]);
+   expect(deadlines).toHaveBeenCalledTimes(2);
+   expect(photos).toHaveBeenCalledTimes(2);
+   expect(billing).not.toHaveBeenCalled();
+   expect((await db.prepare('SELECT day FROM family_photo_report_reminders WHERE report_id=? ORDER BY day').bind(due.id).all()).results)
+    .toEqual([{day:1},{day:5}]);
+   expect(await db.prepare('SELECT 1 FROM family_photo_report_reminders WHERE report_id=?').bind(early.id).first()).toBeNull();
+   expect(await db.prepare('SELECT revision,outcome FROM family_photo_report_records WHERE report_id=?').bind(expired.id).first())
+    .toEqual({revision:1,outcome:'photo'});
+   expect(await familyPhotoStopped(db,expired.family,crypto.randomUUID())).toBe(false);
+   expect(await familyPhotoStopped(db,decided.family,decided.asset)).toBe(false);
+  } finally {vi.restoreAllMocks();}
+ });
  it('sends fixed reminder text only, leaves failures retryable and sends nothing when email is OFF',async()=>{
   const a=await report(5*86400+1);await advanceFamilyPhotoReportDeadlines(db,false);
   const sent:unknown[]=[],env={...testEnv,GROUP_REPORT_EMAIL_ENABLED:'YES',GROUP_REPORT_EMAIL_TO:'owner@example.test',
