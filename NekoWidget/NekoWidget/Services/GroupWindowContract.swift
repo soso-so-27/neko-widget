@@ -384,6 +384,19 @@ struct GroupNotificationRoute: Sendable {
     }
 }
 
+/// 11/19 (機種変更 水準2): the relay's silent push to the other devices of a
+/// family notebook when a device registers. Exactly
+/// {"aps":{"content-available":1},"neko":{"v":3,"kind":"family_device_registered"}};
+/// it carries no family ID. Anything else is not this push.
+enum FamilyDeviceRegisteredPush {
+    static let kind = "family_device_registered"
+    static func matches(_ info: [AnyHashable: Any]) -> Bool {
+        guard let neko = info["neko"] as? [String: Any], Set(neko.keys) == ["v", "kind"],
+              neko["v"] as? Int == 3, neko["kind"] as? String == kind else { return false }
+        return true
+    }
+}
+
 // Presentation only: never use these mutable dates as a pagination cursor.
 enum GroupWindowListOrder {
     static func precedes(id: String, received: Date?, created: Int?,

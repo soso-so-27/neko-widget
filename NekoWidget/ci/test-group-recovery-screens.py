@@ -61,6 +61,7 @@ class GroupRecoveryScreenTests(unittest.TestCase):
             "choose": "こちらを使う",
             "inNothing": "まだどこにも入っていない",
             "familyNotebook": "家族の手帳",
+            "notebookWaiting": "家族の誰かがアプリを開くと戻ります",
         })
 
     def test_no_mechanism_or_forever_words(self):
@@ -141,9 +142,10 @@ class GroupRecoveryScreenTests(unittest.TestCase):
         # Each root has its own journal and Keychain namespace; nothing is removed locally.
         self.assertIn('namespace + ".recovery-journal." + scope', code)
         self.assertIn('namespace + ".recovery." + scope', code)
-        # The only removal is forwarding the person's 3-iPhone choice to the relay.
-        self.assertEqual(code.count(".remove("), 1)
-        self.assertIn("try await base.remove(device, operationID: operationID)", code)
+        # The only removal is forwarding the person's 3-iPhone choice to the relay
+        # (11/19: the notebook's row passes it on to the same base).
+        self.assertEqual(code.count(".remove("), 2)
+        self.assertEqual(code.count("try await base.remove(device, operationID: operationID)"), 2)
         self.assertIsNone(re.search(r"(journal|secrets|store|Keychain\w*)\S*\.remove", code))
         view = VIEW.read_text(encoding="utf-8")
         self.assertIn("GroupRecoveryLiveScreen(model: .connected())", internal.selected_source(view, {"INTERNAL_PRESENTATION"}))
@@ -209,6 +211,28 @@ class GroupRecoveryScreenTests(unittest.TestCase):
                           "keepCheckingWaiting", "receiveKeys(", "finishKeyDelivery("):
                 with self.subTest(path=path, token=token):
                     self.assertNotIn(token, source)
+
+    def test_new_iphone_returns_to_the_family_notebook(self):
+        # 11/19 (機種変更 水準2): the notebook is one row of the same screen; 続ける
+        # links this iPhone and the waiting row is the existing waiting state.
+        live = (ROOT / "NekoWidget/Services/GroupRecoveryLiveSession.swift").read_text(encoding="utf-8")
+        code = "\n".join(line.split("//", 1)[0] for line in live.splitlines())
+        session = code.split("actor GroupRecoveryNotebookSession", 1)[1].split("// MARK: - P5", 1)[0]
+        self.assertIn("case .submitSameOperation(let id) where id == operationID:\n            try await steps.confirm()", session)
+        self.assertIn("guard try await steps.linked() else { return .notStarted(operationID: operationID) }", session)
+        self.assertIn(": .registeredWaitingForKeys(operationID: operationID, deviceID: deviceID)", session)
+        self.assertIn("items.append(.init(windowID: \"notebook-\" + family.uuidString.lowercased(), name: nil, state: state,", code)
+        self.assertIn("builder.notebook = { context in GroupRecoveryLiveModel.notebookSteps(", code)
+        steps = code.split("static func notebookSteps(", 1)[1].split("static func connected()", 1)[0]
+        # The link is written after any registration, then the notebook restarts.
+        self.assertLess(steps.index("client.familyNotebookIdentity()"), steps.index("FamilyNotebookIdentityChoice.linkAccount,"))
+        self.assertIn("restartSession()", steps)
+        found, _ = words()
+        self.assertEqual(found["notebookWaiting"], "家族の誰かがアプリを開くと戻ります")
+        presentation = PRESENTATION.read_text(encoding="utf-8")
+        self.assertIn("return Self(title: GroupRecoveryWords.notebookWaiting, message: nil,", presentation)
+        view = VIEW.read_text(encoding="utf-8")
+        self.assertEqual(view.count("GroupRecoveryStateView(state: item.screenState"), 2)
 
     def test_verifier_and_tests_run_in_quick_checks(self):
         quick = (ROOT / "ci/run-quick-ios-checks.sh").read_text(encoding="utf-8")

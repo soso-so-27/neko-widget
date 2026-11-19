@@ -186,8 +186,11 @@ private actor Relay: GroupHTTPTransport {
         try await rejected { _ = try await coordinator(b).prepare(family: family) }
         try check(await relay.deviceBodies().count == beforeInvalid, "a certificate signed for another family is rejected, not treated as registration")
         try await approvedBeforeNewcomerRegisters(directory: directory, endpoint: endpoint)
+        try await newIPhoneFromSyncedPin(directory: directory, endpoint: endpoint)
+        try identityChoice()
+        try deviceRegisteredPush()
         try await CallBudgetChecks.run(directory: directory, endpoint: endpoint)
-        print("Family notebook key delivery: real HPKE, pinned invitation, durable roster/key retry, explicit admission, pre-join keys, departure rotation, rejected-key isolation, approval-before-registration and call budget passed")
+        print("Family notebook key delivery: real HPKE, pinned invitation, durable roster/key retry, explicit admission, pre-join keys, departure rotation, rejected-key isolation, approval-before-registration, synced-pin new iPhone, identity choice and call budget passed")
     }
 
     /// 11/15 (TestFlight 378): the family approved the newcomer before the
@@ -245,6 +248,146 @@ private actor Relay: GroupHTTPTransport {
     }
 }
 
+
+// MARK: - 11/19 (機種変更 水準2): a new iPhone of the same person
+
+/// A synthetic Keychain: any account name, in memory only.
+private final class MemorySecrets: GroupSecretStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: Data] = [:]
+    func read(_ account: String) throws -> Data? { lock.lock(); defer { lock.unlock() }; return values[account] }
+    func write(_ data: Data, account: String, createOnly: Bool) throws {
+        lock.lock(); defer { lock.unlock() }
+        if createOnly, values[account] != nil { throw GroupClientError.idempotencyConflict }
+        values[account] = data
+    }
+    func remove(_ account: String) throws { lock.lock(); defer { lock.unlock() }; values[account] = nil }
+}
+
+extension VerifyFamilyNotebookKeyDelivery {
+    /// The person's iPhone A1 keeps the roster pin in (synthetic) iCloud
+    /// Keychain. A new iPhone A2 of the same person, with only an older synced
+    /// pin, walks the roster forward with the usual verification, registers
+    /// itself, is signed in by A1 without an approval and receives every key.
+    fileprivate static func newIPhoneFromSyncedPin(directory: URL, endpoint: URL) async throws {
+        var a1 = GroupDeviceIdentity.firstDevice(), b = GroupDeviceIdentity.firstDevice()
+        a1.registered = true; b.registered = true
+        let a2 = GroupDeviceIdentity(personPrivateKey: a1.personPrivateKey, personPublicKey: a1.personPublicKey,
+            signingPrivateKey: Curve25519.Signing.PrivateKey().rawRepresentation,
+            agreementPrivateKey: Curve25519.KeyAgreement.PrivateKey().rawRepresentation, windowCertificates: [:], registered: true)
+        let family = UUID(), relay = try Relay(family: family, creator: a1), endpointID = endpoint.absoluteString
+        let root = directory.appendingPathComponent("synced-pin-" + UUID().uuidString)
+        // Synthetic stand-ins for the person's iCloud Keychain item.
+        let cloud = FamilyNotebookStoredPinSync(store: MemorySecrets())
+        let older = FamilyNotebookStoredPinSync(store: MemorySecrets())
+        func coordinator(_ who: GroupDeviceIdentity, _ name: String, pins: FamilyNotebookStoredPinSync?) throws -> FamilyNotebookKeyCoordinator {
+            let folder = root.appendingPathComponent(name)
+            let journal = try GroupOperationStore(directory: folder.appendingPathComponent("journal"), maximumRecordBytes: 2_100_000)
+            let secrets = try GroupOperationStore(directory: folder.appendingPathComponent("synthetic-secrets"))
+            return try .init(endpoint: endpoint, identity: who, network: .init(endpoint: endpoint, identity: who, transport: relay, journal: journal),
+                             secrets: secrets, journal: journal, pinSync: pins)
+        }
+        func passes(_ who: GroupDeviceIdentity, _ name: String, pins: FamilyNotebookStoredPinSync?, _ count: Int = 3) async throws -> FamilyNotebookKeyMaterial? {
+            var last: FamilyNotebookKeyMaterial?
+            for _ in 0..<count {
+                last = try await coordinator(who, name, pins: pins).prepare(family: family)
+                if last?.ready == true && !(last?.moreWork ?? true) { break }
+            }
+            return last
+        }
+        stage("Key delivery stage: synced pin written by the person's iPhone")
+        let creator = try coordinator(a1, "a1", pins: cloud)
+        try await creator.registerCreatedFamily(family)
+        guard let first = try await creator.prepare(family: family), first.ready else { throw Failure.check("pin: creator not ready") }
+        let pin1 = try cloud.read(endpoint: endpointID, personID: a1.personID, family: family)
+        try check(pin1 == first.current.pin, "pin: the creator's verified pin is synced next to the person key")
+        try older.write(pin1!, endpoint: endpointID, personID: a1.personID)
+        // B joins (epoch 2): the synced pin follows the chain; an older one never replaces it.
+        let now = Date(), (capability, cipher) = try FamilyNotebookInvitationCrypto.create(roster: first.current, generation: 1, identity: a1,
+            payerPersonID: a1.personID, invitationID: UUID(), inviterName: "synthetic", catNames: [], now: now)
+        let invitation = try FamilyNotebookInvitationCrypto.open(cipher, capability: capability, serverInviterPersonID: a1.personID,
+            serverInviterDeviceID: a1.deviceID, serverGeneration: 1, serverExpiresAt: Int64(now.timeIntervalSince1970) + 86400, now: now)
+        try await coordinator(b, "b", pins: nil).registerInvitation(invitation)
+        try await relay.admit(b)
+        try await creator.confirmApprovedAddition(family: family, personID: b.personID, identityPublicKey: b.personPublicKey)
+        _ = try await passes(b, "b", pins: nil)
+        _ = try await passes(a1, "a1", pins: cloud)
+        guard let joined = try await passes(b, "b", pins: nil), joined.ready else { throw Failure.check("pin: B not ready") }
+        try check(await relay.epoch() == 2, "pin: B's admission rotated the roster")
+        try check(try cloud.read(endpoint: endpointID, personID: a1.personID, family: family)?.epoch == 2, "pin: the synced pin advances")
+        try cloud.write(pin1!, endpoint: endpointID, personID: a1.personID)
+        try check(try cloud.read(endpoint: endpointID, personID: a1.personID, family: family)?.epoch == 2, "pin: an older pin never replaces a newer one")
+
+        stage("Key delivery stage: new iPhone without a synced pin stays untrusted")
+        try await relay.admit(a2)
+        try await rejected { _ = try await coordinator(a2, "a2-none", pins: nil).prepare(family: family) }
+        let other = FamilyNotebookStoredPinSync(store: MemorySecrets())
+        try other.write(.init(familyID: family, epoch: 1, hash: Data(repeating: 9, count: 32)), endpoint: endpointID, personID: a1.personID)
+        try await rejected { _ = try await coordinator(a2, "a2-forged", pins: other).prepare(family: family) }
+
+        stage("Key delivery stage: new iPhone starts from the older synced pin")
+        let waiting = try await coordinator(a2, "a2", pins: older).prepare(family: family)
+        try check(waiting?.ready != true, "pin: the new iPhone waits until the family signs it in")
+        try check(try older.read(endpoint: endpointID, personID: a1.personID, family: family)?.epoch == 2,
+                  "pin: the new iPhone walked from epoch 1 to the current roster and synced it")
+        _ = try await passes(a1, "a1", pins: cloud)
+        let a2Device = try a2.deviceID
+        try check(await relay.epoch() == 3, "pin: the person's other iPhone signed the new iPhone in without an approval")
+        try check(await relay.delivered().contains { $0.recipientDeviceID == a2Device }, "pin: keys sent to the new iPhone")
+        guard let back = try await passes(a2, "a2", pins: older, 5), back.ready else { throw Failure.check("pin: new iPhone cannot read") }
+        try check(back.keys[1] == first.keys[1] && back.keys[2] == joined.keys[2] && back.keys[3] != nil,
+                  "pin: the new iPhone has every past key")
+        try check(back.current.roster.members.first { $0.personID == a1.personID }?.devices.count == 2,
+                  "pin: one person, two iPhones in the signed roster")
+    }
+
+    /// The relay's silent push (server #1075): exactly this payload, nothing else.
+    fileprivate static func deviceRegisteredPush() throws {
+        stage("Key delivery stage: device registered push")
+        let exact: [AnyHashable: Any] = ["aps": ["content-available": 1], "neko": ["v": 3, "kind": "family_device_registered"]]
+        try check(FamilyDeviceRegisteredPush.matches(exact), "push: the relay's payload")
+        let refused: [[AnyHashable: Any]] = [
+            ["aps": ["content-available": 1], "neko": ["v": 3, "kind": "family_device_removed"]],
+            ["aps": ["content-available": 1], "neko": ["v": 2, "kind": "family_device_registered"]],
+            ["aps": ["content-available": 1], "neko": ["v": 3, "kind": "family_device_registered", "familyId": UUID().uuidString]],
+            ["aps": ["content-available": 1], "neko": ["v": 3, "kind": "moment", "windowId": "abcdefghijklmnopqrstuv"]],
+            ["aps": ["content-available": 1]],
+            ["neko": "family_device_registered"],
+        ]
+        for info in refused { try check(!FamilyDeviceRegisteredPush.matches(info), "push: unknown or changed payload ignored") }
+        try check(GroupNotificationRoute.parse(exact) == nil, "push: not a まど route")
+    }
+
+    /// FamilyNotebookIdentityChoice: the recovered identity only when it is
+    /// registered, linked to a listed notebook, and not this iPhone's own person.
+    fileprivate static func identityChoice() throws {
+        stage("Key delivery stage: identity choice")
+        var recovered = GroupDeviceIdentity.firstDevice(); recovered.registered = true
+        let usual = GroupDeviceIdentity.firstDevice()
+        let link = FamilyNotebookIdentityChoice.Link(version: 1, scope: String(repeating: "a", count: 64),
+                                                     personID: recovered.personID, familyIDs: [UUID()])
+        typealias Choice = FamilyNotebookIdentityChoice
+        try check(Choice.recovered(link: link, recovered: recovered, usualPersonID: usual.personID)?.personID == recovered.personID,
+                  "choice: linked and registered recovered identity is used")
+        try check(Choice.recovered(link: link, recovered: recovered, usualPersonID: nil) != nil, "choice: no usual identity yet")
+        var unregistered = recovered; unregistered.registered = false
+        try check(Choice.recovered(link: link, recovered: unregistered, usualPersonID: usual.personID) == nil, "choice: not registered")
+        try check(Choice.recovered(link: nil, recovered: recovered, usualPersonID: usual.personID) == nil, "choice: no link")
+        let empty = Choice.Link(version: 1, scope: link.scope, personID: link.personID, familyIDs: [])
+        try check(Choice.recovered(link: empty, recovered: recovered, usualPersonID: usual.personID) == nil, "choice: catalog listed no notebook")
+        let elsewhere = Choice.Link(version: 1, scope: link.scope, personID: usual.personID, familyIDs: link.familyIDs)
+        try check(Choice.recovered(link: elsewhere, recovered: recovered, usualPersonID: nil) == nil, "choice: link names another person")
+        try check(Choice.recovered(link: link, recovered: recovered, usualPersonID: recovered.personID) == nil,
+                  "choice: the original iPhone keeps its own identity")
+        let links = MemorySecrets(), recovery = MemorySecrets()
+        try check(try Choice.load(links: links, recoveryStore: { _ in recovery }, usualPersonID: nil) == nil, "choice: nothing saved")
+        try links.write(GroupWire.encode(link), account: Choice.linkAccount, createOnly: true)
+        try recovery.write(GroupWire.encode(recovered), account: "identity", createOnly: true)
+        var scopes: [String] = []
+        let loaded = try Choice.load(links: links, recoveryStore: { scopes.append($0); return recovery }, usualPersonID: usual.personID)
+        try check(loaded?.personID == recovered.personID && scopes == [link.scope], "choice: loaded from the link's own scope")
+    }
+}
 
 // MARK: - 11/15 (1115q): calls per minute, counted on a synthetic clock
 

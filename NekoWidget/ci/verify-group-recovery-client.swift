@@ -643,6 +643,17 @@ private actor LateRecoveryCatalog {
     }
     func release() { let pending = waiting; waiting = []; pending.forEach { $0.resume() } }
 }
+/// The notebook row's steps, synthetic: no link, Keychain or notebook.
+private actor NotebookStepsFixture {
+    private(set) var linked = false
+    private(set) var reads = false
+    private(set) var confirms = 0
+    func confirm() { confirms += 1; linked = true }
+    func setReads(_ value: Bool) { reads = value }
+    nonisolated var steps: GroupRecoveryNotebookSteps {
+        GroupRecoveryNotebookSteps(linked: { await self.linked }, confirm: { await self.confirm() }, reads: { await self.reads })
+    }
+}
 private struct RecoveryCatalogRefusal: GroupHTTPTransport {
     let relay: Relay
     let disabledRoot: String
@@ -739,5 +750,34 @@ private struct RecoveryCatalogRefusal: GroupHTTPTransport {
     try await eventually { adapter.items[1].state == .ready(operationID: alone, deviceID: "synthetic-new") }
     quick.close()
     try check(quick.phase == .idle && quick.adapter == nil)
+
+    // 11/19 (機種変更 水準2): the family notebook's row. Not linked asks to
+    // continue; 続ける links (once) and waits; the existing waiting check makes
+    // it ready once the notebook reads. The まど's operations still reach the base.
+    let steps = NotebookStepsFixture()
+    let notebookFamily = UUID()
+    let notebookID = GroupRecoveryNotebookSession.operationID(personID: "synthetic-person", family: notebookFamily)
+    try check(notebookID == GroupRecoveryNotebookSession.operationID(personID: "synthetic-person", family: notebookFamily)
+        && notebookID != GroupRecoveryNotebookSession.operationID(personID: "synthetic-other", family: notebookFamily))
+    let windowOp = UUID()
+    let notebookSession = GroupRecoveryNotebookSession(
+        base: GroupRecoverySyntheticSession(states: [windowOp: .notStarted(operationID: windowOp)], devices: [], delay: .zero),
+        operationID: notebookID, deviceID: "synthetic-new", steps: steps.steps)
+    try check(try await notebookSession.run(.queryStatus(notebookID)) == .notStarted(operationID: notebookID))
+    try check(try await notebookSession.run(.queryStatus(windowOp)) == .notStarted(operationID: windowOp))
+    let notebookAdapter = GroupRecoveryAdapter(contexts: [.init(
+        candidate: .init(summary: .init(rootID: "synthetic-root-n", windowIDs: [], notebookIDs: ["synthetic-notebook"]),
+                         openableWindowNames: []),
+        session: notebookSession,
+        items: [.init(windowID: "notebook-synthetic", name: nil, state: .notStarted(operationID: notebookID), notebook: true)])])
+    await notebookAdapter.handle(.perform(.submitSameOperation(notebookID)))
+    try await eventually { notebookAdapter.items[0].state == .registeredWaitingForKeys(operationID: notebookID, deviceID: "synthetic-new") }
+    try check(await steps.confirms == 1 && notebookAdapter.items[0].notebook)
+    await notebookAdapter.checkWaiting()
+    try check(notebookAdapter.items[0].state == .registeredWaitingForKeys(operationID: notebookID, deviceID: "synthetic-new"))
+    await steps.setReads(true)
+    await notebookAdapter.checkWaiting()
+    try check(notebookAdapter.items[0].state == .ready(operationID: notebookID, deviceID: "synthetic-new"))
+    try check(await steps.confirms == 1)
     print("recovery live screen model: PASS (builder catalog/identity, timeout, late answer, synthetic flow, close)")
 }

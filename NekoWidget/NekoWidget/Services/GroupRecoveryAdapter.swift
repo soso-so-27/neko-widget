@@ -114,7 +114,7 @@ struct GroupRecoveryClientSession: GroupRecoverySession {
     private func set(_ id: UUID, state: GroupRecoveryRegistrationState, devices: [GroupRecoveryDevice]? = nil) {
         guard let index = items.firstIndex(where: { operation($0.state) == id }) else { return }
         let old = items[index]
-        items[index] = .init(windowID: old.windowID, name: old.name, state: state, devices: devices ?? old.devices)
+        items[index] = .init(windowID: old.windowID, name: old.name, state: state, devices: devices ?? old.devices, notebook: old.notebook)
     }
     func handle(_ command: GroupRecoveryCommand) async {
         switch command {
