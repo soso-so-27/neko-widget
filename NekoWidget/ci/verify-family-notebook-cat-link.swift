@@ -375,8 +375,15 @@ enum FamilyNotebookCatLinkVerifier {
                         FamilyNotebookCatLink.Unlinked(id: UUID(), toolID: UUID(), name: "ミケ")]
         try require(FamilyNotebookCatLink.sameName("ソラ ", in: unlinked)?.id == unlinked[0].id, "a cat being added finds its name")
         try require(FamilyNotebookCatLink.sameName("コテツ", in: unlinked) == nil, "another name is not asked about")
-        try require(FamilyNotebookCatLink.sameName("ソラ", in: unlinked + [.init(id: UUID(), toolID: UUID(), name: "ソラ")]) == nil,
-                    "two family cats with one name: never guessed")
+        // 11/19: two family cats of one name (a duplicate): each is asked
+        // about in turn, never skipped silently and never guessed.
+        let twins = unlinked + [.init(id: UUID(), toolID: UUID(), name: "ソラ")]
+        try require(FamilyNotebookCatLink.sameName("ソラ", in: twins)?.id == twins[0].id,
+                    "two family cats with one name: the first is asked about")
+        try require(FamilyNotebookCatLink.sameName("ソラ", in: twins, skipping: [twins[0].id])?.id == twins[2].id,
+                    "after 「べつの子」 the other one of the same name is asked about")
+        try require(FamilyNotebookCatLink.sameName("ソラ", in: twins, skipping: [twins[0].id, twins[2].id]) == nil,
+                    "both answered 「べつの子」: added as a new cat")
         let family = UUID(), cat = UUID()
         try require(FamilyNotebookCatLink.answerKey(family: family, cat: cat) == FamilyNotebookCatLink.answerKey(family: family, cat: cat)
                     && FamilyNotebookCatLink.answerKey(family: UUID(), cat: cat) != FamilyNotebookCatLink.answerKey(family: family, cat: cat),

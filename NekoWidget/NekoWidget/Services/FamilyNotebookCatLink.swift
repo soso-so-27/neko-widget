@@ -185,12 +185,13 @@ enum FamilyNotebookCatLink {
     }
 
     /// The family cat with the same name as a cat being added to the
-    /// notebook, if exactly one unlinked family cat has it.
-    static func sameName(_ name: String, in unlinked: [Unlinked]) -> Unlinked? {
+    /// notebook, not answered 「べつの子」 yet (`skipping`). 11/19: with two or
+    /// more of one name, each is asked about in turn: still only a question,
+    /// never a guess, and a cat is not added again silently beside them.
+    static func sameName(_ name: String, in unlinked: [Unlinked], skipping: Set<UUID> = []) -> Unlinked? {
         let wanted = normalized(name)
         guard !wanted.isEmpty else { return nil }
-        let matches = unlinked.filter { normalized($0.name) == wanted }
-        return matches.count == 1 ? matches[0] : nil
+        return unlinked.first { !skipping.contains($0.id) && normalized($0.name) == wanted }
     }
 
     static func normalized(_ name: String) -> String {

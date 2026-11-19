@@ -85,6 +85,22 @@ final class FamilyNotebookPrototype: ObservableObject {
         }
     }
 
+    /// 11/19: the notebook's list of cats in the family's order
+    /// (FamilyNotebookCatOrder, worked out on each read), not in the order
+    /// this iPhone happened to keep them.
+    var orderedFamilyCats: [FamilyCat] {
+        let cats = familyCats
+        let places = Dictionary(familyOrder.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+        return cats.enumerated().sorted { a, b in
+            (places[a.element.id] ?? Int.max, a.offset) < (places[b.element.id] ?? Int.max, b.offset)
+        }.map { $0.element }
+    }
+
+    /// The page of this iPhone a family cat is linked to, if any.
+    func linkedProfile(of cat: UUID) -> UUID? {
+        snapshot.flatMap { FamilyNotebookCatLink.linkedProfile(cat, in: $0) }
+    }
+
     /// The family cats while this iPhone is in the family. 11/15: after
     /// leaving (or the family ending) the kept copy stays for the notebook's
     /// own screens, but no page of another home's cat stays in この子.
@@ -171,7 +187,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     /// This iPhone's cats in their order (registration order), for the first
     /// places of the cats this person put into the notebook. Set by AppRootView.
     var profileOrder: [UUID] = [] {
-        didSet { if profileOrder != oldValue { writeInitialPositions() } }
+        didSet { if profileOrder != oldValue { relinkOwnCats(); writeInitialPositions() } }
     }
 
     /// The first places, once per cat and iPhone (a ledger key), and only by
@@ -361,9 +377,11 @@ final class FamilyNotebookPrototype: ObservableObject {
         guard hasFamily, let store, let snapshot, let author = realAuthor else { return }
         do {
             let mappings = try FamilyNotebookCatCareBridge.mappings(for: snapshot,
-                existingLocalIDs: Set(CatCareStore.shared.state?.cats.map(\.catID) ?? []))
+                existingLocalIDs: Set(CatCareStore.shared.state?.cats.map(\.catID) ?? []),
+                person: author.personID, profiles: profileOrder)
             if mappings != snapshot.activeMappings { _ = try store.applyImport(.init(familyID: snapshot.familyID, entries: [], mappings: mappings), author: author) }
             reload(); applyFamilyWrites(reportsFailure: reportsFailure)
+            relinkOwnCats()
             writeInitialPositions()
         } catch { if reportsFailure { message = "家族の手帳を開けませんでした。少し待ってから、もう一度お試しください。" } }
     }
@@ -375,8 +393,12 @@ final class FamilyNotebookPrototype: ObservableObject {
               CatCareStore.shared.canSave else { throw FamilySharingError.notAllowed }
         care.cats = care.cats.filter { selected.contains($0.catID) && $0.deletedAt == nil }
         guard Set(care.cats.map(\.catID)) == selected else { throw FamilyNotebookMigrationError.unreadableSource }
-        let mappings = Self.catMappings(snapshot.activeMappings, care: care, handoff: nil, visits: [])
+        let author = try writer()
         let profiles = Set(care.cats.compactMap(\.profileID))
+        // 11/19: a cat this person already put in from the same page (a new
+        // store on this iPhone) is that cat again, never a second one.
+        let origins = FamilyNotebookCatOrigin.cats(in: snapshot, person: author.personID, profiles: Array(profiles))
+        let mappings = Self.catMappings(snapshot.activeMappings, care: care, handoff: nil, visits: [], origins: origins)
         var handoff = CareHandoffStore.shared.loadError == nil ? CareHandoffStore.shared.plan : nil
         if var plan = handoff {
             plan.cats = plan.cats.filter { cat in
@@ -388,8 +410,44 @@ final class FamilyNotebookPrototype: ObservableObject {
         let source = try FamilyNotebookMigrationSource(catCare: .init(state: care, unreadableCatCount: 0), handoff: handoff, visits: visits)
         let prepared = try FamilyNotebookMigration.prepare(source: source, familyID: snapshot.familyID, mappings: mappings)
         let relinked = try FamilyNotebookCatRelink.preserving(prepared.plan, previous: snapshot)
-        _ = try store.applyImport(relinked, author: writer())
+        let marked = FamilyNotebookCatOrigin.marking(relinked, previous: snapshot, person: author.personID)
+        _ = try store.applyImport(marked, author: author)
         reload()
+    }
+
+    /// 11/19: a family cat this person put in from a page of this iPhone
+    /// (FamilyNotebookCatOrigin) is that page, also when this iPhone's store
+    /// started empty (a reinstall, a new iPhone) and the cat came back as the
+    /// family's own page. What the page's own record has joins it as with
+    /// 「同じ子」 (FamilyNotebookCatLink.linking); nothing is erased.
+    private func relinkOwnCats() {
+        guard isReal, hasFamily, let store, let snapshot, let author = realAuthor,
+              !profileOrder.isEmpty, CatCareStore.shared.canSave else { return }
+        let own = FamilyNotebookCatOrigin.cats(in: snapshot, person: author.personID, profiles: profileOrder)
+        guard !own.isEmpty else { return }
+        var changed = false
+        for (profile, cat) in own.sorted(by: { $0.value.uuidString < $1.value.uuidString }) {
+            guard let current = try? store.snapshot(), !FamilyNotebookCatLink.linkedProfiles(in: current).contains(profile),
+                  let mapping = FamilyNotebookCatLink.catMapping(cat, in: current), mapping.profileID == nil,
+                  let tool = mapping.toolCatID, CatCareStore.shared.state?.record(catID: tool)?.profileID == nil,
+                  (try? store.setLocalProfile(profile, forFamilyCat: cat)) != nil else { continue }
+            changed = true
+        }
+        if changed { reload(); applyFamilyWrites() }
+        guard let current = self.snapshot else { return }
+        for (profile, cat) in own {
+            guard let mapping = FamilyNotebookCatLink.catMapping(cat, in: current), mapping.profileID == profile,
+                  let tool = mapping.toolCatID, let care = CatCareStore.shared.state,
+                  let record = care.record(catID: tool), record.deletedAt == nil,
+                  record.profileID == nil || record.profileID == profile,
+                  record.profileID == nil || care.cats.contains(where: { $0.profileID == profile && $0.deletedAt == nil && $0.catID != tool })
+            else { continue }
+            _ = CatCareStore.shared.update { state in
+                if let next = try? FamilyNotebookCatLink.linking(state, toolCatID: tool, profile: profile, now: Date()) { state = next }
+            }
+            changed = true
+        }
+        if changed { reload() }
     }
 
     func unshareCat(_ cat: UUID) throws {
@@ -536,8 +594,11 @@ final class FamilyNotebookPrototype: ObservableObject {
     }
 
     /// One family cat per cat the tools know, reusing the links already made.
+    /// `origins`: family cats this person put in from these pages, by page
+    /// (FamilyNotebookCatOrigin): reused, never a new family cat.
     private static func catMappings(_ existing: [FamilyNotebookLocalMapping], care: CatCareState?,
-                                    handoff: CareHandoffPlan?, visits: [VeterinaryVisit]) -> [FamilyNotebookLocalMapping] {
+                                    handoff: CareHandoffPlan?, visits: [VeterinaryVisit],
+                                    origins: [UUID: UUID] = [:]) -> [FamilyNotebookLocalMapping] {
         var mappings = existing
         func link(_ toolID: UUID, profile: UUID?) {
             let known = mappings.contains { mapping in
@@ -545,6 +606,12 @@ final class FamilyNotebookPrototype: ObservableObject {
                     || (profile != nil && (mapping.profileID == profile || mapping.toolCatID == profile)))
             }
             guard !known else { return }
+            if let profile, let cat = origins[profile],
+               !mappings.contains(where: { $0.familyCatID == cat && $0.recordID == nil }) {
+                mappings.append(.init(sourceKey: "cat:" + toolID.uuidString.lowercased(), familyCatID: cat,
+                                      profileID: profile, toolCatID: toolID))
+                return
+            }
             mappings.append(.init(sourceKey: "cat:" + toolID.uuidString.lowercased(), familyCatID: UUID(),
                                   profileID: profile, toolCatID: toolID))
         }
@@ -1248,11 +1315,13 @@ struct FamilyNotebookView: View {
             // says invited people are free.
             if model.isReal {
                 Section("猫") {
-                    ForEach(model.familyCats) { cat in
+                    ForEach(model.orderedFamilyCats) { cat in
                         FamilyNotebookSharedCatRow(name: cat.name, remove: {
                             do { try model.unshareCat(cat.id); Task { await sharing.refresh() } }
                             catch { sharing.failure = error as? FamilySharingError ?? .serviceUnavailable }
-                        })
+                        }) {
+                            FamilyNotebookCatThumbnail(familyCat: cat.id, profile: model.linkedProfile(of: cat.id))
+                        }
                     }
                     // Choosing which cats the notebook holds, not adding a new cat (11/7).
                     Button { showsCats = true } label: { Label("手帳に入れる猫を選ぶ", systemImage: "checklist") }
@@ -2288,7 +2357,9 @@ struct FamilyNotebookCatSelectionView: View {
     /// 「家族の手帳の「むぎ」」 / 「このiPhoneの子と同じですか。」 before anything is added.
     @State private var sameNameQuestion: SameName?
     @State private var linkedCats: [UUID: UUID] = [:]
-    @State private var answeredDifferent: Set<UUID> = []
+    /// 「べつの子」, by chosen cat: the family cats it is not (11/19: one of
+    /// several of the same name, so the next one is asked about).
+    @State private var answeredDifferent: [UUID: Set<UUID>] = [:]
     struct SameName: Identifiable {
         let record: CatCareRecord
         let family: FamilyNotebookCatLink.Unlinked
@@ -2343,8 +2414,9 @@ struct FamilyNotebookCatSelectionView: View {
     private func nextSameName() -> SameName? {
         let unlinked = model.unlinkedFamilyCats.filter { cat in !linkedCats.values.contains(cat.id) }
         for record in (shown ?? available) where selected.contains(record.catID) && linkedCats[record.catID] == nil {
-            guard record.profileID != nil, !answeredDifferent.contains(record.catID),
-                  let family = FamilyNotebookCatLink.sameName(record.name?.value ?? "", in: unlinked) else { continue }
+            guard record.profileID != nil,
+                  let family = FamilyNotebookCatLink.sameName(record.name?.value ?? "", in: unlinked,
+                                                              skipping: answeredDifferent[record.catID] ?? []) else { continue }
             return SameName(record: record, family: family)
         }
         return nil
@@ -2353,7 +2425,7 @@ struct FamilyNotebookCatSelectionView: View {
     private func answer(_ question: SameName, same: Bool) {
         sameNameQuestion = nil
         if same { linkedCats[question.record.catID] = question.family.id }
-        else { answeredDifferent.insert(question.record.catID) }
+        else { answeredDifferent[question.record.catID, default: []].insert(question.family.id) }
         add()
     }
 
@@ -2361,9 +2433,14 @@ struct FamilyNotebookCatSelectionView: View {
         List {
             Section {
                 ForEach(cats) { cat in
-                    Toggle(cat.name?.value ?? "名前なし", isOn: Binding(
+                    Toggle(isOn: Binding(
                         get: { selected.contains(cat.catID) },
-                        set: { if $0 { selected.insert(cat.catID) } else { selected.remove(cat.catID) } }))
+                        set: { if $0 { selected.insert(cat.catID) } else { selected.remove(cat.catID) } })) {
+                        HStack(spacing: 12) {
+                            FamilyNotebookCatThumbnail(familyCat: nil, profile: cat.profileID)
+                            Text(cat.name?.value ?? "名前なし")
+                        }
+                    }
                 }
             } footer: {
                 Text("選んだ猫の「この子のこと」と、病院・預けるときに書いたことを家族と共有します。")
@@ -2388,6 +2465,49 @@ struct FamilyNotebookCatSelectionView: View {
             } catch { failed = true }
             saving = false
         }
+    }
+}
+
+/// 11/19: a cat's photo in the notebook's lists, so two cats of one name can
+/// be told apart: this iPhone's own photo of a cat of this iPhone, else the
+/// family's photo (FamilyRepresentativePhotos, only while it is on), else
+/// the plain cat. Shown only; no words.
+struct FamilyNotebookCatThumbnail: View {
+    let familyCat: UUID?
+    let profile: UUID?
+    @ObservedObject private var model = FamilyNotebookPrototype.shared
+    @ObservedObject private var photos = FamilyRepresentativePhotos.shared
+
+    var body: some View {
+        Group {
+            if let cover = ownCover {
+                CatProfileThumbnail(photo: cover)
+            } else if let shown = familyPhoto {
+                Image(uiImage: shown.image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 36, height: 36)
+                    .clipShape(RoundedRectangle(cornerRadius: 9))
+            } else {
+                CatProfileThumbnail(photo: nil)
+            }
+        }
+        .frame(width: 36, height: 36)
+        .accessibilityHidden(true)
+        .task(id: familyCat) {
+            guard let familyCat, ownCover == nil, photos.isOn else { return }
+            await photos.read([familyCat])
+        }
+    }
+
+    private var ownCover: CatProfilePhotoPresentation? {
+        guard let profile else { return nil }
+        return model.deviceCats.first { $0.identifier == profile.uuidString }?.coverPhoto
+    }
+
+    private var familyPhoto: FamilyRepresentativePhotos.Shown? {
+        guard let familyCat, photos.isOn else { return nil }
+        return photos.shown[familyCat]
     }
 }
 

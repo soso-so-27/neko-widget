@@ -112,7 +112,94 @@ enum FamilyNotebookCatCareBridgeVerifier {
         print("Adoption bridge: unset, one-time import, approximation, explicit identity, shared precedence and explicit clear passed")
     }
 
+    /// 11/19: a cat put in from a page, the person's iPhone starting again
+    /// with an empty store (a reinstall), and the page added again: one
+    /// family cat, linked to the page (FamilyNotebookCatOrigin).
+    static func originAfterReinstall() throws {
+        let f = FamilyNotebookMigrationVerifier.Fixture()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("family-origin-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        func require(_ value: Bool, _ message: String) throws { try FamilyNotebookMigrationVerifier.require(value, "origin: " + message) }
+        let family = f.family, cat = UUID(), at = FamilyNotebookMigrationVerifier.then
+        let creator = FamilyNotebookAuthor(personID: "creator", displayName: "作った人")
+        let joiner = FamilyNotebookAuthor(personID: "joiner", displayName: "入った人")
+        var chosen = f.care; chosen.cats = [f.care.cats[0]]
+        chosen.cats[0].vaccinations = []
+        _ = chosen.cats[0].setVaccinationStatus(.none, editedAt: at, editedBy: "creator")
+        let link = FamilyNotebookLocalMapping(sourceKey: "cat:" + f.toolA.uuidString.lowercased(), familyCatID: cat,
+                                               profileID: f.profileA, toolCatID: f.toolA)
+        let first = try FamilyNotebookStore(directory: root.appendingPathComponent("creator-first"), familyID: family, deviceID: "creator-first")
+        let plan = try FamilyNotebookMigration.prepare(source: .init(catCare: .init(state: chosen, unreadableCatCount: 0)),
+                                                       familyID: family, mappings: [link]).plan
+        let marked = FamilyNotebookCatOrigin.marking(plan, previous: try first.snapshot(), person: creator.personID)
+        try require(marked.entries.count == plan.entries.count + 1, "the first adding writes one origin")
+        _ = try first.applyImport(marked, author: creator, now: at)
+        let operations = try first.snapshot().operations
+        let origin = FamilyNotebookCatOrigin.target(cat: cat)
+        let row = operations.first { $0.target == origin }
+        var text = ""
+        if case .text(let value)? = row?.value { text = value }
+        try require(text.hasPrefix(FamilyNotebookCatOrigin.prefix), "the origin is in the notebook")
+        try require(!text.lowercased().contains(f.profileA.uuidString.lowercased()) && !text.contains(creator.personID),
+                    "the origin is a hash: no profile or person ID")
+        try require(!operations.contains { $0.target.recordID == origin.recordID && $0.target.field == .givenOn },
+                    "older readers skip the origin row (no date), as the predecessor link")
+        // Old and new readers decode the operation the same: no new field, collection or value.
+        let bytes = try JSONEncoder().encode(operations)
+        try require(try JSONDecoder().decode([FamilyNotebookOperation].self, from: bytes) == operations, "the operations decode as before")
+        if let row, case .known(let known) = try FamilyNotebookReceivedOperation.decode(FamilyNotebookOpaqueOperation.preserving(row).plaintext) {
+            try require(known == row, "the origin is an ordinary known operation")
+        } else { try require(false, "the origin is an ordinary known operation") }
+        let projected = try FamilyNotebookCatCareBridge.apply(try first.snapshot(), to: chosen)
+        try require(projected.cats[0].vaccinationStatus == .none && projected.cats[0].activeVaccinations.isEmpty,
+                    "the origin is never a vaccination and never undoes 「受けていない」")
+        try require(FamilyNotebookCatOrigin.marking(marked, previous: try first.snapshot(), person: creator.personID) == marked,
+                    "a cat already in the notebook gets no second origin")
+
+        // A reinstall: the same person, a new empty store, the page kept.
+        let again = try FamilyNotebookStore(directory: root.appendingPathComponent("creator-again"), familyID: family, deviceID: "creator-again")
+        _ = try again.receive(operations)
+        let rows = try FamilyNotebookCatCareBridge.mappings(for: again.snapshot(), existingLocalIDs: [f.toolA],
+                                                           person: creator.personID, profiles: [f.profileB, f.profileA])
+        let catRows = rows.filter { $0.recordID == nil }
+        try require(catRows.count == 1 && catRows[0].familyCatID == cat && catRows[0].profileID == f.profileA,
+                    "the cat comes back as the page it came from, not as a family-only page")
+        try require(!rows.contains { $0.recordID == origin.recordID }, "the origin never becomes a local vaccination ID")
+        _ = try again.applyImport(.init(familyID: family, entries: [], mappings: rows), author: creator)
+        try require(FamilyNotebookCatLink.linkedProfiles(in: try again.snapshot()) == [f.profileA], "the page is linked")
+        // The page chosen again: the same family cat (as catMappings reuses it).
+        let found = FamilyNotebookCatOrigin.cats(in: try again.snapshot(), person: creator.personID, profiles: [f.profileA])
+        try require(found == [f.profileA: cat], "the page finds its family cat")
+        let readd = FamilyNotebookLocalMapping(sourceKey: "cat:" + f.toolA.uuidString.lowercased(), familyCatID: found[f.profileA] ?? UUID(),
+                                                profileID: f.profileA, toolCatID: f.toolA)
+        let fresh = try FamilyNotebookStore(directory: root.appendingPathComponent("creator-third"), familyID: family, deviceID: "creator-third")
+        _ = try fresh.receive(operations)
+        let replan = try FamilyNotebookMigration.prepare(source: .init(catCare: .init(state: chosen, unreadableCatCount: 0)),
+                                                         familyID: family, mappings: [readd]).plan
+        _ = try fresh.applyImport(FamilyNotebookCatOrigin.marking(replan, previous: try fresh.snapshot(), person: creator.personID), author: creator)
+        let member = try FamilyNotebookStore(directory: root.appendingPathComponent("member"), familyID: family, deviceID: "member")
+        _ = try member.receive(try fresh.snapshot().operations)
+        try require(Set(try member.snapshot().operations.map { $0.target.familyCatID }) == [cat], "the family sees one cat, not two")
+        let memberRows = try FamilyNotebookCatCareBridge.mappings(for: member.snapshot(), person: joiner.personID, profiles: [f.profileA])
+        try require(memberRows.filter { $0.recordID == nil }.count == 1 && memberRows.first { $0.recordID == nil }?.profileID == nil,
+                    "another person's page never matches someone else's origin")
+        // Page IDs that are new (a fresh install without a restore): no match.
+        let other = try FamilyNotebookStore(directory: root.appendingPathComponent("creator-new-pages"), familyID: family, deviceID: "creator-new")
+        _ = try other.receive(operations)
+        let otherRows = try FamilyNotebookCatCareBridge.mappings(for: other.snapshot(), person: creator.personID, profiles: [UUID()])
+        try require(otherRows.filter { $0.recordID == nil }.count == 1 && otherRows.first { $0.recordID == nil }?.profileID == nil,
+                    "new page IDs: the family's page, then 「同じ子ですか」")
+        // A notebook written before origins: nothing changes.
+        let old = try FamilyNotebookStore(directory: root.appendingPathComponent("old"), familyID: family, deviceID: "old")
+        _ = try old.receive(operations.filter { $0.target != origin })
+        let oldRows = try FamilyNotebookCatCareBridge.mappings(for: old.snapshot(), person: creator.personID, profiles: [f.profileA])
+        try require(oldRows.filter { $0.recordID == nil }.count == 1 && oldRows.first { $0.recordID == nil }?.profileID == nil,
+                    "without an origin a received cat is the family's page, as before")
+        print("Family cat origin: reinstall, adding again, other person, old notebooks and old readers passed")
+    }
+
     static func run() throws {
+        try originAfterReinstall()
         try adoptionDays()
         try absenceAnswers()
         try unsharingPreservesRecords()
