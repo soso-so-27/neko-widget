@@ -6,7 +6,7 @@ import subprocess
 
 
 PUBLIC_SITE_TEST = "NekoWidget/ci/test-public-policy-site.py"
-SHARING_SOURCE = re.compile(r"NekoWidget/SharingService/(?:src/.+\.ts|migrations/[^/]+\.sql)")
+SHARING_INPUT = re.compile(r"NekoWidget/SharingService/(?:src/.+\.ts|migrations/[^/]+\.sql|test/.+\.test\.ts)")
 
 
 def git(*args):
@@ -48,7 +48,7 @@ def select_checks(paths):
     for path in paths:
         if path.startswith("docs/") or path == PUBLIC_SITE_TEST:
             docs = True
-        elif SHARING_SOURCE.fullmatch(path):
+        elif SHARING_INPUT.fullmatch(path):
             sharing = True
         else:
             return {"mac": True, "docs": False, "sharing": False}

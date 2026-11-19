@@ -12,7 +12,8 @@ class OrdinaryCIScopeTests(unittest.TestCase):
         self.assertEqual(scope.select_checks({"docs/privacy/index.html", scope.PUBLIC_SITE_TEST}),
                          {"mac": False, "docs": True, "sharing": False})
         self.assertEqual(scope.select_checks({"NekoWidget/SharingService/src/group-api.ts",
-                                              "NekoWidget/SharingService/migrations/0001_base.sql"}),
+                                              "NekoWidget/SharingService/migrations/0001_base.sql",
+                                              "NekoWidget/SharingService/test/owner-two-device-trial.integration.test.ts"}),
                          {"mac": False, "docs": False, "sharing": True})
         self.assertEqual(scope.select_checks({"docs/join.html", "NekoWidget/SharingService/src/index.ts"}),
                          {"mac": False, "docs": True, "sharing": True})
