@@ -5,6 +5,7 @@ import type { Env } from "./env";
 import { groupFields } from "./group-protocol";
 import { enforceRateLimit, parseJsonBody, readBody, transientNetworkKey } from "./http";
 import { binaryField, exactKeys, uuidField } from "./validation";
+import {checkTrialActor} from './owner-two-device-trial';
 
 export function groupIdentityTranscript(input: {operationId:string;challengeId:string;challenge:string;expiresAt:number;
   personPublicKey:string;signingPublicKey:string;hpkePublicKey:string}): Uint8Array {
@@ -21,9 +22,14 @@ export async function createGroupIdentityChallenge(request:Request,env:Env):Prom
   exactKeys(body,["purpose","signingPublicKey","hpkePublicKey"]);
   if(body.purpose!=="register") throw new ApiError(400,"invalid_field","The challenge purpose is invalid.");
   const signingPublicKey=binaryField(body,"signingPublicKey",32),hpkePublicKey=binaryField(body,"hpkePublicKey",32);
+  const deviceId=await groupDeviceKeyHash(signingPublicKey,hpkePublicKey),trial=env.ownerTrial;
+  if(trial) {
+    if(deviceId===trial.bDevice) checkTrialActor(env,trial.bPerson!,deviceId);
+    else checkTrialActor(env,trial.aPerson,deviceId);
+  }
   const challengeId=crypto.randomUUID(),challenge=randomBase64url(32),now=Math.floor(Date.now()/1000),expiresAt=now+300;
   await env.DB.prepare("INSERT INTO group_challenges VALUES (?,'register',NULL,?,?,?,NULL)")
-    .bind(challengeId,await groupDeviceKeyHash(signingPublicKey,hpkePublicKey),challenge,expiresAt).run();
+    .bind(challengeId,deviceId,challenge,expiresAt).run();
   return jsonResponse({challengeId,challenge,expiresAt,serverNow:now},201);
 }
 
@@ -34,18 +40,20 @@ export async function registerGroupIdentity(request:Request,env:Env):Promise<Res
   const operationId=uuidField(body,"operationId"),challengeId=uuidField(body,"challengeId");
   const personPublicKey=binaryField(body,"personPublicKey",32),signingPublicKey=binaryField(body,"signingPublicKey",32),hpkePublicKey=binaryField(body,"hpkePublicKey",32);
   const personSignature=binaryField(body,"personSignature",64),deviceSignature=binaryField(body,"deviceSignature",64);
+  const personId=await sha256Base64url(base64urlDecode(personPublicKey,32));
+  const deviceId=await groupDeviceKeyHash(signingPublicKey,hpkePublicKey);
+  checkTrialActor(env,personId,deviceId);
   const now=Math.floor(Date.now()/1000);
   const challenge=await env.DB.prepare("SELECT random_challenge,device_key_hash,expires_at,consumed_at FROM group_challenges WHERE id=? AND purpose='register'")
     .bind(challengeId).first<{random_challenge:string;device_key_hash:string;expires_at:number;consumed_at:number|null}>();
-  if(!challenge || challenge.device_key_hash!==await groupDeviceKeyHash(signingPublicKey,hpkePublicKey))
+  if(!challenge || challenge.device_key_hash!==deviceId)
     throw new ApiError(401,"invalid_proof","The device registration proof is invalid.");
   const transcript=groupIdentityTranscript({operationId,challengeId,challenge:challenge.random_challenge,expiresAt:challenge.expires_at,
     personPublicKey,signingPublicKey,hpkePublicKey});
   if(!await verifyEd25519(personPublicKey,personSignature,transcript) || !await verifyEd25519(signingPublicKey,deviceSignature,transcript))
     throw new ApiError(401,"invalid_proof","The device registration proof is invalid.");
-  const personId=await sha256Base64url(base64urlDecode(personPublicKey,32));
   await requireCurrentIdentity(env,personId);
-  const deviceId=await groupDeviceKeyHash(signingPublicKey,hpkePublicKey),requestHash=await sha256Base64url(bytes);
+  const requestHash=await sha256Base64url(bytes);
   const prior=await env.DB.prepare(`SELECT r.request_hash,d.person_id,d.state,p.state AS person_state FROM group_identity_registrations r
       JOIN group_person_devices d ON d.id=r.device_id JOIN group_people p ON p.id=d.person_id
       WHERE r.device_id=? AND r.operation_id=?`).bind(deviceId,operationId)

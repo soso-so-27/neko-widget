@@ -1,6 +1,7 @@
 import {ApiError} from './errors';
 import {asObject,exactKeys,integerField,stringField,type JsonRecord} from './validation';
 import type {Env} from './env';
+import {trialDenied} from './owner-two-device-trial';
 export const FAMILY_WRITE_PROTOCOL_VERSION=1;
 export function familyPhotoSlotId(body:JsonRecord):string {
   const slot=stringField(body,'slotId');
@@ -32,6 +33,7 @@ export function familyWriteCheck(env:Env,family:string,version:number):D1Prepare
 export function familyWriteEffects(env:Env,family:string,value:unknown):D1PreparedStatement[]{
  const contract=asObject(value);parseFamilyWriteContract(value);
  return (contract.effects as unknown[]).flatMap(item=>{
+  if(env.ownerTrial?.phase==='RECOVERY') throw trialDenied();
   const e=asObject(item),slot=familyPhotoSlotId(e);
   return [env.DB.prepare("UPDATE family_representative_assets SET state='retired',expires_at=unixepoch() WHERE family_id=? AND slot_id=? AND state IN ('active','reserved','uploaded')").bind(family,slot),
    env.DB.prepare("UPDATE family_representative_slots SET state=?,asset_id=NULL,revision=revision+1 WHERE family_id=? AND slot_id=?").bind(e.kind==='retireCat'?'retired':'active',family,slot)];

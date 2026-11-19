@@ -122,6 +122,37 @@ describe('owner-only staging trial',()=>{
     expect((await scopedRead(a,familyRoot+'/me',f.env('PHOTO',{
       phaseUntilMs:Date.now()-1,expiresAtMs:Date.now()-1,recoveryDevice:null,
     }))).status).toBe(404);
+    const unlisted=await person(a.identity);
+    for(const device of [a,b,f.recovery]) expect((await call(device,photo+'/slots','RECOVERY')).status).toBe(200);
+    expect((await call(unlisted,photo+'/slots','RECOVERY')).status).toBe(404);
+    expect((await call(outside,photo+'/slots','RECOVERY')).status).toBe(404);
+    expect((await call(f.recovery,photo+'/slots','RECOVERY',undefined,null)).status).toBe(404);
+    expect((await call(f.recovery,familyRoot+'/'+crypto.randomUUID()+'/representative-photos/slots','RECOVERY')).status).toBe(404);
+    const readAsset=crypto.randomUUID(),slot=crypto.randomUUID(),sample=new Uint8Array(100).fill(9);
+    const digest=await sha256Base64url(sample),objectKey='family/owner-trial-test/'+readAsset;
+    await f.unscoped.MEDIA!.put(objectKey,sample);
+    await db.batch([
+      db.prepare("INSERT INTO family_representative_slots VALUES(?,?,0,NULL,'active')").bind(scope.family,slot),
+      db.prepare(`INSERT INTO family_representative_assets VALUES(?,?,?,?,?,?,1,1,?,?,?,?,'active',unixepoch(),unixepoch()+600,?)`)
+        .bind(readAsset,scope.family,slot,crypto.randomUUID(),a.id,a.deviceId,digest,objectKey,sample.length,digest,digest),
+      db.prepare('UPDATE family_representative_slots SET revision=1,asset_id=? WHERE family_id=? AND slot_id=?').bind(readAsset,scope.family,slot),
+    ]);
+    const assetPath=photo+'/assets/'+readAsset;
+    expect(ok(await call(f.recovery,assetPath+'/status','RECOVERY')).available).toBe(true);
+    const download=await route(f.mark(await signed(f.recovery,assetPath)),f.env('RECOVERY'));
+    expect(download.status).toBe(200);
+    expect(new Uint8Array(await download.arrayBuffer())).toEqual(sample);
+    expect((await call(unlisted,assetPath,'RECOVERY')).status).toBe(404);
+    expect((await call(a,photo+'/uploads','RECOVERY',{})).status).toBe(404);
+    expect((await call(b,photo+'/reports','RECOVERY',{})).status).toBe(404);
+    expect((await call(a,root+'/crypto/operations','RECOVERY',{operationId:crypto.randomUUID(),expectedGeneration:2,
+      expectedEpoch:0,payload:{},writeContract:{version:1,effects:[{kind:'clearPhoto',slotId:crypto.randomUUID()}]}})).status).toBe(404);
+    const identity=async(path:string,body:unknown)=>send(f.mark(new Request('https://group.invalid/v3/group-identities'+path,
+      {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})),f.env('RECOVERY'));
+    expect((await identity('/challenges',{purpose:'register',signingPublicKey:unlisted.signing.publicKey,hpkePublicKey:unlisted.hpke})).status).toBe(404);
+    expect((await identity('',unlisted.registration)).status).toBe(404);
+    expect((await identity('',{...f.recovery.registration,personPublicKey:outside.identity.publicKey})).status).toBe(404);
+    expect((await identity('',f.recovery.registration)).status).toBe(200);
     expect((await call(a,photo+'/reports','REPORT',{})).status).toBe(503);
     expect((await call(b,photo+'/reports','PHOTO',{})).status).toBe(404);
     const asset=crypto.randomUUID(),bytes=new Uint8Array(100).fill(7);
@@ -159,6 +190,7 @@ describe('owner-only staging trial',()=>{
     const creation={operationId:crypto.randomUUID(),...wire};
     expect((await call(a,groupRoot,'RECOVERY',creation,null)).status).toBe(404);
     ok(await call(a,groupRoot,'RECOVERY',creation),201);
+    ok(await call(a,familyRoot,'PREPARE',{operationId:crypto.randomUUID(),familyId:scope.family}));
     const listing=ok(await call(a,groupRoot+'/list','RECOVERY',{after:null,limit:20}));
     expect(listing.items.map((x:{windowId:string})=>x.windowId)).toEqual([scope.window]);
     const catalog=async(p:Person)=>{
@@ -174,7 +206,7 @@ describe('owner-only staging trial',()=>{
     await expect(catalog(outside)).rejects.toMatchObject({status:404});
     const body=await (await catalog(a)).json() as {windows:{windowId:string}[];notebooks:unknown[];devices:{deviceId:string}[]};
     expect(body.windows.map(x=>x.windowId)).toEqual([scope.window]);
-    expect(body.notebooks).toEqual([]);
+    expect(body.notebooks).toEqual([{familyId:scope.family}]);
     expect(body.devices.map(x=>x.deviceId).sort()).toEqual([a.deviceId,recovery.deviceId].sort());
     expect((await call(a,groupRoot+'/'+neighbor.windowId+'/recovery/pending','RECOVERY',{})).status).toBe(404);
     expect((await call(b,groupRoot+'/'+scope.window+'/recovery/pending','RECOVERY',{})).status).toBe(404);

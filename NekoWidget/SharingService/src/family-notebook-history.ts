@@ -9,6 +9,7 @@ import { parseJsonBody, requireEmptyBody } from './http';
 import { asObject, binaryField, exactKeys, integerField, uuidField } from './validation';
 import type { Env } from './env';
 import { familyQuotaFailure } from './family-notebook-quota';
+import { familyDeviceNotification } from './family-notebook-push';
 
 // Deliberately not in the public router. The native service/consent and key
 // delivery lifecycle must be connected before this becomes externally usable.
@@ -95,6 +96,8 @@ export async function familyNotebookHistory(request: Request, env: Env): Promise
       }
       // Roots/device keys are the existing authenticated identity, not client
       // claims. This explicit family certificate is independent of photo rooms.
+      // Snapshot existing recipients before inserting the certificate in the same batch.
+      statements.push(...familyDeviceNotification(env,family,actor.deviceId));
       statements.push(env.DB.prepare(`INSERT INTO family_notebook_crypto_devices VALUES (?,?,?,?,?,?,?)
         ON CONFLICT(family_id,device_id) DO NOTHING`).bind(family, actor.deviceId, actor.personId, actor.identityPublicKey,
         actor.signingPublicKey, actor.hpkePublicKey, authorization));

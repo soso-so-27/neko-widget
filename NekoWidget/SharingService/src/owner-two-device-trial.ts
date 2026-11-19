@@ -151,8 +151,12 @@ export async function ownerTrialRequest(request: Request, env: Env): Promise<Env
   if (path.startsWith('/v3/group-recovery/')) {
     if (!recovery || /\/(?:remove|fresh)$/u.test(path)) throw trialDenied();
   } else if (onFamily) {
-    if (path.includes('/representative-photos/') && !photos) throw trialDenied();
-    if (path.endsWith('/representative-photos/reports') && scope.phase !== 'REPORT') throw trialDenied();
+    if (path.startsWith(family + '/representative-photos/')) {
+      const read = request.method === 'GET' && /^\/(?:slots|assets\/[0-9a-f-]{36}(?:\/status)?)$/u
+        .test(path.slice((family + '/representative-photos').length));
+      if (!photos && !(recovery && read)) throw trialDenied();
+      if (path.endsWith('/representative-photos/reports') && scope.phase !== 'REPORT') throw trialDenied();
+    }
   } else if (onWindow) {
     // A new single-owner window is the source. Do not admit or remove members/devices here.
     const suffix = path.slice(window.length);
@@ -164,12 +168,12 @@ export async function ownerTrialRequest(request: Request, env: Env): Promise<Env
   } else if (path === group) {
     if (!recovery) throw trialDenied();
   } else if (path !== notebooks && path !== notebooks+'/me' && path !== group+'/list' && path !== group+'/billing-connection') {
-    if (path === '/v3/group-identities' || path === '/v3/group-identities/challenges') return;
-    throw trialDenied();
+    if (path !== '/v3/group-identities' && path !== '/v3/group-identities/challenges') throw trialDenied();
+    if (!recovery) return;
   }
   const billing = await verifiedBillingScope(env, scope, now);
   return {...billing,ownerTrial:scope,BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED:'YES',
-    FAMILY_REPRESENTATIVE_PHOTO_RUNTIME_ENABLED:photos?'YES':'NO',
+    FAMILY_REPRESENTATIVE_PHOTO_RUNTIME_ENABLED:photos||recovery?'YES':'NO',
     GROUP_RECOVERY_CATALOG_ENABLED:recovery?'YES':'NO'};
 }
 
