@@ -56,7 +56,7 @@ async function fixture() {
 }
 
 describe('owner-only staging trial',()=>{
-  it('opens family push only in the verified recovery scope',async()=>{
+  it('opens the family notification sender only in the verified recovery scope',async()=>{
     const f=await fixture(), path=`${familyRoot}/${f.scope.family}/push-subscription`;
     const req=()=>new Request('https://group.invalid'+path,{method:'POST'});
     for(const phase of ['OFF','PREPARE','PHOTO','REPORT'] as const) {
@@ -70,6 +70,42 @@ describe('owner-only staging trial',()=>{
     expect(await ownerTrialRequest(f.mark(req()),f.env('RECOVERY'))).toMatchObject({FAMILY_NOTEBOOK_APNS_RUNTIME_ENABLED:'YES'});
     await expect(ownerTrialRequest(req(),f.env('RECOVERY'))).rejects.toMatchObject({status:404});
     expect(f.unscoped.FAMILY_NOTEBOOK_APNS_RUNTIME_ENABLED).not.toBe('YES');
+  });
+
+  it('registers only the two enrolled devices on the tested notebook in PHOTO',async()=>{
+    const f=await fixture(), {a,b,outside,scope,call}=f, root=familyRoot+'/'+scope.family;
+    ok(await call(a,familyRoot,'PREPARE',{operationId:crypto.randomUUID(),familyId:scope.family}));
+    const proof=await key(), invitationId=crypto.randomUUID(), joinId=crypto.randomUUID();
+    ok(await call(a,root+'/invitations','PREPARE',{operationId:invitationId,expectedGeneration:1,
+      proofPublicKey:proof.publicKey,encryptedPreview:cipher()}));
+    ok(await call(b,root+'/invitations/'+invitationId+'/join','PREPARE',{operationId:joinId,expectedGeneration:1,
+      encryptedDisplayName:cipher(),proofSignature:await sign(proof.privateKey,
+        familyInvitationProof(scope.family,invitationId,b.id,b.deviceId,'join',joinId))}));
+    ok(await call(a,root+'/requests/'+joinId+'/approve','PREPARE',{operationId:crypto.randomUUID(),expectedGeneration:1}));
+    await db.prepare('UPDATE personal_staging_runtime_gate SET media_enabled=1,apns_enabled=1,generation=generation+1 WHERE singleton=1').run();
+
+    const pair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
+    const keyBytes=new Uint8Array(await crypto.subtle.exportKey('pkcs8',pair.privateKey));
+    const pushConfig={APNS_RUNTIME_ENABLED:'YES',MOMENT_RUNTIME_ENABLED:'YES',FAMILY_NOTEBOOK_APNS_RUNTIME_ENABLED:'NO',
+      APNS_PROVIDER_CREDENTIAL_JSON:JSON.stringify({keyId:'A1B2C3D4E5',teamId:'Z9Y8X7W6V5',bundleId:'jp.nekowidget.app',
+        environment:'production',privateKey:'-----BEGIN PRIVATE KEY-----\n'+btoa(String.fromCharCode(...keyBytes))+'\n-----END PRIVATE KEY-----'}),
+      APNS_TOKEN_KEYRING_JSON:JSON.stringify({current:'test',keys:{test:randomBase64url(32)}})};
+    const photo={...f.env('PHOTO',{phaseUntilMs:scope.expiresAtMs,recoveryDevice:null}),...pushConfig};
+    const register=async (person:Person, stage=photo, family=scope.family, proved=true)=>
+      send(f.mark(await signed(person,familyRoot+'/'+family+'/push-subscription',{
+        operationId:crypto.randomUUID(),token:randomBase64url(32),environment:'production'}),proved?undefined:null),stage);
+
+    expect((await register(a,photo,scope.family,false)).status).toBe(404);
+    expect((await register(outside)).status).toBe(404);
+    expect((await register(a,photo,crypto.randomUUID())).status).toBe(404);
+    expect((await register(a,{...f.env('OFF'),...pushConfig})).status).toBe(404);
+    expect((await register(f.recovery,{...f.env('RECOVERY'),...pushConfig})).status).toBe(404);
+    ok(await register(a));
+    ok(await register(b));
+    const subscribed=await db.prepare('SELECT device_id FROM family_push_subscriptions WHERE space_id=? AND expires_at>unixepoch()')
+      .bind(scope.family).all<{device_id:string}>();
+    expect(subscribed.results.map(row=>row.device_id).sort()).toEqual([a.deviceId,b.deviceId].sort());
+    expect(await ownerTrialFamilyPushEnvironment(photo)).toBeUndefined();
   });
 
   it('reports readiness while closed and sends only proved transaction/entitlement calls to the private verifier',async()=>{

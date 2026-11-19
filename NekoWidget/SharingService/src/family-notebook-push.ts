@@ -62,6 +62,10 @@ function gateCheck(env:Env,generation:number):D1PreparedStatement[] {
 export async function familyPushRegistration(request:Request,env:Env,familyId:string,remove=false):Promise<Response> {
   if(env.FAMILY_NOTEBOOK_APNS_RUNTIME_ENABLED!=='YES' && !remove) throw new ApiError(503,'family_notifications_disabled','Family notifications are unavailable.');
   const {actor,body}=await authenticateGroupRequest(request,env,8192);
+  const trial = env.ownerTrial;
+  if (!remove && trial && (familyId !== trial.family || ![trial.aDevice, trial.bDevice].includes(actor.deviceId))) {
+    throw new ApiError(404, 'owner_trial_unavailable', 'The endpoint is unavailable.');
+  }
   try { return await changeFamilyPush(env,actor,familyId,parseJsonBody(request,body),remove); }
   catch(error) {
     if(error instanceof Error && error.message.includes('family_notification_not_allowed')) throw new ApiError(403,'family_notification_not_allowed','Family notification registration is no longer allowed.');
