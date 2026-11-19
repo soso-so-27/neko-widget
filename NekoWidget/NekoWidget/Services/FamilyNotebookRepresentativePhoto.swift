@@ -259,6 +259,13 @@ actor FamilyNotebookRepresentativePhotoClient {
     /// Persist the returned encrypted value for retries; no family key is included.
     func prepareReport(canonicalJPEG: Data, assetID: UUID, reasonCode: String,
                        moderationKeyID: String, moderationPublicKey: Data) throws -> PendingReport {
+        // 11/19 (TestFlight 391): a received photo keeps ImageIO's JFIF APP0
+        // (and may carry an ICC APP2): the save side drops only EXIF/XMP,
+        // IPTC and comments. The report's check stays strict (no APPn, no
+        // COM), so the same pixels go without every APPn/COM segment.
+        guard let canonicalJPEG = JPEGPrivateMetadata.strippingAll(from: canonicalJPEG) else {
+            throw GroupReportCryptoError.invalidCanonicalJPEG
+        }
         let encrypted = try GroupReportCrypto.encryptFamilyPhoto(canonicalJPEG: canonicalJPEG,
             familyID: familyID, assetID: assetID, reporterPersonID: identity.personID,
             reasonCode: reasonCode, keyID: moderationKeyID, publicKey: moderationPublicKey)
