@@ -2902,8 +2902,14 @@ final class FamilyRepresentativePhotos: ObservableObject {
     /// chosen), as AppRootView last saw them. Nil until it has: nothing is
     /// cleared before the cats are known.
     private var ownKeyPhotos: [UUID: String?]?
-    private var syncing = false
+    /// 11/19 (TestFlight 391): the one sync under way, owned here. It used to
+    /// run inside its caller's task (the notebook's schedule, which is
+    /// cancelled when it is planned again or the app leaves the front), so a
+    /// commit was cut off mid-call and a change asked for meanwhile was
+    /// dropped with the cancelled loop until a later pass.
+    private var syncTask: Task<Void, Never>?
     private var syncAgain = false
+    private var syncBackground: UIBackgroundTaskIdentifier = .invalid
     /// A cat that did not go: its photo (nil: a clear), failures in a row,
     /// and when it is tried again. A new photo starts over.
     private var waits: [UUID: (photo: String?, failures: Int, until: Date)] = [:]
@@ -2927,16 +2933,59 @@ final class FamilyRepresentativePhotos: ObservableObject {
     /// of this iPhone: its key photo when that is not the one this iPhone
     /// last sent, a clear when it has none, nothing when unchanged. The
     /// check is this iPhone's own (the copy and what it sent), no network.
+    ///
+    /// The work runs in a task of its own (not its caller's: a screen or the
+    /// schedule going away does not cut a send off) and, while it runs, in
+    /// the time iOS gives an app that leaves the front. A call while it runs
+    /// is checked right after it, and waits for that.
     func syncCreatorPhotos() async {
-        guard let backend, backend.canWrite, let keyPhotos = ownKeyPhotos else { return }
-        let notebook = FamilyNotebookPrototype.shared
-        guard notebook.isReal, notebook.hasFamily, FamilyNotebookSharing.shared.state.membership?.role == .payer,
-              let family = notebook.snapshot?.familyID else { return }
-        if syncing { syncAgain = true; return }
-        syncing = true
-        defer { syncing = false }
+        // Not the creator's iPhone (most passes): nothing starts.
+        guard let backend, backend.canWrite, ownKeyPhotos != nil,
+              FamilyNotebookSharing.shared.state.membership?.role == .payer else { return }
+        if let running = syncTask {
+            syncAgain = true
+            await running.value
+            return
+        }
+        // Automatic, as before (within this iPhone's call budget).
+        let task = Task { @MainActor in
+            // A call that came as one pass ended is not lost: nothing is
+            // awaited between this check and clearing the task.
+            repeat {
+                await SharingPersonAction.automatic { await self.runSync() }
+            } while syncAgain && !Task.isCancelled
+            syncTask = nil
+            endSyncBackground()
+        }
+        syncTask = task
+        beginSyncBackground()
+        await task.value
+    }
+
+    private func beginSyncBackground() {
+        guard syncBackground == .invalid else { return }
+        // UIKit calls the expiration on the main thread.
+        syncBackground = UIApplication.shared.beginBackgroundTask(withName: "Send family key photo") { [weak self] in
+            MainActor.assumeIsolated {
+                self?.syncTask?.cancel()
+                self?.endSyncBackground()
+            }
+        }
+    }
+
+    private func endSyncBackground() {
+        guard syncBackground != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(syncBackground)
+        syncBackground = .invalid
+    }
+
+    private func runSync() async {
         repeat {
             syncAgain = false
+            guard let backend, backend.canWrite, let keyPhotos = ownKeyPhotos else { return }
+            let notebook = FamilyNotebookPrototype.shared
+            guard notebook.isReal, notebook.hasFamily, FamilyNotebookSharing.shared.state.membership?.role == .payer,
+                  let family = notebook.snapshot?.familyID else { return }
             var sent = Self.sentPhotos(family)
             let before = sent
             for (profile, photo) in keyPhotos.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
@@ -2962,6 +3011,9 @@ final class FamilyRepresentativePhotos: ObservableObject {
             } catch FamilyNotebookPhotoFailure.limited {
                 // Full: dropped without a word until the photo changes.
                 limitedPhotos[cat] = photo; waits[cat] = nil
+            } catch where Task.isCancelled {
+                // iOS ended the time it gave: not a failure (no wait); the
+                // kept delivery goes on the next pass.
             } catch { failed(cat, photo: photo) }
         } else {
             // 11/19 (機種変更): only a slot this iPhone itself filled is cleared.
@@ -2975,6 +3027,7 @@ final class FamilyRepresentativePhotos: ObservableObject {
                 try await backend.clear(cat)
                 sent[key] = nil
                 waits[cat] = nil; limitedPhotos[cat] = nil; pendingPhotos[cat] = nil
+            } catch where Task.isCancelled {
             } catch { failed(cat, photo: nil) }
         }
     }
@@ -3253,6 +3306,13 @@ struct FamilyPhotoReportSheet: View {
             failure = nil
         } catch FamilyNotebookPhotoFailure.unavailable {
             failure = .disabled
+        } catch let error as GroupReportCryptoError {
+            // Stopped on this iPhone before anything was sent: not 「送れた
+            // かどうか分かりませんでした」 (11/19, TestFlight 391).
+            switch error {
+            case .invalidCanonicalJPEG, .payloadTooLarge: failure = .evidenceUnavailable
+            case .invalidInput, .untrustedModerationKey: failure = .disabled
+            }
         } catch {
             failure = .unknownOutcome
         }
