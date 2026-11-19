@@ -389,6 +389,43 @@ final class FamilyNotebookAutoCheck {
                      secondsSinceFull: lastFullAt.map { now.timeIntervalSince($0) } ?? .infinity)
     }
 
+    /// The whole-family pass: the read (keys and roster included) and what follows it.
+    @discardableResult
+    private func fullPass() async -> Bool {
+        let read = await sharing.refresh()
+        if let membership = sharing.state.membership { model.rememberShown(membership) }
+        if model.hasFamily {
+            try? await model.copyTools(); model.applyFamilyWrites()
+            // 11/19: the creator's key photos, and a try again of
+            // one that did not go (its own wait), on this schedule.
+            await FamilyRepresentativePhotos.shared.syncCreatorPhotos()
+        }
+        return read
+    }
+
+    /// 11/19 (機種変更 水準2): the relay's silent push says a device joined this
+    /// person's family notebook (FamilyDeviceRegisteredPush). One full pass
+    /// now, so this iPhone signs the new device in and wraps the keys for it
+    /// at once. Automatic (this iPhone's call budget), skipped while the
+    /// budget is paused or another pass runs, within the time iOS gives.
+    func deviceRegisteredPush() async -> Bool {
+        guard model.isReal, model.hasFamily, !sharing.isWorking, loop == nil || sleeping,
+              SharingAutoCallBudget.shared.pausedUntil() == nil else { return false }
+        #if canImport(UIKit)
+        let work = Task { await SharingPersonAction.automatic { await fullPass() } }
+        // UIKit calls the expiration on the main thread.
+        let handle = UIApplication.shared.beginBackgroundTask(withName: "Family notebook device") {
+            MainActor.assumeIsolated { work.cancel() }
+        }
+        let read = await work.value
+        if handle != .invalid { UIApplication.shared.endBackgroundTask(handle) }
+        #else
+        let read = await SharingPersonAction.automatic { await fullPass() }
+        #endif
+        if read { lastPassAt = Date(); lastFullAt = lastPassAt }
+        return read
+    }
+
     private func run(pass first: FamilyAutoCheckPolicy.Pass, delay firstDelay: TimeInterval) async {
         var pass = first, delay = firstDelay
         while !Task.isCancelled {
@@ -414,14 +451,7 @@ final class FamilyNotebookAutoCheck {
                 switch pass {
                 case .full:
                     if !model.hasFamily && model.mayResumeEndedNotebook { lastResumeProbeAt = Date() }
-                    await sharing.refresh()
-                    if let membership = sharing.state.membership { model.rememberShown(membership) }
-                    if model.hasFamily {
-                        try? await model.copyTools(); model.applyFamilyWrites()
-                        // 11/19: the creator's key photos, and a try again of
-                        // one that did not go (its own wait), on this schedule.
-                        await FamilyRepresentativePhotos.shared.syncCreatorPhotos()
-                    }
+                    await fullPass()
                 case .requestsOnly:
                     await sharing.refreshRequests()
                 }

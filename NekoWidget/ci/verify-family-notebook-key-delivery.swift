@@ -188,6 +188,7 @@ private actor Relay: GroupHTTPTransport {
         try await approvedBeforeNewcomerRegisters(directory: directory, endpoint: endpoint)
         try await newIPhoneFromSyncedPin(directory: directory, endpoint: endpoint)
         try identityChoice()
+        try deviceRegisteredPush()
         try await CallBudgetChecks.run(directory: directory, endpoint: endpoint)
         print("Family notebook key delivery: real HPKE, pinned invitation, durable roster/key retry, explicit admission, pre-join keys, departure rotation, rejected-key isolation, approval-before-registration, synced-pin new iPhone, identity choice and call budget passed")
     }
@@ -338,6 +339,23 @@ extension VerifyFamilyNotebookKeyDelivery {
                   "pin: the new iPhone has every past key")
         try check(back.current.roster.members.first { $0.personID == a1.personID }?.devices.count == 2,
                   "pin: one person, two iPhones in the signed roster")
+    }
+
+    /// The relay's silent push (server #1075): exactly this payload, nothing else.
+    fileprivate static func deviceRegisteredPush() throws {
+        stage("Key delivery stage: device registered push")
+        let exact: [AnyHashable: Any] = ["aps": ["content-available": 1], "neko": ["v": 3, "kind": "family_device_registered"]]
+        try check(FamilyDeviceRegisteredPush.matches(exact), "push: the relay's payload")
+        let refused: [[AnyHashable: Any]] = [
+            ["aps": ["content-available": 1], "neko": ["v": 3, "kind": "family_device_removed"]],
+            ["aps": ["content-available": 1], "neko": ["v": 2, "kind": "family_device_registered"]],
+            ["aps": ["content-available": 1], "neko": ["v": 3, "kind": "family_device_registered", "familyId": UUID().uuidString]],
+            ["aps": ["content-available": 1], "neko": ["v": 3, "kind": "moment", "windowId": "abcdefghijklmnopqrstuv"]],
+            ["aps": ["content-available": 1]],
+            ["neko": "family_device_registered"],
+        ]
+        for info in refused { try check(!FamilyDeviceRegisteredPush.matches(info), "push: unknown or changed payload ignored") }
+        try check(GroupNotificationRoute.parse(exact) == nil, "push: not a まど route")
     }
 
     /// FamilyNotebookIdentityChoice: the recovered identity only when it is

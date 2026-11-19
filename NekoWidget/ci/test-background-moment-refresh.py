@@ -108,6 +108,33 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertNotIn("synchronizeMomentSharing", self.app_view_model)
         self.assertNotIn("MomentNotificationTapMailbox.shared.enqueue", self.service)
 
+    def test_family_device_registered_push_runs_one_notebook_pass(self):
+        # 11/19 (server #1075): a silent push when a device joins the notebook.
+        remote = self.service.split("fetchCompletionHandler completionHandler:", 1)[1].split("func userNotificationCenter(", 1)[0]
+        self.assertLess(remote.index("GroupNotificationRoute.parse(userInfo)"), remote.index("FamilyDeviceRegisteredPush.matches(userInfo)"))
+        family = remote.split("if FamilyDeviceRegisteredPush.matches(userInfo) {", 1)[1].split("return\n        }", 1)[0]
+        self.assertIn("await FamilyNotebookAutoCheck.shared.deviceRegisteredPush()", family)
+        self.assertIn("completionHandler(read ? .newData : .noData)", family)
+        # Unknown kinds still end with no data.
+        self.assertTrue(remote.rstrip().endswith("completionHandler(.noData)\n    }"))
+        contract = (ROOT / "NekoWidget/Services/GroupWindowContract.swift").read_text(encoding="utf-8")
+        push = contract.split("enum FamilyDeviceRegisteredPush {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn('static let kind = "family_device_registered"', push)
+        self.assertIn('Set(neko.keys) == ["v", "kind"]', push)
+        self.assertIn('neko["v"] as? Int == 3', push)
+        sharing = (ROOT / "NekoWidget/Services/FamilyNotebookSharing.swift").read_text(encoding="utf-8")
+        handler = sharing.split("func deviceRegisteredPush() async -> Bool {", 1)[1].split("private func run(pass", 1)[0]
+        self.assertIn("SharingAutoCallBudget.shared.pausedUntil() == nil", handler)
+        self.assertIn("SharingPersonAction.automatic { await fullPass() }", handler)
+        self.assertNotIn("SharingPersonAction.run", handler)
+        self.assertIn("beginBackgroundTask(withName:", handler)
+        self.assertIn("endBackgroundTask(handle)", handler)
+        self.assertIn("work.cancel()", handler)
+        # The same work as the schedule's whole-family pass.
+        self.assertIn("case .full:\n                    if !model.hasFamily && model.mayResumeEndedNotebook { lastResumeProbeAt = Date() }\n                    await fullPass()", sharing)
+        delivery = (ROOT / "ci/verify-family-notebook-key-delivery.swift").read_text(encoding="utf-8")
+        self.assertIn("try deviceRegisteredPush()", delivery)
+
     def test_group_background_and_album_notice_paths_survive(self):
         protected = self.service.split("if protectedDataAvailable {", 1)[1].split("}", 1)[0]
         authority = "await PlusPurchaseStore.productionShared.refreshWidgetAuthorityInBackground()"
