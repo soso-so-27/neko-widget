@@ -80,11 +80,11 @@ describe('family admission notifications',()=>{
  const transport:typeof fetch=async(_url,init)=>{bodies.push(JSON.parse(init!.body as string));return new Response(null,{status:200});};
  expect((await drainFamilyNotifications(f.config,undefined,transport)).accepted).toBe(0);
  expect((await drainFamilyNotifications(f.config,f.now,transport)).accepted).toBe(1);
- expect(bodies[0].aps.alert.body).toBe('家族の手帳に、入りたい人がいます。');
+ expect(bodies[0].aps.alert.body).toBe('家族の手帳に、参加を待っている人がいます。');
  expect((await drainFamilyNotifications(f.config,f.now,transport)).accepted).toBe(0);
  ok(await approve(f.owner,f.f.id,f.j.id));ok(await f.register(f.guest));
  expect((await drainFamilyNotifications(f.config,f.now,transport)).accepted).toBe(1);
- expect(bodies[1].aps.alert.body).toBe('家族の手帳に入りました。');
+ expect(bodies[1].aps.alert.body).toBe('家族の手帳に参加できました。');
  expect(bodies[1].neko).toEqual({v:3,kind:'family_join_approved',familyId:f.f.id});
  expect(JSON.stringify(bodies)).not.toContain('encrypted');expect(JSON.stringify(bodies)).not.toContain(f.guest.id);
  });

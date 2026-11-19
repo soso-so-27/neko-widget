@@ -30,7 +30,7 @@ class GroupRecoveryScreenTests(unittest.TestCase):
     def test_words_are_fixed(self):
         found, _ = words()
         self.assertEqual(found, {
-            "entry": "前の iPhone のまど",
+            "entry": "前のiPhoneのまど",
             "unnamedWindow": "まど",
             "checkingTitle": "確認しています",
             "unavailableTitle": "つながりませんでした",
@@ -40,30 +40,30 @@ class GroupRecoveryScreenTests(unittest.TestCase):
             "syncSaved": "このiPhoneで同期の準備ができました。",
             "syncFailed": "本人情報を同期できませんでした。",
             "retry": "もう一度",
-            "foundTitle": "前の iPhone のまどがあります",
-            "foundMessage": "この iPhone でも続けますか。",
+            "foundTitle": "前のiPhoneのまどがあります",
+            "foundMessage": "このiPhoneでも続けますか。",
             "continueButton": "続ける",
             "notNow": "今はしない",
             "waitingTitle": "もう少しで見られます",
-            "waitingMessage": "前の iPhone でアプリを開くと、続きが届きます。",
+            "waitingMessage": "前のiPhoneでアプリを開くと、続きが届きます。",
             "noProviderTitle": "前の写真は開けません",
             "noProviderMessage": "新しく続けることはできます。まどの名前は付け直します。",
             "freshContinue": "新しく続ける",
             "freshNameHeader": "まどの名前",
             "freshNamePlaceholder": "例：実家のまど",
-            "needsOriginalTitle": "前の iPhone が必要です",
-            "needsOriginalMessage": "前の iPhone でアプリを一度開くか、もう一度招待してもらってください。",
-            "deviceLimitTitle": "使える iPhone は 3 台までです",
-            "deviceLimitMessage": "外す iPhone を選んでください。",
+            "needsOriginalTitle": "前のiPhoneが必要です",
+            "needsOriginalMessage": "前のiPhoneでアプリを一度開くか、もう一度招待してもらってください。",
+            "deviceLimitTitle": "使えるiPhoneは3台までです",
+            "deviceLimitMessage": "外すiPhoneを選んでください。",
             "removeDevice": "外す",
             "keepDevice": "やめる",
-            "removeDeviceMessage": "外した iPhone では、この人として入っているまどと家族の手帳が見られなくなります。",
+            "removeDeviceMessage": "外したiPhoneでは、この人として入っているまどと家族の手帳が見られなくなります。",
             "revokedTitle": "このまどには戻れません",
             "chooseTitle": "どちらを使いますか",
             "choose": "こちらを使う",
             "inNothing": "まだどこにも入っていない",
             "familyNotebook": "家族の手帳",
-            "notebookWaiting": "家族のだれかが ねこのまど を開くと、手帳が戻ります",
+            "notebookWaiting": "家族のだれかがねこのまどを開くと、手帳が戻ります",
         })
 
     def test_no_mechanism_or_forever_words(self):
@@ -209,7 +209,7 @@ class GroupRecoveryScreenTests(unittest.TestCase):
                     self.assertNotIn(token, text)
         # Waiting: one state, one sentence, no button, no percentage or count.
         found, block = words()
-        self.assertEqual(found["waitingMessage"], "前の iPhone でアプリを開くと、続きが届きます。")
+        self.assertEqual(found["waitingMessage"], "前のiPhoneでアプリを開くと、続きが届きます。")
         for token in ("%", "％", "枚", "件", "割", "残り"):
             with self.subTest(token=token):
                 self.assertNotIn(token, found["waitingTitle"] + found["waitingMessage"])
@@ -267,7 +267,7 @@ class GroupRecoveryScreenTests(unittest.TestCase):
         read = sharing.split("private func read(reportsFailure: Bool) async -> Bool {", 1)[1].split("\n    }\n", 1)[0]
         self.assertLess(read.index("restartPending == true { return false }"), read.index("let syncing = "))
         found, _ = words()
-        self.assertEqual(found["notebookWaiting"], "家族のだれかが ねこのまど を開くと、手帳が戻ります")
+        self.assertEqual(found["notebookWaiting"], "家族のだれかがねこのまどを開くと、手帳が戻ります")
         presentation = PRESENTATION.read_text(encoding="utf-8")
         self.assertIn("return Self(title: GroupRecoveryWords.notebookWaiting, message: nil,", presentation)
         view = VIEW.read_text(encoding="utf-8")

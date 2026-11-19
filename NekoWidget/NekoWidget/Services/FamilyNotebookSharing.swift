@@ -18,6 +18,10 @@ final class FamilyNotebookSharing: ObservableObject {
     @Published private(set) var pause: FamilySharingPause?
     @Published var failure: FamilySharingError?
     @Published private(set) var isWorking = false
+    /// 11/19 (UI/UX 整理): the last whole read did not reach the family. While
+    /// the state is still `.checking`, the notebook says 「つながりませんでした」
+    /// with 「もう一度」 instead of waiting without end.
+    @Published private(set) var readFailed = false
     private var refreshing = false
     /// A whole read or a requests read is running (11/19: the device push waits for it).
     var isReading: Bool { refreshing }
@@ -121,6 +125,16 @@ final class FamilyNotebookSharing: ObservableObject {
                 }
                 #endif
             }
+            // 11/19 (UI/UX 整理): the family as last shown is kept after every
+            // read that knows it (joining, approving, pulling to refresh), not
+            // only the schedule's, so the notebook opens as itself next time
+            // instead of a placeholder. Written only when
+            // it changed (rememberShown), never while scrolling.
+            if let membership = next.membership { FamilyNotebookPrototype.shared.rememberShown(membership) }
+            // 11/19: the family stopped listing this person (taken out, or the
+            // family ended): the notebook says so in one line, for a week.
+            if next == .notInFamily { FamilyNotebookPrototype.shared.noteEndedNotice() }
+            if readFailed { readFailed = false }
             lastReadAt = Date()
             return true
         } catch is CancellationError {
@@ -128,6 +142,7 @@ final class FamilyNotebookSharing: ObservableObject {
             return false
         } catch {
             if !notedSend { noteSend() }
+            if !readFailed { readFailed = true }
             if reportsFailure { failure = error as? FamilySharingError ?? .serviceUnavailable }
             return false
         }
@@ -140,7 +155,7 @@ final class FamilyNotebookSharing: ObservableObject {
     /// device still waiting for its keys, and the recovery screen closed).
     func restartSession() {
         (service as? ProductionFamilyNotebookSharingService)?.restartSession()
-        state = .checking; pause = nil; requests = []; ownJoinResults = []
+        state = .checking; pause = nil; requests = []; ownJoinResults = []; readFailed = false
     }
 
     /// 11/15 (TestFlight 378): after Plus was bought or confirmed on this

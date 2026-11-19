@@ -181,7 +181,7 @@ class WordingPass1112Tests(unittest.TestCase):
         notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
         self.assertIn('"家族の手帳から抜けますか？"', notebook)
         self.assertIn('"この名前で手帳を作る"', notebook)
-        self.assertIn('"\\(member.displayName)を家族の手帳から外しますか？"', notebook)
+        self.assertIn('"\\(member.displayName)さんを家族の手帳から外しますか？"', notebook)
         self.assertIn('"\\(presentation.monthNumber)月の作品"', source("NekoWidget/Views/MonthlyWindowView.swift"))
         self.assertIn('"これまでの月の作品・季節のムービー"', source("NekoWidget/Views/LikedPhotosView.swift"))
         self.assertIn('return "このまどは終わりました。"', source("NekoWidget/Views/GroupWindowSetupView.swift"))
@@ -5327,10 +5327,10 @@ class WorkingFeedbackTests(unittest.TestCase):
                 'WorkingLabel(title: "参加をやめる", workingTitle: "やめています…"',
             ),
             "NekoWidget/Views/FamilyNotebookView.swift": (
-                'WorkingLabel(title: "もう一度確認", workingTitle: "確認しています…", working: rechecking)',
+                'WorkingLabel(title: "もう一度", workingTitle: "確認しています…", working: rechecking)',
                 'workingTitle: "返事をしています…"',
                 'workingTitle: "準備しています…"',
-                'WorkingLabel(title: "共有をやめる", workingTitle: "やめています…"',
+                'WorkingLabel(title: "この日付の共有をやめる", workingTitle: "やめています…"',
             ),
             "NekoWidget/Views/ManagedPreservationView.swift": (
                 'WorkingLabel(title: "購入を復元", workingTitle: "確認しています…", working: coordinator.membershipRestoring)',
@@ -6993,7 +6993,10 @@ class OnePlaceSettingsTests(unittest.TestCase):
         self.assertIn('"family-notebook-leave"', notebook)
         member = section(notebook, "struct FamilyNotebookMemberView: View {", "struct FamilyNotebookIntroView: View {")
         self.assertNotIn("leaveFamily", member)
-        self.assertIn("return membership.canDissolve ? [.dissolve] : []", member)
+        # 11/19 (UI/UX 整理): ending the family is at the bottom too, once.
+        self.assertNotIn("dissolve", member)
+        self.assertEqual(notebook.count('"家族の手帳を終わりにする"'), 1)
+        self.assertIn('"family-notebook-dissolve"', notebook)
 
     def test_one_widget_guide(self) -> None:
         official = source("NekoWidget/Views/OfficialWindowView.swift")

@@ -326,7 +326,9 @@ class FamilyJoinAfterApproval1115Tests(unittest.TestCase):
         # 設定 keeps the one way to the notebook while waiting.
         self.assertIn("@AppStorage(FamilyNotebookAwaitingApproval.key) private var awaitsFamilyApproval = false", SETTINGS)
         self.assertIn("private var showsFamilyNotebookRow: Bool { familyNotebook.hasFamily || awaitsFamilyApproval }", SETTINGS)
-        self.assertEqual(SETTINGS.count('Text("参加を待っています")'), 1)
+        # 11/19 (UI/UX 整理): the row says the wait it is in, in the notebook's words.
+        self.assertNotIn("参加を待っています", SETTINGS)
+        self.assertIn("? FamilyNotebookWords.receiving : FamilyNotebookWords.awaitingApproval)", SETTINGS)
 
     def test_invite_link_opens_without_the_whole_family_read(self):
         family = section(NOTEBOOK, "struct FamilyNotebookInviteView: View {", "enum FamilyInviteSendTap")
@@ -806,6 +808,125 @@ class FamilyNotebookDeviceChange1119Tests(unittest.TestCase):
         self.assertIn("var sent = Self.sentPhotos(family), seen = Self.seenPhotos(family)", run)
         self.assertIn("if seen != seenBefore { Self.saveSeen(seen, family) }", run)
         self.assertIn('private static let seenKeyPrefix = "familyNotebook.creatorPhotos.seen.v1."', model)
+
+
+class NotebookCleanup1119Tests(unittest.TestCase):
+    """11/19 UI/UX 整理 (rounds 1 and 2): nothing looks broken, and each
+    state is said one way in one place."""
+
+    SHARING = read("NekoWidget/Services/FamilyNotebookSharing.swift")
+    CONTRACT = read("NekoWidget/Services/GroupWindowContract.swift")
+    DELEGATE = read("NekoWidget/Services/MomentBackgroundRefreshService.swift")
+    PUSH = read("SharingService/src/family-notebook-push.ts")
+    CARE = read("NekoWidget/Views/CatCareView.swift")
+
+    def test_a_member_never_reads_the_left_copy_text(self):
+        # The text was for a person who left; a member landed on it while the
+        # first read ran (no family shown before, a failed read, the switch).
+        self.assertNotIn("このiPhoneに残っている記録です", NOTEBOOK)
+        self.assertNotIn("家族との共有を確認しています", NOTEBOOK)
+        body = section(NOTEBOOK, "                if showsNotebook {", '            .navigationTitle("家族の手帳")')
+        self.assertIn("notebook(shownMembership)", body)
+        self.assertNotIn("case .checking where", body)
+        self.assertIn("if sharing.readFailed { checkFailedView } else { ProgressView() }", body)
+        shows = section(NOTEBOOK, "private var showsNotebook: Bool {", "\n    }")
+        # In the family (not a left copy) and still checking: the notebook itself.
+        self.assertIn("shownMembership != nil || (sharing.state == .checking && model.hasFamily)", shows)
+
+    def test_what_needs_the_role_waits_for_it(self):
+        notebook = section(NOTEBOOK, "private func notebook(_ membership: FamilyMembership?) -> some View {",
+                           "    private var prototype:")
+        self.assertIn("if membership?.canInvite == true && sharing.pause == nil {", notebook)
+        self.assertIn("if let membership, membership.canLeave {", notebook)
+        self.assertIn("if let membership, membership.canRemoveMember, !model.isMe(member) {", notebook)
+        self.assertIn("} else if sharing.state == .checking && sharing.readFailed {\n                checkFailedSection", notebook)
+
+    def test_the_family_as_shown_is_kept_after_every_read(self):
+        read_ = section(self.SHARING, "private func read(reportsFailure: Bool) async -> Bool {", "    func restartSession()")
+        self.assertIn("if let membership = next.membership { FamilyNotebookPrototype.shared.rememberShown(membership) }", read_)
+        self.assertLess(read_.index("FamilyNotebookPrototype.shared.attachReal("), read_.index("rememberShown(membership)"))
+        self.assertIn("if !readFailed { readFailed = true }", read_)
+        self.assertIn("if readFailed { readFailed = false }", read_)
+        restart = section(self.SHARING, "func restartSession() {", "\n    }")
+        self.assertIn("readFailed = false", restart)
+
+    def test_a_failed_read_says_one_line_and_one_button(self):
+        failed = section(NOTEBOOK, "private var checkFailedSection: some View {", "private var recheckButton")
+        self.assertIn('Label("つながりませんでした", systemImage: "wifi.exclamationmark")', failed)
+        retry = section(NOTEBOOK, "private var recheckButton: some View {", '.accessibilityIdentifier("family-notebook-check-retry")')
+        self.assertIn('WorkingLabel(title: "もう一度", workingTitle: "確認しています…", working: rechecking)', retry)
+        self.assertIn("SharingPersonAction.run", retry)
+
+    def test_taken_out_or_ended_is_said_once(self):
+        self.assertIn('static let sharingEnded = "この手帳の共有は終わりました。"', NOTEBOOK)
+        self.assertIn("endedJoinNotice ?? (model.showsEndedNotice ? FamilyNotebookWords.sharingEnded : nil)", NOTEBOOK)
+        shows = section(NOTEBOOK, "var showsEndedNotice: Bool {", "\n    }")
+        # Not this iPhone's own leaving or ending: only the directory's absence.
+        self.assertIn("snapshot.endedReason == .absentFromDirectory", shows)
+        self.assertIn("static let endedNoticeDays = 7", NOTEBOOK)
+        # Written after a read, never while drawing.
+        self.assertIn("if next == .notInFamily { FamilyNotebookPrototype.shared.noteEndedNotice() }", self.SHARING)
+        self.assertEqual(NOTEBOOK.count("noteEndedNotice("), 1)
+
+    def test_own_invitation_link_is_not_sent_toward_leaving(self):
+        join = section(NOTEBOOK, "struct FamilyNotebookJoinView: View {", "struct FamilyNotebookNameView: View {")
+        self.assertIn('static let alreadyInThisFamily = "もう家族の手帳に入っています。"', NOTEBOOK)
+        self.assertIn("} else if inFamily && !otherFamilyLink {", join)
+        self.assertIn('Text("手帳を開く")', join)
+        # Only a link verified to be another family's says 「抜けると参加できます」.
+        other = section(join, "private var otherFamilyLink: Bool {", "\n    }")
+        self.assertIn("FamilyNotebookInvitationCapability(url: link).familyID", other)
+        self.assertIn("return linked != own", other)
+        self.assertLess(join.index("} else if inFamily && !otherFamilyLink {"),
+                        join.index("FamilySharingError.alreadyInFamily.message"))
+
+    def test_a_notification_tap_opens_the_notebook(self):
+        route = section(self.CONTRACT, "enum FamilyNotebookNotificationRoute {", "\n}\n")
+        self.assertIn('["family_join_requested", "family_join_approved"]', route)
+        self.assertIn("FamilyNotebookNotificationRoute.matches(response.notification.request.content.userInfo)", self.DELEGATE)
+        self.assertIn("FamilyNotebookOpenInbox.shared.opensNotebook = true", self.DELEGATE)
+        self.assertIn(".onReceive(familyNotebookOpenInbox.$opensNotebook)", ROOT_VIEW)
+        # The pushes say the notebook's words.
+        self.assertIn("'家族の手帳に、参加を待っている人がいます。':'家族の手帳に参加できました。'", self.PUSH)
+        self.assertNotIn("入りたい人", self.PUSH)
+
+    def test_each_wait_is_said_one_way(self):
+        self.assertIn('static let awaitingApproval = "家族が受け入れるのを待っています"', NOTEBOOK)
+        self.assertIn('static let receiving = "家族の手帳を受け取っています"', NOTEBOOK)
+        for old in ('"参加を待っています"', '"準備しています"', "家族が参加を受け入れると",
+                    '"家族の手帳を受け取っています。"', '"家族が受け入れるのを待っています。"'):
+            self.assertNotIn(old, NOTEBOOK)
+        self.assertIn('ContentUnavailableView(FamilyNotebookWords.receiving, systemImage: "book.closed")', NOTEBOOK)
+
+    def test_ending_is_in_one_place_with_its_own_words(self):
+        notebook = section(NOTEBOOK, "private func notebook(_ membership: FamilyMembership?) -> some View {",
+                           "    private var prototype:")
+        self.assertIn('Button("家族の手帳から抜ける", role: .destructive)', notebook)
+        self.assertIn('Button("家族の手帳を終わりにする", role: .destructive)', notebook)
+        self.assertLess(notebook.index("家族の手帳から抜ける"), notebook.index("家族の手帳を終わりにする"))
+        self.assertIn("if membership.canDissolve {", notebook)
+        member = section(NOTEBOOK, "struct FamilyNotebookMemberView: View {", "    var body: some View {")
+        self.assertNotIn("dissolve", member)
+        self.assertIn('case .remove: "この人を手帳から外す"', member)
+        self.assertIn('"\\(member.displayName)さんを家族の手帳から外しますか？"', member)
+        self.assertNotIn("家族の共有をやめる", NOTEBOOK)
+        self.assertIn('Button("この猫を手帳から外す")', read("NekoWidget/Views/FamilyNotebookSharedCatRow.swift"))
+        self.assertIn('WorkingLabel(title: "この日付の共有をやめる"', NOTEBOOK)
+        self.assertIn('static let dissolveDetail = "家族みんなの共有が終わります。書いたものは、それぞれのiPhoneに残ります。"',
+                      NOTEBOOK)
+
+    def test_paused_says_one_sentence(self):
+        paused = section(NOTEBOOK, "static func pausedDetail(_ pause: FamilySharingPause) -> String {", "\n    }")
+        for line in ('"だれか1人がPlusを始めると、また共有できます。"', '"Plusを続けると、家族みんなの共有が戻ります。"',
+                     '"書いたものは消えません。Plusが戻ると、また共有できます。"'):
+            self.assertIn(line, paused)
+        for old in ("払っている人", "家族の共有に使っているPlus", "確認できないため"):
+            self.assertNotIn(old, paused)
+        self.assertNotIn("あなたのPlusで、家族みんなの共有が戻ります。", NOTEBOOK)
+        self.assertIn('case .continueFamily: "家族の手帳を再開する"', OFFER)
+
+    def test_report_says_where_the_answer_comes(self):
+        self.assertIn('Text("返答は、家族の手帳の「通報への返答」に届きます。")', self.CARE)
 
 
 if __name__ == "__main__":

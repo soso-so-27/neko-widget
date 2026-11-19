@@ -3947,7 +3947,7 @@ final class SoloMemoriesUITests: XCTestCase {
             let reassurance = app.descendants(matching: .any)["membership-offer-reassurance"].firstMatch
             for _ in 0..<10 { if reassurance.isHittable { break }; app.swipeUp() }
             XCTAssertTrue(reassurance.isHittable, "The three reassurances must be readable before the links")
-            for line in ["いつでも解約できます", "解約しても、このiPhoneの写真・メモ・まどの写真は消えません", "招待した家族は無料で入れます"] {
+            for line in ["いつでも解約できます", "解約しても、このiPhoneの写真・メモ・まどの写真は消えません", "招待した家族は無料で参加できます"] {
                 XCTAssertTrue(reassurance.label.contains(line), "Missing reassurance: \(line)")
             }
             for identifier in ["membership-offer-restore", "membership-offer-cancel-help",
@@ -4176,7 +4176,7 @@ final class SoloMemoriesUITests: XCTestCase {
         let row = app.staticTexts["試験の猫"]
         XCTAssertTrue(row.waitForExistence(timeout: 10))
         row.swipeLeft()
-        app.buttons["手帳から外す"].tap()
+        app.buttons["この猫を手帳から外す"].tap()
         XCTAssertTrue(app.staticTexts["この猫を家族の手帳から外しますか？"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["各自の記録は残ります。"].exists)
         XCTAssertFalse(app.staticTexts["unshare-completed"].exists)

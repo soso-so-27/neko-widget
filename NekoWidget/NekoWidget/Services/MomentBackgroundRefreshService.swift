@@ -106,6 +106,14 @@ struct MomentNotificationTap: Equatable, Identifiable, Sendable {
 /// Keeps the latest validated tap in memory until SwiftUI has installed its
 /// root view. Posting NotificationCenter-only events here would lose a cold
 /// launch tap that arrives before AppRootView subscribes.
+/// 11/19: a tap on a family notebook notification, waiting for the root
+/// view to open the notebook.
+@MainActor
+final class FamilyNotebookOpenInbox: ObservableObject {
+    static let shared = FamilyNotebookOpenInbox()
+    @Published var opensNotebook = false
+}
+
 @MainActor
 final class MomentNotificationTapMailbox: ObservableObject {
     struct Feedback: Equatable, Identifiable {
@@ -300,6 +308,13 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
            let route = GroupNotificationRoute.parse(response.notification.request.content.userInfo) {
             _ = await GroupAdmissionService.shared.receive(route, open: true)
+            return
+        }
+        // 11/19 (UI/UX 整理): 「家族の手帳に、参加を待っている人がいます。」 and
+        // 「家族の手帳に参加できました。」 open the notebook.
+        if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+           FamilyNotebookNotificationRoute.matches(response.notification.request.content.userInfo) {
+            FamilyNotebookOpenInbox.shared.opensNotebook = true
             return
         }
         if response.actionIdentifier == UNNotificationDefaultActionIdentifier,

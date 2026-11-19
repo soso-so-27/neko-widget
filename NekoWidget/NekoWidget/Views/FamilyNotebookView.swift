@@ -856,6 +856,29 @@ final class FamilyNotebookPrototype: ObservableObject {
         UserDefaults.standard.set(data, forKey: Self.shownKey)
     }
 
+    /// 11/19 (UI/UX 整理): the family stopped listing this person (taken out
+    /// by the payer, or the family ended), not this iPhone's own leaving or
+    /// ending. Said in one line on the notebook for a week from when this
+    /// iPhone first saw it, instead of quietly showing 「家族の手帳を作る」.
+    private static let endedNoticeKey = "familyNotebook.endedNotice.v1"
+    static let endedNoticeDays = 7
+    /// After a read that found this iPhone outside the family. Written once
+    /// per family, never while drawing.
+    func noteEndedNotice(now: Date = .now) {
+        guard isReal, let snapshot, snapshot.sharingEnded, snapshot.endedReason == .absentFromDirectory else { return }
+        let id = snapshot.familyID.uuidString.lowercased()
+        if UserDefaults.standard.string(forKey: Self.endedNoticeKey)?.hasPrefix(id + "|") == true { return }
+        UserDefaults.standard.set(id + "|" + String(Int(now.timeIntervalSince1970)), forKey: Self.endedNoticeKey)
+    }
+    var showsEndedNotice: Bool {
+        guard isReal, let snapshot, snapshot.sharingEnded, snapshot.endedReason == .absentFromDirectory,
+              let saved = UserDefaults.standard.string(forKey: Self.endedNoticeKey) else { return false }
+        let parts = saved.split(separator: "|")
+        guard parts.count == 2, parts[0] == snapshot.familyID.uuidString.lowercased(),
+              let at = TimeInterval(parts[1]) else { return false }
+        return Date.now.timeIntervalSince1970 - at < TimeInterval(Self.endedNoticeDays * 86_400)
+    }
+
     /// Takes someone out of the family: what they wrote stays (test builds:
     /// the tried family member only).
     func removeMember(personID: String) {
@@ -1006,12 +1029,19 @@ struct FamilyNotebookView: View {
     @State private var showsName = false
     /// 「家族の手帳から抜ける」 at the bottom of the notebook (11/7).
     @State private var confirmsLeave = false
+    /// 「家族の手帳を終わりにする」, the payer's, under it (11/19).
+    @State private var confirmsDissolve = false
     /// This iPhone sent a family photo report: 「通報への返答」 shows.
     @AppStorage(FamilyReportReplies.sentKey) private var sentPhotoReport = false
     @State private var showsCats = false
     /// The server's answer, or before it comes, the family as last shown here.
     private var shownMembership: FamilyMembership? {
         sharing.state.membership ?? (sharing.state == .checking ? model.lastShownMembership : nil)
+    }
+    /// The notebook shows: the family is known, or this iPhone is in it and
+    /// the first read has not answered (its role then waits, 11/19).
+    private var showsNotebook: Bool {
+        shownMembership != nil || (sharing.state == .checking && model.hasFamily)
     }
     /// The newest of this person's own join requests, when it ended in the
     /// last week without joining.
@@ -1033,7 +1063,7 @@ struct FamilyNotebookView: View {
     @Environment(\.scenePhase) private var scenePhase
     /// The pressed 受け入れる/受け入れない, so only it says it is working (11/6).
     @State private var running: String?
-    /// 「もう一度確認」 was pressed and its check is running (11/6).
+    /// 「もう一度」 after 「つながりませんでした」 is running (11/6, 11/19).
     @State private var rechecking = false
     /// 11/16: 「もう一度」 under the unsent line is sending.
     @State private var resending = false
@@ -1061,36 +1091,26 @@ struct FamilyNotebookView: View {
         NavigationStack {
             Group {
                 // One branch for the notebook whether the server answered yet
-                // or not, so the list is not rebuilt when it does.
-                if let membership = shownMembership {
-                    notebook(membership)
+                // or not, so the list is not rebuilt when it does. 11/19 (UI/UX
+                // 整理): a member whose role is not read yet (no family shown
+                // before on this iPhone, a first read that failed, or right
+                // after the 機種変更 switch) sees the notebook too, never
+                // the left-copy text; only what needs the role waits.
+                if showsNotebook {
+                    notebook(shownMembership)
                 } else {
                 switch sharing.state {
-                case .checking where model.snapshot != nil:
-                    List {
-                        Section {
-                            ForEach(model.familyCats) { cat in
-                                Text(cat.name)
-
-                            }
-                        } footer: { Text("このiPhoneに残っている記録です。家族との共有を確認しています。") }
-                        Button {
-                            rechecking = true
-                            Task {
-                                defer { rechecking = false }
-                                await sharing.refresh(reportsFailure: true)
-                            }
-                        } label: {
-                            WorkingLabel(title: "もう一度確認", workingTitle: "確認しています…", working: rechecking)
-                        }
-                        .disabled(rechecking)
-                    }
-                case .checking, .leaving:
+                case .checking:
+                    // A notebook this iPhone left or that ended: the checking
+                    // state, never another home's cats for a moment.
+                    if sharing.readFailed { checkFailedView } else { ProgressView() }
+                case .leaving:
                     ProgressView()
                 case .notInFamily:
-                    // A join this person asked for ended without them: say so
-                    // once it has, instead of quietly showing the intro (11/6).
-                    if let ended = endedJoinNotice {
+                    // A join this person asked for ended without them, or the
+                    // family stopped listing them: say so once it has, instead
+                    // of quietly showing the intro (11/6, 11/19).
+                    if let ended = endedJoinNotice ?? (model.showsEndedNotice ? FamilyNotebookWords.sharingEnded : nil) {
                         Label(ended, systemImage: "person.crop.circle.badge.xmark")
                             .font(.footnote).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -1108,11 +1128,10 @@ struct FamilyNotebookView: View {
                         if sentPhotoReport || FamilyReportReplies.showsFixture { FamilyReportRepliesRow() }
                     }
                 case .pendingApproval:
-                    ContentUnavailableView("参加を待っています", systemImage: "hourglass",
-                                           description: Text("家族が参加を受け入れると、ここに手帳が表示されます。"))
+                    // 11/19 (UI/UX 整理): the same words wherever it waits.
+                    ContentUnavailableView(FamilyNotebookWords.awaitingApproval, systemImage: "hourglass")
                 case .waitingForKeys:
-                    ContentUnavailableView("準備しています", systemImage: "key",
-                                           description: Text("家族の手帳を受け取っています。"))
+                    ContentUnavailableView(FamilyNotebookWords.receiving, systemImage: "book.closed")
                 case .inFamily:
                     EmptyView()
                 }
@@ -1181,29 +1200,42 @@ struct FamilyNotebookView: View {
         .onDisappear { FamilyNotebookAutoCheck.shared.holdsRedraw = false }
         .onAppear { model.markSeen() }
         .onDisappear { model.markSeen() }
-        .modifier(FamilyNotebookLinkAsk())
+        // 11/19 (UI/UX 整理): 「同じ子ですか」 is asked by the この子 tab only,
+        // not again when the notebook opens.
     }
 
     /// Who is in the family, and what they wrote lately (like the activity of
     /// a shared note). The writing itself lives in 「この子のこと」 and the tools.
-    private func notebook(_ membership: FamilyMembership) -> some View {
+    /// `membership` nil: this iPhone is in the family and its first read has
+    /// not answered (11/19): inviting, leaving and a person's page wait for it.
+    private func notebook(_ membership: FamilyMembership?) -> some View {
         List {
+            // One state line at most (11/19 UI/UX 整理).
             if let pause = sharing.pause {
                 pausedSection(pause)
             } else if sharing.showsUnsentLine {
                 unsentSection
+            } else if sharing.state == .checking && sharing.readFailed {
+                checkFailedSection
             }
             Section {
                 ForEach(model.members, id: \.personID) { member in
-                    NavigationLink {
-                        FamilyNotebookMemberView(member: member, membership: membership)
-                    } label: {
+                    // A person's page only where something can be done there
+                    // (the payer taking someone else out, 11/19); otherwise
+                    // the row does not open an empty page.
+                    if let membership, membership.canRemoveMember, !model.isMe(member) {
+                        NavigationLink {
+                            FamilyNotebookMemberView(member: member, membership: membership)
+                        } label: {
+                            Label(member.displayName, systemImage: "person.crop.circle.fill")
+                        }
+                    } else {
                         Label(member.displayName, systemImage: "person.crop.circle.fill")
                     }
                 }
                 // Everyone in the family invites (the family decision in #543),
                 // while sharing goes on.
-                if membership.canInvite && sharing.pause == nil {
+                if membership?.canInvite == true && sharing.pause == nil {
                     Button { invites = true } label: { Label("招待する", systemImage: "person.badge.plus") }
                         .accessibilityIdentifier("family-notebook-invite")
                 }
@@ -1278,13 +1310,24 @@ struct FamilyNotebookView: View {
             }
             // Leaving only the notebook, where the notebook is (11/7): it was
             // behind your own name, and Settings' row ends every window too.
-            if membership.canLeave {
+            // 11/19 (UI/UX 整理): ending the family for everyone is here too,
+            // under it (it was on the payer's own page): one place to end.
+            if let membership, membership.canLeave {
                 Section {
                     Button("家族の手帳から抜ける", role: .destructive) { confirmsLeave = true }
                         .disabled(sharing.isWorking)
                         .accessibilityIdentifier("family-notebook-leave")
                 } footer: {
                     Text(FamilyNotebookWords.leaveDetail(payer: membership.role == .payer))
+                }
+                if membership.canDissolve {
+                    Section {
+                        Button("家族の手帳を終わりにする", role: .destructive) { confirmsDissolve = true }
+                            .disabled(sharing.isWorking)
+                            .accessibilityIdentifier("family-notebook-dissolve")
+                    } footer: {
+                        Text(FamilyNotebookWords.dissolveDetail)
+                    }
                 }
             }
             // 11/18: only on an iPhone that sent a family photo report.
@@ -1325,6 +1368,49 @@ struct FamilyNotebookView: View {
                 Task { await sharing.perform { _ = try await sharing.service.leaveFamily(operationID: $0) } }
             }
         }
+        .confirmationDialog("家族の手帳を終わりにしますか？", isPresented: $confirmsDissolve, titleVisibility: .visible) {
+            Button("終わりにする", role: .destructive) {
+                Task { await sharing.perform { _ = try await sharing.service.dissolveFamily(operationID: $0) } }
+            }
+        }
+    }
+
+    /// 11/19 (UI/UX 整理): the read did not reach the family. One line and
+    /// 「もう一度」, as 「通報への返答」 says it.
+    private var checkFailedSection: some View {
+        Section {
+            Label("つながりませんでした", systemImage: "wifi.exclamationmark")
+                .accessibilityIdentifier("family-notebook-check-failed")
+            recheckButton
+        }
+    }
+
+    /// The same, before anything of the notebook can show.
+    private var checkFailedView: some View {
+        ContentUnavailableView {
+            Label("つながりませんでした", systemImage: "wifi.exclamationmark")
+        } description: {
+            EmptyView()
+        } actions: {
+            recheckButton
+        }
+        .accessibilityIdentifier("family-notebook-check-failed")
+    }
+
+    private var recheckButton: some View {
+        Button {
+            rechecking = true
+            Task {
+                defer { rechecking = false }
+                // The person's own read (their call budget); the line says
+                // the result, so no alert as well.
+                await SharingPersonAction.run { _ = await sharing.refreshAfterPlusChange(reportsFailure: false) }
+            }
+        } label: {
+            WorkingLabel(title: "もう一度", workingTitle: "確認しています…", working: rechecking)
+        }
+        .disabled(rechecking || sharing.isWorking)
+        .accessibilityIdentifier("family-notebook-check-retry")
     }
 
     private var prototype: FamilyNotebookPrototypeSharing? { sharing.service as? FamilyNotebookPrototypeSharing }
@@ -1521,12 +1607,7 @@ extension FamilyNotebookView {
                     .accessibilityIdentifier("family-notebook-continue-plus")
                 }
             }
-        } footer: {
-            if case .noPayer(canClaim: true, handoverPending: false) = pause {
-                Text("あなたのPlusで、家族みんなの共有が戻ります。")
-            } else if case .noPayer(canClaim: false, handoverPending: false) = pause {
-                Text("家族のだれかがPlusを始めると、みんなの共有が戻ります。")
-            }
+            // 11/19 (UI/UX 整理): no footer; the one sentence above says it.
         }
     }
 }
@@ -1644,7 +1725,7 @@ struct FamilyFarewellShareSheet: View {
         if state.consentedDay != nil, !state.revocationPending {
             Section {
                 Button(role: .destructive) { confirmsRevoke = true } label: {
-                    WorkingLabel(title: "共有をやめる", workingTitle: "やめています…", working: running == "共有をやめる")
+                    WorkingLabel(title: "この日付の共有をやめる", workingTitle: "やめています…", working: running == "共有をやめる")
                 }
                     .disabled(working)
                     .accessibilityIdentifier("family-farewell-revoke")
@@ -1730,8 +1811,9 @@ struct FamilyFarewellShareSheet: View {
 }
 
 /// One person's page, as in Apple's family settings: what can be done about
-/// this person, and what happens. Leaving is only at the bottom of the
-/// notebook (11/7: one place), so your own page offers dissolving at most.
+/// this person, and what happens. Leaving and ending the family are only at
+/// the bottom of the notebook (11/7, 11/19: one place), so a page opens only
+/// for the payer taking someone else out.
 struct FamilyNotebookMemberView: View {
     let member: FamilyNotebookAuthor
     let membership: FamilyMembership
@@ -1740,40 +1822,33 @@ struct FamilyNotebookMemberView: View {
     @State private var confirms = false
     @State private var selectedAction: Action?
 
-    private enum Action: Hashable { case dissolve, remove }
+    private enum Action: Hashable { case remove }
 
     private var isMe: Bool { FamilyNotebookPrototype.shared.isMe(member) }
     private var actions: [Action] {
-        if isMe {
-            return membership.canDissolve ? [.dissolve] : []
-        }
-        return membership.canRemoveMember ? [.remove] : []
+        !isMe && membership.canRemoveMember ? [.remove] : []
     }
 
     private func title(_ action: Action) -> String {
         switch action {
-        case .dissolve: "家族の共有をやめる"
-        case .remove: "手帳から外す"
+        case .remove: "この人を手帳から外す"
         }
     }
 
     private func explanation(_ action: Action) -> String {
         switch action {
-        case .dissolve: "家族全員の共有が止まります。"
         case .remove: "この人がこれから書くことは、家族に届かなくなります。"
         }
     }
 
     private func question(_ action: Action) -> String {
         switch action {
-        case .dissolve: "家族の共有をやめますか？"
-        case .remove: "\(member.displayName)を家族の手帳から外しますか？"
+        case .remove: "\(member.displayName)さんを家族の手帳から外しますか？"
         }
     }
 
     private func confirmation(_ action: Action) -> String {
         switch action {
-        case .dissolve: "共有をやめる"
         case .remove: "外す"
         }
     }
@@ -1789,7 +1864,6 @@ struct FamilyNotebookMemberView: View {
         Task {
             await sharing.perform { operationID in
                 switch action {
-                case .dissolve: _ = try await service.dissolveFamily(operationID: operationID)
                 case .remove: try await service.removeMember(personID: personID, operationID: operationID)
                 }
             }
@@ -1975,8 +2049,12 @@ struct FamilyNotebookInviteView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                         .accessibilityIdentifier("family-notebook-invitation-lifetime")
                 }
-                Text(sharing.service.sendsInvitations ? "招待された人は無料です。" : "試作のため、まだ送れません。招待された人は無料です。")
-                    .font(.footnote).foregroundStyle(.secondary)
+                // 11/19 (UI/UX 整理): that invited people are free is said
+                // before making the notebook and on the invitation itself.
+                if !sharing.service.sendsInvitations {
+                    Text("試作のため、まだ送れません。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
             .padding(24)
             .background(Color(.systemGroupedBackground))
@@ -2058,6 +2136,14 @@ struct FamilyNotebookJoinView: View {
     @FocusState private var typingName: Bool
 
     private var inFamily: Bool { sharing.state.membership != nil }
+    /// The link is verified to be another family's than this iPhone's (both
+    /// family IDs read on this iPhone, 11/19). Unknown is not another's.
+    private var otherFamilyLink: Bool {
+        guard let link, let linked = try? FamilyNotebookInvitationCapability(url: link).familyID,
+              let own = FamilyNotebookPrototype.shared.snapshot?.familyID, FamilyNotebookPrototype.shared.hasFamily
+        else { return false }
+        return linked != own
+    }
 
     var body: some View {
         NavigationStack {
@@ -2077,10 +2163,23 @@ struct FamilyNotebookJoinView: View {
                         .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 } else if result == .pendingApproval || result == .waitingForKeys
                             || (result == nil && (preview?.priorRequestState == "pending" || sharing.state == .pendingApproval)) {
-                    // Sent is not joined: say what it is waiting for.
-                    Text(result == .waitingForKeys ? "家族の手帳を受け取っています。" : "家族が受け入れるのを待っています。")
+                    // Sent is not joined: say what it is waiting for, in the
+                    // notebook's words (11/19 UI/UX 整理).
+                    Text(result == .waitingForKeys ? FamilyNotebookWords.receiving : FamilyNotebookWords.awaitingApproval)
                         .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     Button("閉じる") { dismiss() }
+                } else if inFamily && !otherFamilyLink {
+                    // 11/19 (UI/UX 整理): a member opening their own family's
+                    // link (or one not known to be another's) is never sent
+                    // toward leaving: the notebook is where they already are.
+                    Text(FamilyNotebookWords.alreadyInThisFamily)
+                        .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        .accessibilityIdentifier("family-notebook-already-in")
+                    Button { onJoined?(); dismiss() } label: {
+                        Text("手帳を開く").font(.headline).frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("family-notebook-open-own")
                 } else if inFamily {
                     Text(FamilySharingError.alreadyInFamily.message)
                         .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
@@ -2124,7 +2223,7 @@ struct FamilyNotebookJoinView: View {
                     Text("参加は無料です。").font(.footnote).foregroundStyle(.secondary)
                     GroupWindowStandardsAgreement(action: "参加する", isFamilyNotebook: true)
                 }
-                if result == nil {
+                if result == nil && !(inFamily && !otherFamilyLink) {
                     Button("今はやめておく") { dismiss() }
                         .disabled(sharing.isWorking)
                 }
@@ -2142,8 +2241,9 @@ struct FamilyNotebookJoinView: View {
                 await sharing.refresh()
                 do { preview = try await sharing.service.previewInvitation(link) }
                 catch {
-                    // Already waiting: the used link is not an error to this person.
-                    if sharing.state != .pendingApproval {
+                    // Already waiting, or already in this family: the used link
+                    // is not an error to this person (11/19).
+                    if sharing.state != .pendingApproval && !(inFamily && !otherFamilyLink) {
                         sharing.failure = error as? FamilySharingError ?? .serviceUnavailable
                     }
                 }
@@ -2185,7 +2285,7 @@ struct FamilyNotebookCatSelectionView: View {
     /// of the list under the person's finger (11/5: the list jumped).
     @State private var shown: [CatCareRecord]?
     /// 11/15: a chosen cat with the name of a family cat not on this iPhone:
-    /// 「家族の手帳の「むぎ」と同じ子ですか。」 before anything is added.
+    /// 「家族の手帳の「むぎ」」 / 「このiPhoneの子と同じですか。」 before anything is added.
     @State private var sameNameQuestion: SameName?
     @State private var linkedCats: [UUID: UUID] = [:]
     @State private var answeredDifferent: Set<UUID> = []
@@ -2209,27 +2309,31 @@ struct FamilyNotebookCatSelectionView: View {
                     selection(shown ?? available)
                 }
             }
-            .navigationTitle("追加する猫を選ぶ")
+            .navigationTitle("手帳に入れる猫")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() }.disabled(saving) }
                 // The action says what the title asks for (11/5: 「家族と共有する」
-                // under 「追加する猫を選ぶ」 read as a different step).
+                // under 「追加する猫を選ぶ」 read as a different step; 11/19:
+                // 「手帳に入れる猫」 / 「決める」).
                 if shown?.isEmpty == false {
                     ToolbarItem(placement: .confirmationAction) {
                         if saving { ProgressView() }
-                        else { Button("追加", action: add).disabled(selected.isEmpty || !care.canSave) }
+                        else { Button("決める", action: add).disabled(selected.isEmpty || !care.canSave) }
                     }
                 }
             }
             .alert("追加できませんでした", isPresented: $failed) { Button("閉じる", role: .cancel) {} }
                 message: { Text("少し待ってから、もう一度お試しください。") }
-            .alert(sameNameQuestion.map { "家族の手帳の「" + $0.family.name + "」と同じ子ですか。" } ?? "",
+            // 11/19 (UI/UX 整理): the same question as the この子 tab's.
+            .alert(sameNameQuestion.map { "家族の手帳の「" + $0.family.name + "」" } ?? "",
                    isPresented: Binding(get: { sameNameQuestion != nil }, set: { if !$0 { sameNameQuestion = nil } }),
                    presenting: sameNameQuestion) { question in
-                Button("同じ子（つなぐ）") { answer(question, same: true) }
-                Button("べつの子（手帳に足す）") { answer(question, same: false) }
+                Button("同じ子") { answer(question, same: true) }
+                Button("べつの子") { answer(question, same: false) }
                 Button("キャンセル", role: .cancel) { saving = false }
+            } message: { _ in
+                Text(FamilyNotebookWords.sameChildQuestion)
             }
         }
         .onAppear { if shown == nil { shown = available } }
@@ -2352,45 +2456,6 @@ struct FamilyNotebookLinkQuestionView: View {
         }
         .presentationDetents([.medium, .large])
         .accessibilityIdentifier("family-link-question")
-    }
-}
-
-/// 11/15: the same question when the notebook is opened (the この子 tab
-/// asks it too). This iPhone's cats are the ones この子 last drew.
-struct FamilyNotebookLinkAsk: ViewModifier {
-    @ObservedObject private var model = FamilyNotebookPrototype.shared
-    @State private var question: FamilyNotebookCatLink.Unlinked?
-    @State private var unanswered: UUID?
-
-    func body(content: Content) -> some View {
-        content
-            .task(id: model.unlinkedFamilyCats.map(\.id)) {
-                try? await Task.sleep(for: .milliseconds(900))
-                guard !Task.isCancelled, question == nil,
-                      let cat = model.pendingLinkQuestion(profiles: model.deviceCats.map(\.identifier)) else { return }
-                unanswered = cat.id
-                question = cat
-            }
-            .sheet(item: $question, onDismiss: {
-                if let unanswered { model.closeLinkQuestion(unanswered) }
-                unanswered = nil
-            }) { cat in
-                FamilyNotebookLinkQuestionView(
-                    cat: cat,
-                    cats: FamilyNotebookCatLink.candidates(for: cat.name, among: model.deviceCats,
-                        id: { UUID(uuidString: $0.identifier) }, name: { $0.displayName }, linked: model.linkedProfiles),
-                    choose: { profile in
-                        unanswered = nil
-                        question = nil
-                        guard let id = UUID(uuidString: profile.identifier) else { return }
-                        Task { _ = try? await model.link(cat.id, toProfile: id) }
-                    },
-                    other: {
-                        unanswered = nil
-                        model.rememberLinkAnswer(cat.id)
-                        question = nil
-                    })
-            }
     }
 }
 
@@ -2600,22 +2665,43 @@ enum FamilyNotebookWords {
 
     /// Under 「家族の手帳から抜ける」 at the bottom of the notebook.
     static func leaveDetail(payer: Bool) -> String {
-        payer ? "抜けると、ほかの家族がPlusを始めるまで、家族みんなの共有が止まります。"
+        payer ? "抜けると、だれかがPlusを始めるまで共有が止まります。"
             : "これから書くことは家族に届かなくなります。"
     }
+
+    /// Under the payer's 「家族の手帳を終わりにする」 (11/19 UI/UX 整理).
+    static let dissolveDetail = "家族みんなの共有が終わります。書いたものは、それぞれのiPhoneに残ります。"
+
+    /// 11/19 (UI/UX 整理): one way to say each wait, wherever it shows (the
+    /// notebook, the invitation, Settings' row).
+    static let awaitingApproval = "家族が受け入れるのを待っています"
+    static let receiving = "家族の手帳を受け取っています"
+
+    /// 11/19: the family stopped listing this person (taken out, or ended).
+    static let sharingEnded = "この手帳の共有は終わりました。"
+
+    /// 11/19: a member opened an invitation to their own family.
+    static let alreadyInThisFamily = "もう家族の手帳に入っています。"
+
+    /// 11/19: 「同じ子ですか」, asked the same way everywhere.
+    static let sameChildQuestion = "このiPhoneの子と同じですか。"
+    /// 11/19: linking to this iPhone's cat did not go (it used to say nothing).
+    static let linkFailedTitle = "つなげませんでした"
+    static let linkFailedMessage = "少し待ってから、もう一度お試しください。"
 
     /// 11/15: this iPhone's Plus was found, but the family does not see it yet.
     static let familyAwaitsPlus = "家族の手帳には、まだPlusが届いていません。少しおいて、もう一度確かめてください。"
 
-    /// What stopped (1029e). That nothing written is lost is left to the help page (1031).
+    /// What brings sharing back, in one sentence (1029e; 11/19 UI/UX 整理:
+    /// the reason is the help page's, the heading says it stopped).
     static func pausedDetail(_ pause: FamilySharingPause) -> String {
         switch pause {
         case .noPayer:
-            return "Plusを使っていた人が家族の手帳から抜けたので、新しく書いたことは家族に届きません。だれか1人がPlusを始めると、また共有できます。"
+            return "だれか1人がPlusを始めると、また共有できます。"
         case .payerPlusUnverified(isPayer: true):
-            return "あなたのPlusを確認できないため、共有が止まっています。Plusを続けると、家族みんなの共有が戻ります。"
+            return "Plusを続けると、家族みんなの共有が戻ります。"
         case .payerPlusUnverified(isPayer: false):
-            return "家族の共有に使っているPlusを確認できないため、共有が止まっています。払っている人がPlusを続けると戻ります。書いたものは消えません。"
+            return "書いたものは消えません。Plusが戻ると、また共有できます。"
         }
     }
 
