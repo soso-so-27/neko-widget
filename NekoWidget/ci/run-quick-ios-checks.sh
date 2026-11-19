@@ -10,15 +10,12 @@ case "$check_mode" in all|public|public-build|owner) ;; *) echo "Use all, public
 if [[ "$check_mode" != owner ]]; then
 python3 ci/test-root-sync-boundary.py
 bash ci/run-group-recovery-client-checks.sh
-xcrun --sdk macosx swiftc -D INTERNAL_PRESENTATION -parse-as-library \
+# 11/19: the store ships with 機種変更 (the relay's gate decides); its tests run
+# as the public build compiles it, without internal or DEBUG conditions.
+xcrun --sdk macosx swiftc -parse-as-library \
   NekoWidget/Services/RootSyncStore.swift ci/verify-root-sync-store.swift \
   -o "$RUNNER_TEMP/root-sync-tests"
 "$RUNNER_TEMP/root-sync-tests"
-printf 'let p2ProductionBoundary = RootSyncStore.self\n' > "$RUNNER_TEMP/root-sync-public.swift"
-if xcrun --sdk macosx swiftc -typecheck NekoWidget/Services/RootSyncStore.swift "$RUNNER_TEMP/root-sync-public.swift" 2> "$RUNNER_TEMP/root-sync-public-error.txt"; then
-  echo "P2 store unexpectedly exists in production" >&2; exit 1
-fi
-grep -F "cannot find 'RootSyncStore' in scope" "$RUNNER_TEMP/root-sync-public-error.txt" > /dev/null
 fi
 
 # 11/16: tool photos must pass the save server's JPEG rule (max 4096 px, no MPF).

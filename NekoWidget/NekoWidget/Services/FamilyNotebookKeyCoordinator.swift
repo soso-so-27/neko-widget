@@ -485,7 +485,6 @@ enum FamilyNotebookIdentityChoice {
     }
 }
 
-#if DEBUG || INTERNAL_PRESENTATION
 /// The iCloud Keychain item of the pin: synchronizable, with the same access
 /// class and group as the person key's item (available while unlocked).
 struct FamilyNotebookSyncedKeychainStore: GroupSecretStore {
@@ -524,4 +523,3 @@ struct FamilyNotebookSyncedKeychainStore: GroupSecretStore {
         guard status == errSecSuccess || status == errSecItemNotFound else { throw FamilyNotebookTransportError.unavailable }
     }
 }
-#endif

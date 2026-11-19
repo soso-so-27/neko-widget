@@ -155,24 +155,47 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         self.operations = try GroupOperationStore(directory: self.outboxDirectory.appendingPathComponent("http-operations", isDirectory: true))
         _ = try GroupHTTPRequest.make(endpoint: endpoint, path: "/v3/group-identities/challenges", body: Data(), identity: nil)
     }
-#if (DEBUG || INTERNAL_PRESENTATION) && !NEKO_SHARE_EXTENSION
+#if !NEKO_SHARE_EXTENSION
+    /// 11/19: the relay's recovery gate as last answered in this process.
+    private var recoveryGate: GroupRecoveryServerGate { .shared }
+    /// Proofs go only to a relay whose recovery gate answered open: a closed
+    /// one refuses a roster that carries them. Not known yet: one probe with
+    /// this person's key; a failed probe leaves the roster as before.
+    private func recoveryServerOpen(identity: GroupDeviceIdentity, environment: String) async -> Bool {
+        switch recoveryGate.state {
+        case .on: return true
+        case .off: return false
+        case .unknown: break
+        }
+        guard let root = identity.personPrivateKey,
+              let client = try? GroupRecoveryClient(endpoint: endpoint, environment: environment, root: root,
+                  transport: transport, journal: GroupRecoveryNoStore(), enabled: true) else { return false }
+        try? await client.probe()
+        return recoveryGate.state == .on
+    }
     private var recoveryEnvironment: String? {
         switch endpoint.host {
         case "api.nekonomado.com": return "production"
+#if DEBUG || INTERNAL_PRESENTATION
+        // 11/19: never in the App Store build (it talks only to production).
         case "neko-window-sharing-staging.nakanishisoya.workers.dev", "recovery.invalid": return "staging"
+#endif
         default: return nil
         }
     }
 #endif
     private func recoveryBoundaries(packet: SignedGroupRoster, anchor: GroupTrustAnchor,
         previous: VerifiedGroupRoster?, identity: GroupDeviceIdentity, newAdmissions: Set<String> = []) async throws -> [GroupParticipationBoundary]? {
-#if (DEBUG || INTERNAL_PRESENTATION) && !NEKO_SHARE_EXTENSION
-        guard recoveryEnabled, let environment = recoveryEnvironment else { return nil }
+#if !NEKO_SHARE_EXTENSION
+        guard recoveryEnabled, let environment = recoveryEnvironment,
+              await recoveryServerOpen(identity: identity, environment: environment) else { return nil }
         let next = try GroupRosterVerifier.verify(packet, anchor: anchor, previous: previous)
         var old: [GroupParticipationBoundary] = []
         if previous != nil {
             let provider = try GroupRecoveryProviderClient(endpoint: endpoint, environment: environment, secrets: secrets, transport: transport, enabled: true)
-            old = try await provider.pending(windowID: next.roster.windowID).participationProofs
+            // Closed since: the roster goes as it did before (no proofs).
+            do { old = try await provider.pending(windowID: next.roster.windowID).participationProofs }
+            catch GroupRecoveryClient.Failure.serverDisabled { return nil }
         }
         return try next.roster.members.compactMap { member in
             if newAdmissions.contains(member.personID) || previous?.roster.members.contains(where: { $0.personID == member.personID }) != true {
@@ -187,7 +210,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         return nil
 #endif
     }
-#if (DEBUG || INTERNAL_PRESENTATION) && !NEKO_SHARE_EXTENSION
+#if !NEKO_SHARE_EXTENSION
     private var recoveryWindowAttempts: [String: Date] = [:]
     private func recoverAfterLoad(_ windows: [GroupWindow]) async {
         guard let window = windows.min(by: {
@@ -198,7 +221,8 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         await recoverAfterLoad(window)
     }
     private func recoverAfterLoad(_ window: GroupWindow) async {
-        guard recoveryEnabled, !recoveryRunning, anchorReceiptForeground,
+        // 11/19: the relay said its recovery gate is closed: nothing more this launch.
+        guard recoveryEnabled, recoveryGate.state != .off, !recoveryRunning, anchorReceiptForeground,
               SharingForegroundGap.allows(since: lastRecoveryAt), let environment = recoveryEnvironment else { return }
         recoveryRunning = true; lastRecoveryAt = Date(); recoveryWindowAttempts[window.id] = lastRecoveryAt; defer { recoveryRunning = false }
         await SharingPersonAction.automatic {
@@ -463,7 +487,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
                     otherID: $1.id, otherReceived: received[$1.id], otherCreated: created[$1.id] ?? nil)
             }
             recentWindows = (Date(), sorted)
-#if (DEBUG || INTERNAL_PRESENTATION) && !NEKO_SHARE_EXTENSION
+#if !NEKO_SHARE_EXTENSION
             if recoveryEnabled { Task { await self.recoverAfterLoad(sorted) } }
 #endif
             return sorted
@@ -631,7 +655,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             personID: identity.personID, deviceID: myDeviceID)
 #if !NEKO_SHARE_EXTENSION
         Task { await self.publishAnchorReceipt(windowID: windowID) }
-#if (DEBUG || INTERNAL_PRESENTATION) && !NEKO_SHARE_EXTENSION
+#if !NEKO_SHARE_EXTENSION
         if recoveryEnabled { Task { await self.recoverAfterLoad(result) } }
 #endif
 #endif

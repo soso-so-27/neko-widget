@@ -1,7 +1,9 @@
 """機種変更の画面（1115）：文・入口・通信の境目を固定する。
 
 文は GroupRecoveryWords の 1 か所だけ。状態 1 つ＋ 1 文＋ボタンで、仕組みの言葉は書かない。
-発行が OFF の間、通常の版にはどこにも入口がない（内部試験の版の見本だけ）。
+11/19: 公開版の入口は 設定 → 家族とまど の 1 行だけ。サーバーの発行の gate が開いていると
+確かめられたとき（GroupRecoveryAvailability）だけ出す。閉じているときは何も出さない。
+見本の一覧は内部試験の版だけ。
 ボタンが何を呼ぶかは ci/verify-group-recovery-presentation.swift が固定する。
 """
 from pathlib import Path
@@ -81,9 +83,10 @@ class GroupRecoveryScreenTests(unittest.TestCase):
         outside = "\n".join(line.split("//", 1)[0] for line in outside.splitlines())
         self.assertEqual(re.findall(r'"[^"\n]*[぀-ヿ一-鿿][^"\n]*"', outside), [])
 
-    def test_no_entry_in_the_public_build(self):
+    def test_public_entry_only_while_the_relay_is_open(self):
         sources = internal.InternalPresentationBoundaryTests().sources()
         view_key = str(VIEW.relative_to(ROOT))
+        settings_key = str((ROOT / "NekoWidget/Views/SettingsView.swift").relative_to(ROOT))
         for path, source in sources.items():
             if path == view_key:
                 continue
@@ -91,9 +94,26 @@ class GroupRecoveryScreenTests(unittest.TestCase):
                           "GroupRecoveryGallery", "GroupRecoveryFixtureRoot", "settings-group-recovery-gallery"):
                 with self.subTest(path=path, token=token):
                     self.assertNotIn(token, source)
+            if path != settings_key:
+                with self.subTest(path=path, token="GroupRecoveryLiveScreen"):
+                    self.assertNotIn("GroupRecoveryLiveScreen", source)
         public_view = sources[view_key]
         for token in ("GroupRecoveryGallery", "GroupRecoverySamples", "GroupRecoveryFixtureRoot"):
             self.assertNotIn(token, public_view)
+        # One row in 設定 → 家族とまど, shown only once the relay's gate answered open.
+        settings = sources[settings_key]
+        self.assertEqual(settings.count("GroupRecoveryLiveScreen(model: .connected())"), 1)
+        row = settings.split("if deviceChangeOpen {", 1)[1].split("} header: {", 1)[0]
+        self.assertIn("GroupRecoveryLiveScreen(model: .connected())", row)
+        self.assertIn('Text("家族とまど")', settings.split("if deviceChangeOpen {", 1)[1])
+        self.assertEqual(settings.count(".task { deviceChangeOpen = await GroupRecoveryAvailability.isOpen() }"), 1)
+        self.assertEqual(settings.count("deviceChangeOpen = "), 2)
+        self.assertIn("@State private var deviceChangeOpen = false", settings)
+        live = (ROOT / "NekoWidget/Services/GroupRecoveryLiveSession.swift").read_text(encoding="utf-8")
+        availability = live.split("enum GroupRecoveryAvailability {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn("guard SharingAPIConfiguration.groupRecoveryRuntimeEnabled else { return false }", availability)
+        self.assertIn("case .off: return false", availability)
+        self.assertIn("return gate.state == .on", availability)
 
     def test_internal_build_has_the_sample_entry(self):
         for defines in ({"INTERNAL_PRESENTATION"}, {"DEBUG"}):
@@ -124,20 +144,25 @@ class GroupRecoveryScreenTests(unittest.TestCase):
         self.assertIn("ContentUnavailableView {", view)
         self.assertIn("SheetCloseButton", view)
 
-    def test_live_connection_is_internal_and_tap_only(self):
-        # The real P3 client is enabled only by the internal test screen, after a tap.
+    def test_live_connection_is_tap_only_besides_one_probe(self):
+        # 11/19: the real client ships. It is enabled by the person's tap, or by
+        # the one automatic probe that learns the relay's gate (no screen of its own).
         live = ROOT / "NekoWidget/Services/GroupRecoveryLiveSession.swift"
         text = live.read_text(encoding="utf-8")
-        self.assertEqual(internal.selected_source(text).strip(), "")
-        for path, source in internal.InternalPresentationBoundaryTests().sources().items():
-            for token in ("GroupRecoveryLiveModel", "GroupRecoveryLiveScreen", "GroupRecoveryAdapter(",
-                          "GroupRecoveryLiveBuilder", "GroupRecoverySyntheticSession", "GroupRecoveryClient("):
-                with self.subTest(path=path, token=token):
-                    self.assertNotIn(token, source)
+        public = internal.selected_source(text)
+        for token in ("GroupRecoveryLiveModel", "GroupRecoveryLiveBuilder", "GroupRecoveryAvailability", "GroupRecoveryClient("):
+            self.assertIn(token, public)
+        for token in ("GroupRecoverySyntheticSession", "GroupRecoverySyntheticKeySource"):
+            self.assertNotIn(token, public)
         code = "\n".join(line.split("//", 1)[0] for line in text.splitlines())
-        self.assertEqual(code.count("enabled: true"), 1)
+        self.assertEqual(code.count("enabled: true"), 2)
         self.assertEqual(code.count("SharingPersonAction.run"), 1)
-        self.assertNotIn("SharingPersonAction.automatic", code)
+        self.assertEqual(code.count("SharingPersonAction.automatic"), 1)
+        availability = code.split("enum GroupRecoveryAvailability {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn("try? await SharingPersonAction.automatic { try await client.probe() }", availability)
+        self.assertIn("journal: GroupRecoveryNoStore(), enabled: true)", availability)
+        self.assertIn("guard !probing, lastProbe.map", availability)
+        self.assertNotIn("publishCurrentRoot", availability)
         self.assertIn("let catalog = try await client.catalog()", code)
         # Each root has its own journal and Keychain namespace; nothing is removed locally.
         self.assertIn('namespace + ".recovery-journal." + scope', code)
@@ -199,18 +224,22 @@ class GroupRecoveryScreenTests(unittest.TestCase):
         self.assertNotIn("SharingPersonAction.run", adapter)
         view = VIEW.read_text(encoding="utf-8")
         self.assertEqual(view.count(".task { await adapter.keepCheckingWaiting() }"), 1)
-        self.assertNotIn("keepCheckingWaiting", internal.selected_source(view))
+        # 11/19: the waiting check ships with the screen.
+        self.assertIn("keepCheckingWaiting", internal.selected_source(view))
         # The capture is synthetic and DEBUG only.
         self.assertIn("GroupRecoveryKeysFixture()", internal.selected_source(view, {"DEBUG"}))
         self.assertNotIn("GroupRecoveryKeysFixture", internal.selected_source(view, {"INTERNAL_PRESENTATION"}))
         self.assertIn('requested == "keys-waiting"', view)
         shots = (ROOT / "NekoWidgetUITests/ReviewScreenshotUITests.swift").read_text(encoding="utf-8")
         self.assertIn('stateScreenshot("92o_recovery_keys_waiting", "keys-waiting", "group-recovery-screen")', shots)
-        for path, source in internal.InternalPresentationBoundaryTests().sources().items():
-            for token in ("GroupRecoveryKeyDeliverySession", "GroupRecoverySyntheticKeySource", "GroupRecoveryClientKeySource",
-                          "keepCheckingWaiting", "receiveKeys(", "finishKeyDelivery("):
-                with self.subTest(path=path, token=token):
-                    self.assertNotIn(token, source)
+        # 11/19: the real key delivery ships; the synthetic source stays internal.
+        public = internal.InternalPresentationBoundaryTests().sources()
+        combined = "\n".join(public.values())
+        for token in ("GroupRecoveryKeyDeliverySession", "GroupRecoveryClientKeySource", "receiveKeys(", "finishKeyDelivery("):
+            self.assertIn(token, combined)
+        for path, source in public.items():
+            with self.subTest(path=path):
+                self.assertNotIn("GroupRecoverySyntheticKeySource", source)
 
     def test_new_iphone_returns_to_the_family_notebook(self):
         # 11/19 (機種変更 水準2): the notebook is one row of the same screen; 続ける

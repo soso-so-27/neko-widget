@@ -270,6 +270,39 @@ struct SharingAPIConfiguration: Equatable, Sendable {
         ownerStagingTwoDeviceEnabled(info: Bundle.main.infoDictionary ?? [:])
     }
 
+    /// 11/19: the family notebook's representative photo and 機種変更 (device
+    /// change) are carried by the App Store build and by the owner's staging
+    /// trial. Whether they do anything is the relay's call: its own gates
+    /// answer 503 (`photo_feature_disabled`, `recovery_disabled`) while off,
+    /// and the app then shows and sends nothing more. The App Store build
+    /// talks only to the production relay; a staging endpoint never passes.
+    static var serverGatedFamilyFeaturesEnabled: Bool {
+        serverGatedFamilyFeaturesEnabled(info: Bundle.main.infoDictionary ?? [:])
+    }
+
+    static func serverGatedFamilyFeaturesEnabled(info: [String: Any]) -> Bool {
+#if NEKO_SHARE_EXTENSION
+        return false
+#else
+        if ownerStagingTwoDeviceEnabled(info: info) { return true }
+        let configuration = from(info: info)
+        return configuration.releaseMode == "production"
+            && configuration.baseURL?.absoluteString == productionEndpoint
+            && info["FamilyNotebookProductionEnabled"] as? String == "YES"
+            && info["GroupWindowsEnabled"] as? String == "YES"
+            && configuration.isGroupRuntimeAvailable
+#endif
+    }
+
+    /// The reviewed production relay (Config.Production.xcconfig).
+    static let productionEndpoint = "https://api.nekonomado.com"
+
+    /// The representative photo's client (FamilyNotebookServiceFactory).
+    static var representativePhotoRuntimeEnabled: Bool { serverGatedFamilyFeaturesEnabled }
+
+    /// 機種変更's client (GroupWindowClientProvider, GroupRecoveryAvailability).
+    static var groupRecoveryRuntimeEnabled: Bool { serverGatedFamilyFeaturesEnabled }
+
     static func ownerStagingTwoDeviceEnabled(info: [String: Any]) -> Bool {
 #if INTERNAL_PRESENTATION && !NEKO_SHARE_EXTENSION
         let configuration = from(info: info)

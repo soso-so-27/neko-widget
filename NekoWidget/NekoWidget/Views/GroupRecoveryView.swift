@@ -1,10 +1,10 @@
 import SwiftUI
 
 // 機種変更の画面。状態を受け取って描くだけ（文とボタンは GroupRecoveryPresentation）。
-// 発行が OFF の間、通常の版ではどこからも開かない。入口は内部試験の版の
-// 設定 → テスト用 にある見本の一覧だけ（このファイルの下の内部試験の部分）。
-// 通常の版で開くときの入口は、まどのタブの一覧の上（参加の手続き中の行と同じ所）に
-// GroupRecoveryEntryRow を 1 行。状態の供給は Codex のアダプタが受け持つ。
+// 11/19: 公開版の入口は 設定 → 家族とまど の 1 行（GroupRecoveryLiveScreen）。サーバーの
+// 発行の gate が開いていると確かめられたときだけ出す（GroupRecoveryAvailability）。閉じて
+// いれば何も出さない。内部試験の版は 設定 → テスト用 の見本の一覧もある（下の内部試験の部分）。
+// 状態の供給は Codex のアダプタが受け持つ。
 
 /// 押したものを受け取って、状態モデルに渡す側（Codex のアダプタ）。
 /// 画面からは、本人が押したものだけが本人の操作の印つきで届く（GroupRecoveryCommandRoute）。
@@ -325,6 +325,77 @@ struct GroupRecoveryFreshNameForm: View {
     }
 }
 
+// MARK: - 機種変更の画面（11/19 から公開版にも。入口は 設定 → 家族とまど、サーバーが開いているときだけ）
+
+/// 入口を押すと、Adapter の状態をそのまま同じ画面で見せる。押すまで何も送らない。
+struct GroupRecoveryLiveScreen: View {
+    @StateObject private var model: GroupRecoveryLiveModel
+    /// 確かめ中・つながらないの画面だけに使う印。外へは出ない。
+    private static let local = UUID(uuidString: "00000000-0000-4000-8000-000000001117")!
+
+    init(model: @escaping @autoclosure () -> GroupRecoveryLiveModel) {
+        _model = StateObject(wrappedValue: model())
+    }
+
+    private var waiting: GroupRecoveryRegistrationState {
+        switch model.phase {
+        case .serverDisabled: return .serverDisabled(operationID: Self.local)
+        case .unavailable: return .unavailable(operationID: Self.local)
+        default: return .checking(operationID: Self.local)
+        }
+    }
+
+    var body: some View {
+        List {
+            Button { model.begin() } label: { GroupRecoveryEntryRow() }
+                .buttonStyle(.plain)
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                .listRowBackground(Color.clear)
+                .accessibilityIdentifier("group-recovery-live-entry")
+                .disabled(model.publishingRoot)
+            if model.canPublishRoot {
+                Button(GroupRecoveryWords.syncAction) { model.syncThisDevice() }
+                    .disabled(model.publishingRoot)
+                if let message = model.rootSyncMessage { Text(message) }
+            }
+        }
+        .onDisappear { model.cancelRootPublication() }
+        .navigationTitle(GroupRecoveryWords.entry)
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: Binding(get: { model.phase != .idle }, set: { if !$0 { model.close() } })) {
+            if model.phase == .ready, let adapter = model.adapter {
+                GroupRecoveryLiveAdapterView(adapter: adapter) { model.close() }
+            } else {
+                NavigationStack {
+                    Group {
+                        if model.phase == .noRoots {
+                            Text(GroupRecoveryWords.noRootsTitle)
+                        } else {
+                            GroupRecoveryStateView(state: .registration(waiting), send: { command in
+                                if command == .dismiss { model.close() } else { model.begin() }
+                            })
+                        }
+                    }
+                    .toolbar { ToolbarItem(placement: .topBarTrailing) { SheetCloseButton { model.close() } } }
+                }
+            }
+        }
+    }
+}
+
+/// Adapter が公開する本人の候補・まど・閉じたかを見て、#1029 の画面にそのまま渡す。
+private struct GroupRecoveryLiveAdapterView: View {
+    @ObservedObject var adapter: GroupRecoveryAdapter
+    let close: () -> Void
+
+    var body: some View {
+        GroupRecoverySheet(rootChoice: adapter.rootChoice, items: adapter.items, handler: adapter)
+            .onChange(of: adapter.dismissed) { _, dismissed in if dismissed { close() } }
+            // 鍵を待つまどは、開いている間だけ自動で確かめ直す（回数と間隔は Adapter が決める）。
+            .task { await adapter.keepCheckingWaiting() }
+    }
+}
+
 #if DEBUG || INTERNAL_PRESENTATION
 // MARK: - 内部試験の版だけ：見本の状態で、それぞれの画面を見る
 
@@ -449,74 +520,6 @@ struct GroupRecoveryGallery: View {
     }
 }
 
-/// 入口を押すと、Adapter の状態をそのまま同じ画面で見せる。押すまで何も送らない。
-struct GroupRecoveryLiveScreen: View {
-    @StateObject private var model: GroupRecoveryLiveModel
-    /// 確かめ中・つながらないの画面だけに使う印。外へは出ない。
-    private static let local = UUID(uuidString: "00000000-0000-4000-8000-000000001117")!
-
-    init(model: @escaping @autoclosure () -> GroupRecoveryLiveModel) {
-        _model = StateObject(wrappedValue: model())
-    }
-
-    private var waiting: GroupRecoveryRegistrationState {
-        switch model.phase {
-        case .serverDisabled: return .serverDisabled(operationID: Self.local)
-        case .unavailable: return .unavailable(operationID: Self.local)
-        default: return .checking(operationID: Self.local)
-        }
-    }
-
-    var body: some View {
-        List {
-            Button { model.begin() } label: { GroupRecoveryEntryRow() }
-                .buttonStyle(.plain)
-                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                .listRowBackground(Color.clear)
-                .accessibilityIdentifier("group-recovery-live-entry")
-                .disabled(model.publishingRoot)
-            if model.canPublishRoot {
-                Button(GroupRecoveryWords.syncAction) { model.syncThisDevice() }
-                    .disabled(model.publishingRoot)
-                if let message = model.rootSyncMessage { Text(message) }
-            }
-        }
-        .onDisappear { model.cancelRootPublication() }
-        .navigationTitle(GroupRecoveryWords.entry)
-        .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: Binding(get: { model.phase != .idle }, set: { if !$0 { model.close() } })) {
-            if model.phase == .ready, let adapter = model.adapter {
-                GroupRecoveryLiveAdapterView(adapter: adapter) { model.close() }
-            } else {
-                NavigationStack {
-                    Group {
-                        if model.phase == .noRoots {
-                            Text(GroupRecoveryWords.noRootsTitle)
-                        } else {
-                            GroupRecoveryStateView(state: .registration(waiting), send: { command in
-                                if command == .dismiss { model.close() } else { model.begin() }
-                            })
-                        }
-                    }
-                    .toolbar { ToolbarItem(placement: .topBarTrailing) { SheetCloseButton { model.close() } } }
-                }
-            }
-        }
-    }
-}
-
-/// Adapter が公開する本人の候補・まど・閉じたかを見て、#1029 の画面にそのまま渡す。
-private struct GroupRecoveryLiveAdapterView: View {
-    @ObservedObject var adapter: GroupRecoveryAdapter
-    let close: () -> Void
-
-    var body: some View {
-        GroupRecoverySheet(rootChoice: adapter.rootChoice, items: adapter.items, handler: adapter)
-            .onChange(of: adapter.dismissed) { _, dismissed in if dismissed { close() } }
-            // 鍵を待つまどは、開いている間だけ自動で確かめ直す（回数と間隔は Adapter が決める）。
-            .task { await adapter.keepCheckingWaiting() }
-    }
-}
 #endif
 
 #if DEBUG

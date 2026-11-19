@@ -52,13 +52,20 @@ enum FamilyNotebookServiceFactory {
     /// notebook); nil keeps the iPhone's usual identity. Builds without the
     /// recovery screen never have a link.
     static func recoveredIdentity(_ client: ProductionGroupWindowClient) async throws -> GroupDeviceIdentity? {
-#if DEBUG || INTERNAL_PRESENTATION
+        // 11/19: the App Store build carries 機種変更 (the relay decides).
+        guard recoveryRuntimeCarried else { return nil }
         let namespace = GroupWindowClientProvider.namespace
         let usual = try await client.existingPersonID()
         return try FamilyNotebookIdentityChoice.load(links: GroupKeychainStore(namespace: namespace + recoveryLinkSuffix),
             recoveryStore: { try GroupKeychainStore(namespace: namespace + ".recovery." + $0) }, usualPersonID: usual)
+    }
+    /// 11/19: internal builds as before; the App Store build only with 機種変更's
+    /// client (SharingAPIConfiguration.groupRecoveryRuntimeEnabled).
+    private static var recoveryRuntimeCarried: Bool {
+#if DEBUG || INTERNAL_PRESENTATION
+        return true
 #else
-        return nil
+        return SharingAPIConfiguration.groupRecoveryRuntimeEnabled
 #endif
     }
     /// Where the recovery screen keeps FamilyNotebookIdentityChoice.Link.
@@ -67,15 +74,11 @@ enum FamilyNotebookServiceFactory {
     /// 11/19: the roster pin next to the person key in iCloud Keychain, in the
     /// builds that sync the person key (the same access group); nil elsewhere.
     static func pinSync() -> (any FamilyNotebookPinSync)? {
-#if DEBUG || INTERNAL_PRESENTATION
-        guard let bundleID = Bundle.main.bundleIdentifier,
+        guard recoveryRuntimeCarried, let bundleID = Bundle.main.bundleIdentifier,
               let accessGroup = Bundle.main.object(forInfoDictionaryKey: "RootSyncKeychainAccessGroup") as? String,
               accessGroup.hasSuffix("." + bundleID) else { return nil }
         return FamilyNotebookStoredPinSync(store: FamilyNotebookSyncedKeychainStore(
             service: bundleID + ".family-notebook-pin.v1", accessGroup: accessGroup))
-#else
-        return nil
-#endif
     }
 
     /// The same reviewed recipient as a まど report, pinned in the app's
@@ -87,9 +90,11 @@ enum FamilyNotebookServiceFactory {
         return (keyID, key)
     }
 
-    /// Actual representative-photo calls are confined to the owner staging exercise.
+    /// 11/19: the App Store build and the owner's staging trial carry the
+    /// representative photo; the relay's gate (503 `photo_feature_disabled`)
+    /// decides, and the service stops asking once it says off.
     static var representativePhotoRuntimeEnabled: Bool {
-        SharingAPIConfiguration.ownerStagingTwoDeviceEnabled
+        SharingAPIConfiguration.representativePhotoRuntimeEnabled
     }
 
     /// The reporter's private receipt list, without loading family membership.
@@ -213,6 +218,8 @@ final class ProductionFamilyRepresentativePhotoBackend: FamilyRepresentativePhot
     init(service: ProductionFamilyNotebookSharingService) { self.service = service }
     var myPersonID: String? { service.personID }
     var canWrite: Bool { service.representativePhotoWritable }
+    var relayAnswer: FamilyPhotoServerState { service.photoServer }
+    func probe() async { await service.probeRepresentativePhotos() }
     func displayName(of personID: String) -> String? {
         FamilyNotebookPrototype.shared.members.first { $0.personID == personID }?.displayName
     }

@@ -720,6 +720,25 @@ private struct RecoveryCatalogRefusal: GroupHTTPTransport {
     try await eventually { locked.phase == .unavailable }
     try check(locked.adapter == nil)
 
+    // 11/19: the probe learns the relay's gate. Closed (503 recovery_disabled)
+    // is remembered; another refusal or no answer leaves it unknown; an
+    // answered challenge opens it. Nothing is kept by the probe.
+    for (status, code, expected) in [(503, "recovery_disabled", GroupRecoveryServerGate.State.off),
+                                     (503, "maintenance", .unknown), (0, nil, .unknown)] as [(Int, String?, GroupRecoveryServerGate.State)] {
+        let gate = GroupRecoveryServerGate()
+        let probe = try GroupRecoveryClient(endpoint: URL(string: "https://recovery.invalid")!, environment: "staging",
+            root: other.rawRepresentation, transport: RecoveryCatalogRefusal(relay: relay,
+                disabledRoot: GroupWire.base64(other.publicKey.rawRepresentation), status: status, code: code),
+            journal: GroupRecoveryNoStore(), enabled: true, gate: gate)
+        do { try await probe.probe(); throw TestFailure.failed } catch is GroupRecoveryClient.Failure {} catch is URLError {}
+        try check(gate.state == expected)
+    }
+    let openGate = GroupRecoveryServerGate()
+    let opened = try GroupRecoveryClient(endpoint: URL(string: "https://recovery.invalid")!, environment: "staging",
+        root: root.rawRepresentation, transport: relay, journal: GroupRecoveryNoStore(), enabled: true, gate: openGate)
+    try await opened.probe()
+    try check(openGate.state == .on)
+
     // Timeout shows unavailable; the late answer is not applied.
     let late = LateRecoveryCatalog()
     let model = GroupRecoveryLiveModel(timeout: .milliseconds(30)) { await late.contexts() }

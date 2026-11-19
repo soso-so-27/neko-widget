@@ -1,4 +1,3 @@
-#if DEBUG || INTERNAL_PRESENTATION
 import Foundation
 import CryptoKit
 import Security
@@ -199,4 +198,3 @@ actor RootSyncStore {
         return .removedLocally
     }
 }
-#endif

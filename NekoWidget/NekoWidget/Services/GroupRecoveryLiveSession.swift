@@ -1,4 +1,3 @@
-#if DEBUG || INTERNAL_PRESENTATION
 import Foundation
 import Combine
 import CryptoKit
@@ -6,9 +5,11 @@ import CryptoKit
 import LocalAuthentication
 #endif
 
-// 機種変更の試験画面（設定 → テスト用）だけが使う接続。通常の版には入らない。
+// 機種変更の画面（設定 → 家族とまど、内部版は 設定 → テスト用 にも）の接続。
 // 押したとき（本人の操作）にだけ client を有効で作り、最初の catalog が通った
 // （サーバーの発行の gate が開いている）ときだけ Adapter を作る。起動時・自動の通信はしない。
+// 11/19: 公開版にも入る。入口は GroupRecoveryAvailability がサーバーの gate を
+// 一度確かめて開いているときだけ出す（閉じていれば何も出さない）。
 
 private func recoveryPersonAction<T>(_ work: () async throws -> T) async rethrows -> T {
     try await SharingPersonAction.run(work)
@@ -311,7 +312,7 @@ struct GroupRecoveryKeyStatus: Sendable {
 }
 
 /// The calls the new iPhone makes for one operation. The real one is the P3/P5
-/// client with the saved Draft; captures use GroupRecoverySyntheticKeySource.
+/// client with the saved Draft; captures use the synthetic key source.
 protocol GroupRecoveryKeySource: Sendable {
     func resume(_ operationID: UUID) async throws -> GroupRecoveryRegistrationState?
     func status(_ operationID: UUID) async throws -> GroupRecoveryKeyStatus
@@ -425,6 +426,7 @@ actor GroupRecoveryKeyDeliverySession: GroupRecoverySession {
     }
 }
 
+#if DEBUG || INTERNAL_PRESENTATION
 /// Captures and the probe: the AutoRelay pages of ci/verify-group-recovery-client.swift
 /// as state values only (sent and received, waiting for the owner, the owner's
 /// switch). No relay, no keys, no copies of keys.
@@ -557,6 +559,7 @@ extension GroupRecoveryLiveModel {
         GroupRecoveryLiveModel { GroupRecoverySyntheticSession.contexts() }
     }
 }
+#endif
 
 #if os(iOS)
 private func makeRootSyncStore(environment: RootSyncStore.Environment) throws -> RootSyncStore {
@@ -574,6 +577,47 @@ private func currentRegisteredRoot(namespace: String) throws -> Data? {
         throw RootSyncFailure.invalidRecord
     }
     return raw
+}
+
+/// 11/19: whether 設定 shows the 機種変更 row. Only in a build that carries the
+/// feature (SharingAPIConfiguration.groupRecoveryRuntimeEnabled), and only
+/// once the relay's own gate answered open. While it is closed (503
+/// `recovery_disabled`) or not known, nothing is shown and nothing is said.
+/// At most one probe per launch (a failed one waits ten minutes), with a
+/// person key this iPhone already has; none on an iPhone without one.
+@MainActor
+enum GroupRecoveryAvailability {
+    private static var probing = false
+    private static var lastProbe: Date?
+    static let probeGap: TimeInterval = 600
+
+    static func isOpen() async -> Bool {
+        guard SharingAPIConfiguration.groupRecoveryRuntimeEnabled else { return false }
+        let gate = GroupRecoveryServerGate.shared
+        switch gate.state {
+        case .on: return true
+        case .off: return false
+        case .unknown: break
+        }
+        guard !probing, lastProbe.map({ Date().timeIntervalSince($0) >= probeGap }) ?? true else { return false }
+        probing = true; lastProbe = Date(); defer { probing = false }
+        let configuration = SharingAPIConfiguration.current
+        guard let endpoint = configuration.baseURL else { return false }
+        let environment: RootSyncStore.Environment = configuration.releaseMode == "production" ? .production : .staging
+        let namespace = GroupWindowClientProvider.namespace
+        let root: Data? = await Task.detached { () -> Data? in
+            if let local = try? currentRegisteredRoot(namespace: namespace) { return local }
+            guard let sync = try? makeRootSyncStore(environment: environment) else { return nil }
+            return try? await sync.availableRoots().first?.privateKey
+        }.value
+        guard let root,
+              let client = try? GroupRecoveryClient(endpoint: endpoint, environment: environment.rawValue, root: root,
+                  transport: GroupURLSessionTransport(), journal: GroupRecoveryNoStore(), enabled: true)
+        else { return false }
+        // Automatic: within this iPhone's call budget, never the person's.
+        try? await SharingPersonAction.automatic { try await client.probe() }
+        return gate.state == .on
+    }
 }
 
 extension GroupRecoveryLiveModel {
@@ -708,5 +752,4 @@ extension GroupRecoveryLiveModel {
         }
     }
 }
-#endif
 #endif

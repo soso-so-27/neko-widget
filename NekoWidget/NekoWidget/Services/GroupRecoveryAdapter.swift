@@ -1,4 +1,3 @@
-#if DEBUG || INTERNAL_PRESENTATION
 import Foundation
 import Combine
 
@@ -180,4 +179,3 @@ struct GroupRecoveryClientSession: GroupRecoverySession {
         }
     }
 }
-#endif

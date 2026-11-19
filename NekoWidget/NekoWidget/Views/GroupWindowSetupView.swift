@@ -1713,7 +1713,7 @@ enum GroupWindowClientProvider {
               let endpoint = configuration.baseURL
         else { return nil }
         return try? ProductionGroupWindowClient(endpoint: endpoint, namespace: namespace,
-            recoveryEnabled: SharingAPIConfiguration.ownerStagingTwoDeviceEnabled)
+            recoveryEnabled: SharingAPIConfiguration.groupRecoveryRuntimeEnabled)
     }()
 
     /// What the まど tab and the photo screens use: the production adapter, or
