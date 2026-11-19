@@ -331,8 +331,11 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         try await registeredIdentity()
     }
 
-    func familyPhotoReportReplies() async throws -> [FamilyPhotoReportReply] {
-        guard let identity = try load(GroupDeviceIdentity.self, "identity"), identity.registered else {
+    /// 11/20: `notebookIdentity` is the identity the family notebook uses
+    /// (FamilyNotebookIdentityChoice's recovered one after 機種変更); nil
+    /// reads with this client's usual identity, as before.
+    func familyPhotoReportReplies(as notebookIdentity: GroupDeviceIdentity? = nil) async throws -> [FamilyPhotoReportReply] {
+        guard let identity = try notebookIdentity ?? load(GroupDeviceIdentity.self, "identity"), identity.registered else {
             throw GroupClientError.authenticationRequired
         }
         struct Page: Decodable { let schemaVersion: Int; let replies: [FamilyPhotoReportReply] }
