@@ -206,6 +206,15 @@ const PUBLIC_1_0_PAGES = Object.freeze([
 ].map(page => Object.freeze({ ...page, forbiddenPhrases: [SHARING_BETA_BOUNDARY_PHRASE, "完全ローカル版", "新規の暗号化通報受付は停止",
   "毎日の入れ替わりはPlusの機能", "毎日新しい1枚に入れ替わるのはPlusの機能", "最初の1枚がそのまま残ります"] })));
 
+const MEDIA_STAGING_POLICY_BASE = "https://soso-so-27.github.io/neko-widget/";
+const MEDIA_STAGING_PUBLIC_PAGES = PUBLIC_1_0_PAGES.map(page => page.name === "privacy"
+  ? {
+      ...page,
+      visibleRevisionDate: "2026-11-19",
+      requiredPhrases: [...page.requiredPhrases, "家族の手帳を作った人が猫ごとに選んだ代表写真"],
+    }
+  : page);
+
 const PROFILE_DEFINITIONS = Object.freeze({
   "public-1.0": Object.freeze({ pages: PUBLIC_1_0_PAGES, forbiddenBaseSuffix: "/app/", requiredSharingBetaLink: false }),
   "sharing-beta": Object.freeze({
@@ -690,12 +699,16 @@ export async function checkPublicPolicySite({
     throw new Error(`${profile} policy site base must not end in ${profileDefinition.forbiddenBaseSuffix}`);
   }
   await requirePublicDns(baseUrl.hostname, lookupImpl);
-  const pageUrls = profileDefinition.pages.map((page) => new URL(page.path, baseUrl));
+  // Media-staging follows the GitHub Pages publication. The public custom
+  // domain uses its own reviewed content date under the same contract revision.
+  const expectedPages = profile === "public-1.0" && normalizedBase === MEDIA_STAGING_POLICY_BASE
+    ? MEDIA_STAGING_PUBLIC_PAGES : profileDefinition.pages;
+  const pageUrls = expectedPages.map((page) => new URL(page.path, baseUrl));
   const expectedPageUrls = new Set(pageUrls.map((url) => url.href));
   const requiredSameOriginUrls = new Set(
     profileDefinition.requiredSharingBetaLink ? [new URL("../", baseUrl).href] : [],
   );
-  const pages = await Promise.all(profileDefinition.pages.map((page, index) => fetchPolicyPage({
+  const pages = await Promise.all(expectedPages.map((page, index) => fetchPolicyPage({
     page,
     pageUrl: pageUrls[index],
     baseUrl,
