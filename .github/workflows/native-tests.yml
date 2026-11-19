@@ -27,6 +27,7 @@ jobs:
   scope:
     runs-on: ubuntu-24.04
     outputs:
+      mac: ${{ steps.ordinary.outputs.mac }}
       ui: ${{ steps.scope.outputs.ui }}
       matrix: ${{ steps.scope.outputs.matrix }}
     steps:
@@ -34,7 +35,12 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - id: ordinary
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 NekoWidget/ci/ordinary_ci_scope.py
       - id: scope
+        if: steps.ordinary.outputs.mac == 'true'
         env:
           EVENT: ${{ github.event_name }}
           REQUESTED_ROUTE: ${{ inputs.route }}
@@ -46,7 +52,10 @@ jobs:
           import os, re, subprocess, json
           base = os.environ.get('BASE', '')
           always = os.environ['EVENT'] in ('schedule', 'workflow_dispatch') or not base.strip('0')
-          paths = [] if always else subprocess.check_output(['git','diff','--name-only',base,'HEAD'],text=True).splitlines()
+          try:
+              paths = [] if always else subprocess.check_output(['git','diff','--name-only','--no-renames','-z',base,'HEAD']).decode('utf-8').split('\0')
+          except (subprocess.CalledProcessError, UnicodeDecodeError):
+              always, paths = True, []
           ui = always or any(re.search(r'(CareHandoff|Evacuation|Veterinary|LostCat|Showcase|Tool|CatCare|CatHousehold|PhotoNote|NekoWidgetTests|NekoWidgetUITests|run-native|native-ui|native-tests|project\.pbxproj|\.xcscheme)', p) for p in paths)
           with open(os.environ['GITHUB_OUTPUT'],'a') as f: f.write('ui=' + str(ui).lower() + '\n')
           routes = ['standard','empty','ipad','widget','movie']
@@ -59,7 +68,8 @@ jobs:
           PY
   output:
     name: App-hosted output XCTest
-    if: github.event_name != 'workflow_dispatch' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
+    needs: scope
+    if: needs.scope.outputs.mac == 'true' && github.event_name != 'workflow_dispatch' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: macos-15
     timeout-minutes: 30
     env:
@@ -78,7 +88,7 @@ jobs:
   ui:
     name: UI（報告のみ・直し中）${{ matrix.route }} / ${{ matrix.shard }}
     needs: [output, scope]
-    if: always() && !cancelled() && needs.scope.outputs.ui == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+    if: always() && !cancelled() && needs.scope.result == 'success' && needs.scope.outputs.ui == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
     continue-on-error: true
     runs-on: macos-15
     timeout-minutes: 90
