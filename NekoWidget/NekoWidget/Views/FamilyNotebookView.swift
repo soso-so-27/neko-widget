@@ -77,11 +77,8 @@ final class FamilyNotebookPrototype: ObservableObject {
         if let fixtureCats { return fixtureCats.map { FamilyCat(id: $0.id, toolID: $0.toolID, name: $0.name) } }
 #endif
         guard let snapshot else { return [] }
-        var seen = Set<UUID>()
-        return snapshot.activeMappings.compactMap { mapping in
-            guard mapping.recordID == nil, let toolID = mapping.toolCatID, seen.insert(mapping.familyCatID).inserted,
-                  snapshot.fieldState(for: .init(familyCatID: mapping.familyCatID, field: nil))?.isDeleted != true else { return nil }
-            return FamilyCat(id: mapping.familyCatID, toolID: toolID, name: name(of: mapping.familyCatID))
+        return FamilyNotebookCatCareBridge.listedCats(in: snapshot).map { cat in
+            FamilyCat(id: cat.familyCatID, toolID: cat.toolCatID, name: name(of: cat.familyCatID))
         }
     }
 
@@ -376,10 +373,9 @@ final class FamilyNotebookPrototype: ObservableObject {
         reload()
         guard hasFamily, let store, let snapshot, let author = realAuthor else { return }
         do {
-            let mappings = try FamilyNotebookCatCareBridge.mappings(for: snapshot,
+            try FamilyNotebookCatCareBridge.linkFamilyCats(store, snapshot: snapshot,
                 existingLocalIDs: Set(CatCareStore.shared.state?.cats.map(\.catID) ?? []),
-                person: author.personID, profiles: profileOrder)
-            if mappings != snapshot.activeMappings { _ = try store.applyImport(.init(familyID: snapshot.familyID, entries: [], mappings: mappings), author: author) }
+                author: author, profiles: profileOrder)
             reload(); applyFamilyWrites(reportsFailure: reportsFailure)
             relinkOwnCats()
             writeInitialPositions()
@@ -887,7 +883,7 @@ final class FamilyNotebookPrototype: ObservableObject {
             return realMemberIDs.map { id in
                 if id == realAuthor?.personID, let realAuthor { return realAuthor }
                 return snapshot?.operations.filter { $0.author.personID == id }.max { $0.version < $1.version }?.author
-                    ?? .init(personID: id, displayName: realMemberNames[id] ?? "家族の人")
+                    ?? .init(personID: id, displayName: realMemberNames[id] ?? FamilyNotebookAuthorName.unnamed)
             }
         }
         let removed = Set(UserDefaults.standard.stringArray(forKey: Self.removedKey) ?? [])

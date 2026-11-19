@@ -1,6 +1,6 @@
 import Foundation
 
-// The seven two-device scenarios. Each one makes its own family with fresh
+// The eight two-device scenarios. Each one makes its own family with fresh
 // synthetic people, so a failure in one does not leave state for the next.
 //
 // Not driven anywhere here (UIKit, a singleton, PhotoKit or Apple's servers);
@@ -32,6 +32,7 @@ struct Family {
         ("S5", "member B changes iPhone, reports A's photo, the operator stops it", s5),
         ("S6", "A reinstalls and adds the same cat page again (PR #1089)", s6),
         ("S7", "member B reinstalls without 機種変更", s7),
+        ("S8", "member B changes iPhone, then reinstalls without 機種変更 (its name wiped)", s8),
     ]
 
     // MARK: Common steps
@@ -44,6 +45,8 @@ struct Family {
 
         Log.step("A creates the family notebook")
         let id = UUID()
+        // The notebook screen remembers the typed name before it creates or joins.
+        a.rememberedName = "合成のA"
         try await a.service.createFamily(operationID: id)
         try await settle("A's first key", [a]) { a.inFamily }
         try expect(a.service.currentFamilyID == id, "A's notebook is the one it created")
@@ -60,6 +63,7 @@ struct Family {
         let b = try await Device.make("B", relay: relay, cloud: PersonCloud())
         let preview = try await b.service.previewInvitation(invitation.link)
         try expect(preview.catNames == ["合成ねこ"], "B sees the invitation's cat names (got \(preview.catNames))")
+        b.rememberedName = "合成のB"
         _ = try await b.service.join(preview, operationID: UUID())
         let waiting = await b.pass()
         try expect(waiting == .pendingApproval, "B waits for approval (got \(String(describing: waiting)))")
@@ -479,9 +483,66 @@ struct Family {
         let cats = try familyCats(f.b)
         try expect(cats == [f.cat], "B's notebook has \(cats.count) cats")
 
+        Log.step("B's notebook screen lists the cat (B never wrote: the unnamed word, not remembered)")
+        try expect(f.b.rememberedName.isEmpty, "the reinstall wiped B's remembered name")
+        let listed = try f.b.notebookScreenCats()
+        try expect(listed == [f.cat], "B's 「猫」 list has \(listed.count) cats")
+        let author = try required(f.b.service.author, "B has no author")
+        try expect(author.displayName == FamilyNotebookAuthorName.unnamed && f.b.rememberedName.isEmpty,
+                   "B writes as the unnamed word and keeps no name (got \(author.displayName))")
+
         Log.step("B reads the current photo again")
         let seen = try await seePhoto(f.b, f.cat, asset: photo.asset)
         try expect(seen.jpeg == photo.jpeg && seen.author == creator, "B reads A's current pixels again")
         return nil
+    }
+
+    // MARK: S8
+
+    static func s8(_ relay: Relay) async throws -> String? {
+        let f = try await makeFamily(relay)
+        let person = try required(f.b.notebookIdentity?.personID, "B has no person")
+        let rosterName = try required(f.a.service.memberNames[person], "A's roster has no name for B")
+
+        Log.step("B writes one line on the cat")
+        let firstStore = try required(f.b.service.notebook, "B has no notebook copy")
+        try firstStore.edit(target: .init(familyCatID: f.cat, field: .marks), value: .text("合成のしるし1"),
+                            author: try required(f.b.service.author, "B has no author"))
+        try await settle("B's line sent", [f.b]) { try firstStore.pendingOperations().isEmpty }
+
+        Log.step("B's new iPhone: only B's iCloud Keychain on it; 機種変更")
+        let b2 = try await Device.make("B2", relay: relay, cloud: f.b.cloud)
+        let entrance = await b2.pass()
+        try expect(entrance == .notInFamily, "nothing of the notebook before 機種変更 (got \(String(describing: entrance)))")
+        let recovered = try await recoverAlone(b2, person: person, family: f.id)
+        let newDevice = try recovered.deviceID
+        await b2.pass()
+        try expect(b2.notebookDeviceID == newDevice, "B2's notebook uses the recovered device")
+        try await settle("B2 has the keys", [f.a, b2]) { b2.inFamily }
+
+        Log.step("B2 deletes the app and installs it again; no 機種変更")
+        try await b2.reinstall()
+        try expect(b2.rememberedName.isEmpty, "the reinstall wiped B2's remembered name")
+        let first = await b2.pass()
+        try expect(first != nil, "the first read after the reinstall answers a state, not a failure")
+        try await settle("B2 reads the notebook again", [b2, f.a]) { b2.inFamily }
+        try expect(b2.notebookDeviceID == newDevice, "B2 keeps the recovered device")
+
+        Log.step("B2's notebook screen: the family's name for B, and the cat in the list")
+        let author = try required(b2.service.author, "B2 has no author (the bug: the 「猫」 list stays empty)")
+        try expect(author.personID == person, "B2 writes as B")
+        try expect(author.displayName == rosterName, "B2's name is the roster's (got \(author.displayName))")
+        try expect(b2.rememberedName == rosterName, "B2 remembers the name again")
+        let listed = try b2.notebookScreenCats()
+        try expect(listed == [f.cat], "B2's 「猫」 list has \(listed.count) cats")
+
+        Log.step("B2 writes; A reads it as B's")
+        let store = try required(b2.service.notebook, "B2 has no notebook copy")
+        let line = try store.edit(target: .init(familyCatID: f.cat, field: .marks), value: .text("合成のしるし2"), author: author)
+        try await settle("B2's line sent", [b2]) { try store.pendingOperations().isEmpty }
+        try await settle("A has B2's line", [f.a]) {
+            try f.a.service.notebook?.snapshot().operations.contains { $0.id == line.id && $0.author == author } == true
+        }
+        return "UserDefaults is Device.rememberedName; CatCareStore and the screen's other steps are not driven"
     }
 }

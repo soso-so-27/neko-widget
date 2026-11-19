@@ -310,6 +310,9 @@ struct Drained: Decodable {
     /// The identity the last notebook session opened with.
     private(set) var notebookIdentity: GroupDeviceIdentity?
     private(set) var lastState: FamilySharingState?
+    /// GroupDisplayName.remembered: UserDefaults on an iPhone, so deleting
+    /// the app wipes it. The notebook screen remembers it on create and join.
+    var rememberedName = ""
 
     init(_ name: String, relay: Relay, cloud: PersonCloud, keychain: DeviceKeychain = DeviceKeychain(), billing: BillingCredential? = nil) {
         self.name = name; self.relay = relay; self.cloud = cloud; self.keychain = keychain; self.billing = billing
@@ -340,7 +343,8 @@ struct Drained: Decodable {
             transport: relay.transport, outboxDirectory: outbox, billingSigner: HarnessBillingSigner(credential: billing))
         service = ProductionFamilyNotebookSharingService(provider: { [unowned self] in try await self.openSession() },
             billing: { [unowned self] in try await self.client.connectExistingBillingAccount() },
-            displayName: { [unowned self] in "合成の" + self.name }, catNames: { ["合成ねこ"] },
+            displayName: { [unowned self] in try GroupWire.name(self.rememberedName) },
+            rememberName: { [unowned self] in self.rememberedName = $0 }, catNames: { ["合成ねこ"] },
             hasExistingIdentity: { [unowned self] in
                 if try await self.client.hasExistingIdentity() { return true }
                 return try await self.recoveredIdentity() != nil
@@ -353,11 +357,13 @@ struct Drained: Decodable {
     }
 
     /// Deleting the app and installing it again: Application Support (and
-    /// with it the notebook copy and journals) is gone, the device-only
-    /// Keychain and the iCloud Keychain stay. iOS gives a new push token.
+    /// with it the notebook copy and journals) and UserDefaults are gone,
+    /// the device-only Keychain and the iCloud Keychain stay. iOS gives a
+    /// new push token.
     func reinstall() async throws {
         try? FileManager.default.removeItem(at: support)
         support = Self.newSupportFolder(name)
+        rememberedName = ""
         pushToken = Data((0..<32).map { _ in UInt8.random(in: 0...255) })
         try await launch()
     }
@@ -505,6 +511,18 @@ struct Drained: Decodable {
     /// The cat's representative photo as the cat's page reads it.
     func photo(_ cat: UUID) async throws -> FamilyNotebookPhotoLoad? {
         try await service.representativePhotos(familyCatIDs: [cat])[cat]
+    }
+
+    /// The notebook screen opens (FamilyNotebookPrototype.attachReal after a
+    /// read): the service's author, the cats linked through the bridge, and
+    /// the 「猫」 list it shows (familyCats). No cat pages of its own here.
+    func notebookScreenCats() throws -> [UUID] {
+        let store = try required(service.notebook, "\(name) has no notebook copy")
+        let author = try required(service.author, "\(name) has no author (the screen stops before its cats)")
+        let snapshot = try store.snapshot()
+        try expect(!snapshot.sharingEnded, "\(name)'s notebook is shared")
+        try FamilyNotebookCatCareBridge.linkFamilyCats(store, snapshot: snapshot, existingLocalIDs: [], author: author, profiles: [])
+        return FamilyNotebookCatCareBridge.listedCats(in: try store.snapshot()).map { $0.familyCatID }
     }
 
     /// POSTs this iPhone's notebook device sent under /v3/family-notebooks.

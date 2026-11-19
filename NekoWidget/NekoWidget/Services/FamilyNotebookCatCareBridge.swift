@@ -200,6 +200,25 @@ enum FamilyNotebookCatCareBridge {
         }
         return result
     }
+    /// FamilyNotebookPrototype.attachReal: this iPhone's links for the
+    /// family's cats (`mappings`), written only when they changed.
+    static func linkFamilyCats(_ store: FamilyNotebookStore, snapshot: FamilyNotebookSnapshot, existingLocalIDs: Set<UUID>,
+                               author: FamilyNotebookAuthor, profiles: [UUID]) throws {
+        let links = try Self.mappings(for: snapshot, existingLocalIDs: existingLocalIDs, person: author.personID, profiles: profiles)
+        if links != snapshot.activeMappings {
+            _ = try store.applyImport(.init(familyID: snapshot.familyID, entries: [], mappings: links), author: author)
+        }
+    }
+    /// The notebook's 「猫」 list (FamilyNotebookPrototype.familyCats): one
+    /// row per family cat linked to a cat on this iPhone, removed cats left out.
+    static func listedCats(in snapshot: FamilyNotebookSnapshot) -> [(familyCatID: UUID, toolCatID: UUID)] {
+        var seen = Set<UUID>()
+        return snapshot.activeMappings.compactMap { mapping -> (familyCatID: UUID, toolCatID: UUID)? in
+            guard mapping.recordID == nil, let toolID = mapping.toolCatID, seen.insert(mapping.familyCatID).inserted,
+                  snapshot.fieldState(for: .init(familyCatID: mapping.familyCatID, field: nil))?.isDeleted != true else { return nil }
+            return (mapping.familyCatID, toolID)
+        }
+    }
     private static func sourcePrefix(_ cat: UUID, _ collection: FamilyNotebookCollection) -> String {
         "migration:v1:cat-care:" + cat.uuidString.lowercased() + ":" + collection.rawValue + ":"
     }

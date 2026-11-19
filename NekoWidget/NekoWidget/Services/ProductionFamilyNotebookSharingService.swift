@@ -127,6 +127,7 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     private let hasExistingIdentity: @MainActor () async throws -> Bool
     private let hasPersonalPlus: @MainActor () -> Bool
     private let displayName: @MainActor () throws -> String
+    private let rememberName: @MainActor (String) -> Void
     private let catNames: @MainActor () -> [String]
     private let privateFarewellDay: @MainActor (UUID, UUID?) throws -> String?
     private let now: @MainActor () -> Date
@@ -173,13 +174,24 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     private let moderationRecipient: @MainActor () -> (keyID: String, publicKey: Data)?
     var notebook: FamilyNotebookStore? { session?.notebook }
     var author: FamilyNotebookAuthor? {
-        guard let identity = session?.identity, let name = try? displayName() else { return nil }
-        return .init(personID: identity.personID, displayName: name)
+        guard let identity = session?.identity else { return nil }
+        if let name = try? displayName() { return .init(personID: identity.personID, displayName: name) }
+        // 11/20: deleting the app wipes the remembered name while the keys
+        // stay. A member of the family read last writes under the name the
+        // family already knows, worked out on each read (FamilyNotebookAuthorName).
+        guard currentFamilyID != nil else { return nil }
+        let found = FamilyNotebookAuthorName.recovered(
+            written: FamilyNotebookAuthorName.written(by: identity.personID, in: try? notebook?.snapshot()),
+            known: memberNames[identity.personID])
+        if found.remember { rememberName(found.name) }
+        return .init(personID: identity.personID, displayName: found.name)
     }
     var sendsInvitations: Bool { true }
 
     init(provider: @escaping SessionProvider, billing: @escaping @MainActor () async throws -> Void,
-         displayName: @escaping @MainActor () throws -> String, catNames: @escaping @MainActor () -> [String],
+         displayName: @escaping @MainActor () throws -> String,
+         rememberName: @escaping @MainActor (String) -> Void = { _ in },
+         catNames: @escaping @MainActor () -> [String],
          privateFarewellDay: @escaping @MainActor (UUID, UUID?) throws -> String? = { _, _ in nil },
          now: @escaping @MainActor () -> Date = { Date() },
          hasPersonalPlus: @escaping @MainActor () -> Bool = { false },
@@ -188,6 +200,7 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
          moderationRecipient: @escaping @MainActor () -> (keyID: String, publicKey: Data)? = { nil },
          photoTrace: @escaping FamilyPhotoDeliveryTrace = { FamilyPhotoDeliveryLog.system($0) }) {
         self.provider = provider; self.billing = billing; self.displayName = displayName; self.catNames = catNames
+        self.rememberName = rememberName
         self.privateFarewellDay = privateFarewellDay; self.now = now
         self.hasPersonalPlus = hasPersonalPlus; self.hasExistingIdentity = hasExistingIdentity
         self.photoRuntimeEnabled = photoRuntimeEnabled; self.photoTransport = photoTransport; self.photoTrace = photoTrace
@@ -925,5 +938,31 @@ private extension Array where Element == FamilyNotebookAdmissionClient.Request {
                 displayName: client.requestName(request, family: family), generation: generation))
         }
         return result
+    }
+}
+
+/// 11/20: the name a member writes under when this iPhone has no remembered
+/// one (GroupDisplayName.remembered lives in UserDefaults, which deleting the
+/// app wipes; the keys and the membership stay).
+enum FamilyNotebookAuthorName {
+    /// FamilyNotebookPrototype.members' word for a member without a known name.
+    static let unnamed = "家族の人"
+
+    /// The names this person's own writing in the notebook carries, newest first.
+    static func written(by personID: String, in snapshot: FamilyNotebookSnapshot?) -> [String] {
+        (snapshot?.operations ?? []).filter { $0.author.personID == personID }
+            .sorted { $0.version > $1.version }.map(\.author.displayName)
+    }
+
+    /// The newest valid name of the person's own writing, else the name the
+    /// family's admission gave this iPhone; either is kept as the remembered
+    /// name. Neither known: `unnamed`, not kept, so a later read can still
+    /// find the real one.
+    static func recovered(written: [String], known: String?) -> (name: String, remember: Bool) {
+        let candidates = written + (known.map { [$0] } ?? [])
+        for candidate in candidates where candidate != unnamed {
+            if let name = try? GroupWire.name(candidate) { return (name, true) }
+        }
+        return (unnamed, false)
     }
 }
