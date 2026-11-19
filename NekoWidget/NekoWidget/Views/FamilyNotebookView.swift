@@ -30,6 +30,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     private var realMemberIDs: [String] = []
     private var applyingRemote = false
     private var notebookObserver: NSObjectProtocol?
+    private var readableObserver: NSObjectProtocol?
     private static let bindingKey = FamilyNotebookLocalBinding.key
     var isReal: Bool { FamilyNotebookServiceFactory.productionRequested }
     var currentAuthor: FamilyNotebookAuthor? { isReal ? realAuthor : Self.me }
@@ -402,19 +403,15 @@ final class FamilyNotebookPrototype: ObservableObject {
 
     private init() {
         if !isReal, let id = UserDefaults.standard.string(forKey: Self.familyKey).flatMap(UUID.init(uuidString:)) { open(id) }
-        if isReal {
-            do {
-                if let binding = try FamilyNotebookLocalBinding.load(support: AppRecordDataset.support) {
-                    store = try .init(directory: binding.directory(support: AppRecordDataset.support), familyID: binding.familyID, deviceID: binding.deviceID)
-                    realAuthor = binding.author; reload()
-                }
-            } catch { message = "家族の手帳を読み込めませんでした。少し待ってから、もう一度お試しください。" }
-        }
+        if isReal { openRealBinding() }
         CatCareStore.shared.willSave = { [weak self] before, after in
             guard let self, self.isReal, !self.applyingRemote else { return }
             try self.saveRealChanges(before, after)
         }
         CatCareStore.shared.didSave = { [weak self] before, after in self?.catCareDidSave(before, after) }
+        readableObserver = NotificationCenter.default.addObserver(forName: .appRecordsReadableAgain, object: nil, queue: nil) { [weak self] _ in
+            Task { @MainActor in self?.reopenIfUnread() }
+        }
         notebookObserver = NotificationCenter.default.addObserver(forName: .appRecordsCommitted, object: nil, queue: nil) { [weak self] note in
             guard (note.object as? URL)?.lastPathComponent == "family-notebook.json" else { return }
             Task { @MainActor in
@@ -428,6 +425,26 @@ final class FamilyNotebookPrototype: ObservableObject {
                 }
             }
         }
+    }
+
+    private func openRealBinding() {
+        do {
+            if let binding = try FamilyNotebookLocalBinding.load(support: AppRecordDataset.support) {
+                store = try .init(directory: binding.directory(support: AppRecordDataset.support), familyID: binding.familyID, deviceID: binding.deviceID)
+                realAuthor = binding.author; reload()
+                if snapshot != nil, message == Self.unreadMessage { message = nil }
+            }
+        } catch { message = Self.unreadMessage }
+    }
+    private static let unreadMessage = "家族の手帳を読み込めませんでした。少し待ってから、もう一度お試しください。"
+
+    /// 11/19 (build 394): a launch only for the family's silent push, or one
+    /// before the first unlock, may find the notebook unread: it was kept
+    /// unread for the whole launch. Opened again here (the push, unlock);
+    /// an open notebook is left as it is.
+    func reopenIfUnread() {
+        guard isReal, store == nil else { return }
+        openRealBinding()
     }
 
     private static var root: URL? {

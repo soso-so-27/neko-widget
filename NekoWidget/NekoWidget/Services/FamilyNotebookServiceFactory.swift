@@ -187,18 +187,21 @@ enum FamilyPhotoDeliveryDiagnostics {
 /// between, in 診断ログ of the owner's trial builds. No ID, token or key.
 enum FamilyDevicePushDiagnostics {
     enum Outcome: String { case read, notRead, skipped }
+    /// 11/19 (build 394): why it was skipped, or what it waited for first.
+    enum Reason: String { case notReal, noFamily, working, passRunning, budgetPaused }
     static func received() {
 #if INTERNAL_PRESENTATION && !NEKO_SHARE_EXTENSION
         SharedLog.app.info("family-device-push", "Family device push received",
                            metadata: ["familyDevicePush": "received"])
 #endif
     }
-    static func finished(_ outcome: Outcome, since start: Date) {
+    static func finished(_ outcome: Outcome, since start: Date, reason: Reason? = nil) {
 #if INTERNAL_PRESENTATION && !NEKO_SHARE_EXTENSION
         let milliseconds = max(0, Int(Date().timeIntervalSince(start) * 1_000))
-        SharedLog.app.info("family-device-push", "Family device push pass finished",
-                           metadata: ["familyDevicePush": "finished", "familyDevicePushOutcome": outcome.rawValue,
-                                      "durationMs": String(milliseconds)])
+        var metadata = ["familyDevicePush": "finished", "familyDevicePushOutcome": outcome.rawValue,
+                        "durationMs": String(milliseconds)]
+        if let reason { metadata["familyDevicePushReason"] = reason.rawValue }
+        SharedLog.app.info("family-device-push", "Family device push pass finished", metadata: metadata)
 #endif
     }
 }

@@ -61,7 +61,7 @@ class GroupRecoveryScreenTests(unittest.TestCase):
             "choose": "こちらを使う",
             "inNothing": "まだどこにも入っていない",
             "familyNotebook": "家族の手帳",
-            "notebookWaiting": "家族の誰かがアプリを開くと戻ります",
+            "notebookWaiting": "家族のだれかが ねこのまど を開くと、手帳が戻ります",
         })
 
     def test_no_mechanism_or_forever_words(self):
@@ -238,7 +238,7 @@ class GroupRecoveryScreenTests(unittest.TestCase):
         read = sharing.split("private func read(reportsFailure: Bool) async -> Bool {", 1)[1].split("\n    }\n", 1)[0]
         self.assertLess(read.index("restartPending == true { return false }"), read.index("let syncing = "))
         found, _ = words()
-        self.assertEqual(found["notebookWaiting"], "家族の誰かがアプリを開くと戻ります")
+        self.assertEqual(found["notebookWaiting"], "家族のだれかが ねこのまど を開くと、手帳が戻ります")
         presentation = PRESENTATION.read_text(encoding="utf-8")
         self.assertIn("return Self(title: GroupRecoveryWords.notebookWaiting, message: nil,", presentation)
         view = VIEW.read_text(encoding="utf-8")

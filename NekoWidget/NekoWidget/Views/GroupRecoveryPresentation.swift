@@ -59,7 +59,7 @@ enum GroupRecoveryWords {
     static let inNothing = "まだどこにも入っていない"
     static let familyNotebook = "家族の手帳"
     /// 家族の手帳が鍵を待つ間の 1 行（家族の誰かの iPhone が、この iPhone を迎え入れる）。
-    static let notebookWaiting = "家族の誰かがアプリを開くと戻ります"
+    static let notebookWaiting = "家族のだれかが ねこのまど を開くと、手帳が戻ります"
 
     /// 本人の 1 つを、入っている所で言う（作った日や順番では選ばせない）。
     static func describe(windowCount: Int, openableWindowNames: [String], inFamilyNotebook: Bool) -> String {

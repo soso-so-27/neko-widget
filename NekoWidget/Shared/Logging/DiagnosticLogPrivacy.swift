@@ -323,6 +323,7 @@ enum DiagnosticLogPrivacy {
         // 11/19: the family notebook's device push (FamilyDevicePushDiagnostics).
         "familyDevicePush": ["finished", "received"],
         "familyDevicePushOutcome": ["notRead", "read", "skipped"],
+        "familyDevicePushReason": ["budgetPaused", "noFamily", "notReal", "passRunning", "working"],
         "deliveryStage": [
             "load-outbox", "reserve", "save-reservation", "read-ciphertext",
             "upload", "save-upload", "begin-commit", "commit", "save-commit", "cleanup",
