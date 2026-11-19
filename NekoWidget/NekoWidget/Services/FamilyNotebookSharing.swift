@@ -19,6 +19,8 @@ final class FamilyNotebookSharing: ObservableObject {
     @Published var failure: FamilySharingError?
     @Published private(set) var isWorking = false
     private var refreshing = false
+    /// A whole read or a requests read is running (11/19: the device push waits for it).
+    var isReading: Bool { refreshing }
     /// 11/19: once a launch, the first read that knows the family asks for
     /// the notification permission and token it registers.
     private var askedForPushPreference = false
@@ -433,16 +435,31 @@ final class FamilyNotebookAutoCheck {
     /// person's family notebook (FamilyDeviceRegisteredPush). One full pass
     /// now, so this iPhone signs the new device in and wraps the keys for it
     /// at once. Automatic (this iPhone's call budget), skipped while the
-    /// budget is paused or another pass runs, within the time iOS gives.
+    /// budget is paused, within the time iOS gives.
+    ///
+    /// 11/19 (build 394): iOS may launch the app in the background for this
+    /// push alone; the notebook is opened here first (`reopenIfUnread`). A
+    /// pass already running may be a light one (requests only) or may have
+    /// read the roster before the device joined: this one waits for it, then
+    /// makes its own full pass, instead of being skipped behind it.
     func deviceRegisteredPush() async -> Bool {
         let started = Date()
-        guard model.isReal, model.hasFamily, !sharing.isWorking, loop == nil || sleeping,
-              SharingAutoCallBudget.shared.pausedUntil() == nil else {
-            FamilyDevicePushDiagnostics.finished(.skipped, since: started)
+        model.reopenIfUnread()
+        let skip: FamilyDevicePushDiagnostics.Reason? = !model.isReal ? .notReal : !model.hasFamily ? .noFamily
+            : SharingAutoCallBudget.shared.pausedUntil() == nil ? nil : .budgetPaused
+        if let skip {
+            FamilyDevicePushDiagnostics.finished(.skipped, since: started, reason: skip)
             return false
         }
+        let waited = pushBusyReason
+        let work = Task { () -> Bool in
+            while pushBusyReason != nil, Date().timeIntervalSince(started) < Self.pushWaitLimit {
+                try? await Task.sleep(for: .milliseconds(250))
+                if Task.isCancelled { return false }
+            }
+            return await SharingPersonAction.automatic { await fullPass() }
+        }
         #if canImport(UIKit)
-        let work = Task { await SharingPersonAction.automatic { await fullPass() } }
         // UIKit calls the expiration on the main thread.
         let handle = UIApplication.shared.beginBackgroundTask(withName: "Family notebook device") {
             MainActor.assumeIsolated { work.cancel() }
@@ -450,11 +467,23 @@ final class FamilyNotebookAutoCheck {
         let read = await work.value
         if handle != .invalid { UIApplication.shared.endBackgroundTask(handle) }
         #else
-        let read = await SharingPersonAction.automatic { await fullPass() }
+        let read = await work.value
         #endif
         if read { lastPassAt = Date(); lastFullAt = lastPassAt }
-        FamilyDevicePushDiagnostics.finished(read ? .read : .notRead, since: started)
+        FamilyDevicePushDiagnostics.finished(read ? .read : .notRead, since: started, reason: waited)
         return read
+    }
+
+    /// The push waits at most this long for a pass in flight, then makes its
+    /// own (a read still running then makes it end unread).
+    static let pushWaitLimit: TimeInterval = 20
+
+    /// What the device push waits for: a person's operation (`working`), or
+    /// a pass of the schedule, a leaving send or another read (`passRunning`).
+    private var pushBusyReason: FamilyDevicePushDiagnostics.Reason? {
+        if sharing.isWorking { return .working }
+        if (loop != nil && !sleeping) || sharing.isReading { return .passRunning }
+        return nil
     }
 
     private func run(pass first: FamilyAutoCheckPolicy.Pass, delay firstDelay: TimeInterval) async {

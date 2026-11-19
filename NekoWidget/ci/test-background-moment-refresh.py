@@ -145,21 +145,60 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertLess(family.index("FamilyDevicePushDiagnostics.received()"), family.index("Task { @MainActor in"))
         sharing = (ROOT / "NekoWidget/Services/FamilyNotebookSharing.swift").read_text(encoding="utf-8")
         handler = sharing.split("func deviceRegisteredPush() async -> Bool {", 1)[1].split("private func run(pass", 1)[0]
-        skipped = handler.split("else {", 1)[1].split("}", 1)[0]
-        self.assertIn("FamilyDevicePushDiagnostics.finished(.skipped, since: started)", skipped)
-        self.assertLess(handler.index("let read = await work.value"),
-                        handler.index("FamilyDevicePushDiagnostics.finished(read ? .read : .notRead, since: started)"))
+        skipped = handler.split("if let skip {", 1)[1].split("}", 1)[0]
+        self.assertIn("FamilyDevicePushDiagnostics.finished(.skipped, since: started, reason: skip)", skipped)
+        self.assertIn("return false", skipped)
+        self.assertLess(handler.rindex("let read = await work.value"),
+                        handler.index("FamilyDevicePushDiagnostics.finished(read ? .read : .notRead, since: started, reason: waited)"))
         factory = (ROOT / "NekoWidget/Services/FamilyNotebookServiceFactory.swift").read_text(encoding="utf-8")
         diagnostics = factory.split("enum FamilyDevicePushDiagnostics {", 1)[1].split("\n}\n", 1)[0]
         self.assertEqual(diagnostics.count("#if INTERNAL_PRESENTATION && !NEKO_SHARE_EXTENSION"), 2)
         self.assertEqual(diagnostics.count("SharedLog.app.info("), 2)
-        keys = set(re.findall(r'"([A-Za-z]+)":', diagnostics))
-        self.assertEqual(keys, {"familyDevicePush", "familyDevicePushOutcome", "durationMs"})
+        # Keys of the literal and of a subscript (metadata["…"] = …).
+        keys = set(re.findall(r'"([A-Za-z]+)"(?::|] =)', diagnostics))
+        self.assertEqual(keys, {"familyDevicePush", "familyDevicePushOutcome", "familyDevicePushReason", "durationMs"})
+        # 11/19 (build 394): which guard skipped it, or what it waited for:
+        # fixed tokens only.
+        self.assertIn("enum Reason: String { case notReal, noFamily, working, passRunning, budgetPaused }", diagnostics)
+        self.assertIn('if let reason { metadata["familyDevicePushReason"] = reason.rawValue }', diagnostics)
         for token in ("deviceID", "personID", "token", "familyID", "userInfo"):
             self.assertNotIn(token, diagnostics)
         privacy = (ROOT / "Shared/Logging/DiagnosticLogPrivacy.swift").read_text(encoding="utf-8")
         self.assertIn('"familyDevicePush": ["finished", "received"],', privacy)
         self.assertIn('"familyDevicePushOutcome": ["notRead", "read", "skipped"],', privacy)
+        self.assertIn('"familyDevicePushReason": ["budgetPaused", "noFamily", "notReal", "passRunning", "working"],', privacy)
+
+    def test_family_device_push_opens_the_notebook_and_waits_for_a_pass_in_flight(self):
+        # 11/19 (build 394): a launch in the background for the push alone
+        # opens the notebook before the guards; a pass in flight (perhaps a
+        # requests-only one, or one that read the roster before the device
+        # joined) is waited for, then this push makes its own full pass.
+        sharing = (ROOT / "NekoWidget/Services/FamilyNotebookSharing.swift").read_text(encoding="utf-8")
+        handler = sharing.split("func deviceRegisteredPush() async -> Bool {", 1)[1].split("private func run(pass", 1)[0]
+        self.assertLess(handler.index("model.reopenIfUnread()"), handler.index("!model.isReal ? .notReal"))
+        self.assertIn("!model.hasFamily ? .noFamily", handler)
+        self.assertIn(": .budgetPaused", handler)
+        # Busy is waited for, never a skip.
+        guard = handler.split("let skip:", 1)[1].split("if let skip {", 1)[0]
+        for busy in ("isWorking", "sleeping", "loop", "isReading"):
+            self.assertNotIn(busy, guard)
+        work = handler.split("let work = Task {", 1)[1].split("#if canImport(UIKit)", 1)[0]
+        self.assertLess(work.index("while pushBusyReason != nil, Date().timeIntervalSince(started) < Self.pushWaitLimit {"),
+                        work.index("return await SharingPersonAction.automatic { await fullPass() }"))
+        self.assertIn("if Task.isCancelled { return false }", work)
+        self.assertIn("static let pushWaitLimit: TimeInterval = 20", sharing)
+        busy = sharing.split("private var pushBusyReason: FamilyDevicePushDiagnostics.Reason? {", 1)[1].split("\n    }\n", 1)[0]
+        self.assertIn("if sharing.isWorking { return .working }", busy)
+        self.assertIn("if (loop != nil && !sleeping) || sharing.isReading { return .passRunning }", busy)
+        self.assertIn("var isReading: Bool { refreshing }", sharing)
+        # The model opens a notebook left unread (a launch while locked, or
+        # for the push alone) again, and leaves an open one as it is.
+        view = (ROOT / "NekoWidget/Views/FamilyNotebookView.swift").read_text(encoding="utf-8")
+        reopen = view.split("func reopenIfUnread() {", 1)[1].split("\n    }\n", 1)[0]
+        self.assertIn("guard isReal, store == nil else { return }", reopen)
+        self.assertIn("openRealBinding()", reopen)
+        self.assertIn("forName: .appRecordsReadableAgain, object: nil, queue: nil) { [weak self] _ in\n"
+                      "            Task { @MainActor in self?.reopenIfUnread() }", view)
 
     def test_group_background_and_album_notice_paths_survive(self):
         protected = self.service.split("if protectedDataAvailable {", 1)[1].split("}", 1)[0]
