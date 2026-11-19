@@ -10,6 +10,8 @@ import {routeGroupOperator,type GroupOperatorEnvironment,type GroupReviewHost} f
 import {runGroupReportCleanup} from '../src/group-report-cleanup';
 import {runGroupReportOperations,purgeGroupReportRecords} from '../src/group-report-operations';
 import {runGroupRelayCleanup} from '../src/group-cleanup';
+import worker from '../src/index';
+import {FAMILY_PHOTO_MAINTENANCE_CRON,MOMENT_CLEANUP_CRON} from '../src/scheduled';
 
 const settings={...testEnv,GROUP_REPORT_RUNTIME_ENABLED:'YES',GROUP_MODERATION_RUNTIME_ENABLED:'YES',REPORT_INGESTION_RUNTIME_ENABLED:'YES'};
 const image=new Uint8Array([255,216,255,217]);
@@ -282,6 +284,76 @@ describe('group operator selected-evidence workflow',()=>{
 });
 
 describe('group report stage-one durable operations',()=>{
+  it('runs the production report jobs only on the five-minute trigger and only with intake open',async()=>{
+    const f=await fixture();
+    await ageCommittedRecord(f.report.id);
+    const production={...settings,ENVIRONMENT:'production',INTAKE_ENABLED:'YES'} as const;
+    const objectKey=`groups/reports/v3/${randomBase64url(16)}/${randomBase64url(24)}`;
+    await production.MODERATION_MEDIA!.put(objectKey,'synthetic expired evidence');
+    await db.prepare("INSERT INTO group_report_object_deletions VALUES ('test-expired-evidence',?,0,unixepoch()-1,'pending')").bind(objectKey).run();
+    async function tick(cron:string,config:typeof settings) {
+      const jobs:Promise<unknown>[]=[];
+      const ctx={waitUntil(job:Promise<unknown>){jobs.push(job);}} as ExecutionContext;
+      await worker.scheduled({cron} as ScheduledController,config,ctx);
+      await Promise.all(jobs);
+    }
+    async function expectUntouched(){
+      expect(await activeRestrictions(f.report.id)).toEqual([]);
+      expect(await production.MODERATION_MEDIA!.head(objectKey)).not.toBeNull();
+    }
+    await tick(FAMILY_PHOTO_MAINTENANCE_CRON,{...production,REPORT_INGESTION_RUNTIME_ENABLED:'NO'});
+    await expectUntouched();
+    await db.prepare('UPDATE personal_staging_runtime_gate SET generation=generation+1,report_ingestion_enabled=0,updated_at=unixepoch()').run();
+    await tick(FAMILY_PHOTO_MAINTENANCE_CRON,production);
+    await expectUntouched();
+    await db.prepare('UPDATE personal_staging_runtime_gate SET generation=generation+1,report_ingestion_enabled=1,updated_at=unixepoch()').run();
+    await tick(MOMENT_CLEANUP_CRON,production);
+    await expectUntouched();
+    await tick(FAMILY_PHOTO_MAINTENANCE_CRON,production);
+    await tick(FAMILY_PHOTO_MAINTENANCE_CRON,production);
+    expect(await count('group_report_events')).toBe(1);
+    expect(await activeRestrictions(f.report.id)).toMatchObject([{target_id:f.report.momentId}]);
+    expect(await production.MODERATION_MEDIA!.head(objectKey)).toBeNull();
+  });
+
+  it('leaves excess decisions, reminders and evidence jobs for the next invocation',async()=>{
+    // Populate a backlog without sending 102 signed uploads. The decision
+    // guards, revision updates, queue constraints and cleanup queries remain live.
+    const triggers=(await db.prepare(`SELECT name,sql FROM sqlite_master
+      WHERE name IN ('group_report_number_insert','group_report_record_insert')`).all<{name:string;sql:string}>()).results;
+    expect(triggers).toHaveLength(2);
+    for(const {name} of triggers)await db.prepare(`DROP TRIGGER ${name}`).run();
+    try {
+      await db.prepare(`WITH RECURSIVE backlog(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM backlog WHERE i<102)
+        INSERT INTO group_report_numbers(report_id) SELECT 'test-report-'||i FROM backlog`).run();
+      await db.prepare(`INSERT INTO group_report_records(report_id,moment_id,committed_at,evidence_expires_at)
+        SELECT report_id,'test-photo',unixepoch()-age,unixepoch()-age+604800 FROM
+        (SELECT report_id,CASE WHEN CAST(substr(report_id,13) AS INTEGER)<=51 THEN 604802 ELSE 432002 END AS age
+         FROM group_report_numbers)`).run();
+    } finally {
+      for(const {sql} of triggers)await db.prepare(sql).run();
+    }
+    const keys=Array.from({length:51},()=>`groups/reports/v3/${randomBase64url(16)}/${randomBase64url(24)}`);
+    await db.batch(keys.map((key,index)=>db.prepare("INSERT INTO group_report_object_deletions VALUES (?,?,0,unixepoch()-1,'pending')")
+      .bind('test-object-'+index,key)));
+    const removed:string[]=[];
+    const cleanupSettings={...settings,MODERATION_MEDIA:{delete:async(key:string)=>{removed.push(key);}} as unknown as R2Bucket};
+
+    await runGroupReportOperations(settings);
+    await runGroupReportCleanup(cleanupSettings);
+    expect(await count('group_report_events')).toBe(50);
+    expect(await count('group_report_first_day_mail')).toBe(50);
+    expect(await count('group_report_mail_outbox')).toBe(50);
+    expect(removed).toHaveLength(50);
+
+    await runGroupReportOperations(settings);
+    await runGroupReportCleanup(cleanupSettings);
+    expect(await count('group_report_events')).toBe(51);
+    expect(await count('group_report_mail_outbox')).toBe(51);
+    expect(removed).toHaveLength(51);
+    expect(new Set(removed)).toEqual(new Set(keys));
+  });
+
   for(const viewed of [false,true])it(`automatically stops only the reported photo after an ${viewed?'opened but undecided':'unopened'} case expires`,async()=>{
     const f=await fixture();
     if(viewed) {const c=(await f.queue())[0]!;await f.read(c.caseReference);}
