@@ -9,6 +9,7 @@ on:
       - 'NekoWidget/SharingService/src/**'
       - 'NekoWidget/SharingService/migrations/**'
       - 'NekoWidget/SharingService/scripts/e2e-*'
+      - 'NekoWidget/SharingService/test/fixtures/moderation-operator.ts'
       - 'NekoWidget/SharingService/package-lock.json'
       - 'NekoWidget/ci/two-device/**'
       - 'NekoWidget/ci/run-two-device-e2e.sh'
@@ -26,7 +27,7 @@ jobs:
   two-device:
     name: Run Swift against the local SharingService Worker
     runs-on: macos-15
-    timeout-minutes: 12
+    timeout-minutes: 18
     defaults:
       run:
         shell: bash
@@ -50,10 +51,17 @@ jobs:
           scratch="$(mktemp -d "${RUNNER_TEMP}/neko-two-device.XXXXXX")"
           worker_pid=
           cleanup() {
+            local status="$?"
             if [[ -n "$worker_pid" ]]; then
               kill "$worker_pid" 2>/dev/null || true
               wait "$worker_pid" 2>/dev/null || true
             fi
+            if [[ "$status" -ne 0 && -f "$scratch/worker.log" ]]; then
+              echo '::group::Local SharingService Worker log'
+              cat "$scratch/worker.log"
+              echo '::endgroup::'
+            fi
+            return "$status"
           }
           trap cleanup EXIT
           node NekoWidget/SharingService/scripts/e2e-seed.mjs "$scratch"
@@ -67,7 +75,6 @@ jobs:
               break
             fi
             if ! kill -0 "$worker_pid" 2>/dev/null || [[ "$attempt" == 60 ]]; then
-              cat "$scratch/worker.log"
               exit 1
             fi
             sleep 1
