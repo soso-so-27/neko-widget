@@ -673,6 +673,15 @@ class FamilyPhotoCreatorAuto1119Tests(unittest.TestCase):
         self.assertLess(one.index("if referenced, isMine("), one.index("try await deliver("))
         self.assertIn("static let retryBackoff: [TimeInterval] = [60, 5 * 60, 15 * 60, 60 * 60]", self.model)
 
+    def test_a_clear_needs_this_iphones_own_delivery(self):
+        # 11/19 (機種変更): a new iPhone of the same person, with no key photo
+        # chosen, never clears the family's photo; the record is presence only.
+        one = section(self.model, "private func syncOne(", "private func deliver(")
+        clear = one.split("} else {", 1)[1]
+        self.assertIn("guard sent[key] != nil else { return }", clear)
+        self.assertLess(clear.index("guard sent[key] != nil else { return }"), clear.index("try await backend.clear(cat)"))
+        self.assertNotIn("sent[key] == photo", clear)
+
     def test_triggers_are_automatic(self):
         app = read("NekoWidget/App/AppRootView.swift")
         hook = section(app, ".onChange(of: familyPhotoSyncKey, initial: true)", "\n        }\n")
@@ -689,6 +698,57 @@ class FamilyPhotoCreatorAuto1119Tests(unittest.TestCase):
         self.assertEqual(factory.count("var canWrite: Bool"), 2)
         self.assertIn("FamilyNotebookAutoCheck.shared.sendSoon()", factory)
         self.assertNotIn("refreshAfterPlusChange", section(factory, "func clear(_ cat: UUID) async throws {", "func report("))
+
+
+class FamilyNotebookDeviceChange1119Tests(unittest.TestCase):
+    """11/19 (機種変更 水準2): a new iPhone of the same person returns to the
+    family notebook as another device of that person."""
+
+    def test_identity_is_chosen_in_one_place(self):
+        factory = read("NekoWidget/Services/FamilyNotebookServiceFactory.swift")
+        self.assertEqual(factory.count("FamilyNotebookIdentityChoice.load("), 1)
+        self.assertEqual(factory.count("client.familyNotebookIdentity()"), 1)
+        provider = section(factory, "return ProductionFamilyNotebookSharingService(provider: {", "}, billing: {")
+        self.assertLess(provider.index("FamilyNotebookServiceFactory.recoveredIdentity(client)"),
+                        provider.index("client.familyNotebookIdentity()"))
+        self.assertIn("pinSync: FamilyNotebookServiceFactory.pinSync()", provider)
+        # Only FamilyNotebookIdentityChoice reads the link.
+        for path in (ROOT / "NekoWidget").rglob("*.swift"):
+            text = path.read_text(encoding="utf-8")
+            if "notebook-recovery-link" in text:
+                self.assertEqual(path.name, "FamilyNotebookKeyCoordinator.swift")
+        choice = section(KEYS, "enum FamilyNotebookIdentityChoice {", "#if DEBUG || INTERNAL_PRESENTATION")
+        self.assertIn("recovered.registered", choice)
+        self.assertIn("usualPersonID != link.personID", choice)
+        self.assertIn("!link.familyIDs.isEmpty", choice)
+
+    def test_pin_is_synced_and_never_from_the_relay(self):
+        save = section(KEYS, "private func save(_ value: Trust, createOnly: Bool = false) throws {", "/// 11/19 (機種変更 水準2): a new iPhone")
+        self.assertIn("if let pin = value.pin { syncPin(pin) }", save)
+        adopt = section(KEYS, "private func adoptSyncedPin(_ family: UUID) throws {", "/// Call only after validating")
+        self.assertIn("pinSync.read(endpoint: endpoint, personID: identity.personID, family: family)", adopt)
+        self.assertIn("createdHere: false, pin: pin", adopt)
+        self.assertNotIn("network", adopt)
+        prepare = section(KEYS, "func prepare(family: UUID) async throws -> FamilyNotebookKeyMaterial? {", "var currentState = try await state(family)")
+        self.assertLess(prepare.index("try adoptSyncedPin(family)"), prepare.index("var trusted = try trust(family)"))
+        stored = section(KEYS, "struct FamilyNotebookStoredPinSync: FamilyNotebookPinSync {", "enum FamilyNotebookIdentityChoice {")
+        self.assertIn("saved.epoch >= pin.epoch { return }", stored)
+        keychain = section(KEYS, "struct FamilyNotebookSyncedKeychainStore: GroupSecretStore {", "\n#endif")
+        self.assertIn("kSecAttrSynchronizable as String: true", keychain)
+        self.assertIn("kSecAttrAccessibleWhenUnlocked", keychain)
+        self.assertNotIn("ThisDeviceOnly", keychain)
+        # The same access class as the person key's iCloud Keychain item.
+        self.assertIn("kSecAttrAccessibleWhenUnlocked", read("NekoWidget/Services/RootSyncStore.swift"))
+        for name in ("newIPhoneFromSyncedPin(directory: directory, endpoint: endpoint)", "identityChoice()"):
+            self.assertIn("try await " + name if name.startswith("new") else "try " + name, DELIVERY)
+        pinned = section(DELIVERY, "fileprivate static func newIPhoneFromSyncedPin(", "fileprivate static func identityChoice(")
+        for step in ("pin: the creator's verified pin is synced next to the person key",
+                     "pin: an older pin never replaces a newer one",
+                     "a2-none", "a2-forged",
+                     "pin: the new iPhone walked from epoch 1 to the current roster and synced it",
+                     "pin: the person's other iPhone signed the new iPhone in without an approval",
+                     "pin: the new iPhone has every past key"):
+            self.assertIn(step, pinned)
 
 
 if __name__ == "__main__":

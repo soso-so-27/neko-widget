@@ -58,6 +58,8 @@ enum GroupRecoveryWords {
     static let choose = "こちらを使う"
     static let inNothing = "まだどこにも入っていない"
     static let familyNotebook = "家族の手帳"
+    /// 家族の手帳が鍵を待つ間の 1 行（家族の誰かの iPhone が、この iPhone を迎え入れる）。
+    static let notebookWaiting = "家族の誰かがアプリを開くと戻ります"
 
     /// 本人の 1 つを、入っている所で言う（作った日や順番では選ばせない）。
     static func describe(windowCount: Int, openableWindowNames: [String], inFamilyNotebook: Bool) -> String {
@@ -99,6 +101,16 @@ enum GroupRecoveryScreenState: Equatable, Sendable {
     case registration(GroupRecoveryRegistrationState)
     /// GroupRootSelection.choose：本人が 2 つ以上。選ぶまで何もしない。
     case chooseRoot([GroupRecoveryRootCandidate])
+    /// 11/19（機種変更 水準2）：家族の手帳の 1 行。状態の型はまどと同じ。
+    case notebook(GroupRecoveryRegistrationState)
+
+    /// まど・家族の手帳の登録の状態（本人を選ぶ画面は nil）。
+    var registrationState: GroupRecoveryRegistrationState? {
+        switch self {
+        case .registration(let state), .notebook(let state): return state
+        case .chooseRoot: return nil
+        }
+    }
 }
 
 /// まどが複数あるときの 1 行。
@@ -108,8 +120,12 @@ struct GroupRecoveryWindowItem: Identifiable, Equatable, Sendable {
     let name: String?
     let state: GroupRecoveryRegistrationState
     var devices: [GroupRecoveryDevice] = []
+    /// 11/19：まどではなく家族の手帳の行。
+    var notebook = false
     var id: String { windowID }
+    var screenState: GroupRecoveryScreenState { notebook ? .notebook(state) : .registration(state) }
     var displayName: String {
+        if notebook { return GroupRecoveryWords.familyNotebook }
         guard let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return GroupRecoveryWords.unnamedWindow
         }
@@ -164,6 +180,24 @@ struct GroupRecoveryPresentation: Equatable, Sendable {
                         layout: .rootChoice, primary: nil, secondary: nil)
         case .registration(let registration):
             return make(for: registration)
+        case .notebook(let registration):
+            return makeNotebook(for: registration)
+        }
+    }
+
+    /// 11/19：家族の手帳。続けるかを聞く画面と、待つ間の 1 行だけが まどと違う。
+    static func makeNotebook(for state: GroupRecoveryRegistrationState) -> Self? {
+        switch state {
+        case .notStarted:
+            return Self(title: GroupRecoveryWords.familyNotebook, message: GroupRecoveryWords.foundMessage,
+                        icon: .found, layout: .message,
+                        primary: .init(title: GroupRecoveryWords.continueButton, step: .send(.perform(state.nextAction))),
+                        secondary: .init(title: GroupRecoveryWords.notNow, step: .send(.dismiss)))
+        case .registeredWaitingForKeys:
+            return Self(title: GroupRecoveryWords.notebookWaiting, message: nil,
+                        icon: .waiting, layout: .message, primary: nil, secondary: nil)
+        default:
+            return make(for: state)
         }
     }
 
@@ -211,6 +245,9 @@ struct GroupRecoveryPresentation: Equatable, Sendable {
     /// まどが複数あるときの一覧の 2 行目。画面の見出しと同じ言葉にする。
     static func rowStatus(for state: GroupRecoveryRegistrationState) -> String? {
         make(for: state)?.title
+    }
+    static func rowStatus(for item: GroupRecoveryWindowItem) -> String? {
+        make(for: item.screenState)?.title
     }
 }
 

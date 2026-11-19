@@ -293,6 +293,11 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         try secrets.read("identity") != nil
     }
 
+    /// 11/19: the person of the usual identity, without creating one.
+    func existingPersonID() throws -> String? {
+        try load(GroupDeviceIdentity.self, "identity")?.personID
+    }
+
     func familyNotebookIdentity() async throws -> GroupDeviceIdentity {
         try await registeredIdentity()
     }

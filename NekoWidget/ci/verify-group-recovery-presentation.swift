@@ -116,6 +116,23 @@ enum GroupRecoveryPresentationVerifier {
         try check(GroupRecoveryPresentation.rowStatus(for: .notStarted(operationID: id)) == "前の iPhone のまどがあります",
                   "row status reuses the title")
 
+        // 11/19（機種変更 水準2）：家族の手帳の行。続けるかを聞いて、待つ間は 1 行だけ。
+        let notebookFound = GroupRecoveryPresentation.make(for: .notebook(.notStarted(operationID: id)))
+        try check(notebookFound?.title == "家族の手帳" && notebookFound?.message == "この iPhone でも続けますか。",
+                  "notebook asks to continue")
+        try check(notebookFound?.primary?.step == .send(.perform(.submitSameOperation(id))), "continue registers the same operation")
+        try check(notebookFound?.secondary?.step == .send(.dismiss), "not now sends nothing")
+        let notebookWaiting = GroupRecoveryPresentation.make(for: .notebook(.registeredWaitingForKeys(operationID: id, deviceID: "new")))
+        try check(notebookWaiting?.title == "家族の誰かがアプリを開くと戻ります" && notebookWaiting?.message == nil
+                  && notebookWaiting?.primary == nil && notebookWaiting?.secondary == nil, "notebook waiting is one line")
+        try check(GroupRecoveryPresentation.make(for: .notebook(.ready(operationID: id, deviceID: "new"))) == nil, "notebook ready closes")
+        try check(GroupRecoveryPresentation.make(for: .notebook(.unavailable(operationID: id)))
+                  == GroupRecoveryPresentation.make(for: .unavailable(operationID: id)), "other notebook states are the window's")
+        let notebookRow = GroupRecoveryWindowItem(windowID: "notebook-x", name: nil,
+            state: .registeredWaitingForKeys(operationID: id, deviceID: "new"), notebook: true)
+        try check(notebookRow.displayName == "家族の手帳" && notebookRow.screenState == .notebook(notebookRow.state)
+                  && GroupRecoveryPresentation.rowStatus(for: notebookRow) == "家族の誰かがアプリを開くと戻ります", "notebook row")
+
         print("Group recovery presentation verifier passed")
     }
 }

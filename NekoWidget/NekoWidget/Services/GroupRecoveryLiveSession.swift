@@ -112,6 +112,9 @@ struct GroupRecoveryLiveBuilder: Sendable {
     let transport: any GroupHTTPTransport
     let model: String
     let stores: Stores
+    /// 11/19 (機種変更 水準2): the family notebook's steps for a root whose
+    /// catalog lists one; nil leaves the notebook out (captures, verifiers).
+    var notebook: (@Sendable (GroupRecoveryNotebookContext) -> GroupRecoveryNotebookSteps)? = nil
     /// Bounds the one tap: a catalog, then one status per まど.
     static let windowLimit = 8
 
@@ -139,7 +142,7 @@ struct GroupRecoveryLiveBuilder: Sendable {
             let base = GroupRecoveryClientSession(client: client, identity: identity,
                 drafts: Dictionary(drafts.map { ($0.operationID, $0) }, uniquingKeysWith: { first, _ in first }))
             // P5: a waiting まど receives its keys on the same Draft and operation.
-            let session = GroupRecoveryKeyDeliverySession(base: base, source: GroupRecoveryClientKeySource(base: base))
+            var session: any GroupRecoverySession = GroupRecoveryKeyDeliverySession(base: base, source: GroupRecoveryClientKeySource(base: base))
             let devices = catalog.devices.map {
                 GroupRecoveryDevice(id: $0.deviceID, modelName: $0.model ?? "iPhone",
                                     registeredAt: Date(timeIntervalSince1970: TimeInterval($0.registeredAt)))
@@ -158,6 +161,27 @@ struct GroupRecoveryLiveBuilder: Sendable {
                     state = .unavailable(operationID: draft.operationID)
                 }
                 items.append(.init(windowID: draft.windowID, name: nil, state: state, devices: devices))
+            }
+            // 11/19 (機種変更 水準2): the person's family notebook, one row.
+            let familyIDs = catalog.notebooks.compactMap { UUID(uuidString: $0.familyID) }
+            if let notebook, let family = familyIDs.first {
+                let deviceID = try identity.deviceID
+                let wrapped = GroupRecoveryNotebookSession(base: session,
+                    operationID: GroupRecoveryNotebookSession.operationID(personID: catalog.personID, family: family),
+                    deviceID: deviceID,
+                    steps: notebook(.init(scope: scope, personID: catalog.personID, familyIDs: familyIDs,
+                                          hasWindows: !catalog.windows.isEmpty)))
+                let state: GroupRecoveryRegistrationState
+                do {
+                    state = try await wrapped.run(.queryStatus(wrapped.operationID))
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    state = .unavailable(operationID: wrapped.operationID)
+                }
+                items.append(.init(windowID: "notebook-" + family.uuidString.lowercased(), name: nil, state: state,
+                                   devices: devices, notebook: true))
+                session = wrapped
             }
             try Task.checkCancellation()
             contexts.append(.init(candidate: .init(summary: .init(rootID: catalog.personID,
@@ -183,6 +207,70 @@ struct GroupRecoveryLiveBuilder: Sendable {
             windowCertificates: [:], registered: false)
         try secrets.write(GroupWire.encode(identity), account: "identity", createOnly: true)
         return identity
+    }
+}
+
+// MARK: - 11/19 (機種変更 水準2): the family notebook on the new iPhone
+
+/// What the notebook's row needs of one root's catalog.
+struct GroupRecoveryNotebookContext: Sendable {
+    let scope: String
+    let personID: String
+    let familyIDs: [UUID]
+    let hasWindows: Bool
+}
+
+/// The notebook's three steps. The live ones keep the link next to the
+/// recovered identity and let the notebook's own schedule do the rest
+/// (FamilyNotebookIdentityChoice, FamilyNotebookKeyCoordinator).
+struct GroupRecoveryNotebookSteps: Sendable {
+    /// The person confirmed this notebook on this iPhone.
+    let linked: @Sendable () async throws -> Bool
+    /// After 続ける: link this iPhone, then start the notebook.
+    let confirm: @Sendable () async throws -> Void
+    /// Once linked: the notebook reads the family on this iPhone.
+    let reads: @Sendable () async -> Bool
+}
+
+/// The root's session with the notebook's row in it. The まど's operations go
+/// to the base as before; the notebook's one operation maps to the steps:
+/// not linked is notStarted, 続ける links and waits, and the row is ready once
+/// the notebook reads. Waiting is the existing registeredWaitingForKeys.
+actor GroupRecoveryNotebookSession: GroupRecoverySession {
+    private let base: any GroupRecoverySession
+    nonisolated let operationID: UUID
+    private let deviceID: String
+    private let steps: GroupRecoveryNotebookSteps
+
+    init(base: any GroupRecoverySession, operationID: UUID, deviceID: String, steps: GroupRecoveryNotebookSteps) {
+        self.base = base; self.operationID = operationID; self.deviceID = deviceID; self.steps = steps
+    }
+    /// The same person and family give the same ID on every check.
+    static func operationID(personID: String, family: UUID) -> UUID {
+        var bytes = [UInt8](GroupCanonical.hash(Data(("NW3.RECOVERY.NOTEBOOK|" + personID + "|" + family.uuidString.lowercased()).utf8)).prefix(16))
+        bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128
+        return UUID(uuid: (bytes[0],bytes[1],bytes[2],bytes[3],bytes[4],bytes[5],bytes[6],bytes[7],
+                           bytes[8],bytes[9],bytes[10],bytes[11],bytes[12],bytes[13],bytes[14],bytes[15]))
+    }
+    func catalog() async throws -> GroupRecoveryClient.Catalog { try await base.catalog() }
+    func remove(_ device: String, operationID: UUID) async throws {
+        try await base.remove(device, operationID: operationID)
+    }
+    func run(_ action: GroupRecoveryRetryAction) async throws -> GroupRecoveryRegistrationState {
+        switch action {
+        case .queryStatus(let id) where id == operationID:
+            return try await state()
+        case .submitSameOperation(let id) where id == operationID:
+            try await steps.confirm()
+            return try await state()
+        default:
+            return try await base.run(action)
+        }
+    }
+    private func state() async throws -> GroupRecoveryRegistrationState {
+        guard try await steps.linked() else { return .notStarted(operationID: operationID) }
+        return await steps.reads() ? .ready(operationID: operationID, deviceID: deviceID)
+            : .registeredWaitingForKeys(operationID: operationID, deviceID: deviceID)
     }
 }
 
@@ -519,6 +607,57 @@ extension GroupRecoveryLiveModel {
     }
 #endif
 
+    /// 11/19 (機種変更 水準2): the live steps of the notebook's row.
+    private nonisolated static func notebookSteps(_ context: GroupRecoveryNotebookContext, endpoint: URL,
+                                                  namespace: String) -> GroupRecoveryNotebookSteps {
+        let links = namespace + FamilyNotebookServiceFactory.recoveryLinkSuffix
+        let recovery = namespace + ".recovery." + context.scope
+        @Sendable func registered() throws -> Bool {
+            try GroupKeychainStore(namespace: recovery).read("identity")
+                .map { try GroupWire.decode(GroupDeviceIdentity.self, $0).registered } ?? false
+        }
+        return GroupRecoveryNotebookSteps(linked: {
+            guard let bytes = try GroupKeychainStore(namespace: links).read(FamilyNotebookIdentityChoice.linkAccount) else { return false }
+            let link = try GroupWire.decode(FamilyNotebookIdentityChoice.Link.self, bytes)
+            return link.scope == context.scope && link.personID == context.personID
+                && !Set(link.familyIDs).isDisjoint(with: context.familyIDs)
+        }, confirm: {
+            // A まど being recovered registers this iPhone as the person; with
+            // none, the notebook does it with the person key (the usual
+            // registration, signed by the person and this iPhone).
+            if !context.hasWindows, try !registered() {
+                guard let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+                    throw GroupRecoveryClient.Failure.unavailable
+                }
+                let client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: GroupKeychainStore(namespace: recovery),
+                    transport: GroupURLSessionTransport(), outboxDirectory: root.appendingPathComponent("GroupTransport-v3", isDirectory: true)
+                        .appendingPathComponent("recovery-" + context.scope, isDirectory: true).appendingPathComponent("outbox", isDirectory: true))
+                _ = try await client.familyNotebookIdentity()
+            }
+            let link = FamilyNotebookIdentityChoice.Link(version: 1, scope: context.scope, personID: context.personID,
+                                                         familyIDs: context.familyIDs)
+            try GroupKeychainStore(namespace: links).write(GroupWire.encode(link), account: FamilyNotebookIdentityChoice.linkAccount,
+                                                           createOnly: false)
+            _ = await notebookRestarted()
+        }, reads: {
+            guard (try? registered()) == true else { return false }
+            return await notebookReads()
+        })
+    }
+
+    /// The notebook opens again with the identity FamilyNotebookIdentityChoice now picks.
+    private static func notebookRestarted() async -> Bool {
+        (FamilyNotebookSharing.shared.service as? ProductionFamilyNotebookSharingService)?.restartSession()
+        return await FamilyNotebookSharing.shared.refresh()
+    }
+
+    /// One quiet read of the notebook (its own schedule keeps going after this).
+    private static func notebookReads() async -> Bool {
+        _ = await FamilyNotebookSharing.shared.refresh()
+        if case .inFamily = FamilyNotebookSharing.shared.state { return true }
+        return false
+    }
+
     static func connected() -> GroupRecoveryLiveModel {
         let configuration = SharingAPIConfiguration.current
         guard configuration.isGroupRuntimeAvailable, let endpoint = configuration.baseURL else {
@@ -557,11 +696,12 @@ extension GroupRecoveryLiveModel {
                 roots = roots.filter { matchesTrialOwner($0, owner: trial.owner) }
             }
 #endif
-            let builder = GroupRecoveryLiveBuilder(endpoint: endpoint, environment: environment.rawValue,
+            var builder = GroupRecoveryLiveBuilder(endpoint: endpoint, environment: environment.rawValue,
                 transport: GroupURLSessionTransport(), model: "iPhone", stores: { scope in
                     (try GroupKeychainStore(namespace: namespace + ".recovery-journal." + scope),
                      try GroupKeychainStore(namespace: namespace + ".recovery." + scope))
                 })
+            builder.notebook = { context in GroupRecoveryLiveModel.notebookSteps(context, endpoint: endpoint, namespace: namespace) }
             return try await builder.contexts(roots: roots)
         }
     }

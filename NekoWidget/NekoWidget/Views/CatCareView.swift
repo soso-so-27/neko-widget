@@ -2964,6 +2964,11 @@ final class FamilyRepresentativePhotos: ObservableObject {
                 limitedPhotos[cat] = photo; waits[cat] = nil
             } catch { failed(cat, photo: photo) }
         } else {
+            // 11/19 (機種変更): only a slot this iPhone itself filled is cleared.
+            // A new iPhone of the same person (the same author) has no record and
+            // leaves the family's photo. Presence only: a changed PhotoKit ID of
+            // the photo it sent is not a clear.
+            guard sent[key] != nil else { return }
             guard referenced || backend.author(of: cat) != nil else { sent[key] = nil; return }
             if waiting(cat, photo: nil) { return }
             do {

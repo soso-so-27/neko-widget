@@ -16,10 +16,11 @@ final class FamilyNotebookSession {
     private var participation: Participation?
 
     init(endpoint: URL, identity: GroupDeviceIdentity, transport: any GroupHTTPTransport,
-         journal: any GroupSecretStore, secrets: any GroupSecretStore, directory: URL) throws {
+         journal: any GroupSecretStore, secrets: any GroupSecretStore, directory: URL,
+         pinSync: (any FamilyNotebookPinSync)? = nil) throws {
         self.identity = identity; self.endpoint = endpoint; self.journal = journal; self.directory = directory
         wire = try .init(endpoint: endpoint, identity: identity, transport: transport, journal: journal)
-        keys = try .init(endpoint: endpoint, identity: identity, network: wire, secrets: secrets, journal: journal)
+        keys = try .init(endpoint: endpoint, identity: identity, network: wire, secrets: secrets, journal: journal, pinSync: pinSync)
         admission = .init(endpoint: endpoint, identity: identity, wire: wire, keys: keys, journal: journal, secrets: secrets)
         membership = try .init(endpoint: endpoint, identity: identity, transport: transport, journal: journal)
         if let bytes = try journal.read(account) {
@@ -189,9 +190,18 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
         self.photoRuntimeEnabled = photoRuntimeEnabled; self.photoTransport = photoTransport; self.photoTrace = photoTrace
         self.moderationRecipient = moderationRecipient
     }
+    /// 11/19 (機種変更 水準2): the recovery screen linked this iPhone to the
+    /// person's notebook; the next call opens a session with the identity
+    /// FamilyNotebookIdentityChoice now picks.
+    private var restartRequested = false
+    func restartSession() { restartRequested = true }
     private func run<T>(_ action: (FamilyNotebookSession) async throws -> T) async throws -> T {
         guard !working else { throw FamilySharingError.unknownOutcome }
         working = true; defer { working = false }
+        if restartRequested {
+            restartRequested = false
+            session = nil; currentFamilyID = nil; lastMembers = []; photoMaterial = nil; photoClient = nil
+        }
         do {
             let context: FamilyNotebookSession
             if let session { context = session } else { context = try await provider(); session = context }

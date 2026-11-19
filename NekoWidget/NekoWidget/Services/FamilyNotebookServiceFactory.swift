@@ -18,14 +18,18 @@ enum FamilyNotebookServiceFactory {
                   let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
                 throw FamilySharingError.serviceUnavailable
             }
-            let identity = try await client.familyNotebookIdentity()
+            // 11/19 (機種変更 水準2): FamilyNotebookIdentityChoice decides.
+            let identity: GroupDeviceIdentity
+            if let recovered = try await FamilyNotebookServiceFactory.recoveredIdentity(client) { identity = recovered }
+            else { identity = try await client.familyNotebookIdentity() }
             let scope = try GroupWire.base64(GroupCanonical.hash(GroupCanonical.fields([
                 Data(endpoint.absoluteString.utf8), Data(identity.personID.utf8), Data(identity.deviceID.utf8)])))
             let directory = root.appendingPathComponent("FamilyNotebook-v1", isDirectory: true).appendingPathComponent(scope, isDirectory: true)
             let journal = try GroupOperationStore(directory: directory.appendingPathComponent("http", isDirectory: true), maximumRecordBytes: 2_100_000)
             let secrets = try GroupKeychainStore(namespace: GroupWindowClientProvider.namespace + ".family." + scope)
             return try FamilyNotebookSession(endpoint: endpoint, identity: identity, transport: GroupURLSessionTransport(),
-                journal: journal, secrets: secrets, directory: directory.appendingPathComponent("notebooks", isDirectory: true))
+                journal: journal, secrets: secrets, directory: directory.appendingPathComponent("notebooks", isDirectory: true),
+                pinSync: FamilyNotebookServiceFactory.pinSync())
         }, billing: {
             guard let client = GroupWindowClientProvider.production else { throw FamilySharingError.serviceUnavailable }
             try await client.connectExistingBillingAccount()
@@ -36,10 +40,42 @@ enum FamilyNotebookServiceFactory {
         }, hasPersonalPlus: { PlusPurchaseStore.productionShared.entitlementState.permitsPersonalPlus },
         hasExistingIdentity: {
             guard let client = GroupWindowClientProvider.production else { throw FamilySharingError.serviceUnavailable }
-            return try await client.hasExistingIdentity()
+            if try await client.hasExistingIdentity() { return true }
+            return try await FamilyNotebookServiceFactory.recoveredIdentity(client) != nil
         }, photoRuntimeEnabled: representativePhotoRuntimeEnabled, photoTransport: GroupURLSessionTransport(),
         moderationRecipient: { FamilyNotebookServiceFactory.moderationRecipient() },
         photoTrace: { FamilyPhotoDeliveryDiagnostics.note($0) })
+    }
+
+    /// 11/19 (機種変更 水準2): the recovered person's identity when
+    /// FamilyNotebookIdentityChoice picks it (the recovery screen linked the
+    /// notebook); nil keeps the iPhone's usual identity. Builds without the
+    /// recovery screen never have a link.
+    static func recoveredIdentity(_ client: ProductionGroupWindowClient) async throws -> GroupDeviceIdentity? {
+#if DEBUG || INTERNAL_PRESENTATION
+        let namespace = GroupWindowClientProvider.namespace
+        let usual = try await client.existingPersonID()
+        return try FamilyNotebookIdentityChoice.load(links: GroupKeychainStore(namespace: namespace + recoveryLinkSuffix),
+            recoveryStore: { try GroupKeychainStore(namespace: namespace + ".recovery." + $0) }, usualPersonID: usual)
+#else
+        return nil
+#endif
+    }
+    /// Where the recovery screen keeps FamilyNotebookIdentityChoice.Link.
+    static let recoveryLinkSuffix = ".notebook-recovery"
+
+    /// 11/19: the roster pin next to the person key in iCloud Keychain, in the
+    /// builds that sync the person key (the same access group); nil elsewhere.
+    static func pinSync() -> (any FamilyNotebookPinSync)? {
+#if DEBUG || INTERNAL_PRESENTATION
+        guard let bundleID = Bundle.main.bundleIdentifier,
+              let accessGroup = Bundle.main.object(forInfoDictionaryKey: "RootSyncKeychainAccessGroup") as? String,
+              accessGroup.hasSuffix("." + bundleID) else { return nil }
+        return FamilyNotebookStoredPinSync(store: FamilyNotebookSyncedKeychainStore(
+            service: bundleID + ".family-notebook-pin.v1", accessGroup: accessGroup))
+#else
+        return nil
+#endif
     }
 
     /// The same reviewed recipient as a まど report, pinned in the app's

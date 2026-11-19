@@ -39,7 +39,7 @@ struct GroupRecoverySheet: View {
                 if rootChoice.count >= 2 {
                     GroupRecoveryStateView(state: .chooseRoot(rootChoice), send: route)
                 } else if items.count == 1, let item = items.first {
-                    GroupRecoveryStateView(state: .registration(item.state), devices: item.devices, send: route)
+                    GroupRecoveryStateView(state: item.screenState, devices: item.devices, send: route)
                 } else {
                     GroupRecoveryWindowList(items: items, send: route)
                 }
@@ -79,13 +79,13 @@ struct GroupRecoveryWindowList: View {
 
     var body: some View {
         List {
-            ForEach(items.filter { GroupRecoveryPresentation.rowStatus(for: $0.state) != nil }) { item in
+            ForEach(items.filter { GroupRecoveryPresentation.rowStatus(for: $0) != nil }) { item in
                 NavigationLink {
-                    GroupRecoveryStateView(state: .registration(item.state), devices: item.devices, send: send)
+                    GroupRecoveryStateView(state: item.screenState, devices: item.devices, send: send)
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(item.displayName).font(.body.weight(.semibold))
-                        if let status = GroupRecoveryPresentation.rowStatus(for: item.state) {
+                        if let status = GroupRecoveryPresentation.rowStatus(for: item) {
                             Text(status).font(.subheadline).foregroundStyle(.secondary)
                         }
                     }
@@ -121,7 +121,7 @@ struct GroupRecoveryStateView: View {
             } else {
                 // ready：この画面は閉じて、まどを開く。
                 Color.clear.onAppear {
-                    if case .registration(let registration) = state { send(.perform(registration.nextAction)) }
+                    if let registration = state.registrationState { send(.perform(registration.nextAction)) }
                 }
             }
         }
@@ -222,7 +222,7 @@ struct GroupRecoveryStateView: View {
                             isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
                             titleVisibility: .visible, presenting: removing) { device in
             Button(GroupRecoveryWords.removeDevice, role: .destructive) {
-                if case .registration(let registration) = state,
+                if let registration = state.registrationState,
                    let command = GroupRecoveryActions.removeDevice(registration, deviceID: device.id) {
                     send(command)
                 }
@@ -388,6 +388,9 @@ enum GroupRecoverySamples {
         .init(id: "ready", label: "ready（画面を閉じてまどを開く）",
               state: .registration(.ready(operationID: operation, deviceID: "sample-new"))),
         .init(id: "chooseRoot", label: "本人が 2 つ", state: .chooseRoot(roots)),
+        .init(id: "notebookFound", label: "家族の手帳が見つかった", state: .notebook(.notStarted(operationID: operation))),
+        .init(id: "notebookWaiting", label: "家族の手帳・待つ",
+              state: .notebook(.registeredWaitingForKeys(operationID: operation, deviceID: "sample-new"))),
     ]
     static let windows: [GroupRecoveryWindowItem] = [
         .init(windowID: "sample-window-1", name: "実家のまど",

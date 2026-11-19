@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Security
 
 struct FamilyNotebookKeyMaterial: Sendable {
     let current: VerifiedFamilyNotebookRoster
@@ -53,6 +54,10 @@ actor FamilyNotebookKeyCoordinator {
     private let endpoint: String, identity: GroupDeviceIdentity, network: FamilyNotebookTransport
     private let secrets: any GroupSecretStore, journal: any GroupSecretStore
     private let recoveryEnabled: Bool
+    /// 11/19 (機種変更 水準2): the person's pin in iCloud Keychain, next to the
+    /// person key. Nil in builds without that sync.
+    private let pinSync: (any FamilyNotebookPinSync)?
+    private var pinsOffered = Set<UUID>()
     private var working = false
     /// 11/15 (1115q): what the last pass saw (the relay's generation, epoch,
     /// devices, readiness, and the keys held). A pass that changes it moved;
@@ -67,10 +72,12 @@ actor FamilyNotebookKeyCoordinator {
     }
 
     init(endpoint: URL, identity: GroupDeviceIdentity, network: FamilyNotebookTransport,
-         secrets: any GroupSecretStore, journal: any GroupSecretStore, recoveryEnabled: Bool = false) throws {
+         secrets: any GroupSecretStore, journal: any GroupSecretStore, recoveryEnabled: Bool = false,
+         pinSync: (any FamilyNotebookPinSync)? = nil) throws {
         guard identity.registered else { throw FamilyNotebookTransportError.authenticationRequired }
         self.endpoint = endpoint.absoluteString; self.identity = identity; self.network = network
         self.secrets = secrets; self.journal = journal; self.recoveryEnabled = recoveryEnabled
+        self.pinSync = pinSync
     }
     private func account(_ kind: String, _ family: UUID, _ epoch: Int? = nil) -> String {
         "op:fnb-" + kind + ":" + family.uuidString.lowercased() + (epoch.map { ":" + String($0) } ?? "")
@@ -116,6 +123,24 @@ actor FamilyNotebookKeyCoordinator {
     }
     private func save(_ value: Trust, createOnly: Bool = false) throws {
         try secrets.write(GroupWire.encode(value), account: account("trust", value.familyID), createOnly: createOnly)
+        // Every pin this iPhone verified and kept also goes next to the person
+        // key (only a newer epoch replaces it there). Best effort: a locked or
+        // missing iCloud Keychain never stops the notebook.
+        if let pin = value.pin { syncPin(pin) }
+    }
+    private func syncPin(_ pin: FamilyNotebookRosterPin) {
+        try? pinSync?.write(pin, endpoint: endpoint, personID: identity.personID)
+    }
+    /// 11/19 (機種変更 水準2): a new iPhone of the same person has no trust of
+    /// its own. It starts from the pin the person's other iPhone kept in iCloud
+    /// Keychain and walks forward with the usual verification. A pin from the
+    /// relay is never used; without a synced one this stays untrusted.
+    private func adoptSyncedPin(_ family: UUID) throws {
+        guard try secrets.read(account("trust", family)) == nil, let pinSync,
+              let pin = try pinSync.read(endpoint: endpoint, personID: identity.personID, family: family) else { return }
+        guard pin.familyID == family, pin.epoch >= 1, pin.hash.count == 32 else { throw FamilyNotebookCryptoError.untrusted }
+        try save(.init(schemaVersion: 1, familyID: family, endpoint: endpoint, personID: identity.personID,
+            deviceID: identity.deviceID, createdHere: false, pin: pin, approvedAdditions: [:]), createOnly: true)
     }
     /// Call only after validating this device's persisted CREATE receipt.
     func registerCreatedFamily(_ family: UUID) throws {
@@ -286,7 +311,10 @@ actor FamilyNotebookKeyCoordinator {
     func prepare(family: UUID) async throws -> FamilyNotebookKeyMaterial? {
         guard !working else { throw FamilyNotebookTransportError.operationInFlight }
         working = true; defer { working = false }
+        try adoptSyncedPin(family)
         var trusted = try trust(family)
+        // A pin kept before the sync existed reaches iCloud Keychain once.
+        if let pin = trusted.pin, pinsOffered.insert(family).inserted { syncPin(pin) }
         try await finishCandidate(family, trust: &trusted)
         var currentState = try await state(family)
         if let registered = currentState.devices.first(where: { $0.deviceID == (try? identity.deviceID) }) {
@@ -384,3 +412,116 @@ actor FamilyNotebookKeyCoordinator {
                      moreWork: !complete || dispatch.index < total)
     }
 }
+
+/// 11/19 (機種変更 水準2): the notebook's roster pin of one person, kept in
+/// iCloud Keychain next to the person key so a new iPhone of the same person
+/// can verify the roster chain from it. Only this person's own iPhones write
+/// it; the relay never supplies one.
+protocol FamilyNotebookPinSync: Sendable {
+    func read(endpoint: String, personID: String, family: UUID) throws -> FamilyNotebookRosterPin?
+    func write(_ pin: FamilyNotebookRosterPin, endpoint: String, personID: String) throws
+}
+
+/// The record over a store: bound to the endpoint, the person and the family;
+/// a newer epoch replaces it, an older or equal one never does.
+struct FamilyNotebookStoredPinSync: FamilyNotebookPinSync {
+    let store: any GroupSecretStore
+    private struct Record: Codable { let version: Int; let endpoint: String; let personID: String; let pin: FamilyNotebookRosterPin }
+    static func account(endpoint: String, personID: String, family: UUID) -> String {
+        "fnb-pin:" + GroupCanonical.hash(Data((endpoint + "|" + personID + "|" + family.uuidString.lowercased()).utf8))
+            .map { String(format: "%02x", $0) }.joined()
+    }
+    func read(endpoint: String, personID: String, family: UUID) throws -> FamilyNotebookRosterPin? {
+        guard let bytes = try store.read(Self.account(endpoint: endpoint, personID: personID, family: family)) else { return nil }
+        let record = try GroupWire.decode(Record.self, bytes)
+        guard record.version == 1, record.endpoint == endpoint, record.personID == personID,
+              record.pin.familyID == family, record.pin.epoch >= 1, record.pin.hash.count == 32 else {
+            throw FamilyNotebookCryptoError.untrusted
+        }
+        return record.pin
+    }
+    func write(_ pin: FamilyNotebookRosterPin, endpoint: String, personID: String) throws {
+        guard pin.epoch >= 1, pin.hash.count == 32 else { throw FamilyNotebookCryptoError.untrusted }
+        if let saved = try? read(endpoint: endpoint, personID: personID, family: pin.familyID), saved.epoch >= pin.epoch { return }
+        try store.write(GroupWire.encode(Record(version: 1, endpoint: endpoint, personID: personID, pin: pin)),
+                        account: Self.account(endpoint: endpoint, personID: personID, family: pin.familyID), createOnly: false)
+    }
+}
+
+/// 11/19 (機種変更 水準2): which identity the family notebook uses. The one
+/// place this is decided (FamilyNotebookServiceFactory asks here).
+enum FamilyNotebookIdentityChoice {
+    /// Written by the recovery screen after the person confirmed the notebook:
+    /// the recovered person (its root's scope) and the notebooks the recovery
+    /// catalog listed for it.
+    struct Link: Codable, Equatable, Sendable {
+        let version: Int
+        let scope: String
+        let personID: String
+        let familyIDs: [UUID]
+    }
+    static let linkAccount = "notebook-recovery-link"
+
+    /// The recovered person's identity when it is registered, is the person
+    /// the link names, and the catalog listed a notebook; else nil (the
+    /// iPhone's usual identity). An iPhone whose usual identity already is
+    /// that person (the original iPhone) keeps its usual identity.
+    static func recovered(link: Link?, recovered: GroupDeviceIdentity?, usualPersonID: String?) -> GroupDeviceIdentity? {
+        guard let link, link.version == 1, !link.familyIDs.isEmpty, let recovered, recovered.registered,
+              recovered.personPrivateKey != nil, recovered.personID == link.personID,
+              usualPersonID != link.personID else { return nil }
+        return recovered
+    }
+
+    /// The link and the recovered identity from their Keychain stores.
+    static func load(links: any GroupSecretStore, recoveryStore: (String) throws -> any GroupSecretStore,
+                     usualPersonID: String?) throws -> GroupDeviceIdentity? {
+        guard let bytes = try links.read(linkAccount) else { return nil }
+        let link = try GroupWire.decode(Link.self, bytes)
+        guard link.scope.utf8.count == 64,
+              link.scope.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { return nil }
+        let identity = try recoveryStore(link.scope).read("identity").map { try GroupWire.decode(GroupDeviceIdentity.self, $0) }
+        return recovered(link: link, recovered: identity, usualPersonID: usualPersonID)
+    }
+}
+
+#if DEBUG || INTERNAL_PRESENTATION
+/// The iCloud Keychain item of the pin: synchronizable, with the same access
+/// class and group as the person key's item (available while unlocked).
+struct FamilyNotebookSyncedKeychainStore: GroupSecretStore {
+    let service: String
+    let accessGroup: String?
+    private func query(_ account: String) -> [String: Any] {
+        var q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+            kSecAttrAccount as String: account, kSecAttrSynchronizable as String: true]
+        if let accessGroup { q[kSecAttrAccessGroup as String] = accessGroup }
+        return q
+    }
+    func read(_ account: String) throws -> Data? {
+        var request = query(account)
+        request[kSecReturnData as String] = true
+        request[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(request as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data else { throw FamilyNotebookTransportError.unavailable }
+        return data
+    }
+    func write(_ data: Data, account: String, createOnly: Bool) throws {
+        var request = query(account)
+        request[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
+        request[kSecValueData as String] = data
+        let status = SecItemAdd(request as CFDictionary, nil)
+        if status == errSecDuplicateItem, !createOnly {
+            guard SecItemUpdate(query(account) as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecSuccess
+            else { throw FamilyNotebookTransportError.unavailable }
+            return
+        }
+        guard status == errSecSuccess else { throw FamilyNotebookTransportError.unavailable }
+    }
+    func remove(_ account: String) throws {
+        let status = SecItemDelete(query(account) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw FamilyNotebookTransportError.unavailable }
+    }
+}
+#endif
