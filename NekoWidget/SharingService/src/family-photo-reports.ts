@@ -4,7 +4,7 @@ import {currentModerationReportKey} from './moderation-report-key-policy';
 import {loadRuntimeGate,reportIngestionGateOpen} from './runtime-gate';
 import {base64urlDecode,base64urlEncode,sha256Base64url,randomBase64url} from './encoding';
 import {parseJsonBody} from './http';
-import {exactKeys,integerField,stringField,uuidField,binaryField} from './validation';
+import {exactKeys,integerField,stringField,binaryField} from './validation';
 import {ApiError,jsonResponse} from './errors';
 import {putGroupUpload} from './group-identity-upload';
 import {requireCurrentIdentity} from './group-identity-service';
@@ -39,7 +39,8 @@ export async function familyPhotoReportAPI(request:Request,env:Env,familyValue:s
  const b=parseJsonBody(request,bytes);
  exactKeys(b,['schemaVersion','operationId','assetId','reasonCode','moderationKeyId','ciphertext','ciphertextSHA256','consentedAt']);
  if(b.schemaVersion!==1)fail('invalid_report',400);
- const operation=uuidField(b,'operationId'),asset=uuidField(b,'assetId'),reason=stringField(b,'reasonCode');
+ // Verify the signed body as sent, then use the canonical UUIDs for lookups.
+ const operation=familyUUID(b.operationId),asset=familyUUID(b.assetId),reason=stringField(b,'reasonCode');
  if(!['objectionable','harassment','privacy','other'].includes(reason))fail('invalid_reason',400);
  if(b.moderationKeyId!=='moderation-v2'||!await currentModerationReportKey(env.DB,'moderation-v2'))fail('moderation_key_required');
  const consent=integerField(b,'consentedAt',0,Number.MAX_SAFE_INTEGER),hash=binaryField(b,'ciphertextSHA256',32);

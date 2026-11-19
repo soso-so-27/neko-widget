@@ -127,7 +127,8 @@ describe('owner-only staging trial',()=>{
     const asset=crypto.randomUUID(),bytes=new Uint8Array(100).fill(7);
     await db.prepare('INSERT INTO family_photo_report_deliveries VALUES (?,?,?,?,?,unixepoch()+604800)')
       .bind(scope.family,asset,b.id,b.deviceId,a.id).run();
-    const report=ok(await call(b,photo+'/reports','REPORT',{schemaVersion:1,operationId:crypto.randomUUID(),assetId:asset,
+    // The iPhone's Foundation UUIDs are uppercase in the signed JSON body.
+    const report=ok(await call(b,photo+'/reports','REPORT',{schemaVersion:1,operationId:crypto.randomUUID().toUpperCase(),assetId:asset.toUpperCase(),
       reasonCode:'privacy',moderationKeyId:'moderation-v2',ciphertext:base64urlEncode(bytes),
       ciphertextSHA256:await sha256Base64url(bytes),consentedAt:Math.floor(Date.now()/1000)}));
     expect(report).toMatchObject({familyId:scope.family,state:'committed'});
