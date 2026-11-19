@@ -123,7 +123,7 @@ interface Current extends Queued {
 export function familyNotificationPayload(row:Pick<Current,'kind'|'space_id'>):string {
   if(row.kind==='device_registered')
     return JSON.stringify({aps:{'content-available':1},neko:{v:3,kind:'family_device_registered'}});
-  return JSON.stringify({aps:{alert:{title:'ねこのまど',body:row.kind==='join_requested'?'家族の手帳に、入りたい人がいます。':'家族の手帳に入りました。'},
+  return JSON.stringify({aps:{alert:{title:'ねこのまど',body:row.kind==='join_requested'?'家族の手帳に、参加を待っている人がいます。':'家族の手帳に参加できました。'},
     'content-available':1},neko:{v:3,kind:'family_'+row.kind,familyId:row.space_id}});
 }
 async function finish(env:Env,row:Queued,leaseId:string,state:'accepted'|'skipped'|'invalid'|'pending',now:number):Promise<void> {

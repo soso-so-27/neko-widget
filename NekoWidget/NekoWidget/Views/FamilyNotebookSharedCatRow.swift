@@ -10,7 +10,7 @@ struct FamilyNotebookSharedCatRow: View {
     var body: some View {
         Text(name)
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                Button("手帳から外す") { confirming = true }.tint(.red)
+                Button("この猫を手帳から外す") { confirming = true }.tint(.red)
             }
             .confirmationDialog("この猫を家族の手帳から外しますか？", isPresented: $confirming, titleVisibility: .visible) {
                 Button("外す", role: .destructive, action: remove)

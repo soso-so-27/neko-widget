@@ -3299,7 +3299,8 @@ struct FamilyPhotoReportSheet: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityIdentifier("family-photo-report-number")
                     } footer: {
-                        Text("問い合わせるときは、この番号を添えてください。")
+                        // 11/19 (UI/UX 整理): where the answer comes.
+                        Text("返答は、家族の手帳の「通報への返答」に届きます。")
                     }
                 } else {
                     Section {

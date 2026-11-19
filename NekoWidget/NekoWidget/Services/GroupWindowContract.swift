@@ -384,6 +384,19 @@ struct GroupNotificationRoute: Sendable {
     }
 }
 
+/// 11/19 (UI/UX 整理): the family notebook's two visible pushes
+/// (`family_join_requested`, `family_join_approved`, family-notebook-push.ts).
+/// A tap opens the notebook, where 受け入れる or the joined notebook is; the
+/// family ID it carries is not needed for that (one family per person).
+enum FamilyNotebookNotificationRoute {
+    static let kinds: Set<String> = ["family_join_requested", "family_join_approved"]
+    static func matches(_ info: [AnyHashable: Any]) -> Bool {
+        guard let neko = info["neko"] as? [String: Any], neko["v"] as? Int == 3,
+              let kind = neko["kind"] as? String else { return false }
+        return kinds.contains(kind)
+    }
+}
+
 /// 11/19 (機種変更 水準2): the relay's silent push to the other devices of a
 /// family notebook when a device registers. Exactly
 /// {"aps":{"content-available":1},"neko":{"v":3,"kind":"family_device_registered"}};

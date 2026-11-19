@@ -61,9 +61,18 @@ class Words(unittest.TestCase):
 
     def test_adding_to_the_notebook_asks_about_the_same_name(self):
         selection = block(NOTEBOOK, "struct FamilyNotebookCatSelectionView: View {")
-        self.assertIn('"家族の手帳の「" + $0.family.name + "」と同じ子ですか。"', selection)
-        self.assertIn('Button("同じ子（つなぐ）") { answer(question, same: true) }', selection)
-        self.assertIn('Button("べつの子（手帳に足す）") { answer(question, same: false) }', selection)
+        # 11/19 (UI/UX 整理): the same heading, sentence and answers as the
+        # この子 tab's question.
+        self.assertIn('"家族の手帳の「" + $0.family.name + "」"', selection)
+        self.assertIn("Text(FamilyNotebookWords.sameChildQuestion)", selection)
+        self.assertIn('static let sameChildQuestion = "このiPhoneの子と同じですか。"', NOTEBOOK)
+        self.assertIn('Button("同じ子") { answer(question, same: true) }', selection)
+        self.assertIn('Button("べつの子") { answer(question, same: false) }', selection)
+        for old in ("と同じ子ですか。", "同じ子（つなぐ）", "べつの子（手帳に足す）"):
+            self.assertNotIn(old, NOTEBOOK)
+        self.assertIn('.navigationTitle("手帳に入れる猫")', selection)
+        self.assertIn('Button("決める", action: add)', selection)
+        self.assertNotIn("追加する猫を選ぶ\")", selection)
         # 「同じ子」 links instead of making a second family cat.
         add = block(selection, "private func add() {")
         self.assertIn("try await model.link(family, toProfile: profile)", add)
@@ -75,8 +84,11 @@ class Words(unittest.TestCase):
         self.assertIn('Image("Nowa-sit-up")', art)
         self.assertIn(".accessibilityHidden(true)", art)
         button = block(HOME, "private struct CatHomeChoosePhotoButton: View {")
-        self.assertIn('Label("写真を選ぶ", systemImage: "photo.on.rectangle")', button)
-        self.assertIn('.accessibilityLabel(name.isEmpty ? "写真を選ぶ" : name + "の写真を選ぶ")', button)
+        # 11/19 (UI/UX 整理): named for what it does, not 「写真を選ぶ」.
+        self.assertIn('private var title: String { linksHere ? "このiPhoneの子とつなぐ" : "この子を追加" }', button)
+        self.assertIn("Label(title, systemImage: linksHere ? \"link\" : \"plus\")", button)
+        self.assertNotIn("写真を選ぶ", button)
+        self.assertIn("linksHere: hasLinkCandidates(toolID: cat.id),", HOME)
         self.assertIn("frame(maxWidth: .infinity, minHeight: 44)", button)
         # One way in: the page's button goes to the same question or registration.
         choose = block(HOME, "private func choosePhoto(for cat: FamilyNotebookCatLink.Unlinked) {")
@@ -108,7 +120,18 @@ class AskedOnce(unittest.TestCase):
         self.assertNotIn("pendingLinkQuestion", ROOT_VIEW)
         task = HOME.split(".task(id: familyNotebook.unlinkedFamilyCats.map(\\.id)) {", 1)[1].split("}", 1)[0]
         self.assertIn("try? await Task.sleep(for: .milliseconds(900))", task)
-        self.assertIn(".modifier(FamilyNotebookLinkAsk())", NOTEBOOK)
+        # 11/19 (UI/UX 整理): asked by the この子 tab only, not again by the notebook.
+        self.assertNotIn("FamilyNotebookLinkAsk", NOTEBOOK)
+        self.assertEqual(NOTEBOOK.count("pendingLinkQuestion(profiles:"), 1)
+
+    def test_a_link_that_fails_says_so(self):
+        # 11/19: it used to be dropped (`try?`).
+        link = block(HOME, "private func link(_ cat: FamilyNotebookCatLink.Unlinked, to profile: String) {")
+        self.assertNotIn("try?", link)
+        self.assertIn("catch { linkFailed = true }", link)
+        self.assertIn(".alert(FamilyNotebookWords.linkFailedTitle, isPresented: $linkFailed)", HOME)
+        self.assertIn('static let linkFailedTitle = "つなげませんでした"', NOTEBOOK)
+        self.assertIn('static let linkFailedMessage = "少し待ってから、もう一度お試しください。"', NOTEBOOK)
 
     def test_an_answer_is_kept_and_written_once(self):
         remember = block(NOTEBOOK, "func rememberLinkAnswer(_ cat: UUID) {")
@@ -117,7 +140,6 @@ class AskedOnce(unittest.TestCase):
         self.assertIn("!closedLinkQuestions.contains(cat.id)", pending)
         # 「べつの子」 is remembered too.
         self.assertIn("familyNotebook.rememberLinkAnswer(question.cat.id)", HOME)
-        self.assertIn("model.rememberLinkAnswer(cat.id)", NOTEBOOK)
 
     def test_unlinked_cats_are_not_worked_out_while_drawing(self):
         self.assertIn("@Published private(set) var unlinkedCats: [FamilyNotebookCatLink.Unlinked] = []", NOTEBOOK)
@@ -254,7 +276,7 @@ class SendingFailures(unittest.TestCase):
         self.assertIn("JSONEncoder().encode(sorted)", SYNC)
 
     def test_the_line_and_its_one_button(self):
-        notebook = block(NOTEBOOK, "private func notebook(_ membership: FamilyMembership) -> some View {")
+        notebook = block(NOTEBOOK, "private func notebook(_ membership: FamilyMembership?) -> some View {")
         self.assertIn("} else if sharing.showsUnsentLine {\n                unsentSection", notebook)
         section = block(NOTEBOOK, "private var unsentSection: some View {")
         self.assertIn('Label("家族に届けられていない書き込みがあります。"', section)

@@ -41,7 +41,7 @@ enum PlusOfferContext: Equatable, Sendable {
         case .createWindow: "まどを作る"
         case .continueWindow: "このまどを続ける"
         case .createFamily: "家族の手帳を作る"
-        case .continueFamily: "家族の手帳を続ける"
+        case .continueFamily: "家族の手帳を再開する"
         case .preservation: "保存を始める"
         case .settings: "Plusについて"
         }

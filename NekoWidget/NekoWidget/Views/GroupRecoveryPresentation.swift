@@ -14,7 +14,7 @@ protocol GroupRecoveryCommandHandling: AnyObject {
 /// 画面の文。状態 1 つ＋ 1 文＋ボタン。仕組みの言葉は書かない。
 enum GroupRecoveryWords {
     // まどのタブの入口（一覧の上に 1 行）と、まどが複数あるときの一覧の題
-    static let entry = "前の iPhone のまど"
+    static let entry = "前のiPhoneのまど"
     /// 名前を開けないまど
     static let unnamedWindow = "まど"
 
@@ -27,13 +27,13 @@ enum GroupRecoveryWords {
     static let syncFailed = "本人情報を同期できませんでした。"
     static let retry = "もう一度"
 
-    static let foundTitle = "前の iPhone のまどがあります"
-    static let foundMessage = "この iPhone でも続けますか。"
+    static let foundTitle = "前のiPhoneのまどがあります"
+    static let foundMessage = "このiPhoneでも続けますか。"
     static let continueButton = "続ける"
     static let notNow = "今はしない"
 
     static let waitingTitle = "もう少しで見られます"
-    static let waitingMessage = "前の iPhone でアプリを開くと、続きが届きます。"
+    static let waitingMessage = "前のiPhoneでアプリを開くと、続きが届きます。"
 
     static let noProviderTitle = "前の写真は開けません"
     static let noProviderMessage = "新しく続けることはできます。まどの名前は付け直します。"
@@ -41,14 +41,14 @@ enum GroupRecoveryWords {
     static let freshNameHeader = "まどの名前"
     static let freshNamePlaceholder = "例：実家のまど"
 
-    static let needsOriginalTitle = "前の iPhone が必要です"
-    static let needsOriginalMessage = "前の iPhone でアプリを一度開くか、もう一度招待してもらってください。"
+    static let needsOriginalTitle = "前のiPhoneが必要です"
+    static let needsOriginalMessage = "前のiPhoneでアプリを一度開くか、もう一度招待してもらってください。"
 
-    static let deviceLimitTitle = "使える iPhone は 3 台までです"
-    static let deviceLimitMessage = "外す iPhone を選んでください。"
+    static let deviceLimitTitle = "使えるiPhoneは3台までです"
+    static let deviceLimitMessage = "外すiPhoneを選んでください。"
     static let removeDevice = "外す"
     static let keepDevice = "やめる"
-    static let removeDeviceMessage = "外した iPhone では、この人として入っているまどと家族の手帳が見られなくなります。"
+    static let removeDeviceMessage = "外したiPhoneでは、この人として入っているまどと家族の手帳が見られなくなります。"
     static func removeDeviceQuestion(_ modelName: String) -> String { "\(modelName) を外しますか" }
     static func registered(_ date: String) -> String { "\(date) に登録" }
 
@@ -59,7 +59,7 @@ enum GroupRecoveryWords {
     static let inNothing = "まだどこにも入っていない"
     static let familyNotebook = "家族の手帳"
     /// 家族の手帳が鍵を待つ間の 1 行（家族の誰かの iPhone が、この iPhone を迎え入れる）。
-    static let notebookWaiting = "家族のだれかが ねこのまど を開くと、手帳が戻ります"
+    static let notebookWaiting = "家族のだれかがねこのまどを開くと、手帳が戻ります"
 
     /// 本人の 1 つを、入っている所で言う（作った日や順番では選ばせない）。
     static func describe(windowCount: Int, openableWindowNames: [String], inFamilyNotebook: Bool) -> String {

@@ -62,7 +62,7 @@ struct MembershipOfferView: View {
         "いつでも解約できます",
         // 11/14: only what this iPhone keeps; the auto-save copy ends 12 months later.
         "解約しても、このiPhoneの写真・メモ・まどの写真は消えません",
-        "招待した家族は無料で入れます",
+        "招待した家族は無料で参加できます",
     ]
     /// Apple's own instructions; the app never cancels on the person's behalf.
     static let cancellationHelpURL = URL(string: "https://support.apple.com/ja-jp/118428")

@@ -45,6 +45,7 @@ struct AppRootView: View {
     /// Joined a family from a link: the notebook opens once that sheet is gone.
     @State private var joinedFamilyFromLink = false
     @State private var showsFamilyNotebook = false
+    private let familyNotebookOpenInbox = FamilyNotebookOpenInbox.shared
     @State private var onboardingInvitation: GroupInvitationLink?
     @State private var firstRunPhoto: PhotoPresentation?
     @State private var startsInPhotosAfterOnboarding = false
@@ -88,6 +89,12 @@ struct AppRootView: View {
             }
         }) { FamilyNotebookJoinView(link: $0.url, onJoined: { joinedFamilyFromLink = true }) }
         .sheet(isPresented: $showsFamilyNotebook) { FamilyNotebookView() }
+        // 11/19 (UI/UX 整理): a tap on a family notebook notification.
+        .onReceive(familyNotebookOpenInbox.$opensNotebook) { opens in
+            guard opens else { return }
+            familyNotebookOpenInbox.opensNotebook = false
+            showsFamilyNotebook = true
+        }
         // 11/15: a family member, or someone waiting to be let in, reads the
         // family when the app opens, before any screen of it is opened.
         .familyNotebookOpeningCheck()

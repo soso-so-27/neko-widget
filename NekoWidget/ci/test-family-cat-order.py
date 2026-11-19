@@ -175,11 +175,11 @@ class ReachedFromTheApp(unittest.TestCase):
             self.assertIn(step, entry)
 
     def test_the_other_new_entries_are_on_app_paths(self):
-        # 同じ子ですか: the この子 tab and the notebook (both opened by the app).
+        # 同じ子ですか: the この子 tab only (11/19 UI/UX 整理: one place to ask).
         self.assertIn("FamilyNotebookLinkQuestionView(", HOME)
-        self.assertIn(".modifier(FamilyNotebookLinkAsk())", NOTEBOOK)
+        self.assertNotIn("FamilyNotebookLinkAsk", NOTEBOOK)
         self.assertIn("FamilyNotebookView()", read("NekoWidget/App/AppRootView.swift"))
-        # 家族の手帳の子から選ぶ and 写真を選ぶ: the この子 tab.
+        # 家族の手帳の子から選ぶ and このiPhoneの子とつなぐ: the この子 tab.
         self.assertIn('.confirmationDialog("家族の手帳の子から選ぶ"', HOME)
         self.assertIn("CatHomeChoosePhotoButton(", HOME)
         # つながりを外す: the cat's 「…」 in 「この子のこと」.

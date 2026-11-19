@@ -163,6 +163,7 @@ struct SettingsView: View {
     @State private var isRescanning = false
     @State private var showsFamilyNotebook = false
     @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
+    @ObservedObject private var familySharing = FamilyNotebookSharing.shared
 #if DEBUG || INTERNAL_PRESENTATION
     @State private var isExporting = false
     @State private var exportedFile: ExportedFile?
@@ -309,8 +310,13 @@ struct SettingsView: View {
                                     Image(systemName: "person.2.fill")
                                 }
                                 Spacer(minLength: 8)
+                                // 11/19 (UI/UX 整理): the notebook's own words for
+                                // the wait it is in, never the approval wait
+                                // while the notebook is being received.
                                 if !familyNotebook.hasFamily {
-                                    Text("参加を待っています").foregroundStyle(Color(uiColor: .secondaryLabel))
+                                    Text(familySharing.state == .waitingForKeys
+                                         ? FamilyNotebookWords.receiving : FamilyNotebookWords.awaitingApproval)
+                                        .foregroundStyle(Color(uiColor: .secondaryLabel))
                                 }
                                 Image(systemName: "chevron.right")
                                     .font(.footnote.weight(.semibold))

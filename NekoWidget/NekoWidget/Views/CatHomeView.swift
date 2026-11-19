@@ -306,6 +306,8 @@ struct CatHomeView: View {
     /// until the next launch), and a cat to register once it is gone.
     @State private var unansweredLinkCat: UUID?
     @State private var registerAfterQuestion: FamilyNotebookCatLink.Unlinked?
+    /// 11/19: 「つなげませんでした」.
+    @State private var linkFailed = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Up to this many cats, every page is built up front (CatHomeView.pager).
@@ -369,11 +371,14 @@ struct CatHomeView: View {
                 other: {
                     unansweredLinkCat = nil
                     familyNotebook.rememberLinkAnswer(question.cat.id)
-                    // From the page's 「写真を選ぶ」: another cat, so register it.
+                    // From the page's 「このiPhoneの子とつなぐ」: another cat, so register it.
                     if question.registersOther { registerAfterQuestion = question.cat }
                     linkQuestion = nil
                 })
         }
+        .alert(FamilyNotebookWords.linkFailedTitle, isPresented: $linkFailed) {
+            Button("閉じる", role: .cancel) {}
+        } message: { Text(FamilyNotebookWords.linkFailedMessage) }
         .confirmationDialog("家族の手帳の子から選ぶ", isPresented: $choosesFamilyCat, titleVisibility: .visible) {
             ForEach(familyNotebook.unlinkedFamilyCats) { cat in
                 Button(cat.name.isEmpty ? "名前未設定の猫" : cat.name) { choosePhoto(for: cat) }
@@ -590,6 +595,7 @@ struct CatHomeView: View {
                            menuCats: cats.count >= Self.menuMinimumCats
                                ? cats.map { CatHomeMenuCat(id: $0.id, name: $0.name) } : nil,
                            choosesPhoto: unlinkedToolIDs.contains(cat.id),
+                           linksHere: hasLinkCandidates(toolID: cat.id),
                            inFamilyNotebook: isFamilyCat(record),
                            familyPhoto: familyPhoto(for: cat),
                            actions: pageActions)
@@ -671,6 +677,12 @@ struct CatHomeView: View {
         Set(familyNotebook.unlinkedFamilyCats.map(\.toolID.uuidString))
     }
 
+    /// A family cat not on this iPhone that one of this iPhone's cats could be.
+    private func hasLinkCandidates(toolID: String) -> Bool {
+        guard let cat = familyNotebook.unlinkedFamilyCats.first(where: { $0.toolID.uuidString == toolID }) else { return false }
+        return !linkCandidates(for: cat).isEmpty
+    }
+
     /// This iPhone's cats that a family cat could be: same name first.
     private func linkCandidates(for cat: FamilyNotebookCatLink.Unlinked) -> [CatProfilePresentation] {
         FamilyNotebookCatLink.candidates(for: cat.name, among: presentation.profiles,
@@ -707,7 +719,12 @@ struct CatHomeView: View {
     private func link(_ cat: FamilyNotebookCatLink.Unlinked, to profile: String) {
         guard let id = UUID(uuidString: profile) else { return }
         let notebook = familyNotebook
-        Task { _ = try? await notebook.link(cat.id, toProfile: id) }
+        // 11/19 (UI/UX 整理): a link that did not go says so (it was dropped).
+        Task {
+            do { _ = try await notebook.link(cat.id, toProfile: id) }
+            catch is CancellationError {}
+            catch { linkFailed = true }
+        }
     }
 
     /// VoiceOver's 「次の子」「前の子」 (11/14): the same move as a swipe;
@@ -897,8 +914,12 @@ private struct CatHomePage: View {
     /// The cats of the cat menu after the name; nil with fewer than
     /// `CatHomeView.menuMinimumCats` cats (no button, swipe instead).
     let menuCats: [CatHomeMenuCat]?
-    /// 11/15: a family cat with no cat of this iPhone: 「写真を選ぶ」.
+    /// 11/15: a family cat with no cat of this iPhone: 「このiPhoneの子とつなぐ」
+    /// (11/19; it was 「写真を選ぶ」, which opened the question, not photos).
     var choosesPhoto = false
+    /// 11/19: this iPhone has a cat it could be; without one the button
+    /// says what it does instead, 「この子を追加」.
+    var linksHere = true
     /// 11/16: a cat in the family notebook: pulled down, the family is read
     /// once (when the page is taller than the screen; a page that fits does
     /// not move up and down, 11/14).
@@ -916,7 +937,9 @@ private struct CatHomePage: View {
                             turn: { [pageIndex] by in actions.turn(pageIndex, by) }, familyPhoto: familyPhoto)
                 // 18 (was 22): the page fits one screen on a standard iPhone (11/14).
                 VStack(spacing: 18) {
-                    if choosesPhoto { CatHomeChoosePhotoButton(name: cat.name) { actions.choosePhoto(cat.id) } }
+                    if choosesPhoto {
+                        CatHomeChoosePhotoButton(name: cat.name, linksHere: linksHere) { actions.choosePhoto(cat.id) }
+                    }
                     // A cat whose farewell day is recorded is not offered in the tools.
                     if !facts.departed {
                         CatHomeToolBar(cat: cat, toolsShown: CatHomeTool.allCases, width: metrics.width,
@@ -961,7 +984,7 @@ extension CatHomePage: Equatable {
             && lhs.pageIndex == rhs.pageIndex && lhs.pageCount == rhs.pageCount
             && lhs.vetUnfinished == rhs.vetUnfinished && lhs.searching == rhs.searching
             && lhs.care == rhs.care && lhs.careLinks.catID == rhs.careLinks.catID
-            && lhs.menuCats == rhs.menuCats && lhs.choosesPhoto == rhs.choosesPhoto
+            && lhs.menuCats == rhs.menuCats && lhs.choosesPhoto == rhs.choosesPhoto && lhs.linksHere == rhs.linksHere
             && lhs.inFamilyNotebook == rhs.inFamilyNotebook && lhs.familyPhoto == rhs.familyPhoto
             && lhs.actions === rhs.actions
     }
@@ -1494,21 +1517,26 @@ private struct CatHomeNoPhotoArt: View {
     }
 }
 
-/// 11/15: 「写真を選ぶ」 under the photo of a family cat this iPhone has no
-/// cat for: it links to a cat here, or registers one with its name.
+/// 11/15: the button under the photo of a family cat this iPhone has no
+/// cat for: it links to a cat here, or registers one with its name. 11/19
+/// (UI/UX 整理): named for what it does, 「このiPhoneの子とつなぐ」, or
+/// 「この子を追加」 when this iPhone has no cat it could be.
 private struct CatHomeChoosePhotoButton: View {
     let name: String
+    var linksHere = true
     let action: () -> Void
+
+    private var title: String { linksHere ? "このiPhoneの子とつなぐ" : "この子を追加" }
 
     var body: some View {
         Button(action: action) {
-            Label("写真を選ぶ", systemImage: "photo.on.rectangle")
+            Label(title, systemImage: linksHere ? "link" : "plus")
                 .font(.body.weight(.semibold))
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.bordered)
         .buttonBorderShape(.capsule)
-        .accessibilityLabel(name.isEmpty ? "写真を選ぶ" : name + "の写真を選ぶ")
+        .accessibilityLabel(name.isEmpty ? title : name + "、" + title)
         .accessibilityIdentifier("cat-home-choose-photo")
     }
 }
