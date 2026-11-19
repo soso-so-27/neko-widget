@@ -3007,27 +3007,41 @@ final class FamilyRepresentativePhotos: ObservableObject {
             let notebook = FamilyNotebookPrototype.shared
             guard notebook.isReal, notebook.hasFamily, FamilyNotebookSharing.shared.state.membership?.role == .payer,
                   let family = notebook.snapshot?.familyID else { return }
-            var sent = Self.sentPhotos(family)
-            let before = sent
+            var sent = Self.sentPhotos(family), seen = Self.seenPhotos(family)
+            let before = sent, seenBefore = seen
             for (profile, photo) in keyPhotos.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
                 guard !Task.isCancelled else { break }
                 guard let cat = notebook.linkedFamilyCat(profile: profile.uuidString) else { continue }
-                await syncOne(cat, photo: photo, sent: &sent, backend: backend)
+                await syncOne(cat, photo: photo, sent: &sent, seen: &seen, backend: backend)
             }
             if sent != before { Self.saveSent(sent, family) }
+            if seen != seenBefore { Self.saveSeen(seen, family) }
         } while syncAgain && !Task.isCancelled
     }
 
-    private func syncOne(_ cat: UUID, photo: String?, sent: inout [String: String],
+    private func syncOne(_ cat: UUID, photo: String?, sent: inout [String: String], seen: inout [String: String],
                          backend: any FamilyRepresentativePhotoBackend) async {
         let key = cat.uuidString.lowercased()
         let referenced = backend.referencedAsset(of: cat) != nil
+        // 11/19 (the creator with two iPhones): the family's photo by this
+        // person that this iPhone never sent came from the person's other
+        // iPhone. This iPhone's choice as first seen then is only noted (""
+        // for none); it replaces the photo only once that choice changes.
+        // A new iPhone never overwrites the photo on its first pass.
+        if sent[key] == nil {
+            if let first = seen[key] {
+                if first == (photo ?? "") { return }
+            } else if referenced, isMine(backend.author(of: cat)) {
+                seen[key] = photo ?? ""
+                return
+            }
+        }
         if let photo {
             if referenced, isMine(backend.author(of: cat)), sent[key] == photo { return }
             if limitedPhotos[cat] == photo || waiting(cat, photo: photo) { return }
             do {
                 try await deliver(cat, photo: photo, backend: backend)
-                sent[key] = photo
+                sent[key] = photo; seen[key] = nil
                 waits[cat] = nil; limitedPhotos[cat] = nil; pendingPhotos[cat] = nil
             } catch FamilyNotebookPhotoFailure.limited {
                 // Full: dropped without a word until the photo changes.
@@ -3089,6 +3103,27 @@ final class FamilyRepresentativePhotos: ObservableObject {
     private static func saveSent(_ sent: [String: String], _ family: UUID) {
         UserDefaults.standard.set(sent, forKey: sentKeyPrefix + family.uuidString.lowercased())
     }
+
+    /// This iPhone's choice for a cat when it first saw the family's photo
+    /// sent by the person's other iPhone ("" for none); dropped once this
+    /// iPhone sends its own.
+    private static let seenKeyPrefix = "familyNotebook.creatorPhotos.seen.v1."
+    private static func seenPhotos(_ family: UUID) -> [String: String] {
+        UserDefaults.standard.dictionary(forKey: seenKeyPrefix + family.uuidString.lowercased()) as? [String: String] ?? [:]
+    }
+
+    private static func saveSeen(_ seen: [String: String], _ family: UUID) {
+        UserDefaults.standard.set(seen, forKey: seenKeyPrefix + family.uuidString.lowercased())
+    }
+
+#if INTERNAL_PRESENTATION
+    /// 11/19 (the owner's two-device trial only): the records of a device
+    /// that is being forgotten on this iPhone, so the next one starts fresh.
+    static func forgetSyncRecords(_ family: UUID) {
+        UserDefaults.standard.removeObject(forKey: sentKeyPrefix + family.uuidString.lowercased())
+        UserDefaults.standard.removeObject(forKey: seenKeyPrefix + family.uuidString.lowercased())
+    }
+#endif
 
     /// The photo shown when 「この写真を通報」 was chosen; once received it
     /// is not shown on this iPhone again.

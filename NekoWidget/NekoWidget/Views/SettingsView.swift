@@ -1528,6 +1528,7 @@ extension View {
 private struct OwnerTwoDeviceEnrollmentView: View {
     @State private var result = ""
     @State private var checking = false
+    @State private var confirmsForget = false
 
     var body: some View {
         Form {
@@ -1540,6 +1541,19 @@ private struct OwnerTwoDeviceEnrollmentView: View {
                 }
             }
             .disabled(checking)
+            // 11/19: B's iPhone, used as A's new iPhone, back to B.
+            Button("この端末をBに戻す", role: .destructive) { confirmsForget = true }
+                .disabled(checking)
+                .confirmationDialog("Aの引き継ぎをこの端末から消します。", isPresented: $confirmsForget, titleVisibility: .visible) {
+                    Button("Bに戻す", role: .destructive) {
+                        checking = true
+                        Task {
+                            defer { checking = false }
+                            do { result = try await FamilyNotebookOwnerTrialReset.forgetRecovery() }
+                            catch { result = "戻せませんでした。" }
+                        }
+                    }
+                }
             if !result.isEmpty {
                 Text(result).font(.footnote.monospaced()).textSelection(.enabled)
             }

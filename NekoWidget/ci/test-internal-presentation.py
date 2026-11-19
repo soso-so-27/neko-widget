@@ -73,7 +73,9 @@ class InternalPresentationBoundaryTests(unittest.TestCase):
                      'CatIdentityFeatureExtractor', 'settings-cat-identity-measure', '猫の見分けを測る',
                      # 11/15: the device-change screens' samples (no entry until issuance is on).
                      'GroupRecoveryGallery', 'GroupRecoverySamples', 'settings-group-recovery-gallery',
-                     '機種変更の画面（見本）')
+                     '機種変更の画面（見本）',
+                     # 11/19: the owner's two-device trial way back to B (never in a public build).
+                     'FamilyNotebookOwnerTrialReset', 'forgetRecovery', 'forgetSyncRecords', 'この端末をBに戻す')
         for path, source in self.sources().items():
             for token in forbidden:
                 with self.subTest(path=path, token=token):

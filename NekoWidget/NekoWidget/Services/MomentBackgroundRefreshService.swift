@@ -267,6 +267,7 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         // 11/19 (機種変更 水準2): a device joined the family notebook; one pass
         // re-wraps the keys for it. Other kinds stay ignored below.
         if FamilyDeviceRegisteredPush.matches(userInfo) {
+            FamilyDevicePushDiagnostics.received()
             Task { @MainActor in
                 let read = await FamilyNotebookAutoCheck.shared.deviceRegisteredPush()
                 completionHandler(read ? .newData : .noData)

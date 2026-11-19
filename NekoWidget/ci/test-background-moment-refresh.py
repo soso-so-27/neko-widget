@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import plistlib
 import unittest
 
@@ -134,6 +135,31 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn("case .full:\n                    if !model.hasFamily && model.mayResumeEndedNotebook { lastResumeProbeAt = Date() }\n                    await fullPass()", sharing)
         delivery = (ROOT / "ci/verify-family-notebook-key-delivery.swift").read_text(encoding="utf-8")
         self.assertIn("try deviceRegisteredPush()", delivery)
+
+    def test_family_device_push_times_are_in_the_owner_log_only(self):
+        # 11/19 (2台試験): the receipt and the end of its pass, with the outcome
+        # and the time between, in 診断ログ of the owner's trial builds; no ID,
+        # token or key.
+        remote = self.service.split("fetchCompletionHandler completionHandler:", 1)[1].split("func userNotificationCenter(", 1)[0]
+        family = remote.split("if FamilyDeviceRegisteredPush.matches(userInfo) {", 1)[1].split("return\n        }", 1)[0]
+        self.assertLess(family.index("FamilyDevicePushDiagnostics.received()"), family.index("Task { @MainActor in"))
+        sharing = (ROOT / "NekoWidget/Services/FamilyNotebookSharing.swift").read_text(encoding="utf-8")
+        handler = sharing.split("func deviceRegisteredPush() async -> Bool {", 1)[1].split("private func run(pass", 1)[0]
+        skipped = handler.split("else {", 1)[1].split("}", 1)[0]
+        self.assertIn("FamilyDevicePushDiagnostics.finished(.skipped, since: started)", skipped)
+        self.assertLess(handler.index("let read = await work.value"),
+                        handler.index("FamilyDevicePushDiagnostics.finished(read ? .read : .notRead, since: started)"))
+        factory = (ROOT / "NekoWidget/Services/FamilyNotebookServiceFactory.swift").read_text(encoding="utf-8")
+        diagnostics = factory.split("enum FamilyDevicePushDiagnostics {", 1)[1].split("\n}\n", 1)[0]
+        self.assertEqual(diagnostics.count("#if INTERNAL_PRESENTATION && !NEKO_SHARE_EXTENSION"), 2)
+        self.assertEqual(diagnostics.count("SharedLog.app.info("), 2)
+        keys = set(re.findall(r'"([A-Za-z]+)":', diagnostics))
+        self.assertEqual(keys, {"familyDevicePush", "familyDevicePushOutcome", "durationMs"})
+        for token in ("deviceID", "personID", "token", "familyID", "userInfo"):
+            self.assertNotIn(token, diagnostics)
+        privacy = (ROOT / "Shared/Logging/DiagnosticLogPrivacy.swift").read_text(encoding="utf-8")
+        self.assertIn('"familyDevicePush": ["finished", "received"],', privacy)
+        self.assertIn('"familyDevicePushOutcome": ["notRead", "read", "skipped"],', privacy)
 
     def test_group_background_and_album_notice_paths_survive(self):
         protected = self.service.split("if protectedDataAvailable {", 1)[1].split("}", 1)[0]
