@@ -176,7 +176,10 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     private var recoveryEnvironment: String? {
         switch endpoint.host {
         case "api.nekonomado.com": return "production"
+#if DEBUG || INTERNAL_PRESENTATION
+        // 11/19: never in the App Store build (it talks only to production).
         case "neko-window-sharing-staging.nakanishisoya.workers.dev", "recovery.invalid": return "staging"
+#endif
         default: return nil
         }
     }
