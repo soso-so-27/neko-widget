@@ -325,7 +325,7 @@ class FamilyJoinAfterApproval1115Tests(unittest.TestCase):
         self.assertIn(".familyNotebookOpeningCheck()", ROOT_VIEW)
         # 設定 keeps the one way to the notebook while waiting.
         self.assertIn("@AppStorage(FamilyNotebookAwaitingApproval.key) private var awaitsFamilyApproval = false", SETTINGS)
-        self.assertIn("private var showsFamilyNotebookRow: Bool { familyNotebook.hasFamily || awaitsFamilyApproval }", SETTINGS)
+        self.assertIn("private var showsFamilyNotebookRow: Bool { familyNotebook.hasFamily || awaitsFamilyApproval || awaitsRecoveredNotebook }", SETTINGS)
         # 11/19 (UI/UX 整理): the row says the wait it is in, in the notebook's words.
         self.assertNotIn("参加を待っています", SETTINGS)
         self.assertIn("? FamilyNotebookWords.receiving : FamilyNotebookWords.awaitingApproval)", SETTINGS)
@@ -731,6 +731,12 @@ class FamilyNotebookDeviceChange1119Tests(unittest.TestCase):
         self.assertIn("recovered.registered", choice)
         self.assertIn("usualPersonID != link.personID", choice)
         self.assertIn("!link.familyIDs.isEmpty", choice)
+        # 11/19 (入れ直し): with a link, the recovered device wins over a
+        # leftover usual device of the same person, and registers itself first.
+        self.assertIn("usualPersonID != link.personID || usualDeviceID != recoveredDeviceID", choice)
+        self.assertIn("usualPersonID: usual, usualDeviceID: usualDevice)", factory)
+        self.assertIn("try await reinstalledIPhoneRegistersItsNewDevice(directory: directory, endpoint: endpoint)", DELIVERY)
+        self.assertIn("reinstall: the first write is the new device's registration", DELIVERY)
 
     def test_pin_is_synced_and_never_from_the_relay(self):
         save = section(KEYS, "private func save(_ value: Trust, createOnly: Bool = false) throws {", "/// 11/19 (機種変更 水準2): a new iPhone")

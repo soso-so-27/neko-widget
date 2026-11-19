@@ -13,8 +13,12 @@ protocol GroupRecoveryCommandHandling: AnyObject {
 
 /// 画面の文。状態 1 つ＋ 1 文＋ボタン。仕組みの言葉は書かない。
 enum GroupRecoveryWords {
-    // まどのタブの入口（一覧の上に 1 行）と、まどが複数あるときの一覧の題
+    // まどが複数あるときの一覧の題
     static let entry = "前のiPhoneのまど"
+    /// 11/19: 設定 → 家族とまど の行と、その画面の題（まどと家族の手帳の両方を引き継ぐ）
+    static let settingsEntry = "前のiPhoneから引き継ぐ"
+    /// 11/19: その画面の中の、始めるボタン
+    static let start = "引き継ぐ"
     /// 名前を開けないまど
     static let unnamedWindow = "まど"
 
@@ -57,9 +61,11 @@ enum GroupRecoveryWords {
     static let chooseTitle = "どちらを使いますか"
     static let choose = "こちらを使う"
     static let inNothing = "まだどこにも入っていない"
+    /// 11/19: この iPhone に残っていた本人の候補の行に添える（一番上に並べる）。
+    static let usedOnThisIPhone = "このiPhoneで使っていた"
     static let familyNotebook = "家族の手帳"
-    /// 家族の手帳が鍵を待つ間の 1 行（家族の誰かの iPhone が、この iPhone を迎え入れる）。
-    static let notebookWaiting = "家族のだれかがねこのまどを開くと、手帳が戻ります"
+    /// 家族の手帳が鍵を待つ間の 1 行（家族か前の iPhone の、どれかが この iPhone を迎え入れる）。
+    static let notebookWaiting = "家族のiPhoneか、前のiPhoneで ねこのまど を開くと、このiPhoneに手帳が戻ります。"
 
     /// 本人の 1 つを、入っている所で言う（作った日や順番では選ばせない）。
     static func describe(windowCount: Int, openableWindowNames: [String], inFamilyNotebook: Bool) -> String {
@@ -87,6 +93,8 @@ struct GroupRecoveryDevice: Identifiable, Equatable, Sendable {
 struct GroupRecoveryRootCandidate: Identifiable, Equatable, Sendable {
     let summary: GroupRootMembershipSummary
     let openableWindowNames: [String]
+    /// 11/19: この iPhone に残っていた本人（アプリを入れ直したとき）。
+    var usedOnThisIPhone = false
     var id: String { summary.rootID }
     var text: String {
         GroupRecoveryWords.describe(windowCount: summary.windowIDs.count,

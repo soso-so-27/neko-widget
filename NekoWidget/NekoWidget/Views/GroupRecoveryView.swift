@@ -8,11 +8,11 @@ import SwiftUI
 
 /// 押したものを受け取って、状態モデルに渡す側（Codex のアダプタ）。
 /// 画面からは、本人が押したものだけが本人の操作の印つきで届く（GroupRecoveryCommandRoute）。
-/// まどのタブの入口。参加の手続き中の行と同じ形。
+/// 引き継ぎを始めるボタン。参加の手続き中の行と同じ形。
 struct GroupRecoveryEntryRow: View {
     var body: some View {
         HStack(spacing: 12) {
-            Label(GroupRecoveryWords.entry, systemImage: "iphone.and.arrow.forward")
+            Label(GroupRecoveryWords.start, systemImage: "iphone.and.arrow.forward")
                 .font(.body.weight(.semibold))
             Spacer(minLength: 0)
             Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.tertiary)
@@ -245,8 +245,15 @@ struct GroupRecoveryStateView: View {
             Section {
                 ForEach(candidates) { candidate in
                     Button { choosing = candidate } label: {
-                        Text(candidate.text)
-                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        HStack(spacing: 8) {
+                            Text(candidate.text)
+                            Spacer(minLength: 0)
+                            if candidate.usedOnThisIPhone {
+                                Text(GroupRecoveryWords.usedOnThisIPhone)
+                                    .font(.subheadline).foregroundStyle(.secondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     }
                     .tint(Color.primary)
                     .accessibilityIdentifier("group-recovery-root-\(candidate.id)")
@@ -360,7 +367,7 @@ struct GroupRecoveryLiveScreen: View {
             }
         }
         .onDisappear { model.cancelRootPublication() }
-        .navigationTitle(GroupRecoveryWords.entry)
+        .navigationTitle(GroupRecoveryWords.settingsEntry)
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: Binding(get: { model.phase != .idle }, set: { if !$0 { model.close() } })) {
             if model.phase == .ready, let adapter = model.adapter {
