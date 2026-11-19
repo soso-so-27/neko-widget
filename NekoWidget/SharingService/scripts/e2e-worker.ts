@@ -7,6 +7,7 @@ import type { Env } from '../src/env';
 import { ApiError, errorResponse } from '../src/errors';
 import { drainFamilyNotifications } from '../src/family-notebook-push';
 import { route } from '../src/index';
+import { stopTestPhoto } from './e2e-family-photo-stop';
 
 type LocalEnv = Env & { E2E_TOKEN?: string };
 
@@ -56,9 +57,14 @@ async function grantPlus(request: Request, env: LocalEnv): Promise<Response> {
   return Response.json({ plus: true });
 }
 
-async function captureNotifications(env: LocalEnv): Promise<Response> {
+async function captureNotifications(request: Request, env: LocalEnv): Promise<Response> {
+  const options = request.body === null ? {} : await request.json<{ advanceSeconds?: number }>();
+  const advance = options.advanceSeconds ?? 0;
+  if (!Number.isInteger(advance) || advance < 0 || advance > 240) {
+    throw new ApiError(400, 'invalid_fixture_clock', 'Use an advanceSeconds value from 0 to 240.');
+  }
   const destinations: { tokenSHA256: string; kind: string; pushType: string | null }[] = [];
-  const result = await drainFamilyNotifications(env, Math.floor(Date.now() / 1000), async (input, init) => {
+  const result = await drainFamilyNotifications(env, Math.floor(Date.now() / 1000) + advance, async (input, init) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
     const token = /^\/3\/device\/([0-9a-f]{64})$/u.exec(url.pathname)?.[1];
@@ -81,6 +87,13 @@ export default {
       return new Response(null, { status: 404 });
     }
     try {
+      if (url.pathname === '/v3/group-recovery/challenges' || url.pathname === '/v3/group-recovery/catalog') {
+        // The signed protocol and D1 schema require a staging or production
+        // domain. Use staging only for these two routes in this local Worker.
+        return await route(request, {
+          ...env, ENVIRONMENT: 'staging', MEMBER_RATE_LIMITER: { limit: async () => ({ success: true }) },
+        });
+      }
       if (!url.pathname.startsWith('/__e2e/')) {
         // Route through the real HTTP handlers. Family APNs is drained only by
         // the explicit fixture endpoint below, so it never calls Apple.
@@ -88,7 +101,8 @@ export default {
       }
       if (request.method === 'POST' && request.headers.get('neko-e2e-token') === env.E2E_TOKEN) {
         if (url.pathname === '/__e2e/plus') return await grantPlus(request, env);
-        if (url.pathname === '/__e2e/drain-notifications') return await captureNotifications(env);
+        if (url.pathname === '/__e2e/drain-notifications') return await captureNotifications(request, env);
+        if (url.pathname === '/__e2e/family-photo/stop') return await stopTestPhoto(request, env);
       }
       return new Response(null, { status: 404 });
     } catch (error) {
