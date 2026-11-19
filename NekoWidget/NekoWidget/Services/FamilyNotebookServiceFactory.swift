@@ -109,6 +109,64 @@ enum FamilyNotebookServiceFactory {
     }
 }
 
+#if INTERNAL_PRESENTATION
+/// 11/19 (2台試験だけ): B's iPhone, used as A's new iPhone in the trial, goes
+/// back to being B in the family notebook, and A's next recovery on it
+/// registers a fresh device. Removed, on this iPhone only: the notebook's
+/// recovery link, A's recovered device keys (its recovery Keychain, journal
+/// and outbox), that device's notebook copy and its creator-photo records.
+/// Never this iPhone's own identity, the person key in iCloud Keychain, or
+/// the notebook on the relay. Does nothing on A's own iPhone.
+@MainActor
+enum FamilyNotebookOwnerTrialReset {
+    static func forgetRecovery() async throws -> String {
+        guard let trial = OwnerTwoDeviceTrialConfiguration.current,
+              let client = GroupWindowClientProvider.production,
+              let endpoint = SharingAPIConfiguration.current.baseURL,
+              let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        else { throw FamilySharingError.serviceUnavailable }
+        if try await client.existingPersonID() == trial.owner { return "この端末はAです。戻すものはありません。" }
+        let namespace = GroupWindowClientProvider.namespace
+        let links = try GroupKeychainStore(namespace: namespace + FamilyNotebookServiceFactory.recoveryLinkSuffix)
+        // The recovery scope of A's root (the trial's owner is its hash).
+        let ownerScope = try GroupWire.bytes(trial.owner, count: 32).map { String(format: "%02x", $0) }.joined()
+        var scopes: Set<String> = [ownerScope], families: Set<UUID> = [trial.family]
+        if let bytes = try links.read(FamilyNotebookIdentityChoice.linkAccount),
+           let link = try? GroupWire.decode(FamilyNotebookIdentityChoice.Link.self, bytes) {
+            if link.scope.utf8.count == 64, link.scope.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) {
+                scopes.insert(link.scope)
+            }
+            families.formUnion(link.familyIDs)
+        }
+        // The link first: the notebook stops using the recovered identity.
+        try links.remove(FamilyNotebookIdentityChoice.linkAccount)
+        FamilyNotebookSharing.shared.restartSession()
+        for scope in scopes.sorted() {
+            let recovery = try GroupKeychainStore(namespace: namespace + ".recovery." + scope)
+            if let saved = try recovery.read("identity") {
+                let identity = try GroupWire.decode(GroupDeviceIdentity.self, saved)
+                // The same scope the provider above gives that device's notebook.
+                let notebook = try GroupWire.base64(GroupCanonical.hash(GroupCanonical.fields([
+                    Data(endpoint.absoluteString.utf8), Data(identity.personID.utf8), Data(identity.deviceID.utf8)])))
+                let secrets = try GroupKeychainStore(namespace: namespace + ".family." + notebook)
+                for account in try secrets.accounts(prefix: "") { try secrets.remove(account) }
+                try? FileManager.default.removeItem(at: support.appendingPathComponent("FamilyNotebook-v1", isDirectory: true)
+                    .appendingPathComponent(notebook, isDirectory: true))
+            }
+            let journal = try GroupKeychainStore(namespace: namespace + ".recovery-journal." + scope)
+            for store in [recovery, journal] {
+                for account in try store.accounts(prefix: "") { try store.remove(account) }
+            }
+            try? FileManager.default.removeItem(at: support.appendingPathComponent("GroupTransport-v3", isDirectory: true)
+                .appendingPathComponent("recovery-" + scope, isDirectory: true))
+        }
+        for family in families { FamilyRepresentativePhotos.forgetSyncRecords(family) }
+        _ = await FamilyNotebookSharing.shared.refreshAfterPlusChange(reportsFailure: false)
+        return "この端末をBに戻しました。"
+    }
+}
+#endif
+
 /// 11/18 (TestFlight 388): each stage of a family photo delivery in the unified
 /// log and, in the owner's trial builds, in 診断ログ (設定 → ログ): a stage
 /// name, the relay's HTTP status and a fixed code only.
@@ -120,6 +178,27 @@ enum FamilyPhotoDeliveryDiagnostics {
         if let status = note.status { metadata["familyPhotoStatus"] = String(status) }
         if let code = note.code { metadata["familyPhotoCode"] = code }
         SharedLog.app.info("family-photo", "Family photo delivery stage", metadata: metadata)
+#endif
+    }
+}
+
+/// 11/19 (2台試験): when the relay's silent push FamilyDeviceRegisteredPush
+/// came and when its one notebook pass ended, with the outcome and the time
+/// between, in 診断ログ of the owner's trial builds. No ID, token or key.
+enum FamilyDevicePushDiagnostics {
+    enum Outcome: String { case read, notRead, skipped }
+    static func received() {
+#if INTERNAL_PRESENTATION && !NEKO_SHARE_EXTENSION
+        SharedLog.app.info("family-device-push", "Family device push received",
+                           metadata: ["familyDevicePush": "received"])
+#endif
+    }
+    static func finished(_ outcome: Outcome, since start: Date) {
+#if INTERNAL_PRESENTATION && !NEKO_SHARE_EXTENSION
+        let milliseconds = max(0, Int(Date().timeIntervalSince(start) * 1_000))
+        SharedLog.app.info("family-device-push", "Family device push pass finished",
+                           metadata: ["familyDevicePush": "finished", "familyDevicePushOutcome": outcome.rawValue,
+                                      "durationMs": String(milliseconds)])
 #endif
     }
 }

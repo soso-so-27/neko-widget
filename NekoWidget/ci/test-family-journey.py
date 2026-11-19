@@ -758,6 +758,55 @@ class FamilyNotebookDeviceChange1119Tests(unittest.TestCase):
                      "pin: the new iPhone has every past key"):
             self.assertIn(step, pinned)
 
+    def test_owner_trial_way_back_forgets_only_the_recovered_device(self):
+        # 11/19 (2台試験だけ): B's iPhone, used as A's new iPhone, back to B; the
+        # next recovery registers a fresh device. Owner trial builds only.
+        factory = read("NekoWidget/Services/FamilyNotebookServiceFactory.swift")
+        block = section(factory, "#if INTERNAL_PRESENTATION\n/// 11/19 (2台試験だけ)", "#endif\n")
+        reset = section(block, "static func forgetRecovery() async throws -> String {", "\n    }\n}")
+        self.assertIn("guard let trial = OwnerTwoDeviceTrialConfiguration.current,", reset)
+        # Nothing on A's own iPhone; nothing created or registered.
+        self.assertLess(reset.index("if try await client.existingPersonID() == trial.owner { return "),
+                        reset.index(".remove("))
+        for token in ("familyNotebookIdentity()", "deviceIdentity(", "write(", "RootSyncStore", "pinSync",
+                      "FamilyNotebookSyncedKeychainStore", "SharingPersonAction", "notebook-recovery-link"):
+            self.assertNotIn(token, reset)
+        # This iPhone's own identity (the bare namespace) is never touched.
+        self.assertNotIn("GroupKeychainStore(namespace: namespace)", reset)
+        self.assertEqual(reset.count("GroupKeychainStore(namespace: namespace + "), 4)
+        for store in ("FamilyNotebookServiceFactory.recoveryLinkSuffix", '".recovery." + scope',
+                      '".recovery-journal." + scope', '".family." + notebook'):
+            self.assertIn("GroupKeychainStore(namespace: namespace + " + store + ")", reset)
+        # The link goes first, then the notebook stops using the recovered identity.
+        self.assertLess(reset.index("try links.remove(FamilyNotebookIdentityChoice.linkAccount)"),
+                        reset.index("FamilyNotebookSharing.shared.restartSession()"))
+        self.assertLess(reset.index("FamilyNotebookSharing.shared.restartSession()"), reset.index("for scope in scopes"))
+        self.assertIn("FamilyRepresentativePhotos.forgetSyncRecords(family)", reset)
+        # The same notebook scope as the provider's.
+        self.assertIn("Data(endpoint.absoluteString.utf8), Data(identity.personID.utf8), Data(identity.deviceID.utf8)", reset)
+        settings = read("NekoWidget/Views/SettingsView.swift")
+        view = section(settings, "private struct OwnerTwoDeviceEnrollmentView: View {", "\n#endif")
+        self.assertIn('Button("この端末をBに戻す", role: .destructive) { confirmsForget = true }', view)
+        self.assertIn("try await FamilyNotebookOwnerTrialReset.forgetRecovery()", view)
+        self.assertEqual(settings.count("FamilyNotebookOwnerTrialReset"), 1)
+        records = section(read("NekoWidget/Views/CatCareView.swift"), "#if INTERNAL_PRESENTATION\n    /// 11/19 (the owner's two-device trial only)", "#endif")
+        self.assertIn("static func forgetSyncRecords(_ family: UUID) {", records)
+
+    def test_creators_new_iphone_never_overwrites_the_family_photo_first(self):
+        # 11/19 (the creator with two iPhones): a photo by this person that this
+        # iPhone never sent is replaced only after this iPhone's own choice changed.
+        model = read("NekoWidget/Views/CatCareView.swift")
+        one = section(model, "private func syncOne(", "private func deliver(")
+        guard = section(one, "if sent[key] == nil {", "if let photo {")
+        self.assertIn("if first == (photo ?? \"\") { return }", guard)
+        self.assertIn("} else if referenced, isMine(backend.author(of: cat)) {\n                seen[key] = photo ?? \"\"\n                return", guard)
+        self.assertLess(one.index("if sent[key] == nil {"), one.index("try await deliver("))
+        self.assertIn("sent[key] = photo; seen[key] = nil", one)
+        run = section(model, "private func runSync() async {", "private func syncOne(")
+        self.assertIn("var sent = Self.sentPhotos(family), seen = Self.seenPhotos(family)", run)
+        self.assertIn("if seen != seenBefore { Self.saveSeen(seen, family) }", run)
+        self.assertIn('private static let seenKeyPrefix = "familyNotebook.creatorPhotos.seen.v1."', model)
+
 
 if __name__ == "__main__":
     unittest.main()

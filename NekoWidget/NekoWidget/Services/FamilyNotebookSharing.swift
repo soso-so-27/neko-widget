@@ -435,8 +435,12 @@ final class FamilyNotebookAutoCheck {
     /// at once. Automatic (this iPhone's call budget), skipped while the
     /// budget is paused or another pass runs, within the time iOS gives.
     func deviceRegisteredPush() async -> Bool {
+        let started = Date()
         guard model.isReal, model.hasFamily, !sharing.isWorking, loop == nil || sleeping,
-              SharingAutoCallBudget.shared.pausedUntil() == nil else { return false }
+              SharingAutoCallBudget.shared.pausedUntil() == nil else {
+            FamilyDevicePushDiagnostics.finished(.skipped, since: started)
+            return false
+        }
         #if canImport(UIKit)
         let work = Task { await SharingPersonAction.automatic { await fullPass() } }
         // UIKit calls the expiration on the main thread.
@@ -449,6 +453,7 @@ final class FamilyNotebookAutoCheck {
         let read = await SharingPersonAction.automatic { await fullPass() }
         #endif
         if read { lastPassAt = Date(); lastFullAt = lastPassAt }
+        FamilyDevicePushDiagnostics.finished(read ? .read : .notRead, since: started)
         return read
     }
 

@@ -320,6 +320,9 @@ enum DiagnosticLogPrivacy {
             "temporarily_unavailable", "transport_unavailable", "unknown_outcome", "unparsed_body",
             "upgrade_required",
         ],
+        // 11/19: the family notebook's device push (FamilyDevicePushDiagnostics).
+        "familyDevicePush": ["finished", "received"],
+        "familyDevicePushOutcome": ["notRead", "read", "skipped"],
         "deliveryStage": [
             "load-outbox", "reserve", "save-reservation", "read-ciphertext",
             "upload", "save-upload", "begin-commit", "commit", "save-commit", "cleanup",
