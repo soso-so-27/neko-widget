@@ -101,6 +101,24 @@ async function check(profileCase = sharingBeta, overrides = new Map(), options =
   });
 }
 
+test("requires the published media-staging privacy revision only on the approved Pages base", async () => {
+  const githubPages = { ...publicOne, siteBase: "https://soso-so-27.github.io/neko-widget/" };
+  const privacy = publicOne.definition.pages.find(page => page.name === "privacy");
+  const disclosure = "家族の手帳を作った人が猫ごとに選んだ代表写真";
+  const mediaPage = { ...privacy, visibleRevisionDate: "2026-11-19" };
+  const updated = pageHtml(githubPages, mediaPage, { phrases: [...privacy.requiredPhrases, disclosure] });
+
+  await assert.rejects(check(githubPages), /privacy is missing the visible policy revision/u);
+  await assert.rejects(check(githubPages, new Map([["privacy", pageHtml(githubPages, mediaPage)]])),
+    /privacy is missing required policy content/u);
+  assert.equal((await check(githubPages, new Map([["privacy", updated]]))).pages.length, 5);
+
+  const publicDomain = { ...publicOne, siteBase: "https://nekonomado.com/" };
+  assert.equal((await check(publicDomain)).pages.length, 5);
+  await assert.rejects(check(publicDomain, new Map([["privacy", pageHtml(publicDomain, mediaPage)]])),
+    /privacy is missing the visible policy revision/u);
+});
+
 test("accepts the complete sharing-beta policy profile", async () => {
   const result = await check();
   assert.equal(result.profile, "sharing-beta");
