@@ -464,24 +464,29 @@ enum FamilyNotebookIdentityChoice {
 
     /// The recovered person's identity when it is registered, is the person
     /// the link names, and the catalog listed a notebook; else nil (the
-    /// iPhone's usual identity). An iPhone whose usual identity already is
-    /// that person (the original iPhone) keeps its usual identity.
-    static func recovered(link: Link?, recovered: GroupDeviceIdentity?, usualPersonID: String?) -> GroupDeviceIdentity? {
+    /// iPhone's usual identity). The link is written only after the person
+    /// confirmed the recovery on this iPhone, so the recovered device wins
+    /// over a leftover usual device of the same person (11/19: the app
+    /// deleted and installed again keeps the old device in the Keychain).
+    /// An iPhone whose usual device already is the recovered one keeps it.
+    static func recovered(link: Link?, recovered: GroupDeviceIdentity?, usualPersonID: String?,
+                          usualDeviceID: String?) -> GroupDeviceIdentity? {
         guard let link, link.version == 1, !link.familyIDs.isEmpty, let recovered, recovered.registered,
               recovered.personPrivateKey != nil, recovered.personID == link.personID,
-              usualPersonID != link.personID else { return nil }
+              let recoveredDeviceID = try? recovered.deviceID,
+              usualPersonID != link.personID || usualDeviceID != recoveredDeviceID else { return nil }
         return recovered
     }
 
     /// The link and the recovered identity from their Keychain stores.
     static func load(links: any GroupSecretStore, recoveryStore: (String) throws -> any GroupSecretStore,
-                     usualPersonID: String?) throws -> GroupDeviceIdentity? {
+                     usualPersonID: String?, usualDeviceID: String?) throws -> GroupDeviceIdentity? {
         guard let bytes = try links.read(linkAccount) else { return nil }
         let link = try GroupWire.decode(Link.self, bytes)
         guard link.scope.utf8.count == 64,
               link.scope.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { return nil }
         let identity = try recoveryStore(link.scope).read("identity").map { try GroupWire.decode(GroupDeviceIdentity.self, $0) }
-        return recovered(link: link, recovered: identity, usualPersonID: usualPersonID)
+        return recovered(link: link, recovered: identity, usualPersonID: usualPersonID, usualDeviceID: usualDeviceID)
     }
 }
 

@@ -116,6 +116,10 @@ struct GroupRecoveryLiveBuilder: Sendable {
     /// 11/19 (機種変更 水準2): the family notebook's steps for a root whose
     /// catalog lists one; nil leaves the notebook out (captures, verifiers).
     var notebook: (@Sendable (GroupRecoveryNotebookContext) -> GroupRecoveryNotebookSteps)? = nil
+    /// 11/19: the root of this iPhone's usual identity (left in the Keychain
+    /// when the app was deleted and installed again); its candidate is marked
+    /// and listed first.
+    var usualRoot: Data? = nil
     /// Bounds the one tap: a catalog, then one status per まど.
     static let windowLimit = 8
 
@@ -187,9 +191,10 @@ struct GroupRecoveryLiveBuilder: Sendable {
             try Task.checkCancellation()
             contexts.append(.init(candidate: .init(summary: .init(rootID: catalog.personID,
                 windowIDs: catalog.windows.map(\.windowID), notebookIDs: catalog.notebooks.map(\.familyID)),
-                openableWindowNames: []), session: session, items: items))
+                openableWindowNames: [], usedOnThisIPhone: usualRoot == root), session: session, items: items))
         }
-        return contexts
+        // Display order only: the one used on this iPhone first (never a pick).
+        return contexts.filter { $0.candidate.usedOnThisIPhone } + contexts.filter { !$0.candidate.usedOnThisIPhone }
     }
 
     /// This iPhone's keys for the root, kept in the root's own namespace and reused.
@@ -736,7 +741,8 @@ extension GroupRecoveryLiveModel {
             // If the Keychain cannot be read, preserve the error. Only a
             // successful empty read plus no local identity means no candidates.
             var roots = try await sync.availableRoots().map(\.privateKey)
-            if let local = try currentRegisteredRoot(namespace: namespace) { roots.append(local) }
+            let local = try currentRegisteredRoot(namespace: namespace)
+            if let local { roots.append(local) }
 #if INTERNAL_PRESENTATION
             if let trial = OwnerTwoDeviceTrialConfiguration.current {
                 roots = roots.filter { matchesTrialOwner($0, owner: trial.owner) }
@@ -748,6 +754,7 @@ extension GroupRecoveryLiveModel {
                      try GroupKeychainStore(namespace: namespace + ".recovery." + scope))
                 })
             builder.notebook = { context in GroupRecoveryLiveModel.notebookSteps(context, endpoint: endpoint, namespace: namespace) }
+            builder.usualRoot = local
             return try await builder.contexts(roots: roots)
         }
     }

@@ -6919,7 +6919,7 @@ class OnePlaceSettingsTests(unittest.TestCase):
         family = section(body, "if showsFamilyNotebookRow {", '"settings-family-notebook"')
         # 11/10: only for someone already in a family, or (11/15) waiting to be
         # let in; starting one is in この子のこと.
-        self.assertIn("private var showsFamilyNotebookRow: Bool { familyNotebook.hasFamily || awaitsFamilyApproval }", settings)
+        self.assertIn("private var showsFamilyNotebookRow: Bool { familyNotebook.hasFamily || awaitsFamilyApproval || awaitsRecoveredNotebook }", settings)
         self.assertIn('Text("家族の手帳").foregroundStyle(Color.primary)', family)
         self.assertIn(".foregroundStyle(Color(uiColor: .tertiaryLabel))", family)
         self.assertNotIn('"settings-cat-profiles"', body)
