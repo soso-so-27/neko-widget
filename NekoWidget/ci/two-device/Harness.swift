@@ -355,6 +355,51 @@ struct Drained: Decodable {
         // hiddenOperationIDs = …, then FamilyHiddenOperations.keep (UserDefaults and the Keychain).
         hiddenEntriesMemory.write(FamilyHiddenOperationsMemory.text(ids)); hiddenEntriesChecked = true
     }
+    /// FamilyNotebookPrototype's answers to 「同じ子ですか」: UserDefaults
+    /// (FamilyCatLinkAnswersMemory.defaultsKey), which deleting the app wipes.
+    private(set) var linkAnswers: [String]?
+    /// FamilyNotebookPrototype.linkAnswersChecked: one per process.
+    private var linkAnswersChecked = false
+    /// FamilyNotebookPrototype.linkAnswers over this iPhone's UserDefaults value and device-only Keychain.
+    private var linkAnswersMemory: FamilyCatLinkAnswersMemory {
+        FamilyCatLinkAnswersMemory(defaults: { [unowned self] in self.linkAnswers },
+            setDefaults: { [unowned self] in self.linkAnswers = $0 },
+            keychain: { [unowned self] in self.keychain.store(Self.namespace + FamilyCatLinkAnswersMemory.namespaceSuffix) })
+    }
+    /// The family cats 「同じ子ですか」 would ask about now, in order, as
+    /// FamilyNotebookPrototype works them out after a read (refreshUnlinked:
+    /// the Keychain copy once per process, then FamilyNotebookCatLink.unlinked)
+    /// and pendingLinkQuestion offers them one at a time
+    /// (FamilyNotebookCatLink.firstUnanswered). This iPhone is taken to have a
+    /// page of its own the cat could be (no CatCareStore here: `care` is nil).
+    func linkQuestions() throws -> [UUID] {
+        let snapshot = try required(service.notebook, "\(name) has no notebook copy").snapshot()
+        let linked = FamilyNotebookCatLink.linkedAnswerKeys(in: snapshot)
+        linkAnswersMemory.restore(checked: &linkAnswersChecked) { !linked.contains($0) }
+        let unlinked = FamilyNotebookCatLink.unlinked(snapshot, care: nil) { _ in "" }
+        let answered = Set(linkAnswers ?? [])
+        var asked: [UUID] = [], closed = Set<UUID>()
+        while let next = FamilyNotebookCatLink.firstUnanswered(unlinked, closed: closed, answered: answered,
+                key: { FamilyNotebookCatLink.answerKey(family: snapshot.familyID, cat: $0) }) {
+            asked.append(next.id); closed.insert(next.id)
+        }
+        return asked
+    }
+    /// The question answered: 「同じ子」 links `cat` to `profile` (the store's
+    /// setLocalProfile, as FamilyNotebookPrototype.link does before it saves
+    /// 「この子のこと」, not driven here), else 「べつの子」. Then rememberLinkAnswer.
+    func answerLinkQuestion(_ cat: UUID, sameAs profile: UUID?) throws {
+        let store = try required(service.notebook, "\(name) has no notebook copy")
+        if let profile { _ = try store.setLocalProfile(profile, forFamilyCat: cat) }
+        let family = try store.snapshot().familyID
+        linkAnswersMemory.remember(FamilyNotebookCatLink.answerKey(family: family, cat: cat), linked: profile != nil)
+    }
+    /// The answers' copy in this iPhone's Keychain (survives deleting the app).
+    var keptLinkAnswers: [String] {
+        FamilyCatLinkAnswersMemory.keys(try? keychain.store(Self.namespace + FamilyCatLinkAnswersMemory.namespaceSuffix)
+            .read(FamilyCatLinkAnswersMemory.account))
+    }
+
     /// FamilyReportReplies.sentKey: a UserDefaults flag that deleting the app wipes.
     private(set) var reportSent = false
     /// FamilyReportReplies.checkedNone: one per process.
@@ -440,7 +485,7 @@ struct Drained: Decodable {
             // The pinned recipient: on macOS GroupReportCrypto accepts no other.
             moderationRecipient: { (keyID: GroupReportCrypto.moderationKeyID, publicKey: GroupReportCrypto.moderationPublicKey) })
         notebookIdentity = nil; lastState = nil; nameChecked = false
-        hiddenEntriesChecked = false; repliesCheckedNone = false
+        hiddenEntriesChecked = false; repliesCheckedNone = false; linkAnswersChecked = false
         lastReadAt = nil; identityChecked = nil
         // Notifications allowed (GroupAdmissionService passes the token on).
         await service.updatePushSubscription(token: pushToken, environment: "production")
@@ -454,7 +499,7 @@ struct Drained: Decodable {
         try? FileManager.default.removeItem(at: support)
         support = Self.newSupportFolder(name)
         rememberedName = ""; keepsNameInKeychain = true
-        hiddenEntries = nil; reportSent = false
+        hiddenEntries = nil; reportSent = false; linkAnswers = nil
         bindingSaved = false; savesBinding = true; awaitingApprovalMark = nil
         pushToken = Data((0..<32).map { _ in UInt8.random(in: 0...255) })
         try await launch()
