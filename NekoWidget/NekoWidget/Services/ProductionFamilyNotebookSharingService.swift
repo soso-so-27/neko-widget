@@ -229,9 +229,10 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     private let revocations: (any GroupSecretStore)?
     /// What else points at the pair (the factory: its 機種変更 link).
     private let forgetRevoked: @MainActor (GroupDeviceRevocation.Pair) async -> Void
-    /// The person's own create or join at the entrance: a new device under
-    /// the same person key when the usual one was taken off (the factory:
-    /// ProductionGroupWindowClient.renewRevokedDevice). Never by itself.
+    /// The person's own create or join at the entrance: a fresh start (a new
+    /// person and device) when the usual one was taken off (the factory:
+    /// ProductionGroupWindowClient.startFreshAfterRevocation). Never by itself;
+    /// coming back as the same person is 機種変更's alone.
     private let renewForEntrance: @MainActor () async throws -> Bool
     /// Counts the sessions let go of because their pair was taken off.
     private var revocationDetaches = 0
@@ -269,7 +270,7 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
         do { renewed = try await renewForEntrance() }
         catch is CancellationError { throw CancellationError() }
         catch { throw Self.presentation(error) }
-        // The next call opens a session with the new device, not the one taken off.
+        // The next call opens a session with the new person, not the pair taken off.
         if renewed, let session, (try? session.isRevoked()) == true { await detachRevoked(session) }
     }
     /// 11/19 (機種変更 水準2): the recovery screen linked this iPhone to the
@@ -814,7 +815,9 @@ extension ProductionFamilyNotebookSharingService {
                                           client: FamilyNotebookRepresentativePhotoClient, journal: any GroupSecretStore) {
         guard representativePhotosEnabled else { throw FamilyNotebookPhotoFailure.unavailable }
         guard let session, let store = session.notebook, let material = photoMaterial,
-              let snapshot = try? store.snapshot(), !snapshot.sharingEnded, snapshot.familyID == material.familyID
+              let snapshot = try? store.snapshot(), !snapshot.sharingEnded, snapshot.familyID == material.familyID,
+              // 11/20: no photo call for a pair taken off (the next read lets it go).
+              (try? session.isRevoked()) == false
         else { throw FamilySharingError.membershipChecking }
         if let photoClient, photoClient.familyID == material.familyID {
             return (session, store, material, photoClient.client, photoClient.journal)

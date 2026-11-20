@@ -317,7 +317,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     private func registeredIdentity() async throws -> GroupDeviceIdentity {
         let value = try identity()
         // 11/20: a pair the relay said was taken off never signs, registers
-        // or is replaced by itself (renewRevokedDevice: the person's tap only).
+        // or is replaced by itself (startFreshAfterRevocation: the person's tap only).
         if try isRevoked(value) { throw GroupClientError.authenticationRequired }
         if value.registered { return value }
         if let registrationTask { return try await registrationTask.value }
@@ -362,32 +362,44 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         photoMetadata.removeAll(); historicalRosters.removeAll()
     }
 
-    /// 11/20: only from the person's own create or join at the まど's entrance
-    /// (GroupWindowView, GroupJoinModel; never by itself). After the relay said
-    /// this iPhone's device was taken off, a new device key under the same
-    /// person key; the next call registers it as a first device registers
-    /// (POST /v3/group-identities, signed by the person and the new device;
-    /// 409 `device_limit` is the existing error). The old keys stay in the
-    /// Keychain (`identity-revoked:`), and nothing of the old device is sent
-    /// with the new one. Without the person key (a device linked from another
-    /// iPhone) nothing changes and the existing error stays.
+    /// 11/20: only from the person's own 作る or 参加 (まど: GroupWindowView,
+    /// GroupJoinModel; the notebook: 作る and joining by invitation), never by
+    /// itself. After the relay said this iPhone's device was taken off, the
+    /// person starts fresh: a new person and device, exactly as on an iPhone
+    /// with no identity (identity()). The identity taken off, its person key
+    /// included, is set aside (`identity-revoked:`) and never used by itself
+    /// again; its mark stays. Coming back as that person is 機種変更's alone
+    /// (its root is offered there: setAsideRoots). What waits to be sent for
+    /// the old pair stays with it. Returns whether a fresh start was made.
     @discardableResult
-    func renewRevokedDevice() throws -> Bool {
-        guard let current = try load(GroupDeviceIdentity.self, "identity"), try isRevoked(current),
-              let root = current.personPrivateKey else { return false }
+    func startFreshAfterRevocation() throws -> Bool {
+        guard let current = try load(GroupDeviceIdentity.self, "identity"), try isRevoked(current) else { return false }
         let old = try current.deviceID
-        try save(current, "identity-revoked:" + old)
-        let fresh = GroupDeviceIdentity(personPrivateKey: root, personPublicKey: current.personPublicKey,
-            signingPrivateKey: Curve25519.Signing.PrivateKey().rawRepresentation,
-            agreementPrivateKey: Curve25519.KeyAgreement.PrivateKey().rawRepresentation, windowCertificates: [:], registered: false)
+        try save(current, Self.setAsidePrefix + old)
         try secrets.remove("registration-request")
-        if let connection = try load(GroupLocalBillingConnection.self, "billing-connection"), connection.deviceID == old {
-            try secrets.remove("billing-connection")
-        }
-        try save(fresh, "identity")
+        // The billing connection was the old person's; the new one connects itself.
+        try secrets.remove("billing-connection")
+        try secrets.remove("identity")
         registrationTask = nil
         forgetShown()
+        _ = try identity()
         return true
+    }
+
+    /// Where startFreshAfterRevocation keeps an identity taken off.
+    static let setAsidePrefix = "identity-revoked:"
+
+    /// 11/20: the person keys of the identities set aside in `store` (the
+    /// usual one), for 機種変更's candidates; Keychain only.
+    static func setAsideRoots(in store: any GroupSecretStore) throws -> [Data] {
+        var roots: [Data] = []
+        for account in try store.accounts(prefix: setAsidePrefix) {
+            guard let bytes = try store.read(account),
+                  let root = try? GroupWire.decode(GroupDeviceIdentity.self, bytes).personPrivateKey,
+                  !roots.contains(root) else { continue }
+            roots.append(root)
+        }
+        return roots
     }
 
     /// 11/19: the person of the usual identity, without creating one.

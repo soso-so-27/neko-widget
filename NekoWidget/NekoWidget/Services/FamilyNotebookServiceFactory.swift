@@ -49,9 +49,9 @@ enum FamilyNotebookServiceFactory {
         revocations: GroupWindowClientProvider.production?.revocations,
         forgetRevoked: { FamilyNotebookServiceFactory.dropRecoveryLink(of: $0) },
         renewForEntrance: {
-            // 11/20: only from 作る / 招待で入る (the service calls it there).
+            // 11/20: only from 作る / 招待で入る (the service calls it there): a fresh start.
             guard let client = GroupWindowClientProvider.production else { return false }
-            return try await client.renewRevokedDevice()
+            return try await client.startFreshAfterRevocation()
         })
     }
 

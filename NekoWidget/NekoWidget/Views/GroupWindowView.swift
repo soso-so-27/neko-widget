@@ -2223,8 +2223,8 @@ final class GroupWindowListModel: ObservableObject {
             if let createOperation, createOperation.draft == draft { operationID = createOperation.id }
             else { operationID = UUID(); createOperation = (draft, operationID) }
             do {
-                // 11/20: the person's own 作る: a device taken off gets a new one first.
-                _ = try await (client as? ProductionGroupWindowClient)?.renewRevokedDevice()
+                // 11/20: the person's own 作る: after a device was taken off, a fresh start first.
+                _ = try await (client as? ProductionGroupWindowClient)?.startFreshAfterRevocation()
                 let window = try await client.createWindow(name: trimmed, ownerDisplayName: owner, operationID: operationID)
                 createOperation = nil
                 UsageCounter.shared.count(.madoCreated)  // Usage (11/7)

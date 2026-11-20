@@ -120,6 +120,9 @@ struct GroupRecoveryLiveBuilder: Sendable {
     /// when the app was deleted and installed again); its candidate is marked
     /// and listed first.
     var usualRoot: Data? = nil
+    /// 11/20: where the relay's 「taken off」 is marked (the usual identity's
+    /// store); nil: never looked at (captures, verifiers).
+    var revocations: (any GroupSecretStore)? = nil
     /// Bounds the one tap: a catalog, then one status per まど.
     static let windowLimit = 8
 
@@ -136,7 +139,7 @@ struct GroupRecoveryLiveBuilder: Sendable {
                 transport: transport, journal: journal, secrets: secrets, enabled: true)
             // The relay answers this only while its recovery gate is on (else 503).
             let catalog = try await client.catalog()
-            let identity = try Self.deviceIdentity(root: key, secrets: secrets)
+            let identity = try Self.deviceIdentity(root: key, secrets: secrets, journal: journal, revocations: revocations)
             var drafts: [GroupRecoveryClient.Draft] = []
             for window in catalog.windows.prefix(Self.windowLimit) {
                 // Journaled: a retry reuses the same operationID for this root and まど.
@@ -197,14 +200,37 @@ struct GroupRecoveryLiveBuilder: Sendable {
         return contexts.filter { $0.candidate.usedOnThisIPhone } + contexts.filter { !$0.candidate.usedOnThisIPhone }
     }
 
+    /// 11/20: the one discard on the spot, only for a recovered device that
+    /// carries the relay's confirmed 「taken off」 mark, and only from the
+    /// person's own 「引き継ぐ」 (contexts runs on that tap). Its drafts held the
+    /// old device's keys, so they go from this root's journal; the old keys
+    /// are kept aside in the root's store and a new device is made.
+    private static func renewTakenOff(_ identity: GroupDeviceIdentity, saved: Data, root: Curve25519.Signing.PrivateKey,
+                                      secrets: any GroupSecretStore, journal: any GroupSecretStore) throws -> GroupDeviceIdentity {
+        try secrets.write(saved, account: "identity-revoked:" + identity.deviceID, createOnly: false)
+        for account in try journal.accounts(prefix: "op:recovery:") + journal.accounts(prefix: "op:rf:") {
+            try journal.remove(account)
+        }
+        let fresh = GroupDeviceIdentity(personPrivateKey: root.rawRepresentation, personPublicKey: root.publicKey.rawRepresentation,
+            signingPrivateKey: Curve25519.Signing.PrivateKey().rawRepresentation,
+            agreementPrivateKey: Curve25519.KeyAgreement.PrivateKey().rawRepresentation, windowCertificates: [:], registered: false)
+        try secrets.write(GroupWire.encode(fresh), account: "identity", createOnly: false)
+        return fresh
+    }
+
     /// This iPhone's keys for the root, kept in the root's own namespace and reused.
-    static func deviceIdentity(root: Curve25519.Signing.PrivateKey, secrets: any GroupSecretStore) throws -> GroupDeviceIdentity {
+    /// 11/20: with `revocations`, a device of this root that the relay said
+    /// was taken off is not reused (renewTakenOff).
+    static func deviceIdentity(root: Curve25519.Signing.PrivateKey, secrets: any GroupSecretStore,
+                               journal: (any GroupSecretStore)? = nil,
+                               revocations: (any GroupSecretStore)? = nil) throws -> GroupDeviceIdentity {
         if let saved = try secrets.read("identity") {
             let identity = try GroupWire.decode(GroupDeviceIdentity.self, saved)
             guard identity.personPublicKey == root.publicKey.rawRepresentation else {
                 throw GroupRecoveryClient.Failure.invalidResponse
             }
-            return identity
+            guard let revocations, let journal, try GroupDeviceRevocation.isMarked(identity, in: revocations) else { return identity }
+            return try renewTakenOff(identity, saved: saved, root: root, secrets: secrets, journal: journal)
         }
         let identity = GroupDeviceIdentity(personPrivateKey: root.rawRepresentation,
             personPublicKey: root.publicKey.rawRepresentation,
@@ -267,7 +293,9 @@ actor GroupRecoveryNotebookSession: GroupRecoverySession {
         case .queryStatus(let id) where id == operationID:
             return try await state()
         case .submitSameOperation(let id) where id == operationID:
-            try await steps.confirm()
+            // 11/20: the relay's 3-iPhone limit on registering the notebook's
+            // device is the row's existing 3台まで state (and its 外す).
+            do { try await steps.confirm() } catch GroupClientError.deviceLimit { throw GroupRecoveryClient.Failure.deviceLimit }
             return try await state()
         default:
             return try await base.run(action)
@@ -753,6 +781,9 @@ extension GroupRecoveryLiveModel {
             var roots = try await sync.availableRoots().map(\.privateKey)
             let local = try currentRegisteredRoot(namespace: namespace)
             if let local { roots.append(local) }
+            // 11/20: a person set aside after a fresh start (its device was taken
+            // off) can come back here, also when its key never went to iCloud.
+            roots += try ProductionGroupWindowClient.setAsideRoots(in: GroupKeychainStore(namespace: namespace))
 #if INTERNAL_PRESENTATION
             if let trial = OwnerTwoDeviceTrialConfiguration.current {
                 roots = roots.filter { matchesTrialOwner($0, owner: trial.owner) }
@@ -765,6 +796,7 @@ extension GroupRecoveryLiveModel {
                 })
             builder.notebook = { context in GroupRecoveryLiveModel.notebookSteps(context, endpoint: endpoint, namespace: namespace) }
             builder.usualRoot = local
+            builder.revocations = try GroupKeychainStore(namespace: namespace)
             return try await builder.contexts(roots: roots)
         }
     }

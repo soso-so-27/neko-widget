@@ -86,6 +86,10 @@ private func healthy(_ request: URLRequest) -> ScriptedRelay.Answer {
         return .reply(201, Data(#"{"personId":"\#(personID)","deviceId":"\#(deviceID)","state":"registered"}"#.utf8))
     }
     if path == "/v3/group-windows/list" { return .reply(200, emptyList) }
+    if path == "/v3/group-identities/deletion-requests", let body = request.httpBody,
+       let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any], let id = object["operationId"] as? String {
+        return .reply(202, Data(#"{"protocolVersion":3,"requestId":"\#(id)","state":"processing","acceptedAt":1763600000,"completedAt":null}"#.utf8))
+    }
     return .reply(404, Data(#"{"error":{"code":"not_found"}}"#.utf8))
 }
 
@@ -222,28 +226,36 @@ enum DeviceRevocationChecks {
             try check(listed.isEmpty && mixed.log.last?.path == "/v3/group-windows/list", "the usual pair still reads (nothing it shows was closed)")
         }
 
-        // 2d. The person's own create or join: a new device under the same person.
+        // 2d. The person's own 作る / 参加: a fresh start, a new person and device.
         do {
             try check(!(try await ProductionGroupWindowClient(endpoint: endpoint, secrets: MemorySecrets(), transport: relay,
-                outboxDirectory: folder.appendingPathComponent("none")).renewRevokedDevice()), "nothing to renew without an identity")
+                outboxDirectory: folder.appendingPathComponent("none")).startFreshAfterRevocation()), "nothing to restart without an identity")
             relay.answer(healthy)
             let before = relay.count
-            try check(try await client.renewRevokedDevice(), "a revoked device with the person key is renewed")
-            try check(!(try await client.renewRevokedDevice()), "only once")
+            try check(try await client.startFreshAfterRevocation(), "a revoked identity starts fresh")
+            try check(!(try await client.startFreshAfterRevocation()), "only once")
             let fresh = try required(try store.read("identity").map { try GroupWire.decode(GroupDeviceIdentity.self, $0) })
             let freshDevice = try fresh.deviceID, oldDevice = try me.deviceID
-            try check(fresh.personID == me.personID && freshDevice != oldDevice && !fresh.registered, "same person, new device, not yet registered")
-            try check(try store.read("identity-revoked:" + me.deviceID) != nil, "the old keys are kept aside")
-            try check(relay.count == before, "renewing itself sends nothing")
-            try check(try await client.windows().isEmpty, "the new device lists")
+            try check(fresh.personID != me.personID && fresh.personPrivateKey != me.personPrivateKey && freshDevice != oldDevice
+                      && !fresh.registered, "a new person and device, not yet registered")
+            let aside = try store.read(ProductionGroupWindowClient.setAsidePrefix + oldDevice)
+            try check(aside != nil, "the old identity, person key included, is set aside")
+            let roots = try ProductionGroupWindowClient.setAsideRoots(in: store)
+            try check(roots == [me.personPrivateKey!], "機種変更 is offered the set-aside person")
+            let stillMarked = try GroupDeviceRevocation.isMarked(me, in: marks)
+            try check(stillMarked, "the old pair's mark stays")
+            try check(relay.count == before, "starting fresh itself sends nothing")
+            try check(try await client.windows().isEmpty, "the new person lists")
             let paths = relay.log.dropFirst(before).map { $0.path }
             try check(paths == ["/v3/group-identities/challenges", "/v3/group-identities", "/v3/group-windows/list"],
                       "registered as a first device registers, then read (got \(paths))")
             try check(relay.log.last?.device == freshDevice, "signed by the new device")
-            try check(try await client.hasExistingIdentity(), "the new device opens")
+            try check(try await client.hasExistingIdentity(), "the new person opens")
+            let personNow = try await client.existingPersonID()
+            try check(personNow == fresh.personID, "the usual identity is the new person")
         }
 
-        // 2e. A device linked without the person key stays with the existing error.
+        // 2e. A device linked without the person key starts fresh the same way.
         do {
             let linked = GroupDeviceIdentity(personPrivateKey: nil, personPublicKey: Curve25519.Signing.PrivateKey().publicKey.rawRepresentation,
                 signingPrivateKey: Curve25519.Signing.PrivateKey().rawRepresentation,
@@ -253,7 +265,30 @@ enum DeviceRevocationChecks {
             try GroupDeviceRevocation.mark(.init(personID: linked.personID, deviceID: try linked.deviceID), in: linkedStore)
             let client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: linkedStore, transport: relay,
                 outboxDirectory: folder.appendingPathComponent("linked"))
-            try check(!(try await client.renewRevokedDevice()), "no person key: nothing is renewed")
+            try check(try await client.startFreshAfterRevocation(), "a linked device starts fresh too")
+            let roots = try ProductionGroupWindowClient.setAsideRoots(in: linkedStore)
+            try check(roots.isEmpty, "no person key to offer")
+        }
+
+        // 2f. Deleting the data (#1104) leaves no mark or set-aside identity behind,
+        //     and its clean-up is not confused by them.
+        do {
+            let old = registered(.firstDevice()), deletionStore = MemorySecrets()
+            try deletionStore.write(GroupWire.encode(old), account: "identity", createOnly: true)
+            try GroupDeviceRevocation.mark(.init(personID: old.personID, deviceID: try old.deviceID), in: deletionStore)
+            let client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: deletionStore, transport: relay,
+                outboxDirectory: folder.appendingPathComponent("deletion"))
+            try check(try await client.startFreshAfterRevocation(), "fresh start before the deletion")
+            let pending = try await client.identityDeletionNeedingLocalCleanup()
+            try check(pending == nil, "no deletion: nothing to clean up")
+            _ = try await client.windows()
+            _ = try await client.requestIdentityDeletion()
+            let left = try deletionStore.accounts(prefix: GroupDeviceRevocation.accountPrefix)
+                + deletionStore.accounts(prefix: ProductionGroupWindowClient.setAsidePrefix) + deletionStore.accounts(prefix: "identity")
+            try check(left.allSatisfy { $0 == "identity-deletion" || $0.hasPrefix("identity-deletion-history:") },
+                      "no mark, set-aside or current identity is left (got \(left))")
+            let again = try await client.identityDeletionNeedingLocalCleanup()
+            try check(again != nil, "the accepted deletion still asks for its local clean-up")
         }
     }
 
@@ -316,12 +351,33 @@ enum DeviceRevocationChecks {
         try FamilyNotebookIdentityChoice.forgetLink(links: links, pair: pair, recoveryStore: { _ in recoveryStore })
         try check(try links.read(FamilyNotebookIdentityChoice.linkAccount) == nil, "the pair's link goes")
 
-        // Opening 機種変更 keeps the root's device as before (a taken-off
-        // recovered device is not renewed there; see the PR's open path).
+        // 「引き継ぐ」 (the person's tap) makes a new device for a root whose
+        // recovered device here carries the mark: its drafts go, only then.
         let root = try Curve25519.Signing.PrivateKey(rawRepresentation: recovered.personPrivateKey!)
-        let same = try GroupRecoveryLiveBuilder.deviceIdentity(root: root, secrets: recoveryStore)
+        let journal = MemorySecrets()
+        try journal.write(Data("draft".utf8), account: "op:recovery:old", createOnly: true)
+        try journal.write(Data("material".utf8), account: "op:rf:old", createOnly: true)
+        try journal.write(Data("other".utf8), account: "op:keep", createOnly: true)
+        let same = try GroupRecoveryLiveBuilder.deviceIdentity(root: root, secrets: recoveryStore, journal: journal)
         let sameDevice = try same.deviceID
-        try check(sameDevice == pair.deviceID, "the recovery screen reuses the root's device")
+        try check(sameDevice == pair.deviceID, "without the mark store the device is reused")
+        let unmarkedJournal = MemorySecrets()
+        try unmarkedJournal.write(Data("draft".utf8), account: "op:recovery:kept", createOnly: true)
+        let otherRoot = Curve25519.Signing.PrivateKey(), otherStore = MemorySecrets()
+        let first = try GroupRecoveryLiveBuilder.deviceIdentity(root: otherRoot, secrets: otherStore, journal: unmarkedJournal, revocations: marks)
+        let reused = try GroupRecoveryLiveBuilder.deviceIdentity(root: otherRoot, secrets: otherStore, journal: unmarkedJournal, revocations: marks)
+        let firstDevice = try first.deviceID, reusedDevice = try reused.deviceID
+        let keptDraft = try unmarkedJournal.read("op:recovery:kept")
+        try check(firstDevice == reusedDevice && keptDraft != nil, "an unmarked device and its drafts stay")
+        let fresh = try GroupRecoveryLiveBuilder.deviceIdentity(root: root, secrets: recoveryStore, journal: journal, revocations: marks)
+        let freshDevice = try fresh.deviceID
+        try check(freshDevice != pair.deviceID && fresh.personID == pair.personID && !fresh.registered, "a new device of the root")
+        let aside = try recoveryStore.read("identity-revoked:" + pair.deviceID)
+        try check(aside != nil, "the old keys are kept aside")
+        let draft = try journal.read("op:recovery:old"), material = try journal.read("op:rf:old"), other = try journal.read("op:keep")
+        try check(draft == nil && material == nil && other != nil, "only the old device's drafts go")
+        let again = try GroupRecoveryLiveBuilder.deviceIdentity(root: root, secrets: recoveryStore, journal: journal, revocations: marks)
+        try check((try again.deviceID) == freshDevice, "the new device is reused")
 
         // The schedule: no family shown, no identity to open with: it never reads.
         try check(!FamilyAutoCheckPolicy.eligible(.init(real: true, hasFamily: false, awaitingApproval: false,
@@ -411,12 +467,12 @@ enum DeviceRevocationChecks {
                   && view.contains("UserDefaults.standard.removeObject(forKey: FamilyNotebookLocalBinding.legacyKey)"),
                   "the binding goes (both versions)")
         let factory = try read("NekoWidget/Services/FamilyNotebookServiceFactory.swift")
-        try check(factory.contains("revocations: client.revocations)") && factory.contains("return try await client.renewRevokedDevice()"),
+        try check(factory.contains("revocations: client.revocations)") && factory.contains("return try await client.startFreshAfterRevocation()"),
                   "the factory wires the marks and the entrance")
         for (path, call) in [("NekoWidget/Views/GroupWindowView.swift", "client.createWindow(name: trimmed, ownerDisplayName: owner"),
                              ("NekoWidget/Views/GroupWindowSetupView.swift", "let request = try await client.apply(")] {
             let text = try read(path)
-            let renew = try required(text.range(of: "(client as? ProductionGroupWindowClient)?.renewRevokedDevice()"))
+            let renew = try required(text.range(of: "(client as? ProductionGroupWindowClient)?.startFreshAfterRevocation()"))
             let action = try required(text.range(of: call))
             try check(renew.lowerBound < action.lowerBound, "\(path): the person's tap renews before it calls")
         }

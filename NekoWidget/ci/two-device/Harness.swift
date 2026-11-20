@@ -578,7 +578,13 @@ struct Drained: Decodable {
                 return try await self.recoveredIdentity() != nil
             }, photoRuntimeEnabled: true, photoTransport: relay.transport,
             // The pinned recipient: on macOS GroupReportCrypto accepts no other.
-            moderationRecipient: { (keyID: GroupReportCrypto.moderationKeyID, publicKey: GroupReportCrypto.moderationPublicKey) })
+            moderationRecipient: { (keyID: GroupReportCrypto.moderationKeyID, publicKey: GroupReportCrypto.moderationPublicKey) },
+            // 11/20: FamilyNotebookServiceFactory's marks, link removal and fresh start.
+            revocations: client.revocations, forgetRevoked: { [unowned self] pair in
+                let keychain = self.keychain
+                try? FamilyNotebookIdentityChoice.forgetLink(links: keychain.store(Self.namespace + Self.recoveryLinkSuffix), pair: pair,
+                    recoveryStore: { keychain.store(Self.namespace + ".recovery." + $0) })
+            }, renewForEntrance: { [unowned self] in try await self.client.startFreshAfterRevocation() })
         notebookIdentity = nil; lastState = nil; nameChecked = false
         hiddenEntriesChecked = false; repliesCheckedNone = false; linkAnswersChecked = false
         lastReadAt = nil; identityChecked = nil; sharingState = .checking
@@ -660,6 +666,8 @@ struct Drained: Decodable {
         var roots = cloud.roots
         let local = try usualRoot()
         if let local { roots.append(local) }
+        // 11/20: a person set aside after a fresh start (GroupRecoveryLiveModel.connected).
+        roots += try ProductionGroupWindowClient.setAsideRoots(in: keychain.store(Self.namespace))
         let keychain = self.keychain, namespace = Self.namespace, endpoint = relay.endpoint
         let transport = relay.transport, support = self.support, device = self
         var builder = GroupRecoveryLiveBuilder(endpoint: endpoint, environment: Self.recoveryEnvironment, transport: transport,
@@ -671,6 +679,7 @@ struct Drained: Decodable {
             Device.notebookSteps(context, keychain: keychain, endpoint: endpoint, transport: transport, support: support, device: device)
         }
         builder.usualRoot = local
+        builder.revocations = keychain.store(namespace)
         let ready = builder, candidates = roots
         let contexts = try await SharingPersonAction.run { try await ready.contexts(roots: candidates) }
         return GroupRecoveryAdapter(contexts: contexts)
@@ -692,7 +701,8 @@ struct Drained: Decodable {
                 personID: context.personID, familyIDs: context.familyIDs, hasWindows: context.hasWindows) {
                 let client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: recovery, transport: transport,
                     outboxDirectory: support.appendingPathComponent("GroupTransport-v3", isDirectory: true)
-                        .appendingPathComponent("recovery-" + context.scope, isDirectory: true).appendingPathComponent("outbox", isDirectory: true))
+                        .appendingPathComponent("recovery-" + context.scope, isDirectory: true).appendingPathComponent("outbox", isDirectory: true),
+                    revocations: keychain.store(namespace))
                 _ = try await client.familyNotebookIdentity()
             }
             await device.notebookRestarted()
