@@ -90,7 +90,11 @@ final class ProductionGroupReporting: GroupReportingService {
               let value = try? GroupWire.decode(GroupDeviceIdentity.self, data), value.registered else {
             throw GroupSafetyError.authenticationRequired
         }
-        _ = try value.deviceID
+        // 11/20: a device the relay said was taken off sends no report or check
+        // (its mark is in this same store: GroupDeviceRevocation).
+        guard (try? GroupDeviceRevocation.isMarked(value, in: secrets)) == false else {
+            throw GroupSafetyError.authenticationRequired
+        }
         return value
     }
     private func sameIdentity(_ expected: GroupDeviceIdentity) throws {

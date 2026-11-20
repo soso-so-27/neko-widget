@@ -396,3 +396,56 @@ enum GroupHTTPRequest {
         return reply.data
     }
 }
+
+/// 11/20 (#1102): the relay's answer that the device which signed a request
+/// was taken off by another iPhone of the same person (機種変更 「外す」): HTTP
+/// 401 `invalid_authentication` with `reason: device_revoked`. Only that exact
+/// answer counts, from the configured sharing endpoint, to a request signed by
+/// the pair it is about. A plain 401 (every older relay), another code or
+/// status, a timeout or a 5xx is never this and changes nothing here.
+enum GroupDeviceRevocation {
+    /// One person and one device: the pair that signed the request.
+    struct Pair: Codable, Hashable, Sendable {
+        let personID: String
+        let deviceID: String
+    }
+
+    /// The reply says so: 401, `invalid_authentication`, `device_revoked`.
+    static func says(_ reply: GroupHTTPReply) -> Bool {
+        guard reply.status == 401,
+              let object = try? JSONSerialization.jsonObject(with: reply.data) as? [String: Any],
+              let error = object["error"] as? [String: Any] else { return false }
+        return error["code"] as? String == "invalid_authentication" && error["reason"] as? String == "device_revoked"
+    }
+
+    /// The pair the reply is about: `identity`, when it signed `request`
+    /// (its Neko-Device-Id) and the request went to `endpoint`. nil otherwise.
+    static func pair(_ reply: GroupHTTPReply, request: URLRequest, identity: GroupDeviceIdentity?, endpoint: URL) -> Pair? {
+        guard says(reply), let identity, let deviceID = try? identity.deviceID,
+              request.value(forHTTPHeaderField: "Neko-Device-Id") == deviceID,
+              let url = request.url, url.scheme == endpoint.scheme, url.host == endpoint.host, url.port == endpoint.port
+        else { return nil }
+        return Pair(personID: identity.personID, deviceID: deviceID)
+    }
+
+    /// In this iPhone's device-only Keychain (the store of the usual
+    /// identity), so deleting the app and installing it again keeps it.
+    static let accountPrefix = "device-revoked:"
+    static func account(_ deviceID: String) -> String { accountPrefix + deviceID }
+
+    /// Written first, before anything stops or leaves the screen.
+    static func mark(_ pair: Pair, in store: any GroupSecretStore) throws {
+        try store.write(GroupWire.encode(pair), account: account(pair.deviceID), createOnly: false)
+    }
+
+    /// This exact pair was marked. A mark that cannot be decoded counts.
+    static func isMarked(_ pair: Pair, in store: any GroupSecretStore) throws -> Bool {
+        guard let bytes = try store.read(account(pair.deviceID)) else { return false }
+        guard let saved = try? GroupWire.decode(Pair.self, bytes) else { return true }
+        return saved == pair
+    }
+
+    static func isMarked(_ identity: GroupDeviceIdentity, in store: any GroupSecretStore) throws -> Bool {
+        try isMarked(Pair(personID: identity.personID, deviceID: identity.deviceID), in: store)
+    }
+}

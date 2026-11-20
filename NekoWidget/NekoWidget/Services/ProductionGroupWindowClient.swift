@@ -12,6 +12,9 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     private var lastRecoveryAt: Date?
     private let secrets: any GroupSecretStore
     private let operations: any GroupSecretStore
+    /// 11/20: where this iPhone keeps the pairs the relay said were taken off
+    /// (GroupDeviceRevocation): the usual identity's device-only Keychain store.
+    nonisolated let revocations: any GroupSecretStore
     private let transport: any GroupHTTPTransport
     private let billingSigner: any GroupBillingSigner
     private let ownerDisplayName: String
@@ -79,7 +82,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     private func publishAnchorReceipt(windowID: String) async {
         guard anchorReceiptForeground, !Task.isCancelled, !anchorReceiptAttempts.contains(windowID) else { return }
         do {
-            guard let id = try load(GroupDeviceIdentity.self, "identity"), id.registered,
+            guard let id = try load(GroupDeviceIdentity.self, "identity"), id.registered, try !isRevoked(id),
                   let privateRoot = id.personPrivateKey else { return }
             let record = try local(windowID)
             // A staged but unaccepted invitation is not a recovered membership.
@@ -129,6 +132,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     init(endpoint: URL, namespace: String, ownerDisplayName: String = "自分", outboxDirectory: URL? = nil, recoveryEnabled: Bool = false) throws {
         self.endpoint = endpoint; self.recoveryEnabled = recoveryEnabled
         let privateStore = try GroupKeychainStore(namespace: namespace)
+        self.revocations = privateStore
 #if os(iOS) && !NEKO_SHARE_EXTENSION
         if Bundle.main.object(forInfoDictionaryKey: "GroupShareExtensionEnabled") as? String == "YES",
            let accessGroup = GroupShareAccess.accessGroup,
@@ -151,8 +155,12 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         _ = try GroupHTTPRequest.make(endpoint: endpoint, path: "/v3/group-identities/challenges", body: Data(), identity: nil)
     }
     // Test injection uses the same production signing/verification state machine.
-    init(endpoint: URL, secrets: any GroupSecretStore, transport: any GroupHTTPTransport, ownerDisplayName: String = "自分", outboxDirectory: URL, billingSigner: any GroupBillingSigner = GroupHostBillingSigner(), recoveryEnabled: Bool = false) throws {
+    // 11/20: `revocations` nil keeps the marks next to `secrets`; a client over
+    // a 機種変更 store passes the usual one, so every pair is looked up in one place.
+    init(endpoint: URL, secrets: any GroupSecretStore, transport: any GroupHTTPTransport, ownerDisplayName: String = "自分", outboxDirectory: URL, billingSigner: any GroupBillingSigner = GroupHostBillingSigner(), recoveryEnabled: Bool = false,
+         revocations: (any GroupSecretStore)? = nil) throws {
         self.endpoint = endpoint; self.recoveryEnabled = recoveryEnabled; self.secrets = secrets; self.transport = transport
+        self.revocations = revocations ?? secrets
         self.ownerDisplayName = try GroupWire.name(ownerDisplayName)
         self.billingSigner = billingSigner
         self.outboxDirectory = try Self.outboxURL(outboxDirectory, context: endpoint.absoluteString)
@@ -297,6 +305,11 @@ actor ProductionGroupWindowClient: GroupWindowClient {
 #if DEBUG || INTERNAL_PRESENTATION
             outcome = "HTTP \(reply.status)"
 #endif
+            // 11/20: taken off by another iPhone of the same person: the mark
+            // first; the reply then fails as any 401 does.
+            if let pair = GroupDeviceRevocation.pair(reply, request: request, identity: identity, endpoint: endpoint) {
+                try revoked(pair)
+            }
             return try GroupHTTPRequest.check(reply)
         } catch is CancellationError {
 #if DEBUG || INTERNAL_PRESENTATION
@@ -307,6 +320,9 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     }
     private func registeredIdentity() async throws -> GroupDeviceIdentity {
         let value = try identity()
+        // 11/20: a pair the relay said was taken off never signs, registers
+        // or is replaced by itself (startFreshAfterRevocation: the person's tap only).
+        if try isRevoked(value) { throw GroupClientError.authenticationRequired }
         if value.registered { return value }
         if let registrationTask { return try await registrationTask.value }
         let task = Task { try await self.register(value) }
@@ -318,7 +334,76 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     /// Family sharing reuses the registered app person/device, not photo-room
     /// membership. Only the host's explicitly enabled family factory calls it.
     func hasExistingIdentity() throws -> Bool {
-        try secrets.read("identity") != nil
+        guard try secrets.read("identity") != nil else { return false }
+        // 11/20: a device taken off is no identity to open with.
+        return try !usualRevoked()
+    }
+
+    // MARK: 11/20 A device taken off by another iPhone of the same person
+
+    private func isRevoked(_ identity: GroupDeviceIdentity) throws -> Bool {
+        try GroupDeviceRevocation.isMarked(identity, in: revocations)
+    }
+
+    /// The usual identity is marked (Keychain only, no network).
+    func usualRevoked() throws -> Bool {
+        guard let current = try load(GroupDeviceIdentity.self, "identity") else { return false }
+        return try isRevoked(current)
+    }
+
+    /// The relay said `pair` was taken off. The mark first; then, only when it
+    /// is the pair this client uses now, what was verified for it is let go
+    /// (a late answer about an earlier pair changes nothing shown).
+    private func revoked(_ pair: GroupDeviceRevocation.Pair) throws {
+        try GroupDeviceRevocation.mark(pair, in: revocations)
+        guard let current = try load(GroupDeviceIdentity.self, "identity"), current.personID == pair.personID,
+              (try? current.deviceID) == pair.deviceID else { return }
+        forgetShown()
+    }
+
+    private func forgetShown() {
+        verifiedWindows.removeAll(); verifiedListEntries.removeAll(); recentWindows = nil
+        photoMetadata.removeAll(); historicalRosters.removeAll()
+    }
+
+    /// 11/20: only from the person's own 作る or 参加 (まど: GroupWindowView,
+    /// GroupJoinModel; the notebook: 作る and joining by invitation), never by
+    /// itself. After the relay said this iPhone's device was taken off, the
+    /// person starts fresh: a new person and device, exactly as on an iPhone
+    /// with no identity (identity()). The identity taken off, its person key
+    /// included, is set aside (`identity-revoked:`) and never used by itself
+    /// again; its mark stays. Coming back as that person is 機種変更's alone
+    /// (its root is offered there: setAsideRoots). What waits to be sent for
+    /// the old pair stays with it. Returns whether a fresh start was made.
+    @discardableResult
+    func startFreshAfterRevocation() throws -> Bool {
+        guard let current = try load(GroupDeviceIdentity.self, "identity"), try isRevoked(current) else { return false }
+        let old = try current.deviceID
+        try save(current, Self.setAsidePrefix + old)
+        try secrets.remove("registration-request")
+        // The billing connection was the old person's; the new one connects itself.
+        try secrets.remove("billing-connection")
+        try secrets.remove("identity")
+        registrationTask = nil
+        forgetShown()
+        _ = try identity()
+        return true
+    }
+
+    /// Where startFreshAfterRevocation keeps an identity taken off.
+    static let setAsidePrefix = "identity-revoked:"
+
+    /// 11/20: the person keys of the identities set aside in `store` (the
+    /// usual one), for 機種変更's candidates; Keychain only.
+    static func setAsideRoots(in store: any GroupSecretStore) throws -> [Data] {
+        var roots: [Data] = []
+        for account in try store.accounts(prefix: setAsidePrefix) {
+            guard let bytes = try store.read(account),
+                  let root = try? GroupWire.decode(GroupDeviceIdentity.self, bytes).personPrivateKey,
+                  !roots.contains(root) else { continue }
+            roots.append(root)
+        }
+        return roots
     }
 
     /// 11/19: the person of the usual identity, without creating one.
@@ -339,7 +424,8 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     /// (FamilyNotebookIdentityChoice's recovered one after 機種変更); nil
     /// reads with this client's usual identity, as before.
     func familyPhotoReportReplies(as notebookIdentity: GroupDeviceIdentity? = nil) async throws -> [FamilyPhotoReportReply] {
-        guard let identity = try notebookIdentity ?? load(GroupDeviceIdentity.self, "identity"), identity.registered else {
+        guard let identity = try notebookIdentity ?? load(GroupDeviceIdentity.self, "identity"), identity.registered,
+              try !isRevoked(identity) else {
             throw GroupClientError.authenticationRequired
         }
         struct Page: Decodable { let schemaVersion: Int; let replies: [FamilyPhotoReportReply] }
@@ -458,6 +544,9 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     func windows() async throws -> [GroupWindow] {
         // Merely opening the tab never creates or registers another person.
         guard try load(GroupDeviceIdentity.self, "identity") != nil else { return [] }
+        // 11/20: taken off by another iPhone of the same person: the existing
+        // "no windows", without a call.
+        if try usualRevoked() { forgetShown(); return [] }
 #if DEBUG || INTERNAL_PRESENTATION
         GroupListMeasurement.current?.enteredClient()
 #endif
@@ -1145,11 +1234,12 @@ extension ProductionGroupWindowClient {
         return results
     }
     func hasLocalGroupState() throws -> Bool {
-        guard try secrets.read("identity") != nil else { return false }
+        guard try secrets.read("identity") != nil, try !usualRevoked() else { return false }
         return !(try secrets.accounts(prefix: "window:")).isEmpty
     }
     /// Notification routes are hints only. No route can pin a new window or import a key.
     func acceptsNotification(windowID: String, requestID: String?, kind: String) throws -> Bool {
+        if try usualRevoked() { return false }
         if kind == "join_approved" {
             guard let requestID, let saved = try load(GroupLocalJoin.self, "join:" + requestID) else { return false }
             let currentPerson = try identity().personID

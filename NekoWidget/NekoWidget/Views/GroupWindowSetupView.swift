@@ -1268,6 +1268,8 @@ final class GroupJoinModel: ObservableObject {
             defer { isWorking = false }
             errorMessage = nil
             do {
+                // 11/20: the person's own 参加: after a device was taken off, a fresh start first.
+                _ = try await (client as? ProductionGroupWindowClient)?.startFreshAfterRevocation()
                 let request = try await client.apply(
                     invitationID: invitationID,
                     displayName: trimmedName,
