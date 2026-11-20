@@ -1023,6 +1023,8 @@ struct MembershipOfferSheet: View {
     /// 11/15: this sheet's purchase ended waiting for the server. When the
     /// store's own re-check then confirms Plus, it goes on as a purchase.
     @State private var awaitsConfirmation = false
+    /// Counts purchases and restores that ended with Plus here: one haptic each.
+    @State private var plusCompletions = 0
 #if DEBUG || INTERNAL_PRESENTATION
     @State private var showsManagementPreview = false
 #endif
@@ -1061,6 +1063,8 @@ struct MembershipOfferSheet: View {
         }
         // While buying, a swipe must not drop the purchase the caller waits for.
         .interactiveDismissDisabled(model.isWorking)
+        // Once per purchase or restore that ended with Plus (the count only grows then).
+        .sensoryFeedback(.success, trigger: plusCompletions)
         // Usage (11/7): each time the one Plus screen is shown, by its entry place.
         .onAppear {
             if heldPhoto == nil { heldPhoto = placePhoto }
@@ -1107,7 +1111,10 @@ struct MembershipOfferSheet: View {
                 awaitsConfirmation = false
                 Task {
                     let result = await model.restore()
-                    if result == .completed { onFinish(result) }
+                    if result == .completed {
+                        plusCompletions &+= 1
+                        onFinish(result)
+                    }
                 }
             },
             onClose: { onFinish(model.isMember ? .completed : .cancelled) },
@@ -1143,6 +1150,7 @@ struct MembershipOfferSheet: View {
     private func completePurchase() {
         let result = MembershipOfferActionResult.completed
         awaitsConfirmation = false
+        plusCompletions &+= 1
         if !model.isPreview {
             UsageCounter.shared.count(.plusPurchased(.init(context)))  // Usage (11/7)
             // 11/12: 「自動保存も始めますか？」 is asked later, once, at the

@@ -311,6 +311,13 @@ struct CatCareDetailView: View {
                           || showsNameEditor || isSavingName || showsKeyPhotoPicker
                           || photoRole != nil || cropRequest != nil)
         .familyNotebookToolSync(enabled: sharedWithFamily)
+        // Once, when a row written here makes the page 「すべてそろっています」:
+        // opening (or switching to) a cat that is already complete changes
+        // the loaded cat in the same update, so it does not count.
+        .sensoryFeedback(.success, trigger: CareCompletion(cat: loadedKey == subject.key ? loadedKey : nil,
+                                                           complete: progress.filled >= progress.total)) { old, new in
+            new.cat != nil && old.cat == new.cat && !old.complete && new.complete
+        }
         .modifier(FamilyPhotoDialogs(question: $familyPhotoQuestion, reportTarget: $familyPhotoReport))
         .task(id: familyPhotoCatID) {
             // The photo 「…」 offers to report is the one this page's cat shows.
@@ -568,6 +575,12 @@ struct CatCareDetailView: View {
         return saved
     }
 
+    /// The loaded cat and whether its page is all in, for the one haptic.
+    private struct CareCompletion: Equatable {
+        let cat: String?
+        let complete: Bool
+    }
+
     /// The same count as the ring on the ツール tab, so a row filled here moves it.
     private var progress: CatCareProgress {
         var lifeDates: Bool?
@@ -656,6 +669,8 @@ struct CatCareDetailView: View {
             noted(ToolValueRow(title: item.title, systemImage: item.systemImage, value: words ?? ToolEmptyValue.unwritten,
                                filled: words != nil, problem: problem), item.note)
         }
+        // The red value, in the words its page shows for it.
+        .accessibilityHint(problem ? "15桁の数字にすると保存されます。" : "")
         .accessibilityIdentifier(item.identifier + "-row")
     }
 
@@ -1377,6 +1392,7 @@ struct CatCareRing: View {
     /// 11/20: the ring beside 「あと N つで「…」の項目がそろいます」 shows that
     /// tool's count; with no such line, the whole page's.
     var followsNextHint = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var count: (Int, Int) {
         followsNextHint ? progress.nextGroup ?? (progress.filled, progress.total) : (progress.filled, progress.total)
@@ -1389,7 +1405,7 @@ struct CatCareRing: View {
                 .trim(from: 0, to: count.1 == 0 ? 0 : CGFloat(count.0) / CGFloat(count.1))
                 .stroke(Color.accentColor, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-                .animation(.easeOut(duration: 0.5), value: count.0)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.5), value: count.0)
         }
         .accessibilityHidden(true)
     }
