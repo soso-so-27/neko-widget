@@ -115,6 +115,9 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var unavailableProfilePhotoAlbumIdentifiers = Set<String>()
     @Published var selectedAssetIdentifier: String?
     @Published var selectedAssetShownAt: Date?
+    /// 11/20: a Widget photo that is no longer a candidate still lands on
+    /// the photo tab (its list), never on whatever screen was open.
+    @Published var photosTabRequest: UUID?
     @Published var isFamilyWindowPresented = false
     @Published var pendingFamilyMomentSourceDigest: String?
     @Published var pendingFamilyNotificationRoute: MomentNotificationRoute?
@@ -2531,9 +2534,10 @@ final class AppViewModel: ObservableObject {
         }) else {
             selectedAssetIdentifier = nil
             selectedAssetShownAt = nil
+            photosTabRequest = UUID()
             SharedLog.app.info(
                 "deeplink",
-                "Ignored stale Widget photo outside current candidates",
+                "Opened the photo tab for a stale Widget photo outside current candidates",
                 metadata: ["asset": SharedLog.shortHash(route.localIdentifier)]
             )
             return
@@ -3977,6 +3981,8 @@ final class AppViewModel: ObservableObject {
             let revision = try PersonalRediscoveryStore.shared.updateEligibility(
                 photoIDs: [], scopeIdentifier: "invalidated", isAuthorized: false, now: .now)
             try await widgetCacheBuilder.clearPersonal(expectedRevision: revision)
+            // 11/20: the cloudy window's clear and cloudy copies go now too.
+            try? CloudyWindowStore.shared.releasePreparedImages()
             reloadAllWidgetTimelines()
         } catch {
             Self.logError(error, category: "widget-cache", operation: "clear_cache")
@@ -4127,10 +4133,23 @@ final class AppViewModel: ObservableObject {
             }
         }
         let scope = "\(curated.settings.analysisFingerprint)|\(curated.settings.dateRange.rawValue)|\(curated.settings.minimumCatAreaRatio)|\(curated.settings.widgetEntryIntervalMinutes)"
+        // 11/20: a very large library keeps a bounded set in the shared file
+        // (PersonalRediscoveryStore.maximumPersistedEligibleCount); the new,
+        // date and album photos the windows will ask for stay in it.
+        var preferred = Set<String>()
+        if eligibleIDs.count > PersonalRediscoveryStore.maximumPersistedEligibleCount,
+           CloudyWindowAvailability.isAvailable {
+            let cats = eligible.lazy.filter { $0.isCatCandidate && !$0.isScreenshot }
+            preferred = CloudyWindowStore.newPhotoIDs(cats, now: now, id: { $0.localIdentifier },
+                                                      takenAt: { $0.creationDate })
+                .union(cloudyWindowDatePhotoIDs(cats))
+                .union(CloudyWindowStore.shared.albumPriorityPhotoIDs(now: now))
+                .union(CloudyWindowStore.shared.photoIDsInUse(now: now))
+        }
         let revision = try PersonalRediscoveryStore.shared.updateEligibility(
             photoIDs: eligibleIDs, scopeIdentifier: scope,
             isAuthorized: authorized, now: now, photoModificationDates: dates,
-            bootstrapCandidates: bootstrap,
+            bootstrapCandidates: bootstrap, preferredPhotoIDs: preferred,
             interval: TimeInterval(curated.settings.widgetEntryIntervalMinutes * 60))
         if authorized {
             // 11/14: たぶん猫 go to the end of the daily plan; today's photo

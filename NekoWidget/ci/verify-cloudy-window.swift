@@ -21,8 +21,7 @@ private struct Fixture {
     let profiles: [String: String]
     let revision: String
 
-    init(count: Int, cats: Int = 0, burstPair: Bool = false,
-         enabled: Bool = true, installed: Bool = true) throws {
+    init(count: Int, cats: Int = 0, burstPair: Bool = false, installed: Bool = true) throws {
         directory = FileManager.default.temporaryDirectory.appendingPathComponent("cloudy-check-\(UUID().uuidString)")
         authority = PersonalRediscoveryStore(containerURL: directory)
         store = CloudyWindowStore(containerURL: directory, internalPresentation: true)
@@ -63,7 +62,7 @@ private struct Fixture {
                 burstIdentifier: burstPair && index < 2 ? "burst" : nil,
                 profileIDs: cats > 0 ? ["cat-\(index % cats)"] : [], previouslyShown: false))
         })
-        try store.configure(enabled: enabled, strength: .strong)
+        try store.configure(strength: .strong)
         try store.synchronize(metadata: metadata, profiles: profiles, now: baseline)
         if installed {
             try store.synchronizeInstalledSources(Set([CloudyWindowStore.personalScope]
@@ -134,7 +133,21 @@ private enum CloudyWindowVerifier {
         try milestoneDays()
         try dayWords()
         try departedCatsAndDateDays()
+        try readFailureFailsClosed()
+        try olderSwitchOffIsMigrated()
+        try takenTodayWaitsWhenChosenLate()
+        try appViewKeepsTheNewDay()
+        try editedPhotoKeepsItsDay()
+        try replacedSelectionTapClearsToday()
+        try oneEmptyAnswerKeepsImages()
+        try releasingImagesKeepsSelections()
         print("Cloudy window: daily reveal, stale actions, restart, rotation, cats, permission, public mode and publication checks passed")
+    }
+
+    /// 11/20: WidgetKit says "no Widget" twice, an hour apart.
+    private static func removeEveryWidget(_ f: Fixture, now: Date) throws {
+        try f.store.synchronizeInstalledSources([], now: now)
+        try f.store.synchronizeInstalledSources([], now: now.addingTimeInterval(CloudyWindowStore.uninstallConfirmationInterval))
     }
 
     private static var closing: Date {
@@ -142,17 +155,15 @@ private enum CloudyWindowVerifier {
     }
 
     private static func widgetSelectionWithoutSwitch() throws {
-        let f = try Fixture(count: 6, cats: 2, enabled: false, installed: false)
+        let f = try Fixture(count: 6, cats: 2, installed: false)
         defer { f.cleanup() }
         let scope = CloudyWindowStore.profilePrefix + "cat-1"
         try check(f.store.profiles().count == 2, "all cats listed before installing a cloudy Widget")
         try check(f.store.preparation(now: baseline) == nil, "no blur preparation before installation")
-        try f.store.synchronizeInstalledSources([CloudyWindowStore.personalScope, "unknown"])
-        try check(f.store.preparation(now: baseline) == nil, "ordinary personal Widget does not enable blur")
         try f.store.synchronizeInstalledSources([scope])
         let plan = try f.store.preparation(now: baseline)!
-        try check(!plan.configuration.enabled && plan.configuration.strength == .strong,
-                  "cat Widget works at fixed strength without changing the legacy switch")
+        try check(plan.configuration.enabled && plan.configuration.strength == .strong,
+                  "cat Widget works at fixed strength without the personal Widget")
         let baseURL = f.directory.appendingPathComponent("widget-cache").appendingPathComponent(f.candidates[0].item.cacheFilename)
         let image = try Data(contentsOf: baseURL)
         for photo in f.prepared {
@@ -167,9 +178,7 @@ private enum CloudyWindowVerifier {
                                now: closing), "cat Widget reveals without legacy switch")
         try check(f.store.albumPeriod(for: .init(selectionID: first.selection.id), now: closing) == "2026-10",
                   "revealed cat cover opens the monthly work")
-        try check(f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: closing).isEmpty,
-                  "ordinary personal Widget retains its ordinary behavior")
-        try f.store.synchronizeInstalledSources([])
+        try removeEveryWidget(f, now: closing)
         try check(f.store.preparation(now: closing) == nil, "last Widget removal stops preparation")
         try check(f.store.imageURL(filename: first.photo.clear.small, scopeID: scope) == nil,
                   "last Widget removal releases derived cache")
@@ -211,13 +220,9 @@ private enum CloudyWindowVerifier {
         try check(f.store.hasRevealedAnyWindow(), "a cleared window is known for the first Plus offer")
         try check(f.store.preparation(now: baseline) == nil, "after the first drawing, no Widget means no preparation")
         try f.store.synchronizeInstalledSources([CloudyWindowStore.personalScope])
-        try f.store.synchronizeInstalledSources([])
+        try removeEveryWidget(f, now: baseline)
         try check(f.store.imageURL(filename: first[0].photo.clear.small) == nil, "removal still releases derived cache")
         try check(f.store.preparation(now: baseline) == nil, "removal stops preparation")
-        let disabled = try Fixture(count: 6, enabled: false, installed: false)
-        defer { disabled.cleanup() }
-        try disabled.store.synchronizeInstalledSources([])
-        try check(disabled.store.preparation(now: baseline) == nil, "nothing prepared while the window is not cloudy")
     }
 
     private static func deliver(_ f: Fixture, photoID: String = "photo-05", now: Date = closing,
@@ -390,11 +395,9 @@ private enum CloudyWindowVerifier {
         try check(next[0].isCloudy && next[0].selection.photoID != first.photoID, "next day changes photo and resets cloud")
         try check(!reopened.reveal(selectionID: next[0].selection.id, scopeID: first.scopeID,
             photoID: first.photoID, now: tomorrow), "wrong exact photo rejected")
-        try f.store.configure(enabled: false, strength: .light)
-        try check(f.store.timeline(scopeID: first.scopeID, now: tomorrow).isEmpty, "off produces no cloudy timeline")
-        try f.store.configure(enabled: true, strength: .light)
+        try f.store.configure(strength: .light)
         try check(f.store.timeline(scopeID: first.scopeID, now: tomorrow)[0].selection.id == next[0].selection.id,
-                  "on/off does not reroll today's photograph")
+                  "a strength change does not reroll today's photograph")
     }
 
     private static func staleDisplayReveal() throws {
@@ -423,7 +426,8 @@ private enum CloudyWindowVerifier {
         let shown = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: baseline)[0]
         try check(f.store.reveal(selectionID: shown.selection.id, scopeID: shown.selection.scopeID,
             photoID: shown.photo.photoID, now: baseline), "reveal before removal")
-        try f.store.synchronizeInstalledSources([])
+        try f.store.synchronizeInstalledSources([], now: baseline.addingTimeInterval(-2 * CloudyWindowStore.uninstallConfirmationInterval))
+        try f.store.synchronizeInstalledSources([], now: baseline)
         try check(f.store.imageURL(filename: shown.photo.clear.small) == nil, "removal still releases derived cache")
         try f.store.synchronizeInstalledSources([CloudyWindowStore.personalScope])
         // The fixture baseline is 23:59 JST, so stay inside that minute.
@@ -980,7 +984,7 @@ private enum CloudyWindowVerifier {
         let f = try Fixture(count: 2)
         defer { f.cleanup() }
         let plan = try f.store.preparation(now: baseline)!
-        try f.store.configure(enabled: true, strength: .light)
+        try f.store.configure(strength: .light)
         do {
             try f.store.publish(f.prepared[0], files: [:], authorityRevision: f.revision,
                                 configurationRevision: plan.configuration.revision, now: baseline)
@@ -1022,5 +1026,189 @@ private enum CloudyWindowVerifier {
         }, "new publications keep earlier skipped candidates")
         let frozen = try f.store.timeline(scopeID: scope, now: later, allowsSelection: false, selectionValidUntil: cutoff)
         try check(frozen.first?.selection.id == first.selection.id, "refill keeps the frozen last issued photograph")
+    }
+
+    /// Writes the saved state as an older build or a damaged disk left it.
+    private static func writeState(_ f: Fixture, _ text: String) throws {
+        let url = f.directory.appendingPathComponent("cloudy-window.v1/state.json")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(text.utf8).write(to: url, options: .atomic)
+    }
+
+    /// 11/20 (1, 2): a state that cannot be read is neither "not cloudy"
+    /// (the clear legacy photo) nor "this cat was removed". The app's next
+    /// save starts a damaged file again.
+    private static func readFailureFailsClosed() throws {
+        let f = try Fixture(count: 6, cats: 2)
+        defer { f.cleanup() }
+        let cat = CloudyWindowStore.profilePrefix + "cat-0"
+        try check(f.store.sourceStatus(CloudyWindowStore.personalScope) == .cloudy && f.store.sourceStatus(cat) == .cloudy,
+                  "a read state: both windows are cloudy")
+        try check(f.store.sourceStatus(CloudyWindowStore.profilePrefix + "gone") == .notCloudy,
+                  "a cat missing from a read state is the only removed window")
+        let fresh = try Fixture(count: 1, installed: false)
+        defer { fresh.cleanup() }
+        try FileManager.default.removeItem(at: fresh.directory.appendingPathComponent("cloudy-window.v1/state.json"))
+        try check(fresh.store.sourceStatus(cat) == .notReady
+                  && fresh.store.sourceStatus(CloudyWindowStore.personalScope) == .cloudy,
+                  "nothing saved yet: a cat's window waits, it is not removed")
+        try writeState(f, "{ not json")
+        try check(f.store.sourceStatus(CloudyWindowStore.personalScope) == .unreadable,
+                  "a damaged state: the personal window fails closed")
+        try check(f.store.sourceStatus(cat) == .unreadable, "a damaged state: a cat's window is not called removed")
+        do {
+            _ = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: baseline)
+            throw Failure.failed("a damaged state produced a timeline")
+        } catch PersonalRediscoveryStore.Error.corrupted { }
+        try f.store.synchronize(metadata: f.metadata, profiles: f.profiles, now: baseline)
+        try check(f.store.sourceStatus(cat) == .cloudy, "the app's next save starts a damaged state again")
+        let publicStore = CloudyWindowStore(containerURL: f.directory, internalPresentation: false)
+        try check(publicStore.sourceStatus(CloudyWindowStore.personalScope) == .notCloudy,
+                  "outside Version1 the personal photos keep their own Widget")
+    }
+
+    /// 11/20 (1): an older build's saved 「くもりのまど」 switch turned off
+    /// is read as on; there is no screen to turn it off any more.
+    private static func olderSwitchOffIsMigrated() throws {
+        let f = try Fixture(count: 6, installed: false)
+        defer { f.cleanup() }
+        try writeState(f, #"{"version":1,"configuration":{"enabled":false,"strength":"light","revision":"old"},"profiles":{},"metadata":{},"photos":[],"selections":[],"seenPhotoIDs":[]}"#)
+        try check(f.store.configuration().enabled && f.store.sourceStatus(CloudyWindowStore.personalScope) == .cloudy,
+                  "a saved switch-off reads as cloudy")
+        try f.store.synchronize(metadata: f.metadata, profiles: f.profiles, now: baseline)
+        try f.store.synchronizeInstalledSources([CloudyWindowStore.personalScope])
+        try check(f.store.preparation(now: baseline) != nil, "the personal window is prepared again")
+    }
+
+    /// 11/20 (3): a photo taken today goes out tomorrow, also when today's
+    /// photo is first chosen late in the day (a new Widget, a missed reload).
+    private static func takenTodayWaitsWhenChosenLate() throws {
+        let d = baseline  // 23:59 JST
+        var f = try Fixture(count: 40)
+        defer { f.cleanup() }
+        takenLongAgo(&f)
+        f.metadata["photo-05"]?.creationDate = d.addingTimeInterval(-3_600)
+        try f.store.synchronize(metadata: f.metadata, profiles: f.profiles, now: d)
+        let entries = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: d)
+        try check(entries[0].photo.photoID != "photo-05" && entries[0].selection.kind != .new,
+                  "today's photo chosen at 23:59 is not a photo taken today")
+        try check(entries[1].photo.photoID == "photo-05" && entries[1].selection.kind == .new,
+                  "the photo taken today is tomorrow's new photo")
+        try check(!CloudyWindowStore.isNewPhoto(takenAt: d.addingTimeInterval(-3_600), previouslyShown: false,
+                                                at: CloudyWindowStore.calendar.startOfDay(for: d))
+                  && CloudyWindowStore.isNewPhoto(takenAt: d.addingTimeInterval(-3_600), previouslyShown: false,
+                                                  at: CloudyWindowStore.nextDay(after: d)),
+                  "new from the next day on")
+
+        var few = try Fixture(count: 6)
+        defer { few.cleanup() }
+        for key in few.metadata.keys { few.metadata[key]?.creationDate = d.addingTimeInterval(-1_800) }
+        few.metadata["photo-03"]?.creationDate = d.addingTimeInterval(-3 * day)
+        try few.store.synchronize(metadata: few.metadata, profiles: few.profiles, now: d)
+        let today = try few.store.timeline(scopeID: CloudyWindowStore.personalScope, now: d)[0]
+        try check(today.photo.photoID == "photo-03", "few photos: today's is the one taken before today")
+    }
+
+    /// 11/20 (3): opening a photo in the app does not take away its
+    /// new-photo day; being shown in the Widget does.
+    private static func appViewKeepsTheNewDay() throws {
+        let d = baseline
+        var f = try Fixture(count: 40)
+        defer { f.cleanup() }
+        takenLongAgo(&f)
+        f.metadata["photo-05"]?.creationDate = d.addingTimeInterval(-3_600)
+        try f.store.synchronize(metadata: f.metadata, profiles: f.profiles, now: d)
+        f.store.noteViewed(photoID: "photo-05")
+        let entries = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: d)
+        try check(entries[1].photo.photoID == "photo-05" && entries[1].selection.kind == .new,
+                  "a photo opened in the app right after shooting still gets its new day")
+        let shown = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: entries[1].date.addingTimeInterval(1))
+        try check(shown[0].photo.photoID == "photo-05", "it is shown the next day")
+        let later = try f.store.timeline(scopeID: CloudyWindowStore.personalScope,
+                                         now: entries[1].date.addingTimeInterval(4 * day))
+        try check(later.allSatisfy { $0.photo.photoID != "photo-05" || $0.selection.kind != .new },
+                  "once shown in the Widget it is no longer new")
+    }
+
+    /// 11/20 (5): today's photo edited in Photos keeps drawing its last
+    /// prepared image, cloudy as it was; never an empty or later-only plan;
+    /// it is not chosen again for another day.
+    private static func editedPhotoKeepsItsDay() throws {
+        let f = try Fixture(count: 6)
+        defer { f.cleanup() }
+        let shown = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: baseline)
+        let photoID = shown[0].photo.photoID
+        var dates = Dictionary(uniqueKeysWithValues: f.candidates.map { ($0.item.localIdentifier, baseline) })
+        dates[photoID] = baseline.addingTimeInterval(30)
+        _ = try f.authority.updateEligibility(photoIDs: Set(dates.keys), scopeIdentifier: "fixture",
+            isAuthorized: true, now: baseline.addingTimeInterval(30), photoModificationDates: dates)
+        let now = baseline.addingTimeInterval(40)
+        let after = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: now)
+        try check(!after.isEmpty && after[0].date <= now && after[0].photo.photoID == photoID
+                  && after[0].selection.id == shown[0].selection.id && after[0].isCloudy,
+                  "the edited photo stays today's, cloudy, from now")
+        try check(f.store.imageURL(filename: after[0].photo.cloudy.small) != nil,
+                  "its last prepared image is still drawn")
+        try check(after.count < 2 || after[1].photo.photoID != photoID, "it is not chosen for tomorrow")
+        try check(f.store.reveal(selectionID: after[0].selection.id, scopeID: CloudyWindowStore.personalScope,
+                                 photoID: photoID, now: now), "its tag still clears it")
+    }
+
+    /// 11/20 (4): a tag tapped on an entry whose selection was replaced
+    /// clears today's photo, which the reload then shows.
+    private static func replacedSelectionTapClearsToday() throws {
+        var f = try Fixture(count: 40)
+        defer { f.cleanup() }
+        takenLongAgo(&f)
+        try f.store.synchronize(metadata: f.metadata, profiles: f.profiles, now: baseline)
+        let issued = try f.store.timelineReportingReplacement(scopeID: CloudyWindowStore.personalScope, now: baseline)
+        try check(!issued.replacedSelection, "a first timeline replaces nothing")
+        let promised = issued.entries[1].selection
+        f.metadata["photo-06"]?.creationDate = baseline.addingTimeInterval(-3_600)
+        try f.store.synchronize(metadata: f.metadata, profiles: f.profiles, now: baseline.addingTimeInterval(5))
+        // Another Widget (or a snapshot) asks: tomorrow is chosen again.
+        let other = try f.store.timelineReportingReplacement(scopeID: CloudyWindowStore.personalScope,
+                                                             now: baseline.addingTimeInterval(10))
+        try check(other.replacedSelection && other.entries[1].selection.id != promised.id,
+                  "replacing a promised selection is reported, so every timeline reloads")
+        let again = try f.store.timelineReportingReplacement(scopeID: CloudyWindowStore.personalScope,
+                                                             now: baseline.addingTimeInterval(20))
+        try check(!again.replacedSelection, "the reload does not replace again")
+        // Midnight: the first Widget still shows its old entry for tomorrow.
+        let midnight = promised.day.addingTimeInterval(60)
+        try check(f.store.reveal(selectionID: promised.id, scopeID: promised.scopeID, photoID: promised.photoID,
+                                 now: midnight), "the old entry's tap clears today's photo")
+        let now = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: midnight.addingTimeInterval(1))
+        try check(now[0].selection.id == other.entries[1].selection.id && !now[0].isCloudy,
+                  "the reload shows today's photo cleared")
+    }
+
+    /// 11/20 (9): one "no Widget" answer keeps the prepared images; the same
+    /// answer an hour later releases them; a Widget seen again cancels it.
+    private static func oneEmptyAnswerKeepsImages() throws {
+        let f = try Fixture(count: 6)
+        defer { f.cleanup() }
+        let shown = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: baseline)[0]
+        try f.store.synchronizeInstalledSources([], now: baseline)
+        try check(f.store.imageURL(filename: shown.photo.cloudy.small) != nil, "one empty answer keeps the images")
+        try check(f.store.preparation(now: baseline) != nil, "and preparation goes on")
+        try f.store.synchronizeInstalledSources([CloudyWindowStore.personalScope], now: baseline.addingTimeInterval(60))
+        try f.store.synchronizeInstalledSources([], now: baseline.addingTimeInterval(CloudyWindowStore.uninstallConfirmationInterval))
+        try check(f.store.imageURL(filename: shown.photo.cloudy.small) != nil, "a Widget seen again starts the wait over")
+        try f.store.synchronizeInstalledSources([], now: baseline.addingTimeInterval(2 * CloudyWindowStore.uninstallConfirmationInterval))
+        try check(f.store.imageURL(filename: shown.photo.cloudy.small) == nil, "a confirmed empty answer releases them")
+    }
+
+    /// 11/20 (9): Photos access taken away: the derived images go at once,
+    /// the day's selection stays.
+    private static func releasingImagesKeepsSelections() throws {
+        let f = try Fixture(count: 6)
+        defer { f.cleanup() }
+        let shown = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: baseline)[0]
+        try f.store.releasePreparedImages()
+        let images = f.directory.appendingPathComponent("cloudy-window.v1/images")
+        try check((try FileManager.default.contentsOfDirectory(atPath: images.path)).isEmpty, "no derived image is left")
+        try check(f.store.preparation(now: baseline)?.protectedPhotoIDs.contains(shown.photo.photoID) == true,
+                  "the day's photo is prepared again when allowed")
     }
 }

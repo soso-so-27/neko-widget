@@ -201,7 +201,48 @@ private enum PersonalRediscoveryVerifier {
         try publicationCallbackFailureIsNotRetried()
         try readAndPublicationPreserveMissingOrCorruptState()
         try probableCatsGoLast()
-        print("Personal rediscovery passed: calendar-day photos, same-day hold after turning/refill/restart, legacy cadence migration, shared slots, bounded pool, cycles, leases, failures, quota, midnight/DST, stale requests, 48h history, source and authority isolation, atomic legacy bootstrap, frozen last photo across pool replacement/30 days/cleanup, frozen release on resume and source deletion, cross-process quota race, snapshot without flock, publication CAS with quota/revocation/three-conflict bounds, single callback including failure, missing/corrupt state preserved.")
+        try largeLibraryStaysBounded()
+        print("Personal rediscovery passed: large libraries bounded, calendar-day photos, same-day hold after turning/refill/restart, legacy cadence migration, shared slots, bounded pool, cycles, leases, failures, quota, midnight/DST, stale requests, 48h history, source and authority isolation, atomic legacy bootstrap, frozen last photo across pool replacement/30 days/cleanup, frozen release on resume and source deletion, cross-process quota race, snapshot without flock, publication CAS with quota/revocation/three-conflict bounds, single callback including failure, missing/corrupt state preserved.")
+    }
+
+    /// 11/20: a very large cat library. Unbounded, 100,000 allowed photos
+    /// would not fit the 8 MB file, so every update failed and the Widget
+    /// never changed again. Bounded: in-use and preferred photos stay, the
+    /// file stays small, each day samples others, and updates keep working.
+    private static func largeLibraryStaysBounded() throws {
+        let fixture = try Fixture(4)
+        defer { fixture.cleanup() }
+        let inUse = fixture.candidates.map { $0.item.localIdentifier }
+        // Shaped like PhotoKit identifiers (43 characters).
+        let library = (0..<100_000).map { String(format: "%08X-0000-4000-8000-%012X/L0/001", $0, $0) }
+        let all = Set(library).union(inUse)
+        let dates = Dictionary(uniqueKeysWithValues: all.map { ($0, baseline) })
+        let unbounded = try JSONEncoder().encode(all).count + JSONEncoder().encode(dates).count
+        try require(unbounded > 8 * 1_024 * 1_024, "the unbounded set really is over the 8 MB file limit")
+        let preferred: Set<String> = [library[99_999], library[7]]
+        let revision = try fixture.store.updateEligibility(photoIDs: all, scopeIdentifier: "fixture",
+            isAuthorized: true, now: baseline, photoModificationDates: dates,
+            preferredPhotoIDs: preferred, timeZone: utc)
+        let saved = try fixture.store.snapshot(now: baseline)!
+        try require(saved.eligibilityRevision == revision
+            && saved.eligiblePhotoIDs.count == PersonalRediscoveryStore.maximumPersistedEligibleCount,
+            "a large library keeps a bounded set")
+        try require(Set(inUse).isSubset(of: saved.eligiblePhotoIDs) && saved.candidates.count == inUse.count,
+                    "photos in use stay allowed and prepared")
+        try require(preferred.isSubset(of: saved.eligiblePhotoIDs), "the photos the app asks for stay")
+        try require(Set(saved.photoModificationDates.keys) == saved.eligiblePhotoIDs, "edit dates are bounded too")
+        let file = fixture.directory.appendingPathComponent("personal-rediscovery.v1/state.json")
+        let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? .max
+        try require(size < 3 * 1_024 * 1_024, "the shared file stays small (\(size) bytes)")
+        let tomorrow = baseline.addingTimeInterval(interval)
+        _ = try fixture.store.updateEligibility(photoIDs: all, scopeIdentifier: "fixture", isAuthorized: true,
+            now: tomorrow, photoModificationDates: dates, preferredPhotoIDs: preferred, timeZone: utc)
+        let next = try fixture.store.snapshot(now: tomorrow)!
+        try require(next.eligiblePhotoIDs != saved.eligiblePhotoIDs && Set(inUse).isSubset(of: next.eligiblePhotoIDs),
+                    "another day samples other photos; updates keep working")
+        let small = Set(library.prefix(10))
+        try require(PersonalRediscoveryStore.boundedEligibility(small, keeping: [], preferring: [], salt: "x") == small,
+                    "an ordinary library is kept whole")
     }
 
     /// 11/14: たぶん猫 move behind every 確かな猫 in later daily slots;

@@ -374,6 +374,9 @@ struct MainTabView: View {
     var startsInPhotos = false
     /// Continues a stopped search (「続きを探す」); nil falls back to `rescan`.
     var resumeScan: (() async -> Void)? = nil
+    /// 11/20: a Widget tap on a photo that is no longer shown opens the
+    /// photo tab's list.
+    var photosTabRequest: Binding<UUID?> = .constant(nil)
 
     @State private var selectedTab: AppTab = .memories
     @State private var groupShareNavigationGeneration = UUID()
@@ -822,6 +825,19 @@ struct MainTabView: View {
             showsSettings = false
             selectedTab = .windows
             deepLinkedFamilyWindowIsPresented = false
+        }
+        .onChange(of: photosTabRequest.wrappedValue, initial: true) { _, request in
+            guard request != nil else { return }
+            relatedPhotoUsesLibraryScope = false
+            relatedPhotoRoute = nil
+            didApplyInitialTab = true
+            widgetOpenedPhotoIdentifier = nil
+            widgetShownAt = nil
+            showsSettings = false
+            selectedTab = .photos
+            photoLibrarySelection.select(.all)
+            photosPath = NavigationPath()
+            photosTabRequest.wrappedValue = nil
         }
         .onChange(of: groupWindowOpenInbox.pendingWindowID, initial: true) { _, windowID in
             // A group window's home-screen photo: show the まど tab, where
