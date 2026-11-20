@@ -559,8 +559,8 @@ private struct GroupAdapterChecks {
         try check(try JSONDecoder().decode([GroupRole].self, from: Data(#"["owner","moderator"]"#.utf8)) == [.owner, .unknown],
                   "unknown role decodes as unknown")
         let isOwner: (String) -> Bool = { $0 == "owner" }
-        let paused = try ProductionGroupWindowClient.deliveryPolicy(status: .paused, reason: .ownerPlusRequired, owner: "owner", isOwner: isOwner)
-        try check(paused.0 == .paused && paused.1 == .ownerPlusRequired && paused.2 == "owner", "known policy passes unchanged")
+        let knownPolicy = try ProductionGroupWindowClient.deliveryPolicy(status: .paused, reason: .ownerPlusRequired, owner: "owner", isOwner: isOwner)
+        try check(knownPolicy.0 == .paused && knownPolicy.1 == .ownerPlusRequired && knownPolicy.2 == "owner", "known policy passes unchanged")
         let newer = try ProductionGroupWindowClient.deliveryPolicy(status: .unknown, reason: .ownerPlus, owner: "owner", isOwner: isOwner)
         try check(newer.0 == .unknown && newer.1 == .unknown && newer.2 == "owner", "a newer value is kept as unknown")
         var unknownWindow = GroupWindow(id: "w", name: "n", revision: 1, keyEpoch: 1, myParticipantID: "p", myRole: .member,
