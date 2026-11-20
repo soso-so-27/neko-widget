@@ -42,7 +42,9 @@ struct LibraryPhotoPresentationRevisions {
 
     mutating func update(from previous: LibrarySnapshot, to next: LibrarySnapshot) {
         guard previous.assets != next.assets
-            || previous.settings.analysisFingerprint != next.settings.analysisFingerprint else { return }
+            || previous.settings.analysisFingerprint != next.settings.analysisFingerprint
+            || previous.settings.supersededAnalysisFingerprints
+                != next.settings.supersededAnalysisFingerprints else { return }
         content &+= 1
         // Content additions/edits can prepare behind the current album. A
         // removal or loss of cat eligibility must invalidate old cards at once.
@@ -74,9 +76,9 @@ struct LibrarySnapshot: Codable, Equatable, Sendable {
     )
 
     var catAssets: [AssetRecord] {
-        let fingerprint = settings.analysisFingerprint
+        let current = self.settings
         return assets.filter {
-            $0.isCatCandidate && $0.analysisFingerprint == fingerprint
+            $0.isCatCandidate && current.presentsAnalysis(fingerprint: $0.analysisFingerprint)
         }
     }
 

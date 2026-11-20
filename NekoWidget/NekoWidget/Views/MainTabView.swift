@@ -66,6 +66,7 @@ private struct PhotoLibraryPageSettling: ViewModifier {
     let page: PhotoLibrarySection?
     let pager: PhotoLibraryPagerProgress
     let settle: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         if #available(iOS 18.0, *) {
@@ -82,7 +83,7 @@ private struct PhotoLibraryPageSettling: ViewModifier {
         } else {
             content.onChange(of: page) { _, page in
                 guard let page else { return }
-                withAnimation(.snappy) { pager.position = PhotoLibraryPagerProgress.index(of: page) }
+                withAnimation(reduceMotion ? nil : .snappy) { pager.position = PhotoLibraryPagerProgress.index(of: page) }
                 settle()
             }
         }
@@ -313,6 +314,7 @@ private struct SeasonalMovieArchiveValidationKey: Hashable {
 
 struct MainTabView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.requestReview) private var requestReview
     /// Only the first cat photo of a launch may bring the review prompt.
     @MainActor private static var reviewPhotoOpenedThisSession = false
@@ -356,7 +358,7 @@ struct MainTabView: View {
     let requestPhotoAccess: () -> Void
     let showWidgetPlacementGuide: () -> Void
     let setMemorySaved: (String, Bool) -> Void
-    let exportPhotoBook: ([String]) async throws -> URL
+    let exportPhotoBook: ([String]) async throws -> PhotoBookPDFExport
     let exportMemoryPhoto: (String) async throws -> MemoryPhotoJPEGExport
     let albumOpened: (String, String) -> Void
     let updateAlbum: () -> Void
@@ -1410,7 +1412,7 @@ struct MainTabView: View {
     /// The pages slide there; the section is kept when they rest.
     private func showPhotoLibrarySection(_ section: PhotoLibrarySection) {
         guard section != photoLibrarySelection.selection else { return }
-        withAnimation(.snappy(duration: 0.35)) { photoPage = section }
+        withAnimation(reduceMotion ? nil : .snappy(duration: 0.35)) { photoPage = section }
     }
 
     private func photoLibraryPositionKey(_ section: PhotoLibrarySection) -> String {
@@ -2359,10 +2361,16 @@ struct MainTabView: View {
             SeasonalMovieView(
                 presentation: presentation,
                 setSceneExcluded: { identifier, excluded in
+                    // 11/20: a scene whose photo was deleted may go below
+                    // the eight-scene floor (SeasonalMovieArchiveStore).
+                    let photoIsMissing = excluded && PHAsset.fetchAssets(
+                        withLocalIdentifiers: [identifier], options: nil
+                    ).count == 0
                     let updated = try await seasonalMovieArchive.setSceneExcluded(
                         identifier,
                         excluded: excluded,
-                        in: periodID
+                        in: periodID,
+                        photoIsMissing: photoIsMissing
                     )
                     if seasonalMovie.map({
                         SeasonalMoviePeriodID(presentation: $0)
@@ -3403,6 +3411,7 @@ private struct PhotoRelatedAlbumsSheet: View {
 private struct WindowListView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var invitationInbox = GroupInvitationInbox.shared
     @ObservedObject private var listNavigation = GroupWindowListNavigation.shared
     @State private var publicStates: [String: OfficialWindowState]
@@ -3525,7 +3534,7 @@ private struct WindowListView: View {
             try source.store.setSubscribed(true)
             WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
             addPublicWindowError = nil
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) { reloadPublicStates() }
+            withAnimation(reduceMotion ? nil : .spring(response: 0.45, dampingFraction: 0.82)) { reloadPublicStates() }
             addedPublicWindows &+= 1
             UsageCounter.shared.count(.officialWindowStarted)  // Usage (11/7)
             startedPublicWindow = source
@@ -3571,8 +3580,9 @@ private struct WindowListView: View {
             groupSection
             ForEach(receivingPublicWindows) { source in
                 publicCard(source, presentation: .wide)
-                    .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
-                                            removal: .opacity))
+                    .transition(reduceMotion ? AnyTransition.opacity
+                                : .asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
+                                              removal: .opacity))
             }
             if let started = startedPublicWindow {
                 startedConfirmation(started)

@@ -1,6 +1,6 @@
 import { ApiError } from './errors';
 
-type ReadRoute = 'billing_entitlement';
+type ReadRoute = 'billing_entitlement' | 'group_directory' | 'family_directory';
 export type ReadStage = 'routing' | 'retention_guard' | 'billing_gate' | 'rate_limit'
   | 'body' | 'authentication' | 'billing_nonce' | 'entitlement'
   | 'family_gate' | 'family_state' | 'family_authorization'
@@ -16,9 +16,12 @@ const reasons = new Set([
 
 /** Only a fixed ID-free path; provider metadata can include the original pathname. */
 export function beginReadDiagnostic(request: Request): void {
-  if (request.method !== 'GET') return;
-  const path = new URL(request.url).pathname;
-  const route = path === '/v1/billing/entitlement' ? 'billing_entitlement' : null;
+  const url = new URL(request.url);
+  const path = url.pathname;
+  let route: ReadRoute | undefined;
+  if (request.method === 'GET' && path === '/v1/billing/entitlement') route = 'billing_entitlement';
+  if (!url.search && request.method === 'POST' && path === '/v3/group-windows/list') route = 'group_directory';
+  if (!url.search && request.method === 'GET' && path === '/v3/family-notebooks/me') route = 'family_directory';
   if (route) contexts.set(request, { route, stage: 'routing' });
 }
 export function readStage(request: Request, stage: ReadStage): void {
@@ -31,6 +34,9 @@ export function finishReadDiagnostic(request: Request, error?: unknown): void {
   if (!context || error === undefined) return;
   const status = error instanceof ApiError ? error.status : 500;
   if (status !== 401 && !(status >= 500 && status <= 599)) return;
+  // Additional directory telemetry is only for server failures, so ordinary
+  // denied requests do not add log volume.
+  if (status === 401 && context.route !== 'billing_entitlement') return;
   const reason = error instanceof ApiError
     ? (reasons.has(error.code) ? error.code : 'other_api_error') : 'unexpected_exception';
   // Diagnostics must never change the original response or retry a billing operation.

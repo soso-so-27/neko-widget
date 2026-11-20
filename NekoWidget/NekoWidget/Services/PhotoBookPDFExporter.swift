@@ -181,6 +181,25 @@ enum PhotoBookPDFExportError: LocalizedError, Equatable {
     }
 }
 
+/// A finished PDF and how many selected photos it could not include.
+struct PhotoBookPDFExport: Sendable {
+    let url: URL
+    let omittedPhotoCount: Int
+}
+
+/// 11/20: how long one PDF may wait for photos in all. Each photo still has
+/// its own limit; after this, a photo gets only a short final try, so a
+/// thirty-photo PDF cannot wait an hour on iCloud.
+enum PhotoBookImageWaitPolicy {
+    static let perPhotoSeconds: TimeInterval = 120
+    static let totalSeconds: TimeInterval = 300
+    static let minimumSeconds: TimeInterval = 5
+
+    static func timeout(elapsed: TimeInterval) -> TimeInterval {
+        max(minimumSeconds, min(perPhotoSeconds, totalSeconds - elapsed))
+    }
+}
+
 /// Creates one local A4-portrait PDF from one to thirty explicitly selected
 /// liked photos. The returned temporary file can be passed directly to a
 /// `UIActivityViewController`. The caller owns the file's eventual cleanup.
@@ -202,7 +221,7 @@ struct PhotoBookPDFExporter {
     func export(
         from records: [AssetRecord],
         selectedIdentifiers: [String]
-    ) async throws -> URL {
+    ) async throws -> PhotoBookPDFExport {
         try await export(from: records.map {
             PhotoBookPhotoCandidate(
                 localIdentifier: $0.localIdentifier,
@@ -216,7 +235,7 @@ struct PhotoBookPDFExporter {
     func export(
         from candidates: [PhotoBookPhotoCandidate],
         selectedIdentifiers: [String]
-    ) async throws -> URL {
+    ) async throws -> PhotoBookPDFExport {
         let uniqueSelection = Set(selectedIdentifiers)
         guard uniqueSelection.count == selectedIdentifiers.count,
               uniqueSelection.count >= PhotoBookPolicy.minimumPhotosPerExport,
@@ -283,16 +302,24 @@ struct PhotoBookPDFExporter {
             throw PhotoBookPDFExportError.couldNotCreatePDF
         }
 
+        // 11/20: a photo deleted since, or one that cannot be loaded in
+        // time, is left out; each photo has its own page, so no gap is left.
+        let waitStartedAt = ProcessInfo.processInfo.systemUptime
+        var omittedPhotoCount = 0
         do {
-            for (offset, candidate) in selected.enumerated() {
+            for candidate in selected {
                 try Task.checkCancellation()
-                let page = offset + 1
                 guard let asset = assetsByIdentifier[candidate.localIdentifier] else {
-                    throw PhotoBookPDFExportError.photoUnavailable(page: page)
+                    omittedPhotoCount += 1
+                    continue
                 }
-                guard let image = await image(for: asset) else {
+                let timeout = PhotoBookImageWaitPolicy.timeout(
+                    elapsed: ProcessInfo.processInfo.systemUptime - waitStartedAt
+                )
+                guard let image = await image(for: asset, timeout: timeout) else {
                     try Task.checkCancellation()
-                    throw PhotoBookPDFExportError.imageUnavailable(page: page)
+                    omittedPhotoCount += 1
+                    continue
                 }
                 try Task.checkCancellation()
 
@@ -311,6 +338,12 @@ struct PhotoBookPDFExporter {
                 pdfContext.restoreGState()
                 pdfContext.endPDFPage()
             }
+            guard omittedPhotoCount < selected.count else {
+                throw PhotoBookPDFExportError.selectedPhotosUnavailable(
+                    expected: selected.count,
+                    actual: 0
+                )
+            }
             pdfContext.closePDF()
         } catch {
             pdfContext.closePDF()
@@ -325,11 +358,11 @@ struct PhotoBookPDFExporter {
             try? fileManager.removeItem(at: exportDirectory)
             throw PhotoBookPDFExportError.couldNotCreatePDF
         }
-        return outputURL
+        return PhotoBookPDFExport(url: outputURL, omittedPhotoCount: omittedPhotoCount)
     }
 
     @MainActor
-    private func image(for asset: PHAsset) async -> UIImage? {
+    private func image(for asset: PHAsset, timeout: TimeInterval) async -> UIImage? {
         let contentBounds = CGRect(origin: .zero, size: Self.pageSize)
             .inset(by: Self.pageInsets)
         let targetSize = CGSize(
@@ -349,7 +382,8 @@ struct PhotoBookPDFExporter {
         let request = PhotoBookImageRequest(
             asset: asset,
             targetSize: targetSize,
-            options: options
+            options: options,
+            timeoutNanoseconds: UInt64(timeout * 1_000_000_000)
         )
         return await withTaskCancellationHandler {
             await request.value()
@@ -393,8 +427,8 @@ struct PhotoBookPDFExporter {
 private final class PhotoBookImageRequest: @unchecked Sendable {
     /// iCloud-backed display derivatives can legitimately take longer than the
     /// former local-only ten-second budget. Keep a finite escape hatch while
-    /// the UI exposes explicit task cancellation.
-    private static let timeoutNanoseconds: UInt64 = 120_000_000_000
+    /// the UI exposes explicit task cancellation (PhotoBookImageWaitPolicy).
+    private let timeoutNanoseconds: UInt64
 
     private let asset: PHAsset
     private let targetSize: CGSize
@@ -409,11 +443,13 @@ private final class PhotoBookImageRequest: @unchecked Sendable {
     init(
         asset: PHAsset,
         targetSize: CGSize,
-        options: PHImageRequestOptions
+        options: PHImageRequestOptions,
+        timeoutNanoseconds: UInt64 = UInt64(PhotoBookImageWaitPolicy.perPhotoSeconds * 1_000_000_000)
     ) {
         self.asset = asset
         self.targetSize = targetSize
         self.options = options
+        self.timeoutNanoseconds = timeoutNanoseconds
     }
 
     func value() async -> UIImage? {
@@ -448,7 +484,7 @@ private final class PhotoBookImageRequest: @unchecked Sendable {
             let timeoutTask = Task { [weak self] in
                 guard let self else { return }
                 do {
-                    try await Task.sleep(nanoseconds: Self.timeoutNanoseconds)
+                    try await Task.sleep(nanoseconds: self.timeoutNanoseconds)
                 } catch {
                     return
                 }

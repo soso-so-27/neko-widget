@@ -199,7 +199,17 @@ enum MembershipRestoreFailure: Equatable {
         }
     }
 
+    /// 11/20: the Apple purchase on this iPhone cannot be matched to its
+    /// Plus account (several or no account tokens, a family-shared or
+    /// device-bound mismatch, a kept attempt for another account). Every
+    /// later 「購入を復元」 gives the same answer, so waiting cannot fix it:
+    /// the sheet offers お問い合わせ instead of another wait.
+    var waitingCannotFix: Bool { self == .purchaseEvidence }
+
     var message: String {
+        if waitingCannotFix {
+            return "このiPhoneのPlusの購入情報を確認できません。購入し直さずに、設定の「お問い合わせ」からご連絡ください。"
+        }
         let reason: String
         switch self {
         case .connection: reason = "通信できませんでした。"
@@ -228,13 +238,18 @@ final class MembershipOfferModel: ObservableObject {
     @Published private(set) var purchaseTitle: String?
     /// 「11月9日まで使えます」 when a member's Plus will not renew (11/9); nil while it renews.
     @Published private(set) var memberEndLine: String?
+    /// 11/20: the last restore failed in a way waiting cannot fix; the sheet
+    /// shows the お問い合わせ link under the message. Goes with the message.
+    @Published private(set) var offersContact = false
     private var purchases: PlusPurchaseStore?
     private var observation: AnyCancellable?
     private var expiryTask: Task<Void, Never>?
     /// The result of the person's last purchase or restore tap (not found,
     /// unavailable, failed, a changed offer). Kept on screen until the next
     /// tap or a confirmed membership, as the restore failure (#786, 11/5).
-    private var actionResult: String?
+    private var actionResult: String? {
+        didSet { if offersContact { offersContact = false } }
+    }
 #if DEBUG || INTERNAL_PRESENTATION
     private var fixtureStatus: MembershipOfferFixtureStatus?
     private var fixtureExpiresAt: Date?
@@ -419,6 +434,7 @@ final class MembershipOfferModel: ObservableObject {
             actionResult = "料金か無料期間が変わりました。表示を確かめてから、もう一度お申し込みください。"
         case let .restoreFailed(reason):
             actionResult = reason.message
+            offersContact = reason.waitingCannotFix
         }
         if let actionResult { message = actionResult }
     }
@@ -1023,6 +1039,8 @@ struct MembershipOfferSheet: View {
     /// 11/15: this sheet's purchase ended waiting for the server. When the
     /// store's own re-check then confirms Plus, it goes on as a purchase.
     @State private var awaitsConfirmation = false
+    /// Counts purchases and restores that ended with Plus here: one haptic each.
+    @State private var plusCompletions = 0
 #if DEBUG || INTERNAL_PRESENTATION
     @State private var showsManagementPreview = false
 #endif
@@ -1061,6 +1079,8 @@ struct MembershipOfferSheet: View {
         }
         // While buying, a swipe must not drop the purchase the caller waits for.
         .interactiveDismissDisabled(model.isWorking)
+        // Once per purchase or restore that ended with Plus (the count only grows then).
+        .sensoryFeedback(.success, trigger: plusCompletions)
         // Usage (11/7): each time the one Plus screen is shown, by its entry place.
         .onAppear {
             if heldPhoto == nil { heldPhoto = placePhoto }
@@ -1107,12 +1127,17 @@ struct MembershipOfferSheet: View {
                 awaitsConfirmation = false
                 Task {
                     let result = await model.restore()
-                    if result == .completed { onFinish(result) }
+                    if result == .completed {
+                        plusCompletions &+= 1
+                        onFinish(result)
+                    }
                 }
             },
             onClose: { onFinish(model.isMember ? .completed : .cancelled) },
             showsClose: showsClose,
-            reasonOverride: reasonOverride
+            reasonOverride: reasonOverride,
+            supportURL: model.offersContact && !model.isMember
+                ? AppPublicLinksConfiguration.current.supportURL : nil
         )
     }
 
@@ -1143,6 +1168,7 @@ struct MembershipOfferSheet: View {
     private func completePurchase() {
         let result = MembershipOfferActionResult.completed
         awaitsConfirmation = false
+        plusCompletions &+= 1
         if !model.isPreview {
             UsageCounter.shared.count(.plusPurchased(.init(context)))  // Usage (11/7)
             // 11/12: 「自動保存も始めますか？」 is asked later, once, at the

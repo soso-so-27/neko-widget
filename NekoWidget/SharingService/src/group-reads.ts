@@ -25,9 +25,15 @@ export function groupCursor(scope:string,last:string):string {
 export async function listGroupMembers(env:Env,actor:GroupActor,windowId:string,body:JsonRecord):Promise<Response> {
   const access=await requireGroupMember(env,actor,windowId),scope=`members:${windowId}:${actor.deviceId}:${access.revision}`;
   const page=groupPage(body,scope),head=await loadStoredGroupRoster(env.DB,windowId);
+  // The owner needs the old participant ID to approve a return. Other members
+  // only need rows in the signed head, including a departure awaiting rotation.
+  const owner=head.packet.roster.ownerPersonId===actor.personId;
+  const signedParticipants=head.packet.roster.members.map(member=>member.participantId);
+  const visibility=owner?'':`AND participant_id IN (${signedParticipants.map(()=>'?').join(',')})`;
   const result=await env.DB.prepare(`SELECT participant_id AS id,person_id AS personId,role,state,joined_revision AS joinedRevision,
-    display_name_ciphertext AS encryptedDisplayName FROM group_members WHERE space_id=? AND participant_id>? ORDER BY participant_id LIMIT ?`)
-    .bind(windowId,page.after,page.limit+1).all<{id:string}>();
+    display_name_ciphertext AS encryptedDisplayName FROM group_members WHERE space_id=? AND participant_id>?
+    ${visibility} ORDER BY participant_id LIMIT ?`)
+    .bind(windowId,page.after,...(owner?[]:signedParticipants),page.limit+1).all<{id:string}>();
   const items=result.results.slice(0,page.limit);
   await env.DB.batch(groupAuthorizationStatements(env,actor,{windowId,expectedRevision:access.revision}));
   return jsonResponse({items,next:result.results.length>page.limit?groupCursor(scope,items.at(-1)!.id):null,

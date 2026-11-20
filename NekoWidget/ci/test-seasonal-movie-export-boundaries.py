@@ -68,6 +68,15 @@ def main() -> None:
         assert boundary not in source, f"unexpected export behavior: {boundary}"
 
     assert "source audio are never copied" in source
+    # 11/20: a deleted or iCloud-only scene is left out, never a blank frame;
+    # leaving the app gets the time iOS allows, then stops cleanly.
+    assert "func exportOmittingUnavailableScenes(" in source
+    assert "catch let unavailable as UnavailableScene" in source
+    scene_loop = source.split("for index in presentation.scenes.indices {", 1)[1].split("guard let finalFrameImage else {", 1)[0]
+    assert "SeasonalMovieExportError.mediaNotAvailableOffline" not in scene_loop
+    assert "UIApplication.shared.beginBackgroundTask(" in view
+    assert "backgroundTime.end()" in view
+    assert "pendingExportNotice = omitted?.errorDescription" in view
     assert 'let text = "この季節も、ここまで" as NSString' in source
     assert "finalFrameImage = generatedImage" in source
     assert "sourceTrack" in source

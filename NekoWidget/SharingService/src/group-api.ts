@@ -13,11 +13,11 @@ import { groupInvitationStatus,createGroupInvitation,createGroupWindow,getGroupW
 import { parseJsonBody,requireEmptyBody } from './http';
 import { connectGroupBilling } from './group-owner-plus';
 import { acknowledgeGroupPhoto,commitGroupPhoto,getGroupPhoto,GROUP_MAX_CIPHERTEXT,listGroupPhotos,reserveGroupPhoto,uploadGroupPhoto } from './group-media';
-import { listGroupHearts,recordGroupHeart,setGroupBlock } from './group-hearts';
+import { listGroupBlocks,listGroupHearts,recordGroupHeart,setGroupBlock } from './group-hearts';
 import { groupReportAPI,isGroupReportPath } from './group-reports';
 import { registerGroupJoinPush } from './group-admission-push';
 import { registerGroupPush } from './group-push';
-import { groupReportStatus,groupReplyPath } from './group-moderation-replies';
+import { groupReportReplies,groupReportRepliesPath,groupReportStatus,groupReplyPath } from './group-moderation-replies';
 import { groupReportingAvailability,groupReportingAvailabilityPath } from './group-reporting-availability';
 import { manageGroupWindow } from './group-management';
 import {checkTrialActor} from './owner-two-device-trial';
@@ -68,11 +68,19 @@ async function dispatchGroup(request:Request,env:Env):Promise<Response> {
   const path=new URL(request.url).pathname;
   if(path.startsWith('/v3/group-recovery/'))return groupRecoveryCatalogAPI(request,env);
   if(path===groupReportingAvailabilityPath)return groupReportingAvailability(request,env);
+  if(path===groupReportRepliesPath)return groupReportReplies(request,env);
   if(groupReplyPath.test(path))return groupReportStatus(request,env);
   if(isGroupReportPath(path))return groupReportAPI(request,env);
   if(request.method==='POST' && path==='/v3/group-identities/challenges') return createGroupIdentityChallenge(request,env);
   if(request.method==='POST' && path==='/v3/group-identities') return registerGroupIdentity(request,env);
   if(!path.startsWith('/v3/group-windows')) throw new ApiError(404,'not_found','The endpoint was not found.');
+  const blockList=/^\/v3\/group-windows\/([A-Za-z0-9_-]{1,128})\/blocks\/list$/u.exec(path);
+  if(blockList){
+    if(request.method!=='POST')throw new ApiError(405,'method_not_allowed','Only POST is supported.');
+    const {actor,body}=await authenticateGroupRequest(request,env,0);
+    requireEmptyBody(body);
+    return listGroupBlocks(env,actor,blockList[1]!);
+  }
   const upload=request.method==='PUT' && /^\/v3\/group-windows\/[A-Za-z0-9_-]{22}\/moments\/[A-Za-z0-9_-]{22}\/(?:ciphertext|caption-ciphertext)$/u.test(path);
   const {actor,body:bytes}=await authenticateGroupRequest(request,env,upload?GROUP_MAX_CIPHERTEXT:128*1024);
   if(request.method==='GET') requireEmptyBody(bytes);

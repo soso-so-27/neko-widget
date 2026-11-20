@@ -636,7 +636,18 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
                           "entitlementState =", "canStartNewPurchase", "AppStore.sync"):
             self.assertNotIn(forbidden, display)
         front = section(self.store, "func refreshOnForegroundEntry() async {", "\n    }\n")
-        self.assertIn("guard allowsAutomaticBillingCheck() else { await refreshForDisplay(); return }", front)
+        self.assertIn("guard allowsAutomaticBillingCheck() else {\n            await refreshForDisplay()", front)
+        # 11/20: a skipped first check is read once the gate opens, never a
+        # 「Plusを確認しています…」 until the next coming to the front.
+        skipped = section(front, "guard allowsAutomaticBillingCheck() else {", "            return\n        }")
+        self.assertIn("if configuration.isConfigured, entitlementState == .checking {", skipped)
+        self.assertIn("deferredReconcile = true\n                scheduleDeferredBillingWork()", skipped)
+        self.assertNotIn("refreshServerAuthority", skipped)
+        # The gate's refusal with nothing held to retry leaves a definite state.
+        gate = section(self.store, "guard billingBudget.admit(.entitlement, personAction: SharingAutoCallBudget.isPersonAction) else {",
+                       "        let expectedContext = cacheContext")
+        self.assertIn("} else if entitlementState == .checking {\n", gate)
+        self.assertIn("markServerConfirmationIndeterminate()", gate)
         model = source("NekoWidget/Services/MembershipOfferModel.swift")
         settings = section(model, "struct PlusSettingsSection: View {", "#if DEBUG || INTERNAL_PRESENTATION")
         self.assertIn(".task { await purchases.refreshForDisplay() }", settings)
@@ -942,6 +953,60 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertIn('"A new memo must open without Plus"', ui)
         tests = source("NekoWidgetTests/OutputHarnessTests.swift")
         self.assertIn("XCTAssertEqual(expired.decision(for: .createPersonalMemo, now: now), .allowed)", tests)
+
+
+class RemainingBugs1120Tests(unittest.TestCase):
+    """11/20: a paying person is never left without an action or a sign."""
+
+    def test_restore_failure_waiting_cannot_fix_offers_contact(self) -> None:
+        model = source("NekoWidget/Services/MembershipOfferModel.swift")
+        failure = section(model, "enum MembershipRestoreFailure: Equatable {", "enum MembershipOfferActionResult")
+        # The Apple purchase cannot be matched to its Plus account on this iPhone.
+        self.assertIn("case .billingAccountRecoveryUnavailable, .billingAccountRecoveryEvidenceChanged, .identityMismatch:\n"
+                      "            return .purchaseEvidence", failure)
+        self.assertIn("var waitingCannotFix: Bool { self == .purchaseEvidence }", failure)
+        message = section(failure, "    var message: String {", "\n    }\n")
+        permanent = section(message, "if waitingCannotFix {", "}")
+        self.assertIn('"このiPhoneのPlusの購入情報を確認できません。購入し直さずに、設定の「お問い合わせ」からご連絡ください。"', permanent)
+        self.assertNotIn("時間をおいて", permanent)
+        # Transient failures still say to wait and try 「購入を復元」 again.
+        self.assertIn('return reason + "もう一度購入せず、時間をおいて「購入を復元」をお試しください。"', message)
+        # The link goes with the message and is the same route as Settings.
+        self.assertIn("didSet { if offersContact { offersContact = false } }", model)
+        applied = section(model, "case let .restoreFailed(reason):\n            actionResult = reason.message", "\n        }\n")
+        self.assertIn("offersContact = reason.waitingCannotFix", applied)
+        self.assertIn("supportURL: model.offersContact && !model.isMember\n"
+                      "                ? AppPublicLinksConfiguration.current.supportURL : nil", model)
+        view = source("NekoWidget/Views/MembershipOfferView.swift")
+        actions = section(view, "    private var actions: some View {", "    private var reassurance: some View {")
+        link = section(actions, "if let supportURL, !isMember {", 'accessibilityIdentifier("membership-offer-support")')
+        self.assertIn('Link("お問い合わせ", destination: supportURL)', link)
+        self.assertLess(actions.index('accessibilityIdentifier("membership-offer-message")'),
+                        actions.index('accessibilityIdentifier("membership-offer-support")'))
+        settings = source("NekoWidget/Views/SettingsView.swift")
+        self.assertIn("if let url = AppPublicLinksConfiguration.current.supportURL {", settings)
+        self.assertIn('ExternalLinkRow("お問い合わせ", systemImage: "questionmark.circle")', settings)
+
+    def test_unusable_auto_save_settings_show_the_gear_dot(self) -> None:
+        persistence = source("NekoWidget/Services/AppRecordPersistence.swift")
+        load = section(persistence, "    private func loadBindingIfUnread() {", "    private static let bindingUnreadableDetail")
+        self.assertIn("} catch let error as AppRecordBindingError where Self.needsPersonForSettings(error) {\n"
+                      "            settingsUnusable = error\n"
+                      "            detail = error.errorDescription", load)
+        self.assertIn("[.destination, .format, .consent].contains(error)", load)
+        # A locked iPhone still reads again after unlock; the binding is never touched.
+        self.assertIn("} catch { detail = Self.bindingUnreadableDetail }", load)
+        for forbidden in ("removeItem", "write(", "enabled = false"):
+            self.assertNotIn(forbidden, load)
+        self.assertIn("settingsUnusable = nil", load)
+        settings = source("NekoWidget/Views/SettingsView.swift")
+        gear = section(settings, "struct SettingsGearIcon: View {", "struct AutoSaveSettingsRow: View {")
+        self.assertIn("return persistence.settingsUnusable != nil\n"
+                      "            || (persistence.enabled && (persistence.planEnded || persistence.needsAttention))", gear)
+        self.assertIn('.accessibilityValue(stopped ? "自動保存が止まっています" : "")', gear)
+        row = section(settings, "struct AutoSaveSettingsRow: View {", "struct SettingsView: View {")
+        self.assertIn('Text(persistence.settingsUnusable != nil ? "保存できていません"', row)
+
 
 if __name__ == "__main__":
     unittest.main()

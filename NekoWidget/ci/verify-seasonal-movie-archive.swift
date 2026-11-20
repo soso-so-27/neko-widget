@@ -208,6 +208,29 @@ private struct SeasonalMovieArchiveVerifier {
         } catch SeasonalMovieArchiveError.minimumSceneCount {
             // Expected.
         }
+        // 11/20: a scene whose photo was deleted may still be taken out.
+        let repaired = try await store.setSceneExcluded(
+            favoriteRefresh.scenes[2].localIdentifier,
+            excluded: true,
+            in: first.periodID,
+            photoIsMissing: true
+        )
+        try require(repaired.effectivePresentation.scenes.count == 7,
+                    "a movie that lost a photo could not drop that scene")
+        try require(SeasonalMovieArchiveStore.allowsExclusion(
+                        effectiveSceneCount: 2, photoIsMissing: true)
+                    && !SeasonalMovieArchiveStore.allowsExclusion(
+                        effectiveSceneCount: 1, photoIsMissing: true)
+                    && !SeasonalMovieArchiveStore.allowsExclusion(
+                        effectiveSceneCount: 8, photoIsMissing: false)
+                    && SeasonalMovieArchiveStore.allowsExclusion(
+                        effectiveSceneCount: 9, photoIsMissing: false),
+                    "the scene floor rule changed")
+        _ = try await store.setSceneExcluded(
+            favoriteRefresh.scenes[2].localIdentifier,
+            excluded: false,
+            in: first.periodID
+        )
 
         let automaticRescan = try await store.upsert(presentation(suffix: "-new"))
         try require(
