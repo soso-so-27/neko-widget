@@ -53,15 +53,21 @@ enum CatFarewell {
     /// is read, never saved here.
     static var familyDays: [String: CatCareDay] = [:]
 
+    /// 11/20: read entry by entry, so one unreadable entry hides no other.
+    /// The record's copy (CatHouseholdIdentityState.farewellDays) is kept the
+    /// same by AppRecordLinkRetry, so 保存 carries the day.
     static func days(_ json: String) -> [String: CatCareDay] {
-        (try? JSONDecoder().decode([String: CatCareDay].self, from: Data(json.utf8))) ?? [:]
+        (CatFarewellDay.decodeAll(json) ?? [:]).compactMapValues {
+            CatCareDay(year: $0.year, month: $0.month, day: $0.day)
+        }
     }
 
+    /// An unreadable value is never replaced by a new, smaller one: the
+    /// change is not made and the stored text stays exactly as it was.
     static func setting(_ day: CatCareDay?, for subject: String, in json: String) -> String {
-        var all = days(json)
-        all[subject] = day
-        guard let data = try? JSONEncoder().encode(all) else { return json }
-        return String(decoding: data, as: UTF8.self)
+        guard var all = CatFarewellDay.decodeAll(json) else { return json }
+        all[subject] = day.map { CatFarewellDay(year: $0.year, month: $0.month, day: $0.day) }
+        return CatFarewellDay.encodeAll(all, keepingUnreadableFrom: json)
     }
 
     static func text(_ day: CatCareDay) -> String {

@@ -401,6 +401,7 @@ final class AppViewModel: ObservableObject {
     private var todayDayChangeObserver: NSObjectProtocol?
     private var protectedDataObserver: NSObjectProtocol?
     private var adoptionDayObserver: NSObjectProtocol?
+    private var photoLinksObserver: NSObjectProtocol?
     /// nil means no additional in-memory source filter. When an album is
     /// selected this is refreshed from PhotoKit before a scan, so old snapshot
     /// records outside that album disappear from candidate surfaces at once.
@@ -613,6 +614,11 @@ final class AppViewModel: ObservableObject {
             guard let url = note.object as? URL, url.deletingLastPathComponent().lastPathComponent == "CatCare" else { return }
             Task { @MainActor [weak self] in self?.objectWillChange.send() }
         }
+        // 11/20: saved photo decisions or liked photos reached the records
+        // (AppRecordLinkRetry). Read the cat ledger and the likes again.
+        photoLinksObserver = NotificationCenter.default.addObserver(forName: .appRecordPhotoLinksApplied, object: nil, queue: nil) { [weak self] _ in
+            Task { @MainActor [weak self] in await self?.reloadAfterPhotoLinksApplied() }
+        }
         protectedDataObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.protectedDataDidBecomeAvailableNotification,
             object: nil,
@@ -637,6 +643,7 @@ final class AppViewModel: ObservableObject {
 
     deinit {
         if let adoptionDayObserver { NotificationCenter.default.removeObserver(adoptionDayObserver) }
+        if let photoLinksObserver { NotificationCenter.default.removeObserver(photoLinksObserver) }
         if let receivedMemoryImportObserver {
             NotificationCenter.default.removeObserver(receivedMemoryImportObserver)
         }
@@ -1627,6 +1634,18 @@ final class AppViewModel: ObservableObject {
         await saveSnapshot(reportErrors: false)
     }
 
+    /// 11/20: AppRecordLinkRetry brought saved photo decisions or liked
+    /// photos onto photos that are here now. Read both again, the same way a
+    /// newer ledger revision or a Widget like is read.
+    private func reloadAfterPhotoLinksApplied() async {
+        if catIdentityLoadState == .ready, let identityStore,
+           let latest = try? await identityStore.load(),
+           latest.mutationRevision > (catHouseholdIdentity?.mutationRevision ?? -1) {
+            catHouseholdIdentity = latest
+        }
+        await syncLikesForPresentation(trigger: "restored-likes")
+    }
+
     func createOrUpdateAlbum() async {
         guard candidateAuthorityIsReady(operation: "create_or_update_album") else {
             return
@@ -1694,7 +1713,13 @@ final class AppViewModel: ObservableObject {
             guard let metadata = Self.transferMetadata(asset), let profiles = memberships[asset.localIdentifier] else { return }
             photos.append(.init(id: UUID(), metadata: metadata, profileIDs: profiles))
         }
-        return try CatProfileTransfer(profiles: current.profiles, photos: photos).encoded()
+        var transfer = try CatProfileTransfer(profiles: current.profiles, photos: photos)
+        // 11/20: the file carries 旅立った日 too, as 保存 does.
+        let profileKeys = Set(current.profiles.map(\.id.uuidString))
+        let days = (CatFarewellDay.decodeAll(UserDefaults.standard.string(forKey: CatFarewell.key) ?? "") ?? [:])
+            .filter { profileKeys.contains($0.key) }
+        transfer.farewellDays = days.isEmpty ? nil : days
+        return try transfer.encoded()
     }
 
     private static func transferMetadata(_ asset: PHAsset) -> CatProfileTransfer.PhotoMetadata? {
@@ -1786,6 +1811,8 @@ final class AppViewModel: ObservableObject {
                 if committed.mutationRevision >= (self.catHouseholdIdentity?.mutationRevision ?? -1) {
                     self.catHouseholdIdentity = committed
                 }
+                // 11/20: a file's 旅立った日 reaches the screens.
+                if committed.farewellDays != nil { AppRecordLinkRetry.shared.syncFarewell() }
                 result = .success(true)
             } catch {
                 // Do not put names, dates, file contents or external URLs into logs.

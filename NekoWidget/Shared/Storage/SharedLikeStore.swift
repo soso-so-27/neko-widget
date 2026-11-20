@@ -291,6 +291,34 @@ enum SharedLikeStore {
         }
     }
 
+    /// 11/20: liked photos brought back by 保存, by local identifier. A merge
+    /// only: a photo liked here stays liked, and an unlike made here after the
+    /// saved like stays unliked. Returns how many records changed.
+    @discardableResult
+    static func mergeRestoredLikes(_ likes: [String: Date]) throws -> Int {
+        guard !likes.isEmpty else { return 0 }
+        return try withExclusiveLock {
+            var file = try readUnlocked()
+            var changed = 0
+            for (localIdentifier, likedAt) in likes where !localIdentifier.isEmpty {
+                if let current = file.records[localIdentifier],
+                   current.isLiked || current.changedAt >= likedAt { continue }
+                let previous = file.records[localIdentifier]
+                file.records[localIdentifier] = SharedLikeRecord(
+                    localIdentifier: localIdentifier,
+                    isLiked: true,
+                    likedAt: likedAt,
+                    changedAt: likedAt,
+                    isReceivedMemoryImport: previous?.isReceivedMemoryImport
+                )
+                file.updatedAt = max(file.updatedAt, likedAt)
+                changed += 1
+            }
+            if changed > 0 { try writeUnlocked(file) }
+            return changed
+        }
+    }
+
     /// Makes the v2 store independently writable before an irreversible
     /// received-photo import. A later personal-library scan can still merge
     /// every missing legacy record; existing imported records and explicit

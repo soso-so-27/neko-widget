@@ -16,6 +16,18 @@ struct NekoWidgetApp: App {
         // Before any store opens its records: a store opened while the iPhone
         // is locked is opened again after unlock (11/18).
         AppRecordDataset.trackProtectedData()
+        // 11/20: also before any store opens a dataset folder. Test launches
+        // (any "--" argument) keep their fixtures as they are.
+#if DEBUG
+        let repairsRecords = !CommandLine.arguments.dropFirst().contains { $0.hasPrefix("--") }
+#else
+        let repairsRecords = true
+#endif
+        if repairsRecords {
+            AppRecordDataset.retireSupersededDatasets()
+            Task.detached(priority: .background) { AppRecordDataset.removeRetiredDatasets() }
+            AppRecordLinkRetry.shared.start()
+        }
         ClientUpgradePresenter.shared.start()
         ShowcaseAppShortcuts.updateAppShortcutParameters()
 #if DEBUG

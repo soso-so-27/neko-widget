@@ -40,6 +40,7 @@ enum PhotoMemoryNoteVerifier {
         try await verifiesRecordIntegrity(at: root.appendingPathComponent("integrity/state.json"))
         try await verifiesWeightPersistence(at: root.appendingPathComponent("weight/state.json"))
         try await verifiesMissingPartitionNeverReplacesRecords(at: root.appendingPathComponent("partition-failure/state.json"))
+        try await verifiesWaitingMemosRelinkLater(at: root.appendingPathComponent("waiting/state.json"))
         print("Photo memory note verifier passed: editing, conflict, persistence, migration, records, metadata, failure recovery")
     }
 
@@ -60,6 +61,37 @@ enum PhotoMemoryNoteVerifier {
         let collision = PhotoMemoryNoteRelink.apply(.init(schemaVersion: 4, notes: [saved: note, "saved:other": other]),
             local: nil, resolved: ["synthetic-cloud-id": "new-phone-photo"])
         precondition(collision.notes.count == 2 && Set(collision.notes.values.map(\.id)) == [note.id, other.id], "colliding links never overwrite either memo")
+    }
+
+    /// 11/20: a memo restored before its photo arrived waits under `saved:`
+    /// and moves onto the photo at a later try. A lookup that finds nothing,
+    /// or a photo that already has a memo, keeps it waiting.
+    private static func verifiesWaitingMemosRelinkLater(at url: URL) async throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var first = PhotoMemoryNote(text: "synthetic first", updatedAt: Date(), revision: UUID().uuidString)
+        first.photoCloudIdentifier = "synthetic-cloud-1"; first.photoFile = first.id.uuidString + ".jpg"
+        var second = PhotoMemoryNote(text: "synthetic second", updatedAt: Date(), revision: UUID().uuidString)
+        second.photoCloudIdentifier = "synthetic-cloud-2"
+        let own = PhotoMemoryNote(text: "written on this phone", updatedAt: Date(), revision: UUID().uuidString)
+        let notes = ["saved:" + first.id.uuidString: first, "saved:" + second.id.uuidString: second, "local-photo-2": own]
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        try AppRecordJSON.write(encoder.encode(PhotoMemoryNoteSnapshot(schemaVersion: 4, notes: notes)), to: url)
+        let store = PhotoMemoryNoteStore(fileURL: url)
+        let waiting = try await store.waitingPhotoCloudIdentifiers()
+        try require(waiting == ["synthetic-cloud-1", "synthetic-cloud-2"], "both memos wait")
+        let none = try await store.relinkWaitingNotes(resolved: [:])
+        let stillWaiting = try await store.waitingPhotoCloudIdentifiers()
+        try require(none == 0 && stillWaiting.count == 2, "a failed lookup moves and drops nothing")
+        let moved = try await store.relinkWaitingNotes(resolved: ["synthetic-cloud-1": "local-photo-1", "synthetic-cloud-2": "local-photo-2"])
+        try require(moved == 1, "only the photo without a memo takes one")
+        let relinked = try await store.note(for: "local-photo-1")
+        let kept = try await store.note(for: "local-photo-2")
+        let rest = try await store.waitingPhotoCloudIdentifiers()
+        let all = try await store.records()
+        try require(relinked == first, "the memo and its saved photo file move together")
+        try require(kept == own, "a memo written here is never replaced")
+        try require(rest == ["synthetic-cloud-2"], "the other memo keeps waiting")
+        try require(all.count == 3, "no memo is lost")
     }
 
     private static func verifiesMissingPartitionNeverReplacesRecords(at url: URL) async throws {
