@@ -196,3 +196,41 @@ struct GroupLocalDeviceLink: Codable, Sendable {
     let signingPrivateKey: Data
     let agreementPrivateKey: Data
 }
+
+/// 11/20: the name this person last gave (GroupDisplayName.remembered).
+/// The screens read UserDefaults; this iPhone's Keychain (GroupKeychainStore:
+/// device-only, not synced, like the identity) keeps a copy that deleting the
+/// app does not remove. A Keychain failure leaves UserDefaults as it was.
+struct GroupRememberedName {
+    static let account = "my-display-name.v1"
+    let defaults: () -> String?
+    let setDefaults: (String) -> Void
+    let keychain: () -> (any GroupSecretStore)?
+
+    /// `checked`: this process already compared the two; later reads are
+    /// UserDefaults only (one Keychain read per process, none while scrolling).
+    func read(checked: inout Bool) -> String {
+        let saved = defaults() ?? ""
+        guard !checked else { return saved }
+        checked = true
+        let data = try? keychain()?.read(Self.account)
+        let kept = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        if saved.isEmpty {
+            guard !kept.isEmpty else { return "" }
+            setDefaults(kept)
+            return kept
+        }
+        // An install from before 11/20 has the name in UserDefaults only.
+        if kept != saved { keep(saved) }
+        return saved
+    }
+
+    func write(_ name: String) {
+        setDefaults(name)
+        keep(name)
+    }
+
+    private func keep(_ name: String) {
+        try? keychain()?.write(Data(name.utf8), account: Self.account, createOnly: false)
+    }
+}

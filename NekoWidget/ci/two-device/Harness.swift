@@ -310,6 +310,31 @@ struct Drained: Decodable {
     /// The identity the last notebook session opened with.
     private(set) var notebookIdentity: GroupDeviceIdentity?
     private(set) var lastState: FamilySharingState?
+    /// GroupDisplayName's UserDefaults value: deleting the app wipes it. The
+    /// notebook screen remembers the name on create and join (rememberName).
+    private(set) var rememberedName = ""
+    /// false: this iPhone runs a build from before GroupRememberedName (the
+    /// name is not kept in the Keychain); reinstalling installs this build.
+    var keepsNameInKeychain = true
+    /// GroupDisplayName.keychainChecked: one per process.
+    private var nameChecked = false
+    /// GroupDisplayName's memory (GroupRememberedName) over this iPhone's
+    /// UserDefaults value and device-only Keychain.
+    private var nameMemory: GroupRememberedName {
+        GroupRememberedName(defaults: { [unowned self] in self.rememberedName },
+            setDefaults: { [unowned self] in self.rememberedName = $0 },
+            keychain: { [unowned self] () -> (any GroupSecretStore)? in
+                guard self.keepsNameInKeychain else { return nil }
+                return self.keychain.store(Self.namespace + ".display-name")
+            })
+    }
+    /// GroupDisplayName.remember (the notebook screen, on create and join).
+    func rememberName(_ name: String) { nameMemory.write(name); nameChecked = true }
+    /// The name kept in this iPhone's Keychain (survives deleting the app).
+    var keptName: String? {
+        let data = try? keychain.store(Self.namespace + ".display-name").read(GroupRememberedName.account)
+        return data.flatMap { String(data: $0, encoding: .utf8) }
+    }
 
     init(_ name: String, relay: Relay, cloud: PersonCloud, keychain: DeviceKeychain = DeviceKeychain(), billing: BillingCredential? = nil) {
         self.name = name; self.relay = relay; self.cloud = cloud; self.keychain = keychain; self.billing = billing
@@ -340,24 +365,27 @@ struct Drained: Decodable {
             transport: relay.transport, outboxDirectory: outbox, billingSigner: HarnessBillingSigner(credential: billing))
         service = ProductionFamilyNotebookSharingService(provider: { [unowned self] in try await self.openSession() },
             billing: { [unowned self] in try await self.client.connectExistingBillingAccount() },
-            displayName: { [unowned self] in "合成の" + self.name }, catNames: { ["合成ねこ"] },
+            displayName: { [unowned self] in try GroupWire.name(self.nameMemory.read(checked: &self.nameChecked)) },
+            rememberName: { [unowned self] in self.rememberName($0) }, catNames: { ["合成ねこ"] },
             hasExistingIdentity: { [unowned self] in
                 if try await self.client.hasExistingIdentity() { return true }
                 return try await self.recoveredIdentity() != nil
             }, photoRuntimeEnabled: true, photoTransport: relay.transport,
             // The pinned recipient: on macOS GroupReportCrypto accepts no other.
             moderationRecipient: { (keyID: GroupReportCrypto.moderationKeyID, publicKey: GroupReportCrypto.moderationPublicKey) })
-        notebookIdentity = nil; lastState = nil
+        notebookIdentity = nil; lastState = nil; nameChecked = false
         // Notifications allowed (GroupAdmissionService passes the token on).
         await service.updatePushSubscription(token: pushToken, environment: "production")
     }
 
     /// Deleting the app and installing it again: Application Support (and
-    /// with it the notebook copy and journals) is gone, the device-only
-    /// Keychain and the iCloud Keychain stay. iOS gives a new push token.
+    /// with it the notebook copy and journals) and UserDefaults are gone,
+    /// the device-only Keychain and the iCloud Keychain stay. iOS gives a
+    /// new push token.
     func reinstall() async throws {
         try? FileManager.default.removeItem(at: support)
         support = Self.newSupportFolder(name)
+        rememberedName = ""; keepsNameInKeychain = true
         pushToken = Data((0..<32).map { _ in UInt8.random(in: 0...255) })
         try await launch()
     }
@@ -505,6 +533,18 @@ struct Drained: Decodable {
     /// The cat's representative photo as the cat's page reads it.
     func photo(_ cat: UUID) async throws -> FamilyNotebookPhotoLoad? {
         try await service.representativePhotos(familyCatIDs: [cat])[cat]
+    }
+
+    /// The notebook screen opens (FamilyNotebookPrototype.attachReal after a
+    /// read): the service's author, the cats linked through the bridge, and
+    /// the 「猫」 list it shows (familyCats). No cat pages of its own here.
+    func notebookScreenCats() throws -> [UUID] {
+        let store = try required(service.notebook, "\(name) has no notebook copy")
+        let author = try required(service.author, "\(name) has no author (the screen stops before its cats)")
+        let snapshot = try store.snapshot()
+        try expect(!snapshot.sharingEnded, "\(name)'s notebook is shared")
+        try FamilyNotebookCatCareBridge.linkFamilyCats(store, snapshot: snapshot, existingLocalIDs: [], author: author, profiles: [])
+        return FamilyNotebookCatCareBridge.listedCats(in: try store.snapshot()).map { $0.familyCatID }
     }
 
     /// POSTs this iPhone's notebook device sent under /v3/family-notebooks.
