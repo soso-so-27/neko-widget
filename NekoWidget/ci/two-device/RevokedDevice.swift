@@ -265,9 +265,9 @@ extension Scenarios {
         try expect(recoveredMarked && linkAfterRemoval == nil, "marked, link removed")
 
         Log.step("「引き継ぐ」 again: the taken-off recovered device's drafts go and a new device key is made")
-        let again = try await b.openRecoveryScreen()
-        let state = try await b.confirmNotebook(on: again, rootID: person)
-        Log.note("notebook row: \(state)")
+        let retake = try await b.openRecoveryScreen()
+        let retaken = try await b.confirmNotebook(on: retake, rootID: person)
+        Log.note("notebook row: \(retaken)")
         let second = try required(try await b.recoveredIdentity(), "the identity choice picks the person again")
         let secondDevice = try second.deviceID
         try expect(second.personID == person && secondDevice != recoveredDevice && secondDevice != oldDevice, "another new device key")

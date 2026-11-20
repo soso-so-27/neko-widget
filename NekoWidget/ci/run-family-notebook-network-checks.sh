@@ -86,7 +86,6 @@ revocation_sources=(
   NekoWidget/Services/VeterinaryVisitStore.swift NekoWidget/Services/FamilyNotebookMigration.swift
   NekoWidget/Services/FamilyNotebookCatCareBridge.swift NekoWidget/Services/FamilyNotebookToolBridge.swift
   NekoWidget/Services/FamilyNotebookCatLink.swift NekoWidget/Services/SharingAutoCheckPolicy.swift
-  NekoWidget/Services/GroupWindowLocalPhotoStore.swift
   ci/verify-device-revocation.swift
 )
 xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0"   "${revocation_sources[@]}" -o "$RUNNER_TEMP/device-revocation-tests"
