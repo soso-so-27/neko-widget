@@ -983,9 +983,23 @@ class IdentityDeletionAndLeaving1120Tests(unittest.TestCase):
                         resume.index("try? await client.markIdentityDeletionLocalCleanupDone()"))
         remove = section(local, "static func remove(_ deletion: GroupIdentityDeletion) async -> Bool {", "\n    }\n")
         self.assertIn("guard deletion.acceptedAt != nil else { return false }", remove)
-        # The binding before the files: the tools never write into a removed copy.
-        self.assertLess(remove.index("for key in defaultsKeys { UserDefaults.standard.removeObject(forKey: key) }"),
+        # A record from before 11/20 removes nothing more; a running notebook
+        # pass ends first; a removed copy's binding goes before the files.
+        self.assertIn("guard let person = deletion.personID else { return true }", remove)
+        self.assertLess(remove.index("await FamilyNotebookSharing.shared.stopForIdentityDeletion()"),
                         remove.index("local.removeAfterIdentityDeletion("))
+        self.assertLess(remove.index("UserDefaults.standard.removeObject(forKey: FamilyNotebookLocalBinding.key)"),
+                        remove.index("local.removeAfterIdentityDeletion("))
+        # The shared copies only when no other identity (機種変更) remains.
+        shared = section(remove, "if !outcome.otherIdentityRemains {", "\n        }\n")
+        self.assertIn("for key in defaultsKeys { UserDefaults.standard.removeObject(forKey: key) }", shared)
+        self.assertIn("local.removeSharedCopies(keychainCopies)", shared)
+        self.assertNotIn("recoveryLinkSuffix", section(local, "static let keychainCopies", "]"))
+        core = read("NekoWidget/Services/FamilyNotebookKeyCoordinator.swift")
+        removal = section(core, "func removeAfterIdentityDeletion(", "\n    }\n")
+        self.assertIn("guard scope == deleted else { result.otherIdentityRemains = true; continue }", removal)
+        self.assertIn("link.personID == personID || link.scope == deleted", removal)
+        self.assertNotIn('".family."', removal)
         for key in ("FamilyNotebookLocalBinding.key", "FamilyNotebookLocalBinding.legacyKey", "GroupDisplayName.rememberedKey",
                     "FamilyHiddenOperationsMemory.defaultsKey", "FamilyCatLinkAnswersMemory.defaultsKey",
                     "FamilyNotebookSharing.sendHealthKey", "FamilyNotebookAwaitingApproval.key"):

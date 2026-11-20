@@ -158,6 +158,18 @@ final class FamilyNotebookSharing: ObservableObject {
         state = .checking; pause = nil; requests = []; ownJoinResults = []; readFailed = false
     }
 
+    /// 11/20 (GroupIdentityDeletionLocalData): restartSession, then waits (up
+    /// to 10 s) for a read or call already running on the identity before it,
+    /// so none writes into its stores after they are removed.
+    func stopForIdentityDeletion() async {
+        restartSession()
+        let production = service as? ProductionFamilyNotebookSharingService
+        for _ in 0..<100 {
+            guard refreshing || production?.callRunning == true else { return }
+            do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+        }
+    }
+
     /// 11/15 (TestFlight 378): after Plus was bought or confirmed on this
     /// iPhone. A background pass already running may have read the family
     /// before the Plus, and a second call during it was dropped, so

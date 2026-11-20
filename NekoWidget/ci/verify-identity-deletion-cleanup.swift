@@ -162,98 +162,161 @@ enum IdentityDeletionCleanupChecks {
         print("identity deletion: an interrupted clean-up resumes for the deleted identity only")
     }
 
-    /// FamilySharingLocalData: every notebook copy, recovered device and kept choice.
+    /// FamilySharingLocalData: only what provably is the deleted person's.
     static func localDataChecks(_ folder: URL) throws {
-        let keychain = Keychain()
-        let support = folder.appendingPathComponent("support", isDirectory: true)
         let manager = FileManager.default
         func make(_ url: URL) throws {
             try manager.createDirectory(at: url, withIntermediateDirectories: true)
             try Data("synthetic".utf8).write(to: url.appendingPathComponent("file"))
         }
         func exists(_ url: URL) -> Bool { manager.fileExists(atPath: url.path) }
-        let notebooks = support.appendingPathComponent("FamilyNotebook-v1", isDirectory: true)
-        let transport = support.appendingPathComponent("GroupTransport-v3", isDirectory: true)
+        let shared: [(suffix: String, prefix: String)] = [(".display-name", ""), (FamilyHiddenOperationsMemory.namespaceSuffix, ""),
+            (FamilyCatLinkAnswersMemory.namespaceSuffix, ""), (GroupWindowKept.namespaceSuffix, GroupWindowKept.choicesAccountPrefix)]
 
-        // The deleted identity: its notebook copy, whose Keychain is already empty.
-        let usual = registered(.firstDevice())
-        let usualScope = try FamilySharingLocalData.notebookScope(endpoint: endpoint, personID: usual.personID, deviceID: usual.deviceID)
-        try make(notebooks.appendingPathComponent(usualScope).appendingPathComponent("notebooks"))
-        // An older notebook of this namespace, with its trust pin and epoch key.
-        let older = try FamilySharingLocalData.notebookScope(endpoint: endpoint, personID: "older", deviceID: "older-device")
-        try make(notebooks.appendingPathComponent(older))
-        for account in ["op:fnb-trust:x", "op:fnb-key:x:1", "family-photo-visibility.v1:x"] {
-            try keychain.store(namespace + ".family." + older).write(Data("k".utf8), account: account, createOnly: true)
+        /// One iPhone: the usual identity `usual`, the same person's recovered
+        /// device, optionally another person's recovered device and the link.
+        struct Phone {
+            let keychain = Keychain()
+            let support: URL
+            let usual: GroupDeviceIdentity
+            let ownRecovered: GroupDeviceIdentity
+            let other: GroupDeviceIdentity
+            var local: FamilySharingLocalData {
+                let keychain = self.keychain
+                return FamilySharingLocalData(namespace: IdentityDeletionCleanupChecks.namespace, support: support,
+                    store: { keychain.store($0) }, namespaces: { try keychain.namespaces(prefix: $0) })
+            }
+            func notebook(_ scope: String) -> URL {
+                support.appendingPathComponent("FamilyNotebook-v1", isDirectory: true).appendingPathComponent(scope, isDirectory: true)
+            }
+            func outbox(_ scope: String) -> URL {
+                support.appendingPathComponent("GroupTransport-v3", isDirectory: true).appendingPathComponent("recovery-" + scope, isDirectory: true)
+            }
         }
-        // A recovered device (機種変更) with its own notebook copy and outbox.
-        let recovered = registered(.firstDevice())
-        let recoveryScope = GroupCanonical.hash(recovered.personPublicKey).map { String(format: "%02x", $0) }.joined()
-        try keychain.store(namespace + ".recovery." + recoveryScope).write(GroupWire.encode(recovered), account: "identity", createOnly: true)
-        try keychain.store(namespace + ".recovery-journal." + recoveryScope).write(Data("j".utf8), account: "op:x", createOnly: true)
-        let recoveredScope = try FamilySharingLocalData.notebookScope(endpoint: endpoint, personID: recovered.personID, deviceID: recovered.deviceID)
-        try keychain.store(namespace + ".family." + recoveredScope).write(Data("k".utf8), account: "op:fnb-trust:y", createOnly: true)
-        try make(notebooks.appendingPathComponent(recoveredScope))
-        try make(transport.appendingPathComponent("recovery-" + recoveryScope).appendingPathComponent("outbox"))
-        // A journal whose recovery store is already gone.
-        let orphan = String(repeating: "a", count: 64)
-        try keychain.store(namespace + ".recovery-journal." + orphan).write(Data("j".utf8), account: "op:y", createOnly: true)
-        // The kept choices and the recovery link.
-        let suffixes = [".notebook-recovery", ".display-name", FamilyHiddenOperationsMemory.namespaceSuffix,
-                        FamilyCatLinkAnswersMemory.namespaceSuffix, GroupWindowKept.namespaceSuffix]
-        for suffix in suffixes.dropLast() { try keychain.store(namespace + suffix).write(Data("c".utf8), account: "kept", createOnly: true) }
-        let windowChoices = keychain.store(namespace + GroupWindowKept.namespaceSuffix)
-        try windowChoices.write(Data("c".utf8), account: GroupWindowKept.choicesAccountPrefix + "w", createOnly: true)
-        try windowChoices.write(Data("r".utf8), account: "reports:w", createOnly: true)
-
-        // Not this deletion's: the identity's own store, another namespace, the
-        // まど's own outbox, the person's own records and an unsafe scope name.
-        try keychain.store(namespace).write(Data("d".utf8), account: "identity-deletion", createOnly: true)
-        let otherNamespace = "jp.nekowidget.other"
-        try keychain.store(otherNamespace + ".family." + older).write(Data("k".utf8), account: "op:fnb-trust:z", createOnly: true)
-        try keychain.store(namespace + ".family.../escape").write(Data("k".utf8), account: "x", createOnly: true)
-        let mainOutbox = transport.appendingPathComponent("main").appendingPathComponent("outbox")
-        try make(mainOutbox)
-        let records = support.appendingPathComponent("AppRecords").appendingPathComponent("CatCare")
-        try make(records)
-        let otherNotebook = try FamilySharingLocalData.notebookScope(endpoint: URL(string: "https://other.invalid")!, personID: "p", deviceID: "d")
-        try make(notebooks.appendingPathComponent(otherNotebook))
-
-        let local = FamilySharingLocalData(namespace: namespace, support: support,
-            store: { keychain.store($0) }, namespaces: { try keychain.namespaces(prefix: $0) })
-        func run() -> Bool {
-            local.removeAfterIdentityDeletion(endpoint: endpoint, personID: usual.personID, deviceID: try? usual.deviceID,
-                                              choices: suffixes.map { (suffix: $0, prefix: $0 == GroupWindowKept.namespaceSuffix ? GroupWindowKept.choicesAccountPrefix : "") })
+        func phone(_ name: String, other: Bool, linkOther: Bool = false) throws -> Phone {
+            let usual = registered(.firstDevice())
+            // The same person's recovered device: another device key, the same person key.
+            var ownRecovered = registered(.firstDevice())
+            ownRecovered = GroupDeviceIdentity(personPrivateKey: usual.personPrivateKey, personPublicKey: usual.personPublicKey,
+                signingPrivateKey: ownRecovered.signingPrivateKey, agreementPrivateKey: ownRecovered.agreementPrivateKey,
+                windowCertificates: [:], registered: true)
+            let value = Phone(support: folder.appendingPathComponent(name, isDirectory: true), usual: usual,
+                              ownRecovered: ownRecovered, other: registered(.firstDevice()))
+            var people = [ownRecovered]
+            if other { people.append(value.other) }
+            for identity in [usual] + people {
+                let scope = try FamilySharingLocalData.notebookScope(endpoint: endpoint, personID: identity.personID, deviceID: identity.deviceID)
+                try make(value.notebook(scope).appendingPathComponent("notebooks"))
+                for account in ["op:fnb-trust:x", "op:fnb-key:x:1"] {
+                    try value.keychain.store(namespace + ".family." + scope).write(Data("k".utf8), account: account, createOnly: true)
+                }
+            }
+            for identity in people {
+                let scope = FamilySharingLocalData.recoveryScope(personID: identity.personID)!
+                try value.keychain.store(namespace + ".recovery." + scope).write(GroupWire.encode(identity), account: "identity", createOnly: true)
+                try value.keychain.store(namespace + ".recovery-journal." + scope).write(Data("j".utf8), account: "op:x", createOnly: true)
+                try make(value.outbox(scope))
+            }
+            if linkOther {
+                let linked = value.other
+                let link = FamilyNotebookIdentityChoice.Link(version: 1, scope: FamilySharingLocalData.recoveryScope(personID: linked.personID)!,
+                                                             personID: linked.personID, familyIDs: [UUID()])
+                try value.keychain.store(namespace + ".notebook-recovery").write(GroupWire.encode(link),
+                    account: FamilyNotebookIdentityChoice.linkAccount, createOnly: true)
+            }
+            for choice in shared.dropLast() {
+                try value.keychain.store(namespace + choice.suffix).write(Data("c".utf8), account: "kept", createOnly: true)
+            }
+            let windowChoices = value.keychain.store(namespace + GroupWindowKept.namespaceSuffix)
+            try windowChoices.write(Data("c".utf8), account: GroupWindowKept.choicesAccountPrefix + "w", createOnly: true)
+            try windowChoices.write(Data("r".utf8), account: "reports:w", createOnly: true)
+            // A notebook copy nobody can be named for, the person's own records, another namespace.
+            let unknown = try FamilySharingLocalData.notebookScope(endpoint: endpoint, personID: "older", deviceID: "older-device")
+            try make(value.notebook(unknown))
+            try value.keychain.store(namespace + ".family." + unknown).write(Data("k".utf8), account: "op:fnb-trust:z", createOnly: true)
+            try make(value.support.appendingPathComponent("AppRecords").appendingPathComponent("CatCare"))
+            try value.keychain.store("jp.nekowidget.other.recovery." + String(repeating: "b", count: 64)).write(Data("i".utf8), account: "identity", createOnly: true)
+            return value
+        }
+        func scope(_ identity: GroupDeviceIdentity) throws -> String {
+            try FamilySharingLocalData.notebookScope(endpoint: endpoint, personID: identity.personID, deviceID: identity.deviceID)
+        }
+        func gone(_ p: Phone, _ identity: GroupDeviceIdentity) throws -> Bool {
+            !exists(p.notebook(try scope(identity))) && p.keychain.isEmpty(namespace + ".family." + (try scope(identity)))
+        }
+        func stays(_ p: Phone, _ identity: GroupDeviceIdentity) throws -> Bool {
+            exists(p.notebook(try scope(identity))) && !p.keychain.isEmpty(namespace + ".family." + (try scope(identity)))
+        }
+        func untouchedCommon(_ p: Phone) throws {
+            let unknown = try FamilySharingLocalData.notebookScope(endpoint: endpoint, personID: "older", deviceID: "older-device")
+            try check(exists(p.notebook(unknown)) && !p.keychain.isEmpty(namespace + ".family." + unknown), "a notebook copy nobody can be named for stays")
+            try check(exists(p.support.appendingPathComponent("AppRecords").appendingPathComponent("CatCare")), "the person's own records stay")
+            try check(!p.keychain.isEmpty("jp.nekowidget.other.recovery." + String(repeating: "b", count: 64)), "another namespace stays")
+            try check(try p.keychain.store(namespace + GroupWindowKept.namespaceSuffix).accounts(prefix: "reports:") == ["reports:w"], "the report copy stays")
         }
 
-        // A Keychain error on one item: the rest still goes, and it says so.
-        keychain.store(namespace + ".family." + older).stuck = ["op:fnb-key:x:1"]
-        try check(!run(), "a failed step is reported")
-        try check(!exists(notebooks.appendingPathComponent(usualScope)) && !exists(notebooks.appendingPathComponent(recoveredScope)),
-                  "the other notebook copies went anyway")
-        try check(keychain.isEmpty(namespace + ".display-name"), "the kept choices went anyway")
-        try check(!keychain.isEmpty(namespace + ".family." + older), "the stuck notebook Keychain is left for the next run")
-
-        // The next run finishes it.
-        keychain.store(namespace + ".family." + older).stuck = []
-        try check(run(), "the second run finishes")
-        for scope in [older, recoveredScope] { try check(keychain.isEmpty(namespace + ".family." + scope), "notebook Keychain \(scope.prefix(6)) is empty") }
-        for name in [".recovery." + recoveryScope, ".recovery-journal." + recoveryScope, ".recovery-journal." + orphan] {
-            try check(keychain.isEmpty(namespace + name), "\(name.prefix(18)) is empty")
+        // 1. Another person's recovered device is in use (the link names it):
+        //    only the deleted person's copies go; the other's and the shared ones stay.
+        do {
+            let p = try phone("with-other", other: true, linkOther: true)
+            let ownScope = FamilySharingLocalData.recoveryScope(personID: p.usual.personID)!
+            let otherScope = FamilySharingLocalData.recoveryScope(personID: p.other.personID)!
+            let outcome = p.local.removeAfterIdentityDeletion(endpoint: endpoint, personID: p.usual.personID,
+                deviceID: try p.usual.deviceID, linkSuffix: ".notebook-recovery")
+            try check(outcome == .init(complete: true, otherIdentityRemains: true), "done, and another identity remains")
+            try check(try gone(p, p.usual) && gone(p, p.ownRecovered), "the deleted person's notebook copies go")
+            try check(p.keychain.isEmpty(namespace + ".recovery." + ownScope) && p.keychain.isEmpty(namespace + ".recovery-journal." + ownScope)
+                      && !exists(p.outbox(ownScope)), "the deleted person's recovered device goes")
+            try check(try stays(p, p.other), "the other person's notebook copy stays")
+            try check(!p.keychain.isEmpty(namespace + ".recovery." + otherScope) && !p.keychain.isEmpty(namespace + ".recovery-journal." + otherScope)
+                      && exists(p.outbox(otherScope)), "the other person's recovered device stays")
+            try check(!p.keychain.isEmpty(namespace + ".notebook-recovery"), "the link naming the other person stays")
+            for choice in shared.dropLast() { try check(!p.keychain.isEmpty(namespace + choice.suffix), "\(choice.suffix) stays (not removed here)") }
+            try untouchedCommon(p)
         }
-        for suffix in suffixes.dropLast() { try check(keychain.isEmpty(namespace + suffix), "\(suffix) is empty") }
-        try check(try windowChoices.accounts(prefix: "") == ["reports:w"], "the まど choices go, the report copy stays")
-        try check(!exists(notebooks.appendingPathComponent(older)) && !exists(transport.appendingPathComponent("recovery-" + recoveryScope)),
-                  "the notebook folders and the recovered outbox are gone")
-        try check(!keychain.isEmpty(namespace) && !keychain.isEmpty(otherNamespace + ".family." + older)
-                  && !keychain.isEmpty(namespace + ".family.../escape"), "other namespaces, the deletion record and unsafe names stay")
-        try check(exists(mainOutbox) && exists(records) && exists(notebooks.appendingPathComponent(otherNotebook)),
-                  "the まど outbox, the person's records and another endpoint's notebook stay")
-        try check(run(), "running it again changes nothing")
 
-        // Listing the Keychain fails: reported, nothing else breaks.
-        keychain.listingFails = true
-        try check(!run(), "an unreadable Keychain list is reported")
-        print("identity deletion: every notebook copy, recovered device and kept choice of the namespace, finished on a second run")
+        // 2. Only the deleted person on this iPhone: its link goes, no other
+        //    identity remains, and the shared copies (but the reports) go.
+        do {
+            let p = try phone("alone", other: false)
+            let linked = p.ownRecovered
+            let link = FamilyNotebookIdentityChoice.Link(version: 1, scope: FamilySharingLocalData.recoveryScope(personID: linked.personID)!,
+                                                         personID: linked.personID, familyIDs: [UUID()])
+            try p.keychain.store(namespace + ".notebook-recovery").write(GroupWire.encode(link), account: FamilyNotebookIdentityChoice.linkAccount, createOnly: true)
+            // A Keychain error on one item: the rest still goes, and it says so.
+            p.keychain.store(namespace + ".family." + (try scope(p.usual))).stuck = ["op:fnb-key:x:1"]
+            var outcome = p.local.removeAfterIdentityDeletion(endpoint: endpoint, personID: p.usual.personID,
+                deviceID: try p.usual.deviceID, linkSuffix: ".notebook-recovery")
+            try check(!outcome.complete && !outcome.otherIdentityRemains, "a failed step is reported; no other identity")
+            try check(try gone(p, p.ownRecovered) && p.keychain.isEmpty(namespace + ".notebook-recovery"), "the rest went anyway")
+            p.keychain.store(namespace + ".family." + (try scope(p.usual))).stuck = []
+            outcome = p.local.removeAfterIdentityDeletion(endpoint: endpoint, personID: p.usual.personID,
+                deviceID: try p.usual.deviceID, linkSuffix: ".notebook-recovery")
+            try check(outcome == .init(complete: true, otherIdentityRemains: false), "the second run finishes")
+            try check(try gone(p, p.usual), "the deleted person's notebook copy is gone")
+            try check(p.local.removeSharedCopies(shared), "the shared copies go")
+            for choice in shared.dropLast() { try check(p.keychain.isEmpty(namespace + choice.suffix), "\(choice.suffix) is empty") }
+            try untouchedCommon(p)
+            // Listing the Keychain fails: reported, and nothing shared is offered for removal.
+            p.keychain.listingFails = true
+            outcome = p.local.removeAfterIdentityDeletion(endpoint: endpoint, personID: p.usual.personID,
+                deviceID: try p.usual.deviceID, linkSuffix: ".notebook-recovery")
+            try check(!outcome.complete && outcome.otherIdentityRemains, "an unreadable Keychain list is reported and keeps the shared copies")
+        }
+
+        // 3. A record from before 11/20 (no person): nothing is touched.
+        do {
+            let p = try phone("old-record", other: true, linkOther: true)
+            let outcome = p.local.removeAfterIdentityDeletion(endpoint: endpoint, personID: nil, deviceID: nil, linkSuffix: ".notebook-recovery")
+            try check(outcome == .init(complete: true, otherIdentityRemains: true), "nothing to do, shared copies kept")
+            try check(try stays(p, p.usual) && stays(p, p.ownRecovered) && stays(p, p.other), "every notebook copy stays")
+            for identity in [p.ownRecovered, p.other] {
+                try check(!p.keychain.isEmpty(namespace + ".recovery." + FamilySharingLocalData.recoveryScope(personID: identity.personID)!),
+                          "every recovered device stays")
+            }
+            try untouchedCommon(p)
+        }
+        print("identity deletion: only the deleted person's recovered device, link and notebook copies; another person's and unknown ones stay")
     }
 
     static func main() async {

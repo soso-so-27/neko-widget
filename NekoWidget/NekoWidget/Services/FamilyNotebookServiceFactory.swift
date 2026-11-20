@@ -137,16 +137,17 @@ extension FamilySharingLocalData {
 /// 11/20: 「まどと家族の手帳のデータを消す」 once the relay accepted it (never
 /// before, never after a failure): the rest of the deleted person's sharing
 /// state on this iPhone, which ProductionGroupWindowClient's own store does
-/// not hold. Removed: recovered devices and their outboxes, every family
-/// notebook copy of this namespace (notebook, journal, photo cache, trust
-/// pin, epoch keys, invitations), the notebook's recovery link, the
-/// remembered name, the notebook's hidden entries and 「同じ子ですか」
-/// answers, the まど choices (not the report copies) kept in the Keychain, the
-/// notebook's settings in UserDefaults, and the person key this iPhone put
-/// into iCloud Keychain. Kept: the deletion record and its history,
-/// 「この子のこと」 and the other tools (the person's own writing is there,
-/// not only in the notebook), photos, widgets, 保存, purchases, the photos
-/// received in 前のまど, and what this iPhone reported.
+/// not hold, and only what provably is that person's (FamilySharingLocalData:
+/// its notebook copies, its recovered device, the recovery link naming it,
+/// and the person key it put into iCloud Keychain). The copies every
+/// identity here shares (the remembered name, the notebook's hidden entries
+/// and 「同じ子ですか」 answers, the まど choices, the notebook's settings in
+/// UserDefaults) go only when no other identity remains: another person's
+/// recovered device (機種変更) still uses them. A record from before 11/20
+/// (no person ID) removes nothing more here. Kept always: the deletion record
+/// and its history, 「この子のこと」 and the other tools (the person's own
+/// writing is there, not only in the notebook), photos, widgets, 保存,
+/// purchases, the photos received in 前のまど, and what this iPhone reported.
 @MainActor
 enum GroupIdentityDeletionLocalData {
     static let defaultsKeys = [
@@ -155,13 +156,13 @@ enum GroupIdentityDeletionLocalData {
         FamilyCatLinkAnswersMemory.defaultsKey, FamilyNotebookSharing.sendHealthKey,
         FamilyNotebookAwaitingApproval.key,
     ]
-    /// The Keychain copies, by namespace suffix and account prefix ("": all).
-    /// Of the まど choices only `choices:` (hidden and blocked people, removed
-    /// photos): the report copies stay, as the reports themselves do on this
-    /// iPhone (ProductionGroupReporting keeps a reported photo hidden after
-    /// leaving or deleting an identity).
+    /// The shared Keychain copies, by namespace suffix and account prefix
+    /// ("": all). Of the まど choices only `choices:` (hidden and blocked
+    /// people, removed photos): the report copies stay, as the reports
+    /// themselves do on this iPhone (ProductionGroupReporting keeps a reported
+    /// photo hidden after leaving or deleting an identity).
     static let keychainCopies: [(suffix: String, prefix: String)] = [
-        (FamilyNotebookServiceFactory.recoveryLinkSuffix, ""), (GroupDisplayName.keychainSuffix, ""),
+        (GroupDisplayName.keychainSuffix, ""),
         (FamilyHiddenOperationsMemory.namespaceSuffix, ""), (FamilyCatLinkAnswersMemory.namespaceSuffix, ""),
         (GroupWindowKept.namespaceSuffix, GroupWindowKept.choicesAccountPrefix),
     ]
@@ -179,19 +180,34 @@ enum GroupIdentityDeletionLocalData {
     /// Whether every step went. A failed step never stops the others.
     static func remove(_ deletion: GroupIdentityDeletion) async -> Bool {
         guard deletion.acceptedAt != nil else { return false }
-        // The notebook stops using the deleted identity and its copy.
-        FamilyNotebookSharing.shared.restartSession()
-        // The binding first: the tools never write into a removed copy.
-        for key in defaultsKeys { UserDefaults.standard.removeObject(forKey: key) }
-        GroupDisplayName.forgetChecked()
-        var complete = true
-        if let person = deletion.personID, !(await removeDeletedPersonSyncedRoot(personID: person)) { complete = false }
+        // A record from before 11/20 names no one: the client already removed
+        // its own keys, and nothing else can be told to be that person's.
+        guard let person = deletion.personID else { return true }
         guard let local = FamilySharingLocalData.live(),
               let endpoint = SharingAPIConfiguration.current.baseURL else { return false }
-        if !local.removeAfterIdentityDeletion(endpoint: endpoint, personID: deletion.personID, deviceID: deletion.deviceID,
-                                              choices: keychainCopies) { complete = false }
+        // The notebook stops using the deleted identity, and a pass already
+        // running ends before its stores go (from here to the last removal
+        // there is no suspension, so no new pass starts in between).
+        await FamilyNotebookSharing.shared.stopForIdentityDeletion()
+        let removed = local.notebookScopes(endpoint: endpoint, personID: person, deviceID: deletion.deviceID)
+        // The binding before the files when it is a removed copy: the tools
+        // never write into it.
+        if let binding = try? FamilyNotebookLocalBinding.load(support: local.support),
+           let scope = binding.relativeDirectory.split(separator: "/").first, removed.contains(String(scope)) {
+            UserDefaults.standard.removeObject(forKey: FamilyNotebookLocalBinding.key)
+            UserDefaults.standard.removeObject(forKey: FamilyNotebookLocalBinding.legacyKey)
+        }
+        let outcome = local.removeAfterIdentityDeletion(endpoint: endpoint, personID: person, deviceID: deletion.deviceID,
+                                                        linkSuffix: FamilyNotebookServiceFactory.recoveryLinkSuffix)
+        var complete = outcome.complete
+        if !outcome.otherIdentityRemains {
+            for key in defaultsKeys { UserDefaults.standard.removeObject(forKey: key) }
+            GroupDisplayName.forgetChecked()
+            if !local.removeSharedCopies(keychainCopies) { complete = false }
+        }
         FamilyNotebookSharing.shared.restartSession()
-        // The notebook's screens: no identity now, so no family (no network).
+        if !(await removeDeletedPersonSyncedRoot(personID: person)) { complete = false }
+        // The notebook's screens read again (the identity that remains, if any).
         _ = await FamilyNotebookSharing.shared.refreshAfterPlusChange(reportsFailure: false)
         return complete
     }

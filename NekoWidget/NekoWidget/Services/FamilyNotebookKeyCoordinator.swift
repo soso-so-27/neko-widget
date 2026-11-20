@@ -756,32 +756,88 @@ struct FamilySharingLocalData {
         if let failure { throw failure }
     }
 
-    /// After the relay accepted the deletion of the identity `personID` /
-    /// `deviceID` (nil: a record from before 11/20): every recovered device,
-    /// every notebook copy of this namespace (the deleted identity's even
-    /// when its Keychain is already empty), and in each store of `choices`
-    /// (namespace suffix) the accounts that start with its prefix ("": all).
-    /// Returns whether every step went.
-    func removeAfterIdentityDeletion(endpoint: URL, personID: String?, deviceID: String?,
-                                     choices: [(suffix: String, prefix: String)]) -> Bool {
+    /// What the clean-up after an accepted identity deletion did.
+    struct DeletionCleanup: Equatable {
+        /// Every step it took went.
         var complete = true
-        func scopes(_ suffix: String) -> Set<String> {
+        /// Another person's identity may still be in use on this iPhone (a
+        /// recovered device of another person, its recovery link, or nothing
+        /// known about the deleted one): the copies every identity here shares
+        /// (removeSharedCopies) stay.
+        var otherIdentityRemains = false
+    }
+
+    /// A person's recovery scope (`.recovery.<scope>`): the hex of the hash
+    /// its person ID is the base64 of.
+    static func recoveryScope(personID: String) -> String? {
+        guard let bytes = try? GroupWire.bytes(personID, count: 32) else { return nil }
+        return bytes.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The notebook copies that provably are the deleted person's: the one of
+    /// its device `deviceID`, and the one of its recovered device on this
+    /// iPhone (機種変更), if there is one.
+    func notebookScopes(endpoint: URL, personID: String, deviceID: String?) -> Set<String> {
+        var result = Set<String>()
+        if let deviceID, let scope = try? Self.notebookScope(endpoint: endpoint, personID: personID, deviceID: deviceID) {
+            result.insert(scope)
+        }
+        if let scope = Self.recoveryScope(personID: personID),
+           let saved = try? store(namespace + ".recovery." + scope).read("identity"),
+           let identity = try? GroupWire.decode(GroupDeviceIdentity.self, saved), identity.personID == personID,
+           let notebook = try? Self.notebookScope(endpoint: endpoint, personID: personID, deviceID: identity.deviceID) {
+            result.insert(notebook)
+        }
+        return result
+    }
+
+    /// After the relay accepted the deletion of the person `personID` (its
+    /// device `deviceID`): only what provably is that person's. The notebook's
+    /// recovery link when it names that person (first, so the notebook stops
+    /// opening that identity), that person's recovered device (its recovery
+    /// scope), and the notebook copies of notebookScopes. Another person's
+    /// recovered device, its link and notebook copy, and a notebook copy that
+    /// cannot be told to be the deleted person's stay. nil `personID` (a
+    /// record from before 11/20): nothing is removed here.
+    func removeAfterIdentityDeletion(endpoint: URL, personID: String?, deviceID: String?,
+                                     linkSuffix: String) -> DeletionCleanup {
+        var result = DeletionCleanup()
+        guard let personID, let deleted = Self.recoveryScope(personID: personID) else {
+            result.otherIdentityRemains = true
+            return result
+        }
+        let notebooks = notebookScopes(endpoint: endpoint, personID: personID, deviceID: deviceID)
+        do {
+            let links = try store(namespace + linkSuffix)
+            if let bytes = try links.read(FamilyNotebookIdentityChoice.linkAccount) {
+                if let link = try? GroupWire.decode(FamilyNotebookIdentityChoice.Link.self, bytes),
+                   link.personID == personID || link.scope == deleted {
+                    try links.remove(FamilyNotebookIdentityChoice.linkAccount)
+                } else { result.otherIdentityRemains = true }
+            }
+        } catch { result.complete = false; result.otherIdentityRemains = true }
+        var scopes = Set<String>()
+        for suffix in [".recovery.", ".recovery-journal."] {
             let prefix = namespace + suffix
             do {
-                return Set(try namespaces(prefix).filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) })
-            } catch { complete = false; return [] }
+                scopes.formUnion(try namespaces(prefix).filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) })
+            } catch { result.complete = false; result.otherIdentityRemains = true }
         }
-        for scope in scopes(".recovery.").union(scopes(".recovery-journal.")).sorted() where Self.validRecoveryScope(scope) {
-            do { try forgetRecoveredDevice(scope: scope, endpoint: endpoint) } catch { complete = false }
+        for scope in scopes.sorted() {
+            guard scope == deleted else { result.otherIdentityRemains = true; continue }
+            do { try forgetRecoveredDevice(scope: scope, endpoint: endpoint) } catch { result.complete = false }
         }
-        var notebooks = scopes(".family.")
-        if let personID, let deviceID,
-           let scope = try? Self.notebookScope(endpoint: endpoint, personID: personID, deviceID: deviceID) {
-            notebooks.insert(scope)
+        for scope in notebooks.sorted() {
+            do { try forgetNotebook(scope: scope) } catch { result.complete = false }
         }
-        for scope in notebooks.sorted() where Self.validNotebookScope(scope) {
-            do { try forgetNotebook(scope: scope) } catch { complete = false }
-        }
+        return result
+    }
+
+    /// The copies every identity on this iPhone shares, by namespace suffix
+    /// and account prefix ("": all). Only when no other identity remains
+    /// (DeletionCleanup.otherIdentityRemains). Returns whether every step went.
+    func removeSharedCopies(_ choices: [(suffix: String, prefix: String)]) -> Bool {
+        var complete = true
         for choice in choices {
             do {
                 let kept = try store(namespace + choice.suffix)

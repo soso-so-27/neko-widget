@@ -145,6 +145,8 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     private var farewellPreviews: [UUID: PreparedFarewell] = [:]
     private var session: FamilyNotebookSession?
     private var working = false
+    /// 11/20: a call is running (FamilyNotebookSharing.stopForIdentityDeletion waits for it).
+    var callRunning: Bool { working }
     private(set) var needsAnotherPass = false
     /// 11/15 (1115q): what the last key pass saw; a changed value is progress.
     private(set) var lastKeyObservation = ""
