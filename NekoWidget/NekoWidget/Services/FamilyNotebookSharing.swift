@@ -326,9 +326,21 @@ final class FamilyNotebookAutoCheck {
 
     private var lastResumeProbeAt: Date?
 
+    /// 11/20: this iPhone holds an identity the notebook could use (the
+    /// service's own Keychain check, no network). Asked once per launch, only
+    /// while nothing was read yet.
+    private var hasNotebookIdentity: Bool?
+
+    private var unreadThisLaunch: Bool {
+        FamilyAutoCheckPolicy.unreadThisLaunch(lastReadAt: sharing.lastReadAt, checking: sharing.state == .checking)
+    }
+
     private var eligible: Bool {
-        model.isReal && (model.hasFamily || FamilyNotebookSharing.awaitingApproval
-            || FamilyNotebookSharing.awaitingApprovalUnknown) || resumeProbeDue
+        FamilyAutoCheckPolicy.eligible(.init(real: model.isReal, hasFamily: model.hasFamily,
+            awaitingApproval: FamilyNotebookSharing.awaitingApproval,
+            awaitingApprovalUnknown: FamilyNotebookSharing.awaitingApprovalUnknown,
+            unreadThisLaunch: unreadThisLaunch, hasIdentity: hasNotebookIdentity == true,
+            resumeProbeDue: resumeProbeDue))
     }
 
     /// 11/18: a notebook that ended only because the directory stopped listing
@@ -504,6 +516,10 @@ final class FamilyNotebookAutoCheck {
     private func run(pass first: FamilyAutoCheckPolicy.Pass, delay firstDelay: TimeInterval) async {
         var pass = first, delay = firstDelay
         while !Task.isCancelled {
+            if hasNotebookIdentity == nil, model.isReal, unreadThisLaunch,
+               let real = sharing.service as? ProductionFamilyNotebookSharingService {
+                hasNotebookIdentity = await real.hasLocalIdentity()
+            }
             guard eligible else { break }
             // The budget is paused after a 429: wait it out, at least a minute.
             if let paused = SharingAutoCallBudget.shared.pausedUntil() {

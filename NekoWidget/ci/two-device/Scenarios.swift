@@ -36,6 +36,7 @@ struct Family {
         ("S9", "member B lost its name before the Keychain copy and never wrote; A still sees B's name", s9),
         ("S10", "member B hides and reports, reinstalls without 機種変更: the choices stay", s10),
         ("S11", "member B reports, reinstalls without 機種変更: 「通報への返答」 comes back", s11),
+        ("S12", "member B reinstalled on a build that kept no binding: the next launch reads, the third is normal", s12),
     ]
 
     // MARK: Common steps
@@ -495,7 +496,27 @@ struct Family {
         Log.step("B reads the current photo again")
         let seen = try await seePhoto(f.b, f.cat, asset: photo.asset)
         try expect(seen.jpeg == photo.jpeg && seen.author == creator, "B reads A's current pixels again")
-        return nil
+
+        Log.step("B closes the app and opens it again (the second launch after the reinstall)")
+        try expect(f.b.bindingSaved, "the first open kept the notebook binding")
+        try await f.b.relaunch()
+        try expect(f.b.lastReadAt == nil && f.b.lastState == nil, "a new process remembers no read")
+        try expect(f.b.screenHasFamily, "the notebook opens from the kept binding before any read")
+        try await relaunchedReadsIntoFamily(f.b)
+        try expect(f.b.notebookDeviceID == oldDevice, "B keeps its device")
+        let again = try f.b.notebookScreenCats()
+        try expect(again == [f.cat], "B's 「猫」 list has \(again.count) cats after the relaunch")
+        return "the binding, the approval mark and lastReadAt are Device's UserDefaults and process stand-ins"
+    }
+
+    /// After a relaunch: the schedule (the app's FamilyAutoCheckPolicy.eligible)
+    /// reads, and keeps reading while the notebook is open, until B is in the family.
+    static func relaunchedReadsIntoFamily(_ device: Device) async throws {
+        for round in 1...12 {
+            try expect(await device.automaticPass(), "the schedule read nothing on round \(round) (the endless spinner)")
+            if device.inFamily { Log.note("\(device.name) in the family after \(round) automatic pass(es)"); return }
+        }
+        throw E2EFailure(description: "\(Log.location): \(device.name) did not reach the family in 12 automatic passes")
     }
 
     // MARK: S8
@@ -697,5 +718,46 @@ struct Family {
         let aReads = relay.transport.log.dropFirst(mark).filter { $0.path == replies }
         try expect(aReads.count == 1, "A read the replies once (got \(aReads.count))")
         return "FamilyReportReplies' UserDefaults flag and process memory are Device.reportSent / repliesCheckedNone"
+    }
+
+    // MARK: S12
+
+    static func s12(_ relay: Relay) async throws -> String? {
+        let f = try await makeFamily(relay, oldBuildB: true)
+
+        Log.step("B deletes the app and installs the earlier build: its read finds no name, so no binding is kept")
+        try await f.b.reinstall()
+        f.b.savesBinding = false
+        try expect(f.b.awaitingApprovalMark == nil && !f.b.bindingSaved, "the reinstall wiped B's UserDefaults")
+        try expect(!f.b.screenHasFamily, "no binding: nothing opens before a read")
+
+        Log.step("B's first launch: the unsettled mark makes the schedule read; B is in the family")
+        try await relaunchedReadsIntoFamily(f.b)
+        try expect(f.b.awaitingApprovalMark == false, "the first read settled the mark: not waiting")
+        try expect(!f.b.bindingSaved, "the earlier build kept no binding")
+
+        Log.step("B closes the app and opens it again with this build (the launch that sat on the spinner)")
+        f.b.savesBinding = true
+        try await f.b.relaunch()
+        try expect(f.b.lastReadAt == nil && f.b.lastState == nil, "a new process remembers no read")
+        try expect(!f.b.screenHasFamily && f.b.awaitingApprovalMark == false,
+                   "no binding and a settled mark: only the launch read can make the schedule read")
+        let device = try required(f.b.notebookDeviceID, "B has no device")
+        let mark = relay.transport.log.count
+        try await relaunchedReadsIntoFamily(f.b)
+        try expect(relay.transport.log.dropFirst(mark).contains { $0.device == device },
+                   "the launch read reached the relay as B's device")
+        try expect(f.b.bindingSaved, "this build keeps the binding once the read answered")
+        let listed = try f.b.notebookScreenCats()
+        try expect(listed == [f.cat], "B's 「猫」 list has \(listed.count) cats")
+
+        Log.step("B's third launch: the notebook opens from the binding and the schedule reads")
+        try await f.b.relaunch()
+        try expect(f.b.screenHasFamily, "the notebook opens from the kept binding before any read")
+        try await relaunchedReadsIntoFamily(f.b)
+        try expect(f.b.notebookDeviceID == device, "B keeps its device")
+        let third = try f.b.notebookScreenCats()
+        try expect(third == [f.cat], "B's 「猫」 list has \(third.count) cats on the third launch")
+        return "the earlier build is Device.savesBinding = false; the schedule's eligibility is FamilyAutoCheckPolicy's, the screen's belt read is not driven"
     }
 }

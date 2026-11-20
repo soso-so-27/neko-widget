@@ -1263,6 +1263,9 @@ struct FamilyNotebookView: View {
             FamilyNotebookAutoCheck.shared.appeared(.notebook)
             // Test builds (the family on this iPhone alone) send nothing.
             if !model.isReal { Task { await sharing.refresh() } }
+            // 11/20: nothing known yet and no read running: one read, so the
+            // spinner ends in the family, the intro or 「もう一度」, never waits.
+            else if sharing.state == .checking && !sharing.isReading { Task { await sharing.refresh() } }
         }
         .onDisappear { FamilyNotebookAutoCheck.shared.disappeared(.notebook); askedReportReplies = false }
         // 11/20: after 機種変更 or a reinstall, replies to reports sent before
