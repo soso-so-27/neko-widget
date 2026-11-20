@@ -758,11 +758,21 @@ enum CatHouseholdIdentityVerifier {
             "unlinking the only confirming source retained its key photo"
         )
         state.setGloballyExcluded(true, assetLocalIdentifiers: ["chosen-photo"])
-        state.setGloballyExcluded(false, assetLocalIdentifiers: ["chosen-photo"])
         try require(
             state.profiles.allSatisfy { $0.keyPhotoLocalIdentifier == nil },
-            "global exclusion/restore retained or resurrected an unconfirmed key photo"
+            "global exclusion retained a key photo"
         )
+        // 11/20: 「戻す」 gives back what the exclusion took: the second cat's
+        // confirmed membership and, with it, its key photo. The first cat,
+        // whose decision was unknown, stays without one.
+        state.setGloballyExcluded(false, assetLocalIdentifiers: ["chosen-photo"])
+        try require(
+            state.profiles.first { $0.id == firstID }?.keyPhotoLocalIdentifier == nil
+                && state.profiles.first { $0.id == secondID }?.keyPhotoLocalIdentifier == "chosen-photo"
+                && state.confirmsAsset("chosen-photo", for: secondID),
+            "global restore resurrected an unconfirmed key photo or lost a confirmed one"
+        )
+        state.setProfileKeyPhoto(profileID: secondID, assetLocalIdentifier: nil)
         state.profiles[0].keyPhotoLocalIdentifier = "unconfirmed"
         try require(
             state.normalized().profiles.allSatisfy { $0.keyPhotoLocalIdentifier == nil },
