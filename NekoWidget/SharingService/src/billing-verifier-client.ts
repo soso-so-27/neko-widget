@@ -13,7 +13,7 @@ import {
 } from "./billing-verifier-protocol";
 import { randomBase64url } from "./encoding";
 import { ApiError } from "./errors";
-import type { Env } from "./env";
+import { billingSandboxReviewDeadline, type Env } from "./env";
 
 export interface VerifiedBillingTransaction {
   transactionId: string;
@@ -105,6 +105,7 @@ export interface VerifierConfig {
   bundleId: string;
   environment: "Sandbox" | "Production";
   acceptSandboxInProduction?: boolean;
+  sandboxReviewDeadline?: number;
   subscriptionGroupId: string;
   productIds: ReadonlySet<string>;
 }
@@ -128,6 +129,9 @@ function requiredSetting(value: string | undefined): string {
 }
 
 export function loadVerifierConfig(env: Env): VerifierConfig {
+  if (env.ENVIRONMENT === "production" && env.BILLING_STORE_ENVIRONMENT !== "Production") {
+    throw new ApiError(503, "billing_configuration_unavailable", "Billing is temporarily unavailable.");
+  }
   const dual = env.BILLING_ACCEPT_SANDBOX_IN_PRODUCTION ?? "NO";
   if ((dual !== "NO" && dual !== "YES") || (dual === "YES" && (
     env.BILLING_STORE_ENVIRONMENT !== "Production" || env.BILLING_SANDBOX_OWNER_ONLY_REQUIRED === "YES"
@@ -232,6 +236,9 @@ export function loadVerifierConfig(env: Env): VerifierConfig {
     bundleId,
     environment,
     acceptSandboxInProduction: dual === "YES",
+    ...(env.ENVIRONMENT === "production" && environment === "Production" && {
+      sandboxReviewDeadline: billingSandboxReviewDeadline(env.BILLING_PRODUCTION_SANDBOX_REVIEW_UNTIL),
+    }),
     subscriptionGroupId,
     productIds: new Set(annualProductId === undefined
       ? [monthlyProductId] : [monthlyProductId, annualProductId]),
@@ -475,9 +482,10 @@ function positiveInteger(value: unknown): number | null {
 export function verifierEnvironmentAccepted(
   config: VerifierConfig, environment: unknown,
 ): environment is "Sandbox" | "Production" {
-  return (environment === "Sandbox" || environment === "Production")
-    && (environment === config.environment || (config.environment === "Production"
-      && config.acceptSandboxInProduction === true && environment === "Sandbox"));
+  if (environment === "Production") return config.environment === "Production";
+  return environment === "Sandbox"
+    && (config.sandboxReviewDeadline === undefined || Date.now() < config.sandboxReviewDeadline)
+    && (config.environment === "Sandbox" || config.acceptSandboxInProduction === true);
 }
 
 /** Narrow a verified response or persisted job to exactly one environment. */

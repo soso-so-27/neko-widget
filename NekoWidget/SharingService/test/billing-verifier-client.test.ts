@@ -57,11 +57,11 @@ function transaction(
 
 function verifierFetch(
   responseValue: unknown,
-  options: { corruptSignature?: boolean; status?: number } = {},
+  options: { corruptSignature?: boolean; status?: number; origin?: string } = {},
 ): typeof fetch {
   return async (input, init) => {
     expect(String(input)).toBe(
-      "http://127.0.0.1:8080/internal/v1/apple-transactions/verify",
+      `${options.origin ?? "http://127.0.0.1:8080"}/internal/v1/apple-transactions/verify`,
     );
     expect(init?.method).toBe("POST");
     expect(init?.redirect).toBe("manual");
@@ -323,6 +323,19 @@ describe("Worker to Apple verifier client", () => {
 describe("dual-environment Worker transaction contract", () => {
   const dual = { ...testEnv, BILLING_STORE_ENVIRONMENT: "Production",
     BILLING_ACCEPT_SANDBOX_IN_PRODUCTION: "YES" };
+  it("accepts Sandbox in production only until the configured review deadline", async () => {
+    const origin = "https://verifier.example.test";
+    const production: Env = { ...dual, ENVIRONMENT: "production", BILLING_VERIFIER_ORIGIN: origin };
+    const verify = (deadline: string | undefined, environment: "Sandbox" | "Production") =>
+      verifyAppleTransactionViaService("header.payload.signature",
+        deadline === undefined ? production : { ...production, BILLING_PRODUCTION_SANDBOX_REVIEW_UNTIL: deadline },
+        verifierFetch(transaction({ environment }), { origin }));
+    await expect(verify(new Date(Date.now()+60_000).toISOString(), "Sandbox")).resolves.toMatchObject({environment:"Sandbox"});
+    for (const deadline of [undefined, "2026-02-30T00:00:00.000Z", new Date(Date.now()-1000).toISOString()]) {
+      await expect(verify(deadline,"Sandbox")).rejects.toMatchObject({code:"billing_verifier_invalid_response"});
+      await expect(verify(deadline,"Production")).resolves.toMatchObject({environment:"Production"});
+    }
+  });
   it("accepts only authenticated normalized environments explicitly enabled by configuration", async () => {
     for (const environment of ["Production", "Sandbox"] as const) {
       expect((await verifyAppleTransactionViaService("header.payload.signature", dual,

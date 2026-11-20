@@ -8,7 +8,9 @@ import { readBoundedBody } from './bounded-body';
 import { ServiceError, sha256 } from './contracts';
 
 export interface BillingAuthorityEnv extends Pick<SharingEnv, 'DB' | 'BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED'
-  | 'BILLING_STORE_ENVIRONMENT' | 'BILLING_ACCEPT_SANDBOX_IN_PRODUCTION' | 'BILLING_SANDBOX_OWNER_ONLY_REQUIRED'> {
+  | 'BILLING_STORE_ENVIRONMENT' | 'BILLING_ACCEPT_SANDBOX_IN_PRODUCTION'
+  | 'BILLING_SANDBOX_OWNER_ONLY_REQUIRED' | 'BILLING_PRODUCTION_SANDBOX_REVIEW_UNTIL'> {
+  ENVIRONMENT?: SharingEnv['ENVIRONMENT'];
   PRESERVATION_BILLING_ENABLED?: string;
   PRESERVATION_LINK_AUDIENCE?: string;
   RETENTION_BILLING_REFRESH?: Fetcher;
@@ -68,7 +70,13 @@ async function verifiedStatus(value: unknown, env: BillingAuthorityEnv): Promise
   const gate = await env.DB.prepare('SELECT effective_entitlement_enabled FROM billing_runtime_gate WHERE singleton = 1')
     .first<{ effective_entitlement_enabled: number }>();
   if (gate?.effective_entitlement_enabled !== 1) throw new ServiceError('billing_authority_unavailable', 503);
-  const entitlement = await effectiveBillingEntitlement(billingEnv(env), input.billingAccountId);
+  // App Review can exercise Plus, but only a Production purchase grants
+  // storage intake on the production authority. Archive reads and deletion
+  // are authorized by the existing owner session.
+  const requiredEnvironment = env.ENVIRONMENT === 'production' || env.BILLING_STORE_ENVIRONMENT === 'Production'
+    ? 'Production' : undefined;
+  const entitlement = await effectiveBillingEntitlement(billingEnv(env), input.billingAccountId,
+    Date.now(), requiredEnvironment);
   const status = entitlement.grantsPlus && entitlement.status === 'active' ? 'active'
     : entitlement.grantsPlus && entitlement.status === 'gracePeriod' ? 'grace'
     : entitlement.status === 'unconfirmed' ? 'unknown' : 'expired';

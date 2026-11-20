@@ -108,6 +108,18 @@ describe('private preservation billing authority', () => {
       .toMatchObject({ status: 'unknown', endedAt: null });
   });
 
+  it('does not use a Sandbox purchase for new production storage during review', async () => {
+    const f=await fixture();
+    await entitlement(f.billingAccountId,1);
+    const production=makeWorker({ENVIRONMENT:'production',BILLING_STORE_ENVIRONMENT:'Production',
+      BILLING_ACCEPT_SANDBOX_IN_PRODUCTION:'YES',
+      BILLING_PRODUCTION_SANDBOX_REVIEW_UNTIL:new Date(Date.now()+60_000).toISOString()});
+    expect(await (await status(f.billingAccountId)).json()).toMatchObject({status:'active'});
+    expect(await (await status(f.billingAccountId,production)).json()).toMatchObject({status:'unknown'});
+    await entitlement(f.billingAccountId,1,7*86_400_000,false,'Production');
+    expect(await (await status(f.billingAccountId,production)).json()).toMatchObject({status:'active'});
+  });
+
   it('requires explicit dual approval and rejects unknown or contradictory store policies', async () => {
     const f = await fixture(); await entitlement(f.billingAccountId, 1);
     for (const [store, dual, owner, expected] of [
