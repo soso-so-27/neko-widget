@@ -356,7 +356,7 @@ struct MainTabView: View {
     let requestPhotoAccess: () -> Void
     let showWidgetPlacementGuide: () -> Void
     let setMemorySaved: (String, Bool) -> Void
-    let exportPhotoBook: ([String]) async throws -> URL
+    let exportPhotoBook: ([String]) async throws -> PhotoBookPDFExport
     let exportMemoryPhoto: (String) async throws -> MemoryPhotoJPEGExport
     let albumOpened: (String, String) -> Void
     let updateAlbum: () -> Void
@@ -2343,10 +2343,16 @@ struct MainTabView: View {
             SeasonalMovieView(
                 presentation: presentation,
                 setSceneExcluded: { identifier, excluded in
+                    // 11/20: a scene whose photo was deleted may go below
+                    // the eight-scene floor (SeasonalMovieArchiveStore).
+                    let photoIsMissing = excluded && PHAsset.fetchAssets(
+                        withLocalIdentifiers: [identifier], options: nil
+                    ).count == 0
                     let updated = try await seasonalMovieArchive.setSceneExcluded(
                         identifier,
                         excluded: excluded,
-                        in: periodID
+                        in: periodID,
+                        photoIsMissing: photoIsMissing
                     )
                     if seasonalMovie.map({
                         SeasonalMoviePeriodID(presentation: $0)

@@ -543,3 +543,72 @@ struct ScanState: Codable, Equatable, Sendable {
         phase == .completed && resultKind == .final
     }
 }
+
+/// 11/20: which stored records a pass may keep instead of analysing again.
+/// Pure, so it is checked without PhotoKit (ci/verify-scan-recovery-policy).
+enum ScanResumePolicy {
+    /// At most this many 512px "no cat" results are looked at again per pass.
+    static let lowFidelityRetriesPerPass = 200
+
+    /// A full rescan moves the analysis revision on, so a record that already
+    /// carries the current fingerprint was made by this rescan before it was
+    /// interrupted (a call, leaving the app) and is kept: the rescan goes on
+    /// where it stopped instead of starting from the newest photo again.
+    /// The grouped-album upgrade keeps its fingerprint; it keeps only records
+    /// that already have the current album analysis.
+    static func mayReuse(
+        recordFingerprint: String,
+        currentFingerprint: String,
+        forceFullAnalysis: Bool,
+        purpose: ScanPurpose,
+        hasCompletedGroupedAlbumAnalysis: Bool
+    ) -> Bool {
+        guard forceFullAnalysis else { return true }
+        if purpose == .groupedAlbumUpgrade { return hasCompletedGroupedAlbumAnalysis }
+        return recordFingerprint == currentFingerprint
+    }
+
+    /// "No cat" judged only from the small local preview of a photo kept in
+    /// iCloud is not final: it is looked at again once a day (the original
+    /// may be on this iPhone by then), a bounded number per pass.
+    static func retriesLowFidelityNoCat(
+        _ record: AssetRecord,
+        now: Date,
+        remainingThisPass: Int
+    ) -> Bool {
+        guard record.isLowFidelityNoCat, remainingThisPass > 0 else { return false }
+        return now.timeIntervalSince(record.analyzedAt) >= 24 * 60 * 60
+            || record.analyzedAt > now
+    }
+}
+
+/// 11/20: the scan's load follows the iPhone's heat and Low Power Mode.
+enum ScanPowerPolicy {
+    /// Vision jobs at once; nil pauses the scan until the iPhone cools down.
+    static func analysisConcurrency(
+        maximum: Int,
+        thermalState: ProcessInfo.ThermalState,
+        isLowPowerModeEnabled: Bool
+    ) -> Int? {
+        switch thermalState {
+        case .critical:
+            return nil
+        case .serious:
+            return 1
+        default:
+            return isLowPowerModeEnabled ? max(1, maximum / 2) : max(1, maximum)
+        }
+    }
+
+    /// The screen is kept on during a scan only when that costs little.
+    static func holdsScreenAwake(
+        thermalState: ProcessInfo.ThermalState,
+        isLowPowerModeEnabled: Bool
+    ) -> Bool {
+        guard !isLowPowerModeEnabled else { return false }
+        switch thermalState {
+        case .serious, .critical: return false
+        default: return true
+        }
+    }
+}

@@ -68,6 +68,40 @@ final class SingleCatPhotosTests: XCTestCase {
         XCTAssertEqual(state.effectiveAssetIdentifiers(for: cat, detectedCatAssetIdentifiers: detected), ["d"])
     }
 
+    /// 11/20: deleting one of two cats must not hand her photos to the other.
+    func testDeletingOneOfTwoCatsKeepsHerPhotosOffTheOther() {
+        var (state, ids) = household(["mugi", "ame"])
+        let (mugi, ame) = (ids[0], ids[1])
+        state.setManualMembership(assetLocalIdentifier: "a", profileID: ame, decision: .included)
+        state.setManualMembership(assetLocalIdentifier: "b", profileID: ame, decision: .included)
+        // Both cats are in "b"; mugi's own decision is kept.
+        state.setManualMembership(assetLocalIdentifier: "b", profileID: mugi, decision: .included)
+        state.removeProfile(id: ame)
+
+        XCTAssertEqual(state.singleCatProfileID, mugi)
+        XCTAssertEqual(state.membershipDecision(for: "a", profileID: mugi), .excluded)
+        XCTAssertEqual(state.membershipDecision(for: "b", profileID: mugi), .included)
+        XCTAssertEqual(
+            state.effectiveAssetIdentifiers(for: mugi, detectedCatAssetIdentifiers: detected),
+            ["b", "c", "d"]
+        )
+        // She can still be given the photo by hand.
+        state.setManualMembership(assetLocalIdentifier: "a", profileID: mugi, decision: .included)
+        XCTAssertTrue(state.confirmsAsset("a", for: mugi))
+    }
+
+    func testDeletingTheOnlyCatOrOneOfThreeWritesNothing() {
+        var (three, ids) = household(["mugi", "ame", "sora"])
+        three.setManualMembership(assetLocalIdentifier: "a", profileID: ids[2], decision: .included)
+        three.removeProfile(id: ids[2])
+        XCTAssertTrue(three.memberships.isEmpty)
+
+        var (one, only) = household(["mugi"])
+        one.setManualMembership(assetLocalIdentifier: "a", profileID: only[0], decision: .included)
+        one.removeProfile(id: only[0])
+        XCTAssertTrue(one.memberships.isEmpty)
+    }
+
     func testPinNeverReincludesAnExcludedPhoto() {
         var (state, ids) = household(["mugi"])
         state.setManualMembership(assetLocalIdentifier: "a", profileID: ids[0], decision: .excluded)

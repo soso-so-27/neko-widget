@@ -184,6 +184,7 @@ python3 ci/test-family-journey.py
 python3 ci/test-preservation-call-budget.py
 python3 ci/test-when-stuck.py
 python3 ci/test-launch-work.py
+python3 ci/test-scan-pipeline-defects.py
 python3 ci/test-review-eye.py
 python3 ci/test-a11y-voiceover-type.py
 python3 ci/test-group-recovery-screens.py
