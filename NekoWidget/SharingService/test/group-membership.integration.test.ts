@@ -1,11 +1,32 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
+import { person as registeredPerson, send, signed, testEnv } from "./group-fixture";
 
 const db = (env as unknown as Env).DB;
 const now = 1_792_454_400;
 const id = () => crypto.randomUUID();
 const sql = (text: string, ...values: (string | number | null | ArrayBuffer)[]) => db.prepare(text).bind(...values);
+it("returns fixed 409 codes for roster transaction conflicts", async () => {
+  const owner = await registeredPerson();
+  const cases = [
+    ["group_revoked_device_in_roster", "stale_revision"],
+    ["group_empty_roster", "roster_conflict"],
+    ["group_envelope_set_mismatch", "roster_conflict"],
+  ];
+  for (const [marker, code] of cases) {
+    const settings = {
+      ...testEnv,
+      DB: {
+        prepare: db.prepare.bind(db),
+        batch: async () => { throw new Error(marker); },
+      } as unknown as D1Database,
+    };
+    const response = await send(await signed(owner, "/v3/group-windows/list", { after: null, limit: 20 }), settings);
+    expect(response).toMatchObject({ status: 409, data: { error: { code } } });
+    expect(JSON.stringify(response.data)).not.toContain(marker);
+  }
+});
 async function person() {
   const personId = id();
   await sql("INSERT INTO group_people VALUES (?, ?, 'active', ?)", personId, `identity-${personId}`, now).run();

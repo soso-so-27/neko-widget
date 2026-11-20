@@ -11,7 +11,7 @@ const reasons = new Set([
   'invalid_authentication', 'replay', 'invalid_billing_authentication', 'stale_billing_request',
   'billing_runtime_disabled', 'billing_runtime_gate_unavailable', 'rate_limiter_unavailable',
   'family_notebook_disabled', 'family_notebook_unavailable', 'deletion_recovery_required',
-  'billing_retention_unavailable', 'billing_account_unavailable',
+  'billing_retention_unavailable', 'billing_account_unavailable', 'billing_nonce_unavailable',
 ]);
 
 /** Only a fixed ID-free path; provider metadata can include the original pathname. */

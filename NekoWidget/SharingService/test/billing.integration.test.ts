@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
 import fixture from "../../ci/fixtures/billing-verifier-protocol-v1.json";
+import { consumeBillingNonce } from "../src/billing-auth";
 import {
   createBillingAccount,
   getBillingEntitlement,
@@ -506,6 +507,26 @@ describe.sequential("disabled Plus billing foundation", () => {
       replayVerifier,
     )).rejects.toMatchObject({ status: 409, code: "replayed_billing_request" });
     expect(verifierCalls).toBe(1);
+  });
+
+  it("distinguishes failed nonce storage from an already used request", async () => {
+    await setLowerGate(true);
+    const account = await createAccount();
+    const nonce = { ...account, nonce: randomValue(16), now: Math.floor(Date.now() / 1000) };
+    const interrupted = {
+      ...testEnv,
+      DB: {
+        prepare: testEnv.DB.prepare.bind(testEnv.DB),
+        batch: async () => { throw new Error("synthetic D1 storage failure"); },
+      } as unknown as D1Database,
+    };
+    await expect(consumeBillingNonce(interrupted, nonce)).rejects.toMatchObject({
+      status: 503, code: "billing_nonce_unavailable",
+    });
+    await consumeBillingNonce(testEnv, nonce);
+    await expect(consumeBillingNonce(testEnv, nonce)).rejects.toMatchObject({
+      status: 409, code: "replayed_billing_request",
+    });
   });
 
   it("keeps transaction responses provisional until effective authority exists", async () => {
