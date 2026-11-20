@@ -11,6 +11,9 @@ import Foundation
 //   are driven as they call the service and the bridge, one step at a time.
 // - RootSyncStore (iCloud Keychain): the person keys it would list are kept
 //   in PersonCloud and handed to the real GroupRecoveryLiveBuilder.
+// - GroupWindowScreenModel (the まど screen, UIKit): its sync is mirrored over
+//   the app's ProductionGroupWindowClient and GroupWindowLocalPhotoStore
+//   (Device.syncWindow); ProductionGroupReporting refuses the local endpoint.
 
 struct Family {
     let a: Device, b: Device
@@ -38,6 +41,9 @@ struct Family {
         ("S11", "member B reports, reinstalls without 機種変更: 「通報への返答」 comes back", s11),
         ("S12", "member B reinstalled on a build that kept no binding: the next launch reads, the third is normal", s12),
         ("S13", "member B answers 「同じ子ですか」, reinstalls without 機種変更: only the lost link is asked again", s13),
+        ("S15", "まど: B blocks, hides and removes, reinstalls and relaunches: nothing comes back", s15),
+        ("S16", "while member B's app is deleted, A adds, replaces and removes; B reinstalls and launches twice", s16),
+        ("S17", "while member B's app is deleted, A takes B out; B reinstalls and launches twice", s17),
     ]
 
     // MARK: Common steps
@@ -67,6 +73,8 @@ struct Family {
         Log.step("A invites; B opens the link and asks to join")
         let invitation = try await a.service.createInvitation(operationID: UUID())
         let b = try await Device.make("B", relay: relay, cloud: PersonCloud())
+        // B has a cat page of its own on its iPhone (not in the notebook).
+        b.addOwnPage()
         let preview = try await b.service.previewInvitation(invitation.link)
         try expect(preview.catNames == ["合成ねこ"], "B sees the invitation's cat names (got \(preview.catNames))")
         b.keepsNameInKeychain = !oldBuildB
@@ -749,18 +757,26 @@ struct Family {
         try expect(relay.transport.log.dropFirst(mark).contains { $0.device == device },
                    "the launch read reached the relay as B's device")
         try expect(!f.b.bindingSaved, "nothing kept the binding before the read")
+        let afterSchedule = relay.transport.log.count
+        try expect(!(await f.b.notebookScreenAppeared()), "the screen adds no read once a read answered")
+        try expect(relay.transport.log.count == afterSchedule, "nothing was sent when the screen appeared")
         let listed = try f.b.notebookScreenCats()
         try expect(listed == [f.cat], "B's 「猫」 list has \(listed.count) cats")
         try expect(f.b.bindingSaved, "this build keeps the binding once the read answered")
 
-        Log.step("B's third launch: the notebook opens from the binding and the schedule reads")
+        Log.step("B's third launch: the screen appears in .checking with no read running: its one read; then the schedule")
         try await f.b.relaunch()
         try expect(f.b.screenHasFamily, "the notebook opens from the kept binding before any read")
+        let thirdMark = relay.transport.log.count
+        try expect(await f.b.notebookScreenAppeared(), "the screen's own read (FamilyAutoCheckPolicy.screenReadsOnAppear)")
+        try expect(f.b.lastState != nil && f.b.sharingState != .checking, "the screen's read answered (got \(String(describing: f.b.lastState)))")
+        try expect(relay.transport.log.dropFirst(thirdMark).contains { $0.device == device }, "the screen's read reached the relay as B's device")
+        try expect(!(await f.b.notebookScreenAppeared()), "appearing again adds no read")
         try await relaunchedReadsIntoFamily(f.b)
         try expect(f.b.notebookDeviceID == device, "B keeps its device")
         let third = try f.b.notebookScreenCats()
         try expect(third == [f.cat], "B's 「猫」 list has \(third.count) cats on the third launch")
-        return "the earlier build is Device.savesBinding = false; the schedule's eligibility is FamilyAutoCheckPolicy's, the screen's belt read is not driven"
+        return "the earlier build is Device.savesBinding = false; the schedule's eligibility is FamilyAutoCheckPolicy.eligible and the screen's read FamilyAutoCheckPolicy.screenReadsOnAppear (with `reading` false: the harness runs one read at a time); FamilyNotebookSharing.state is Device.sharingState"
     }
 
     // MARK: S13
@@ -810,6 +826,247 @@ struct Family {
         try f.b.answerLinkQuestion(second, sameAs: UUID())
         try expect(try f.b.linkQuestions().isEmpty, "nothing is asked")
         try expect(f.b.keptLinkAnswers == [otherKey], "the Keychain still keeps 「べつの子」 only")
-        return "the questions are FamilyNotebookCatLink's over Device.linkAnswers (the model's UserDefaults); B's own cat pages and 「この子のこと」 (CatCareStore) are not modelled: care is nil and 「同じ子」 is the store's mapping only"
+        return "the questions are FamilyNotebookCatLink's over Device.linkAnswers (the model's UserDefaults); B's own page is Device.ownPages (the screen's link input only); the questions' CatCareStore `care` is nil and 「同じ子」 is the store's mapping only (「この子のこと」 not driven)"
+    }
+
+    // MARK: S15
+
+    /// A まど photo: the public report vector's canonical JPEG (ci/fixtures,
+    /// synthetic pixels, no metadata, so GroupJPEG.validate takes it).
+    static func windowJPEG() throws -> Data {
+        struct Vector: Decodable { let canonicalJPEGBase64: String }
+        let vector = try JSONDecoder().decode(Vector.self,
+            from: Data(contentsOf: URL(fileURLWithPath: "ci/fixtures/group-report-v3.json")))
+        return try required(Data(base64Encoded: vector.canonicalJPEGBase64), "the fixture JPEG")
+    }
+
+    static func s15(_ relay: Relay) async throws -> String? {
+        Log.step("A: a Sandbox billing account with test Plus; A makes a まど and its invitation")
+        let billing = try await relay.bootstrapBilling()
+        try await relay.grantPlus(billing)
+        let a = try await Device.make("A", relay: relay, cloud: PersonCloud(), billing: billing)
+        let window = try await a.client.createWindow(name: "合成のまど", ownerDisplayName: "合成のA", operationID: UUID())
+        let invitation = try await a.client.createInvitation(windowID: window.id,
+                                                            operation: GroupOperation(expectedRevision: window.revision))
+        let link = try required(URL(string: invitation.shareText).flatMap({ GroupInvitationLink(url: $0) })?.url,
+                                "the invitation link")
+
+        var joined: [Device] = []
+        for name in ["B", "C", "D"] {
+            Log.step("\(name) opens the link and asks to join; A's iPhone lets them in (reconcileAdmissions)")
+            let device = try await Device.make(name, relay: relay, cloud: PersonCloud())
+            let invitationID = try await device.client.stageInvitation(url: link)
+            let request = try await device.client.apply(invitationID: invitationID, displayName: "合成の" + name, operationID: UUID())
+            _ = try await a.client.reconcileAdmissions()
+            let status = try await device.client.joinStatus(requestID: request.id)
+            try expect(status.state == .approved, "\(name) was let in (got \(status.state))")
+            joined.append(device)
+        }
+        let b = joined[0], c = joined[1], d = joined[2]
+
+        Log.step("A sends two photos, C and D one each")
+        let jpeg = try windowJPEG()
+        let a1 = try await a.client.sendPhoto(normalizedJPEG: jpeg, windowID: window.id, operationID: UUID()).id
+        let a2 = try await a.client.sendPhoto(normalizedJPEG: jpeg, windowID: window.id, operationID: UUID()).id
+        let c1 = try await c.client.sendPhoto(normalizedJPEG: jpeg, windowID: window.id, operationID: UUID()).id
+        let d1 = try await d.client.sendPhoto(normalizedJPEG: jpeg, windowID: window.id, operationID: UUID()).id
+
+        Log.step("B opens the まど: the four photos are kept and shown")
+        let first = try await b.syncWindow(window.id)
+        try expect(Set(first.shown) == [a1, a2, c1, d1] && first.shown.count == 4, "B shows \(first.shown.count) photos")
+        let entries = await b.windowPhotos.entries(windowID: window.id)
+        let cPhoto = try required(entries.first { $0.id == c1 }, "B has C's photo")
+        let dPhoto = try required(entries.first { $0.id == d1 }, "B has D's photo")
+
+        Log.step("B: 「自分のまどから消す」 on A's first photo, ブロック on C, and D hidden (an earlier build's 「表示しない」)")
+        // GroupWindowScreenModel.remove and blockSender (its local half; see the PASS line).
+        try await b.windowPhotos.remove(photoID: a1, windowID: window.id)
+        await b.windowPhotos.hide(memberID: cPhoto.senderParticipantID, name: cPhoto.senderDisplayName, windowID: window.id, blocked: true)
+        await b.windowPhotos.hide(memberID: dPhoto.senderParticipantID, name: dPhoto.senderDisplayName, windowID: window.id)
+        let chosen = await b.windowPhotos.entries(windowID: window.id).map(\.id)
+        try expect(chosen == [a2], "B shows A's second photo only (got \(chosen.count))")
+        let kept = try required(try b.keptWindowChoices(window.id), "B's Keychain keeps the choices")
+        try expect(kept.removedPhotoIDs == [a1] && kept.blockedMemberIDs == [cPhoto.senderParticipantID]
+                   && kept.hiddenMemberIDs == [dPhoto.senderParticipantID], "the Keychain copy holds the three choices")
+
+        Log.step("B deletes the app and installs it again")
+        try await b.reinstall()
+        try expect(await b.windowPhotos.knownWindows().isEmpty, "the reinstall wiped B's kept まど photos")
+        let device = try required(try await b.client.existingDeviceID(), "B still has its まど device (Keychain)")
+
+        Log.step("B opens the まど: the relay still lists every photo; the removed one is not downloaded, C and D stay away")
+        var mark = relay.transport.log.count
+        let again = try await b.syncWindow(window.id)
+        try expect(Set([a1, a2, c1, d1]).isSubset(of: Set(again.listed)), "the relay lists the four photos to B (the choices are what keep them away)")
+        try expect(!again.downloaded.contains(a1), "the removed photo was downloaded again")
+        try expect(!relay.transport.log.dropFirst(mark).contains { $0.device == device && $0.path.contains(a1) },
+                   "no request for the removed photo")
+        try expect(again.shown == [a2], "B shows A's second photo only after the reinstall (got \(again.shown.count))")
+        try await expectHidden(b, window: window.id, blocked: cPhoto, hidden: dPhoto)
+
+        Log.step("B closes the app and opens it again: nothing is downloaded, the same is shown")
+        try await b.relaunch()
+        mark = relay.transport.log.count
+        let relaunched = try await b.syncWindow(window.id)
+        try expect(relaunched.downloaded.isEmpty, "the second launch downloaded \(relaunched.downloaded.count) photos")
+        try expect(!relay.transport.log.dropFirst(mark).contains { $0.device == device && $0.path.hasSuffix("/ciphertext") },
+                   "no photo bytes were read")
+        try expect(relaunched.shown == [a2], "B shows A's second photo only on the second launch (got \(relaunched.shown.count))")
+        try await expectHidden(b, window: window.id, blocked: cPhoto, hidden: dPhoto)
+        return "GroupWindowLocalPhotoStore and ProductionGroupWindowClient are the app's over Device's folder and Keychain; "
+            + "GroupWindowScreenModel.sync/receive (GroupWindowView.swift, UIKit) are mirrored step for step, the sensitive-content check taken as safe; "
+            + "the relay half of ブロック and 通報 (ProductionGroupReporting) is not driven: its init accepts only the staging endpoint "
+            + "with the pinned moderation key or the iOS production configuration, so the block here is local only and the reported-photo "
+            + "cover stays with verify-group-window-choices-survive-reinstall.swift"
+    }
+
+    /// 「ブロックした人」 (knownWindows' hiddenMembers): the blocked person with
+    /// the name the relay gave, the hidden one not blocked.
+    static func expectHidden(_ device: Device, window: String, blocked: GroupWindowLocalPhotoStore.Entry,
+                             hidden: GroupWindowLocalPhotoStore.Entry) async throws {
+        let known = try required(await device.windowPhotos.knownWindows().first { $0.id == window }, "\(device.name) knows the まど")
+        let members = known.hiddenMembers ?? []
+        try expect(members.count == 2, "\(device.name) lists \(members.count) people it does not show")
+        try expect(members.contains { $0.id == blocked.senderParticipantID && $0.blocked == true && $0.name == blocked.senderDisplayName },
+                   "the blocked person is listed as blocked, with the name from the relay")
+        try expect(members.contains { $0.id == hidden.senderParticipantID && $0.blocked != true && $0.name == hidden.senderDisplayName },
+                   "the hidden person is hidden, not blocked")
+    }
+
+    // MARK: S16
+
+    /// A launch after a reinstall: the app's schedule (FamilyAutoCheckPolicy.eligible)
+    /// reads on `device`; the other iPhones read as they would on their own.
+    static func scheduledIntoFamily(_ device: Device, with others: [Device]) async throws {
+        for round in 1...12 {
+            try expect(await device.automaticPass(), "the schedule read nothing on round \(round)")
+            if device.inFamily { Log.note("\(device.name) in the family after \(round) automatic pass(es)"); return }
+            for other in others { await other.pass() }
+        }
+        throw E2EFailure(description: "\(Log.location): \(device.name) did not reach the family in 12 automatic passes")
+    }
+
+    /// B shows A's current notebook: the cats, one row each, and the photo.
+    static func expectCurrent(_ b: Device, cats: Set<UUID>, photoCat: UUID, photo: (asset: UUID, jpeg: Data),
+                              creator: String) async throws {
+        let inCopy = try familyCats(b)
+        try expect(inCopy == cats, "B's copy has \(inCopy.count) cats, A has \(cats.count)")
+        let rows = try b.notebookScreenRows()
+        try expect(rows.count == cats.count && Set(rows.map { $0.familyCatID }) == cats,
+                   "B's 「猫」 list has \(rows.count) rows for \(cats.count) cats (a duplicate, or the removed cat)")
+        try expect(Set(rows.map { $0.toolCatID }).count == rows.count, "one cat on B's iPhone per row")
+        let seen = try await seePhoto(b, photoCat, asset: photo.asset)
+        try expect(seen.jpeg == photo.jpeg && seen.author == creator, "B reads A's current pixels")
+    }
+
+    static func s16(_ relay: Relay) async throws -> String? {
+        let f = try await makeFamily(relay)
+        let creator = try required(f.a.notebookIdentity?.personID, "A has no person")
+        let aStore = try required(f.a.service.notebook, "A has no notebook copy")
+        let aAuthor = try required(f.a.service.author, "A has no author")
+
+        Log.step("B puts its own cat page into the notebook")
+        let page = try required(f.b.ownPages.first, "B has a cat page of its own")
+        let bCat = try shareCat(f.b, name: "合成のBのねこ", profile: page.profile, tool: page.tool)
+        let bStore = try required(f.b.service.notebook, "B has no notebook copy")
+        try await settle("B's cat sent", [f.b]) { try bStore.pendingOperations().isEmpty }
+
+        Log.step("A puts a second cat in with a photo; B sees three cats and the photo")
+        let second = try shareCat(f.a, name: "合成のくろ", profile: UUID(), tool: UUID())
+        try await settle("A's second cat sent", [f.a]) { try aStore.pendingOperations().isEmpty }
+        let firstPhoto = try await deliver(f.a, second, shade: 1)
+        try await settle("B has the three cats", [f.b, f.a]) { try familyCats(f.b) == [f.cat, bCat, second] }
+        _ = try await seePhoto(f.b, second, asset: firstPhoto.asset)
+        let before = try f.b.notebookScreenRows()
+        try expect(before.count == 3 && Set(before.map { $0.familyCatID }) == [f.cat, bCat, second], "B's 「猫」 list has \(before.count) rows")
+        try expect(before.first(where: { $0.familyCatID == bCat })?.toolCatID == page.tool, "B's own cat is its page's cat, not a second one")
+        let bDevice = try required(f.b.notebookDeviceID, "B has no device")
+
+        Log.step("B deletes the app; while it is gone A adds a cat, removes the first one and replaces the photo")
+        let third = try shareCat(f.a, name: "合成のみけ", profile: UUID(), tool: UUID())
+        // FamilyNotebookPrototype.unshareCat.
+        _ = try aStore.edit(target: .init(familyCatID: f.cat, field: .sharingEnded), value: nil, author: aAuthor,
+                            expectedRevision: try aStore.snapshot().revision)
+        try await settle("A's changes sent", [f.a]) { try aStore.pendingOperations().isEmpty }
+        let replaced = try await deliver(f.a, second, shade: 2)
+        let current: Set<UUID> = [bCat, second, third]
+        let onA = try familyCats(f.a)
+        try expect(onA == current, "A's notebook has \(onA.count) cats")
+
+        Log.step("B installs the app again; first launch: the schedule reads until B is in the family")
+        try await f.b.reinstall()
+        try expect(f.b.ownPages.isEmpty && f.b.localCats.isEmpty, "the reinstall wiped B's cat page and CatCareStore")
+        try await scheduledIntoFamily(f.b, with: [f.a])
+        try expect(f.b.notebookDeviceID == bDevice, "B keeps its device")
+        try await expectCurrent(f.b, cats: current, photoCat: second, photo: replaced, creator: creator)
+
+        Log.step("B closes the app and opens it again (the second launch)")
+        try await f.b.relaunch()
+        try expect(f.b.screenHasFamily, "the notebook opens from the kept binding before any read")
+        try await relaunchedReadsIntoFamily(f.b)
+        try await expectCurrent(f.b, cats: current, photoCat: second, photo: replaced, creator: creator)
+
+        Log.step("A still has the same three cats: B's two launches added none")
+        await f.a.pass()
+        let after = try familyCats(f.a)
+        try expect(after == current, "A's notebook has \(after.count) cats after B's launches")
+        return "B's cat page and CatCareStore are Device.ownPages/localCats, wiped by the reinstall and not restored; "
+            + "the launches' family reads are the schedule's (FamilyAutoCheckPolicy.eligible), the photo reads the cat page's; "
+            + "attachReal's relinkOwnCats and writeInitialPositions are not driven"
+    }
+
+    // MARK: S17
+
+    /// One launch of a member taken out of the family: one read answers the
+    /// entrance, nothing else reads in that launch, and there is no copy (so
+    /// no 「終わりました」 notice). Returns the read's requests.
+    static func entranceLaunch(_ b: Device, relay: Relay, screenFirst: Bool) async throws -> Int {
+        let mark = relay.transport.log.count
+        if screenFirst {
+            try expect(await b.notebookScreenAppeared(), "the screen's one read (.checking, no read running)")
+        } else {
+            try expect(await b.automaticPass(), "the schedule's launch read (nothing read yet, an identity on this iPhone)")
+        }
+        try expect(b.lastState == .notInFamily && b.sharingState == .notInFamily,
+                   "B's read answers the entrance, not a failure (got \(String(describing: b.lastState)))")
+        let device = try required(b.notebookDeviceID, "B has no notebook device")
+        let sent = relay.transport.log.dropFirst(mark).filter { $0.device == device }
+        try expect(!sent.isEmpty, "the read reached the relay as B's device")
+        let afterRead = relay.transport.log.count
+        for _ in 0..<3 {
+            try expect(!(await b.automaticPass()), "the schedule reads again in the same launch")
+            try expect(!(await b.notebookScreenAppeared()), "the screen reads again in the same launch")
+        }
+        try expect(relay.transport.log.count == afterRead, "\(relay.transport.log.count - afterRead) more requests in the same launch")
+        try expect(b.service.notebook == nil && !b.copyCanShowEndedNotice && !b.screenHasFamily,
+                   "B sees only the entrance (no copy, so no 「終わりました」 notice)")
+        Log.note("\(b.name): \(sent.count) requests, statuses \(sent.map(\.status))")
+        return sent.count
+    }
+
+    static func s17(_ relay: Relay) async throws -> String? {
+        let f = try await makeFamily(relay)
+        let person = try required(f.b.notebookIdentity?.personID, "B has no person")
+        let listed = try f.b.notebookScreenCats()
+        try expect(listed == [f.cat], "B's 「猫」 list has \(listed.count) cats")
+
+        Log.step("B deletes the app; while it is gone A takes B out of the family")
+        try await f.a.service.removeMember(personID: person, operationID: UUID())
+        try await settle("A's family no longer lists B", [f.a]) {
+            f.a.inFamily && !f.a.service.lastMembers.contains { $0.personID == person }
+        }
+
+        Log.step("B installs the app again; first launch: the notebook screen's one read, the entrance")
+        try await f.b.reinstall()
+        try expect(!f.b.screenHasFamily && f.b.awaitingApprovalMark == nil, "nothing opens before a read; the mark is unsettled")
+        let first = try await entranceLaunch(f.b, relay: relay, screenFirst: true)
+
+        Log.step("B closes the app and opens it again: the schedule's one launch read, the entrance again")
+        try await f.b.relaunch()
+        try expect(!f.b.screenHasFamily && f.b.awaitingApprovalMark == false, "no binding, a settled mark")
+        let second = try await entranceLaunch(f.b, relay: relay, screenFirst: false)
+        return "accepted as-is: B sees only the entrance and no 「終わりました」 notice (its copy and the notice's date went with the app); "
+            + "one read per launch (\(first) and \(second) requests), none after it; the screen's read is FamilyAutoCheckPolicy.screenReadsOnAppear "
+            + "and the schedule's FamilyAutoCheckPolicy.eligible over Device's stand-ins for FamilyNotebookSharing.state, lastReadAt and the mark"
     }
 }

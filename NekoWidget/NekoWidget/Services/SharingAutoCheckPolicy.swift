@@ -112,6 +112,14 @@ enum FamilyAutoCheckPolicy {
             || (e.unreadThisLaunch && e.hasIdentity)) || e.resumeProbeDue
     }
 
+    /// 11/20: the notebook screen appears (FamilyNotebookView.onAppear). Test
+    /// builds (the family on this iPhone alone, nothing sent) read each time;
+    /// a real one reads once when nothing is known yet and no read runs, so
+    /// the spinner ends in the family, the intro or 「もう一度」, never waits.
+    static func screenReadsOnAppear(real: Bool, checking: Bool, reading: Bool) -> Bool {
+        !real || (checking && !reading)
+    }
+
     /// No read answered in this launch (`lastReadAt`) and nothing is known yet.
     static func unreadThisLaunch(lastReadAt: Date?, checking: Bool) -> Bool {
         lastReadAt == nil && checking

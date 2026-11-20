@@ -13,7 +13,8 @@ mkdir -p "$build"
 
 # The app's own sources: the family notebook's (run-family-notebook-network-checks.sh)
 # with the usual client and the recovery builder (verify-group-adapter /
-# run-group-recovery-client-checks.sh) and the cat bridge (run-family-notebook-checks.sh).
+# run-group-recovery-client-checks.sh), the cat bridge (run-family-notebook-checks.sh)
+# and the まど photo store (verify-group-window-choices-survive-reinstall.swift).
 # No -D INTERNAL_PRESENTATION or DEBUG: the App Store build's branches. (The
 # owner-trial narrowing of recovery candidates is in GroupRecoveryLiveModel.connected(),
 # iOS only, and not compiled here either way.)
@@ -43,6 +44,7 @@ sources=(
   NekoWidget/Services/VeterinaryVisitStore.swift NekoWidget/Services/FamilyNotebookMigration.swift
   NekoWidget/Services/FamilyNotebookCatCareBridge.swift NekoWidget/Services/FamilyNotebookToolBridge.swift
   NekoWidget/Services/FamilyNotebookCatLink.swift NekoWidget/Services/SharingAutoCheckPolicy.swift
+  NekoWidget/Services/GroupWindowLocalPhotoStore.swift
   ci/two-device/Harness.swift ci/two-device/Scenarios.swift
 )
 echo "Compiling the two-device driver (${#sources[@]} files)" >&2
