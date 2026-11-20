@@ -301,6 +301,15 @@ it('keeps a durable physical deletion job only for the confirmed tombstone', asy
   expect((await queue()).results).toEqual([{
     record_id: record, tombstone_revision: 2, requested_at: f.options.now(),
   }]);
+  const markers = remote.references.filter(item => item.key.includes('/manifest/'));
+  const previous = (await Promise.all(markers.map(item => remote.recovery.inspectManifest(f.session.ownerId, item))))
+    .find(item => item.recordId === record && item.kind === 'commit' && item.revision === 1)!;
+  if (previous.kind !== 'commit' || !previous.photo) throw new Error('synthetic photo reference missing');
+  for (const old of [previous.record, previous.photo]) remote.objects.delete(`${old.key}:${old.versionId}`);
+  await expect(remote.recovery.selectRecoveredRecord(f.session.ownerId, record, markers))
+    .resolves.toMatchObject({ status: 'ready', image: { deleted: true, revision: 2, metadata: null } });
+  await expect(remote.recovery.selectRecoveredRecord(f.session.ownerId, companion, markers))
+    .resolves.toMatchObject({ status: 'ready', image: { deleted: false, revision: 1 } });
   expect((await archive.read(f.session.token, companion)).revision).toBe(1);
 });
 

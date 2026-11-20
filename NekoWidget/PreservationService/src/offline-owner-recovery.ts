@@ -1,7 +1,7 @@
 import {ServiceError} from './contracts';
 import {canonicalJSON,type TreeRef,type TreeDiffFrame} from './immutable-record-tree';
 import type {OwnerRecoveryImage,OwnerRecoveryCopy} from './owner-recovery-copy';
-import type {RecordRecoveryCopy,DiscoveredRecordManifest,DiscoveredRecordCommit} from './record-recovery-copy';
+import {matchesCommittedTombstone,type RecordRecoveryCopy,type DiscoveredRecordManifest,type DiscoveredRecordCommit} from './record-recovery-copy';
 import type {S3RecoveryCopy,RecoveryObject,RecoveryVersionCursor} from './s3-recovery-copy';
 import {parseAppRecordHead,type AppRecordHead} from './documents';
 import {parseToolNode} from './tool-index-v4';
@@ -278,7 +278,17 @@ export class OfflineOwnerRecovery {
       WHERE i.owner_id=? AND i.record_id=? AND i.kind='delete-intent' AND c.revision IS NULL LIMIT 1`).bind(job.owner_id,expected.record_id).first();
     if(!coverage || coverage.n!==expected.revision || coverage.lo!==1 || coverage.hi!==expected.revision || unresolved)throw new Quarantined();
    }
-   const progress=current??{id:expected.record_id,revision:1,wasDeleted:false};
+   let progress=current??{id:expected.record_id,revision:1,wasDeleted:false};
+   if(!current&&expected.deleted===1){
+    const final=await this.currentCommit(job.owner_id,expected,expected.revision);
+    const intents=(await this.d.db.prepare(`SELECT payload_json FROM pa_offline_recovery_revisions
+     WHERE owner_id=? AND record_id=? AND kind='delete-intent' ORDER BY revision LIMIT 2`)
+     .bind(job.owner_id,expected.record_id).all<{payload_json:string}>()).results;
+    // The separate history pass still verifies and restores every marker.
+    if(intents.length===1&&matchesCommittedTombstone(final,JSON.parse(intents[0]!.payload_json) as DiscoveredRecordManifest)){
+     progress={id:expected.record_id,revision:expected.revision,wasDeleted:false};
+    }
+   }
    if(progress.historyAfter!==undefined){
     const rows=(await this.d.db.prepare(`SELECT revision,payload_json FROM pa_offline_recovery_revisions
       WHERE owner_id=? AND record_id=? AND kind='commit' AND revision>? ORDER BY revision LIMIT 20`)
