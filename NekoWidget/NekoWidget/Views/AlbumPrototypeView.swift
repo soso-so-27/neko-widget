@@ -1175,12 +1175,11 @@ struct MonthlyStoryView: View {
         options.deliveryMode = .highQualityFormat
         options.isNetworkAccessAllowed = false
         options.resizeMode = .fast
-        return await withCheckedContinuation { continuation in
-            PhotoAssetImagePipeline.manager.requestImage(for: asset, targetSize: CGSize(width: side, height: side),
-                                                         contentMode: .aspectFill, options: options) { image, _ in
-                continuation.resume(returning: image)
-            }
-        }
+        // 11/20: bounded and cancellable (PhotoKitTimedRequest); a photo that
+        // does not come is left out, so the best nine never waits forever.
+        return await PhotoKitTimedRequest.image(
+            for: asset, targetSize: CGSize(width: side, height: side), contentMode: .aspectFill,
+            options: options, timeoutSeconds: 8, manager: PhotoAssetImagePipeline.manager)
     }
 
     /// The photo's average colour, darkened, for the page behind it.
@@ -2447,16 +2446,10 @@ struct LivePhotoHold: ViewModifier {
         let options = PHLivePhotoRequestOptions()
         options.deliveryMode = .highQualityFormat
         options.isNetworkAccessAllowed = true
-        return await withCheckedContinuation { continuation in
-            var resumed = false
-            PHImageManager.default().requestLivePhoto(for: asset, targetSize: CGSize(width: 1600, height: 1600),
-                                                      contentMode: .aspectFit, options: options) { photo, info in
-                if (info?[PHImageResultIsDegradedKey] as? Bool) == true { return }
-                guard !resumed else { return }
-                resumed = true
-                continuation.resume(returning: photo)
-            }
-        }
+        // 11/20: bounded and cancellable (PhotoKitTimedRequest).
+        return await PhotoKitTimedRequest.livePhoto(
+            for: asset, targetSize: CGSize(width: 1600, height: 1600),
+            options: options, timeoutSeconds: 30)
     }
 }
 
@@ -2578,11 +2571,9 @@ struct StoryPhotoView: View {
         options.deliveryMode = .highQualityFormat
         options.isNetworkAccessAllowed = true
         options.resizeMode = .fast
-        return await withCheckedContinuation { continuation in
-            PhotoAssetImagePipeline.manager.requestImage(for: asset, targetSize: CGSize(width: 1600, height: 1600),
-                                                         contentMode: .aspectFit, options: options) { image, _ in
-                continuation.resume(returning: image)
-            }
-        }
+        // 11/20: bounded, and the PhotoKit request is cancelled with the view's task.
+        return await PhotoKitTimedRequest.image(
+            for: asset, targetSize: CGSize(width: 1600, height: 1600), contentMode: .aspectFit,
+            options: options, timeoutSeconds: 30, manager: PhotoAssetImagePipeline.manager)
     }
 }

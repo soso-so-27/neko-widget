@@ -599,6 +599,13 @@ private struct OnboardingScanPage: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("onboarding-scan-zero-body")
+            // 11/20: zero found can mean many photos could not be read; say
+            // so with the same line the result with cats shows.
+            if scan.hasDeferredAssets {
+                Text("読み込めなかった写真が\(scan.deferredAssets.formatted())枚あります。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
             if isLimitedAccess {
                 VStack(spacing: 10) {
                     Button(OnboardingPresentationCopy.scanZeroLimitedAction,

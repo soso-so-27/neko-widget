@@ -162,7 +162,7 @@ class PoolTests(unittest.TestCase):
         self.assertIn("var ordered = available.filter { $0.item.localIdentifier == arrivalID }", prep)
 
     def test_the_pool_of_100_gets_them_from_loaded_dates(self) -> None:
-        rebuild = section(VIEW_MODEL, "private func performRebuildWidgetCache(", "private func clearAlbumAndWidgetOutputs(")
+        rebuild = section(VIEW_MODEL, "private func performRebuildWidgetCache(", "private func clearOutputsAfterStartupFailure(")
         self.assertIn("CloudyWindowStore.newPhotoIDs(cats.filter { $0.lastShownAt == nil },", rebuild)
         self.assertIn(".union(cloudyWindowDatePhotoIDs(cats))", rebuild)
         self.assertIn("CloudyWindowStore.datePhotoIDs(cats, id: { $0.localIdentifier }, takenAt: { $0.creationDate })", VIEW_MODEL)

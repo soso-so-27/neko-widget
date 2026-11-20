@@ -942,7 +942,7 @@ struct LikedPhotosView: View {
     let latestMonthlyWindowIsUnread: Bool
     let latestSeasonalMovieIsNew: Bool
     let seasonalMovies: [SeasonalMovieArchiveRecord]
-    let exportPhotoBook: ([String]) async throws -> URL
+    let exportPhotoBook: ([String]) async throws -> PhotoBookPDFExport
     let openPhotos: () -> Void
     let recoverPhotoSource: () -> Void
     var albumSections: [CuratedAlbumSectionPresentation]
@@ -967,7 +967,7 @@ struct LikedPhotosView: View {
         monthlyWindowCollection: MonthlyWindowCollectionPresentation?,
         latestMonthlyWindowIsUnread: Bool, latestSeasonalMovieIsNew: Bool,
         seasonalMovies: [SeasonalMovieArchiveRecord],
-        exportPhotoBook: @escaping ([String]) async throws -> URL,
+        exportPhotoBook: @escaping ([String]) async throws -> PhotoBookPDFExport,
         openPhotos: @escaping () -> Void,
         recoverPhotoSource: (() -> Void)? = nil,
         albumSections: [CuratedAlbumSectionPresentation] = [],
@@ -1820,7 +1820,7 @@ struct SavedMemoriesGalleryView: View {
     /// The way to grant access, from the place that knows how (nil: no button).
     let requestPhotoAccess: (() -> Void)?
     let savedStateReadFailed: Bool
-    let exportPhotoBook: ([String]) async throws -> URL
+    let exportPhotoBook: ([String]) async throws -> PhotoBookPDFExport
 
     @State private var creationOutput: CreationOutput?
     @State private var selectedExportIdentifiers: Set<String>
@@ -1828,6 +1828,10 @@ struct SavedMemoriesGalleryView: View {
     @State private var photoBookExport: LikedPhotoBookExportFile?
     @State private var photoBookExportDirectory: URL?
     @State private var photoBookErrorMessage: String?
+    /// 11/20: photos the PDF could not include, said once the share sheet
+    /// closes, with the scan's own sentence.
+    @State private var pendingPhotoBookOmittedCount = 0
+    @State private var photoBookOmittedNotice: String?
     @State private var photoBookExportTask: Task<Void, Never>?
 #if DEBUG || INTERNAL_PRESENTATION
     @State private var bookDemandPreview: BookDemandPreviewSelection?
@@ -1846,7 +1850,7 @@ struct SavedMemoriesGalleryView: View {
         ownCatPhotoIdentifiers: Set<String> = [],
         receivedPhotoSourceLabels: [String: String] = [:],
         catFilterName: String? = nil,
-        exportPhotoBook: @escaping ([String]) async throws -> URL
+        exportPhotoBook: @escaping ([String]) async throws -> PhotoBookPDFExport
     ) {
         self.photos = photos
         self.catFilterName = catFilterName
@@ -1950,6 +1954,15 @@ struct SavedMemoriesGalleryView: View {
             }
         } message: {
             Text(photoBookErrorMessage ?? "時間をおいて、もう一度お試しください。")
+        }
+        .alert(
+            photoBookOmittedNotice ?? "",
+            isPresented: Binding(
+                get: { photoBookOmittedNotice != nil },
+                set: { if !$0 { photoBookOmittedNotice = nil } }
+            )
+        ) {
+            Button("閉じる", role: .cancel) { photoBookOmittedNotice = nil }
         }
         .onChange(of: originFilter) { _, _ in
             selectedExportIdentifiers.formIntersection(Set(visiblePhotos.map(\.localIdentifier)))
@@ -2224,7 +2237,8 @@ struct SavedMemoriesGalleryView: View {
                 photoBookExportTask = nil
             }
             do {
-                let url = try await exportPhotoBook(identifiers)
+                let export = try await exportPhotoBook(identifiers)
+                let url = export.url
                 if Task.isCancelled {
                     try? FileManager.default.removeItem(
                         at: url.deletingLastPathComponent()
@@ -2232,6 +2246,7 @@ struct SavedMemoriesGalleryView: View {
                     return
                 }
                 photoBookExportDirectory = url.deletingLastPathComponent()
+                pendingPhotoBookOmittedCount = export.omittedPhotoCount
                 photoBookExport = LikedPhotoBookExportFile(url: url)
             } catch is CancellationError {
                 return
@@ -2252,6 +2267,10 @@ struct SavedMemoriesGalleryView: View {
         }
         photoBookExportDirectory = nil
         photoBookExport = nil
+        if pendingPhotoBookOmittedCount > 0 {
+            photoBookOmittedNotice = "読み込めなかった写真が\(pendingPhotoBookOmittedCount.formatted())枚あります。"
+        }
+        pendingPhotoBookOmittedCount = 0
     }
 }
 

@@ -86,6 +86,14 @@ struct AssetRecord: Codable, Identifiable, Equatable, Sendable {
         analysisStatus == .detected && cat.detected
     }
 
+    /// 11/20: "no cat" from the 512px local preview of a photo whose original
+    /// was not on this iPhone. Not a final answer: it counts with the photos
+    /// that could not be read, and the scanner looks at it again
+    /// (ScanResumePolicy.retriesLowFidelityNoCat).
+    var isLowFidelityNoCat: Bool {
+        analysisStatus == .noCat && analysisEvidence?.isLowFidelity == true
+    }
+
     /// 11/14 確かな猫 for the app's own picks: the stored best cat confidence
     /// reaches the confident line, or the user saved the photo (お気に入り).
     /// Other user vouching (an include for a cat, a key photo, a linked
@@ -169,7 +177,7 @@ struct AssetRecord: Codable, Identifiable, Equatable, Sendable {
     /// existing minimum-area visual quality gate here.
     func isWidgetEligible(settings: AppSettings) -> Bool {
         isCatCandidate
-            && analysisFingerprint == settings.analysisFingerprint
+            && settings.presentsAnalysis(fingerprint: analysisFingerprint)
             && cat.areaRatio >= settings.minimumCatAreaRatio
             && analysisEvidence?.isLowFidelity != true
     }

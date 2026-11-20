@@ -62,6 +62,10 @@ struct SeasonalMovieView: View {
     @State private var pendingShareFailure = false
     @State private var showsShareFailure = false
     @State private var exportErrorMessage: String?
+    /// 11/20: why a scene was left out of the shared movie, said after the
+    /// share sheet closes (existing wording, SeasonalMovieExportError).
+    @State private var pendingExportNotice: String?
+    @State private var exportNotice: String?
 
     init(
         presentation: SeasonalMoviePresentation,
@@ -202,6 +206,15 @@ struct SeasonalMovieView: View {
             Button("閉じる", role: .cancel) { exportErrorMessage = nil }
         } message: {
             Text(exportErrorMessage ?? "もう一度お試しください。")
+        }
+        .alert(
+            exportNotice ?? "",
+            isPresented: Binding(
+                get: { exportNotice != nil },
+                set: { if !$0 { exportNotice = nil } }
+            )
+        ) {
+            Button("閉じる", role: .cancel) { exportNotice = nil }
         }
         .alert("動画を保存・共有できませんでした", isPresented: $showsShareFailure) {
             Button("閉じる", role: .cancel) {}
@@ -651,12 +664,18 @@ struct SeasonalMovieView: View {
         isExporting = true
         latestShareSessionURL = nil
         exportErrorMessage = nil
+        pendingExportNotice = nil
         let presentation = activePresentation
         let includesSound = soundEnabled
+        // 11/20: leaving the app gives the export the extra time iOS allows.
+        // When that runs out the export stops, its file is removed, and the
+        // usual retry message is shown on return.
+        let backgroundTime = SeasonalMovieExportBackgroundTime()
+        backgroundTime.begin { exportTask?.cancel() }
         exportTask = Task {
             do {
                 try await freezeRecipe(.export)
-                let url = try await SeasonalMovieExportService.shared.export(
+                let (url, omitted) = try await SeasonalMovieExportService.shared.exportOmittingUnavailableScenes(
                     presentation,
                     soundEnabled: includesSound
                 )
@@ -665,6 +684,11 @@ struct SeasonalMovieView: View {
                     await MainActor.run {
                         isExporting = false
                         exportTask = nil
+                        if backgroundTime.expired {
+                            exportErrorMessage = exportMessage(
+                                for: SeasonalMovieExportError.encodingFailed)
+                        }
+                        backgroundTime.end()
                     }
                     return
                 }
@@ -674,16 +698,22 @@ struct SeasonalMovieView: View {
                     sharedExportURL = url
                     latestShareSessionURL = url
                     pendingShareFailure = false
+                    pendingExportNotice = omitted?.errorDescription
                     shareItem = SeasonalMovieShareItem(url: url)
+                    backgroundTime.end()
                 }
             } catch {
                 await MainActor.run {
                     isExporting = false
                     exportTask = nil
-                    if !(error is CancellationError),
+                    if backgroundTime.expired {
+                        exportErrorMessage = exportMessage(
+                            for: SeasonalMovieExportError.encodingFailed)
+                    } else if !(error is CancellationError),
                        (error as? SeasonalMovieExportError) != .cancelled {
                         exportErrorMessage = exportMessage(for: error)
                     }
+                    backgroundTime.end()
                 }
             }
         }
@@ -694,6 +724,10 @@ struct SeasonalMovieView: View {
         // when the sheet is dismissed without an activity completion callback.
         showsShareFailure = pendingShareFailure
         pendingShareFailure = false
+        if !showsShareFailure, let notice = pendingExportNotice {
+            exportNotice = notice
+        }
+        pendingExportNotice = nil
         guard let url = sharedExportURL else { return }
         sharedExportURL = nil
         Task {
@@ -1248,5 +1282,32 @@ private final class LocalSeasonalVideoModel: ObservableObject {
         )
         guard let asset = assets.firstObject else { return nil }
         return await SeasonalMovieLocalMediaLoader.avAsset(for: asset)
+    }
+}
+
+/// 11/20: the time iOS gives an export after the app leaves the foreground.
+/// Ended exactly once: when the export finishes, or when iOS ends it.
+@MainActor
+private final class SeasonalMovieExportBackgroundTime {
+    private var identifier: UIBackgroundTaskIdentifier = .invalid
+    private(set) var expired = false
+
+    func begin(onExpire: @escaping @MainActor () -> Void) {
+        // UIKit calls the expiration on the main thread.
+        identifier = UIApplication.shared.beginBackgroundTask(
+            withName: "Seasonal movie export"
+        ) { [weak self] in
+            MainActor.assumeIsolated {
+                self?.expired = true
+                onExpire()
+                self?.end()
+            }
+        }
+    }
+
+    func end() {
+        guard identifier != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(identifier)
+        identifier = .invalid
     }
 }
