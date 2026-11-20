@@ -13,6 +13,17 @@ import UniformTypeIdentifiers
 // its iCloud Keychain and a temporary Application Support folder.
 // Synthetic people, keys and pixels only.
 
+// The neighbours of GroupWindowLocalPhotoStore.swift that live in UIKit
+// files (GroupWindowSetupView, the Widget cache), stood in for as
+// ci/verify-group-window-choices-survive-reinstall.swift does. The store
+// itself is the app's, given this iPhone's folder and Keychain (Device.launch).
+enum GroupWindowClientProvider { static let namespace = Device.namespace }
+enum GroupDisplayName {}
+enum GroupWidgetCache {
+    struct Entry { let windowID: String }
+    static func entries() -> [Entry] { [] }
+}
+
 // MARK: - Failure and log
 
 struct E2EFailure: Error, CustomStringConvertible { let description: String }
@@ -307,6 +318,8 @@ struct Drained: Decodable {
     private(set) var support: URL
     private(set) var client: ProductionGroupWindowClient!
     private(set) var service: ProductionFamilyNotebookSharingService!
+    /// The まど photos kept on this iPhone (a new store per process).
+    private(set) var windowPhotos: GroupWindowLocalPhotoStore!
     /// The identity the last notebook session opened with.
     private(set) var notebookIdentity: GroupDeviceIdentity?
     private(set) var lastState: FamilySharingState?
@@ -419,6 +432,25 @@ struct Drained: Decodable {
     private(set) var lastReadAt: Date?
     /// The schedule's FamilyNotebookAutoCheck.hasNotebookIdentity: once per process.
     private var identityChecked: Bool?
+    /// FamilyNotebookSharing.state: `.checking` when the process starts (and
+    /// after restartSession); only a read that answers changes it, a failed
+    /// one leaves it as it was. A further pass while the notebook is shown
+    /// (`.waitingForKeys` over a membership) keeps it (FamilyNotebookSharing.read).
+    private(set) var sharingState: FamilySharingState = .checking
+
+    /// This iPhone's own cat pages: the profile (AppRootView's catProfiles,
+    /// FamilyNotebookPrototype.profileOrder) and its cat in CatCareStore.
+    /// Both live in the app's containers, so deleting the app wipes them.
+    private(set) var ownPages: [(profile: UUID, tool: UUID)] = []
+    /// CatCareStore's cat IDs (attachReal's `existingLocalIDs`): the pages'
+    /// cats, and the family cats the bridge put there (CatCareBridge.apply).
+    private(set) var localCats: Set<UUID> = []
+    /// A cat page made on this iPhone (a profile with its cat).
+    @discardableResult func addOwnPage() -> (profile: UUID, tool: UUID) {
+        let page = (profile: UUID(), tool: UUID())
+        ownPages.append(page); localCats.insert(page.tool)
+        return page
+    }
 
     /// FamilyNotebookPrototype.hasFamily: before any read of this launch the
     /// copy opens only from the kept binding (openRealBinding); after one,
@@ -432,7 +464,7 @@ struct Drained: Decodable {
     /// FamilyNotebookAutoCheck.run's first steps: the identity check once per
     /// launch while nothing was read, then the app's own eligibility.
     func scheduleEligible() async -> Bool {
-        let unread = FamilyAutoCheckPolicy.unreadThisLaunch(lastReadAt: lastReadAt, checking: lastState == nil)
+        let unread = FamilyAutoCheckPolicy.unreadThisLaunch(lastReadAt: lastReadAt, checking: sharingState == .checking)
         if identityChecked == nil, unread { identityChecked = await service.hasLocalIdentity() }
         return FamilyAutoCheckPolicy.eligible(.init(real: true, hasFamily: screenHasFamily,
             awaitingApproval: awaitingApprovalMark == true, awaitingApprovalUnknown: awaitingApprovalMark == nil,
@@ -445,6 +477,27 @@ struct Drained: Decodable {
         guard await scheduleEligible() else { Log.note("\(name): the schedule is not eligible; no read"); return false }
         await pass()
         return true
+    }
+
+    /// The notebook screen appears (FamilyNotebookView.onAppear): the app's
+    /// FamilyAutoCheckPolicy.screenReadsOnAppear with this iPhone's state. No
+    /// read runs while the harness takes a step (`reading` is false).
+    /// Returns whether it read.
+    @discardableResult func notebookScreenAppeared() async -> Bool {
+        guard FamilyAutoCheckPolicy.screenReadsOnAppear(real: true, checking: sharingState == .checking, reading: false) else {
+            Log.note("\(name): the notebook screen appeared; no read"); return false
+        }
+        Log.note("\(name): the notebook screen appeared in .checking: one read")
+        await pass()
+        return true
+    }
+
+    /// What FamilyNotebookPrototype.showsEndedNotice needs from the copy (an
+    /// ended copy, ended because the directory stopped listing the family);
+    /// its date (noteEndedNotice) is UserDefaults, which deleting the app wipes.
+    var copyCanShowEndedNotice: Bool {
+        guard let snapshot = try? service.notebook?.snapshot() else { return false }
+        return snapshot.sharingEnded && snapshot.endedReason == .absentFromDirectory
     }
 
     init(_ name: String, relay: Relay, cloud: PersonCloud, keychain: DeviceKeychain = DeviceKeychain(), billing: BillingCredential? = nil) {
@@ -486,7 +539,12 @@ struct Drained: Decodable {
             moderationRecipient: { (keyID: GroupReportCrypto.moderationKeyID, publicKey: GroupReportCrypto.moderationPublicKey) })
         notebookIdentity = nil; lastState = nil; nameChecked = false
         hiddenEntriesChecked = false; repliesCheckedNone = false; linkAnswersChecked = false
-        lastReadAt = nil; identityChecked = nil
+        lastReadAt = nil; identityChecked = nil; sharingState = .checking
+        // GroupWindowLocalPhotoStore.shared of this process: Application
+        // Support's GroupWindows folder and the `.window-choices` Keychain.
+        let deviceKeychain = self.keychain
+        windowPhotos = GroupWindowLocalPhotoStore(root: support.appendingPathComponent("GroupWindows", isDirectory: true),
+            keychain: { deviceKeychain.store(Device.namespace + GroupWindowKept.namespaceSuffix) })
         // Notifications allowed (GroupAdmissionService passes the token on).
         await service.updatePushSubscription(token: pushToken, environment: "production")
     }
@@ -501,6 +559,7 @@ struct Drained: Decodable {
         rememberedName = ""; keepsNameInKeychain = true
         hiddenEntries = nil; reportSent = false; linkAnswers = nil
         bindingSaved = false; savesBinding = true; awaitingApprovalMark = nil
+        ownPages = []; localCats = []
         pushToken = Data((0..<32).map { _ in UInt8.random(in: 0...255) })
         try await launch()
     }
@@ -602,7 +661,7 @@ struct Drained: Decodable {
     }
 
     /// FamilyNotebookSharing.restartSession, then its one read.
-    func notebookRestarted() async { service.restartSession(); await pass() }
+    func notebookRestarted() async { service.restartSession(); sharingState = .checking; await pass() }
     /// One read; ready only when the notebook is in the family with its keys.
     func notebookReads() async -> Bool { await pass(); return inFamily }
 
@@ -682,6 +741,7 @@ struct Drained: Decodable {
             case .notInFamily, .inFamily: awaitingApprovalMark = false
             default: break
             }
+            if !(state == .waitingForKeys && sharingState.membership != nil) { sharingState = state }
             lastReadAt = Date()
             Log.note("\(name): \(state)")
             return state
@@ -698,17 +758,77 @@ struct Drained: Decodable {
     }
 
     /// The notebook screen opens (FamilyNotebookPrototype.attachReal after a
-    /// read): the service's author, the cats linked through the bridge, and
-    /// the 「猫」 list it shows (familyCats). No cat pages of its own here.
-    func notebookScreenCats() throws -> [UUID] {
+    /// read): the service's author, the cats linked through the bridge with
+    /// this iPhone's own pages and CatCareStore cats (`ownPages`, `localCats`),
+    /// and the 「猫」 list it shows (familyCats). attachReal's relinkOwnCats and
+    /// writeInitialPositions (CatCareStore) are not driven.
+    func notebookScreenRows() throws -> [(familyCatID: UUID, toolCatID: UUID)] {
         let store = try required(service.notebook, "\(name) has no notebook copy")
         let author = try required(service.author, "\(name) has no author (the screen stops before its cats)")
         // attachReal keeps the binding (UserDefaults) once it has a copy and an author.
         if savesBinding { bindingSaved = true }
         let snapshot = try store.snapshot()
         try expect(!snapshot.sharingEnded, "\(name)'s notebook is shared")
-        try FamilyNotebookCatCareBridge.linkFamilyCats(store, snapshot: snapshot, existingLocalIDs: [], author: author, profiles: [])
-        return FamilyNotebookCatCareBridge.listedCats(in: try store.snapshot()).map { $0.familyCatID }
+        try FamilyNotebookCatCareBridge.linkFamilyCats(store, snapshot: snapshot, existingLocalIDs: localCats, author: author,
+                                                       profiles: ownPages.map { $0.profile })
+        let rows = FamilyNotebookCatCareBridge.listedCats(in: try store.snapshot())
+        // FamilyNotebookCatCareBridge.apply then puts the linked cats into CatCareStore.
+        localCats.formUnion(rows.map { $0.toolCatID })
+        return rows
+    }
+    func notebookScreenCats() throws -> [UUID] { try notebookScreenRows().map { $0.familyCatID } }
+
+    // MARK: まど (group windows)
+
+    /// One pass of GroupWindowScreenModel.sync(background:) (GroupWindowView.swift,
+    /// a UIKit file), step for step over the app's client and this iPhone's
+    /// GroupWindowLocalPhotoStore: read the window, `remember` it with the
+    /// members' names, list the photos, and keep each one the store does not
+    /// already have (removed ones included) before the relay is told.
+    struct WindowSync { let listed: [String]; let downloaded: [String]; let shown: [String] }
+    func syncWindow(_ windowID: String) async throws -> WindowSync {
+        let latest = try await client.window(id: windowID)
+        await windowPhotos.remember(windowID: windowID, name: latest.name, myParticipantID: latest.myParticipantID,
+                                    memberNames: Dictionary(latest.members.map { ($0.id, $0.displayName) },
+                                                            uniquingKeysWith: { first, _ in first }))
+        let photos = try await client.photos(windowID: windowID)
+        var downloaded: [String] = []
+        for photo in photos {
+            guard !(await windowPhotos.contains(photoID: photo.id, windowID: windowID)) else { continue }
+            try await receiveWindowPhoto(photo, windowID: windowID, me: latest.myParticipantID)
+            downloaded.append(photo.id)
+        }
+        let shown = await windowPhotos.entries(windowID: windowID).map(\.id)
+        Log.note("\(name) synced the まど: \(photos.count) listed, \(downloaded.count) downloaded, \(shown.count) shown")
+        return .init(listed: photos.map(\.id), downloaded: downloaded, shown: shown)
+    }
+
+    /// GroupWindowScreenModel.receive with the production adapter's
+    /// fetchPhoto/keep (downloadPhoto, storeAndAcknowledge). The on-device
+    /// sensitive-content check (MomentModerating, iOS) is not run: the
+    /// verdict is `.safe`. A failure throws here (the screen leaves the photo
+    /// for its next sync).
+    private func receiveWindowPhoto(_ photo: GroupPhoto, windowID: String, me: String) async throws {
+        let incoming = try await client.downloadPhoto(photoID: photo.id, windowID: windowID)
+        let momentID = incoming.clientMomentID, isOwn = incoming.photo.senderParticipantID == me
+        let store: GroupWindowLocalPhotoStore = windowPhotos
+        let alreadyReceived = try await store.hasReceived(verifiedMomentID: momentID, windowID: windowID)
+        _ = try await client.storeAndAcknowledge(incoming) { kept in
+            if alreadyReceived {
+                guard try await store.hasReceived(verifiedMomentID: momentID, windowID: windowID)
+                else { throw GroupClientError.invalidResponse }
+                return
+            }
+            try await store.save(.init(id: kept.photo.id, senderParticipantID: kept.photo.senderParticipantID,
+                                       senderDisplayName: kept.photo.senderDisplayName, createdAt: kept.photo.createdAt,
+                                       isHidden: false, isOwn: isOwn, caption: kept.photo.caption),
+                                 jpeg: kept.jpeg, windowID: windowID, verifiedMomentID: momentID)
+        }
+    }
+
+    /// The person's choices of a window as this iPhone's Keychain keeps them.
+    func keptWindowChoices(_ windowID: String) throws -> GroupWindowKept.Choices? {
+        try GroupWindowKept.choices(windowID: windowID, in: keychain.store(Self.namespace + GroupWindowKept.namespaceSuffix))
     }
 
     /// POSTs this iPhone's notebook device sent under /v3/family-notebooks.
