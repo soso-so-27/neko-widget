@@ -134,6 +134,7 @@ import { groupReportingAvailabilityPath } from './group-reporting-availability';
 import { drainGroupAdmissionNotifications } from './group-admission-push';
 import { drainGroupNotifications } from './group-push';
 import { ownerTrialFamilyPushEnvironment, ownerTrialRequest } from './owner-two-device-trial';
+import { cleanupExpiredGroupRecovery } from './group-recovery-expiry';
 
 export async function route(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   beginReadDiagnostic(request);
@@ -750,6 +751,7 @@ export default {
       ctx.waitUntil(env.DB.prepare('DELETE FROM family_notebook_daily_usage WHERE day<(unixepoch()+32400)/86400-1').run());
       ctx.waitUntil(runGroupRelayCleanup(env));
     } else if (controller.cron === APNS_DRAIN_CRON) {
+      if(env.GROUP_RECOVERY_CATALOG_ENABLED==='YES')ctx.waitUntil(cleanupExpiredGroupRecovery(env.DB,Math.floor(Date.now()/1000)));
       if(deletionRequired(env))ctx.waitUntil(env.DB.prepare('SELECT 1 FROM group_identity_deletion_acceptance LIMIT 1').first()
         .then(pending=>pending?advanceIdentityDeletion(env):undefined));
       ctx.waitUntil(env.GROUP_REPORT_EMAIL_ENABLED==='YES'

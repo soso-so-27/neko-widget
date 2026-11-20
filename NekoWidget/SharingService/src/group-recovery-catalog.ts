@@ -10,6 +10,7 @@ import { removeRecoveryDevice } from './group-recovery-devices';
 import { freshRecovery } from './group-recovery-fresh';
 import { recipientRecoveryKeys } from './group-recovery-key-recipient';
 import {checkTrialRecovery} from './owner-two-device-trial';
+import {recoveryPendingLifetime} from './group-recovery-expiry';
 
 export interface RecoveryChallenge {
   id: string; person_id: string; identity_public_key: string; operation_id: string;
@@ -98,10 +99,10 @@ export async function groupRecoveryCatalogAPI(request: Request, env: Env): Promi
             AND (? IS NULL OR d.id IN (?,?))
           UNION SELECT r.device_id AS deviceId,MIN(r.model) AS model,MIN(r.created_at) AS registeredAt
           FROM group_recovery_pending r JOIN group_people p ON p.id=r.person_id AND p.state='active'
-          WHERE r.person_id=? AND NOT EXISTS(SELECT 1 FROM group_person_devices d WHERE d.id=r.device_id AND d.state='active')
+          WHERE r.person_id=? AND r.created_at>? AND NOT EXISTS(SELECT 1 FROM group_person_devices d WHERE d.id=r.device_id AND d.state='active')
             AND (? IS NULL OR (r.window_id=? AND r.device_id=?))
           GROUP BY r.device_id ORDER BY deviceId`).bind(c.person_id,trial?.window??null,trial?.aDevice??null,
-            trial?.recoveryDevice??null,c.person_id,trial?.window??null,trial?.window??null,trial?.recoveryDevice??null),
+            trial?.recoveryDevice??null,c.person_id,now-recoveryPendingLifetime,trial?.window??null,trial?.window??null,trial?.recoveryDevice??null),
         env.DB.prepare('DELETE FROM group_recovery_read_checks WHERE id=?').bind(claim),
       ]);
       return jsonResponse({ personId: c.person_id, windows: rows[2]!.results, notebooks: rows[3]!.results,

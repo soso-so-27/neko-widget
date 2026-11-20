@@ -10,6 +10,7 @@ import {exactKeys,binaryField,stringField,integerField,uuidField,type JsonRecord
 import {recoveryDeliveryState,recoveryEpoch,recoveryKeyChecks,requireRecoveryGate,type RecoveryPendingRow} from './group-recovery-key-delivery';
 import {verifyRecoveryOffer,recoveryReceiptBytes,type RecoveryKeyOffer} from './group-recovery-key-protocol';
 import {checkTrialRecovery} from './owner-two-device-trial';
+import {recoveryExpiryCheckedBatch,recoveryPendingLifetime} from './group-recovery-expiry';
 
 export function recoveryRecipientAction(c:RecoveryChallenge,windowId:string,action:string,payload:Uint8Array):Uint8Array{
  return groupFields(['NW3.RECOVERY.KEY.ACTION.V1',action,recoveryCatalogTranscript(c),windowId,payload]);
@@ -31,8 +32,8 @@ export async function recipientRecoveryKeys(env:Env,body:JsonRecord,operation:st
  checkTrialRecovery(env,c.person_id,windowId);
  await requireCurrentIdentity(env,c.person_id);
  return protectedGroupRead(env,async()=>{
-  const row=await env.DB.prepare('SELECT * FROM group_recovery_pending WHERE person_id=? AND operation_id=? AND window_id=?')
-   .bind(c.person_id,operation,windowId).first<RecoveryPendingRow>();
+  const row=await env.DB.prepare('SELECT * FROM group_recovery_pending WHERE person_id=? AND operation_id=? AND window_id=? AND created_at>?')
+   .bind(c.person_id,operation,windowId,now-recoveryPendingLifetime).first<RecoveryPendingRow>();
   if(!row){
    if(receipt)throw denied();
    const done=await env.DB.prepare('SELECT device_id,previous_hash FROM group_recovery_key_completions WHERE person_id=? AND operation_id=? AND window_id=?')
@@ -58,7 +59,7 @@ export async function recipientRecoveryKeys(env:Env,body:JsonRecord,operation:st
    env.DB.prepare('INSERT INTO group_recovery_read_checks VALUES (?,?,?,?)').bind(claim,c.person_id,c.id,now),
    ...recoveryKeyChecks(env,row,head,claim),
    env.DB.prepare('DELETE FROM group_recovery_read_checks WHERE id=?').bind(claim)];
-  if(!boundary){await env.DB.batch(statements);return jsonResponse({state:'needsParticipationProof',canOpen:false,canSend:false,items:[]});}
+  if(!boundary){await recoveryExpiryCheckedBatch(env.DB,statements);return jsonResponse({state:'needsParticipationProof',canOpen:false,canSend:false,items:[]});}
   if(!receipt){
    const rows=await env.DB.prepare(`SELECT offer_json,received_at FROM group_recovery_key_offers
     WHERE person_id=? AND operation_id=? AND roster_hash=? AND expires_at>? AND key_epoch>? ORDER BY key_epoch LIMIT 17`)
@@ -69,7 +70,7 @@ export async function recipientRecoveryKeys(env:Env,body:JsonRecord,operation:st
     if(!await verifyRecoveryOffer(offer,head,old,recipient,boundary,now))throw new ApiError(409,'recovery_proof_invalid','Recovery proof is invalid.');
     items.push({offer,epochRoster:old.packet,received:stored.received_at!==null});
    }
-   await env.DB.batch(statements);await requireCurrentIdentity(env,c.person_id);
+   await recoveryExpiryCheckedBatch(env.DB,statements);await requireCurrentIdentity(env,c.person_id);
    return jsonResponse({state:'waitingForReceipt',canOpen:false,canSend:false,roster:head.packet,participation:boundary,recipientProof:JSON.parse(row.proof_json),
     items,nextAfterEpoch:rows.results.length>16?items.at(-1)!.offer.keyEpoch:null});
   }
@@ -85,7 +86,7 @@ export async function recipientRecoveryKeys(env:Env,body:JsonRecord,operation:st
   statements.push(env.DB.prepare(`UPDATE group_recovery_key_offers SET received_at=COALESCE(received_at,?),receipt_signature=?,person_authorization=?
    WHERE person_id=? AND operation_id=? AND key_epoch=? AND offer_hash=? AND expires_at>?`)
    .bind(now,receiptSignature,authorization,c.person_id,operation,epoch,stored.offer_hash,now));
-  await env.DB.batch(statements);await requireCurrentIdentity(env,c.person_id);
+  await recoveryExpiryCheckedBatch(env.DB,statements);await requireCurrentIdentity(env,c.person_id);
   const committed=await env.DB.prepare(`SELECT 1 FROM group_recovery_key_offers WHERE person_id=? AND operation_id=?
    AND key_epoch=? AND offer_hash=? AND received_at IS NOT NULL AND receipt_signature=? AND person_authorization=?`)
    .bind(c.person_id,operation,epoch,stored.offer_hash,receiptSignature,authorization).first();
