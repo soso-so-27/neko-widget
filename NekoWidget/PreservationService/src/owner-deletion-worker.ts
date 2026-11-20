@@ -1,7 +1,7 @@
 import { type Env } from './index';
 import { boundDeletionInventory } from './owner-deletion-inventory';
-import { OwnerDeletionExecutor } from './owner-deletion';
-import { OwnerDeletionJournal } from './owner-deletion-journal';
+import { OwnerDeletionExecutor, type OwnerDeletionBlock } from './owner-deletion';
+import { OwnerDeletionJournal, type DeletionProgress } from './owner-deletion-journal';
 import { S3VersionPurge } from './s3-version-purge';
 import { AppleTokenRevoker } from './apple-revocation';
 import { createAppleClientSecret } from './apple';
@@ -61,13 +61,32 @@ export default {
       // Advance before work: crashes and permanently blocked owners must not
       // monopolize the front of the queue on every scheduled invocation.
       await journal.markAttempt(request.ownerId);
+      const blocks = new Set<OwnerDeletionBlock>();
+      let progress: DeletionProgress | undefined;
+      let retry = false;
+      let completed = false;
       try {
         for (let step = 0; step < 48 && now() - started < 25_000; step++) {
-          const result = await executor.step(request.ownerId);
-          if (result === 'waiting') { failed = true; break; }
-          if (result === 'completed') break;
+          const result = await executor.step(request.ownerId, {
+            blocked: reason => blocks.add(reason), progress: value => { progress = value; },
+          });
+          if (result === 'waiting') { retry = true; break; }
+          if (result === 'completed') { completed = true; break; }
         }
-      } catch { failed = true; }
+      } catch { retry = true; }
+      if (!completed) {
+        const observedAt = now();
+        let lastProgressAt = request.requestedAt;
+        try { lastProgressAt = await journal.observeProgress(request, progress, observedAt); }
+        catch { retry = true; }
+        const idleSeconds = Math.max(0, Math.floor((observedAt - lastProgressAt) / 1000));
+        if (retry || idleSeconds >= 3600) {
+          failed = true;
+          console.warn(JSON.stringify({ event: 'preservation_owner_deletion_blocked',
+            reasons: blocks.size ? [...blocks] : [retry ? 'step-unavailable' : 'no-confirmed-progress'],
+            idleSeconds, investigationDue: idleSeconds >= 3600 }));
+        }
+      }
       if (now() - started >= 25_000) break;
     }
     if (failed) throw new ServiceError('OWNER_DELETION_RETRY_REQUIRED', 503);

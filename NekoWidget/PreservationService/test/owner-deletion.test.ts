@@ -117,8 +117,13 @@ describe('explicit owner-requested deletion', () => {
     await expect(route(request({ confirmation: 'delete-service-account', receipt: f.receipt, ownerId: crypto.randomUUID() }), services))
       .rejects.toMatchObject({ code: 'INVALID_REQUEST' });
     await expect(route(request({ receipt: f.receipt }), services)).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    await expect(route(request({ confirmation: 'delete-service-account', receipt: f.receipt }), services))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' });
     expect(await f.journal.request(f.session.ownerId)).toBeNull();
-    const result = await route(request({ confirmation: 'delete-service-account', receipt: f.receipt }), services);
+    // The signed challenge itself is exercised in device-sessions.integration.
+    vi.spyOn(f.auth.devices, 'authorizeOwnerDeletion').mockResolvedValueOnce(undefined);
+    const result = await route(request({ confirmation: 'delete-service-account', receipt: f.receipt,
+      challengeId: randomToken(), deviceProof: 'synthetic-test-proof' }), services);
     expect(result.status).toBe(202);
     await expect(f.auth.requireSession(f.session.token)).rejects.toThrow();
     expect(await f.requests.status(f.session.ownerId, f.receipt)).toEqual({ state: 'processing' });
@@ -229,7 +234,9 @@ describe('explicit owner-requested deletion', () => {
     await db.prepare('INSERT INTO pa_recovery_write_leases(write_id,owner_id,started_at) VALUES(?,?,1)')
       .bind(crypto.randomUUID(), f.session.ownerId).run();
     await f.requests.request(f.session.token, f.receipt);
-    expect(await f.executor.step(f.session.ownerId)).toBe('waiting');
+    const blocked = vi.fn();
+    expect(await f.executor.step(f.session.ownerId, { blocked, progress() {} })).toBe('waiting');
+    expect(blocked).toHaveBeenCalledExactlyOnceWith('write-lease');
     expect(f.revokeRefreshToken).not.toHaveBeenCalled();
     expect(f.deleteVersion).not.toHaveBeenCalled();
   });
@@ -272,4 +279,19 @@ describe('explicit owner-requested deletion', () => {
     expect(f.deleteVersion).not.toHaveBeenCalled();
     expect(await f.requests.status(f.session.ownerId, f.receipt)).toEqual({ state: 'processing' });
   });
+});
+it('keeps the stuck clock through retries and advances it only after verified remaining work falls', async () => {
+  const f = await fixture();
+  await f.requests.request(f.session.token, f.receipt);
+  const request = (await f.journal.request(f.session.ownerId))!;
+  const t = request.requestedAt;
+  const cloud = (remaining: number) => ({ phase: 'cloud' as const, remaining });
+  const database = (remaining: number) => ({ phase: 'database' as const, remaining });
+  expect(await f.journal.observeProgress(request, cloud(3), t + 1)).toBe(t);
+  expect(await f.journal.observeProgress(request, cloud(3), t + 3_600_000)).toBe(t);
+  expect(await f.journal.observeProgress(request, undefined, t + 3_600_100)).toBe(t);
+  expect(await f.journal.observeProgress(request, cloud(2), t + 3_600_200)).toBe(t + 3_600_200);
+  expect(await f.journal.observeProgress(request, cloud(4), t + 3_600_300)).toBe(t + 3_600_200);
+  expect(await f.journal.observeProgress(request, database(8), t + 3_600_400)).toBe(t + 3_600_400);
+  expect(await f.journal.observeProgress(request, cloud(1), t + 3_600_500)).toBe(t + 3_600_400);
 });
