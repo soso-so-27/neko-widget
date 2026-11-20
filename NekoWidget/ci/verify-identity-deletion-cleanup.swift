@@ -12,7 +12,7 @@ import Foundation
 private enum Failure: Error { case check(String) }
 private func check(_ value: Bool, _ name: String) throws { if !value { throw Failure.check(name) } }
 
-private final class MemorySecrets: GroupSecretStore, @unchecked Sendable {
+final class MemorySecrets: GroupSecretStore, @unchecked Sendable {
     private let lock = NSLock()
     private var values: [String: Data] = [:]
     /// Accounts whose removal fails (a Keychain error).
@@ -33,7 +33,7 @@ private final class MemorySecrets: GroupSecretStore, @unchecked Sendable {
 }
 
 /// The iPhone's device-only Keychain: one store per namespace.
-private final class Keychain: @unchecked Sendable {
+final class Keychain: @unchecked Sendable {
     private let lock = NSLock()
     private var stores: [String: MemorySecrets] = [:]
     var listingFails = false
@@ -51,7 +51,7 @@ private final class Keychain: @unchecked Sendable {
 }
 
 /// Takes the deletion request (or answers 503 while `down`); records requests.
-private actor DeletionRelay: GroupHTTPTransport {
+actor DeletionRelay: GroupHTTPTransport {
     var down = false
     private(set) var deletions = 0
     func setDown(_ value: Bool) { down = value }
