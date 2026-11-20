@@ -39,5 +39,11 @@ BEGIN
  WHERE owner_id=NEW.owner_id AND record_id=NEW.record_id AND tombstone_revision=NEW.target_revision;
 END;
 
-INSERT INTO pa_record_physical_delete_queue(owner_id,record_id,tombstone_revision,requested_at)
- SELECT owner_id,record_id,tombstone_revision,requested_at FROM pa_record_physical_delete_candidates;
+-- Backfill only records already in the existing R2 deletion backlog. Other
+-- historical tombstones need a separate scope audit before physical erasure.
+INSERT OR IGNORE INTO pa_record_physical_delete_queue(owner_id,record_id,tombstone_revision,requested_at)
+ SELECT c.owner_id,c.record_id,c.tombstone_revision,c.requested_at
+ FROM pa_record_physical_delete_candidates c
+ WHERE EXISTS(SELECT 1 FROM pa_pending_deletes p
+   WHERE p.object_key >= 'personal/'||c.owner_id||'/'||c.record_id||'/'
+     AND p.object_key < 'personal/'||c.owner_id||'/'||c.record_id||'0');

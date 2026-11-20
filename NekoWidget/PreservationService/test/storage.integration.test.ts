@@ -623,6 +623,25 @@ it('erases only committed target payloads across all pages and confirms their ab
   });
 });
 
+it('backfills existing tombstones only when they were in the R2 cleanup backlog', async () => {
+  const f = await fixture();
+  const remote = syntheticRecovery(f.options.keys);
+  const archive = new ArchiveStore({ ...f.options, recovery: remote.recovery });
+  const pending = crypto.randomUUID(), historical = crypto.randomUUID(), owner = f.session.ownerId;
+  await archive.put(f.session.token, pending, f.request());
+  await archive.put(f.session.token, historical, f.request({ photoBase64: null, document: { ...document, photoFile: null } }));
+  await archive.remove(f.session.token, pending, 1);
+  await archive.remove(f.session.token, historical, 1);
+  await binding.DB.prepare('DELETE FROM pa_record_physical_delete_queue WHERE owner_id=?').bind(owner).run();
+  const migration = (env as unknown as { TEST_MIGRATIONS: D1Migration[] }).TEST_MIGRATIONS
+    .find(item => item.name === '0052_record_physical_delete_queue.sql');
+  expect(migration?.queries.at(-1)).toContain('FROM pa_record_physical_delete_candidates c');
+  await binding.DB.prepare(migration!.queries.at(-1)!).run();
+  const actual = await binding.DB.prepare('SELECT record_id FROM pa_record_physical_delete_queue WHERE owner_id=?')
+    .bind(owner).all();
+  expect(actual.results).toEqual([{ record_id: pending }]);
+});
+
 it('real D1/R2 round trip survives new auth/store instances and expires membership without losing access', async () => {
   const f = await fixture(); const id = crypto.randomUUID();
   await f.archive.put(f.session.token, id, f.request());
