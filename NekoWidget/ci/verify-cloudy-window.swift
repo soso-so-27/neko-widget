@@ -87,7 +87,28 @@ private struct Fixture {
 
 @main
 private enum CloudyWindowVerifier {
+    /// 11/20: 「◯年前のきょう」 and the day boundary follow the iPhone's own
+    /// day, as the app's 写真 tab does; in Japan that is the JST day as before.
+    static func daysFollowTheIPhone() throws {
+        let iso = ISO8601DateFormatter()
+        let taken = iso.date(from: "2025-11-20T20:00:00Z")!   // 10:00 in Honolulu, 05:00 the 21st in Tokyo
+        let today = iso.date(from: "2026-11-20T12:00:00Z")!   // the 20th in both: 02:00 Honolulu, 21:00 Tokyo
+        CloudyWindowStore.timeZoneOverride = TimeZone(identifier: "Pacific/Honolulu")!
+        let honolulu = CloudyWindowStore.dateMatch(takenAt: taken, on: today)
+        try check(honolulu?.offset == 0 && honolulu?.yearsAgo == 1, "the same day a year ago in Honolulu")
+        try check(CloudyWindowStore.nextDay(after: today) == iso.date(from: "2026-11-21T10:00:00Z")!, "Honolulu midnight")
+        CloudyWindowStore.timeZoneOverride = TimeZone(secondsFromGMT: 9 * 3_600)!
+        let tokyo = CloudyWindowStore.dateMatch(takenAt: taken, on: today)
+        try check(tokyo?.offset == 1, "a day apart in Tokyo")
+        try check(CloudyWindowStore.nextDay(after: today) == iso.date(from: "2026-11-20T15:00:00Z")!, "midnight JST")
+        CloudyWindowStore.timeZoneOverride = nil
+        try check(CloudyWindowStore.calendar.timeZone == TimeZone.current, "the iPhone's zone by default")
+    }
+
     static func main() throws {
+        try daysFollowTheIPhone()
+        // The checks below were written for an iPhone in Japan.
+        CloudyWindowStore.timeZoneOverride = TimeZone(secondsFromGMT: 9 * 3_600)!
         try dailyReveal()
         try freeWindowGetsItsFirstPhotoOnce()
         try staleDisplayReveal()

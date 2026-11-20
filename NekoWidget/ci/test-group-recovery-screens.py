@@ -167,7 +167,20 @@ class GroupRecoveryScreenTests(unittest.TestCase):
         self.assertIn("guard !probing, lastProbe.map", availability)
         self.assertNotIn("publishCurrentRoot", availability)
         self.assertIn("let catalog = try await client.catalog()", code)
-        # Each root has its own journal and Keychain namespace; nothing is removed locally.
+        # 11/20: the one carve-out. Only a recovered device carrying the relay's
+        # confirmed 「taken off」 mark (GroupDeviceRevocation), and only from
+        # contexts (the person's 「引き継ぐ」), has its drafts discarded so a new
+        # device key is made. Everything else below still holds without it.
+        END = chr(10) + "    }" + chr(10)
+        renew = code.split("private static func renewTakenOff(", 1)[1].split(END, 1)[0]
+        self.assertIn('for account in try journal.accounts(prefix: "op:recovery:") + journal.accounts(prefix: "op:rf:") {', renew)
+        self.assertEqual(renew.count(".remove("), 1)
+        guarded = code.split("static func deviceIdentity(", 1)[1].split(END, 1)[0]
+        self.assertIn("guard let revocations, let journal, try GroupDeviceRevocation.isMarked(identity, in: revocations) else { return identity }", guarded)
+        self.assertEqual(code.count("renewTakenOff("), 2)
+        self.assertIn("let identity = try Self.deviceIdentity(root: key, secrets: secrets, journal: journal, revocations: revocations)", code)
+        code = code.replace("private static func renewTakenOff(" + renew + END, "")
+        # Each root has its own journal and Keychain namespace; nothing else is removed locally.
         self.assertIn('namespace + ".recovery-journal." + scope', code)
         self.assertIn('namespace + ".recovery." + scope', code)
         # The only removal is forwarding the person's 3-iPhone choice to the relay
@@ -259,7 +272,9 @@ class GroupRecoveryScreenTests(unittest.TestCase):
         live = (ROOT / "NekoWidget/Services/GroupRecoveryLiveSession.swift").read_text(encoding="utf-8")
         code = "\n".join(line.split("//", 1)[0] for line in live.splitlines())
         session = code.split("actor GroupRecoveryNotebookSession", 1)[1].split("// MARK: - P5", 1)[0]
-        self.assertIn("case .submitSameOperation(let id) where id == operationID:\n            try await steps.confirm()", session)
+        self.assertIn("case .submitSameOperation(let id) where id == operationID:", session)
+        # 11/20: the 3-iPhone limit of the notebook's registration is the row's existing 3台まで.
+        self.assertIn("do { try await steps.confirm() } catch GroupClientError.deviceLimit { throw GroupRecoveryClient.Failure.deviceLimit }", session)
         self.assertIn("guard try await steps.linked() else { return .notStarted(operationID: operationID) }", session)
         self.assertIn(": .registeredWaitingForKeys(operationID: operationID, deviceID: deviceID)", session)
         self.assertIn("items.append(.init(windowID: \"notebook-\" + family.uuidString.lowercased(), name: nil, state: state,", code)

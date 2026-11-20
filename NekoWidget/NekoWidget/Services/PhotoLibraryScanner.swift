@@ -381,10 +381,11 @@ actor PhotoLibraryScanner {
             ]
         )
 
+        // 11/20: a stored file with a repeated identifier must not trap;
+        // the first record wins, as everywhere else that reads assets.
         let previousByIdentifier = Dictionary(
-            uniqueKeysWithValues: migratedExisting.assets.map {
-                ($0.localIdentifier, $0)
-            }
+            migratedExisting.assets.map { ($0.localIdentifier, $0) },
+            uniquingKeysWith: { first, _ in first }
         )
         let activeIdentifiers = Set(assets.map(\.localIdentifier))
         // A selected album is only a candidate scope, not permission to destroy

@@ -76,8 +76,9 @@ actor FamilyNotebookMembershipClient {
     private let pendingAccount = "op:family:management:pending"
     private var working = false
 
-    init(endpoint: URL, identity: GroupDeviceIdentity, transport: any GroupHTTPTransport, journal: any GroupSecretStore) throws {
-        self.wire = try .init(endpoint: endpoint, identity: identity, transport: transport, journal: journal)
+    init(endpoint: URL, identity: GroupDeviceIdentity, transport: any GroupHTTPTransport, journal: any GroupSecretStore,
+         revocations: (any GroupSecretStore)? = nil) throws {
+        self.wire = try .init(endpoint: endpoint, identity: identity, transport: transport, journal: journal, revocations: revocations)
         self.journal = journal; self.endpoint = endpoint.absoluteString
         self.personID = identity.personID; self.deviceID = try identity.deviceID
     }

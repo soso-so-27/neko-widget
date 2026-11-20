@@ -360,6 +360,12 @@ async function dispatch(request:Request,env:Env,ctx?:ExecutionContext):Promise<R
       );
     }
   }
+  // Close old admission independently of current billing, v3 and the
+  // completion or revocation of old pairings already in progress.
+  if (env.LEGACY_PAIRING_ADMISSION_ENABLED === "NO" && request.method === "POST" &&
+      (pathname === "/v1/spaces" || /^\/v1\/invitations\/[^/]+\/(?:challenges|enrollments)$/u.test(pathname))) {
+    throw new ApiError(503, "legacy_pairing_admission_disabled", "Legacy pairing admission is unavailable.");
+  }
   if (request.method === "POST" && pathname === "/v1/spaces") {
     return createSpace(request, env);
   }

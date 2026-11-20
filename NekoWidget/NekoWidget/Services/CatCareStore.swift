@@ -323,7 +323,11 @@ final class CatCareStore: ObservableObject {
         guard let current = state else { return }
         let items = profiles.compactMap { profile -> (UUID, String, CatCareDay?)? in
             guard let id = UUID(uuidString: profile.identifier) else { return nil }
-            return (id, profile.displayName, profile.lifeDates.birthday.flatMap { CatCareDay(date: $0.date) })
+            guard let birthday = profile.lifeDates.birthday else { return (id, profile.displayName, nil) }
+            // 11/20: a birthday this app cannot hold as a day (an old 和暦/仏暦
+            // year read as 西暦, year 8) is not "cleared": the copy is kept.
+            guard let day = CatCareDay(date: birthday.date) else { return nil }
+            return (id, profile.displayName, day)
         }
         let needed = items.filter { id, _, day in
             let record = current.cats.first { $0.profileID == id && $0.deletedAt == nil }

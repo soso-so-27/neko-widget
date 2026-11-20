@@ -748,7 +748,8 @@ class FamilyNotebookDeviceChange1119Tests(unittest.TestCase):
         # 11/19 (入れ直し): with a link, the recovered device wins over a
         # leftover usual device of the same person, and registers itself first.
         self.assertIn("usualPersonID != link.personID || usualDeviceID != recoveredDeviceID", choice)
-        self.assertIn("usualPersonID: usual, usualDeviceID: usualDevice)", factory)
+        # 11/20: a recovered device the relay said was taken off is never picked.
+        self.assertIn("usualPersonID: usual, usualDeviceID: usualDevice, revocations: client.revocations)", factory)
         self.assertIn("try await reinstalledIPhoneRegistersItsNewDevice(directory: directory, endpoint: endpoint)", DELIVERY)
         self.assertIn("reinstall: the first write is the new device's registration", DELIVERY)
 

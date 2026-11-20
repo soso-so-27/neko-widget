@@ -88,8 +88,21 @@ extension GroupRecoveryRegistrationState {
 // Names here are display values resolved by the production adapter after verification.
 // The wire protocol in the companion specification uses encrypted names instead.
 
-enum GroupRole: String, Codable, Sendable { case owner, member }
-enum GroupMemberState: String, Codable, Sendable { case pending, active, left, removed }
+// 11/20: a value a newer relay adds is read as `unknown`, which allows
+// nothing (never an owner, an active member or an open delivery), instead of
+// failing the whole list. Signed rosters keep their own strict types.
+enum GroupRole: String, Codable, Sendable {
+    case owner, member, unknown
+    init(from decoder: Decoder) throws {
+        self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
+    }
+}
+enum GroupMemberState: String, Codable, Sendable {
+    case pending, active, left, removed, unknown
+    init(from decoder: Decoder) throws {
+        self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
+    }
+}
 enum GroupRequestState: String, Codable, Sendable {
     case pending, approved, rejected, cancelled, expired
 }
@@ -97,8 +110,18 @@ enum GroupConnectionState: String, Codable, Sendable { case active, rotationRequ
 // Server-derived delivery policy is separate from membership. A paused window
 // still supports reading, hearts and member management. nil means unconfirmed,
 // never a locally calculated trial or an assertion of paid access.
-enum GroupDeliveryStatus: String, Codable, Sendable { case active, paused }
-enum GroupDeliveryReason: String, Codable, Sendable { case ownerPlus = "owner_plus", ownerPlusRequired = "owner_plus_required" }
+enum GroupDeliveryStatus: String, Codable, Sendable {
+    case active, paused, unknown
+    init(from decoder: Decoder) throws {
+        self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
+    }
+}
+enum GroupDeliveryReason: String, Codable, Sendable {
+    case ownerPlus = "owner_plus", ownerPlusRequired = "owner_plus_required", unknown
+    init(from decoder: Decoder) throws {
+        self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
+    }
+}
 enum GroupSubscriptionError: Error, Equatable, Sendable { case ownerPlusRequired, windowPaused }
 
 struct GroupDevice: Identifiable, Codable, Equatable, Sendable {
@@ -135,6 +158,9 @@ struct GroupWindow: Identifiable, Codable, Equatable, Sendable {
     var memberCount: Int { activeMembers.count }
     var deviceCount: Int { activeMembers.reduce(0) { $0 + $1.devices.count } }
     var canManage: Bool { myRole == .owner && state != .closed }
+    /// 11/20: a delivery state from a newer relay that this app cannot read:
+    /// sending waits (the relay decides anyway); reading and hearts go on.
+    var hasUnknownDelivery: Bool { deliveryStatus == .unknown || deliveryReason == .unknown }
 }
 
 struct GroupInvitation: Identifiable, Equatable, Sendable {
@@ -201,6 +227,13 @@ enum GroupClientError: Error, Equatable, Sendable {
     /// window per day (JST), or 30 hearts a day. Which one is known from the
     /// request that got it.
     case dailyLimit
+    /// 11/20: the relay's `reservation_expired`: a photo's reservation ran
+    /// out (30 minutes) before it was committed. Nothing was delivered; the
+    /// photo is sealed and reserved again.
+    case reservationExpired
+    /// 11/20: the relay's `delivery_expired` (410): it no longer holds this
+    /// photo for this iPhone (7 days after arrival), so no heart or download.
+    case deliveryExpired
 }
 
 enum GroupInvitationError: Error, Equatable, Sendable {

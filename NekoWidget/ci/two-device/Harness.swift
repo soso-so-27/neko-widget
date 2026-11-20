@@ -157,6 +157,7 @@ final class LoopbackTransport: GroupHTTPTransport, @unchecked Sendable {
     private let lock = NSLock()
     private var entries: [Entry] = []
     private var cancels: [(device: String, contains: String)] = []
+    private var drops: [(device: String, method: String, suffix: String)] = []
 
     init(origin: URL) throws {
         guard let components = URLComponents(url: origin, resolvingAgainstBaseURL: false), components.host != nil else {
@@ -184,6 +185,19 @@ final class LoopbackTransport: GroupHTTPTransport, @unchecked Sendable {
         cancels.remove(at: index)
         return true
     }
+    /// 11/20 (S23): the next `method` request of `device` whose path ends
+    /// with `suffix` is lost before it is sent (no connection).
+    func dropNext(device: String, method: String, suffix: String) {
+        lock.lock(); defer { lock.unlock() }; drops.append((device, method, suffix))
+    }
+    private func takeDrop(device: String?, method: String, path: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let device, let index = drops.firstIndex(where: {
+            $0.device == device && $0.method == method && path.hasSuffix($0.suffix)
+        }) else { return false }
+        drops.remove(at: index)
+        return true
+    }
     private func record(_ entry: Entry) { lock.lock(); defer { lock.unlock() }; entries.append(entry) }
 
     private func url(_ path: String) throws -> URL {
@@ -203,6 +217,10 @@ final class LoopbackTransport: GroupHTTPTransport, @unchecked Sendable {
         if takeCancel(device: device, method: method, path: path) {
             record(.init(device: device, method: method, path: path, status: -1))
             throw CancellationError()
+        }
+        if takeDrop(device: device, method: method, path: path) {
+            record(.init(device: device, method: method, path: path, status: -2))
+            throw GroupClientError.offline
         }
         let data: Data, response: URLResponse
         do { (data, response) = try await session.data(for: outgoing) }
@@ -580,7 +598,13 @@ struct Drained: Decodable {
                 return try await self.recoveredIdentity() != nil
             }, photoRuntimeEnabled: true, photoTransport: relay.transport,
             // The pinned recipient: on macOS GroupReportCrypto accepts no other.
-            moderationRecipient: { (keyID: GroupReportCrypto.moderationKeyID, publicKey: GroupReportCrypto.moderationPublicKey) })
+            moderationRecipient: { (keyID: GroupReportCrypto.moderationKeyID, publicKey: GroupReportCrypto.moderationPublicKey) },
+            // 11/20: FamilyNotebookServiceFactory's marks, link removal and fresh start.
+            revocations: client.revocations, forgetRevoked: { [unowned self] pair in
+                let keychain = self.keychain
+                try? FamilyNotebookIdentityChoice.forgetLink(links: keychain.store(Self.namespace + Self.recoveryLinkSuffix), pair: pair,
+                    recoveryStore: { keychain.store(Self.namespace + ".recovery." + $0) })
+            }, renewForEntrance: { [unowned self] in try await self.client.startFreshAfterRevocation() })
         notebookIdentity = nil; lastState = nil; nameChecked = false
         hiddenEntriesChecked = false; repliesCheckedNone = false; linkAnswersChecked = false
         lastReadAt = nil; identityChecked = nil; sharingState = .checking
@@ -622,7 +646,7 @@ struct Drained: Decodable {
         let keychain = self.keychain, recoveryPrefix = Self.namespace + ".recovery."
         return try FamilyNotebookIdentityChoice.load(links: keychain.store(Self.namespace + Self.recoveryLinkSuffix),
             recoveryStore: { keychain.store(recoveryPrefix + $0) },
-            usualPersonID: usual, usualDeviceID: usualDevice)
+            usualPersonID: usual, usualDeviceID: usualDevice, revocations: client.revocations)
     }
 
     /// The provider of FamilyNotebookServiceFactory.make(), line for line,
@@ -639,7 +663,7 @@ struct Drained: Decodable {
         return try FamilyNotebookSession(endpoint: relay.endpoint, identity: identity, transport: relay.transport,
             journal: journal, secrets: keychain.store(Self.namespace + ".family." + scope),
             directory: directory.appendingPathComponent("notebooks", isDirectory: true),
-            pinSync: FamilyNotebookStoredPinSync(store: cloud.pins))
+            pinSync: FamilyNotebookStoredPinSync(store: cloud.pins), revocations: client.revocations)
     }
 
     /// The person key of this iPhone's usual identity (currentRegisteredRoot).
@@ -662,6 +686,8 @@ struct Drained: Decodable {
         var roots = cloud.roots
         let local = try usualRoot()
         if let local { roots.append(local) }
+        // 11/20: a person set aside after a fresh start (GroupRecoveryLiveModel.connected).
+        roots += try ProductionGroupWindowClient.setAsideRoots(in: keychain.store(Self.namespace))
         let keychain = self.keychain, namespace = Self.namespace, endpoint = relay.endpoint
         let transport = relay.transport, support = self.support, device = self
         var builder = GroupRecoveryLiveBuilder(endpoint: endpoint, environment: Self.recoveryEnvironment, transport: transport,
@@ -673,6 +699,7 @@ struct Drained: Decodable {
             Device.notebookSteps(context, keychain: keychain, endpoint: endpoint, transport: transport, support: support, device: device)
         }
         builder.usualRoot = local
+        builder.revocations = keychain.store(namespace)
         let ready = builder, candidates = roots
         let contexts = try await SharingPersonAction.run { try await ready.contexts(roots: candidates) }
         return GroupRecoveryAdapter(contexts: contexts)
@@ -694,7 +721,8 @@ struct Drained: Decodable {
                 personID: context.personID, familyIDs: context.familyIDs, hasWindows: context.hasWindows) {
                 let client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: recovery, transport: transport,
                     outboxDirectory: support.appendingPathComponent("GroupTransport-v3", isDirectory: true)
-                        .appendingPathComponent("recovery-" + context.scope, isDirectory: true).appendingPathComponent("outbox", isDirectory: true))
+                        .appendingPathComponent("recovery-" + context.scope, isDirectory: true).appendingPathComponent("outbox", isDirectory: true),
+                    revocations: keychain.store(namespace))
                 _ = try await client.familyNotebookIdentity()
             }
             await device.notebookRestarted()
@@ -778,6 +806,8 @@ struct Drained: Decodable {
         do {
             let state = try await service.loadState()
             lastState = state
+            // FamilyNotebookSharing.detachIfRevoked: the binding goes (11/20).
+            if service.takeRevokedDetach() { bindingSaved = false }
             // FamilyNotebookSharing.read after a whole read: the mark and
             // lastReadAt (attachReal's binding: notebookScreenCats).
             switch state {

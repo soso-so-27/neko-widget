@@ -769,7 +769,8 @@ struct AppRootView: View {
             isPaused: state.phase == .cancelled,
             lastScannedAt: state.lastScannedAt,
             isGroupedAlbumUpgrade: state.purpose == .groupedAlbumUpgrade,
-            hasFailed: state.phase == .failed
+            hasFailed: state.phase == .failed,
+            startupLoadFailed: viewModel.startupLoadFailed
         )
 
         switch state.resultKind {

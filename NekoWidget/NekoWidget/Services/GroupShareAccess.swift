@@ -92,16 +92,20 @@ final class GroupShareKeychain: GroupSecretStore, Sendable {
         guard status == errSecSuccess, let data = result as? Data else { throw GroupClientError.authenticationRequired }
         return data
     }
+    /// 11/20: the iPhone is locked, so this WhenUnlocked item cannot be
+    /// written now (a silent push). Not a rejected update.
+    struct Locked: Error {}
     func write(_ data: Data, account: String, createOnly: Bool) throws {
         var value = query(account)
         value[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         value[kSecValueData as String] = data
         let status = SecItemAdd(value as CFDictionary, nil)
         if status == errSecDuplicateItem, !createOnly {
-            guard SecItemUpdate(query(account) as CFDictionary,
-                                [kSecValueData as String: data] as CFDictionary) == errSecSuccess
-            else { throw GroupClientError.authenticationRequired }
-        } else if status != errSecSuccess { throw GroupClientError.authenticationRequired }
+            let updated = SecItemUpdate(query(account) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+            if updated == errSecInteractionNotAllowed { throw Locked() }
+            guard updated == errSecSuccess else { throw GroupClientError.authenticationRequired }
+        } else if status == errSecInteractionNotAllowed { throw Locked() }
+        else if status != errSecSuccess { throw GroupClientError.authenticationRequired }
     }
     func remove(_ account: String) throws {
         let status = SecItemDelete(query(account) as CFDictionary)
@@ -153,6 +157,10 @@ final class GroupSharePublishingStore: GroupSecretStore, Sendable {
             } else {
                 try snapshot.remove(account)
             }
+        } catch is GroupShareKeychain.Locked {
+            // 11/20: only the lock stopped this write (a silent push while the
+            // iPhone is locked). The grant stays; a removal never waits on
+            // the lock, and the next read after unlocking publishes again.
         } catch {
             // Do not silently keep an older grant if this update was rejected.
             try? snapshot.remove(account)

@@ -40,8 +40,10 @@ class GregorianDatesTests(unittest.TestCase):
         self.assertIn("Calendar.nekoGregorian(in: calendar).dateComponents", core)
         settings = source("Shared/Models/AppSettings.swift")
         life = settings[settings.index("struct CatLifeDate"):settings.index("struct CatLifeReference")]
-        # The iPhone's calendar only reads a year saved in it before 11/10.
-        self.assertEqual(re.findall(r"Calendar\s*=\s*\.current\b.*", life), ["Calendar = .current) -> Date? {"])
+        # The iPhone's calendar only reads a year saved in it before 11/10,
+        # and (11/20) turns such a year into 西暦 while it can tell the day.
+        self.assertEqual(re.findall(r"Calendar\s*=\s*\.current\b.*", life), [
+            "Calendar = .current) -> Date? {", "Calendar = .current) -> CatLifeDate? {"])
         self.assertIn("isDeviceCalendarYear(year", life)
         self.assertIn("init?(date: Date, calendar: Calendar = .nekoGregorian)", life)
         self.assertIn("func date(in inputCalendar: Calendar = .nekoGregorian", life)

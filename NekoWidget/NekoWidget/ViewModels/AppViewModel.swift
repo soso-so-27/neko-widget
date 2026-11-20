@@ -102,7 +102,10 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var savedPhotoIdentifiers: Set<String> = []
     @Published private(set) var savedPhotoStateReadFailed = false
     @Published private(set) var catCandidateCuration: CatCandidateCurationState = .empty
-    @Published private(set) var catHouseholdIdentity: CatHouseholdIdentityState?
+    @Published private(set) var catHouseholdIdentity: CatHouseholdIdentityState? {
+        // 11/20: tools count only cats whose profile still exists.
+        didSet { CatProfileLimit.knownProfiles = catHouseholdIdentity.map { Set($0.profiles.map(\.id.uuidString)) } }
+    }
     @Published private(set) var photoSourceAlbums: [PhotoSourceAlbumOption] = []
     @Published private(set) var photoSourceStatus: PhotoSourceAlbumStatus = .allLibrary
     /// Creation dates for currently accessible profile-linked album assets.
@@ -404,6 +407,7 @@ final class AppViewModel: ObservableObject {
 
     private var isManualRescanRequestPending = false
     private var receivedMemoryImportObserver: NSObjectProtocol?
+    private var groupSavedCopiesObserver: NSObjectProtocol?
     private var todayDayChangeObserver: NSObjectProtocol?
     private var protectedDataObserver: NSObjectProtocol?
     private var adoptionDayObserver: NSObjectProtocol?
@@ -639,6 +643,18 @@ final class AppViewModel: ObservableObject {
                 )
             }
         }
+        // 11/20: a まど photo removed, reported or blocked: its 「お気に入りに追加」
+        // copy leaves the app's own photos like a hidden photo (PhotoKit untouched).
+        groupSavedCopiesObserver = NotificationCenter.default.addObserver(
+            forName: .groupWindowSavedCopiesWithdrawn,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let identifiers = notification.object as? [String] ?? []
+            Task { @MainActor [weak self] in
+                await self?.withdrawGroupWindowCopies(localIdentifiers: identifiers)
+            }
+        }
         // 11/16: queue nil. With a queue, posting waits until the main thread
         // runs this; a save off the main thread (the family sync) then held
         // the record locks while the main thread waited for them (a hang).
@@ -673,6 +689,7 @@ final class AppViewModel: ObservableObject {
         if let receivedMemoryImportObserver {
             NotificationCenter.default.removeObserver(receivedMemoryImportObserver)
         }
+        if let groupSavedCopiesObserver { NotificationCenter.default.removeObserver(groupSavedCopiesObserver) }
         if let todayDayChangeObserver {
             NotificationCenter.default.removeObserver(todayDayChangeObserver)
         }
@@ -690,6 +707,15 @@ final class AppViewModel: ObservableObject {
             Self.logError(error, category: "cat-identity", operation: "initialize_store")
             return (nil, Self.userFacingMessage(for: error), withoutProtectedData)
         }
+    }
+
+    /// 11/20: the like was cleared by the まど screen; the copy itself goes out
+    /// of every app surface through the same exclusion as a hidden photo.
+    private func withdrawGroupWindowCopies(localIdentifiers: [String]) async {
+        let identifiers = localIdentifiers.filter { !$0.isEmpty }
+        guard !identifiers.isEmpty else { return }
+        _ = synchronizeSharedLikes(importLegacyLikes: false, trigger: "group-window-withdrawn")
+        await excludeFromCatCandidates(localIdentifiers: identifiers)
     }
 
     /// Publishes a newly imported Photos asset into the ordinary "思い出"
@@ -1058,6 +1084,12 @@ final class AppViewModel: ObservableObject {
         isManualRescanRequestPending = true
         defer { isManualRescanRequestPending = false }
         guard catIdentityLoadState == .ready else {
+            // 11/20: after a failed start, 「もう一度」 runs the start again
+            // (the same as the first run's). Nothing is reset or deleted.
+            if startupLoadFailed {
+                await retryStartup()
+                return
+            }
             logCandidateAuthorityUnavailable(operation: "full_rescan")
             return
         }
@@ -1214,6 +1246,13 @@ final class AppViewModel: ObservableObject {
         guard await resolveReadablePhotoProjectionIfNeeded() else {
             // Keep the suspension if the read was cancelled or superseded.
             await reconcilePersonalWidgetReadAuthority()
+            // 11/20: a Widget photo waiting on this read gets an answer: the
+            // sheet's 「この写真は開けません」, unless a newer read is under way
+            // (it opens the photo when it finishes).
+            if readablePhotoResolution == nil, !readablePhotoProjection.isResolved,
+               widgetPhotoLibraryLoadSucceeded == nil {
+                widgetPhotoLibraryLoadSucceeded = false
+            }
             return
         }
         // Counting every album's photos is PhotoKit work: off the main
@@ -2593,11 +2632,22 @@ final class AppViewModel: ObservableObject {
             return false
         }
         do {
-            let loaded = try await identityStore.loadOrMigrate(
-                legacyLifeReference: settings.catLifeReference,
+            // 11/20: an old 和暦/仏暦 year becomes 西暦 while this iPhone can
+            // still tell the day (CatLifeDate.inGregorian); otherwise unchanged.
+            let legacyLifeReference = settings.catLifeReference?.inGregorian()
+            if legacyLifeReference != settings.catLifeReference {
+                settings.catLifeReference = legacyLifeReference
+                snapshot.settings.catLifeReference = legacyLifeReference
+            }
+            var loaded = try await identityStore.loadOrMigrate(
+                legacyLifeReference: legacyLifeReference,
                 legacyCuration: catCandidateCuration
             )
             catHouseholdIdentity = loaded
+            if loaded.convertingDeviceCalendarYears() != loaded,
+               let converted = try? await mutateCatHouseholdIdentity({ $0 = $0.convertingDeviceCalendarYears() }) {
+                loaded = converted
+            }
             if loaded.mode == .legacyUnscoped,
                let url = CatHouseholdIdentityStore.defaultStateURL(), AppRecordDataset.liveIdentityPolicy(url) {
                 settings.catLifeReference = loaded.legacyUnscoped?.lifeReference
@@ -3427,24 +3477,12 @@ final class AppViewModel: ObservableObject {
                 currentlyVisibleImportIdentifiers.insert(asset.localIdentifier)
             }
         }
-        let canConcludeImportedAssetWasDeleted =
-            PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized
-        if canConcludeImportedAssetWasDeleted {
-            let confirmedDeleted = receivedImportIdentifiers
-                .subtracting(currentlyVisibleImportIdentifiers)
-            for identifier in confirmedDeleted {
-                if let mutation = try? SharedLikeStore.set(
-                    localIdentifier: identifier,
-                    isLiked: false,
-                    source: "received-memory-deleted"
-                ) {
-                    sharedLikeRecords[identifier] = mutation.record
-                    savedPhotoIdentifiers = Set(sharedLikeRecords.compactMap { $0.value.isLiked ? $0.key : nil })
-                }
-            }
-        }
+        // 11/20: a received photo missing from one fetch is only hidden
+        // from this snapshot. Recently Deleted, iCloud and limited access
+        // all bring photos back, so absence never writes an un-like; only
+        // the person's own un-like removes the mark.
         let liveByIdentifier = Dictionary(
-            uniqueKeysWithValues: snapshot.assets.map { ($0.localIdentifier, $0) }
+            snapshot.assets.map { ($0.localIdentifier, $0) }, uniquingKeysWith: { first, _ in first }
         )
         var merged = newSnapshot
         merged.assets = newSnapshot.assets.filter {
@@ -3814,11 +3852,22 @@ final class AppViewModel: ObservableObject {
                 from: input, eligibilityRevision: revision,
                 priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs().union(cloudyPriorityPhotos),
                 probablePhotoIDs: probable)
-            try synchronizeCloudyWindowMetadata()
-            try await CloudyWindowImagePreparer.shared.prepare()
+            // 11/20: the photos just prepared reach the Widgets even when the
+            // cloudy-window step fails; that failure is reported as before.
+            var cloudyFailure: Error?
+            do {
+                try synchronizeCloudyWindowMetadata()
+                try await CloudyWindowImagePreparer.shared.prepare()
+            } catch {
+                cloudyFailure = error
+            }
             // Preparation is not a view. Keep legacy lastShownAt/shownCount
             // unchanged; the shared journal records issued slots separately.
             reloadAllWidgetTimelines()
+            if let cloudyFailure {
+                Self.logError(cloudyFailure, category: "widget-cache", operation: "rebuild_cache")
+                if reportErrors { setError(cloudyFailure) }
+            }
             SharedLog.app.info(
                 "widget-cache",
                 "Widget timeline reload requested",
@@ -3848,9 +3897,11 @@ final class AppViewModel: ObservableObject {
                                 priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs().union(cloudyPriorityPhotos),
                                 probablePhotoIDs: probable)
                             attemptedPhotoIDs.formUnion(batch.attemptedPhotoIDs)
+                            // 11/20: counted before the cloudy step, so its
+                            // failure still reloads the Widgets on the way out.
+                            if batch.addedCount > 0 { added = true }
                             try self.synchronizeCloudyWindowMetadata()
                             try await CloudyWindowImagePreparer.shared.prepare()
-                            if batch.addedCount > 0 { added = true }
                             if !batch.hasMore { return }
                         } catch { return } // Next foreground/BG opportunity can resume.
                     }
@@ -4027,9 +4078,9 @@ final class AppViewModel: ObservableObject {
         let curated = candidateSnapshot(input ?? snapshot)
         let eligible = photoSelector.eligibleCandidates(from: curated.assets,
             settings: curated.settings, now: now)
-        let dates = Dictionary(uniqueKeysWithValues: eligible.compactMap { record in
+        let dates = Dictionary(eligible.compactMap { record in
             record.sourceModificationDate.map { (record.localIdentifier, $0) }
-        })
+        }, uniquingKeysWith: { first, _ in first })
         let authorized = canPresentPhotoCandidates && catIdentityLoadState == .ready
         let eligibleIDs = Set(eligible.map(\.localIdentifier))
         var bootstrap: [PersonalRediscoveryCandidate] = []

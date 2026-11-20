@@ -67,10 +67,10 @@ enum PersonalWidgetBackgroundRefresh {
                     task.setTaskCompleted(success: true)
                     return
                 }
-                var input = try await LibraryStore().load()
+                var input = try await LibraryStore().read()
                 let eligibleRecords = WeightedPhotoSelector().eligibleCandidates(
                     from: input.assets, settings: input.settings, now: .now)
-                let known = Dictionary(uniqueKeysWithValues: eligibleRecords.map { ($0.localIdentifier, $0) })
+                let known = Dictionary(eligibleRecords.map { ($0.localIdentifier, $0) }, uniquingKeysWith: { first, _ in first })
                 // Resolve only known analyzed IDs, never enumerate/analyze the
                 // full library or start an iCloud photo download in background.
                 // The frozen photo (shown while membership selection is stopped)

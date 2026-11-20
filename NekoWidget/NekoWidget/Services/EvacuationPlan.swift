@@ -48,7 +48,40 @@ struct EvacuationSupply: Codable, Equatable, Identifiable {
     var catID: UUID?
     var isNeeded = true
     /// 「期限」 (round 2, 11/9). Optional so lists saved before still decode.
+    /// 11/20: still written (the day's start here) so an older build reads
+    /// the same day; `expiresOn` wins whenever it is present.
     var expiresAt: Date?
+    /// 11/20: the 期限 as a calendar day, 西暦 "2027-05-20", so a time-zone
+    /// change never moves the day or its notice. Absent in older files.
+    var expiresOn: String?
+
+    /// Sets (or clears) the 期限 to the day `date` falls on in `calendar`.
+    mutating func setExpiry(_ date: Date?, calendar: Calendar = .current) {
+        guard let date else { expiresAt = nil; expiresOn = nil; return }
+        let parts = Self.gregorian(calendar).dateComponents([.year, .month, .day], from: date)
+        guard let year = parts.year, let month = parts.month, let day = parts.day else { return }
+        expiresOn = String(format: "%04d-%02d-%02d", year, month, day)
+        expiresAt = calendar.startOfDay(for: date)
+    }
+
+    /// The start of the 期限 day in `calendar`: the stored day when there is
+    /// one, else the day `expiresAt` falls on there (files saved before 11/20).
+    func expiryDate(calendar: Calendar = .current) -> Date? {
+        if let expiresOn {
+            let parts = expiresOn.split(separator: "-").compactMap { Int($0) }
+            if parts.count == 3, (1900...2200).contains(parts[0]),
+               let date = Self.gregorian(calendar).date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2])) {
+                return calendar.startOfDay(for: date)
+            }
+        }
+        return expiresAt.map { calendar.startOfDay(for: $0) }
+    }
+
+    private static func gregorian(_ calendar: Calendar) -> Calendar {
+        var value = Calendar(identifier: .gregorian)
+        value.timeZone = calendar.timeZone
+        return value
+    }
 
     /// Food, water, medicine and 療法食 have a 期限. An item that already has
     /// one keeps the field, so it can be taken off after a rename.
@@ -61,9 +94,8 @@ struct EvacuationSupply: Codable, Equatable, Identifiable {
 
     /// Whole days from today to the 期限: 0 on the day, below 0 after it.
     func daysUntilExpiry(now: Date, calendar: Calendar = .current) -> Int? {
-        guard let expiresAt else { return nil }
-        return calendar.dateComponents([.day], from: calendar.startOfDay(for: now),
-                                       to: calendar.startOfDay(for: expiresAt)).day
+        guard let expiry = expiryDate(calendar: calendar) else { return nil }
+        return calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: expiry).day
     }
 
     /// 「期限まであと〇日」 within 30 days, 「期限切れ」 after; nil otherwise.
@@ -282,7 +314,7 @@ struct EvacuationPlan: Codable, Equatable {
     /// The item on the list whose 期限 comes first, when it is within 30 days or past.
     func nearestExpiry(now: Date = Date(), calendar: Calendar = .current) -> EvacuationSupply? {
         supplies.filter { $0.isNeeded && $0.expiryText(now: now, calendar: calendar) != nil }
-            .min { ($0.expiresAt ?? .distantFuture) < ($1.expiresAt ?? .distantFuture) }
+            .min { ($0.expiryDate(calendar: calendar) ?? .distantFuture) < ($1.expiryDate(calendar: calendar) ?? .distantFuture) }
     }
 
     /// The hub's step 1 line: 「フードの期限まであと12日」.
@@ -318,9 +350,8 @@ struct EvacuationPlan: Codable, Equatable {
                                                     body: "避難の備えを見直す時期です。"))
         }
         let days = Set(supplies.filter(\.isNeeded).compactMap { item -> Date? in
-            guard let expiresAt = item.expiresAt else { return nil }
-            return calendar.date(byAdding: .day, value: -EvacuationScheduledNotice.expiryDaysBefore,
-                                 to: calendar.startOfDay(for: expiresAt))
+            guard let expiry = item.expiryDate(calendar: calendar) else { return nil }
+            return calendar.date(byAdding: .day, value: -EvacuationScheduledNotice.expiryDaysBefore, to: expiry)
         })
         for day in days.sorted().prefix(EvacuationScheduledNotice.expiryLimit) {
             guard let at = calendar.date(bySettingHour: EvacuationScheduledNotice.hour, minute: 0, second: 0, of: day),

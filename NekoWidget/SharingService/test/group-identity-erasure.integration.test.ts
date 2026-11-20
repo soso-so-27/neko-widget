@@ -1,5 +1,5 @@
 import {familyIdentityPhotos} from '../src/family-photo-erasure';
-import {beforeAll,describe,expect,it} from 'vitest';
+import {beforeAll,describe,expect,it,vi} from 'vitest';
 import {base64urlDecode,randomBase64url,sha256Base64url} from '../src/encoding';
 import {groupCaptionTranscript} from '../src/group-captions';
 import {cleanupDissolvedFamilyRosters} from '../src/family-notebook-roster-cleanup';
@@ -186,7 +186,11 @@ describe('identity deletion dependency closure',()=>{
 describe('bounded physical erasure and retry',()=>{
   it('resumes after physical deletion but a rolled-back D1 batch and drains nine owned photos in two slices',async()=>{
     const a=await plusOwner(),w=await create(a),v=await create(a),all=[];
-    for(let i=0;i<9;i++)all.push(await photo(a,i<5?w:v));
+    for(let i=0;i<5;i++)all.push(await photo(a,w));
+    // A single owner accumulates this inventory on two days.
+    const nextDay=vi.spyOn(Date,'now').mockReturnValue(Date.now()+86400000);
+    try{for(let i=0;i<4;i++)all.push(await photo(a,v));}
+    finally{nextDay.mockRestore();}
     const acceptedInventory=await prepareIdentityErasurePhotos(testEnv,a.id);
     const claim=await fence(a),manifest=await listIdentityErasurePhotos(testEnv,claim,'',32);
     expect(acceptedInventory).toEqual(manifest);
