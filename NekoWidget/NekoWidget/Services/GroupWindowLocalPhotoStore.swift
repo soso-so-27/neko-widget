@@ -31,6 +31,9 @@ actor GroupWindowLocalPhotoStore {
         var entries: [Entry] = []
         // A signed sender ID stays known after its visible row is evicted.
         var receivedMomentIDs: Set<String>? = nil
+        // 11/20: photos removed here before the app was installed again
+        // (from the Keychain copy), so they are not downloaded again.
+        var removedPhotoIDs: Set<String>? = nil
     }
 
     /// Windows this iPhone has kept photos for, with the last name seen, so
@@ -60,12 +63,19 @@ actor GroupWindowLocalPhotoStore {
     private static let maximumEntriesPerWindow = 500
 
     private let root: URL?
+    /// 11/20: the Keychain copy of the person's choices (GroupWindowKept).
+    private let keychain: @Sendable () -> (any GroupSecretStore)?
+    /// Windows whose Keychain copy this process already compared (one read each).
+    private var keptChecked = Set<String>()
 
-    init(root: URL? = nil) {
+    init(root: URL? = nil, keychain: (@Sendable () -> (any GroupSecretStore)?)? = nil) {
         self.root = root ?? FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent((Bundle.main.object(forInfoDictionaryKey: "SharingReleaseMode") as? String) == "production"
                 ? "GroupWindows-production" : "GroupWindows", isDirectory: true)
+        self.keychain = keychain ?? {
+            try? GroupKeychainStore(namespace: GroupWindowClientProvider.namespace + GroupWindowKept.namespaceSuffix)
+        }
     }
 
     /// Photos to show: not removed here, and not from a person hidden here.
@@ -77,7 +87,8 @@ actor GroupWindowLocalPhotoStore {
 
     /// Includes photos removed from this iPhone, which are not downloaded again.
     func contains(photoID: String, windowID: String) -> Bool {
-        ((try? loadIndex(windowID: windowID).entries) ?? []).contains { $0.id == photoID }
+        guard let index = try? loadIndex(windowID: windowID) else { return false }
+        return index.entries.contains { $0.id == photoID } || index.removedPhotoIDs?.contains(photoID) == true
     }
 
     func hasReceived(verifiedMomentID: String, windowID: String) throws -> Bool {
@@ -108,6 +119,10 @@ actor GroupWindowLocalPhotoStore {
         index.entries[position].isRemoved = true
         try? FileManager.default.removeItem(at: photoURL(photoID: photoID, windowID: windowID))
         try write(JSONEncoder().encode(index), to: indexURL(windowID: windowID))
+        GroupWindowKept.update(windowID: windowID, in: keychain()) {
+            $0.removedPhotoIDs.removeAll { $0 == photoID }
+            $0.removedPhotoIDs.append(photoID)
+        }
     }
 
     func setFavoriteImport(photoID: String, windowID: String, token: UUID?, localIdentifier: String?) throws {
@@ -128,17 +143,58 @@ actor GroupWindowLocalPhotoStore {
         return directory.windows
     }
 
-    func remember(windowID: String, name: String, myParticipantID: String? = nil) {
+    /// `memberNames` (participant ID to name, from the relay's member list)
+    /// names people whose block or hiding comes back from the Keychain.
+    func remember(windowID: String, name: String, myParticipantID: String? = nil,
+                  memberNames: [String: String] = [:]) {
         var windows = knownWindows()
         if let index = windows.firstIndex(where: { $0.id == windowID }) {
+            seedKeptChoicesIfNeeded(windows[index])
             let me = myParticipantID ?? windows[index].myParticipantID
             guard windows[index].name != name || windows[index].myParticipantID != me else { return }
             windows[index].name = name
             windows[index].myParticipantID = me
         } else {
-            windows.append(KnownWindow(id: windowID, name: name, myParticipantID: myParticipantID))
+            var window = KnownWindow(id: windowID, name: name, myParticipantID: myParticipantID)
+            // 11/20: new to this iPhone's files (the app was deleted and installed
+            // again): the person's earlier choices come back from the Keychain.
+            keptChecked.insert(windowID)
+            if let kept = try? GroupWindowKept.choices(windowID: windowID, in: keychain()), !kept.isEmpty {
+                let blocked = Set(kept.blockedMemberIDs)
+                let hidden = kept.blockedMemberIDs + kept.hiddenMemberIDs.filter { !blocked.contains($0) }
+                if !hidden.isEmpty {
+                    window.hiddenMembers = hidden.map {
+                        HiddenMember(id: $0, name: memberNames[$0] ?? "", blocked: blocked.contains($0) ? true : nil)
+                    }
+                }
+                if !kept.removedPhotoIDs.isEmpty, var photos = try? loadIndex(windowID: windowID) {
+                    photos.removedPhotoIDs = (photos.removedPhotoIDs ?? []).union(kept.removedPhotoIDs)
+                    if let data = try? JSONEncoder().encode(photos), let url = try? indexURL(windowID: windowID) {
+                        try? write(data, to: url)
+                    }
+                }
+            }
+            windows.append(window)
         }
         writeDirectory(windows)
+    }
+
+    /// An install from before 11/20 has its choices in the local files only:
+    /// copied to the Keychain once, when nothing is kept there yet.
+    private func seedKeptChoicesIfNeeded(_ window: KnownWindow) {
+        guard keptChecked.insert(window.id).inserted, let store = keychain() else { return }
+        let saved: GroupWindowKept.Choices?
+        do { saved = try GroupWindowKept.choices(windowID: window.id, in: store) } catch { return }
+        guard saved == nil else { return }
+        let hidden = window.hiddenMembers ?? []
+        let removed = ((try? loadIndex(windowID: window.id).entries) ?? [])
+            .filter { $0.isRemoved == true }.sorted { $0.createdAt < $1.createdAt }.map(\.id)
+        let choices = GroupWindowKept.Choices(
+            hiddenMemberIDs: hidden.filter { $0.blocked != true }.map(\.id),
+            blockedMemberIDs: hidden.filter { $0.blocked == true }.map(\.id),
+            removedPhotoIDs: removed)
+        guard !choices.isEmpty else { return }
+        GroupWindowKept.keep(choices, windowID: window.id, in: store)
     }
 
     func myParticipantID(windowID: String) -> String? {
@@ -173,6 +229,15 @@ actor GroupWindowLocalPhotoStore {
         }
         windows[index].hiddenMembers = hidden
         writeDirectory(windows)
+        let isBlocked = hidden.contains { $0.id == memberID && $0.blocked == true }
+        GroupWindowKept.update(windowID: windowID, in: keychain()) {
+            if isBlocked {
+                $0.hiddenMemberIDs.removeAll { $0 == memberID }
+                if !$0.blockedMemberIDs.contains(memberID) { $0.blockedMemberIDs.append(memberID) }
+            } else if !$0.hiddenMemberIDs.contains(memberID) {
+                $0.hiddenMemberIDs.append(memberID)
+            }
+        }
     }
 
     func unhide(memberID: String, windowID: String) {
@@ -180,11 +245,17 @@ actor GroupWindowLocalPhotoStore {
         guard let index = windows.firstIndex(where: { $0.id == windowID }) else { return }
         windows[index].hiddenMembers?.removeAll { $0.id == memberID }
         writeDirectory(windows)
+        GroupWindowKept.update(windowID: windowID, in: keychain()) {
+            $0.hiddenMemberIDs.removeAll { $0 == memberID }
+            $0.blockedMemberIDs.removeAll { $0 == memberID }
+        }
     }
 
     /// Deletes every photo of a window this iPhone is no longer in.
     func forget(windowID: String) {
         writeDirectory(knownWindows().filter { $0.id != windowID })
+        GroupWindowKept.forgetChoices(windowID: windowID, in: keychain())
+        keptChecked.remove(windowID)
         if let folder = try? directory(windowID: windowID) {
             try? FileManager.default.removeItem(at: folder)
         }

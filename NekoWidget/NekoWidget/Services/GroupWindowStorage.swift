@@ -240,3 +240,102 @@ struct GroupRememberedName {
         else { try? store.write(Data(name.utf8), account: account, createOnly: false) }
     }
 }
+
+/// 11/20: the person's protective choices in a group window, also kept in
+/// this iPhone's Keychain (GroupKeychainStore: device-only, not synced, like
+/// the `window:` records), so deleting the app and installing it again does
+/// not bring back a blocked or hidden person, a removed photo, or a reported
+/// photo. Opaque IDs, receipt numbers and dates only: no names, photos,
+/// reasons or text the person wrote. Written only on the person's action; a
+/// Keychain failure leaves the app as it was before (local files only).
+/// Bound: each list keeps the newest 500 IDs (the oldest is dropped first),
+/// as the local index keeps 500 photos a window.
+enum GroupWindowKept {
+    static let namespaceSuffix = ".window-choices"
+    static let limit = 500
+
+    struct Choices: Codable, Equatable, Sendable {
+        var hiddenMemberIDs: [String] = []
+        var blockedMemberIDs: [String] = []
+        var removedPhotoIDs: [String] = []
+        var isEmpty: Bool { hiddenMemberIDs.isEmpty && blockedMemberIDs.isEmpty && removedPhotoIDs.isEmpty }
+    }
+
+    struct Report: Codable, Equatable, Sendable {
+        let photoID: String
+        var receiptNumber: String? = nil
+        let sentAt: Date
+    }
+
+    private static func choicesAccount(_ windowID: String) -> String { "choices:" + windowID }
+    private static func reportsAccount(_ windowID: String) -> String { "reports:" + windowID }
+
+    /// nil: nothing kept. Throws when the Keychain or the item could not be read.
+    static func choices(windowID: String, in store: (any GroupSecretStore)?) throws -> Choices? {
+        guard let store, GroupCanonical.validID(windowID) else { return nil }
+        guard let data = try store.read(choicesAccount(windowID)) else { return nil }
+        return try JSONDecoder().decode(Choices.self, from: data)
+    }
+
+    static func keep(_ choices: Choices, windowID: String, in store: (any GroupSecretStore)?) {
+        guard let store, GroupCanonical.validID(windowID) else { return }
+        let bounded = Choices(hiddenMemberIDs: bound(choices.hiddenMemberIDs),
+                              blockedMemberIDs: bound(choices.blockedMemberIDs),
+                              removedPhotoIDs: bound(choices.removedPhotoIDs))
+        guard let data = try? JSONEncoder().encode(bounded) else { return }
+        try? store.write(data, account: choicesAccount(windowID), createOnly: false)
+    }
+
+    /// Reads, changes and writes back one window's choices; silent on failure.
+    /// An unreadable item is left alone rather than overwritten with less.
+    static func update(windowID: String, in store: (any GroupSecretStore)?, _ change: (inout Choices) -> Void) {
+        let current: Choices
+        do { current = try choices(windowID: windowID, in: store) ?? Choices() } catch { return }
+        var next = current
+        change(&next)
+        guard next != current else { return }
+        keep(next, windowID: windowID, in: store)
+    }
+
+    static func reports(windowID: String, in store: (any GroupSecretStore)?) -> [Report] {
+        guard let store, GroupCanonical.validID(windowID),
+              let data = try? store.read(reportsAccount(windowID)),
+              let reports = try? JSONDecoder().decode([Report].self, from: data) else { return [] }
+        return reports.filter { GroupCanonical.validID($0.photoID) }
+    }
+
+    /// One reported photo; a receipt number learned later is added to it.
+    static func keepReport(photoID: String, receiptNumber: String?, sentAt: Date,
+                           windowID: String, in store: (any GroupSecretStore)?) {
+        guard let store, GroupCanonical.validID(windowID), GroupCanonical.validID(photoID) else { return }
+        let account = reportsAccount(windowID)
+        var reports: [Report] = []
+        do {
+            if let data = try store.read(account) {
+                guard let saved = try? JSONDecoder().decode([Report].self, from: data) else { return }
+                reports = saved
+            }
+        } catch { return }
+        if let index = reports.firstIndex(where: { $0.photoID == photoID }) {
+            guard let receiptNumber, reports[index].receiptNumber != receiptNumber else { return }
+            reports[index].receiptNumber = receiptNumber
+        } else {
+            reports.append(Report(photoID: photoID, receiptNumber: receiptNumber, sentAt: sentAt))
+        }
+        guard let data = try? JSONEncoder().encode(Array(reports.suffix(limit))) else { return }
+        try? store.write(data, account: account, createOnly: false)
+    }
+
+    /// A window whose kept photos were deleted here (「このまどを一覧から消す」).
+    static func forgetChoices(windowID: String, in store: (any GroupSecretStore)?) {
+        guard let store, GroupCanonical.validID(windowID) else { return }
+        try? store.remove(choicesAccount(windowID))
+    }
+
+    private static func bound(_ ids: [String]) -> [String] {
+        var seen = Set<String>()
+        // The newest copy of a repeated ID wins; the oldest IDs go first.
+        let unique = ids.reversed().filter { GroupCanonical.validID($0) && seen.insert($0).inserted }.reversed()
+        return Array(Array(unique).suffix(limit))
+    }
+}

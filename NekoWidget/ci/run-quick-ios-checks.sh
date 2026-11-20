@@ -262,6 +262,18 @@ xcrun --sdk macosx swiftc -D INTERNAL_PRESENTATION -parse-as-library -target "$(
   NekoWidget/Services/ProductionGroupReporting.swift ci/verify-group-reporting.swift \
   -o "$RUNNER_TEMP/group-reporting-tests"
 "$RUNNER_TEMP/group-reporting-tests" ci/fixtures/group-report-v3.json
+# 11/20: hiding, blocking, removing and reporting in a まど survive deleting
+# the app (in-memory Keychain, temporary folders, synthetic IDs only).
+xcrun --sdk macosx swiftc -D INTERNAL_PRESENTATION -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+  Shared/Sharing/GroupWindowCore.swift Shared/Sharing/GroupReportCrypto.swift \
+  NekoWidget/Services/GroupWindowContract.swift NekoWidget/Services/GroupWindowWire.swift \
+  NekoWidget/Services/GroupInvitationLink.swift NekoWidget/Services/GroupWindowStorage.swift Shared/Sharing/ClientUpgradeRequirement.swift NekoWidget/Services/GroupWindowTransport.swift \
+  NekoWidget/Services/GroupWindowOperationStore.swift NekoWidget/Services/GroupReporting.swift \
+  NekoWidget/Services/GroupReportingProvider.swift NekoWidget/Services/GroupReportDraftStore.swift \
+  NekoWidget/Services/ProductionGroupReporting.swift NekoWidget/Services/GroupWindowLocalPhotoStore.swift \
+  ci/verify-group-window-choices-survive-reinstall.swift \
+  -o "$RUNNER_TEMP/group-window-choices-tests"
+"$RUNNER_TEMP/group-window-choices-tests" ci/fixtures/group-report-v3.json
 xcrun --sdk macosx swiftc -parse-as-library \
   -target "$(uname -m)-apple-macos14.0" \
   NekoWidget/Services/GroupInvitationLink.swift ci/verify-group-invitation-link.swift \
