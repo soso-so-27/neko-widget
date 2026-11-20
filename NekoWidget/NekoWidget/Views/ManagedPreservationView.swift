@@ -498,7 +498,7 @@ struct ManagedPreservationView: View {
             } else {
                 Text(coordinator.usageMessage ?? "容量を確認できません。")
                     .font(.footnote).foregroundStyle(.secondary)
-                Button("容量を再確認") { coordinator.refreshUsage() }
+                Button("容量をもう一度確認") { coordinator.refreshUsage() }
                     .accessibilityIdentifier("preservation-usage-retry")
             }
 #if DEBUG || INTERNAL_PRESENTATION
