@@ -9,6 +9,7 @@ export type OwnerDeletionRequest = {
   ownerEpoch: number; requestedAt: number;
 };
 export type DeletionStage = 'apple-revoked' | 'plan' | 'erasing' | 'completed';
+export type DeletionProgress = { phase: 'cloud' | 'database'; remaining: number };
 
 /** This journal is outside D1 and outside both content prefixes. It survives
  * restoration of an old D1 bookmark. Keep its request/completion receipts;
@@ -106,6 +107,30 @@ export class OwnerDeletionJournal {
     await this.requireAvailable();
     this.key(ownerId, 'request');
     await this.bucket.put(`${prefix}scan-after`, ownerId);
+  }
+
+  /** Advisory only. A retry or a provider acknowledgement never resets the
+   * clock. The worker supplies a newly observed count of remaining targets. */
+  async observeProgress(request: OwnerDeletionRequest, current: DeletionProgress | undefined,
+    now: number): Promise<number> {
+    if (!uuid.test(request.ownerId) || !Number.isSafeInteger(now) || now < request.requestedAt) throw unavailable();
+    const key = `${prefix}progress/${request.ownerId}.json`;
+    const object = await this.bucket.get(key);
+    const valid = (v: DeletionProgress) => ['cloud','database'].includes(v.phase)
+      && Number.isSafeInteger(v.remaining) && v.remaining >= 0;
+    if (object && (object.size < 1 || object.size > 512)) throw unavailable();
+    const prior = object ? await object.json<DeletionProgress & { requestId: string; observedAt: number }>() : null;
+    if (prior && (prior.requestId !== request.requestId || !valid(prior)
+      || !Number.isSafeInteger(prior.observedAt) || prior.observedAt < request.requestedAt || prior.observedAt > now)) throw unavailable();
+    const earliest = prior?.observedAt ?? request.requestedAt;
+    if (!current || !valid(current) || (prior && !(
+      current.phase === prior.phase && current.remaining < prior.remaining
+      || current.phase === 'database' && prior.phase === 'cloud'))) return earliest;
+    const observedAt = prior || current.phase === 'database' ? now : earliest;
+    const result = await this.bucket.put(key, JSON.stringify({ ...current, requestId: request.requestId, observedAt }), {
+      onlyIf: object ? { etagMatches: object.etag } : { etagDoesNotMatch: '*' },
+    });
+    return result ? observedAt : earliest;
   }
 
   /** Round-robin across opaque receipts, including permanently blocked ones.

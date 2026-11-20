@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { groupRecoveryCatalogAPI, type RecoveryChallenge } from '../src/group-recovery-catalog';
 import { pendingAuthentication, type PendingIntent } from '../src/group-recovery-pending';
+import { cleanupExpiredGroupRecovery, recoveryExpiryCheckedBatch, recoveryPendingLifetime } from '../src/group-recovery-expiry';
 import { anchorReceiptTranscript } from '../src/group-anchor-receipts';
 import { plusOwner } from './group-billing-fixture';
 import { create, db, person, sign, signed, send, testEnv, key, invitation, apply, transition } from './group-fixture';
@@ -40,11 +41,35 @@ describe('pending-only root recovery',()=>{
   await expect(db.prepare("INSERT INTO group_person_devices VALUES (?,?,?,?,?,'active',?,NULL)").bind(randomBase64url(32),f.p.id,randomBase64url(32),randomBase64url(32),'synthetic',Math.floor(Date.now()/1000)).run()).rejects.toThrow('group_device_limit');
  });
  it('cleans pending requests on root revocation and denies status',async()=>{const f=await fixture();await f.invoke();await db.prepare("UPDATE group_people SET state='revoked' WHERE id=?").bind(f.p.id).run();expect(await db.prepare('SELECT 1 FROM group_recovery_pending WHERE person_id=?').bind(f.p.id).first()).toBeNull();await expect(f.invoke(false)).rejects.toMatchObject({status:401});});
- it('has no waiting expiry; distinguishes no provider without advancing generations',async()=>{const f=await fixture();await f.invoke();await db.prepare("UPDATE group_window_devices SET state='revoked',removed_revision=1 WHERE space_id=?").bind(f.w.windowId).run();
+ it('distinguishes no provider without advancing generations',async()=>{const f=await fixture();await f.invoke();await db.prepare("UPDATE group_window_devices SET state='revoked',removed_revision=1 WHERE space_id=?").bind(f.w.windowId).run();
   const result=await f.invoke(false);expect(result).toMatchObject({state:'noKeyProvider',canRequestFreshGeneration:true,canOpen:false,canSend:false,revision:1});
-  await db.prepare('UPDATE group_recovery_pending SET created_at=1 WHERE person_id=?').bind(f.p.id).run();expect((await f.invoke(false)).state).toBe('noKeyProvider');
   const other=await person();await db.prepare("INSERT INTO group_members VALUES (?,?,?,'member','active',1,NULL,'synthetic')").bind(crypto.randomUUID(),f.w.windowId,other.id).run();
   expect(await f.invoke(false)).toMatchObject({state:'registeredWaitingForKeys',canRequestFreshGeneration:false});
+ });
+ it('ignores expired waiting devices, rejects completion in D1 and frees only the waiting slot',async()=>{
+  const f=await fixture(),before=await current(f.w.windowId),registered=await f.invoke();
+  await db.prepare('UPDATE group_recovery_pending SET created_at=unixepoch()-? WHERE person_id=?')
+   .bind(recoveryPendingLifetime,f.p.id).run();
+  expect((await f.invoke(false)).state).toBe('notStarted');
+  await expect(recoveryExpiryCheckedBatch(db,[db.prepare('INSERT INTO group_recovery_key_checks VALUES (?,?,?,?,?,?,NULL)')
+   .bind(crypto.randomUUID(),f.p.id,f.operation,f.w.windowId,registered.rosterHash,registered.deviceId)]))
+   .rejects.toMatchObject({status:409,code:'recovery_pending_expired'});
+  expect(await current(f.w.windowId)).toEqual(before);
+  await person(f.p.identity);await person(f.p.identity);
+  await person(f.p.identity,409);
+  expect(await db.prepare('SELECT 1 FROM group_recovery_pending WHERE person_id=?').bind(f.p.id).first()).toBeNull();
+ });
+ it('prunes only the old pending row and its offers, and can register it again with a new proof',async()=>{
+  const old=await fixture(),live=await fixture(),previous=await old.invoke(),currentLive=await live.invoke();
+  const now=Math.floor(Date.now()/1000);
+  await db.prepare('UPDATE group_recovery_pending SET created_at=? WHERE person_id=?')
+   .bind(now-recoveryPendingLifetime,old.p.id).run();
+  await db.prepare('INSERT INTO group_recovery_key_offers VALUES (?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL)')
+   .bind(old.p.id,old.operation,1,crypto.randomUUID(),old.w.windowId,previous.rosterHash,old.p.deviceId,'{}','synthetic',now+600).run();
+  await cleanupExpiredGroupRecovery(db,now);
+  expect(await db.prepare('SELECT 1 FROM group_recovery_key_offers WHERE person_id=?').bind(old.p.id).first()).toBeNull();
+  expect(await live.invoke(false)).toMatchObject({state:'registeredWaitingForKeys',deviceId:currentLive.deviceId});
+  expect(await old.invoke()).toMatchObject({state:'registeredWaitingForKeys',deviceId:previous.deviceId});
  });
  it('removes pending immediately when identity deletion is accepted',async()=>{
   const f=await fixture();await f.invoke();const requestId=crypto.randomUUID();

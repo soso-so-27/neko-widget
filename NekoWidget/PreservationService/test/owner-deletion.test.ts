@@ -235,7 +235,7 @@ describe('explicit owner-requested deletion', () => {
       .bind(crypto.randomUUID(), f.session.ownerId).run();
     await f.requests.request(f.session.token, f.receipt);
     const blocked = vi.fn();
-    expect(await f.executor.step(f.session.ownerId, blocked)).toBe('waiting');
+    expect(await f.executor.step(f.session.ownerId, { blocked, progress() {} })).toBe('waiting');
     expect(blocked).toHaveBeenCalledExactlyOnceWith('write-lease');
     expect(f.revokeRefreshToken).not.toHaveBeenCalled();
     expect(f.deleteVersion).not.toHaveBeenCalled();
@@ -279,4 +279,19 @@ describe('explicit owner-requested deletion', () => {
     expect(f.deleteVersion).not.toHaveBeenCalled();
     expect(await f.requests.status(f.session.ownerId, f.receipt)).toEqual({ state: 'processing' });
   });
+});
+it('keeps the stuck clock through retries and advances it only after verified remaining work falls', async () => {
+  const f = await fixture();
+  await f.requests.request(f.session.token, f.receipt);
+  const request = (await f.journal.request(f.session.ownerId))!;
+  const t = request.requestedAt;
+  const cloud = (remaining: number) => ({ phase: 'cloud' as const, remaining });
+  const database = (remaining: number) => ({ phase: 'database' as const, remaining });
+  expect(await f.journal.observeProgress(request, cloud(3), t + 1)).toBe(t);
+  expect(await f.journal.observeProgress(request, cloud(3), t + 3_600_000)).toBe(t);
+  expect(await f.journal.observeProgress(request, undefined, t + 3_600_100)).toBe(t);
+  expect(await f.journal.observeProgress(request, cloud(2), t + 3_600_200)).toBe(t + 3_600_200);
+  expect(await f.journal.observeProgress(request, cloud(4), t + 3_600_300)).toBe(t + 3_600_200);
+  expect(await f.journal.observeProgress(request, database(8), t + 3_600_400)).toBe(t + 3_600_400);
+  expect(await f.journal.observeProgress(request, cloud(1), t + 3_600_500)).toBe(t + 3_600_400);
 });

@@ -18,10 +18,10 @@ async function fixture(settings: ProductQuotaSettings = {}) {
   const now = () => 1_790_035_200_000;
   const auth = new DurableAuth({ db:binding.DB,keys,identityIndexSecret:randomToken(),now });
   const session = await auth.establish({ issuer:'https://appleid.apple.com',subject:crypto.randomUUID(),refreshToken:randomToken() });
-  const archive = new ArchiveStore({db:binding.DB,bucket:binding.ARCHIVE,keys,auth,now,
+  const withQuota = (policy: ProductQuotaSettings) => new ArchiveStore({db:binding.DB,bucket:binding.ARCHIVE,keys,auth,now,
     membership:{status:async()=>'active'},photos:{validateJPEG:async()=>true},
-    quotaBytes:32*1024*1024,maximumRecords:1000,productQuotaSettings:settings});
-  return {archive,session,keys};
+    quotaBytes:32*1024*1024,maximumRecords:1000,productQuotaSettings:policy});
+  return {archive:withQuota(settings),session,keys,withQuota};
 }
 
 it('returns real logical bytes/count only to opt-in readers; retries, updates and deletes reconcile',async()=>{
@@ -67,6 +67,19 @@ it('fences competing admission against the same total',async()=>{
   const results=await Promise.allSettled([f.archive.put(token,crypto.randomUUID(),input()),f.archive.put(token,crypto.randomUUID(),input())]);
   expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(1);
   expect((await f.archive.usage(token,2)).productQuota?.usage?.records.saved).toBe(1);
+});
+
+it('preserves reads and deletion for an owner already over the limit when enforcement starts',async()=>{
+  const f=await fixture(),token=f.session.token,first=crypto.randomUUID(),second=crypto.randomUUID();
+  await f.archive.put(token,first,input());
+  await f.archive.put(token,second,input());
+  const enforced=f.withQuota({PRODUCT_VISIBLE_RECORDS:'1',PRODUCT_QUOTA_ENFORCEMENT:'true'});
+  for(const id of [first,second])expect((await enforced.read(token,id)).revision).toBe(1);
+  await expect(enforced.put(token,crypto.randomUUID(),input())).rejects.toMatchObject({code:'PRODUCT_RECORD_LIMIT_EXCEEDED'});
+  await enforced.remove(token,first,1);
+  await expect(enforced.put(token,crypto.randomUUID(),input())).rejects.toMatchObject({code:'PRODUCT_RECORD_LIMIT_EXCEEDED'});
+  await enforced.remove(token,second,1);
+  await enforced.put(token,crypto.randomUUID(),input());
 });
 
 it('also enforces a legacy standalone tool snapshot at publication, not by its transport row count',async()=>{

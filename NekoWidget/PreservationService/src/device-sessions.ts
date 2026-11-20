@@ -6,6 +6,8 @@ import { identityIndexKey, indexedOwnerIdentity } from './identity-index';
 const ACCESS_MS = 15 * 60_000;
 const CHALLENGE_MS = 5 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
+const APPLE_VALIDATION_LEASE_MS = 120_000;
+const APPLE_RETRY_MS = 60_000;
 const IDLE_MS = 30 * DAY_MS;
 const APPLE = 'https://appleid.apple.com';
 const opaque = /^[A-Za-z0-9_-]{43}$/u;
@@ -26,6 +28,10 @@ const liveOwner = `EXISTS(SELECT 1 FROM pa_owners o WHERE o.owner_id=g.owner_id
 const recovered = `((SELECT owner_snapshot_required FROM pa_recovery_write_policy WHERE singleton=1)=0
   OR EXISTS(SELECT 1 FROM pa_owner_recovery_generations r JOIN pa_owner_recovery_versions v
     ON v.owner_id=r.owner_id AND v.generation=r.generation WHERE r.owner_id=g.owner_id))`;
+const boundSession = `FROM pa_sessions s JOIN pa_device_session_grants g ON g.grant_id=s.device_grant_id
+  AND g.owner_id=s.owner_id AND g.owner_epoch=s.owner_epoch
+  WHERE s.session_hash=? AND s.owner_id=? AND s.expires_at>? AND g.idle_expires_at>?
+    AND g.revoked_at IS NULL AND ${liveOwner} AND ${recovered}`;
 const blob = (value: unknown): Uint8Array => {
   const bytes = value instanceof Uint8Array ? value : value instanceof ArrayBuffer ? new Uint8Array(value)
     : Array.isArray(value) && value.every(n => Number.isInteger(n) && n >= 0 && n <= 255) ? Uint8Array.from(value) : null;
@@ -112,16 +118,17 @@ export class DeviceSessions {
     } catch (error) { throw safe(error); }
   }
 
-  private async proof(input: DeviceSessionRequest, purpose: Purpose): Promise<GrantRow> {
+  private async proof(input: DeviceSessionRequest, purpose: Purpose, otherDevice?: string): Promise<GrantRow> {
     if (!opaque.test(input.challengeId)) throw denied();
     const grant = await this.grant(input.grantId, input.origin, purpose);
     const row = await this.d.db.prepare(`SELECT challenge_id,nonce,expires_at FROM pa_device_session_challenges
       WHERE challenge_id=? AND grant_id=? AND purpose=? AND expires_at>? AND consumed_by IS NULL`)
       .bind(input.challengeId, input.grantId, purpose, this.now()).first<ChallengeRow>();
     if (!row) throw denied();
+    const path = purpose === 'renew' ? '/v1/auth/session-renewals' : '/v1/auth/session-revocations';
     await verifyDeviceProof(input.deviceProof, JSON.parse(grant.device_binding) as DeviceBinding, {
-      challengeId: input.challengeId, subject: input.grantId, nonce: row.nonce, now: this.now(), origin: input.origin,
-      path: purpose === 'renew' ? '/v1/auth/session-renewals' : '/v1/auth/session-revocations',
+      challengeId: input.challengeId, subject: otherDevice ?? input.grantId, nonce: row.nonce,
+      now: this.now(), origin: input.origin, path: otherDevice ? '/v1/auth/device-revocations' : path,
     });
     return grant;
   }
@@ -137,14 +144,13 @@ export class DeviceSessions {
     if (current.verified_at > now - DAY_MS && current.lease_id === null) return;
     if (!verifier.verifyRefreshIdentity || current.attempt_after > now) throw unavailable();
     const lease = randomToken();
-    // Strictly at most one remote validation attempt per owner per 24 hours,
-    // including timeouts. A transient outage preserves credentials but stops
-    // renewal until the next allowed attempt or explicit Apple sign-in.
+    // Keep concurrent renewals on one remote validation. An interrupted worker
+    // loses the lease after two minutes. A temporary provider error can retry sooner.
     const claimed = await db.prepare(`UPDATE pa_device_identity_checks SET lease_id=?,attempt_after=?
       WHERE owner_id=? AND owner_epoch=? AND credential_hash=? AND credential_updated_at=?
         AND attempt_after<=? AND verified_at<=? AND EXISTS(SELECT 1 FROM pa_device_session_grants g
           WHERE g.grant_id=? AND g.revoked_at IS NULL AND g.idle_expires_at>? AND ${liveOwner})`)
-      .bind(lease, now + DAY_MS, grant.owner_id, grant.owner_epoch, current.credential_hash,
+      .bind(lease, now + APPLE_VALIDATION_LEASE_MS, grant.owner_id, grant.owner_epoch, current.credential_hash,
         current.updated_at, now, now - DAY_MS, grant.grant_id, now).run();
     if (claimed.meta.changes !== 1) throw unavailable();
     try {
@@ -204,7 +210,12 @@ export class DeviceSessions {
         await this.d.ownerRecovery?.copyCurrent(db, grant.owner_id, completed);
       }
     } catch (error) {
-      if (error instanceof ServiceError && error.code === 'APPLE_AUTHORIZATION_REJECTED') {
+      if (error instanceof ServiceError && error.code === 'APPLE_UNAVAILABLE') {
+        await db.prepare(`UPDATE pa_device_identity_checks SET lease_id=NULL,attempt_after=?
+          WHERE owner_id=? AND owner_epoch=? AND lease_id=? AND credential_hash=? AND credential_updated_at=?`)
+          .bind(this.now() + APPLE_RETRY_MS, grant.owner_id, grant.owner_epoch, lease,
+            current.credential_hash, current.updated_at).run();
+      } else if (error instanceof ServiceError && error.code === 'APPLE_AUTHORIZATION_REJECTED') {
         // A late failure must not revoke a newer explicit Apple sign-in.
         await db.prepare(`UPDATE pa_device_session_grants SET revoked_at=? WHERE owner_id=?
           AND owner_epoch=? AND revoked_at IS NULL AND EXISTS(SELECT 1 FROM pa_device_identity_checks k
@@ -287,13 +298,9 @@ export class DeviceSessions {
     try {
       if (!opaque.test(input.challengeId) || !opaque.test(input.receipt)) throw denied();
       const db = this.d.db;
-      const authority = `FROM pa_sessions s JOIN pa_device_session_grants g
-        ON s.device_grant_id=g.grant_id AND s.owner_id=g.owner_id AND s.owner_epoch=g.owner_epoch
-        WHERE s.session_hash=? AND s.owner_id=? AND s.expires_at>? AND g.idle_expires_at>?
-          AND g.revoked_at IS NULL AND ${liveOwner} AND ${recovered}`;
       const bindings = (now: number) => [session.sessionHash, session.ownerId, now, now];
       const now = this.now();
-      const grant = await db.prepare(`SELECT g.grant_id,g.device_binding ${authority}`)
+      const grant = await db.prepare(`SELECT g.grant_id,g.device_binding ${boundSession}`)
         .bind(...bindings(now)).first<Pick<GrantRow, 'grant_id' | 'device_binding'>>();
       if (!grant) throw denied();
       const challenge = await db.prepare(`SELECT nonce FROM pa_device_session_challenges
@@ -309,10 +316,71 @@ export class DeviceSessions {
       const claimedAt = this.now();
       const claimed = await db.prepare(`UPDATE pa_device_session_challenges SET consumed_by=?
         WHERE challenge_id=? AND owner_id=? AND grant_id=? AND purpose='revoke' AND expires_at>?
-          AND consumed_by IS NULL AND EXISTS(SELECT 1 ${authority} AND g.grant_id=?) RETURNING challenge_id`)
+          AND consumed_by IS NULL AND EXISTS(SELECT 1 ${boundSession} AND g.grant_id=?) RETURNING challenge_id`)
         .bind(randomToken(), input.challengeId, session.ownerId, grant.grant_id, claimedAt,
           ...bindings(claimedAt), grant.grant_id).first();
       if (!claimed) throw denied();
+    } catch (error) { throw safe(error); }
+  }
+
+  private async sessionGrant(session: Session): Promise<GrantRow> {
+    const now = this.now();
+    const actor = await this.d.db.prepare(`SELECT g.* ${boundSession}`)
+      .bind(session.sessionHash, session.ownerId, now, now).first<GrantRow>();
+    if (!actor) throw denied();
+    await this.d.ownerDeletion?.assertNotRequested(actor.owner_id);
+    return actor;
+  }
+
+  async list(session: Session, after: string) {
+    try {
+      if (after && !grantPattern.test(after)) throw new ServiceError('INVALID_REQUEST');
+      const actor = await this.sessionGrant(session);
+      const now = this.now();
+      const rows = await this.d.db.prepare(`WITH actor AS (SELECT g.* ${boundSession})
+        SELECT max(listed.grant_id) AS id, min(listed.created_at) AS first_seen_at,
+          max(listed.idle_expires_at) AS expires_at, listed.device_binding=actor.device_binding AS is_current
+        FROM actor JOIN pa_device_session_grants listed ON listed.owner_id=actor.owner_id
+          AND listed.owner_epoch=actor.owner_epoch
+        WHERE listed.revoked_at IS NULL AND listed.idle_expires_at>?
+        GROUP BY listed.device_binding HAVING max(listed.grant_id)>?
+        ORDER BY id LIMIT 51`).bind(session.sessionHash, session.ownerId, now, now, now, after)
+        .all<{ id: string; first_seen_at: number; expires_at: number; is_current: 0 | 1 }>();
+      const page = rows.results.slice(0, 50);
+      return { version: 1, currentGrantId: actor.grant_id,
+        devices: page.map(row => ({ id: row.id, current: row.is_current === 1,
+          firstSeenAt: new Date(row.first_seen_at).toISOString(), expiresAt: new Date(row.expires_at).toISOString() })),
+        next: rows.results.length > 50 ? page.at(-1)!.id : null };
+    } catch (error) { throw safe(error); }
+  }
+
+  async revokeOther(session: Session, input: Omit<DeviceSessionRequest, 'grantId'> & { targetGrantId: string }): Promise<void> {
+    try {
+      if (!grantPattern.test(input.targetGrantId)) throw denied();
+      const actor = await this.sessionGrant(session);
+      await this.proof({ ...input, grantId: actor.grant_id }, 'revoke', input.targetGrantId);
+      const now = this.now();
+      const marker = randomToken();
+      const { db } = this.d;
+      // A fresh signature names the target grant. Recheck both devices and the
+      // acting session in the same transaction, then revoke every grant for that key.
+      const [claim, revoked] = await db.batch([
+        db.prepare(`UPDATE pa_device_session_challenges SET consumed_by=? WHERE challenge_id=? AND grant_id=?
+          AND purpose='revoke' AND consumed_by IS NULL AND expires_at>?
+          AND EXISTS(SELECT 1 ${boundSession} AND g.grant_id=? AND EXISTS(
+            SELECT 1 FROM pa_device_session_grants t WHERE t.grant_id=?
+              AND t.owner_id=g.owner_id AND t.owner_epoch=g.owner_epoch AND t.device_binding<>g.device_binding
+              AND t.revoked_at IS NULL AND t.idle_expires_at>?))`)
+          .bind(marker, input.challengeId, actor.grant_id, now, session.sessionHash, session.ownerId, now, now,
+            actor.grant_id, input.targetGrantId, now),
+        db.prepare(`UPDATE pa_device_session_grants SET revoked_at=?
+          WHERE owner_id=? AND owner_epoch=? AND revoked_at IS NULL
+          AND device_binding=(SELECT device_binding FROM pa_device_session_grants WHERE grant_id=?)
+          AND EXISTS(SELECT 1 FROM pa_device_session_challenges WHERE challenge_id=? AND consumed_by=?)
+          RETURNING grant_id`)
+          .bind(now, actor.owner_id, actor.owner_epoch, input.targetGrantId, input.challengeId, marker),
+      ]);
+      if (claim?.meta.changes !== 1 || !revoked?.results.length) throw denied();
     } catch (error) { throw safe(error); }
   }
 }

@@ -9,6 +9,7 @@ import {groupDeviceKeyHash} from './group-identities';
 import {protectedGroupRead,requireCurrentIdentity} from './group-identity-service';
 import {groupCipher,groupNames,groupEnvelopes,groupPacketStatements} from './group-windows';
 import {asObject,binaryField,exactKeys,stringField,uuidField} from './validation';
+import {recoveryExpiryCheckedBatch,recoveryPendingLifetime} from './group-recovery-expiry';
 
 function fail(code='recovery_fresh_unavailable'):never{throw new ApiError(409,code,'Fresh recovery is unavailable.');}
 export function freshConsentTranscript(c:RecoveryChallenge,hash:string):Uint8Array{
@@ -46,8 +47,8 @@ export async function freshRecovery(env:Env,body:Record<string,unknown>,operatio
     JOIN group_members m ON m.space_id=w.space_id AND m.person_id=d.person_id
     WHERE w.space_id=? AND w.mode='active' AND m.state='active' AND d.state='active' AND d.person_id=?`)
     .bind(prior.device_id,prior.window_id,c.person_id).first();if(!active)fail();return jsonResponse(response(prior));}
-  const pending=await env.DB.prepare('SELECT * FROM group_recovery_pending WHERE person_id=? AND operation_id=?')
-   .bind(c.person_id,operation).first<{window_id:string;device_id:string;signing_public_key:string;hpke_public_key:string;model:string}>();
+  const pending=await env.DB.prepare('SELECT * FROM group_recovery_pending WHERE person_id=? AND operation_id=? AND created_at>?')
+   .bind(c.person_id,operation,now-recoveryPendingLifetime).first<{window_id:string;device_id:string;signing_public_key:string;hpke_public_key:string;model:string}>();
   if(!pending||pending.window_id!==claim.windowId||pending.device_id!==claim.newDevice.id
    ||pending.signing_public_key!==claim.newDevice.signingPublicKey||pending.hpke_public_key!==claim.newDevice.hpkePublicKey
    ||pending.device_id!==await groupDeviceKeyHash(pending.signing_public_key,pending.hpke_public_key))fail();
@@ -64,7 +65,7 @@ export async function freshRecovery(env:Env,body:Record<string,unknown>,operatio
   const next=await verifySoloRecoveryRoster(asObject(body.packet) as unknown as SignedGroupRoster,previous,proof,ledger,now);
   const envelopes=groupEnvelopes(body);await verifyGroupEnvelopes(envelopes,next);
   const names=groupNames(body,next),name=groupCipher(body,'encryptedName'),r=next.packet.roster,check=crypto.randomUUID();
-  await env.DB.batch([
+  await recoveryExpiryCheckedBatch(env.DB,[
    env.DB.prepare('UPDATE group_recovery_challenges SET consumed_at=?,consumed_by=? WHERE id=? AND consumed_at IS NULL AND expires_at>?').bind(now,check,c.id,now),
    env.DB.prepare('INSERT INTO group_recovery_read_checks VALUES (?,?,?,?)').bind(check,c.person_id,c.id,now),
    env.DB.prepare('INSERT INTO group_recovery_fresh_checks VALUES (?,?,?,?,?,?,?)').bind(check,c.person_id,operation,pending.window_id,pending.device_id,previous.packet.roster.revision,previous.hash),

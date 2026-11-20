@@ -1,5 +1,5 @@
 import { ServiceError, sha256, type KeyCustody, type Session } from './contracts';
-import { OwnerDeletionJournal, type OwnerDeletionRequest } from './owner-deletion-journal';
+import { OwnerDeletionJournal, type DeletionProgress, type OwnerDeletionRequest } from './owner-deletion-journal';
 import { inventoryOwnerCloudStorage, type OwnerCloudInventory } from './owner-cloud-inventory';
 import { inspectOwnerD1Residue, ownerD1DeleteOrder } from './owner-d1-residue';
 import { requestManifestPhotoDeletion } from './r2-photo-purge';
@@ -96,7 +96,10 @@ type ExecutorDependencies = Base & {
 export class OwnerDeletionExecutor {
   constructor(private readonly d: ExecutorDependencies) {}
 
-  async step(ownerId: string, reportBlocked?: (reason: OwnerDeletionBlock) => void): Promise<'processing' | 'waiting' | 'completed'> {
+  async step(ownerId: string, observer?: {
+    blocked(reason: OwnerDeletionBlock): void;
+    progress(value: DeletionProgress): void;
+  }): Promise<'processing' | 'waiting' | 'completed'> {
     if (this.d.enabled !== true) throw new ServiceError('OWNER_DELETION_DISABLED', 503);
     const r = await this.d.journal.request(ownerId);
     if (!r) throw unavailable();
@@ -123,7 +126,7 @@ export class OwnerDeletionExecutor {
       if (pending?.writes) reasons.push('write-lease');
       if (pending?.uploads) reasons.push('upload');
       if (pending?.expiry_fences) reasons.push('expiry-fence');
-      for (const reason of reasons) reportBlocked?.(reason);
+      for (const reason of reasons) observer?.blocked(reason);
       return 'waiting';
     }
     await installOwnerDeletionFence(db, r);
@@ -148,7 +151,7 @@ export class OwnerDeletionExecutor {
       const before = canonical(await inventoryOwnerCloudStorage(this.d.bucket, this.d.recovery, ownerId));
       const after = canonical(await inventoryOwnerCloudStorage(this.d.bucket, this.d.recovery, ownerId));
       if (before !== after) {
-        reportBlocked?.('inventory-drift');
+        observer?.blocked('inventory-drift');
         throw unavailable();
       }
       plan = await this.d.journal.record(r, 'plan', JSON.parse(before) as Plan);
@@ -165,9 +168,11 @@ export class OwnerDeletionExecutor {
     const allowedVersions = new Set(plan.s3Versions.map(item => JSON.stringify(item)));
     if (current.r2Objects.some(item => !allowedPhotos.has(JSON.stringify(item)))
       || current.s3Versions.some(item => !allowedVersions.has(JSON.stringify(item)))) {
-      reportBlocked?.('inventory-drift');
+      observer?.blocked('inventory-drift');
       throw unavailable();
     }
+    const cloudRemaining = current.r2Objects.length + current.s3Versions.length;
+    if (cloudRemaining) observer?.progress({ phase: 'cloud', remaining: cloudRemaining });
     if (current.r2Objects.length) {
       const yieldAt = this.d.now() + 5000;
       for (const item of current.r2Objects.slice(0, cloudDeletionBatchSize)) {
@@ -193,6 +198,9 @@ export class OwnerDeletionExecutor {
     const authority = `EXISTS(SELECT 1 FROM pa_owner_requested_erasing_authority WHERE owner_id=? AND request_id=?)`;
     const residue = await inspectOwnerD1Residue(db, ownerId);
     if (Object.entries(residue.purgeWork).some(([table, n]) => table !== 'pa_owner_deletion_requests' && n)) throw unavailable();
+    observer?.progress({ phase: 'database', remaining: residue.contentTotal + residue.pendingPhotoDeletes
+      + Object.values(residue.ownerCursors).reduce((sum, count) => sum + count, 0)
+      + Object.values(residue.recoveryRepairCursors).reduce((sum, count) => sum + count, 0) });
     for (const [table, column, n] of [
       ...Object.entries(residue.ownerCursors).map(([table, n]) => [table, 'owner_id', n] as const),
       ...Object.entries(residue.recoveryRepairCursors).map(([table, n]) => [table, 'last_owner_id', n] as const),

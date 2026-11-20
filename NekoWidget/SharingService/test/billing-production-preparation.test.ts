@@ -16,6 +16,7 @@ const profiles = Object.fromEntries(environments.map((store, index) => [store, {
   BILLING_VERIFIER_SHARED_SECRET: Buffer.alloc(32, index + 17).toString("base64url"),
   BILLING_BUNDLE_ID: "jp.nekowidget.app",
   BILLING_STORE_ENVIRONMENT: store,
+  ...(store === "Sandbox" && { BILLING_PRODUCTION_SANDBOX_REVIEW_UNTIL: new Date(Date.now()+60*60_000).toISOString() }),
   BILLING_SUBSCRIPTION_GROUP_ID: "20999999",
   BILLING_MONTHLY_PRODUCT_ID: "jp.nekowidget.plus.monthly",
 }])) as Record<Store, Env>;
@@ -81,6 +82,11 @@ function edge(options: { responseStore?: Store; wrongNonce?: boolean } = {}) {
 }
 
 describe("production/reviewer Sandbox HTTPS preparation (offline only)", () => {
+  it("also closes the isolated reviewer profile once its review deadline has passed", async () => {
+    await expect(verifyAppleTransactionViaService("synthetic.transaction.signature", {
+      ...profiles.Sandbox, BILLING_PRODUCTION_SANDBOX_REVIEW_UNTIL: new Date(Date.now()-1000).toISOString(),
+    }, edge().fetchMock)).rejects.toMatchObject({code:"billing_verifier_invalid_response"});
+  });
   it("uses distinct origins, Access credentials and HMAC keys for the same transaction/account IDs", async () => {
     for (const key of ["BILLING_VERIFIER_ORIGIN", "BILLING_VERIFIER_ACCESS_CLIENT_ID",
       "BILLING_VERIFIER_ACCESS_CLIENT_SECRET", "BILLING_VERIFIER_SHARED_SECRET"] as const) {
