@@ -86,4 +86,27 @@ describe("sharing Worker production intake", () => {
     const res = await worker.fetch(await signedSpaceRequest(), active, {} as ExecutionContext);
     expect(res.status).toBe(201);
   });
+
+  it("closes only legacy admission before touching the request or creating rows", async () => {
+    const active = { ...env, ENVIRONMENT: "production", INTAKE_ENABLED: "YES",
+      LEGACY_PAIRING_ADMISSION_ENABLED: "NO" } as unknown as Env;
+    const signedSpace = await signedSpaceRequest();
+    const before = await active.DB.prepare("SELECT count(*) AS n FROM spaces").first("n");
+    const ctx = {} as ExecutionContext;
+    for (const request of [signedSpace, ...["challenges", "enrollments"].map(suffix =>
+      incoming("/v1/invitations/fixture/" + suffix, { method: "POST", body: "{}" }))]) {
+      const reply = await worker.fetch(request, active, ctx);
+      expect(reply.status).toBe(503);
+      expect(await reply.json()).toMatchObject({ error: { code: "legacy_pairing_admission_disabled" } });
+      expect(request.bodyUsed).toBe(false);
+    }
+    expect(await active.DB.prepare("SELECT count(*) AS n FROM spaces").first("n")).toBe(before);
+    const healthy = await worker.fetch(incoming("/health", { method: "GET" }), active, ctx);
+    expect(healthy.status).toBe(200);
+    for (const route of ["/v1/pairing/revoke", "/v1/billing/transactions", "/v3/group-windows", "/v2/moments/reservations"]) {
+      const request = incoming(route, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const result = await worker.fetch(request, active, ctx);
+      expect(await result.text()).not.toContain("legacy_pairing_admission_disabled");
+    }
+  });
 });
