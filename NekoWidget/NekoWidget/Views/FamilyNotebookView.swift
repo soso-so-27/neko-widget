@@ -2842,7 +2842,7 @@ enum FamilyNotebookWords {
         case .name: "名前"
         case .sex: "性別"
         case .neutered: "去勢・避妊"
-        case .indoorOnly: "室内飼い"
+        case .indoorOnly: "飼い方"  // 11/20: was 「室内飼い」, as in CatCareView
         case .birthday: "誕生日"
         case .adoptionDay: "迎えた日"
         case .coat: "毛色・柄"
