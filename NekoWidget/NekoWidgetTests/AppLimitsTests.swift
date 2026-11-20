@@ -167,6 +167,28 @@ final class AppLimitsTests: XCTestCase {
         XCTAssertEqual(GroupWindowPresentation.dailyHeartLimitMessage, "きょうのハートはここまでです。")
     }
 
+    /// 11/20: deleted records stay (sharing needs them) but never count, and
+    /// a refused add says so instead of passing for saved.
+    func testDeletedListRecordsDoNotCountTowardTheLimit() {
+        let day = CatCareDay(year: 2026, month: 11, day: 20)!
+        var record = CatCareRecord(catID: UUID(), profileID: nil)
+        for _ in 0..<CatCareLimits.maximumMedications {
+            XCTAssertTrue(CatCareListEditor.Result.medication(name: "synthetic", dose: "", schedule: "")
+                .apply(to: &record, by: "test", now: Date()))
+        }
+        XCTAssertTrue(CatCareListEditor.Kind.medication.isFull(record))
+        XCTAssertFalse(CatCareListEditor.Result.medication(name: "one more", dose: "", schedule: "")
+            .apply(to: &record, by: "test", now: Date()), "a full list refuses and says so")
+        CatCareListEditor.Result.delete(kind: .medication, entryID: record.medications[0].id)
+            .apply(to: &record, by: "test", now: Date())
+        XCTAssertFalse(CatCareListEditor.Kind.medication.isFull(record), "a deleted record frees its place")
+        XCTAssertTrue(CatCareListEditor.Result.medication(name: "after delete", dose: "", schedule: "")
+            .apply(to: &record, by: "test", now: Date()))
+        XCTAssertEqual(record.medications.count, CatCareLimits.maximumMedications + 1, "the deleted record is kept")
+        XCTAssertEqual(record.activeMedications.count, CatCareLimits.maximumMedications)
+        XCTAssertTrue(CatCareListEditor.Result.weight(grams: 4_000, day: day).apply(to: &record, by: "test", now: Date()))
+    }
+
     func testPhotoMemoStopsAtThreeThousandNewMemosOnly() async throws {
         struct Fixture: Encodable { let schemaVersion = 4; let notes: [String: PhotoMemoryNote] }
         var notes: [String: PhotoMemoryNote] = [:]

@@ -2898,9 +2898,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "currentlyVisibleImportIdentifiers.contains($0.localIdentifier)",
             app_model,
         )
-        self.assertIn("canConcludeImportedAssetWasDeleted", app_model)
-        self.assertIn("PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized", app_model)
-        self.assertIn('source: "received-memory-deleted"', app_model)
+        # 11/20: absence from one fetch never un-likes a received photo.
+        self.assertNotIn("canConcludeImportedAssetWasDeleted", app_model)
+        self.assertNotIn('source: "received-memory-deleted"', app_model)
         self.assertIn("snapshot.likedAssets", app_model)
         self.assertIn("likedPhotos = sourceSnapshot.assets.compactMap", app_root)
 
@@ -9273,7 +9273,7 @@ class CatIdentityMeasure1113Tests(unittest.TestCase):
             self.assertNotIn(gone, self.service, gone)
             self.assertNotIn(gone, self.view, gone)
         # Read only: the stores are loaded, never saved.
-        self.assertIn("try await LibraryStore().load().assets", self.service)
+        self.assertIn("try await LibraryStore().read().assets", self.service)
         self.assertIn("try await CatHouseholdIdentityStore().load()", self.service)
         # The only file written is the result text, in this app's caches.
         self.assertEqual(self.service.count(".write(to:"), 1)
@@ -9360,7 +9360,7 @@ class CatPhotoCoverage1113Tests(unittest.TestCase):
                 continue
             self.assertNotIn(gone, self.service, gone)
         # Read only: stores are loaded, the curation file is decoded directly.
-        self.assertIn("snapshot = try await LibraryStore().load()", self.service)
+        self.assertIn("snapshot = try await LibraryStore().read()", self.service)
         self.assertIn("try await CatHouseholdIdentityStore().load()", self.service)
         self.assertIn("try AtomicJSON.read(CatCandidateCurationState.self, from: url)", self.service)
         self.assertNotIn("CatCandidateCurationStore()", self.service)

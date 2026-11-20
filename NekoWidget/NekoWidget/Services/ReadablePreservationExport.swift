@@ -331,6 +331,8 @@ enum ReadablePreservationText {
         "profileID", "toolCatID", "sourceNoteID", "sourceRevision", "familyRecordID", "familyDetached", "prefilledFields", "prefilledUsualFood",
         "mutationRevision", "memberships", "globalExcludedAssets", "legacyUnscoped", "mode", "photoAlbumLink", "keyPhotoLocalIdentifier",
         "archiveBindings", "sharedWindowIDs", "editedBy", "editedAt", "sourceAssetID", "origin", "sourcePhotoIdentifier", "source", "order", "status",
+        // 11/20: expiresOn is the same 期限 as expiresAt, which is shown.
+        "expiresOn",
         "recommendedFromCount", "photoRemoved", "pendingPhotoCleanup"]
     /// Stored codes shown as words (11/8: 「shelter」 read as English).
     private static let valueWords: [String: [String: String]] = [

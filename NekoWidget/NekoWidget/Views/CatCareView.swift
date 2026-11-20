@@ -1171,11 +1171,14 @@ struct CatCareDetailView: View {
             value.microchip = savedDraft.microchip
             microchipInvalid = !draft.microchip.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
+        // 11/20: a cat no longer in the file stores nothing; that is not saved.
+        var written = false
         let saved = store.update { state in
             guard let index = state.cats.firstIndex(where: { $0.catID == catID }) else { return }
             value.write(to: &state.cats[index], household: &state.household,
                         by: state.deviceID, now: Date())
-        }
+            written = true
+        } && written
         // What was actually stored: an unfinished chip number stays out of it.
         if saved { savedDraft = value }
         if saved { UsageCounter.shared.count(.catCareEdited) }  // Usage (11/7): each autosave that stored a change
@@ -1210,11 +1213,14 @@ struct CatCareDetailView: View {
 
     private func apply(_ result: CatCareListEditor.Result) {
         guard let catID else { return }
+        // 11/20: a full list refuses the new record; the list then says so
+        // where 「追加」 was (limitSentence). A missing cat is a failure.
+        var applied: Bool?
         let saved = store.update { state in
             guard let index = state.cats.firstIndex(where: { $0.catID == catID }) else { return }
-            result.apply(to: &state.cats[index], by: state.deviceID, now: Date())
+            applied = result.apply(to: &state.cats[index], by: state.deviceID, now: Date())
         }
-        if !saved { saveFailed = true }
+        if !saved || applied == nil { saveFailed = true }
     }
 }
 
@@ -1546,15 +1552,18 @@ struct CatCareListEditor: Identifiable {
         case meal(time: String, food: String, amount: String, replacing: UUID? = nil)
         case delete(kind: Kind, entryID: UUID)
 
-        func apply(to r: inout CatCareRecord, by: String, now: Date) {
+        /// False when a new record was refused because the list is full
+        /// (11/20: counted without deleted records, as the list shows them).
+        @discardableResult
+        func apply(to r: inout CatCareRecord, by: String, now: Date) -> Bool {
             switch self {
             case let .weight(grams, day, replacing):
                 if let index = replacing.flatMap({ id in r.weights.firstIndex { $0.id == id } }) {
                     r.weights[index].grams = grams; r.weights[index].measuredOn = day
                     r.weights[index].editedAt = now; r.weights[index].editedBy = by
-                    return
+                    return true
                 }
-                guard r.weights.count < CatCareLimits.maximumWeights else { return }
+                guard r.activeWeights.count < CatCareLimits.maximumWeights else { return false }
                 r.weights.append(.init(measuredOn: day, grams: grams, editedAt: now, editedBy: by))
             case let .medication(name, dose, schedule, replacing):
                 if let index = replacing.flatMap({ id in r.medications.firstIndex { $0.id == id } }) {
@@ -1562,9 +1571,9 @@ struct CatCareListEditor: Identifiable {
                     r.medications[index].dose = CatCareLimits.clippedText(dose)
                     r.medications[index].schedule = CatCareLimits.clippedText(schedule)
                     r.medications[index].editedAt = now; r.medications[index].editedBy = by
-                    return
+                    return true
                 }
-                guard r.medications.count < CatCareLimits.maximumMedications else { return }
+                guard r.activeMedications.count < CatCareLimits.maximumMedications else { return false }
                 r.medications.append(.init(name: CatCareLimits.clippedText(name), dose: CatCareLimits.clippedText(dose),
                                            schedule: CatCareLimits.clippedText(schedule), editedAt: now, editedBy: by))
             case let .vaccination(kind, day, proof, replacing):
@@ -1573,18 +1582,18 @@ struct CatCareListEditor: Identifiable {
                     r.vaccinations[index].givenOn = day
                     r.replaceVaccinationProof(proof, for: r.vaccinations[index].id)
                     r.vaccinations[index].editedAt = now; r.vaccinations[index].editedBy = by
-                    return
+                    return true
                 }
-                guard r.vaccinations.count < CatCareLimits.maximumVaccinations else { return }
+                guard r.activeVaccinations.count < CatCareLimits.maximumVaccinations else { return false }
                 r.vaccinations.append(.init(kind: CatCareLimits.clippedText(kind), givenOn: day, proof: proof,
                                             editedAt: now, editedBy: by))
             case let .meal(time, food, amount, replacing):
                 if let index = replacing.flatMap({ id in r.meals.firstIndex { $0.id == id } }) {
                     r.meals[index].time = time; r.meals[index].food = food; r.meals[index].amount = amount
                     r.meals[index].editedAt = now; r.meals[index].editedBy = by
-                    return
+                    return true
                 }
-                guard r.activeMeals.count < CatCareLimits.maximumMeals else { return }
+                guard r.activeMeals.count < CatCareLimits.maximumMeals else { return false }
                 r.meals.append(.init(time: time, food: food, amount: amount,
                                      order: (r.activeMeals.map(\.order).max() ?? -1) + 1,
                                      editedAt: now, editedBy: by))
@@ -1597,6 +1606,7 @@ struct CatCareListEditor: Identifiable {
                 case .meal: r.meals.markDeleted(entryID, at: now, by: by)
                 }
             }
+            return true
         }
     }
 }
@@ -1616,9 +1626,9 @@ extension CatCareListEditor.Kind {
     func isFull(_ record: CatCareRecord?) -> Bool {
         guard let r = record else { return false }
         switch self {
-        case .weight: return r.weights.count >= limit
-        case .medication: return r.medications.count >= limit
-        case .vaccination: return r.vaccinations.count >= limit
+        case .weight: return r.activeWeights.count >= limit
+        case .medication: return r.activeMedications.count >= limit
+        case .vaccination: return r.activeVaccinations.count >= limit
         case .meal: return r.activeMeals.count >= limit
         }
     }

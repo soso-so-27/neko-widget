@@ -12,6 +12,9 @@ actor LibraryStore {
         self.snapshotURL = snapshotURL
     }
 
+    /// The app's own load. Writes only when a stored-format migration
+    /// actually changed something (11/20): a plain load of a current file
+    /// never rewrites its 10-20 MB.
     func load() throws -> LibrarySnapshot {
         guard FileManager.default.fileExists(atPath: snapshotURL.path) else {
             return Self.migratedGroupedAlbumSnapshot(.empty).snapshot
@@ -22,6 +25,18 @@ actor LibraryStore {
             try AtomicJSON.write(migration.snapshot, to: snapshotURL)
         }
         return migration.snapshot
+    }
+
+    /// Read-only (11/20): the background refresh and measurements run beside
+    /// the app with no lock between processes. They migrate in memory only,
+    /// so an older snapshot they read can never overwrite a newer scan.
+    func read() throws -> LibrarySnapshot {
+        guard FileManager.default.fileExists(atPath: snapshotURL.path) else {
+            return Self.migratedGroupedAlbumSnapshot(.empty).snapshot
+        }
+        return Self.migratedGroupedAlbumSnapshot(
+            try AtomicJSON.read(LibrarySnapshot.self, from: snapshotURL)
+        ).snapshot
     }
 
     /// The last value this store wrote (11/14). The app asked to save the
@@ -149,10 +164,12 @@ actor LibraryStore {
             didChange = true
         }
 
-        let postureSummary = PostureScanSummary(records: value.assets)
-        if value.scanState.postureSummary != postureSummary {
-            value.scanState.postureSummary = postureSummary
-            didChange = true
+        // Diagnostics only, and the app stores it from the filtered cat
+        // candidates (AppViewModel), not from every asset. Recomputing it
+        // here made every load differ and rewrite the file (11/20). Only a
+        // file without one gets it, in memory; that is not a migration.
+        if value.scanState.postureSummary == nil {
+            value.scanState.postureSummary = PostureScanSummary(records: value.assets)
         }
 
         // Build 16 resolves posture albums from already persisted detector

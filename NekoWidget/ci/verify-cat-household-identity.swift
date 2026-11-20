@@ -20,6 +20,8 @@ enum CatHouseholdIdentityVerifier {
         try verifiesProfileAlbumMembershipPrecedence()
         try verifiesBuild14ReferenceMigrationIsConservative()
         try verifiesGlobalExclusionIsSeparate()
+        try verifiesDeviceCalendarYearsBecomeGregorian()
+        try verifiesDeletedProfilesTakeNoToolPlace()
         try verifiesNormalizationSafety()
         try verifiesOptionalProfileMetadataCompatibility()
         try verifiesBothProfileDatesAndPrimaryBasis()
@@ -465,6 +467,9 @@ enum CatHouseholdIdentityVerifier {
                 isSimilarityReference: true
             )
         }
+        state.setProfileKeyPhoto(profileID: firstID, assetLocalIdentifier: "two-cats")
+        try require(state.profiles.first { $0.id == firstID }?.keyPhotoLocalIdentifier == "two-cats", "key photo fixture")
+        let beforeExclusion = state.memberships
         state.setGloballyExcluded(
             true,
             assetLocalIdentifiers: ["two-cats"],
@@ -475,13 +480,67 @@ enum CatHouseholdIdentityVerifier {
             state.memberships.allSatisfy { $0.assetLocalIdentifier != "two-cats" },
             "global exclusion retained per-profile learning decisions"
         )
+        try require(state.profiles.allSatisfy { $0.keyPhotoLocalIdentifier == nil }, "an excluded photo stayed a key photo")
+        // A local-only copy: what leaves this iPhone drops it with the exclusions.
+        var portable = state
+        portable.globalExcludedAssets = []
+        try require(portable.normalized().exclusionSetAside == nil, "set-aside decisions outlived their exclusion")
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        state = try decoder.decode(CatHouseholdIdentityState.self, from: encoder.encode(state))
+        // 11/20: 「戻す」 gives back what the exclusion took, key photo included.
         state.setGloballyExcluded(false, assetLocalIdentifiers: ["two-cats"])
         try require(!state.isGloballyExcluded("two-cats"), "global restore failed")
-        try require(
-            state.membershipDecision(for: "two-cats", profileID: firstID) == .unknown
-                && state.membershipDecision(for: "two-cats", profileID: secondID) == .unknown,
-            "global restore silently reassigned the photo"
-        )
+        try require(state.memberships == beforeExclusion, "global restore lost the per-cat decisions")
+        try require(state.profiles.first { $0.id == firstID }?.keyPhotoLocalIdentifier == "two-cats", "global restore lost the key photo")
+        try require(state.exclusionSetAside == nil, "a restored photo kept its set-aside copy")
+
+        // A decision made while excluded is not overwritten; a cat with a
+        // new key photo keeps it.
+        state.setManualMembership(assetLocalIdentifier: "other", profileID: firstID, decision: .included)
+        state.setGloballyExcluded(true, assetLocalIdentifiers: ["two-cats"], at: Date(timeIntervalSince1970: 600))
+        state.setProfileKeyPhoto(profileID: firstID, assetLocalIdentifier: "other")
+        state.setGloballyExcluded(false, assetLocalIdentifiers: ["two-cats"])
+        try require(state.profiles.first { $0.id == firstID }?.keyPhotoLocalIdentifier == "other", "restore replaced a newer key photo")
+        try require(state.membershipDecision(for: "two-cats", profileID: secondID) == .included, "restore lost the second cat's decision")
+    }
+
+    /// 11/20: a tool cat whose profile was deleted keeps its records but takes
+    /// no place; a cat without a profile still does.
+    private static func verifiesDeletedProfilesTakeNoToolPlace() throws {
+        let living = (0..<9).map { "PROFILE-\($0)" }
+        let tool: [String?] = living + ["deleted-profile"]
+        try require(!CatProfileLimit.canAddToolCat(tool, departed: [], profiles: nil), "unknown profiles count every cat")
+        try require(CatProfileLimit.canAddToolCat(tool, departed: [], profiles: Set(living.map { $0.lowercased() })),
+                    "a deleted profile's leftover blocked a new cat")
+        try require(!CatProfileLimit.canAddToolCat(tool + [nil], departed: [], profiles: Set(living)),
+                    "a cat without a profile stopped counting")
+    }
+
+    /// 11/20: a year saved in the iPhone's 仏暦 calendar before 11/10 becomes
+    /// 西暦 while this iPhone can tell the day; otherwise it stays as it is.
+    private static func verifiesDeviceCalendarYearsBecomeGregorian() throws {
+        var buddhist = Calendar(identifier: .buddhist)
+        buddhist.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        let legacy = try JSONDecoder().decode(CatLifeDate.self, from: Data(#"{"year":2569,"month":4,"day":5}"#.utf8))
+        let converted = legacy.inGregorian(device: buddhist)
+        try require(converted?.year == 2026 && converted?.month == 4 && converted?.day == 5, "a 仏暦 year did not become 西暦")
+        try require(legacy.inGregorian(device: gregorian) == nil, "a 西暦 iPhone guessed at an undeterminable year")
+        let current = lifeReference(year: 2020, month: 4, day: 5).date
+        try require(current.inGregorian(device: buddhist) == nil, "a 西暦 year was converted again")
+
+        let profileID = fixedUUID("00000000-0000-0000-0000-000000000009")
+        var state = emptyProfiledState()
+        state.upsertProfile(CatProfile(id: profileID, displayName: "むぎ",
+            lifeDates: CatProfileLifeDates(birthday: legacy, adoptionDay: current)))
+        let unchanged = state.convertingDeviceCalendarYears(device: gregorian)
+        try require(unchanged == state, "a 西暦 iPhone changed an undeterminable birthday")
+        let fixed = state.convertingDeviceCalendarYears(device: buddhist)
+        let dates = fixed.profiles.first?.resolvedLifeDates
+        try require(dates?.birthday?.year == 2026 && dates?.adoptionDay?.year == 2020, "profile dates were not made 西暦")
+        try require(fixed.profiles.first?.lifeReference?.date.year == 2026, "the primary basis kept the 仏暦 year")
     }
 
     private static func verifiesNormalizationSafety() throws {
@@ -865,6 +924,17 @@ enum CatHouseholdIdentityVerifier {
         try require(recovered == original, "the same store could not explicitly reread a repaired fixture")
         let bytesAfterRecovery = try Data(contentsOf: url)
         try require(bytesAfterRecovery == validBytes, "rereading advanced or rewrote healthy identity data")
+
+        // 11/20: a plain load writes nothing, so a field from a later build
+        // in the same schema survives being read here.
+        var later = try JSONSerialization.jsonObject(with: validBytes) as! [String: Any]
+        later["syntheticFieldFromLaterBuild"] = "kept"
+        let laterBytes = try JSONSerialization.data(withJSONObject: later, options: [.sortedKeys])
+        try laterBytes.write(to: url)
+        _ = try await store.load()
+        let bytesAfterPlainLoad = try Data(contentsOf: url)
+        try require(bytesAfterPlainLoad == laterBytes, "a plain load rewrote the identity file")
+        try validBytes.write(to: url)
 
         var future = try JSONSerialization.jsonObject(with: validBytes) as! [String: Any]
         future["schemaVersion"] = CatHouseholdIdentityState.currentSchemaVersion + 1

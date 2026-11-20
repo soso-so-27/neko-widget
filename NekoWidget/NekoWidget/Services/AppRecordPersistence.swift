@@ -143,6 +143,49 @@ enum AppRecordRebinding {
     }
 }
 
+/// 11/20: automatic-save settings this build cannot use. Only the explicit
+/// start replaces them, and only after their bytes are kept aside. A higher
+/// format version or a consent this build cannot place as older came from a
+/// newer build: refused, never rewritten.
+enum AppRecordUnusableBinding: Equatable {
+    case newerFormat, newerConsent, unreadable
+    /// The same settings with only `consent` replaced; other keys kept.
+    case olderConsent(Data)
+    static func mayRepair(_ error: Error) -> Bool {
+        if let failure = error as? AppRecordBindingError { return failure == .consent || failure == .format }
+        return error is DecodingError
+    }
+    /// nil: nothing here to repair (the settings decode with today's consent).
+    static func classify(_ raw: Data, currentConsent: String, decodes: (Data) -> Bool) -> Self? {
+        guard let object = (try? JSONSerialization.jsonObject(with: raw)) as? [String: Any] else { return .unreadable }
+        let version = (object["version"] as? NSNumber).flatMap { CFGetTypeID($0) == CFBooleanGetTypeID() ? nil : $0 }
+        if let version, version.doubleValue > 1 { return .newerFormat }
+        guard let version, version.doubleValue == 1, let consent = object["consent"] as? String else { return .unreadable }
+        if consent == currentConsent { return decodes(raw) ? nil : .unreadable }
+        guard let stored = consentNumber(consent), let current = consentNumber(currentConsent),
+              stored < current else { return .newerConsent }
+        var next = object; next["consent"] = currentConsent
+        guard let repaired = try? JSONSerialization.data(withJSONObject: next, options: [.sortedKeys]),
+              decodes(repaired) else { return .unreadable }
+        return .olderConsent(repaired)
+    }
+    /// "app-records-automatic-v1" → 1. Anything else cannot be placed.
+    static func consentNumber(_ value: String) -> Int? {
+        guard let marker = value.range(of: "-v", options: .backwards),
+              value[..<marker.lowerBound] == "app-records-automatic",
+              let number = Int(value[marker.upperBound...]), number > 0 else { return nil }
+        return number
+    }
+    /// A fresh folder per copy beside the rebinding history; never read back
+    /// automatically, never overwritten.
+    static func setAside(_ raw: Data, in control: URL) throws {
+        let url = control.appendingPathComponent("previous-settings/unusable-" + UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("binding.json")
+        try AppRecordRebinding.write(raw, to: url)
+        guard try Data(contentsOf: url) == raw else { throw AppRecordBindingError.rebinding }
+    }
+}
+
 /// These leases outlive hidden editors and nested presentations. They protect
 /// memory-only drafts, which a fingerprint of committed files cannot detect.
 final class AppRecordEditingLease: ObservableObject, @unchecked Sendable {
@@ -588,6 +631,7 @@ enum AppRecordDataset {
         }
         result.memberships = local.memberships.filter { ids.contains($0.profileID) }
         result.globalExcludedAssets = local.globalExcludedAssets
+        result.exclusionSetAside = local.exclusionSetAside  // 11/20: local links, like the exclusions
         if let own = local.legacyUnscoped {
             if result.legacyUnscoped == nil {
                 var photoLinks = own; photoLinks.lifeReference = nil; result.legacyUnscoped = photoLinks
@@ -1068,6 +1112,28 @@ final class AppRecordPersistence: ObservableObject {
             enabled = true
         }
     }
+    /// 11/20: the explicit start only. Settings that are corrupt or carry an
+    /// older consent are copied to previous-settings/ before they are
+    /// replaced; settings written by a newer build are never touched.
+    nonisolated private func setAsideUnusableBinding(_ failure: Error) throws {
+        AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
+        let control = bindingURL.deletingLastPathComponent()
+        try AppRecordRebinding.recover(at: control)
+        let raw = try ToolBackupFiles.read(bindingURL, maximum: 8192)
+        let found = AppRecordUnusableBinding.classify(raw, currentConsent: Self.consentVersion,
+            decodes: { (try? JSONDecoder().decode(Binding.self, from: $0)) != nil })
+        switch found {
+        case nil: throw failure
+        case .newerFormat?: throw AppRecordBindingError.format
+        case .newerConsent?: throw AppRecordBindingError.consent
+        case .unreadable?:
+            try AppRecordUnusableBinding.setAside(raw, in: control)
+            try FileManager.default.removeItem(at: bindingURL)
+        case .olderConsent(let repaired)?:
+            try AppRecordUnusableBinding.setAside(raw, in: control)
+            try AppRecordDataset.writeBackedUp(repaired, to: bindingURL)
+        }
+    }
     func enable() async {
         let intent = saveIntent.ticket()
         await yieldCleanup()
@@ -1081,6 +1147,14 @@ final class AppRecordPersistence: ObservableObject {
             var changingDestination = false
             do { previous = try binding() }
             catch AppRecordBindingError.destination { changingDestination = true }
+            catch let failure where AppRecordUnusableBinding.mayRepair(failure) {
+                // 11/20: only this button, with today's consent on screen,
+                // replaces settings this build cannot use. Their bytes are
+                // kept aside first; settings from a newer build stay refused.
+                try setAsideUnusableBinding(failure)
+                do { previous = try binding() }
+                catch AppRecordBindingError.destination { changingDestination = true }
+            }
             // Explicit start may use the newly authenticated Apple account.
             // Automatic/background work remains fenced to the previous owner.
             let checkpoint = try await client.prepareSession()
@@ -1137,7 +1211,17 @@ final class AppRecordPersistence: ObservableObject {
             let checkpoint = try await client.prepareSession(expectedOwner: value.owner)
             try await require(value, checkpoint)
             let headID = AppRecordHead.id(origin: value.origin, owner: value.owner)
-            guard let remote = try await remoteHead(headID) else { throw ManagedPreservationError.conflict }
+            guard let remote = try await remoteHead(headID) else {
+                // 11/20: nothing on the server to choose. Either answer keeps
+                // this iPhone's records and starts a new head from them.
+                try await forgetMissingRemote(&value, headID: headID, checkpoint: checkpoint, intent: intent)
+                try saveIntent.require(intent)
+                conflict = false; requested = true; nextAttempt = .distantPast; flushEdits()
+                title = "保存の準備中…"; detail = nil
+                busy = false
+                if enabled, (try? saveIntent.require(intent)) != nil { await synchronize() }
+                return
+            }
             let fingerprint = try await AppRecordBackground.fingerprint()
             // Retain a complete remote copy even when choosing this device.
             let record = try await index(remote.1)
@@ -1184,6 +1268,29 @@ final class AppRecordPersistence: ObservableObject {
             let snapshot = try await client.detail(id)
             return (snapshot.record, try AppRecordHead.decode(snapshot.document))
         } catch ManagedPreservationError.notFound { return nil }
+    }
+    /// 11/20: the server answered "no such head" (404/410) while this iPhone
+    /// remembers a saved revision: its copy was erased or never came back.
+    /// That is not a conflict — this iPhone holds the only copy — so the
+    /// next save starts a new head from it. Asked a second time first, so a
+    /// single odd answer never counts. Nothing local is restored, removed or
+    /// rewritten here: an absent remote never stands for "deleted everything".
+    private func forgetMissingRemote(_ value: inout Binding, headID: UUID,
+                                     checkpoint: ManagedPreservationClient.SessionCheckpoint, intent: UInt64) async throws {
+        try await require(value, checkpoint)
+        guard try await remoteHead(headID) == nil else { throw ToolBackupError.changed }
+        try saveIntent.require(intent)
+        try await require(value, checkpoint)
+        value = Self.startingNewRemote(value)
+        try write(value, intent: intent)
+    }
+    /// Forgets only what described the vanished head. A prepared capture
+    /// keeps its old base, so it is abandoned and prepared again.
+    nonisolated static func startingNewRemote(_ value: Binding) -> Binding {
+        var next = value
+        next.revision = nil; next.snapshotID = nil; next.fingerprint = nil
+        next.filteredNotebookSnapshotID = nil; next.pendingPrevious = nil
+        return next
     }
     private func index(_ head: AppRecordHead) async throws -> ManagedPreservationRecord {
         struct Header: Decodable { let version: Int }
@@ -1382,6 +1489,12 @@ final class AppRecordPersistence: ObservableObject {
             try saveIntent.require(intent)
             try await require(value, checkpoint)
             try saveIntent.require(intent)
+            if remote == nil, value.revision != nil {
+                // 11/20: no head on the server, yet this iPhone remembers one.
+                // Not a disagreement: this iPhone holds the only copy.
+                try await forgetMissingRemote(&value, headID: headID, checkpoint: checkpoint, intent: intent)
+                try saveIntent.require(intent)
+            }
             if remote?.0.revision != value.revision, let retiring = remote?.1.retiring {
                 value.retiring = Array(Set((value.retiring ?? []) + retiring)); try write(value, intent: intent)
             }
@@ -1468,7 +1581,10 @@ final class AppRecordPersistence: ObservableObject {
             }
             accepted = nil
             let saved: ToolBackupFiles.Saved
-            if let pending = value.pending, pendingCapture == nil || replacePendingNotebook || replacePendingPhoto {
+            // 11/20: a capture prepared against a head the server no longer
+            // has is prepared again too (see forgetMissingRemote).
+            let pendingOnMissingHead = value.pending != nil && value.pendingBase != value.revision && value.revision == nil
+            if let pending = value.pending, pendingCapture == nil || replacePendingNotebook || replacePendingPhoto || pendingOnMissingHead {
                 // OS backup deliberately excludes transport staging. A head
                 // accepted before its reply was lost was reconciled above;
                 // otherwise recapture current live records under a fresh ID.
@@ -1477,7 +1593,8 @@ final class AppRecordPersistence: ObservableObject {
                 try saveIntent.require(intent)
                 guard try await AppRecordBackground.fingerprint() == currentFingerprint else { throw ToolBackupError.changed }
                 try saveIntent.require(intent)
-                try await client.abandonToolSnapshot(pending, checkpoint: checkpoint)
+                do { try await client.abandonToolSnapshot(pending, checkpoint: checkpoint) }
+                catch ManagedPreservationError.notFound where pendingOnMissingHead { }
                 try saveIntent.require(intent)
                 try await require(value, checkpoint)
                 try saveIntent.require(intent)

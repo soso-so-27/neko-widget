@@ -206,11 +206,13 @@ private struct CatHomeCareListPage: View {
     }
 
     private func apply(_ result: CatCareListEditor.Result) {
+        // 11/20: as in 「この子のこと」: a full list says so where 「追加」 was.
+        var applied: Bool?
         let saved = store.update { state in
             guard let index = state.cats.firstIndex(where: { $0.catID == catID }) else { return }
-            result.apply(to: &state.cats[index], by: state.deviceID, now: Date())
+            applied = result.apply(to: &state.cats[index], by: state.deviceID, now: Date())
         }
-        if !saved { saveFailed = true }
+        if !saved || applied == nil { saveFailed = true }
     }
 }
 

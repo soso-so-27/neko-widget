@@ -7,7 +7,7 @@ def block(signature, indent):
  b=source.index("\n"+" "*indent+"}",a)+indent+2
  return source[a:b]
 parts=["import Foundation\nimport CryptoKit",
- block("enum AppRecordBindingError:",0),block("enum AppRecordRebinding {",0),
+ block("enum AppRecordBindingError:",0),block("enum AppRecordRebinding {",0),block("enum AppRecordUnusableBinding:",0),
  "enum ToolBackupError: Error { case invalid }",
  "enum ManagedPreservationError: Error { case staleSession }",
  "enum ManagedPreservationClient { typealias LocalSessionFence = @Sendable (_ publication: () throws -> Void) throws -> Void }",

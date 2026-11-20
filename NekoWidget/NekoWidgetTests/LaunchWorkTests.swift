@@ -252,6 +252,22 @@ final class LaunchWorkTests: XCTestCase {
         XCTAssertTrue(loaded.assets[0].isFavorite)
     }
 
+    /// 11/20: the app stores a posture summary of its filtered cat
+    /// candidates. Loading that file must not rewrite it, and the
+    /// background reader never writes at all.
+    func testPlainLoadAndBackgroundReadDoNotRewrite() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("snapshot-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        var snapshot = completedSnapshot()
+        snapshot.scanState.postureSummary = PostureScanSummary(records: [])
+        try await LibraryStore(snapshotURL: url).save(snapshot)
+        let written = try Data(contentsOf: url)
+        _ = try await LibraryStore(snapshotURL: url).load()
+        XCTAssertEqual(try Data(contentsOf: url), written, "a plain load does not rewrite the snapshot")
+        _ = try await LibraryStore(snapshotURL: url).read()
+        XCTAssertEqual(try Data(contentsOf: url), written, "a background read never writes")
+    }
+
     // MARK: - 写真 tab: a spinner after 「〇枚」, only for real work
 
     @MainActor
