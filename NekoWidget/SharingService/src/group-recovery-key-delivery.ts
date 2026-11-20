@@ -7,6 +7,7 @@ import {verifyRecoveryRecipient,verifyRecoveryOffer,recoveryOfferBytes} from './
 import {base64urlEncode,sha256Base64url} from './encoding';
 import {exactKeys,uuidField,type JsonRecord} from './validation';
 import {checkTrialRecovery} from './owner-two-device-trial';
+import {recoveryExpiryCheckedBatch,recoveryPendingLifetime} from './group-recovery-expiry';
 
 export interface RecoveryPendingRow {person_id:string;operation_id:string;window_id:string;device_id:string;
  signing_public_key:string;hpke_public_key:string;model:string;proof_json:string}
@@ -45,8 +46,9 @@ export async function providerRecoveryAPI(env:Env,actor:GroupActor,windowId:stri
  if(suffix==='recovery/pending'){
   exactKeys(body,[]);
   const rows=await env.DB.prepare(`SELECT r.* FROM group_recovery_pending r JOIN group_members m ON m.person_id=r.person_id AND m.space_id=r.window_id
-   JOIN group_people p ON p.id=r.person_id WHERE r.window_id=? AND m.state='active' AND p.state='active' ORDER BY r.created_at LIMIT 18`)
-   .bind(windowId).all<RecoveryPendingRow>();
+   JOIN group_people p ON p.id=r.person_id WHERE r.window_id=? AND r.created_at>?
+    AND m.state='active' AND p.state='active' ORDER BY r.created_at LIMIT 18`)
+   .bind(windowId,actor.now-recoveryPendingLifetime).all<RecoveryPendingRow>();
   const items=[];
   for(const row of rows.results){
    if(env.ownerTrial && (row.person_id!==env.ownerTrial.aPerson || row.device_id!==env.ownerTrial.recoveryDevice))continue;
@@ -69,7 +71,8 @@ export async function providerRecoveryAPI(env:Env,actor:GroupActor,windowId:stri
  if(!match)throw new ApiError(404,'not_found','Recovery endpoint unavailable.');
  exactKeys(body,['offer']);
  const operation=uuidField({operation:match[1]},'operation');
- const candidates=await env.DB.prepare('SELECT * FROM group_recovery_pending WHERE window_id=? AND operation_id=? LIMIT 2').bind(windowId,operation).all<RecoveryPendingRow>();
+ const candidates=await env.DB.prepare('SELECT * FROM group_recovery_pending WHERE window_id=? AND operation_id=? AND created_at>? LIMIT 2')
+  .bind(windowId,operation,actor.now-recoveryPendingLifetime).all<RecoveryPendingRow>();
  if(candidates.results.length>1)throw new ApiError(409,'recovery_operation_ambiguous','Recovery operation is ambiguous.');
  const row=candidates.results[0];
  if(!row)throw new ApiError(404,'recovery_pending_unavailable','Recovery registration unavailable.');
@@ -85,7 +88,7 @@ export async function providerRecoveryAPI(env:Env,actor:GroupActor,windowId:stri
   .bind(row.person_id,operation,offer.keyEpoch).first<{offer_hash:string;offer_json:string;expires_at:number}>();
  if(old&&old.expires_at>actor.now&&(old.offer_hash!==hash||JSON.parse(old.offer_json).signature!==offer.signature))
   throw new ApiError(409,'idempotency_conflict','A different recovery envelope is already pending.');
- await env.DB.batch([...groupAuthorizationStatements(env,actor,{windowId,expectedRevision:access.revision}),
+ await recoveryExpiryCheckedBatch(env.DB,[...groupAuthorizationStatements(env,actor,{windowId,expectedRevision:access.revision}),
   ...recoveryKeyChecks(env,row,head,crypto.randomUUID()),
   env.DB.prepare('DELETE FROM group_recovery_key_offers WHERE person_id=? AND operation_id=? AND key_epoch=? AND expires_at<=?')
    .bind(row.person_id,operation,offer.keyEpoch,actor.now),

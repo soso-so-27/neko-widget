@@ -110,6 +110,7 @@ const expectedMigrationNames = [
   "0090_family_device_notifications.sql",
   "0091_group_report_replies_index.sql",
   "0092_group_person_photo_quota.sql",
+  "0093_group_recovery_pending_expiry.sql",
 ];
 
 const databaseGateColumns = [

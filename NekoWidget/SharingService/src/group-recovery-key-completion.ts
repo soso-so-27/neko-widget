@@ -8,6 +8,7 @@ import {recoveryDeliveryState,recoveryKeyChecks,recoveryEpoch,requireRecoveryGat
 import {verifyRecoveryOffer,recoveryReceiptBytes,type RecoveryKeyOffer} from './group-recovery-key-protocol';
 import {verifyEd25519} from './encoding';
 import {participationStatements} from './group-recovery-participation-store';
+import {recoveryExpiryCheckedBatch,recoveryPendingLifetime} from './group-recovery-expiry';
 
 const shape=(members:readonly GroupRosterMember[])=>JSON.stringify([...members].sort((a,b)=>a.participantId.localeCompare(b.participantId)).map(m=>
  [m.participantId,m.personId,m.identityPublicKey,m.role,[...m.devices].sort((a,b)=>a.id.localeCompare(b.id)).map(d=>[d.id,d.signingPublicKey,d.hpkePublicKey])]));
@@ -19,7 +20,8 @@ export async function completeRecoveryKeys(env:Env,actor:GroupActor,windowId:str
  await requireGroupMember(env,actor,windowId,true);
  const prior=await storedGroupMutation(env,actor,operation,scope);if(prior)return jsonResponse(prior);
  const fail=()=>new ApiError(409,'recovery_receipt_required','Recovery keys must be received first.');
- const candidates=await env.DB.prepare('SELECT * FROM group_recovery_pending WHERE window_id=? AND operation_id=? LIMIT 2').bind(windowId,operation).all<RecoveryPendingRow>();
+ const candidates=await env.DB.prepare('SELECT * FROM group_recovery_pending WHERE window_id=? AND operation_id=? AND created_at>? LIMIT 2')
+  .bind(windowId,operation,actor.now-recoveryPendingLifetime).all<RecoveryPendingRow>();
  if(candidates.results.length>1)throw fail();
  const row=candidates.results[0];
  if(!row)throw fail();
@@ -59,7 +61,7 @@ export async function completeRecoveryKeys(env:Env,actor:GroupActor,windowId:str
  const result={state:'recoveryCommitted',operationId:operation,personId:row.person_id,windowId,deviceId:row.device_id,
   revision:next.packet.roster.revision,rosterHash:next.hash};
  const updates=expected.map(m=>env.DB.prepare('UPDATE group_members SET display_name_ciphertext=? WHERE space_id=? AND participant_id=?').bind(names[m.participantId],windowId,m.participantId));
- await env.DB.batch([...groupAuthorizationStatements(env,actor,scope),...recoveryKeyChecks(env,row,previous,crypto.randomUUID(),receipts.results.map(r=>r.offer_hash)),
+ await recoveryExpiryCheckedBatch(env.DB,[...groupAuthorizationStatements(env,actor,scope),...recoveryKeyChecks(env,row,previous,crypto.randomUUID(),receipts.results.map(r=>r.offer_hash)),
   env.DB.prepare("INSERT INTO group_person_devices VALUES (?,?,?,?,?,'active',?,NULL) ON CONFLICT(id) DO NOTHING")
    .bind(row.device_id,row.person_id,row.signing_public_key,row.hpke_public_key,row.proof_json,actor.now),
   env.DB.prepare('INSERT INTO group_recovery_device_labels VALUES (?,?) ON CONFLICT(device_id) DO NOTHING').bind(row.device_id,row.model),
