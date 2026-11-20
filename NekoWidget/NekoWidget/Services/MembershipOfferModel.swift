@@ -199,7 +199,17 @@ enum MembershipRestoreFailure: Equatable {
         }
     }
 
+    /// 11/20: the Apple purchase on this iPhone cannot be matched to its
+    /// Plus account (several or no account tokens, a family-shared or
+    /// device-bound mismatch, a kept attempt for another account). Every
+    /// later 「購入を復元」 gives the same answer, so waiting cannot fix it:
+    /// the sheet offers お問い合わせ instead of another wait.
+    var waitingCannotFix: Bool { self == .purchaseEvidence }
+
     var message: String {
+        if waitingCannotFix {
+            return "このiPhoneのPlusの購入情報を確認できません。購入し直さずに、設定の「お問い合わせ」からご連絡ください。"
+        }
         let reason: String
         switch self {
         case .connection: reason = "通信できませんでした。"
@@ -228,13 +238,18 @@ final class MembershipOfferModel: ObservableObject {
     @Published private(set) var purchaseTitle: String?
     /// 「11月9日まで使えます」 when a member's Plus will not renew (11/9); nil while it renews.
     @Published private(set) var memberEndLine: String?
+    /// 11/20: the last restore failed in a way waiting cannot fix; the sheet
+    /// shows the お問い合わせ link under the message. Goes with the message.
+    @Published private(set) var offersContact = false
     private var purchases: PlusPurchaseStore?
     private var observation: AnyCancellable?
     private var expiryTask: Task<Void, Never>?
     /// The result of the person's last purchase or restore tap (not found,
     /// unavailable, failed, a changed offer). Kept on screen until the next
     /// tap or a confirmed membership, as the restore failure (#786, 11/5).
-    private var actionResult: String?
+    private var actionResult: String? {
+        didSet { if offersContact { offersContact = false } }
+    }
 #if DEBUG || INTERNAL_PRESENTATION
     private var fixtureStatus: MembershipOfferFixtureStatus?
     private var fixtureExpiresAt: Date?
@@ -419,6 +434,7 @@ final class MembershipOfferModel: ObservableObject {
             actionResult = "料金か無料期間が変わりました。表示を確かめてから、もう一度お申し込みください。"
         case let .restoreFailed(reason):
             actionResult = reason.message
+            offersContact = reason.waitingCannotFix
         }
         if let actionResult { message = actionResult }
     }
@@ -1119,7 +1135,9 @@ struct MembershipOfferSheet: View {
             },
             onClose: { onFinish(model.isMember ? .completed : .cancelled) },
             showsClose: showsClose,
-            reasonOverride: reasonOverride
+            reasonOverride: reasonOverride,
+            supportURL: model.offersContact && !model.isMember
+                ? AppPublicLinksConfiguration.current.supportURL : nil
         )
     }
 

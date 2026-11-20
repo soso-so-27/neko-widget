@@ -130,6 +130,50 @@ enum IdentityDeletionCleanupChecks {
         print("identity deletion: client keys only after acceptance, failure-tolerant, handed on once, then never")
     }
 
+    /// 11/20 (after #1104): the deleted identity's まど outbox (sealed photos
+    /// never sent) and HTTP journal go only for an accepted deletion of the
+    /// identity this iPhone still holds (or none); a failure says so.
+    static func transportChecks(_ folder: URL) async throws {
+        let relay = DeletionRelay()
+        let outbox = folder.appendingPathComponent("transport-" + UUID().uuidString, isDirectory: true)
+        let journalFolder = outbox.appendingPathComponent("http-operations", isDirectory: true)
+        func seed() throws {
+            try FileManager.default.createDirectory(at: outbox, withIntermediateDirectories: true)
+            try Data("sealed".utf8).write(to: outbox.appendingPathComponent(UUID().uuidString.lowercased() + ".json"))
+            try GroupOperationStore(directory: journalFolder).write(Data("op".utf8), account: "op:" + UUID().uuidString.lowercased(),
+                                                                     createOnly: true)
+        }
+        func sealed() throws -> Int {
+            try FileManager.default.contentsOfDirectory(at: outbox, includingPropertiesForKeys: nil).filter { $0.pathExtension == "json" }.count
+        }
+        let secrets = MemorySecrets()
+        let identity = registered(.firstDevice())
+        try secrets.write(GroupWire.encode(identity), account: "identity", createOnly: true)
+        try seed()
+        let c = try ProductionGroupWindowClient(endpoint: endpoint, secrets: secrets, transport: relay, outboxDirectory: outbox)
+        // No deletion, or one the relay has not accepted: nothing goes.
+        try check(await c.removeDeletedIdentityTransport() == false, "nothing without a deletion")
+        await relay.setDown(true)
+        _ = try? await c.requestIdentityDeletion()
+        try check(await c.removeDeletedIdentityTransport() == false && sealed() == 1, "nothing before acceptance")
+        try check(try GroupOperationStore(directory: journalFolder).accounts(prefix: "op:").count == 1, "the journal stays before acceptance")
+        // Accepted: the sealed photos and the journal's rows go; the folder and database stay usable.
+        await relay.setDown(false)
+        _ = try await c.requestIdentityDeletion()
+        try check(await c.removeDeletedIdentityTransport(), "accepted: the outbox and journal go")
+        try check(try sealed() == 0, "no sealed photo is left")
+        try check(try GroupOperationStore(directory: journalFolder).accounts(prefix: "op:").isEmpty, "no journal row is left")
+        try check(await c.removeDeletedIdentityTransport(), "a second run has nothing left and says done")
+        // Another person's identity on this iPhone (a device link or a new identity): left alone.
+        try seed()
+        try secrets.write(GroupWire.encode(registered(.firstDevice())), account: "identity", createOnly: true)
+        try check(await c.removeDeletedIdentityTransport() == false && sealed() == 1, "another person's outbox is left alone")
+        try secrets.remove("identity")
+        try secrets.write(Data("draft".utf8), account: "device-link", createOnly: true)
+        try check(await c.removeDeletedIdentityTransport() == false && sealed() == 1, "a device link in progress is left alone")
+        print("identity deletion: the まど outbox and HTTP journal go only after acceptance, for the deleted identity")
+    }
+
     /// The app closed between the relay's acceptance and the key removal.
     static func interruptedChecks(_ folder: URL) async throws {
         let relay = DeletionRelay()
@@ -327,6 +371,7 @@ enum IdentityDeletionCleanupChecks {
         do {
             try await clientChecks(folder)
             try await interruptedChecks(folder)
+            try await transportChecks(folder)
             try localDataChecks(folder)
             print("Identity deletion clean-up checks passed")
         } catch {
