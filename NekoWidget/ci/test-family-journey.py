@@ -686,10 +686,17 @@ class FamilyPhotoCreatorAuto1119Tests(unittest.TestCase):
     def test_a_clear_needs_this_iphones_own_delivery(self):
         # 11/19 (機種変更): a new iPhone of the same person, with no key photo
         # chosen, never clears the family's photo; the record is presence only.
+        # 11/20: a choice first seen with a photo (after 機種変更 or a
+        # reinstall) that is now none is cleared; first seen as none returns
+        # before the clear branch.
         one = section(self.model, "private func syncOne(", "private func deliver(")
+        self.assertIn("if first == (photo ?? \"\") { return }", one)
+        self.assertLess(one.index("if first == (photo ?? \"\") { return }"), one.index("try await backend.clear(cat)"))
         clear = one.split("} else {", 1)[1]
-        self.assertIn("guard sent[key] != nil else { return }", clear)
-        self.assertLess(clear.index("guard sent[key] != nil else { return }"), clear.index("try await backend.clear(cat)"))
+        guard = "guard sent[key] != nil || seen[key] != nil else { return }"
+        self.assertIn(guard, clear)
+        self.assertLess(clear.index(guard), clear.index("try await backend.clear(cat)"))
+        self.assertIn("sent[key] = nil; seen[key] = nil", clear)
         self.assertNotIn("sent[key] == photo", clear)
 
     def test_triggers_are_automatic(self):

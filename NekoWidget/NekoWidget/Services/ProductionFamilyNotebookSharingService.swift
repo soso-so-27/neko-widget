@@ -10,6 +10,9 @@ final class FamilyNotebookSession {
     let wire: FamilyNotebookTransport, keys: FamilyNotebookKeyCoordinator
     let admission: FamilyNotebookAdmissionClient, membership: FamilyNotebookMembershipClient
     let directory: URL
+    /// The notebook's device-only Keychain (`.family.<scope>`): it outlives
+    /// deleting the app, Application Support does not.
+    let secrets: any GroupSecretStore
     private struct Participation: Codable { let familyID: UUID; let admittedGeneration: Int64 }
     private let account = "op:fnb-active-participation"
     private(set) var notebook: FamilyNotebookStore?
@@ -19,6 +22,7 @@ final class FamilyNotebookSession {
          journal: any GroupSecretStore, secrets: any GroupSecretStore, directory: URL,
          pinSync: (any FamilyNotebookPinSync)? = nil) throws {
         self.identity = identity; self.endpoint = endpoint; self.journal = journal; self.directory = directory
+        self.secrets = secrets
         wire = try .init(endpoint: endpoint, identity: identity, transport: transport, journal: journal)
         keys = try .init(endpoint: endpoint, identity: identity, network: wire, secrets: secrets, journal: journal, pinSync: pinSync)
         admission = .init(endpoint: endpoint, identity: identity, wire: wire, keys: keys, journal: journal, secrets: secrets)
@@ -698,11 +702,14 @@ extension ProductionFamilyNotebookSharingService {
             return (session, store, material, photoClient.client, photoClient.journal)
         }
         // Its own journal beside the notebook's: ciphertext, receipts and this
-        // person's 「表示しない」, never the notebook's keys.
+        // person's 「表示しない」, never the notebook's keys. 11/20: the
+        // 「表示しない」 and reported photos also in the notebook's Keychain,
+        // so deleting the app does not show them again.
         let journal = try GroupOperationStore(directory: session.directory.deletingLastPathComponent()
             .appendingPathComponent("representative-photo", isDirectory: true), maximumRecordBytes: 2_100_000)
         let client = FamilyNotebookRepresentativePhotoClient(familyID: material.familyID, endpoint: session.endpoint,
-            identity: session.identity, transport: photoTransport, journal: journal, runtimeEnabled: photoRuntimeEnabled)
+            identity: session.identity, transport: photoTransport, journal: journal, runtimeEnabled: photoRuntimeEnabled,
+            kept: session.secrets)
         photoClient = (material.familyID, client, journal)
         return (session, store, material, client, journal)
     }

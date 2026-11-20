@@ -1,6 +1,6 @@
 import Foundation
 
-// The nine two-device scenarios. Each one makes its own family with fresh
+// The two-device scenarios. Each one makes its own family with fresh
 // synthetic people, so a failure in one does not leave state for the next.
 //
 // Not driven anywhere here (UIKit, a singleton, PhotoKit or Apple's servers);
@@ -34,6 +34,8 @@ struct Family {
         ("S7", "member B reinstalls without 機種変更", s7),
         ("S8", "member B changes iPhone, then reinstalls without 機種変更 (name lost before the Keychain copy)", s8),
         ("S9", "member B lost its name before the Keychain copy and never wrote; A still sees B's name", s9),
+        ("S10", "member B hides and reports, reinstalls without 機種変更: the choices stay", s10),
+        ("S11", "member B reports, reinstalls without 機種変更: 「通報への返答」 comes back", s11),
     ]
 
     // MARK: Common steps
@@ -384,22 +386,18 @@ struct Family {
         try await relay.stopPhoto(reportID: receipt)
 
         Log.step("B2 opens the notebook: one reply read after 機種変更 (FamilyReportRepliesDiscovery)")
-        // FamilyReportReplies.discoverAfterRecovery (in a UIKit file) with B2's
-        // own inputs: no 「通報への返答」 flag yet on this iPhone (UserDefaults
-        // after 機種変更), the recovery link, the notebook loaded, the photo gate.
-        var sentFlag = false
-        let linked = try b2.keychain.store(Device.namespace + Device.recoveryLinkSuffix)
-            .read(FamilyNotebookIdentityChoice.linkAccount) != nil
-        let shouldRead = FamilyReportRepliesDiscovery.shouldRead(flagSet: sentFlag, recoveryLinked: linked,
-            notebookLoaded: b2.inFamily, gateOpen: b2.service.representativePhotosEnabled)
-        try expect(shouldRead, "a recovered iPhone without the flag reads the replies once")
+        // FamilyReportReplies.discoverReplies (in a UIKit file) with B2's own
+        // inputs: no 「通報への返答」 flag on this iPhone (the report above went
+        // through the service, not the cat page's markSent, as if it had been
+        // sent from B's previous iPhone), the notebook loaded, the photo gate.
+        try expect(!b2.showsReplyRow, "no 「通報への返答」 flag on B2 yet")
+        let discovered = await b2.notebookOpened()
+        try expect(discovered == .found && b2.showsReplyRow, "the reply sets the 「通報への返答」 row flag (got \(discovered))")
+        let again = await b2.notebookOpened()
+        try expect(again == .skipped, "no second read once the row shows (got \(again))")
         // FamilyNotebookServiceFactory.reportReplies: the usual client, as the
         // notebook's identity (FamilyNotebookIdentityChoice's recovered one).
         let replies = try await b2.client.familyPhotoReportReplies(as: try await b2.recoveredIdentity())
-        if !replies.isEmpty { sentFlag = true }
-        try expect(sentFlag, "the reply sets the 「通報への返答」 row flag")
-        try expect(!FamilyReportRepliesDiscovery.shouldRead(flagSet: sentFlag, recoveryLinked: linked, notebookLoaded: true,
-                                                            gateOpen: true), "no second read once the row shows")
 
         Log.step("The reporter reads the reply through the app's path: photo_stopped")
         try expect(replies.contains { $0.status == .photoStopped }, "the reply list shows the photo stopped (got \(replies.map(\.status)))")
@@ -418,7 +416,7 @@ struct Family {
         Log.step("The sender (A)")
         let own = try await f.a.photo(f.cat)
         Log.note("A's read of the shared copy: \(String(describing: own).prefix(60)); A's own key photo is in its library (PhotoKit, not driven)")
-        return "A's local original (PhotoKit) not driven; discoverAfterRecovery's UserDefaults flag mirrored around FamilyReportRepliesDiscovery"
+        return "A's local original (PhotoKit) not driven; discoverReplies' UserDefaults flag is Device.reportSent"
     }
 
     // MARK: S6
@@ -584,5 +582,120 @@ struct Family {
         let shown = FamilyNotebookAuthorName.shown(received.author, operations: operations, known: f.a.service.memberNames)
         try expect(shown == rosterName, "A shows B as \(shown), not B's name")
         return "the screens' shownName/members are FamilyNotebookAuthorName.shown with A's memberNames"
+    }
+
+    // MARK: S10
+
+    static func s10(_ relay: Relay) async throws -> String? {
+        let f = try await makeFamily(relay)
+        let creator = try required(f.a.notebookIdentity?.personID, "A has no person")
+
+        Log.step("A puts a photo and writes one line; B sees both")
+        let photo = try await deliver(f.a, f.cat, shade: 3)
+        _ = try await seePhoto(f.b, f.cat, asset: photo.asset)
+        let aStore = try required(f.a.service.notebook, "A has no notebook copy")
+        let line = try aStore.edit(target: .init(familyCatID: f.cat, field: .marks), value: .text("合成のしるし"),
+                                   author: try required(f.a.service.author, "A has no author"))
+        try await settle("A's line sent", [f.a]) { try aStore.pendingOperations().isEmpty }
+        try await settle("B has A's line", [f.b]) {
+            try f.b.service.notebook?.snapshot().operations.contains { $0.id == line.id } == true
+        }
+        let entry = String(describing: line.id)
+
+        Log.step("B: 「表示しない」 on A's line and on A's photos")
+        f.b.hideEntry(entry)
+        try await f.b.service.hideRepresentativePhotos(of: creator)
+        let hidden = try await f.b.photo(f.cat)
+        try expect(hidden == .hidden(authorID: creator), "B hides A's photo (got \(String(describing: hidden)))")
+
+        Log.step("B deletes the app and installs it again; no 機種変更")
+        let oldDevice = try required(f.b.notebookDeviceID, "B has no device")
+        try await f.b.reinstall()
+        try expect(f.b.hiddenEntries == nil, "the reinstall wiped B's UserDefaults")
+        try await settle("B reads the notebook again", [f.b, f.a]) { f.b.inFamily }
+        try expect(f.b.notebookDeviceID == oldDevice, "B keeps its device")
+        _ = await f.b.notebookOpened()
+
+        Log.step("B's choices came back from the Keychain")
+        try expect(f.b.hiddenEntryIDs == [entry], "A's line stays hidden on B (got \(f.b.hiddenEntryIDs.count) entries)")
+        let stillHidden = try await f.b.photo(f.cat)
+        try expect(stillHidden == .hidden(authorID: creator), "A's photo stays hidden on B (got \(String(describing: stillHidden)))")
+
+        Log.step("A still has its photo")
+        let own = try await f.a.photo(f.cat)
+        guard case .shown(let ownAsset, _, let ownJPEG)? = own, ownAsset == photo.asset, ownJPEG == photo.jpeg else {
+            throw E2EFailure(description: "\(Log.location): A reads its photo as \(String(describing: own))")
+        }
+
+        Log.step("B shows A's photos again, then reports the photo (as S5)")
+        try await f.b.service.showRepresentativePhotos(of: creator)
+        let shown = try await seePhoto(f.b, f.cat, asset: photo.asset)
+        try expect(shown.jpeg == photo.jpeg, "B reads A's pixels again")
+        let receipt = try await f.b.reportPhoto(photo.asset)
+        try expect(!receipt.isEmpty, "the relay committed the report")
+        let reported = try await f.b.photo(f.cat)
+        try expect(reported == FamilyNotebookPhotoLoad.none, "B shows nothing after reporting (got \(String(describing: reported)))")
+
+        Log.step("B deletes the app and installs it again; no 機種変更 (the photo is not stopped)")
+        try await f.b.reinstall()
+        try await settle("B reads the notebook again", [f.b, f.a]) { f.b.inFamily }
+        _ = await f.b.notebookOpened()
+        let afterReport = try await f.b.photo(f.cat)
+        try expect(afterReport == FamilyNotebookPhotoLoad.none,
+                   "the reported photo stays away on B, and 「表示する」 held (got \(String(describing: afterReport)))")
+        try expect(f.b.hiddenEntryIDs == [entry], "A's line is still hidden on B")
+
+        Log.step("A still has its photo")
+        let ownAgain = try await f.a.photo(f.cat)
+        guard case .shown(let againAsset, _, _)? = ownAgain, againAsset == photo.asset else {
+            throw E2EFailure(description: "\(Log.location): A reads its photo as \(String(describing: ownAgain))")
+        }
+        return "the entries' 「表示しない」 is FamilyHiddenOperationsMemory over Device.hiddenEntries (the view's @AppStorage)"
+    }
+
+    // MARK: S11
+
+    static func s11(_ relay: Relay) async throws -> String? {
+        let f = try await makeFamily(relay)
+
+        Log.step("A puts a photo; B sees it and reports it")
+        let photo = try await deliver(f.a, f.cat, shade: 4)
+        _ = try await seePhoto(f.b, f.cat, asset: photo.asset)
+        let receipt = try await f.b.reportPhoto(photo.asset)
+        try expect(!receipt.isEmpty && f.b.showsReplyRow, "the report was received; B shows 「通報への返答」")
+
+        Log.step("B deletes the app and installs it again; no 機種変更")
+        try await f.b.reinstall()
+        try expect(!f.b.showsReplyRow, "the reinstall wiped the row's flag")
+        let linked = try f.b.keychain.store(Device.namespace + Device.recoveryLinkSuffix)
+            .read(FamilyNotebookIdentityChoice.linkAccount) != nil
+        try expect(!linked, "no recovery link on B")
+        try await settle("B reads the notebook again", [f.b, f.a]) { f.b.inFamily }
+
+        Log.step("B opens the notebook: one quiet reply read finds the report")
+        let replies = "/v3/family-notebooks/report-replies"
+        let device = try required(f.b.notebookDeviceID, "B has no device")
+        var mark = relay.transport.log.count
+        let first = await f.b.notebookOpened()
+        try expect(first == .found, "the app's discovery finds the reply (got \(first))")
+        try expect(f.b.showsReplyRow, "「通報への返答」 shows again")
+        let reads = relay.transport.log.dropFirst(mark).filter { $0.path == replies }
+        try expect(reads.count == 1 && reads[0].device == device && reads[0].status == 200,
+                   "one reply read by B (got \(reads.count))")
+
+        Log.step("B opens the notebook again: no read")
+        mark = relay.transport.log.count
+        let second = await f.b.notebookOpened()
+        try expect(second == .skipped, "the row's flag is set (got \(second))")
+        try expect(!relay.transport.log.dropFirst(mark).contains { $0.path == replies }, "no second read")
+
+        Log.step("A (never reported) opens the notebook twice: one read, then none in this launch")
+        mark = relay.transport.log.count
+        let aFirst = await f.a.notebookOpened(), aSecond = await f.a.notebookOpened()
+        try expect(aFirst == .noReplies && !f.a.showsReplyRow, "A has no replies and no row (got \(aFirst))")
+        try expect(aSecond == .skipped, "none is remembered for the launch (got \(aSecond))")
+        let aReads = relay.transport.log.dropFirst(mark).filter { $0.path == replies }
+        try expect(aReads.count == 1, "A read the replies once (got \(aReads.count))")
+        return "FamilyReportReplies' UserDefaults flag and process memory are Device.reportSent / repliesCheckedNone"
     }
 }

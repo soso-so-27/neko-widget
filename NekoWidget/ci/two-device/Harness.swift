@@ -336,6 +336,32 @@ struct Drained: Decodable {
         return data.flatMap { String(data: $0, encoding: .utf8) }
     }
 
+    /// The notebook's 「表示しない」 entries: @AppStorage(FamilyHiddenOperationsMemory.defaultsKey),
+    /// a UserDefaults value that deleting the app wipes.
+    private(set) var hiddenEntries: String?
+    /// FamilyHiddenOperations.keychainChecked: one per process.
+    private var hiddenEntriesChecked = false
+    /// FamilyHiddenOperations' memory over this iPhone's UserDefaults value and device-only Keychain.
+    private var hiddenEntriesMemory: GroupRememberedName {
+        FamilyHiddenOperationsMemory.memory(defaults: { [unowned self] in self.hiddenEntries },
+            setDefaults: { [unowned self] in self.hiddenEntries = $0 },
+            keychain: { [unowned self] in self.keychain.store(Self.namespace + FamilyHiddenOperationsMemory.namespaceSuffix) })
+    }
+    var hiddenEntryIDs: Set<String> { FamilyHiddenOperationsMemory.ids(hiddenEntries ?? "") }
+    /// FamilyNotebookView.hide: 「表示しない」 on an entry.
+    func hideEntry(_ id: String) {
+        var ids = hiddenEntryIDs
+        ids.insert(id)
+        // hiddenOperationIDs = …, then FamilyHiddenOperations.keep (UserDefaults and the Keychain).
+        hiddenEntriesMemory.write(FamilyHiddenOperationsMemory.text(ids)); hiddenEntriesChecked = true
+    }
+    /// FamilyReportReplies.sentKey: a UserDefaults flag that deleting the app wipes.
+    private(set) var reportSent = false
+    /// FamilyReportReplies.checkedNone: one per process.
+    private var repliesCheckedNone = false
+    /// The notebook screen's 「通報への返答」 row (`sentPhotoReport || showsFixture`; no fixture here).
+    var showsReplyRow: Bool { reportSent }
+
     init(_ name: String, relay: Relay, cloud: PersonCloud, keychain: DeviceKeychain = DeviceKeychain(), billing: BillingCredential? = nil) {
         self.name = name; self.relay = relay; self.cloud = cloud; self.keychain = keychain; self.billing = billing
         support = Self.newSupportFolder(name)
@@ -374,6 +400,7 @@ struct Drained: Decodable {
             // The pinned recipient: on macOS GroupReportCrypto accepts no other.
             moderationRecipient: { (keyID: GroupReportCrypto.moderationKeyID, publicKey: GroupReportCrypto.moderationPublicKey) })
         notebookIdentity = nil; lastState = nil; nameChecked = false
+        hiddenEntriesChecked = false; repliesCheckedNone = false
         // Notifications allowed (GroupAdmissionService passes the token on).
         await service.updatePushSubscription(token: pushToken, environment: "production")
     }
@@ -386,6 +413,7 @@ struct Drained: Decodable {
         try? FileManager.default.removeItem(at: support)
         support = Self.newSupportFolder(name)
         rememberedName = ""; keepsNameInKeychain = true
+        hiddenEntries = nil; reportSent = false
         pushToken = Data((0..<32).map { _ in UInt8.random(in: 0...255) })
         try await launch()
     }
@@ -495,6 +523,37 @@ struct Drained: Decodable {
         let reader = try ProductionGroupWindowClient(endpoint: relay.endpoint, secrets: store, transport: relay.transport,
             outboxDirectory: support.appendingPathComponent("replies-" + scope, isDirectory: true))
         return try await reader.familyPhotoReportReplies()
+    }
+
+    /// The family photo report from the cat's page (FamilyRepresentativePhotos.report):
+    /// once received, FamilyReportReplies.markSent.
+    func reportPhoto(_ asset: UUID) async throws -> String {
+        let number = try await service.reportRepresentativePhoto(assetID: asset, reasonCode: "other")
+        reportSent = true
+        return number
+    }
+
+    /// The notebook screen opens: FamilyNotebookView's `.task(id: model.hasFamily)`
+    /// line for line (FamilyHiddenOperations.restore, then
+    /// FamilyReportReplies.discoverReplies with this iPhone's flag, its
+    /// process memory, the notebook and the photo gate). The reply read is
+    /// FamilyNotebookServiceFactory.reportReplies: the usual client as the
+    /// notebook's identity choice.
+    func notebookOpened() async -> FamilyReportRepliesDiscovery.Outcome {
+        _ = hiddenEntriesMemory.read(checked: &hiddenEntriesChecked)
+        guard inFamily else { return .skipped }
+        let outcome = await FamilyReportRepliesDiscovery.discover(flagSet: reportSent, checkedNone: repliesCheckedNone,
+            notebookLoaded: inFamily, gateOpen: service.representativePhotosEnabled) { [unowned self] in
+            let replies = try await self.client.familyPhotoReportReplies(as: try await self.recoveredIdentity())
+            return !replies.isEmpty
+        }
+        switch outcome {
+        case .found: reportSent = true
+        case .noReplies: repliesCheckedNone = true
+        case .skipped, .failed: break
+        }
+        Log.note("\(name) opened the notebook: replies \(outcome), row \(showsReplyRow ? "shown" : "hidden")")
+        return outcome
     }
 
     /// The person picks `rootID` (when two are offered) and taps 続ける on

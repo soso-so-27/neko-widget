@@ -1265,12 +1265,14 @@ struct FamilyNotebookView: View {
             if !model.isReal { Task { await sharing.refresh() } }
         }
         .onDisappear { FamilyNotebookAutoCheck.shared.disappeared(.notebook); askedReportReplies = false }
-        // 11/20: after 機種変更, replies to reports from the previous iPhone
-        // (at most one read per open; none once the row shows).
+        // 11/20: after 機種変更 or a reinstall, replies to reports sent before
+        // (at most one read per open; none once the row shows or none was
+        // found in this launch). The 「表示しない」 entries come back from the Keychain.
         .task(id: model.hasFamily) {
+            FamilyHiddenOperations.restore()
             guard model.isReal, model.hasFamily, !askedReportReplies else { return }
             askedReportReplies = true
-            await FamilyReportReplies.discoverAfterRecovery(notebookLoaded: model.hasFamily)
+            await FamilyReportReplies.discoverReplies(notebookLoaded: model.hasFamily)
         }
         .onChange(of: presentsSheet, initial: true) { _, open in FamilyNotebookAutoCheck.shared.holdsRedraw = open }
         // 11/16: the notebook gone, nothing on screen waits for a sheet; a
@@ -1495,17 +1497,19 @@ struct FamilyNotebookView: View {
 
     private var prototype: FamilyNotebookPrototypeSharing? { sharing.service as? FamilyNotebookPrototypeSharing }
 
-    /// Entries this iPhone chose not to show. Kept here only; the family and
-    /// the server never learn about it.
-    @AppStorage("family.hiddenOperations.v1") private var hiddenOperationIDs = ""
+    /// Entries this iPhone chose not to show. Kept here only (11/20: with a
+    /// copy in its Keychain, FamilyHiddenOperations); the family and the
+    /// server never learn about it.
+    @AppStorage(FamilyHiddenOperationsMemory.defaultsKey) private var hiddenOperationIDs = ""
     private var visibleRecentFromFamily: [FamilyNotebookOperation] {
-        let hidden = Set(hiddenOperationIDs.split(separator: ",").map(String.init))
+        let hidden = FamilyHiddenOperationsMemory.ids(hiddenOperationIDs)
         return model.recentFromFamily.filter { !hidden.contains(String(describing: $0.id)) }
     }
     private func hide(_ operation: FamilyNotebookOperation) {
-        var hidden = Set(hiddenOperationIDs.split(separator: ",").map(String.init))
+        var hidden = FamilyHiddenOperationsMemory.ids(hiddenOperationIDs)
         hidden.insert(String(describing: operation.id))
-        hiddenOperationIDs = hidden.sorted().joined(separator: ",")
+        hiddenOperationIDs = FamilyHiddenOperationsMemory.text(hidden)
+        FamilyHiddenOperations.keep(hiddenOperationIDs)
     }
 
     // Kept out of the body chain so the type checker stays fast.
@@ -3028,10 +3032,10 @@ extension View {
 /// The same form as まど's 「表示しない・ブロックした人」; kept on this iPhone only.
 struct FamilyHiddenOperationsView: View {
     @ObservedObject private var model = FamilyNotebookPrototype.shared
-    @AppStorage("family.hiddenOperations.v1") private var hiddenOperationIDs = ""
+    @AppStorage(FamilyHiddenOperationsMemory.defaultsKey) private var hiddenOperationIDs = ""
 
     private var hidden: [FamilyNotebookOperation] {
-        let ids = Set(hiddenOperationIDs.split(separator: ",").map(String.init))
+        let ids = FamilyHiddenOperationsMemory.ids(hiddenOperationIDs)
         return model.recentFromFamily.filter { ids.contains(String(describing: $0.id)) }
     }
 
@@ -3061,9 +3065,31 @@ struct FamilyHiddenOperationsView: View {
     }
 
     private func show(_ operation: FamilyNotebookOperation) {
-        var ids = Set(hiddenOperationIDs.split(separator: ",").map(String.init))
+        var ids = FamilyHiddenOperationsMemory.ids(hiddenOperationIDs)
         ids.remove(String(describing: operation.id))
-        hiddenOperationIDs = ids.sorted().joined(separator: ",")
+        hiddenOperationIDs = FamilyHiddenOperationsMemory.text(ids)
+        FamilyHiddenOperations.keep(hiddenOperationIDs)
+    }
+}
+
+/// 11/20: 「表示しない」 of family entries in UserDefaults (the screens'
+/// @AppStorage) and in this iPhone's device-only Keychain
+/// (FamilyHiddenOperationsMemory), so deleting the app does not show them again.
+@MainActor
+enum FamilyHiddenOperations {
+    private static var keychainChecked = false
+    private static var memory: GroupRememberedName {
+        let key = FamilyHiddenOperationsMemory.defaultsKey
+        return FamilyHiddenOperationsMemory.memory(defaults: { UserDefaults.standard.string(forKey: key) },
+            setDefaults: { UserDefaults.standard.set($0, forKey: key) },
+            keychain: { try? GroupKeychainStore(namespace: GroupWindowClientProvider.namespace + FamilyHiddenOperationsMemory.namespaceSuffix) })
+    }
+    /// When the notebook opens; one Keychain read per process.
+    static func restore() { _ = memory.read(checked: &keychainChecked) }
+    /// After 「表示しない」 or 「表示する」 (the person's tap only).
+    static func keep(_ ids: String) {
+        memory.write(ids)
+        keychainChecked = true
     }
 }
 
@@ -3108,14 +3134,24 @@ enum FamilyReportReplies {
     }
 #endif
 
-    /// 11/20: one silent read when the notebook opens on a recovered iPhone
-    /// without the flag (FamilyReportRepliesDiscovery); a reply sets it.
-    @MainActor static func discoverAfterRecovery(notebookLoaded: Bool) async {
-        guard FamilyReportRepliesDiscovery.shouldRead(flagSet: UserDefaults.standard.bool(forKey: sentKey),
-            recoveryLinked: FamilyNotebookServiceFactory.hasRecoveryLink(), notebookLoaded: notebookLoaded,
-            gateOpen: FamilyNotebookServiceFactory.representativePhotoBackend() != nil),
-              let replies = try? await FamilyNotebookServiceFactory.reportReplies(), !replies.isEmpty else { return }
-        markSent()
+    /// 11/20: "no replies" was read in this process (FamilyReportRepliesDiscovery).
+    private static var checkedNone = false
+
+    /// 11/20: one silent read when the notebook opens without the flag (機種変更,
+    /// or the app deleted and installed again); a reply sets it, none is
+    /// remembered until the app ends (FamilyReportRepliesDiscovery).
+    @MainActor static func discoverReplies(notebookLoaded: Bool) async {
+        let outcome = await FamilyReportRepliesDiscovery.discover(flagSet: UserDefaults.standard.bool(forKey: sentKey),
+            checkedNone: checkedNone, notebookLoaded: notebookLoaded,
+            gateOpen: FamilyNotebookServiceFactory.representativePhotoBackend() != nil) {
+            let replies = try await FamilyNotebookServiceFactory.reportReplies()
+            return !replies.isEmpty
+        }
+        switch outcome {
+        case .found: markSent()
+        case .noReplies: checkedNone = true
+        case .skipped, .failed: break
+        }
     }
 
     static func load() async throws -> [FamilyPhotoReportReply] {

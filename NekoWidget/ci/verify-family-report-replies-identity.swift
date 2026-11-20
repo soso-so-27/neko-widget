@@ -110,19 +110,36 @@ enum FamilyReportRepliesIdentityChecks {
                 try await check(relay.signers == [usualDevice, usualDevice], "both reads are signed by the usual device")
             }
 
-            // 5. After 機種変更 the notebook asks once for replies sent from the
-            //    previous iPhone; never when the row already shows or the gate is off.
+            // 5. Without the flag (機種変更, or a reinstall that wiped UserDefaults)
+            //    the notebook asks once for replies to reports sent before; never
+            //    when the row already shows, the gate is off, or "none" was read
+            //    in this launch (11/20: no longer only after 機種変更).
             let read = FamilyReportRepliesDiscovery.shouldRead
-            try check(read(false, true, true, true), "recovered without the flag: one read")
-            try check(!read(true, true, true, true), "the flag set: no extra read")
-            try check(!read(false, true, true, false), "the gate off: no read")
-            try check(!read(false, true, false, true), "the notebook not loaded: no read")
-            try check(!read(false, false, true, true), "no recovery: no read")
+            try check(read(false, false, true, true), "no flag: one read")
+            try check(!read(true, false, true, true), "the flag set: no extra read")
+            try check(!read(false, false, true, false), "the gate off: no read")
+            try check(!read(false, false, false, true), "the notebook not loaded: no read")
+            try check(!read(false, true, true, true), "none read in this launch: no read")
+            var asked = 0
+            let found = await FamilyReportRepliesDiscovery.discover(flagSet: false, checkedNone: false, notebookLoaded: true,
+                                                                    gateOpen: true) { asked += 1; return true }
+            let empty = await FamilyReportRepliesDiscovery.discover(flagSet: false, checkedNone: false, notebookLoaded: true,
+                                                                   gateOpen: true) { asked += 1; return false }
+            let failed = await FamilyReportRepliesDiscovery.discover(flagSet: false, checkedNone: false, notebookLoaded: true,
+                                                                     gateOpen: true) { asked += 1; throw GroupClientError.offline }
+            let skipped = await FamilyReportRepliesDiscovery.discover(flagSet: false, checkedNone: true, notebookLoaded: true,
+                                                                      gateOpen: true) { asked += 1; return true }
+            try check(found == .found && empty == .noReplies && failed == .failed && skipped == .skipped && asked == 3,
+                      "a reply sets the flag, none is remembered, a failure asks again, a known answer asks nothing")
             let view = try String(contentsOfFile: "NekoWidget/Views/FamilyNotebookView.swift", encoding: .utf8)
             try check(view.contains("gateOpen: FamilyNotebookServiceFactory.representativePhotoBackend() != nil"),
                       "the view passes the relay's photo gate")
             try check(view.contains("guard model.isReal, model.hasFamily, !askedReportReplies else { return }"),
                       "at most one read per notebook open")
+            try check(view.contains("checkedNone: checkedNone, notebookLoaded: notebookLoaded,")
+                      && view.contains("case .noReplies: checkedNone = true") && view.contains("case .found: markSent()"),
+                      "the view remembers none for the launch and sets the flag on a reply")
+            try check(!view.contains("recoveryLinked:"), "the read no longer needs the recovery link")
 
             // 4. The app's wiring passes the notebook's choice (FamilyNotebookServiceFactory
             //    needs UIKit, so its one line is checked as text).
