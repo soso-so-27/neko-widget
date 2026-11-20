@@ -16,6 +16,14 @@ async function removal(p:Awaited<ReturnType<typeof person>>,device:string,operat
  const body={challengeId:challenge.id,deviceId:device,rootSignature:await sign(p.identity.privateKey,recoveryDeviceRemovalTranscript(challenge,device))};
  return {body,call:()=>groupRecoveryCatalogAPI(req('devices/remove',body),settings)};
 }
+it('returns an authentication failure when simultaneous requests consume the same challenge',async()=>{
+ const p=await person(),r=await removal(p,p.deviceId);
+ const results=await Promise.allSettled([r.call(),r.call()]);
+ expect(results.filter(result=>result.status==='fulfilled')).toHaveLength(1);
+ expect(results.find(result=>result.status==='rejected')).toMatchObject({
+  reason:{status:401,code:'recovery_authentication_failed'},
+ });
+});
 it('root removes only its selected device, prevents re-registration, leaves membership/photos and frees the slot',async()=>{
  const p=await plusOwner(),w=await create(p),other=await person(p.identity);
  const members=(await db.prepare('SELECT * FROM group_members WHERE space_id=?').bind(w.windowId).all()).results;
