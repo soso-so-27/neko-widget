@@ -23,7 +23,7 @@ struct CatProfileDetailView: View {
     let manualCandidatePhotos: [CatProfilePhotoPresentation]
     let photoAlbumOptions: [CatProfilePhotoAlbumOptionPresentation]
     let actions: CatProfilesViewActions
-    /// Opened from the family notebook: the faces, not a second notebook (11/7).
+    /// Opened from the family notebook: not a second notebook (11/7).
     var insideFamilyNotebook = false
 
     @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
@@ -47,10 +47,15 @@ struct CatProfileDetailView: View {
             .navigationTitle("この子のこと")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                if let familyNames, insideFamilyNotebook {
-                    ToolbarItem(placement: .topBarTrailing) { FamilyFaces(names: familyNames) }
-                } else if !insideFamilyNotebook, familyNames != nil || Version1.familyNotebook || familyNotebook.hasFamily {
-                    ToolbarItem(placement: .topBarTrailing) { FamilyNotebookButton(sharedNames: familyNames) }
+                // 11/20: opened from inside the notebook, nothing here (the
+                // family's initials were hard to read).
+                if !insideFamilyNotebook, familyNames != nil || Version1.familyNotebook || familyNotebook.hasFamily {
+                    // 11/20: on iOS 26 the button and 「…」 (the page's own,
+                    // before it) were one glass capsule; a gap makes them two.
+                    if #available(iOS 26.0, *) {
+                        ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                    }
+                    ToolbarItem(placement: .topBarTrailing) { FamilyNotebookButton(shared: familyNames != nil) }
                 }
             }
             // Memo weights show in この子のこと wherever the page opens (11/7).
@@ -255,10 +260,11 @@ enum CatProfilePhotoAlbumLinkOrder {
 }
 
 extension CatProfilePresentation {
-    /// 「推定の誕生日 2020/5/1」「両方設定済み」「未設定」: the 誕生日・迎えた日 row.
+    /// 「推定の誕生日 2020/5/1」「両方設定済み」「未記入」: the 誕生日・迎えた日 row.
+    /// 11/20: the empty word is the tools' one (it was 「未設定」).
     var lifeDatesSummary: String {
         if lifeDates.hasBothDates { return "どちらも入力済み" }
-        guard let reference = lifeDates.birthday ?? lifeDates.adoptionDay ?? lifeReference else { return "未設定" }
+        guard let reference = lifeDates.birthday ?? lifeDates.adoptionDay ?? lifeReference else { return ToolEmptyValue.unset }
         let prefix = reference.isApproximate ? "だいたいの" : ""
         return "\(prefix)\(reference.kind.title) \(reference.date.formatted(date: .numeric, time: .omitted))"
     }
