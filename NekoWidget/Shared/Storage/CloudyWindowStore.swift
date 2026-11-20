@@ -427,7 +427,9 @@ struct CloudyWindowStore: Sendable {
         var recent: [(id: String, captured: Date)] = []
         for item in items {
             guard let captured = takenAt(item),
-                  isNewPhoto(takenAt: captured, previouslyShown: false, at: now) else { continue }
+                  // Taken up to this moment: it goes out tomorrow, so the
+                  // pool takes it in today.
+                  isNewPhoto(takenAt: captured, previouslyShown: false, at: now.addingTimeInterval(1)) else { continue }
             recent.append((id: id(item), captured: captured))
         }
         return Set(recent.sorted { $0.captured == $1.captured ? $0.id < $1.id : $0.captured > $1.captured }
