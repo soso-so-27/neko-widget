@@ -195,6 +195,12 @@ actor FamilyNotebookRepresentativePhotoClient {
     private let transport: any GroupHTTPTransport
     private let journal: any GroupSecretStore
     private let runtimeEnabled: Bool
+    /// 11/20: the notebook's device-only Keychain (`.family.<scope>`). Deleting
+    /// the app wipes `journal` (Application Support) but not this, so a copy of
+    /// this person's 「表示しない」 and reported photos is kept here.
+    private let kept: (any GroupSecretStore)?
+    /// The kept copy was compared with the journal once (one Keychain read per client).
+    private var keptChecked = false
     private var inFlight = false
     private struct Journal: Codable {
         let digest: Data
@@ -204,9 +210,9 @@ actor FamilyNotebookRepresentativePhotoClient {
 
     init(familyID: UUID, endpoint: URL, identity: GroupDeviceIdentity,
          transport: any GroupHTTPTransport = GroupURLSessionTransport(), journal: any GroupSecretStore,
-         runtimeEnabled: Bool = false) {
+         runtimeEnabled: Bool = false, kept: (any GroupSecretStore)? = nil) {
         self.familyID = familyID; self.endpoint = endpoint; self.identity = identity
-        self.transport = transport; self.journal = journal; self.runtimeEnabled = runtimeEnabled
+        self.transport = transport; self.journal = journal; self.runtimeEnabled = runtimeEnabled; self.kept = kept
     }
     private var contextKey: String {
         GroupWire.base64(Data(GroupCanonical.hash(Data((endpoint.absoluteString + "|" + familyID.uuidString + "|" + identity.personID).utf8)).prefix(16)))
@@ -218,22 +224,46 @@ actor FamilyNotebookRepresentativePhotoClient {
     private var visibilityAccount: String {
         "op:fp:v:" + GroupWire.base64(GroupCanonical.hash(Data((endpoint.absoluteString + "|" + identity.personID).utf8)))
     }
+    /// The Keychain copy's account (the same endpoint and person as the journal's).
+    private var keptVisibilityAccount: String { "family-photo-visibility.v1:" + String(visibilityAccount.dropFirst("op:fp:v:".count)) }
     private func visibility() throws -> Visibility {
-        guard let data = try journal.read(visibilityAccount) else { return Visibility() }
-        return try GroupWire.decode(Visibility.self, data)
+        let saved = try journal.read(visibilityAccount)
+        if !keptChecked {
+            // 11/20: once per client, never per photo: an empty journal (the
+            // app was deleted) takes the kept copy; a journal from before
+            // the copy existed is kept now. A Keychain failure changes nothing.
+            keptChecked = true
+            let copy = try? kept?.read(keptVisibilityAccount)
+            if saved == nil, let copy, let value = try? GroupWire.decode(Visibility.self, copy) {
+                try journal.write(copy, account: visibilityAccount, createOnly: false)
+                return value
+            }
+            if let saved, saved != copy { keep(saved) }
+        }
+        guard let saved else { return Visibility() }
+        return try GroupWire.decode(Visibility.self, saved)
+    }
+    /// The journal first (what this iPhone reads), then the kept copy, quietly.
+    private func save(_ value: Visibility) throws {
+        let data = try GroupWire.encode(value)
+        try journal.write(data, account: visibilityAccount, createOnly: false)
+        keep(data)
+    }
+    private func keep(_ data: Data) {
+        try? kept?.write(data, account: keptVisibilityAccount, createOnly: false)
     }
     /// Local only: never changes notebook membership or text sharing.
     func hideAuthor(_ personID: String) throws {
         guard (try? GroupWire.bytes(personID, count: 32).count) == 32 else { throw FamilyNotebookCryptoError.invalid }
         var value = try visibility(); value.hiddenAuthors.insert(personID)
-        try journal.write(try GroupWire.encode(value), account: visibilityAccount, createOnly: false)
+        try save(value)
         // Persist the deny rule before discarding caches. A failed removal must
         // not restore visibility after restart.
         for account in try journal.accounts(prefix: cachePrefix) { try journal.remove(account) }
     }
     func unhideAuthor(_ personID: String) throws {
         var value = try visibility(); value.hiddenAuthors.remove(personID)
-        try journal.write(try GroupWire.encode(value), account: visibilityAccount, createOnly: false)
+        try save(value)
     }
     func hiddenAuthors() throws -> Set<String> { try visibility().hiddenAuthors }
     struct PendingReport: Codable, Sendable {
@@ -290,7 +320,7 @@ actor FamilyNotebookRepresentativePhotoClient {
     }
     private func markReported(_ assetID: UUID) throws {
         var value = try visibility(); value.reportedAssets.insert(assetID)
-        try journal.write(try GroupWire.encode(value), account: visibilityAccount, createOnly: false)
+        try save(value)
         for account in try journal.accounts(prefix: cachePrefix) { try journal.remove(account) }
     }
     private var pendingPrefix: String { "op:fp:p:" + contextKey + ":" }

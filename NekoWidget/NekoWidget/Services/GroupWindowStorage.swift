@@ -206,6 +206,9 @@ struct GroupRememberedName {
     let defaults: () -> String?
     let setDefaults: (String) -> Void
     let keychain: () -> (any GroupSecretStore)?
+    /// The Keychain item. 11/20: the family notebook's 「表示しない」 entries
+    /// (FamilyHiddenOperations) are kept the same way under their own.
+    var account = GroupRememberedName.account
 
     /// `checked`: this process already compared the two; later reads are
     /// UserDefaults only (one Keychain read per process, none while scrolling).
@@ -213,7 +216,7 @@ struct GroupRememberedName {
         let saved = defaults() ?? ""
         guard !checked else { return saved }
         checked = true
-        let data = try? keychain()?.read(Self.account)
+        let data = try? keychain()?.read(account)
         let kept = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
         if saved.isEmpty {
             guard !kept.isEmpty else { return "" }
@@ -230,7 +233,10 @@ struct GroupRememberedName {
         keep(name)
     }
 
+    /// Empty is the same as none (read treats it so): the item is removed.
     private func keep(_ name: String) {
-        try? keychain()?.write(Data(name.utf8), account: Self.account, createOnly: false)
+        guard let store = keychain() else { return }
+        if name.isEmpty { try? store.remove(account) }
+        else { try? store.write(Data(name.utf8), account: account, createOnly: false) }
     }
 }

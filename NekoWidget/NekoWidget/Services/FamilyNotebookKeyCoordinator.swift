@@ -527,15 +527,42 @@ enum FamilyNotebookIdentityChoice {
 }
 
 /// 11/20: 「通報への返答」 shows only on an iPhone that sent a family photo
-/// report, but the relay answers replies by person. After 機種変更 the
-/// notebook asks once when it opens, so a report sent from the previous
-/// iPhone still finds its reply. A reinstall without the recovery screen
-/// cannot be told apart from "never reported" without a read, so it is not
-/// asked.
+/// report (a UserDefaults flag), but the relay answers replies by person.
+/// Without the flag (機種変更, or deleting the app, which wipes UserDefaults)
+/// the notebook asks once when it opens, so a report sent before still finds
+/// its reply. "None" is remembered for the process (`checkedNone`), so an
+/// iPhone that never reported reads once per launch, not on every open.
 enum FamilyReportRepliesDiscovery {
-    static func shouldRead(flagSet: Bool, recoveryLinked: Bool, notebookLoaded: Bool, gateOpen: Bool) -> Bool {
-        !flagSet && recoveryLinked && notebookLoaded && gateOpen
+    enum Outcome: Equatable { case skipped, found, noReplies, failed }
+    static func shouldRead(flagSet: Bool, checkedNone: Bool, notebookLoaded: Bool, gateOpen: Bool) -> Bool {
+        !flagSet && !checkedNone && notebookLoaded && gateOpen
     }
+    /// `found`: set the flag. `noReplies`: remember it for the process. `failed`:
+    /// the next open asks again.
+    @MainActor static func discover(flagSet: Bool, checkedNone: Bool, notebookLoaded: Bool, gateOpen: Bool,
+                         hasReplies: () async throws -> Bool) async -> Outcome {
+        guard shouldRead(flagSet: flagSet, checkedNone: checkedNone, notebookLoaded: notebookLoaded, gateOpen: gateOpen)
+        else { return .skipped }
+        guard let found = try? await hasReplies() else { return .failed }
+        return found ? .found : .noReplies
+    }
+}
+
+/// 11/20: the family entries this iPhone chose not to show (「表示しない」).
+/// The screens read UserDefaults (`defaultsKey`); a copy is kept in this
+/// iPhone's device-only Keychain, as the remembered name is
+/// (GroupRememberedName), so deleting the app does not show them again.
+enum FamilyHiddenOperationsMemory {
+    static let defaultsKey = "family.hiddenOperations.v1"
+    static let account = "family-hidden-operations.v1"
+    /// After GroupWindowClientProvider.namespace.
+    static let namespaceSuffix = ".family-hidden"
+    static func memory(defaults: @escaping () -> String?, setDefaults: @escaping (String) -> Void,
+                       keychain: @escaping () -> (any GroupSecretStore)?) -> GroupRememberedName {
+        GroupRememberedName(defaults: defaults, setDefaults: setDefaults, keychain: keychain, account: account)
+    }
+    static func ids(_ text: String) -> Set<String> { Set(text.split(separator: ",").map(String.init)) }
+    static func text(_ ids: Set<String>) -> String { ids.sorted().joined(separator: ",") }
 }
 
 /// The iCloud Keychain item of the pin: synchronizable, with the same access

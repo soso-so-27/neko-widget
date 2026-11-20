@@ -3136,13 +3136,15 @@ final class FamilyRepresentativePhotos: ObservableObject {
             // 11/19 (機種変更): only a slot this iPhone itself filled is cleared.
             // A new iPhone of the same person (the same author) has no record and
             // leaves the family's photo. Presence only: a changed PhotoKit ID of
-            // the photo it sent is not a clear.
-            guard sent[key] != nil else { return }
-            guard referenced || backend.author(of: cat) != nil else { sent[key] = nil; return }
+            // the photo it sent is not a clear. 11/20: a choice noted when first
+            // seen (after 機種変更, or the app deleted, which wipes `sent`) that
+            // had a photo and now has none is the person's own change: cleared.
+            guard sent[key] != nil || seen[key] != nil else { return }
+            guard referenced || backend.author(of: cat) != nil else { sent[key] = nil; seen[key] = nil; return }
             if waiting(cat, photo: nil) { return }
             do {
                 try await backend.clear(cat)
-                sent[key] = nil
+                sent[key] = nil; seen[key] = nil
                 waits[cat] = nil; limitedPhotos[cat] = nil; pendingPhotos[cat] = nil
             } catch where Task.isCancelled {
             } catch { failed(cat, photo: nil) }
