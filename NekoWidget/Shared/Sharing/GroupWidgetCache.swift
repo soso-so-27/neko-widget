@@ -29,6 +29,17 @@ enum GroupWidgetCache {
     static let sourceIDPrefix = "group-window:"
     static let maximumPixelSize = 1_000
     private static let maximumWindows = 10
+    /// 11/20: every read-modify-write of `catalog.json` goes through this
+    /// lock. Only the app writes (the heart intent's write runs in the app
+    /// too, `NEKO_HOST_APP`), so a lock in the process is enough; no file
+    /// lock is held in the shared container while the app may be suspended.
+    private static let catalogLock = NSLock()
+
+    private static func withCatalogLock<Value>(_ operation: () throws -> Value) rethrows -> Value {
+        catalogLock.lock()
+        defer { catalogLock.unlock() }
+        return try operation()
+    }
 
     static func sourceID(windowID: String) -> String { sourceIDPrefix + windowID }
 
@@ -115,10 +126,26 @@ enum GroupWidgetCache {
                        senderDisplayName: String?, capturedAt: Date?, isPaused: Bool,
                        myHeartActive: Bool = false) throws {
         guard isValidID(windowID), let directory = directory() else { return }
+        try withCatalogLock {
+            try updateLocked(in: directory, windowID: windowID, windowName: windowName, photoID: photoID,
+                             jpeg: jpeg, senderDisplayName: senderDisplayName, capturedAt: capturedAt,
+                             isPaused: isPaused, myHeartActive: myHeartActive)
+        }
+    }
+
+    private static func updateLocked(in directory: URL, windowID: String, windowName: String, photoID: String?,
+                                     jpeg: Data?, senderDisplayName: String?, capturedAt: Date?, isPaused: Bool,
+                                     myHeartActive: Bool) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var catalog = Catalog(entries: entries())
         let previous = catalog.entries.first { $0.windowID == windowID }
-        var imageFileName = previous?.photoID == photoID ? previous?.imageFileName : nil
+        // 11/20: the same photo keeps its image only while the file is there.
+        // A missing file is written again from `jpeg`, so the Widget does not
+        // keep saying 「アプリを開くと写真が出ます」 after the app was opened.
+        var imageFileName: String?
+        if let previous, previous.photoID == photoID, imageURL(for: previous) != nil {
+            imageFileName = previous.imageFileName
+        }
         if imageFileName == nil, let jpeg, let small = downscaled(jpeg),
            let name = fileName(windowID: windowID, photoID: photoID) {
             try write(small, to: directory.appendingPathComponent(name))
@@ -150,12 +177,14 @@ enum GroupWidgetCache {
     /// After leaving a window, its home-screen photo goes too.
     static func remove(windowID: String) throws {
         guard let directory = directory() else { return }
-        var catalog = Catalog(entries: entries())
-        guard let removed = catalog.entries.first(where: { $0.windowID == windowID }) else { return }
-        catalog.entries.removeAll { $0.windowID == windowID }
-        try write(JSONEncoder().encode(catalog), to: directory.appendingPathComponent("catalog.json"))
-        if let name = removed.imageFileName {
-            try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+        try withCatalogLock {
+            var catalog = Catalog(entries: entries())
+            guard let removed = catalog.entries.first(where: { $0.windowID == windowID }) else { return }
+            catalog.entries.removeAll { $0.windowID == windowID }
+            try write(JSONEncoder().encode(catalog), to: directory.appendingPathComponent("catalog.json"))
+            if let name = removed.imageFileName {
+                try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+            }
         }
     }
 
@@ -187,12 +216,14 @@ enum GroupWidgetCache {
     /// After the app sent a heart from the Widget, show it as sent.
     static func markMyHeart(windowID: String, photoID: String) throws {
         guard let directory = directory() else { return }
-        var catalog = Catalog(entries: entries())
-        guard let index = catalog.entries.firstIndex(where: { $0.windowID == windowID }),
-              catalog.entries[index].photoID == photoID
-        else { return }
-        catalog.entries[index].myHeartActive = true
-        try write(JSONEncoder().encode(catalog), to: directory.appendingPathComponent("catalog.json"))
+        try withCatalogLock {
+            var catalog = Catalog(entries: entries())
+            guard let index = catalog.entries.firstIndex(where: { $0.windowID == windowID }),
+                  catalog.entries[index].photoID == photoID
+            else { return }
+            catalog.entries[index].myHeartActive = true
+            try write(JSONEncoder().encode(catalog), to: directory.appendingPathComponent("catalog.json"))
+        }
     }
 
     // MARK: Files

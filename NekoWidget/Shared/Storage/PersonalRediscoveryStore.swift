@@ -164,6 +164,15 @@ struct PersonalRediscoveryStore: Sendable {
     static let maximumCandidateCount = 100
     static let maximumCachedFileCount = 400
     static let maximumTimelineEntryCount = 2
+    /// 11/20: the most allowed photo IDs (with their edit dates) kept in the
+    /// shared file. The Widget decodes the whole file on every request
+    /// (about 100 bytes per photo on disk, roughly 330 bytes while decoded),
+    /// and a file over 8 MB cannot be written at all, so a very large cat
+    /// library (tens of thousands of photos) could make every update fail.
+    /// Above this many, the photos the windows are using, the ones the app
+    /// asks for (new, date and album photos), and a sample that changes each
+    /// day are kept; the app prepares only from this set.
+    static let maximumPersistedEligibleCount = 20_000
     private static let processLock = NSLock()
     private static let historyDuration: TimeInterval = 48 * 60 * 60
     private static let operationDuration: TimeInterval = 7 * 24 * 60 * 60
@@ -208,6 +217,7 @@ struct PersonalRediscoveryStore: Sendable {
         now: Date = .now,
         photoModificationDates: [String: Date] = [:],
         bootstrapCandidates: [PersonalRediscoveryCandidate] = [],
+        preferredPhotoIDs: Set<String> = [],
         interval: TimeInterval = 20 * 60,
         timeZone: TimeZone = .current
     ) throws -> String {
@@ -220,7 +230,15 @@ struct PersonalRediscoveryStore: Sendable {
                 eligiblePhotoIDs: [], modificationDates: [:], isAuthorized: false,
                 updatedAt: now
             )
-            let allowed = isAuthorized ? photoIDs : []
+            let inUse = Set(state.candidates.map { $0.item.localIdentifier })
+                .union(state.grants.flatMap { [$0.photoID, $0.previousPhotoID] })
+                .union(state.issues.filter { !$0.invalidated }.map(\.photoID))
+                .union(state.frozenItem.map { [$0.localIdentifier] } ?? [])
+                .union(bootstrapCandidates.map { $0.item.localIdentifier })
+            let allowed = isAuthorized
+                ? Self.boundedEligibility(photoIDs, keeping: inUse, preferring: preferredPhotoIDs,
+                                          salt: Self.dayKey(now, timeZone: timeZone))
+                : []
             let versions = photoModificationDates.filter { allowed.contains($0.key) }
             if state.scopeIdentifier != scopeIdentifier || state.eligiblePhotoIDs != allowed
                 || state.isAuthorized != isAuthorized || state.modificationDates != versions {
@@ -1360,6 +1378,25 @@ struct PersonalRediscoveryStore: Sendable {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
         return calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: date)) ?? date.addingTimeInterval(24 * 60 * 60)
+    }
+
+    /// 11/20: all of `photoIDs` up to `maximumPersistedEligibleCount`. Above
+    /// it: those in use first, then those preferred, then a sample by a hash
+    /// salted with the day, so other photos get their turn on later days.
+    static func boundedEligibility(_ photoIDs: Set<String>, keeping inUse: Set<String>,
+                                   preferring preferred: Set<String>, salt: String) -> Set<String> {
+        let limit = maximumPersistedEligibleCount
+        guard photoIDs.count > limit else { return photoIDs }
+        var result = Set<String>()
+        result.reserveCapacity(limit)
+        for group in [photoIDs.intersection(inUse), photoIDs.intersection(preferred).subtracting(inUse)] {
+            for id in group.sorted() where result.count < limit { result.insert(id) }
+        }
+        guard result.count < limit else { return result }
+        let rest = photoIDs.subtracting(result).map { (hash: stableHash(salt + "|" + $0), id: $0) }
+            .sorted { $0.hash == $1.hash ? $0.id < $1.id : $0.hash < $1.hash }
+        for item in rest.prefix(limit - result.count) { result.insert(item.id) }
+        return result
     }
 
     private static func stableHash(_ value: String) -> UInt64 {

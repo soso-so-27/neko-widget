@@ -6,6 +6,10 @@ struct RevealCloudyWindowIntent: AppIntent {
     static var title: LocalizedStringResource = "まどのくもりを晴らす"
     static var isDiscoverable = false
     static var openAppWhenRun = false
+    /// 11/20: on a locked iPhone (StandBy, the Lock Screen) the tag asks to
+    /// unlock first, so someone else cannot clear the day's photo. Unlocked,
+    /// the tap clears at once as before.
+    static var authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
     @Parameter(title: "表示") var selectionID: String
     @Parameter(title: "まど") var scopeID: String
     @Parameter(title: "写真") var photoID: String
@@ -18,6 +22,9 @@ struct RevealCloudyWindowIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult {
+        // Every tap reloads, also one that cleared nothing (an old entry, a
+        // replaced selection, Photos access gone): the Widget then shows the
+        // state as it is now instead of staying as it was.
         defer { WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget") }
         // Old entries refresh only; they cannot reveal tomorrow's photo.
         // The daily photo is free for everyone (11/11): no membership gate.
@@ -46,4 +53,11 @@ struct CloudyWindowIdleTapIntent: AppIntent {
     init() {}
 
     func perform() async throws -> some IntentResult { .result() }
+}
+
+/// 11/20: the heart under a group window's photo is not sent from a locked
+/// iPhone by someone else either; unlocked, it is sent at once as before.
+/// Declared here so the heart intent's own file stays as it is.
+extension SendGroupWidgetHeartIntent {
+    static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
 }

@@ -45,7 +45,12 @@ struct PhotoImageLoader {
         ) { image, info in
             let wasCancelled = (info?[PHImageCancelledKey] as? Bool) == true
             let error = info?[PHImageErrorKey] as? Error
-            if !wasCancelled, error == nil {
+            // 11/20: without network access an iCloud-only photo can come
+            // back as its small degraded preview. That is not the photo: the
+            // Widget preparation (the only caller without network) leaves it
+            // for a later pass instead of drawing an enlarged, blurry copy.
+            let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) == true
+            if !wasCancelled, error == nil, networkAccessAllowed || !isDegraded {
                 result = image
             }
         }

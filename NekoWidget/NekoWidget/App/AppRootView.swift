@@ -712,7 +712,8 @@ struct AppRootView: View {
             startsInPhotos: startsInPhotosAfterOnboarding,
             resumeScan: {
                 await viewModel.resumeScan()
-            }
+            },
+            photosTabRequest: $viewModel.photosTabRequest
         )
     }
 

@@ -307,17 +307,37 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
     private func cloudyTimeline(sourceID: String, now: Date, variant: WidgetImageVariant) -> Timeline<NekoWidgetEntry>? {
         let isProfile = sourceID.hasPrefix(CloudyWindowStore.profilePrefix)
         guard sourceID == WidgetPhotoSource.personalLibraryID || isProfile else { return nil }
-        guard CloudyWindowStore.shared.isCloudySource(sourceID) else {
-            // A cat's own window whose cat was deleted (11/14, A8).
+        let retry = now.addingTimeInterval(20 * 60)
+        switch CloudyWindowStore.shared.sourceStatus(sourceID) {
+        case .cloudy:
+            break
+        case .notCloudy:
+            // Read and outside the cloudy window: a cat's own window whose
+            // cat was deleted (11/14, A8); the personal photos outside
+            // Version1 keep their own timeline.
             return isProfile ? Timeline(entries: [.stuck(.catRemoved, at: now, imageVariant: variant,
                 photoSourceIdentifier: sourceID)], policy: .never) : nil
+        case .notReady:
+            // 11/20: nothing saved yet. Never the clear legacy photo.
+            return Timeline(entries: [personalStuckEntry(at: now, variant: variant, sourceID: sourceID,
+                unreadable: false)], policy: .after(retry))
+        case .unreadable:
+            // 11/20: fails closed. A read error (before the first unlock, a
+            // lock, a damaged file) is neither the clear legacy photo nor
+            // "this cat was removed"; WidgetKit asks again.
+            return Timeline(entries: [personalStuckEntry(at: now, variant: variant, sourceID: sourceID,
+                unreadable: true)], policy: .after(retry))
         }
         // The daily photo is free for everyone (11/11): no membership gate.
         let plan: [CloudyWindowEntry]
         var unreadable = false
         do {
-            plan = try CloudyWindowStore.shared.timeline(scopeID: sourceID, now: now,
+            let result = try CloudyWindowStore.shared.timelineReportingReplacement(scopeID: sourceID, now: now,
                 allowsSelection: true, selectionValidUntil: nil)
+            plan = result.entries
+            // 11/20: another Widget of this window may hold the replaced
+            // selection; every timeline is asked again so none keeps it.
+            if result.replacedSelection { WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget") }
         } catch {
             plan = []
             unreadable = true
@@ -341,9 +361,13 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             entry.cloudyWindowSelection = planned.selection
             return entry
         }
-        return Timeline(entries: entries.isEmpty ? [personalStuckEntry(at: now, variant: variant,
-            sourceID: sourceID, unreadable: unreadable)] : entries,
-            policy: .after(entries.isEmpty ? now.addingTimeInterval(20 * 60) : CloudyWindowStore.shared.nextRefresh(after: now)))
+        // 11/20: never only a later entry. Without today's photo (its image
+        // is being prepared again), today says so until WidgetKit asks again.
+        guard let first = entries.first, first.date <= now else {
+            return Timeline(entries: [personalStuckEntry(at: now, variant: variant,
+                sourceID: sourceID, unreadable: unreadable)], policy: .after(retry))
+        }
+        return Timeline(entries: entries, policy: .after(CloudyWindowStore.shared.nextRefresh(after: now)))
     }
 
     private func personalRediscoveryTimeline(now: Date, variant: WidgetImageVariant) -> Timeline<NekoWidgetEntry>? {

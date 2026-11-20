@@ -20,7 +20,8 @@ enum CloudyWindowStrength: String, Codable, CaseIterable, Sendable {
 
 struct CloudyWindowConfiguration: Codable, Equatable, Sendable {
     /// 11/3: 「このiPhoneの猫写真」 is cloudy from the first install, like the
-    /// per-cat windows. A persisted older state keeps whatever it saved.
+    /// per-cat windows. 11/20: no screen turns it off; a `false` saved by an
+    /// older build is read as `true` (CloudyWindowStore.read).
     var enabled = true
     /// 10/24: the owner preferred こいめ on a real iPhone.
     var strength: CloudyWindowStrength = .strong
@@ -218,6 +219,21 @@ struct CloudyWindowAlbumRoute: Equatable, Sendable {
     }
 }
 
+/// 11/20: whether a Widget source is a cloudy window. A state that could not
+/// be read is never taken for "not cloudy": the user's photo is never shown
+/// clear by mistake, and a cat's window is not called removed.
+enum CloudyWindowSourceStatus: Equatable, Sendable {
+    case cloudy
+    /// Read, and not a cloudy window (outside Version1, or a cat's window
+    /// whose cat is no longer in the saved state).
+    case notCloudy
+    /// Nothing saved yet (the app has not run its first look).
+    case notReady
+    /// The saved state could not be read now (locked before the first
+    /// unlock, a lock or read error, a damaged file).
+    case unreadable
+}
+
 struct CloudyWindowEntry: Sendable {
     var date: Date
     var selection: CloudyWindowSelection
@@ -241,7 +257,17 @@ private struct CloudyWindowState: Codable {
     var photos: [CloudyWindowPreparedPhoto] = []
     var selections: [CloudyWindowSelection] = []
     var frozenSelectionIDs: [String: String]? = nil
+    /// Photos shown in a Widget (or cleared there). Only these lose their
+    /// new-photo day.
     var seenPhotoIDs: Set<String> = []
+    /// 11/20: photos opened in the app. They wait behind unseen ones in the
+    /// rotation, but keep their new-photo day: a photo looked at right after
+    /// it was taken still comes to the window. Optional: older saves.
+    var appViewedPhotoIDs: Set<String>? = nil
+    /// 11/20: WidgetKit first answered "no Widget placed" at this time. The
+    /// prepared images go only when it still says so an hour later, so one
+    /// empty answer never empties the window. Optional: older saves.
+    var uninstalledSince: Date? = nil
     var albumPrototypeEnabled: Bool? = nil
     var albumArrival: CloudyWindowAlbumArrival? = nil
     /// Only a successful host WidgetCenter query can grant image preparation.
@@ -299,6 +325,10 @@ struct CloudyWindowStore: Sendable {
     static let preparedNewPhotoCount = 8
     static let preparedDateDays = 7
     static let maximumFileBytes = 220 * 1_024
+    /// 11/20: WidgetKit's "no Widget" is believed when it is still the
+    /// answer this long after the first time.
+    static let uninstallConfirmationInterval: TimeInterval = 60 * 60
+    static let maximumAppViewedCount = 20_000
     private let containerURL: URL?
     private let authorityStore: PersonalRediscoveryStore
     private let internalPresentation: Bool
@@ -328,11 +358,13 @@ struct CloudyWindowStore: Sendable {
         calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: date))!
     }
 
-    /// 11/15: taken within `newPhotoDays` of `date` (and not in its future)
-    /// and never shown. The capture date, not the day the app found it: an
-    /// old photo that refills the pool is not new.
+    /// 11/15: taken within `newPhotoDays` of `date` (and before it) and never
+    /// shown. The capture date, not the day the app found it: an old photo
+    /// that refills the pool is not new. For a day's photo `date` is the
+    /// start of that day, so a photo taken today goes out tomorrow (11/20:
+    /// also when today's photo is chosen late in the day).
     static func isNewPhoto(takenAt captured: Date?, previouslyShown: Bool, at date: Date) -> Bool {
-        guard !previouslyShown, let captured, captured <= date.addingTimeInterval(86_400) else { return false }
+        guard !previouslyShown, let captured, captured < date else { return false }
         return date.timeIntervalSince(captured) <= Double(newPhotoDays) * 86_400
     }
 
@@ -433,40 +465,83 @@ struct CloudyWindowStore: Sendable {
         return (try? authorityStore.withAuthoritySnapshot { _ in try read().configuration }) ?? .init()
     }
 
-    func configure(enabled: Bool, strength: CloudyWindowStrength) throws {
+    /// Test builds only: the blur strength. 「このiPhoneの猫写真」 is always
+    /// cloudy (11/20), so there is nothing to turn off.
+    func configure(strength: CloudyWindowStrength) throws {
         guard internalPresentation else { return }
         try authorityStore.withAuthoritySnapshot { _ in
             var state = try read()
-            let old = state.configuration
-            guard old.enabled != enabled || old.strength != strength else { return }
-            state.configuration = .init(enabled: enabled, strength: strength)
-            // Re-enabling keeps today's committed photo and reveal state.
+            guard state.configuration.strength != strength else { return }
+            state.configuration = .init(enabled: true, strength: strength)
             try write(state)
         }
     }
 
-    func isCloudySource(_ sourceID: String) -> Bool {
-        guard internalPresentation else { return false }
-        return (try? authorityStore.withAuthoritySnapshot { _ in
-            let state = try read()
-            return supports(sourceID, in: state)
-        }) ?? false
+    /// 11/20: fails closed. Only a state that was read and says so is "not
+    /// cloudy"; a read error is `.unreadable`, never the clear legacy photo,
+    /// and never "this cat was removed".
+    func sourceStatus(_ sourceID: String) -> CloudyWindowSourceStatus {
+        guard internalPresentation else { return .notCloudy }
+        do {
+            return try authorityStore.withAuthoritySnapshot { _ -> CloudyWindowSourceStatus in
+                guard try stateExists() else { return sourceID == Self.personalScope ? .cloudy : .notReady }
+                return supports(sourceID, in: try read()) ? .cloudy : .notCloudy
+            }
+        } catch {
+            return .unreadable
+        }
     }
 
     /// Never changes the persisted Widget intent or the legacy personal-photo
     /// switch. Unknown WidgetKit results must not be supplied as an empty set.
-    func synchronizeInstalledSources(_ sourceIDs: Set<String>) throws {
+    /// 11/20: "no Widget" after Widgets were placed releases the prepared
+    /// images only when WidgetKit still says so `uninstallConfirmationInterval`
+    /// later; one empty answer keeps everything as it is.
+    func synchronizeInstalledSources(_ sourceIDs: Set<String>, now: Date = .now) throws {
         guard internalPresentation else { return }
         try authorityStore.withAuthoritySnapshot { _ in
             var state = try read()
             let installed = Set(sourceIDs.filter { supports($0, in: state) })
-            guard state.installedSources != installed || state.configuration.strength != .strong else { return }
+            if installed.isEmpty, state.installedSources?.isEmpty == false {
+                let since = state.uninstalledSince.map { min($0, now) } ?? now
+                guard now.timeIntervalSince(since) >= Self.uninstallConfirmationInterval else {
+                    if state.uninstalledSince != since {
+                        state.uninstalledSince = since
+                        try write(state)
+                    }
+                    return
+                }
+            }
+            let wasPending = state.uninstalledSince != nil
+            state.uninstalledSince = nil
+            guard state.installedSources != installed || state.configuration.strength != .strong else {
+                if wasPending { try write(state) }
+                return
+            }
             state.installedSources = installed
             state.configuration.strength = .strong
             state.configuration.revision = UUID().uuidString
             if installed.isEmpty { state.photos = [] }
             try write(state)
             collectFiles(keeping: Set(state.photos.flatMap(\.filenames)))
+        }
+    }
+
+    /// 11/20: Photos access was taken away, or the Widget output was cleared:
+    /// the derived clear and cloudy images go now, not at the next launch.
+    /// The selections stay, so access given back shows the same photo in the
+    /// same state once it is prepared again.
+    func releasePreparedImages() throws {
+        guard internalPresentation else { return }
+        try authorityStore.withAuthoritySnapshot { _ in
+            if try stateExists() {
+                var state = try read()
+                if !state.photos.isEmpty {
+                    state.photos = []
+                    try write(state)
+                }
+            }
+            collectFiles(keeping: [])
         }
     }
 
@@ -478,7 +553,7 @@ struct CloudyWindowStore: Sendable {
     }
 
     private func supports(_ sourceID: String, in state: CloudyWindowState) -> Bool {
-        sourceID == Self.personalScope ? state.configuration.enabled : profileID(sourceID, in: state) != nil
+        sourceID == Self.personalScope || profileID(sourceID, in: state) != nil
     }
 
     /// Metadata contains only known personal candidates. Imported received
@@ -488,7 +563,10 @@ struct CloudyWindowStore: Sendable {
                      now: Date = .now) throws {
         guard internalPresentation else { return }
         try authorityStore.withAuthoritySnapshot(now: now) { authority in
-            var state = try read()
+            // 11/20: only the app writes here. A damaged file (not a lock or
+            // a locked iPhone) starts again, so the window cannot stay
+            // unreadable for good.
+            var state = try readRecoveringDamage()
             let relevant = Set(authority?.candidates.map { $0.item.localIdentifier } ?? [])
                 .union(state.photos.map(\.photoID))
                 .union(state.albumArrival.map { [$0.photoID] } ?? [])
@@ -596,6 +674,18 @@ struct CloudyWindowStore: Sendable {
                                 calendar.component(.month, from: previous))
     }
 
+    /// 11/20: the photos the windows hold now (prepared, or given for a day
+    /// from yesterday on), so a bounded authority keeps them.
+    func photoIDsInUse(now: Date = .now) -> Set<String> {
+        guard internalPresentation else { return [] }
+        let yesterday = Self.calendar.startOfDay(for: now).addingTimeInterval(-86_400)
+        return (try? authorityStore.withAuthoritySnapshot(now: now) { _ in
+            let state = try read()
+            return Set(state.photos.map(\.photoID))
+                .union(state.selections.filter { $0.day >= yesterday }.map(\.photoID))
+        }) ?? []
+    }
+
     func profiles() -> [(id: String, name: String)] {
         guard internalPresentation else { return [] }
         return (try? authorityStore.withAuthoritySnapshot { authority in
@@ -630,8 +720,10 @@ struct CloudyWindowStore: Sendable {
                                 .union(planned.map { $0.item.localIdentifier }))
             }
             let month = Self.calendar.component(.month, from: now)
+            let appViewed = state.appViewedPhotoIDs ?? []
             var pools = [
                 available.filter { !state.seenPhotoIDs.contains($0.item.localIdentifier)
+                    && !appViewed.contains($0.item.localIdentifier)
                     && state.metadata[$0.item.localIdentifier]?.previouslyShown != true },
                 available.filter { candidate in
                     guard let date = candidate.creationDate,
@@ -782,11 +874,24 @@ struct CloudyWindowStore: Sendable {
 
     func timeline(scopeID: String, now: Date = .now, allowsSelection: Bool = true,
                   selectionValidUntil: Date? = nil) throws -> [CloudyWindowEntry] {
-        guard internalPresentation else { return [] }
+        try timelineReportingReplacement(scopeID: scopeID, now: now, allowsSelection: allowsSelection,
+                                         selectionValidUntil: selectionValidUntil).entries
+    }
+
+    /// `replacedSelection` (11/20): a selection that a Widget already given a
+    /// timeline may show (tomorrow's, or today's before the monthly cover)
+    /// was replaced here. The caller reloads every timeline, so no Widget
+    /// keeps an entry whose tag tap names a selection that is gone.
+    func timelineReportingReplacement(scopeID: String, now: Date = .now, allowsSelection: Bool = true,
+                                      selectionValidUntil: Date? = nil) throws
+        -> (entries: [CloudyWindowEntry], replacedSelection: Bool) {
+        guard internalPresentation else { return ([], false) }
+        var replaced = false
         let entries: [CloudyWindowEntry] = try authorityStore.withAuthoritySnapshot(now: now) { authority in
             var state = try read()
             guard supports(scopeID, in: state), authority?.isAuthorized == true else { return [] }
             reconcile(&state, authority: authority, now: now)
+            let stalePhotos = Set(state.photos.filter { !valid($0, in: state, authority: authority) }.map(\.photoID))
             // Older installs: any window with a selection was issued one.
             let issued = (state.issuedScopeIDs ?? []).union(state.selections.map(\.scopeID))
             let today = Self.calendar.startOfDay(for: now)
@@ -807,7 +912,7 @@ struct CloudyWindowStore: Sendable {
                     // so an expired window does not start choosing again
                     // (11/6: a free widget stayed empty).
                     if selection == nil, date == today, !issued.contains(scopeID),
-                       let first = choose(state: state, scopeID: scopeID, date: date, now: now) {
+                       let first = choose(state: state, scopeID: scopeID, date: date, now: now, excluding: stalePhotos) {
                         selection = first
                         state.selections.append(first)
                     }
@@ -826,7 +931,10 @@ struct CloudyWindowStore: Sendable {
                    scopeID == Self.personalScope || state.metadata[cover.photoID]?.profileIDs.contains(
                     String(scopeID.dropFirst(Self.profilePrefix.count))) == true,
                    selection?.albumPeriod != arrival.period {
-                    if let old = selection { state.selections.removeAll { $0.id == old.id } }
+                    if let old = selection {
+                        state.selections.removeAll { $0.id == old.id }
+                        replaced = true
+                    }
                     let chosen = CloudyWindowSelection(scopeID: scopeID, day: date,
                         photoID: cover.photoID, profileID: profileID(scopeID, in: state), albumPeriod: arrival.period)
                     selection = chosen
@@ -839,17 +947,18 @@ struct CloudyWindowStore: Sendable {
                    planned.revealedAt == nil, planned.albumPeriod == nil,
                    let changed = state.libraryChangedAt, (planned.chosenAt ?? .distantPast) < changed,
                    let index = state.selections.firstIndex(where: { $0.id == planned.id }) {
-                    if let chosen = choose(state: state, scopeID: scopeID, date: date, now: now),
+                    if let chosen = choose(state: state, scopeID: scopeID, date: date, now: now, excluding: stalePhotos),
                        chosen.photoID != planned.photoID {
                         state.selections[index] = chosen
                         selection = chosen
+                        replaced = true
                     } else {
                         state.selections[index].chosenAt = now
                         selection = state.selections[index]
                     }
                 }
                 if selection == nil && maySelect,
-                   let chosen = choose(state: state, scopeID: scopeID, date: date, now: now) {
+                   let chosen = choose(state: state, scopeID: scopeID, date: date, now: now, excluding: stalePhotos) {
                     selection = chosen
                     state.selections.append(chosen)
                 }
@@ -879,7 +988,7 @@ struct CloudyWindowStore: Sendable {
             try authorityStore.recordExternalWidgetIssue(slotID: "cloudy-" + entry.selection.id,
                 photoID: entry.photo.photoID, scheduledAt: entry.selection.day, now: now)
         }
-        return entries
+        return (entries, replaced)
     }
 
     @discardableResult
@@ -891,12 +1000,29 @@ struct CloudyWindowStore: Sendable {
             var state = try read()
             guard supports(scopeID, in: state), authority?.isAuthorized == true else { return false }
             reconcile(&state, authority: authority, now: now)
+            let today = Self.calendar.startOfDay(for: now)
+            // 11/20: the tag tapped on an entry the Widget kept after its
+            // selection was replaced (tomorrow chosen again, a skipped
+            // reload): the reload this tap starts shows today's cloudy photo,
+            // so the tap clears that one instead of doing nothing.
+            let todays = state.selections.firstIndex { $0.scopeID == scopeID && $0.day == today }
+            func revealToday() throws -> Bool {
+                guard allowsSelection, selectionValidUntil.map({ today < $0 }) ?? true, let index = todays,
+                      let photo = state.photos.first(where: { $0.photoID == state.selections[index].photoID }),
+                      filesExist(photo) else { return false }
+                if state.selections[index].revealedAt == nil {
+                    state.selections[index].revealedAt = now
+                    state.seenPhotoIDs.insert(photo.photoID)
+                    try write(state)
+                }
+                return true
+            }
+            guard state.selections.contains(where: { $0.id == selectionID }) else { return try revealToday() }
             guard let index = state.selections.firstIndex(where: {
                 $0.id == selectionID && $0.scopeID == scopeID && $0.photoID == photoID
             }), let photo = state.photos.first(where: { $0.photoID == photoID }), filesExist(photo) else { return false }
             let selection = state.selections[index]
             guard selectionValidUntil.map({ selection.day < $0 }) ?? true else { return false }
-            let today = Self.calendar.startOfDay(for: now)
             let latestIssued = state.selections.filter { value in
                 value.scopeID == scopeID && value.day <= now
                     && (selectionValidUntil.map { value.day < $0 } ?? true)
@@ -917,6 +1043,10 @@ struct CloudyWindowStore: Sendable {
                 state.seenPhotoIDs.insert(photoID)
                 try write(state)
                 return true
+            }
+            if selection.day < today, !frozen, selection.revealedAt == nil, todays != nil {
+                // Yesterday's cloudy entry, while today's photo is chosen.
+                return try revealToday()
             }
             guard selection.day == today || frozen else { return false }
             if selection.revealedAt == nil {
@@ -965,13 +1095,19 @@ struct CloudyWindowStore: Sendable {
         }
     }
 
+    /// A photo opened in the app. 11/20: it waits behind unseen photos in
+    /// the rotation, but keeps its new-photo day (only being shown in a
+    /// Widget ends that), so a photo looked at right after shooting still
+    /// comes to the window.
     func noteViewed(photoID: String) {
         guard internalPresentation else { return }
         try? authorityStore.withAuthoritySnapshot { authority in
             var state = try read()
+            var viewed = state.appViewedPhotoIDs ?? []
             guard state.installedSources?.isEmpty == false, authority?.eligiblePhotoIDs.contains(photoID) == true,
-                  state.seenPhotoIDs.count < 100_000, !state.seenPhotoIDs.contains(photoID) else { return }
-            state.seenPhotoIDs.insert(photoID)
+                  viewed.count < Self.maximumAppViewedCount, !state.seenPhotoIDs.contains(photoID),
+                  viewed.insert(photoID).inserted else { return }
+            state.appViewedPhotoIDs = viewed
             try write(state)
         }
     }
@@ -981,7 +1117,7 @@ struct CloudyWindowStore: Sendable {
         return try? authorityStore.withAuthoritySnapshot { authority in
             let state = try read()
             guard supports(scopeID, in: state), let photo = state.photos.first(where: { $0.filenames.contains(filename) }),
-                  valid(photo, in: state, authority: authority) else { return nil }
+                  displayable(photo, in: state, authority: authority) else { return nil }
             if scopeID != Self.personalScope {
                 guard let profile = profileID(scopeID, in: state),
                       state.metadata[photo.photoID]?.profileIDs.contains(profile) == true else { return nil }
@@ -1067,13 +1203,20 @@ struct CloudyWindowStore: Sendable {
     }
 
     private func choose(state: CloudyWindowState, scopeID: String, date: Date,
-                        now: Date) -> CloudyWindowSelection? {
+                        now: Date, excluding stale: Set<String> = []) -> CloudyWindowSelection? {
         let profile = profileID(scopeID, in: state)
         let previous = state.selections.filter { $0.scopeID == scopeID && $0.day < date }.sorted { $0.day > $1.day }
+        // 11/20: an edited photo whose image is not prepared again is only
+        // kept for the day it was already given.
         var candidates = state.photos.filter { photo in
-            guard let metadata = state.metadata[photo.photoID], filesExist(photo) else { return false }
+            guard !stale.contains(photo.photoID), let metadata = state.metadata[photo.photoID], filesExist(photo) else { return false }
             return profile.map { metadata.profileIDs.contains($0) } ?? true
         }.sorted { $0.photoID < $1.photoID }
+        // 11/20: a photo taken today goes out from tomorrow, on every kind of
+        // day, even when today's photo is chosen late (a new Widget, a missed
+        // reload). Only a window with nothing older shows today's.
+        let takenBefore = candidates.filter { (state.metadata[$0.photoID]?.creationDate).map { $0 < date } ?? true }
+        if !takenBefore.isEmpty { candidates = takenBefore }
         // Keep one representative of a burst / very similar nearby capture.
         var unique: [CloudyWindowPreparedPhoto] = []
         for photo in candidates {
@@ -1203,6 +1346,7 @@ struct CloudyWindowStore: Sendable {
             guard let metadata = state.metadata[photo.photoID] else { return false }
             switch channel {
             case 0: return !splits && !metadata.previouslyShown && !state.seenPhotoIDs.contains(photo.photoID)
+                && !(state.appViewedPhotoIDs ?? []).contains(photo.photoID)
             case 1:
                 // One day in three: the same season of an earlier year.
                 guard let captured = metadata.creationDate,
@@ -1211,7 +1355,7 @@ struct CloudyWindowStore: Sendable {
                 return min(distance, 12 - distance) <= 1
             default:
                 guard !splits, let captured = metadata.creationDate else { return false }
-                return captured <= date.addingTimeInterval(86_400) && date.timeIntervalSince(captured) <= 30 * 86_400
+                return captured < date && date.timeIntervalSince(captured) <= 30 * 86_400
             }
         }
         let pool = preferred.isEmpty ? candidates : preferred
@@ -1255,8 +1399,30 @@ struct CloudyWindowStore: Sendable {
             && photo.filenames.allSatisfy(Self.validFilename)
     }
 
+    /// 11/20: the same photo, still allowed, whose source was edited (or
+    /// favorited) after its images were prepared. It keeps drawing its last
+    /// prepared image, cloudy or cleared as it was, until the app prepares it
+    /// again; it is never chosen for another day.
+    private func stale(_ photo: CloudyWindowPreparedPhoto, in state: CloudyWindowState,
+                       authority: PersonalRediscoverySnapshot?) -> Bool {
+        guard let authority, authority.isAuthorized, authority.eligiblePhotoIDs.contains(photo.photoID),
+              authority.photoModificationDates[photo.photoID] != photo.source.sourceModificationDate,
+              state.metadata[photo.photoID] != nil else { return false }
+        return photo.filenames.count == 6 && Set(photo.filenames).count == 6
+            && photo.filenames.allSatisfy(Self.validFilename)
+    }
+
+    private func displayable(_ photo: CloudyWindowPreparedPhoto, in state: CloudyWindowState,
+                             authority: PersonalRediscoverySnapshot?) -> Bool {
+        valid(photo, in: state, authority: authority) || stale(photo, in: state, authority: authority)
+    }
+
     private func reconcile(_ state: inout CloudyWindowState, authority: PersonalRediscoverySnapshot?, now: Date) {
-        let keptPhotos = state.photos.filter { valid($0, in: state, authority: authority) }
+        let given = protectedSelections(in: state, now: now)
+        let keptPhotos = state.photos.filter { photo in
+            valid(photo, in: state, authority: authority)
+                || (given.contains(photo.photoID) && stale(photo, in: state, authority: authority))
+        }
         state.photos = keptPhotos
         let available = Set(state.photos.map(\.photoID))
         let lastIDs = Set(Dictionary(grouping: state.selections.filter { $0.day <= now }, by: \.scopeID)
@@ -1310,20 +1476,36 @@ struct CloudyWindowStore: Sendable {
         return containerURL.appendingPathComponent("cloudy-window.v1", isDirectory: true)
     }
     private func imageDirectory() throws -> URL { try directory().appendingPathComponent("images", isDirectory: true) }
+    private func stateExists() throws -> Bool {
+        FileManager.default.fileExists(atPath: try directory().appendingPathComponent("state.json").path)
+    }
     private func read() throws -> CloudyWindowState {
         let url = try directory().appendingPathComponent("state.json")
         guard FileManager.default.fileExists(atPath: url.path) else { return .init() }
         guard let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 8 * 1_024 * 1_024 else {
             throw PersonalRediscoveryStore.Error.corrupted
         }
-        let state = try JSONDecoder().decode(CloudyWindowState.self, from: Data(contentsOf: url))
+        let data = try Data(contentsOf: url)
+        var state: CloudyWindowState
+        do { state = try JSONDecoder().decode(CloudyWindowState.self, from: data) }
+        catch { throw PersonalRediscoveryStore.Error.corrupted }
         guard state.version == 1, state.photos.count <= Self.maximumPhotoCount,
               Set(state.photos.map(\.photoID)).count == state.photos.count,
               state.photos.allSatisfy({ $0.filenames.allSatisfy(Self.validFilename) }),
-              state.selections.count <= 5_000, state.seenPhotoIDs.count <= 100_000 else {
+              state.selections.count <= 5_000, state.seenPhotoIDs.count <= 100_000,
+              (state.appViewedPhotoIDs?.count ?? 0) <= Self.maximumAppViewedCount else {
             throw PersonalRediscoveryStore.Error.corrupted
         }
+        // 11/20: no screen turns the window off any more; an older build's
+        // saved `false` is read as on (written back by the next save).
+        state.configuration.enabled = true
         return state
+    }
+    /// The app's own read before it writes: a file that is damaged (its
+    /// bytes, not a lock or a locked iPhone) starts again from empty.
+    private func readRecoveringDamage() throws -> CloudyWindowState {
+        do { return try read() }
+        catch PersonalRediscoveryStore.Error.corrupted { return .init() }
     }
     private func write(_ state: CloudyWindowState) throws {
         var folder = try directory()

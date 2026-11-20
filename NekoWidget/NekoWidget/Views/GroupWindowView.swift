@@ -339,8 +339,10 @@ final class GroupWindowScreenModel: ObservableObject {
         guard !Task.isCancelled else { return }
         let previous = GroupWidgetCache.entry(windowID: windowID)
         // The cache keeps the image it already has for the same photo, so the
-        // full photo is read only when the home screen needs a new one.
+        // full photo is read only when the home screen needs a new one, or
+        // when that image file is gone (11/20: it is written again).
         let keepsCachedImage = previous?.photoID == newest?.id && previous?.imageFileName != nil
+            && previous.flatMap(GroupWidgetCache.imageURL(for:)) != nil
         let jpeg = keepsCachedImage ? nil : imageURL.flatMap { try? Data(contentsOf: $0) }
         do {
             try GroupWidgetCache.update(
@@ -2423,6 +2425,16 @@ extension GroupWidgetCache {
                     myHeartActive: newest?.id == previous.photoID ? (previous.myHeartActive ?? false) : false)
         if previous != entry(windowID: windowID) {
             WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+        }
+    }
+
+    /// 11/20: a window on the home screen whose image file is gone (the
+    /// Widget says 「アプリを開くと写真が出ます」) gets it back when the app
+    /// comes to the front, from the photos kept on this iPhone. Nothing is
+    /// fetched; a window whose photo is not kept here stays as it is.
+    @MainActor static func repairMissingImages() async {
+        for cached in entries() where cached.photoID != nil && imageURL(for: cached) == nil {
+            await refreshKept(windowID: cached.windowID)
         }
     }
 }

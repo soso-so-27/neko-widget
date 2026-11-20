@@ -210,6 +210,9 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         // app. Reconcile on every foreground activation; the signed PUT is
         // idempotent and extends the server-side bounded subscription lease.
         reconcileRemoteNotificationRegistration()
+        // 11/20: opening the app brings back a group window's home-screen
+        // image whose file is gone (local only, no network).
+        Task { @MainActor in await GroupWidgetCache.repairMissingImages() }
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {

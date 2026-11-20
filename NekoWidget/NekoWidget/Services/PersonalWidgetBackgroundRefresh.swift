@@ -56,6 +56,8 @@ enum PersonalWidgetBackgroundRefresh {
                     let revision = try PersonalRediscoveryStore.shared.updateEligibility(
                         photoIDs: [], scopeIdentifier: "invalidated", isAuthorized: false, now: .now)
                     try? await WidgetCacheBuilder().clearPersonal(expectedRevision: revision)
+                    // 11/20: the cloudy window's copies of the photos too.
+                    try? CloudyWindowStore.shared.releasePreparedImages()
                     WidgetCenter.shared.reloadAllTimelines()
                     task.setTaskCompleted(success: true)
                     return
