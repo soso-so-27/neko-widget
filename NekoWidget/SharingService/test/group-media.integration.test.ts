@@ -48,6 +48,36 @@ async function heart(p:Person,w:Window,momentId:string,active=true) {
       active,operationId,keyEpoch:w.roster.keyEpoch,rosterHash:w.hash}))};
 }
 describe('group encrypted relay and creator Plus commit boundary (runtime stays OFF outside test)',()=>{
+  it('lists only outgoing active blocks for a current member and caps the result at 500',async()=>{
+    const {owner,bob,w}=await family(),prefix=`/v3/group-windows/${w.windowId}/blocks`;
+    const ownerId=w.roster.members[0]!.participantId,bobId=w.roster.members[1]!.participantId;
+    const list=(p:Person)=>signed(p,`${prefix}/list`,undefined,randomBase64url(16),'POST').then(request=>send(request));
+    ok(await call(owner,`${prefix}/${bobId}`,{operationId:crypto.randomUUID(),active:true}));
+    expect(ok(await list(bob)).items).toEqual([]);
+    expect(ok(await list(owner)).items).toEqual([{participantId:bobId,updatedAt:expect.any(Number)}]);
+    ok(await call(owner,`${prefix}/${bobId}`,{operationId:crypto.randomUUID(),active:false}));
+    expect(ok(await list(owner)).items).toEqual([]);
+    expect((await list(await person())).status).toBe(404);
+    expect((await list(await person(bob.identity))).status).toBe(404);
+    expect((await call(bob,`${prefix}/list`)).status).toBe(405);
+    expect((await call(bob,`${prefix}/list`,{})).status).toBe(413);
+
+    // Former members can accumulate over the life of one window. No active
+    // roster, group limit, or live credential needs to be changed for this fixture.
+    const fixture=`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<501)`;
+    await db.batch([
+      db.prepare(`${fixture} INSERT INTO group_people SELECT 'cap_person_'||n,'cap_key_'||n,'active',unixepoch() FROM seq`),
+      db.prepare(`${fixture} INSERT INTO group_members SELECT printf('cap_%018d',n),?,'cap_person_'||n,'member','removed',1,2,'' FROM seq`).bind(w.windowId),
+      db.prepare(`${fixture} INSERT INTO group_participant_blocks SELECT ?,?,printf('cap_%018d',n),1,unixepoch() FROM seq`).bind(w.windowId,ownerId),
+    ]);
+    const items=ok(await list(owner)).items;
+    expect(items).toHaveLength(500);
+    expect(items[0].participantId).toBe('cap_000000000000000001');
+    expect(items.at(-1).participantId).toBe('cap_000000000000000500');
+    ok((await transition(owner,w,'remove',bobId,[w.roster.members[0]!])).response);
+    expect((await list(bob)).status).toBe(404);
+  });
+
   it('keeps legacy photo bytes intact and binds a caption sidecar through upload, delivery and expiry',async()=>{
     const {owner,bob,w}=await family(),p=await reserve(owner,w,48,true);ok(p.result,201);
     ok(await upload(owner,w,p));
