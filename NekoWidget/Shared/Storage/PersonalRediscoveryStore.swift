@@ -1393,8 +1393,17 @@ struct PersonalRediscoveryStore: Sendable {
             for id in group.sorted() where result.count < limit { result.insert(id) }
         }
         guard result.count < limit else { return result }
-        let rest = photoIDs.subtracting(result).map { (hash: stableHash(salt + "|" + $0), id: $0) }
-            .sorted { $0.hash == $1.hash ? $0.id < $1.id : $0.hash < $1.hash }
+        let prefix = salt + "|"
+        var rest: [(hash: UInt64, id: String)] = []
+        rest.reserveCapacity(photoIDs.count - result.count)
+        for id in photoIDs where !result.contains(id) {
+            let key: String = prefix + id
+            rest.append((hash: stableHash(key), id: id))
+        }
+        rest.sort { (lhs: (hash: UInt64, id: String), rhs: (hash: UInt64, id: String)) -> Bool in
+            if lhs.hash != rhs.hash { return lhs.hash < rhs.hash }
+            return lhs.id < rhs.id
+        }
         for item in rest.prefix(limit - result.count) { result.insert(item.id) }
         return result
     }
