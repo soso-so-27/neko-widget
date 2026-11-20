@@ -95,7 +95,7 @@ export async function route(request: Request, services: Services, context?: Pick
   const url = new URL(request.url);
   if (url.protocol !== 'https:') throw new ServiceError('HTTPS_REQUIRED');
   const path = url.pathname;
-  if (!['/v1/records', '/v1/export-page', '/v1/tool-cleanup', '/v1/usage'].includes(path) && url.search) throw new ServiceError('INVALID_REQUEST');
+  if (!['/v1/records', '/v1/export-page', '/v1/tool-cleanup', '/v1/usage', '/v1/auth/devices'].includes(path) && url.search) throw new ServiceError('INVALID_REQUEST');
   if (request.method === 'POST' && path === '/v1/auth/challenges') {
     const input = await body(request, 1024);
     if (Object.keys(input).some(key => key !== 'devicePublicKey')) throw new ServiceError('INVALID_REQUEST');
@@ -165,6 +165,20 @@ export async function route(request: Request, services: Services, context?: Pick
   },request.signal,context);
   if (services.ownerRequestLimiter) {
     await services.ownerRequestLimiter.admit(await services.auth.requireSession(token));
+  }
+  if (request.method === 'GET' && path === '/v1/auth/devices') {
+    for (const [key] of url.searchParams) if (key !== 'after' || url.searchParams.getAll(key).length !== 1) {
+      throw new ServiceError('INVALID_REQUEST');
+    }
+    return response(await services.auth.devices.list(await services.auth.requireSession(token), url.searchParams.get('after') ?? ''));
+  }
+  if (request.method === 'POST' && path === '/v1/auth/device-revocations') {
+    const session = await services.auth.requireSession(token);
+    const input = await body(request, 12 * 1024);
+    if (Object.keys(input).sort().join(',') !== 'challengeId,deviceProof,targetGrantId') throw new ServiceError('INVALID_REQUEST');
+    await services.auth.devices.revokeOther(session, { targetGrantId: string(input.targetGrantId),
+      challengeId: string(input.challengeId), deviceProof: string(input.deviceProof), origin: url.origin });
+    return new Response(null, { status: 204, headers });
   }
   if (request.method === 'GET' && path === '/v1/export-page') {
     return services.archive.exportPage(token, request, context);

@@ -404,4 +404,46 @@ describe('device-bound preservation sessions', () => {
     const result = await call('/v1/auth/session-revocations', revoke);
     expect(result.status).toBe(204); expect(await result.text()).toBe('');
   });
+
+  it('lists only the owner’s devices and revokes all sessions for one other device with a target-bound proof', async () => {
+    const f=await fixture(), outsider=await fixture();
+    const otherPair=await generateKeyPair('ES256',{extractable:true});
+    const otherBinding=await deviceBinding(await exportJWK(otherPair.publicKey),ORIGIN);
+    const target=await f.auth.establish({...f.identity,deviceBinding:otherBinding});
+    const duplicate=await f.auth.establish({...f.identity,deviceBinding:otherBinding});
+    const services={auth:f.auth,verifier:f.verifier} as Services;
+    const list=() => route(new Request(ORIGIN+'/v1/auth/devices',{
+      headers:{authorization:`Bearer ${f.session.token}`},
+    }),services);
+    const listed=await (await list()).json() as { currentGrantId:string; devices:{id:string;current:boolean}[] };
+    expect(listed.currentGrantId).toBe(f.session.deviceGrant!.grantId);
+    expect(listed.devices).toHaveLength(2);
+    expect(listed.devices.filter(device=>device.current)).toHaveLength(1);
+    const targetGrantId=listed.devices.find(device=>!device.current)!.id;
+    expect([target.deviceGrant!.grantId,duplicate.deviceGrant!.grantId]).toContain(targetGrantId);
+    const path='/v1/auth/device-revocations';
+    const proof=await f.signed('revoke',{sub:targetGrantId,htu:ORIGIN+path});
+    const submit=(id:string,deviceProof=proof.deviceProof)=>route(new Request(ORIGIN+path,{
+      method:'POST',headers:{authorization:`Bearer ${f.session.token}`,'content-type':'application/json'},
+      body:JSON.stringify({targetGrantId:id,challengeId:proof.challengeId,deviceProof}),
+    }),services);
+    await expect(submit(targetGrantId,(await f.signed('revoke')).deviceProof)).rejects.toMatchObject({code:'unauthorized'});
+    const foreignId=outsider.session.deviceGrant!.grantId;
+    const foreign=await f.signed('revoke',{sub:foreignId,htu:ORIGIN+path});
+    await expect(submit(foreignId,foreign.deviceProof)).rejects.toMatchObject({code:'unauthorized'});
+    const ownId=f.session.deviceGrant!.grantId;
+    const own=await f.signed('revoke',{sub:ownId,htu:ORIGIN+path});
+    await expect(submit(ownId,own.deviceProof)).rejects.toMatchObject({code:'unauthorized'});
+    const concurrent=await Promise.allSettled([submit(targetGrantId),submit(targetGrantId)]);
+    expect(concurrent.filter(result=>result.status==='fulfilled')).toMatchObject([{value:{status:204}}]);
+    expect(concurrent.filter(result=>result.status==='rejected')).toMatchObject([{reason:{code:'unauthorized'}}]);
+    for(const session of [target,duplicate]) {
+      await expect(f.auth.requireSession(session.token)).rejects.toMatchObject({code:'unauthorized'});
+      await expect(f.auth.devices.issueChallenge(session.deviceGrant!.grantId,'renew',ORIGIN))
+        .rejects.toMatchObject({code:'unauthorized'});
+    }
+    await expect(f.auth.requireSession(f.session.token)).resolves.toHaveProperty('ownerId');
+    await expect(outsider.auth.requireSession(outsider.session.token)).resolves.toHaveProperty('ownerId');
+    expect((await (await list()).json() as {devices:unknown[]}).devices).toHaveLength(1);
+  });
 });
