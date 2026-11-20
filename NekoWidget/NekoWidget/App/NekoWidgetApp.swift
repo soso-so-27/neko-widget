@@ -18,10 +18,9 @@ struct NekoWidgetApp: App {
         AppRecordDataset.trackProtectedData()
         // 11/20: also before any store opens a dataset folder. Test launches
         // (any "--" argument) keep their fixtures as they are.
+        var repairsRecords = true
 #if DEBUG
-        let repairsRecords = !CommandLine.arguments.dropFirst().contains { $0.hasPrefix("--") }
-#else
-        let repairsRecords = true
+        repairsRecords = !CommandLine.arguments.dropFirst().contains { $0.hasPrefix("--") }
 #endif
         if repairsRecords {
             AppRecordDataset.retireSupersededDatasets()
