@@ -737,19 +737,20 @@ struct Family {
         try expect(!f.b.bindingSaved, "the earlier build kept no binding")
 
         Log.step("B closes the app and opens it again with this build (the launch that sat on the spinner)")
+        let device = try required(f.b.notebookDeviceID, "B has no device")
         f.b.savesBinding = true
         try await f.b.relaunch()
         try expect(f.b.lastReadAt == nil && f.b.lastState == nil, "a new process remembers no read")
         try expect(!f.b.screenHasFamily && f.b.awaitingApprovalMark == false,
                    "no binding and a settled mark: only the launch read can make the schedule read")
-        let device = try required(f.b.notebookDeviceID, "B has no device")
         let mark = relay.transport.log.count
         try await relaunchedReadsIntoFamily(f.b)
         try expect(relay.transport.log.dropFirst(mark).contains { $0.device == device },
                    "the launch read reached the relay as B's device")
-        try expect(f.b.bindingSaved, "this build keeps the binding once the read answered")
+        try expect(!f.b.bindingSaved, "nothing kept the binding before the read")
         let listed = try f.b.notebookScreenCats()
         try expect(listed == [f.cat], "B's 「猫」 list has \(listed.count) cats")
+        try expect(f.b.bindingSaved, "this build keeps the binding once the read answered")
 
         Log.step("B's third launch: the notebook opens from the binding and the schedule reads")
         try await f.b.relaunch()

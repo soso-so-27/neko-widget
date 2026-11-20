@@ -630,14 +630,13 @@ struct Drained: Decodable {
         do {
             let state = try await service.loadState()
             lastState = state
-            // FamilyNotebookSharing.read after a whole read: the mark, the
-            // binding attachReal keeps (a copy and an author), lastReadAt.
+            // FamilyNotebookSharing.read after a whole read: the mark and
+            // lastReadAt (attachReal's binding: notebookScreenCats).
             switch state {
             case .pendingApproval, .waitingForKeys: awaitingApprovalMark = true
             case .notInFamily, .inFamily: awaitingApprovalMark = false
             default: break
             }
-            if savesBinding, (try? service.notebook?.snapshot()) != nil, service.author != nil { bindingSaved = true }
             lastReadAt = Date()
             Log.note("\(name): \(state)")
             return state
@@ -659,6 +658,8 @@ struct Drained: Decodable {
     func notebookScreenCats() throws -> [UUID] {
         let store = try required(service.notebook, "\(name) has no notebook copy")
         let author = try required(service.author, "\(name) has no author (the screen stops before its cats)")
+        // attachReal keeps the binding (UserDefaults) once it has a copy and an author.
+        if savesBinding { bindingSaved = true }
         let snapshot = try store.snapshot()
         try expect(!snapshot.sharingEnded, "\(name)'s notebook is shared")
         try FamilyNotebookCatCareBridge.linkFamilyCats(store, snapshot: snapshot, existingLocalIDs: [], author: author, profiles: [])
