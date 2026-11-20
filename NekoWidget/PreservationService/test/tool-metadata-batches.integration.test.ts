@@ -1,6 +1,41 @@
-import {expect,it} from 'vitest';
+import {expect,it,vi} from 'vitest';
 import {randomToken,sha256} from '../src/contracts';
+import {route,type Services} from '../src/index';
 import {fixture,finish,db,base,encoder} from './tool-metadata-batch-fixture';
+
+it('accepts a progressing metadata part that needs more than five seconds at the authenticated route',async()=>{
+  const batchId=crypto.randomUUID(),partId=crypto.randomUUID(),token=randomToken();
+  const bytes=new Uint8Array(512*1024).fill(32);
+  const authorize=vi.fn(async()=>({ownerId:crypto.randomUUID(),sessionHash:'test',expiresAt:Date.now()+1000}));
+  const stage=vi.fn(async()=>({status:'part-staged'}));
+  vi.useFakeTimers({toFake:['setTimeout','clearTimeout','performance']});
+  try {
+    let stream!:ReadableStreamDefaultController<Uint8Array>;
+    let started!:()=>void;
+    const reading=new Promise<void>(resolve=>{started=resolve;});
+    const body=new ReadableStream<Uint8Array>({start(controller){stream=controller;},pull(){started();}},
+      {highWaterMark:0});
+    const request=new Request(`https://preservation.test/v1/tool-metadata-batches/${batchId}/parts/${partId}`,{
+      method:'PUT',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body,
+      duplex:'half',
+    } as RequestInit);
+    const services={
+      auth:{requireToolMetadataBatchSession:authorize},archive:{stageMetadataBatch:stage},
+    } as unknown as Services;
+    const response=route(request,services);
+    const staged=expect(response.then(value=>value.json())).resolves.toMatchObject({status:'part-staged'});
+    const end=bytes.length/2;
+    await Promise.race([reading,response]);
+    await vi.advanceTimersByTimeAsync(3000);
+    stream.enqueue(bytes.slice(0,end));
+    await vi.advanceTimersByTimeAsync(3000);
+    stream.enqueue(bytes.slice(end));
+    stream.close();
+    await staged;
+    expect(authorize).toHaveBeenCalledWith(token,batchId);
+    expect(stage).toHaveBeenCalledWith(token,batchId,partId,bytes);
+  }finally{vi.useRealTimers();}
+});
 it('direct probe: stages three immutable parts, resumes after new instances, publishes one union and preserves head boundary',async()=>{
   const f=await fixture(),before=new Map([...f.objects].map(([key,value])=>[key,value.body.slice()]));
   const baseline=await db.prepare('SELECT count(*) n FROM pa_owner_recovery_versions WHERE owner_id=?').bind(f.session.ownerId).first<{n:number}>();

@@ -41,6 +41,7 @@ export interface Env extends ProductQuotaSettings {
   OWNER_DELETION_ENABLED?: string;
   APPLE_AUTH_DIAGNOSTICS_UNTIL?: string;
   PRESERVATION_ENABLED?: string; CLEANUP_ENABLED?: string; RETENTION_TRACKING_ENABLED?: string;
+  AUTH_EPHEMERAL_CLEANUP_ENABLED?: string;
   RECOVERY_BACKFILL_ENABLED?: string;
   OWNER_RECOVERY_COMPRESSION_ENABLED?: string;
   OWNER_RECOVERY_PAGED_ENABLED?: string;
@@ -160,7 +161,8 @@ export async function route(request: Request, services: Services, context?: Pick
     if(batchRoute[3])return response(await services.archive.finishMetadataBatch(token,batchId));
     if(request.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase()!=='application/json')throw new ServiceError('INVALID_REQUEST');
     const raw=await readBoundedBody(request.body,512*1024,()=>new ServiceError('INVALID_REQUEST'),request.signal,
-      ()=>new ServiceError('REQUEST_TOO_LARGE',413));
+      ()=>new ServiceError('REQUEST_TOO_LARGE',413),4096,
+      {totalMilliseconds:20_000,idleMilliseconds:5000,progressChunkBytes:512});
     return response(await services.archive.stageMetadataBatch(token,batchId,batchRoute[2]!,raw));
   },request.signal,context);
   if (services.ownerRequestLimiter) {
@@ -528,7 +530,7 @@ export default {
     if (env.NOTICE_SEND_ENABLED === 'YES' && (env.RETENTION_TRACKING_ENABLED !== 'YES' || env.NOTICE_EVENTS_ENABLED !== 'YES'
         || env.PRESERVATION_ENABLED !== 'YES')) throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
     if (!env.DB) {
-      if (env.CLEANUP_ENABLED === 'YES' || env.RECOVERY_BACKFILL_ENABLED === 'YES'
+      if (env.CLEANUP_ENABLED === 'YES' || env.AUTH_EPHEMERAL_CLEANUP_ENABLED === 'YES' || env.RECOVERY_BACKFILL_ENABLED === 'YES'
         || env.PRESERVATION_ENABLED === 'YES' || env.RETENTION_TRACKING_ENABLED === 'YES') {
         throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
       }
@@ -577,15 +579,18 @@ export default {
         try { await cleanupArchive({ db: env.DB, bucket: env.ARCHIVE, now: () => Date.now() }); }
         catch { maintenanceFailures++; }
       } else maintenanceFailures++;
+    }
+    if (env.CLEANUP_ENABLED === 'YES' || env.AUTH_EPHEMERAL_CLEANUP_ENABLED === 'YES') {
       try {
+        const now = Date.now();
         await env.DB.batch([
           env.DB.prepare(`DELETE FROM pa_membership_challenges WHERE challenge_id IN
-            (SELECT challenge_id FROM pa_membership_challenges WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
+            (SELECT challenge_id FROM pa_membership_challenges WHERE expires_at<=? ORDER BY expires_at,challenge_id LIMIT 100)`).bind(now),
           env.DB.prepare(`DELETE FROM pa_auth_challenges WHERE challenge_id IN
-            (SELECT challenge_id FROM pa_auth_challenges WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
+            (SELECT challenge_id FROM pa_auth_challenges WHERE expires_at<=? ORDER BY expires_at,challenge_id LIMIT 100)`).bind(now),
           env.DB.prepare(`DELETE FROM pa_sessions WHERE session_hash IN
-            (SELECT session_hash FROM pa_sessions WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
-          ...deviceSessionCleanupStatements(env.DB, Date.now(), 100),
+            (SELECT session_hash FROM pa_sessions WHERE expires_at<=? ORDER BY expires_at,session_hash LIMIT 100)`).bind(now),
+          ...deviceSessionCleanupStatements(env.DB, now, 100),
         ]);
       } catch { maintenanceFailures++; }
     }

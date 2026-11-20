@@ -241,7 +241,7 @@ describe('device-bound preservation sessions', () => {
     expect(calls).toBe(1);
   });
 
-  it('retains credentials and grants after temporary Apple failure and respects the daily attempt limit', async () => {
+  it('retains credentials and grants after temporary Apple failure and retries after one minute', async () => {
     const f = await fixture();
     const prior = await db.prepare('SELECT hex(sealed_credentials) AS bytes FROM pa_identity_credentials WHERE owner_id=?')
       .bind(f.session.ownerId).first();
@@ -255,7 +255,10 @@ describe('device-bound preservation sessions', () => {
       .bind(f.session.ownerId).first()).toEqual(prior);
     expect((await db.prepare('SELECT revoked_at FROM pa_device_session_grants WHERE grant_id=?')
       .bind(f.session.deviceGrant!.grantId).first())!.revoked_at).toBeNull();
-    f.advance(DAY);
+    f.advance(59_999);
+    await expect(f.auth.devices.renew(await f.signed(), failing)).rejects.toMatchObject({ code: 'auth_unavailable' });
+    expect(calls).toBe(1);
+    f.advance(1);
     await expect(f.auth.devices.renew(await f.signed(), f.verifier)).resolves.toHaveProperty('token');
   });
 
