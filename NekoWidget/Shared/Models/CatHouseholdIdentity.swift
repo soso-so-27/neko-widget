@@ -458,14 +458,17 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
     func convertingDeviceCalendarYears(device: Calendar = .current) -> Self {
         var value = self
         for index in value.profiles.indices {
-            value.profiles[index].lifeReference = value.profiles[index].lifeReference?.inGregorian(device: device)
-            if var dates = value.profiles[index].lifeDates {
+            var profile = value.profiles[index]
+            profile.lifeReference = profile.lifeReference?.inGregorian(device: device)
+            if var dates = profile.lifeDates {
                 dates.birthday = dates.birthday.map { $0.inGregorian(device: device) ?? $0 }
                 dates.adoptionDay = dates.adoptionDay.map { $0.inGregorian(device: device) ?? $0 }
-                value.profiles[index].lifeDates = dates
+                profile.lifeDates = dates
             }
+            value.profiles[index] = profile
         }
-        value.legacyUnscoped?.lifeReference = value.legacyUnscoped?.lifeReference?.inGregorian(device: device)
+        let legacy = value.legacyUnscoped?.lifeReference?.inGregorian(device: device)
+        value.legacyUnscoped?.lifeReference = legacy
         return value
     }
 
