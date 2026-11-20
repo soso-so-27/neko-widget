@@ -251,6 +251,25 @@ actor GroupWindowLocalPhotoStore {
         }
     }
 
+    /// 11/20 (GroupIdentityDeletionLocalData, once no other identity remains
+    /// on this iPhone): the deleted identity's own marks in the windows kept
+    /// here, the people it hid or blocked and its participant ID, so a new
+    /// identity that joins the same まど again does not inherit them (their
+    /// Keychain copy, GroupWindowKept `choices:`, goes in the same clean-up).
+    /// The kept photos, their removals and the window names stay. Whether
+    /// windows.json was written; the next resume tries again.
+    func forgetIdentityChoices() -> Bool {
+        var windows = knownWindows()
+        guard windows.contains(where: { $0.hiddenMembers != nil || $0.myParticipantID != nil }) else { return true }
+        for index in windows.indices {
+            windows[index].hiddenMembers = nil
+            windows[index].myParticipantID = nil
+        }
+        guard let url = directoryURL(), let data = try? JSONEncoder().encode(Directory(windows: windows)) else { return false }
+        do { try write(data, to: url) } catch { return false }
+        return true
+    }
+
     /// Deletes every photo of a window this iPhone is no longer in.
     func forget(windowID: String) {
         writeDirectory(knownWindows().filter { $0.id != windowID })

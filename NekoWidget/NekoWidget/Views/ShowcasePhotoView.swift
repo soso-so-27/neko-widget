@@ -603,22 +603,16 @@ struct ShowcasePhotoView: View {
 #endif
         guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject
         else { return nil }
-        return await withCheckedContinuation { continuation in
-            let options = PHImageRequestOptions()
-            options.deliveryMode = .highQualityFormat
-            options.resizeMode = .fast
-            options.isNetworkAccessAllowed = false
-            var completed = false
-            PHImageManager.default().requestImage(
-                for: asset, targetSize: CGSize(width: 800, height: 800),
-                contentMode: .aspectFill, options: options
-            ) { image, info in
-                if info?[PHImageResultIsDegradedKey] as? Bool == true { return }
-                guard !completed else { return }
-                completed = true
-                continuation.resume(returning: image)
-            }
-        }
+        let options = PHImageRequestOptions()
+        options.deliveryMode = .highQualityFormat
+        options.resizeMode = .fast
+        options.isNetworkAccessAllowed = false
+        // 11/20: bounded and cancellable; a photo that does not come is left
+        // out like a missing one, so the best nine never waits forever.
+        return await PhotoKitTimedRequest.image(
+            for: asset, targetSize: CGSize(width: 800, height: 800),
+            contentMode: .aspectFill, options: options, timeoutSeconds: 8
+        )
     }
 
 #if DEBUG && targetEnvironment(simulator)

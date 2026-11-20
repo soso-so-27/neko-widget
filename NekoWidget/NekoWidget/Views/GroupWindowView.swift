@@ -1321,6 +1321,8 @@ struct GroupWindowScreen: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
+        // Once, when the row turns 「届けました」 (not on a failure).
+        .sensoryFeedback(.success, trigger: model.sendCompleted) { old, new in !old && new }
         // 11/12 (review 11): the page's own colour, so no line or brown band
         // shows between the photos and the bar.
         .background(Color(uiColor: .systemGroupedBackground))
@@ -1432,6 +1434,9 @@ private struct GroupPhotoTile: View {
     @State private var image: UIImage?
     @ObservedObject private var safety = GroupSafety.shared
     @Environment(\.dynamicTypeSize) private var typeSize
+    /// Hearts sent from this tile (not removed): one light haptic each, as
+    /// the photo's own page gives. The page's taps do not count here.
+    @State private var heartsSentHere = 0
 
     private var heartCount: Int { model.shownHearts(entry.id).count }
     private var reported: Bool { safety.hasReported(entry.id, in: model.windowID) }
@@ -1464,10 +1469,7 @@ private struct GroupPhotoTile: View {
                 }
                 .clipped()
                 .contentShape(Rectangle())
-                .onTapGesture(count: 2) {
-                    guard canHeart else { return }
-                    Task { await model.toggleHeart(entry.id) }
-                }
+                .onTapGesture(count: 2) { toggleHeart() }
                 .onTapGesture(count: 1, perform: open)
                 // 11/14: VoiceOver opens the photo here; it says who sent it
                 // and when, so the name and the day under it are not read again.
@@ -1543,11 +1545,14 @@ private struct GroupPhotoTile: View {
             .accessibilityHidden(true)
     }
 
+    private func toggleHeart() {
+        guard canHeart else { return }
+        if !model.myHeartIsActive(entry.id) { heartsSentHere &+= 1 }
+        Task { await model.toggleHeart(entry.id) }
+    }
+
     private var heartButton: some View {
-        Button {
-            guard canHeart else { return }
-            Task { await model.toggleHeart(entry.id) }
-        } label: {
+        Button(action: toggleHeart) {
             let mine = model.myHeartIsActive(entry.id)
             HStack(spacing: 5) {
                 Image(systemName: mine ? "heart.fill" : "heart")
@@ -1565,6 +1570,7 @@ private struct GroupPhotoTile: View {
         }
         .buttonStyle(.plain)
         .disabled(!canHeart)
+        .sensoryFeedback(.impact(weight: .light), trigger: heartsSentHere)
         // 11/14: as on the photo's own page, it says whether this
         // person sent one (not only by its red).
         .accessibilityLabel(GroupPhotoTileSpeech.heart(mine: model.myHeartIsActive(entry.id), canHeart: canHeart))
@@ -1717,7 +1723,9 @@ private struct GroupWindowCatPhotoDelivery: View {
     @State private var memo = ""
 
     var body: some View {
-        GroupLibraryDeliveryStep(model: model, localIdentifier: localIdentifier, memo: $memo, close: close)
+        // The window's own send bar, under this sheet, gives the haptic.
+        GroupLibraryDeliveryStep(model: model, localIdentifier: localIdentifier, memo: $memo,
+                                 givesDeliveryHaptic: false, close: close)
     }
 }
 
@@ -1731,6 +1739,8 @@ private struct GroupLibraryDeliveryStep: View {
     var pushed = false
     /// With 2 or more まど: back to the pick list from the 「届け先」 row.
     var changeWindow: (() -> Void)? = nil
+    /// False inside a まど, whose send bar gives it: one haptic per delivery.
+    var givesDeliveryHaptic = true
     let close: () -> Void
     @State private var prepared: GroupWindowScreenModel.PreparedPhoto?
     @State private var checked = false
@@ -1829,6 +1839,8 @@ private struct GroupLibraryDeliveryStep: View {
             }
         }
         .announcesWhenShown(model.message)
+        // Once, when this page turns 「届けました」 (not on a failure).
+        .sensoryFeedback(.success, trigger: model.sendCompleted) { old, new in givesDeliveryHaptic && !old && new }
         .task {
             await model.loadWindow()
             prepared = await model.prepare(localIdentifier: localIdentifier)

@@ -143,7 +143,7 @@ class WordingPass1112Tests(unittest.TestCase):
         "家族は 1 つまで", "この家族は、もう人数", "この家族の共有は終わ",
         # 月の作品
         "月のまとめ",
-        # このまどは終わりました／終わったまど
+        # このまどは終わりました／前のまど
         "このまどは閉じられています", "このまどはもうありません", "利用できなくなりました",
         "使えなくなったまど", "このまどは表示できません", "ウィジェットを編集してください",
         # 確認をやめるボタンは「キャンセル」
@@ -185,7 +185,7 @@ class WordingPass1112Tests(unittest.TestCase):
         self.assertIn('"\\(presentation.monthNumber)月の作品"', source("NekoWidget/Views/MonthlyWindowView.swift"))
         self.assertIn('"これまでの月の作品・季節のムービー"', source("NekoWidget/Views/LikedPhotosView.swift"))
         self.assertIn('return "このまどは終わりました。"', source("NekoWidget/Views/GroupWindowSetupView.swift"))
-        self.assertIn('"終わったまど"', source("NekoWidgetWidget/NekoWidgetConfigurationIntent.swift"))
+        self.assertIn('"前のまど"', source("NekoWidgetWidget/NekoWidgetConfigurationIntent.swift"))
         self.assertIn('Text("Plusをやめたあとも、12か月のあいだは読み出しと書き出しができます。このiPhoneの記録は残ります。")',
                       source("NekoWidget/Views/ManagedPreservationView.swift"))
         self.assertIn('"App Storeでアプリを最新にしてください。"', source("Shared/Sharing/ClientUpgradeRequirement.swift"))
@@ -803,7 +803,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "static func resolvedSource(id: String)",
             "static var availableSources",
         )
-        self.assertIn('name: "終わったまど"', resolved)
+        self.assertIn('name: "前のまど"', resolved)
         self.assertIn("static func familyWindowExists", resolved)
 
         self.assertIn(
@@ -3559,7 +3559,7 @@ class GroupWidgetCacheTests(unittest.TestCase):
         intent = source("NekoWidgetWidget/NekoWidgetConfigurationIntent.swift")
         # A missing group window never becomes the personal-library default.
         resolve = section(intent, "if let groupWindowID = GroupWidgetCache.windowID(fromSourceID: id) {", "guard let localWindowID")
-        self.assertIn('"終わったまど"', resolve)
+        self.assertIn('"前のまど"', resolve)
 
         project = source("NekoWidget.xcodeproj/project.pbxproj")
         widget_sources = section(project, "A00000000000000000000025 /* Sources */ = {", "A00000000000000000000028 /* Sources */")
@@ -3971,7 +3971,11 @@ class EvacuationCatCareTests(unittest.TestCase):
         self.assertIn("let start = max(made, lastReadyDate ?? made)", plan)
         self.assertIn("if createdAt == nil { createdAt = earliestKnownDate ?? now }", plan)
         update = section(store, "func update(_ change:", "func retrySave()")
-        self.assertIn("next.stampCreation()", update)
+        self.assertIn("stamp(&next)", update)
+        stamp = section(store, "private func stamp(_ next: inout EvacuationPlan) {", "\n    }\n")
+        self.assertIn("next.stampCreation()", stamp)
+        # Every save of the plan goes through the one stamp (11/20).
+        self.assertNotIn("next.stampCreation()", store.replace(stamp, ""))
         self.assertIn('Button("見直しを始める") { startReview() }', view)
         review = section(view, "private func startReview() {", "private func show(")
         self.assertIn("$0.clearChecks()", review)
@@ -4169,7 +4173,7 @@ class EvacuationRoundTwoTests(unittest.TestCase):
         turn_on = section(notice, "static func turnOn(", "static func turnOff()")
         self.assertIn("requestAuthorization(options: [.alert])", turn_on)
         self.assertEqual(self.store.count("EvacuationNotice.turnOn("), 2)
-        self.assertIn("return await EvacuationNotice.turnOn(plan)", section(self.store, "func turnOnNotices()", "func firstExpirySet()"))
+        self.assertIn("let allowed = await EvacuationNotice.turnOn(plan)", section(self.store, "func turnOnNotices()", "func firstExpirySet()"))
         first = section(self.store, "func firstExpirySet()", "func turnOffNotices()")
         self.assertIn("guard schedulesNotices, !EvacuationNotice.wasChosen else { return }", first)
         self.assertNotIn("turnOn", section(self.store, "func reload()", "func retryPhotoCleanup()"))
@@ -4198,6 +4202,45 @@ class EvacuationRoundTwoTests(unittest.TestCase):
         review = section(self.view, "private func startReview() {", "private func show(")
         self.assertLess(review.index("reminderDismissedAt ="), review.index("$0.clearChecks()"))
         self.assertIn("store.followNotices()", hub)
+
+    def test_notice_choice_comes_back_with_the_saved_plan_1120(self) -> None:
+        """11/20: the choice lived only in UserDefaults, so a restore from 保存
+        or a reinstall brought the 期限 back with the notices silently off."""
+        # Optional in the saved plan: old plans decode, older versions ignore it.
+        self.assertIn("    var noticeChoice: Int?\n", self.plan)
+        self.assertNotIn("init(from decoder", self.plan)
+        self.assertIn("var savedNoticeChoice: Int? { noticeChoice.flatMap { [1, 2].contains($0) ? $0 : nil } }", self.plan)
+        validate = section(self.plan, "    func validate() throws {", "\n    }\n")
+        self.assertNotIn("noticeChoice", validate)  # an unknown future value never makes the plan unreadable
+        # Every save carries this iPhone's choice; the toggle and the first 期限 save it.
+        stamp = section(self.store, "private func stamp(_ next: inout EvacuationPlan) {", "\n    }\n")
+        self.assertIn("if schedulesNotices, let choice = EvacuationNotice.choice { next.noticeChoice = choice }", stamp)
+        for entry, end in (("func turnOnNotices()", "func firstExpirySet()"), ("func firstExpirySet()", "func turnOffNotices()"),
+                           ("func turnOffNotices()", "private func keepNoticeChoice()")):
+            self.assertIn("keepNoticeChoice()", section(self.store, entry, end))
+        # A plan that comes back brings its choice back before the notices follow it.
+        reload = section(self.store, "func reload()", "func retryPhotoCleanup()")
+        self.assertLess(reload.index("adoptSavedNoticeChoice()"), reload.index("followNotices()"))
+        adopt = section(self.store, "private func adoptSavedNoticeChoice() {", "\n    }\n")
+        self.assertIn("guard schedulesNotices, let saved = plan.savedNoticeChoice,", adopt)
+        notice = section(self.store, "enum EvacuationNotice {", "\n}\n")
+        adopted = section(notice, "static func adopt(_ value: Int) {", "\n    }\n")
+        self.assertIn("UserDefaults.standard.set(value, forKey: settingKey)", adopted)
+        self.assertIn("scheduled = nil", adopted)
+        self.assertNotIn("requestAuthorization", adopted)  # never asks; the hub shows 「通知が許可されていません」
+        # Rescheduled right after a restore, without opening the tool.
+        app = source("NekoWidget/App/NekoWidgetApp.swift")
+        restored = section(app, ".onReceive(NotificationCenter.default.publisher(for: .appRecordDatasetChanged)) { _ in", "}")
+        self.assertIn("EvacuationStore.followRestoredPlan()", restored)
+        self.assertIn("static func followRestoredPlan() { shared.followNotices() }", self.store)
+        # The denied line the hub already has, checked when it opens.
+        self.assertIn("if noticeSetting == 1 { noticesBlocked = !(await EvacuationNotice.allowed()) }", self.view)
+        self.assertIn('Text("通知が許可されていません。iPhoneの設定で許可できます。")', self.view)
+        # Not shown as a record in the readable copy.
+        readable = source("NekoWidget/Services/ReadablePreservationExport.swift")
+        self.assertIn('"prefilledUsualFood", "noticeChoice",', readable)
+        verify = source("ci/verify-evacuation-plan.swift")
+        self.assertIn("try noticeChoiceTravelsWithThePlan()", verify)
 
     def test_evacuate_now_is_first_and_uses_local_data(self) -> None:
         hub = section(self.view, "struct EvacuationPreparationView: View {", "private func makeBook() async {")
@@ -5762,6 +5805,11 @@ class GroupWidgetHeartTests(unittest.TestCase):
         self.assertIn("GroupWindowClientProvider.production", host)
         self.assertIn("active: true", host)
         self.assertNotIn("URLSession", intent)
+        # 11/20: the heart is marked sent only after the relay took it. A
+        # failure (or a run in the extension) leaves the 「ハートを送る」 button.
+        self.assertEqual(intent.count("markMyHeart("), 1)
+        sent = section(host, "operationID: UUID())) != nil {", "}")
+        self.assertIn("try? GroupWidgetCache.markMyHeart(windowID: windowID, photoID: photoID)", sent)
         self.assertIn("extension SendGroupWidgetHeartIntent: ForegroundContinuableIntent {}", intent)
         view = source("NekoWidgetWidget/NekoWidgetView.swift")
         control = section(view, "private func groupHeartControl(", "private func familyHeartControl(")

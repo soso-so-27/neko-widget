@@ -172,6 +172,11 @@ struct ProductionAppRootView: View {
             .task {
                 await plusPurchases.start()
             }
+            // 11/20: a restore from 保存 brings back 「見直しの時期に知らせる」
+            // with the 期限; its notices are set again without opening the tool.
+            .onReceive(NotificationCenter.default.publisher(for: .appRecordDatasetChanged)) { _ in
+                EvacuationStore.followRestoredPlan()
+            }
             // Usage counts (11/7): earlier days are sent on becoming active,
             // and the file is written only on going to the background.
             .task(id: scenePhase) {

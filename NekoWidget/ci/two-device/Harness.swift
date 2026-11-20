@@ -122,6 +122,8 @@ extension Device {
         }
         service.restartSession()
         guard complete else { return false }
+        // resumeIfNeeded: the deleted identity's まど outbox and HTTP journal.
+        guard await client.removeDeletedIdentityTransport() else { return false }
         try await client.markIdentityDeletionLocalCleanupDone()
         return true
     }

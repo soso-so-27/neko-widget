@@ -427,6 +427,8 @@ struct LostCatDraftView: View {
     private func flyerSection(_ issues: [String: String]) -> some View {
         Section {
             NavigationLink { photoPage } label: { photoLabel }
+                // The red value, in the words the photo page shows for it.
+                .accessibilityHint(photoError ?? "")
                 .accessibilityIdentifier("lost-cat-row-photo")
             if !profiles.contains(where: { $0.identifier == key }) {
                 NavigationLink { namePage(issues) } label: {

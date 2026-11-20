@@ -2051,6 +2051,38 @@ extension ProductionGroupWindowClient {
         return record
     }
 
+    /// 11/20: the deleted identity's まど outbox (photos it sealed but never
+    /// finished sending) and its HTTP journal (requests kept for an exact
+    /// resend), under Application Support `GroupTransport-v3/<hash>/outbox`.
+    /// Only for an accepted deletion while this iPhone holds no other
+    /// person's identity (the same check as identityDeletionNeedingLocalCleanup):
+    /// this namespace's outbox and journal are that identity's alone. The
+    /// journal's database stays open in this process, so its rows go, not
+    /// its file. Whether everything went; the next resume tries again.
+    func removeDeletedIdentityTransport() -> Bool {
+        guard let record = try? identityDeletion(), record.acceptedAt != nil else { return false }
+        do {
+            guard try secrets.read("device-link") == nil else { return false }
+            if let current = try load(GroupDeviceIdentity.self, "identity"),
+               record.personID == nil || current.personID != record.personID { return false }
+        } catch { return false }
+        var complete = true
+        do {
+            for account in try operations.accounts(prefix: "op:") {
+                do { try operations.remove(account) } catch { complete = false }
+            }
+        } catch { complete = false }
+        let files: [URL]
+        do {
+            files = FileManager.default.fileExists(atPath: outboxDirectory.path)
+                ? try FileManager.default.contentsOfDirectory(at: outboxDirectory, includingPropertiesForKeys: nil) : []
+        } catch { return false }
+        for file in files where file.pathExtension == "json" {
+            do { try FileManager.default.removeItem(at: file) } catch { complete = false }
+        }
+        return complete
+    }
+
     /// 11/20: the local clean-up of the accepted deletion is done.
     func markIdentityDeletionLocalCleanupDone() throws {
         guard var record = try identityDeletion(), record.acceptedAt != nil, record.localDataRemovedAt == nil else { return }

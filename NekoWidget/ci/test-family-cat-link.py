@@ -299,7 +299,9 @@ class SendingFailures(unittest.TestCase):
         self.assertIn('WorkingLabel(title: "もう一度", workingTitle: "もう一度", working: resending)', section)
         self.assertIn("await sharing.resendUnsent()", section)
         words = {w for w in __import__("re").findall(r'"([^"]*)"', section) if any(ord(c) > 127 for c in w)}
-        self.assertEqual(words, {"家族に届けられていない書き込みがあります。", "もう一度", "コード："})
+        # 「コード」 is the VoiceOver action for the long press (11/20), not a shown word.
+        self.assertEqual(words, {"家族に届けられていない書き込みがあります。", "もう一度", "コード：", "コード"})
+        self.assertIn('.accessibilityAction(named: "コード") { showsSendCode = true }', section)
         # The code only when asked: the line held, or もう一度 did not get it sent.
         self.assertIn(".onLongPressGesture { showsSendCode = true }", section)
         self.assertIn("if sharing.showsUnsentLine { showsSendCode = true }", section)

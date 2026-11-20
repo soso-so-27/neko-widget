@@ -58,7 +58,7 @@ async function gate(enabled:boolean) {
 
 // Synthetic historical state only. Preserve and restore the exact installed
 // trigger; production does not acquire a clock override or weaker update guard.
-async function withoutTestTrigger(name:'group_report_record_update'|'group_report_number_immutable',seed:()=>Promise<unknown>) {
+async function withoutTestTrigger(name:'group_report_record_update'|'group_report_number_immutable'|'group_report_record_insert'|'group_report_number_insert',seed:()=>Promise<unknown>) {
   const trigger=await db.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?").bind(name).first<{sql:string}>();
   expect(trigger?.sql).toBeTruthy();
   await db.prepare(`DROP TRIGGER ${name}`).run();
@@ -86,6 +86,59 @@ function mailSettings():GroupReportMailEnv&{DB:D1Database} {
 }
 
 describe('group encrypted report receiver (independent gate OFF by default)',()=>{
+  it('discovers only this person’s retained receipts on a new device while intake is closed',async()=>{
+    const {owner,bob,w}=await family(),first=await photo(owner,w),second=await photo(owner,w);
+    const waiting=await reserve(bob,w,first.id),expired=await reserve(bob,w,second.id);
+    await complete(bob,w,waiting);await complete(bob,w,expired);
+    await withoutTestTrigger('group_report_number_immutable',()=>db.prepare('UPDATE group_report_numbers SET receipt_number=NULL WHERE report_id=?').bind(waiting.id).run());
+    await seedReportDeadline(expired.id,-2592000,'no_action');
+    await withoutTestTrigger('group_report_record_update',()=>db.prepare('UPDATE group_report_records SET retention_until=unixepoch()-1 WHERE report_id=?').bind(expired.id).run());
+    const newPhone=await person(bob.identity);
+    const list=(p:Person,settings:Env=reports)=>reportCall(p,'/v3/group-windows/report-replies',undefined,settings);
+    expect((await reportCall(newPhone,`${root(w)}/${waiting.id}/status`,undefined)).status).toBe(404);
+    expect(ok(await list(owner)).replies).toEqual([]);
+    expect(ok(await list(await person())).replies).toEqual([]);
+    expect((await send(new Request('https://group.invalid/v3/group-windows/report-replies'),reports)).status).toBe(401);
+    const bobId=w.roster.members.find(m=>m.personId===bob.id)!.participantId;
+    ok((await transition(owner,w,'remove',bobId,[w.roster.members[0]!])).response);
+    await gate(false);
+    const settings={...reports,GROUP_RUNTIME_ENABLED:'NO',GROUP_REPORT_RUNTIME_ENABLED:'NO'};
+    const before=ok(await list(newPhone,settings));
+    expect(before).toEqual({protocolVersion:3,replies:[{reportId:waiting.id,windowId:w.windowId,momentId:first.id,
+      receiptNumber:expect.stringMatching(/^R-/),receivedAt:expect.any(Number),repliedAt:null,outcome:'received',replyTemplate:null}]});
+    expect(ok(await list(bob,settings))).toEqual(before);
+    await seedReportDeadline(waiting.id,0);
+    await runGroupReportOperations(reports);
+    expect(ok(await list(newPhone,settings)).replies).toEqual([{...before.replies[0],receivedAt:expect.any(Number),
+      repliedAt:expect.any(Number),outcome:'photo',replyTemplate:'review_restricted_v1'}]);
+    await db.prepare("UPDATE group_person_devices SET state='revoked',revoked_at=unixepoch() WHERE id=?").bind(newPhone.deviceId).run();
+    expect((await list(newPhone,settings)).status).toBe(401);
+    await gate(true);
+  });
+
+  it('orders the latest 100 report replies by commit time then report ID',async()=>{
+    const p=await person(),w=await create(await plusOwner());
+    const fixture=`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<102)`;
+    await withoutTestTrigger('group_report_number_insert',async()=>{
+      await db.prepare(`${fixture} INSERT INTO group_report_numbers(report_id,receipt_number)
+        SELECT printf('cap_%018d',n),printf('R-2222-%04d-01',n) FROM seq`).run();
+    });
+    await withoutTestTrigger('group_report_record_insert',async()=>{
+      await db.prepare(`${fixture} INSERT INTO group_report_records
+        (report_id,space_id,moment_id,reporter_person_id,reporter_device_id,committed_at,evidence_expires_at)
+        SELECT printf('cap_%018d',n),?,'synthetic_moment',?,?,
+          unixepoch()-CASE WHEN n=102 THEN 1 ELSE 0 END,unixepoch()+604800-CASE WHEN n=102 THEN 1 ELSE 0 END FROM seq`)
+        .bind(w.windowId,p.id,p.deviceId).run();
+    });
+    const rows=ok(await reportCall(p,'/v3/group-windows/report-replies',undefined)).replies;
+    expect(rows).toHaveLength(100);
+    expect(rows[0].reportId).toBe('cap_000000000000000101');
+    expect(rows.at(-1).reportId).toBe('cap_000000000000000002');
+    const plan=await db.prepare(`EXPLAIN QUERY PLAN SELECT report_id FROM group_report_records
+      WHERE reporter_person_id=? AND committed_at IS NOT NULL ORDER BY committed_at DESC,report_id DESC LIMIT 100`).bind(p.id).all<{detail:string}>();
+    expect(plan.results.map(row=>row.detail).join(' ')).toContain('group_report_replies_by_person');
+  });
+
   it('stores selected evidence only in the moderation bucket, binds ownership and deduplicates one report',async()=>{
     const {owner,bob,w}=await family(),p=await photo(owner,w),r=await reserve(bob,w,p.id);accepted(r.result);
     expect(JSON.stringify(r.result.data)).not.toMatch(/object_key|objectKey|groups\/reports/);
