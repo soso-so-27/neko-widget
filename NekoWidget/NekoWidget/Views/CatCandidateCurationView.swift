@@ -247,5 +247,7 @@ struct PhotoSourceAlbumSelectionView: View {
             }
         }
         .disabled(isScanning || savingIdentifier != nil)
+        // The checkmark, for VoiceOver too.
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

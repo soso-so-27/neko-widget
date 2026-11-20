@@ -1062,7 +1062,8 @@ struct MonthlyStoryView: View {
         .task(id: preparationKey) { await build(preparationKey) }
         .task(id: AdvanceKey(index: index, paused: paused, count: currentPageCount)) {
             // VoiceOver readers turn pages themselves; never move under them.
-            guard !paused, !UIAccessibility.isVoiceOverRunning, index + 1 < currentPageCount else { return }
+            // Under Reduce Motion the pages wait for a tap too.
+            guard !paused, !reduceMotion, !UIAccessibility.isVoiceOverRunning, index + 1 < currentPageCount else { return }
             try? await Task.sleep(for: .seconds(Self.pageSeconds))
             guard !Task.isCancelled else { return }
             move(1)
@@ -1083,7 +1084,7 @@ struct MonthlyStoryView: View {
     private func move(_ step: Int) {
         let next = index + step
         guard displayedPreparationKey == preparationKey, pages.indices.contains(next) else { return }
-        withAnimation(.easeInOut(duration: 0.4)) { index = next }
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.4)) { index = next }
     }
 
     // MARK: Building the pages
@@ -1174,12 +1175,11 @@ struct MonthlyStoryView: View {
         options.deliveryMode = .highQualityFormat
         options.isNetworkAccessAllowed = false
         options.resizeMode = .fast
-        return await withCheckedContinuation { continuation in
-            PhotoAssetImagePipeline.manager.requestImage(for: asset, targetSize: CGSize(width: side, height: side),
-                                                         contentMode: .aspectFill, options: options) { image, _ in
-                continuation.resume(returning: image)
-            }
-        }
+        // 11/20: bounded and cancellable (PhotoKitTimedRequest); a photo that
+        // does not come is left out, so the best nine never waits forever.
+        return await PhotoKitTimedRequest.image(
+            for: asset, targetSize: CGSize(width: side, height: side), contentMode: .aspectFill,
+            options: options, timeoutSeconds: 8, manager: PhotoAssetImagePipeline.manager)
     }
 
     /// The photo's average colour, darkened, for the page behind it.
@@ -1838,7 +1838,8 @@ private struct YearStoryContentView: View {
         .accessibilityIdentifier("year-story")
         .onAppear { if !isBuilt { build() } }
         .task(id: [index, paused ? 1 : 0, pages.count]) {
-            guard !paused, index + 1 < pages.count else { return }
+            // As the month's story: VoiceOver and Reduce Motion turn pages by tap.
+            guard !paused, !reduceMotion, !UIAccessibility.isVoiceOverRunning, index + 1 < pages.count else { return }
             let seconds: Double
             if case .month = pages[index] { seconds = Self.monthSeconds } else { seconds = Self.pageSeconds }
             try? await Task.sleep(for: .seconds(seconds))
@@ -1861,7 +1862,7 @@ private struct YearStoryContentView: View {
     private func move(_ step: Int) {
         let next = index + step
         guard pages.indices.contains(next) else { return }
-        withAnimation(.easeInOut(duration: 0.4)) { index = next }
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.4)) { index = next }
     }
 
     @ViewBuilder private func pageView(_ page: Page) -> some View {
@@ -2386,6 +2387,7 @@ struct LivePhotoHold: ViewModifier {
     @State private var isLive = false
     @State private var livePhoto: PHLivePhoto?
     @State private var playing: PHLivePhotoViewPlaybackStyle?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         content
@@ -2427,6 +2429,8 @@ struct LivePhotoHold: ViewModifier {
             }
             .task(id: shown) {
                 guard shown else { playing = nil; return }
+                // Under Reduce Motion nothing plays by itself; holding still plays it.
+                guard !reduceMotion else { return }
                 // Let the page finish turning first.
                 try? await Task.sleep(for: .milliseconds(350))
                 guard !Task.isCancelled, isLive, playing == nil else { return }
@@ -2442,16 +2446,10 @@ struct LivePhotoHold: ViewModifier {
         let options = PHLivePhotoRequestOptions()
         options.deliveryMode = .highQualityFormat
         options.isNetworkAccessAllowed = true
-        return await withCheckedContinuation { continuation in
-            var resumed = false
-            PHImageManager.default().requestLivePhoto(for: asset, targetSize: CGSize(width: 1600, height: 1600),
-                                                      contentMode: .aspectFit, options: options) { photo, info in
-                if (info?[PHImageResultIsDegradedKey] as? Bool) == true { return }
-                guard !resumed else { return }
-                resumed = true
-                continuation.resume(returning: photo)
-            }
-        }
+        // 11/20: bounded and cancellable (PhotoKitTimedRequest).
+        return await PhotoKitTimedRequest.livePhoto(
+            for: asset, targetSize: CGSize(width: 1600, height: 1600),
+            options: options, timeoutSeconds: 30)
     }
 }
 
@@ -2573,11 +2571,9 @@ struct StoryPhotoView: View {
         options.deliveryMode = .highQualityFormat
         options.isNetworkAccessAllowed = true
         options.resizeMode = .fast
-        return await withCheckedContinuation { continuation in
-            PhotoAssetImagePipeline.manager.requestImage(for: asset, targetSize: CGSize(width: 1600, height: 1600),
-                                                         contentMode: .aspectFit, options: options) { image, _ in
-                continuation.resume(returning: image)
-            }
-        }
+        // 11/20: bounded, and the PhotoKit request is cancelled with the view's task.
+        return await PhotoKitTimedRequest.image(
+            for: asset, targetSize: CGSize(width: 1600, height: 1600), contentMode: .aspectFit,
+            options: options, timeoutSeconds: 30, manager: PhotoAssetImagePipeline.manager)
     }
 }

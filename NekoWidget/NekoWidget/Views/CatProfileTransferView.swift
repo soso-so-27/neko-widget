@@ -120,7 +120,9 @@ struct CatProfileTransferView: View {
                                         pendingNotice = (changed ? "猫の名前と日付、選んだ写真がどの子かを引き継ぎました。" : "今の内容と同じだったので、変わったところはありません。")
                                             + (item.wasLimited ? AppLimitCopy.catProfilesImported : "")
                                     case let .failure(error):
-                                        pendingNotice = (error as? LocalizedError)?.errorDescription
+                                        pendingNotice = (error is NekoWidgetError
+                                            ? AppViewModel.userFacingMessage(for: error)
+                                            : (error as? LocalizedError)?.errorDescription)
                                             ?? "引き継ぎを完了できませんでした。ファイルを選び直してください。"
                                     }
                                     isImporting = false
@@ -151,7 +153,7 @@ struct CatProfileTransferView: View {
     }
 
     private func dateText(_ title: String, _ date: CatLifeDate?, approximate: Bool) -> String {
-        guard let date else { return "\(title)：未設定" }
+        guard let date else { return "\(title)：\(ToolEmptyValue.unset)" }
         return "\(title)：\(date.year)年\(date.month)月\(date.day)日\(approximate ? "ごろ" : "")"
     }
 

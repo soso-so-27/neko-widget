@@ -61,6 +61,14 @@ struct CatProfileTransfer: Codable, Equatable, Sendable {
         let dates: CatProfileLifeDates
         let primaryKind: CatLifeReferenceKind?
 
+        init(id: UUID, name: String, dates: CatProfileLifeDates,
+             primaryKind: CatLifeReferenceKind?) {
+            self.id = id
+            self.name = name
+            self.dates = dates
+            self.primaryKind = primaryKind
+        }
+
         init(_ profile: CatProfile) {
             id = profile.id
             name = profile.displayName
@@ -119,6 +127,23 @@ struct CatProfileTransfer: Codable, Equatable, Sendable {
         let value: Self
         do { value = try JSONDecoder().decode(Self.self, from: data) }
         catch { throw CatProfileTransferError.invalidFile }
+        try value.validate()
+        return try value.withImportedNames()
+    }
+
+    /// 11/20: a name read from a file is new input. It gets the same rule as
+    /// a typed one (CatNameText.savingInput): invisible and control
+    /// characters out, at most 20 characters. The preview shows the result.
+    func withImportedNames() throws -> Self {
+        var entries = profiles
+        for index in entries.indices {
+            guard let name = CatNameText.savingInput(entries[index].name) else {
+                throw CatProfileTransferError.invalidFile
+            }
+            entries[index] = Entry(id: entries[index].id, name: name,
+                                   dates: entries[index].dates, primaryKind: entries[index].primaryKind)
+        }
+        let value = Self(format: format, version: version, profiles: entries, photos: photos)
         try value.validate()
         return value
     }

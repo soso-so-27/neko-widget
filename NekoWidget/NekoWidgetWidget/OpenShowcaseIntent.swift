@@ -69,7 +69,7 @@ enum ShowcaseOpenTarget: String, AppEnum {
 
     static var typeDisplayRepresentation = TypeDisplayRepresentation("見せる写真")
     static var caseDisplayRepresentations: [Self: DisplayRepresentation] = [
-        .prepared: DisplayRepresentation(title: "うちのこ")
+        .prepared: DisplayRepresentation(title: "うちの子")
     ]
 }
 

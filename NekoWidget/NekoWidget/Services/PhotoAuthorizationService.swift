@@ -20,9 +20,16 @@ struct PhotoAuthorizationService {
     }
 
     /// The picker may be presented repeatedly while access is `.limited`.
+    /// `onFinish` runs on the main actor once the picker closes (11/20), so
+    /// newly chosen photos are searched without leaving the app first.
     @MainActor
-    func presentLimitedLibraryPicker(from viewController: UIViewController) {
+    func presentLimitedLibraryPicker(
+        from viewController: UIViewController,
+        onFinish: @escaping @MainActor @Sendable () -> Void
+    ) {
         guard status == .limited else { return }
-        PHPhotoLibrary.shared().presentLimitedLibraryPicker(from: viewController)
+        PHPhotoLibrary.shared().presentLimitedLibraryPicker(from: viewController) { _ in
+            Task { @MainActor in onFinish() }
+        }
     }
 }

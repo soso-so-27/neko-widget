@@ -8,6 +8,7 @@ import { cleanupExpiredGroupPush } from './group-push';
 // paths or private archive/legacy prefixes and never reacts to Plus pausing.
 export const GROUP_RELAY_KEY=/^groups\/v3\/[A-Za-z0-9_-]{22}\/[A-Za-z0-9_-]{22}\/[A-Za-z0-9_-]{43}$/u;
 const BATCH=50,RECEIPT_SECONDS=172800;
+const UNUSED_CHALLENGE_GRACE_SECONDS=86400;
 const due="state IN ('reserved','uploaded','committed') AND cleanup_at<=?";
 
 export async function runGroupRelayCleanup(env:Env,now=Math.floor(Date.now()/1000)):Promise<void> {
@@ -71,6 +72,12 @@ export async function runGroupRelayCleanup(env:Env,now=Math.floor(Date.now()/100
   await cleanupExpiredGroupPush(env,now);
   await cleanupExpiredGroupAdmissionPush(env,now);
   await env.DB.prepare("DELETE FROM group_admission_deliveries WHERE available_at<? AND state<>'leased'").bind(now-7*86400).run();
+  // A consumed registration challenge can still authenticate a response-loss
+  // retry. Remove only unused challenges after their expiry plus a grace day.
+  await env.DB.prepare(`DELETE FROM group_challenges WHERE id IN (
+    SELECT id FROM group_challenges WHERE consumed_at IS NULL AND expires_at<=?
+    ORDER BY expires_at,id LIMIT 1000
+  )`).bind(now-UNUSED_CHALLENGE_GRACE_SECONDS).run();
 }
 
 // An upload whose final authorization fails may finish after cleanup has

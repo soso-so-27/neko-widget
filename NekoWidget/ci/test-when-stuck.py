@@ -157,7 +157,7 @@ class DeadEnds1120Tests(unittest.TestCase):
         self.assertIn("startupLoadFailed: viewModel.startupLoadFailed",
                       section(root, "private func scanPresentation(", "switch state.resultKind"))
         app = read("NekoWidget/ViewModels/AppViewModel.swift")
-        rescan = section(app, "    func rescan() async {", "settings.analysisRevision += 1")
+        rescan = section(app, "    func rescan() async {", "guard canReadPhotos else {")
         # The retry runs the start again; it never resets or deletes records.
         self.assertIn("if startupLoadFailed {\n                await retryStartup()", rescan)
         retry = section(app, "    func retryStartup() async {", "\n    }\n")

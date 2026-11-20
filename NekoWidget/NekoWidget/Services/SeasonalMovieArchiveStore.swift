@@ -197,10 +197,23 @@ actor SeasonalMovieArchiveStore {
         return record
     }
 
+    /// 11/20: the eight-scene floor is for the person's own choices. A scene
+    /// whose photo is gone from the library may always be taken out, while
+    /// one scene is left, so a movie that lost a photo can still be fixed.
+    static func allowsExclusion(
+        effectiveSceneCount: Int,
+        photoIsMissing: Bool
+    ) -> Bool {
+        photoIsMissing
+            ? effectiveSceneCount > 1
+            : effectiveSceneCount > SeasonalMovieBuilder.minimumOutputSceneCount
+    }
+
     func setSceneExcluded(
         _ identifier: String,
         excluded: Bool,
         in periodID: SeasonalMoviePeriodID,
+        photoIsMissing: Bool = false,
         now: Date = Date()
     ) throws -> SeasonalMovieArchiveRecord {
         var records = try load()
@@ -215,7 +228,10 @@ actor SeasonalMovieArchiveStore {
         let effectiveSceneCount = records[index].effectivePresentation.scenes.count
         if excluded,
            !records[index].excludedSceneIdentifiers.contains(identifier),
-           effectiveSceneCount <= SeasonalMovieBuilder.minimumOutputSceneCount {
+           !Self.allowsExclusion(
+               effectiveSceneCount: effectiveSceneCount,
+               photoIsMissing: photoIsMissing
+           ) {
             throw SeasonalMovieArchiveError.minimumSceneCount
         }
         if excluded {
@@ -550,13 +566,15 @@ final class SeasonalMovieArchiveLibrary: ObservableObject {
     func setSceneExcluded(
         _ identifier: String,
         excluded: Bool,
-        in periodID: SeasonalMoviePeriodID
+        in periodID: SeasonalMoviePeriodID,
+        photoIsMissing: Bool = false
     ) async throws -> SeasonalMoviePresentation {
         do {
             let record = try await store.setSceneExcluded(
                 identifier,
                 excluded: excluded,
-                in: periodID
+                in: periodID,
+                photoIsMissing: photoIsMissing
             )
             merge(record)
             lastErrorDescription = nil

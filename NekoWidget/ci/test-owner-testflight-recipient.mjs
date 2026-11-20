@@ -9,8 +9,9 @@ import { check as checkReportOff } from '../SharingService/scripts/check-owner-i
 
 const groupID = 'owner-group-id', testerID = 'owner-tester-id';
 const group = { type: 'betaGroups', id: groupID, attributes: { name: '自分用', isInternalGroup: true, hasAccessToAllBuilds: true, publicLinkEnabled: false } };
-const tester = { type: 'betaTesters', id: testerID, attributes: { email: 'nakanishisoya@gmail.com' } };
-const run = (groups = [group], testers = [tester]) => checkRecipient({ groupID, testerID,
+const ownerEmail = 'synthetic-owner@example.invalid';
+const tester = { type: 'betaTesters', id: testerID, attributes: { email: ownerEmail } };
+const run = (groups = [group], testers = [tester]) => checkRecipient({ groupID, testerID, ownerEmail,
   get: async url => url.includes('/betaTesters') ? testers : groups });
 
 test('pinned sole owner; no name-only fallback or additional automatic recipients', async () => {
@@ -23,7 +24,22 @@ test('pinned sole owner; no name-only fallback or additional automatic recipient
   }
   for (const testers of [[], [tester, { ...tester, id: 'another-person' }],
     [{ ...tester, attributes: { email: 'wrong@example.com' } }]]) await assert.rejects(run([group], testers));
-  await assert.rejects(checkRecipient({ groupID: '', testerID, get: async () => [] }));
+  await assert.rejects(checkRecipient({ groupID: '', testerID, ownerEmail, get: async () => [] }));
+});
+
+test('owner email pin is required before querying Apple and is never logged', async () => {
+  let contactedApple = false;
+  const get = async () => { contactedApple = true; return []; };
+  for (const badPin of [undefined, '', 'not-an-address']) {
+    await assert.rejects(checkRecipient({ groupID, testerID, ownerEmail: badPin, get }),
+      { message: 'Owner recipient email pin is missing or invalid; do not distribute.' });
+  }
+  assert.equal(contactedApple, false);
+  for (const email of [null, 5, 'other@example.invalid']) {
+    await assert.rejects(run([group], [{ ...tester, attributes: { email } }]),
+      { message: 'Owner group must contain only the pinned owner tester.' });
+  }
+  assert.equal(await run([group], [{ ...tester, attributes: { email: ownerEmail.toUpperCase() } }]), true);
 });
 
 test('GET-only reader follows bounded same-origin pages and fails on unavailable data', async () => {
@@ -62,7 +78,7 @@ test('failure diagnostics identify the boundary without printing IDs, responses 
 });
 
 test('explicit ASC fields are requested and incomplete booleans still block upload', async () => {
-  await checkRecipient({ groupID, testerID, get: async url => {
+  await checkRecipient({ groupID, testerID, ownerEmail, get: async url => {
     const query = new URL(url, 'https://api.appstoreconnect.apple.com').searchParams;
     if (url.includes('/betaTesters')) {
       assert.equal(query.get('fields[betaTesters]'), 'email');
@@ -85,7 +101,7 @@ test('explicit ASC fields are requested and incomplete booleans still block uplo
 
 test('observed external null is excluded only for an authenticated internal-only IPA', async () => {
   const external = { type: 'betaGroups', id: 'external-group', attributes: { isInternalGroup: false, hasAccessToAllBuilds: null } };
-  const check = (other = external, proof = true) => checkRecipient({ groupID, testerID,
+  const check = (other = external, proof = true) => checkRecipient({ groupID, testerID, ownerEmail,
     authenticatedInternalOnly: proof, get: async url => url.includes('/betaTesters') ? [tester] : [group, other] });
   assert.equal(await check(), true);
   await assert.rejects(check(external, false));
@@ -93,7 +109,7 @@ test('observed external null is excluded only for an authenticated internal-only
     { hasAccessToAllBuilds: undefined }, { hasAccessToAllBuilds: true }, { hasAccessToAllBuilds: 'false' }]) {
     await assert.rejects(check({ ...external, attributes: { ...external.attributes, ...patch } }));
   }
-  await assert.rejects(checkRecipient({ groupID, testerID, authenticatedInternalOnly: true,
+  await assert.rejects(checkRecipient({ groupID, testerID, ownerEmail, authenticatedInternalOnly: true,
     get: async url => url.includes('/betaTesters') ? [tester] : [{ ...group, attributes: { ...group.attributes, hasAccessToAllBuilds: null } }] }));
 });
 
