@@ -1600,6 +1600,8 @@ extension FamilyNotebookView {
                 .accessibilityIdentifier("family-notebook-unsent")
                 // Held: the code to tell support (no explanation on screen).
                 .onLongPressGesture { showsSendCode = true }
+                // The same for VoiceOver, named with the line's own word.
+                .accessibilityAction(named: "コード") { showsSendCode = true }
             if showsSendCode {
                 Text("コード：" + sharing.sendCode)
                     .font(.caption2).foregroundStyle(.secondary)
@@ -2343,6 +2345,8 @@ struct FamilyNotebookJoinView: View {
                 Button("閉じる", role: .cancel) {}
             } message: { Text(sharing.failure?.message ?? "") }
         }
+        // Once, when joining succeeds (the result is set once per 「参加する」).
+        .sensoryFeedback(.success, trigger: result) { old, new in old != .joined && new == .joined }
         .task {
             // 1115s: opening the invitation link is the person's own action.
             await SharingPersonAction.run {

@@ -70,6 +70,8 @@ struct OnboardingView: View {
             }
         }
         .background(Color(.systemBackground).ignoresSafeArea())
+        // Once, when 「置けました」 takes the guide's place (never on a redraw).
+        .sensoryFeedback(.success, trigger: page == .widgetGuide && isWidgetPlaced) { old, new in !old && new }
         .onChange(of: authorizationStatus, initial: true) { _, status in
             routePastPermissionIfAuthorized(status)
         }
@@ -450,6 +452,7 @@ private struct OnboardingScanPage: View {
     var openNowaWindow: (() -> Void)? = nil
     let placeWidget: () -> Void
     let continueToApp: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// From the first cat on, the title says it was found (11/12).
     private var title: String {
@@ -552,7 +555,9 @@ private struct OnboardingScanPage: View {
             .padding(.vertical, 12)
             .background(Color(.systemBackground))
         }
-        .animation(.easeOut(duration: 0.25), value: scan.displayedCatCount)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: scan.displayedCatCount)
+        // Once, when the title first says a cat was found.
+        .sensoryFeedback(.success, trigger: title == OnboardingPresentationCopy.scanFoundTitle) { old, new in !old && new }
     }
 
     private var continueButton: some View {
@@ -711,7 +716,7 @@ private struct OnboardingScanPage: View {
         // label hides its failure state.
         .accessibilityHint("写真を開きます")
         .accessibilityIdentifier("initial-scan-photo-\(photo.localIdentifier)")
-        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+        .transition(reduceMotion ? AnyTransition.opacity : .opacity.combined(with: .scale(scale: 0.9)))
     }
 }
 

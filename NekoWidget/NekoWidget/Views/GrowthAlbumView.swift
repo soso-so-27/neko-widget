@@ -352,6 +352,7 @@ private struct GrowthPhotoReplacementSheet: View {
                                 ? "選択中の一枚"
                                 : "この一枚を選ぶ"
                         )
+                        .accessibilityAddTraits(photo.localIdentifier == selectedIdentifier ? .isSelected : [])
                     }
                 }
                 .padding(16)

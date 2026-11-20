@@ -915,7 +915,11 @@ struct CuratedAlbumDetailView: View {
     private func photoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
         let date = photo.creationDate?.formatted(.dateTime.year().month().day().hour().minute())
             ?? "撮影日時不明"
-        return photo.isLiked ? "\(date)の猫の写真、お気に入りの写真" : "\(date)の猫の写真"
+        // The cats this photo is given to, from what the page already holds.
+        let assigned = assignmentsByPhotoIdentifier[photo.localIdentifier] ?? []
+        let names = profiles.filter { assigned.contains($0.identifier) }.map(\.displayName)
+        let subject = names.isEmpty ? "\(date)の猫の写真" : "\(names.joined(separator: "と"))、\(date)の写真"
+        return photo.isLiked ? "\(subject)、お気に入りの写真" : subject
     }
 }
 
