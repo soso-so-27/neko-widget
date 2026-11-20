@@ -18,11 +18,19 @@ export async function runGroupRelayCleanup(env:Env,now=Math.floor(Date.now()/100
   const rosterCleanup=await env.DB.prepare("SELECT 1 AS present FROM sqlite_master WHERE type='view' AND name='group_closed_roster_cleanup_due'").first();
   const expired=await env.DB.prepare(`SELECT id FROM group_moments WHERE ${due} ORDER BY created_at,id LIMIT ?`)
     .bind(now,BATCH).all<{id:string}>();
-  for(const row of expired.results)await env.DB.batch([
-    env.DB.prepare(`UPDATE group_moments SET state='expired',expired_at=? WHERE id=? AND ${due}`).bind(now,row.id,now),
-    env.DB.prepare(`INSERT INTO group_object_deletions SELECT id,object_key,0,?,'pending' FROM group_moments WHERE id=? AND state='expired'
-      ON CONFLICT(moment_id) DO NOTHING`).bind(now,row.id),
-  ]);
+  let rowFailures=0;
+  for(const row of expired.results) {
+    try {
+      await env.DB.batch([
+        env.DB.prepare(`UPDATE group_moments SET state='expired',expired_at=? WHERE id=? AND ${due}`).bind(now,row.id,now),
+        env.DB.prepare(`INSERT INTO group_object_deletions SELECT id,object_key,0,?,'pending' FROM group_moments WHERE id=? AND state='expired'
+          ON CONFLICT(moment_id) DO NOTHING`).bind(now,row.id),
+      ]);
+    } catch {
+      // The transaction rolls back and the row stays eligible for retry.
+      rowFailures++;
+    }
+  }
   if(env.MEDIA) {
     const jobs=await env.DB.prepare(`SELECT q.moment_id,q.object_key,q.attempts FROM group_object_deletions q
       LEFT JOIN group_moments m ON m.id=q.moment_id
@@ -36,11 +44,16 @@ export async function runGroupRelayCleanup(env:Env,now=Math.floor(Date.now()/100
         await env.DB.prepare("UPDATE group_object_deletions SET state='completed' WHERE moment_id=? AND object_key=? AND attempts=?")
           .bind(job.moment_id,job.object_key,job.attempts).run();
       } catch {
-        await env.DB.prepare("UPDATE group_object_deletions SET attempts=attempts+1,available_at=? WHERE moment_id=? AND state='pending' AND attempts=?")
-          .bind(now+Math.min(3600,30*2**Math.min(job.attempts,7)),job.moment_id,job.attempts).run();
+        try {
+          await env.DB.prepare("UPDATE group_object_deletions SET attempts=attempts+1,available_at=? WHERE moment_id=? AND state='pending' AND attempts=?")
+            .bind(now+Math.min(3600,30*2**Math.min(job.attempts,7)),job.moment_id,job.attempts).run();
+        } catch {
+          rowFailures++;
+        }
       }
     }
   }
+  if(rowFailures)console.warn(JSON.stringify({event:'group_relay_cleanup_row_failure',count:rowFailures}));
   const finalMoments=await env.DB.prepare(`SELECT m.id,m.space_id FROM group_moments m JOIN group_object_deletions q ON q.moment_id=m.id
     WHERE m.state='expired' AND m.expired_at<=? AND q.state='completed' ORDER BY m.expired_at,m.id LIMIT ?`)
     .bind(now-RECEIPT_SECONDS,BATCH).all<{id:string;space_id:string}>();

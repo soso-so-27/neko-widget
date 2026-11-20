@@ -38,6 +38,8 @@ export async function groupAPI(request:Request,env:Env):Promise<Response> {
       ['group_total_window_limit',409,'total_window_limit'],['group_owned_window_limit',409,'owned_window_limit'],
       ['group_member_limit',409,'member_limit'],['group_device_limit',409,'device_limit'],
       ['group_stale_revision_or_epoch',409,'stale_revision'],['group_request_not_pending',409,'request_not_pending'],
+      ['group_revoked_device_in_roster',409,'stale_revision'],
+      ['group_envelope_set_mismatch',409,'roster_conflict'],['group_empty_roster',409,'roster_conflict'],
       ['group_invitation_expired_or_revoked',410,'invitation_expired'],['group_challenge_expired_or_used',410,'challenge_expired'],
       ['group_pending_request_limit',429,'rate_limited'],['group_invalid_join_request',410,'invitation_revoked'],
       ['group_invalid_authentication',401,'invalid_authentication'],['group_not_member_or_owner',404,'not_found'],
