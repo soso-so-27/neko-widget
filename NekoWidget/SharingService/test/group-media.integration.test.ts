@@ -237,12 +237,17 @@ describe('group encrypted relay and creator Plus commit boundary (runtime stays 
     const request=await signed(bob,path,await heart(bob,w,p.id));expect((await send(request,{...testEnv,REACTION_RUNTIME_ENABLED:'NO'})).status).toBe(503);
     }finally{await db.prepare('UPDATE daily_quota_day_policy SET effective_at=?').bind(prior!.effective_at).run();}
   });
-  it('commits concurrent retries once and enforces five photos per person per day',async()=>{
+  it('commits concurrent retries once and shares five photo slots across a person’s windows',async()=>{
     const owner=await plusOwner(),w=await create(owner),p=await reserve(owner,w);ok(p.result,201);ok(await upload(owner,w,p));
     const results=await Promise.all([commit(owner,w,p),commit(owner,w,p)]);for(const r of results)ok(r);
     expect((await db.prepare('SELECT COUNT(*) n FROM group_moment_deliveries WHERE moment_id=?').bind(p.id).first<{n:number}>())?.n).toBe(1);
-    for(let i=0;i<4;i++)ok((await reserve(owner,w)).result,201);
-    expect((await reserve(owner,w)).result.data.error.code).toBe('daily_limit');
+    const otherWindow=await create(owner);
+    for(let i=0;i<3;i++)ok((await reserve(owner,i%2===0?w:otherWindow)).result,201);
+    const competing=await Promise.all([reserve(owner,w),reserve(owner,otherWindow)]);
+    expect(competing.map(entry=>entry.result.status).sort()).toEqual([201,409]);
+    expect(competing.find(entry=>entry.result.status===409)?.result.data.error.code).toBe('daily_limit');
+    const another=await plusOwner(),anotherWindow=await create(another);
+    ok((await reserve(another,anotherWindow)).result,201);
     expect((await db.prepare("SELECT COUNT(*) n FROM group_notification_events WHERE moment_id=? AND kind='new_moment'").bind(p.id).first<{n:number}>())?.n).toBe(1);
   });
   it('rechecks personal blocks at ciphertext download and keeps other copies available',async()=>{
