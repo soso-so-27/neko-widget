@@ -185,10 +185,12 @@ private struct LostCatCropRequest: Identifiable {
 
 struct LostCatDraftView: View {
     private enum Field: Hashable { case name, features, collar, place, contact, advice }
-    /// 11/12 (round 2): not chosen yet reads 「未設定」 like every choice in the
-    /// tools (it read 「不明」, which looked like an answer); a stored 「不明」
-    /// from before is still read as not chosen.
-    private enum Collar: String, CaseIterable { case unknown = "未設定", none = "なし", present = "あり" }
+    /// 11/12 (round 2): not chosen yet reads like every choice in the tools
+    /// (it read 「不明」, which looked like an answer); a stored 「不明」 from
+    /// before is still read as not chosen. 11/20: 「未記入」 (was 「未設定」),
+    /// the same word as `ToolEmptyValue.unset`; a raw value must be a literal.
+    /// The raw value is only shown; `draft.collar` never stores it.
+    private enum Collar: String, CaseIterable { case unknown = "未記入", none = "なし", present = "あり" }
     let initialKey: String
     let initialName: String
     let profiles: [CatProfilePresentation]
@@ -476,7 +478,7 @@ struct LostCatDraftView: View {
     }
     /// Opens the date sheet at once, as 体重 does in 病院で見せる: one control,
     /// no page of its own. 11/12 (round 2): with the chevron every row that
-    /// opens something has, and 「未設定」 until a day is chosen (「不明」).
+    /// opens something has, and `ToolEmptyValue.unset` until a day is chosen (「不明」).
     private var dateRow: some View {
         ToolSheetRow(row: ToolValueRow(title: "日時", systemImage: "clock",
                                        value: draft.lastSeenAt.map(LostCatPublicDraft.lastSeenText) ?? ToolEmptyValue.unset,
