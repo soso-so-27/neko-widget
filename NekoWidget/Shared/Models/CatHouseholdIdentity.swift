@@ -319,6 +319,16 @@ struct CatLegacyUnscopedIdentity: Codable, Equatable, Sendable {
     var importedCurationMutationRevision: Int
 }
 
+/// 11/20: what excluding a photo from every cat took away (its per-cat
+/// decisions and the cats whose key photo it was), so 「戻す」 gives it back.
+/// Optional in the file: an older build ignores it and drops it on its next
+/// save, which only loses the way back, never a current decision.
+struct CatExclusionSetAside: Codable, Equatable, Sendable {
+    var assetLocalIdentifier: String
+    var memberships: [CatAssetProfileMembership]
+    var keyPhotoProfileIDs: [UUID]
+}
+
 /// Durable user-owned identity state, deliberately separate from the
 /// replaceable scanner snapshot. Scanner output is evidence; this file records
 /// the user's household and manual many-to-many identity decisions.
@@ -340,6 +350,8 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
     var legacyUnscoped: CatLegacyUnscopedIdentity?
     var createdAt: Date
     var updatedAt: Date
+    /// 11/20: kept only while the photo stays excluded (see CatExclusionSetAside).
+    var exclusionSetAside: [CatExclusionSetAside]? = nil
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
@@ -351,6 +363,7 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
         case legacyUnscoped
         case createdAt
         case updatedAt
+        case exclusionSetAside
     }
 
     init(
@@ -409,6 +422,10 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
             ?? Date(timeIntervalSince1970: 0)
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt)
             ?? createdAt
+        exclusionSetAside = try container.decodeIfPresent(
+            [CatExclusionSetAside].self,
+            forKey: .exclusionSetAside
+        )
     }
 
     static func legacyUnscoped(
@@ -432,6 +449,27 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
             createdAt: date,
             updatedAt: date
         ).normalized()
+    }
+
+    /// 11/20: birthdays and adoption days saved before 11/10 on an iPhone set
+    /// to 和暦 or 仏暦 hold that calendar's year. While this iPhone can still
+    /// tell which day it was, they become 西暦, so a later switch to 西暦 or
+    /// a restore elsewhere keeps the day. Undeterminable values stay as they are.
+    func convertingDeviceCalendarYears(device: Calendar = .current) -> Self {
+        var value = self
+        for index in value.profiles.indices {
+            var profile = value.profiles[index]
+            profile.lifeReference = profile.lifeReference?.inGregorian(device: device)
+            if var dates = profile.lifeDates {
+                dates.birthday = dates.birthday.map { $0.inGregorian(device: device) ?? $0 }
+                dates.adoptionDay = dates.adoptionDay.map { $0.inGregorian(device: device) ?? $0 }
+                profile.lifeDates = dates
+            }
+            value.profiles[index] = profile
+        }
+        let legacy = value.legacyUnscoped?.lifeReference?.inGregorian(device: device)
+        value.legacyUnscoped?.lifeReference = legacy
+        return value
     }
 
     /// Reconciles only while Build 13 state remains authoritative. It never
@@ -907,8 +945,10 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
     }
 
     /// A global exclusion removes all manual per-profile decisions for that
-    /// photo. Restoring it returns manual membership to unknown; a still-linked
-    /// Photos album may explicitly include it again for that profile.
+    /// photo. 11/20: they are set aside with it, and restoring the photo
+    /// gives them back (a decision made since wins), with the key photo of a
+    /// cat that has not chosen another. A still-linked Photos album may
+    /// explicitly include it again for that profile.
     mutating func setGloballyExcluded(
         _ excluded: Bool,
         assetLocalIdentifiers: some Sequence<String>,
@@ -932,10 +972,36 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
                     excludedAt: date
                 )
             }
+            let newlyExcluded = identifiers.filter { identifier in
+                !previous.contains { $0.localIdentifier == identifier }
+            }
+            var setAside = (exclusionSetAside ?? []).filter { !newlyExcluded.contains($0.assetLocalIdentifier) }
+            for identifier in newlyExcluded.sorted() {
+                let removed = memberships.filter { $0.assetLocalIdentifier == identifier }
+                let keyPhotos = profiles.filter { $0.keyPhotoLocalIdentifier == identifier }.map(\.id)
+                guard !removed.isEmpty || !keyPhotos.isEmpty else { continue }
+                setAside.append(CatExclusionSetAside(assetLocalIdentifier: identifier,
+                    memberships: removed, keyPhotoProfileIDs: keyPhotos))
+            }
+            exclusionSetAside = setAside.isEmpty ? nil : setAside
             globalExcludedAssets = Array(byIdentifier.values)
             memberships.removeAll { identifiers.contains($0.assetLocalIdentifier) }
         } else {
             globalExcludedAssets.removeAll { identifiers.contains($0.localIdentifier) }
+            for saved in exclusionSetAside ?? [] where identifiers.contains(saved.assetLocalIdentifier) {
+                for membership in saved.memberships where !memberships.contains(where: {
+                    $0.assetLocalIdentifier == membership.assetLocalIdentifier && $0.profileID == membership.profileID
+                }) {
+                    memberships.append(membership)
+                }
+                for profileID in saved.keyPhotoProfileIDs {
+                    guard let index = profiles.firstIndex(where: { $0.id == profileID }),
+                          profiles[index].keyPhotoLocalIdentifier == nil else { continue }
+                    profiles[index].keyPhotoLocalIdentifier = saved.assetLocalIdentifier
+                }
+            }
+            let remaining = (exclusionSetAside ?? []).filter { !identifiers.contains($0.assetLocalIdentifier) }
+            exclusionSetAside = remaining.isEmpty ? nil : remaining
         }
         guard globalExcludedAssets != previous else { return }
         updatedAt = max(updatedAt, max(createdAt, date))
@@ -1061,6 +1127,22 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
                 }
             }
         }
+
+        // 11/20: what an exclusion set aside lives only while it stands.
+        var setAsideByIdentifier: [String: CatExclusionSetAside] = [:]
+        for saved in value.exclusionSetAside ?? []
+        where globallyExcluded.contains(saved.assetLocalIdentifier) {
+            var entry = saved
+            entry.memberships = saved.memberships.filter {
+                $0.assetLocalIdentifier == saved.assetLocalIdentifier && validProfileIDs.contains($0.profileID)
+            }
+            entry.keyPhotoProfileIDs = Array(Set(saved.keyPhotoProfileIDs.filter { validProfileIDs.contains($0) }))
+                .sorted { $0.uuidString < $1.uuidString }
+            guard !entry.memberships.isEmpty || !entry.keyPhotoProfileIDs.isEmpty else { continue }
+            setAsideByIdentifier[saved.assetLocalIdentifier] = entry
+        }
+        value.exclusionSetAside = setAsideByIdentifier.isEmpty ? nil
+            : setAsideByIdentifier.values.sorted { $0.assetLocalIdentifier < $1.assetLocalIdentifier }
 
         if var legacy = value.legacyUnscoped {
             legacy.importedCurationMutationRevision = max(
@@ -1209,6 +1291,21 @@ enum CatProfileLimit {
 
     static func canAdd(_ identifiers: [String?], departed: Set<String>) -> Bool {
         livingCount(identifiers, departed: departed) < maximumLiving
+    }
+
+    /// The profiles that exist now, set by the app whenever they change;
+    /// nil until they are read. Like CatSingleCatRule, never saved.
+    static var knownProfiles: Set<String>?
+
+    /// 11/20: a tool's cats. One whose profile was deleted keeps its records
+    /// and stays in the tool's list (the delete says 「ツールの記録は残ります」),
+    /// but it is no longer a cat of the household and takes no place. A cat
+    /// without a profile still counts; with profiles unknown, every one does.
+    static func canAddToolCat(_ identifiers: [String?], departed: Set<String>,
+                              profiles: Set<String>? = CatProfileLimit.knownProfiles) -> Bool {
+        guard let profiles else { return canAdd(identifiers, departed: departed) }
+        let known = Set(profiles.map { $0.lowercased() })
+        return canAdd(identifiers.filter { $0.map { known.contains($0.lowercased()) } ?? true }, departed: departed)
     }
 
     /// Profile identifiers (never nil).

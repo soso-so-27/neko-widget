@@ -620,7 +620,7 @@ enum CatIdentityMeasurementRunner {
         let records: [AssetRecord]
         let identity: CatHouseholdIdentityState?
         do {
-            records = try await LibraryStore().load().assets
+            records = try await LibraryStore().read().assets
             identity = try await CatHouseholdIdentityStore().load()
         } catch {
             return .blocked("写真の記録を読めませんでした。")

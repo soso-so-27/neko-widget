@@ -116,7 +116,8 @@ final class CareHandoffStore: ObservableObject {
     }
     /// 11/14: the plan has as many living cats as can exist.
     var isFullOfCats: Bool {
-        !CatProfileLimit.canAdd(plan.cats.map(\.profileID), departed: CatFarewell.departedIdentifiers())
+        !CatProfileLimit.canAddToolCat(plan.cats.map(\.profileID), departed: CatFarewell.departedIdentifiers())
+            || plan.cats.count >= CareHandoffPlan.storedMaximumCats  // what a saved plan may hold
     }
     func addCat(profileID: String? = nil, name: String = "",
                 using source: EvacuationStore? = nil, sourceCatID: UUID? = nil,

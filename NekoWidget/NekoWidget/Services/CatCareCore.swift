@@ -722,7 +722,7 @@ enum CatCareImport {
         })
         for weight in source.weights where !known.contains(weight.noteID)
             && CatCareLimits.gramsRange.contains(weight.grams)
-            && r.weights.count < CatCareLimits.maximumWeights {
+            && r.activeWeights.count < CatCareLimits.maximumWeights {
             r.weights.append(.init(measuredOn: weight.day, grams: weight.grams,
                                    source: .photoMemo(noteID: weight.noteID),
                                    editedAt: now, editedBy: by))

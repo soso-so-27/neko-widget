@@ -157,7 +157,8 @@ class NameTests(unittest.TestCase):
 class ToolCatTests(unittest.TestCase):
     def test_tools_add_up_to_the_cat_limit_and_keep_saved_plans(self):
         for store in (HANDOFF_STORE, EVAC_STORE):
-            self.assertIn("!CatProfileLimit.canAdd(plan.cats.map(\\.profileID), departed: CatFarewell.departedIdentifiers())", store)
+            # 11/20: a cat whose profile was deleted keeps its records but takes no place.
+            self.assertIn("!CatProfileLimit.canAddToolCat(plan.cats.map(\\.profileID), departed: CatFarewell.departedIdentifiers())", store)
             self.assertIn("guard !isFullOfCats, loadError == nil, saveError == nil, let repository else { return nil }", store)
             self.assertNotIn("plan.cats.count < 20", store)
             self.assertNotIn("plan.cats.count < 30", store)
@@ -177,9 +178,10 @@ class LimitSentenceTests(unittest.TestCase):
 
     def test_cat_care_lists_say_their_limit(self):
         kind = section(CARE_VIEW, "extension CatCareListEditor.Kind {", "struct CatCareListView: View {")
-        for line in ("case .weight: return r.weights.count >= limit",
-                     "case .medication: return r.medications.count >= limit",
-                     "case .vaccination: return r.vaccinations.count >= limit",
+        # 11/20: deleted records stay for sharing but never count.
+        for line in ("case .weight: return r.activeWeights.count >= limit",
+                     "case .medication: return r.activeMedications.count >= limit",
+                     "case .vaccination: return r.activeVaccinations.count >= limit",
                      "case .meal: return r.activeMeals.count >= limit"):
             self.assertIn(line, kind)
         listing = section(CARE_VIEW, "struct CatCareListView: View {", "private var isEmpty: Bool {")

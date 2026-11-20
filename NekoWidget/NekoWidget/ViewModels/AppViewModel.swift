@@ -102,7 +102,10 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var savedPhotoIdentifiers: Set<String> = []
     @Published private(set) var savedPhotoStateReadFailed = false
     @Published private(set) var catCandidateCuration: CatCandidateCurationState = .empty
-    @Published private(set) var catHouseholdIdentity: CatHouseholdIdentityState?
+    @Published private(set) var catHouseholdIdentity: CatHouseholdIdentityState? {
+        // 11/20: tools count only cats whose profile still exists.
+        didSet { CatProfileLimit.knownProfiles = catHouseholdIdentity.map { Set($0.profiles.map(\.id.uuidString)) } }
+    }
     @Published private(set) var photoSourceAlbums: [PhotoSourceAlbumOption] = []
     @Published private(set) var photoSourceStatus: PhotoSourceAlbumStatus = .allLibrary
     /// Creation dates for currently accessible profile-linked album assets.
@@ -2625,11 +2628,22 @@ final class AppViewModel: ObservableObject {
             return false
         }
         do {
-            let loaded = try await identityStore.loadOrMigrate(
-                legacyLifeReference: settings.catLifeReference,
+            // 11/20: an old 和暦/仏暦 year becomes 西暦 while this iPhone can
+            // still tell the day (CatLifeDate.inGregorian); otherwise unchanged.
+            let legacyLifeReference = settings.catLifeReference?.inGregorian()
+            if legacyLifeReference != settings.catLifeReference {
+                settings.catLifeReference = legacyLifeReference
+                snapshot.settings.catLifeReference = legacyLifeReference
+            }
+            var loaded = try await identityStore.loadOrMigrate(
+                legacyLifeReference: legacyLifeReference,
                 legacyCuration: catCandidateCuration
             )
             catHouseholdIdentity = loaded
+            if loaded.convertingDeviceCalendarYears() != loaded,
+               let converted = try? await mutateCatHouseholdIdentity({ $0 = $0.convertingDeviceCalendarYears() }) {
+                loaded = converted
+            }
             if loaded.mode == .legacyUnscoped,
                let url = CatHouseholdIdentityStore.defaultStateURL(), AppRecordDataset.liveIdentityPolicy(url) {
                 settings.catLifeReference = loaded.legacyUnscoped?.lifeReference
@@ -3459,24 +3473,12 @@ final class AppViewModel: ObservableObject {
                 currentlyVisibleImportIdentifiers.insert(asset.localIdentifier)
             }
         }
-        let canConcludeImportedAssetWasDeleted =
-            PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized
-        if canConcludeImportedAssetWasDeleted {
-            let confirmedDeleted = receivedImportIdentifiers
-                .subtracting(currentlyVisibleImportIdentifiers)
-            for identifier in confirmedDeleted {
-                if let mutation = try? SharedLikeStore.set(
-                    localIdentifier: identifier,
-                    isLiked: false,
-                    source: "received-memory-deleted"
-                ) {
-                    sharedLikeRecords[identifier] = mutation.record
-                    savedPhotoIdentifiers = Set(sharedLikeRecords.compactMap { $0.value.isLiked ? $0.key : nil })
-                }
-            }
-        }
+        // 11/20: a received photo missing from one fetch is only hidden
+        // from this snapshot. Recently Deleted, iCloud and limited access
+        // all bring photos back, so absence never writes an un-like; only
+        // the person's own un-like removes the mark.
         let liveByIdentifier = Dictionary(
-            uniqueKeysWithValues: snapshot.assets.map { ($0.localIdentifier, $0) }
+            snapshot.assets.map { ($0.localIdentifier, $0) }, uniquingKeysWith: { first, _ in first }
         )
         var merged = newSnapshot
         merged.assets = newSnapshot.assets.filter {
@@ -4070,9 +4072,9 @@ final class AppViewModel: ObservableObject {
         let curated = candidateSnapshot(input ?? snapshot)
         let eligible = photoSelector.eligibleCandidates(from: curated.assets,
             settings: curated.settings, now: now)
-        let dates = Dictionary(uniqueKeysWithValues: eligible.compactMap { record in
+        let dates = Dictionary(eligible.compactMap { record in
             record.sourceModificationDate.map { (record.localIdentifier, $0) }
-        })
+        }, uniquingKeysWith: { first, _ in first })
         let authorized = canPresentPhotoCandidates && catIdentityLoadState == .ready
         let eligibleIDs = Set(eligible.map(\.localIdentifier))
         var bootstrap: [PersonalRediscoveryCandidate] = []

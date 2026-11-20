@@ -571,13 +571,16 @@ private struct VeterinaryConsultationView: View {
         let record = CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString)
             ?? (profile != nil ? catCareStore.ensureRecord(profileID: visit.catID, name: profile?.displayName)
                 : catCareStore.ensureRecord(toolCatID: visit.catID, profileIdentifier: nil, name: visit.catName))
+        var outcome: Bool?
         guard let id = record?.catID, catCareStore.update({ state in
             guard let index = state.cats.firstIndex(where: { $0.catID == id }) else { return }
-            result.apply(to: &state.cats[index], by: state.deviceID, now: Date())
-        }) else {
+            outcome = result.apply(to: &state.cats[index], by: state.deviceID, now: Date())
+        }), let applied = outcome else {
             error = "体重を保存できませんでした。もう一度お試しください。"
             return
         }
+        // 11/20: a full weight list refused it; say so with the list's own sentence.
+        if !applied { error = CatCareListEditor.Kind.weight.limitSentence }
     }
     /// 「診察メモ」 (11/12): this cat's past memos as one row that opens them,
     /// then starting a new memo, which files the one on the page there. The
