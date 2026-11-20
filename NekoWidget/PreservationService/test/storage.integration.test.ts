@@ -288,6 +288,22 @@ it('acknowledges a record only after its owner-wide inventory copy succeeds', as
   expect(seen.at(-1)).toBe(2);
 });
 
+it('keeps a durable physical deletion job only for the confirmed tombstone', async () => {
+  const f = await fixture(), remote = syntheticRecovery(f.options.keys);
+  const archive = new ArchiveStore({ ...f.options, recovery: remote.recovery });
+  const record = crypto.randomUUID(), companion = crypto.randomUUID();
+  for (const id of [record, companion]) await archive.put(f.session.token, id, f.request());
+  const queue = () => binding.DB.prepare(`SELECT record_id,tombstone_revision,requested_at
+    FROM pa_record_physical_delete_queue WHERE owner_id=?`).bind(f.session.ownerId).all();
+  expect((await queue()).results).toEqual([]);
+  await archive.remove(f.session.token, record, 1);
+  await archive.remove(f.session.token, record, 1);
+  expect((await queue()).results).toEqual([{
+    record_id: record, tombstone_revision: 2, requested_at: f.options.now(),
+  }]);
+  expect((await archive.read(f.session.token, companion)).revision).toBe(1);
+});
+
 it('only the winning concurrent edit can attach a recovery version to the next revision', async () => {
   const f = await fixture(); const remote = syntheticRecovery(f.options.keys);
   const archive = new ArchiveStore({ ...f.options, recovery: remote.recovery });
