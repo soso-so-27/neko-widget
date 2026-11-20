@@ -548,6 +548,62 @@ private struct GroupAdapterChecks {
         try rejects("commit receipt from another sender") {
             try receipt.validate(operationID: receiptOperation, windowID: "window", photoID: "photo", participantID: "other", deviceID: "device", revision: 3, epoch: 2)
         }
+        // 11/20: a value only a newer relay sends is `unknown` (it allows nothing),
+        // never a failed list; the owner binding is still checked.
+        try check(try JSONDecoder().decode([GroupDeliveryStatus].self, from: Data(#"["active","sleeping"]"#.utf8)) == [.active, .unknown],
+                  "unknown delivery status decodes as unknown")
+        try check(try JSONDecoder().decode([GroupDeliveryReason].self, from: Data(#"["owner_plus","owner_gift"]"#.utf8)) == [.ownerPlus, .unknown],
+                  "unknown delivery reason decodes as unknown")
+        try check(try JSONDecoder().decode([GroupMemberState].self, from: Data(#"["active","suspended"]"#.utf8)) == [.active, .unknown],
+                  "unknown member state decodes as unknown")
+        try check(try JSONDecoder().decode([GroupRole].self, from: Data(#"["owner","moderator"]"#.utf8)) == [.owner, .unknown],
+                  "unknown role decodes as unknown")
+        let isOwner: (String) -> Bool = { $0 == "owner" }
+        let knownPolicy = try ProductionGroupWindowClient.deliveryPolicy(status: .paused, reason: .ownerPlusRequired, owner: "owner", isOwner: isOwner)
+        try check(knownPolicy.0 == .paused && knownPolicy.1 == .ownerPlusRequired && knownPolicy.2 == "owner", "known policy passes unchanged")
+        let newer = try ProductionGroupWindowClient.deliveryPolicy(status: .unknown, reason: .ownerPlus, owner: "owner", isOwner: isOwner)
+        try check(newer.0 == .unknown && newer.1 == .unknown && newer.2 == "owner", "a newer value is kept as unknown")
+        var unknownWindow = GroupWindow(id: "w", name: "n", revision: 1, keyEpoch: 1, myParticipantID: "p", myRole: .member,
+                                        state: .active, members: [], deliveryStatus: newer.0, deliveryReason: newer.1)
+        try check(unknownWindow.hasUnknownDelivery, "an unknown delivery waits for sending")
+        unknownWindow.deliveryStatus = .active; unknownWindow.deliveryReason = .ownerPlus
+        try check(!unknownWindow.hasUnknownDelivery, "a known delivery does not")
+        try rejects("an unknown value still names a verified owner") {
+            _ = try ProductionGroupWindowClient.deliveryPolicy(status: .unknown, reason: .unknown, owner: "stranger", isOwner: isOwner)
+        }
+        try rejects("mixed known values stay invalid") {
+            _ = try ProductionGroupWindowClient.deliveryPolicy(status: .active, reason: .ownerPlusRequired, owner: "owner", isOwner: isOwner)
+        }
+        // 11/20: only one window's own failure skips that window; a lost connection fails the list.
+        try check(ProductionGroupWindowClient.concernsOneWindow(GroupClientError.invalidResponse)
+                  && ProductionGroupWindowClient.concernsOneWindow(GroupProtocolError.invalidSignature)
+                  && ProductionGroupWindowClient.concernsOneWindow(GroupClientError.notMember), "per-window failures")
+        try check(!ProductionGroupWindowClient.concernsOneWindow(GroupClientError.offline)
+                  && !ProductionGroupWindowClient.concernsOneWindow(GroupClientError.unavailable)
+                  && !ProductionGroupWindowClient.concernsOneWindow(GroupClientError.authenticationRequired)
+                  && !ProductionGroupWindowClient.concernsOneWindow(CancellationError()), "list-wide failures")
+        // 11/20: the relay's codes for an ended reservation and an expired delivery.
+        for (code, expected) in [("reservation_expired", GroupClientError.reservationExpired), ("delivery_expired", .deliveryExpired)] {
+            do { _ = try GroupHTTPRequest.check(.init(status: 410, data: Data(#"{"error":{"code":"\#(code)"}}"#.utf8))) }
+            catch let error as GroupClientError { try check(error == expected, code + " maps to its own case"); continue }
+            throw Failure.check(code + " was not refused")
+        }
+        // 11/20: a refused request whose reply shows a clock over 5 minutes off.
+        try check(GroupClockSkew.date("Fri, 20 Nov 2026 03:04:05 GMT") != nil, "HTTP Date parses")
+        GroupClockSkew.note(.init(status: 401, data: Data(), serverDate: Date().addingTimeInterval(900)))
+        try check(GroupClockSkew.isLikely, "a 401 with a 15-minute skew is noticed")
+        GroupClockSkew.note(.init(status: 200, data: Data(), serverDate: Date()))
+        try check(!GroupClockSkew.isLikely, "a reply with the right time clears it")
+        GroupClockSkew.note(.init(status: 401, data: Data(), serverDate: Date().addingTimeInterval(60)))
+        try check(!GroupClockSkew.isLikely, "a 401 within the relay's 5 minutes is not a clock problem")
+        // The relay's own answer (#1120): stale_request with reason clock_skew.
+        do { _ = try GroupHTTPRequest.check(.init(status: 401, data: Data(#"{"error":{"code":"stale_request","message":"m","reason":"clock_skew","serverNow":1}}"#.utf8))) }
+        catch GroupClientError.authenticationRequired { }
+        try check(GroupClockSkew.isLikely, "the relay's clock_skew answer is noticed")
+        GroupClockSkew.note(.init(status: 200, data: Data(), serverDate: Date()))
+        do { _ = try GroupHTTPRequest.check(.init(status: 401, data: Data(#"{"error":{"code":"invalid_authentication","message":"m"}}"#.utf8))) }
+        catch GroupClientError.authenticationRequired { }
+        try check(!GroupClockSkew.isLikely, "an older relay's plain 401 stays as today")
         try await admissionLifecycle()
         let paths = CommandLine.arguments
         guard paths.count == 3 else { throw Failure.check("two public vectors required") }
@@ -1056,15 +1112,21 @@ private struct GroupAdapterChecks {
         }
         for mode in ["duplicate", "partial-policy", "ahead"] {
             await relay.configureList(mode)
-            do { _ = try await client.windows(); throw Failure.check("invalid list accepted: " + mode) }
-            catch GroupClientError.invalidResponse { }
+            if mode == "duplicate" {
+                do { _ = try await client.windows(); throw Failure.check("invalid list accepted: " + mode) }
+                catch GroupClientError.invalidResponse { }
+            } else {
+                // 11/20: that window alone is left out (never shown unverified); the list still reads.
+                let shown = try await client.windows(), skipped = await client.unreadableWindowIDs()
+                try check(shown.isEmpty && skipped == [room.id], "invalid window left out of the list: " + mode)
+            }
             await relay.configureList()
             _ = try await client.windows()
             try check(await relay.requestPaths() == full, "invalid list discards reusable snapshots: " + mode)
         }
         await relay.setDelivery("wrong-owner"); await relay.configureList()
-        do { _ = try await client.windows(); throw Failure.check("list policy owner not roster-bound") }
-        catch GroupClientError.invalidResponse { }
+        let wrongOwner = try await client.windows(), wrongOwnerSkipped = await client.unreadableWindowIDs()
+        try check(wrongOwner.isEmpty && wrongOwnerSkipped == [room.id], "list policy owner not roster-bound: the window is left out")
         await relay.setDelivery("active"); await relay.configureList()
         _ = try await client.windows()
         for mode in ["denied", "offline", "absent"] {
@@ -1087,22 +1149,22 @@ private struct GroupAdapterChecks {
         record.left = true
         try memory.write(GroupWire.encode(record), account: account, createOnly: false)
         await relay.configureList()
-        do { _ = try await client.windows(); throw Failure.check("local leave resurrected by list") }
-        catch GroupClientError.notMember { }
+        let afterLeave = try await client.windows(), leaveSkipped = await client.unreadableWindowIDs()
+        try check(afterLeave.isEmpty && leaveSkipped.isEmpty, "local leave not resurrected by list, and not called unreadable")
         try memory.write(saved, account: account, createOnly: false)
         _ = try await client.windows()
         record = try GroupWire.decode(GroupLocalWindow.self, saved)
         record.minimumAdmissionRevision = room.revision + 1
         try memory.write(GroupWire.encode(record), account: account, createOnly: false)
-        do { _ = try await client.windows(); throw Failure.check("pre-admission cache accepted") }
-        catch GroupClientError.invalidResponse { }
+        let preAdmission = try await client.windows(), preAdmissionSkipped = await client.unreadableWindowIDs()
+        try check(preAdmission.isEmpty && preAdmissionSkipped == [room.id], "pre-admission cache not accepted")
         try memory.write(saved, account: account, createOnly: false)
         _ = try await client.windows()
         record = try GroupWire.decode(GroupLocalWindow.self, saved)
         record.pinnedHash = Data(repeating: 0, count: 32)
         try memory.write(GroupWire.encode(record), account: account, createOnly: false)
-        do { _ = try await client.windows(); throw Failure.check("changed local pin accepted") }
-        catch GroupProtocolError.staleRevision { }
+        let changedPin = try await client.windows(), changedPinSkipped = await client.unreadableWindowIDs()
+        try check(changedPin.isEmpty && changedPinSkipped == [room.id], "changed local pin not accepted")
         try memory.write(saved, account: account, createOnly: false)
         _ = try await client.windows()
         record = try GroupWire.decode(GroupLocalWindow.self, saved); record.keys = [:]
@@ -1114,8 +1176,8 @@ private struct GroupAdapterChecks {
         record.keys[String(room.keyEpoch)] = Data(repeating: 9, count: 32)
         try memory.write(GroupWire.encode(record), account: account, createOnly: false)
         await relay.configureList()
-        var replacedKeyRejected = false
-        do { _ = try await client.windows() } catch { replacedKeyRejected = true }
+        let replacedKeyShown = try await client.windows(), replacedKeySkipped = await client.unreadableWindowIDs()
+        let replacedKeyRejected = replacedKeyShown.isEmpty && replacedKeySkipped == [room.id]
         let replacedKeyPaths = await relay.requestPaths()
         try check(replacedKeyRejected && replacedKeyPaths == full, "same-epoch replacement key cannot reuse decrypted cache")
         try memory.write(saved, account: account, createOnly: false)
@@ -1124,8 +1186,8 @@ private struct GroupAdapterChecks {
             signingPrivateKey: identity.signingPrivateKey, agreementPrivateKey: identity.agreementPrivateKey,
             windowCertificates: [:], registered: true)
         try memory.write(GroupWire.encode(changedIdentity), account: "identity", createOnly: false)
-        do { _ = try await client.windows(); throw Failure.check("cache crossed person identity") }
-        catch GroupClientError.notMember { }
+        let crossed = try await client.windows(), crossedSkipped = await client.unreadableWindowIDs()
+        try check(crossed.isEmpty && crossedSkipped == [room.id], "cache did not cross person identity")
         try memory.write(GroupWire.encode(identity), account: "identity", createOnly: false)
         _ = try await client.windows()
 

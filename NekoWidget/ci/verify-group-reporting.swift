@@ -355,6 +355,7 @@ private struct VerifyGroupReporting {
         try await reportingPhase("identity and departure") { try await identitiesAndDeparture(root, jpeg) }
         try await reportingPhase("former report and device-local suppression") { try await formerSuppression(root, jpeg) }
         try await reportingPhase("blocking") { try await blocking(root, jpeg) }
+        try await reportingPhase("consent renewed by the person's tap") { try await consentRenewal(root, jpeg) }
         try await reportingPhase("OFF") { try await disabled(root, jpeg) }
         print("Group reporting native adapter checks passed: exact evidence, durable retries, signed requests, identity/status, receipt numbers, evidence expiry, blocks and OFF.")
     }
@@ -625,17 +626,61 @@ private struct VerifyGroupReporting {
         let env = try ReportingEnvironment(root: root, name: "block", jpeg: jpeg), service = try env.service()
         let target = GroupWire.base64(Data(repeating: 11, count: 16)), operation = UUID()
         await env.echo.lose(.block)
-        try await fails(.offline, "block response loss") { try await service.setBlock(windowID: env.windowID, participantID: target, active: true, operationID: operation) }
+        // 11/20: a block that cannot reach the relay now waits; it is not a failure.
+        try await service.setBlock(windowID: env.windowID, participantID: target, active: true, operationID: operation)
         let restarted = try env.service()
-        try require(try await restarted.pendingBlocks(windowID: env.windowID).map(\.id) == [operation], "failed block remains discoverable after restart")
+        try require(try await restarted.pendingBlocks(windowID: env.windowID).map(\.id) == [operation], "a waiting block remains after restart")
+        await restarted.sendPendingBlocks(windowID: env.windowID)
+        try require(try await restarted.pendingBlocks(windowID: env.windowID).isEmpty, "the waiting block is sent by itself")
         try await restarted.setBlock(windowID: env.windowID, participantID: target, active: true, operationID: operation)
-        try await restarted.setBlock(windowID: env.windowID, participantID: target, active: true, operationID: operation)
-        try require(try await restarted.pendingBlocks(windowID: env.windowID).isEmpty, "acknowledged block no longer asks for retry")
         let mutations = await env.mutationLog()
         try require(mutations.count == 2 && mutations[0].body == mutations[1].body, "block retries exact body and completed operation is local")
         try await fails(.conflict, "same block operation cannot change intent") { try await restarted.setBlock(windowID: env.windowID, participantID: target, active: false, operationID: operation) }
         try await fails(.blockSelf, "cannot block self") { try await restarted.setBlock(windowID: env.windowID, participantID: env.participantID, active: true, operationID: UUID()) }
         try require(await env.mutationLog().count == 2, "invalid block intents never sent")
+        // 11/20: the newest choice for a person replaces an older one not sent yet.
+        let unblock = UUID(), reblock = UUID()
+        await env.echo.lose(.block)
+        try await restarted.setBlock(windowID: env.windowID, participantID: target, active: false, operationID: unblock)
+        await env.echo.lose(.block)
+        try await restarted.setBlock(windowID: env.windowID, participantID: target, active: true, operationID: reblock)
+        try require(try await restarted.pendingBlocks(windowID: env.windowID).map(\.id) == [reblock], "only the newest choice waits")
+        await restarted.sendPendingBlocks(windowID: env.windowID)
+        let last = await env.mutationLog().last
+        try require(try await restarted.pendingBlocks(windowID: env.windowID).isEmpty && last?.path.hasSuffix("/blocks/" + target) == true
+                    && (try JSONSerialization.jsonObject(with: last?.body ?? Data()) as? [String: Any])?["active"] as? Bool == true,
+                    "the newest choice (block) is the one the relay gets last")
+    }
+    /// 11/20: consent is the person's tap. An automatic submit never changes
+    /// it; the person's 「もう一度送る」 renews it, so a report refused for an
+    /// old consent (offline, daily cap, intake closed) still reaches the team.
+    private static func consentRenewal(_ root: URL, _ jpeg: Data) async throws {
+        let env = try ReportingEnvironment(root: root, name: "consent-renewal", jpeg: jpeg), service = try env.service()
+        let id = try await service.prepareReport(windowID: env.windowID, photoID: env.photoID, senderName: "合成の送り主",
+            reason: .privacy, consent: .init(acceptedAt: Date().addingTimeInterval(-290)))
+        let original = try env.draft(id)
+        await env.echo.setAvailable(false)
+        try await fails(.disabled, "intake closed before the reservation") { _ = try await service.submitReport(draftID: id) }
+        try require(try env.draft(id).reserveBody == original.reserveBody, "an automatic submit never changes the consent")
+        try require(await env.mutationLog().isEmpty, "nothing was reserved")
+        await env.echo.setAvailable(true)
+        let tap = Date()
+        let result = try await service.resumeReport(draftID: id, consent: .init(acceptedAt: tap))
+        try require(result.progress == .received, "the tap's consent lets the report reach the team")
+        struct Body: Decodable {
+            struct Consent: Decodable { let version: Int; let acceptedAt: Int }
+            let operationID: String; let momentID: String; let reasonCode: String; let reporterConsent: Consent
+        }
+        let before = try GroupWire.decode(Body.self, original.reserveBody), after = try GroupWire.decode(Body.self, env.draft(id).reserveBody)
+        try require(after.reporterConsent.acceptedAt == Int(tap.timeIntervalSince1970) && after.reporterConsent.version == 1,
+                    "the reservation carries the tap's time")
+        try require(after.operationID != before.operationID && after.momentID == before.momentID && after.reasonCode == before.reasonCode,
+                    "a new reserve operation for the same photo and reason")
+        let reserves = await env.mutationLog().filter { $0.path.hasSuffix("/reserve") }
+        try require(reserves.count == 1 && reserves[0].body == (try env.draft(id).reserveBody), "one reservation, with the renewed body")
+        try await fails(.consentRequired, "a tap older than the relay's 5 minutes is not consent") {
+            _ = try await service.resumeReport(draftID: id, consent: .init(acceptedAt: Date().addingTimeInterval(-400)))
+        }
     }
     private static func ownerOff(_ root: URL, _ jpeg: Data) async throws {
         let env = try ReportingEnvironment(root: root, name: "owner-off", jpeg: jpeg)
@@ -653,7 +698,11 @@ private struct VerifyGroupReporting {
         try require(await off.reports(windowID: env.windowID).contains { $0.id == id }, "pending records still cover reported photos")
         try require(try GroupWire.encode(env.draft(id)) == before, "pending ciphertext and intent unchanged")
         try require(await env.echo.log().count == requests && env.evidence.reads() == photoReads,
-                    "owner OFF makes zero HTTP requests and reads no photo")
+                    "owner OFF makes zero report HTTP requests and reads no photo")
+        // 11/20: the owner's report switch does not stop blocking or unblocking.
+        try await off.setBlock(windowID: env.windowID, participantID: GroupWire.base64(Data(repeating: 11, count: 16)),
+                               active: false, operationID: UUID())
+        try require(await env.mutationLog().last?.path.contains("/blocks/") == true, "owner OFF still sends an unblock")
     }
     private static func disabled(_ root: URL, _ jpeg: Data) async throws {
         let env = try ReportingEnvironment(root: root, name: "off", jpeg: jpeg), service = try env.service()
@@ -662,11 +711,15 @@ private struct VerifyGroupReporting {
         await service.refreshAvailability()
         try require(!service.isAvailable, "server OFF remains false")
         try await fails(.disabled, "OFF cannot prepare") { _ = try await env.prepare(service) }
-        try await fails(.disabled, "OFF cannot block") { try await service.setBlock(windowID: env.windowID,
-            participantID: GroupWire.base64(Data(repeating: 11, count: 16)), active: true, operationID: UUID()) }
-        let drafts = try env.all(), mutations = await env.mutationLog()
-        try require(env.evidence.reads() == 0 && drafts.isEmpty && mutations.isEmpty,
-            "OFF reads no photo, saves no draft, sends no mutation")
+        let drafts = try env.all(), before = await env.mutationLog()
+        try require(env.evidence.reads() == 0 && drafts.isEmpty && before.isEmpty,
+            "OFF reads no photo, saves no draft, sends no report mutation")
+        // 11/20: a block is not behind the report intake, on the relay or here.
+        let target = GroupWire.base64(Data(repeating: 11, count: 16))
+        try await service.setBlock(windowID: env.windowID, participantID: target, active: true, operationID: UUID())
+        let after = await env.mutationLog()
+        try require(after.count == 1 && after[0].path.hasSuffix("/blocks/" + target), "report intake OFF still sends the block")
+        try require(try await service.pendingBlocks(windowID: env.windowID).isEmpty, "and it is not left waiting")
         try require(!GroupReportingProvider.make().isAvailable, "macOS fallback stays unavailable with internal fixture OFF")
     }
 }

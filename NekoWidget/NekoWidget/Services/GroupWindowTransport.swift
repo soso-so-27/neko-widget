@@ -1,7 +1,58 @@
 import CryptoKit
 import Foundation
 
-struct GroupHTTPReply: Sendable { let status: Int; let data: Data }
+struct GroupHTTPReply: Sendable {
+    let status: Int; let data: Data
+    /// 11/20: the reply's HTTP `Date`, only to notice a wrong iPhone clock.
+    var serverDate: Date? = nil
+}
+
+/// 11/20: the relay refuses a request whose signed time is more than 300 s
+/// from its own (group-auth.ts). It says so (`stale_request`, reason
+/// `clock_skew`) for a correctly signed request of an active device; an
+/// older relay does not, and then a refused reply's HTTP `Date` that far off
+/// is the sign. Either way the person is told to fix the iPhone's clock
+/// rather than to reopen the window. The signing time is NEVER moved to the
+/// relay's clock: neither the reply's `Date` nor its `serverNow` is signed.
+enum GroupClockSkew {
+    static let limit: TimeInterval = 300
+    static let message = "iPhoneの「日付と時刻」を自動設定にしてから、もう一度お試しください。"
+    private final class Noticed: @unchecked Sendable {
+        let lock = NSLock()
+        var at: Date?
+    }
+    private static let noticed = Noticed()
+
+    /// Within the last 10 minutes, a refusal came with a clock this far off.
+    static var isLikely: Bool {
+        noticed.lock.lock(); defer { noticed.lock.unlock() }
+        return noticed.at.map { Date().timeIntervalSince($0) < 600 } ?? false
+    }
+
+    /// The relay's own `clock_skew` answer.
+    static func noteRelayReported(now: Date = Date()) {
+        noticed.lock.lock(); defer { noticed.lock.unlock() }
+        noticed.at = now
+    }
+
+    static func note(_ reply: GroupHTTPReply, now: Date = Date()) {
+        guard let serverDate = reply.serverDate else { return }
+        let skewed = abs(serverDate.timeIntervalSince(now)) > limit
+        noticed.lock.lock(); defer { noticed.lock.unlock() }
+        if skewed, reply.status == 401 { noticed.at = now }
+        else if !skewed { noticed.at = nil }
+    }
+
+    /// RFC 9110 IMF-fixdate, as Cloudflare sends it.
+    static func date(_ value: String?) -> Date? {
+        guard let value else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        return formatter.date(from: value.trimmingCharacters(in: .whitespaces))
+    }
+}
 protocol GroupHTTPTransport: Sendable {
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply
 }
@@ -254,7 +305,10 @@ final class GroupURLSessionTransport: GroupHTTPTransport, Sendable {
             }
             replied(http.statusCode, http.value(forHTTPHeaderField: "Retry-After"))
             try ClientUpgradeRequirement.shared.checkResponse(status: http.statusCode, data: data)
-            return .init(status: http.statusCode, data: data)
+            let reply = GroupHTTPReply(status: http.statusCode, data: data,
+                                       serverDate: GroupClockSkew.date(http.value(forHTTPHeaderField: "Date")))
+            GroupClockSkew.note(reply)
+            return reply
         } catch let error as URLError {
             // A request the app itself cancelled (a screen closed) is not an outage.
             if error.code == .cancelled { throw CancellationError() }
@@ -297,12 +351,15 @@ enum GroupHTTPRequest {
         return request
     }
     private struct ErrorBody: Decodable {
-        struct Detail: Decodable { let code: String; let currentRevision: Int? }
+        struct Detail: Decodable { let code: String; let currentRevision: Int?; var reason: String? = nil }
         let error: Detail
     }
     static func check(_ reply: GroupHTTPReply) throws -> Data {
         guard (200...299).contains(reply.status) else {
             guard let error = try? GroupWire.decode(ErrorBody.self, reply.data).error else { throw GroupClientError.unavailable }
+            // 11/20: the relay names a correctly signed request from this
+            // device that arrived outside its 5 minutes (group-auth.ts).
+            if error.code == "stale_request", error.reason == "clock_skew" { GroupClockSkew.noteRelayReported() }
             switch error.code {
             case "invalid_authentication", "invalid_proof", "replay", "stale_request", "invalid_billing_authentication", "stale_billing_request", "replayed_billing_request": throw GroupClientError.authenticationRequired
             case "not_found", "not_member", "epoch_not_authorized": throw GroupClientError.notMember
@@ -330,6 +387,9 @@ enum GroupHTTPRequest {
             // SharingService group-api.ts: group_photo_daily_limit and
             // group_heart_daily_limit both answer 409 daily_limit.
             case "daily_limit": throw GroupClientError.dailyLimit
+            // 11/20: a reservation that ran out, and a photo no longer held for this iPhone.
+            case "reservation_expired": throw GroupClientError.reservationExpired
+            case "delivery_expired": throw GroupClientError.deliveryExpired
             default: throw GroupClientError.unavailable
             }
         }

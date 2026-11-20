@@ -34,11 +34,19 @@ protocol GroupWindowMediaClient: GroupWindowClient {
     func pendingDelivery(windowID: String) async -> GroupPendingDelivery?
     /// Removes that sealed copy once the person stops sending it.
     func discardPendingDelivery(operationID: UUID) async
+    /// 11/20: windows the last list read could not verify. They are left out
+    /// of the list (never shown unverified), and their kept copies stay.
+    func unreadableWindowIDs() async -> Set<String>
+    /// 11/20: tells the relay again about photos kept here whose receipt did
+    /// not reach it, among the photos it still lists for this iPhone.
+    func retryAcknowledgements(windowID: String, listed: Set<String>) async
 }
 
 extension GroupWindowMediaClient {
     func pendingDelivery(windowID: String) async -> GroupPendingDelivery? { nil }
     func discardPendingDelivery(operationID: UUID) async {}
+    func unreadableWindowIDs() async -> Set<String> { [] }
+    func retryAcknowledgements(windowID: String, listed: Set<String>) async {}
 }
 
 extension ProductionGroupWindowClient: GroupWindowMediaClient {
@@ -129,6 +137,15 @@ final class GroupWindowScreenModel: ObservableObject {
     @Published var actionMessage: String?
     /// The photo being copied by 「お気に入りに追加」, so its button says so (11/6).
     @Published private(set) var addingFavoriteID: String?
+    /// 11/20: the photos the relay lists for this iPhone now. Only these take
+    /// a heart (the relay refuses older ones); nil until the first read.
+    @Published private(set) var heartablePhotoIDs: Set<String>?
+    /// 11/20: people hidden or blocked here. Their hearts are not shown or counted.
+    @Published private(set) var hiddenPeople: Set<String> = []
+    /// 11/20: more photos wait on the relay than this pass could fetch within
+    /// the iPhone's call limit; the rest follow by themselves.
+    @Published private(set) var morePhotosComing = false
+    private var continueReceiving: Task<Void, Never>?
 
     let windowID: String
     let client: any GroupWindowMediaClient
@@ -175,7 +192,7 @@ final class GroupWindowScreenModel: ObservableObject {
     var isPaused: Bool { window.map(GroupWindowPresentation.isPaused) ?? false }
 
     var canSend: Bool {
-        guard !isFormer, let window, window.state == .active, !isPaused else { return false }
+        guard !isFormer, let window, window.state == .active, !isPaused, !window.hasUnknownDelivery else { return false }
         return !isSending && !isPreparing
     }
 
@@ -200,9 +217,13 @@ final class GroupWindowScreenModel: ObservableObject {
 
     /// Who this iPhone is in the window: from the relay, or as last remembered.
     private var rememberedMe: String?
-    /// Hearts tapped here and not yet answered by the relay: photo → (on, tap number).
-    private var pendingHearts: [String: (active: Bool, tap: Int)] = [:]
-    private var heartTaps = 0
+    /// Hearts tapped here and not yet confirmed: photo → the state the
+    /// person wants now (11/20: only this last state is sent).
+    private var pendingHearts: [String: Bool] = [:]
+    /// The relay's last answer for a photo with a tap on its way.
+    private var confirmedHearts: [String: [GroupHeart]] = [:]
+    /// One heart request at a time per photo.
+    private var sendingHearts = Set<String>()
     private var me: String? { window?.myParticipantID ?? rememberedMe }
 
     func myHeartIsActive(_ photoID: String) -> Bool {
@@ -210,11 +231,29 @@ final class GroupWindowScreenModel: ObservableObject {
         return hearts[photoID]?.contains { $0.participantID == me && $0.active } ?? false
     }
 
+    /// The hearts shown and counted: not from someone hidden or blocked here (11/20).
+    func shownHearts(_ photoID: String) -> [GroupHeart] {
+        (hearts[photoID] ?? []).filter { $0.active && !hiddenPeople.contains($0.participantID) }
+    }
+
+    /// Whether the relay still takes a heart for this photo (11/20): it
+    /// does for the photos it lists for this iPhone, 7 days after arrival.
+    func acceptsHearts(_ photoID: String) -> Bool {
+        guard !isFormer, !isGone else { return false }
+        return heartablePhotoIDs?.contains(photoID) ?? true
+    }
+
+    private func loadHiddenPeople() async {
+        let hidden = Set((await store.knownWindows().first { $0.id == windowID }?.hiddenMembers ?? []).map(\.id))
+        if hiddenPeople != hidden { hiddenPeople = hidden }
+    }
+
     /// Photos and hearts already kept on this iPhone appear at once, before the relay answers.
     func showStored() async {
         if entries.isEmpty { entries = await store.entries(windowID: windowID) }
         if hearts.isEmpty { hearts = await store.hearts(windowID: windowID) }
         if rememberedMe == nil { rememberedMe = await store.myParticipantID(windowID: windowID) }
+        await loadHiddenPeople()
         // Read here before: its name, and an empty window shows as empty at once (11/7).
         if let known = await store.knownWindows().first(where: { $0.id == windowID }) {
             if knownName == nil { knownName = known.name }
@@ -233,6 +272,7 @@ final class GroupWindowScreenModel: ObservableObject {
         // report records load, so a reported photo is never drawn bare (11/7).
         guard showedStored else { return }
         entries = await store.entries(windowID: windowID)
+        await loadHiddenPeople()
     }
 
     /// Reads the window, keeps every new photo on this iPhone, then tells the
@@ -266,27 +306,49 @@ final class GroupWindowScreenModel: ObservableObject {
                                  memberNames: Dictionary(latest.members.map { ($0.id, $0.displayName) },
                                                          uniquingKeysWith: { first, _ in first }))
             let photos = try await client.photos(windowID: windowID)
-            hearts = Dictionary(photos.map { ($0.id, $0.hearts) }, uniquingKeysWith: { _, last in last })
+            // 11/20: the relay lists a photo only while it holds it for this
+            // iPhone (7 days after arrival). Hearts already known for older
+            // photos stay; only listed photos take the relay's newer answer.
+            let listed = Set(photos.map(\.id))
+            let kept = Set(await store.entries(windowID: windowID).map(\.id))
+            var merged = hearts.filter { listed.contains($0.key) || kept.contains($0.key) }
+            for photo in photos { merged[photo.id] = photo.hearts }
+            hearts = merged
+            heartablePhotoIDs = listed
             // The relay's list may predate a tap still on its way; keep the tap.
-            for (photoID, pending) in pendingHearts { applyMyHeart(pending.active, to: photoID) }
+            for (photoID, wanted) in pendingHearts { applyMyHeart(wanted, to: photoID) }
             await store.saveHearts(hearts, windowID: windowID)
+            await loadHiddenPeople()
             var waiting: GroupPhotoModeration.Verdict?
             await GroupSafety.shared.loadRecords(windowID: windowID)
+            // 11/20: a block or unblock not sent yet goes before anything else.
+            await GroupSafety.shared.sendPendingBlocks(windowID: windowID)
             var triedNew = false
             defer {
                 // The まど tab's badge and the list's new marks read again (11/7, W1).
                 if triedNew { NotificationCenter.default.post(name: .groupWindowNewPhotosDidChange, object: nil) }
             }
+            var stopped = false
             for photo in photos {
                 try Task.checkCancellation()
                 guard !(await store.contains(photoID: photo.id, windowID: windowID)) else { continue }
                 triedNew = true
-                if let deferred = await receive(photo, me: latest.myParticipantID) {
-                    waiting = deferred
+                switch await receive(photo, me: latest.myParticipantID) {
+                case .waiting(let deferred): waiting = deferred
+                case .mustWait: stopped = true
+                case .kept, .failed: break
                 }
                 // Each photo shows as soon as it is kept, not after all of them.
                 entries = await store.entries(windowID: windowID)
+                // 11/20: the call limit (or the connection) ran out: the rest
+                // come by themselves, and the window says more are coming.
+                if stopped { break }
             }
+            morePhotosComing = stopped
+            if stopped { receiveLater() }
+            // 11/20: receipts that did not reach the relay are sent again, so
+            // it does not keep a photo this iPhone already has for 30 days.
+            if !stopped { await client.retryAcknowledgements(windowID: windowID, listed: listed) }
             receiveNotice = waiting.map(GroupPhotoModeration.receiveMessage)
             message = nil
             isGone = false
@@ -306,9 +368,10 @@ final class GroupWindowScreenModel: ObservableObject {
                 UsageCounter.shared.count(.madoPhotoSent)  // Usage (11/7): confirmed after "確かめています"
             }
         } catch GroupClientError.notMember {
-            window = nil; failedDelivery = nil; message = nil; isGone = true
+            window = nil; failedDelivery = nil; message = nil; isGone = true; morePhotosComing = false
         } catch {
             message = GroupWindowPresentation.message(for: error)
+            morePhotosComing = false
         }
         knowsPhotos = true
         entries = await store.entries(windowID: windowID)
@@ -358,10 +421,39 @@ final class GroupWindowScreenModel: ObservableObject {
         }
     }
 
-    /// Returns the verdict when the photo waits for the safety check.
+    /// What happened to one photo of a sync.
+    private enum ReceiveOutcome {
+        case kept
+        /// Waits for the safety check (kept on the relay until then).
+        case waiting(GroupPhotoModeration.Verdict)
+        /// The iPhone's call limit or the connection ran out: stop this pass.
+        case mustWait
+        /// This photo alone could not be read; the next one is tried.
+        case failed
+    }
+
+    /// The automatic budget or the iPhone's own limit is spent now (1115s).
+    private static var callLimitReached: Bool {
+        let budget = SharingAutoCallBudget.shared
+        if budget.pausedUntil() != nil || budget.allCalls() >= SharingAutoCallBudget.devicePerMinute { return true }
+        return !SharingAutoCallBudget.isPersonAction && budget.automaticCalls() >= SharingAutoCallBudget.perMinute
+    }
+
+    /// 11/20: the rest of the photos, once the call limit allows (automatic).
+    private func receiveLater() {
+        guard continueReceiving == nil else { return }
+        let wait = max(15, (SharingAutoCallBudget.shared.pausedUntil()?.timeIntervalSinceNow ?? 0) + 1)
+        continueReceiving = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard !Task.isCancelled, let self else { return }
+            self.continueReceiving = nil
+            await SharingPersonAction.automatic { await self.sync(background: true) }
+        }
+    }
+
     @discardableResult
     private func receive(_ photo: GroupPhoto, me: String,
-                         outgoingOperationID: UUID? = nil) async -> GroupPhotoModeration.Verdict? {
+                         outgoingOperationID: UUID? = nil) async -> ReceiveOutcome {
         do {
             let incoming = try await client.fetchPhoto(photoID: photo.id, windowID: windowID)
             let verifiedMomentID = incoming.verified?.clientMomentID
@@ -381,7 +473,7 @@ final class GroupWindowScreenModel: ObservableObject {
                 verdict = await GroupPhotoModeration.check(incoming.jpeg, with: moderation)
             }
             // Keep it unacknowledged; it is tried again next time.
-            guard verdict != .retryLater else { return verdict }
+            guard verdict != .retryLater else { return .waiting(verdict) }
             let store = self.store
             let windowID = self.windowID
             let hidden = verdict == .hidden
@@ -408,10 +500,16 @@ final class GroupWindowScreenModel: ObservableObject {
                     verifiedMomentID: verifiedMomentID
                 )
             }
+            return .kept
+        } catch is CancellationError {
+            return .mustWait
+        } catch GroupClientError.offline {
+            return .mustWait
         } catch {
             // Leave it for the next sync; the relay keeps it until acknowledged.
+            // A call the limit refused is not this photo's fault (11/20).
+            return Self.callLimitReached ? .mustWait : .failed
         }
-        return nil
     }
 
     /// Reads and checks a picked photo, before the confirmation screen.
@@ -447,6 +545,8 @@ final class GroupWindowScreenModel: ObservableObject {
             // meanwhile leaves the earlier undelivered one offered (11/7).
             if failedDelivery?.photo.operationID == prepared.operationID { failedDelivery = nil }
             defer { isSending = false }
+            // 11/20: a block not sent yet reaches the relay before a new photo does.
+            await GroupSafety.shared.sendPendingBlocks(windowID: windowID)
             do {
                 let operationID = prepared.operationID
                 let sent = try await client.sendPhoto(normalizedJPEG: prepared.jpeg, caption: memo,
@@ -466,7 +566,10 @@ final class GroupWindowScreenModel: ObservableObject {
                     // The same operation resends safely, unless the window's key changed.
                     let keepsOperation: Bool
                     switch error as? GroupClientError {
-                    case .some(.staleEpoch), .some(.rotationPending), .some(.idempotencyConflict): keepsOperation = false
+                    case .some(.staleEpoch), .some(.rotationPending), .some(.idempotencyConflict),
+                         // 11/20: the relay refused the reservation for good (the
+                         // members changed, or it ran out), so nothing was delivered.
+                         .some(.staleRevision), .some(.reservationExpired): keepsOperation = false
                     default: keepsOperation = true
                     }
                     if !keepsOperation {
@@ -490,7 +593,7 @@ final class GroupWindowScreenModel: ObservableObject {
         switch error as? GroupClientError {
         case .some(.offline):
             return "インターネットにつながらず、届けられませんでした。つながったら「もう一度届ける」を押してください。"
-        case .some(.unavailable):
+        case .some(.unavailable), .some(.staleRevision), .some(.reservationExpired):
             return "うまく届けられませんでした。少し待ってから「もう一度届ける」を押してください。"
         default:
             return GroupWindowPresentation.message(for: error)
@@ -586,9 +689,23 @@ final class GroupWindowScreenModel: ObservableObject {
                 actionMessage = "消せませんでした。もう一度お試しください。"
                 return
             }
+            Self.withdrawSavedCopies([entry])
             entries = await store.entries(windowID: windowID)
             await updateHomeScreenPhoto()
         }
+    }
+
+    /// 11/20: a photo removed, reported or blocked here is no longer shown by
+    /// the app anywhere, its 「お気に入りに追加」 copy included: the like is
+    /// cleared and the copy leaves the app's own photos (albums, works,
+    /// widgets) as a hidden photo does. The Photos app's copy is not touched.
+    static func withdrawSavedCopies(_ entries: [GroupWindowLocalPhotoStore.Entry]) {
+        let identifiers = entries.filter { !$0.isOwn }.compactMap(\.favoriteLocalIdentifier)
+        guard !identifiers.isEmpty else { return }
+        for identifier in identifiers {
+            _ = try? SharedLikeStore.set(localIdentifier: identifier, isLiked: false, source: "received-memory")
+        }
+        NotificationCenter.default.post(name: .groupWindowSavedCopiesWithdrawn, object: identifiers)
     }
 
     /// Blocks this person here; they are not told. 11/8: 「表示しない」 was
@@ -597,7 +714,11 @@ final class GroupWindowScreenModel: ObservableObject {
     func blockSender(of entry: GroupWindowLocalPhotoStore.Entry) async {
         // 1115s: the person's own action, outside the automatic budget.
         await SharingPersonAction.run {
+            // Read before hiding: afterwards the entries list leaves them out.
+            let theirs = await store.entries(windowID: windowID).filter { $0.senderParticipantID == entry.senderParticipantID }
             await store.hide(memberID: entry.senderParticipantID, name: entry.senderDisplayName, windowID: windowID, blocked: true)
+            Self.withdrawSavedCopies(theirs)
+            await loadHiddenPeople()
             entries = await store.entries(windowID: windowID)
             await updateHomeScreenPhoto()
             // 11/8: where to undo it is said here only, once.
@@ -659,32 +780,47 @@ final class GroupWindowScreenModel: ObservableObject {
     func toggleHeart(_ photoID: String) async {
         // 1115s: the person's own action, outside the automatic budget.
         await SharingPersonAction.run {
+            guard acceptsHearts(photoID) else { return }
             let active = !myHeartIsActive(photoID)
             // Show the heart at once; the relay confirms (or corrects) it after.
-            let before = hearts[photoID]
-            heartTaps += 1
-            let tap = heartTaps
-            pendingHearts[photoID] = (active, tap)
+            if pendingHearts[photoID] == nil { confirmedHearts[photoID] = hearts[photoID] ?? [] }
+            pendingHearts[photoID] = active
             applyMyHeart(active, to: photoID)
-            do {
-                let updated = try await client.setHeart(
-                    photoID: photoID, windowID: windowID,
-                    active: active, operationID: UUID()
-                )
-                // A newer tap on the same photo wins; its own answer comes later.
-                guard pendingHearts[photoID]?.tap == tap else { return }
-                pendingHearts[photoID] = nil
-                hearts[photoID] = updated.hearts
-                if active { UsageCounter.shared.count(.madoHeart) }  // Usage (11/7)
-                await store.saveHearts(hearts, windowID: windowID)
-            } catch {
-                guard pendingHearts[photoID]?.tap == tap else { return }
-                pendingHearts[photoID] = nil
-                hearts[photoID] = before
-                message = error as? GroupClientError == .dailyLimit
-                    ? GroupWindowPresentation.dailyHeartLimitMessage
-                    : GroupWindowPresentation.message(for: error)
+            // 11/20: one request at a time for a photo. Taps meanwhile change
+            // only what is sent next, so the relay ends where the screen ends,
+            // and a quick off-and-on sends nothing at all.
+            guard sendingHearts.insert(photoID).inserted else { return }
+            defer { sendingHearts.remove(photoID) }
+            while let wanted = pendingHearts[photoID] {
+                let relayHas = (confirmedHearts[photoID] ?? []).contains { $0.participantID == me && $0.active }
+                if wanted == relayHas { pendingHearts[photoID] = nil; break }
+                do {
+                    let updated = try await client.setHeart(
+                        photoID: photoID, windowID: windowID,
+                        active: wanted, operationID: UUID()
+                    )
+                    confirmedHearts[photoID] = updated.hearts
+                    hearts[photoID] = updated.hearts
+                    if wanted { UsageCounter.shared.count(.madoHeart) }  // Usage (11/7)
+                    if let next = pendingHearts[photoID], next != wanted { applyMyHeart(next, to: photoID) }
+                    else { pendingHearts[photoID] = nil }
+                } catch {
+                    pendingHearts[photoID] = nil
+                    hearts[photoID] = confirmedHearts[photoID]
+                    if error as? GroupClientError == .deliveryExpired {
+                        // The relay no longer takes hearts for this photo: its ♥ is shown as unavailable.
+                        heartablePhotoIDs?.remove(photoID)
+                        if heartablePhotoIDs == nil { heartablePhotoIDs = [] }
+                    } else {
+                        message = error as? GroupClientError == .dailyLimit
+                            ? GroupWindowPresentation.dailyHeartLimitMessage
+                            : GroupWindowPresentation.message(for: error)
+                    }
+                    break
+                }
             }
+            confirmedHearts[photoID] = nil
+            await store.saveHearts(hearts, windowID: windowID)
         }
     }
 
@@ -903,7 +1039,7 @@ struct GroupWindowScreen: View {
                 // Photos already here stay as they are while new ones are checked
                 // quietly; new photos simply appear. Only a window never read on
                 // this iPhone shows a small spinner (11/7: a blank page for 3 s).
-                if model.entries.isEmpty && !model.knowsPhotos && !model.isFormer {
+                if model.entries.isEmpty && (!model.knowsPhotos || model.morePhotosComing) && !model.isFormer {
                     ProgressView()
                         .controlSize(.small)
                         .frame(maxWidth: .infinity)
@@ -927,6 +1063,15 @@ struct GroupWindowScreen: View {
                         }
                     }
                     .padding(.horizontal, 12)
+                    // 11/20: more photos are still on their way (the call limit).
+                    if model.morePhotosComing {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .accessibilityLabel("写真を読み込んでいます")
+                            .accessibilityIdentifier("group-window-more-coming")
+                    }
                 }
             }
             .padding(.vertical, 12)
@@ -1293,9 +1438,11 @@ private struct GroupPhotoTile: View {
     /// the photo's own page gives. The page's taps do not count here.
     @State private var heartsSentHere = 0
 
-    private var heartCount: Int { model.hearts[entry.id]?.filter(\.active).count ?? 0 }
+    private var heartCount: Int { model.shownHearts(entry.id).count }
     private var reported: Bool { safety.hasReported(entry.id, in: model.windowID) }
-    private var canHeart: Bool { !entry.isHidden && !reported && !entry.isOwn && !model.isFormer }
+    private var canHeart: Bool {
+        !entry.isHidden && !reported && !entry.isOwn && !model.isFormer && model.acceptsHearts(entry.id)
+    }
 
     /// Width over height for the tile: the photo's own shape, kept between
     /// 3:4 (tall) and 4:3 (wide). A tall cat photo is no longer cut to a
@@ -1652,9 +1799,12 @@ private struct GroupLibraryDeliveryStep: View {
                 }
                 .safeAreaInset(edge: .bottom) {
                     Button {
-                        // After a failure, the copy the model kept (a new seal
-                        // when the window's key changed), not the first one.
-                        Task { await model.deliver(model.failedDelivery?.photo ?? prepared, memo: memo) }
+                        // After a failure of THIS photo, the copy the model kept
+                        // (a new seal when the window's key changed). 11/20: an
+                        // earlier undelivered photo is never sent in its place;
+                        // it keeps its own 「もう一度届ける」.
+                        let retry = model.failedDelivery.flatMap { $0.photo.jpeg == prepared.jpeg ? $0.photo : nil }
+                        Task { await model.deliver(retry ?? prepared, memo: memo) }
                     } label: {
                         Group {
                             if model.isSending {
@@ -1806,7 +1956,7 @@ private struct GroupPhotoDetail: View {
     }
 
     private func reactors(_ entry: GroupWindowLocalPhotoStore.Entry) -> [String] {
-        (model.hearts[entry.id] ?? []).filter(\.active).map(\.displayName)
+        model.shownHearts(entry.id).map(\.displayName)
     }
 
     var body: some View {
@@ -1972,6 +2122,8 @@ private struct GroupPhotoDetail: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                // 11/20: shown, not offered, once the relay no longer takes hearts for it.
+                .disabled(!model.acceptsHearts(entry.id))
                 .sensoryFeedback(.impact(weight: .light), trigger: mine) { _, sent in sent }
                 .accessibilityLabel(mine ? "ハートを送りました" : "ハートを送る")
                 .accessibilityValue(heartCount > 0 ? "\(heartCount)" : "")
@@ -2193,10 +2345,13 @@ final class GroupWindowListModel: ObservableObject {
 #else
             windows = try await client.windows()
 #endif
-            message = nil
+            // 11/20: a window that could not be verified is left out, said with
+            // the list's usual sentence, and its home-screen copy is kept.
+            let unreadable = await client.unreadableWindowIDs()
+            message = unreadable.isEmpty ? nil : GroupWindowPresentation.message(for: GroupClientError.invalidResponse)
             hasLoaded = true
             GroupWindowListNavigation.shared.rememberListed(windows)
-            if GroupWidgetCache.keepOnly(windowIDs: Set(windows.map(\.id))) {
+            if GroupWidgetCache.keepOnly(windowIDs: Set(windows.map(\.id)).union(unreadable)) {
                 WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
             }
         } catch is CancellationError {
@@ -3313,8 +3468,13 @@ struct GroupReportSheet: View {
     /// same draft again instead of making a second report.
     private func send() async {
         let service = safety.service
-        if let draft = record {
-            record = await safety.run(windowID: windowID) { try await service.resumeReport(draftID: draft.id) } ?? draft
+        // 11/20: a draft the relay will never take (its reservation ran out,
+        // or it was refused) is made again below; any other goes on, with
+        // this tap as the person's consent.
+        if let draft = record, ![.expired, .unavailable, .authenticationRequired].contains(draft.progress) {
+            record = await safety.run(windowID: windowID) {
+                try await service.resumeReport(draftID: draft.id, consent: GroupReportConsent(acceptedAt: Date()))
+            } ?? draft
             return
         }
         guard let reason else { return }
@@ -3329,6 +3489,8 @@ struct GroupReportSheet: View {
                 return try await service.refreshReport(draftID: draftID)
             }
         }
+        // 11/20: covered here from now on, its 「お気に入りに追加」 copy included.
+        if safety.hasReported(entry.id, in: windowID) { GroupWindowScreenModel.withdrawSavedCopies([entry]) }
     }
 }
 
@@ -3368,7 +3530,9 @@ struct GroupReportsView: View {
                         Button {
                             running = record.id
                             Task {
-                                await safety.run(windowID: windowID) { try await safety.service.resumeReport(draftID: record.id) }
+                                await safety.run(windowID: windowID) {
+                                    try await safety.service.resumeReport(draftID: record.id, consent: GroupReportConsent(acceptedAt: Date()))
+                                }
                             }
                         } label: {
                             WorkingLabel(title: "もう一度送る", workingTitle: "送っています…", working: running == record.id)

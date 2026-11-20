@@ -421,6 +421,9 @@ enum GroupWindowSeen {
 extension Notification.Name {
     /// New photos were kept, or a window's photos were seen (11/7).
     static let groupWindowNewPhotosDidChange = Notification.Name("jp.nekowidget.group.new-photos-did-change")
+    /// 11/20: 「お気に入りに追加」 copies (Photos local identifiers, `[String]`)
+    /// of photos removed, reported or blocked in a まど: the app stops showing them.
+    static let groupWindowSavedCopiesWithdrawn = Notification.Name("jp.nekowidget.group.saved-copies-withdrawn")
 }
 
 /// Which invitation this iPhone made for a window, and until when. Never the

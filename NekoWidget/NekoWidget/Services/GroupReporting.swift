@@ -84,7 +84,7 @@ enum GroupSafetyError: Error, Equatable, Sendable {
         case .rateLimited: "少し待ってから、もう一度お試しください。"
         case .disabled: "いまは通報できません。"
         case .unknownOutcome, .offline: "送れたかどうか分かりませんでした。「もう一度送る」を押してください。"
-        case .authenticationRequired: "まどを開き直してから、もう一度お試しください。"
+        case .authenticationRequired: GroupClockSkew.isLikely ? GroupClockSkew.message : "まどを開き直してから、もう一度お試しください。"
         case .invalidResponse: "いまは使えません。少し待ってから、もう一度お試しください。"
         case .blockSelf: "自分はブロックできません。"
         case .storageUnavailable: "通報を保存できませんでした。iPhoneの空き容量を確かめて、もう一度お試しください。"
@@ -111,6 +111,9 @@ protocol GroupReportingService: AnyObject {
     func submitReport(draftID: String) async throws -> GroupReportRecord
     /// The same draft, the same bytes, from where it stopped.
     func resumeReport(draftID: String) async throws -> GroupReportRecord
+    /// 11/20: the person's own 「もう一度送る」. The tap is consent again, so a
+    /// draft the relay never reserved is not refused for an old consent.
+    func resumeReport(draftID: String, consent: GroupReportConsent) async throws -> GroupReportRecord
     /// This person's reports in this window, kept even after leaving it.
     func reports(windowID: String) async -> [GroupReportRecord]
     /// Device-local suppression only: no receipt, reply or former identity is exposed.
@@ -118,7 +121,11 @@ protocol GroupReportingService: AnyObject {
     /// Asks the server for this exact report's state and answer.
     func refreshReport(draftID: String) async throws -> GroupReportRecord
     func pendingBlocks(windowID: String) async throws -> [GroupPendingBlock]
+    /// Keeps the choice on this iPhone first; one that cannot reach the
+    /// relay now waits for `sendPendingBlocks` instead of failing (11/20).
     func setBlock(windowID: String, participantID: String, active: Bool, operationID: UUID) async throws
+    /// Sends blocks and unblocks still waiting for this window (automatic).
+    func sendPendingBlocks(windowID: String) async
 }
 
 extension GroupReportingService {
@@ -127,6 +134,10 @@ extension GroupReportingService {
     }
     func refreshAvailability() async {}
     func pendingBlocks(windowID: String) async throws -> [GroupPendingBlock] { [] }
+    func resumeReport(draftID: String, consent: GroupReportConsent) async throws -> GroupReportRecord {
+        try await resumeReport(draftID: draftID)
+    }
+    func sendPendingBlocks(windowID: String) async {}
 }
 
 /// What the screens hold.
@@ -148,7 +159,17 @@ final class GroupSafety: ObservableObject {
 
     func load(windowID: String) async {
         await service.refreshAvailability()
+        await service.sendPendingBlocks(windowID: windowID)
         await loadRecords(windowID: windowID)
+    }
+
+    /// 11/20: a block or unblock that could not be sent goes now (opening
+    /// the window, each sync, before each photo is sent). Automatic calls.
+    func sendPendingBlocks(windowID: String) async {
+        await service.sendPendingBlocks(windowID: windowID)
+        if let next = try? await service.pendingBlocks(windowID: windowID), pendingBlocks[windowID] != next {
+            pendingBlocks[windowID] = next
+        }
     }
 
     /// This iPhone's own records only, without asking the server.

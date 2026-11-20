@@ -344,6 +344,45 @@ enum GroupWindowKept {
         try? store.write(data, account: account, createOnly: false)
     }
 
+    /// 11/20: a block or unblock the relay has not confirmed yet, so an app
+    /// deleted before it was sent still tells the relay after reinstalling
+    /// (ProductionGroupReporting.sendPendingBlocks). One per person: the
+    /// newest choice. Under `choices:`, so deleting the data removes it.
+    struct UnsentBlock: Codable, Equatable, Sendable {
+        let participantID: String
+        let active: Bool
+    }
+    private static func unsentBlocksAccount(_ windowID: String) -> String { choicesAccountPrefix + "blocks:" + windowID }
+
+    static func unsentBlocks(windowID: String, in store: (any GroupSecretStore)?) -> [UnsentBlock] {
+        guard let store, GroupCanonical.validID(windowID),
+              let data = try? store.read(unsentBlocksAccount(windowID)),
+              let blocks = try? JSONDecoder().decode([UnsentBlock].self, from: data) else { return [] }
+        return blocks.filter { GroupCanonical.validID($0.participantID) }
+    }
+
+    static func markUnsentBlock(_ block: UnsentBlock, windowID: String, in store: (any GroupSecretStore)?) {
+        guard GroupCanonical.validID(block.participantID) else { return }
+        var blocks = unsentBlocks(windowID: windowID, in: store)
+        blocks.removeAll { $0.participantID == block.participantID }
+        blocks.append(block)
+        writeUnsentBlocks(blocks, windowID: windowID, in: store)
+    }
+
+    /// Only the same choice is cleared: a newer one for that person stays.
+    static func clearUnsentBlock(_ block: UnsentBlock, windowID: String, in store: (any GroupSecretStore)?) {
+        let blocks = unsentBlocks(windowID: windowID, in: store)
+        guard blocks.contains(block) else { return }
+        writeUnsentBlocks(blocks.filter { $0 != block }, windowID: windowID, in: store)
+    }
+
+    private static func writeUnsentBlocks(_ blocks: [UnsentBlock], windowID: String, in store: (any GroupSecretStore)?) {
+        guard let store, GroupCanonical.validID(windowID) else { return }
+        if blocks.isEmpty { try? store.remove(unsentBlocksAccount(windowID)); return }
+        guard let data = try? JSONEncoder().encode(Array(blocks.suffix(limit))) else { return }
+        try? store.write(data, account: unsentBlocksAccount(windowID), createOnly: false)
+    }
+
     /// A window whose kept photos were deleted here (「このまどを一覧から消す」).
     static func forgetChoices(windowID: String, in store: (any GroupSecretStore)?) {
         guard let store, GroupCanonical.validID(windowID) else { return }

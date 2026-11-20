@@ -201,12 +201,12 @@ class WindowDailyLimitTests(unittest.TestCase):
     def test_server_codes_map_to_their_reason(self):
         self.assertIn("['group_photo_daily_limit',409,'daily_limit'],['group_heart_daily_limit',409,'daily_limit']", SERVER)
         self.assertIn('case "daily_limit": throw GroupClientError.dailyLimit', TRANSPORT)
-        self.assertIn("    case dailyLimit\n}", CONTRACT)
+        self.assertIn("    case dailyLimit\n", CONTRACT)
         self.assertIn('static let dailyPhotoLimitMessage = "きょうはここまでです。あした、また届けられます。"', WINDOW_SETUP)
         self.assertIn('static let dailyHeartLimitMessage = "きょうのハートはここまでです。"', WINDOW_SETUP)
         self.assertIn("case .dailyLimit:\n            return dailyPhotoLimitMessage", WINDOW_SETUP)
         heart = section(WINDOW, "func toggleHeart(_ photoID: String) async {", "private func applyMyHeart(")
-        self.assertIn("error as? GroupClientError == .dailyLimit\n                    ? GroupWindowPresentation.dailyHeartLimitMessage", heart)
+        self.assertIn("error as? GroupClientError == .dailyLimit\n                            ? GroupWindowPresentation.dailyHeartLimitMessage", heart)
         self.assertIn('case GroupClientError.dailyLimit:', SHARE)
 
 

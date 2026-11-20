@@ -58,6 +58,9 @@ enum GroupWindowPresentation {
         case .invitationPaused:
             return invitationPausedMessage
         case .authenticationRequired:
+            // 11/20: the relay refuses a request signed more than 5 minutes
+            // off its clock; reopening cannot help then.
+            if GroupClockSkew.isLikely { return GroupClockSkew.message }
             return "まどを開き直してから、もう一度お試しください。"
         case .notMember:
             return "このまどのメンバーではありません。"
@@ -91,6 +94,10 @@ enum GroupWindowPresentation {
             return "うまくいきませんでした。画面を開き直して、もう一度お試しください。"
         case .dailyLimit:
             return dailyPhotoLimitMessage
+        case .reservationExpired:
+            return "うまく届けられませんでした。少し待ってから「もう一度届ける」を押してください。"
+        case .deliveryExpired:
+            return "まどを読み込めませんでした。もう一度お試しください。"
         }
     }
 
@@ -1227,7 +1234,10 @@ final class GroupJoinModel: ObservableObject {
         displayName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    var canApply: Bool { isAvailable && !trimmedName.isEmpty && !isWorking }
+    /// 11/20: the same 80-byte limit as making or renaming a window, said
+    /// before 「参加する」 rather than refused by the relay afterwards.
+    var nameTooLong: Bool { !GroupDisplayName.fits(trimmedName) }
+    var canApply: Bool { isAvailable && !trimmedName.isEmpty && !nameTooLong && !isWorking }
 
     var isPending: Bool {
         if case .pending = phase { return true }
@@ -1455,7 +1465,8 @@ struct GroupJoinView: View {
             Text("あなたの名前")
         } footer: {
             VStack(alignment: .leading, spacing: 8) {
-                Text("まどを作った人に、この名前が届きます。")
+                Text(model.nameTooLong ? GroupDisplayName.tooLongMessage : "まどを作った人に、この名前が届きます。")
+                    .foregroundStyle(model.nameTooLong ? .red : .secondary)
                 GroupWindowStandardsAgreement(action: "参加する")
             }
         }

@@ -25,6 +25,10 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     // Only fully verified, in-process snapshots. The relay still authorizes
     // every heart against its current membership and epoch.
     private var verifiedWindows: [String: GroupWindow] = [:]
+    /// When each window above was verified (11/20: a sync reuses it per photo).
+    private var verifiedWindowAt: [String: Date] = [:]
+    /// 11/20: windows the last list read could not verify (left out of it).
+    private var unreadableWindows = Set<String>()
     private var closedWindows = Set<String>()
     private var managementInFlight = Set<UUID>()
     private struct VerifiedListEntry {
@@ -467,19 +471,32 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             verifiedWindows = verifiedWindows.filter { ids.contains($0.key) }
             let identity = try await registeredIdentity()
             var result: [GroupWindow] = []
+            var unreadable = Set<String>()
             for item in items {
                 if closedWindows.contains(item.windowID) { continue }
-                if let cached = try cachedListWindow(item, identity: identity) {
-                    result.append(cached)
-
-                } else {
-                    let fresh = try await window(id: item.windowID)
-                    guard fresh.revision >= (item.revision ?? 0), fresh.keyEpoch >= (item.keyEpoch ?? 0) else {
-                        throw GroupClientError.invalidResponse
+                // 11/20: one window that cannot be verified (or a value only a
+                // newer relay sends) no longer hides the others. That window is
+                // left out, never shown unverified; a lost connection still
+                // fails the whole read.
+                do {
+                    if let cached = try cachedListWindow(item, identity: identity) {
+                        result.append(cached)
+                    } else {
+                        let fresh = try await window(id: item.windowID)
+                        guard fresh.revision >= (item.revision ?? 0), fresh.keyEpoch >= (item.keyEpoch ?? 0) else {
+                            throw GroupClientError.invalidResponse
+                        }
+                        result.append(fresh)
                     }
-                    result.append(fresh)
+                } catch let error where Self.concernsOneWindow(error) {
+                    verifiedWindows.removeValue(forKey: item.windowID)
+                    verifiedListEntries.removeValue(forKey: item.windowID)
+                    // A window left on this iPhone is simply not listed again.
+                    let left = (try? load(GroupLocalWindow.self, "window:" + item.windowID))?.left == true
+                    if !left { unreadable.insert(item.windowID) }
                 }
             }
+            unreadableWindows = unreadable
             // Fetch every immutable-ID page before changing display order.
             // Arrival dates come only from photos already received on this phone.
             var received: [String: Date] = [:]
@@ -503,6 +520,34 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             verifiedListEntries.removeAll()
             recentWindows = nil
             throw error
+        }
+    }
+
+    /// 11/20: a failure of one window's own records (its roster, pin, names or
+    /// fields), not of the connection or this iPhone's identity.
+    static func concernsOneWindow(_ error: Error) -> Bool {
+        if error is GroupProtocolError || error is DecodingError || error is CryptoKitError { return true }
+        switch error as? GroupClientError {
+        case .some(.invalidResponse), .some(.notMember): return true
+        default: return false
+        }
+    }
+    func unreadableWindowIDs() -> Set<String> { unreadableWindows }
+
+    /// The relay's delivery fields, bound to the verified roster's owner.
+    /// 11/20: a value only a newer relay sends is kept as `unknown` (sending
+    /// waits until the app is updated), never trusted, never failing the list.
+    static func deliveryPolicy(status: GroupDeliveryStatus?, reason: GroupDeliveryReason?, owner: String?,
+                               isOwner: (String) -> Bool) throws -> (GroupDeliveryStatus?, GroupDeliveryReason?, String?) {
+        switch (status, reason, owner) {
+        case (nil, nil, nil): return (nil, nil, nil)
+        case (.active?, .ownerPlus?, let owner?), (.paused?, .ownerPlusRequired?, let owner?):
+            guard isOwner(owner) else { throw GroupClientError.invalidResponse }
+            return (status, reason, owner)
+        case (_?, _?, let owner?) where status == .unknown || reason == .unknown:
+            guard isOwner(owner) else { throw GroupClientError.invalidResponse }
+            return (.unknown, .unknown, owner)
+        default: throw GroupClientError.invalidResponse
         }
     }
 
@@ -567,17 +612,13 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         var current = cached
         // Payment can change independently of the roster. Only the fresh list
         // supplies policy, and its owner must belong to the verified snapshot.
-        switch (item.deliveryStatus, item.deliveryReason, item.ownerParticipantID) {
-        case (nil, nil, nil): break
-        case (.active?, .ownerPlus?, let owner?), (.paused?, .ownerPlusRequired?, let owner?):
-            guard cached.members.contains(where: { $0.id == owner && $0.role == .owner && $0.state == .active }) else {
-                throw GroupClientError.invalidResponse
+        let policy = try Self.deliveryPolicy(status: item.deliveryStatus, reason: item.deliveryReason,
+            owner: item.ownerParticipantID) { owner in
+                cached.members.contains(where: { $0.id == owner && $0.role == .owner && $0.state == .active })
             }
-        default: throw GroupClientError.invalidResponse
-        }
-        current.deliveryStatus = item.deliveryStatus
-        current.deliveryReason = item.deliveryReason
-        current.ownerParticipantID = item.ownerParticipantID
+        current.deliveryStatus = policy.0
+        current.deliveryReason = policy.1
+        current.ownerParticipantID = policy.2
 #if DEBUG || INTERNAL_PRESENTATION
         outcome = "採用"
 #endif
@@ -619,12 +660,10 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         // Billing status is delivered by the authenticated server, not inferred
         // from room age or the membership state. Bind its displayed owner to the
         // verified roster; legacy responses without all three fields stay unknown.
-        switch (reply.window.deliveryStatus, reply.window.deliveryReason, reply.window.ownerParticipantID) {
-        case (nil, nil, nil): break
-        case (.active?, .ownerPlus?, let owner?), (.paused?, .ownerPlusRequired?, let owner?):
-            guard head.roster.members.contains(where: { $0.participantID == owner && $0.role == .owner }) else { throw GroupClientError.invalidResponse }
-        default: throw GroupClientError.invalidResponse
-        }
+        let policy = try Self.deliveryPolicy(status: reply.window.deliveryStatus, reason: reply.window.deliveryReason,
+            owner: reply.window.ownerParticipantID) { owner in
+                head.roster.members.contains(where: { $0.participantID == owner && $0.role == .owner })
+            }
         var record = try local(windowID)
         let key: SymmetricKey
         if let saved = record.keys[String(head.roster.keyEpoch)] {
@@ -655,9 +694,10 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         let result = GroupWindow(id: windowID, name: name, revision: head.roster.revision, keyEpoch: head.roster.keyEpoch,
             myParticipantID: me.member.participantID, myRole: GroupRole(rawValue: me.member.role.rawValue)!,
             state: reply.window.rotationRequired ? .rotationRequired : .active, members: members,
-            deliveryStatus: reply.window.deliveryStatus, deliveryReason: reply.window.deliveryReason,
-            ownerParticipantID: reply.window.ownerParticipantID, nameRevision: reply.window.nameRevision)
+            deliveryStatus: policy.0, deliveryReason: policy.1,
+            ownerParticipantID: policy.2, nameRevision: reply.window.nameRevision)
         verifiedWindows[windowID] = result
+        verifiedWindowAt[windowID] = Date()
         verifiedListEntries[windowID] = .init(window: result, encryptedName: reply.window.encryptedName,
             rosterHash: head.hash, keyHash: GroupCanonical.hash(key.withUnsafeBytes { Data($0) }),
             personID: identity.personID, deviceID: myDeviceID)
@@ -1425,7 +1465,17 @@ private struct GroupPreparedPhoto: Codable {
     let packet: SignedGroupRoster
     let photo: GroupEncryptedPhoto
     var caption: GroupEncryptedCaption? = nil
+    /// 11/20: set when the photo was sealed again after the relay refused its
+    /// reservation for good. `operationID` stays the person's one send (the
+    /// file's name); the new reservation has its own operation.
+    var reserveOperationID: UUID? = nil
+    var reservation: UUID { reserveOperationID ?? operationID }
 }
+
+/// 11/20: the relay refused this photo's reservation for good (the members
+/// changed, it ran out, or it was cleaned up) before any commit: nothing was
+/// delivered, so it is sealed against the current members and reserved again.
+private struct GroupReservationEnded: Error {}
 
 enum GroupPhotoAcknowledgement: Sendable { case acknowledged, awaitingConnection, authenticationRequired, accessEnded }
 
@@ -1436,14 +1486,22 @@ extension ProductionGroupWindowClient {
     func sharePhotoOperation(jpeg: Data, caption: String?, windowID: String, proposed: UUID) throws -> UUID {
         let normalized = try GroupPhotoCaption.normalized(caption)
         guard FileManager.default.fileExists(atPath: outboxDirectory.path) else { return proposed }
-        let candidates = try FileManager.default.contentsOfDirectory(at: outboxDirectory, includingPropertiesForKeys: nil)
-        let hash = GroupCanonical.hash(jpeg)
+        let candidates = try FileManager.default.contentsOfDirectory(at: outboxDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey])
+        let hash = GroupCanonical.hash(jpeg), now = Date()
         for file in candidates where file.pathExtension == "json" {
+            // 11/20: the extension's own outbox is cleared too: copies older
+            // than the app's 30 days, and copies the relay already committed.
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? now
+            if now.timeIntervalSince(modified) > Self.outboxRetention { try? FileManager.default.removeItem(at: file); continue }
             guard let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent),
                   let data = try? Data(contentsOf: file),
-                  let prepared = try? GroupWire.decode(GroupPreparedPhoto.self, data),
-                  prepared.operationID == id, prepared.windowID == windowID, prepared.sourceHash == hash else { continue }
-            if try recoverPendingCaption(operationID: id) == normalized { return id }
+                  let prepared = try? GroupWire.decode(GroupPreparedPhoto.self, data), prepared.operationID == id else { continue }
+            if let committed = try? load(GroupPendingHTTP.self, "op:" + prepared.commitOperationID.uuidString.lowercased()),
+               committed.response != nil { try? FileManager.default.removeItem(at: file); continue }
+            guard prepared.windowID == windowID, prepared.sourceHash == hash else { continue }
+            // A copy whose reservation the relay refused is sealed again by sendPhoto.
+            if (try? recoverPendingCaption(operationID: id)) == normalized { return id }
         }
         return proposed
     }
@@ -1451,14 +1509,12 @@ extension ProductionGroupWindowClient {
     /// Only the extension's private encrypted temporary copy is removed. No
     /// acknowledgement/delete is sent; the host can still receive the photo.
     func finishSharePhoto(operationID: UUID, photoID: String) throws {
-        guard let reservation = try load(GroupPendingHTTP.self, "op:" + operationID.uuidString.lowercased()),
-              let response = reservation.response,
-              try GroupWire.decode(GroupAPIModel.PhotoReservation.self, response).momentID == photoID else {
-            throw GroupClientError.invalidResponse
-        }
         let file = outboxDirectory.appendingPathComponent(operationID.uuidString.lowercased() + ".json")
         guard let data = try? Data(contentsOf: file), let prepared = try? GroupWire.decode(GroupPreparedPhoto.self, data),
               prepared.operationID == operationID,
+              let reservation = try load(GroupPendingHTTP.self, "op:" + prepared.reservation.uuidString.lowercased()),
+              let response = reservation.response,
+              try GroupWire.decode(GroupAPIModel.PhotoReservation.self, response).momentID == photoID,
               let committed = try load(GroupPendingHTTP.self, "op:" + prepared.commitOperationID.uuidString.lowercased()),
               committed.response != nil else { throw GroupClientError.invalidResponse }
         try? FileManager.default.removeItem(at: file)
@@ -1594,8 +1650,22 @@ extension ProductionGroupWindowClient {
         return try GroupWire.encode(GroupAPIModel.HeartInput(operationID: operationID.uuidString.lowercased(), active: active,
             keyEpoch: current.keyEpoch, rosterRevision: current.revision, reactorSignature: signature))
     }
+    /// 11/20: the window this process verified moments ago (the same sync),
+    /// while its pin is unchanged; else read and verified again. Only names
+    /// come from it: each photo is still checked against its own pinned roster.
+    private func recentlyVerifiedWindow(_ windowID: String) async throws -> GroupWindow {
+        if let cached = verifiedWindows[windowID], let at = verifiedWindowAt[windowID],
+           Date().timeIntervalSince(at) < SharingForegroundGap.seconds,
+           let stored = try? local(windowID), cached.revision == stored.pinnedRevision,
+           cached.keyEpoch == (try? stored.verified())?.roster.keyEpoch {
+            return cached
+        }
+        return try await window(id: windowID)
+    }
     func downloadPhoto(photoID: String, windowID: String) async throws -> GroupVerifiedIncomingPhoto {
-        let current = try await window(id: windowID), identity = try await registeredIdentity()
+        // 11/20: not a fresh window read per photo (about 5 calls each, so a
+        // sync stopped at about 10 photos a minute).
+        let current = try await recentlyVerifiedWindow(windowID), identity = try await registeredIdentity()
         let row = try await photoRow(windowID: windowID, photoID: photoID)
         let (roster, key) = try await historicalMaterial(windowID: windowID, epoch: row.keyEpoch, revision: row.rosterRevision, hash: row.rosterHash)
         guard roster.device(id: row.senderDeviceID)?.member.participantID == row.senderParticipantID else { throw GroupProtocolError.invalidSignature }
@@ -1610,7 +1680,9 @@ extension ProductionGroupWindowClient {
                   descriptor.senderSignature.count == 64 else { throw GroupClientError.invalidResponse }
             let bytes = try await raw("/v3/group-windows/\(windowID)/moments/\(photoID)/caption-ciphertext", body: nil, identity: identity)
             guard bytes.count == descriptor.ciphertextSize, GroupCanonical.hash(bytes) == descriptor.ciphertextSHA256 else { throw GroupProtocolError.invalidPhoto }
-            photo.caption = try GroupCaptionCrypto.open(.init(ciphertext: bytes, signature: descriptor.senderSignature),
+            // 11/20: signed and decrypted as before; a ひとこと this iOS counts
+            // differently (new emoji) leaves the photo without it, not dropped.
+            photo.caption = try GroupCaptionCrypto.openForDisplay(.init(ciphertext: bytes, signature: descriptor.senderSignature),
                 photo: .init(clientMomentID: row.clientMomentID, senderDeviceID: row.senderDeviceID, ciphertext: cipher, signature: row.senderSignature),
                 roomKey: key, roster: roster)
         }
@@ -1635,13 +1707,51 @@ extension ProductionGroupWindowClient {
                 try? FileManager.default.removeItem(at: file)
             }
         }
+        // 11/20: kept until the relay has it, then sent again by later syncs.
+        let pending = PendingAcknowledgement(windowID: incoming.photo.windowID, photoID: incoming.photo.id,
+                                             ciphertextSHA256: incoming.ciphertextSHA256)
+        if let bytes = try? GroupWire.encode(pending) { try? operations.write(bytes, account: pending.account, createOnly: false) }
+        return await acknowledge(pending)
+    }
+
+    /// A receipt the relay has not had yet. Opaque IDs and a hash only.
+    private struct PendingAcknowledgement: Codable {
+        let windowID: String; let photoID: String; let ciphertextSHA256: Data
+        static func prefix(_ windowID: String) -> String { "op:ack:" + windowID + ":" }
+        var account: String { Self.prefix(windowID) + photoID }
+    }
+    private func acknowledge(_ pending: PendingAcknowledgement) async -> GroupPhotoAcknowledgement {
         do {
-            _ = try await signed("/v3/group-windows/\(incoming.photo.windowID)/moments/\(incoming.photo.id)/ack",
-                GroupAPIModel.AckPhoto(operationID: UUID().uuidString.lowercased(), ciphertextSHA256: incoming.ciphertextSHA256))
+            _ = try await signed("/v3/group-windows/\(pending.windowID)/moments/\(pending.photoID)/ack",
+                GroupAPIModel.AckPhoto(operationID: UUID().uuidString.lowercased(), ciphertextSHA256: pending.ciphertextSHA256))
+            try? operations.remove(pending.account)
             return .acknowledged
-        } catch GroupClientError.notMember { return .accessEnded }
-        catch GroupClientError.authenticationRequired { return .authenticationRequired }
+        } catch GroupClientError.notMember {
+            try? operations.remove(pending.account); return .accessEnded
+        } catch GroupClientError.deliveryExpired {
+            try? operations.remove(pending.account); return .accessEnded
+        } catch GroupClientError.authenticationRequired { return .authenticationRequired }
         catch { return .awaitingConnection }
+    }
+    /// 11/20: receipts that did not reach the relay, sent again for photos it
+    /// still lists for this iPhone; one it no longer lists needs none. At
+    /// most 10 a sync, and it stops at the first that cannot go now.
+    func retryAcknowledgements(windowID: String, listed: Set<String>) async {
+        guard GroupCanonical.validID(windowID),
+              let accounts = try? operations.accounts(prefix: PendingAcknowledgement.prefix(windowID)) else { return }
+        var sent = 0
+        for account in accounts {
+            guard let bytes = try? operations.read(account),
+                  let pending = try? GroupWire.decode(PendingAcknowledgement.self, bytes),
+                  pending.account == account else { try? operations.remove(account); continue }
+            guard listed.contains(pending.photoID) else { try? operations.remove(account); continue }
+            guard sent < 10 else { return }
+            sent += 1
+            switch await acknowledge(pending) {
+            case .acknowledged, .accessEnded: continue
+            case .awaitingConnection, .authenticationRequired: return
+            }
+        }
     }
 
     /// A sender's interrupted encrypted outbox remains recoverable locally,
@@ -1683,11 +1793,23 @@ extension ProductionGroupWindowClient {
     func sendPhoto(normalizedJPEG: Data, caption: String?, windowID: String, operationID: UUID) async throws -> GroupPhoto {
         let caption = try GroupPhotoCaption.normalized(caption)
         try GroupJPEG.validate(normalizedJPEG)
+        do {
+            return try await sendPhotoOnce(normalizedJPEG, caption: caption, windowID: windowID, operationID: operationID, reseal: false)
+        } catch is GroupReservationEnded {
+            // 11/20: once per send. Still refused after that: said as an
+            // ordinary failure, and 「もう一度届ける」 seals anew.
+            do {
+                return try await sendPhotoOnce(normalizedJPEG, caption: caption, windowID: windowID, operationID: operationID, reseal: true)
+            } catch is GroupReservationEnded { throw GroupClientError.reservationExpired }
+        }
+    }
+    private func sendPhotoOnce(_ normalizedJPEG: Data, caption: String?, windowID: String, operationID: UUID,
+                               reseal: Bool) async throws -> GroupPhoto {
         let current = try await window(id: windowID), identity = try identity(), record = try local(windowID)
         guard current.state == .active, let roster = try record.verified(), let rawKey = record.keys[String(current.keyEpoch)] else { throw GroupClientError.rotationPending }
         let file = outboxDirectory.appendingPathComponent(operationID.uuidString.lowercased() + ".json")
         let prepared: GroupPreparedPhoto
-        if FileManager.default.fileExists(atPath: file.path) {
+        if !reseal, FileManager.default.fileExists(atPath: file.path) {
             prepared = try GroupWire.decode(GroupPreparedPhoto.self, Data(contentsOf: file))
             guard prepared.operationID == operationID, prepared.windowID == windowID,
                   prepared.sourceHash == GroupCanonical.hash(normalizedJPEG) else { throw GroupClientError.idempotencyConflict }
@@ -1700,13 +1822,23 @@ extension ProductionGroupWindowClient {
             } else { previousCaption = nil }
             guard previousCaption == caption else { throw GroupClientError.idempotencyConflict }
         } else {
+            if reseal {
+                // Only over the copy just refused: the same photo the person chose.
+                guard let data = try? Data(contentsOf: file),
+                      let earlier = try? GroupWire.decode(GroupPreparedPhoto.self, data), earlier.operationID == operationID,
+                      earlier.windowID == windowID, earlier.sourceHash == GroupCanonical.hash(normalizedJPEG) else {
+                    throw GroupClientError.idempotencyConflict
+                }
+            }
             let photo = try GroupPhotoCrypto.seal(normalizedJPEG, clientMomentID: GroupWire.randomID(), senderDeviceID: identity.deviceID,
                 roomKey: SymmetricKey(data: rawKey), signingKey: identity.signingKey, roster: roster)
             prepared = .init(operationID: operationID, commitOperationID: UUID(), windowID: windowID, sourceHash: GroupCanonical.hash(normalizedJPEG),
                 keyEpoch: current.keyEpoch, rosterRevision: current.revision, rosterHash: roster.hash,
                 packet: record.packet!, photo: photo,
-                caption: try GroupCaptionCrypto.seal(caption, photo: photo, roomKey: SymmetricKey(data: rawKey), signingKey: identity.signingKey, roster: roster))
+                caption: try GroupCaptionCrypto.seal(caption, photo: photo, roomKey: SymmetricKey(data: rawKey), signingKey: identity.signingKey, roster: roster),
+                reserveOperationID: reseal ? UUID() : nil)
             try FileManager.default.createDirectory(at: outboxDirectory, withIntermediateDirectories: true)
+            // Atomic: the earlier sealed copy is replaced, never lost in between.
 #if os(iOS)
             try GroupWire.encode(prepared).write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
 #else
@@ -1714,25 +1846,43 @@ extension ProductionGroupWindowClient {
 #endif
         }
         let root = "/v3/group-windows/\(windowID)/moments", hash = GroupCanonical.hash(prepared.photo.ciphertext)
-        let reserve = GroupAPIModel.ReservePhoto(operationID: operationID.uuidString.lowercased(), clientMomentID: prepared.photo.clientMomentID,
+        let reserve = GroupAPIModel.ReservePhoto(operationID: prepared.reservation.uuidString.lowercased(), clientMomentID: prepared.photo.clientMomentID,
             keyEpoch: prepared.keyEpoch, rosterRevision: prepared.rosterRevision, ciphertextSize: prepared.photo.ciphertext.count,
             ciphertextSHA256: hash, senderSignature: prepared.photo.signature, kind: "photo",
             caption: prepared.caption.map { .init(ciphertextSize: $0.ciphertext.count, ciphertextSHA256: GroupCanonical.hash($0.ciphertext), senderSignature: $0.signature) })
-        let reservation = try GroupWire.decode(GroupAPIModel.PhotoReservation.self, await mutation(operationID: operationID,
-            intent: "reserve:\(windowID):\(prepared.photo.clientMomentID)", path: root + "/reserve", body: GroupWire.encode(reserve)))
+        let reserveIntent = "reserve:\(windowID):\(prepared.photo.clientMomentID)"
+        // 11/20: a reserve never answered within the relay's 48-hour receipt
+        // cannot be replayed; without its answer no commit was ever sent.
+        if let stored = try pending(prepared.reservation, intent: reserveIntent), stored.response == nil,
+           Date().timeIntervalSince(stored.createdAt) >= 172_800 { throw GroupReservationEnded() }
+        let reservation: GroupAPIModel.PhotoReservation
+        do {
+            reservation = try GroupWire.decode(GroupAPIModel.PhotoReservation.self, await mutation(operationID: prepared.reservation,
+                intent: reserveIntent, path: root + "/reserve", body: GroupWire.encode(reserve)))
+        } catch let error as GroupClientError where [.staleEpoch, .reservationExpired].contains(error) || Self.isStaleRevision(error) {
+            // Refused before anything was reserved.
+            throw GroupReservationEnded()
+        }
         guard GroupCanonical.validID(reservation.momentID) else { throw GroupClientError.invalidResponse }
         let commitIntent = "commit:\(windowID):\(reservation.momentID)"
         // Once commit was attempted, both uploads already succeeded. Retry only
         // that exact persisted commit; never PUT again over a committed photo.
-        if try pending(prepared.commitOperationID, intent: commitIntent) == nil {
-            var upload = try GroupHTTPRequest.make(endpoint: endpoint, path: root + "/\(reservation.momentID)/ciphertext", body: prepared.photo.ciphertext, identity: identity, method: "PUT")
-            upload.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-            _ = try GroupHTTPRequest.check(await transport.send(upload, maximumBytes: 4096))
-            if let encrypted = prepared.caption {
-                var request = try GroupHTTPRequest.make(endpoint: endpoint, path: root + "/\(reservation.momentID)/caption-ciphertext",
-                    body: encrypted.ciphertext, identity: identity, method: "PUT")
-                request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-                _ = try GroupHTTPRequest.check(await transport.send(request, maximumBytes: 4096))
+        let commitAttempted = try pending(prepared.commitOperationID, intent: commitIntent) != nil
+        if !commitAttempted {
+            do {
+                var upload = try GroupHTTPRequest.make(endpoint: endpoint, path: root + "/\(reservation.momentID)/ciphertext", body: prepared.photo.ciphertext, identity: identity, method: "PUT")
+                upload.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+                _ = try GroupHTTPRequest.check(await transport.send(upload, maximumBytes: 4096))
+                if let encrypted = prepared.caption {
+                    var request = try GroupHTTPRequest.make(endpoint: endpoint, path: root + "/\(reservation.momentID)/caption-ciphertext",
+                        body: encrypted.ciphertext, identity: identity, method: "PUT")
+                    request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+                    _ = try GroupHTTPRequest.check(await transport.send(request, maximumBytes: 4096))
+                }
+            } catch let error as GroupClientError {
+                // No commit was ever sent for this reservation, so nothing was delivered.
+                if try await reservationEnded(error, windowID: windowID) { throw GroupReservationEnded() }
+                throw error
             }
         }
         let commit = GroupAPIModel.CommitPhoto(operationID: prepared.commitOperationID.uuidString.lowercased(), expectedRevision: prepared.rosterRevision,
@@ -1751,6 +1901,15 @@ extension ProductionGroupWindowClient {
                 photoID: reservation.momentID, participantID: current.myParticipantID,
                 deviceID: prepared.photo.senderDeviceID, revision: prepared.rosterRevision, epoch: prepared.keyEpoch)
         } catch {
+            // 11/20: the relay answers these only for a photo it did not commit
+            // (a committed one is answered as committed), so it is sealed again.
+            if let refused = error as? GroupClientError,
+               [.staleEpoch, .reservationExpired].contains(refused) || Self.isStaleRevision(refused) {
+                throw GroupReservationEnded()
+            }
+            // Its reservation is gone, and no earlier commit could have made it.
+            if !commitAttempted, error as? GroupClientError == .notMember,
+               try await reservationEnded(.notMember, windowID: windowID) { throw GroupReservationEnded() }
             if error is URLError || error is CancellationError
                 || error as? GroupClientError == .offline || error as? GroupClientError == .unavailable
                 || error as? GroupClientError == .invalidResponse || error is DecodingError {
@@ -1765,6 +1924,23 @@ extension ProductionGroupWindowClient {
             senderDisplayName: current.members.first { $0.id == current.myParticipantID }?.displayName ?? "自分",
             createdAt: Date(timeIntervalSince1970: TimeInterval(receipt.createdAt)),
             fixtureAssetName: nil, hearts: [], caption: caption)
+    }
+}
+
+@available(iOS 17.0, macOS 14.0, *)
+extension ProductionGroupWindowClient {
+    static func isStaleRevision(_ error: GroupClientError) -> Bool {
+        if case .staleRevision = error { return true }
+        return false
+    }
+    /// 11/20: whether an upload/commit refusal means the reservation itself
+    /// is over. `not_found` is that only while this iPhone is still a member
+    /// (the relay cleaned the reservation up); otherwise it stays notMember.
+    fileprivate func reservationEnded(_ error: GroupClientError, windowID: String) async throws -> Bool {
+        if [.staleEpoch, .reservationExpired].contains(error) || Self.isStaleRevision(error) { return true }
+        guard error == .notMember else { return false }
+        do { _ = try await window(id: windowID); return true }
+        catch GroupClientError.notMember { return false }
     }
 }
 
@@ -1993,7 +2169,7 @@ extension ProductionGroupWindowClient {
             do { caption = try recoverPendingCaption(operationID: id) } catch { continue }
             if oldest.map({ modified < $0.0 }) ?? true {
                 let attempted = try? load(GroupPendingHTTP.self, "op:" + prepared.commitOperationID.uuidString.lowercased())
-                let reservation = try? pending(id, intent: "reserve:\(windowID):\(prepared.photo.clientMomentID)")
+                let reservation = try? pending(prepared.reservation, intent: "reserve:\(windowID):\(prepared.photo.clientMomentID)")
                 let photoID = reservation?.response.flatMap { try? GroupWire.decode(GroupAPIModel.PhotoReservation.self, $0).momentID }
                 oldest = (modified, GroupPendingDelivery(operationID: id, jpeg: jpeg, caption: caption,
                     confirmationPhotoID: attempted == nil ? nil : photoID))

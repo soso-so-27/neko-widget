@@ -59,6 +59,25 @@ private struct AvailabilityOnly: GroupHTTPTransport {
     }
 }
 
+/// 11/20: blocks, offline or answered as the relay does; the paths sent are kept.
+private final class BlockRelay: GroupHTTPTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var online: Bool
+    private var paths: [(path: String, active: Bool)] = []
+    init(online: Bool) { self.online = online }
+    var sent: [(path: String, active: Bool)] { lock.lock(); defer { lock.unlock() }; return paths }
+    func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
+        guard let path = request.url?.path, path.contains("/blocks/"), let body = request.httpBody,
+              let value = try JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let operation = value["operationId"] as? String, let active = value["active"] as? Bool else { throw GroupClientError.offline }
+        lock.lock(); let reachable = online; if reachable { paths.append((path, active)) }; lock.unlock()
+        guard reachable else { throw GroupClientError.offline }
+        let reply: [String: Any] = ["protocolVersion": 3, "operationId": operation,
+                                    "participantId": String(path.split(separator: "/").last!), "active": active]
+        return GroupHTTPReply(status: 200, data: try JSONSerialization.data(withJSONObject: reply))
+    }
+}
+
 private func syntheticID(_ byte: UInt8) -> String { GroupWire.base64(Data(repeating: byte, count: 16)) }
 
 private func entry(_ photo: String, from sender: String, minutesAgo: Double) -> GroupWindowLocalPhotoStore.Entry {
@@ -79,10 +98,53 @@ private struct VerifyGroupWindowChoicesSurviveReinstall {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         try await reinstall(root, jpeg)
+        try await unsentBlockAfterReinstall(root, jpeg)
         try await olderInstall(root, jpeg)
         try await keychainFailure(root, jpeg)
         try bound()
         print("group window choices survive reinstall: ok")
+    }
+
+    /// 11/20: a block made offline, then the app deleted before it was sent:
+    /// the Keychain copy re-sends it after reinstalling; once the relay has
+    /// it, nothing waits any more.
+    static func unsentBlockAfterReinstall(_ root: URL, _ jpeg: Data) async throws {
+        let app = root.appendingPathComponent("unsent-block", isDirectory: true)
+        let kept = MemoryKeychain(), secrets = MemoryKeychain()
+        let windowID = syntheticID(2), me = syntheticID(4), blocked = syntheticID(6)
+        var identity = GroupDeviceIdentity.firstDevice(); identity.registered = true
+        let anchor = GroupTrustAnchor(windowID: windowID, ownerPersonID: identity.personID, ownerIdentityPublicKey: identity.personPublicKey)
+        let roster = try GroupRoster(windowID: windowID, revision: 1, keyEpoch: 1, previousHash: Data(repeating: 0, count: 32),
+            ownerPersonID: identity.personID, members: [.init(participantID: me, personID: identity.personID,
+                identityPublicKey: identity.personPublicKey, role: .owner, devices: [identity.certificate(windowID: windowID)])])
+        let packet = try GroupRosterVerifier.sign(roster, deviceID: identity.deviceID, privateKey: identity.signingKey)
+        let verified = try GroupRosterVerifier.verify(packet, anchor: anchor)
+        try secrets.write(GroupWire.encode(identity), account: "identity", createOnly: true)
+        try secrets.write(GroupWire.encode(GroupLocalWindow(anchor: anchor, packet: packet, pinnedRevision: 1,
+            pinnedHash: verified.hash, keys: [:], rosterHashes: [:], left: false, minimumAdmissionRevision: 0)),
+            account: "window:" + windowID, createOnly: true)
+        func reporting(_ folder: String, _ relay: BlockRelay) throws -> ProductionGroupReporting {
+            let directory = app.appendingPathComponent(folder, isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            return try ProductionGroupReporting(endpoint: URL(string: ProductionGroupReporting.stagingEndpoint)!,
+                secrets: secrets, transport: relay, directory: directory,
+                publicKey: GroupReportCrypto.moderationPublicKey, kept: kept) { window, photo in
+                    GroupReportEvidence(windowID: window, photoID: photo, canonicalJPEG: jpeg)
+                }
+        }
+        let offline = BlockRelay(online: false)
+        try await reporting("before", offline).setBlock(windowID: windowID, participantID: blocked, active: true, operationID: UUID())
+        try require(GroupWindowKept.unsentBlocks(windowID: windowID, in: kept) == [.init(participantID: blocked, active: true)],
+                    "the Keychain copy keeps the block the relay has not had")
+        // Deleting the app: its folder (and the waiting operation) is gone; the Keychain stays.
+        let relay = BlockRelay(online: true)
+        let after = try reporting("after", relay)
+        await after.sendPendingBlocks(windowID: windowID)
+        try require(relay.sent.count == 1 && relay.sent[0].path.hasSuffix("/blocks/" + blocked) && relay.sent[0].active,
+                    "after reinstalling, the block reaches the relay")
+        try require(GroupWindowKept.unsentBlocks(windowID: windowID, in: kept).isEmpty, "and nothing waits any more")
+        await after.sendPendingBlocks(windowID: windowID)
+        try require(relay.sent.count == 1, "a confirmed block is not sent again")
     }
 
     static func reinstall(_ root: URL, _ jpeg: Data) async throws {

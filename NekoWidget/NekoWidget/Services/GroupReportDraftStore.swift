@@ -24,7 +24,7 @@ struct GroupReportDraft: Codable, Sendable {
     let deviceID: String
     let reporterParticipantID: String
     var record: GroupReportRecord
-    let reserveBody: Data
+    var reserveBody: Data
     let commitBody: Data
     let evidenceSHA256: String
     let evidenceSize: Int
