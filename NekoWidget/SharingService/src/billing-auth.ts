@@ -94,18 +94,26 @@ export async function consumeBillingNonce(
   env: Env,
   account: AuthenticatedBillingAccount,
 ): Promise<void> {
+  let claimed: D1Result<{ nonce: string }> | undefined;
   try {
-    await env.DB.batch([
+    [, claimed] = await env.DB.batch<{ nonce: string }>([
       env.DB.prepare(
         "DELETE FROM billing_request_nonces WHERE billing_key_id = ? AND expires_at <= ?",
       ).bind(account.billingKeyId, account.now),
       env.DB.prepare(
         `INSERT INTO billing_request_nonces(
            billing_key_id, nonce, created_at, expires_at
-         ) VALUES (?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?)
+         ON CONFLICT(billing_key_id, nonce) DO NOTHING RETURNING nonce`,
       ).bind(account.billingKeyId, account.nonce, account.now, account.now + 601),
     ]);
   } catch {
+    throw new ApiError(503, "billing_nonce_unavailable", "Billing is temporarily unavailable.");
+  }
+  if (claimed?.success !== true) {
+    throw new ApiError(503, "billing_nonce_unavailable", "Billing is temporarily unavailable.");
+  }
+  if (claimed.results.length === 0) {
     throw new ApiError(409, "replayed_billing_request", "This billing request was already used.");
   }
 }
