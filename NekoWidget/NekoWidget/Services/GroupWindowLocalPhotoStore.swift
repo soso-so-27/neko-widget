@@ -433,14 +433,20 @@ enum GroupInvitationMemory {
 /// only after creating or asking to join, never while typing. 11/20: also kept
 /// in this iPhone's Keychain, so deleting the app keeps it (GroupRememberedName).
 extension GroupDisplayName {
-    private static let rememberedKey = "group.myDisplayName.v1"
+    static let rememberedKey = "group.myDisplayName.v1"
+    /// After GroupWindowClientProvider.namespace.
+    static let keychainSuffix = ".display-name"
     private static var keychainChecked = false
     private static var memory: GroupRememberedName {
         let key = rememberedKey
         return GroupRememberedName(defaults: { UserDefaults.standard.string(forKey: key) },
             setDefaults: { UserDefaults.standard.set($0, forKey: key) },
-            keychain: { try? GroupKeychainStore(namespace: GroupWindowClientProvider.namespace + ".display-name") })
+            keychain: { try? GroupKeychainStore(namespace: GroupWindowClientProvider.namespace + keychainSuffix) })
     }
+
+    /// 11/20 (GroupIdentityDeletionLocalData): both copies were removed; the
+    /// next read compares them again instead of trusting this process's.
+    static func forgetChecked() { keychainChecked = false }
 
     static var remembered: String { memory.read(checked: &keychainChecked) }
 

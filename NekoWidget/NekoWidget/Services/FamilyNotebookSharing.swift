@@ -41,7 +41,7 @@ final class FamilyNotebookSharing: ObservableObject {
     private(set) var sendHealth = FamilyNotebookSharing.savedSendHealth()
     /// 「コード：RJ-3」: the last failure's short code and the number unsent.
     var sendCode: String { FamilyNotebookSendFailure.code(kind: sendHealth.last?.kind, unsent: unsentCount) }
-    private static let sendHealthKey = "familyNotebook.sendHealth.v1"
+    static let sendHealthKey = "familyNotebook.sendHealth.v1"
     let service: any FamilyNotebookSharingService
 
     init(service: any FamilyNotebookSharingService) {
@@ -157,6 +157,18 @@ final class FamilyNotebookSharing: ObservableObject {
     func restartSession() {
         (service as? ProductionFamilyNotebookSharingService)?.restartSession()
         state = .checking; pause = nil; requests = []; ownJoinResults = []; readFailed = false
+    }
+
+    /// 11/20 (GroupIdentityDeletionLocalData): restartSession, then waits (up
+    /// to 10 s) for a read or call already running on the identity before it,
+    /// so none writes into its stores after they are removed.
+    func stopForIdentityDeletion() async {
+        restartSession()
+        let production = service as? ProductionFamilyNotebookSharingService
+        for _ in 0..<100 {
+            guard refreshing || production?.callRunning == true else { return }
+            do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+        }
     }
 
     /// 11/15 (TestFlight 378): after Plus was bought or confirmed on this

@@ -152,6 +152,8 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     private var farewellPreviews: [UUID: PreparedFarewell] = [:]
     private var session: FamilyNotebookSession?
     private var working = false
+    /// 11/20: a call is running (FamilyNotebookSharing.stopForIdentityDeletion waits for it).
+    var callRunning: Bool { working }
     private(set) var needsAnotherPass = false
     /// 11/15 (1115q): what the last key pass saw; a changed value is progress.
     private(set) var lastKeyObservation = ""
@@ -701,13 +703,37 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
             let family = try await family(context), members = try await context.admission.members(family.familyID)
             guard let own = members.members.first(where: { $0.personID == context.identity.personID }) else { throw FamilySharingError.notAllowed }
             let store = try context.activate(family: family.familyID, admittedGeneration: own.admittedGeneration)
+            // 11/20: leaving ends the outbox for good (endSharing), so what was
+            // written just before goes first, once. Ending the family for all
+            // has no one left to read it, so nothing is sent then.
+            var generation = members.generation
+            if !dissolve, await sendBeforeLeaving(context, family: family.familyID, store: store) {
+                // The keys' step may have moved the family on; leave from where it is now.
+                generation = try await context.admission.members(family.familyID).generation
+            }
             let result = try await (dissolve
-                ? context.membership.dissolveFamily(familyID: family.familyID, expectedGeneration: members.generation, operationID: operation, notebook: store)
-                : context.membership.leaveFamily(familyID: family.familyID, expectedGeneration: members.generation, operationID: operation, notebook: store))
+                ? context.membership.dissolveFamily(familyID: family.familyID, expectedGeneration: generation, operationID: operation, notebook: store)
+                : context.membership.leaveFamily(familyID: family.familyID, expectedGeneration: generation, operationID: operation, notebook: store))
             // 11/19: out of the family, its pushes stop for this iPhone.
             if result == .confirmed { await removePush(context, family: family.familyID) }
             return result
         }
+    }
+    /// One pass of the usual read and send (FamilyNotebookSync.synchronize:
+    /// at most 64 writes, the same operation IDs, so a write the relay already
+    /// took is not sent twice), only when something waits. Best effort: a
+    /// failure, a pause or keys still moving leave it unsent, and leaving
+    /// goes on as before. Inside run(), so no other pass overlaps it.
+    /// Returns whether it reached the relay (false: nothing waited).
+    private func sendBeforeLeaving(_ context: FamilyNotebookSession, family: UUID, store: FamilyNotebookStore) async -> Bool {
+        guard (try? store.pendingOperations().isEmpty) == false else { return false }
+        do {
+            guard let material = try await context.keys.prepare(family: family), material.ready, !material.moreWork else { return true }
+            let sync = try FamilyNotebookSync(familyID: family, identity: context.identity, store: store,
+                network: context.wire, journal: context.journal, endpointID: context.endpoint.absoluteString)
+            _ = try await sync.synchronize(current: material.current, history: material.history, keys: material.keys)
+        } catch {}
+        return true
     }
     func pendingRequests() async throws -> [FamilyNotebookJoinRequest] {
         try await run { context in

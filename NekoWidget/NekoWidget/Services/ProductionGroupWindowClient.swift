@@ -1878,6 +1878,14 @@ struct GroupIdentityDeletion: Codable, Sendable, Equatable {
     let receipt: String
     var acceptedAt: Date?
     var completedAt: Date?
+    /// 11/20: the deleted identity (public IDs only), so its notebook scope
+    /// and the person key it put into iCloud Keychain can still be found
+    /// after its keys are gone. nil in a record from before 11/20.
+    var personID: String? = nil
+    var deviceID: String? = nil
+    /// 11/20: when the rest of its sharing state on this iPhone was removed
+    /// (GroupIdentityDeletionLocalData); nil until every step went.
+    var localDataRemovedAt: Date? = nil
 }
 
 @available(iOS 17.0, macOS 14.0, *)
@@ -1909,6 +1917,9 @@ extension ProductionGroupWindowClient {
             try? secrets.remove(Self.deletionAccount)
             record = .init(operationID: UUID(),
                            receipt: GroupWire.base64(SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }))
+            if let current = try? load(GroupDeviceIdentity.self, "identity") {
+                record.personID = current.personID; record.deviceID = try? current.deviceID
+            }
             try save(record, Self.deletionAccount, createOnly: true)
         }
         if record.acceptedAt == nil {
@@ -1920,8 +1931,33 @@ extension ProductionGroupWindowClient {
                 record = answered
             }
         }
-        try removeGroupKeys()
+        // 11/20: accepted; a Keychain error here never makes it look failed.
+        // What is left is removed by identityDeletionNeedingLocalCleanup.
+        _ = removeGroupKeys()
         return record
+    }
+
+    /// 11/20: an accepted deletion whose local clean-up has not finished (the
+    /// app closed, or a Keychain error, after the relay accepted it), with
+    /// this store's keys removed again. nil when there is none, when it was
+    /// finished, or when this iPhone now holds another person's identity.
+    func identityDeletionNeedingLocalCleanup() throws -> GroupIdentityDeletion? {
+        guard let record = try identityDeletion(), record.acceptedAt != nil, record.localDataRemovedAt == nil else { return nil }
+        // identity() moves the record to its history before making a new
+        // identity; a device link writes one without doing so. Never clean up
+        // a person other than the deleted one.
+        if try secrets.read("device-link") != nil { return nil }
+        if let current = try load(GroupDeviceIdentity.self, "identity"),
+           record.personID == nil || current.personID != record.personID { return nil }
+        _ = removeGroupKeys()
+        return record
+    }
+
+    /// 11/20: the local clean-up of the accepted deletion is done.
+    func markIdentityDeletionLocalCleanupDone() throws {
+        guard var record = try identityDeletion(), record.acceptedAt != nil, record.localDataRemovedAt == nil else { return }
+        record.localDataRemovedAt = Date()
+        try save(record, Self.deletionAccount)
     }
 
     /// Asks with the receipt alone; no device key is needed or sent.
@@ -1944,13 +1980,18 @@ extension ProductionGroupWindowClient {
         try save(record, Self.deletionAccount)
     }
 
-    private func removeGroupKeys() throws {
-        for account in try secrets.accounts(prefix: "") where account != Self.deletionAccount
-            && !account.hasPrefix("identity-deletion-history:") {
-            try secrets.remove(account)
-        }
+    /// Every item is tried (11/20); false: one could not be listed or removed.
+    @discardableResult
+    private func removeGroupKeys() -> Bool {
         verifiedWindows = [:]; verifiedListEntries = [:]; historicalRosters = [:]
         photoMetadata = [:]; closedWindows = []; registrationTask = nil
+        guard let accounts = try? secrets.accounts(prefix: "") else { return false }
+        var removed = true
+        for account in accounts where account != Self.deletionAccount
+            && !account.hasPrefix("identity-deletion-history:") {
+            do { try secrets.remove(account) } catch { removed = false }
+        }
+        return removed
     }
 }
 

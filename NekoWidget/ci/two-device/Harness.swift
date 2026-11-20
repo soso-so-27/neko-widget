@@ -83,6 +83,48 @@ final class DeviceKeychain: @unchecked Sendable {
         let created = MemorySecrets(); stores[namespace] = created
         return created
     }
+    /// GroupKeychainStore.namespaces(prefix:): the namespaces with an item.
+    func namespaces(prefix: String) -> [String] {
+        lock.lock(); let all = stores; lock.unlock()
+        return all.filter { $0.key.hasPrefix(prefix) && !((try? $0.value.accounts(prefix: "")) ?? []).isEmpty }.keys.sorted()
+    }
+}
+
+/// 11/20 (S20): 「まどと家族の手帳のデータを消す」's local clean-up on this
+/// iPhone. The real ProductionGroupWindowClient and FamilySharingLocalData
+/// over this iPhone's Keychain and Application Support; the UserDefaults step
+/// of GroupIdentityDeletionLocalData (a UIKit file) over this harness's
+/// stand-ins for the same keys.
+extension Device {
+    /// GroupIdentityDeletionLocalData.remove, step for step (no binding to
+    /// check here: a removed copy's binding goes with the other UserDefaults).
+    /// Returns nil when the client offers no clean-up, else whether it finished.
+    func removeLocalDataAfterIdentityDeletion() async throws -> Bool? {
+        guard let record = try await client.identityDeletionNeedingLocalCleanup() else { return nil }
+        guard let person = record.personID else {
+            try await client.markIdentityDeletionLocalCleanupDone()
+            return true
+        }
+        service.restartSession()
+        let keychain = self.keychain
+        let local = FamilySharingLocalData(namespace: Self.namespace, support: support,
+            store: { keychain.store($0) }, namespaces: { keychain.namespaces(prefix: $0) })
+        let outcome = local.removeAfterIdentityDeletion(endpoint: relay.endpoint, personID: person, deviceID: record.deviceID,
+                                                        linkSuffix: Self.recoveryLinkSuffix)
+        var complete = outcome.complete
+        if !outcome.otherIdentityRemains {
+            // defaultsKeys, then keychainCopies (GroupDisplayName.keychainSuffix is ".display-name").
+            rememberedName = ""; nameChecked = false; hiddenEntries = nil; hiddenEntriesChecked = false
+            linkAnswers = nil; linkAnswersChecked = false; bindingSaved = false; awaitingApprovalMark = nil
+            if !local.removeSharedCopies([(".display-name", ""), (FamilyHiddenOperationsMemory.namespaceSuffix, ""),
+                                          (FamilyCatLinkAnswersMemory.namespaceSuffix, ""),
+                                          (GroupWindowKept.namespaceSuffix, GroupWindowKept.choicesAccountPrefix)]) { complete = false }
+        }
+        service.restartSession()
+        guard complete else { return false }
+        try await client.markIdentityDeletionLocalCleanupDone()
+        return true
+    }
 }
 
 /// One person's iCloud Keychain: the person key RootSyncStore publishes and
