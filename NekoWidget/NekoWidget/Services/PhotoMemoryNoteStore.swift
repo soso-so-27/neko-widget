@@ -444,11 +444,11 @@ actor PhotoMemoryNoteStore {
         Self.commitLock.lock()
         defer { Self.commitLock.unlock() }
         let state = try load(from: resolvedFileURL())
-        return Array(Set(state.notes.compactMap { key, note -> String? in
-            guard key.hasPrefix("saved:"), state.archiveBindings?[key] == nil,
-                  let cloud = note.photoCloudIdentifier, !cloud.isEmpty else { return nil }
-            return cloud
-        })).sorted()
+        var waiting = Set<String>()
+        for (key, note) in state.notes where key.hasPrefix("saved:") && state.archiveBindings?[key] == nil {
+            if let cloud = note.photoCloudIdentifier, !cloud.isEmpty { waiting.insert(cloud) }
+        }
+        return waiting.sorted()
     }
 
     /// Moves a waiting memo onto its photo once the photo is here (`resolved`:

@@ -67,7 +67,7 @@ enum AppRecordPhotoIdentity {
         let missing = Array(Set(localIDs.filter { known[$0] == nil }))
         if missing.isEmpty { return known }
         let added: [String: String] = await Task.detached(priority: .utility) {
-            guard !missing.isEmpty, readable else { return [:] }
+            guard !missing.isEmpty, AppRecordPhotoIdentity.readable else { return [:] }
             var result: [String: String] = [:]
             // Bounded batches keep one PhotoKit call small on a large library.
             for start in stride(from: 0, to: missing.count, by: 2_000) {
@@ -110,7 +110,7 @@ enum AppRecordPhotoIdentity {
     static func cloudAlbums(_ localIDs: [String]) async -> [String: String] {
         let wanted = Array(Set(localIDs))
         return await Task.detached(priority: .utility) {
-            guard !wanted.isEmpty, readable else { return [:] }
+            guard !wanted.isEmpty, AppRecordPhotoIdentity.readable else { return [:] }
             let values = PHPhotoLibrary.shared().cloudIdentifierMappings(forLocalIdentifiers: wanted)
             var result: [String: String] = [:]
             for local in wanted {
@@ -124,7 +124,7 @@ enum AppRecordPhotoIdentity {
     private static func mapped(_ input: [String], present: @escaping @Sendable ([String]) -> Set<String>) async -> [String: String] {
         let cloudIDs = Array(Set(input.filter { !$0.isEmpty && $0.utf8.count <= 4096 }))
         return await Task.detached(priority: .utility) {
-            guard !cloudIDs.isEmpty, readable else { return [:] }
+            guard !cloudIDs.isEmpty, AppRecordPhotoIdentity.readable else { return [:] }
             var result: [String: String] = [:]
             for start in stride(from: 0, to: cloudIDs.count, by: 2_000) {
                 let batch = Array(cloudIDs[start..<min(cloudIDs.count, start + 2_000)])
