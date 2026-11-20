@@ -674,14 +674,26 @@ enum GroupCaptionCrypto {
     }
     static func open(_ caption: GroupEncryptedCaption, photo: GroupEncryptedPhoto,
                      roomKey: SymmetricKey, roster: VerifiedGroupRoster) throws -> String {
+        guard let value = try openForDisplay(caption, photo: photo, roomKey: roomKey, roster: roster) else {
+            throw GroupProtocolError.invalidPhoto
+        }
+        return value
+    }
+    /// 11/20: the same signature and decryption checks as `open`; a failure
+    /// there still fails the photo. Text that passes them but not this
+    /// iPhone's display check (another iOS counts a new emoji differently)
+    /// is nil: the photo shows without its ひとこと. Never shown unchecked,
+    /// never cut (a cut could change the sender's words).
+    static func openForDisplay(_ caption: GroupEncryptedCaption, photo: GroupEncryptedPhoto,
+                               roomKey: SymmetricKey, roster: VerifiedGroupRoster) throws -> String? {
         guard roomKey.bitCount == 256, caption.signature.count == 64,
               let sender = roster.device(id: photo.senderDeviceID) else { throw GroupProtocolError.invalidPhoto }
         let aad = try aad(photo: photo, size: caption.ciphertext.count, roster: roster)
         let key = try Curve25519.Signing.PublicKey(rawRepresentation: sender.device.signingPublicKey)
         guard key.isValidSignature(caption.signature, for: try signed(aad, caption.ciphertext)) else { throw GroupProtocolError.invalidSignature }
         let data = try AES.GCM.open(AES.GCM.SealedBox(combined: caption.ciphertext), using: roomKey, authenticating: aad)
-        guard let value = String(data: data, encoding: .utf8), try GroupPhotoCaption.normalized(value) == value,
-              !value.isEmpty else { throw GroupProtocolError.invalidPhoto }
+        guard let value = String(data: data, encoding: .utf8), !value.isEmpty,
+              (try? GroupPhotoCaption.normalized(value)) == value else { return nil }
         return value
     }
 }

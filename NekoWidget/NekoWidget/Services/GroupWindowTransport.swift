@@ -1,7 +1,51 @@
 import CryptoKit
 import Foundation
 
-struct GroupHTTPReply: Sendable { let status: Int; let data: Data }
+struct GroupHTTPReply: Sendable {
+    let status: Int; let data: Data
+    /// 11/20: the reply's HTTP `Date`, only to notice a wrong iPhone clock.
+    var serverDate: Date? = nil
+}
+
+/// 11/20: the relay refuses a request whose signed time is more than 300 s
+/// from its own (group-auth.ts). When a refused reply's `Date` shows this
+/// iPhone's clock that far off, the person is told to fix the clock rather
+/// than to reopen the window. The signing time is NOT moved to the relay's
+/// clock: the reply's `Date` is not signed, so trusting it would let anyone
+/// on the path shift the time this iPhone signs.
+enum GroupClockSkew {
+    static let limit: TimeInterval = 300
+    static let message = "iPhoneの「日付と時刻」を自動設定にしてから、もう一度お試しください。"
+    private final class Noticed: @unchecked Sendable {
+        let lock = NSLock()
+        var at: Date?
+    }
+    private static let noticed = Noticed()
+
+    /// Within the last 10 minutes, a refusal came with a clock this far off.
+    static var isLikely: Bool {
+        noticed.lock.lock(); defer { noticed.lock.unlock() }
+        return noticed.at.map { Date().timeIntervalSince($0) < 600 } ?? false
+    }
+
+    static func note(_ reply: GroupHTTPReply, now: Date = Date()) {
+        guard let serverDate = reply.serverDate else { return }
+        let skewed = abs(serverDate.timeIntervalSince(now)) > limit
+        noticed.lock.lock(); defer { noticed.lock.unlock() }
+        if skewed, reply.status == 401 { noticed.at = now }
+        else if !skewed { noticed.at = nil }
+    }
+
+    /// RFC 9110 IMF-fixdate, as Cloudflare sends it.
+    static func date(_ value: String?) -> Date? {
+        guard let value else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        return formatter.date(from: value.trimmingCharacters(in: .whitespaces))
+    }
+}
 protocol GroupHTTPTransport: Sendable {
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply
 }
@@ -254,7 +298,10 @@ final class GroupURLSessionTransport: GroupHTTPTransport, Sendable {
             }
             replied(http.statusCode, http.value(forHTTPHeaderField: "Retry-After"))
             try ClientUpgradeRequirement.shared.checkResponse(status: http.statusCode, data: data)
-            return .init(status: http.statusCode, data: data)
+            let reply = GroupHTTPReply(status: http.statusCode, data: data,
+                                       serverDate: GroupClockSkew.date(http.value(forHTTPHeaderField: "Date")))
+            GroupClockSkew.note(reply)
+            return reply
         } catch let error as URLError {
             // A request the app itself cancelled (a screen closed) is not an outage.
             if error.code == .cancelled { throw CancellationError() }
@@ -330,6 +377,9 @@ enum GroupHTTPRequest {
             // SharingService group-api.ts: group_photo_daily_limit and
             // group_heart_daily_limit both answer 409 daily_limit.
             case "daily_limit": throw GroupClientError.dailyLimit
+            // 11/20: a reservation that ran out, and a photo no longer held for this iPhone.
+            case "reservation_expired": throw GroupClientError.reservationExpired
+            case "delivery_expired": throw GroupClientError.deliveryExpired
             default: throw GroupClientError.unavailable
             }
         }

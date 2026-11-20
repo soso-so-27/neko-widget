@@ -155,6 +155,7 @@ final class LoopbackTransport: GroupHTTPTransport, @unchecked Sendable {
     private let lock = NSLock()
     private var entries: [Entry] = []
     private var cancels: [(device: String, contains: String)] = []
+    private var drops: [(device: String, method: String, suffix: String)] = []
 
     init(origin: URL) throws {
         guard let components = URLComponents(url: origin, resolvingAgainstBaseURL: false), components.host != nil else {
@@ -182,6 +183,19 @@ final class LoopbackTransport: GroupHTTPTransport, @unchecked Sendable {
         cancels.remove(at: index)
         return true
     }
+    /// 11/20 (S23): the next `method` request of `device` whose path ends
+    /// with `suffix` is lost before it is sent (no connection).
+    func dropNext(device: String, method: String, suffix: String) {
+        lock.lock(); defer { lock.unlock() }; drops.append((device, method, suffix))
+    }
+    private func takeDrop(device: String?, method: String, path: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let device, let index = drops.firstIndex(where: {
+            $0.device == device && $0.method == method && path.hasSuffix($0.suffix)
+        }) else { return false }
+        drops.remove(at: index)
+        return true
+    }
     private func record(_ entry: Entry) { lock.lock(); defer { lock.unlock() }; entries.append(entry) }
 
     private func url(_ path: String) throws -> URL {
@@ -201,6 +215,10 @@ final class LoopbackTransport: GroupHTTPTransport, @unchecked Sendable {
         if takeCancel(device: device, method: method, path: path) {
             record(.init(device: device, method: method, path: path, status: -1))
             throw CancellationError()
+        }
+        if takeDrop(device: device, method: method, path: path) {
+            record(.init(device: device, method: method, path: path, status: -2))
+            throw GroupClientError.offline
         }
         let data: Data, response: URLResponse
         do { (data, response) = try await session.data(for: outgoing) }

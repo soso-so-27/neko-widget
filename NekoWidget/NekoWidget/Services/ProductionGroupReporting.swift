@@ -122,9 +122,11 @@ final class ProductionGroupReporting: GroupReportingService {
         }
         return (draft, actor)
     }
+    /// `reportGate: false` only for a block: blocking is not behind the
+    /// report switch or the report intake (11/20), as on the relay.
     private func request(_ path: String, body: Data? = nil, actor: GroupDeviceIdentity,
-                         method: String? = nil, ciphertext: Bool = false) async throws -> Data {
-        guard !reportsDisabled else { throw GroupSafetyError.disabled }
+                         method: String? = nil, ciphertext: Bool = false, reportGate: Bool = true) async throws -> Data {
+        guard !reportGate || !reportsDisabled else { throw GroupSafetyError.disabled }
         try sameIdentity(actor)
         var request = try GroupHTTPRequest.make(endpoint: endpoint, path: path, body: body, identity: actor, method: method)
         if ciphertext { request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type") }
@@ -133,7 +135,7 @@ final class ProductionGroupReporting: GroupReportingService {
             try sameIdentity(actor)
             guard (200...299).contains(reply.status) else {
                 let mapped = Self.error(reply)
-                if [.disabled, .authenticationRequired, .notAuthorized].contains(mapped) { availabilityUntil = .distantPast }
+                if reportGate, [.disabled, .authenticationRequired, .notAuthorized].contains(mapped) { availabilityUntil = .distantPast }
                 throw mapped
             }
             return reply.data
@@ -179,6 +181,9 @@ final class ProductionGroupReporting: GroupReportingService {
         }) {
             if saved.record.progress == .received { throw GroupSafetyError.alreadyReported }
             guard saved.record.reason == reason else { throw GroupSafetyError.conflict }
+            // 11/20: 「送る」 pressed again is the person's consent again. A
+            // draft never reserved takes it, so it is not refused for an old one.
+            try renewConsent(saved.record.id, consent: consent)
             return saved.record.id
         }
         let selected = try await evidence(windowID, photoID)
@@ -188,11 +193,6 @@ final class ProductionGroupReporting: GroupReportingService {
             momentID: photoID, reporterParticipantID: participantID, reasonCode: reason.rawValue,
             keyID: "moderation-v2", publicKey: publicKey)
         let digest = GroupWire.base64(GroupCanonical.hash(encrypted))
-        struct Reserve: Encodable {
-            struct Consent: Encodable { let version: Int; let acceptedAt: Int }
-            let operationID: String; let momentID: String; let reasonCode: String; let moderationKeyID: String
-            let ciphertextSize: Int; let ciphertextSHA256: String; let reporterConsent: Consent
-        }
         struct Commit: Encodable { let operationID: String }
         let reserve = try GroupWire.encode(Reserve(operationID: UUID().uuidString.lowercased(), momentID: photoID,
             reasonCode: reason.rawValue, moderationKeyID: "moderation-v2", ciphertextSize: encrypted.count,
@@ -206,6 +206,44 @@ final class ProductionGroupReporting: GroupReportingService {
             evidenceSHA256: digest, evidenceSize: encrypted.count, ciphertext: encrypted, receipt: nil), createOnly: true)
         keepCopy(record)
         return id
+    }
+    private struct Reserve: Codable {
+        struct Consent: Codable { let version: Int; let acceptedAt: Int }
+        let operationID: String; let momentID: String; let reasonCode: String; let moderationKeyID: String
+        let ciphertextSize: Int; let ciphertextSHA256: String; let reporterConsent: Consent
+    }
+    /// The relay takes consent given within 300 s for a NEW reservation
+    /// (group-reports.ts). Renewed a little before that.
+    static let consentRenewal: TimeInterval = 240
+
+    /// 11/20: consent is the person's tap. Called only from their own 「送る」
+    /// or 「もう一度送る」 with that tap's time, never from an automatic pass.
+    /// Only a draft the relay has not reserved changes: the same photo,
+    /// reason and encrypted bytes, a fresh consent time and a new reserve
+    /// operation (a different body under the old ID would be refused). The
+    /// relay answers a second reserve of the same encrypted bytes with the
+    /// first reservation (group-reports.ts `previous`), so no second report
+    /// is made.
+    private func renewConsent(_ draftID: String, consent: GroupReportConsent) throws {
+        guard consent.version == 1, abs(consent.acceptedAt.timeIntervalSinceNow) <= 300 else { throw GroupSafetyError.consentRequired }
+        var (draft, _) = try owned(draftID)
+        guard draft.receipt == nil, draft.record.progress != .received else { return }
+        let saved = try GroupWire.decode(Reserve.self, draft.reserveBody)
+        let fresh = Int(consent.acceptedAt.timeIntervalSince1970)
+        let stale = Double(fresh - saved.reporterConsent.acceptedAt) >= Self.consentRenewal
+        let stopped = [GroupReportProgress.unavailable, .authenticationRequired].contains(draft.record.progress)
+        guard stale || stopped else { return }
+        guard saved.momentID == draft.record.photoID, saved.reasonCode == draft.record.reason.rawValue,
+              saved.ciphertextSize == draft.evidenceSize, saved.ciphertextSHA256 == draft.evidenceSHA256 else {
+            throw GroupSafetyError.invalidResponse
+        }
+        draft.reserveBody = try GroupWire.encode(Reserve(operationID: UUID().uuidString.lowercased(), momentID: saved.momentID,
+            reasonCode: saved.reasonCode, moderationKeyID: saved.moderationKeyID, ciphertextSize: saved.ciphertextSize,
+            ciphertextSHA256: saved.ciphertextSHA256, reporterConsent: .init(version: 1, acceptedAt: fresh)))
+        // The 48-hour limit in submitReport counts from this tap, the latest consent.
+        draft.record.sentAt = consent.acceptedAt
+        draft.record.progress = .preparing
+        try store.write(draft)
     }
     private func receiptNumber(_ incoming: String?, draft: GroupReportDraft) throws -> String? {
         let stored = [draft.record.receiptNumber, draft.receipt?.receiptNumber].compactMap { $0 }
@@ -308,7 +346,9 @@ final class ProductionGroupReporting: GroupReportingService {
                 case .authenticationRequired: current.record.progress = .authenticationRequired
                 // Gone from the relay (old, deleted or restricted): no retry can
                 // succeed, so it is not offered as 「もう一度送る」 (11/6).
-                case .disabled, .notAuthorized, .consentRequired, .notFound: current.record.progress = .unavailable
+                case .disabled, .notAuthorized, .notFound: current.record.progress = .unavailable
+                // 11/20: 「もう一度送る」 renews the consent (resumeReport with the tap).
+                case .consentRequired: current.record.progress = .retryable
                 default: current.record.progress = .retryable
                 }
                 do { try store.write(current) }
@@ -318,6 +358,13 @@ final class ProductionGroupReporting: GroupReportingService {
         }
     }
     func resumeReport(draftID: String) async throws -> GroupReportRecord { try await submitReport(draftID: draftID) }
+    /// The person's 「もう一度送る」: the same draft, with this tap as consent.
+    func resumeReport(draftID: String, consent: GroupReportConsent) async throws -> GroupReportRecord {
+        guard !reportsDisabled else { throw GroupSafetyError.disabled }
+        guard !inFlight.contains(draftID) else { throw GroupSafetyError.conflict }
+        try renewConsent(draftID, consent: consent)
+        return try await submitReport(draftID: draftID)
+    }
     func locallyReportedPhotoIDs(windowID: String) async throws -> Set<String> {
         guard GroupCanonical.validID(windowID) else { throw GroupSafetyError.invalidResponse }
         // Keep this iPhone's hide intent after leaving/erasing an identity.
@@ -401,58 +448,128 @@ final class ProductionGroupReporting: GroupReportingService {
         if committed { keepCopy(draft.record) }
         return draft.record
     }
-    func pendingBlocks(windowID: String) async throws -> [GroupPendingBlock] {
-        let actor = try identity()
-        struct Body: Decodable { let operationID: UUID; let active: Bool }
-        var result: [GroupPendingBlock] = []
+    private struct BlockBody: Codable { let operationID: String; let active: Bool }
+    private func blockPath(_ windowID: String, _ participantID: String) -> String {
+        "/v3/group-windows/" + windowID + "/blocks/" + participantID
+    }
+    private func blockHash(path: String, body: Data, actor: GroupDeviceIdentity) throws -> Data {
+        GroupCanonical.hash(try GroupCanonical.fields([endpoint.absoluteString, actor.personID, actor.deviceID, path].map(GroupCanonical.text)) + body)
+    }
+    /// Unsent block operations of this identity, oldest first.
+    private func unsentBlocks(actor: GroupDeviceIdentity) throws -> [(account: String, pending: GroupPendingHTTP, windowID: String, participantID: String, active: Bool)] {
+        var result: [(account: String, pending: GroupPendingHTTP, windowID: String, participantID: String, active: Bool)] = []
         for account in try blockStore.accounts(prefix: "op:") {
             guard let bytes = try blockStore.read(account) else { continue }
             let pending = try GroupWire.decode(GroupPendingHTTP.self, bytes)
             guard pending.response == nil else { continue }
             let parts = pending.path.split(separator: "/").map(String.init)
-            guard parts.count == 5, parts[0] == "v3", parts[1] == "group-windows", parts[2] == windowID,
+            guard parts.count == 5, parts[0] == "v3", parts[1] == "group-windows", GroupCanonical.validID(parts[2]),
                   parts[3] == "blocks", GroupCanonical.validID(parts[4]) else { continue }
-            let body = try GroupWire.decode(Body.self, pending.body)
-            let hash = GroupCanonical.hash(try GroupCanonical.fields([endpoint.absoluteString, actor.personID, actor.deviceID, pending.path].map(GroupCanonical.text)) + pending.body)
-            guard body.operationID == pending.operationID, pending.intentHash == hash else { continue }
-            result.append(.init(id: pending.operationID, windowID: windowID, participantID: parts[4], active: body.active))
+            let body = try GroupWire.decode(BlockBody.self, pending.body)
+            let expected = try blockHash(path: pending.path, body: pending.body, actor: actor)
+            guard body.operationID == pending.operationID.uuidString.lowercased(), pending.intentHash == expected else { continue }
+            result.append((account: account, pending: pending, windowID: parts[2], participantID: parts[4], active: body.active))
         }
-        return result
+        return result.sorted { $0.pending.createdAt < $1.pending.createdAt }
+    }
+    func pendingBlocks(windowID: String) async throws -> [GroupPendingBlock] {
+        let actor = try identity()
+        return try unsentBlocks(actor: actor).filter { $0.windowID == windowID }
+            .map { GroupPendingBlock(id: $0.pending.operationID, windowID: windowID, participantID: $0.participantID, active: $0.active) }
+    }
+    /// A block or unblock that could not reach the relay now (offline, a busy
+    /// relay) waits here and goes later; one the relay refuses for good is
+    /// dropped and said. 11/20: never behind the report switch or intake,
+    /// which the relay does not apply to blocks either.
+    static func blockWaits(_ error: GroupSafetyError) -> Bool {
+        switch error {
+        case .offline, .unknownOutcome, .rateLimited, .disabled, .invalidResponse, .authenticationRequired, .storageUnavailable: true
+        default: false
+        }
     }
     func setBlock(windowID: String, participantID: String, active: Bool, operationID: UUID) async throws {
         guard GroupCanonical.validID(windowID), GroupCanonical.validID(participantID) else { throw GroupSafetyError.notFound }
-        let id = "block:" + operationID.uuidString.lowercased()
-        guard inFlight.insert(id).inserted else { throw GroupSafetyError.conflict }
-        defer { inFlight.remove(id) }
-        await refreshAvailability(); guard isAvailable else { throw GroupSafetyError.disabled }
         let actor = try identity()
         if active {
             guard try participant(windowID: windowID, actor: actor) != participantID else { throw GroupSafetyError.blockSelf }
         }
         // Unblocking after departure is authorized against the person's
         // historical membership by the server, not a possibly removed roster.
-        let path = "/v3/group-windows/" + windowID + "/blocks/" + participantID
-        struct Body: Encodable { let operationID: String; let active: Bool }
-        let body = try GroupWire.encode(Body(operationID: operationID.uuidString.lowercased(), active: active))
-        let hash = GroupCanonical.hash(try GroupCanonical.fields([endpoint.absoluteString, actor.personID, actor.deviceID, path].map(GroupCanonical.text)) + body)
+        let path = blockPath(windowID, participantID)
+        let body = try GroupWire.encode(BlockBody(operationID: operationID.uuidString.lowercased(), active: active))
+        let hash = try blockHash(path: path, body: body, actor: actor)
         let account = "op:" + operationID.uuidString.lowercased()
-        var pending: GroupPendingHTTP
         if let bytes = try blockStore.read(account) {
-            pending = try GroupWire.decode(GroupPendingHTTP.self, bytes)
+            let pending = try GroupWire.decode(GroupPendingHTTP.self, bytes)
             guard pending.operationID == operationID, pending.path == path, pending.intentHash == hash else { throw GroupSafetyError.conflict }
             if pending.response != nil { return }
         } else {
-            pending = .init(operationID: operationID, path: path, body: body, intentHash: hash, createdAt: Date(), response: nil)
+            // The newest choice for this person replaces any older one not sent yet.
+            for older in try unsentBlocks(actor: actor) where older.windowID == windowID && older.participantID == participantID {
+                try? blockStore.remove(older.account)
+            }
+            let pending = GroupPendingHTTP(operationID: operationID, path: path, body: body, intentHash: hash, createdAt: Date(), response: nil)
             try blockStore.write(GroupWire.encode(pending), account: account, createOnly: true)
         }
-        guard Date().timeIntervalSince(pending.createdAt) < 172_800 else { throw GroupSafetyError.unknownOutcome }
-        let response = try await request(path, body: pending.body, actor: actor)
+        // Kept in this iPhone's Keychain too, so a reinstall still tells the relay.
+        GroupWindowKept.markUnsentBlock(.init(participantID: participantID, active: active), windowID: windowID, in: kept)
+        do { try await sendBlock(account: account, actor: actor) }
+        catch let error as GroupSafetyError where Self.blockWaits(error) {
+            // Waits for sendPendingBlocks (opening the window, each sync, each send).
+        }
+    }
+    /// Sends what waits for this window, oldest first; stops at the first
+    /// that must wait. Also re-creates a block kept in the Keychain whose
+    /// operation went with a deleted app.
+    func sendPendingBlocks(windowID: String) async {
+        guard GroupCanonical.validID(windowID), let actor = try? identity(), let waiting = try? unsentBlocks(actor: actor) else { return }
+        var queued = waiting.filter { $0.windowID == windowID }
+        for saved in GroupWindowKept.unsentBlocks(windowID: windowID, in: kept)
+        where !queued.contains(where: { $0.participantID == saved.participantID && $0.active == saved.active }) {
+            if saved.active, (try? participant(windowID: windowID, actor: actor)) == saved.participantID { continue }
+            let operationID = UUID(), path = blockPath(windowID, saved.participantID)
+            guard let body = try? GroupWire.encode(BlockBody(operationID: operationID.uuidString.lowercased(), active: saved.active)),
+                  let hash = try? blockHash(path: path, body: body, actor: actor),
+                  let bytes = try? GroupWire.encode(GroupPendingHTTP(operationID: operationID, path: path, body: body,
+                                                                    intentHash: hash, createdAt: Date(), response: nil)),
+                  (try? blockStore.write(bytes, account: "op:" + operationID.uuidString.lowercased(), createOnly: true)) != nil else { continue }
+        }
+        guard let refreshed = try? unsentBlocks(actor: actor) else { return }
+        queued = refreshed.filter { $0.windowID == windowID }
+        for item in queued {
+            do { try await sendBlock(account: item.account, actor: actor) }
+            catch let error as GroupSafetyError where Self.blockWaits(error) { return }
+            catch { continue }
+        }
+    }
+    private func sendBlock(account: String, actor: GroupDeviceIdentity) async throws {
+        guard inFlight.insert("block:" + account).inserted else { throw GroupSafetyError.unknownOutcome }
+        defer { inFlight.remove("block:" + account) }
+        guard let bytes = try blockStore.read(account) else { return }
+        var pending = try GroupWire.decode(GroupPendingHTTP.self, bytes)
+        if pending.response != nil { return }
+        let body = try GroupWire.decode(BlockBody.self, pending.body)
+        let parts = pending.path.split(separator: "/").map(String.init)
+        guard parts.count == 5 else { throw GroupSafetyError.invalidResponse }
+        let windowID = parts[2], participantID = parts[4]
+        // A block sets a state, so an exact replay after the relay's 48-hour
+        // receipt is the same state again; older unsent choices were dropped above.
+        let response: Data
+        do { response = try await request(pending.path, body: pending.body, actor: actor, reportGate: false) }
+        catch let error as GroupSafetyError where !Self.blockWaits(error) {
+            // Refused for good (not in the window, the relay says no): not tried again.
+            try? blockStore.remove(account)
+            GroupWindowKept.clearUnsentBlock(.init(participantID: participantID, active: body.active), windowID: windowID, in: kept)
+            throw error
+        }
         struct Receipt: Decodable { let operationID: String; let participantID: String; let active: Bool }
         let result = try GroupWire.decode(Receipt.self, response)
-        guard result.operationID == operationID.uuidString.lowercased(), result.participantID == participantID, result.active == active else {
+        guard result.operationID == pending.operationID.uuidString.lowercased(), result.participantID == participantID,
+              result.active == body.active else {
             throw GroupSafetyError.invalidResponse
         }
         pending.response = response; pending.body = Data()
         try blockStore.write(GroupWire.encode(pending), account: account, createOnly: false)
+        GroupWindowKept.clearUnsentBlock(.init(participantID: participantID, active: body.active), windowID: windowID, in: kept)
     }
 }

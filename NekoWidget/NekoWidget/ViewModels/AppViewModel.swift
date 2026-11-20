@@ -398,6 +398,7 @@ final class AppViewModel: ObservableObject {
 
     private var isManualRescanRequestPending = false
     private var receivedMemoryImportObserver: NSObjectProtocol?
+    private var groupSavedCopiesObserver: NSObjectProtocol?
     private var todayDayChangeObserver: NSObjectProtocol?
     private var protectedDataObserver: NSObjectProtocol?
     private var adoptionDayObserver: NSObjectProtocol?
@@ -606,6 +607,18 @@ final class AppViewModel: ObservableObject {
                 )
             }
         }
+        // 11/20: a まど photo removed, reported or blocked: its 「お気に入りに追加」
+        // copy leaves the app's own photos like a hidden photo (PhotoKit untouched).
+        groupSavedCopiesObserver = NotificationCenter.default.addObserver(
+            forName: .groupWindowSavedCopiesWithdrawn,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let identifiers = notification.object as? [String] ?? []
+            Task { @MainActor [weak self] in
+                await self?.withdrawGroupWindowCopies(localIdentifiers: identifiers)
+            }
+        }
         // 11/16: queue nil. With a queue, posting waits until the main thread
         // runs this; a save off the main thread (the family sync) then held
         // the record locks while the main thread waited for them (a hang).
@@ -640,6 +653,7 @@ final class AppViewModel: ObservableObject {
         if let receivedMemoryImportObserver {
             NotificationCenter.default.removeObserver(receivedMemoryImportObserver)
         }
+        if let groupSavedCopiesObserver { NotificationCenter.default.removeObserver(groupSavedCopiesObserver) }
         if let todayDayChangeObserver {
             NotificationCenter.default.removeObserver(todayDayChangeObserver)
         }
@@ -657,6 +671,15 @@ final class AppViewModel: ObservableObject {
             Self.logError(error, category: "cat-identity", operation: "initialize_store")
             return (nil, Self.userFacingMessage(for: error), withoutProtectedData)
         }
+    }
+
+    /// 11/20: the like was cleared by the まど screen; the copy itself goes out
+    /// of every app surface through the same exclusion as a hidden photo.
+    private func withdrawGroupWindowCopies(localIdentifiers: [String]) async {
+        let identifiers = localIdentifiers.filter { !$0.isEmpty }
+        guard !identifiers.isEmpty else { return }
+        _ = synchronizeSharedLikes(importLegacyLikes: false, trigger: "group-window-withdrawn")
+        await excludeFromCatCandidates(localIdentifiers: identifiers)
     }
 
     /// Publishes a newly imported Photos asset into the ordinary "思い出"
