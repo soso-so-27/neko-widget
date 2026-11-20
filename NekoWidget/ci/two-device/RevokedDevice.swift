@@ -63,11 +63,11 @@ extension Scenarios {
         let photo = try await deliver(a, cat, shade: 2)
 
         Log.step("B: a second iPhone of the same person (its usual identity: the person key, its own device key)")
-        // B's own Sandbox account with Plus (for its fresh start below) and its
-        // own iCloud Keychain, which never held the person key.
+        // B's own Sandbox account with Plus (for its fresh start below). The
+        // same person's iCloud Keychain (the notebook's roster pin is there).
         let bBilling = try await relay.bootstrapBilling()
         try await relay.grantPlus(bBilling)
-        let b = try await Device.make("B", relay: relay, cloud: PersonCloud(), billing: bBilling)
+        let b = try await Device.make("B", relay: relay, cloud: a.cloud, billing: bBilling)
         // Written by the test: the usual identity holds the person key and its
         // own device key (registered by the app on its first call).
         let seeded = seededIdentity(root)
