@@ -328,7 +328,7 @@ enum ReadablePreservationText {
         // Round 2 (11/9): 避難に備えるの持ち物の期限.
         "expiresAt": "期限"]
     private static let bookkeeping: Set<String> = ["schemaVersion", "version", "revision", "id", "catID", "familyID", "deviceID", "ownerID", "generation", "deletedAt",
-        "profileID", "toolCatID", "sourceNoteID", "sourceRevision", "familyRecordID", "familyDetached", "prefilledFields", "prefilledUsualFood",
+        "profileID", "toolCatID", "sourceNoteID", "sourceRevision", "familyRecordID", "familyDetached", "prefilledFields", "prefilledUsualFood", "noticeChoice",
         "mutationRevision", "memberships", "globalExcludedAssets", "legacyUnscoped", "mode", "photoAlbumLink", "keyPhotoLocalIdentifier",
         "archiveBindings", "sharedWindowIDs", "editedBy", "editedAt", "sourceAssetID", "origin", "sourcePhotoIdentifier", "source", "order", "status",
         // 11/20: expiresOn is the same 期限 as expiresAt, which is shown.

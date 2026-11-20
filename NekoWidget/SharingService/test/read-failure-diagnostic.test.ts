@@ -120,4 +120,20 @@ describe('bounded read failure diagnostics', () => {
     }
     expect(warn).not.toHaveBeenCalled();
   });
+  it('identifies a deletion barrier failure on fixed directory paths only', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const request = new Request('https://example.invalid/v3/family-notebooks/me');
+    beginReadDiagnostic(request);
+    finishReadDiagnostic(request, new ApiError(503, 'deletion_recovery_required', 'SECRET'));
+    expect(JSON.parse(warn.mock.calls[0]![0] as string)).toEqual({ event: 'neko_read_failure_v1',
+      route: 'family_directory', stage: 'routing', status: 503, reason: 'deletion_recovery_required' });
+    warn.mockClear();
+    const rejected = new Request('https://example.invalid/v3/group-windows/list', { method: 'POST' });
+    beginReadDiagnostic(rejected);
+    finishReadDiagnostic(rejected, new ApiError(401, 'invalid_authentication', 'SECRET'));
+    const privateQuery = new Request('https://example.invalid/v3/family-notebooks/me?private=SECRET');
+    beginReadDiagnostic(privateQuery);
+    finishReadDiagnostic(privateQuery, new Error('SECRET'));
+    expect(warn).not.toHaveBeenCalled();
+  });
 });

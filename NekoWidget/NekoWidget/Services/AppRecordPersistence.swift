@@ -810,6 +810,11 @@ final class AppRecordPersistence: ObservableObject {
     @Published private(set) var planEnded = false
     @Published private(set) var detail: String?
     @Published private(set) var enabled = false
+    /// 11/20: the auto-save settings on this iPhone are there but cannot be
+    /// used (P01/P02/P03); waiting or unlocking does not change that, so the
+    /// gear's dot shows with the error's own guidance. The binding is never
+    /// deleted or made again here.
+    @Published private(set) var settingsUnusable: AppRecordBindingError?
     @Published private(set) var busy = false
     @Published private(set) var conflict = false
     @Published private(set) var datasetGeneration = UUID()
@@ -965,8 +970,17 @@ final class AppRecordPersistence: ObservableObject {
         do {
             enabled = try binding()?.enabled == true
             bindingRead = true
-            if detail == Self.bindingUnreadableDetail { detail = nil }
+            if detail == Self.bindingUnreadableDetail || detail == settingsUnusable?.errorDescription { detail = nil }
+            settingsUnusable = nil
+        } catch let error as AppRecordBindingError where Self.needsPersonForSettings(error) {
+            settingsUnusable = error
+            detail = error.errorDescription
         } catch { detail = Self.bindingUnreadableDetail }
+    }
+    /// A destination, format or consent mismatch stays until someone looks
+    /// at it (お問い合わせ); a busy or interrupted switch settles by itself.
+    nonisolated static func needsPersonForSettings(_ error: AppRecordBindingError) -> Bool {
+        [.destination, .format, .consent].contains(error)
     }
     private static let bindingUnreadableDetail = "自動保存の設定を読み込めません。このiPhoneの記録は残っています。"
     private var bindingRead = false

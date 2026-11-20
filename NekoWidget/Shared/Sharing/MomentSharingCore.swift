@@ -538,7 +538,7 @@ enum MomentSharingError: LocalizedError, Equatable, Sendable {
         case .stateUnavailable:
             "うまく保存できませんでした。もう一度お試しください。"
         case let .reportOnly(until):
-            "このまどは終了しました。\(until.formatted(.dateTime.month().day().hour().minute()))までは、届いた写真を通報できます。"
+            "このまどは終わりました。\(until.formatted(.dateTime.month().day().hour().minute()))までは、届いた写真を通報できます。"
         case .retryableServer:
             "うまくつながりませんでした。あとで自動でもう一度試します。"
         case let .requestRejected(status, code, _):
@@ -550,7 +550,7 @@ enum MomentSharingError: LocalizedError, Equatable, Sendable {
             case "window_support_unavailable" where status == 503:
                 "このまどに届けられるか確かめられませんでした。写真は残して、あとでもう一度試します。"
             case "sharing_revoked":
-                "このまどは終了しました。また届け合うには、新しく招待してください。"
+                "このまどは終わりました。また届け合うには、新しく招待してください。"
             case "invalid_authentication":
                 "いまはまどにつながりません。まどはそのままで、あとで自動でもう一度試します。"
             case "reservation_expired":
@@ -560,7 +560,7 @@ enum MomentSharingError: LocalizedError, Equatable, Sendable {
             case "moment_daily_quota_exceeded" where status == 429:
                 "今日届けられる枚数の上限に達しました。上限が戻ったら、自動で届けます。"
             case "report_daily_quota_exceeded":
-                "今日はこれ以上通報できません。急ぎのときは、サポートへ連絡してください。"
+                "きょうはこれ以上通報できません。急ぎのときは、サポートへ連絡してください。"
             default:
                 if status == 429 {
                     "操作が続いたため、少し待ってからもう一度お試しください。"

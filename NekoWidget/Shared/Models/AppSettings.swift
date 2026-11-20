@@ -99,8 +99,15 @@ struct AppSettings: Codable, Equatable, Sendable {
     /// Marks the one-time move of the stored default line (0.7 -> 0.5, 11/13).
     /// Optional, so older builds still decode the settings (they ignore it).
     var detectorPolicyVersion: Int? = nil
+    /// 11/20: fingerprints a full rescan replaced. Until that rescan finishes,
+    /// cat records still carrying one of them keep showing (写真, cat pages,
+    /// Widgets); the scanner replaces them record by record, newest first.
+    /// Optional, so older builds still decode the settings (they ignore it).
+    var supersededAnalysisFingerprints: [String]? = nil
 
     static let currentDetectorPolicyVersion = 2
+    /// A rescan started again during a rescan keeps the older results too.
+    static let maximumSupersededAnalysisFingerprints = 4
 
     /// 11/13 on-device measurement: of the photos Apple's Photos app groups
     /// as the owner's two cats, 402 had been judged "not a cat". Run again at
@@ -158,6 +165,11 @@ struct AppSettings: Codable, Equatable, Sendable {
         value.widgetEntryCount = min(20, max(15, widgetEntryCount))
         value.widgetEntryIntervalMinutes = min(30, max(10, widgetEntryIntervalMinutes))
         value.analysisRevision = max(1, analysisRevision)
+        if let superseded = value.supersededAnalysisFingerprints {
+            let kept = superseded.filter { $0 != value.analysisFingerprint }
+                .suffix(Self.maximumSupersededAnalysisFingerprints)
+            value.supersededAnalysisFingerprints = kept.isEmpty ? nil : Array(kept)
+        }
         let today = Calendar.current.startOfDay(for: .now)
         let startOfTomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today)
         if let referenceDate = value.catLifeReference?.date.date(),
@@ -174,5 +186,32 @@ struct AppSettings: Codable, Equatable, Sendable {
         // Minimum area is a Widget presentation policy, not detector input.
         // Changing it must not invalidate otherwise identical Vision evidence.
         "cat-v3:\(confidenceThreshold.bitPattern):\(analysisRevision)"
+    }
+
+    /// True for a record made under the current detector settings, or under
+    /// settings a still-running rescan is replacing (11/20). Starting a
+    /// rescan must not empty the 写真 tab, the cat pages or the Widgets.
+    func presentsAnalysis(fingerprint: String) -> Bool {
+        fingerprint == analysisFingerprint
+            || supersededAnalysisFingerprints?.contains(fingerprint) == true
+    }
+
+    /// The settings for a rescan: the analysis revision moves on, and the
+    /// results made so far stay shown until the rescan replaces them.
+    func startingRescan() -> AppSettings {
+        var value = self
+        var superseded = supersededAnalysisFingerprints ?? []
+        superseded.removeAll { $0 == analysisFingerprint }
+        superseded.append(analysisFingerprint)
+        value.supersededAnalysisFingerprints = superseded
+        value.analysisRevision = analysisRevision + 1
+        return value.normalized()
+    }
+
+    /// Called when a pass under the current settings completed.
+    func finishingRescan() -> AppSettings {
+        var value = self
+        value.supersededAnalysisFingerprints = nil
+        return value
     }
 }

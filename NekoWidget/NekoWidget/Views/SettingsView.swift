@@ -82,8 +82,11 @@ struct SettingsSheetHost<Content: View>: View {
 struct SettingsGearIcon: View {
     @ObservedObject private var persistence = AppRecordPersistence.shared
     private var stopped: Bool {
-        ManagedPreservationConfiguration.current.isEnabled && persistence.enabled
-            && (persistence.planEnded || persistence.needsAttention)
+        guard ManagedPreservationConfiguration.current.isEnabled else { return false }
+        // 11/20: settings that cannot be read as they are (P01–P03) leave
+        // `enabled` unknown and saving stopped: the same dot, never silence.
+        return persistence.settingsUnusable != nil
+            || (persistence.enabled && (persistence.planEnded || persistence.needsAttention))
     }
     var body: some View {
         Image(systemName: "gearshape")
@@ -103,7 +106,8 @@ struct AutoSaveSettingsRow: View {
     @ObservedObject private var persistence = AppRecordPersistence.shared
     var body: some View {
         LabeledContent {
-            Text(!persistence.enabled ? "オフ"
+            Text(persistence.settingsUnusable != nil ? "保存できていません"
+                : !persistence.enabled ? "オフ"
                 : persistence.planEnded ? "止まっています"
                 : persistence.needsAttention ? "保存できていません"
                 // 11/16: the save server's pause for everyone, not this iPhone's failure.

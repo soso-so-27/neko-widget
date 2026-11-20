@@ -177,6 +177,14 @@ struct EvacuationPlan: Codable, Equatable {
     var createdAt: Date?
     /// The last time an item was checked: 「最後に見直した日」 (lastReadyDate).
     var lastCheckedAt: Date?
+    /// 11/20: 「見直しの時期に知らせる」 (1: on, 2: turned off), kept with the
+    /// plan so 保存 brings the choice back with the 期限 after a restore or a
+    /// reinstall. Optional: plans saved before (and by older versions, which
+    /// ignore it) have none, and the iPhone's own choice is used then.
+    var noticeChoice: Int?
+
+    /// The saved choice when it is one this version knows.
+    var savedNoticeChoice: Int? { noticeChoice.flatMap { [1, 2].contains($0) ? $0 : nil } }
 
     var photoNames: Set<String> { Set(cats.flatMap { $0.photos.values }) }
 

@@ -76,9 +76,26 @@ async function ownFamilies(env: Env, actor: GroupActor): Promise<Response> {
            WHEN j.state='pending' AND f.state<>'active' THEN 'cancelled' ELSE j.state END AS state
       FROM family_notebook_join_requests j JOIN family_notebook_spaces f ON f.id=j.family_id
       WHERE j.person_id=? AND (? IS NULL OR f.id=?) AND (? IS NULL OR f.id<>?)
-      ORDER BY j.created_at DESC,j.id LIMIT 64`).bind(actor.personId,only,only,excluded,excluded)]);
-  if (batch.at(-4)?.results[0]?.enabled !== 1) throw new ApiError(503, 'family_notebook_disabled', 'Family notebooks are unavailable.');
-  const families = batch.at(-3)!.results;
-  if (families.length > 1) throw new ApiError(503, 'family_notebook_unavailable', 'The current family could not be confirmed.');
-  return jsonResponse({ schemaVersion: 1, personId: actor.personId, family: families[0] ?? null, pendingRequests: batch.at(-2)!.results, joinRequests: batch.at(-1)!.results });
+      ORDER BY j.created_at DESC,j.id LIMIT 64`).bind(actor.personId,only,only,excluded,excluded),
+    env.DB.prepare(`WITH ended AS (
+        SELECT m.family_id AS familyId,m.state,e.recorded_at AS endedAt,'self' AS endedBy
+        FROM family_notebook_members m JOIN family_notebook_payer_events e
+          ON e.family_id=m.family_id AND e.expected_generation=m.left_generation-1
+         AND e.resulting_generation=m.left_generation AND e.operation='leave' AND e.actor_person_id=m.person_id
+        WHERE m.person_id=? AND m.state='left'
+        UNION ALL
+        SELECT m.family_id,m.state,e.recorded_at,
+          CASE WHEN e.actor_person_id=m.person_id THEN 'self' ELSE 'other' END
+        FROM family_notebook_members m JOIN family_notebook_governance_events e
+          ON e.family_id=m.family_id AND e.expected_generation=m.left_generation-1 AND e.resulting_generation=m.left_generation
+         AND (e.action='dissolve' OR (e.action='remove' AND e.target_person_id=m.person_id))
+        WHERE m.person_id=? AND m.state='removed'
+      )
+      SELECT familyId,state,endedAt,endedBy FROM ended
+      WHERE (? IS NULL OR familyId=?) AND (? IS NULL OR familyId<>?)
+      ORDER BY endedAt DESC,familyId DESC LIMIT 4`).bind(actor.personId,actor.personId,only,only,excluded,excluded)]);
+  const [gateRows, families, pendingRequests, joinRequests, endedFamilies] = batch.slice(-5).map(result => result.results);
+  if (gateRows![0]?.enabled !== 1) throw new ApiError(503, 'family_notebook_disabled', 'Family notebooks are unavailable.');
+  if (families!.length > 1) throw new ApiError(503, 'family_notebook_unavailable', 'The current family could not be confirmed.');
+  return jsonResponse({ schemaVersion: 1, personId: actor.personId, family: families![0] ?? null, pendingRequests, joinRequests, endedFamilies });
 }

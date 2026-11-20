@@ -404,6 +404,7 @@ actor PhotoLibraryScanner {
         var seenBurstIdentifiers = Set<String>()
         let quickEnd = min(settings.quickScanLimit, assets.count)
         var recoveryDiagnostics = ScanRecoveryDiagnostics.zero
+        var lowFidelityRetryBudget = ScanResumePolicy.lowFidelityRetriesPerPass
 
         if quickEnd > 0 {
             recoveryDiagnostics = try await process(
@@ -421,6 +422,7 @@ actor PhotoLibraryScanner {
                 phase: .quickScan,
                 purpose: scanPurpose,
                 startingRecoveryDiagnostics: recoveryDiagnostics,
+                lowFidelityRetryBudget: &lowFidelityRetryBudget,
                 onEvent: onEvent
             )
         }
@@ -472,6 +474,7 @@ actor PhotoLibraryScanner {
                 phase: .fullScan,
                 purpose: scanPurpose,
                 startingRecoveryDiagnostics: recoveryDiagnostics,
+                lowFidelityRetryBudget: &lowFidelityRetryBudget,
                 onEvent: onEvent
             )
         }
@@ -546,9 +549,9 @@ actor PhotoLibraryScanner {
         phase: ScanPhase,
         purpose: ScanPurpose,
         startingRecoveryDiagnostics: ScanRecoveryDiagnostics,
+        lowFidelityRetryBudget: inout Int,
         onEvent: @escaping @Sendable (ScanEvent) async -> Void
     ) async throws -> ScanRecoveryDiagnostics {
-        let concurrency = Self.analysisConcurrency
         var batchStart = range.lowerBound
         var lastPublishedIndex = range.lowerBound
         var newlyAnalyzedCount = 0
@@ -556,10 +559,15 @@ actor PhotoLibraryScanner {
         var recoveryDiagnostics = startingRecoveryDiagnostics
         var analyzedSinceLastReport = 0
         var lastReportUptime = ProcessInfo.processInfo.systemUptime
+        var isFirstBatch = true
 
         while batchStart < range.upperBound {
             try Task.checkCancellation()
-            let batchEnd = min(batchStart + concurrency, range.upperBound)
+            let concurrency = try await Self.currentAnalysisConcurrency()
+            // A smaller batch (heat, Low Power Mode) must not step over the
+            // every-100 report that the 1,000-photo resume checkpoints use.
+            let nextHundred = (batchStart / 100 + 1) * 100
+            let batchEnd = min(batchStart + concurrency, range.upperBound, nextHundred)
             var pending: [(Int, PHAsset, AssetRecord?, AnalysisMode)] = []
 
             for index in batchStart..<batchEnd {
@@ -595,9 +603,14 @@ actor PhotoLibraryScanner {
                 // the Vision box without forcing an upgrade rescan. The marker
                 // also distinguishes a captured nil date from a missing field.
                 if let previous,
-                   (!forceFullAnalysis
-                       || (purpose == .groupedAlbumUpgrade
-                           && Self.hasCompletedGroupedAlbumAnalysis(previous))),
+                   ScanResumePolicy.mayReuse(
+                       recordFingerprint: previous.analysisFingerprint,
+                       currentFingerprint: settings.analysisFingerprint,
+                       forceFullAnalysis: forceFullAnalysis,
+                       purpose: purpose,
+                       hasCompletedGroupedAlbumAnalysis:
+                           Self.hasCompletedGroupedAlbumAnalysis(previous)
+                   ),
                    Self.canReusePrimaryAnalysis(previous, settings: settings),
                    (previous.sourceModificationDateWasCaptured != true
                        || previous.sourceModificationDate
@@ -650,6 +663,15 @@ actor PhotoLibraryScanner {
                                 evidence: reused.analysisEvidence
                             ))
                         }
+                    } else if ScanResumePolicy.retriesLowFidelityNoCat(
+                        previous,
+                        now: scanStartedAt,
+                        remainingThisPass: lowFidelityRetryBudget
+                    ) {
+                        // 11/20: judged from the 512px preview only; the
+                        // original may be on this iPhone now.
+                        lowFidelityRetryBudget -= 1
+                        pending.append((index, asset, previous, .full))
                     } else if reused.analysisStatus == .noCat {
                         reused.albumAnalysisVersion =
                             CatAlbumTraits.currentAnalysisVersion
@@ -727,8 +749,8 @@ actor PhotoLibraryScanner {
 
             batchStart = batchEnd
             analyzedSinceLastReport += pending.count
-            let isFirstQuickBatch = phase == .quickScan
-                && batchEnd == min(range.lowerBound + concurrency, range.upperBound)
+            let isFirstQuickBatch = phase == .quickScan && isFirstBatch
+            isFirstBatch = false
             let nowUptime = ProcessInfo.processInfo.systemUptime
             if ScanProgressEventPolicy.shouldReport(
                 batchEnd: batchEnd,
@@ -818,6 +840,9 @@ actor PhotoLibraryScanner {
             deferredAssets: finished.filter { record in
                 record.analysisStatus == .unavailableLocally
                     || record.analysisStatus == .failed
+                    // 11/20: "no cat" from the 512px preview only is not a
+                    // real answer; the user is told it could not be read.
+                    || record.isLowFidelityNoCat
                     || (record.isCatCandidate
                         && (record.albumAnalysisVersion
                                 != CatAlbumTraits.currentAnalysisVersion
@@ -836,6 +861,31 @@ actor PhotoLibraryScanner {
             purpose: resultingPurpose,
             lastError: nil
         )
+    }
+
+    /// 11/20: fewer Vision jobs at once when the iPhone is hot or in Low
+    /// Power Mode; at a critical temperature the scan waits (cancellable,
+    /// so leaving the app still stops it) and goes on once it has cooled.
+    private static func currentAnalysisConcurrency() async throws -> Int {
+        var loggedPause = false
+        while true {
+            let info = ProcessInfo.processInfo
+            if let value = ScanPowerPolicy.analysisConcurrency(
+                maximum: analysisConcurrency,
+                thermalState: info.thermalState,
+                isLowPowerModeEnabled: info.isLowPowerModeEnabled
+            ) {
+                if loggedPause {
+                    SharedLog.app.info("scan", "Scan resumed after thermal pause")
+                }
+                return value
+            }
+            if !loggedPause {
+                SharedLog.app.info("scan", "Scan paused at critical thermal state")
+                loggedPause = true
+            }
+            try await Task.sleep(nanoseconds: 5_000_000_000)
+        }
     }
 
     private static func outingValue(

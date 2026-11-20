@@ -4,6 +4,46 @@ import Photos
 import SwiftUI
 import UIKit
 
+/// 11/20: the screen stays on during a scan only while the app is active,
+/// and not in Low Power Mode or while the iPhone is hot (ScanPowerPolicy).
+@MainActor
+private struct ScanScreenHold: ViewModifier {
+    let isScanning: Bool
+    let scenePhase: ScenePhase
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: isScanning, initial: true) { _, scanning in
+                Self.update(isScanning: scanning, scenePhase: scenePhase)
+            }
+            .onChange(of: scenePhase) { _, phase in
+                Self.update(isScanning: isScanning, scenePhase: phase)
+            }
+            .onReceive(
+                Publishers.Merge(
+                    NotificationCenter.default.publisher(
+                        for: ProcessInfo.thermalStateDidChangeNotification),
+                    NotificationCenter.default.publisher(
+                        for: Notification.Name.NSProcessInfoPowerStateDidChange)
+                )
+                .receive(on: DispatchQueue.main)
+            ) { _ in
+                Self.update(isScanning: isScanning, scenePhase: scenePhase)
+            }
+    }
+
+    private static func update(isScanning: Bool, scenePhase: ScenePhase) {
+        let info = ProcessInfo.processInfo
+        AppIdleTimer.setPreventSleep(
+            isScanning && scenePhase == .active
+                && ScanPowerPolicy.holdsScreenAwake(
+                    thermalState: info.thermalState,
+                    isLowPowerModeEnabled: info.isLowPowerModeEnabled),
+            for: "photo-scan"
+        )
+    }
+}
+
 /// One foreground operation must not clear another operation's sleep request.
 @MainActor
 enum AppIdleTimer {
@@ -187,9 +227,7 @@ struct AppRootView: View {
             do { try await Task.sleep(for: .seconds(5)) } catch { return }
             await client.backfillAnchorReceipts()
         }
-        .onChange(of: viewModel.isScanning, initial: true) { _, isScanning in
-            AppIdleTimer.setPreventSleep(isScanning && scenePhase == .active, for: "photo-scan")
-        }
+        .modifier(ScanScreenHold(isScanning: viewModel.isScanning, scenePhase: scenePhase))
         .onChange(of: momentNotificationTapMailbox.pendingWidgetFeedback, initial: true) { _, feedback in
             guard let feedback else { return }
             presentedError = PresentedError(message: feedback.message)
@@ -198,16 +236,20 @@ struct AppRootView: View {
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .active:
-                AppIdleTimer.setPreventSleep(viewModel.isScanning, for: "photo-scan")
                 widgetInstallationChecker.refresh()
                 Task {
                     await viewModel.syncOnActive()
                     await viewModel.refreshInstalledCloudyWindows()
                 }
-            case .inactive, .background:
-                AppIdleTimer.setPreventSleep(false, for: "photo-scan")
+            case .inactive:
+                // 11/20: a notification banner, Control Center or a glance at
+                // the app switcher only makes the app inactive. The search
+                // goes on; coming back does not start it again.
+                break
+            case .background:
                 // Vision batches are intentionally cancellable. Do not keep decoding photos
-                // after the user leaves the app; the next active transition resumes/syncs.
+                // after the user leaves the app; the next active transition resumes
+                // where this pass stopped (ScanResumePolicy).
                 viewModel.suspendScan()
             @unknown default:
                 viewModel.suspendScan()
@@ -1653,7 +1695,7 @@ private final class PhotoPresentationCache: ObservableObject {
         )
         guard cachedKey != key else { return cachedProjection }
 
-        let fingerprint = snapshot.settings.analysisFingerprint
+        let settings = snapshot.settings
         var libraryPhotos: [PhotoPresentation] = []
         var catPhotos: [PhotoPresentation] = []
         var likedPhotos: [PhotoPresentation] = []
@@ -1664,7 +1706,7 @@ private final class PhotoPresentationCache: ObservableObject {
             let presentation = transform(asset)
             libraryPhotos.append(presentation)
             if asset.isCatCandidate,
-               asset.analysisFingerprint == fingerprint {
+               settings.presentsAnalysis(fingerprint: asset.analysisFingerprint) {
                 catPhotos.append(presentation)
                 catAssets.append(asset)
             }

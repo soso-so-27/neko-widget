@@ -44,6 +44,50 @@ function beforeCommit(action: () => Promise<void>): Env {
 }
 
 describe('explicit family handover and retained management', () => {
+  it('shows a caller’s own ended memberships, with the exact cause and no access to the old notebook', async () => {
+    const a = await plusOwner(), b = await person(), c = await person(), d = await person(), f = await create(a);
+    await admit(a, b, f); await admit(a, c, f, 2); await admit(a, d, f, 3);
+    ok(await invoke(b, `${root}/${f}/leave`, body(4)));
+    ok(await invoke(a, `${root}/${f}/members/${c.id}/remove`, body(5)));
+    ok(await invoke(a, `${root}/${f}/dissolve`, body(6)));
+    const eventTime = async (table: 'payer' | 'governance', generation: number) =>
+      db.prepare(`SELECT recorded_at FROM family_notebook_${table}_events WHERE family_id=? AND resulting_generation=?`)
+        .bind(f,generation).first('recorded_at');
+    for (const [caller,state,endedBy,time] of [
+      [a,'removed','self',await eventTime('governance',7)],
+      [b,'left','self',await eventTime('payer',5)],
+      [c,'removed','other',await eventTime('governance',6)],
+      [d,'removed','other',await eventTime('governance',7)],
+    ] as const) {
+      expect(ok(await invoke(caller,`${root}/me`))).toMatchObject({family:null,endedFamilies:[{familyId:f,state,endedAt:time,endedBy}]});
+      expect((await invoke(caller,`${root}/${f}/members`)).status).toBe(404);
+    }
+    expect(ok(await invoke(await person(c.identity),`${root}/me`)).endedFamilies)
+      .toEqual([{familyId:f,state:'removed',endedAt:await eventTime('governance',6),endedBy:'other'}]);
+    expect(ok(await invoke(await person(),`${root}/me`)).endedFamilies).toEqual([]);
+    await db.prepare("UPDATE group_person_devices SET state='revoked',revoked_at=unixepoch() WHERE id=?").bind(c.deviceId).run();
+    expect((await invoke(c,`${root}/me`)).status).toBe(401);
+  });
+
+  it('returns at most four recent endings and suppresses an ending when a membership is active again', async () => {
+    const a=await plusOwner(),b=await person();
+    for(let i=0;i<5;i++){
+      const f=await create(a); await admit(a,b,f);
+      ok(await invoke(a,`${root}/${f}/dissolve`,body(2)));
+    }
+    const expected=(await db.prepare(`SELECT family_id FROM family_notebook_governance_events
+      WHERE actor_person_id=? AND action='dissolve' ORDER BY recorded_at DESC,family_id DESC LIMIT 4`).bind(a.id).all<{family_id:string}>()).results;
+    const own=ok(await invoke(b,`${root}/me`)).endedFamilies;
+    expect(own.map((row:{familyId:string})=>row.familyId)).toEqual(expected.map(row=>row.family_id));
+    expect(own).toHaveLength(4);
+    const active=await create(a); await admit(a,b,active);
+    ok(await invoke(b,`${root}/${active}/leave`,body(2)));
+    await admit(a,b,active,3);
+    const rejoined=ok(await invoke(b,`${root}/me`));
+    expect(rejoined.family.familyId).toBe(active);
+    expect(rejoined.endedFamilies.map((row:{familyId:string})=>row.familyId)).not.toContain(active);
+  },15_000);
+
   it('discovers only the authenticated family and scopes pending requests to their inviter or payer', async () => {
     const a = await plusOwner(), b = await person(), c = await person(), f = await create(a);
     await admit(a, c, f); const waiting = await admit(a, b, f, 2, false);

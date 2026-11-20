@@ -11,6 +11,7 @@ struct InitialScanView: View {
     let widgetGuideAction: (() -> Void)?
     let continueToApp: () -> Void
     let scanErrorMessage: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
         scan: ScanPresentation,
@@ -44,7 +45,7 @@ struct InitialScanView: View {
 
                     if scan.hasPreliminaryResult {
                         result
-                            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                            .transition(reduceMotion ? AnyTransition.opacity : .opacity.combined(with: .scale(scale: 0.96)))
                         if let scanErrorMessage = OnboardingPartialScanRecovery.message(
                             hasPreliminaryResult: scan.hasPreliminaryResult, error: scanErrorMessage) {
                             VStack(alignment: .leading, spacing: 12) {
@@ -104,7 +105,7 @@ struct InitialScanView: View {
                 .background(.bar)
             }
         }
-        .animation(.easeOut(duration: 0.25), value: scan.hasPreliminaryResult)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: scan.hasPreliminaryResult)
     }
 
     private var continueAction: some View {
