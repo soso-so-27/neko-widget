@@ -4981,8 +4981,8 @@ class CatCareRowListPage1112Tests(unittest.TestCase):
         for title, key in (("基本", "basics"), ("健康", "health"), ("暮らし", "living"), ("家の情報", "household")):
             self.assertIn(f'partHeader("{title}", progress.{key}, key: "{key}")', self.detail)
         header = section(self.detail, "private func partHeader(", "private static func rowLabel(")
-        # 11/12 (round 2): the count, or one green check once full.
-        self.assertIn('Text(verbatim: "\\(count.0) / \\(count.1)").foregroundStyle(Color.secondary)', header)
+        # 11/12 (round 2): one green check once full. 11/20: no 「3 / 7」.
+        self.assertNotIn("Text(verbatim:", header)
         self.assertIn('Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.green)', header)
         self.assertNotIn("そろっています", header)
         self.assertIn('.accessibilityIdentifier("cat-care-part-\\(key)")', header)
@@ -5410,12 +5410,22 @@ class CatPageSharedLabelTests(unittest.TestCase):
         care = source("NekoWidget/Views/CatCareView.swift")
         # 11/15: only while this iPhone is in the family (not a left copy).
         self.assertIn("familyNotebook.activeFamilyCats.contains { $0.toolID == catID }", care)
-        # Faces, not a sentence: in the notebook as a picture, elsewhere as the way in.
-        self.assertIn("FamilyFaces(names: familyNotebook.members.map(\\.displayName))", care)
-        self.assertIn("FamilyNotebookButton(sharedNames: familyNotebook.members.map(\\.displayName))", care)
+        # 11/20: no initials; the same button as any family member's, and
+        # nothing inside the notebook (the faces were hard to read).
+        self.assertIn("FamilyNotebookButton(shared: sharedWithFamily)", care)
         self.assertNotIn("家族の手帳で共有しています", care)
         notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
-        self.assertIn("struct FamilyFaces: View {", notebook)
+        detail = source("NekoWidget/Views/CatProfilePhotoCurationViews.swift")
+        for text in (care, notebook, detail):
+            self.assertNotIn("FamilyFaces", text)
+        self.assertIn("FamilyNotebookButton(shared: familyNames != nil)", detail)
+        button = section(notebook, "struct FamilyNotebookButton: View {", "private struct FamilyNotebookToolSyncModifier")
+        self.assertIn('Label("家族の手帳", systemImage: shared || model.hasFamily ? "person.2.fill" : "person.badge.plus")',
+                      button)
+        # 11/20: on iOS 26, a gap between the button and 「…」 (two controls).
+        for text in (care, detail):
+            self.assertIn("if #available(iOS 26.0, *) {\n", text)
+            self.assertIn("ToolbarSpacer(.fixed, placement: .topBarTrailing)", text)
         # The old note showed for every cat once the person had a family.
         self.assertNotIn("家族と一緒に書いています。", care)
 
@@ -6895,7 +6905,8 @@ class NavigationAfterActionTests(unittest.TestCase):
         self.assertNotIn("CatCareDetailView(toolCatID: cat.toolID, name: cat.name)", notebook)
         self.assertIn("if joined == .joined { onJoined?(); dismiss() }", notebook)
         care = source("NekoWidget/Views/CatCareView.swift")
-        self.assertIn("if !insideFamilyNotebook, Version1.familyNotebook || familyNotebook.hasFamily {", care)
+        self.assertIn("if !insideCatPage, !insideFamilyNotebook,\n"
+                      "               sharedWithFamily || Version1.familyNotebook || familyNotebook.hasFamily {", care)
         root_view = source("NekoWidget/App/AppRootView.swift")
         self.assertIn("FamilyNotebookJoinView(link: $0.url, onJoined: { joinedFamilyFromLink = true })", root_view)
         self.assertIn(".sheet(isPresented: $showsFamilyNotebook) { FamilyNotebookView() }", root_view)
@@ -8584,7 +8595,8 @@ class ToolsLookRoundTwo1112Tests(unittest.TestCase):
     def test_three_words_for_nothing_yet(self) -> None:
         words = section(self.parts, "enum ToolEmptyValue {", "\n}\n")
         self.assertIn('static let unwritten = "未記入"', words)
-        self.assertIn('static let unset = "未設定"', words)
+        # 11/20: one empty word; 「未設定」 could not be told from 「未記入」.
+        self.assertIn('static let unset = "未記入"', words)
         self.assertIn('static let none = "なし"', words)
         # 「未記入」: what the owner writes.
         for name, text, needle in (
@@ -8596,7 +8608,7 @@ class ToolsLookRoundTwo1112Tests(unittest.TestCase):
                 ("evac cats", self.evacuation, "if cats.isEmpty { return ToolEmptyValue.unwritten }"),
                 ("evac places", self.evacuation, 'count == 0 ? ToolEmptyValue.unwritten : "\\(count)件"')):
             self.assertIn(needle, text, name)
-        # 「未設定」: dates and choices.
+        # `unset` (11/20: 「未記入」 too): dates and choices.
         for name, text, needle in (
                 ("vet next visit", self.vet, ": ToolEmptyValue.unset,"),
                 ("lost date", self.lost, "?? ToolEmptyValue.unset,"),

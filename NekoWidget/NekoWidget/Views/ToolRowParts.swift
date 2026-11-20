@@ -36,17 +36,19 @@ struct ToolValueRow: View {
     }
 }
 
-/// The three words a row shows when nothing is there yet (11/12, round 2),
-/// the same in every tool and in 「この子のこと」:
+/// The words a row shows when nothing is there yet (11/12, round 2), the
+/// same in every tool and in 「この子のこと」:
 /// - 「未記入」: something the owner writes (a text, a record, a list of places);
-/// - 「未設定」: a date or a choice that is set rather than written;
+/// - `unset`: a date or a choice that is set rather than written. 11/20: also
+///   「未記入」 (it was 「未設定」; the owner could not tell the two apart), so
+///   one word means "nothing yet" everywhere; the name stays for its uses;
 /// - 「なし」: a count of things added (photos, records) and an explicit
 ///   「none」 answer (持病なし, 首輪なし).
 /// An answer the owner chose (「なし」, 「わからない」) is in the text colour;
-/// the three words above are gray.
+/// the words above are gray.
 enum ToolEmptyValue {
     static let unwritten = "未記入"
-    static let unset = "未設定"
+    static let unset = "未記入"
     static let none = "なし"
 }
 

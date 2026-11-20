@@ -2594,8 +2594,9 @@ struct FamilyNotebookLinkQuestionView: View {
 /// out of the way for anyone who keeps it to themselves (test builds only).
 struct FamilyNotebookButton: View {
     var accessibilityIdentifier = "cat-care-family-notebook"
-    /// On a cat that is in the notebook: the family's names, shown as faces.
-    var sharedNames: [String]? = nil
+    /// On a cat that is in the notebook. 11/20: the same icon and words as
+    /// any family member's button (the overlapped initials were hard to read).
+    var shared = false
     @ObservedObject private var model = FamilyNotebookPrototype.shared
     /// Read only: the pause this session already knows, no request of its own.
     @ObservedObject private var sharing = FamilyNotebookSharing.shared
@@ -2606,22 +2607,11 @@ struct FamilyNotebookButton: View {
 
     var body: some View {
         Button { shows = true } label: {
-            Group {
-                if let sharedNames {
-                    // 11/7: the words stay beside the faces, so it still says
-                    // what the button opens.
-                    HStack(spacing: 6) {
-                        FamilyFaces(names: sharedNames)
-                        Text("家族の手帳")
-                            .accessibilityHidden(true)  // the faces already say it
-                    }
-                } else {
-                    // Words beside the icon: a bare person icon was not found (1031).
-                    // One name for it everywhere: 家族の手帳 (11/7).
-                    Label("家族の手帳", systemImage: model.hasFamily ? "person.2.fill" : "person.badge.plus")
-                        .labelStyle(.titleAndIcon)
-                }
-            }
+            // Words beside the icon: a bare person icon was not found (1031).
+            // One name for it everywhere: 家族の手帳 (11/7). 11/20: a shared
+            // cat shows the same, without the family's initials.
+            Label("家族の手帳", systemImage: shared || model.hasFamily ? "person.2.fill" : "person.badge.plus")
+                .labelStyle(.titleAndIcon)
                 .overlay(alignment: .topTrailing) {
                     // 11/7: a mark with a symbol, not a 7pt dot of color alone.
                     if paused {
@@ -2642,45 +2632,6 @@ struct FamilyNotebookButton: View {
         .accessibilityValue(paused ? "共有が止まっています" : model.hasNewFromFamily ? "新しい記録があります" : "")
         .accessibilityIdentifier(accessibilityIdentifier)
         .sheet(isPresented: $shows) { FamilyNotebookView() }
-    }
-}
-
-/// The family on a shared cat's page: the first two letters of each name in a
-/// small circle, overlapped, at most three and then 「+N」. No sentence (11/6).
-/// 11/7: two letters (「お母」「お父」 were both 「お」) on dark fills that
-/// white text reads well on (it was white on orange).
-struct FamilyFaces: View {
-    let names: [String]
-    private static let tints: [Color] = [
-        Color(red: 0.22, green: 0.29, blue: 0.53),  // navy
-        Color(red: 0.08, green: 0.40, blue: 0.38),  // deep teal
-        Color(red: 0.45, green: 0.22, blue: 0.43),  // plum
-        Color(red: 0.40, green: 0.31, blue: 0.20),  // brown
-    ]
-
-    var body: some View {
-        HStack(spacing: -8) {
-            ForEach(Array(names.prefix(3).enumerated()), id: \.offset) { index, name in
-                Text(String(name.prefix(2)))
-                    .font(.caption2.weight(.bold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 2)
-                    .frame(width: 30, height: 30)
-                    .background(Circle().fill(Self.tints[index % Self.tints.count]))
-                    .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
-            }
-            if names.count > 3 {
-                Text("+\(names.count - 3)")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 12)
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("家族の手帳：" + names.joined(separator: "、"))
-        .accessibilityIdentifier("cat-care-family-faces")
     }
 }
 
