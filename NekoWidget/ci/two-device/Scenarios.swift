@@ -37,6 +37,7 @@ struct Family {
         ("S10", "member B hides and reports, reinstalls without 機種変更: the choices stay", s10),
         ("S11", "member B reports, reinstalls without 機種変更: 「通報への返答」 comes back", s11),
         ("S12", "member B reinstalled on a build that kept no binding: the next launch reads, the third is normal", s12),
+        ("S13", "member B answers 「同じ子ですか」, reinstalls without 機種変更: only the lost link is asked again", s13),
     ]
 
     // MARK: Common steps
@@ -760,5 +761,55 @@ struct Family {
         let third = try f.b.notebookScreenCats()
         try expect(third == [f.cat], "B's 「猫」 list has \(third.count) cats on the third launch")
         return "the earlier build is Device.savesBinding = false; the schedule's eligibility is FamilyAutoCheckPolicy's, the screen's belt read is not driven"
+    }
+
+    // MARK: S13
+
+    static func s13(_ relay: Relay) async throws -> String? {
+        let f = try await makeFamily(relay)
+
+        Log.step("A puts a second cat page into the notebook; B gets it")
+        let second = try shareCat(f.a, name: "合成のくろ", profile: UUID(), tool: UUID())
+        let aStore = try required(f.a.service.notebook, "A has no notebook copy")
+        try await settle("A's second cat sent", [f.a]) { try aStore.pendingOperations().isEmpty }
+        try await settle("B has both cats", [f.b]) { try familyCats(f.b) == [f.cat, second] }
+        let listed = try f.b.notebookScreenCats()
+        try expect(Set(listed) == [f.cat, second], "B's 「猫」 list has \(listed.count) cats")
+
+        Log.step("B is asked about both cats: 「べつの子」 for the first, 「同じ子」 for the second")
+        let asked = try f.b.linkQuestions()
+        try expect(Set(asked) == [f.cat, second], "B is asked about \(asked.count) cats")
+        try f.b.answerLinkQuestion(f.cat, sameAs: nil)
+        try f.b.answerLinkQuestion(second, sameAs: UUID())
+        try expect(try f.b.linkQuestions().isEmpty, "nothing is asked again")
+        let otherKey = FamilyNotebookCatLink.answerKey(family: f.id, cat: f.cat)
+        try expect(f.b.keptLinkAnswers == [otherKey], "the Keychain keeps 「べつの子」 only (got \(f.b.keptLinkAnswers.count))")
+
+        Log.step("B deletes the app and installs it again; no 機種変更")
+        let oldDevice = try required(f.b.notebookDeviceID, "B has no device")
+        try await f.b.reinstall()
+        try expect(f.b.linkAnswers == nil, "the reinstall wiped B's UserDefaults")
+        try await settle("B reads the notebook again", [f.b, f.a]) { f.b.inFamily }
+        try expect(f.b.notebookDeviceID == oldDevice, "B keeps its device")
+        let again = try f.b.notebookScreenCats()
+        try expect(Set(again) == [f.cat, second], "B's 「猫」 list has \(again.count) cats")
+
+        Log.step("「べつの子」 came back from the Keychain; the link went with the app, so that cat is asked again")
+        let afterReinstall = try f.b.linkQuestions()
+        try expect(afterReinstall == [second], "B is asked about the second cat only (got \(afterReinstall.count))")
+        try expect(f.b.linkAnswers == [otherKey], "the answer is back in UserDefaults")
+
+        Log.step("B closes the app and opens it again (the second launch after the reinstall)")
+        try await f.b.relaunch()
+        try await relaunchedReadsIntoFamily(f.b)
+        _ = try f.b.notebookScreenCats()
+        let secondLaunch = try f.b.linkQuestions()
+        try expect(secondLaunch == [second], "the second launch asks the same (got \(secondLaunch.count))")
+
+        Log.step("B links the second cat again: nothing is asked any more")
+        try f.b.answerLinkQuestion(second, sameAs: UUID())
+        try expect(try f.b.linkQuestions().isEmpty, "nothing is asked")
+        try expect(f.b.keptLinkAnswers == [otherKey], "the Keychain still keeps 「べつの子」 only")
+        return "the questions are FamilyNotebookCatLink's over Device.linkAnswers (the model's UserDefaults); B's own cat pages and 「この子のこと」 (CatCareStore) are not modelled: care is nil and 「同じ子」 is the store's mapping only"
     }
 }

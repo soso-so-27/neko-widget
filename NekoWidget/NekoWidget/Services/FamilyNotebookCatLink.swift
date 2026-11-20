@@ -202,6 +202,20 @@ enum FamilyNotebookCatLink {
     static func answerKey(family: UUID, cat: UUID) -> String {
         family.uuidString.lowercased() + ":" + cat.uuidString.lowercased()
     }
+
+    /// The one family cat to ask 「同じ子ですか」 about: not closed in this
+    /// launch and not answered (`key` nil: never asked).
+    static func firstUnanswered(_ unlinked: [Unlinked], closed: Set<UUID>, answered: Set<String>,
+                                key: (UUID) -> String?) -> Unlinked? {
+        unlinked.first { cat in !closed.contains(cat.id) && !(key(cat.id).map { answered.contains($0) } ?? true) }
+    }
+
+    /// The answer keys of the family cats this iPhone linked to one of its
+    /// pages (FamilyCatLinkAnswersMemory keeps no copy of those).
+    static func linkedAnswerKeys(in snapshot: FamilyNotebookSnapshot) -> Set<String> {
+        Set(snapshot.activeMappings.filter { $0.recordID == nil && $0.profileID != nil }
+            .map { answerKey(family: snapshot.familyID, cat: $0.familyCatID) })
+    }
 }
 
 /// 11/15 (段 1): one order of cats for the whole family, kept in the notebook

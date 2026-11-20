@@ -565,6 +565,83 @@ enum FamilyHiddenOperationsMemory {
     static func text(_ ids: Set<String>) -> String { ids.sorted().joined(separator: ",") }
 }
 
+/// 11/20: the person's answers to 「同じ子ですか」 (FamilyNotebookCatLink.answerKey
+/// per family cat). The screens read UserDefaults (`defaultsKey`, a sorted
+/// array); a copy is kept in this iPhone's device-only Keychain, as
+/// FamilyHiddenOperationsMemory is, so deleting the app does not ask again.
+///
+/// Only answers that left no link are kept there (「べつの子」, and
+/// 「つながりを外す」): a 「同じ子」 link is this iPhone's local mapping, which
+/// deleting the app removes with Application Support, so that cat is asked
+/// about again and can be linked again. A Keychain failure leaves UserDefaults
+/// as it was. Bound: the newest `limit` keys (the oldest is dropped first).
+struct FamilyCatLinkAnswersMemory {
+    static let defaultsKey = "familyNotebook.catLinkAnswered.v1"
+    static let account = "family-cat-link-answers.v1"
+    /// After GroupWindowClientProvider.namespace.
+    static let namespaceSuffix = ".family-cat-links"
+    static let limit = 200
+
+    let defaults: () -> [String]?
+    let setDefaults: ([String]) -> Void
+    let keychain: () -> (any GroupSecretStore)?
+
+    static func keys(_ data: Data?) -> [String] {
+        guard let data, let text = String(data: data, encoding: .utf8) else { return [] }
+        return text.split(separator: ",").map(String.init)
+    }
+
+    /// Once per process (`checked`), when the questions are worked out after a
+    /// read. UserDefaults empty (the app deleted and installed again): the
+    /// kept answers come back. Otherwise answers from an install before the
+    /// copy for which `keeps` holds (no link) are added to it once.
+    @discardableResult
+    func restore(checked: inout Bool, keeps: (String) -> Bool) -> [String] {
+        let saved = defaults() ?? []
+        guard !checked else { return saved }
+        checked = true
+        guard let store = keychain() else { return saved }
+        let data: Data?
+        do { data = try store.read(Self.account) } catch { return saved }
+        let kept = Self.keys(data)
+        if saved.isEmpty {
+            guard !kept.isEmpty else { return [] }
+            let restored = Array(Set(kept)).sorted()
+            setDefaults(restored)
+            return restored
+        }
+        let missing = saved.filter { !kept.contains($0) && keeps($0) }
+        if !missing.isEmpty { keep(kept + missing, in: store, previous: data) }
+        return saved
+    }
+
+    /// The person's answer for `key` (written once per answer, never while
+    /// drawing). `linked`: 「同じ子」, kept in UserDefaults only and taken out
+    /// of the Keychain copy.
+    func remember(_ key: String, linked: Bool) {
+        var saved = defaults() ?? []
+        if !saved.contains(key) { saved.append(key); setDefaults(saved.sorted()) }
+        guard let store = keychain() else { return }
+        let data: Data?
+        do { data = try store.read(Self.account) } catch { return }
+        var kept = Self.keys(data).filter { $0 != key }
+        if !linked { kept.append(key) }
+        keep(kept, in: store, previous: data)
+    }
+
+    /// Writes only a changed list; empty removes the item.
+    private func keep(_ keys: [String], in store: any GroupSecretStore, previous: Data?) {
+        let bounded = Array(keys.suffix(Self.limit))
+        if bounded.isEmpty {
+            if previous != nil { try? store.remove(Self.account) }
+            return
+        }
+        let next = Data(bounded.joined(separator: ",").utf8)
+        guard next != previous else { return }
+        try? store.write(next, account: Self.account, createOnly: false)
+    }
+}
+
 /// The iCloud Keychain item of the pin: synchronizable, with the same access
 /// class and group as the person key's item (available while unlocked).
 struct FamilyNotebookSyncedKeychainStore: GroupSecretStore {
