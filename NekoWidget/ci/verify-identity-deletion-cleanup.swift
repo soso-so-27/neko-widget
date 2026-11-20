@@ -242,10 +242,12 @@ enum IdentityDeletionCleanupChecks {
             try FamilySharingLocalData.notebookScope(endpoint: endpoint, personID: identity.personID, deviceID: identity.deviceID)
         }
         func gone(_ p: Phone, _ identity: GroupDeviceIdentity) throws -> Bool {
-            !exists(p.notebook(try scope(identity))) && p.keychain.isEmpty(namespace + ".family." + (try scope(identity)))
+            let notebook = try scope(identity)
+            return !exists(p.notebook(notebook)) && p.keychain.isEmpty(namespace + ".family." + notebook)
         }
         func stays(_ p: Phone, _ identity: GroupDeviceIdentity) throws -> Bool {
-            exists(p.notebook(try scope(identity))) && !p.keychain.isEmpty(namespace + ".family." + (try scope(identity)))
+            let notebook = try scope(identity)
+            return exists(p.notebook(notebook)) && !p.keychain.isEmpty(namespace + ".family." + notebook)
         }
         func untouchedCommon(_ p: Phone) throws {
             let unknown = try FamilySharingLocalData.notebookScope(endpoint: endpoint, personID: "older", deviceID: "older-device")
