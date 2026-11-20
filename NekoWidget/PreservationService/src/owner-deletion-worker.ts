@@ -1,6 +1,6 @@
 import { type Env } from './index';
 import { boundDeletionInventory } from './owner-deletion-inventory';
-import { OwnerDeletionExecutor } from './owner-deletion';
+import { OwnerDeletionExecutor, type OwnerDeletionBlock } from './owner-deletion';
 import { OwnerDeletionJournal } from './owner-deletion-journal';
 import { S3VersionPurge } from './s3-version-purge';
 import { AppleTokenRevoker } from './apple-revocation';
@@ -61,13 +61,22 @@ export default {
       // Advance before work: crashes and permanently blocked owners must not
       // monopolize the front of the queue on every scheduled invocation.
       await journal.markAttempt(request.ownerId);
+      const blocks = new Set<OwnerDeletionBlock>();
+      let retry = false;
       try {
         for (let step = 0; step < 48 && now() - started < 25_000; step++) {
-          const result = await executor.step(request.ownerId);
-          if (result === 'waiting') { failed = true; break; }
+          const result = await executor.step(request.ownerId, reason => blocks.add(reason));
+          if (result === 'waiting') { retry = true; break; }
           if (result === 'completed') break;
         }
-      } catch { failed = true; }
+      } catch { retry = true; }
+      if (retry) {
+        failed = true;
+        const ageSeconds = Math.max(0, Math.floor((now()-request.requestedAt)/1000));
+        console.warn(JSON.stringify({ event: 'preservation_owner_deletion_blocked',
+          reasons: blocks.size ? [...blocks] : ['step-unavailable'],
+          ageSeconds, investigationDue: ageSeconds >= 3600 }));
+      }
       if (now() - started >= 25_000) break;
     }
     if (failed) throw new ServiceError('OWNER_DELETION_RETRY_REQUIRED', 503);

@@ -117,8 +117,13 @@ describe('explicit owner-requested deletion', () => {
     await expect(route(request({ confirmation: 'delete-service-account', receipt: f.receipt, ownerId: crypto.randomUUID() }), services))
       .rejects.toMatchObject({ code: 'INVALID_REQUEST' });
     await expect(route(request({ receipt: f.receipt }), services)).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    await expect(route(request({ confirmation: 'delete-service-account', receipt: f.receipt }), services))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' });
     expect(await f.journal.request(f.session.ownerId)).toBeNull();
-    const result = await route(request({ confirmation: 'delete-service-account', receipt: f.receipt }), services);
+    // The signed challenge itself is exercised in device-sessions.integration.
+    vi.spyOn(f.auth.devices, 'authorizeOwnerDeletion').mockResolvedValueOnce(undefined);
+    const result = await route(request({ confirmation: 'delete-service-account', receipt: f.receipt,
+      challengeId: randomToken(), deviceProof: 'synthetic-test-proof' }), services);
     expect(result.status).toBe(202);
     await expect(f.auth.requireSession(f.session.token)).rejects.toThrow();
     expect(await f.requests.status(f.session.ownerId, f.receipt)).toEqual({ state: 'processing' });
@@ -229,7 +234,9 @@ describe('explicit owner-requested deletion', () => {
     await db.prepare('INSERT INTO pa_recovery_write_leases(write_id,owner_id,started_at) VALUES(?,?,1)')
       .bind(crypto.randomUUID(), f.session.ownerId).run();
     await f.requests.request(f.session.token, f.receipt);
-    expect(await f.executor.step(f.session.ownerId)).toBe('waiting');
+    const blocked = vi.fn();
+    expect(await f.executor.step(f.session.ownerId, blocked)).toBe('waiting');
+    expect(blocked).toHaveBeenCalledExactlyOnceWith('write-lease');
     expect(f.revokeRefreshToken).not.toHaveBeenCalled();
     expect(f.deleteVersion).not.toHaveBeenCalled();
   });

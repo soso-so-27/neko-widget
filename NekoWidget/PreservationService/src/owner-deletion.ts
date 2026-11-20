@@ -7,6 +7,8 @@ import type { S3RecoveryCopy } from './s3-recovery-copy';
 import type { S3VersionPurge } from './s3-version-purge';
 
 const unavailable = () => new ServiceError('OWNER_DELETION_UNAVAILABLE', 503);
+export type OwnerDeletionBlock = 'write-lease' | 'upload' | 'expiry-fence' | 'inventory-drift' | 'inventory-unavailable';
+const cloudDeletionBatchSize = 16;
 const canonical = (inventory: OwnerCloudInventory): string => JSON.stringify({
   ownerId: inventory.ownerId,
   r2Objects: [...inventory.r2Objects].sort((a, b) => a.key.localeCompare(b.key, 'en')),
@@ -94,7 +96,7 @@ type ExecutorDependencies = Base & {
 export class OwnerDeletionExecutor {
   constructor(private readonly d: ExecutorDependencies) {}
 
-  async step(ownerId: string): Promise<'processing' | 'waiting' | 'completed'> {
+  async step(ownerId: string, reportBlocked?: (reason: OwnerDeletionBlock) => void): Promise<'processing' | 'waiting' | 'completed'> {
     if (this.d.enabled !== true) throw new ServiceError('OWNER_DELETION_DISABLED', 503);
     const r = await this.d.journal.request(ownerId);
     if (!r) throw unavailable();
@@ -115,7 +117,15 @@ export class OwnerDeletionExecutor {
       .bind(ownerId, ownerId, ownerId).first<{ writes: number; uploads: number; expiry_fences: number }>();
     // An uncertain write is not dismissed because its lease is old. It must
     // finish or be independently reconciled before sealing the inventory.
-    if (!pending || pending.writes || pending.uploads || pending.expiry_fences) return 'waiting';
+    if (!pending || pending.writes || pending.uploads || pending.expiry_fences) {
+      const reasons: OwnerDeletionBlock[] = [];
+      if (!pending) reasons.push('inventory-unavailable');
+      if (pending?.writes) reasons.push('write-lease');
+      if (pending?.uploads) reasons.push('upload');
+      if (pending?.expiry_fences) reasons.push('expiry-fence');
+      for (const reason of reasons) reportBlocked?.(reason);
+      return 'waiting';
+    }
     await installOwnerDeletionFence(db, r);
 
     if (!await this.d.journal.stage(r, 'apple-revoked')) {
@@ -137,7 +147,10 @@ export class OwnerDeletionExecutor {
     if (!plan) {
       const before = canonical(await inventoryOwnerCloudStorage(this.d.bucket, this.d.recovery, ownerId));
       const after = canonical(await inventoryOwnerCloudStorage(this.d.bucket, this.d.recovery, ownerId));
-      if (before !== after) throw unavailable();
+      if (before !== after) {
+        reportBlocked?.('inventory-drift');
+        throw unavailable();
+      }
       plan = await this.d.journal.record(r, 'plan', JSON.parse(before) as Plan);
     }
     if (plan.ownerId !== ownerId || !Array.isArray(plan.r2Objects) || !Array.isArray(plan.s3Versions)) throw unavailable();
@@ -151,13 +164,24 @@ export class OwnerDeletionExecutor {
     const allowedPhotos = new Set(plan.r2Objects.map(item => JSON.stringify(item)));
     const allowedVersions = new Set(plan.s3Versions.map(item => JSON.stringify(item)));
     if (current.r2Objects.some(item => !allowedPhotos.has(JSON.stringify(item)))
-      || current.s3Versions.some(item => !allowedVersions.has(JSON.stringify(item)))) throw unavailable();
+      || current.s3Versions.some(item => !allowedVersions.has(JSON.stringify(item)))) {
+      reportBlocked?.('inventory-drift');
+      throw unavailable();
+    }
     if (current.r2Objects.length) {
-      await requestManifestPhotoDeletion(this.d.bucket, ownerId, current.r2Objects[0]!);
+      const yieldAt = this.d.now() + 5000;
+      for (const item of current.r2Objects.slice(0, cloudDeletionBatchSize)) {
+        await requestManifestPhotoDeletion(this.d.bucket, ownerId, item);
+        if (this.d.now() >= yieldAt) break;
+      }
       return 'processing';
     }
     if (current.s3Versions.length) {
-      await this.d.versionPurge.requestExactVersionDeletion(ownerId, current.s3Versions[0]!);
+      const yieldAt = this.d.now() + 5000;
+      for (const item of current.s3Versions.slice(0, cloudDeletionBatchSize)) {
+        await this.d.versionPurge.requestExactVersionDeletion(ownerId, item);
+        if (this.d.now() >= yieldAt) break;
+      }
       // A successful DELETE is not a completion receipt; the next step re-lists.
       return 'processing';
     }

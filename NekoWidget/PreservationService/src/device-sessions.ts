@@ -1,5 +1,5 @@
 import { type AuthDependencies, type DeviceBinding, type DeviceGrant, type IdentityVerifier,
-  type SessionCredential, type VerifiedIdentity, randomToken, ServiceError, sha256 } from './contracts';
+  type Session, type SessionCredential, type VerifiedIdentity, randomToken, ServiceError, sha256 } from './contracts';
 import { deviceBinding, verifyDeviceProof } from './device-proof';
 import { identityIndexKey, indexedOwnerIdentity } from './identity-index';
 
@@ -278,6 +278,41 @@ export class DeviceSessions {
           .bind(now, input.grantId, input.challengeId, marker),
       ]);
       if (batch[0]?.meta.changes !== 1 || batch[1]?.results.length !== 1) throw denied();
+    } catch (error) { throw safe(error); }
+  }
+
+  async authorizeOwnerDeletion(session: Session, input: {
+    challengeId: string; deviceProof: string; receipt: string; origin: string;
+  }): Promise<void> {
+    try {
+      if (!opaque.test(input.challengeId) || !opaque.test(input.receipt)) throw denied();
+      const db = this.d.db;
+      const authority = `FROM pa_sessions s JOIN pa_device_session_grants g
+        ON s.device_grant_id=g.grant_id AND s.owner_id=g.owner_id AND s.owner_epoch=g.owner_epoch
+        WHERE s.session_hash=? AND s.owner_id=? AND s.expires_at>? AND g.idle_expires_at>?
+          AND g.revoked_at IS NULL AND ${liveOwner} AND ${recovered}`;
+      const bindings = (now: number) => [session.sessionHash, session.ownerId, now, now];
+      const now = this.now();
+      const grant = await db.prepare(`SELECT g.grant_id,g.device_binding ${authority}`)
+        .bind(...bindings(now)).first<Pick<GrantRow, 'grant_id' | 'device_binding'>>();
+      if (!grant) throw denied();
+      const challenge = await db.prepare(`SELECT nonce FROM pa_device_session_challenges
+        WHERE challenge_id=? AND owner_id=? AND grant_id=? AND purpose='revoke'
+          AND expires_at>? AND consumed_by IS NULL`)
+        .bind(input.challengeId, session.ownerId, grant.grant_id, now).first<{ nonce: string }>();
+      if (!challenge) throw denied();
+      const subject = await sha256(`neko-owner-deletion-v1\n${session.sessionHash}\n${await sha256(input.receipt)}`);
+      await verifyDeviceProof(input.deviceProof, JSON.parse(grant.device_binding) as DeviceBinding, {
+        challengeId: input.challengeId, subject, nonce: challenge.nonce,
+        path: '/v1/account-deletion', origin: input.origin, now: this.now(),
+      });
+      const claimedAt = this.now();
+      const claimed = await db.prepare(`UPDATE pa_device_session_challenges SET consumed_by=?
+        WHERE challenge_id=? AND owner_id=? AND grant_id=? AND purpose='revoke' AND expires_at>?
+          AND consumed_by IS NULL AND EXISTS(SELECT 1 ${authority} AND g.grant_id=?) RETURNING challenge_id`)
+        .bind(randomToken(), input.challengeId, session.ownerId, grant.grant_id, claimedAt,
+          ...bindings(claimedAt), grant.grant_id).first();
+      if (!claimed) throw denied();
     } catch (error) { throw safe(error); }
   }
 }
