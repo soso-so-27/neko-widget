@@ -503,6 +503,117 @@ private func requireObject(_ value: Any) throws -> [String: Any] {
     return object
 }
 
+/// 11/20: starting a rescan must not empty the 写真 tab, cat pages or Widgets.
+private func verifyRescanKeepsEarlierResultsShown() throws {
+    let before = AppSettings.default
+    let cat = record("earlier-cat", areaRatio: 0.3)
+    var unrelated = record("older-settings", areaRatio: 0.3)
+    unrelated.analysisFingerprint = "cat-v3:0:999"
+
+    let rescanning = before.startingRescan()
+    try require(rescanning.analysisRevision == before.analysisRevision + 1,
+                "a rescan did not move the analysis revision on")
+    try require(rescanning.analysisFingerprint != before.analysisFingerprint,
+                "a rescan kept the old fingerprint")
+    var snapshot = LibrarySnapshot.empty
+    snapshot.settings = rescanning
+    snapshot.assets = [cat, unrelated]
+    try require(snapshot.catAssets.map(\.localIdentifier) == ["earlier-cat"],
+                "a rescan hid the cats found before it: \(snapshot.catAssets.map(\.localIdentifier))")
+    try require(AlbumCandidateSelector().select(from: snapshot).map(\.localIdentifier) == ["earlier-cat"],
+                "albums lost the earlier cats during a rescan")
+    try require(cat.isWidgetEligible(settings: rescanning),
+                "Widgets lost the earlier cats during a rescan")
+
+    // A rescan started again keeps both earlier results.
+    let again = rescanning.startingRescan()
+    var middle = record("middle-cat", areaRatio: 0.3)
+    middle.analysisFingerprint = rescanning.analysisFingerprint
+    try require(again.presentsAnalysis(fingerprint: before.analysisFingerprint)
+                    && again.presentsAnalysis(fingerprint: middle.analysisFingerprint),
+                "a second rescan hid the first rescan's results")
+
+    // Once a pass completes, only the current results count.
+    let finished = again.finishingRescan()
+    try require(finished.analysisFingerprint == again.analysisFingerprint
+                    && !finished.presentsAnalysis(fingerprint: before.analysisFingerprint),
+                "earlier results kept counting after the rescan finished")
+
+    // Settings written before 11/20 still decode; the field is only added.
+    let decoded = try JSONDecoder().decode(
+        AppSettings.self, from: JSONEncoder().encode(before))
+    try require(decoded.supersededAnalysisFingerprints == nil,
+                "settings without the new field did not decode as before")
+}
+
+/// 11/20: an interrupted rescan goes on where it stopped.
+private func verifyInterruptedRescanResumes() throws {
+    let current = AppSettings.default.startingRescan().analysisFingerprint
+    let earlier = AppSettings.default.analysisFingerprint
+    try require(ScanResumePolicy.mayReuse(
+        recordFingerprint: current, currentFingerprint: current,
+        forceFullAnalysis: true, purpose: .manualRescan,
+        hasCompletedGroupedAlbumAnalysis: false),
+        "a record this rescan already made was analysed again")
+    try require(!ScanResumePolicy.mayReuse(
+        recordFingerprint: earlier, currentFingerprint: current,
+        forceFullAnalysis: true, purpose: .manualRescan,
+        hasCompletedGroupedAlbumAnalysis: true),
+        "a rescan reused a record made before it")
+    try require(!ScanResumePolicy.mayReuse(
+        recordFingerprint: current, currentFingerprint: current,
+        forceFullAnalysis: true, purpose: .groupedAlbumUpgrade,
+        hasCompletedGroupedAlbumAnalysis: false),
+        "the album upgrade skipped a record without the new album analysis")
+    try require(ScanResumePolicy.mayReuse(
+        recordFingerprint: earlier, currentFingerprint: current,
+        forceFullAnalysis: false, purpose: .regular,
+        hasCompletedGroupedAlbumAnalysis: false),
+        "an ordinary pass stopped deferring to the record checks")
+}
+
+/// 11/20: "no cat" from the 512px preview is not final.
+private func verifyLowFidelityNoCatIsNotFinal() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    var miss = record("preview-only", areaRatio: 0.3, evidence: AssetAnalysisEvidence(
+        finalPass: .localRecovery512, fallbackReason: .unavailableLocally,
+        fallbackOutcome: .noCat))
+    miss.cat = .none
+    miss.analysisStatus = .noCat
+    miss.analyzedAt = now.addingTimeInterval(-25 * 60 * 60)
+    var full = miss
+    full.analysisEvidence = AssetAnalysisEvidence(finalPass: .primary1024)
+    try require(miss.isLowFidelityNoCat && !full.isLowFidelityNoCat,
+                "a preview-only no-cat was not told apart")
+    try require(ScanResumePolicy.retriesLowFidelityNoCat(miss, now: now, remainingThisPass: 1),
+                "a day-old preview-only no-cat was not looked at again")
+    try require(!ScanResumePolicy.retriesLowFidelityNoCat(miss, now: now, remainingThisPass: 0),
+                "the per-pass bound was not kept")
+    try require(!ScanResumePolicy.retriesLowFidelityNoCat(full, now: now, remainingThisPass: 1),
+                "a full-size no-cat was analysed again")
+    var fresh = miss
+    fresh.analyzedAt = now.addingTimeInterval(-60)
+    try require(!ScanResumePolicy.retriesLowFidelityNoCat(fresh, now: now, remainingThisPass: 1),
+                "a preview-only no-cat was retried on every pass")
+}
+
+/// 11/20: the scan's load follows heat and Low Power Mode.
+private func verifyScanPowerPolicy() throws {
+    try require(ScanPowerPolicy.analysisConcurrency(
+        maximum: 4, thermalState: .nominal, isLowPowerModeEnabled: false) == 4, "nominal")
+    try require(ScanPowerPolicy.analysisConcurrency(
+        maximum: 4, thermalState: .fair, isLowPowerModeEnabled: true) == 2, "low power")
+    try require(ScanPowerPolicy.analysisConcurrency(
+        maximum: 4, thermalState: .serious, isLowPowerModeEnabled: false) == 1, "serious")
+    try require(ScanPowerPolicy.analysisConcurrency(
+        maximum: 4, thermalState: .critical, isLowPowerModeEnabled: false) == nil,
+        "a critical temperature did not pause the scan")
+    try require(ScanPowerPolicy.holdsScreenAwake(thermalState: .fair, isLowPowerModeEnabled: false)
+                    && !ScanPowerPolicy.holdsScreenAwake(thermalState: .nominal, isLowPowerModeEnabled: true)
+                    && !ScanPowerPolicy.holdsScreenAwake(thermalState: .serious, isLowPowerModeEnabled: false),
+                "the screen was kept on when it should not be")
+}
+
 @main
 private struct ScanRecoveryPolicyVerifier {
     static func main() throws {
@@ -516,6 +627,10 @@ private struct ScanRecoveryPolicyVerifier {
         try verifyRecoveryCounterAccounting()
         try verifyScanProgressPublicationPolicy()
         try verifyThumbnailCropAlwaysFillsTheFrame()
+        try verifyRescanKeepsEarlierResultsShown()
+        try verifyInterruptedRescanResumes()
+        try verifyLowFidelityNoCatIsNotFinal()
+        try verifyScanPowerPolicy()
         print("Scan recovery and eligibility policies: PASS")
     }
 }

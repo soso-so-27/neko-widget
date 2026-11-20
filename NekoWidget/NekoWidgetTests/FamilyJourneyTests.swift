@@ -155,6 +155,26 @@ final class FamilyJourneyTests: XCTestCase {
         XCTAssertEqual(reads.count, 1 + BillingCallBudget.automaticPerMinute)
     }
 
+    /// 11/20: a read the gate refuses with nothing held to retry it never
+    /// leaves the first 「Plusを確認しています…」 spinner on screen for good.
+    func testRefusedReadWithNoRetryNeverStaysChecking() async {
+        final class Reads: @unchecked Sendable { var count = 0 }
+        let reads = Reads()
+        let store = PlusPurchaseStore(
+            configuration: PlusPurchaseConfiguration(isEnabled: true, monthlyProductID: "jp.neko.monthly", annualProductID: nil),
+            recordVerifiedTransactionEvent: { _, _ in throw BillingClientError.transportUnavailable },
+            fetchAuthoritativeEntitlement: { reads.count += 1; throw BillingClientError.transportUnavailable })
+        store.billingBudget = BillingCallBudget()
+        XCTAssertEqual(store.entitlementState, .checking)
+        for _ in 0..<BillingCallBudget.devicePerMinute {
+            XCTAssertTrue(store.billingBudget.admit(.entitlement, personAction: true))
+        }
+        await SharingPersonAction.run { await store.refreshWidgetAuthorityInBackground() }
+        XCTAssertEqual(reads.count, 0, "the iPhone's minute is full: nothing is sent")
+        XCTAssertNotEqual(store.entitlementState, .checking)
+        XCTAssertTrue(store.entitlementState.cannotBeConfirmed, "「購入を復元」 instead of a spinner")
+    }
+
     func testTapsStopAtTheIPhonesLimitSoTwoIPhonesStayUnder120() {
         let budget = SharingAutoCallBudget(), start = Date()
         var taps = 0

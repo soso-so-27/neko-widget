@@ -20,6 +20,7 @@ struct VerifyEvacuationPlan {
         try expiryRules()
         try noticeSchedule()
         try takenOnTheDay()
+        try noticeChoiceTravelsWithThePlan()
         print("Evacuation plan (避難に備える) decoding and rule checks passed")
     }
 
@@ -64,6 +65,33 @@ struct VerifyEvacuationPlan {
         var future = next
         future.destinations[0].kindValue = "someday"
         try check(future.destinations[0].kind == nil, "unknown kind is not chosen")
+    }
+
+    /// 11/20: 「見直しの時期に知らせる」 is saved with the plan, so 保存 brings it
+    /// back. Plans saved before have none; a value this version does not know
+    /// is read as none, never as an unreadable plan.
+    static func noticeChoiceTravelsWithThePlan() throws {
+        let old = try JSONDecoder().decode(EvacuationPlan.self, from: JSONEncoder().encode(EvacuationPlan()))
+        try check(old.noticeChoice == nil && old.savedNoticeChoice == nil, "a new plan has no choice")
+        var plan = EvacuationPlan()
+        plan.noticeChoice = 1
+        let json = String(decoding: try JSONEncoder().encode(plan), as: UTF8.self)
+        try check(json.contains("\"noticeChoice\":1"), "the choice is in the saved plan")
+        let back = try JSONDecoder().decode(EvacuationPlan.self, from: Data(json.utf8))
+        try back.validate()
+        try check(back.savedNoticeChoice == 1, "the choice comes back")
+        plan.noticeChoice = 2
+        try check(try JSONDecoder().decode(EvacuationPlan.self, from: JSONEncoder().encode(plan)).savedNoticeChoice == 2,
+                  "turned off comes back off")
+        plan.noticeChoice = 7
+        let future = try JSONDecoder().decode(EvacuationPlan.self, from: JSONEncoder().encode(plan))
+        try future.validate()
+        try check(future.savedNoticeChoice == nil, "an unknown choice is read as none")
+        // A plan from an older version (no key at all) still decodes.
+        var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(EvacuationPlan())) as! [String: Any]
+        object.removeValue(forKey: "noticeChoice")
+        let older = try JSONDecoder().decode(EvacuationPlan.self, from: JSONSerialization.data(withJSONObject: object))
+        try check(older.savedNoticeChoice == nil, "an older plan has none")
     }
 
     static func amountsFollowCatCount() throws {

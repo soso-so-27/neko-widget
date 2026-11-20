@@ -772,12 +772,57 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
 
     mutating func removeProfile(id: UUID, at date: Date = .now) {
         let previousCount = profiles.count
+        let removedCatPhotos = confirmedAssetIdentifiers(for: id)
         profiles.removeAll { $0.id == id }
         memberships.removeAll { $0.profileID == id }
         guard profiles.count != previousCount else { return }
+        // 11/20: with one cat left, the single-cat rule would make every
+        // detected photo hers, including the deleted cat's. Those photos get
+        // her 「この子ではない」 instead; she can still be given one by hand.
+        memberships.append(contentsOf: Self.membershipsKeepingApart(
+            removedCatPhotos,
+            // Not `singleCatProfileID`: the family-notebook pause of the rule
+            // can end later, and the photos must stay apart then too.
+            from: profiles.count == 1 ? profiles.first?.id : nil,
+            in: self,
+            at: date
+        ))
         mode = .profiled
         updatedAt = max(updatedAt, max(createdAt, date))
         self = normalized()
+    }
+
+    /// The 「この子ではない」 decisions that keep a deleted cat's photos off
+    /// the only remaining cat (11/20). A photo she already has a decision
+    /// for, or that her linked album holds, is left as it is.
+    static func membershipsKeepingApart(
+        _ removedCatPhotos: Set<String>,
+        from remainingProfileID: UUID?,
+        in state: CatHouseholdIdentityState,
+        at date: Date
+    ) -> [CatAssetProfileMembership] {
+        guard let remainingProfileID, !removedCatPhotos.isEmpty else { return [] }
+        let decided = Set(state.memberships.lazy
+            .filter { $0.profileID == remainingProfileID }
+            .map(\.assetLocalIdentifier))
+        let remaining = state.profiles.first { $0.id == remainingProfileID }
+        let linked = Set(remaining?.photoAlbumLink?.lastKnownAssetLocalIdentifiers ?? [])
+        let globallyExcluded = Set(state.globalExcludedAssets.map(\.localIdentifier))
+        return removedCatPhotos
+            .subtracting(decided)
+            .subtracting(linked)
+            .subtracting(globallyExcluded)
+            .sorted()
+            .map {
+                CatAssetProfileMembership(
+                    assetLocalIdentifier: $0,
+                    profileID: remainingProfileID,
+                    decision: .excluded,
+                    subjectBoundingBox: nil,
+                    isSimilarityReference: false,
+                    decidedAt: date
+                )
+            }
     }
 
     /// Selecting a cover never creates identity membership. Temporary Photos
@@ -1297,6 +1342,20 @@ enum CatNameText {
     static func saving(_ value: String) -> String? {
         let name = VisibleText.finalized(value)
         return name.isEmpty ? nil : name
+    }
+
+    /// The model's rule for a name typed or imported now (11/20), so the
+    /// limit does not depend on the text field: cleaned, at most 20
+    /// characters as people count them. A name saved earlier with more keeps
+    /// that length while it is being edited (it only gets shorter); stored
+    /// names are never cut when they load.
+    static func savingInput(_ value: String, previous: String? = nil) -> String? {
+        guard let name = saving(value) else { return nil }
+        let allowance = max(
+            maximumCharacters,
+            min(previous?.count ?? 0, storedMaximumCharacters)
+        )
+        return String(name.prefix(allowance))
     }
 }
 

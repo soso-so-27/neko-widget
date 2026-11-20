@@ -13,6 +13,9 @@ final class EvacuationStore: ObservableObject {
         if let cached = sharedCache, cached.0 == key { return cached.1 }
         let value = EvacuationStore(schedulesNotices: true); sharedCache = (key, value); return value
     }
+    /// 11/20: after a restore, the restored plan is read (a new store for the
+    /// new records) and its notices follow it, as when the tool opens.
+    static func followRestoredPlan() { shared.followNotices() }
     @Published private(set) var plan = EvacuationPlan()
     @Published private(set) var loadError: String?
     @Published private(set) var saveError: String?
@@ -46,11 +49,29 @@ final class EvacuationStore: ObservableObject {
         EvacuationNotice.follow(plan)
     }
 
+    /// 11/20: every save carries this iPhone's 「見直しの時期に知らせる」, so the
+    /// saved plan (and 保存) keeps it with the 期限 it is about.
+    private func stamp(_ next: inout EvacuationPlan) {
+        next.stampCreation()
+        if schedulesNotices, let choice = EvacuationNotice.choice { next.noticeChoice = choice }
+    }
+
+    /// 11/20: a plan that comes back (a restore from 保存, a reinstall) brings
+    /// its choice back too; the notices are then set again by followNotices,
+    /// when notifications are allowed. Plans saved before keep the iPhone's.
+    private func adoptSavedNoticeChoice() {
+        guard schedulesNotices, let saved = plan.savedNoticeChoice,
+              saved != EvacuationNotice.choice else { return }
+        EvacuationNotice.adopt(saved)
+    }
+
     /// The hub's 「見直しの時期に知らせる」, and the first 期限: the only places that
     /// ask for notifications. False: they are not allowed on this iPhone.
     func turnOnNotices() async -> Bool {
         guard schedulesNotices else { return true }
-        return await EvacuationNotice.turnOn(plan)
+        let allowed = await EvacuationNotice.turnOn(plan)
+        keepNoticeChoice()
+        return allowed
     }
 
     /// A 期限 was set: the first time ever, notices turn on and the app asks.
@@ -58,11 +79,19 @@ final class EvacuationStore: ObservableObject {
     func firstExpirySet() async {
         guard schedulesNotices, !EvacuationNotice.wasChosen else { return }
         _ = await EvacuationNotice.turnOn(plan)
+        keepNoticeChoice()
     }
 
     func turnOffNotices() {
         guard schedulesNotices else { return }
         EvacuationNotice.turnOff()
+        keepNoticeChoice()
+    }
+
+    /// Saves the plan with the new choice (nothing else changes).
+    private func keepNoticeChoice() {
+        guard plan.noticeChoice != EvacuationNotice.choice else { return }
+        update { _ in }
     }
 
     func reload() {
@@ -74,6 +103,7 @@ final class EvacuationStore: ObservableObject {
             plan = loaded.committed
             loadError = nil
             pendingPhotoCleanup = loaded.pendingPhotoCleanup > 0
+            adoptSavedNoticeChoice()
             followNotices()
         } catch {
             repository = nil
@@ -93,7 +123,7 @@ final class EvacuationStore: ObservableObject {
         guard repository != nil, loadError == nil else { return false }
         var next = plan
         change(&next)
-        next.stampCreation()
+        stamp(&next)
         // Retain the edit in memory even if storage is full. Never claim saved.
         plan = next
         return retrySave()
@@ -134,7 +164,7 @@ final class EvacuationStore: ObservableObject {
               let index = plan.cats.firstIndex(where: { $0.id == id }) else { return false }
         var next = plan
         next.cats[index].profileID = profileID
-        next.stampCreation()
+        stamp(&next)
         do {
             try repository.commit(next)
             plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
@@ -192,7 +222,7 @@ final class EvacuationStore: ObservableObject {
             }
             var next = plan; next.cats.append(cat)
             next.followCatCount()
-            next.stampCreation()
+            stamp(&next)
             try repository.commit(next, newPhotos: photos)
             plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
             followNotices()
@@ -230,7 +260,7 @@ final class EvacuationStore: ObservableObject {
         guard cat != before else { return false }
         cat.updatedAt = Date()
         var next = plan; next.cats[index] = cat
-        next.stampCreation()
+        stamp(&next)
         try repository.commit(next)
         plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
         followNotices()
@@ -300,7 +330,7 @@ final class EvacuationStore: ObservableObject {
         next.cats[index].prefilledFields?.remove("photo")
         next.cats[index].updatedAt = Date()
         next.cats[index].reviewedAt = nil
-        next.stampCreation()
+        stamp(&next)
         // Commit against current edits, not the record captured before PhotoKit awaited.
         try repository.commit(next, newPhotos: [name: jpeg])
         plan = next
@@ -439,6 +469,19 @@ enum EvacuationNotice {
 
     static var isOn: Bool { UserDefaults.standard.integer(forKey: settingKey) == 1 }
     static var wasChosen: Bool { UserDefaults.standard.integer(forKey: settingKey) != 0 }
+    /// 1 or 2 once chosen on this iPhone; nil before.
+    static var choice: Int? {
+        let value = UserDefaults.standard.integer(forKey: settingKey)
+        return [1, 2].contains(value) ? value : nil
+    }
+
+    /// 11/20: the choice a restored plan brings back. Never asks: the hub
+    /// shows 「通知が許可されていません」 until notifications are allowed.
+    static func adopt(_ value: Int) {
+        guard [1, 2].contains(value) else { return }
+        UserDefaults.standard.set(value, forKey: settingKey)
+        scheduled = nil
+    }
 
     /// Asks the first time, then sets the notices. False: not allowed.
     static func turnOn(_ plan: EvacuationPlan) async -> Bool {

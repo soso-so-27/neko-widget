@@ -732,7 +732,16 @@ final class PlusPurchaseStore: ObservableObject {
     /// billing calls are already near the relay's limit (a burst of openings).
     func refreshOnForegroundEntry() async {
         // 11/16: the words are read again either way (no billing call).
-        guard allowsAutomaticBillingCheck() else { await refreshForDisplay(); return }
+        guard allowsAutomaticBillingCheck() else {
+            await refreshForDisplay()
+            // 11/20: the first answer is still due (just after launch): it is
+            // read once the gate opens, not at the next coming to the front.
+            if configuration.isConfigured, entitlementState == .checking {
+                deferredReconcile = true
+                scheduleDeferredBillingWork()
+            }
+            return
+        }
         await refreshAfterForegroundEntry()
     }
 
@@ -1092,6 +1101,11 @@ final class PlusPurchaseStore: ObservableObject {
             if !SharingAutoCallBudget.isPersonAction, retriesDeferredAuthorityRead {
                 deferredAuthorityRead = true
                 scheduleDeferredBillingWork()
+            } else if entitlementState == .checking {
+                // 11/20: nothing reads again by itself (a tap at the iPhone's
+                // limit, or the one held retry): never a 確認中 with no end.
+                // The last known answer is kept; without one, 「購入を復元」.
+                markServerConfirmationIndeterminate()
             }
             return .indeterminate
         }

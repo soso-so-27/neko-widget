@@ -353,6 +353,9 @@ final class AppViewModel: ObservableObject {
         var catAssetCount: Int
         /// False when every analyzed record equals the one already held.
         var changedRecords: Bool
+        /// The merge index of `snapshot.assets`, kept for the next
+        /// publication instead of rebuilt (11/20).
+        var mergeIndex: [String: Int]? = nil
     }
     private var pendingScanProgress: PendingScanProgress?
     private var scanProgressFlushTask: Task<Void, Never>?
@@ -527,6 +530,7 @@ final class AppViewModel: ObservableObject {
         guard let self else { return }
         self.libraryChangePending = true
         NotificationCenter.default.post(name: .photoLibraryContentDidChange, object: nil)
+        self.scheduleForegroundLibraryChangeScan()
         let previousStatus = self.authorizationStatus
         self.authorizationStatus = self.authorizationService.status
         guard self.authorizationStatus == .limited else {
@@ -539,6 +543,32 @@ final class AppViewModel: ObservableObject {
         // Revoke the old projection before scheduling any asynchronous work.
         if previousStatus == .limited { self.invalidateReadablePhotoProjection() }
         Task { [weak self] in await self?.refreshPhotoSourceAlbums() }
+    }
+
+    private var foregroundLibraryChangeTask: Task<Void, Never>?
+
+    /// 11/20: a photo taken, saved or newly chosen (limited access) while the
+    /// app stays open is searched without leaving the app first. Changes are
+    /// gathered for a few seconds; a running pass is waited for, since it
+    /// read the library before the change. The activation check decides,
+    /// so a change that touches nothing the scan keeps starts no pass.
+    private func scheduleForegroundLibraryChangeScan() {
+        libraryChangePending = true
+        foregroundLibraryChangeTask?.cancel()
+        foregroundLibraryChangeTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(3))
+                while self?.isScanning == true {
+                    try await Task.sleep(for: .seconds(3))
+                }
+            } catch { return }
+            guard let self, self.hasStarted, self.libraryChangePending,
+                  UIApplication.shared.applicationState == .active else { return }
+            await self.synchronizeOnActive(
+                refreshLimitedAccess: false,
+                refreshesWidgetsWhenUnchanged: false
+            )
+        }
     }
 
     /// `scanner` and `changeTokens` are PhotoKit's except in the DEBUG
@@ -891,7 +921,9 @@ final class AppViewModel: ObservableObject {
     }
 
     func presentLimitedPicker(from viewController: UIViewController) {
-        authorizationService.presentLimitedLibraryPicker(from: viewController)
+        authorizationService.presentLimitedLibraryPicker(from: viewController) { [weak self] in
+            self?.scheduleForegroundLibraryChangeScan()
+        }
     }
 
     func syncOnActive() async {
@@ -948,6 +980,9 @@ final class AppViewModel: ObservableObject {
             return
         }
 
+        // 11/20: back from a banner or Control Center the running pass goes
+        // on; only a change in Photos replaces it (which reuses its results).
+        if isScanning, !libraryChangePending { return }
         if let lastActivationSyncAt,
            Date().timeIntervalSince(lastActivationSyncAt) < 2,
            !libraryChangePending,
@@ -1035,7 +1070,9 @@ final class AppViewModel: ObservableObject {
             return
         }
         errorMessage = nil
-        settings.analysisRevision += 1
+        // 11/20: the photos found so far stay shown until the rescan
+        // replaces them (AppSettings.supersededAnalysisFingerprints).
+        settings = settings.startingRescan()
         SharedLog.app.info(
             "scan",
             "Full rescan requested by user",
@@ -1836,13 +1873,13 @@ final class AppViewModel: ObservableObject {
         referenceAssetIdentifier: String?
     ) async -> UUID? {
         guard candidateAuthorityIsReady(operation: "create_cat_profile"),
-              !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+              let name = CatNameText.savingInput(displayName) else {
             return nil
         }
         var createdID: UUID?
         await serializeCatIdentityTransition {
             createdID = await self.performCreateCatProfile(
-                displayName: displayName,
+                displayName: name,
                 lifeReference: lifeReference,
                 lifeReferenceIsApproximate: lifeReferenceIsApproximate,
                 referenceAssetIdentifier: referenceAssetIdentifier
@@ -2021,8 +2058,9 @@ final class AppViewModel: ObservableObject {
     }
 
     func updateCatProfileName(profileID: UUID, displayName: String) async -> Bool {
-        let name = String(displayName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
-        guard candidateAuthorityIsReady(operation: "update_profile_name"), !name.isEmpty else {
+        let stored = catHouseholdIdentity?.profiles.first { $0.id == profileID }?.displayName
+        guard candidateAuthorityIsReady(operation: "update_profile_name"),
+              let name = CatNameText.savingInput(displayName, previous: stored) else {
             return false
         }
         do {
@@ -2290,12 +2328,17 @@ final class AppViewModel: ObservableObject {
         var normalized = newSettings.normalized()
         // Life dates use the serialized, dedicated mutation path.
         normalized.catLifeReference = settings.catLifeReference
+        normalized.supersededAnalysisFingerprints = settings.supersededAnalysisFingerprints
         let detectionChanged = normalized.confidenceThreshold != settings.confidenceThreshold
         let displayRangeChanged = normalized.dateRange != settings.dateRange
         let widgetPolicyChanged = normalized.minimumCatAreaRatio
             != settings.minimumCatAreaRatio
         if detectionChanged {
-            normalized.analysisRevision = settings.analysisRevision + 1
+            // Earlier results stay shown until the rescan replaces them (11/20).
+            let rescanning = settings.startingRescan()
+            normalized.analysisRevision = rescanning.analysisRevision
+            normalized.supersededAnalysisFingerprints = rescanning.supersededAnalysisFingerprints
+            normalized = normalized.normalized()
         }
 
         settings = normalized
@@ -2916,6 +2959,7 @@ final class AppViewModel: ObservableObject {
             discardPendingScanProgress(generation: generation)
             quietScanProgress = nil
             applySnapshot(final)
+            finishRescanPresentationIfComplete(scannedWith: final.settings)
             lastScanProgressPublicationUptime = ProcessInfo.processInfo.systemUptime
             chooseCurrentAssetIfNeeded()
             await saveSnapshot(reportErrors: true)
@@ -2991,6 +3035,17 @@ final class AppViewModel: ObservableObject {
             setError(error)
             await saveSnapshot(reportErrors: false)
         }
+    }
+
+    /// A completed pass under the live settings replaced every record a
+    /// rescan was replacing; earlier results stop counting (11/20).
+    private func finishRescanPresentationIfComplete(scannedWith scanSettings: AppSettings) {
+        guard settings.supersededAnalysisFingerprints != nil,
+              snapshot.scanState.phase == .completed,
+              !snapshot.scanState.requiresFullRescan,
+              scanSettings.analysisFingerprint == settings.analysisFingerprint else { return }
+        settings = settings.finishingRescan()
+        snapshot.settings = settings
     }
 
     private func applyScanEvent(_ event: ScanEvent, generation: Int) async {
@@ -3168,6 +3223,7 @@ final class AppViewModel: ObservableObject {
         quietScanProgress = nil
         scanState = publication.state
         snapshot = publication.snapshot
+        keepScanMergeIndex(publication)
         chooseCurrentAssetIfNeeded()
 
         SharedLog.app.info(
@@ -3209,6 +3265,7 @@ final class AppViewModel: ObservableObject {
         )
         scanState = publication.state
         snapshot = publication.snapshot
+        keepScanMergeIndex(publication)
         lastScanProgressPublicationUptime = ProcessInfo.processInfo.systemUptime
         chooseCurrentAssetIfNeeded()
         SharedLog.app.debug(
@@ -3283,6 +3340,7 @@ final class AppViewModel: ObservableObject {
     ) -> ScanProgressSnapshot {
         var updated = snapshot
         var changedRecords = false
+        var mergedIndex: [String: Int]?
         if !analyzedRecords.isEmpty {
             // The index of the published snapshot is kept while its records
             // are unchanged, instead of rebuilt (10,000 entries) per publication.
@@ -3300,6 +3358,7 @@ final class AppViewModel: ObservableObject {
             changedRecords = ScanProgressMerge.merge(
                 analyzedRecords, into: &updated.assets,
                 index: &indexByIdentifier, likes: sharedLikeRecords)
+            mergedIndex = indexByIdentifier
         }
         if isVerificationPass, !changedRecords {
             // Same records, so the same cats and posture summary: only the
@@ -3315,7 +3374,7 @@ final class AppViewModel: ObservableObject {
                                         changedRecords: false)
         }
 
-        let candidateCats = candidateSnapshot(updated).catAssets
+        let candidateCats = candidateCatAssets(updated)
         var reconciledState = ScanProgressPublicationPolicy
             .preservingLiveRescanIntent(
                 pending: state,
@@ -3334,8 +3393,27 @@ final class AppViewModel: ObservableObject {
             snapshot: updated,
             state: reconciledState,
             catAssetCount: candidateCats.count,
-            changedRecords: changedRecords
+            changedRecords: changedRecords,
+            mergeIndex: mergedIndex
         )
+    }
+
+    /// 11/20: the index built for a publication stays valid for the snapshot
+    /// it published; the next second's merge reuses it instead of hashing
+    /// every identifier again (about 50,000 in a large library).
+    private func keepScanMergeIndex(_ publication: ScanProgressSnapshot) {
+        guard let index = publication.mergeIndex,
+              index.count == snapshot.assets.count else { return }
+        scanMergeIndex = (snapshot.assets.count, photoPresentationRevisions.content, index)
+    }
+
+    /// The same records as `candidateSnapshot(input).catAssets`, without
+    /// copying and curating every record first (11/20): the cats are picked
+    /// first, then curated. Both filters keep order, so the result is equal.
+    private func candidateCatAssets(_ input: LibrarySnapshot) -> [AssetRecord] {
+        var cats = input
+        cats.assets = input.catAssets
+        return candidateSnapshot(cats).assets
     }
 
     private func applySnapshot(
@@ -3429,7 +3507,7 @@ final class AppViewModel: ObservableObject {
             merged.settings = snapshot.settings
         }
 
-        let candidateCats = candidateSnapshot(merged).catAssets
+        let candidateCats = candidateCatAssets(merged)
         merged.scanState.postureSummary = PostureScanSummary(records: candidateCats)
         if merged.scanState.purpose == .postureRepair {
             merged.scanState.purpose = nil
@@ -3810,19 +3888,15 @@ final class AppViewModel: ObservableObject {
     /// Unreadable records fail closed, except when they could not be read only
     /// because the iPhone was locked (prewarm, background launch): the album
     /// and Widget made from them stay, and the start runs again after unlock.
+    /// 11/20: a failed start never changes the person's Photos library. The
+    /// legacy managed album keeps its photos; only the app's own Widget
+    /// output is cleared (it may show photos the app can no longer vouch for).
     private func clearOutputsAfterStartupFailure() async {
         guard !startupFailureMayBeLockedFiles else {
             SharedLog.app.info("lifecycle", "Kept album and Widget outputs after a locked startup failure")
             return
         }
-        await clearAlbumAndWidgetOutputs(reportErrors: false)
-    }
-
-    private func clearAlbumAndWidgetOutputs(reportErrors: Bool) async {
-        await enqueueManagedOutputMutation { model in
-            await model.performClearManagedAlbum(reportErrors: reportErrors)
-            await model.performClearWidgetOutput(reportErrors: reportErrors)
-        }
+        await clearWidgetOutput(reportErrors: false)
     }
 
     private func performClearManagedAlbum(reportErrors: Bool) async {

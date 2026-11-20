@@ -83,6 +83,17 @@ export async function listGroupHearts(env:Env,actor:GroupActor,windowId:string,m
   await env.DB.batch([...groupAuthorizationStatements(env,actor,{windowId,expectedRevision:access.revision}),...groupMediaChecks(env,actor,momentId,'read')]);
   return jsonResponse({items,next:all.length>page.limit?groupCursor(scope,items.at(-1)!.reactorParticipantId):null,serverNow:actor.now});
 }
+export async function listGroupBlocks(env:Env, actor:GroupActor, windowId:string):Promise<Response> {
+  const access=await requireGroupMember(env,actor,windowId);
+  const batch=await env.DB.batch([
+    ...groupAuthorizationStatements(env,actor,{windowId,expectedRevision:access.revision}),
+    env.DB.prepare(`SELECT blocked_id AS participantId,updated_at AS updatedAt
+      FROM group_participant_blocks WHERE space_id=? AND blocker_id=? AND active=1
+      ORDER BY blocked_id LIMIT 500`).bind(windowId,access.participantId),
+  ]);
+  return jsonResponse({items:batch.at(-1)!.results,serverNow:actor.now});
+}
+
 export async function setGroupBlock(env:Env,actor:GroupActor,windowId:string,participantId:string,body:JsonRecord):Promise<Response> {
   exactKeys(body,['operationId','active']);
   if(typeof body.active!=='boolean')throw new ApiError(400,'invalid_request','The block state is invalid.');

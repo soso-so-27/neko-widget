@@ -68,8 +68,7 @@ export async function authenticateGroupRequest(request: Request, env: Env,maximu
   const signature = request.headers.get("neko-signature") ?? "";
   readStage(request, 'auth_headers');
   if (request.headers.get("neko-protocol-version") !== "3" || !/^[A-Za-z0-9_-]{1,128}$/u.test(deviceId)
-      || !Number.isSafeInteger(Number(timestamp)) || String(Number(timestamp)) !== timestamp
-      || Math.abs(now-Number(timestamp)) > 300) throw authenticationFailed();
+      || !Number.isSafeInteger(Number(timestamp)) || String(Number(timestamp)) !== timestamp) throw authenticationFailed();
   readStage(request, 'auth_encoding');
   try { base64urlDecode(nonce,16); base64urlDecode(signature,64); }
   catch { throw authenticationFailed(); }
@@ -97,6 +96,10 @@ export async function authenticateGroupRequest(request: Request, env: Env,maximu
   checkTrialActor(env,row.personId,row.deviceId);
   readStage(request, 'auth_identity');
   if (!identityDeletion) await requireCurrentIdentity(env,row.personId);
+  if (Math.abs(now-Number(timestamp)) > 300) {
+    if (row.deviceState!=='active') throw authenticationFailed();
+    throw new ApiError(401, 'stale_request', 'Group authentication failed.', {reason:'clock_skew',serverNow:now});
+  }
   readStage(request, 'auth_device_rate_limit');
   await enforceRateLimit(env,env.MEMBER_RATE_LIMITER,`group-device:${deviceId}`);
   if (mayReportRevocation && row.deviceState === 'revoked') {

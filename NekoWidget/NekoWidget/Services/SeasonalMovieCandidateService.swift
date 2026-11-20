@@ -3,11 +3,14 @@
 @preconcurrency import Vision
 import CoreGraphics
 import Foundation
+import UIKit
 
 /// A one-shot, cancellable PhotoKit bridge. PhotoKit callbacks are normally
 /// reliable, but malformed or partially imported assets must not be able to
-/// keep automatic preparation or playback waiting forever.
-private final class SeasonalMoviePhotoKitRequest<Value>: @unchecked Sendable {
+/// keep automatic preparation or playback waiting forever. The continuation
+/// is resumed exactly once: by the first final callback, the timeout, or a
+/// cancellation (which also cancels the PhotoKit request).
+final class SeasonalMoviePhotoKitRequest<Value>: @unchecked Sendable {
     typealias Start = (@escaping (Value?) -> Void) -> PHImageRequestID
 
     private let manager: PHImageManager
@@ -599,4 +602,73 @@ actor SeasonalMovieCandidateService {
         await SeasonalMovieLocalMediaLoader.avAsset(for: asset)
     }
 
+}
+
+/// 11/20: the same bridge for the album and showcase pages' image and Live
+/// Photo requests, which waited without a limit and ignored cancellation.
+/// nil after the timeout: the caller shows what it shows for a missing photo.
+enum PhotoKitTimedRequest {
+    static func image(
+        for asset: PHAsset,
+        targetSize: CGSize,
+        contentMode: PHImageContentMode,
+        options: PHImageRequestOptions,
+        timeoutSeconds: Double,
+        manager: PHImageManager = .default()
+    ) async -> UIImage? {
+        let request = SeasonalMoviePhotoKitRequest<UIImage>(
+            manager: manager,
+            timeoutNanoseconds: UInt64(timeoutSeconds * 1_000_000_000)
+        ) { completion in
+            manager.requestImage(
+                for: asset,
+                targetSize: targetSize,
+                contentMode: contentMode,
+                options: options
+            ) { image, info in
+                let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) == true
+                let wasCancelled = (info?[PHImageCancelledKey] as? Bool) == true
+                let error = info?[PHImageErrorKey] as? Error
+                // A degraded preview is followed by the final image.
+                if isDegraded, !wasCancelled, error == nil { return }
+                completion(wasCancelled || error != nil ? nil : image)
+            }
+        }
+        return await withTaskCancellationHandler {
+            await request.value()
+        } onCancel: {
+            request.cancel()
+        }
+    }
+
+    static func livePhoto(
+        for asset: PHAsset,
+        targetSize: CGSize,
+        options: PHLivePhotoRequestOptions,
+        timeoutSeconds: Double,
+        manager: PHImageManager = .default()
+    ) async -> PHLivePhoto? {
+        let request = SeasonalMoviePhotoKitRequest<PHLivePhoto>(
+            manager: manager,
+            timeoutNanoseconds: UInt64(timeoutSeconds * 1_000_000_000)
+        ) { completion in
+            manager.requestLivePhoto(
+                for: asset,
+                targetSize: targetSize,
+                contentMode: .aspectFit,
+                options: options
+            ) { livePhoto, info in
+                let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) == true
+                let wasCancelled = (info?[PHImageCancelledKey] as? Bool) == true
+                let error = info?[PHImageErrorKey] as? Error
+                if isDegraded, !wasCancelled, error == nil { return }
+                completion(wasCancelled || error != nil ? nil : livePhoto)
+            }
+        }
+        return await withTaskCancellationHandler {
+            await request.value()
+        } onCancel: {
+            request.cancel()
+        }
+    }
 }
