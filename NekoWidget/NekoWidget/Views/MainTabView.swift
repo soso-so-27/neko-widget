@@ -816,6 +816,14 @@ struct MainTabView: View {
             deepLinkedPhotoIdentifier = nil
             deepLinkedPhotoShownAt = nil
         }
+        .onChange(of: deepLinkedFamilyWindowIsPresented, initial: true) { _, isPresented in
+            guard isPresented else { return }
+            relatedPhotoUsesLibraryScope = false
+            relatedPhotoRoute = nil
+            showsSettings = false
+            selectedTab = .windows
+            deepLinkedFamilyWindowIsPresented = false
+        }
         .onChange(of: photosTabRequest.wrappedValue, initial: true) { _, request in
             guard request != nil else { return }
             relatedPhotoUsesLibraryScope = false
@@ -828,14 +836,6 @@ struct MainTabView: View {
             photoLibrarySelection.select(.all)
             photosPath = NavigationPath()
             photosTabRequest.wrappedValue = nil
-        }
-        .onChange(of: deepLinkedFamilyWindowIsPresented, initial: true) { _, isPresented in
-            guard isPresented else { return }
-            relatedPhotoUsesLibraryScope = false
-            relatedPhotoRoute = nil
-            showsSettings = false
-            selectedTab = .windows
-            deepLinkedFamilyWindowIsPresented = false
         }
         .onChange(of: groupWindowOpenInbox.pendingWindowID, initial: true) { _, windowID in
             // A group window's home-screen photo: show the まど tab, where

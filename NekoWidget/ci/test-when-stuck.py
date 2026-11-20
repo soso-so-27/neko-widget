@@ -238,7 +238,7 @@ class WidgetBugFixes1120Tests(unittest.TestCase):
         self.assertIn("photosTabRequest = UUID()", route)
         main = read("NekoWidget/Views/MainTabView.swift")
         handler = section(main, ".onChange(of: photosTabRequest.wrappedValue, initial: true)",
-                          ".onChange(of: deepLinkedFamilyWindowIsPresented")
+                          ".onChange(of: groupWindowOpenInbox.pendingWindowID")
         self.assertIn("selectedTab = .photos", handler)
         self.assertNotIn("Text(", handler)
         self.assertIn("photosTabRequest: $viewModel.photosTabRequest", read("NekoWidget/App/AppRootView.swift"))
