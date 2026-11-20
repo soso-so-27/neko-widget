@@ -9,7 +9,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const origin = 'https://api.appstoreconnect.apple.com';
 const appID = '6801962436';
-const ownerEmail = 'nakanishisoya@gmail.com';
 class RecipientCheckError extends Error {}
 const requireValue = (value, message) => { if (!value) throw new RecipientCheckError(message); };
 // Only our fixed messages may reach logs. Fetch/JSON/crypto errors can contain
@@ -19,7 +18,20 @@ export function failureMessage(error) {
 }
 const resourceID = value => typeof value === 'string' && /^[A-Za-z0-9-]{8,80}$/.test(value);
 
-export async function checkRecipient({ groupID, testerID, get, authenticatedInternalOnly = false }) {
+function lowercaseTesterEmail(tester) {
+  const email = tester.attributes?.email;
+  return typeof email === 'string' ? email.toLowerCase() : undefined;
+}
+
+function recipientEmail(value) {
+  const email = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  requireValue(email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email),
+    'Owner recipient email pin is missing or invalid; do not distribute.');
+  return email;
+}
+
+export async function checkRecipient({ groupID, testerID, ownerEmail, get, authenticatedInternalOnly = false }) {
+  const expectedEmail = recipientEmail(ownerEmail);
   requireValue(resourceID(groupID) && resourceID(testerID), 'Pinned owner group/tester IDs are required; no name-based fallback.');
   // Read both independent collections before validating, so a group-shape
   // failure does not hide whether the pinned owner membership is still intact.
@@ -49,7 +61,7 @@ export async function checkRecipient({ groupID, testerID, get, authenticatedInte
     }
   }
   requireValue(testers.length === 1 && testers[0].type === 'betaTesters' && testers[0].id === testerID
-    && testers[0].attributes?.email?.toLowerCase() === ownerEmail, 'Owner group must contain only the pinned owner tester.');
+    && lowercaseTesterEmail(testers[0]) === expectedEmail, 'Owner group must contain only the pinned owner tester.');
   return true;
 }
 
@@ -148,8 +160,10 @@ async function main() {
     authenticatedInternalOnly = true;
   } else if (args.length >= 4) authenticatedInternalOnly = await verifyInternalOnlyArtifact(args[1], args[3], undefined, args[5]);
   const { OWNER_INTERNAL_GROUP_ID: groupID, OWNER_INTERNAL_TESTER_ID: testerID,
+    OWNER_INTERNAL_EMAIL,
     APP_STORE_CONNECT_KEY_ID: keyID, APP_STORE_CONNECT_ISSUER_ID: issuer } = process.env;
   requireValue(resourceID(groupID) && resourceID(testerID), 'Owner recipient pins are missing; do not distribute.');
+  const ownerEmail = recipientEmail(OWNER_INTERNAL_EMAIL);
   requireValue(/^[A-Z0-9]{10}$/.test(keyID ?? '') && /^[0-9a-f-]{36}$/i.test(issuer ?? ''), 'ASC read credentials unavailable.');
   // Reuse the existing upload credential. No new credential or operational key.
   const key = createPrivateKey(await readFile(path.join(homedir(), '.appstoreconnect', 'private_keys', `AuthKey_${keyID}.p8`)));
@@ -160,12 +174,12 @@ async function main() {
     encode({ iss: issuer, iat: now, exp: now + 300, aud: 'appstoreconnect-v1' });
   const token = data + '.' + sign('sha256', Buffer.from(data), { key, dsaEncoding: 'ieee-p1363' }).toString('base64url');
   const get = reader(token);
-  await checkRecipient({ groupID, testerID, authenticatedInternalOnly, get: async url => {
+  await checkRecipient({ groupID, testerID, ownerEmail, authenticatedInternalOnly, get: async url => {
     const resources = await get(url);
     if (new URL(url, origin).pathname.endsWith('/betaGroups')) {
       for (const line of groupDiagnostics(resources, groupID)) console.log(line);
     } else {
-      console.log(`Owner membership: exactlyOne=${resources.length === 1}, pinnedTester=${resources.length === 1 && resources[0].id === testerID}, ownerEmail=${resources.length === 1 && resources[0].attributes?.email?.toLowerCase() === ownerEmail}`);
+      console.log(`Owner membership: exactlyOne=${resources.length === 1}, pinnedTester=${resources.length === 1 && resources[0].id === testerID}, ownerEmail=${resources.length === 1 && lowercaseTesterEmail(resources[0]) === ownerEmail}`);
     }
     return resources;
   } });
