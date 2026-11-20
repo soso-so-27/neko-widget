@@ -834,7 +834,12 @@ struct OfficialWindowView: View {
         guard !isRefreshing else { return }
         state = store.snapshot()
         displayDate = Date()
-        guard store.endpoint != nil, state.isSubscribed || isPreviewing else { return }
+        guard store.endpoint != nil, state.isSubscribed || isPreviewing else {
+            // 11/20: nothing to load (no feed in this build): the linked
+            // photo's spinner ends in 「この写真は表示できません」.
+            hasCheckedFeed = true
+            return
+        }
         let previousPhotos = photos
         isRefreshing = true
         defer {

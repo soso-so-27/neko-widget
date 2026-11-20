@@ -189,6 +189,7 @@ python3 ci/test-review-eye.py
 python3 ci/test-a11y-voiceover-type.py
 python3 ci/test-a11y-motion-feedback.py
 python3 ci/test-group-recovery-screens.py
+python3 ci/test-data-integrity-1120.py
 
 xcrun --sdk macosx swiftc -D DEBUG -parse-as-library \
   -target "$(uname -m)-apple-macos14.0" \

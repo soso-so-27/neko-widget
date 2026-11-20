@@ -13,6 +13,8 @@ final class FamilyNotebookSession {
     /// The notebook's device-only Keychain (`.family.<scope>`): it outlives
     /// deleting the app, Application Support does not.
     let secrets: any GroupSecretStore
+    /// 11/20: where the relay's 「taken off」 is marked (GroupDeviceRevocation).
+    let revocations: (any GroupSecretStore)?
     private struct Participation: Codable { let familyID: UUID; let admittedGeneration: Int64 }
     private let account = "op:fnb-active-participation"
     private(set) var notebook: FamilyNotebookStore?
@@ -20,13 +22,13 @@ final class FamilyNotebookSession {
 
     init(endpoint: URL, identity: GroupDeviceIdentity, transport: any GroupHTTPTransport,
          journal: any GroupSecretStore, secrets: any GroupSecretStore, directory: URL,
-         pinSync: (any FamilyNotebookPinSync)? = nil) throws {
+         pinSync: (any FamilyNotebookPinSync)? = nil, revocations: (any GroupSecretStore)? = nil) throws {
         self.identity = identity; self.endpoint = endpoint; self.journal = journal; self.directory = directory
-        self.secrets = secrets
-        wire = try .init(endpoint: endpoint, identity: identity, transport: transport, journal: journal)
+        self.secrets = secrets; self.revocations = revocations
+        wire = try .init(endpoint: endpoint, identity: identity, transport: transport, journal: journal, revocations: revocations)
         keys = try .init(endpoint: endpoint, identity: identity, network: wire, secrets: secrets, journal: journal, pinSync: pinSync)
         admission = .init(endpoint: endpoint, identity: identity, wire: wire, keys: keys, journal: journal, secrets: secrets)
-        membership = try .init(endpoint: endpoint, identity: identity, transport: transport, journal: journal)
+        membership = try .init(endpoint: endpoint, identity: identity, transport: transport, journal: journal, revocations: revocations)
         if let bytes = try journal.read(account) {
             let saved = try GroupWire.decode(Participation.self, bytes)
             guard (1...1_000_000_000).contains(saved.admittedGeneration) else { throw FamilyNotebookError.corruptStorage }
@@ -117,6 +119,11 @@ final class FamilyNotebookSession {
     func matchesParticipation(family: UUID, admittedGeneration: Int64) -> Bool {
         participation?.familyID == family && participation?.admittedGeneration == admittedGeneration
     }
+    /// 11/20: the relay said this session's pair was taken off (Keychain only).
+    func isRevoked() throws -> Bool {
+        guard let revocations else { return false }
+        return try GroupDeviceRevocation.isMarked(identity, in: revocations)
+    }
 }
 
 /// Explicitly enabled builds use this adapter. Every membership decision comes
@@ -204,13 +211,67 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
          hasExistingIdentity: @escaping @MainActor () async throws -> Bool = { true },
          photoRuntimeEnabled: Bool = false, photoTransport: any GroupHTTPTransport = GroupURLSessionTransport(),
          moderationRecipient: @escaping @MainActor () -> (keyID: String, publicKey: Data)? = { nil },
-         photoTrace: @escaping FamilyPhotoDeliveryTrace = { FamilyPhotoDeliveryLog.system($0) }) {
+         photoTrace: @escaping FamilyPhotoDeliveryTrace = { FamilyPhotoDeliveryLog.system($0) },
+         revocations: (any GroupSecretStore)? = nil,
+         forgetRevoked: @escaping @MainActor (GroupDeviceRevocation.Pair) async -> Void = { _ in },
+         renewForEntrance: @escaping @MainActor () async throws -> Bool = { false }) {
         self.provider = provider; self.billing = billing; self.displayName = displayName; self.catNames = catNames
         self.rememberName = rememberName
         self.privateFarewellDay = privateFarewellDay; self.now = now
         self.hasPersonalPlus = hasPersonalPlus; self.hasExistingIdentity = hasExistingIdentity
         self.photoRuntimeEnabled = photoRuntimeEnabled; self.photoTransport = photoTransport; self.photoTrace = photoTrace
         self.moderationRecipient = moderationRecipient
+        self.revocations = revocations; self.forgetRevoked = forgetRevoked; self.renewForEntrance = renewForEntrance
+    }
+
+    // MARK: 11/20 A device taken off by another iPhone of the same person
+
+    private let revocations: (any GroupSecretStore)?
+    /// What else points at the pair (the factory: its 機種変更 link).
+    private let forgetRevoked: @MainActor (GroupDeviceRevocation.Pair) async -> Void
+    /// The person's own create or join at the entrance: a fresh start (a new
+    /// person and device) when the usual one was taken off (the factory:
+    /// ProductionGroupWindowClient.startFreshAfterRevocation). Never by itself;
+    /// coming back as the same person is 機種変更's alone.
+    private let renewForEntrance: @MainActor () async throws -> Bool
+    /// Counts the sessions let go of because their pair was taken off.
+    private var revocationDetaches = 0
+    /// A session was let go of and the screens have not been told yet
+    /// (FamilyNotebookSharing: the notebook's entrance, its binding removed).
+    private(set) var revokedDetachPending = false
+    func takeRevokedDetach() -> Bool {
+        defer { revokedDetachPending = false }
+        return revokedDetachPending
+    }
+
+    /// The pair is marked on this iPhone (Keychain only, no network).
+    func isRevoked(personID: String, deviceID: String) -> Bool {
+        guard let revocations else { return false }
+        return (try? GroupDeviceRevocation.isMarked(.init(personID: personID, deviceID: deviceID), in: revocations)) ?? true
+    }
+
+    /// The session's pair was taken off: nothing of it is used or shown
+    /// again. The copy and its unsent writing stay on disk with that pair
+    /// (the next session of another pair has its own); nothing is deleted.
+    private func detachRevoked(_ context: FamilyNotebookSession) async {
+        guard session === context else { return }
+        session = nil; currentFamilyID = nil; lastMembers = []; memberNames = [:]; lastJoinResults = []
+        photoMaterial = nil; photoClient = nil; shownPhotos = [:]; photoRetries = [:]; farewellPreviews = [:]
+        needsAnotherPass = false; lastKeyObservation = ""
+        pushRegistered = [:]; pushRemoved = []; pushFamilies = []
+        revocationDetaches += 1; revokedDetachPending = true
+        let pair = GroupDeviceRevocation.Pair(personID: context.identity.personID, deviceID: (try? context.identity.deviceID) ?? "")
+        await forgetRevoked(pair)
+    }
+
+    /// 11/20: before the person's own create or join (never on a schedule).
+    private func renewIfRevoked() async throws {
+        let renewed: Bool
+        do { renewed = try await renewForEntrance() }
+        catch is CancellationError { throw CancellationError() }
+        catch { throw Self.presentation(error) }
+        // The next call opens a session with the new person, not the pair taken off.
+        if renewed, let session, (try? session.isRevoked()) == true { await detachRevoked(session) }
     }
     /// 11/19 (機種変更 水準2): the recovery screen linked this iPhone to the
     /// person's notebook; the next call opens a session with the identity
@@ -258,6 +319,8 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
             pushAgain = nil
             for family in current {
                 if Task.isCancelled { return }
+                // 11/20: a pair taken off registers nothing more.
+                if (try? context.isRevoked()) != false { return }
                 do {
                     if let token = preference.token {
                         let digest = GroupCanonical.hash(token)
@@ -296,9 +359,20 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
         do {
             let context: FamilyNotebookSession
             if let session { context = session } else { context = try await provider(); session = context }
+            // 11/20: a pair already marked (by the まど, or an earlier read)
+            // signs nothing more.
+            if try context.isRevoked() {
+                await detachRevoked(context)
+                throw FamilySharingError.signInExpired
+            }
             return try await action(context)
         } catch is CancellationError { throw CancellationError() }
-        catch { throw Self.presentation(error) }
+        catch {
+            // 11/20: this call's own reply said the pair was taken off (the
+            // transport marked it first).
+            if let context = session, (try? context.isRevoked()) == true { await detachRevoked(context) }
+            throw Self.presentation(error)
+        }
     }
     private static func presentation(_ error: Error) -> FamilySharingError {
         if let error = error as? FamilySharingError { return error }
@@ -336,12 +410,16 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
 
     func loadState() async throws -> FamilySharingState {
         guard try await hasExistingIdentity() else {
+            // 11/20: the session's pair was taken off (the まど heard it first).
+            if let session, (try? session.isRevoked()) == true { await detachRevoked(session) }
             currentFamilyID = nil; lastMembers = []; session = nil; photoMaterial = nil; photoClient = nil; pushFamilies = []
             return .notInFamily
         }
         lastSend = nil
         let retryHeld = retriesHeldOnce
         retriesHeldOnce = false
+        let detachesBefore = revocationDetaches
+        do {
         return try await run { context in
           do {
             needsAnotherPass = false
@@ -413,6 +491,12 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
             lastSend = .failed(FamilyNotebookSendFailure.kind(of: error).rawValue)
             throw error
           }
+        }
+        } catch {
+            // 11/20: taken off by another iPhone of the same person: the
+            // entrance, as for a person with no notebook; no error, no retry.
+            if revocationDetaches != detachesBefore { lastSend = nil; return .notInFamily }
+            throw error
         }
     }
     func loadPause() async throws -> FamilySharingPause? {
@@ -530,6 +614,7 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
         guard try await !context.admission.hasPendingOperation() else { throw FamilySharingError.unknownOutcome }
     }
     func createFamily(operationID: UUID) async throws {
+        try await renewIfRevoked()
         try await run { context in
             try await admissionAllowed(context)
             // Reconcile a prior receipt even when current billing is unavailable.
@@ -551,10 +636,12 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     }
     func previewInvitation(_ link: URL?) async throws -> FamilyInvitationPreview {
         guard let link else { throw FamilySharingError.invitationExpired }
+        try await renewIfRevoked()
         return try await run { try await $0.admission.preview(link) }
     }
     func join(_ invitation: FamilyInvitationPreview, operationID: UUID) async throws -> FamilyJoinResult {
-        try await run { context in
+        try await renewIfRevoked()
+        return try await run { context in
             try await admissionAllowed(context)
             try await context.admission.join(invitation, name: displayName(), operation: operationID)
             return .pendingApproval
@@ -728,7 +815,9 @@ extension ProductionFamilyNotebookSharingService {
                                           client: FamilyNotebookRepresentativePhotoClient, journal: any GroupSecretStore) {
         guard representativePhotosEnabled else { throw FamilyNotebookPhotoFailure.unavailable }
         guard let session, let store = session.notebook, let material = photoMaterial,
-              let snapshot = try? store.snapshot(), !snapshot.sharingEnded, snapshot.familyID == material.familyID
+              let snapshot = try? store.snapshot(), !snapshot.sharingEnded, snapshot.familyID == material.familyID,
+              // 11/20: no photo call for a pair taken off (the next read lets it go).
+              (try? session.isRevoked()) == false
         else { throw FamilySharingError.membershipChecking }
         if let photoClient, photoClient.familyID == material.familyID {
             return (session, store, material, photoClient.client, photoClient.journal)

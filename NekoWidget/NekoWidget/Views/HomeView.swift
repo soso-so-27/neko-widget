@@ -641,12 +641,17 @@ struct HomeView: View {
                         if let headerAccessory, let readingPositionKey, readingPositionKey != "all" {
                             headerAccessory
                         }
-                        emptyPhotoState
-                            .padding(.horizontal, cardMargin)
-                            .task(id: openWindows != nil) {
-                                guard openWindows != nil else { isWindowMember = false; return }
-                                isWindowMember = !GroupWidgetCache.entries().isEmpty
-                            }
+                        if scan.startupLoadFailed {
+                            startupLoadFailedState
+                                .padding(.horizontal, cardMargin)
+                        } else {
+                            emptyPhotoState
+                                .padding(.horizontal, cardMargin)
+                                .task(id: openWindows != nil) {
+                                    guard openWindows != nil else { isWindowMember = false; return }
+                                    isWindowMember = !GroupWidgetCache.entries().isEmpty
+                                }
+                        }
                     }
                 } else {
                     photoAccessCard
@@ -957,6 +962,20 @@ struct HomeView: View {
     private func detectedPhotoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
         guard let creationDate = photo.creationDate else { return "撮影日不明の猫の写真" }
         return "\(creationDate.formatted(.dateTime.year().month().day()))の猫の写真"
+    }
+
+    /// 11/20: the app's own records could not be read at start, so nothing
+    /// is being searched. The first run's words and its 「もう一度」, which
+    /// runs the start again (`rescan` does that after a failed start).
+    private var startupLoadFailedState: some View {
+        ContentUnavailableView {
+            Label(OnboardingPresentationCopy.loadFailedTitle, systemImage: "exclamationmark.triangle")
+        } actions: {
+            Button(OnboardingPresentationCopy.loadFailedAction, systemImage: "arrow.clockwise", action: rescan)
+                .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: .infinity, minHeight: 320)
+        .accessibilityIdentifier("photo-hub-load-failed")
     }
 
     @ViewBuilder

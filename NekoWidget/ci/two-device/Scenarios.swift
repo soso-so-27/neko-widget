@@ -41,12 +41,14 @@ struct Family {
         ("S11", "member B reports, reinstalls without 機種変更: 「通報への返答」 comes back", s11),
         ("S12", "member B reinstalled on a build that kept no binding: the next launch reads, the third is normal", s12),
         ("S13", "member B answers 「同じ子ですか」, reinstalls without 機種変更: only the lost link is asked again", s13),
+        ("S14", "the same person's other iPhone takes B's device off (reason device_revoked)", s14),
         ("S15", "まど: B blocks, hides and removes, reinstalls and relaunches: nothing comes back", s15),
         ("S16", "while member B's app is deleted, A adds, replaces and removes; B reinstalls and launches twice", s16),
         ("S17", "while member B's app is deleted, A takes B out; B reinstalls and launches twice", s17),
         ("S20", "member B deletes its まど and notebook data, then makes a new identity on the same iPhone", s20),
         ("S21", "member B writes, then leaves at once: A receives the write", s21),
         ("S22", "B's new iPhone runs the notebook as recovered B and deletes its own other identity: B stays", s22),
+        ("S23", "まど: A's photo stops after its reservation, D joins, A sends again: sealed anew, delivered once to all", s23),
     ]
 
     // MARK: Common steps
@@ -1216,5 +1218,81 @@ extension Scenarios {
         try await settle("B2 reads as recovered B again", [b2]) { b2.inFamily }
         try expect(b2.notebookDeviceID == (try? recovered.deviceID), "B2's notebook uses the recovered device")
         return "real: the client's record and key removal, FamilySharingLocalData over B2's Keychain and Application Support, recovery and the notebook against the local Worker; modelled: the relay's acceptance (as S20) and the UserDefaults stand-ins"
+    }
+
+    // MARK: S23
+
+    /// 11/20: a photo whose reservation the relay refuses for good (the
+    /// members changed after it was reserved: `stale_revision`) is sealed
+    /// against the current members and reserved again by the same send,
+    /// instead of replaying the old reservation forever; and it reaches
+    /// every member exactly once, a repeated send included.
+    static func s23(_ relay: Relay) async throws -> String? {
+        Log.step("A: a Sandbox billing account with test Plus; A makes a まど and its invitation")
+        let billing = try await relay.bootstrapBilling()
+        try await relay.grantPlus(billing)
+        let a = try await Device.make("A", relay: relay, cloud: PersonCloud(), billing: billing)
+        let window = try await a.client.createWindow(name: "合成のまど", ownerDisplayName: "合成のA", operationID: UUID())
+        let invitation = try await a.client.createInvitation(windowID: window.id,
+                                                            operation: GroupOperation(expectedRevision: window.revision))
+        let link = try required(URL(string: invitation.shareText).flatMap({ GroupInvitationLink(url: $0) })?.url,
+                                "the invitation link")
+        func join(_ name: String) async throws -> Device {
+            let device = try await Device.make(name, relay: relay, cloud: PersonCloud())
+            let invitationID = try await device.client.stageInvitation(url: link)
+            let request = try await device.client.apply(invitationID: invitationID, displayName: "合成の" + name, operationID: UUID())
+            _ = try await a.client.reconcileAdmissions()
+            let status = try await device.client.joinStatus(requestID: request.id)
+            try expect(status.state == .approved, "\(name) was let in (got \(status.state))")
+            return device
+        }
+        Log.step("B joins")
+        let b = try await join("B")
+        let aDevice = try required(try await a.client.existingDeviceID(), "A has a まど device")
+
+        Log.step("A sends a photo; the connection drops at its upload, after the reservation")
+        let jpeg = try windowJPEG(), operation = UUID()
+        relay.transport.dropNext(device: aDevice, method: "PUT", suffix: "/ciphertext")
+        var mark = relay.transport.log.count
+        do {
+            _ = try await a.client.sendPhoto(normalizedJPEG: jpeg, caption: nil, windowID: window.id, operationID: operation)
+            throw E2EFailure(description: "\(Log.location): the send went through without its upload")
+        } catch GroupClientError.offline {
+            Log.note("the send stopped offline")
+        }
+        let firstReserves = relay.transport.log.dropFirst(mark).filter { $0.device == aDevice && $0.path.hasSuffix("/moments/reserve") }
+        try expect(firstReserves.count == 1 && firstReserves[0].status == 201, "one reservation was made (got \(firstReserves.map(\.status)))")
+        let pending = try required(await a.client.pendingDelivery(windowID: window.id), "A keeps the sealed photo to send again")
+        try expect(pending.operationID == operation && pending.jpeg == jpeg, "the kept copy is the photo A chose")
+
+        Log.step("D joins: the members (roster revision and key) change after the reservation")
+        let d = try await join("D")
+
+        Log.step("A presses 「もう一度届ける」: the old reservation is refused, the same photo is sealed anew and delivered")
+        mark = relay.transport.log.count
+        let sent = try await a.client.sendPhoto(normalizedJPEG: jpeg, caption: nil, windowID: window.id, operationID: operation)
+        let retry = Array(relay.transport.log.dropFirst(mark)).filter { $0.device == aDevice && $0.method != "GET" }
+        try expect(retry.contains { $0.method == "PUT" && $0.status == 409 }, "the old reservation's upload was refused (stale)")
+        try expect(retry.filter { $0.path.hasSuffix("/moments/reserve") && $0.status == 201 }.count == 1, "exactly one new reservation")
+        try expect(retry.filter { $0.path.hasSuffix("/commit") && $0.status == 200 }.count == 1, "exactly one commit")
+        let afterSend = await a.client.pendingDelivery(windowID: window.id)
+        try expect(afterSend == nil, "nothing is left to send again")
+
+        Log.step("The same send again (a lost answer, a second tap): nothing new is delivered")
+        mark = relay.transport.log.count
+        let again = try await a.client.sendPhoto(normalizedJPEG: jpeg, caption: nil, windowID: window.id, operationID: operation)
+        try expect(again.id == sent.id, "the repeated send answers with the same photo")
+        let repeated = Array(relay.transport.log.dropFirst(mark)).filter { $0.device == aDevice && $0.method != "GET" }
+        try expect(!repeated.contains { $0.path.hasSuffix("/moments/reserve") || $0.method == "PUT" }, "no second reservation or upload")
+
+        Log.step("B and D, the new member included, each receive A's photo exactly once")
+        for device in [b, d] {
+            let synced = try await device.syncWindow(window.id)
+            try expect(synced.listed == [sent.id], "\(device.name) is offered exactly A's one photo (got \(synced.listed.count))")
+            try expect(synced.shown == [sent.id], "\(device.name) shows A's photo once (got \(synced.shown.count))")
+        }
+        return "real: ProductionGroupWindowClient.sendPhoto against the local Worker (reserve, refused upload, seal again, "
+            + "reserve, upload, commit) and B's and D's receive; the connection loss at the first upload is the harness's; "
+            + "GroupWindowScreenModel's 「もう一度届ける」 row (UIKit) is the same call with the same operation"
     }
 }

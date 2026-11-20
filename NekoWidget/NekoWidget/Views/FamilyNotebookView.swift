@@ -502,6 +502,24 @@ final class FamilyNotebookPrototype: ObservableObject {
         }
     }
 
+    /// 11/20: the copy shown is of a pair the relay said was taken off.
+    func showsRevokedPair(_ service: ProductionFamilyNotebookSharingService) -> Bool {
+        guard isReal, let store, let person = realAuthor?.personID else { return false }
+        return service.isRevoked(personID: person, deviceID: store.localDeviceID)
+    }
+
+    /// 11/20: that pair was taken off by another iPhone of the same person.
+    /// The screens let go of its copy and the kept binding (both versions), so
+    /// the notebook opens at its entrance; the copy itself and its unsent
+    /// writing stay on disk. Not the ended notice.
+    func detachRevoked() {
+        guard isReal else { return }
+        store = nil; snapshot = nil; realAuthor = nil; realMemberIDs = []; realMemberNames = [:]
+        UserDefaults.standard.removeObject(forKey: Self.bindingKey)
+        UserDefaults.standard.removeObject(forKey: FamilyNotebookLocalBinding.legacyKey)
+        refreshUnlinked()
+    }
+
     private func openRealBinding() {
         do {
             if let binding = try FamilyNotebookLocalBinding.load(support: AppRecordDataset.support) {

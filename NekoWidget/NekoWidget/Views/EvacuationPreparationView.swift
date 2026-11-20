@@ -536,7 +536,7 @@ private struct EvacuationSupplyEditor: View {
     private func setExpiry(_ date: Date?) {
         let saved = store.update { plan in
             guard let index = plan.supplies.firstIndex(where: { $0.id == id }) else { return }
-            plan.supplies[index].expiresAt = date
+            plan.supplies[index].setExpiry(date)
         }
         if saved, date != nil { Task { await store.firstExpirySet() } }
     }
@@ -572,7 +572,7 @@ private struct EvacuationSupplyEditor: View {
                                                                  to: Calendar.current.startOfDay(for: Date())) : nil)
                         }))
                         .accessibilityIdentifier("evacuation-item-expiry")
-                        if let date = item.expiresAt {
+                        if let date = item.expiryDate() {
                             DatePicker("期限", selection: Binding(get: { date }, set: { setExpiry($0) }),
                                        displayedComponents: .date)
                                 .accessibilityIdentifier("evacuation-item-expiry-date")

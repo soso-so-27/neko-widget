@@ -18,6 +18,7 @@ struct VerifyEvacuationPlan {
         try reviewCountsFromCreation()
         try destinations()
         try expiryRules()
+        try expiryDayIgnoresTimeZone()
         try noticeSchedule()
         try takenOnTheDay()
         try noticeChoiceTravelsWithThePlan()
@@ -215,6 +216,34 @@ struct VerifyEvacuationPlan {
 
     static func day(_ year: Int, _ month: Int, _ day: Int, hour: Int = 12) -> Date {
         tokyo.date(from: DateComponents(year: year, month: month, day: day, hour: hour))!
+    }
+
+    /// 11/20: a 期限 set in Tokyo is the same day in Honolulu and London, and
+    /// its notice moves with the day; an older build still reads expiresAt.
+    static func expiryDayIgnoresTimeZone() throws {
+        var honolulu = Calendar(identifier: .gregorian); honolulu.timeZone = TimeZone(identifier: "Pacific/Honolulu")!
+        var london = Calendar(identifier: .gregorian); london.timeZone = TimeZone(identifier: "Europe/London")!
+        var item = EvacuationSupply(title: "フード")
+        item.setExpiry(day(2026, 12, 20, hour: 0), calendar: tokyo)
+        try check(item.expiresOn == "2026-12-20", "the day is stored")
+        try check(item.expiresAt == day(2026, 12, 20, hour: 0), "expiresAt is still the day's start for older builds")
+        for calendar in [tokyo, honolulu, london] {
+            let parts = calendar.dateComponents([.year, .month, .day], from: item.expiryDate(calendar: calendar)!)
+            try check(parts.year == 2026 && parts.month == 12 && parts.day == 20, "same 期限 day in \(calendar.timeZone.identifier)")
+        }
+        let inHonolulu = honolulu.date(from: DateComponents(year: 2026, month: 12, day: 10, hour: 12))!
+        try check(item.daysUntilExpiry(now: inHonolulu, calendar: honolulu) == 10, "days count by the stored day")
+        var plan = EvacuationPlan(); plan.supplies = [item]
+        let notice = plan.notices(now: inHonolulu.addingTimeInterval(-30 * 86_400), dismissedAt: .distantFuture, calendar: honolulu)
+            .filter { $0.id.hasPrefix("evacuation.expiry.") }
+        try check(notice.map(\.id) == ["evacuation.expiry.2026-12-06"], "the notice keeps the day, 14 days before")
+        let encoded = try JSONEncoder().encode(item)
+        struct Older: Decodable { var expiresAt: Date? }
+        try check(try JSONDecoder().decode(Older.self, from: encoded).expiresAt == item.expiresAt, "an older build reads expiresAt")
+        var cleared = item; cleared.setExpiry(nil)
+        try check(cleared.expiresAt == nil && cleared.expiresOn == nil && cleared.expiryDate() == nil, "clearing clears both")
+        var old = EvacuationSupply(title: "フード"); old.expiresAt = day(2026, 12, 20, hour: 0)
+        try check(tokyo.component(.day, from: old.expiryDate(calendar: tokyo)!) == 20, "a file from before still reads its 期限")
     }
 
     /// Round 2: 期限 on food, water, medicine and 療法食; shown from 30 days before.

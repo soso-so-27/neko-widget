@@ -80,6 +80,30 @@
             catch AppRecordBindingError.rebinding {}
             check(try Data(contentsOf:c.appendingPathComponent("binding.json"))==Data("unexpected".utf8),"unknown bytes retained")
         }
-        print("Rebinding PASS: 8 interruption states; unchanged records and dataset receipt; old settings retained; old owner rejected; missing-pointer path; expired fence and unknown metadata rejected")
+        // 11/20: only the explicit start repairs settings this build cannot use.
+        do {
+            let current = "app-records-automatic-v1", decodes: (Data) -> Bool = { _ in true }
+            func json(_ text: String) -> Data { Data(text.utf8) }
+            check(AppRecordUnusableBinding.classify(json("{\"version\":2,\"consent\":\"app-records-automatic-v1\"}"), currentConsent: current, decodes: decodes) == .newerFormat, "a newer format is refused")
+            check(AppRecordUnusableBinding.classify(json("{\"version\":2}"), currentConsent: current, decodes: { _ in false }) == .newerFormat, "a newer format that does not decode is still refused")
+            check(AppRecordUnusableBinding.classify(json("{\"version\":1,\"consent\":\"app-records-automatic-v2\"}"), currentConsent: current, decodes: decodes) == .newerConsent, "a newer consent is refused")
+            check(AppRecordUnusableBinding.classify(json("{\"version\":1,\"consent\":\"other-terms\"}"), currentConsent: current, decodes: decodes) == .newerConsent, "an unplaceable consent is refused")
+            check(AppRecordUnusableBinding.classify(json("not json"), currentConsent: current, decodes: decodes) == .unreadable, "corrupt bytes are unreadable")
+            check(AppRecordUnusableBinding.classify(json("{\"version\":true,\"consent\":\"app-records-automatic-v1\"}"), currentConsent: current, decodes: decodes) == .unreadable, "a boolean version is not a version")
+            check(AppRecordUnusableBinding.classify(json("{\"version\":1,\"consent\":\"app-records-automatic-v1\"}"), currentConsent: current, decodes: { _ in false }) == .unreadable, "today's consent that does not decode is unreadable")
+            check(AppRecordUnusableBinding.classify(json("{\"version\":1,\"consent\":\"app-records-automatic-v1\"}"), currentConsent: current, decodes: decodes) == nil, "usable settings are left alone")
+            guard case .olderConsent(let repaired)? = AppRecordUnusableBinding.classify(json("{\"version\":1,\"consent\":\"app-records-automatic-v1\",\"revision\":7,\"later\":\"kept\"}"), currentConsent: "app-records-automatic-v2", decodes: decodes) else { preconditionFailure("an older consent is repaired") }
+            let object = try JSONSerialization.jsonObject(with: repaired) as! [String: Any]
+            check(object["consent"] as? String == "app-records-automatic-v2" && object["revision"] as? Int == 7 && object["later"] as? String == "kept", "repair changes only the consent")
+            check(AppRecordUnusableBinding.mayRepair(AppRecordBindingError.consent) && AppRecordUnusableBinding.mayRepair(AppRecordBindingError.format) && !AppRecordUnusableBinding.mayRepair(AppRecordBindingError.destination), "only consent/format/corrupt settings are repaired")
+            AppRecordDataset.support=FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-unusable-"+UUID().uuidString)
+            defer {try? FileManager.default.removeItem(at:AppRecordDataset.support)}
+            let raw = json("{\"version\":1,\"consent\":\"broken")
+            try AppRecordUnusableBinding.setAside(raw, in: AppRecordDataset.control)
+            try AppRecordUnusableBinding.setAside(raw, in: AppRecordDataset.control)
+            let kept = try FileManager.default.contentsOfDirectory(at: AppRecordDataset.control.appendingPathComponent("previous-settings"), includingPropertiesForKeys: nil)
+            check(kept.count == 2 && kept.allSatisfy { (try? Data(contentsOf: $0.appendingPathComponent("binding.json"))) == raw }, "each set-aside copy is exact and never overwritten")
+        }
+        print("Rebinding PASS: 8 interruption states; unchanged records and dataset receipt; old settings retained; old owner rejected; missing-pointer path; expired fence and unknown metadata rejected; unusable settings classified and kept aside")
     }
 }

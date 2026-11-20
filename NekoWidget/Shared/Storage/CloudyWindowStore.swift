@@ -55,7 +55,7 @@ enum CloudyWindowDayKind: String, Sendable {
 /// on that day (counted as on the cat's page, CatHomeCareCore.heroDay). The
 /// app writes the coming ones; the window only matches the day.
 struct CloudyWindowMilestoneDay: Codable, Equatable, Sendable {
-    /// The JST start of the day (CloudyWindowStore.calendar).
+    /// The start of the day (CloudyWindowStore.calendar).
     var day: Date
     /// `CloudyWindowMilestoneKind` as text.
     var kind: String
@@ -318,9 +318,17 @@ struct CloudyWindowStore: Sendable {
         self.internalPresentation = internalPresentation
     }
 
+    /// 11/20: the iPhone's own day, as the app's 写真 tab counts it
+    /// (Calendar.nekoGregorian). It was fixed to JST, which is the same day
+    /// for an iPhone in Japan but up to a day off elsewhere. Only these local
+    /// photos follow it; みんなのまど and the official window keep the
+    /// server's JST day in their own code. Checks set a fixed zone.
+    static var timeZoneOverride: TimeZone?
+    static var timeZone: TimeZone { timeZoneOverride ?? .current }
+
     static var calendar: Calendar {
         var result = Calendar(identifier: .gregorian)
-        result.timeZone = TimeZone(secondsFromGMT: 9 * 3_600)!
+        result.timeZone = timeZone
         return result
     }
 
@@ -342,10 +350,11 @@ struct CloudyWindowStore: Sendable {
         captured.map { date.timeIntervalSince($0) > Double(newPhotoDays) * 86_400 } ?? true
     }
 
-    /// JST day number and civil date without Calendar, so a pass over the
-    /// whole library stays cheap (days from civil, H. Hinnant).
+    /// Day number (in `timeZone`) and civil date without Calendar, so a pass
+    /// over the whole library stays cheap (days from civil, H. Hinnant).
     static func dayNumber(_ date: Date) -> Int {
-        Int(((date.timeIntervalSince1970 + 32_400) / 86_400).rounded(.down))
+        let offset = Double(timeZone.secondsFromGMT(for: date))
+        return Int(((date.timeIntervalSince1970 + offset) / 86_400).rounded(.down))
     }
 
     static func civil(dayNumber: Int) -> (year: Int, month: Int, day: Int) {
@@ -368,7 +377,7 @@ struct CloudyWindowStore: Sendable {
         return era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468
     }
 
-    /// 11/15: how a photo taken on `capturedDay` (a JST day number) matches
+    /// 11/15: how a photo taken on `capturedDay` (a day number) matches
     /// the day `targetDay`: the same month and day of an earlier year
     /// (offset 0), else within `dateWindowDays`. 2/29 falls on 2/28.
     static func dateMatch(capturedDay: Int, targetDay: Int) -> (offset: Int, yearsAgo: Int)? {
@@ -571,8 +580,8 @@ struct CloudyWindowStore: Sendable {
         }
     }
 
-    /// Album months use the device calendar, while cloudy days use JST. A
-    /// closing time inside a JST day must wake the provider at that time too.
+    /// Album months and cloudy days both use the iPhone's day (11/20). A
+    /// closing time inside a day must wake the provider at that time too.
     func nextRefresh(after now: Date) -> Date {
         let tomorrow = Self.nextDay(after: now)
         guard internalPresentation else { return tomorrow }

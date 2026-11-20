@@ -55,6 +55,9 @@ actor FamilyNotebookTransport {
     private let identity: GroupDeviceIdentity
     private let transport: any GroupHTTPTransport
     private let journal: any GroupSecretStore
+    /// 11/20: where the pair the relay said was taken off is marked
+    /// (GroupDeviceRevocation, the usual identity's device-only Keychain).
+    private let revocations: (any GroupSecretStore)?
     private var inFlight = Set<UUID>()
 
     private struct Record: Codable {
@@ -70,10 +73,21 @@ actor FamilyNotebookTransport {
         var rejectedAsStale: Bool
     }
 
-    init(endpoint: URL, identity: GroupDeviceIdentity, transport: any GroupHTTPTransport, journal: any GroupSecretStore) throws {
+    init(endpoint: URL, identity: GroupDeviceIdentity, transport: any GroupHTTPTransport, journal: any GroupSecretStore,
+         revocations: (any GroupSecretStore)? = nil) throws {
         guard identity.registered else { throw FamilyNotebookTransportError.authenticationRequired }
         _ = try GroupHTTPRequest.make(endpoint: endpoint, path: "/v3/family-notebooks/me", body: nil, identity: identity)
         self.endpoint = endpoint; self.identity = identity; self.transport = transport; self.journal = journal
+        self.revocations = revocations
+    }
+    /// 11/20: the relay said this pair was taken off by another iPhone of the
+    /// same person (GroupDeviceRevocation). The mark first, then the existing
+    /// authenticationRequired: no second try, and a write stays in the journal
+    /// unsent, with this pair. Anything else (a plain 401 included) passes.
+    private func noteRevocation(_ reply: GroupHTTPReply, request: URLRequest) throws {
+        guard let pair = GroupDeviceRevocation.pair(reply, request: request, identity: identity, endpoint: endpoint) else { return }
+        if let revocations { try GroupDeviceRevocation.mark(pair, in: revocations) }
+        throw FamilyNotebookTransportError.authenticationRequired
     }
     private func pathAllowed(_ path: String) throws {
         guard path == "/v3/family-notebooks" || path.hasPrefix("/v3/family-notebooks/") else {
@@ -92,6 +106,7 @@ actor FamilyNotebookTransport {
             do { reply = try await transport.send(request, maximumBytes: 1_600_000) }
             catch is CancellationError { throw CancellationError() }
             catch { throw FamilyNotebookTransportError.unavailable }
+            try noteRevocation(reply, request: request)
             do { return try Self.check(reply) }
             catch FamilyNotebookTransportError.authenticationRequired where reply.status == 401 && attempt == 0 {
                 continue
@@ -143,6 +158,7 @@ actor FamilyNotebookTransport {
         let reply: GroupHTTPReply
         do { reply = try await transport.send(request, maximumBytes: 262_144) }
         catch { throw FamilyNotebookTransportError.unknownOutcome }
+        try noteRevocation(reply, request: request)
         let response: Data
         do { response = try Self.check(reply) }
         catch FamilyNotebookTransportError.upgradeRequired {
@@ -164,6 +180,7 @@ actor FamilyNotebookTransport {
             let upgradedReply: GroupHTTPReply
             do { upgradedReply = try await transport.send(upgraded, maximumBytes: 262_144) }
             catch { throw FamilyNotebookTransportError.unknownOutcome }
+            try noteRevocation(upgradedReply, request: upgraded)
             response = try Self.check(upgradedReply)
         }
         catch FamilyNotebookTransportError.stale {
@@ -190,6 +207,7 @@ actor FamilyNotebookTransport {
         do { reply = try await transport.send(request, maximumBytes: 16_384) }
         catch is CancellationError { throw CancellationError() }
         catch { throw FamilyNotebookTransportError.unavailable }
+        try noteRevocation(reply, request: request)
         _ = try Self.check(reply)
     }
 

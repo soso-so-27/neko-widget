@@ -148,13 +148,10 @@ actor CatHouseholdIdentityStore {
               decoded.schemaVersion <= CatHouseholdIdentityState.currentSchemaVersion else {
             throw CatHouseholdIdentityStoreError.unsupportedSchema(decoded.schemaVersion)
         }
-        let normalized = decoded.normalized()
-        if normalized != decoded {
-            // Normalization does not represent a user mutation, so it preserves
-            // the store-owned revision while repairing deterministic ordering.
-            try writeUnlocked(normalized)
-        }
-        return normalized
+        // 11/20: a plain load never writes. Normalization is applied in
+        // memory; the next real commit stores it. A file read by an older
+        // build keeps its bytes (and anything this build cannot see).
+        return decoded.normalized()
     }
 
     private var usesLiveDataset: Bool {

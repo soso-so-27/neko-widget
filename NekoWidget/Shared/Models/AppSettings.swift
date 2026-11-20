@@ -52,6 +52,19 @@ struct CatLifeDate: Codable, Equatable, Sendable {
         ))
     }
 
+    /// 11/20: the same day in 西暦, when this is an old value in the
+    /// iPhone's own calendar and this iPhone can still say which day that
+    /// was (it is set to that calendar now). nil: already 西暦, or not
+    /// determinable here — then it is left exactly as it is.
+    func inGregorian(device: Calendar = .current) -> CatLifeDate? {
+        let gregorian = Calendar.nekoGregorian
+        guard Self.isDeviceCalendarYear(year, reading: gregorian, device: device),
+              let instant = self.date(in: gregorian, deviceCalendar: device),
+              let converted = CatLifeDate(date: instant, calendar: gregorian),
+              !Self.isDeviceCalendarYear(converted.year, reading: gregorian, device: device) else { return nil }
+        return converted
+    }
+
     /// A 西暦 year no cat could have (before 1900 or after next year), on an
     /// iPhone whose own calendar is not 西暦: an old value in that calendar.
     static func isDeviceCalendarYear(_ year: Int, reading calendar: Calendar, device: Calendar) -> Bool {
@@ -64,6 +77,11 @@ struct CatLifeDate: Codable, Equatable, Sendable {
 struct CatLifeReference: Codable, Equatable, Sendable {
     var kind: CatLifeReferenceKind
     var date: CatLifeDate
+
+    /// 11/20: see CatLifeDate.inGregorian; unchanged when not determinable.
+    func inGregorian(device: Calendar = .current) -> Self {
+        CatLifeReference(kind: kind, date: date.inGregorian(device: device) ?? date)
+    }
 }
 
 struct AppSettings: Codable, Equatable, Sendable {

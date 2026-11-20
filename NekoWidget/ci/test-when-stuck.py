@@ -141,5 +141,125 @@ class AppWordsTests(unittest.TestCase):
         self.assertNotIn("FailedPairingRecovery", pairing)
 
 
+class DeadEnds1120Tests(unittest.TestCase):
+    """11/20: every wait ends in a state with a way on. Native behaviour of
+    the pure rules: NekoWidgetTests WhenStuckTests (testSaveFailure...,
+    testShowcaseLaunchRequest..., testGroupWidgetEnded...)."""
+
+    def test_1_failed_start_offers_the_first_runs_retry_on_the_photo_tab(self):
+        home = read("NekoWidget/Views/HomeView.swift")
+        state = section(home, "private var startupLoadFailedState: some View {", "@ViewBuilder")
+        self.assertIn("Label(OnboardingPresentationCopy.loadFailedTitle", state)
+        self.assertIn("Button(OnboardingPresentationCopy.loadFailedAction", state)
+        self.assertIn("action: rescan)", state)
+        self.assertLess(home.index("if scan.startupLoadFailed {"), home.index("emptyPhotoState\n"))
+        root = read("NekoWidget/App/AppRootView.swift")
+        self.assertIn("startupLoadFailed: viewModel.startupLoadFailed",
+                      section(root, "private func scanPresentation(", "switch state.resultKind"))
+        app = read("NekoWidget/ViewModels/AppViewModel.swift")
+        rescan = section(app, "    func rescan() async {", "guard canReadPhotos else {")
+        # The retry runs the start again; it never resets or deletes records.
+        self.assertIn("if startupLoadFailed {\n                await retryStartup()", rescan)
+        retry = section(app, "    func retryStartup() async {", "\n    }\n")
+        self.assertIn("await start()", retry)
+        for gone in ("remove", "delete", "reset"):
+            self.assertNotIn(gone, retry.lower())
+
+    def test_2_long_online_save_failure_is_shown_but_retried_as_before(self):
+        saving = read("NekoWidget/Services/AppRecordPersistence.swift")
+        report = section(saving, "    private func report(_ error: Error) {",
+                         "\n    private static func isConnectionFailure(")
+        self.assertIn("retriesByItself = transient && !failureStreak.needsAttention(now: Date())", report)
+        self.assertIn("AppRecordNetworkPath.shared.isOnline", report)
+        # The retry schedule is computed before, and does not read the streak.
+        schedule = section(report, "let transient = Self.isConnectionFailure(error)", "failing = true")
+        self.assertNotIn("failureStreak", schedule)
+        self.assertIn("transientFailures == 1 ? 5 : transientFailures == 2 ? 15 : 60", schedule)
+        streak = section(saving, "struct AppRecordFailureStreak", "final class AppRecordNetworkPath")
+        self.assertIn("static let onlineSpan: TimeInterval = 6 * 60 * 60", streak)
+        self.assertIn("static let serverAnswerSpan: TimeInterval = 30 * 60", streak)
+        self.assertIn("guard lastWasOnline else { return false }", streak)
+        # Reading the network state contacts nothing.
+        path = section(saving, "final class AppRecordNetworkPath", "@MainActor")
+        self.assertIn("NWPathMonitor()", path)
+        self.assertNotIn("URLSession", path)
+        self.assertEqual(saving.count("; failureStreak = AppRecordFailureStreak()"), 3)
+
+    def test_3_showcase_request_expires(self):
+        intent = read("NekoWidgetWidget/OpenShowcaseIntent.swift")
+        request = section(intent, "enum ShowcaseLaunchRequest {", "enum ShowcaseWidgetRoute")
+        self.assertIn("static let lifetime: TimeInterval = 120", request)
+        self.assertIn("defaults.removeObject(forKey: legacyKey)", request)
+        self.assertIn("defaults?.set(Date().timeIntervalSince1970, forKey: key)", request)
+        self.assertNotIn("UUID()", request)
+
+    def test_4_group_widget_ends_only_when_the_app_saw_it(self):
+        provider = read("NekoWidgetWidget/NekoWidgetTimelineProvider.swift")
+        group = section(provider, "private func groupEntry(", "private func familyEntry(")
+        self.assertLess(group.index("GroupWidgetCache.missingEntry(windowID: windowID) == .ended"),
+                        group.index("emptyStateReason: .sourceUnavailable"))
+        self.assertIn("emptyStateReason: .needsApp)", group)
+        intent = read("NekoWidgetWidget/NekoWidgetConfigurationIntent.swift")
+        self.assertIn("GroupWidgetCache.missingEntry(windowID: groupWindowID) == .ended", intent)
+        cache = read("Shared/Sharing/GroupWidgetCache.swift")
+        self.assertIn("var listedWindowIDs: [String]? = nil", cache)
+        self.assertIn("var endedWindowIDs: [String]? = nil", cache)
+        self.assertNotIn("Catalog(entries: entries())", cache)
+        remove = section(cache, "static func remove(windowID: String) throws {", "\n    }\n")
+        self.assertIn("catalog.endedWindowIDs = Array(ended.suffix(maximumEndedWindows))", remove)
+        # The background refresh keeps the same list as the まど tab.
+        service = read("NekoWidget/Services/MomentBackgroundRefreshService.swift")
+        refresh = section(service, "func refreshWidgetPhotos(windowID: String? = nil) async {", "func receive(")
+        self.assertIn("GroupWidgetCache.keepOnly(windowIDs: Set(windows.map(\\.id)))", refresh)
+
+    def test_6_widget_reload_does_not_wait_for_the_cloudy_window(self):
+        app = read("NekoWidget/ViewModels/AppViewModel.swift")
+        rebuild = section(app, "private func performRebuildWidgetCache(", "if result.hasMore {")
+        self.assertLess(rebuild.index("cloudyFailure = error"), rebuild.index("reloadAllWidgetTimelines()"))
+        rounds = section(app, "personalReplenishmentTask = Task(priority: .utility)", "} catch { return } // Next")
+        self.assertLess(rounds.index("if batch.addedCount > 0 { added = true }"),
+                        rounds.index("try self.synchronizeCloudyWindowMetadata()"))
+
+    def test_8_a_mado_notification_tap_always_lands_somewhere(self):
+        service = read("NekoWidget/Services/MomentBackgroundRefreshService.swift")
+        receive = section(service, "func receive(_ route: GroupNotificationRoute, open: Bool) async -> Bool {",
+                          "\n    }\n}")
+        self.assertEqual(receive.count("GroupWindowOpenInbox.shared.openList()"), 2)
+        self.assertLess(receive.index("client.acceptsNotification("),
+                        receive.index("GroupWindowOpenInbox.shared.open(windowID:"))
+        window = read("NekoWidget/Views/GroupWindowView.swift")
+        inbox = section(window, "final class GroupWindowOpenInbox", "final class GroupWindowListNavigation")
+        self.assertIn("func openList() {", inbox)
+        tab = read("NekoWidget/Views/MainTabView.swift")
+        self.assertIn(".onChange(of: groupWindowOpenInbox.listRequested, initial: true)", tab)
+
+    def test_9_proof_camera_asks_like_the_vet_camera(self):
+        care = read("NekoWidget/Views/CatCareView.swift")
+        self.assertIn("cameraBlocked = await VeterinaryCapture.cameraBlockedReason()", care)
+        self.assertIn("if cameraBlocked == nil { showsCamera = true }", care)
+        self.assertIn('Button("設定を開く")', care)
+        self.assertNotIn("PHPhotoLibrary", care)
+        capture = read("NekoWidget/Views/VeterinaryCapture.swift")
+        camera = section(capture, "static func cameraBlockedReason() async -> String? {", "\n    }\n")
+        self.assertNotIn("PHPhotoLibrary", camera)
+        self.assertIn('"カメラを使うには、設定でカメラを許可してください。"', camera)
+        self.assertIn("if let camera = await cameraBlockedReason() { return camera }", capture)
+
+    def test_11_12_15_spinners_end(self):
+        app = read("NekoWidget/ViewModels/AppViewModel.swift")
+        refresh = section(app, "    func refreshPhotoSourceAlbums() async {",
+                          "let managedAlbum = snapshot.albumLocalIdentifier")
+        self.assertIn("widgetPhotoLibraryLoadSucceeded = false", refresh)
+        official = read("NekoWidget/Views/OfficialWindowView.swift")
+        load = section(official, "    private func refresh(interactive: Bool = false) async {",
+                       "let previousPhotos = photos")
+        self.assertIn("hasCheckedFeed = true\n            return", load)
+        window = read("NekoWidget/Views/GroupWindowView.swift")
+        deletion = section(window, "struct GroupIdentityDeletionView: View {", "private func delete() async {")
+        self.assertNotIn("try? await client.identityDeletion()", deletion)
+        self.assertIn("readFailed = true", deletion)
+        self.assertLess(deletion.index("if readFailed {"), deletion.index("record.completedAt != nil"))
+
+
 if __name__ == "__main__":
     unittest.main()

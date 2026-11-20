@@ -459,6 +459,11 @@ final class GroupAdmissionService: ObservableObject {
         if let windowID { ids = [windowID] }
         else {
             guard let windows = try? await client.windows() else { return }
+            // 11/20: the same list the まど tab keeps, so a Widget of a window
+            // that went says so even before the tab is opened.
+            if GroupWidgetCache.keepOnly(windowIDs: Set(windows.map(\.id))) {
+                WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+            }
             ids = windows.filter { $0.state != .closed }.map(\.id)
         }
         for id in ids {
@@ -472,13 +477,23 @@ final class GroupAdmissionService: ObservableObject {
 
     func receive(_ route: GroupNotificationRoute, open: Bool) async -> Bool {
         guard let client = GroupWindowClientProvider.production,
-              (try? await client.acceptsNotification(windowID: route.windowID, requestID: route.requestID, kind: route.kind)) == true else { return false }
+              (try? await client.acceptsNotification(windowID: route.windowID, requestID: route.requestID, kind: route.kind)) == true else {
+            // 11/20: a tap is never silent. Without an accepted notification
+            // (offline, a window left) the まど list, whose states explain
+            // themselves; no window is opened from an unchecked route.
+            if open { GroupWindowOpenInbox.shared.openList() }
+            return false
+        }
         await refresh()
         await refreshWidgetPhotos(windowID: route.windowID)
         // Explicit tap may navigate only AFTER authenticated membership, roster and key loading.
         // 1115s: the tap is the person's own; this one read of the window is theirs.
-        if open, (try? await SharingPersonAction.run({ try await client.window(id: route.windowID) })) != nil {
-            GroupWindowOpenInbox.shared.open(windowID: route.windowID)
+        if open {
+            if (try? await SharingPersonAction.run({ try await client.window(id: route.windowID) })) != nil {
+                GroupWindowOpenInbox.shared.open(windowID: route.windowID)
+            } else {
+                GroupWindowOpenInbox.shared.openList()
+            }
         }
         return true
     }

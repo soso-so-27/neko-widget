@@ -2898,9 +2898,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "currentlyVisibleImportIdentifiers.contains($0.localIdentifier)",
             app_model,
         )
-        self.assertIn("canConcludeImportedAssetWasDeleted", app_model)
-        self.assertIn("PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized", app_model)
-        self.assertIn('source: "received-memory-deleted"', app_model)
+        # 11/20: absence from one fetch never un-likes a received photo.
+        self.assertNotIn("canConcludeImportedAssetWasDeleted", app_model)
+        self.assertNotIn('source: "received-memory-deleted"', app_model)
         self.assertIn("snapshot.likedAssets", app_model)
         self.assertIn("likedPhotos = sourceSnapshot.assets.compactMap", app_root)
 
@@ -3489,7 +3489,7 @@ class GroupWindowScreenTests(unittest.TestCase):
         # and only inside keep(), which the production adapter runs through storeAndAcknowledge (so ACK follows the write).
         receive = section(screen, "private func receive(", "func prepare(_ item: PhotosPickerItem) async")
         self.assertIn("GroupPhotoModeration.check(incoming.jpeg, with: moderation)", receive)
-        self.assertIn("guard verdict != .retryLater else { return verdict }", receive)
+        self.assertIn("guard verdict != .retryLater else { return .waiting(verdict) }", receive)
         self.assertIn("client.keep(incoming, outgoingOperationID: outgoingOperationID)", receive)
         self.assertLess(receive.index("GroupPhotoModeration.check"), receive.index("client.keep("))
         self.assertIn("try await store.save(", receive)
@@ -3501,7 +3501,8 @@ class GroupWindowScreenTests(unittest.TestCase):
         self.assertIn("outgoingOperationID: operationID", send)
         self.assertIn("MomentShareIngressService().prepare(fromFileURL: received.file).canonicalJPEG", screen)
         # Paused windows cannot send; the card points to who can resume.
-        self.assertIn("guard !isFormer, let window, window.state == .active, !isPaused else { return false }", screen)
+        # 11/20: a delivery state only a newer relay sends also waits.
+        self.assertIn("guard !isFormer, let window, window.state == .active, !isPaused, !window.hasUnknownDelivery else { return false }", screen)
         self.assertIn('"group-window-screen-paused"', screen)
 
         store = source("NekoWidget/Services/GroupWindowLocalPhotoStore.swift")
@@ -5499,7 +5500,8 @@ class WidgetHygieneTests(unittest.TestCase):
         card = section(window, "private struct GroupWindowCard: View {", "private struct KnownWindowCard: View {")
         self.assertIn("!GroupSafety.shared.hasReported($0.id, in: window.id)", card)
         load = section(window, "    func load() async {", "    func create(name: String, ownerName: String)")
-        self.assertIn("GroupWidgetCache.keepOnly(windowIDs: Set(windows.map(\\.id)))", load)
+        # 11/20: a window left out because it could not be verified keeps its copy.
+        self.assertIn("GroupWidgetCache.keepOnly(windowIDs: Set(windows.map(\\.id)).union(unreadable))", load)
         cache = source("Shared/Sharing/GroupWidgetCache.swift")
         self.assertIn("static func keepOnly(windowIDs: Set<String>) -> Bool {", cache)
 
@@ -5564,7 +5566,11 @@ class WindowStateTests(unittest.TestCase):
         self.assertIn("if !model.isFormer && !model.isGone { sendBar }", window)
         self.assertIn("if message == nil, !isGone { message = reason }", window)
         self.assertIn("window.state == .rotationRequired, !window.canManage", window)
-        self.assertIn("model.deliver(model.failedDelivery?.photo ?? prepared, memo: memo)", window)
+        # 11/20: only this photo's own failed copy is reused; an earlier
+        # undelivered photo is never sent in place of the one shown.
+        self.assertIn("model.failedDelivery.flatMap { $0.photo.jpeg == prepared.jpeg ? $0.photo : nil }", window)
+        self.assertIn("model.deliver(retry ?? prepared, memo: memo)", window)
+        self.assertNotIn("model.deliver(model.failedDelivery?.photo ?? prepared, memo: memo)", window)
 
     def test_recent_writes_never_show_internal_field_names(self) -> None:
         notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
@@ -5674,7 +5680,9 @@ class CodexWiringTests(unittest.TestCase):
         self.assertIn('case .alreadyMember: return "もうこのまどに入っています。', setup)
         self.assertIn('case .windowClosed: return "このまどは終わりました。"', setup)
         reporting = source("NekoWidget/Services/ProductionGroupReporting.swift")
-        self.assertIn("case .disabled, .notAuthorized, .consentRequired, .notFound: current.record.progress = .unavailable", reporting)
+        self.assertIn("case .disabled, .notAuthorized, .notFound: current.record.progress = .unavailable", reporting)
+        # 11/20: an old consent is renewed by the person's next tap, so it is not a dead end.
+        self.assertIn("case .consentRequired: current.record.progress = .retryable", reporting)
         notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
         self.assertIn("sharing.ownJoinResults.max(by: { $0.expiresAt < $1.expiresAt })", notebook)
         self.assertIn('preview?.priorRequestState == "pending"', notebook)
@@ -5751,7 +5759,8 @@ class GroupWindowSpeedTests(unittest.TestCase):
         self.assertIn('"group-window-syncing"', screen)
         # 11/7: a window read before opens with its name and kept photos (or
         # its empty state) at once; only a first-ever open shows the spinner.
-        self.assertIn("if model.entries.isEmpty && !model.knowsPhotos && !model.isFormer {", screen)
+        # 11/20: also while more photos are still on their way (the call limit).
+        self.assertIn("if model.entries.isEmpty && (!model.knowsPhotos || model.morePhotosComing) && !model.isFormer {", screen)
         self.assertIn('.navigationTitle(model.shownName ?? "まど")', screen)
         self.assertIn("GroupWindowListNavigation.shared.rememberListed(windows)", screen)
         listing = section(screen, "struct GroupWindowListSection: View {", "private func row(")
@@ -9321,7 +9330,7 @@ class CatIdentityMeasure1113Tests(unittest.TestCase):
             self.assertNotIn(gone, self.service, gone)
             self.assertNotIn(gone, self.view, gone)
         # Read only: the stores are loaded, never saved.
-        self.assertIn("try await LibraryStore().load().assets", self.service)
+        self.assertIn("try await LibraryStore().read().assets", self.service)
         self.assertIn("try await CatHouseholdIdentityStore().load()", self.service)
         # The only file written is the result text, in this app's caches.
         self.assertEqual(self.service.count(".write(to:"), 1)
@@ -9408,7 +9417,7 @@ class CatPhotoCoverage1113Tests(unittest.TestCase):
                 continue
             self.assertNotIn(gone, self.service, gone)
         # Read only: stores are loaded, the curation file is decoded directly.
-        self.assertIn("snapshot = try await LibraryStore().load()", self.service)
+        self.assertIn("snapshot = try await LibraryStore().read()", self.service)
         self.assertIn("try await CatHouseholdIdentityStore().load()", self.service)
         self.assertIn("try AtomicJSON.read(CatCandidateCurationState.self, from: url)", self.service)
         self.assertNotIn("CatCandidateCurationStore()", self.service)
@@ -9460,6 +9469,150 @@ class CatPhotoCoverage1113Tests(unittest.TestCase):
         self.assertIn("fetchOptions.includeHiddenAssets = true", self.service)
         self.assertIn("fetchOptions.includeAllBurstAssets = true", self.service)
 
+
+
+class MadoBugFixes1120Tests(unittest.TestCase):
+    """11/20: the まど bugs found by the read-only audit (app side)."""
+
+    def setUp(self) -> None:
+        self.window = source("NekoWidget/Views/GroupWindowView.swift")
+        self.client = source("NekoWidget/Services/ProductionGroupWindowClient.swift")
+        self.reporting = source("NekoWidget/Services/ProductionGroupReporting.swift")
+
+    def test_consent_is_renewed_only_by_the_persons_tap(self) -> None:
+        sheet = section(self.window, "struct GroupReportSheet: View {", "struct GroupReportsView: View {")
+        self.assertIn("resumeReport(draftID: draft.id, consent: GroupReportConsent(acceptedAt: Date()))", sheet)
+        self.assertIn("![.expired, .unavailable, .authenticationRequired].contains(draft.progress)", sheet)
+        reports = section(self.window, "struct GroupReportsView: View {", "static func text(_ record: GroupReportRecord)")
+        self.assertIn("resumeReport(draftID: record.id, consent: GroupReportConsent(acceptedAt: Date()))", reports)
+        submit = section(self.reporting, "func submitReport(draftID: String)", "func resumeReport(draftID: String)")
+        self.assertNotIn("renewConsent", submit)
+        safety = source("NekoWidget/Services/GroupReporting.swift")
+        refresh = section(safety, "func refresh(windowID: String) async {", "func run<Value>")
+        self.assertNotIn("consent", refresh)
+
+    def test_blocks_are_not_behind_the_report_gate_and_wait_durably(self) -> None:
+        block = section(self.reporting, "func setBlock(windowID: String", "func sendPendingBlocks(windowID: String)")
+        self.assertNotIn("refreshAvailability", block)
+        self.assertNotIn("isAvailable", block)
+        self.assertIn("GroupWindowKept.markUnsentBlock(", block)
+        self.assertIn("reportGate: false", self.reporting)
+        safety = source("NekoWidget/Services/GroupReporting.swift")
+        self.assertIn("await service.sendPendingBlocks(windowID: windowID)", section(safety, "func load(windowID: String) async {", "func loadRecords("))
+        deliver = section(self.window, "func deliver(_ prepared: PreparedPhoto, memo: String) async {", "static func deliveryMessage(")
+        self.assertLess(deliver.index("sendPendingBlocks(windowID: windowID)"), deliver.index("client.sendPhoto("))
+        kept = source("NekoWidget/Services/GroupWindowStorage.swift")
+        self.assertIn('choicesAccountPrefix + "blocks:" + windowID', kept)
+
+    def test_the_photo_sent_is_the_one_shown(self) -> None:
+        step = section(self.window, "private struct GroupLibraryDeliveryStep: View {", "private struct GroupLibraryDeliveryChosenWindow")
+        self.assertIn("$0.photo.jpeg == prepared.jpeg ? $0.photo : nil", step)
+        self.assertNotIn("model.failedDelivery?.photo ?? prepared", step)
+
+    def test_refused_reservations_are_sealed_again_and_others_not_blocked(self) -> None:
+        send = section(self.client, "func sendPhoto(normalizedJPEG: Data, caption: String?, windowID: String, operationID: UUID)", "static func isStaleRevision")
+        self.assertIn("catch is GroupReservationEnded", send)
+        self.assertIn("reserveOperationID: reseal ? UUID() : nil", send)
+        self.assertIn("ReservePhoto(operationID: prepared.reservation.uuidString.lowercased()", send)
+        # Never twice: only a refusal the relay gives for an uncommitted photo,
+        # and a missing reservation only before any commit was sent.
+        self.assertIn("if !commitAttempted, error as? GroupClientError == .notMember", send)
+        self.assertIn('case "reservation_expired": throw GroupClientError.reservationExpired', source("NekoWidget/Services/GroupWindowTransport.swift"))
+        model = section(self.window, "func deliver(_ prepared: PreparedPhoto, memo: String) async {", "func retryFailedDelivery()")
+        self.assertIn(".some(.staleRevision), .some(.reservationExpired): keepsOperation = false", model)
+        pending = section(self.client, "func pendingDelivery(windowID: String, now: Date)", "func discardPendingDelivery(")
+        self.assertIn("pending(prepared.reservation, intent:", pending)
+        share = section(self.client, "func sharePhotoOperation(", "func finishSharePhoto(")
+        self.assertIn("Self.outboxRetention", share)
+        self.assertIn("committed.response != nil { try? FileManager.default.removeItem(at: file); continue }", share)
+
+    def test_hearts_are_merged_kept_and_offered_only_where_the_relay_takes_them(self) -> None:
+        sync = section(self.window, "func sync(background: Bool) async {", "func updateHomeScreenPhoto()")
+        self.assertNotIn("hearts = Dictionary(photos.map", sync)
+        self.assertIn("for photo in photos { merged[photo.id] = photo.hearts }", sync)
+        self.assertIn("heartablePhotoIDs = listed", sync)
+        tile = section(self.window, "private struct GroupPhotoTile: View {", "private var tileAspectRatio")
+        self.assertIn("model.acceptsHearts(entry.id)", tile)
+        self.assertIn(".disabled(!model.acceptsHearts(entry.id))", self.window)
+        heart = section(self.window, "func toggleHeart(_ photoID: String) async {", "private func applyMyHeart(")
+        self.assertIn("== .deliveryExpired", heart)
+
+    def test_a_sync_fetches_the_window_once_and_says_more_are_coming(self) -> None:
+        download = section(self.client, "func downloadPhoto(photoID: String, windowID: String)", "func storeAndAcknowledge(")
+        self.assertIn("try await recentlyVerifiedWindow(windowID)", download)
+        self.assertNotIn("try await window(id: windowID)", download)
+        sync = section(self.window, "func sync(background: Bool) async {", "func updateHomeScreenPhoto()")
+        self.assertIn("morePhotosComing = stopped", sync)
+        self.assertIn("if stopped { receiveLater() }", sync)
+        later = section(self.window, "private func receiveLater() {", "private func receive(")
+        self.assertIn("SharingPersonAction.automatic", later)
+        self.assertIn('"group-window-more-coming"', self.window)
+
+    def test_a_wrong_clock_is_said_without_moving_the_signing_time(self) -> None:
+        transport = source("NekoWidget/Services/GroupWindowTransport.swift")
+        self.assertIn('static let message = "iPhoneの「日付と時刻」を自動設定にしてから、もう一度お試しください。"', transport)
+        self.assertIn("String(Int(now.timeIntervalSince1970))", transport)
+        self.assertNotIn("serverOffset", transport)
+        setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        self.assertIn("if GroupClockSkew.isLikely { return GroupClockSkew.message }", setup)
+        self.assertIn('if error.code == "stale_request", error.reason == "clock_skew" { GroupClockSkew.noteRelayReported() }', transport)
+
+    def test_one_window_or_value_does_not_break_the_list(self) -> None:
+        listing = section(self.client, "func windows() async throws -> [GroupWindow] {", "static func concernsOneWindow(")
+        self.assertIn("catch let error where Self.concernsOneWindow(error)", listing)
+        contract = source("NekoWidget/Services/GroupWindowContract.swift")
+        for name in ("GroupRole", "GroupMemberState", "GroupDeliveryStatus", "GroupDeliveryReason"):
+            body = section(contract, "enum " + name + ":", "\n}")
+            self.assertIn("?? .unknown", body)
+        # The signed roster's own role type stays strict.
+        self.assertIn("myRole: GroupRole(rawValue: me.member.role.rawValue)!", self.client)
+
+    def test_a_locked_iphone_keeps_the_share_grant(self) -> None:
+        access = source("NekoWidget/Services/GroupShareAccess.swift")
+        publish = section(access, "private func publish(_ data: Data?, account: String) {", "func read(_ account: String)")
+        self.assertIn("} catch is GroupShareKeychain.Locked {", publish)
+        self.assertLess(publish.index("catch is GroupShareKeychain.Locked"), publish.index("try? snapshot.remove(account)"))
+        self.assertIn("errSecInteractionNotAllowed { throw Locked() }", access)
+
+    def test_saved_copies_leave_the_app_after_remove_block_and_report(self) -> None:
+        self.assertIn("Self.withdrawSavedCopies([entry])", section(self.window, "func remove(_ entry:", "static func withdrawSavedCopies("))
+        self.assertIn("Self.withdrawSavedCopies(theirs)", section(self.window, "func blockSender(of entry:", "func forgetFormerWindow()"))
+        sheet = section(self.window, "struct GroupReportSheet: View {", "struct GroupReportsView: View {")
+        self.assertIn("GroupWindowScreenModel.withdrawSavedCopies([entry])", sheet)
+        withdraw = section(self.window, "static func withdrawSavedCopies(", "func blockSender(of entry:")
+        self.assertIn("isLiked: false", withdraw)
+        self.assertNotIn("PHAssetChangeRequest", self.window)
+        app = source("NekoWidget/ViewModels/AppViewModel.swift")
+        self.assertIn("await excludeFromCatCandidates(localIdentifiers: identifiers)",
+                      section(app, "private func withdrawGroupWindowCopies(", "private func refreshReceivedMemoryImport("))
+
+    def test_hidden_peoples_hearts_are_not_shown_or_counted(self) -> None:
+        shown = section(self.window, "func shownHearts(_ photoID: String)", "func acceptsHearts(")
+        self.assertIn("!hiddenPeople.contains($0.participantID)", shown)
+        self.assertIn("private var heartCount: Int { model.shownHearts(entry.id).count }", self.window)
+        self.assertIn("model.shownHearts(entry.id).map(\\.displayName)", self.window)
+
+    def test_join_name_has_the_same_limit_as_create(self) -> None:
+        setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        self.assertIn("var canApply: Bool { isAvailable && !trimmedName.isEmpty && !nameTooLong && !isWorking }", setup)
+        self.assertIn("var nameTooLong: Bool { !GroupDisplayName.fits(trimmedName) }", setup)
+
+    def test_heart_taps_are_serialized_and_send_the_last_state(self) -> None:
+        heart = section(self.window, "func toggleHeart(_ photoID: String) async {", "private func applyMyHeart(")
+        self.assertIn("guard sendingHearts.insert(photoID).inserted else { return }", heart)
+        self.assertIn("while let wanted = pendingHearts[photoID] {", heart)
+        self.assertIn("if wanted == relayHas { pendingHearts[photoID] = nil; break }", heart)
+
+    def test_a_caption_never_costs_the_photo_and_receipts_are_retried(self) -> None:
+        core = source("Shared/Sharing/GroupWindowCore.swift")
+        display = section(core, "static func openForDisplay(", "\n    }\n")
+        self.assertIn("throw GroupProtocolError.invalidSignature", display)
+        self.assertIn("(try? GroupPhotoCaption.normalized(value)) == value else { return nil }", display)
+        download = section(self.client, "func downloadPhoto(photoID: String, windowID: String)", "func storeAndAcknowledge(")
+        self.assertIn("GroupCaptionCrypto.openForDisplay(", download)
+        self.assertIn("await client.retryAcknowledgements(windowID: windowID, listed: listed)", self.window)
+        store = section(self.client, "func storeAndAcknowledge(", "func recoverPendingPhoto(")
+        self.assertLess(store.index("operations.write(bytes, account: pending.account"), store.index("return await acknowledge(pending)"))
 
 if __name__ == "__main__":
     unittest.main()

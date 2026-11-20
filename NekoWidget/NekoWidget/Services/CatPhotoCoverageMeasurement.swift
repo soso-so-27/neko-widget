@@ -373,7 +373,7 @@ enum CatPhotoCoverageRunner {
         let identity: CatHouseholdIdentityState?
         let curation: CatCandidateCurationState
         do {
-            snapshot = try await LibraryStore().load()
+            snapshot = try await LibraryStore().read()
             identity = try await CatHouseholdIdentityStore().load()
             // Read the file directly: the store's load() may rewrite it.
             if let url = SharedContainer.catCandidateCurationURL,
