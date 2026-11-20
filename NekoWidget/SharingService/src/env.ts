@@ -204,7 +204,8 @@ export function billingSandboxReviewDeadline(value: string | undefined): number 
 export function billingStoreEnvironmentAccepted(
   env: Env, environment: unknown,
 ): environment is "Sandbox" | "Production" {
-  if (env.ENVIRONMENT === "production" && env.BILLING_STORE_ENVIRONMENT !== "Production") return false;
+  if (environment === "Sandbox" && env.ENVIRONMENT === "production"
+    && billingSandboxReviewDeadline(env.BILLING_PRODUCTION_SANDBOX_REVIEW_UNTIL) <= Date.now()) return false;
   const dual = env.BILLING_ACCEPT_SANDBOX_IN_PRODUCTION ?? "NO";
   if ((dual !== "NO" && dual !== "YES") || (dual === "YES" && (
     env.BILLING_STORE_ENVIRONMENT !== "Production" || env.BILLING_SANDBOX_OWNER_ONLY_REQUIRED === "YES"
@@ -213,7 +214,5 @@ export function billingStoreEnvironmentAccepted(
   return environment === env.BILLING_STORE_ENVIRONMENT
     || (env.BILLING_STORE_ENVIRONMENT === "Production"
       && env.BILLING_ACCEPT_SANDBOX_IN_PRODUCTION === "YES"
-      && env.BILLING_SANDBOX_OWNER_ONLY_REQUIRED !== "YES" && environment === "Sandbox"
-      && (env.ENVIRONMENT !== "production"
-        || billingSandboxReviewDeadline(env.BILLING_PRODUCTION_SANDBOX_REVIEW_UNTIL) > Date.now()));
+      && env.BILLING_SANDBOX_OWNER_ONLY_REQUIRED !== "YES" && environment === "Sandbox");
 }

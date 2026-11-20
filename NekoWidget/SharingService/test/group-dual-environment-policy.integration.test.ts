@@ -9,6 +9,7 @@ import {authority,billing,connection,gates,plusOwner,settings} from './group-bil
 
 const syntheticRateLimit:RateLimit={limit:async()=>({success:true})};
 const dual:Env={...settings,ENVIRONMENT:'production',BILLING_STORE_ENVIRONMENT:'Production',BILLING_ACCEPT_SANDBOX_IN_PRODUCTION:'YES',
+  BILLING_PRODUCTION_SANDBOX_REVIEW_UNTIL:new Date(Date.now()+60*60_000).toISOString(),
   CREATE_RATE_LIMITER:syntheticRateLimit,INVITE_RATE_LIMITER:syntheticRateLimit,MEMBER_RATE_LIMITER:syntheticRateLimit,
   BILLING_RATE_LIMITER:syntheticRateLimit};
 const single:Env={...dual,BILLING_ACCEPT_SANDBOX_IN_PRODUCTION:'NO'};
