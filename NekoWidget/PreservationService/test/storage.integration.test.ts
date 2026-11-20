@@ -48,6 +48,24 @@ async function fixture(overrides: { quotaBytes?: number; maximumRecords?: number
     setState(value: typeof state) { state = value; }, setNow(value: number) { now = value; } };
 }
 
+it('applies the global capacity fence to concurrent growth while allowing smaller edits', async () => {
+  const f = await fixture();
+  const { token } = f.session;
+  const ids = [crypto.randomUUID(), crypto.randomUUID()];
+  for (const id of ids) await f.archive.put(token, id, f.request());
+  const occupied = (await binding.DB.prepare('SELECT sum(used_bytes) AS n FROM pa_inventory').first<{ n: number }>())!.n;
+  const archive = new ArchiveStore({ ...f.options, globalActiveBytesLimit: occupied + 230 });
+  const results = await Promise.allSettled(ids.map(id => archive.put(token, id, f.request({
+    expectedRevision: 1, document: { ...document, text: 'x'.repeat(170) },
+  }))));
+  expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+  expect(results.find(result => result.status === 'rejected')).toMatchObject({ reason: { code: 'ARCHIVE_CAPACITY_REACHED' } });
+  const id = ids[results.findIndex(result => result.status === 'fulfilled')]!;
+  const over = new ArchiveStore({ ...f.options, globalActiveBytesLimit: 1 });
+  await expect(over.put(token, id, f.request({ expectedRevision: 2, document: { ...document, text: '短い記録' } })))
+    .resolves.toMatchObject({ revision: 3 });
+});
+
 async function pilotFixture() {
   const f = await fixture();
   const identity = await binding.DB.prepare('SELECT identity_key FROM pa_owners WHERE owner_id=?')
