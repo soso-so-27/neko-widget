@@ -7,6 +7,7 @@ import AuthenticationServices
 import ImageIO
 import UIKit
 import Photos
+import Network
 
 private enum AppRecordPhotoIdentity {
     private actor Cache {
@@ -724,6 +725,80 @@ extension AppRecordSaveLifetime {
     }
 }
 
+/// 11/20: an automatic save that keeps failing for a reason that normally
+/// passes (no connection, a busy or odd server reply) reads as 「保存中…」 only
+/// while that is believable. It is retried exactly as before; this only says
+/// when the failure is shown as the person's to look at (the dot and the
+/// usual failure words). A failure while this iPhone has no network never
+/// counts, and the latest failure must have been online, so a phone that is
+/// simply offline is never nagged.
+///
+/// - Online failures for 6 hours (and at least 5 of them): longer than a
+///   server maintenance, a train ride or patchy Wi-Fi, short enough that a
+///   save that cannot work is not hidden for days.
+/// - The server answering in a form the app cannot use (`invalidResponse`)
+///   5 times in a row over 30 minutes: not a connection problem, and it does
+///   not pass by waiting in the same way.
+struct AppRecordFailureStreak: Equatable, Sendable {
+    static let onlineSpan: TimeInterval = 6 * 60 * 60
+    static let onlineFailureCount = 5
+    static let serverAnswerSpan: TimeInterval = 30 * 60
+    static let serverAnswerCount = 5
+
+    private(set) var firstOnlineFailureAt: Date?
+    private(set) var onlineFailures = 0
+    private(set) var firstServerAnswerAt: Date?
+    private(set) var serverAnswers = 0
+    private(set) var lastWasOnline = false
+
+    /// `online`: this iPhone had a network when it failed, or the server
+    /// answered. `serverAnswered`: the reply came but could not be used.
+    mutating func record(online: Bool, serverAnswered: Bool, at now: Date) {
+        guard online || serverAnswered else {
+            lastWasOnline = false
+            firstServerAnswerAt = nil; serverAnswers = 0
+            return
+        }
+        lastWasOnline = true
+        if firstOnlineFailureAt == nil { firstOnlineFailureAt = now }
+        onlineFailures += 1
+        if serverAnswered {
+            if firstServerAnswerAt == nil { firstServerAnswerAt = now }
+            serverAnswers += 1
+        } else {
+            firstServerAnswerAt = nil; serverAnswers = 0
+        }
+    }
+
+    func needsAttention(now: Date) -> Bool {
+        guard lastWasOnline else { return false }
+        if let first = firstOnlineFailureAt, onlineFailures >= Self.onlineFailureCount,
+           now.timeIntervalSince(first) >= Self.onlineSpan { return true }
+        if let first = firstServerAnswerAt, serverAnswers >= Self.serverAnswerCount,
+           now.timeIntervalSince(first) >= Self.serverAnswerSpan { return true }
+        return false
+    }
+}
+
+/// Whether this iPhone has a network path right now: read locally from the
+/// system, never by contacting anything. Unknown counts as offline.
+final class AppRecordNetworkPath: @unchecked Sendable {
+    static let shared = AppRecordNetworkPath()
+    private let monitor = NWPathMonitor()
+    private let lock = NSLock()
+    private var satisfied = false
+
+    private init() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard let self else { return }
+            self.lock.lock(); self.satisfied = path.status == .satisfied; self.lock.unlock()
+        }
+        monitor.start(queue: DispatchQueue(label: "app-records.network-path", qos: .utility))
+    }
+
+    var isOnline: Bool { lock.lock(); defer { lock.unlock() }; return satisfied }
+}
+
 @MainActor
 final class AppRecordPersistence: ObservableObject {
     static let shared = AppRecordPersistence()
@@ -784,6 +859,8 @@ final class AppRecordPersistence: ObservableObject {
     private var waitingForEditor = false
     private var nextAttempt = Date.distantPast
     private var transientFailures = 0
+    /// 11/20: how long the failures that retry by themselves have gone on.
+    private var failureStreak = AppRecordFailureStreak()
     /// 1115v-4: passes in a row that ended on RATE_LIMITED having sent nothing.
     private var rateLimitedQuietPasses = 0
     /// Whether the pass being reported let any call through the gate.
@@ -1429,7 +1506,7 @@ final class AppRecordPersistence: ObservableObject {
             if value.fingerprint == currentFingerprint, value.pending == nil, !value.needsNotebookBackupUpdate {
                 guard await stillSaved(accepted) else { throw ToolBackupError.changed }
                 try saveIntent.require(intent)
-                title = "保存済み"; detail = nil; transientFailures = 0; rateLimitedQuietPasses = 0
+                title = "保存済み"; detail = nil; transientFailures = 0; rateLimitedQuietPasses = 0; failureStreak = AppRecordFailureStreak()
                 enqueueCleanup(value, remote: remote, checkpoint: checkpoint)
                 return
             }
@@ -1462,7 +1539,7 @@ final class AppRecordPersistence: ObservableObject {
                 try saveIntent.require(intent)
                 value.filteredNotebookSnapshotID = previous.snapshotID
                 try write(value, intent: intent)
-                title = "保存済み"; detail = nil; transientFailures = 0; rateLimitedQuietPasses = 0
+                title = "保存済み"; detail = nil; transientFailures = 0; rateLimitedQuietPasses = 0; failureStreak = AppRecordFailureStreak()
                 enqueueCleanup(value, remote: remote, checkpoint: checkpoint)
                 return
             }
@@ -1542,7 +1619,7 @@ final class AppRecordPersistence: ObservableObject {
             let isSaved = await stillSaved(accepted)
             try saveIntent.require(intent)
             title = isSaved ? "保存済み" : "保存待ちの変更があります"
-            detail = nil; transientFailures = 0; rateLimitedQuietPasses = 0
+            detail = nil; transientFailures = 0; rateLimitedQuietPasses = 0; failureStreak = AppRecordFailureStreak()
             if !isSaved { requested = true }
             // The already validated immutable index belongs to this exact CAS.
             cachedIndex = (try indexKey(value, revision: revision, head: head), saved.index)
@@ -1604,7 +1681,14 @@ final class AppRecordPersistence: ObservableObject {
             detail = Self.failureDetail(error)
         }
         failing = true
-        retriesByItself = Self.isConnectionFailure(error)
+        if transient {
+            let answered = error as? ManagedPreservationError == .invalidResponse
+            let online = AppRecordNetworkPath.shared.isOnline || answered
+                || error as? ManagedPreservationError == .rateLimited
+            failureStreak.record(online: online, serverAnswered: answered, at: Date())
+        }
+        // 11/20: still retried as before; after a long online failure it is shown.
+        retriesByItself = transient && !failureStreak.needsAttention(now: Date())
         if error as? ManagedPreservationError == .membershipRequired { planEnded = true }
         let stop = error as? ManagedPreservationError
         stoppedForPlus = stop == .membershipRequired || stop == .accessUnconfirmed

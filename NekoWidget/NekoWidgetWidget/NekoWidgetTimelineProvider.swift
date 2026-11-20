@@ -549,6 +549,14 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
     private func groupEntry(now: Date, variant: WidgetImageVariant, sourceID: String,
                             windowID: String) -> NekoWidgetEntry {
         guard let cached = GroupWidgetCache.entry(windowID: windowID) else {
+            // 11/20: no copy is not the same as ended. Only a window the app
+            // saw go says so; a copy not written yet (a reinstall, a lost
+            // copy) is "being prepared", and a tap opens the app at that
+            // window. The app reloads this timeline once it writes the copy.
+            guard GroupWidgetCache.missingEntry(windowID: windowID) == .ended else {
+                return .empty(at: now, imageVariant: variant, photoSourceIdentifier: sourceID,
+                              emptyStateReason: .needsApp)
+            }
             return .empty(at: now, imageVariant: variant, photoSourceIdentifier: sourceID,
                           windowDisplayName: "終わったまど", emptyStateReason: .sourceUnavailable)
         }

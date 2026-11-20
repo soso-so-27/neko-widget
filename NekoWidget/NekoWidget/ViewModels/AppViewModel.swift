@@ -1020,6 +1020,12 @@ final class AppViewModel: ObservableObject {
         isManualRescanRequestPending = true
         defer { isManualRescanRequestPending = false }
         guard catIdentityLoadState == .ready else {
+            // 11/20: after a failed start, 「もう一度」 runs the start again
+            // (the same as the first run's). Nothing is reset or deleted.
+            if startupLoadFailed {
+                await retryStartup()
+                return
+            }
             logCandidateAuthorityUnavailable(operation: "full_rescan")
             return
         }
@@ -1174,6 +1180,13 @@ final class AppViewModel: ObservableObject {
         guard await resolveReadablePhotoProjectionIfNeeded() else {
             // Keep the suspension if the read was cancelled or superseded.
             await reconcilePersonalWidgetReadAuthority()
+            // 11/20: a Widget photo waiting on this read gets an answer: the
+            // sheet's 「この写真は開けません」, unless a newer read is under way
+            // (it opens the photo when it finishes).
+            if readablePhotoResolution == nil, !readablePhotoProjection.isResolved,
+               widgetPhotoLibraryLoadSucceeded == nil {
+                widgetPhotoLibraryLoadSucceeded = false
+            }
             return
         }
         // Counting every album's photos is PhotoKit work: off the main
@@ -3732,11 +3745,22 @@ final class AppViewModel: ObservableObject {
                 from: input, eligibilityRevision: revision,
                 priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs().union(cloudyPriorityPhotos),
                 probablePhotoIDs: probable)
-            try synchronizeCloudyWindowMetadata()
-            try await CloudyWindowImagePreparer.shared.prepare()
+            // 11/20: the photos just prepared reach the Widgets even when the
+            // cloudy-window step fails; that failure is reported as before.
+            var cloudyFailure: Error?
+            do {
+                try synchronizeCloudyWindowMetadata()
+                try await CloudyWindowImagePreparer.shared.prepare()
+            } catch {
+                cloudyFailure = error
+            }
             // Preparation is not a view. Keep legacy lastShownAt/shownCount
             // unchanged; the shared journal records issued slots separately.
             reloadAllWidgetTimelines()
+            if let cloudyFailure {
+                Self.logError(cloudyFailure, category: "widget-cache", operation: "rebuild_cache")
+                if reportErrors { setError(cloudyFailure) }
+            }
             SharedLog.app.info(
                 "widget-cache",
                 "Widget timeline reload requested",
@@ -3766,9 +3790,11 @@ final class AppViewModel: ObservableObject {
                                 priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs().union(cloudyPriorityPhotos),
                                 probablePhotoIDs: probable)
                             attemptedPhotoIDs.formUnion(batch.attemptedPhotoIDs)
+                            // 11/20: counted before the cloudy step, so its
+                            // failure still reloads the Widgets on the way out.
+                            if batch.addedCount > 0 { added = true }
                             try self.synchronizeCloudyWindowMetadata()
                             try await CloudyWindowImagePreparer.shared.prepare()
-                            if batch.addedCount > 0 { added = true }
                             if !batch.hasMore { return }
                         } catch { return } // Next foreground/BG opportunity can resume.
                     }

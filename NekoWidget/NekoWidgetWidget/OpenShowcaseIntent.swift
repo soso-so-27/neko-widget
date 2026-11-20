@@ -2,18 +2,41 @@ import AppIntents
 import Foundation
 
 /// A one-shot navigation request. The shared value contains no photo or cat data.
+/// 11/20: only the time of the tap. A tap means something only for the launch
+/// it caused, so a request older than `lifetime` is dropped, never kept for
+/// days (it used to force the 写真 tab on every return and open the showcase
+/// long after). A value from an older build (no time) is dropped too.
 enum ShowcaseLaunchRequest {
-    private static let key = "showcase.openRequest.v1"
+    private static let legacyKey = "showcase.openRequest.v1"
+    private static let key = "showcase.openRequest.v2"
     static let notification = Notification.Name("showcase.openRequested")
+    /// Long enough to grant photo access right after the tap, no longer.
+    static let lifetime: TimeInterval = 120
 
+    /// Whether a tap at `requestedAt` still asks for the showcase at `now`.
+    /// A time in the future beyond a small clock skew counts as stale.
+    static func isLive(requestedAt: Date?, now: Date) -> Bool {
+        guard let requestedAt else { return false }
+        let age = now.timeIntervalSince(requestedAt)
+        return age >= -10 && age <= lifetime
+    }
+
+    /// Drops an expired or old-format request as it is read.
     static var hasPending: Bool {
-        UserDefaults(suiteName: SharedContainer.appGroupIdentifier)?
-            .string(forKey: key) != nil
+        guard let defaults = UserDefaults(suiteName: SharedContainer.appGroupIdentifier) else { return false }
+        defaults.removeObject(forKey: legacyKey)
+        let stored = defaults.object(forKey: key) as? Double
+        guard isLive(requestedAt: stored.map(Date.init(timeIntervalSince1970:)), now: Date()) else {
+            if defaults.object(forKey: key) != nil { defaults.removeObject(forKey: key) }
+            return false
+        }
+        return true
     }
 
     static func request() {
-        UserDefaults(suiteName: SharedContainer.appGroupIdentifier)?
-            .set(UUID().uuidString, forKey: key)
+        let defaults = UserDefaults(suiteName: SharedContainer.appGroupIdentifier)
+        defaults?.removeObject(forKey: legacyKey)
+        defaults?.set(Date().timeIntervalSince1970, forKey: key)
         NotificationCenter.default.post(name: notification, object: nil)
     }
 

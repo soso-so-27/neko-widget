@@ -97,4 +97,77 @@ final class WhenStuckTests: XCTestCase {
             XCTAssertFalse(message.contains("App Store"), message)
         }
     }
+
+    // MARK: 11/20 — dead ends
+
+    /// An automatic save that fails while offline stays 「保存中…」 however
+    /// long it lasts; one that fails online for 6 hours (5 times or more),
+    /// or gets an unusable server reply for 30 minutes, is shown.
+    func testSaveFailureIsShownOnlyAfterALongOnlineStreak() {
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        var offline = AppRecordFailureStreak()
+        for minute in stride(from: 0, through: 72 * 60, by: 30) {
+            offline.record(online: false, serverAnswered: false, at: start.addingTimeInterval(Double(minute) * 60))
+        }
+        XCTAssertFalse(offline.needsAttention(now: start.addingTimeInterval(72 * 3600)))
+
+        var online = AppRecordFailureStreak()
+        for hour in 0..<6 { online.record(online: true, serverAnswered: false, at: start.addingTimeInterval(Double(hour) * 3600)) }
+        XCTAssertFalse(online.needsAttention(now: start.addingTimeInterval(5 * 3600)), "not yet 6 hours")
+        online.record(online: true, serverAnswered: false, at: start.addingTimeInterval(6 * 3600))
+        XCTAssertTrue(online.needsAttention(now: start.addingTimeInterval(6 * 3600)))
+        // Offline again: quiet again, without forgetting the streak.
+        online.record(online: false, serverAnswered: false, at: start.addingTimeInterval(7 * 3600))
+        XCTAssertFalse(online.needsAttention(now: start.addingTimeInterval(7 * 3600)))
+        online.record(online: true, serverAnswered: false, at: start.addingTimeInterval(8 * 3600))
+        XCTAssertTrue(online.needsAttention(now: start.addingTimeInterval(8 * 3600)))
+
+        // Two failures far apart are not enough on their own.
+        var few = AppRecordFailureStreak()
+        few.record(online: true, serverAnswered: false, at: start)
+        few.record(online: true, serverAnswered: false, at: start.addingTimeInterval(10 * 3600))
+        XCTAssertFalse(few.needsAttention(now: start.addingTimeInterval(10 * 3600)))
+
+        var answered = AppRecordFailureStreak()
+        for minute in [0, 5, 15, 25] {
+            answered.record(online: true, serverAnswered: true, at: start.addingTimeInterval(Double(minute) * 60))
+        }
+        XCTAssertFalse(answered.needsAttention(now: start.addingTimeInterval(25 * 60)))
+        answered.record(online: true, serverAnswered: true, at: start.addingTimeInterval(30 * 60))
+        XCTAssertTrue(answered.needsAttention(now: start.addingTimeInterval(30 * 60)))
+        // A connection failure in between starts the reply run again.
+        var broken = AppRecordFailureStreak()
+        for minute in [0, 10, 20] { broken.record(online: true, serverAnswered: true, at: start.addingTimeInterval(Double(minute) * 60)) }
+        broken.record(online: true, serverAnswered: false, at: start.addingTimeInterval(25 * 60))
+        for minute in [30, 40] { broken.record(online: true, serverAnswered: true, at: start.addingTimeInterval(Double(minute) * 60)) }
+        XCTAssertFalse(broken.needsAttention(now: start.addingTimeInterval(40 * 60)))
+    }
+
+    /// A showcase tap lasts for the launch it caused, never for days.
+    func testShowcaseLaunchRequestHasAShortLifetime() {
+        let now = Date(timeIntervalSince1970: 2_000_000)
+        XCTAssertFalse(ShowcaseLaunchRequest.isLive(requestedAt: nil, now: now), "an old value has no time")
+        XCTAssertTrue(ShowcaseLaunchRequest.isLive(requestedAt: now, now: now))
+        XCTAssertTrue(ShowcaseLaunchRequest.isLive(requestedAt: now.addingTimeInterval(-ShowcaseLaunchRequest.lifetime), now: now))
+        XCTAssertFalse(ShowcaseLaunchRequest.isLive(requestedAt: now.addingTimeInterval(-ShowcaseLaunchRequest.lifetime - 1), now: now))
+        XCTAssertFalse(ShowcaseLaunchRequest.isLive(requestedAt: now.addingTimeInterval(-3 * 24 * 3600), now: now))
+        XCTAssertFalse(ShowcaseLaunchRequest.isLive(requestedAt: now.addingTimeInterval(3600), now: now))
+        XCTAssertLessThanOrEqual(ShowcaseLaunchRequest.lifetime, 120)
+    }
+
+    /// A group window's Widget says 「このまどは終わりました」 only for a window
+    /// the app saw go; a copy not written yet is "being prepared".
+    func testGroupWidgetEndedOnlyWhenTheAppSawItGo() {
+        typealias Cache = GroupWidgetCache
+        // A reinstall or a lost copy: nothing recorded at all.
+        XCTAssertEqual(Cache.missingEntry(windowID: "w1", listedWindowIDs: nil, endedWindowIDs: nil), .notYetKnown)
+        // Still listed by the relay, its photo not written yet.
+        XCTAssertEqual(Cache.missingEntry(windowID: "w1", listedWindowIDs: ["w1", "w2"], endedWindowIDs: nil), .notYetKnown)
+        // No longer listed: ended.
+        XCTAssertEqual(Cache.missingEntry(windowID: "w3", listedWindowIDs: ["w1"], endedWindowIDs: nil), .ended)
+        // Left or ended here, even while the relay still lists it as closed.
+        XCTAssertEqual(Cache.missingEntry(windowID: "w1", listedWindowIDs: nil, endedWindowIDs: ["w1"]), .ended)
+        XCTAssertEqual(Cache.missingEntry(windowID: "w1", listedWindowIDs: ["w1"], endedWindowIDs: ["w1"]), .ended)
+        XCTAssertEqual(Cache.missingEntry(windowID: "w2", listedWindowIDs: nil, endedWindowIDs: ["w1"]), .notYetKnown)
+    }
 }

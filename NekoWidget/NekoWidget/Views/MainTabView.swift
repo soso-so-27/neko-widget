@@ -830,6 +830,17 @@ struct MainTabView: View {
             showsSettings = false
             selectedTab = .windows
         }
+        .onChange(of: groupWindowOpenInbox.listRequested, initial: true) { _, requested in
+            // 11/20: a まど notification that could not open its window.
+            guard requested else { return }
+            groupWindowOpenInbox.listRequested = false
+            guard showsMadoTab else { return }
+            relatedPhotoUsesLibraryScope = false
+            relatedPhotoRoute = nil
+            showsSettings = false
+            didApplyInitialTab = true
+            selectedTab = .windows
+        }
         .onChange(of: photosTabInbox.pending, initial: true) { _, pending in
             guard pending else { return }
             photosTabInbox.pending = false
@@ -1210,7 +1221,11 @@ struct MainTabView: View {
     }
 
     private func consumeShowcaseLaunchRequest() {
+        // 11/20: `hasPending` drops a request older than its short lifetime,
+        // so a tap from days ago neither moves the tab nor opens the showcase.
         guard ShowcaseLaunchRequest.hasPending else { return }
+        // Without photos yet: the 写真 tab, keeping the tap only for its
+        // lifetime, so allowing access right after it still opens the showcase.
         guard hasPhotoAccess || !showcaseStore.availableEntries(in: effectiveShowcaseScopeID).isEmpty else {
             selectedTab = .photos
             photoLibrarySelection.select(.all)
