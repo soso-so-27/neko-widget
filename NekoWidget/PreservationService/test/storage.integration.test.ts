@@ -48,24 +48,6 @@ async function fixture(overrides: { quotaBytes?: number; maximumRecords?: number
     setState(value: typeof state) { state = value; }, setNow(value: number) { now = value; } };
 }
 
-it('applies the global capacity fence to concurrent growth while allowing smaller edits', async () => {
-  const f = await fixture();
-  const { token } = f.session;
-  const ids = [crypto.randomUUID(), crypto.randomUUID()];
-  for (const id of ids) await f.archive.put(token, id, f.request());
-  const occupied = (await binding.DB.prepare('SELECT sum(used_bytes) AS n FROM pa_inventory').first<{ n: number }>())!.n;
-  const archive = new ArchiveStore({ ...f.options, globalActiveBytesLimit: occupied + 230 });
-  const results = await Promise.allSettled(ids.map(id => archive.put(token, id, f.request({
-    expectedRevision: 1, document: { ...document, text: 'x'.repeat(170) },
-  }))));
-  expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
-  expect(results.find(result => result.status === 'rejected')).toMatchObject({ reason: { code: 'ARCHIVE_CAPACITY_REACHED' } });
-  const id = ids[results.findIndex(result => result.status === 'fulfilled')]!;
-  const over = new ArchiveStore({ ...f.options, globalActiveBytesLimit: 1 });
-  await expect(over.put(token, id, f.request({ expectedRevision: 2, document: { ...document, text: '短い記録' } })))
-    .resolves.toMatchObject({ revision: 3 });
-});
-
 async function pilotFixture() {
   const f = await fixture();
   const identity = await binding.DB.prepare('SELECT identity_key FROM pa_owners WHERE owner_id=?')
@@ -655,6 +637,21 @@ it('maintenance works while Apple, membership and public requests are disabled',
   expect(await binding.ARCHIVE.get(key)).toBeNull();
 });
 
+it('can prune expired authentication metadata without running archive cleanup', async () => {
+  const now=Date.now(),key=crypto.randomUUID(),expired=crypto.randomUUID(),live=crypto.randomUUID();
+  await binding.ARCHIVE.put(key,'encrypted');
+  await binding.DB.prepare('INSERT INTO pa_pending_deletes(object_key,created_at) VALUES(?,?)').bind(key,now).run();
+  for(const [id,deadline] of [[expired,now-1],[live,now+60_000]] as const){
+    await binding.DB.prepare('INSERT INTO pa_auth_challenges(challenge_id,proof_hash,nonce,created_at,expires_at) VALUES(?,?,?,?,?)')
+      .bind(id,'synthetic-proof','synthetic-nonce',now-5000,deadline).run();
+  }
+  await worker.scheduled({} as ScheduledEvent,{...binding,CLEANUP_ENABLED:'NO',AUTH_EPHEMERAL_CLEANUP_ENABLED:'YES'});
+  expect(await binding.DB.prepare('SELECT 1 FROM pa_auth_challenges WHERE challenge_id=?').bind(expired).first()).toBeNull();
+  expect(await binding.DB.prepare('SELECT 1 FROM pa_auth_challenges WHERE challenge_id=?').bind(live).first()).not.toBeNull();
+  expect(await binding.DB.prepare('SELECT 1 FROM pa_pending_deletes WHERE object_key=?').bind(key).first()).not.toBeNull();
+  expect(await binding.ARCHIVE.get(key)).not.toBeNull();
+});
+
 it('required owner snapshots cannot silently skip scheduled repair when S3 is unavailable', async () => {
   const pending = await binding.DB.prepare(`SELECT g.owner_id,g.generation
     FROM pa_owner_recovery_generations g LEFT JOIN pa_owner_recovery_versions v
@@ -1045,6 +1042,24 @@ it('atomically bounds new storage across owners without blocking existing record
   expect((await unconfigured.read(f.session.token, firstId)).revision).toBe(2);
   expect(() => new ArchiveStore({ ...f.options, globalActiveBytesLimit: Number.NaN }))
     .toThrowError(expect.objectContaining({ code: 'PRESERVATION_NOT_CONFIGURED' }));
+});
+
+it('applies the global capacity fence to concurrent growth while allowing smaller edits', async () => {
+  const f = await fixture();
+  const { token } = f.session;
+  const ids = [crypto.randomUUID(), crypto.randomUUID()];
+  for (const id of ids) await f.archive.put(token, id, f.request());
+  const occupied = (await binding.DB.prepare('SELECT sum(used_bytes+reserved_bytes) AS n FROM pa_inventory').first<{ n: number }>())!.n;
+  const archive = new ArchiveStore({ ...f.options, globalActiveBytesLimit: occupied + 230 });
+  const results = await Promise.allSettled(ids.map(id => archive.put(token, id, f.request({
+    expectedRevision: 1, document: { ...document, text: 'x'.repeat(170) },
+  }))));
+  expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+  expect(results.find(result => result.status === 'rejected')).toMatchObject({ reason: { code: 'ARCHIVE_CAPACITY_REACHED' } });
+  const id = ids[results.findIndex(result => result.status === 'fulfilled')]!;
+  const over = new ArchiveStore({ ...f.options, globalActiveBytesLimit: 1 });
+  await expect(over.put(token, id, f.request({ expectedRevision: 2, document: { ...document, text: '短い記録' } })))
+    .resolves.toMatchObject({ revision: 3 });
 });
 
 it('usage rejects inconsistent inventory instead of reporting an empty or inflated archive', async () => {

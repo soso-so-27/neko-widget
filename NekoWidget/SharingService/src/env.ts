@@ -94,6 +94,7 @@ export interface Env extends GroupReportMailEnv {
   BILLING_BUNDLE_ID?: string;
   BILLING_STORE_ENVIRONMENT?: string;
   BILLING_ACCEPT_SANDBOX_IN_PRODUCTION?: string;
+  BILLING_PRODUCTION_SANDBOX_REVIEW_UNTIL?: string;
   BILLING_SANDBOX_OWNER_ADMISSION?: string;
   // Forced by the named private Sandbox gateway; ordinary routes do not infer it.
   BILLING_SANDBOX_OWNER_ONLY_REQUIRED?: string;
@@ -192,10 +193,19 @@ export function positiveIntegerSetting(value: string, fallback: number): number 
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+/** In production, no valid UTC deadline means no Sandbox review access. */
+export function billingSandboxReviewDeadline(value: string | undefined): number {
+  if (!value || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value)) return 0;
+  const deadline = Date.parse(value);
+  return Number.isFinite(deadline) && new Date(deadline).toISOString() === value ? deadline : 0;
+}
+
 /** Accepted only after Apple verification; never accepts a caller-supplied environment. */
 export function billingStoreEnvironmentAccepted(
   env: Env, environment: unknown,
 ): environment is "Sandbox" | "Production" {
+  if (environment === "Sandbox" && env.ENVIRONMENT === "production"
+    && billingSandboxReviewDeadline(env.BILLING_PRODUCTION_SANDBOX_REVIEW_UNTIL) <= Date.now()) return false;
   const dual = env.BILLING_ACCEPT_SANDBOX_IN_PRODUCTION ?? "NO";
   if ((dual !== "NO" && dual !== "YES") || (dual === "YES" && (
     env.BILLING_STORE_ENVIRONMENT !== "Production" || env.BILLING_SANDBOX_OWNER_ONLY_REQUIRED === "YES"

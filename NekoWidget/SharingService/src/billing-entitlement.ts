@@ -188,6 +188,7 @@ export async function effectiveBillingEntitlement(
   env: Env,
   billingAccountId: string,
   evaluatedAtMs = Date.now(),
+  requiredEnvironment?: "Production" | "Sandbox",
 ): Promise<EffectiveBillingEntitlement> {
   await requireBillingAccountNotErasing(env,billingAccountId);
   const rows = await env.DB.prepare(
@@ -200,7 +201,8 @@ export async function effectiveBillingEntitlement(
   ).bind(billingAccountId).all<CurrentEntitlementRow>();
   if (rows.results.length === 0) return noAuthority(evaluatedAtMs);
 
-  const evaluated = rows.results.filter(row => billingStoreEnvironmentAccepted(env, row.environment))
+  const evaluated = rows.results.filter(row => (requiredEnvironment === undefined || row.environment === requiredEnvironment)
+    && billingStoreEnvironmentAccepted(env, row.environment))
     .map((row) => evaluateFacts(row, evaluatedAtMs));
   const granting = evaluated.filter((item) => item.grantsPlus).sort((left, right) => {
     const leftLimit = Math.min(left.accessUntilMs!, left.authorityStaleAtMs);

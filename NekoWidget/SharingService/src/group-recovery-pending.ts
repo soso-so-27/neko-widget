@@ -8,6 +8,7 @@ import { protectedGroupRead, requireCurrentIdentity } from './group-identity-ser
 import { binaryField, exactKeys, opaqueId, stringField, uuidField } from './validation';
 import { recoveryCatalogTranscript, type RecoveryChallenge } from './group-recovery-catalog';
 import {checkTrialRecovery} from './owner-two-device-trial';
+import {recoveryPendingLifetime} from './group-recovery-expiry';
 
 export interface PendingIntent { windowId:string; signingPublicKey:string; hpkePublicKey:string; model:string }
 export function pendingIntentBytes(i:PendingIntent):Uint8Array {
@@ -63,7 +64,8 @@ export async function groupRecoveryPendingAPI(env:Env,body:Record<string,unknown
  return protectedGroupRead(env,async()=>{
   const membership=await env.DB.prepare(`SELECT 1 FROM group_members m JOIN group_windows w ON w.space_id=m.space_id JOIN group_people p ON p.id=m.person_id
    WHERE m.person_id=? AND m.space_id=? AND m.state='active' AND w.mode='active' AND p.state='active'`).bind(c.person_id,windowId).first();if(!membership)throw denied();
-  const previous=await env.DB.prepare('SELECT * FROM group_recovery_pending WHERE person_id=? AND operation_id=?').bind(c.person_id,c.operation_id).first<PendingRow & {window_id:string}>();
+  const previous=await env.DB.prepare('SELECT * FROM group_recovery_pending WHERE person_id=? AND operation_id=? AND created_at>?')
+   .bind(c.person_id,c.operation_id,now-recoveryPendingLifetime).first<PendingRow & {window_id:string}>();
   if(previous&&previous.window_id!==windowId)throw new ApiError(409,'idempotency_conflict','Different recovery intent.');
   if(previous)checkTrialRecovery(env,c.person_id,windowId,previous.device_id);
   const state=await readState(env,c,windowId,previous);
@@ -84,7 +86,8 @@ export async function groupRecoveryPendingAPI(env:Env,body:Record<string,unknown
   // Recheck current root/membership after the commit before disclosing a roster.
   await requireCurrentIdentity(env,c.person_id);
   const active=await env.DB.prepare("SELECT 1 FROM group_members m JOIN group_windows w ON w.space_id=m.space_id JOIN group_people p ON p.id=m.person_id WHERE m.person_id=? AND m.space_id=? AND m.state='active' AND w.mode='active' AND p.state='active'").bind(c.person_id,windowId).first();if(!active)throw denied();
-  const saved=await env.DB.prepare('SELECT * FROM group_recovery_pending WHERE person_id=? AND operation_id=?').bind(c.person_id,c.operation_id).first<PendingRow>();
+  const saved=await env.DB.prepare('SELECT * FROM group_recovery_pending WHERE person_id=? AND operation_id=? AND created_at>?')
+   .bind(c.person_id,c.operation_id,now-recoveryPendingLifetime).first<PendingRow>();
   if(intent&&saved&&saved.request_hash!==await sha256Base64url(pendingIntentBytes(intent)))throw new ApiError(409,'idempotency_conflict','Different recovery intent.');
   return jsonResponse({operationId:c.operation_id,personId:c.person_id,windowId,...await readState(env,c,windowId,saved)});
  });

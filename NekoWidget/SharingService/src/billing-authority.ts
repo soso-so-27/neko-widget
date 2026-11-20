@@ -27,6 +27,7 @@ import {
   enforceRateLimit,
   parseJsonBody,
   readBody,
+  transientNetworkKey,
 } from "./http";
 import { exactKeys, stringField } from "./validation";
 import { ownerOnlyBillingRequired, ownerSandboxBillingAccount, requireOwnerSandboxAccount, recheckOwnerSandboxAdmission } from "./billing-sandbox-owner";
@@ -263,7 +264,7 @@ export async function ingestAppleBillingNotification(
   await enforceRateLimit(
     env,
     env.BILLING_APPLE_NOTIFICATION_RATE_LIMITER,
-    "billing-apple-notification",
+    transientNetworkKey(request, "billing-apple-notification"),
   );
   if ((await loadGate(env))?.apple_notification_ingestion_enabled !== 1) {
     throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
