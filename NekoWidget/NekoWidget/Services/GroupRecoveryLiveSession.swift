@@ -574,6 +574,21 @@ private func makeRootSyncStore(environment: RootSyncStore.Environment) throws ->
     return try RootSyncStore(bundleID: bundleID, environment: environment, accessGroup: accessGroup)
 }
 
+/// 11/20: 「まどと家族の手帳のデータを消す」, accepted by the relay
+/// (GroupIdentityDeletionLocalData): the deleted person's key that this
+/// iPhone put into iCloud Keychain (publishCurrentRoot) is removed there too.
+/// Only that person's: any other key found there stays. The one local
+/// removal in this file. false only while the Keychain is locked (the next
+/// launch tries again).
+func removeDeletedPersonSyncedRoot(personID: String) async -> Bool {
+    guard let hash = try? GroupWire.bytes(personID, count: 32) else { return true }
+    let environment: RootSyncStore.Environment = SharingAPIConfiguration.current.releaseMode == "production" ? .production : .staging
+    // A build without the synced key's access group never wrote one.
+    guard let sync = try? makeRootSyncStore(environment: environment) else { return true }
+    let removal = await sync.removeExact(expectedRootID: hash.map { String(format: "%02x", $0) }.joined())
+    return removal != .failed(.temporarilyUnavailable)
+}
+
 private func currentRegisteredRoot(namespace: String) throws -> Data? {
     guard let saved = try GroupKeychainStore(namespace: namespace).read("identity") else { return nil }
     let identity = try GroupWire.decode(GroupDeviceIdentity.self, saved)

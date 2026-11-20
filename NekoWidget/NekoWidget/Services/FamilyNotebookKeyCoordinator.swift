@@ -680,3 +680,114 @@ struct FamilyNotebookSyncedKeychainStore: GroupSecretStore {
         guard status == errSecSuccess || status == errSecItemNotFound else { throw FamilyNotebookTransportError.unavailable }
     }
 }
+
+/// 11/20: this iPhone's sharing state for one group namespace that is not
+/// the person's own records: recovered devices (機種変更), family notebook
+/// copies and the Keychain copies of the person's choices. Used by
+/// 「まどと家族の手帳のデータを消す」 (GroupIdentityDeletionLocalData) and the
+/// owner's trial reset. Every step is tried; a failure is reported at the
+/// end, so running it again finishes what is left.
+struct FamilySharingLocalData {
+    /// GroupWindowClientProvider.namespace.
+    let namespace: String
+    /// Application Support.
+    let support: URL
+    /// The device-only store of one namespace (GroupKeychainStore(namespace:)).
+    let store: (String) throws -> any GroupSecretStore
+    /// The namespaces with an item that start with a prefix (GroupKeychainStore.namespaces).
+    let namespaces: (String) throws -> [String]
+
+    /// The notebook scope the provider (FamilyNotebookServiceFactory.make)
+    /// gives an identity: its Application Support folder and `.family.` store.
+    static func notebookScope(endpoint: URL, personID: String, deviceID: String) throws -> String {
+        try GroupWire.base64(GroupCanonical.hash(GroupCanonical.fields([
+            Data(endpoint.absoluteString.utf8), Data(personID.utf8), Data(deviceID.utf8)])))
+    }
+    static func validNotebookScope(_ scope: String) -> Bool {
+        scope.utf8.count == 43 && scope.utf8.allSatisfy {
+            (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95
+        }
+    }
+    /// The hex of a recovered person's root (`.recovery.<scope>`).
+    static func validRecoveryScope(_ scope: String) -> Bool {
+        scope.utf8.count == 64 && scope.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+    }
+    static func clear(_ store: any GroupSecretStore) throws {
+        for account in try store.accounts(prefix: "") { try store.remove(account) }
+    }
+    private func removeIfPresent(_ url: URL) throws {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try FileManager.default.removeItem(at: url)
+    }
+
+    /// One notebook copy: its folder (the notebook, its journal and photo
+    /// cache) first, then its Keychain (trust pin, epoch keys, invitations),
+    /// which a second run uses to find the folder again.
+    func forgetNotebook(scope: String) throws {
+        guard Self.validNotebookScope(scope) else { throw GroupClientError.invalidResponse }
+        try removeIfPresent(support.appendingPathComponent("FamilyNotebook-v1", isDirectory: true)
+            .appendingPathComponent(scope, isDirectory: true))
+        try Self.clear(store(namespace + ".family." + scope))
+    }
+
+    /// One recovered device on this iPhone: its notebook copy, its recovery
+    /// Keychain and journal, and its outbox.
+    func forgetRecoveredDevice(scope: String, endpoint: URL) throws {
+        guard Self.validRecoveryScope(scope) else { throw GroupClientError.invalidResponse }
+        var failure: Error?
+        func attempt(_ step: () throws -> Void) {
+            do { try step() } catch { if failure == nil { failure = error } }
+        }
+        let recovery = try store(namespace + ".recovery." + scope)
+        attempt {
+            if let saved = try recovery.read("identity") {
+                let identity = try GroupWire.decode(GroupDeviceIdentity.self, saved)
+                // The same scope the provider gives that device's notebook.
+                try forgetNotebook(scope: Self.notebookScope(endpoint: endpoint, personID: identity.personID,
+                                                             deviceID: identity.deviceID))
+            }
+        }
+        let journal = try store(namespace + ".recovery-journal." + scope)
+        for item in [recovery, journal] { attempt { try Self.clear(item) } }
+        attempt {
+            try removeIfPresent(support.appendingPathComponent("GroupTransport-v3", isDirectory: true)
+                .appendingPathComponent("recovery-" + scope, isDirectory: true))
+        }
+        if let failure { throw failure }
+    }
+
+    /// After the relay accepted the deletion of the identity `personID` /
+    /// `deviceID` (nil: a record from before 11/20): every recovered device,
+    /// every notebook copy of this namespace (the deleted identity's even
+    /// when its Keychain is already empty), and in each store of `choices`
+    /// (namespace suffix) the accounts that start with its prefix ("": all).
+    /// Returns whether every step went.
+    func removeAfterIdentityDeletion(endpoint: URL, personID: String?, deviceID: String?,
+                                     choices: [(suffix: String, prefix: String)]) -> Bool {
+        var complete = true
+        func scopes(_ suffix: String) -> Set<String> {
+            let prefix = namespace + suffix
+            do {
+                return Set(try namespaces(prefix).filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) })
+            } catch { complete = false; return [] }
+        }
+        for scope in scopes(".recovery.").union(scopes(".recovery-journal.")).sorted() where Self.validRecoveryScope(scope) {
+            do { try forgetRecoveredDevice(scope: scope, endpoint: endpoint) } catch { complete = false }
+        }
+        var notebooks = scopes(".family.")
+        if let personID, let deviceID,
+           let scope = try? Self.notebookScope(endpoint: endpoint, personID: personID, deviceID: deviceID) {
+            notebooks.insert(scope)
+        }
+        for scope in notebooks.sorted() where Self.validNotebookScope(scope) {
+            do { try forgetNotebook(scope: scope) } catch { complete = false }
+        }
+        for choice in choices {
+            do {
+                let kept = try store(namespace + choice.suffix)
+                for account in try kept.accounts(prefix: choice.prefix) { try kept.remove(account) }
+            } catch { complete = false }
+        }
+        return complete
+    }
+}

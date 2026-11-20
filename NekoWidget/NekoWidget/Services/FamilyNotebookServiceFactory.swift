@@ -125,6 +125,78 @@ enum FamilyNotebookServiceFactory {
     }
 }
 
+extension FamilySharingLocalData {
+    /// This iPhone's Keychain and Application Support for the app's namespace.
+    static func live() -> FamilySharingLocalData? {
+        guard let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        return FamilySharingLocalData(namespace: GroupWindowClientProvider.namespace, support: support,
+            store: { try GroupKeychainStore(namespace: $0) }, namespaces: { try GroupKeychainStore.namespaces(prefix: $0) })
+    }
+}
+
+/// 11/20: 「まどと家族の手帳のデータを消す」 once the relay accepted it (never
+/// before, never after a failure): the rest of the deleted person's sharing
+/// state on this iPhone, which ProductionGroupWindowClient's own store does
+/// not hold. Removed: recovered devices and their outboxes, every family
+/// notebook copy of this namespace (notebook, journal, photo cache, trust
+/// pin, epoch keys, invitations), the notebook's recovery link, the
+/// remembered name, the notebook's hidden entries and 「同じ子ですか」
+/// answers, the まど choices (not the report copies) kept in the Keychain, the
+/// notebook's settings in UserDefaults, and the person key this iPhone put
+/// into iCloud Keychain. Kept: the deletion record and its history,
+/// 「この子のこと」 and the other tools (the person's own writing is there,
+/// not only in the notebook), photos, widgets, 保存, purchases, the photos
+/// received in 前のまど, and what this iPhone reported.
+@MainActor
+enum GroupIdentityDeletionLocalData {
+    static let defaultsKeys = [
+        FamilyNotebookLocalBinding.key, FamilyNotebookLocalBinding.legacyKey,
+        GroupDisplayName.rememberedKey, FamilyHiddenOperationsMemory.defaultsKey,
+        FamilyCatLinkAnswersMemory.defaultsKey, FamilyNotebookSharing.sendHealthKey,
+        FamilyNotebookAwaitingApproval.key,
+    ]
+    /// The Keychain copies, by namespace suffix and account prefix ("": all).
+    /// Of the まど choices only `choices:` (hidden and blocked people, removed
+    /// photos): the report copies stay, as the reports themselves do on this
+    /// iPhone (ProductionGroupReporting keeps a reported photo hidden after
+    /// leaving or deleting an identity).
+    static let keychainCopies: [(suffix: String, prefix: String)] = [
+        (FamilyNotebookServiceFactory.recoveryLinkSuffix, ""), (GroupDisplayName.keychainSuffix, ""),
+        (FamilyHiddenOperationsMemory.namespaceSuffix, ""), (FamilyCatLinkAnswersMemory.namespaceSuffix, ""),
+        (GroupWindowKept.namespaceSuffix, GroupWindowKept.choicesAccountPrefix),
+    ]
+
+    /// At launch and when the deletion screen opens or deletes: finishes a
+    /// clean-up that the app closing or a Keychain error stopped. Nothing
+    /// without an accepted deletion, or once a new identity was made.
+    static func resumeIfNeeded() async {
+        guard let client = GroupWindowClientProvider.production,
+              let record = try? await client.identityDeletionNeedingLocalCleanup() else { return }
+        guard await remove(record) else { return }
+        try? await client.markIdentityDeletionLocalCleanupDone()
+    }
+
+    /// Whether every step went. A failed step never stops the others.
+    static func remove(_ deletion: GroupIdentityDeletion) async -> Bool {
+        guard deletion.acceptedAt != nil else { return false }
+        // The notebook stops using the deleted identity and its copy.
+        FamilyNotebookSharing.shared.restartSession()
+        // The binding first: the tools never write into a removed copy.
+        for key in defaultsKeys { UserDefaults.standard.removeObject(forKey: key) }
+        GroupDisplayName.forgetChecked()
+        var complete = true
+        if let person = deletion.personID, !(await removeDeletedPersonSyncedRoot(personID: person)) { complete = false }
+        guard let local = FamilySharingLocalData.live(),
+              let endpoint = SharingAPIConfiguration.current.baseURL else { return false }
+        if !local.removeAfterIdentityDeletion(endpoint: endpoint, personID: deletion.personID, deviceID: deletion.deviceID,
+                                              choices: keychainCopies) { complete = false }
+        FamilyNotebookSharing.shared.restartSession()
+        // The notebook's screens: no identity now, so no family (no network).
+        _ = await FamilyNotebookSharing.shared.refreshAfterPlusChange(reportsFailure: false)
+        return complete
+    }
+}
+
 #if INTERNAL_PRESENTATION
 /// 11/19 (2台試験だけ): B's iPhone, used as A's new iPhone in the trial, goes
 /// back to being B in the family notebook, and A's next recovery on it
@@ -139,7 +211,7 @@ enum FamilyNotebookOwnerTrialReset {
         guard let trial = OwnerTwoDeviceTrialConfiguration.current,
               let client = GroupWindowClientProvider.production,
               let endpoint = SharingAPIConfiguration.current.baseURL,
-              let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+              let local = FamilySharingLocalData.live()
         else { throw FamilySharingError.serviceUnavailable }
         if try await client.existingPersonID() == trial.owner { return "この端末はAです。戻すものはありません。" }
         let namespace = GroupWindowClientProvider.namespace
@@ -158,23 +230,7 @@ enum FamilyNotebookOwnerTrialReset {
         try links.remove(FamilyNotebookIdentityChoice.linkAccount)
         FamilyNotebookSharing.shared.restartSession()
         for scope in scopes.sorted() {
-            let recovery = try GroupKeychainStore(namespace: namespace + ".recovery." + scope)
-            if let saved = try recovery.read("identity") {
-                let identity = try GroupWire.decode(GroupDeviceIdentity.self, saved)
-                // The same scope the provider above gives that device's notebook.
-                let notebook = try GroupWire.base64(GroupCanonical.hash(GroupCanonical.fields([
-                    Data(endpoint.absoluteString.utf8), Data(identity.personID.utf8), Data(identity.deviceID.utf8)])))
-                let secrets = try GroupKeychainStore(namespace: namespace + ".family." + notebook)
-                for account in try secrets.accounts(prefix: "") { try secrets.remove(account) }
-                try? FileManager.default.removeItem(at: support.appendingPathComponent("FamilyNotebook-v1", isDirectory: true)
-                    .appendingPathComponent(notebook, isDirectory: true))
-            }
-            let journal = try GroupKeychainStore(namespace: namespace + ".recovery-journal." + scope)
-            for store in [recovery, journal] {
-                for account in try store.accounts(prefix: "") { try store.remove(account) }
-            }
-            try? FileManager.default.removeItem(at: support.appendingPathComponent("GroupTransport-v3", isDirectory: true)
-                .appendingPathComponent("recovery-" + scope, isDirectory: true))
+            try local.forgetRecoveredDevice(scope: scope, endpoint: endpoint)
         }
         for family in families { FamilyRepresentativePhotos.forgetSyncRecords(family) }
         _ = await FamilyNotebookSharing.shared.refreshAfterPlusChange(reportsFailure: false)

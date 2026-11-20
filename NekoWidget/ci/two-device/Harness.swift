@@ -72,6 +72,36 @@ final class DeviceKeychain: @unchecked Sendable {
         let created = MemorySecrets(); stores[namespace] = created
         return created
     }
+    /// GroupKeychainStore.namespaces(prefix:): the namespaces with an item.
+    func namespaces(prefix: String) -> [String] {
+        lock.lock(); let all = stores; lock.unlock()
+        return all.filter { $0.key.hasPrefix(prefix) && !((try? $0.value.accounts(prefix: "")) ?? []).isEmpty }.keys.sorted()
+    }
+}
+
+/// 11/20 (S20): 「まどと家族の手帳のデータを消す」's local clean-up on this
+/// iPhone. The real ProductionGroupWindowClient and FamilySharingLocalData
+/// over this iPhone's Keychain and Application Support; the UserDefaults step
+/// of GroupIdentityDeletionLocalData (a UIKit file) over this harness's
+/// stand-ins for the same keys.
+extension Device {
+    func removeLocalDataAfterIdentityDeletion() async throws -> Bool {
+        guard let record = try await client.identityDeletionNeedingLocalCleanup() else { return false }
+        // GroupIdentityDeletionLocalData.defaultsKeys and restartSession.
+        service.restartSession()
+        rememberedName = ""; nameChecked = false; hiddenEntries = nil; hiddenEntriesChecked = false
+        linkAnswers = nil; linkAnswersChecked = false; bindingSaved = false; awaitingApprovalMark = nil
+        let keychain = self.keychain
+        let local = FamilySharingLocalData(namespace: Self.namespace, support: support,
+            store: { keychain.store($0) }, namespaces: { keychain.namespaces(prefix: $0) })
+        // GroupIdentityDeletionLocalData.keychainCopies (GroupDisplayName.keychainSuffix is ".display-name").
+        guard local.removeAfterIdentityDeletion(endpoint: relay.endpoint, personID: record.personID, deviceID: record.deviceID,
+            choices: [(Self.recoveryLinkSuffix, ""), (".display-name", ""), (FamilyHiddenOperationsMemory.namespaceSuffix, ""),
+                      (FamilyCatLinkAnswersMemory.namespaceSuffix, ""),
+                      (GroupWindowKept.namespaceSuffix, GroupWindowKept.choicesAccountPrefix)]) else { return false }
+        try await client.markIdentityDeletionLocalCleanupDone()
+        return true
+    }
 }
 
 /// One person's iCloud Keychain: the person key RootSyncStore publishes and

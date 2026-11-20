@@ -41,7 +41,7 @@ final class FamilyNotebookSharing: ObservableObject {
     private(set) var sendHealth = FamilyNotebookSharing.savedSendHealth()
     /// 「コード：RJ-3」: the last failure's short code and the number unsent.
     var sendCode: String { FamilyNotebookSendFailure.code(kind: sendHealth.last?.kind, unsent: unsentCount) }
-    private static let sendHealthKey = "familyNotebook.sendHealth.v1"
+    static let sendHealthKey = "familyNotebook.sendHealth.v1"
     let service: any FamilyNotebookSharingService
 
     init(service: any FamilyNotebookSharingService) {

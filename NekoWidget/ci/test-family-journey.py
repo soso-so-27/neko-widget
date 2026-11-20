@@ -795,17 +795,32 @@ class FamilyNotebookDeviceChange1119Tests(unittest.TestCase):
             self.assertNotIn(token, reset)
         # This iPhone's own identity (the bare namespace) is never touched.
         self.assertNotIn("GroupKeychainStore(namespace: namespace)", reset)
-        self.assertEqual(reset.count("GroupKeychainStore(namespace: namespace + "), 4)
-        for store in ("FamilyNotebookServiceFactory.recoveryLinkSuffix", '".recovery." + scope',
-                      '".recovery-journal." + scope', '".family." + notebook'):
-            self.assertIn("GroupKeychainStore(namespace: namespace + " + store + ")", reset)
+        self.assertEqual(reset.count("GroupKeychainStore(namespace: namespace + "), 1)
+        self.assertIn("GroupKeychainStore(namespace: namespace + FamilyNotebookServiceFactory.recoveryLinkSuffix)", reset)
+        # 11/20: each recovered device goes through the function the identity
+        # deletion uses (FamilySharingLocalData), one scope at a time.
+        self.assertIn("for scope in scopes.sorted() {\n            try local.forgetRecoveredDevice(scope: scope, endpoint: endpoint)\n        }", reset)
+        self.assertNotIn("removeAfterIdentityDeletion", reset)
+        local = section(read("NekoWidget/Services/FamilyNotebookKeyCoordinator.swift"),
+                        "struct FamilySharingLocalData {", "\n}\n")
+        recovered = section(local, "func forgetRecoveredDevice(scope: String, endpoint: URL) throws {", "\n    }\n")
+        for store in ('".recovery." + scope', '".recovery-journal." + scope'):
+            self.assertIn("store(namespace + " + store + ")", recovered)
+        self.assertIn("try forgetNotebook(scope: Self.notebookScope(endpoint: endpoint, personID: identity.personID,", recovered)
+        self.assertIn('.appendingPathComponent("recovery-" + scope, isDirectory: true)', recovered)
+        notebook = section(local, "func forgetNotebook(scope: String) throws {", "\n    }\n")
+        self.assertIn('store(namespace + ".family." + scope)', notebook)
+        self.assertIn('.appendingPathComponent("FamilyNotebook-v1", isDirectory: true)', notebook)
+        for token in ("write(", "RootSyncStore", "pinSync", "SharingPersonAction"):
+            self.assertNotIn(token, local)
         # The link goes first, then the notebook stops using the recovered identity.
         self.assertLess(reset.index("try links.remove(FamilyNotebookIdentityChoice.linkAccount)"),
                         reset.index("FamilyNotebookSharing.shared.restartSession()"))
         self.assertLess(reset.index("FamilyNotebookSharing.shared.restartSession()"), reset.index("for scope in scopes"))
         self.assertIn("FamilyRepresentativePhotos.forgetSyncRecords(family)", reset)
         # The same notebook scope as the provider's.
-        self.assertIn("Data(endpoint.absoluteString.utf8), Data(identity.personID.utf8), Data(identity.deviceID.utf8)", reset)
+        self.assertIn("Data(endpoint.absoluteString.utf8), Data(personID.utf8), Data(deviceID.utf8)", local)
+        self.assertIn("Data(endpoint.absoluteString.utf8), Data(identity.personID.utf8), Data(identity.deviceID.utf8)", factory)
         settings = read("NekoWidget/Views/SettingsView.swift")
         view = section(settings, "private struct OwnerTwoDeviceEnrollmentView: View {", "\n#endif")
         self.assertIn('Button("この端末をBに戻す", role: .destructive) { confirmsForget = true }', view)
@@ -947,6 +962,61 @@ class NotebookCleanup1119Tests(unittest.TestCase):
 
     def test_report_says_where_the_answer_comes(self):
         self.assertIn('Text("返答は、家族の手帳の「通報への返答」に届きます。")', self.CARE)
+
+
+
+class IdentityDeletionAndLeaving1120Tests(unittest.TestCase):
+    def test_deletion_cleans_up_only_after_acceptance(self):
+        # 11/20: 「まどと家族の手帳のデータを消す」: the rest of the sharing state
+        # goes once the relay accepted (verify-identity-deletion-cleanup, S20).
+        window = read("NekoWidget/Views/GroupWindowView.swift")
+        view = section(window, "struct GroupIdentityDeletionView: View {", "private func refresh() async {")
+        delete = section(view, "private func delete() async {", "} catch {")
+        self.assertLess(delete.index("record = try await client.requestIdentityDeletion()"),
+                        delete.index("await GroupIdentityDeletionLocalData.resumeIfNeeded()"))
+        self.assertIn("if record?.acceptedAt != nil { await GroupIdentityDeletionLocalData.resumeIfNeeded() }", view)
+        self.assertIn("await GroupIdentityDeletionLocalData.resumeIfNeeded()", ROOT_VIEW)
+        factory = read("NekoWidget/Services/FamilyNotebookServiceFactory.swift")
+        local = section(factory, "enum GroupIdentityDeletionLocalData {", "\n}\n") + "\n"
+        resume = section(local, "static func resumeIfNeeded() async {", "\n    }\n")
+        self.assertLess(resume.index("guard await remove(record) else { return }"),
+                        resume.index("try? await client.markIdentityDeletionLocalCleanupDone()"))
+        remove = section(local, "static func remove(_ deletion: GroupIdentityDeletion) async -> Bool {", "\n    }\n")
+        self.assertIn("guard deletion.acceptedAt != nil else { return false }", remove)
+        # The binding before the files: the tools never write into a removed copy.
+        self.assertLess(remove.index("for key in defaultsKeys { UserDefaults.standard.removeObject(forKey: key) }"),
+                        remove.index("local.removeAfterIdentityDeletion("))
+        for key in ("FamilyNotebookLocalBinding.key", "FamilyNotebookLocalBinding.legacyKey", "GroupDisplayName.rememberedKey",
+                    "FamilyHiddenOperationsMemory.defaultsKey", "FamilyCatLinkAnswersMemory.defaultsKey",
+                    "FamilyNotebookSharing.sendHealthKey", "FamilyNotebookAwaitingApproval.key"):
+            self.assertIn(key, local)
+        # The person's own records, photos, widgets, 保存 and purchases are not touched.
+        for token in ("CatCareStore", "CareHandoffStore", "VeterinaryVisitStore", "AppRecordDataset", "FamilyNotebookBackup",
+                      "GroupWindowLocalPhotoStore", "PlusPurchaseStore", "ManagedPreservation", "WidgetCenter"):
+            self.assertNotIn(token, local)
+        client = read("NekoWidget/Services/ProductionGroupWindowClient.swift")
+        request = section(client, "func requestIdentityDeletion() async throws -> GroupIdentityDeletion {", "\n    }\n")
+        self.assertLess(request.index("if record.acceptedAt == nil {"), request.index("_ = removeGroupKeys()"))
+        self.assertNotIn("try removeGroupKeys()", client)
+        keys = section(client, "private func removeGroupKeys() -> Bool {", "\n    }\n")
+        self.assertIn('account != Self.deletionAccount\n            && !account.hasPrefix("identity-deletion-history:")', keys)
+
+    def test_leaving_sends_what_waits_once_first(self):
+        # 11/20: one send pass before leaving (S21); never when ending the family.
+        service = read("NekoWidget/Services/ProductionFamilyNotebookSharingService.swift")
+        exit_ = section(service, "private func exit(_ operation: UUID, dissolve: Bool) async throws -> FamilyExitResult {",
+                        "func pendingRequests()")
+        self.assertIn("if !dissolve, await sendBeforeLeaving(context, family: family.familyID, store: store) {", exit_)
+        self.assertLess(exit_.index("await sendBeforeLeaving("), exit_.index("context.membership.leaveFamily("))
+        self.assertIn("expectedGeneration: generation, operationID: operation, notebook: store)", exit_)
+        send = section(exit_, "private func sendBeforeLeaving(", "\n    }\n")
+        self.assertIn("guard (try? store.pendingOperations().isEmpty) == false else { return false }", send)
+        self.assertEqual(send.count("sync.synchronize("), 1)
+        self.assertIn("} catch {}", send)
+        # What waited before an unconfirmed end still does not start again (#1067).
+        store = read("NekoWidget/Services/FamilyNotebookStore.swift")
+        resume = section(store, "func resumeSharingAfterUnconfirmedEnd() throws -> FamilyNotebookSnapshot {", "\n    }\n")
+        self.assertIn("state.outboxIDs = []", resume)
 
 
 if __name__ == "__main__":

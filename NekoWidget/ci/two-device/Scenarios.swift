@@ -38,6 +38,8 @@ struct Family {
         ("S11", "member B reports, reinstalls without 機種変更: 「通報への返答」 comes back", s11),
         ("S12", "member B reinstalled on a build that kept no binding: the next launch reads, the third is normal", s12),
         ("S13", "member B answers 「同じ子ですか」, reinstalls without 機種変更: only the lost link is asked again", s13),
+        ("S20", "member B deletes its まど and notebook data, then makes a new identity on the same iPhone", s20),
+        ("S21", "member B writes, then leaves at once: A receives the write", s21),
     ]
 
     // MARK: Common steps
@@ -811,5 +813,91 @@ struct Family {
         try expect(try f.b.linkQuestions().isEmpty, "nothing is asked")
         try expect(f.b.keptLinkAnswers == [otherKey], "the Keychain still keeps 「べつの子」 only")
         return "the questions are FamilyNotebookCatLink's over Device.linkAnswers (the model's UserDefaults); B's own cat pages and 「この子のこと」 (CatCareStore) are not modelled: care is nil and 「同じ子」 is the store's mapping only"
+    }
+}
+
+// MARK: - 11/20: deleting the identity, and writing just before leaving
+
+extension Scenarios {
+    // MARK: S20
+
+    static func s20(_ relay: Relay) async throws -> String? {
+        let f = try await makeFamily(relay)
+        let b = f.b
+        let hidden = UUID().uuidString
+        b.hideEntry(hidden)
+        let old = try required(b.notebookIdentity, "B has a notebook identity")
+        let oldScope = try FamilySharingLocalData.notebookScope(endpoint: relay.endpoint, personID: old.personID, deviceID: old.deviceID)
+        let familyPrefix = Device.namespace + ".family."
+        let folder = b.support.appendingPathComponent("FamilyNotebook-v1", isDirectory: true).appendingPathComponent(oldScope, isDirectory: true)
+        try expect(b.keptName == "合成のB" && b.hiddenEntryIDs == [hidden], "B's name and hidden entry are kept as before")
+        try expect(b.keychain.namespaces(prefix: familyPrefix) == [familyPrefix + oldScope], "B's notebook keys are in its Keychain")
+        try expect(FileManager.default.fileExists(atPath: folder.path), "B's notebook copy is in Application Support")
+
+        Log.step("B: 「まどと家族の手帳のデータを消す」")
+        let main = b.keychain.store(Device.namespace)
+        do {
+            _ = try await b.client.requestIdentityDeletion()
+            Log.note("the local Worker accepted the deletion")
+        } catch {
+            Log.note("the local Worker has no identity deletion (\(error)); the relay's acceptance is modelled")
+        }
+        // ProductionGroupWindowClient's own record ("identity-deletion"), written before the request.
+        var record = try GroupWire.decode(GroupIdentityDeletion.self,
+            try required(try main.read("identity-deletion"), "the deletion record was kept before sending"))
+        try expect(record.personID == old.personID && record.deviceID == (try old.deviceID), "the record names the deleted identity")
+        if record.acceptedAt == nil {
+            record.acceptedAt = Date()
+            try main.write(GroupWire.encode(record), account: "identity-deletion", createOnly: false)
+        }
+
+        Log.step("The app closes before the clean-up; the next launch finishes it")
+        try await b.relaunch()
+        try expect(try await b.removeLocalDataAfterIdentityDeletion(), "the clean-up finishes")
+        try expect(try await b.client.identityDeletionNeedingLocalCleanup() == nil, "and is not run again")
+        try expect(try main.accounts(prefix: "") == ["identity-deletion"], "only the deletion record stays in B's own store")
+        try expect(b.keychain.namespaces(prefix: familyPrefix).isEmpty, "no notebook Keychain is left")
+        try expect(!FileManager.default.fileExists(atPath: folder.path), "the notebook copy is gone")
+        for suffix in [".display-name", FamilyHiddenOperationsMemory.namespaceSuffix] {
+            try expect(b.keychain.namespaces(prefix: Device.namespace + suffix).isEmpty, "nothing is kept under \(suffix)")
+        }
+
+        Log.step("B makes a new identity on the same iPhone")
+        try await b.relaunch()
+        let fresh = try await b.client.familyNotebookIdentity()
+        try expect(fresh.personID != old.personID, "a new person")
+        let history = try main.accounts(prefix: "identity-deletion")
+        try expect(history.count == 1 && history[0].hasPrefix("identity-deletion-history:"), "the old record moved to its history")
+        try expect(b.keptName == nil && b.rememberedName == "", "no old name is offered")
+        try expect(b.hiddenEntryIDs.isEmpty, "no old hidden entry comes back")
+        let state = await b.pass()
+        try expect(state == .notInFamily, "the new person is in no family (got \(String(describing: state)))")
+        try expect((try b.keychain.store(familyPrefix + oldScope).accounts(prefix: "")).isEmpty, "the old notebook keys stay gone")
+        return "real: ProductionGroupWindowClient's record, key removal and new identity, FamilySharingLocalData over B's Keychain and Application Support, the local Worker for the new identity; modelled: the relay's acceptance (the local Worker runs without GROUP_IDENTITY_ERASURE_ENABLED), the UserDefaults step (Device's stand-ins), and the iCloud person key (RootSyncStore.removeExact, iOS only)"
+    }
+
+    // MARK: S21
+
+    static func s21(_ relay: Relay) async throws -> String? {
+        let f = try await makeFamily(relay)
+        let store = try required(f.b.service.notebook, "B has a notebook copy")
+        let author = try required(f.b.service.author, "B has an author")
+
+        Log.step("B writes and leaves at once, before any read sends it")
+        let written = try store.edit(target: .init(familyCatID: f.cat, field: .name), value: .text("合成のくろ"), author: author)
+        try expect(try store.pendingOperations().map(\.id) == [written.id], "B's write waits to be sent")
+        let mark = relay.transport.log.count
+        let result = try await f.b.service.leaveFamily(operationID: UUID())
+        try expect(result == .confirmed, "B left (got \(result))")
+        try expect(try store.snapshot().sharingEnded && store.pendingOperations().isEmpty, "B's copy ended")
+        let posts = f.b.notebookWrites(since: mark)
+        try expect(posts.contains { $0.hasSuffix("/crypto/operations") }, "B sent its write before leaving (sent: \(posts))")
+
+        Log.step("A reads B's write")
+        let copy = try required(f.a.service.notebook, "A has a notebook copy")
+        try await settle("A has B's write", [f.a]) { try copy.snapshot().operations.contains { $0.id == written.id } }
+        let name = try copy.snapshot().fieldState(for: .init(familyCatID: f.cat, field: .name))
+        try expect(name?.operation.value == .text("合成のくろ") && name?.operation.author.personID == author.personID, "A shows B's name for the cat")
+        return "real: the service's leave (one send pass, then the leave) against the local Worker, and A's read; the notebook screen's edit is the store's edit"
     }
 }

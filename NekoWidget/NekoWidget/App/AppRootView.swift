@@ -161,6 +161,11 @@ struct AppRootView: View {
             widgetInstallationChecker.refresh()
             await viewModel.start()
         }
+        .task {
+            // 11/20: 「まどと家族の手帳のデータを消す」 accepted but its local
+            // clean-up stopped (the app closed): finished at the next launch.
+            await GroupIdentityDeletionLocalData.resumeIfNeeded()
+        }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
             // SwiftUI uses scenes: app-delegate foreground callbacks alone are insufficient.
