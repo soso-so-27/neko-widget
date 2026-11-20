@@ -116,6 +116,7 @@ class Haptics(unittest.TestCase):
         self.assertIn(".sensoryFeedback(.success, trigger: addedCat) { old, new in old == nil && new != nil }", HOME)
         self.assertIn(".sensoryFeedback(.success, trigger: result) { old, new in old != .joined && new == .joined }",
                       FAMILY)
+        self.assertIn(".sensoryFeedback(.success, trigger: careCompletion, condition: CareCompletion.justCompleted)", CARE)
         self.assertIn("new.cat != nil && old.cat == new.cat && !old.complete && new.complete", CARE)
 
     def test_plus_completion_counts_only_completions(self):

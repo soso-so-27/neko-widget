@@ -266,6 +266,10 @@ struct CatCareDetailView: View {
             // 11/12 (round 2): the parts close together, as on the tools, so the
             // first rows show on the first screen of a small iPhone.
             .toolPageSpacing()
+            // Once, when a row written here makes the page 「すべてそろっています」:
+            // opening (or switching to) a cat that is already complete changes
+            // the loaded cat in the same update, so it does not count.
+            .sensoryFeedback(.success, trigger: careCompletion, condition: CareCompletion.justCompleted)
             .alert(deleteTitle, isPresented: $showsDeleteConfirmation) { deleteActions } message: {
                 // 11/7: what goes (removeProfile drops the profile and which
                 // photos are this cat), what stays, and that it is final.
@@ -311,13 +315,6 @@ struct CatCareDetailView: View {
                           || showsNameEditor || isSavingName || showsKeyPhotoPicker
                           || photoRole != nil || cropRequest != nil)
         .familyNotebookToolSync(enabled: sharedWithFamily)
-        // Once, when a row written here makes the page 「すべてそろっています」:
-        // opening (or switching to) a cat that is already complete changes
-        // the loaded cat in the same update, so it does not count.
-        .sensoryFeedback(.success, trigger: CareCompletion(cat: loadedKey == subject.key ? loadedKey : nil,
-                                                           complete: progress.filled >= progress.total)) { old, new in
-            new.cat != nil && old.cat == new.cat && !old.complete && new.complete
-        }
         .modifier(FamilyPhotoDialogs(question: $familyPhotoQuestion, reportTarget: $familyPhotoReport))
         .task(id: familyPhotoCatID) {
             // The photo 「…」 offers to report is the one this page's cat shows.
@@ -579,6 +576,15 @@ struct CatCareDetailView: View {
     private struct CareCompletion: Equatable {
         let cat: String?
         let complete: Bool
+
+        static func justCompleted(_ old: CareCompletion, _ new: CareCompletion) -> Bool {
+            new.cat != nil && old.cat == new.cat && !old.complete && new.complete
+        }
+    }
+
+    /// Apart from `body`, so the type checker stays fast.
+    private var careCompletion: CareCompletion {
+        CareCompletion(cat: loadedKey == subject.key ? loadedKey : nil, complete: progress.filled >= progress.total)
     }
 
     /// The same count as the ring on the ツール tab, so a row filled here moves it.
