@@ -310,9 +310,31 @@ struct Drained: Decodable {
     /// The identity the last notebook session opened with.
     private(set) var notebookIdentity: GroupDeviceIdentity?
     private(set) var lastState: FamilySharingState?
-    /// GroupDisplayName.remembered: UserDefaults on an iPhone, so deleting
-    /// the app wipes it. The notebook screen remembers it on create and join.
-    var rememberedName = ""
+    /// GroupDisplayName's UserDefaults value: deleting the app wipes it. The
+    /// notebook screen remembers the name on create and join (rememberName).
+    private(set) var rememberedName = ""
+    /// false: this iPhone runs a build from before GroupRememberedName (the
+    /// name is not kept in the Keychain); reinstalling installs this build.
+    var keepsNameInKeychain = true
+    /// GroupDisplayName.keychainChecked: one per process.
+    private var nameChecked = false
+    /// GroupDisplayName's memory (GroupRememberedName) over this iPhone's
+    /// UserDefaults value and device-only Keychain.
+    private var nameMemory: GroupRememberedName {
+        GroupRememberedName(defaults: { [unowned self] in self.rememberedName },
+            setDefaults: { [unowned self] in self.rememberedName = $0 },
+            keychain: { [unowned self] () -> (any GroupSecretStore)? in
+                guard self.keepsNameInKeychain else { return nil }
+                return self.keychain.store(Self.namespace + ".display-name")
+            })
+    }
+    /// GroupDisplayName.remember (the notebook screen, on create and join).
+    func rememberName(_ name: String) { nameMemory.write(name); nameChecked = true }
+    /// The name kept in this iPhone's Keychain (survives deleting the app).
+    var keptName: String? {
+        let data = try? keychain.store(Self.namespace + ".display-name").read(GroupRememberedName.account)
+        return data.flatMap { String(data: $0, encoding: .utf8) }
+    }
 
     init(_ name: String, relay: Relay, cloud: PersonCloud, keychain: DeviceKeychain = DeviceKeychain(), billing: BillingCredential? = nil) {
         self.name = name; self.relay = relay; self.cloud = cloud; self.keychain = keychain; self.billing = billing
@@ -343,15 +365,15 @@ struct Drained: Decodable {
             transport: relay.transport, outboxDirectory: outbox, billingSigner: HarnessBillingSigner(credential: billing))
         service = ProductionFamilyNotebookSharingService(provider: { [unowned self] in try await self.openSession() },
             billing: { [unowned self] in try await self.client.connectExistingBillingAccount() },
-            displayName: { [unowned self] in try GroupWire.name(self.rememberedName) },
-            rememberName: { [unowned self] in self.rememberedName = $0 }, catNames: { ["合成ねこ"] },
+            displayName: { [unowned self] in try GroupWire.name(self.nameMemory.read(checked: &self.nameChecked)) },
+            rememberName: { [unowned self] in self.rememberName($0) }, catNames: { ["合成ねこ"] },
             hasExistingIdentity: { [unowned self] in
                 if try await self.client.hasExistingIdentity() { return true }
                 return try await self.recoveredIdentity() != nil
             }, photoRuntimeEnabled: true, photoTransport: relay.transport,
             // The pinned recipient: on macOS GroupReportCrypto accepts no other.
             moderationRecipient: { (keyID: GroupReportCrypto.moderationKeyID, publicKey: GroupReportCrypto.moderationPublicKey) })
-        notebookIdentity = nil; lastState = nil
+        notebookIdentity = nil; lastState = nil; nameChecked = false
         // Notifications allowed (GroupAdmissionService passes the token on).
         await service.updatePushSubscription(token: pushToken, environment: "production")
     }
@@ -363,7 +385,7 @@ struct Drained: Decodable {
     func reinstall() async throws {
         try? FileManager.default.removeItem(at: support)
         support = Self.newSupportFolder(name)
-        rememberedName = ""
+        rememberedName = ""; keepsNameInKeychain = true
         pushToken = Data((0..<32).map { _ in UInt8.random(in: 0...255) })
         try await launch()
     }

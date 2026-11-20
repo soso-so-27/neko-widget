@@ -438,7 +438,7 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     private func sharedFarewell(_ snapshot: FamilyNotebookSnapshot, cat: UUID) -> (String?, FamilyNotebookAuthor?) {
         guard let field = snapshot.fieldState(for: .init(familyCatID: cat, field: .farewellDay)),
               !field.isDeleted, case .day(let day) = field.operation.value else { return (nil, nil) }
-        return (day, field.operation.author)
+        return (day, FamilyNotebookAuthorName.shownAuthor(field.operation.author, operations: snapshot.operations, known: memberNames))
     }
     func loadFarewellSharing(toolCatID: UUID) async throws -> FamilyFarewellSharingState {
         try await run { context in
@@ -942,12 +942,9 @@ private extension Array where Element == FamilyNotebookAdmissionClient.Request {
 }
 
 /// 11/20: the name a member writes under when this iPhone has no remembered
-/// one (GroupDisplayName.remembered lives in UserDefaults, which deleting the
-/// app wipes; the keys and the membership stay).
-enum FamilyNotebookAuthorName {
-    /// FamilyNotebookPrototype.members' word for a member without a known name.
-    static let unnamed = "家族の人"
-
+/// one (an iPhone whose name was lost from UserDefaults before
+/// GroupRememberedName kept it in the Keychain; the keys and membership stay).
+extension FamilyNotebookAuthorName {
     /// The names this person's own writing in the notebook carries, newest first.
     static func written(by personID: String, in snapshot: FamilyNotebookSnapshot?) -> [String] {
         (snapshot?.operations ?? []).filter { $0.author.personID == personID }

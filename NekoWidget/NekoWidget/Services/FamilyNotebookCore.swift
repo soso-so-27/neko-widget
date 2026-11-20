@@ -175,6 +175,32 @@ struct FamilyNotebookAuthor: Codable, Equatable, Sendable {
     let displayName: String
 }
 
+/// 11/20: the name shown for who wrote something. A member whose name this
+/// iPhone lost writes as `unnamed` (ProductionFamilyNotebookSharingService.author);
+/// that word never hides a name the family already knows.
+enum FamilyNotebookAuthorName {
+    /// The members list's word for a member without a known name.
+    static let unnamed = "家族の人"
+
+    /// `author`'s own name, unless it is `unnamed`: then the newest other name
+    /// of their writing, then the name the family's admission gave (`known`).
+    static func shown(_ author: FamilyNotebookAuthor, operations: [FamilyNotebookOperation],
+                      known: [String: String] = [:]) -> String {
+        guard author.displayName == unnamed else { return author.displayName }
+        if let real = operations.filter({ $0.author.personID == author.personID && $0.author.displayName != unnamed })
+            .max(by: { $0.version < $1.version }) {
+            return real.author.displayName
+        }
+        if let name = known[author.personID], !name.isEmpty, name != unnamed { return name }
+        return unnamed
+    }
+
+    static func shownAuthor(_ author: FamilyNotebookAuthor, operations: [FamilyNotebookOperation],
+                            known: [String: String] = [:]) -> FamilyNotebookAuthor {
+        .init(personID: author.personID, displayName: shown(author, operations: operations, known: known))
+    }
+}
+
 struct FamilyNotebookVersion: Codable, Equatable, Comparable, Sendable {
     let clock: UInt64
     let deviceID: String

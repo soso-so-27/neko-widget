@@ -359,14 +359,23 @@ enum GroupInvitationMemory {
 }
 
 /// The name this person last gave a window, offered again next time. Written
-/// only after creating or asking to join, never while typing.
+/// only after creating or asking to join, never while typing. 11/20: also kept
+/// in this iPhone's Keychain, so deleting the app keeps it (GroupRememberedName).
 extension GroupDisplayName {
     private static let rememberedKey = "group.myDisplayName.v1"
+    private static var keychainChecked = false
+    private static var memory: GroupRememberedName {
+        let key = rememberedKey
+        return GroupRememberedName(defaults: { UserDefaults.standard.string(forKey: key) },
+            setDefaults: { UserDefaults.standard.set($0, forKey: key) },
+            keychain: { try? GroupKeychainStore(namespace: GroupWindowClientProvider.namespace + ".display-name") })
+    }
 
-    static var remembered: String { UserDefaults.standard.string(forKey: rememberedKey) ?? "" }
+    static var remembered: String { memory.read(checked: &keychainChecked) }
 
     static func remember(_ name: String) {
-        UserDefaults.standard.set(name, forKey: rememberedKey)
+        memory.write(name)
+        keychainChecked = true
     }
 
     /// The relay takes up to 80 bytes (GroupWire.name), about 26 kana.

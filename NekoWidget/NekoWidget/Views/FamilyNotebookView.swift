@@ -877,13 +877,19 @@ final class FamilyNotebookPrototype: ObservableObject {
     /// The family, you first. Like Apple's family and shared lists, nobody
     /// is labelled; who can do what shows only on a person's own page.
     private var realMemberNames: [String: String] = [:]
+    /// Who wrote an entry, as FamilyNotebookAuthorName shows it.
+    func shownName(_ author: FamilyNotebookAuthor) -> String {
+        FamilyNotebookAuthorName.shown(author, operations: snapshot?.operations ?? [], known: realMemberNames)
+    }
     var members: [FamilyNotebookAuthor] {
         if isReal {
             if realMemberIDs.isEmpty, let shown { return shown.members }
             return realMemberIDs.map { id in
                 if id == realAuthor?.personID, let realAuthor { return realAuthor }
-                return snapshot?.operations.filter { $0.author.personID == id }.max { $0.version < $1.version }?.author
-                    ?? .init(personID: id, displayName: realMemberNames[id] ?? FamilyNotebookAuthorName.unnamed)
+                let operations = snapshot?.operations ?? []
+                let latest = operations.filter { $0.author.personID == id }.max { $0.version < $1.version }?.author
+                    ?? .init(personID: id, displayName: FamilyNotebookAuthorName.unnamed)
+                return FamilyNotebookAuthorName.shownAuthor(latest, operations: operations, known: realMemberNames)
             }
         }
         let removed = Set(UserDefaults.standard.stringArray(forKey: Self.removedKey) ?? [])
@@ -1359,7 +1365,7 @@ struct FamilyNotebookView: View {
                             Text(operation.editedAt.formatted(.dateTime.month(.defaultDigits).day()))
                         } label: {
                             Text(model.place(of: operation))
-                            Text(operation.author.displayName)
+                            Text(model.shownName(operation.author))
                         }
                         .contextMenu {
                             // Hiding is local to this iPhone; nobody is told.
@@ -2867,10 +2873,10 @@ enum FamilyNotebookWords {
         return lines.joined(separator: "")
     }
 
-    static func byline(_ operation: FamilyNotebookOperation) -> String {
+    static func byline(_ operation: FamilyNotebookOperation, name: String) -> String {
         let date = (operation.importedSourceEditedAt ?? operation.editedAt)
             .formatted(.dateTime.month(.defaultDigits).day())
-        return "\(operation.author.displayName)・\(date)"
+        return "\(name)・\(date)"
     }
 
     static func label(_ field: FamilyNotebookField) -> String {
@@ -2996,7 +3002,7 @@ struct FamilyNotebookNote: ViewModifier {
                 content
                 if let state = model.state(toolCatID: toolCatID, field) {
                     if !model.isMe(state.operation.author) {
-                        Label(FamilyNotebookWords.byline(state.operation), systemImage: "person.2")
+                        Label(FamilyNotebookWords.byline(state.operation, name: model.shownName(state.operation.author)), systemImage: "person.2")
                             .font(.caption).foregroundStyle(.secondary)
                     } else if FamilyNotebookNote.waitsToBeSent(state, now: Date()) {
                         // 11/16: written here, not sent to the family for over
@@ -3035,7 +3041,7 @@ struct FamilyHiddenOperationsView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(model.place(of: operation))
-                        Text("\(operation.author.displayName)・\(operation.editedAt.formatted(.dateTime.month(.defaultDigits).day()))")
+                        Text("\(model.shownName(operation.author))・\(operation.editedAt.formatted(.dateTime.month(.defaultDigits).day()))")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()

@@ -426,9 +426,9 @@ enum FamilyNotebookReadableText {
                     if group != previous { lines.append("\n" + (collections[target.collection] ?? "記録")); previous = group; count += 1 }
                     let label = ReadablePreservationText.labels[field.rawValue] ?? field.rawValue
                     lines.append(label + "：" + value(state.operation.value, field: field))
-                    lines.append("  書いた人：" + state.operation.author.displayName + "／" + dates.string(from: state.operation.editedAt))
+                    lines.append("  書いた人：" + FamilyNotebookAuthorName.shown(state.operation.author, operations: snapshot.operations) + "／" + dates.string(from: state.operation.editedAt))
                     for alternative in state.history where alternative.isConcurrentConflict {
-                        lines.append("  同じころに書かれた内容：" + value(alternative.operation.value, field: field) + "（" + alternative.operation.author.displayName + "）")
+                        lines.append("  同じころに書かれた内容：" + value(alternative.operation.value, field: field) + "（" + FamilyNotebookAuthorName.shown(alternative.operation.author, operations: snapshot.operations) + "）")
                     }
                 }
             }
