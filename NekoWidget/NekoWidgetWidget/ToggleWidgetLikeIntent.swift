@@ -158,7 +158,7 @@ struct ToggleFamilyWidgetBookmarkIntent: AppIntent {
 struct SendFamilyWidgetHeartIntent: AppIntent {
     static var title: LocalizedStringResource = "ハートを送る"
     static var description = IntentDescription(
-        "以前のまどのボタンです。みんなのまどはアプリのまどタブから開けます。"
+        "前のまどのボタンです。みんなのまどはアプリのまどタブから開けます。"
     )
     static var isDiscoverable = false
     static var openAppWhenRun = false

@@ -844,7 +844,7 @@ final class FamilyNotebookPrototype: ObservableObject {
                 if case let .text(text)? = record.value(.catName), !text.isEmpty { return text }
             }
         }
-        return "名前なし"
+        return "名前未設定の猫"
     }
 
     func state(_ cat: UUID, _ field: FamilyNotebookField) -> FamilyNotebookFieldState? {
@@ -2143,7 +2143,7 @@ struct FamilyNotebookInviteView: View {
                 Button(action: send) {
                     Group {
                         if creating { ProgressView() } else {
-                            Label("招待を送る", systemImage: "square.and.arrow.up").font(.headline)
+                            Label("招待リンクを送る", systemImage: "square.and.arrow.up").font(.headline)
                         }
                     }
                     .frame(maxWidth: .infinity, minHeight: 50)
@@ -2219,7 +2219,7 @@ struct FamilyNotebookInviteView: View {
     }
 }
 
-/// 11/14 (family journey A5): what one press on 「招待を送る」 does.
+/// 11/14 (family journey A5): what one press on 「招待リンクを送る」 does.
 enum FamilyInviteSendTap: Equatable {
     case ignore, create, share
 
@@ -2477,7 +2477,7 @@ struct FamilyNotebookCatSelectionView: View {
                         set: { if $0 { selected.insert(cat.catID) } else { selected.remove(cat.catID) } })) {
                         HStack(spacing: 12) {
                             FamilyNotebookCatThumbnail(familyCat: nil, profile: cat.profileID)
-                            Text(cat.name?.value ?? "名前なし")
+                            Text(cat.name?.value ?? "名前未設定の猫")
                         }
                     }
                 }

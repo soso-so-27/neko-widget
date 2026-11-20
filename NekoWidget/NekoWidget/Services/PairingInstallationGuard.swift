@@ -242,7 +242,7 @@ enum PairingInstallationGuard {
                         )
                         _ = try performCleanupWhileLocked(
                             marker: record.installationMarker,
-                            message: "この相手との写真共有を終了しました。"
+                            message: "この相手との写真共有は終わりました。"
                         )
                         _ = try PrivateWindowCatalogStore.activateWhileLifecycleLocked(
                             localWindowID: catalog.activeWindowID

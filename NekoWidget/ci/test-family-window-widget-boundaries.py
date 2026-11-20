@@ -143,7 +143,7 @@ class WordingPass1112Tests(unittest.TestCase):
         "家族は 1 つまで", "この家族は、もう人数", "この家族の共有は終わ",
         # 月の作品
         "月のまとめ",
-        # このまどは終わりました／終わったまど
+        # このまどは終わりました／前のまど
         "このまどは閉じられています", "このまどはもうありません", "利用できなくなりました",
         "使えなくなったまど", "このまどは表示できません", "ウィジェットを編集してください",
         # 確認をやめるボタンは「キャンセル」
@@ -185,7 +185,7 @@ class WordingPass1112Tests(unittest.TestCase):
         self.assertIn('"\\(presentation.monthNumber)月の作品"', source("NekoWidget/Views/MonthlyWindowView.swift"))
         self.assertIn('"これまでの月の作品・季節のムービー"', source("NekoWidget/Views/LikedPhotosView.swift"))
         self.assertIn('return "このまどは終わりました。"', source("NekoWidget/Views/GroupWindowSetupView.swift"))
-        self.assertIn('"終わったまど"', source("NekoWidgetWidget/NekoWidgetConfigurationIntent.swift"))
+        self.assertIn('"前のまど"', source("NekoWidgetWidget/NekoWidgetConfigurationIntent.swift"))
         self.assertIn('Text("Plusをやめたあとも、12か月のあいだは読み出しと書き出しができます。このiPhoneの記録は残ります。")',
                       source("NekoWidget/Views/ManagedPreservationView.swift"))
         self.assertIn('"App Storeでアプリを最新にしてください。"', source("Shared/Sharing/ClientUpgradeRequirement.swift"))
@@ -803,7 +803,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "static func resolvedSource(id: String)",
             "static var availableSources",
         )
-        self.assertIn('name: "終わったまど"', resolved)
+        self.assertIn('name: "前のまど"', resolved)
         self.assertIn("static func familyWindowExists", resolved)
 
         self.assertIn(
@@ -3558,7 +3558,7 @@ class GroupWidgetCacheTests(unittest.TestCase):
         intent = source("NekoWidgetWidget/NekoWidgetConfigurationIntent.swift")
         # A missing group window never becomes the personal-library default.
         resolve = section(intent, "if let groupWindowID = GroupWidgetCache.windowID(fromSourceID: id) {", "guard let localWindowID")
-        self.assertIn('"終わったまど"', resolve)
+        self.assertIn('"前のまど"', resolve)
 
         project = source("NekoWidget.xcodeproj/project.pbxproj")
         widget_sources = section(project, "A00000000000000000000025 /* Sources */ = {", "A00000000000000000000028 /* Sources */")

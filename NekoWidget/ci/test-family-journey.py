@@ -12,7 +12,7 @@ A3. Plus bought (or restored) from the create-window prompt makes the window
     takes over paying once bought, when the family allows it.
 A4. 「24時間使えます。」 under the まど's and the family notebook's invite
     button (the server's 86400 seconds for both).
-A5. One press on the family notebook's 「招待を送る」 makes the link and opens
+A5. One press on the family notebook's 「招待リンクを送る」 makes the link and opens
     the share sheet.
 A6. The 写真 tab with no cat photos points a まど member to the まど tab.
 
@@ -142,7 +142,7 @@ class FamilyInviteOneTapTests(unittest.TestCase):
     def test_one_press_makes_and_shares(self):
         family = section(NOTEBOOK, "struct FamilyNotebookInviteView: View {", "struct FamilyNotebookJoinView: View {")
         self.assertNotIn("ShareLink(", family)
-        self.assertEqual(family.count('Label("招待を送る"'), 1)
+        self.assertEqual(family.count('Label("招待リンクを送る"'), 1)
         send = section(family, "private func send() {", "enum FamilyInviteSendTap")
         self.assertIn("FamilyInviteSendTap.action(isCreating: creating, hasInvitation: hasInvitation)", send)
         self.assertLess(send.index("invitation = made"), send.index("sharesInvitation = true\n            }"))
