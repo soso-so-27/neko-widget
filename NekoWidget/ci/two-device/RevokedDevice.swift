@@ -177,8 +177,8 @@ extension Scenarios {
         try expect(try bStore.pendingOperations().contains { $0.id == parked.id }, "the line is still parked with B's old device")
 
         Log.step("A still reads and writes; the family and its photo are intact")
-        await a.pass()
-        try expect(a.inFamily, "A is in the family")
+        // The removal moves the notebook's keys on (a new epoch without B's device).
+        try await settle("A reads the family after the removal", [a]) { a.inFamily }
         try expect(a.service.lastMembers.map(\.personID) == [person], "the family still lists the person (got \(a.service.lastMembers.count))")
         let line = try aStore.edit(target: .init(familyCatID: cat, field: .marks), value: .text("合成のしるしA"),
                                    author: try required(a.service.author, "A has no author"))
