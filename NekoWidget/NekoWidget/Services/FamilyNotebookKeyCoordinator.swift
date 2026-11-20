@@ -489,14 +489,30 @@ enum FamilyNotebookIdentityChoice {
     }
 
     /// The link and the recovered identity from their Keychain stores.
+    /// 11/20: `revocations` (the usual identity's store): a recovered device
+    /// the relay said was taken off is never picked.
     static func load(links: any GroupSecretStore, recoveryStore: (String) throws -> any GroupSecretStore,
-                     usualPersonID: String?, usualDeviceID: String?) throws -> GroupDeviceIdentity? {
+                     usualPersonID: String?, usualDeviceID: String?,
+                     revocations: (any GroupSecretStore)? = nil) throws -> GroupDeviceIdentity? {
         guard let bytes = try links.read(linkAccount) else { return nil }
         let link = try GroupWire.decode(Link.self, bytes)
         guard link.scope.utf8.count == 64,
               link.scope.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { return nil }
         let identity = try recoveryStore(link.scope).read("identity").map { try GroupWire.decode(GroupDeviceIdentity.self, $0) }
+        if let identity, let revocations, try GroupDeviceRevocation.isMarked(identity, in: revocations) { return nil }
         return recovered(link: link, recovered: identity, usualPersonID: usualPersonID, usualDeviceID: usualDeviceID)
+    }
+
+    /// 11/20: the link goes when the recovered device it names is `pair`.
+    static func forgetLink(links: any GroupSecretStore, pair: GroupDeviceRevocation.Pair,
+                           recoveryStore: (String) throws -> any GroupSecretStore) throws {
+        guard let bytes = try links.read(linkAccount), let link = try? GroupWire.decode(Link.self, bytes),
+              link.personID == pair.personID,
+              link.scope.utf8.count == 64,
+              link.scope.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
+              let saved = try recoveryStore(link.scope).read("identity"),
+              (try? GroupWire.decode(GroupDeviceIdentity.self, saved).deviceID) == pair.deviceID else { return }
+        try links.remove(linkAccount)
     }
 
     // The notebook row of the recovery screen (GroupRecoveryLiveModel.notebookSteps),

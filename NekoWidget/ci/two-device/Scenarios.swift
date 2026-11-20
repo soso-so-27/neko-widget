@@ -38,6 +38,7 @@ struct Family {
         ("S11", "member B reports, reinstalls without 機種変更: 「通報への返答」 comes back", s11),
         ("S12", "member B reinstalled on a build that kept no binding: the next launch reads, the third is normal", s12),
         ("S13", "member B answers 「同じ子ですか」, reinstalls without 機種変更: only the lost link is asked again", s13),
+        ("S14", "the same person's other iPhone takes B's device off (reason device_revoked)", s14),
     ]
 
     // MARK: Common steps

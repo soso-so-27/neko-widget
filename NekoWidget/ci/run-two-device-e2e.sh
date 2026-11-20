@@ -43,7 +43,7 @@ sources=(
   NekoWidget/Services/VeterinaryVisitStore.swift NekoWidget/Services/FamilyNotebookMigration.swift
   NekoWidget/Services/FamilyNotebookCatCareBridge.swift NekoWidget/Services/FamilyNotebookToolBridge.swift
   NekoWidget/Services/FamilyNotebookCatLink.swift NekoWidget/Services/SharingAutoCheckPolicy.swift
-  ci/two-device/Harness.swift ci/two-device/Scenarios.swift
+  ci/two-device/Harness.swift ci/two-device/Scenarios.swift ci/two-device/RevokedDevice.swift
 )
 echo "Compiling the two-device driver (${#sources[@]} files)" >&2
 xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \

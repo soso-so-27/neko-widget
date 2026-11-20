@@ -29,7 +29,7 @@ enum FamilyNotebookServiceFactory {
             let secrets = try GroupKeychainStore(namespace: GroupWindowClientProvider.namespace + ".family." + scope)
             return try FamilyNotebookSession(endpoint: endpoint, identity: identity, transport: GroupURLSessionTransport(),
                 journal: journal, secrets: secrets, directory: directory.appendingPathComponent("notebooks", isDirectory: true),
-                pinSync: FamilyNotebookServiceFactory.pinSync())
+                pinSync: FamilyNotebookServiceFactory.pinSync(), revocations: client.revocations)
         }, billing: {
             guard let client = GroupWindowClientProvider.production else { throw FamilySharingError.serviceUnavailable }
             try await client.connectExistingBillingAccount()
@@ -45,7 +45,24 @@ enum FamilyNotebookServiceFactory {
             return try await FamilyNotebookServiceFactory.recoveredIdentity(client) != nil
         }, photoRuntimeEnabled: representativePhotoRuntimeEnabled, photoTransport: GroupURLSessionTransport(),
         moderationRecipient: { FamilyNotebookServiceFactory.moderationRecipient() },
-        photoTrace: { FamilyPhotoDeliveryDiagnostics.note($0) })
+        photoTrace: { FamilyPhotoDeliveryDiagnostics.note($0) },
+        revocations: GroupWindowClientProvider.production?.revocations,
+        forgetRevoked: { FamilyNotebookServiceFactory.dropRecoveryLink(of: $0) },
+        renewForEntrance: {
+            // 11/20: only from 作る / 招待で入る (the service calls it there).
+            guard let client = GroupWindowClientProvider.production else { return false }
+            return try await client.renewRevokedDevice()
+        })
+    }
+
+    /// 11/20: the relay said `pair` was taken off. When it is the device the
+    /// 機種変更 link names, the link goes, so nothing keeps pointing at it (the
+    /// keys stay in that root's Keychain; 機種変更 again makes a new device).
+    static func dropRecoveryLink(of pair: GroupDeviceRevocation.Pair) {
+        let namespace = GroupWindowClientProvider.namespace
+        guard let links = try? GroupKeychainStore(namespace: namespace + recoveryLinkSuffix) else { return }
+        try? FamilyNotebookIdentityChoice.forgetLink(links: links, pair: pair,
+            recoveryStore: { try GroupKeychainStore(namespace: namespace + ".recovery." + $0) })
     }
 
     /// 11/19 (機種変更 水準2): the recovered person's identity when
@@ -59,7 +76,7 @@ enum FamilyNotebookServiceFactory {
         let usual = try await client.existingPersonID(), usualDevice = try await client.existingDeviceID()
         return try FamilyNotebookIdentityChoice.load(links: GroupKeychainStore(namespace: namespace + recoveryLinkSuffix),
             recoveryStore: { try GroupKeychainStore(namespace: namespace + ".recovery." + $0) },
-            usualPersonID: usual, usualDeviceID: usualDevice)
+            usualPersonID: usual, usualDeviceID: usualDevice, revocations: client.revocations)
     }
     /// 11/19: internal builds as before; the App Store build only with 機種変更's
     /// client (SharingAPIConfiguration.groupRecoveryRuntimeEnabled).

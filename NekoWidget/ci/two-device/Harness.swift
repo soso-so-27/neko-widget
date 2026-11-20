@@ -519,7 +519,7 @@ struct Drained: Decodable {
         let keychain = self.keychain, recoveryPrefix = Self.namespace + ".recovery."
         return try FamilyNotebookIdentityChoice.load(links: keychain.store(Self.namespace + Self.recoveryLinkSuffix),
             recoveryStore: { keychain.store(recoveryPrefix + $0) },
-            usualPersonID: usual, usualDeviceID: usualDevice)
+            usualPersonID: usual, usualDeviceID: usualDevice, revocations: client.revocations)
     }
 
     /// The provider of FamilyNotebookServiceFactory.make(), line for line,
@@ -536,7 +536,7 @@ struct Drained: Decodable {
         return try FamilyNotebookSession(endpoint: relay.endpoint, identity: identity, transport: relay.transport,
             journal: journal, secrets: keychain.store(Self.namespace + ".family." + scope),
             directory: directory.appendingPathComponent("notebooks", isDirectory: true),
-            pinSync: FamilyNotebookStoredPinSync(store: cloud.pins))
+            pinSync: FamilyNotebookStoredPinSync(store: cloud.pins), revocations: client.revocations)
     }
 
     /// The person key of this iPhone's usual identity (currentRegisteredRoot).
@@ -675,6 +675,8 @@ struct Drained: Decodable {
         do {
             let state = try await service.loadState()
             lastState = state
+            // FamilyNotebookSharing.detachIfRevoked: the binding goes (11/20).
+            if service.takeRevokedDetach() { bindingSaved = false }
             // FamilyNotebookSharing.read after a whole read: the mark and
             // lastReadAt (attachReal's binding: notebookScreenCats).
             switch state {

@@ -83,6 +83,7 @@ final class FamilyNotebookSharing: ObservableObject {
             // 11/19 (機種変更 水準2): a read that began before the notebook
             // switched to the recovered identity says nothing about it.
             if (service as? ProductionFamilyNotebookSharingService)?.restartPending == true { return false }
+            detachIfRevoked(loaded)
             noteSend(); notedSend = true
             // A further pass of a notebook already on screen (more history, a
             // key rotation) keeps it there instead of flipping to 「準備しています」
@@ -245,11 +246,28 @@ final class FamilyNotebookSharing: ObservableObject {
             } catch is CancellationError {
                 return false
             } catch {
-                failure = error as? FamilySharingError ?? .unknownOutcome
+                // 11/20: the device was taken off: the read below shows the
+                // entrance; no error for it.
+                if (service as? ProductionFamilyNotebookSharingService)?.revokedDetachPending != true {
+                    failure = error as? FamilySharingError ?? .unknownOutcome
+                }
                 await refreshAfterChange()
                 return false
             }
         }
+    }
+
+    /// 11/20: the relay said the pair whose copy this iPhone shows was taken
+    /// off by another iPhone of the same person (or a mark from before, after
+    /// a relaunch). The notebook returns to its entrance, as for a person with
+    /// no notebook: not the ended notice, no error. The binding and the
+    /// waiting mark go; the copy stays on disk with what waits to be sent.
+    private func detachIfRevoked(_ loaded: FamilySharingState) {
+        guard let real = service as? ProductionFamilyNotebookSharingService else { return }
+        let model = FamilyNotebookPrototype.shared
+        guard real.takeRevokedDetach() || (loaded == .notInFamily && model.showsRevokedPair(real)) else { return }
+        model.detachRevoked()
+        Self.noteAwaitingApproval(false)
     }
 
     /// The read after a change is never dropped behind a background pass.

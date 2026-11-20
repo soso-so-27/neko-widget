@@ -678,7 +678,8 @@ extension GroupRecoveryLiveModel {
                 }
                 let client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: GroupKeychainStore(namespace: recovery),
                     transport: GroupURLSessionTransport(), outboxDirectory: root.appendingPathComponent("GroupTransport-v3", isDirectory: true)
-                        .appendingPathComponent("recovery-" + context.scope, isDirectory: true).appendingPathComponent("outbox", isDirectory: true))
+                        .appendingPathComponent("recovery-" + context.scope, isDirectory: true).appendingPathComponent("outbox", isDirectory: true),
+                    revocations: GroupKeychainStore(namespace: namespace))
                 _ = try await client.familyNotebookIdentity()
             }
             _ = await notebookRestarted()
