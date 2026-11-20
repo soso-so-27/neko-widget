@@ -73,7 +73,8 @@ describe('group photo product day: next JST midnight cutover',()=>{
   });
   it('migrates old committed and carried reservations without creating five extra slots',async()=>{
     const migrations=(env as unknown as {TEST_MIGRATIONS:D1Migration[]}).TEST_MIGRATIONS;
-    await reset();await applyD1Migrations(db,migrations.filter(m=>!m.name.startsWith('0071')));
+    const quotaUpgrade=migrations.filter(m=>m.name.startsWith('0071')||m.name.startsWith('0092'));
+    await reset();await applyD1Migrations(db,migrations.filter(m=>!quotaUpgrade.includes(m)));
     await db.prepare('UPDATE personal_staging_runtime_gate SET generation=generation+1,media_enabled=1,apns_enabled=1,report_ingestion_enabled=1,updated_at=unixepoch() WHERE singleton=1 AND generation=0').run();
     const f=await fixture(),now=Math.floor(Date.now()/1000),today=Math.floor((now+32400)/86400),start=today*86400-32400;
     await db.prepare('UPDATE group_photo_day_policy SET effective_at=0').run();
@@ -81,7 +82,7 @@ describe('group photo product day: next JST midnight cutover',()=>{
     const pending=[await f.reserve(start-10,now+1800),await f.reserve(start-10,now+1800)];
     await expect(f.reserve(now)).rejects.toThrow('group_photo_daily_limit');
     const before=(await db.prepare('SELECT * FROM group_moments ORDER BY id').all()).results;
-    await applyD1Migrations(db,migrations.filter(m=>m.name.startsWith('0071')));
+    await applyD1Migrations(db,quotaUpgrade);
     expect((await db.prepare('SELECT * FROM group_moments ORDER BY id').all()).results).toEqual(before);
     expect((await db.prepare('SELECT day_key,COUNT(*) n FROM group_moment_quota_days GROUP BY day_key').all()).results).toEqual([{day_key:today,n:5}]);
     await expect(f.reserve(now)).rejects.toThrow('group_photo_daily_limit');
