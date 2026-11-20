@@ -571,11 +571,11 @@ private struct VeterinaryConsultationView: View {
         let record = CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString)
             ?? (profile != nil ? catCareStore.ensureRecord(profileID: visit.catID, name: profile?.displayName)
                 : catCareStore.ensureRecord(toolCatID: visit.catID, profileIdentifier: nil, name: visit.catName))
-        var applied: Bool?
+        var outcome: Bool?
         guard let id = record?.catID, catCareStore.update({ state in
             guard let index = state.cats.firstIndex(where: { $0.catID == id }) else { return }
-            applied = result.apply(to: &state.cats[index], by: state.deviceID, now: Date())
-        }), let applied else {
+            outcome = result.apply(to: &state.cats[index], by: state.deviceID, now: Date())
+        }), let applied = outcome else {
             error = "体重を保存できませんでした。もう一度お試しください。"
             return
         }
