@@ -48,6 +48,21 @@ async function heart(p:Person,w:Window,momentId:string,active=true) {
       active,operationId,keyEpoch:w.roster.keyEpoch,rosterHash:w.hash}))};
 }
 describe('group encrypted relay and creator Plus commit boundary (runtime stays OFF outside test)',()=>{
+  it('cleans only unused identity challenges at least one day past expiry',async()=>{
+    const now=Math.floor(Date.now()/1000);
+    const unused=crypto.randomUUID(),recent=crypto.randomUUID(),consumed=crypto.randomUUID();
+    await db.batch([
+      [unused,now-86401,null],
+      [recent,now-86399,null],
+      [consumed,now-86401,now-86402],
+    ].map(([id,expiresAt,consumedAt])=>db.prepare("INSERT INTO group_challenges VALUES (?,'register',NULL,?,?,?,?)")
+      .bind(id,randomBase64url(32),randomBase64url(32),expiresAt,consumedAt)));
+    await runGroupRelayCleanup(testEnv,now);
+    const remaining=await db.prepare('SELECT id FROM group_challenges WHERE id IN (?,?,?) ORDER BY id')
+      .bind(unused,recent,consumed).all<{id:string}>();
+    expect(remaining.results.map(row=>row.id)).toEqual([recent,consumed].sort());
+  });
+
   it('lists only outgoing active blocks for a current member and caps the result at 500',async()=>{
     const {owner,bob,w}=await family(),prefix=`/v3/group-windows/${w.windowId}/blocks`;
     const ownerId=w.roster.members[0]!.participantId,bobId=w.roster.members[1]!.participantId;
