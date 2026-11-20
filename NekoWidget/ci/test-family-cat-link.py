@@ -134,12 +134,28 @@ class AskedOnce(unittest.TestCase):
         self.assertIn('static let linkFailedMessage = "少し待ってから、もう一度お試しください。"', NOTEBOOK)
 
     def test_an_answer_is_kept_and_written_once(self):
-        remember = block(NOTEBOOK, "func rememberLinkAnswer(_ cat: UUID) {")
-        self.assertIn("guard let key = answerKey(cat), !answeredLinks.contains(key) else { return }", remember)
+        remember = block(NOTEBOOK, "func rememberLinkAnswer(_ cat: UUID, linked: Bool = false) {")
+        self.assertIn("guard let key = answerKey(cat) else { return }", remember)
+        self.assertIn("linkAnswers.remember(key, linked: linked)", remember)
         pending = block(NOTEBOOK, "func pendingLinkQuestion(profiles: [String]) -> FamilyNotebookCatLink.Unlinked? {")
-        self.assertIn("!closedLinkQuestions.contains(cat.id)", pending)
-        # 「べつの子」 is remembered too.
+        self.assertIn("closed: closedLinkQuestions", pending)
+        unanswered = block(LINK, "static func firstUnanswered(")
+        self.assertIn("!closed.contains(cat.id)", unanswered)
+        # 「べつの子」 is remembered too (and kept in the Keychain); 「同じ子」 is not kept there.
         self.assertIn("familyNotebook.rememberLinkAnswer(question.cat.id)", HOME)
+        link = block(NOTEBOOK, "func link(_ cat: UUID, toProfile profile: UUID) async throws {")
+        self.assertIn("rememberLinkAnswer(cat, linked: true)", link)
+        self.assertNotIn("rememberLinkAnswer(cat)" + chr(10), link)
+
+    def test_answers_survive_deleting_the_app(self):
+        # 11/20: a device-only Keychain copy, restored once per process before
+        # any question is worked out (never while drawing).
+        memory = read("NekoWidget/Services/FamilyNotebookKeyCoordinator.swift")
+        self.assertIn('static let defaultsKey = "familyNotebook.catLinkAnswered.v1"', memory)
+        self.assertIn("static let limit = 200", memory)
+        refresh = block(NOTEBOOK, "private func refreshUnlinked() {")
+        self.assertIn("linkAnswers.restore(checked: &linkAnswersChecked)", refresh)
+        self.assertLess(refresh.index("linkAnswers.restore("), refresh.index("FamilyNotebookCatLink.unlinked("))
 
     def test_unlinked_cats_are_not_worked_out_while_drawing(self):
         self.assertIn("@Published private(set) var unlinkedCats: [FamilyNotebookCatLink.Unlinked] = []", NOTEBOOK)

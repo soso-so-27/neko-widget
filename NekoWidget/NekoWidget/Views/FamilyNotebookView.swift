@@ -110,7 +110,25 @@ final class FamilyNotebookPrototype: ObservableObject {
 
     // MARK: The same cat on this iPhone (11/15, FamilyNotebookCatLink)
 
-    private static let linkAnswersKey = "familyNotebook.catLinkAnswered.v1"
+    private static let linkAnswersKey = FamilyCatLinkAnswersMemory.defaultsKey
+    /// 11/20: the answers' Keychain copy was compared in this process.
+    private var linkAnswersChecked = false
+    /// The answers in UserDefaults with a copy in this iPhone's device-only
+    /// Keychain (FamilyCatLinkAnswersMemory), so deleting the app does not ask
+    /// 「同じ子ですか」 again. Review captures' sample cats keep no copy.
+    private var linkAnswers: FamilyCatLinkAnswersMemory {
+        let key = Self.linkAnswersKey
+        var keeps = isReal
+#if DEBUG
+        if fixtureCats != nil { keeps = false }
+#endif
+        return FamilyCatLinkAnswersMemory(defaults: { UserDefaults.standard.stringArray(forKey: key) },
+            setDefaults: { UserDefaults.standard.set($0, forKey: key) },
+            keychain: {
+                guard keeps else { return nil }
+                return try? GroupKeychainStore(namespace: GroupWindowClientProvider.namespace + FamilyCatLinkAnswersMemory.namespaceSuffix)
+            })
+    }
     /// Asked and closed without an answer: not asked again until next launch.
     private var closedLinkQuestions = Set<UUID>()
     /// This iPhone's cats as この子 last drew them (their photos), for the
@@ -154,6 +172,9 @@ final class FamilyNotebookPrototype: ObservableObject {
         var order: [UUID] = []
         var farewells: [String: CatCareDay] = [:]
         if isReal, hasFamily, let snapshot {
+            // 11/20: once per process, before any question is worked out.
+            let linked = FamilyNotebookCatLink.linkedAnswerKeys(in: snapshot)
+            linkAnswers.restore(checked: &linkAnswersChecked) { !linked.contains($0) }
             next = FamilyNotebookCatLink.unlinked(snapshot, care: CatCareStore.shared.state) { name(of: $0) }
             let cats = familyCats
             order = FamilyNotebookCatOrder.ordered(cats.map(\.id), in: snapshot)
@@ -261,10 +282,12 @@ final class FamilyNotebookPrototype: ObservableObject {
 
     /// The person answered for this family cat (same cat, or another cat):
     /// it is never asked again. Written once per answer, never while drawing.
-    func rememberLinkAnswer(_ cat: UUID) {
-        guard let key = answerKey(cat), !answeredLinks.contains(key) else { return }
-        UserDefaults.standard.set(Array(answeredLinks.union([key])).sorted(), forKey: Self.linkAnswersKey)
-        objectWillChange.send()
+    /// `linked`: 「同じ子」 (its Keychain copy is not kept, FamilyCatLinkAnswersMemory).
+    func rememberLinkAnswer(_ cat: UUID, linked: Bool = false) {
+        guard let key = answerKey(cat) else { return }
+        let known = answeredLinks.contains(key)
+        linkAnswers.remember(key, linked: linked)
+        if !known { objectWillChange.send() }
     }
 
     func closeLinkQuestion(_ cat: UUID) {
@@ -277,10 +300,8 @@ final class FamilyNotebookPrototype: ObservableObject {
     func pendingLinkQuestion(profiles: [String]) -> FamilyNotebookCatLink.Unlinked? {
         let linked = linkedProfiles
         guard profiles.contains(where: { UUID(uuidString: $0).map { !linked.contains($0) } ?? false }) else { return nil }
-        let answered = answeredLinks
-        return unlinkedFamilyCats.first { cat in
-            !closedLinkQuestions.contains(cat.id) && !(answerKey(cat.id).map { answered.contains($0) } ?? true)
-        }
+        return FamilyNotebookCatLink.firstUnanswered(unlinkedFamilyCats, closed: closedLinkQuestions,
+                                                     answered: answeredLinks) { answerKey($0) }
     }
 
     /// The profile's birthday is copied into 「この子のこと」 (CatCareStore.
@@ -291,7 +312,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     /// Links a family cat to a cat of this iPhone: one page from now on.
     func link(_ cat: UUID, toProfile profile: UUID) async throws {
 #if DEBUG
-        if fixtureCats != nil { rememberLinkAnswer(cat); return }
+        if fixtureCats != nil { rememberLinkAnswer(cat, linked: true); return }
 #endif
         guard isReal, hasFamily, let store, let snapshot, let author = realAuthor,
               let mapping = FamilyNotebookCatLink.catMapping(cat, in: snapshot), mapping.profileID == nil,
@@ -324,7 +345,7 @@ final class FamilyNotebookPrototype: ObservableObject {
                 _ = try store.applyImport(prepared.plan, author: author)
             }
         } catch {}
-        rememberLinkAnswer(cat)
+        rememberLinkAnswer(cat, linked: true)
         reload(); applyFamilyWrites()
         if let birthday = CatCareStore.shared.state?.record(catID: tool)?.birthday?.value ?? nil {
             await fillProfileBirthday?(profile, birthday)
