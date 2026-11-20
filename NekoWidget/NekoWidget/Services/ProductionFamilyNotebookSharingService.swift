@@ -638,7 +638,7 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     }
     func join(_ invitation: FamilyInvitationPreview, operationID: UUID) async throws -> FamilyJoinResult {
         try await renewIfRevoked()
-        try await run { context in
+        return try await run { context in
             try await admissionAllowed(context)
             try await context.admission.join(invitation, name: displayName(), operation: operationID)
             return .pendingApproval
