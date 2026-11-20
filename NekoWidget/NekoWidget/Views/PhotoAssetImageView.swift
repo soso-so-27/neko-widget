@@ -190,7 +190,7 @@ struct PhotoAssetImageView: View {
                             loader.cancel(preservingImage: true)
                             retryRevision &+= 1
                         } label: {
-                            Label("再読み込み", systemImage: "arrow.clockwise")
+                            Label("もう一度読み込む", systemImage: "arrow.clockwise")
                                 .frame(minWidth: 44, minHeight: 44)
                                 .contentShape(Rectangle())
                         }
@@ -223,7 +223,7 @@ struct PhotoAssetImageView: View {
                     loader.cancel(preservingImage: true)
                     retryRevision &+= 1
                 } label: {
-                    Label("再読み込み", systemImage: "arrow.clockwise")
+                    Label("もう一度読み込む", systemImage: "arrow.clockwise")
                         .font(.subheadline.weight(.semibold))
                         .padding(.horizontal, 14)
                         .frame(minWidth: 44, minHeight: 44)

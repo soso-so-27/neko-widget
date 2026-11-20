@@ -862,7 +862,7 @@ final class FamilyNotebookPrototype: ObservableObject {
                 if case let .text(text)? = record.value(.catName), !text.isEmpty { return text }
             }
         }
-        return "名前なし"
+        return "名前未設定の猫"
     }
 
     func state(_ cat: UUID, _ field: FamilyNotebookField) -> FamilyNotebookFieldState? {
@@ -1618,6 +1618,8 @@ extension FamilyNotebookView {
                 .accessibilityIdentifier("family-notebook-unsent")
                 // Held: the code to tell support (no explanation on screen).
                 .onLongPressGesture { showsSendCode = true }
+                // The same for VoiceOver, named with the line's own word.
+                .accessibilityAction(named: "コード") { showsSendCode = true }
             if showsSendCode {
                 Text("コード：" + sharing.sendCode)
                     .font(.caption2).foregroundStyle(.secondary)
@@ -2161,7 +2163,7 @@ struct FamilyNotebookInviteView: View {
                 Button(action: send) {
                     Group {
                         if creating { ProgressView() } else {
-                            Label("招待を送る", systemImage: "square.and.arrow.up").font(.headline)
+                            Label("招待リンクを送る", systemImage: "square.and.arrow.up").font(.headline)
                         }
                     }
                     .frame(maxWidth: .infinity, minHeight: 50)
@@ -2237,7 +2239,7 @@ struct FamilyNotebookInviteView: View {
     }
 }
 
-/// 11/14 (family journey A5): what one press on 「招待を送る」 does.
+/// 11/14 (family journey A5): what one press on 「招待リンクを送る」 does.
 enum FamilyInviteSendTap: Equatable {
     case ignore, create, share
 
@@ -2361,6 +2363,8 @@ struct FamilyNotebookJoinView: View {
                 Button("閉じる", role: .cancel) {}
             } message: { Text(sharing.failure?.message ?? "") }
         }
+        // Once, when joining succeeds (the result is set once per 「参加する」).
+        .sensoryFeedback(.success, trigger: result) { old, new in old != .joined && new == .joined }
         .task {
             // 1115s: opening the invitation link is the person's own action.
             await SharingPersonAction.run {
@@ -2495,7 +2499,7 @@ struct FamilyNotebookCatSelectionView: View {
                         set: { if $0 { selected.insert(cat.catID) } else { selected.remove(cat.catID) } })) {
                         HStack(spacing: 12) {
                             FamilyNotebookCatThumbnail(familyCat: nil, profile: cat.profileID)
-                            Text(cat.name?.value ?? "名前なし")
+                            Text(cat.name?.value ?? "名前未設定の猫")
                         }
                     }
                 }

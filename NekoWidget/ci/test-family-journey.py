@@ -12,7 +12,7 @@ A3. Plus bought (or restored) from the create-window prompt makes the window
     takes over paying once bought, when the family allows it.
 A4. 「24時間使えます。」 under the まど's and the family notebook's invite
     button (the server's 86400 seconds for both).
-A5. One press on the family notebook's 「招待を送る」 makes the link and opens
+A5. One press on the family notebook's 「招待リンクを送る」 makes the link and opens
     the share sheet.
 A6. The 写真 tab with no cat photos points a まど member to the まど tab.
 
@@ -142,7 +142,7 @@ class FamilyInviteOneTapTests(unittest.TestCase):
     def test_one_press_makes_and_shares(self):
         family = section(NOTEBOOK, "struct FamilyNotebookInviteView: View {", "struct FamilyNotebookJoinView: View {")
         self.assertNotIn("ShareLink(", family)
-        self.assertEqual(family.count('Label("招待を送る"'), 1)
+        self.assertEqual(family.count('Label("招待リンクを送る"'), 1)
         send = section(family, "private func send() {", "enum FamilyInviteSendTap")
         self.assertIn("FamilyInviteSendTap.action(isCreating: creating, hasInvitation: hasInvitation)", send)
         self.assertLess(send.index("invitation = made"), send.index("sharesInvitation = true\n            }"))
@@ -1007,14 +1007,71 @@ class IdentityDeletionAndLeaving1120Tests(unittest.TestCase):
             self.assertIn(key, local)
         # The person's own records, photos, widgets, 保存 and purchases are not touched.
         for token in ("CatCareStore", "CareHandoffStore", "VeterinaryVisitStore", "AppRecordDataset", "FamilyNotebookBackup",
-                      "GroupWindowLocalPhotoStore", "PlusPurchaseStore", "ManagedPreservation", "WidgetCenter"):
+                      "PlusPurchaseStore", "ManagedPreservation", "WidgetCenter"):
             self.assertNotIn(token, local)
+        # 11/20: the kept windows' list only for its choices, never a photo.
+        self.assertEqual(local.count("GroupWindowLocalPhotoStore"), 1)
+        self.assertIn("GroupWindowLocalPhotoStore.shared.forgetIdentityChoices()", local)
         client = read("NekoWidget/Services/ProductionGroupWindowClient.swift")
         request = section(client, "func requestIdentityDeletion() async throws -> GroupIdentityDeletion {", "\n    }\n")
         self.assertLess(request.index("if record.acceptedAt == nil {"), request.index("_ = removeGroupKeys()"))
         self.assertNotIn("try removeGroupKeys()", client)
         keys = section(client, "private func removeGroupKeys() -> Bool {", "\n    }\n")
         self.assertIn('account != Self.deletionAccount\n            && !account.hasPrefix("identity-deletion-history:")', keys)
+
+    def test_deletion_leaves_no_outbox_journal_marks_or_window_choices(self):
+        # 11/20 (after #1104): what was still left behind on this iPhone.
+        factory = read("NekoWidget/Services/FamilyNotebookServiceFactory.swift")
+        local = section(factory, "enum GroupIdentityDeletionLocalData {", "\n}\n") + "\n"
+        resume = section(local, "static func resumeIfNeeded() async {", "\n    }\n")
+        # The outbox and journal: after the rest, and the clean-up is marked done only when they went.
+        self.assertLess(resume.index("guard await remove(record) else { return }"),
+                        resume.index("guard await client.removeDeletedIdentityTransport() else { return }"))
+        self.assertLess(resume.index("guard await client.removeDeletedIdentityTransport() else { return }"),
+                        resume.index("try? await client.markIdentityDeletionLocalCleanupDone()"))
+        client = read("NekoWidget/Services/ProductionGroupWindowClient.swift")
+        transport = section(client, "func removeDeletedIdentityTransport() -> Bool {", "\n    }\n")
+        self.assertIn("guard let record = try? identityDeletion(), record.acceptedAt != nil else { return false }", transport)
+        self.assertIn('guard try secrets.read("device-link") == nil else { return false }', transport)
+        self.assertIn("record.personID == nil || current.personID != record.personID { return false }", transport)
+        self.assertIn('for account in try operations.accounts(prefix: "op:") {', transport)
+        self.assertIn('for file in files where file.pathExtension == "json" {', transport)
+        # The journal database stays open: rows go, never the folder or its file.
+        self.assertNotIn("removeItem(at: outboxDirectory", transport)
+        self.assertNotIn("http-operations", transport)
+        # UserDefaults: the person's own marks always; the shared ones only when no other identity remains.
+        remove = section(local, "static func remove(_ deletion: GroupIdentityDeletion) async -> Bool {", "\n    }\n")
+        self.assertLess(remove.index("local.removeAfterIdentityDeletion("),
+                        remove.index("removeDefaults(prefixes: [personDefaultsPrefix(person)])"))
+        self.assertLess(remove.index("removeDefaults(prefixes: [personDefaultsPrefix(person)])"),
+                        remove.index("if !outcome.otherIdentityRemains {"))
+        shared = section(remove, "if !outcome.otherIdentityRemains {", "\n        }\n")
+        self.assertIn("for key in sharedDefaultsKeys { UserDefaults.standard.removeObject(forKey: key) }", shared)
+        self.assertIn("removeDefaults(prefixes: sharedDefaultsPrefixes)", shared)
+        self.assertIn("if !outcome.otherIdentityRemains, !(await GroupWindowLocalPhotoStore.shared.forgetIdentityChoices()) {", remove)
+        self.assertLess(remove.index("FamilyNotebookSharing.shared.restartSession()"),
+                        remove.index("GroupWindowLocalPhotoStore.shared.forgetIdentityChoices()"))
+        self.assertIn('static func personDefaultsPrefix(_ personID: String) -> String { "familyNotebook.seen.v1." + personID + "." }', local)
+        self.assertIn("static let sharedDefaultsKeys = [FamilyReportReplies.sentKey]", local)
+        # The prefixes are the ones the app writes.
+        notebook = read("NekoWidget/Views/FamilyNotebookView.swift")
+        self.assertIn('return "familyNotebook.seen.v1." + person + "." + id.uuidString.lowercased()', notebook)
+        care = read("NekoWidget/Views/CatCareView.swift")
+        photos = read("NekoWidget/Services/GroupWindowLocalPhotoStore.swift")
+        for prefix, source_text, declaration in (
+                ("familyNotebook.creatorPhotos.v1.", care, 'private static let sentKeyPrefix = "familyNotebook.creatorPhotos.v1."'),
+                ("familyNotebook.creatorPhotos.seen.v1.", care, 'private static let seenKeyPrefix = "familyNotebook.creatorPhotos.seen.v1."'),
+                ("group.pendingManagement.v1.", photos, 'private static func storageKey(_ windowID: String) -> String { "group.pendingManagement.v1." + windowID }')):
+            self.assertIn(declaration, source_text)
+            self.assertIn('"' + prefix + '"', section(local, "static let sharedDefaultsPrefixes = [", "]"))
+        # windows.json: the choices and this identity's participant ID; the photos stay.
+        forget = section(photos, "func forgetIdentityChoices() -> Bool {", "\n    }\n")
+        self.assertIn("windows[index].hiddenMembers = nil", forget)
+        self.assertIn("windows[index].myParticipantID = nil", forget)
+        for token in ("removeItem", "loadIndex", "isRemoved", "GroupWindowKept"):
+            self.assertNotIn(token, forget)
+        verify = read("ci/verify-identity-deletion-cleanup.swift")
+        self.assertIn("try await transportChecks(folder)", verify)
 
     def test_leaving_sends_what_waits_once_first(self):
         # 11/20: one send pass before leaving (S21); never when ending the family.

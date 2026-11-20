@@ -132,6 +132,27 @@ final class AppLimitsTests: XCTestCase {
         XCTAssertEqual(CatNameText.storedMaximumCharacters, 80)
     }
 
+    /// 11/20: the limit and the cleaning hold at the model, not only in the
+    /// text field: a new name, an edited name and a name read from a file.
+    func testNewEditedAndImportedNamesFollowTheSameRule() throws {
+        let long = String(repeating: "猫", count: 25)
+        XCTAssertEqual(CatNameText.savingInput(long)?.count, 20)
+        XCTAssertEqual(CatNameText.savingInput("む\u{200B}ぎ\n"), "むぎ")
+        XCTAssertNil(CatNameText.savingInput(" \u{200B} "))
+        // A name saved earlier with 30 characters may be shortened, never grown.
+        let legacy = String(repeating: "猫", count: 30)
+        XCTAssertEqual(CatNameText.savingInput(String(legacy.dropLast()), previous: legacy)?.count, 29)
+        XCTAssertEqual(CatNameText.savingInput(legacy + "犬", previous: legacy), legacy)
+        XCTAssertEqual(CatNameText.savingInput(long, previous: "むぎ")?.count, 20)
+
+        // An exported file may hold older names; reading it applies the rule.
+        let file = try CatProfileTransfer(profiles: [
+            CatProfile(displayName: long), CatProfile(displayName: "む\u{202E}ぎ")
+        ])
+        let decoded = try CatProfileTransfer.decode(file.encoded())
+        XCTAssertEqual(decoded.profiles.map(\.name), [String(repeating: "猫", count: 20), "むぎ"])
+    }
+
     // MARK: - 6. Telephone numbers
 
     func testPhoneFieldsTakeDigitsAndPhoneSignsOnly() {

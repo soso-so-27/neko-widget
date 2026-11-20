@@ -1,6 +1,6 @@
 import {plusOwner} from './group-billing-fixture';
 import {describe,expect,it} from 'vitest';
-import {randomBase64url,base64urlEncode} from '../src/encoding';
+import {randomBase64url,base64urlDecode,base64urlEncode,sha256Base64url} from '../src/encoding';
 import {groupFields} from '../src/group-protocol';
 import type {Env} from '../src/env';
 import {testEnv,db,key,sign,send,post,person,signed,call,ok,create,invitation,apply,transition,packet} from './group-fixture';
@@ -72,6 +72,42 @@ describe('gated group HTTP identity, invitation and membership',()=>{
     expect((await send(modified)).data.error.code).toBe('invalid_authentication');
     expect((await call(owner,`${path}/invitations`,{operationId:crypto.randomUUID(),expectedRevision:1,proofPublicKey:(await key()).publicKey,notificationLabel:'private'})).status).toBe(400);
     expect((await call(owner,'/v3/group-windows',{})).status).toBe(400);
+  });
+  it('identifies clock skew only for a correctly signed request from an active device',async()=>{
+    const p=await person(),path='/v3/group-windows/list',method='POST';
+    const body=JSON.stringify({after:null,limit:20}),nonce=randomBase64url(16);
+    const time=String(Math.floor(Date.now()/1000)-600);
+    const hash=base64urlDecode(await sha256Base64url(new TextEncoder().encode(body)),32);
+    const message=groupFields(['NW3.REQUEST','3',p.deviceId,time,nonce,method,path,hash]);
+    const signature=await sign(p.signing.privateKey,message);
+    const request=(proof:string)=>new Request('https://group.invalid'+path,{method,body,headers:{
+      'content-type':'application/json','neko-protocol-version':'3','neko-device-id':p.deviceId,
+      'neko-timestamp':time,'neko-nonce':nonce,'neko-signature':proof,
+    }});
+    expect(await send(request(randomBase64url(64)))).toMatchObject({status:401,data:{error:{code:'invalid_authentication'}}});
+    const old=await send(request(signature));
+    expect(old).toMatchObject({status:401,data:{error:{code:'stale_request',reason:'clock_skew',serverNow:expect.any(Number)}}});
+    expect(await db.prepare('SELECT 1 FROM group_request_nonces WHERE device_id=? AND nonce=?')
+      .bind(p.deviceId,nonce).first()).toBeNull();
+    await db.prepare("UPDATE group_person_devices SET state='revoked',revoked_at=unixepoch() WHERE id=?").bind(p.deviceId).run();
+    const revoked=await send(request(signature));
+    expect(revoked.data.error).not.toHaveProperty('serverNow');
+    expect(revoked.data.error).not.toHaveProperty('reason','clock_skew');
+  });
+  it('limits an ordinary member directory to the signed roster and keeps rejoin lookup with the owner',async()=>{
+    const owner=await plusOwner(),former=await person(),guest=await person();let w=await create(owner);
+    const invite=await invitation(owner,w),first=await apply(former,w,invite);ok(first.response,201);
+    const admitted=await transition(owner,w,'admit',first.id,[...w.roster.members,first.member]);ok(admitted.response);w=admitted.next;
+    const removed=await transition(owner,w,'remove',first.member.participantId,w.roster.members.filter(m=>m.personId!==former.id));
+    ok(removed.response);w=removed.next;
+    const nextInvite=await invitation(owner,w),last=await apply(guest,w,nextInvite);ok(last.response,201);
+    const replaced=await transition(owner,w,'admit',last.id,[...w.roster.members,last.member]);ok(replaced.response);w=replaced.next;
+    const list=(member:typeof guest)=>call(member,'/v3/group-windows/'+w.windowId+'/members/list',{after:null,limit:50});
+    const ownerRows=ok(await list(owner)).items;
+    expect(ownerRows).toEqual(expect.arrayContaining([expect.objectContaining({id:first.member.participantId,state:'removed'})]));
+    const guestRows=ok(await list(guest)).items;
+    expect(guestRows.map((row:{id:string})=>row.id).sort()).toEqual(w.roster.members.map(member=>member.participantId).sort());
+    expect((await list(former)).status).toBe(404);
   });
   it('admits three people, preserves idempotency, and never gives pre-join keys or other device envelopes',async()=>{
     const owner=await plusOwner(),bob=await person(),cat=await person();let w=await create(owner);

@@ -36,6 +36,9 @@ struct MembershipOfferView: View {
     let showsClose: Bool
     /// In place of the context's own reason line (the year's work, 11/12).
     let reasonOverride: String?
+    /// 11/20: お問い合わせ under the message, after a restore failure that
+    /// waiting cannot fix (the same link as Settings). nil hides it.
+    let supportURL: URL?
     /// 「購入を復元」 was pressed, so its spinner sits on that link, not on the
     /// purchase button (11/6). Cleared when the work ends.
     @State private var running: String?
@@ -102,7 +105,8 @@ struct MembershipOfferView: View {
         onRestore: @escaping () -> Void,
         onClose: @escaping () -> Void,
         showsClose: Bool = true,
-        reasonOverride: String? = nil
+        reasonOverride: String? = nil,
+        supportURL: URL? = nil
     ) {
         self.context = context
         self.photo = photo
@@ -126,6 +130,7 @@ struct MembershipOfferView: View {
         self.onClose = onClose
         self.showsClose = showsClose
         self.reasonOverride = reasonOverride
+        self.supportURL = supportURL
     }
 
     var body: some View {
@@ -412,6 +417,15 @@ struct MembershipOfferView: View {
                 restoreButton
                     .font(.subheadline.weight(.semibold))
                     .buttonStyle(.bordered)
+            }
+
+            // 11/20: a paying person whose purchase cannot be matched here is
+            // never left with only 「購入を復元」 again: the Settings route.
+            if let supportURL, !isMember {
+                Link("お問い合わせ", destination: supportURL)
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("membership-offer-support")
             }
 
             // No separate re-check: 「購入を復元」 does both (11/5).

@@ -131,9 +131,9 @@ struct WeightedPhotoSelector {
         settings: AppSettings,
         now: Date
     ) -> [AssetRecord] {
-        // A cancelled threshold-changing rescan deliberately keeps old records
-        // so likes and progress can resume. Never publish those records until
-        // they have been analyzed with the active detector fingerprint.
+        // Records from settings a running rescan replaces stay eligible until
+        // the rescan replaces them (11/20, AppSettings.presentsAnalysis);
+        // records from any other earlier settings are never published.
         let cats = assets.filter {
             $0.isWidgetEligible(settings: settings)
         }
@@ -295,9 +295,9 @@ struct AlbumCandidateSelector {
     }
 
     func select(from snapshot: LibrarySnapshot, now: Date = .now) -> [AssetRecord] {
-        let fingerprint = snapshot.settings.analysisFingerprint
+        let settings = snapshot.settings
         var candidates = snapshot.assets.filter {
-            $0.isCatCandidate && $0.analysisFingerprint == fingerprint
+            $0.isCatCandidate && settings.presentsAnalysis(fingerprint: $0.analysisFingerprint)
         }
         if snapshot.settings.dateRange == .recentYear,
            let cutoff = calendar.date(byAdding: .year, value: -1, to: now) {

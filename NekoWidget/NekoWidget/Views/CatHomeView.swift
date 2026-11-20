@@ -356,6 +356,8 @@ struct CatHomeView: View {
             pageID = identifier
             addedCat = identifier
         }
+        // Once per cat added: set only here, and nil again when its page closes.
+        .sensoryFeedback(.success, trigger: addedCat) { old, new in old == nil && new != nil }
         .sheet(item: $linkQuestion, onDismiss: {
             if let closed = unansweredLinkCat { familyNotebook.closeLinkQuestion(closed) }
             unansweredLinkCat = nil

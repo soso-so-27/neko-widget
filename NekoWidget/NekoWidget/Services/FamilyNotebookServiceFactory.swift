@@ -183,6 +183,24 @@ enum GroupIdentityDeletionLocalData {
         (FamilyHiddenOperationsMemory.namespaceSuffix, ""), (FamilyCatLinkAnswersMemory.namespaceSuffix, ""),
         (GroupWindowKept.namespaceSuffix, GroupWindowKept.choicesAccountPrefix),
     ]
+    /// 11/20: the UserDefaults kept per family or window (every identity here
+    /// shares them, so only when no other identity remains): the creator's
+    /// photo records (FamilyRepresentativePhotos), a rename or close waiting
+    /// to be resent (GroupManagementMemory), and the 「通報への返答」 row's mark.
+    static let sharedDefaultsPrefixes = [
+        "familyNotebook.creatorPhotos.v1.", "familyNotebook.creatorPhotos.seen.v1.", "group.pendingManagement.v1.",
+    ]
+    static let sharedDefaultsKeys = [FamilyReportReplies.sentKey]
+    /// 11/20: the notebook's 「ここまで見た」 marks are keyed by the person
+    /// (FamilyNotebookPrototype.currentSeenKey): the deleted person's go always.
+    static func personDefaultsPrefix(_ personID: String) -> String { "familyNotebook.seen.v1." + personID + "." }
+
+    static func removeDefaults(prefixes: [String]) {
+        let defaults = UserDefaults.standard
+        for key in defaults.dictionaryRepresentation().keys where prefixes.contains(where: { key.hasPrefix($0) }) {
+            defaults.removeObject(forKey: key)
+        }
+    }
 
     /// At launch and when the deletion screen opens or deletes: finishes a
     /// clean-up that the app closing or a Keychain error stopped. Nothing
@@ -191,6 +209,8 @@ enum GroupIdentityDeletionLocalData {
         guard let client = GroupWindowClientProvider.production,
               let record = try? await client.identityDeletionNeedingLocalCleanup() else { return }
         guard await remove(record) else { return }
+        // 11/20: the deleted identity's まど outbox and HTTP journal.
+        guard await client.removeDeletedIdentityTransport() else { return }
         try? await client.markIdentityDeletionLocalCleanupDone()
     }
 
@@ -217,13 +237,21 @@ enum GroupIdentityDeletionLocalData {
         let outcome = local.removeAfterIdentityDeletion(endpoint: endpoint, personID: person, deviceID: deletion.deviceID,
                                                         linkSuffix: FamilyNotebookServiceFactory.recoveryLinkSuffix)
         var complete = outcome.complete
+        removeDefaults(prefixes: [personDefaultsPrefix(person)])
         if !outcome.otherIdentityRemains {
             for key in defaultsKeys { UserDefaults.standard.removeObject(forKey: key) }
+            for key in sharedDefaultsKeys { UserDefaults.standard.removeObject(forKey: key) }
+            removeDefaults(prefixes: sharedDefaultsPrefixes)
             GroupDisplayName.forgetChecked()
             if !local.removeSharedCopies(keychainCopies) { complete = false }
         }
         FamilyNotebookSharing.shared.restartSession()
         if !(await removeDeletedPersonSyncedRoot(personID: person)) { complete = false }
+        // 11/20: the same window choices in the kept windows' list
+        // (windows.json), after the notebook's stores went.
+        if !outcome.otherIdentityRemains, !(await GroupWindowLocalPhotoStore.shared.forgetIdentityChoices()) {
+            complete = false
+        }
         // The notebook's screens read again (the identity that remains, if any).
         _ = await FamilyNotebookSharing.shared.refreshAfterPlusChange(reportsFailure: false)
         return complete

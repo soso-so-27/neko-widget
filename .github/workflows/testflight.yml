@@ -1865,6 +1865,7 @@ jobs:
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           OWNER_INTERNAL_GROUP_ID: ${{ secrets.OWNER_INTERNAL_GROUP_ID }}
           OWNER_INTERNAL_TESTER_ID: ${{ secrets.OWNER_INTERNAL_TESTER_ID }}
+          OWNER_INTERNAL_EMAIL: ${{ secrets.OWNER_INTERNAL_EMAIL }}
           SIGNED_ARTIFACT_ENCRYPTION_PASSWORD: ${{ secrets.SIGNED_ARTIFACT_ENCRYPTION_PASSWORD }}
         run: |
           set -euo pipefail

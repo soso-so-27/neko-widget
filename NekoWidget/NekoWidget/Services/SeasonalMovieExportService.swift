@@ -48,6 +48,12 @@ actor SeasonalMovieExportService {
     private static let monthMarkerDuration: TimeInterval = 0.8
     private static let requestTimeoutNanoseconds: UInt64 = 8_000_000_000
 
+    /// One scene that could not be read on this iPhone (11/20). The export
+    /// starts again without it instead of failing the whole movie.
+    private struct UnavailableScene: Error {
+        let localIdentifier: String
+    }
+
     private enum FrameOverlay {
         case opening(title: String, period: String)
         case month(String)
@@ -85,6 +91,20 @@ actor SeasonalMovieExportService {
         _ presentation: SeasonalMoviePresentation,
         soundEnabled: Bool
     ) async throws -> URL {
+        try await exportOmittingUnavailableScenes(
+            presentation,
+            soundEnabled: soundEnabled
+        ).url
+    }
+
+    /// 11/20: a photo deleted since, or kept only in iCloud (nothing here
+    /// downloads it, as in the player), is left out and the movie is made
+    /// from the other scenes, never with blank frames. `omitted` says why
+    /// a scene was left out, with the existing wording; nil when none was.
+    func exportOmittingUnavailableScenes(
+        _ presentation: SeasonalMoviePresentation,
+        soundEnabled: Bool
+    ) async throws -> (url: URL, omitted: SeasonalMovieExportError?) {
         guard !presentation.scenes.isEmpty else {
             throw SeasonalMovieExportError.emptyPresentation
         }
@@ -101,15 +121,36 @@ actor SeasonalMovieExportService {
                     try? fileManager.removeItem(at: soundtrackURL)
                 }
             }
-            let assets = try fetchedAssets(for: presentation)
-            try await encode(
-                presentation: presentation,
-                assets: assets,
-                outputURL: outputURL,
-                soundtrackURL: soundtrackURL
+            let assets = fetchedAssets(for: presentation)
+            var playable = presentation.replacingScenes(
+                presentation.scenes.filter { assets[$0.localIdentifier] != nil }
             )
+            var omitted: SeasonalMovieExportError? = playable.scenes.count
+                < presentation.scenes.count ? .assetMissing : nil
+            // Each pass either finishes or leaves out one more scene.
+            while true {
+                guard !playable.scenes.isEmpty else {
+                    throw omitted ?? SeasonalMovieExportError.assetMissing
+                }
+                do {
+                    try await encode(
+                        presentation: playable,
+                        assets: assets,
+                        outputURL: outputURL,
+                        soundtrackURL: soundtrackURL
+                    )
+                    break
+                } catch let unavailable as UnavailableScene {
+                    try Task.checkCancellation()
+                    try? fileManager.removeItem(at: outputURL)
+                    playable = playable.replacingScenes(playable.scenes.filter {
+                        $0.localIdentifier != unavailable.localIdentifier
+                    })
+                    omitted = .mediaNotAvailableOffline
+                }
+            }
             try protectOutput(at: outputURL)
-            return outputURL
+            return (outputURL, omitted)
         } catch is CancellationError {
             Self.cleanupExport(at: outputURL, fileManager: fileManager)
             throw SeasonalMovieExportError.cancelled
@@ -138,9 +179,10 @@ actor SeasonalMovieExportService {
         )
     }
 
+    /// Photos deleted since the movie was made are simply absent.
     private func fetchedAssets(
         for presentation: SeasonalMoviePresentation
-    ) throws -> [String: PHAsset] {
+    ) -> [String: PHAsset] {
         let identifiers = presentation.scenes.map(\.localIdentifier)
         let result = PHAsset.fetchAssets(
             withLocalIdentifiers: identifiers,
@@ -149,9 +191,6 @@ actor SeasonalMovieExportService {
         var assets: [String: PHAsset] = [:]
         result.enumerateObjects { asset, _, _ in
             assets[asset.localIdentifier] = asset
-        }
-        guard identifiers.allSatisfy({ assets[$0] != nil }) else {
-            throw SeasonalMovieExportError.assetMissing
         }
         return assets
     }
@@ -229,7 +268,7 @@ actor SeasonalMovieExportService {
                 try Task.checkCancellation()
                 let scene = presentation.scenes[index]
                 guard let asset = assets[scene.localIdentifier] else {
-                    throw SeasonalMovieExportError.assetMissing
+                    throw UnavailableScene(localIdentifier: scene.localIdentifier)
                 }
                 let sceneDuration = presentation.playbackDuration(at: index)
                 let frameCount = max(
@@ -258,7 +297,7 @@ actor SeasonalMovieExportService {
                     guard asset.mediaType == .image,
                           let image = await localImage(for: asset),
                           let frameImage = normalizedCIImage(from: image) else {
-                        throw SeasonalMovieExportError.mediaNotAvailableOffline
+                        throw UnavailableScene(localIdentifier: scene.localIdentifier)
                     }
                     finalFrameImage = frameImage
                     for localFrame in 0..<frameCount {
@@ -278,17 +317,17 @@ actor SeasonalMovieExportService {
                 case .video:
                     guard asset.mediaType == .video,
                           let avAsset = await SeasonalMovieLocalMediaLoader.avAsset(for: asset) else {
-                        throw SeasonalMovieExportError.mediaNotAvailableOffline
+                        throw UnavailableScene(localIdentifier: scene.localIdentifier)
                     }
                     let duration: CMTime
                     do {
                         duration = try await avAsset.load(.duration)
                     } catch {
-                        throw SeasonalMovieExportError.mediaNotAvailableOffline
+                        throw UnavailableScene(localIdentifier: scene.localIdentifier)
                     }
                     let durationSeconds = CMTimeGetSeconds(duration)
                     guard durationSeconds.isFinite, durationSeconds > 0 else {
-                        throw SeasonalMovieExportError.mediaNotAvailableOffline
+                        throw UnavailableScene(localIdentifier: scene.localIdentifier)
                     }
 
                     let start = min(
@@ -319,7 +358,7 @@ actor SeasonalMovieExportService {
                         do {
                             generated = try await generator.image(at: sourceTime).image
                         } catch {
-                            throw SeasonalMovieExportError.mediaNotAvailableOffline
+                            throw UnavailableScene(localIdentifier: scene.localIdentifier)
                         }
                         let generatedImage = CIImage(cgImage: generated)
                         finalFrameImage = generatedImage
