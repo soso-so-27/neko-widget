@@ -8,6 +8,7 @@ import {binaryField,exactKeys,uuidField} from './validation';
 
 export const recoveryDeviceRemovalTranscript=(c:RecoveryChallenge,device:string)=>
  groupFields(['NW3.RECOVERY.REMOVE-DEVICE.V1',recoveryCatalogTranscript(c),base64urlDecode(device,32)]);
+const denied=()=>new ApiError(401,'recovery_authentication_failed','Recovery authentication failed.');
 /** Removing this person's device revokes its server access across their memberships.
  * Does not revoke the root, delete photos, leave a family, or select another root. */
 export async function removeRecoveryDevice(env:Env,body:Record<string,unknown>,now:number):Promise<Response>{
@@ -16,7 +17,7 @@ export async function removeRecoveryDevice(env:Env,body:Record<string,unknown>,n
  .bind(uuidField(body,'challengeId')).first<RecoveryChallenge>();
  if(!c||c.environment!==env.ENVIRONMENT||c.purpose!=='register'||c.consumed_at!==null||now<c.issued_at||now>=c.expires_at
  ||!await verifyEd25519(c.identity_public_key,binaryField(body,'rootSignature',64),recoveryDeviceRemovalTranscript(c,device)))
- throw new ApiError(401,'recovery_authentication_failed','Recovery authentication failed.');
+ throw denied();
  await requireCurrentIdentity(env,c.person_id);
  return protectedGroupRead(env,async()=>{
   const previous=await env.DB.prepare('SELECT device_id FROM group_recovery_device_removals WHERE person_id=? AND operation_id=?').bind(c.person_id,c.operation_id).first<{device_id:string}>();
@@ -27,7 +28,7 @@ export async function removeRecoveryDevice(env:Env,body:Record<string,unknown>,n
    .bind(device,c.person_id,device,c.person_id,device,c.person_id).first();
   if(!owned)throw new ApiError(404,'device_not_found','Device unavailable.');
   const claim=crypto.randomUUID();
-  await env.DB.batch([
+  try { await env.DB.batch([
    env.DB.prepare('UPDATE group_recovery_challenges SET consumed_at=?,consumed_by=? WHERE id=? AND consumed_at IS NULL AND expires_at>?').bind(now,claim,c.id,now),
    env.DB.prepare('INSERT INTO group_recovery_read_checks VALUES (?,?,?,?)').bind(claim,c.person_id,c.id,now),
    env.DB.prepare('INSERT INTO group_recovery_device_removals VALUES (?,?,?,?) ON CONFLICT(person_id,operation_id) DO NOTHING').bind(c.person_id,c.operation_id,device,now),
@@ -40,7 +41,16 @@ export async function removeRecoveryDevice(env:Env,body:Record<string,unknown>,n
    env.DB.prepare('DELETE FROM group_recovery_pending WHERE person_id=? AND device_id=?').bind(c.person_id,device),
    ...['group_push_subscriptions','group_join_push_subscriptions','family_push_subscriptions'].map(t=>env.DB.prepare(`UPDATE ${t} SET expires_at=0,generation=generation+1,token_ciphertext='',token_nonce='',token_digest='' WHERE device_id=?`).bind(device)),
    env.DB.prepare('DELETE FROM group_recovery_read_checks WHERE id=?').bind(claim),
-  ]);
+  ]); } catch(error) {
+   if (error instanceof Error && (error.message.includes('group_recovery_challenge_invalid')
+    || error.message.includes('group_recovery_identity_unavailable'))) throw denied();
+   if (error instanceof Error && error.message.includes('malformed JSON')) {
+    const winner=await env.DB.prepare('SELECT device_id FROM group_recovery_device_removals WHERE person_id=? AND operation_id=?')
+     .bind(c.person_id,c.operation_id).first<{device_id:string}>();
+    if(winner&&winner.device_id!==device)throw new ApiError(409,'idempotency_conflict','Different removal intent.');
+   }
+   throw error;
+  }
   return jsonResponse({personId:c.person_id,operationId:c.operation_id,deviceId:device,state:'revoked'});
  });
 }
