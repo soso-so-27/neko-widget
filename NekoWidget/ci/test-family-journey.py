@@ -301,9 +301,15 @@ class FamilyJoinAfterApproval1115Tests(unittest.TestCase):
         # 1115q: coming to the front only tells the one schedule.
         self.assertIn("FamilyNotebookAutoCheck.shared.setActive(active)", check)
         auto = section(SHARING, "final class FamilyNotebookAutoCheck {", "/// 11/15: this iPhone asked to join")
-        self.assertIn("model.hasFamily || FamilyNotebookSharing.awaitingApproval", auto)
+        self.assertIn("FamilyAutoCheckPolicy.eligible(.init(real: model.isReal, hasFamily: model.hasFamily,", auto)
+        self.assertIn("awaitingApproval: FamilyNotebookSharing.awaitingApproval,", auto)
+        self.assertIn("e.real && (e.hasFamily || e.awaitingApproval || e.awaitingApprovalUnknown", POLICY)
         # An app from before 11/15 left no mark: one read settles it.
-        self.assertIn("|| FamilyNotebookSharing.awaitingApprovalUnknown)", auto)
+        self.assertIn("awaitingApprovalUnknown: FamilyNotebookSharing.awaitingApprovalUnknown,", auto)
+        # 11/20: a launch that read nothing yet reads once when this iPhone has an identity.
+        self.assertIn("|| (e.unreadThisLaunch && e.hasIdentity)) || e.resumeProbeDue", POLICY)
+        self.assertIn("unreadThisLaunch: unreadThisLaunch, hasIdentity: hasNotebookIdentity == true,", auto)
+        self.assertIn("hasNotebookIdentity = await real.hasLocalIdentity()", auto)
         self.assertIn("UserDefaults.standard.object(forKey: FamilyNotebookAwaitingApproval.key) == nil", SHARING)
         self.assertIn("await sharing.refresh()", auto)
         self.assertIn("model.applyFamilyWrites()", auto)
@@ -607,7 +613,8 @@ class RegistrationTests(unittest.TestCase):
         self.assertNotIn("retryRepresentativePhoto", load)
         # Ended without proof: the one schedule still asks, at most hourly.
         auto = section(SHARING, "final class FamilyNotebookAutoCheck {", "/// 11/15: this iPhone asked to join")
-        self.assertIn("|| FamilyNotebookSharing.awaitingApprovalUnknown) || resumeProbeDue", auto)
+        self.assertIn("resumeProbeDue: resumeProbeDue))", auto)
+        self.assertIn(") || e.resumeProbeDue", POLICY)
         self.assertIn("static let resumeProbeGap: TimeInterval = 60 * 60", POLICY)
         # Own leaving and ending record a final reason.
         membership = read("NekoWidget/Services/FamilyNotebookMembershipClient.swift")

@@ -42,7 +42,7 @@ sources=(
   NekoWidget/Services/CareHandoffPlan.swift NekoWidget/Services/PhotoMemoryNoteStore.swift
   NekoWidget/Services/VeterinaryVisitStore.swift NekoWidget/Services/FamilyNotebookMigration.swift
   NekoWidget/Services/FamilyNotebookCatCareBridge.swift NekoWidget/Services/FamilyNotebookToolBridge.swift
-  NekoWidget/Services/FamilyNotebookCatLink.swift
+  NekoWidget/Services/FamilyNotebookCatLink.swift NekoWidget/Services/SharingAutoCheckPolicy.swift
   ci/two-device/Harness.swift ci/two-device/Scenarios.swift
 )
 echo "Compiling the two-device driver (${#sources[@]} files)" >&2

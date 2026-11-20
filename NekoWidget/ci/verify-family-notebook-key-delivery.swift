@@ -550,6 +550,7 @@ private enum CallBudgetChecks {
         let billing = try billingGate()
         let writing = try writingOnTheCatPage()
         try photoScreenReadsOnceAMinute()
+        try launchReadsOnceWithIdentity()
         print("11/16: typing on a family cat's page for 2 min: \(writing.perMinute) calls a minute at most; "
             + "a save shows on the other iPhone's open cat page within \(writing.worstSeconds) s")
         print("1115v: a 429 that came back after 10 s holds automatic calls until \(pause.silentUntil) s, again at \(pause.resumesAt) s; "
@@ -583,6 +584,31 @@ private enum CallBudgetChecks {
         }
         try check(passes == 10, "10 minutes on この子: 10 passes")
         print("11/19: この子 with a family photo: a full pass every \(Int(full.after)) s (\(passes) in 10 min); none without the family")
+    }
+
+    /// 11/20 (real iPhone): a member reinstalled on a build without its name;
+    /// the first read settled "not waiting" but kept no notebook binding, and
+    /// every later launch sat on the spinner because nothing was eligible to
+    /// read. A launch that read nothing yet reads once when this iPhone has an
+    /// identity; without one, or once a read answered, nothing more.
+    static func launchReadsOnceWithIdentity() throws {
+        typealias P = FamilyAutoCheckPolicy
+        let stuck = P.Eligibility(real: true, unreadThisLaunch: P.unreadThisLaunch(lastReadAt: nil, checking: true))
+        try check(!P.eligible(stuck), "no identity: no read at launch (no network for people who never shared)")
+        var withIdentity = stuck; withIdentity.hasIdentity = true
+        try check(P.eligible(withIdentity), "the stuck member's launch reads once")
+        var answered = withIdentity
+        answered.unreadThisLaunch = P.unreadThisLaunch(lastReadAt: Date(), checking: false)
+        try check(!answered.unreadThisLaunch && !P.eligible(answered), "a read answered outside the family: no more passes")
+        try check(!P.unreadThisLaunch(lastReadAt: Date(), checking: true), "a read answered in this launch is not unread")
+        try check(!P.unreadThisLaunch(lastReadAt: nil, checking: false), "a known state is not unread")
+        var prototype = withIdentity; prototype.real = false
+        try check(!P.eligible(prototype), "test builds send nothing")
+        try check(P.eligible(.init(real: true, hasFamily: true)), "an open notebook stays eligible")
+        try check(P.eligible(.init(real: true, awaitingApproval: true)), "waiting to be let in stays eligible")
+        try check(P.eligible(.init(real: true, awaitingApprovalUnknown: true)), "an unsettled mark stays eligible")
+        try check(P.eligible(.init(resumeProbeDue: true)), "an ended notebook's probe stays eligible")
+        print("11/20: a launch with an identity and nothing read yet reads once; none without an identity or after an answer")
     }
 
     /// 8 epochs whose keys never come, the notebook open, the app in front, 10 minutes.

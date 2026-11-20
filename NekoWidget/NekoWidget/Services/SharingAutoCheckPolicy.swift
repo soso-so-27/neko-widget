@@ -87,6 +87,35 @@ enum FamilyAutoCheckPolicy {
         if s.photoOpen { return .init(pass: .full, after: notebookFullInterval) }
         return nil
     }
+
+    /// What the schedule knows when it decides whether to read the family at all.
+    struct Eligibility: Equatable, Sendable {
+        var real = false
+        /// The notebook is open on this iPhone (its kept binding, or a read in this launch).
+        var hasFamily = false
+        var awaitingApproval = false
+        /// The mark was never settled on this iPhone (a fresh install).
+        var awaitingApprovalUnknown = false
+        /// No whole read answered in this launch and the state is still checking.
+        var unreadThisLaunch = false
+        /// This iPhone holds an identity the notebook could use (Keychain only).
+        var hasIdentity = false
+        var resumeProbeDue = false
+    }
+
+    /// 11/20: an iPhone whose notebook binding was never kept (a reinstall on
+    /// a build that had no name then) but whose mark was settled sat on the
+    /// spinner of 「家族の手帳」 without end: nothing read. A launch that has
+    /// not read yet now reads once when this iPhone has an identity.
+    static func eligible(_ e: Eligibility) -> Bool {
+        e.real && (e.hasFamily || e.awaitingApproval || e.awaitingApprovalUnknown
+            || (e.unreadThisLaunch && e.hasIdentity)) || e.resumeProbeDue
+    }
+
+    /// No read answered in this launch (`lastReadAt`) and nothing is known yet.
+    static func unreadThisLaunch(lastReadAt: Date?, checking: Bool) -> Bool {
+        lastReadAt == nil && checking
+    }
 }
 
 /// 11/15 (1115q): checking a purchase the server has not confirmed yet. The

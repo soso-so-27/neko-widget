@@ -362,6 +362,46 @@ struct Drained: Decodable {
     /// The notebook screen's 「通報への返答」 row (`sentPhotoReport || showsFixture`; no fixture here).
     var showsReplyRow: Bool { reportSent }
 
+    /// FamilyNotebookLocalBinding in UserDefaults (FamilyNotebookPrototype.attachReal
+    /// writes it; the next launch opens the notebook copy from it). Deleting the app wipes it.
+    private(set) var bindingSaved = false
+    /// false: this iPhone runs a build whose read found no author after a
+    /// reinstall (the name was lost), so attachReal kept no binding (before #1095).
+    var savesBinding = true
+    /// FamilyNotebookAwaitingApproval.key in UserDefaults: nil never settled.
+    private(set) var awaitingApprovalMark: Bool?
+    /// FamilyNotebookSharing.lastReadAt: process memory.
+    private(set) var lastReadAt: Date?
+    /// The schedule's FamilyNotebookAutoCheck.hasNotebookIdentity: once per process.
+    private var identityChecked: Bool?
+
+    /// FamilyNotebookPrototype.hasFamily: before any read of this launch the
+    /// copy opens only from the kept binding (openRealBinding); after one,
+    /// attachReal holds the service's copy.
+    var screenHasFamily: Bool {
+        let snapshot = try? service.notebook?.snapshot()
+        if lastReadAt == nil { return bindingSaved && snapshot.map { !$0.sharingEnded } != false }
+        return snapshot.map { !$0.sharingEnded } ?? false
+    }
+
+    /// FamilyNotebookAutoCheck.run's first steps: the identity check once per
+    /// launch while nothing was read, then the app's own eligibility.
+    func scheduleEligible() async -> Bool {
+        let unread = FamilyAutoCheckPolicy.unreadThisLaunch(lastReadAt: lastReadAt, checking: lastState == nil)
+        if identityChecked == nil, unread { identityChecked = await service.hasLocalIdentity() }
+        return FamilyAutoCheckPolicy.eligible(.init(real: true, hasFamily: screenHasFamily,
+            awaitingApproval: awaitingApprovalMark == true, awaitingApprovalUnknown: awaitingApprovalMark == nil,
+            unreadThisLaunch: unread, hasIdentity: identityChecked == true, resumeProbeDue: false))
+    }
+
+    /// One pass of the schedule: a read only when the app's eligibility says so.
+    /// Returns whether it read.
+    @discardableResult func automaticPass() async -> Bool {
+        guard await scheduleEligible() else { Log.note("\(name): the schedule is not eligible; no read"); return false }
+        await pass()
+        return true
+    }
+
     init(_ name: String, relay: Relay, cloud: PersonCloud, keychain: DeviceKeychain = DeviceKeychain(), billing: BillingCredential? = nil) {
         self.name = name; self.relay = relay; self.cloud = cloud; self.keychain = keychain; self.billing = billing
         support = Self.newSupportFolder(name)
@@ -401,6 +441,7 @@ struct Drained: Decodable {
             moderationRecipient: { (keyID: GroupReportCrypto.moderationKeyID, publicKey: GroupReportCrypto.moderationPublicKey) })
         notebookIdentity = nil; lastState = nil; nameChecked = false
         hiddenEntriesChecked = false; repliesCheckedNone = false
+        lastReadAt = nil; identityChecked = nil
         // Notifications allowed (GroupAdmissionService passes the token on).
         await service.updatePushSubscription(token: pushToken, environment: "production")
     }
@@ -414,7 +455,16 @@ struct Drained: Decodable {
         support = Self.newSupportFolder(name)
         rememberedName = ""; keepsNameInKeychain = true
         hiddenEntries = nil; reportSent = false
+        bindingSaved = false; savesBinding = true; awaitingApprovalMark = nil
         pushToken = Data((0..<32).map { _ in UInt8.random(in: 0...255) })
+        try await launch()
+    }
+
+    /// The app is closed and opened again (the process ends): memory is new,
+    /// UserDefaults, Application Support and both Keychains stay, the push
+    /// token too. Unlike `reinstall()`, nothing on the iPhone is wiped.
+    func relaunch() async throws {
+        Log.note("\(name): the app is closed and opened again")
         try await launch()
     }
 
@@ -580,6 +630,14 @@ struct Drained: Decodable {
         do {
             let state = try await service.loadState()
             lastState = state
+            // FamilyNotebookSharing.read after a whole read: the mark and
+            // lastReadAt (attachReal's binding: notebookScreenCats).
+            switch state {
+            case .pendingApproval, .waitingForKeys: awaitingApprovalMark = true
+            case .notInFamily, .inFamily: awaitingApprovalMark = false
+            default: break
+            }
+            lastReadAt = Date()
             Log.note("\(name): \(state)")
             return state
         } catch {
@@ -600,6 +658,8 @@ struct Drained: Decodable {
     func notebookScreenCats() throws -> [UUID] {
         let store = try required(service.notebook, "\(name) has no notebook copy")
         let author = try required(service.author, "\(name) has no author (the screen stops before its cats)")
+        // attachReal keeps the binding (UserDefaults) once it has a copy and an author.
+        if savesBinding { bindingSaved = true }
         let snapshot = try store.snapshot()
         try expect(!snapshot.sharingEnded, "\(name)'s notebook is shared")
         try FamilyNotebookCatCareBridge.linkFamilyCats(store, snapshot: snapshot, existingLocalIDs: [], author: author, profiles: [])

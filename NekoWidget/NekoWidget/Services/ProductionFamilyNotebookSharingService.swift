@@ -326,6 +326,12 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
         let family = try await family(context)
         return try await context.membership.loadPayer(familyID: family.familyID, minimumGeneration: family.generation)
     }
+    /// 11/20: this iPhone holds an identity the notebook could open with
+    /// (the usual one or a recovered one): Keychain reads only, no network.
+    func hasLocalIdentity() async -> Bool {
+        (try? await hasExistingIdentity()) == true
+    }
+
     func loadState() async throws -> FamilySharingState {
         guard try await hasExistingIdentity() else {
             currentFamilyID = nil; lastMembers = []; session = nil; photoMaterial = nil; photoClient = nil; pushFamilies = []
