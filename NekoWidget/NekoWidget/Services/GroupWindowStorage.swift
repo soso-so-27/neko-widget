@@ -59,6 +59,22 @@ final class GroupKeychainStore: GroupSecretStore, Sendable {
         let status = SecItemDelete(query(account) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw GroupClientError.authenticationRequired }
     }
+    /// 11/20: the namespaces of this app's device-only stores (as passed to
+    /// `init(namespace:)`) that start with `prefix` and hold at least one
+    /// item, e.g. every `.family.<scope>` of one group namespace.
+    static func namespaces(prefix: String) throws -> [String] {
+        let suffix = ".group-windows.v3"
+        let request: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+            kSecAttrSynchronizable as String: false,
+            kSecReturnAttributes as String: true, kSecMatchLimit as String: kSecMatchLimitAll]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(request as CFDictionary, &result)
+        if status == errSecItemNotFound { return [] }
+        guard status == errSecSuccess, let rows = result as? [[String: Any]] else { throw GroupClientError.authenticationRequired }
+        let services = rows.compactMap { $0[kSecAttrService as String] as? String }
+            .filter { $0.hasPrefix(prefix) && $0.hasSuffix(suffix) && $0.count > prefix.count + suffix.count }
+        return Set(services.map { String($0.dropLast(suffix.count)) }).sorted()
+    }
 }
 
 struct GroupDeviceIdentity: Codable, Sendable {
@@ -267,7 +283,9 @@ enum GroupWindowKept {
         let sentAt: Date
     }
 
-    private static func choicesAccount(_ windowID: String) -> String { "choices:" + windowID }
+    /// 11/20: 「まどと家族の手帳のデータを消す」 removes these; the report copies stay.
+    static let choicesAccountPrefix = "choices:"
+    private static func choicesAccount(_ windowID: String) -> String { choicesAccountPrefix + windowID }
     private static func reportsAccount(_ windowID: String) -> String { "reports:" + windowID }
 
     /// nil: nothing kept. Throws when the Keychain or the item could not be read.

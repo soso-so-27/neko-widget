@@ -3041,6 +3041,8 @@ struct GroupIdentityDeletionView: View {
         .task {
             record = try? await client.identityDeletion()
             loaded = true
+            // 11/20: a clean-up the app closing stopped is finished first.
+            if record?.acceptedAt != nil { await GroupIdentityDeletionLocalData.resumeIfNeeded() }
             if record?.acceptedAt != nil, record?.completedAt == nil { await refresh() }
         }
     }
@@ -3052,6 +3054,8 @@ struct GroupIdentityDeletionView: View {
         let windowIDs = (try? await client.localWindowIDs()) ?? []
         do {
             record = try await client.requestIdentityDeletion()
+            // 11/20: accepted: the rest of the sharing state on this iPhone.
+            await GroupIdentityDeletionLocalData.resumeIfNeeded()
             for windowID in windowIDs { try? GroupWidgetCache.remove(windowID: windowID) }
             WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
             // The まど tab under this sheet: no page of a left window, and a fresh list.

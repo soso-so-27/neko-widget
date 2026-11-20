@@ -175,6 +175,15 @@ class GroupRecoveryScreenTests(unittest.TestCase):
         self.assertEqual(code.count(".remove("), 2)
         self.assertEqual(code.count("try await base.remove(device, operationID: operationID)"), 2)
         self.assertIsNone(re.search(r"(journal|secrets|store|Keychain\w*)\S*\.remove", code))
+        # 11/20: one local removal, after the relay accepted 「まどと家族の手帳の
+        # データを消す」: the deleted person's own synced key, by its exact ID.
+        self.assertEqual(code.count(".removeExact("), 1)
+        removal = code.split("func removeDeletedPersonSyncedRoot(personID: String) async -> Bool {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn("await sync.removeExact(expectedRootID: hash.map", removal)
+        self.assertIn("GroupWire.bytes(personID, count: 32)", removal)
+        factory = (ROOT / "NekoWidget/Services/FamilyNotebookServiceFactory.swift").read_text(encoding="utf-8")
+        self.assertEqual(factory.count("removeDeletedPersonSyncedRoot(personID:"), 1)
+        self.assertEqual(code.count("removeDeletedPersonSyncedRoot("), 1)
         view = VIEW.read_text(encoding="utf-8")
         self.assertIn("GroupRecoveryLiveScreen(model: .connected())", internal.selected_source(view, {"INTERNAL_PRESENTATION"}))
         self.assertIn("GroupRecoverySheet(rootChoice: adapter.rootChoice, items: adapter.items, handler: adapter)", view)

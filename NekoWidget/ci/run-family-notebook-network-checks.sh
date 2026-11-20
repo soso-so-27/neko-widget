@@ -57,4 +57,19 @@ xcrun --sdk macosx swiftc -D INTERNAL_PRESENTATION -parse-as-library -target "$(
   -o "$RUNNER_TEMP/family-report-replies-identity-tests"
 "$RUNNER_TEMP/family-report-replies-identity-tests"
 
+# 11/20: 「まどと家族の手帳のデータを消す」 leaves no sharing state behind
+# (the client's keys after acceptance, then FamilySharingLocalData).
+xcrun --sdk macosx swiftc -D INTERNAL_PRESENTATION -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+  Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
+  NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupInvitationLink.swift NekoWidget/Services/GroupWindowStorage.swift \
+  NekoWidget/Services/GroupWindowOperationStore.swift Shared/Sharing/ClientUpgradeRequirement.swift NekoWidget/Services/GroupWindowTransport.swift \
+  NekoWidget/Services/GroupWindowAPIModels.swift NekoWidget/Services/GroupWindowPhotoValidation.swift \
+  NekoWidget/Services/ProductionGroupWindowClient.swift NekoWidget/Services/GroupRecoveryClient.swift NekoWidget/Views/GroupRecoveryPresentation.swift \
+  NekoWidget/Services/FamilyNotebookCore.swift NekoWidget/Services/FamilyNotebookCrypto.swift \
+  NekoWidget/Services/FamilyNotebookTransport.swift NekoWidget/Services/FamilyNotebookInvitationCrypto.swift \
+  NekoWidget/Services/FamilyNotebookKeyCoordinator.swift NekoWidget/Services/SharingAutoCheckPolicy.swift \
+  ci/verify-identity-deletion-cleanup.swift \
+  -o "$RUNNER_TEMP/identity-deletion-cleanup-tests"
+"$RUNNER_TEMP/identity-deletion-cleanup-tests"
+
 bash ci/run-family-representative-photo-checks.sh
