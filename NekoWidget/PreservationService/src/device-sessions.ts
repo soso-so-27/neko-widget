@@ -6,6 +6,8 @@ import { identityIndexKey, indexedOwnerIdentity } from './identity-index';
 const ACCESS_MS = 15 * 60_000;
 const CHALLENGE_MS = 5 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
+const APPLE_VALIDATION_LEASE_MS = 120_000;
+const APPLE_RETRY_MS = 60_000;
 const IDLE_MS = 30 * DAY_MS;
 const APPLE = 'https://appleid.apple.com';
 const opaque = /^[A-Za-z0-9_-]{43}$/u;
@@ -142,14 +144,13 @@ export class DeviceSessions {
     if (current.verified_at > now - DAY_MS && current.lease_id === null) return;
     if (!verifier.verifyRefreshIdentity || current.attempt_after > now) throw unavailable();
     const lease = randomToken();
-    // Strictly at most one remote validation attempt per owner per 24 hours,
-    // including timeouts. A transient outage preserves credentials but stops
-    // renewal until the next allowed attempt or explicit Apple sign-in.
+    // Keep concurrent renewals on one remote validation. An interrupted worker
+    // loses the lease after two minutes. A temporary provider error can retry sooner.
     const claimed = await db.prepare(`UPDATE pa_device_identity_checks SET lease_id=?,attempt_after=?
       WHERE owner_id=? AND owner_epoch=? AND credential_hash=? AND credential_updated_at=?
         AND attempt_after<=? AND verified_at<=? AND EXISTS(SELECT 1 FROM pa_device_session_grants g
           WHERE g.grant_id=? AND g.revoked_at IS NULL AND g.idle_expires_at>? AND ${liveOwner})`)
-      .bind(lease, now + DAY_MS, grant.owner_id, grant.owner_epoch, current.credential_hash,
+      .bind(lease, now + APPLE_VALIDATION_LEASE_MS, grant.owner_id, grant.owner_epoch, current.credential_hash,
         current.updated_at, now, now - DAY_MS, grant.grant_id, now).run();
     if (claimed.meta.changes !== 1) throw unavailable();
     try {
@@ -209,7 +210,12 @@ export class DeviceSessions {
         await this.d.ownerRecovery?.copyCurrent(db, grant.owner_id, completed);
       }
     } catch (error) {
-      if (error instanceof ServiceError && error.code === 'APPLE_AUTHORIZATION_REJECTED') {
+      if (error instanceof ServiceError && error.code === 'APPLE_UNAVAILABLE') {
+        await db.prepare(`UPDATE pa_device_identity_checks SET lease_id=NULL,attempt_after=?
+          WHERE owner_id=? AND owner_epoch=? AND lease_id=? AND credential_hash=? AND credential_updated_at=?`)
+          .bind(this.now() + APPLE_RETRY_MS, grant.owner_id, grant.owner_epoch, lease,
+            current.credential_hash, current.updated_at).run();
+      } else if (error instanceof ServiceError && error.code === 'APPLE_AUTHORIZATION_REJECTED') {
         // A late failure must not revoke a newer explicit Apple sign-in.
         await db.prepare(`UPDATE pa_device_session_grants SET revoked_at=? WHERE owner_id=?
           AND owner_epoch=? AND revoked_at IS NULL AND EXISTS(SELECT 1 FROM pa_device_identity_checks k
