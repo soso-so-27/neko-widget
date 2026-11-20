@@ -267,6 +267,30 @@ describe('group encrypted relay and creator Plus commit boundary (runtime stays 
     expect(ok(await call(bob,`${path}/moments/list`,{after:null,limit:50})).items).toEqual([]);
     expect((await binary(owner,`${path}/moments/${p.id}/ciphertext`)).status).toBe(200);
   });
+  it('keeps expiring other relay rows and nonces after one row fails',async()=>{
+    const owner=await plusOwner(),w=await create(owner);
+    const reservations=[await reserve(owner,w),await reserve(owner,w)];
+    for(const reservation of reservations)ok(reservation.result,201);
+    const rows=await db.prepare('SELECT id,cleanup_at FROM group_moments WHERE space_id=? ORDER BY created_at,id')
+      .bind(w.windowId).all<{id:string;cleanup_at:number}>();
+    const [first,second]=rows.results;
+    const cleanupTime=Math.max(first!.cleanup_at,second!.cleanup_at)+1;
+    await db.prepare(`CREATE TRIGGER synthetic_single_relay_failure BEFORE UPDATE OF state ON group_moments
+      WHEN OLD.id='${first!.id}' AND NEW.state='expired'
+      BEGIN SELECT RAISE(ABORT,'synthetic_row_failure'); END;`).run();
+    try {
+      await runGroupRelayCleanup(testEnv,cleanupTime);
+      expect((await db.prepare('SELECT state FROM group_moments WHERE id=?').bind(first!.id).first<{state:string}>())?.state).toBe('reserved');
+      expect((await db.prepare('SELECT state FROM group_moments WHERE id=?').bind(second!.id).first<{state:string}>())?.state).toBe('expired');
+      expect(await db.prepare('SELECT 1 FROM group_request_nonces WHERE device_id=? AND expires_at<=?')
+        .bind(owner.deviceId,cleanupTime).first()).toBeNull();
+    } finally {
+      await db.prepare('DROP TRIGGER synthetic_single_relay_failure').run();
+    }
+    await runGroupRelayCleanup(testEnv,cleanupTime);
+    expect((await db.prepare('SELECT state FROM group_moments WHERE id=?').bind(first!.id).first<{state:string}>())?.state).toBe('expired');
+  });
+
   it('cleans only expired relay copies, retries late uploads and never treats pausing as deletion',async()=>{
     const {owner,bob,w}=await family(),p=await delivered(owner,w),path=`/v3/group-windows/${w.windowId}/moments/${p.id}`;
     const row=await db.prepare('SELECT object_key,cleanup_at FROM group_moments WHERE id=?').bind(p.id).first<{object_key:string;cleanup_at:number}>();
