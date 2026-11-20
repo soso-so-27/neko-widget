@@ -1863,6 +1863,9 @@ struct CatCareListEntrySheet: View {
     @State private var amount = ""
     @State private var proofItem: PhotosPickerItem?
     @State private var showsCamera = false
+    /// 11/20: the camera is off for this app: the vet memo's sentence and 「設定を開く」.
+    @State private var cameraBlocked: String?
+    @Environment(\.openURL) private var openURL
     @State private var proof: CatCarePhotoRef?
     @State private var opensProof = false
     @State private var removesProof = false
@@ -1890,10 +1893,23 @@ struct CatCareListEntrySheet: View {
                         Label(proof == nil ? "証明の写真を選ぶ" : "証明の写真を選び直す", systemImage: "photo")
                     }
                     if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                        Button { showsCamera = true } label: {
+                        Button {
+                            // 11/20: asked first, as 「病院で見せる」's 「撮る」 does.
+                            Task {
+                                cameraBlocked = await VeterinaryCapture.cameraBlockedReason()
+                                if cameraBlocked == nil { showsCamera = true }
+                            }
+                        } label: {
                             Label(proof == nil ? "証明をカメラで撮る" : "カメラで撮り直す", systemImage: "camera")
                         }
                         .accessibilityIdentifier("cat-care-proof-camera")
+                        if let cameraBlocked {
+                            Text(cameraBlocked).font(.footnote).foregroundStyle(.secondary)
+                            Button("設定を開く") {
+                                if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                            }
+                            .accessibilityIdentifier("cat-care-proof-camera-settings")
+                        }
                     }
                     if let current = proof {
                         Button { opensProof = true } label: {

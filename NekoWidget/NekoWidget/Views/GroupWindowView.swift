@@ -2263,6 +2263,16 @@ final class GroupWindowOpenInbox: ObservableObject {
         pendingWindowID = windowID
     }
     func consume() { pendingWindowID = nil; pendingPhotoID = nil }
+
+    /// 11/20: a まど notification whose window could not be read (offline, or
+    /// left): the まど tab at its list, never a silent tap. Read and cleared
+    /// by the tab, so a tap that started the app still lands there.
+    @Published var listRequested = false
+    func openList() {
+        GroupWindowListNavigation.shared.openedWindow = nil
+        listGeneration = UUID()
+        listRequested = true
+    }
 }
 
 /// The window page over the まど list. Pushed from the list's root, outside
@@ -3160,11 +3170,20 @@ struct GroupIdentityDeletionView: View {
     @State private var working = false
     @State private var failure: String?
     @State private var confirms = false
+    /// 11/20: the saved record could not be read, so whether a deletion is
+    /// under way is not known: no 「消す」, the read again with 「確かめる」.
+    @State private var readFailed = false
 
     var body: some View {
         List {
             Section {
-                if let record, record.completedAt != nil {
+                if readFailed {
+                    Button { Task { await load() } } label: {
+                        WorkingLabel(title: "確かめる", workingTitle: "確かめています…", working: working)
+                    }
+                        .frame(minHeight: 44)
+                        .disabled(working)
+                } else if let record, record.completedAt != nil {
                     Label("消しました", systemImage: "checkmark.circle")
                     Text("このiPhoneに届いた写真は「前のまど」に残ります。").foregroundStyle(.secondary)
                 } else if let record, record.acceptedAt != nil {
@@ -3205,13 +3224,26 @@ struct GroupIdentityDeletionView: View {
         }
         .navigationTitle("まどと家族の手帳のデータを消す")
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            record = try? await client.identityDeletion()
-            loaded = true
-            // 11/20: a clean-up the app closing stopped is finished first.
-            if record?.acceptedAt != nil { await GroupIdentityDeletionLocalData.resumeIfNeeded() }
-            if record?.acceptedAt != nil, record?.completedAt == nil { await refresh() }
+        .task { await load() }
+    }
+
+    private func load() async {
+        working = true
+        do {
+            record = try await client.identityDeletion()
+            readFailed = false; failure = nil
+        } catch {
+            // 11/20: not "nothing under way": that is not known.
+            readFailed = true
+            failure = GroupWindowPresentation.message(for: error)
+            working = false
+            return
         }
+        working = false
+        loaded = true
+        // 11/20: a clean-up the app closing stopped is finished first.
+        if record?.acceptedAt != nil { await GroupIdentityDeletionLocalData.resumeIfNeeded() }
+        if record?.acceptedAt != nil, record?.completedAt == nil { await refresh() }
     }
 
     private func delete() async {

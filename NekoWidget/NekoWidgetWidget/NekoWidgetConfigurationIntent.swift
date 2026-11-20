@@ -88,6 +88,11 @@ struct WidgetPhotoSource: AppEntity {
             // Same rule as a removed two-person window: never fall back to
             // this iPhone's personal photos.
             guard let entry = GroupWidgetCache.entry(windowID: groupWindowID) else {
+                // 11/20: only a window the app saw go is called ended; a copy
+                // not written yet (a reinstall) keeps the group's own detail.
+                guard GroupWidgetCache.missingEntry(windowID: groupWindowID) == .ended else {
+                    return WidgetPhotoSource(id: id, name: "まど", detail: "このまどに届いた最新の一枚")
+                }
                 return WidgetPhotoSource(id: id, name: "前のまど", detail: "別のまどを選んでください")
             }
             return groupWindow(entry)

@@ -38,6 +38,20 @@ enum VeterinaryCapture {
     /// sentence to show beside a 「設定を開く」 button. Asks first when never asked.
     @MainActor
     static func blockedReason() async -> String? {
+        if let camera = await cameraBlockedReason() { return camera }
+        var library = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+        if library == .notDetermined { library = await PHPhotoLibrary.requestAuthorization(for: .addOnly) }
+        guard library == .authorized || library == .limited else {
+            return "撮った写真を残すには、設定で写真への追加を許可してください。"
+        }
+        return nil
+    }
+
+    /// The camera part alone, for a shot that stays in the app (「この子のこと」's
+    /// vaccination proof, 11/20): the same sentence and question, and no
+    /// request to add to the photo library.
+    @MainActor
+    static func cameraBlockedReason() async -> String? {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .denied, .restricted:
             return "カメラを使うには、設定でカメラを許可してください。"
@@ -46,11 +60,6 @@ enum VeterinaryCapture {
                 return "カメラを使うには、設定でカメラを許可してください。"
             }
         default: break
-        }
-        var library = PHPhotoLibrary.authorizationStatus(for: .addOnly)
-        if library == .notDetermined { library = await PHPhotoLibrary.requestAuthorization(for: .addOnly) }
-        guard library == .authorized || library == .limited else {
-            return "撮った写真を残すには、設定で写真への追加を許可してください。"
         }
         return nil
     }

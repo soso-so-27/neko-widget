@@ -24,11 +24,40 @@ enum GroupWidgetCache {
     private struct Catalog: Codable {
         var schemaVersion = 1
         var entries: [Entry] = []
+        /// 11/20: the windows the relay listed last (minus any left since).
+        /// Nil until the app has listed them once with this copy, e.g. right
+        /// after a reinstall or a lost copy. Optional so an older catalog
+        /// still decodes, and an older app ignores it.
+        var listedWindowIDs: [String]? = nil
+        /// 11/20: windows this iPhone saw go (left, ended, data deleted),
+        /// newest last, at most `maximumEndedWindows`.
+        var endedWindowIDs: [String]? = nil
+    }
+
+    /// 11/20: a Widget whose window has no entry here. Only a window the app
+    /// has seen go (left, ended, data deleted, or no longer listed by the
+    /// relay) has ended; otherwise the app has simply not written it yet (a
+    /// reinstall, a lost copy) and the Widget asks for the app to be opened.
+    enum MissingEntry: Equatable, Sendable { case ended, notYetKnown }
+
+    static func missingEntry(windowID: String, listedWindowIDs: [String]?,
+                             endedWindowIDs: [String]?) -> MissingEntry {
+        // Seen going here first: a closed window can still be on the list.
+        if endedWindowIDs?.contains(windowID) == true { return .ended }
+        guard let listedWindowIDs else { return .notYetKnown }
+        return listedWindowIDs.contains(windowID) ? .notYetKnown : .ended
+    }
+
+    static func missingEntry(windowID: String) -> MissingEntry {
+        let catalog = loadCatalog()
+        return missingEntry(windowID: windowID, listedWindowIDs: catalog.listedWindowIDs,
+                            endedWindowIDs: catalog.endedWindowIDs)
     }
 
     static let sourceIDPrefix = "group-window:"
     static let maximumPixelSize = 1_000
     private static let maximumWindows = 10
+    private static let maximumEndedWindows = 20
 
     static func sourceID(windowID: String) -> String { sourceIDPrefix + windowID }
 
@@ -86,12 +115,16 @@ enum GroupWidgetCache {
     // MARK: Reading (Widget and app)
 
     static func entries() -> [Entry] {
+        loadCatalog().entries
+    }
+
+    private static func loadCatalog() -> Catalog {
         guard let url = catalogURL(),
               let data = try? Data(contentsOf: url),
               let catalog = try? JSONDecoder().decode(Catalog.self, from: data),
               catalog.schemaVersion == 1
-        else { return [] }
-        return catalog.entries
+        else { return Catalog() }
+        return catalog
     }
 
     static func entry(windowID: String) -> Entry? {
@@ -116,7 +149,7 @@ enum GroupWidgetCache {
                        myHeartActive: Bool = false) throws {
         guard isValidID(windowID), let directory = directory() else { return }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        var catalog = Catalog(entries: entries())
+        var catalog = loadCatalog()
         let previous = catalog.entries.first { $0.windowID == windowID }
         var imageFileName = previous?.photoID == photoID ? previous?.imageFileName : nil
         if imageFileName == nil, let jpeg, let small = downscaled(jpeg),
@@ -127,6 +160,9 @@ enum GroupWidgetCache {
         let entry = Entry(windowID: windowID, windowName: windowName, photoID: photoID,
                           imageFileName: imageFileName, senderDisplayName: senderDisplayName,
                           capturedAt: capturedAt, isPaused: isPaused, myHeartActive: myHeartActive)
+        // 11/20: a window with an entry is not ended (joined again). An
+        // existing entry means it was never marked, so the check below holds.
+        catalog.endedWindowIDs?.removeAll { $0 == windowID }
         // Nothing changed: the catalog on disk already says exactly this.
         if previous == entry, catalog.entries.count <= maximumWindows { return }
         // Keep each window where it is, so the widget's list does not reorder.
@@ -147,26 +183,46 @@ enum GroupWidgetCache {
         }
     }
 
-    /// After leaving a window, its home-screen photo goes too.
+    /// After leaving a window, its home-screen photo goes too. 11/20: the
+    /// window also leaves the listed ones, so its Widget says it ended.
     static func remove(windowID: String) throws {
         guard let directory = directory() else { return }
-        var catalog = Catalog(entries: entries())
-        guard let removed = catalog.entries.first(where: { $0.windowID == windowID }) else { return }
+        var catalog = loadCatalog()
+        let removed = catalog.entries.first(where: { $0.windowID == windowID })
         catalog.entries.removeAll { $0.windowID == windowID }
+        catalog.listedWindowIDs?.removeAll { $0 == windowID }
+        if isValidID(windowID) {
+            let ended = (catalog.endedWindowIDs ?? []).filter { $0 != windowID } + [windowID]
+            catalog.endedWindowIDs = Array(ended.suffix(maximumEndedWindows))
+        } else if removed == nil { return }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try write(JSONEncoder().encode(catalog), to: directory.appendingPathComponent("catalog.json"))
-        if let name = removed.imageFileName {
+        if let name = removed?.imageFileName {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
         }
     }
 
     /// After the relay's list loaded: a window it no longer lists (removed by
     /// its owner, ended, left on another iPhone) leaves the home screen and the
-    /// widget's choices too (11/6). Returns whether anything went.
+    /// widget's choices too (11/6). 11/20: the list is kept, so a Widget of a
+    /// window with no entry can tell "ended" from "not written yet". Returns
+    /// whether anything a Widget shows changed.
     @discardableResult
     static func keepOnly(windowIDs: Set<String>) -> Bool {
         let gone = entries().map(\.windowID).filter { !windowIDs.contains($0) }
         for windowID in gone { try? remove(windowID: windowID) }
-        return !gone.isEmpty
+        var listChanged = false
+        if let directory = directory() {
+            var catalog = loadCatalog()
+            let listed = windowIDs.sorted()
+            if catalog.listedWindowIDs != listed {
+                catalog.listedWindowIDs = listed
+                try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                listChanged = (try? write(JSONEncoder().encode(catalog),
+                                          to: directory.appendingPathComponent("catalog.json"))) != nil
+            }
+        }
+        return !gone.isEmpty || listChanged
     }
 
     /// Written by builds with group windows on. The Widget then offers group
@@ -187,7 +243,7 @@ enum GroupWidgetCache {
     /// After the app sent a heart from the Widget, show it as sent.
     static func markMyHeart(windowID: String, photoID: String) throws {
         guard let directory = directory() else { return }
-        var catalog = Catalog(entries: entries())
+        var catalog = loadCatalog()
         guard let index = catalog.entries.firstIndex(where: { $0.windowID == windowID }),
               catalog.entries[index].photoID == photoID
         else { return }
