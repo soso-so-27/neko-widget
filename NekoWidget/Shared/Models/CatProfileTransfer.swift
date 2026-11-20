@@ -24,6 +24,9 @@ struct CatProfileTransfer: Codable, Equatable, Sendable {
     let profiles: [Entry]
     /// Portable random keys and metadata only; never PhotoKit identifiers or pixels.
     var photos: [Photo]? = nil
+    /// 11/20: 旅立った日 by profile UUID string, as 保存 carries it. Optional:
+    /// a file without it reads as before, and older builds skip it.
+    var farewellDays: [String: CatFarewellDay]? = nil
 
     struct Photo: Codable, Equatable, Identifiable, Sendable {
         let id: UUID
@@ -119,7 +122,9 @@ struct CatProfileTransfer: Codable, Equatable, Sendable {
                 return owners.isEmpty ? nil : Photo(id: photo.id, metadata: photo.metadata, profileIDs: owners)
             }
         }
-        return (Self(format: format, version: version, profiles: kept, photos: keptPhotos), true)
+        var limited = Self(format: format, version: version, profiles: kept, photos: keptPhotos)
+        limited.farewellDays = farewellDays?.filter { key in kept.contains { $0.id.uuidString == key.key } }
+        return (limited, true)
     }
 
     static func decode(_ data: Data) throws -> Self {
@@ -170,6 +175,10 @@ struct CatProfileTransfer: Codable, Equatable, Sendable {
             throw CatProfileTransferError.invalidFile
         }
         guard !profiles.isEmpty else { throw CatProfileTransferError.emptyProfiles }
+        let profileKeys = Set(profiles.map(\.id.uuidString))
+        guard (farewellDays ?? [:]).allSatisfy({ profileKeys.contains($0.key) && $0.value.isValid }) else {
+            throw CatProfileTransferError.invalidFile
+        }
         guard profiles.count <= 100, Set(profiles.map(\.id)).count == profiles.count else {
             throw CatProfileTransferError.invalidFile
         }
@@ -222,6 +231,11 @@ struct CatProfileTransfer: Codable, Equatable, Sendable {
         }
         var proposed = current
         for entry in profiles { proposed.upsertProfile(entry.profile(at: date), at: date) }
+        if let farewellDays, !farewellDays.isEmpty {
+            // Only an empty household reaches here; the file's days are its days.
+            proposed.farewellDays = (proposed.farewellDays ?? [:]).merging(farewellDays) { _, file in file }
+            proposed = proposed.normalized()
+        }
         return proposed
     }
 }

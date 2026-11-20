@@ -9,42 +9,136 @@ import UIKit
 import Photos
 import Network
 
-private enum AppRecordPhotoIdentity {
+/// PhotoKit local identifiers differ on every iPhone; iCloud Photos
+/// identifiers (PHCloudIdentifier) name the same photo on each iPhone of the
+/// same library. Used for memos, photo decisions, liked photos and albums.
+enum AppRecordPhotoIdentity {
     private actor Cache {
         var values: [String: String] = [:]
-        func read(_ keys: [String]) -> [String: String] { let wanted = Set(keys); return values.filter { wanted.contains($0.key) } }
+        var loaded = false
+        var changed = false
+        /// Local to cloud, kept on this iPhone only (never in the OS backup, never
+        /// uploaded): a later save still names a decided photo while Photos access
+        /// is off, so a save never drops a decision because one lookup failed.
+        static var url: URL { AppRecordDataset.control.appendingPathComponent("photo-cloud-identifiers.json") }
+        static let maximum = 200_000
+        func load() {
+            guard !loaded else { return }
+            guard FileManager.default.fileExists(atPath: Self.url.path) else { loaded = true; return }
+            // Unreadable now (iPhone locked): read again later, never overwrite it.
+            guard let data = try? ToolBackupFiles.read(Self.url, maximum: 64 * 1024 * 1024),
+                  let stored = try? JSONDecoder().decode([String: String].self, from: data) else { return }
+            loaded = true
+            values.merge(stored) { current, _ in current }
+        }
+        func read(_ keys: [String]) -> [String: String] {
+            load()
+            var result: [String: String] = [:]
+            for key in keys { if let value = values[key] { result[key] = value } }
+            return result
+        }
         func save(_ added: [String: String]) {
-            if values.count + added.count > 10_000 { values.removeAll() }
+            load()
+            guard !added.isEmpty else { return }
+            if values.count + added.count > Self.maximum { values.removeAll() }
             values.merge(added) { _, new in new }
+            changed = true
+        }
+        func persist() {
+            guard changed, loaded, let data = try? JSONEncoder().encode(values) else { return }
+            changed = false
+            try? FileManager.default.createDirectory(at: Self.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+#if os(iOS)
+            guard (try? data.write(to: Self.url, options: [.atomic, .completeFileProtection])) != nil else { return }
+#else
+            guard (try? data.write(to: Self.url, options: .atomic)) != nil else { return }
+#endif
+            var file = Self.url
+            var resource = URLResourceValues()
+            resource.isExcludedFromBackup = true
+            try? file.setResourceValues(resource)
         }
     }
     private static let cache = Cache()
+    private static var readable: Bool {
+        [.authorized, .limited].contains(PHPhotoLibrary.authorizationStatus(for: .readWrite))
+    }
     static func cloud(_ localIDs: [String]) async -> [String: String] {
-        let known = await cache.read(localIDs), missing = localIDs.filter { known[$0] == nil }
+        let known = await cache.read(localIDs)
+        let missing = Array(Set(localIDs.filter { known[$0] == nil }))
         if missing.isEmpty { return known }
         let added: [String: String] = await Task.detached(priority: .utility) {
-            guard !missing.isEmpty, [.authorized, .limited].contains(PHPhotoLibrary.authorizationStatus(for: .readWrite)) else { return [:] }
-            let values = PHPhotoLibrary.shared().cloudIdentifierMappings(forLocalIdentifiers: missing)
+            guard !missing.isEmpty, AppRecordPhotoIdentity.readable else { return [:] }
             var result: [String: String] = [:]
-            for local in missing {
-                guard let mapping = values[local], case let .success(cloud) = mapping else { continue }
-                result[local] = cloud.stringValue
+            // Bounded batches keep one PhotoKit call small on a large library.
+            for start in stride(from: 0, to: missing.count, by: 2_000) {
+                let batch = Array(missing[start..<min(missing.count, start + 2_000)])
+                let values = PHPhotoLibrary.shared().cloudIdentifierMappings(forLocalIdentifiers: batch)
+                for local in batch {
+                    guard let mapping = values[local], case let .success(cloud) = mapping,
+                          !cloud.stringValue.isEmpty, cloud.stringValue.utf8.count <= 4096 else { continue }
+                    result[local] = cloud.stringValue
+                }
             }
             return result
         }.value
         await cache.save(added)
+        await cache.persist()
         return known.merging(added) { _, new in new }
     }
+    /// Only identifiers of photos that are in this library now. A photo not
+    /// here yet (iCloud Photos still syncing, Limited access) is left out and
+    /// stays waiting with its caller.
     static func local(_ cloudIDs: [String]) async -> [String: String] {
-        await Task.detached(priority: .utility) {
-            guard !cloudIDs.isEmpty, [.authorized, .limited].contains(PHPhotoLibrary.authorizationStatus(for: .readWrite)) else { return [:] }
-            let identifiers = cloudIDs.map(PHCloudIdentifier.init(stringValue:))
-            let values = PHPhotoLibrary.shared().localIdentifierMappings(for: identifiers)
+        await mapped(cloudIDs) { locals in
+            var present = Set<String>()
+            PHAsset.fetchAssets(withLocalIdentifiers: locals, options: nil).enumerateObjects { asset, _, _ in
+                present.insert(asset.localIdentifier)
+            }
+            return present
+        }
+    }
+    /// The same for a cat's linked album.
+    static func localAlbums(_ cloudIDs: [String]) async -> [String: String] {
+        await mapped(cloudIDs) { locals in
+            var present = Set<String>()
+            PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: locals, options: nil).enumerateObjects { album, _, _ in
+                present.insert(album.localIdentifier)
+            }
+            return present
+        }
+    }
+    static func cloudAlbums(_ localIDs: [String]) async -> [String: String] {
+        let wanted = Array(Set(localIDs))
+        return await Task.detached(priority: .utility) {
+            guard !wanted.isEmpty, AppRecordPhotoIdentity.readable else { return [:] }
+            let values = PHPhotoLibrary.shared().cloudIdentifierMappings(forLocalIdentifiers: wanted)
             var result: [String: String] = [:]
-            for (cloud, identifier) in zip(cloudIDs, identifiers) {
-                guard let mapping = values[identifier], case let .success(local) = mapping, !local.isEmpty else { continue }
-                guard PHAsset.fetchAssets(withLocalIdentifiers: [local], options: nil).count == 1 else { continue }
-                result[cloud] = local
+            for local in wanted {
+                guard let mapping = values[local], case let .success(cloud) = mapping,
+                      !cloud.stringValue.isEmpty, cloud.stringValue.utf8.count <= 4096 else { continue }
+                result[local] = cloud.stringValue
+            }
+            return result
+        }.value
+    }
+    private static func mapped(_ input: [String], present: @escaping @Sendable ([String]) -> Set<String>) async -> [String: String] {
+        let cloudIDs = Array(Set(input.filter { !$0.isEmpty && $0.utf8.count <= 4096 }))
+        return await Task.detached(priority: .utility) {
+            guard !cloudIDs.isEmpty, AppRecordPhotoIdentity.readable else { return [:] }
+            var result: [String: String] = [:]
+            for start in stride(from: 0, to: cloudIDs.count, by: 2_000) {
+                let batch = Array(cloudIDs[start..<min(cloudIDs.count, start + 2_000)])
+                let identifiers = batch.map(PHCloudIdentifier.init(stringValue:))
+                let values = PHPhotoLibrary.shared().localIdentifierMappings(for: identifiers)
+                var candidates: [String: String] = [:]
+                for (cloud, identifier) in zip(batch, identifiers) {
+                    guard let mapping = values[identifier], case let .success(local) = mapping, !local.isEmpty else { continue }
+                    candidates[cloud] = local
+                }
+                guard !candidates.isEmpty else { continue }
+                let here = present(Array(Set(candidates.values)))
+                for (cloud, local) in candidates where here.contains(local) { result[cloud] = local }
             }
             return result
         }.value
@@ -489,7 +583,8 @@ enum AppRecordDataset {
                 let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
                 let state = try decoder.decode(CatHouseholdIdentityState.self, from: data)
                 guard (1...CatHouseholdIdentityState.currentSchemaVersion).contains(state.schemaVersion) else { throw ToolBackupError.invalid }
-                if !state.profiles.isEmpty || !state.memberships.isEmpty || !state.globalExcludedAssets.isEmpty { return false }
+                if !state.profiles.isEmpty || !state.memberships.isEmpty || !state.globalExcludedAssets.isEmpty
+                    || state.portablePhotoLinks != nil || state.farewellDays != nil { return false }
                 if let legacy = state.legacyUnscoped,
                    legacy.lifeReference != nil || legacy.sourceAlbumIdentifier != nil
                     || !(legacy.lastKnownSourceAssetIdentifiers ?? []).isEmpty || !legacy.legacyExcludedAssetIdentifiers.isEmpty { return false }
@@ -583,7 +678,10 @@ enum AppRecordDataset {
         if FileManager.default.fileExists(atPath: identity.path) {
             let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
             let remote = try decoder.decode(CatHouseholdIdentityState.self, from: AppRecordJSON.read(identity))
-            let merged = try preservingLocalPhotoLinks(remote, local: localIdentity)
+            // 11/20: saved photo decisions are applied where their photos are
+            // here; the rest wait in the record and are tried again later.
+            let carried = try preservingLocalPhotoLinks(remote, local: localIdentity)
+            let merged = await AppRecordPhotoLinks.resolving(carried)
             let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = [.sortedKeys]
             try ToolBackupFiles.write(encoder.encode(merged), to: identity)
         }
@@ -607,6 +705,8 @@ enum AppRecordDataset {
     /// PhotoKit relationships are device-local and are never uploaded. A
     /// remote name/date update must not erase this phone's existing curation.
     /// Carry links only by the exact profile UUID; names are not identities.
+    /// 11/20: the saved decisions (`portablePhotoLinks`) and 旅立った日 come
+    /// along; this phone's own links stay and win (see CatPortablePhotoLinks).
     static func preservingLocalPhotoLinks(_ remote: CatHouseholdIdentityState,
                                           local: CatHouseholdIdentityState?) throws -> CatHouseholdIdentityState {
         var portable = remote
@@ -625,6 +725,11 @@ enum AppRecordDataset {
         var result = portable
         let profiles = Dictionary(uniqueKeysWithValues: local.profiles.map { ($0.id, $0) })
         let ids = Set(remote.profiles.map(\.id))
+        // Decisions still waiting here from an earlier restore stay too.
+        result.portablePhotoLinks = CatPortablePhotoLinks.merged(remote.portablePhotoLinks, local.portablePhotoLinks, profileIDs: ids)
+        // A day recorded only on this phone is not lost by restoring.
+        let days = (local.farewellDays ?? [:]).merging(remote.farewellDays ?? [:]) { _, saved in saved }
+        result.farewellDays = days.isEmpty ? nil : days
         for i in result.profiles.indices {
             guard let own = profiles[result.profiles[i].id] else { continue }
             result.profiles[i].keyPhotoLocalIdentifier = own.keyPhotoLocalIdentifier
@@ -2504,14 +2609,19 @@ enum AppRecordCapture {
                 var state = try decoder.decode(CatHouseholdIdentityState.self, from: bytes)
                 guard (1...CatHouseholdIdentityState.currentSchemaVersion).contains(state.schemaVersion) else { throw ToolBackupError.invalid }
                 // PhotoKit identifiers are local links, not portable identities.
+                // 11/20: the decisions travel by iCloud Photos identity instead.
+                let portable = try await AppRecordPhotoLinks.portable(state)
                 for i in state.profiles.indices { state.profiles[i].keyPhotoLocalIdentifier = nil; state.profiles[i].photoAlbumLink = nil }
                 state.memberships = []; state.globalExcludedAssets = []
                 state.legacyUnscoped?.sourceAlbumIdentifier = nil
                 state.legacyUnscoped?.lastKnownSourceAssetIdentifiers = nil
                 state.legacyUnscoped?.legacyExcludedAssetIdentifiers = []
+                state.portablePhotoLinks = portable
                 state = state.normalized()
                 let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = [.sortedKeys]
                 bytes = try encoder.encode(state)
+                // One record file holds at most 8 MB. Never cut decisions to fit.
+                guard bytes.count <= AppRecordPhotoLinks.maximumIdentityBytes else { throw ToolBackupError.capacity }
             } else if tool == "PhotoMemoryNotes" {
                 var state = try JSONDecoder().decode(PhotoMemoryNoteSnapshot.self, from: bytes)
                 guard (2...4).contains(state.schemaVersion) else { throw ToolBackupError.invalid }

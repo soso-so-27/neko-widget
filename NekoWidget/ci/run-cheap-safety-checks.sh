@@ -93,6 +93,25 @@ xcrun --sdk macosx swiftc \
   -o "$RUNNER_TEMP/verify-cat-household-identity"
 "$RUNNER_TEMP/verify-cat-household-identity"
 
+# 11/20: 保存 carries photo decisions, liked photos and 旅立った日 by iCloud
+# identity; a new iPhone restores them, waiting ones are kept, and an
+# older build still reads the saved copy. Synthetic identifiers only.
+xcrun --sdk macosx swiftc \
+  -parse-as-library \
+  Shared/Models/AppSettings.swift Shared/Models/NekoCalendar.swift \
+  Shared/Models/NormalizedRect.swift \
+  Shared/Models/CatCandidateCuration.swift \
+  Shared/Models/CatHouseholdIdentity.swift \
+  Shared/Models/CatProfileTransfer.swift \
+  Shared/Models/NekoWidgetError.swift \
+  Shared/Models/WidgetRenderPlan.swift \
+  Shared/Models/WidgetManifest.swift \
+  Shared/Storage/AtomicJSON.swift \
+  Shared/AppGroup/SharedContainer.swift \
+  ci/verify-backup-photo-links.swift \
+  -o "$RUNNER_TEMP/verify-backup-photo-links"
+"$RUNNER_TEMP/verify-backup-photo-links"
+
 xcrun swiftc -parse-as-library \
   NekoWidget/Services/PhotoMemoryNoteStore.swift \
   ci/verify-photo-memory-notes.swift \

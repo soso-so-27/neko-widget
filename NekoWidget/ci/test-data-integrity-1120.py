@@ -196,7 +196,12 @@ class StoredFieldTests(unittest.TestCase):
                 "sharedWindowIDs", "reviewedAt", "deletedAt"],
             (IDENTITY, "struct CatHouseholdIdentityState: Codable"): [
                 "schemaVersion", "mutationRevision", "mode", "profiles", "memberships",
-                "globalExcludedAssets", "legacyUnscoped", "createdAt", "updatedAt", "exclusionSetAside"],
+                "globalExcludedAssets", "legacyUnscoped", "createdAt", "updatedAt",
+                # #1111 (保存): optional. An older build drops them on its next write: photo
+                # decisions still waiting for their photo, and the copy of 旅立った日 (which
+                # also stays in UserDefaults and the care tools). Harmless, no schema bump.
+                "portablePhotoLinks", "farewellDays",
+                "exclusionSetAside"],
             (IDENTITY, "struct CatExclusionSetAside: Codable"): [
                 "assetLocalIdentifier", "memberships", "keyPhotoProfileIDs"],
             (LIKES, "struct SharedLikeRecord: Codable"): [

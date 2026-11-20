@@ -350,6 +350,15 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
     var legacyUnscoped: CatLegacyUnscopedIdentity?
     var createdAt: Date
     var updatedAt: Date
+    /// 11/20 (保存): photo decisions by iCloud Photos identity. In a saved
+    /// copy, every decision this iPhone could name that way; on this iPhone,
+    /// only the ones whose photos are not here yet. They are kept, and tried
+    /// again, until the photo arrives. Optional: older builds ignore it.
+    var portablePhotoLinks: CatPortablePhotoLinks? = nil
+    /// 11/20: 旅立った日 by the same keys as `CatFarewell` (a profile's
+    /// identifier or "tool-<id>"). Kept with the cats so it is saved and
+    /// restored. Optional: older builds ignore it.
+    var farewellDays: [String: CatFarewellDay]? = nil
     /// 11/20: kept only while the photo stays excluded (see CatExclusionSetAside).
     var exclusionSetAside: [CatExclusionSetAside]? = nil
 
@@ -363,6 +372,8 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
         case legacyUnscoped
         case createdAt
         case updatedAt
+        case portablePhotoLinks
+        case farewellDays
         case exclusionSetAside
     }
 
@@ -422,6 +433,14 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
             ?? Date(timeIntervalSince1970: 0)
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt)
             ?? createdAt
+        portablePhotoLinks = try container.decodeIfPresent(
+            CatPortablePhotoLinks.self,
+            forKey: .portablePhotoLinks
+        )
+        farewellDays = try container.decodeIfPresent(
+            [String: CatFarewellDay].self,
+            forKey: .farewellDays
+        )
         exclusionSetAside = try container.decodeIfPresent(
             [CatExclusionSetAside].self,
             forKey: .exclusionSetAside
@@ -1161,6 +1180,10 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
             )).sorted()
             value.legacyUnscoped = legacy
         }
+        value.portablePhotoLinks = value.portablePhotoLinks?.normalized(
+            profileIDs: validProfileIDs
+        )
+        value.farewellDays = CatFarewellDay.normalized(value.farewellDays)
         return value
     }
 
@@ -1430,5 +1453,441 @@ enum CatNameText {
             min(previous?.count ?? 0, storedMaximumCharacters)
         )
         return String(name.prefix(allowance))
+    }
+}
+
+// MARK: - What 保存 carries of photo decisions (11/20)
+
+/// The household's photo decisions in a form another iPhone of the same
+/// person can read: 「この子に分けた写真」, 「この子ではない」, household-wide
+/// exclusions, key photos, linked albums and liked photos. A photo is named
+/// only by its iCloud Photos identifier (PHCloudIdentifier), which means
+/// nothing outside the owner's own library; a cat by its random profile UUID.
+/// No pixels, PhotoKit local identifiers, names or photo dates are written.
+/// Each photo identifier is written once and referred to by its position.
+///
+/// It travels inside the encrypted CatIdentity record. Older builds skip the
+/// unknown key, and every field decodes with a default, so neither direction
+/// fails to read the other.
+struct CatPortablePhotoLinks: Codable, Equatable, Sendable {
+    static let currentVersion = 1
+
+    struct Membership: Codable, Equatable, Sendable {
+        var asset: Int
+        var profile: Int
+        /// A raw value, so a decision a later build adds never stops reading.
+        var decision: String
+        var box: NormalizedRect?
+        var reference: Bool?
+        var decidedAt: Date
+        private enum CodingKeys: String, CodingKey {
+            case asset = "a", profile = "p", decision = "d", box = "b", reference = "r", decidedAt = "t"
+        }
+    }
+
+    struct Exclusion: Codable, Equatable, Sendable {
+        var asset: Int
+        var excludedAt: Date
+        private enum CodingKeys: String, CodingKey { case asset = "a", excludedAt = "t" }
+    }
+
+    struct KeyPhoto: Codable, Equatable, Sendable {
+        var profile: Int
+        var asset: Int
+        private enum CodingKeys: String, CodingKey { case profile = "p", asset = "a" }
+    }
+
+    struct Album: Codable, Equatable, Sendable {
+        var profile: Int
+        /// The album's iCloud Photos identifier.
+        var album: String
+        var assets: [Int]
+        var linkedAt: Date
+        private enum CodingKeys: String, CodingKey {
+            case profile = "p", album = "c", assets = "a", linkedAt = "t"
+        }
+    }
+
+    struct Like: Codable, Equatable, Sendable {
+        var asset: Int
+        var likedAt: Date
+        private enum CodingKeys: String, CodingKey { case asset = "a", likedAt = "t" }
+    }
+
+    var version: Int
+    var assets: [String]
+    var profiles: [UUID]
+    var memberships: [Membership]
+    var exclusions: [Exclusion]
+    var keyPhotos: [KeyPhoto]
+    var albums: [Album]
+    var likes: [Like]
+
+    private enum CodingKeys: String, CodingKey {
+        case version, assets, profiles, memberships, exclusions, keyPhotos, albums, likes
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decodeIfPresent(Int.self, forKey: .version) ?? Self.currentVersion
+        assets = try container.decodeIfPresent([String].self, forKey: .assets) ?? []
+        profiles = try container.decodeIfPresent([UUID].self, forKey: .profiles) ?? []
+        memberships = try container.decodeIfPresent([Membership].self, forKey: .memberships) ?? []
+        exclusions = try container.decodeIfPresent([Exclusion].self, forKey: .exclusions) ?? []
+        keyPhotos = try container.decodeIfPresent([KeyPhoto].self, forKey: .keyPhotos) ?? []
+        albums = try container.decodeIfPresent([Album].self, forKey: .albums) ?? []
+        likes = try container.decodeIfPresent([Like].self, forKey: .likes) ?? []
+    }
+
+    /// The same content keyed by identifiers. Order-free, so merging and
+    /// comparing never depend on table positions.
+    struct Expanded: Equatable, Sendable {
+        struct Key: Hashable, Sendable { var asset: String; var profile: UUID }
+        struct Decision: Equatable, Sendable {
+            var decision: CatAssetMembershipDecision
+            var box: NormalizedRect?
+            var reference: Bool
+            var decidedAt: Date
+        }
+        struct LinkedAlbum: Equatable, Sendable {
+            var album: String
+            var assets: Set<String>
+            var linkedAt: Date
+        }
+        var memberships: [Key: Decision] = [:]
+        var exclusions: [String: Date] = [:]
+        var keyPhotos: [UUID: String] = [:]
+        var albums: [UUID: LinkedAlbum] = [:]
+        var likes: [String: Date] = [:]
+
+        var isEmpty: Bool {
+            memberships.isEmpty && exclusions.isEmpty && keyPhotos.isEmpty && albums.isEmpty && likes.isEmpty
+        }
+
+        /// `self` wins every conflict; an exclusion keeps its earliest day.
+        func merging(_ other: Expanded) -> Expanded {
+            var result = self
+            result.memberships.merge(other.memberships) { mine, _ in mine }
+            result.exclusions.merge(other.exclusions) { min($0, $1) }
+            result.keyPhotos.merge(other.keyPhotos) { mine, _ in mine }
+            result.albums.merge(other.albums) { mine, _ in mine }
+            result.likes.merge(other.likes) { mine, _ in mine }
+            return result
+        }
+    }
+
+    init?(_ expanded: Expanded) {
+        guard !expanded.isEmpty else { return nil }
+        var assetSet = Set<String>()
+        assetSet.formUnion(expanded.memberships.keys.map(\.asset))
+        assetSet.formUnion(expanded.exclusions.keys)
+        assetSet.formUnion(expanded.keyPhotos.values)
+        for album in expanded.albums.values { assetSet.formUnion(album.assets) }
+        assetSet.formUnion(expanded.likes.keys)
+        var profileSet = Set<UUID>(expanded.memberships.keys.map(\.profile))
+        profileSet.formUnion(expanded.keyPhotos.keys)
+        profileSet.formUnion(expanded.albums.keys)
+        let assets = assetSet.sorted()
+        let profiles = profileSet.sorted { $0.uuidString < $1.uuidString }
+        var assetIndex: [String: Int] = [:]
+        for (index, asset) in assets.enumerated() { assetIndex[asset] = index }
+        var profileIndex: [UUID: Int] = [:]
+        for (index, profile) in profiles.enumerated() { profileIndex[profile] = index }
+        version = Self.currentVersion
+        self.assets = assets
+        self.profiles = profiles
+        memberships = expanded.memberships.map { key, value in
+            Membership(asset: assetIndex[key.asset]!, profile: profileIndex[key.profile]!,
+                       decision: value.decision.rawValue, box: value.box,
+                       reference: value.reference ? true : nil, decidedAt: value.decidedAt)
+        }.sorted { $0.asset != $1.asset ? $0.asset < $1.asset : $0.profile < $1.profile }
+        exclusions = expanded.exclusions.map { Exclusion(asset: assetIndex[$0.key]!, excludedAt: $0.value) }
+            .sorted { $0.asset < $1.asset }
+        keyPhotos = expanded.keyPhotos.map { KeyPhoto(profile: profileIndex[$0.key]!, asset: assetIndex[$0.value]!) }
+            .sorted { $0.profile < $1.profile }
+        albums = expanded.albums.map { profile, value in
+            Album(profile: profileIndex[profile]!, album: value.album,
+                  assets: value.assets.map { assetIndex[$0]! }.sorted(), linkedAt: value.linkedAt)
+        }.sorted { $0.profile < $1.profile }
+        likes = expanded.likes.map { Like(asset: assetIndex[$0.key]!, likedAt: $0.value) }
+            .sorted { $0.asset < $1.asset }
+    }
+
+    /// Entries naming a position that does not exist, or an identifier that
+    /// is empty or too long, are not read. Nothing else is guessed.
+    func expanded() -> Expanded {
+        func asset(_ index: Int) -> String? {
+            guard assets.indices.contains(index), Self.isValidIdentifier(assets[index]) else { return nil }
+            return assets[index]
+        }
+        func profile(_ index: Int) -> UUID? { profiles.indices.contains(index) ? profiles[index] : nil }
+        var result = Expanded()
+        for item in memberships {
+            guard let a = asset(item.asset), let p = profile(item.profile),
+                  let decision = CatAssetMembershipDecision(rawValue: item.decision) else { continue }
+            let key = Expanded.Key(asset: a, profile: p)
+            let value = Expanded.Decision(decision: decision, box: item.box,
+                                          reference: item.reference == true, decidedAt: item.decidedAt)
+            if let previous = result.memberships[key], previous.decidedAt >= value.decidedAt { continue }
+            result.memberships[key] = value
+        }
+        for item in exclusions {
+            guard let a = asset(item.asset) else { continue }
+            result.exclusions[a] = min(result.exclusions[a] ?? item.excludedAt, item.excludedAt)
+        }
+        for item in keyPhotos {
+            guard let a = asset(item.asset), let p = profile(item.profile) else { continue }
+            result.keyPhotos[p] = a
+        }
+        for item in albums {
+            guard let p = profile(item.profile), Self.isValidIdentifier(item.album) else { continue }
+            result.albums[p] = .init(album: item.album, assets: Set(item.assets.compactMap(asset)), linkedAt: item.linkedAt)
+        }
+        for item in likes {
+            guard let a = asset(item.asset) else { continue }
+            result.likes[a] = max(result.likes[a] ?? item.likedAt, item.likedAt)
+        }
+        return result
+    }
+
+    /// The canonical form, limited to cats that exist. Nil when nothing is left.
+    func normalized(profileIDs: Set<UUID>) -> Self? {
+        var value = expanded()
+        let excluded = value.exclusions
+        value.memberships = value.memberships.filter {
+            profileIDs.contains($0.key.profile) && excluded[$0.key.asset] == nil
+        }
+        for (key, decision) in value.memberships {
+            var item = decision
+            item.decidedAt = Self.second(item.decidedAt)
+            if item.decision == .included {
+                item.box = Self.validBox(item.box)
+            } else {
+                item.box = nil
+                item.reference = false
+            }
+            value.memberships[key] = item
+        }
+        value.exclusions = value.exclusions.mapValues(Self.second)
+        value.keyPhotos = value.keyPhotos.filter { profileIDs.contains($0.key) }
+        value.albums = value.albums.filter { profileIDs.contains($0.key) }.mapValues { input in
+            var album = input
+            album.linkedAt = Self.second(album.linkedAt)
+            return album
+        }
+        value.likes = value.likes.mapValues(Self.second)
+        return Self(value)
+    }
+
+    /// Every iCloud Photos identifier of a photo, in table order.
+    var assetIdentifiers: [String] { assets.filter(Self.isValidIdentifier) }
+    var albumIdentifiers: [String] { Array(Set(albums.map(\.album).filter(Self.isValidIdentifier))).sorted() }
+
+    /// Both sides' decisions; `preferred` wins a conflict.
+    static func merged(_ preferred: Self?, _ other: Self?, profileIDs: Set<UUID>) -> Self? {
+        let value = (preferred?.expanded() ?? Expanded()).merging(other?.expanded() ?? Expanded())
+        return Self(value)?.normalized(profileIDs: profileIDs)
+    }
+
+    /// The saved form of this iPhone's decisions. `cloud` maps a PhotoKit local
+    /// identifier to its iCloud Photos identifier, `albumCloud` the same for a
+    /// linked album, and `likes` is this iPhone's liked photos by local
+    /// identifier. A photo without an iCloud identifier cannot be named on
+    /// another iPhone and is left out. `state.portablePhotoLinks` (decisions
+    /// still waiting for their photo here) is carried on; this iPhone's own
+    /// decisions win a conflict.
+    static func capturing(_ state: CatHouseholdIdentityState, likes: [String: Date],
+                          cloud: [String: String], albumCloud: [String: String]) -> Self? {
+        var value = Expanded()
+        for membership in state.memberships {
+            guard let asset = cloud[membership.assetLocalIdentifier] else { continue }
+            value.memberships[.init(asset: asset, profile: membership.profileID)] = .init(
+                decision: membership.decision, box: membership.subjectBoundingBox,
+                reference: membership.isSimilarityReference, decidedAt: membership.decidedAt)
+        }
+        for exclusion in state.globalExcludedAssets {
+            guard let asset = cloud[exclusion.localIdentifier] else { continue }
+            value.exclusions[asset] = min(value.exclusions[asset] ?? exclusion.excludedAt, exclusion.excludedAt)
+        }
+        for profile in state.profiles {
+            if let key = profile.keyPhotoLocalIdentifier, let asset = cloud[key] { value.keyPhotos[profile.id] = asset }
+            if let link = profile.photoAlbumLink, let album = albumCloud[link.localIdentifier] {
+                value.albums[profile.id] = .init(album: album,
+                    assets: Set(link.lastKnownAssetLocalIdentifiers.compactMap { cloud[$0] }), linkedAt: link.linkedAt)
+            }
+        }
+        for (local, likedAt) in likes {
+            guard let asset = cloud[local] else { continue }
+            value.likes[asset] = max(value.likes[asset] ?? likedAt, likedAt)
+        }
+        // A profile with a key photo or an album here keeps its own choice.
+        var waiting = state.portablePhotoLinks?.expanded() ?? Expanded()
+        for profile in state.profiles {
+            if profile.keyPhotoLocalIdentifier != nil { waiting.keyPhotos[profile.id] = nil }
+            if profile.photoAlbumLink != nil { waiting.albums[profile.id] = nil }
+        }
+        return Self(value.merging(waiting))?.normalized(profileIDs: Set(state.profiles.map(\.id)))
+    }
+
+    /// Applies what can be named on this iPhone now (`assets`, `albums`: iCloud
+    /// identifier to local identifier, only for items present in the library)
+    /// and keeps everything else in `portablePhotoLinks` for a later try.
+    /// This iPhone's own decisions win: an existing decision for the same photo
+    /// and cat, an existing key photo or album link, a later local decision
+    /// over a saved exclusion. Liked photos are not applied here; they stay
+    /// until `takingLikes` hands them to the like store.
+    static func applying(_ links: Self?, to state: CatHouseholdIdentityState,
+                         assets: [String: String], albums: [String: String]) -> CatHouseholdIdentityState {
+        guard let links else { return state }
+        let saved = links.expanded()
+        var result = state
+        result.portablePhotoLinks = nil
+        var rest = Expanded()
+        rest.likes = saved.likes
+        let profileIDs = Set(result.profiles.map(\.id))
+
+        for (asset, excludedAt) in saved.exclusions {
+            guard let local = assets[asset] else { rest.exclusions[asset] = excludedAt; continue }
+            if result.isGloballyExcluded(local) { continue }
+            if result.memberships.contains(where: { $0.assetLocalIdentifier == local && $0.decidedAt > excludedAt }) { continue }
+            result.globalExcludedAssets.append(ExcludedCatAsset(localIdentifier: local, excludedAt: excludedAt))
+            result.memberships.removeAll { $0.assetLocalIdentifier == local }
+        }
+        for (key, decision) in saved.memberships where profileIDs.contains(key.profile) {
+            guard let local = assets[key.asset] else { rest.memberships[key] = decision; continue }
+            if result.isGloballyExcluded(local) || result.membership(for: local, profileID: key.profile) != nil { continue }
+            result.memberships.append(CatAssetProfileMembership(
+                assetLocalIdentifier: local, profileID: key.profile, decision: decision.decision,
+                subjectBoundingBox: decision.box, isSimilarityReference: decision.reference,
+                decidedAt: decision.decidedAt))
+        }
+        for (profileID, album) in saved.albums {
+            guard let index = result.profiles.firstIndex(where: { $0.id == profileID }),
+                  result.profiles[index].photoAlbumLink == nil else { continue }
+            guard let local = albums[album.album] else { rest.albums[profileID] = album; continue }
+            result.profiles[index].photoAlbumLink = CatProfilePhotoAlbumLink(
+                localIdentifier: local,
+                lastKnownAssetLocalIdentifiers: album.assets.compactMap { assets[$0] },
+                linkedAt: album.linkedAt, refreshedAt: album.linkedAt).normalized()
+        }
+        for (profileID, asset) in saved.keyPhotos {
+            guard let index = result.profiles.firstIndex(where: { $0.id == profileID }),
+                  result.profiles[index].keyPhotoLocalIdentifier == nil else { continue }
+            guard let local = assets[asset] else { rest.keyPhotos[profileID] = asset; continue }
+            if result.confirmsAsset(local, for: profileID) {
+                result.profiles[index].keyPhotoLocalIdentifier = local
+            } else if rest.memberships[.init(asset: asset, profile: profileID)] != nil || rest.albums[profileID] != nil {
+                // Its decision or album is still waiting; try again with it.
+                rest.keyPhotos[profileID] = asset
+            }
+        }
+        result.portablePhotoLinks = Self(rest)
+        return result.normalized()
+    }
+
+    /// Liked photos that can be named here now, by local identifier, and the
+    /// links without them. The caller keeps the original links until the
+    /// like store has accepted them.
+    static func takingLikes(_ links: Self?, assets: [String: String]) -> (likes: [String: Date], remaining: Self?) {
+        guard let links else { return ([:], nil) }
+        var value = links.expanded()
+        var likes: [String: Date] = [:]
+        for (asset, likedAt) in value.likes {
+            guard let local = assets[asset] else { continue }
+            likes[local] = max(likes[local] ?? likedAt, likedAt)
+            value.likes[asset] = nil
+        }
+        return (likes, Self(value))
+    }
+
+    private static func second(_ date: Date) -> Date {
+        Date(timeIntervalSince1970: floor(date.timeIntervalSince1970))
+    }
+
+    static func isValidIdentifier(_ value: String) -> Bool {
+        !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && value.utf8.count <= 4_096
+    }
+
+    private static func validBox(_ value: NormalizedRect?) -> NormalizedRect? {
+        guard let value, value.x.isFinite, value.y.isFinite, value.width.isFinite, value.height.isFinite,
+              value.x >= 0, value.y >= 0, value.width > 0, value.height > 0,
+              value.x + value.width <= 1, value.y + value.height <= 1 else { return nil }
+        return value
+    }
+}
+
+// MARK: - 旅立った日 with the cat's record (11/20)
+
+/// The same JSON shape as `CatCareDay` ({"year","month","day"}), so the
+/// iPhone's copy in UserDefaults and the record read each other directly.
+struct CatFarewellDay: Codable, Equatable, Hashable, Sendable {
+    var year: Int
+    var month: Int
+    var day: Int
+
+    init(year: Int, month: Int, day: Int) {
+        self.year = year
+        self.month = month
+        self.day = day
+    }
+
+    var isValid: Bool {
+        (1900...2200).contains(year) && (1...12).contains(month) && (1...31).contains(day)
+    }
+
+    static func normalized(_ days: [String: CatFarewellDay]?) -> [String: CatFarewellDay]? {
+        guard let days else { return nil }
+        let kept = days.filter { !$0.key.isEmpty && $0.key.utf8.count <= 256 && $0.value.isValid }
+        return kept.isEmpty ? nil : kept
+    }
+
+    /// Reads the UserDefaults text entry by entry: one unreadable entry does
+    /// not hide the others. Nil only when the text is not a JSON object at
+    /// all; an empty text is an empty record.
+    static func decodeAll(_ json: String) -> [String: CatFarewellDay]? {
+        if json.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return [:] }
+        guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else { return nil }
+        var result: [String: CatFarewellDay] = [:]
+        for (key, value) in object {
+            guard JSONSerialization.isValidJSONObject(value),
+                  let data = try? JSONSerialization.data(withJSONObject: value),
+                  let day = try? JSONDecoder().decode(CatFarewellDay.self, from: data), day.isValid else { continue }
+            result[key] = day
+        }
+        return result
+    }
+
+    /// `days` as UserDefaults text. Entries of `json` that `decodeAll` could
+    /// not read are kept as they were, unless `days` names the same key.
+    static func encodeAll(_ days: [String: CatFarewellDay], keepingUnreadableFrom json: String) -> String {
+        var object = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] ?? [:]
+        for key in (decodeAll(json) ?? [:]).keys { object[key] = nil }
+        for (key, day) in days { object[key] = ["year": day.year, "month": day.month, "day": day.day] }
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else { return json }
+        return String(decoding: data, as: UTF8.self)
+    }
+}
+
+/// Keeps the iPhone's copy (UserDefaults, read by every screen) and the
+/// record's copy (saved and restored) the same. `mirrored` is what both last
+/// agreed on. A change on the iPhone since then wins for the days it touched
+/// (also a removal); everything else comes from the record, so a restored
+/// day reaches the screens. Before the first agreement nothing is removed:
+/// the iPhone's days are added to the record's.
+enum CatFarewellMirror {
+    struct Outcome: Equatable {
+        var agreed: [String: CatFarewellDay]
+        var writesUser: Bool
+        var writesRecord: Bool
+    }
+
+    static func reconcile(user: [String: CatFarewellDay], mirrored: [String: CatFarewellDay]?,
+                          record: [String: CatFarewellDay]) -> Outcome {
+        var agreed = record
+        let base = mirrored ?? [:]
+        for key in Set(base.keys).union(user.keys) where base[key] != user[key] {
+            agreed[key] = user[key]
+        }
+        return Outcome(agreed: agreed, writesUser: agreed != user, writesRecord: agreed != record)
     }
 }

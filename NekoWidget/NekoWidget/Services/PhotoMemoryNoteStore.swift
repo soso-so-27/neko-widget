@@ -437,6 +437,45 @@ actor PhotoMemoryNoteStore {
         }
     }
 
+    /// 11/20: memos restored before their photo was on this iPhone stay under
+    /// `saved:<id>` with the photo's iCloud identifier. These are the
+    /// identifiers still waiting; none is dropped because a lookup failed.
+    func waitingPhotoCloudIdentifiers() throws -> [String] {
+        Self.commitLock.lock()
+        defer { Self.commitLock.unlock() }
+        let state = try load(from: resolvedFileURL())
+        var waiting = Set<String>()
+        for (key, note) in state.notes where key.hasPrefix("saved:") && state.archiveBindings?[key] == nil {
+            if let cloud = note.photoCloudIdentifier, !cloud.isEmpty { waiting.insert(cloud) }
+        }
+        return waiting.sorted()
+    }
+
+    /// Moves a waiting memo onto its photo once the photo is here (`resolved`:
+    /// iCloud identifier to a local identifier present in the library). Exact
+    /// identity only; a photo that already has a memo keeps it, and the saved
+    /// memo stays waiting. Returns how many memos moved.
+    @discardableResult
+    func relinkWaitingNotes(resolved: [String: String]) throws -> Int {
+        guard !resolved.isEmpty else { return 0 }
+        Self.commitLock.lock()
+        defer { Self.commitLock.unlock() }
+        let url = try resolvedFileURL()
+        var state = try load(from: url)
+        var moved = 0
+        for (key, note) in state.notes.sorted(by: { $0.key < $1.key }) {
+            guard key.hasPrefix("saved:"), state.archiveBindings?[key] == nil,
+                  let cloud = note.photoCloudIdentifier, let target = resolved[cloud],
+                  !target.hasPrefix("saved:"), (try? Self.validate(identifier: target)) != nil,
+                  state.notes[target] == nil, state.archiveBindings?[target] == nil else { continue }
+            state.notes[key] = nil
+            state.notes[target] = note
+            moved += 1
+        }
+        if moved > 0 { try commit(state, to: url) }
+        return moved
+    }
+
     func record(id: UUID) throws -> PhotoMemoryNoteRecord? {
         Self.commitLock.lock()
         defer { Self.commitLock.unlock() }
