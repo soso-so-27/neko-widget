@@ -8612,7 +8612,7 @@ class ToolsLookRoundTwo1112Tests(unittest.TestCase):
         for name, text, needle in (
                 ("vet next visit", self.vet, ": ToolEmptyValue.unset,"),
                 ("lost date", self.lost, "?? ToolEmptyValue.unset,"),
-                ("lost collar", self.lost, 'case unknown = "未設定", none = "なし", present = "あり"')):
+                ("lost collar", self.lost, 'case unknown = "未記入", none = "なし", present = "あり"')):
             self.assertIn(needle, text, name)
         for status in ("CatCareSex", "CatCareMicrochipStatus", "CatCareConditionsStatus", "CatCareVetStatus",
                        "CatCareAllergy.Status"):

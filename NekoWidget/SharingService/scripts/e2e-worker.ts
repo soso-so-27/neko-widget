@@ -81,15 +81,15 @@ async function captureNotifications(request: Request, env: LocalEnv): Promise<Re
 }
 
 export default {
-  async fetch(request, env): Promise<Response> {
+  async fetch(request: Request, env: LocalEnv): Promise<Response> {
     const url = new URL(request.url);
     if (env.ENVIRONMENT !== 'local' || url.hostname !== '127.0.0.1' || !env.E2E_TOKEN) {
       return new Response(null, { status: 404 });
     }
     try {
-      if (url.pathname === '/v3/group-recovery/challenges' || url.pathname === '/v3/group-recovery/catalog') {
+      if (['/v3/group-recovery/challenges', '/v3/group-recovery/catalog', '/v3/group-recovery/devices/remove'].includes(url.pathname)) {
         // The signed protocol and D1 schema require a staging or production
-        // domain. Use staging only for these two routes in this local Worker.
+        // domain. Keep recovery challenges and commands in the same local test domain.
         return await route(request, {
           ...env, ENVIRONMENT: 'staging', MEMBER_RATE_LIMITER: { limit: async () => ({ success: true }) },
         });
