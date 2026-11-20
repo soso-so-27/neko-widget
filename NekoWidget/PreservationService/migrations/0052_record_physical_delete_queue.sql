@@ -5,12 +5,13 @@ CREATE TABLE pa_record_physical_delete_queue (
  record_id TEXT NOT NULL,
  tombstone_revision INTEGER NOT NULL CHECK(tombstone_revision>1),
  requested_at INTEGER NOT NULL CHECK(requested_at>0),
+ next_attempt_at INTEGER NOT NULL DEFAULT 0 CHECK(next_attempt_at>=0),
  PRIMARY KEY(owner_id,record_id),
  FOREIGN KEY(owner_id,record_id,tombstone_revision)
   REFERENCES pa_record_commit_markers(owner_id,record_id,revision) ON DELETE RESTRICT
 ) STRICT;
 CREATE INDEX pa_record_physical_delete_queue_age
- ON pa_record_physical_delete_queue(requested_at,owner_id,record_id);
+ ON pa_record_physical_delete_queue(next_attempt_at,requested_at,owner_id,record_id);
 
 CREATE VIEW pa_record_physical_delete_candidates AS
  SELECT r.owner_id,r.record_id,r.revision AS tombstone_revision,d.created_at AS requested_at
@@ -26,17 +27,17 @@ CREATE VIEW pa_record_physical_delete_candidates AS
 CREATE TRIGGER pa_record_physical_delete_after_commit
 AFTER INSERT ON pa_record_commit_markers
 BEGIN
- INSERT OR IGNORE INTO pa_record_physical_delete_queue
+ INSERT OR IGNORE INTO pa_record_physical_delete_queue(owner_id,record_id,tombstone_revision,requested_at)
  SELECT owner_id,record_id,tombstone_revision,requested_at FROM pa_record_physical_delete_candidates
  WHERE owner_id=NEW.owner_id AND record_id=NEW.record_id AND tombstone_revision=NEW.revision;
 END;
 CREATE TRIGGER pa_record_physical_delete_after_intent
 AFTER INSERT ON pa_record_delete_intents
 BEGIN
- INSERT OR IGNORE INTO pa_record_physical_delete_queue
+ INSERT OR IGNORE INTO pa_record_physical_delete_queue(owner_id,record_id,tombstone_revision,requested_at)
  SELECT owner_id,record_id,tombstone_revision,requested_at FROM pa_record_physical_delete_candidates
  WHERE owner_id=NEW.owner_id AND record_id=NEW.record_id AND tombstone_revision=NEW.target_revision;
 END;
 
-INSERT INTO pa_record_physical_delete_queue
+INSERT INTO pa_record_physical_delete_queue(owner_id,record_id,tombstone_revision,requested_at)
  SELECT owner_id,record_id,tombstone_revision,requested_at FROM pa_record_physical_delete_candidates;

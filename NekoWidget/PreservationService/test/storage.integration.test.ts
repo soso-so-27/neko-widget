@@ -7,7 +7,9 @@ import { encodePhoto } from '../src/documents';
 import { randomToken, ServiceError, type ArchiveDocument, type KeyCustody } from '../src/contracts';
 import { RecordRecoveryCopy } from '../src/record-recovery-copy';
 import { OwnerRecoveryCopy } from '../src/owner-recovery-copy';
-import { type RecoveryObject, S3RecoveryCopy } from '../src/s3-recovery-copy';
+import { type RecoveryObject, type RecoveryVersion, type RecoveryVersionCursor, S3RecoveryCopy } from '../src/s3-recovery-copy';
+import { OwnerArchiveRecovery } from '../src/owner-archive-recovery';
+import { RecordPhysicalDeletion, type RecordDeletionJob } from '../src/record-physical-deletion';
 import worker, { route, type Services, type Env } from '../src/index';
 import { PilotControl } from '../src/pilot-control';
 import { IntakeControl } from '../src/intake-control';
@@ -123,6 +125,22 @@ function syntheticRecovery(keys: KeyCustody) {
         .map(byte => byte.toString(16).padStart(2, '0')).join('');
       if (sha256 !== item.sha256 || value.length !== item.bytes) throw new Error('copy corrupt');
       return value.slice();
+    },
+    async listOwnerVersionsPage(ownerId: string, cursor?: RecoveryVersionCursor) {
+      const live = references.filter(item => item.key.startsWith(`recovery/v1/${ownerId}/`)
+        && objects.has(`${item.key}:${item.versionId}`));
+      const start = cursor ? live.findIndex(item => item.key === cursor.keyMarker
+        && item.versionId === cursor.versionIdMarker) + 1 : 0;
+      const versions = live.slice(start, start + 2).map(({ key, versionId, bytes }) =>
+        ({ key, versionId, bytes, deleteMarker: false }));
+      const last = versions.at(-1);
+      return { versions, nextCursor: last && start + versions.length < live.length
+        ? { keyMarker: last.key, versionIdMarker: last.versionId } : null };
+    },
+    async referenceForListedVersion(item: RecoveryVersion) {
+      const reference = references.find(ref => ref.key === item.key && ref.versionId === item.versionId);
+      if (!reference) throw new Error('missing synthetic reference');
+      return reference;
     },
   } as S3RecoveryCopy;
   return { recovery: new RecordRecoveryCopy(keys, s3), s3, objects, references,
@@ -552,6 +570,57 @@ it('resumes a committed deletion before capturing the owner inventory that requi
   } finally {
     await binding.DB.prepare(`UPDATE pa_recovery_write_policy SET owner_snapshot_required=0 WHERE singleton=1`).run();
   }
+});
+
+it('erases only committed target payloads across all pages and confirms their absence before dequeuing', async () => {
+  const f = await fixture();
+  const remote = syntheticRecovery(f.options.keys);
+  const ownerRecovery = new OwnerRecoveryCopy(f.options.keys, remote.s3, f.authOptions.identityIndexSecret);
+  const recovery = new OwnerArchiveRecovery(remote.s3, ownerRecovery, remote.recovery);
+  const archive = new ArchiveStore({ ...f.options, recovery: remote.recovery, ownerRecovery, requireOwnerRecovery: true });
+  const id = crypto.randomUUID(), kept = crypto.randomUUID(), ownerId = f.session.ownerId;
+  const readJob = () => binding.DB.prepare(`SELECT owner_id,record_id,tombstone_revision,requested_at
+    FROM pa_record_physical_delete_queue WHERE owner_id=? AND record_id=?`).bind(ownerId, id).first<RecordDeletionJob>();
+  await archive.put(f.session.token, id, f.request());
+  const recordPayloads = new Set(remote.references.filter(ref => /\/(photo|record)\//.test(ref.key))
+    .map(ref => `${ref.key}:${ref.versionId}`));
+  expect(recordPayloads.size).toBe(2);
+  await archive.put(f.session.token, kept, f.request());
+  await archive.remove(f.session.token, id, 1);
+  const job = await readJob();
+  expect(job).toMatchObject({ owner_id: ownerId, record_id: id, tombstone_revision: 2 });
+
+  const erased: string[] = [];
+  let providerRemoves = false;
+  const executor = new RecordPhysicalDeletion({ db: binding.DB, bucket: binding.ARCHIVE,
+    archive: recovery, records: remote.recovery, inventory: remote.s3, now: f.options.now,
+    eraser: { async requestExactVersionDeletion(owner, item) {
+      expect(owner).toBe(ownerId);
+      const version = `${item.key}:${item.versionId}`;
+      expect(recordPayloads.has(version)).toBe(true);
+      erased.push(version);
+      if (providerRemoves) remote.objects.delete(version);
+    } },
+  });
+  const orphan = await remote.s3.putVersioned(`recovery/v1/${ownerId}/photo/${crypto.randomUUID()}`, photo);
+  const targetR2 = () => binding.ARCHIVE.list({ prefix: `personal/${ownerId}/${id}/` });
+  const before = (await targetR2()).objects.map(object => object.key);
+  await expect(executor.step(job!)).rejects.toMatchObject({ code: 'RECORD_ERASURE_SCOPE_UNVERIFIED' });
+  expect((await targetR2()).objects.map(object => object.key)).toEqual(before);
+  expect(erased).toEqual([]);
+  remote.objects.delete(`${orphan.key}:${orphan.versionId}`);
+
+  expect(await executor.step(job!)).toBe('processing');
+  expect(await readJob()).toEqual(job);
+  expect((await targetR2()).objects).toHaveLength(0);
+  providerRemoves = true;
+  expect(await executor.step(job!)).toBe('complete');
+  expect(new Set(erased)).toEqual(recordPayloads);
+  expect(await readJob()).toBeNull();
+  expect(await archive.read(f.session.token, kept)).toMatchObject({ document, photoBase64: encodePhoto(photo) });
+  expect(await recovery.assembleQuarantineCandidate(ownerId, f.options.now())).toMatchObject({
+    status: 'ready-for-quarantine', verifiedRecords: 2,
+  });
 });
 
 it('real D1/R2 round trip survives new auth/store instances and expires membership without losing access', async () => {

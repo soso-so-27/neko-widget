@@ -373,7 +373,7 @@ export class RecordRecoveryCopy {
       }
     }
     const head = ordered.at(-1)!;
-    // Preserve and verify the chain of signed references, but a confirmed
+    // Preserve and verify the chain of authenticated references. A confirmed
     // tombstone can be restored after the superseded payloads are erased.
     if (intents.length > 0 && intents.every(intent => matchesCommittedTombstone(head, intent))) {
       const tombstone = await this.readCommitted(ownerId, recordId, head);
