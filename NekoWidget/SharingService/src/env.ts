@@ -32,6 +32,7 @@ export interface Env extends GroupReportMailEnv {
   GROUP_REPORT_RUNTIME_ENABLED?: string;
   /// Group evidence decisions and delivery restrictions; defaults OFF.
   GROUP_MODERATION_RUNTIME_ENABLED?: string;
+  REPORT_DEADLINE_MONITOR_ENABLED?: string;
   /// Group APNs registration/dispatch is an independent opt-in. Secrets or
   /// the legacy APNs switch alone never start new group notifications.
   FAMILY_NOTEBOOK_APNS_RUNTIME_ENABLED?: string;

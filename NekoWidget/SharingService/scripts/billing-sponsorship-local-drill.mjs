@@ -111,6 +111,7 @@ const expectedMigrationNames = [
   "0091_group_report_replies_index.sql",
   "0092_group_person_photo_quota.sql",
   "0093_group_recovery_pending_expiry.sql",
+  "0094_report_deadline_heartbeat.sql",
 ];
 
 const databaseGateColumns = [

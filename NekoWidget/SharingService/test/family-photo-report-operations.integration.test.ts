@@ -7,6 +7,7 @@ import * as billingRetention from '../src/billing-retention-executor';
 import worker from '../src/index';
 import {FAMILY_PHOTO_MAINTENANCE_CRON} from '../src/scheduled';
 import type {Env} from '../src/env';
+import {reportDeadlineHealth,withReportDeadlineHeartbeat} from '../src/report-deadline-monitor';
 
 async function report(age:number,outcome='received') {
  const id=crypto.randomUUID(),family=crypto.randomUUID(),asset=crypto.randomUUID();
@@ -17,6 +18,21 @@ async function report(age:number,outcome='received') {
  return {id,family,asset};
 }
 describe('family photo report deadlines',()=>{
+ it('alerts on old unresolved work and records heartbeats only after a successful deadline pass',async()=>{
+  const now=Math.floor(Date.now()/1000);
+  const settings:Env={...testEnv,REPORT_DEADLINE_MONITOR_ENABLED:'YES',GROUP_MODERATION_RUNTIME_ENABLED:'YES'};
+  await db.prepare("DELETE FROM report_deadline_heartbeat WHERE kind='family'").run();
+  await report(2*86400+20);
+  await report(6*86400,'no_action');
+  await expect(withReportDeadlineHeartbeat(settings,'family',async()=>{throw new Error('synthetic failure');}))
+   .rejects.toThrow('synthetic failure');
+  expect(await reportDeadlineHealth(db,'family',true,now)).toMatchObject({heartbeatMissing:true,severity:'warning'});
+  await withReportDeadlineHeartbeat(settings,'family',async()=>{});
+  expect(await reportDeadlineHealth(db,'family',true,now)).toMatchObject({heartbeatMissing:false,severity:'warning'});
+  expect(await reportDeadlineHealth(db,'family',true,now+1000)).toMatchObject({heartbeatMissing:true,severity:'warning'});
+  await report(5*86400+20);
+  expect(await reportDeadlineHealth(db,'family',true,now)).toMatchObject({heartbeatMissing:false,severity:'urgent'});
+ });
  it('uses the dedicated production cron with intake closed for reports, and isolates cleanup failures',async()=>{
   const due=await report(5*86400+5),expired=await report(7*86400+5);
   const early=await report(86400-60),decided=await report(7*86400+5,'no_action');
