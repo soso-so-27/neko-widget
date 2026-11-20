@@ -8,11 +8,12 @@ struct GroupHTTPReply: Sendable {
 }
 
 /// 11/20: the relay refuses a request whose signed time is more than 300 s
-/// from its own (group-auth.ts). When a refused reply's `Date` shows this
-/// iPhone's clock that far off, the person is told to fix the clock rather
-/// than to reopen the window. The signing time is NOT moved to the relay's
-/// clock: the reply's `Date` is not signed, so trusting it would let anyone
-/// on the path shift the time this iPhone signs.
+/// from its own (group-auth.ts). It says so (`stale_request`, reason
+/// `clock_skew`) for a correctly signed request of an active device; an
+/// older relay does not, and then a refused reply's HTTP `Date` that far off
+/// is the sign. Either way the person is told to fix the iPhone's clock
+/// rather than to reopen the window. The signing time is NEVER moved to the
+/// relay's clock: neither the reply's `Date` nor its `serverNow` is signed.
 enum GroupClockSkew {
     static let limit: TimeInterval = 300
     static let message = "iPhoneの「日付と時刻」を自動設定にしてから、もう一度お試しください。"
@@ -26,6 +27,12 @@ enum GroupClockSkew {
     static var isLikely: Bool {
         noticed.lock.lock(); defer { noticed.lock.unlock() }
         return noticed.at.map { Date().timeIntervalSince($0) < 600 } ?? false
+    }
+
+    /// The relay's own `clock_skew` answer.
+    static func noteRelayReported(now: Date = Date()) {
+        noticed.lock.lock(); defer { noticed.lock.unlock() }
+        noticed.at = now
     }
 
     static func note(_ reply: GroupHTTPReply, now: Date = Date()) {
@@ -344,12 +351,15 @@ enum GroupHTTPRequest {
         return request
     }
     private struct ErrorBody: Decodable {
-        struct Detail: Decodable { let code: String; let currentRevision: Int? }
+        struct Detail: Decodable { let code: String; let currentRevision: Int?; var reason: String? = nil }
         let error: Detail
     }
     static func check(_ reply: GroupHTTPReply) throws -> Data {
         guard (200...299).contains(reply.status) else {
             guard let error = try? GroupWire.decode(ErrorBody.self, reply.data).error else { throw GroupClientError.unavailable }
+            // 11/20: the relay names a correctly signed request from this
+            // device that arrived outside its 5 minutes (group-auth.ts).
+            if error.code == "stale_request", error.reason == "clock_skew" { GroupClockSkew.noteRelayReported() }
             switch error.code {
             case "invalid_authentication", "invalid_proof", "replay", "stale_request", "invalid_billing_authentication", "stale_billing_request", "replayed_billing_request": throw GroupClientError.authenticationRequired
             case "not_found", "not_member", "epoch_not_authorized": throw GroupClientError.notMember

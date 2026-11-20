@@ -146,8 +146,11 @@ final class ProductionGroupReporting: GroupReportingService {
         catch { throw GroupSafetyError.unknownOutcome }
     }
     static func error(_ reply: GroupHTTPReply) -> GroupSafetyError {
-        struct Body: Decodable { struct Detail: Decodable { let code: String }; let error: Detail }
-        guard let code = try? JSONDecoder().decode(Body.self, from: reply.data).error.code else { return .invalidResponse }
+        struct Body: Decodable { struct Detail: Decodable { let code: String; var reason: String? = nil }; let error: Detail }
+        guard let detail = try? JSONDecoder().decode(Body.self, from: reply.data).error else { return .invalidResponse }
+        let code = detail.code
+        // 11/20: the relay's clock answer, so the message names the clock.
+        if code == "stale_request", detail.reason == "clock_skew" { GroupClockSkew.noteRelayReported() }
         switch code {
         case "invalid_authentication", "invalid_proof", "replay", "stale_request": return .authenticationRequired
         case "report_not_authorized", "not_member", "epoch_not_authorized": return .notAuthorized

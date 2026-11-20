@@ -9555,6 +9555,7 @@ class MadoBugFixes1120Tests(unittest.TestCase):
         self.assertNotIn("serverOffset", transport)
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
         self.assertIn("if GroupClockSkew.isLikely { return GroupClockSkew.message }", setup)
+        self.assertIn('if error.code == "stale_request", error.reason == "clock_skew" { GroupClockSkew.noteRelayReported() }', transport)
 
     def test_one_window_or_value_does_not_break_the_list(self) -> None:
         listing = section(self.client, "func windows() async throws -> [GroupWindow] {", "static func concernsOneWindow(")

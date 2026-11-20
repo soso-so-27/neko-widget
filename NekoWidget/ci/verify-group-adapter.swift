@@ -596,6 +596,14 @@ private struct GroupAdapterChecks {
         try check(!GroupClockSkew.isLikely, "a reply with the right time clears it")
         GroupClockSkew.note(.init(status: 401, data: Data(), serverDate: Date().addingTimeInterval(60)))
         try check(!GroupClockSkew.isLikely, "a 401 within the relay's 5 minutes is not a clock problem")
+        // The relay's own answer (#1120): stale_request with reason clock_skew.
+        do { _ = try GroupHTTPRequest.check(.init(status: 401, data: Data(#"{"error":{"code":"stale_request","message":"m","reason":"clock_skew","serverNow":1}}"#.utf8))) }
+        catch GroupClientError.authenticationRequired { }
+        try check(GroupClockSkew.isLikely, "the relay's clock_skew answer is noticed")
+        GroupClockSkew.note(.init(status: 200, data: Data(), serverDate: Date()))
+        do { _ = try GroupHTTPRequest.check(.init(status: 401, data: Data(#"{"error":{"code":"invalid_authentication","message":"m"}}"#.utf8))) }
+        catch GroupClientError.authenticationRequired { }
+        try check(!GroupClockSkew.isLikely, "an older relay's plain 401 stays as today")
         try await admissionLifecycle()
         let paths = CommandLine.arguments
         guard paths.count == 3 else { throw Failure.check("two public vectors required") }
