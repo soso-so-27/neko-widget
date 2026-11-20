@@ -46,14 +46,14 @@ final class OutputHarnessTests: XCTestCase {
     func testGroupPhotoReplayDoesNotCreateANewLocalPhoto() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let store = GroupWindowLocalPhotoStore(root: root)
+        let store = GroupWindowLocalPhotoStore(root: root, keychain: { nil })
         let jpeg = Data([1, 2, 3])
         func entry(_ id: String, at time: TimeInterval) -> GroupWindowLocalPhotoStore.Entry {
             .init(id: id, senderParticipantID: "sender", senderDisplayName: "合成",
                   createdAt: Date(timeIntervalSince1970: time), isHidden: false, isOwn: false)
         }
         try await store.save(entry("original", at: 1), jpeg: jpeg, windowID: "window", verifiedMomentID: "sender-photo-id")
-        let reopened = GroupWindowLocalPhotoStore(root: root)
+        let reopened = GroupWindowLocalPhotoStore(root: root, keychain: { nil })
         try await reopened.save(entry("relay-replay", at: 2), jpeg: jpeg, windowID: "window", verifiedMomentID: "sender-photo-id")
         let beforeRemoval = await reopened.entries(windowID: "window")
         XCTAssertEqual(beforeRemoval.map(\.id), ["original"])

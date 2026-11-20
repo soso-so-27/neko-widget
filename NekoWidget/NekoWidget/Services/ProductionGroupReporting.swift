@@ -20,6 +20,9 @@ final class ProductionGroupReporting: GroupReportingService {
     private let store: GroupReportDraftStore
     private let blockStore: any GroupSecretStore
     private let evidence: (String, String) async throws -> GroupReportEvidence
+    /// 11/20: reported photo IDs and receipt numbers, kept in this iPhone's
+    /// Keychain (GroupWindowKept), so deleting the app keeps them covered.
+    private let kept: (any GroupSecretStore)?
     private let publicKey: Data
     private var reportsDisabled: Bool
     private var availabilityUntil = Date.distantPast
@@ -27,7 +30,7 @@ final class ProductionGroupReporting: GroupReportingService {
     private var inFlight = Set<String>()
 
     init(endpoint: URL, secrets: any GroupSecretStore, transport: any GroupHTTPTransport,
-         directory: URL, publicKey: Data, reportsDisabled: Bool = false,
+         directory: URL, publicKey: Data, reportsDisabled: Bool = false, kept: (any GroupSecretStore)? = nil,
          evidence: @escaping (String, String) async throws -> GroupReportEvidence) throws {
         self.reportsDisabled = reportsDisabled
         var approved = false
@@ -49,7 +52,12 @@ final class ProductionGroupReporting: GroupReportingService {
         self.endpoint = endpoint; self.secrets = secrets; self.transport = transport
         self.store = try GroupReportDraftStore(directory: directory)
         self.blockStore = try GroupOperationStore(directory: directory.appendingPathComponent("blocks", isDirectory: true))
-        self.publicKey = publicKey; self.evidence = evidence
+        self.publicKey = publicKey; self.evidence = evidence; self.kept = kept
+    }
+    /// The person's own report: photo, receipt number and date only.
+    private func keepCopy(_ record: GroupReportRecord) {
+        GroupWindowKept.keepReport(photoID: record.photoID, receiptNumber: record.receiptNumber,
+                                   sentAt: record.sentAt, windowID: record.windowID, in: kept)
     }
 
     var isAvailable: Bool {
@@ -196,6 +204,7 @@ final class ProductionGroupReporting: GroupReportingService {
         try store.write(.init(endpoint: endpoint.absoluteString, personID: actor.personID, deviceID: actor.deviceID,
             reporterParticipantID: participantID, record: record, reserveBody: reserve, commitBody: commit,
             evidenceSHA256: digest, evidenceSize: encrypted.count, ciphertext: encrypted, receipt: nil), createOnly: true)
+        keepCopy(record)
         return id
     }
     private func receiptNumber(_ incoming: String?, draft: GroupReportDraft) throws -> String? {
@@ -287,6 +296,7 @@ final class ProductionGroupReporting: GroupReportingService {
             else { throw GroupSafetyError.invalidResponse }
             draft.record.progress = .received; draft.ciphertext = nil
             try store.write(draft)
+            keepCopy(draft.record)
             return draft.record
         } catch {
             var error = error as? GroupSafetyError ?? .unknownOutcome
@@ -312,14 +322,16 @@ final class ProductionGroupReporting: GroupReportingService {
         guard GroupCanonical.validID(windowID) else { throw GroupSafetyError.invalidResponse }
         // Keep this iPhone's hide intent after leaving/erasing an identity.
         // Actual report/status access below remains bound to its original actor.
-        return Set(try store.all().filter {
+        let local = Set(try store.all().filter {
             $0.endpoint == endpoint.absoluteString && $0.record.windowID == windowID
         }.map { $0.record.photoID })
+        // 11/20: and after the app was deleted and installed again.
+        return local.union(GroupWindowKept.reports(windowID: windowID, in: kept).map(\.photoID))
     }
 
     func reports(windowID: String) async -> [GroupReportRecord] {
         guard let actor = try? identity(), let all = try? store.all() else { return [] }
-        return all.filter { $0.endpoint == endpoint.absoluteString && $0.personID == actor.personID
+        let local: [GroupReportRecord] = all.filter { $0.endpoint == endpoint.absoluteString && $0.personID == actor.personID
             && $0.deviceID == (try? actor.deviceID) && $0.record.windowID == windowID }.map { draft in
             var record = draft.record
             // A process restart can leave the durable draft in an in-flight UI
@@ -328,7 +340,19 @@ final class ProductionGroupReporting: GroupReportingService {
                 record.progress = .retryable
             }
             return record
-        }.sorted { $0.sentAt > $1.sentAt }
+        }
+        return (local + keptReports(windowID: windowID, except: all)).sorted { $0.sentAt > $1.sentAt }
+    }
+    /// 11/20: received reports whose drafts went with the deleted app, from
+    /// the Keychain copy, so their receipt numbers stay listed.
+    private func keptReports(windowID: String, except drafts: [GroupReportDraft]) -> [GroupReportRecord] {
+        let local = Set(drafts.filter { $0.record.windowID == windowID }.map(\.record.photoID))
+        return GroupWindowKept.reports(windowID: windowID, in: kept).compactMap { report -> GroupReportRecord? in
+            guard let number = report.receiptNumber, !local.contains(report.photoID) else { return nil }
+            return GroupReportRecord(id: "kept-" + report.photoID, windowID: windowID, photoID: report.photoID,
+                senderName: "", reason: .other, progress: .received, reply: .none, sentAt: report.sentAt,
+                repliedAt: nil, receiptNumber: number, isKeptCopy: true)
+        }
     }
     func refreshReport(draftID: String) async throws -> GroupReportRecord {
         guard !reportsDisabled else { throw GroupSafetyError.disabled }
@@ -374,6 +398,7 @@ final class ProductionGroupReporting: GroupReportingService {
         }
         draft.record.repliedAt = state.repliedAt.map { Date(timeIntervalSince1970: Double($0)) }
         draft.revision = state.revision; try store.write(draft)
+        if committed { keepCopy(draft.record) }
         return draft.record
     }
     func pendingBlocks(windowID: String) async throws -> [GroupPendingBlock] {

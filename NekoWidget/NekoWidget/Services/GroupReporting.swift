@@ -58,6 +58,9 @@ struct GroupReportRecord: Identifiable, Codable, Equatable, Sendable {
     var repliedAt: Date?
     /// Server-issued matching number, not an identifier that grants access.
     var receiptNumber: String? = nil
+    /// 11/20: rebuilt from the Keychain copy after the app was installed
+    /// again: photo, number and date only (the reason was not kept).
+    var isKeptCopy: Bool? = nil
 }
 
 enum GroupSafetyError: Error, Equatable, Sendable {

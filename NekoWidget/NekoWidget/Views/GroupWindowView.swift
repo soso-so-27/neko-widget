@@ -261,7 +261,10 @@ final class GroupWindowScreenModel: ObservableObject {
                 latest = renewed
             }
             window = latest
-            await store.remember(windowID: windowID, name: latest.name, myParticipantID: latest.myParticipantID)
+            // 11/20: names for blocks kept across a reinstall (GroupWindowKept).
+            await store.remember(windowID: windowID, name: latest.name, myParticipantID: latest.myParticipantID,
+                                 memberNames: Dictionary(latest.members.map { ($0.id, $0.displayName) },
+                                                         uniquingKeysWith: { first, _ in first }))
             let photos = try await client.photos(windowID: windowID)
             hearts = Dictionary(photos.map { ($0.id, $0.hearts) }, uniquingKeysWith: { _, last in last })
             // The relay's list may predate a tap still on its way; keep the tap.
@@ -3331,7 +3334,10 @@ struct GroupReportsView: View {
             ForEach(records) { record in
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Text(record.reason.title).font(.subheadline.weight(.semibold))
+                        // A kept copy (11/20) does not know the reason: the date and number only.
+                        if record.isKeptCopy != true {
+                            Text(record.reason.title).font(.subheadline.weight(.semibold))
+                        }
                         Spacer()
                         Text(record.sentAt.formatted(.dateTime.month().day())).font(.footnote).foregroundStyle(.secondary)
                     }

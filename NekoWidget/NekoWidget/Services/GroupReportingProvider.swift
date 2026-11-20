@@ -23,7 +23,8 @@ enum GroupReportingProvider {
             return try ProductionGroupReporting(endpoint: endpoint,
                 secrets: GroupKeychainStore(namespace: GroupWindowClientProvider.namespace), transport: GroupURLSessionTransport(),
                 directory: support.appendingPathComponent(config.releaseMode == "production"
-                    ? "GroupReports-v3-production" : "GroupReports-v3-staging", isDirectory: true), publicKey: publicKey) { windowID, photoID in
+                    ? "GroupReports-v3-production" : "GroupReports-v3-staging", isDirectory: true), publicKey: publicKey,
+                kept: try? GroupKeychainStore(namespace: GroupWindowClientProvider.namespace + GroupWindowKept.namespaceSuffix)) { windowID, photoID in
                     let photos = GroupWindowLocalPhotoStore.shared
                     guard let entry = await photos.entry(photoID: photoID, windowID: windowID),
                           entry.id == photoID, !entry.isHidden, entry.isRemoved != true,
