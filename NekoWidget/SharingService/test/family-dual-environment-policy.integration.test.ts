@@ -9,6 +9,7 @@ import {cipher,db,key,ok,person,send,sign,signed,type Person} from './group-fixt
 
 const limiter:RateLimit={limit:async()=>({success:true})};
 const dual:Env={...settings,ENVIRONMENT:'production',BILLING_STORE_ENVIRONMENT:'Production',BILLING_ACCEPT_SANDBOX_IN_PRODUCTION:'YES',
+  BILLING_PRODUCTION_SANDBOX_REVIEW_UNTIL:new Date(Date.now()+60*60*1000).toISOString(),
   FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED:'YES',FAMILY_NOTEBOOK_API_RUNTIME_ENABLED:'YES',
   CREATE_RATE_LIMITER:limiter,MEMBER_RATE_LIMITER:limiter,INVITE_RATE_LIMITER:limiter,BILLING_RATE_LIMITER:limiter};
 const single:Env={...dual,BILLING_ACCEPT_SANDBOX_IN_PRODUCTION:'NO'};

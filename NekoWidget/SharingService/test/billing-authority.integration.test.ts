@@ -202,13 +202,15 @@ describe.sequential("App Store billing authority", () => {
       },
     }) as Env;
     let verifierCalls = 0;
+    const request = notificationRequest("header.rate_limited.signature");
+    request.headers.set("cf-connecting-ip", "192.0.2.10");
     await expect(ingestAppleBillingNotification(
-      notificationRequest("header.rate_limited.signature"), limitedEnv, async () => {
+      request, limitedEnv, async () => {
       verifierCalls += 1;
       return notification("1ab3d5f7-1234-4abc-8def-1234567890ac", null);
       },
     )).rejects.toMatchObject({ status: 429, code: "rate_limited" });
-    expect(keys).toEqual(["billing-apple-notification"]);
+    expect(keys).toEqual(["billing-apple-notification:192.0.2.10"]);
     expect(verifierCalls).toBe(0);
   });
 
