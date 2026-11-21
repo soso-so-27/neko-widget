@@ -52,8 +52,11 @@ enum CatCareUnfinishedMicrochip {
 
 /// 11/21: deleting a cat removes what this iPhone kept for it in the tools
 /// (預けるとき・避難に備える・迷子のとき・病院のメモ・この子のこと), so the
-/// cat does not come back as a tool page. A cat in the family notebook keeps
-/// its 「この子のこと」: the family's cat stays for everyone.
+/// cat does not come back as a tool page.
+/// A cat in the family notebook stays the family's cat for everyone: its
+/// 「この子のこと」 and tool records are kept and follow the family's cat
+/// (the household cat ID) instead of the deleted profile, so it has one
+/// page, not a second one made from the tools.
 @MainActor
 enum CatProfileDeletionCleanup {
     static func run(profileID: String, careCatID: UUID?, keepsCareRecord: Bool) {
@@ -62,10 +65,30 @@ enum CatProfileDeletionCleanup {
             value.flatMap(UUID.init(uuidString:)) == profile
         }
         let care = CareHandoffStore.shared
+        let evacuation = EvacuationStore.shared
+        if keepsCareRecord {
+            guard let careCatID else { return }
+            if care.plan.cats.contains(where: { matches($0.profileID) }) {
+                care.update { plan in
+                    for index in plan.cats.indices where matches(plan.cats[index].profileID) {
+                        plan.cats[index].profileID = nil
+                        plan.cats[index].toolCatID = careCatID
+                    }
+                }
+            }
+            if evacuation.plan.cats.contains(where: { matches($0.profileID) }) {
+                evacuation.update { plan in
+                    for index in plan.cats.indices where matches(plan.cats[index].profileID) {
+                        plan.cats[index].profileID = nil
+                        plan.cats[index].toolCatID = careCatID
+                    }
+                }
+            }
+            return
+        }
         if care.plan.cats.contains(where: { matches($0.profileID) }) {
             care.update { $0.cats.removeAll { matches($0.profileID) } }
         }
-        let evacuation = EvacuationStore.shared
         let evacuationIDs = evacuation.plan.cats.filter { matches($0.profileID) }.map(\.id)
         if !evacuationIDs.isEmpty {
             let departed = CatFarewell.departedIdentifiers()
@@ -75,13 +98,20 @@ enum CatProfileDeletionCleanup {
             try? CatPreparednessStore.shared.delete(for: key)
             try? LostCatDraftStore.shared.delete(for: key)
         }
-        guard !keepsCareRecord else { return }
         let ids = Set([careCatID, profile].compactMap { $0 })
         let now = Date()
         CatCareStore.shared.update { state in
             for index in state.cats.indices where state.cats[index].deletedAt == nil
                 && (ids.contains(state.cats[index].catID) || state.cats[index].profileID == profile) {
                 state.cats[index].deletedAt = now
+                // Its photos are named no more, so their files leave too
+                // (CatCareStore removes a file only when nothing names it).
+                state.cats[index].facePhoto = nil
+                state.cats[index].bodyPhoto = nil
+                for entry in state.cats[index].vaccinations.indices {
+                    state.cats[index].vaccinations[entry].proof = nil
+                }
+                state.cats[index].detachedVaccinations = nil
             }
         }
         let vet = VeterinaryVisitStore.shared
@@ -330,7 +360,10 @@ struct CatCareDetailView: View {
             .alert(deleteTitle, isPresented: $showsDeleteConfirmation) { deleteActions } message: {
                 // 11/7: what goes, what stays, and that it is final. 11/21: the
                 // tools' records of this cat go too (CatProfileDeletionCleanup).
-                Text("この子の記録と、ツールに書いたことが消えます。写真アプリの写真は残ります。元に戻せません。")
+                // A cat in the family notebook stays the family's cat.
+                Text(sharedWithFamily
+                     ? "このiPhoneの、この子のプロフィールが消えます。家族の手帳のこの子と、書いたことは残ります。元に戻せません。"
+                     : "この子の記録と、ツールに書いたことが消えます。写真アプリの写真は残ります。元に戻せません。")
             }
             .confirmationDialog("家族の手帳とのつながりを外しますか？", isPresented: $confirmsUnlink, titleVisibility: .visible) {
                 Button("つながりを外す", role: .destructive) { unlinkFromFamily() }
@@ -1064,6 +1097,8 @@ struct CatCareDetailView: View {
     private func delete(_ profile: CatProfilePresentation) {
         isDeleting = true
         deleteFailed = false
+        // Read before the profile goes: whether this is the family's cat.
+        let shared = sharedWithFamily
         Task {
             let deleted = await profileActions.deleteProfile(profile.identifier)
             isDeleting = false
@@ -1071,8 +1106,15 @@ struct CatCareDetailView: View {
                 // 11/21: what the tools kept for this cat goes too, so the
                 // cat does not come back as a page of its own.
                 CatProfileDeletionCleanup.run(profileID: profile.identifier, careCatID: catID,
-                                              keepsCareRecord: sharedWithFamily)
-                farewellJSON = CatFarewell.setting(nil, for: subject.key, in: farewellJSON)
+                                              keepsCareRecord: shared)
+                // The family's cat keeps its 旅立った日, under the key its
+                // page uses from now on; a cat that is gone keeps none.
+                let day = CatFarewell.days(farewellJSON)[subject.key]
+                var days = CatFarewell.setting(nil, for: subject.key, in: farewellJSON)
+                if shared, let catID, let day {
+                    days = CatFarewell.setting(day, for: "tool-" + catID.uuidString, in: days)
+                }
+                farewellJSON = days
                 dismiss()
             } else { deleteFailed = true }
         }

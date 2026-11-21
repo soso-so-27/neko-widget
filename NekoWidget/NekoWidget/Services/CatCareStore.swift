@@ -133,9 +133,12 @@ final class CatCareStore: ObservableObject {
             AppRecordDataset.committed(fileURL)
             #endif
             didSave?(previous, next)
-            // 11/21: a photo no longer used (picked again, removed, or its
-            // entry or cat deleted) leaves this iPhone with the change.
-            removePhotoFiles(Self.usedPhotoNames(previous).subtracting(Self.usedPhotoNames(next)))
+            // 11/21: a photo no saved copy names any more (picked again or
+            // removed here) leaves this iPhone with the change. Not on the
+            // family's writing: what it names can come and go.
+            if !familyProjection {
+                removePhotoFiles(Self.usedPhotoNames(previous).subtracting(Self.usedPhotoNames(next)))
+            }
             return true
         } catch {
             reload()
@@ -292,46 +295,56 @@ final class CatCareStore: ObservableObject {
         }
     }
 
-    /// 11/21: the app's copies that the records use. A deleted cat or entry
-    /// uses none; a proof kept apart for the family (detached) still does.
+    /// 11/21: every photo the records name, deleted cats and entries
+    /// included: 保存 reads each named photo (CatCareDecoding.backupPhotoNames),
+    /// so a file goes only when nothing names it any more.
     static func usedPhotoNames(_ state: CatCareState?) -> Set<String> {
-        Set((state?.cats ?? []).filter { $0.deletedAt == nil }.flatMap { cat in
+        Set((state?.cats ?? []).flatMap { cat in
             [cat.facePhoto?.value?.fileName, cat.bodyPhoto?.value?.fileName].compactMap { $0 }
-                + cat.vaccinations.filter { $0.deletedAt == nil }.compactMap { $0.proof?.fileName }
+                + cat.vaccinations.compactMap { $0.proof?.fileName }
                 + (cat.detachedVaccinations ?? []).compactMap { $0.proof?.fileName }
         })
     }
 
     /// 11/21: a photo picked on a sheet that was then closed or picked again.
-    /// Removed only when no record uses it.
+    /// Removed only when no record names it.
     func discardPhoto(_ ref: CatCarePhotoRef?) {
-        guard let ref, canSave, loadedURL == fileURL else { return }
+        guard let ref else { return }
         removePhotoFiles([ref.fileName])
     }
 
-    /// 11/21: copies left by older builds (re-picked or removed photos, deleted
-    /// cats). Only a day after they were written, so a photo picked on a sheet
-    /// still open, or one a restore is bringing back, is never touched.
+    /// 11/21: copies left by older builds (re-picked or removed photos). Only
+    /// a day after they were written, so a photo picked on a sheet still
+    /// open, or one a restore is bringing back, is never touched.
     func removeLeftoverPhotos(now: Date = Date()) {
         guard canSave, loadedURL == fileURL, let directory = fileURL?.deletingLastPathComponent() else { return }
-        let used = Self.usedPhotoNames(state)
         let manager = FileManager.default
-        var leftover: [String] = []
+        var leftover: Set<String> = []
         for folder in [directory, directory.appendingPathComponent("photos", isDirectory: true)] {
             let names = (try? manager.contentsOfDirectory(atPath: folder.path)) ?? []
-            for name in names where name.hasSuffix(".jpg") && UUID(uuidString: String(name.dropLast(4))) != nil
-                && !used.contains(name) {
+            for name in names where name.hasSuffix(".jpg") && UUID(uuidString: String(name.dropLast(4))) != nil {
                 let written = (try? manager.attributesOfItem(atPath: folder.appendingPathComponent(name).path))?[.modificationDate] as? Date
-                if let written, now.timeIntervalSince(written) > 24 * 60 * 60 { leftover.append(name) }
+                if let written, now.timeIntervalSince(written) > 24 * 60 * 60 { leftover.insert(name) }
             }
         }
-        removePhotoFiles(Set(leftover))
+        removePhotoFiles(leftover)
+    }
+
+    /// Every photo the saved file names: what is shown, and this person's own
+    /// copy under the family's writing (what 保存 carries). nil when either
+    /// cannot be read; then nothing is removed.
+    private func savedPhotoNames() -> Set<String>? {
+        guard canSave, loadedURL == fileURL, let fileURL,
+              let bytes = try? AppRecordJSON.read(fileURL),
+              let shown = try? CatCareDecoding.backupPhotoNames(bytes),
+              let personal = try? CatCareDecoding.backupPhotoNames(CatCareDecoding.personalBackup(bytes)) else { return nil }
+        return shown.union(personal).union(Self.usedPhotoNames(state))
     }
 
     private func removePhotoFiles(_ names: Set<String>) {
-        guard !names.isEmpty, let directory = fileURL?.deletingLastPathComponent() else { return }
-        let used = Self.usedPhotoNames(state)
-        for name in names where !used.contains(name) && !name.contains("/") && name.hasSuffix(".jpg") {
+        guard !names.isEmpty, let directory = fileURL?.deletingLastPathComponent(),
+              let named = savedPhotoNames() else { return }
+        for name in names where !named.contains(name) && !name.contains("/") && name.hasSuffix(".jpg") {
             for url in [directory.appendingPathComponent(name),
                         directory.appendingPathComponent("photos", isDirectory: true).appendingPathComponent(name)]
             where FileManager.default.fileExists(atPath: url.path) {

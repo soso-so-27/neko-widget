@@ -573,7 +573,9 @@ extension EvacuationCat {
     /// 11/21: its 旅立った日 is recorded, under its profile or as a tool cat
     /// (the keys CatCareSubject uses).
     func isDeparted(_ departed: Set<String>) -> Bool {
-        if let profileID, departed.contains(profileID) { return true }
-        return departed.contains("tool-" + (toolCatID ?? id).uuidString)
+        // Identifiers are UUID text; their case is not relied on.
+        let keys = Set(departed.map { $0.lowercased() })
+        if let profileID, keys.contains(profileID.lowercased()) { return true }
+        return keys.contains("tool-" + (toolCatID ?? id).uuidString.lowercased())
     }
 }

@@ -205,12 +205,12 @@ struct EvacuationPreparationView: View {
         return ("\(ready) / \(needed.count)", true, false)
     }
 
-    /// 「猫の情報」's value: 「未記入」, a cat with no photo to tell it apart, or the names.
     /// 11/21: a cat whose 旅立った日 is recorded is not offered to show.
     private var livingCats: [EvacuationCat] {
         store.plan.livingCats(departed: CatFarewell.departedIdentifiers())
     }
 
+    /// 「猫の情報」's value: 「未記入」, a cat with no photo to tell it apart, or the names.
     private var catsState: String {
         let cats = livingCats
         if cats.isEmpty { return ToolEmptyValue.unwritten }
