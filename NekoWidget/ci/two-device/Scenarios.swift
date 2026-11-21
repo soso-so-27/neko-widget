@@ -51,6 +51,9 @@ struct Family {
         ("S23", "まど: A's photo stops after its reservation, D joins, A sends again: sealed anew, delivered once to all", s23),
         ("S24", "まど: the Share Extension client lists and sends using the host snapshot", s24),
         ("S25", "editing and deleting a care memo leaves the other device's cat page intact", s25),
+        ("S30", "inviting and sending a photo wait for the newly approved member", s30),
+        ("S31", "an edit made during a mistaken end reaches the family after reopening", s31),
+        ("S33", "refiling a family cat's local visit sends no notebook change", s33),
     ]
 
     static func s24(_ relay: Relay) async throws -> String? {
@@ -144,6 +147,98 @@ struct Family {
         try expect(try b.snapshot().operations.filter { $0.target.familyCatID == f.cat && $0.target.collection == .cat } == page,
             "deleting the memo leaves the cat and every cat-page operation intact")
         return "the tool bridge, two encrypted notebook clients and local Worker are real; the UIKit editor itself is outside this driver"
+    }
+
+    static func s30(_ relay: Relay) async throws -> String? {
+        let f = try await makeFamily(relay)
+        let invitation = try await f.a.service.createInvitation(operationID: UUID())
+        let c = try await Device.make("C", relay: relay, cloud: PersonCloud())
+        c.rememberName("合成のC")
+        let preview = try await c.service.previewInvitation(invitation.link)
+        _ = try await c.service.join(preview, operationID: UUID())
+        try expect(await c.pass() == .pendingApproval, "C has asked to join")
+        let request = try required(try await f.a.service.pendingRequests().first, "A sees C's request")
+        try await f.a.service.decide(requestID: request.id, approve: true, operationID: UUID())
+        try await settle("A recognises the pending member while C stays closed", [f.a, f.b]) { f.a.service.awaitingNewMember }
+        let mark = relay.transport.log.count
+        do {
+            _ = try await f.a.service.createInvitation(operationID: UUID())
+            throw E2EFailure(description: "an invitation was made before C opened")
+        } catch FamilySharingError.awaitingNewMember {
+            try expect(FamilySharingError.awaitingNewMember.message == "新しい家族がアプリを開くと、招待できます。",
+                       "the invite action gives the waiting-member message")
+        }
+        let chosen = try syntheticJPEG(4)
+        do {
+            try await f.a.service.deliverRepresentativePhoto(familyCatID: f.cat, source: chosen)
+            throw E2EFailure(description: "a picture was sent before C opened")
+        } catch FamilySharingError.membershipChecking { }
+        try expect(!f.a.service.hasPendingRepresentativePhoto(familyCatID: f.cat), "no photo was sealed before the keys were ready")
+        try expect(!f.a.notebookWrites(since: mark).contains { $0.hasSuffix("/invitations") || $0.contains("/representative-photos/") },
+                   "no invite or photo mutation was sent")
+
+        try await settle("C opens and the photo becomes writable", [c, f.a, f.b]) {
+            c.inFamily && f.a.service.representativePhotoWritable
+        }
+        try await f.a.service.deliverRepresentativePhoto(familyCatID: f.cat, source: chosen)
+        let asset = try required(f.a.service.representativePhotoAsset(familyCatID: f.cat), "the chosen photo was delivered")
+        let sender = try required(f.a.notebookIdentity?.personID, "A's notebook identity")
+        for reader in [f.b, c] {
+            let received = try await seePhoto(reader, f.cat, asset: asset)
+            try expect(received.author == sender && !received.jpeg.isEmpty, "the family's copy opens the delivered photo")
+        }
+        return "invite action, message value, photo gate and delivery use the real clients; the visual alert and automatic scheduling are outside this driver"
+    }
+
+    static func s31(_ relay: Relay) async throws -> String? {
+        let f = try await makeFamily(relay)
+        let a = try required(f.a.service.notebook, "A has a notebook")
+        let b = try required(f.b.service.notebook, "B has a notebook")
+        let owner = try required(f.a.service.author, "A's author")
+        let target = FamilyNotebookTarget(familyCatID: f.cat, field: .water)
+        _ = try a.edit(target: target, value: .text("元の記録"), author: owner)
+        try await settle("both copies have the original value", [f.a, f.b]) {
+            try b.snapshot().fieldState(for: target)?.operation.value == .text("元の記録")
+        }
+        var care = try FamilyNotebookCatCareBridge.apply(a.snapshot(), to: CatCareState())
+        let row = try required(care.cats.firstIndex { $0.catID == f.tool }, "A's local cat page")
+        _ = try a.endSharing(reason: .absentFromDirectory)
+        care.cats[row].water = .init(value: "共有が止まった間の記録", editedAt: Date().addingTimeInterval(1), editedBy: care.deviceID)
+        try expect(try a.pendingOperations().isEmpty, "the private edit has not been queued while ended")
+
+        try await settle("A verifies the family again", [f.a]) { try a.snapshot().endedEditsSince != nil }
+        let revived = try a.snapshot()
+        let since = try required(revived.endedEditsSince, "the mistaken end has a reconciliation boundary")
+        let plan = try FamilyNotebookCatCareBridge.editsWhileEnded(care, snapshot: revived, since: since)
+        try expect(plan.entries.contains { $0.target == target && $0.value == .text("共有が止まった間の記録") }, "the bridge includes the offline care edit")
+        try a.recordEditsWhileEnded(plan, author: owner)
+        let queued = try required(try a.pendingOperations().first { $0.target == target }, "the recovered edit is in the outbox")
+        try await settle("B receives the recovered edit", [f.a, f.b]) { try b.snapshot().fieldState(for: target)?.operation.id == queued.id }
+        try expect(try a.snapshot().endedEditsSince == nil && a.pendingOperations().isEmpty, "the recovery period and acknowledged outbox entry are cleared")
+        return "the temporary end is induced in A's local store; reopening, journal reconciliation and B's reception run through the real clients"
+    }
+
+    static func s33(_ relay: Relay) async throws -> String? {
+        let f = try await makeFamily(relay)
+        let a = try required(f.a.service.notebook, "A has a notebook")
+        let b = try required(f.b.service.notebook, "B has a notebook")
+        let visits = VeterinaryVisitStore(directory: f.a.support.appendingPathComponent("local-vet"))
+        var memo = try await visits.current(catID: f.profile, catName: "合成ねこ") { try $0() }
+        memo.observations = "手元だけの診察メモ"
+        memo = try await visits.save(memo, expectedRevision: memo.revision)
+        let before = try b.snapshot().operations
+        let mark = relay.transport.log.count
+        _ = try a.setLocalProfile(nil, forFamilyCat: f.cat)
+        try expect(await VeterinaryVisitStore.refile(fromProfileID: f.profile.uuidString, toCatID: f.tool, store: visits),
+                   "the visit follows the family's cat after the profile is detached")
+        let reopened = try await visits.current(catID: f.tool, catName: "合成ねこ") { _ in
+            throw E2EFailure(description: "the family cat opened a new visit instead of the moved one")
+        }
+        try expect(reopened.id == memo.id && reopened.observations == memo.observations, "the original local memo opens")
+        for _ in 0..<2 { await f.a.pass(); await f.b.pass() }
+        try expect(try a.pendingOperations().isEmpty && b.snapshot().operations == before, "the receiving notebook did not change")
+        try expect(!f.a.notebookWrites(since: mark).contains { $0.hasSuffix("/crypto/operations") }, "A sent no shared write")
+        return "the profile detachment and private visit refile are driven directly, with both real clients reading the local Worker"
     }
 
     // MARK: Common steps
