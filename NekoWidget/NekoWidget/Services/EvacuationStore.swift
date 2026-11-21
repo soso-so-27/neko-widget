@@ -222,7 +222,7 @@ final class EvacuationStore: ObservableObject {
                 }
             }
             var next = plan; next.cats.append(cat)
-            next.followCatCount()
+            next.followCatCount(departed: CatFarewell.departedIdentifiers())
             stamp(&next)
             try repository.commit(next, newPhotos: photos)
             plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
@@ -282,7 +282,7 @@ final class EvacuationStore: ObservableObject {
     func followCatsAndMedicines() {
         guard loadError == nil, saveError == nil else { return }
         var next = plan
-        next.followCatCount()
+        next.followCatCount(departed: CatFarewell.departedIdentifiers())
         next.followMedicines(medicineNames())
         guard next != plan else { return }
         update { $0 = next }
@@ -418,7 +418,7 @@ final class EvacuationStore: ObservableObject {
         disclosure.medical = true
         disclosure.catCare = true
         disclosure.withOwnerPhoto = true
-        for cat in plan.cats {
+        for cat in plan.livingCats(departed: CatFarewell.departedIdentifiers()) {
             var record = try shareRecord(catID: cat.id, disclosure: disclosure)
             record.showsReviewDate = false
             records.append(record)
@@ -507,7 +507,7 @@ enum EvacuationNotice {
     /// save on each typed letter costs only the comparison.
     static func follow(_ plan: EvacuationPlan, now: Date = Date()) {
         let dismissed = Date(timeIntervalSince1970: UserDefaults.standard.double(forKey: dismissedKey))
-        let wanted = isOn ? plan.notices(now: now, dismissedAt: dismissed) : []
+        let wanted = isOn ? plan.notices(now: now, dismissedAt: dismissed, departed: CatFarewell.departedIdentifiers()) : []
         guard wanted != scheduled else { return }
         scheduled = wanted
         let ticket = next()

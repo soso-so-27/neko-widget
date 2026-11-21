@@ -1320,9 +1320,9 @@ enum CatProfileLimit {
     /// nil until they are read. Like CatSingleCatRule, never saved.
     static var knownProfiles: Set<String>?
 
-    /// 11/20: a tool's cats. One whose profile was deleted keeps its records
-    /// and stays in the tool's list (the delete says 「ツールの記録は残ります」),
-    /// but it is no longer a cat of the household and takes no place. A cat
+    /// 11/20: a tool's cats. One whose profile was deleted (11/21: the delete
+    /// now takes it out of the tools too; an older entry may remain) is no
+    /// longer a cat of the household and takes no place. A cat
     /// without a profile still counts; with profiles unknown, every one does.
     static func canAddToolCat(_ identifiers: [String?], departed: Set<String>,
                               profiles: Set<String>? = CatProfileLimit.knownProfiles) -> Bool {
