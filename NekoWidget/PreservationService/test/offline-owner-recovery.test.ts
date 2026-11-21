@@ -76,7 +76,8 @@ async function fixture(extraVersions=0){
   {async assertNotRequested(){if(state.purged)throw Error('independent deletion intent');}});
  const safety={async assertSourceFenced(){if(!state.fenced)throw Error('source not fenced');},async assertTargetOffline(){if(!state.offline)throw Error('target not offline');}};
  const step=()=>restore.resume(owner,1000,safety);
- return {step,restore,owners,records,image,refs,objects,omitted,io,state,id,deletedId,photoKey,cipher,keys,s3};
+ return {step,restore,owners,records,image,refs,objects,omitted,io,state,id,deletedId,photoKey,cipher,keys,s3,
+  supersededDeletedRecord:old.record.key};
 }
 async function finish(f:Awaited<ReturnType<typeof fixture>>,maximum=1000){
  let steps=0,peakGets=0,peakHeads=0,peakLists=0,peakBytes=0,peakMs=0,peakDB=0;
@@ -108,6 +109,14 @@ it('spools and rechecks more than 100000 S3 versions in bounded resumable pages'
  expect(result.metrics.maxBatch).toBeLessThanOrEqual(98);expect(result.metrics.maxBindings).toBeLessThanOrEqual(100);
  await context.annotate(JSON.stringify({offlineRecoveryProbe:{versions:f.refs.length+100_001,...result.metrics}}),'measurement');
 },120_000);
+it('restores the other photo after confirmed physical erasure of a superseded deleted payload',async()=>{
+ const f=await fixture();f.objects.delete(f.supersededDeletedRecord);f.omitted.add(f.supersededDeletedRecord);
+ expect((await finish(f)).result).toMatchObject({status:'staged-disabled',records:2,photos:1});
+ expect(await db.prepare('SELECT deleted FROM pa_records WHERE record_id=?').bind(f.deletedId).first('deleted')).toBe(1);
+ expect(await db.prepare('SELECT tombstone_revision FROM pa_record_physical_delete_queue WHERE record_id=?')
+  .bind(f.deletedId).first('tombstone_revision')).toBe(2);
+ expect(await bucket.head(f.photoKey)).not.toBeNull();
+});
 it('quarantines a missing committed marker and refuses source, target or independent deletion fences',async()=>{
  const f=await fixture();f.omitted.add(f.image.records[0]!.marker.key);
  f.state.fenced=false;await expect(f.step()).rejects.toThrow('source not fenced');f.state.fenced=true;

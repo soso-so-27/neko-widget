@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "neko-preservation-record-deletion-local",
+  "main": "src/record-deletion-worker.ts",
+  "compatibility_date": "2026-08-17",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": false },
+  "triggers": { "crons": [] },
+  "vars": { "RECORD_PHYSICAL_DELETION_ENABLED": "NO" }
+}

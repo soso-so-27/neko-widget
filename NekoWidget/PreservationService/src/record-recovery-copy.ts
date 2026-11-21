@@ -112,6 +112,11 @@ export interface DiscoveredDeleteIntent {
   record: RecoveryObject;
 }
 export type DiscoveredRecordManifest = DiscoveredRecordCommit | DiscoveredDeleteIntent;
+export function matchesCommittedTombstone(commit: DiscoveredRecordCommit, intent: DiscoveredRecordManifest): boolean {
+  return intent.kind === 'delete-intent' && intent.recordId === commit.recordId
+    && intent.revision === commit.revision && intent.expectedRevision === commit.revision - 1
+    && commit.photo === null && sameCopy(commit.record, intent.record);
+}
 function sameCopy(left: RecoveryObject | null, right: RecoveryObject | null): boolean {
   return left === null || right === null ? left === right
     : left.key === right.key && left.versionId === right.versionId
@@ -366,6 +371,14 @@ export class RecordRecoveryCopy {
       if (ordered[index]!.revision !== ordered[index - 1]!.revision + 1) {
         return { status: 'quarantined' };
       }
+    }
+    const head = ordered.at(-1)!;
+    // Preserve and verify the chain of authenticated references. A confirmed
+    // tombstone can be restored after the superseded payloads are erased.
+    if (intents.length > 0 && intents.every(intent => matchesCommittedTombstone(head, intent))) {
+      const tombstone = await this.readCommitted(ownerId, recordId, head);
+      if (!tombstone.deleted) return { status: 'quarantined' };
+      return { status: 'ready', image: tombstone };
     }
     let latest: StoredRecordImage | null = null;
     for (const commit of ordered) {
