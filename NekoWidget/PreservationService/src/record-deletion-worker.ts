@@ -20,6 +20,15 @@ interface RecordErasureEnv extends Env {
   ERASER_S3_SESSION_TOKEN?: string;
 }
 const dayMs = 86_400_000;
+const minuteMs = 60_000;
+
+export function matchesErasureReviewSlot(event: Pick<ScheduledEvent, 'cron' | 'scheduledTime'>, reviewAt: number): boolean {
+  if (!Number.isSafeInteger(reviewAt) || reviewAt % minuteMs !== 0 || !Number.isSafeInteger(event.scheduledTime)) return false;
+  const slot = new Date(reviewAt);
+  const cron = `${slot.getUTCMinutes()} ${slot.getUTCHours()} ${slot.getUTCDate()} ${slot.getUTCMonth() + 1} *`;
+  // A cron invocation can carry a timestamp partway through the scheduled minute.
+  return event.cron === cron && event.scheduledTime >= reviewAt && event.scheduledTime < reviewAt + minuteMs;
+}
 
 // A separate worker gets permanent-version deletion credentials. The app's
 // Worker continues to write the queue and has no permanent deletion capability.
@@ -35,10 +44,11 @@ export default {
     if (review !== undefined && (enabled !== apply || (!apply && env.RECORD_PHYSICAL_DELETION_ENABLED !== 'NO')
       || !/^[a-f0-9]{64}$/u.test(review)
       || !/^[0-9]{13}$/u.test(env.RECORD_PHYSICAL_DELETION_REVIEW_AT ?? ''))) throw unavailable();
-    if (review !== undefined && event.scheduledTime !== Number(env.RECORD_PHYSICAL_DELETION_REVIEW_AT)) return;
+    const reviewAt = Number(env.RECORD_PHYSICAL_DELETION_REVIEW_AT);
+    if (review !== undefined && !matchesErasureReviewSlot(event, reviewAt)) return;
     const expiresAt = Number(env.RECORD_PHYSICAL_DELETION_EXPIRES_AT);
     if (apply && (!Number.isSafeInteger(expiresAt) || expiresAt <= Date.now()
-      || expiresAt > event.scheduledTime + 14 * 60_000)) throw unavailable();
+      || expiresAt > reviewAt + 14 * minuteMs)) throw unavailable();
     if (!env.KEY_WRAPPER || !env.KEY_WRAPPER_CALLER_SECRET || !env.IDENTITY_INDEX_SECRET
       || !env.ARCHIVE || !env.DB || (enabled && env.ERASER_S3_ACCESS_KEY_ID === env.RECOVERY_S3_ACCESS_KEY_ID)) {
       throw unavailable();
