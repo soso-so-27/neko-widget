@@ -138,6 +138,7 @@ private enum CloudyWindowVerifier {
         try takenTodayWaitsWhenChosenLate()
         try appViewKeepsTheNewDay()
         try editedPhotoKeepsItsDay()
+        try timeZoneChangeKeepsTheDay()
         try replacedSelectionTapClearsToday()
         try oneEmptyAnswerKeepsImages()
         try releasingImagesKeepsSelections()
@@ -1133,6 +1134,37 @@ private enum CloudyWindowVerifier {
     /// 11/20 (5): today's photo edited in Photos keeps drawing its last
     /// prepared image, cloudy as it was; never an empty or later-only plan;
     /// it is not chosen again for another day.
+    /// 11/21: a time-zone change neither chooses today's photo again nor
+    /// clouds it again. Flying west (the local date goes back), the photo
+    /// already given stays until the local day passes it.
+    private static func timeZoneChangeKeepsTheDay() throws {
+        let tokyo = TimeZone(secondsFromGMT: 9 * 3_600)!
+        defer { CloudyWindowStore.timeZoneOverride = tokyo }
+        let iso = ISO8601DateFormatter()
+        let scope = CloudyWindowStore.personalScope
+        let morning = iso.date(from: "2026-10-25T01:00:00Z")!   // 10:00 the 25th in Tokyo
+        for (arrival, sameDay) in [(iso.date(from: "2026-10-25T13:00:00Z")!, true),   // 03:00 the 25th in Honolulu
+                                   (iso.date(from: "2026-10-25T02:00:00Z")!, false)] { // 16:00 the 24th in Honolulu
+            CloudyWindowStore.timeZoneOverride = tokyo
+            let f = try Fixture(count: 6)
+            defer { f.cleanup() }
+            let first = try f.store.timeline(scopeID: scope, now: morning)[0]
+            try check(f.store.reveal(selectionID: first.selection.id, scopeID: scope,
+                                     photoID: first.photo.photoID, now: morning), "cleared in Tokyo")
+            CloudyWindowStore.timeZoneOverride = TimeZone(identifier: "Pacific/Honolulu")!
+            let after = try f.store.timeline(scopeID: scope, now: arrival)[0]
+            try check(after.photo.photoID == first.photo.photoID && !after.isCloudy,
+                      sameDay ? "the same date keeps its cleared photo" : "flying west keeps the cleared photo")
+            try check(after.selection.day == CloudyWindowStore.calendar.startOfDay(for: arrival),
+                      "the kept photo is today's in the new zone")
+            let again = try f.store.timeline(scopeID: scope, now: arrival.addingTimeInterval(3_600))[0]
+            try check(again.selection.id == after.selection.id, "nothing moves again in the same zone")
+            let nextDay = CloudyWindowStore.nextDay(after: arrival).addingTimeInterval(3_600)
+            let next = try f.store.timeline(scopeID: scope, now: nextDay)[0]
+            try check(next.selection.id != after.selection.id && next.isCloudy, "the next local day brings its own photo")
+        }
+    }
+
     private static func editedPhotoKeepsItsDay() throws {
         let f = try Fixture(count: 6)
         defer { f.cleanup() }

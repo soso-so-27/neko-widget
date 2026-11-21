@@ -304,6 +304,9 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
     /// The daily photo is free (11/11), so selection is never stopped here;
     /// `.needsApp` below is reached only without a journal, with a corrupted
     /// journal, or when the photo's rendition is unreadable.
+    /// 11/21: how long 「晴らせませんでした」 stays before the tag is back.
+    static let revealFailureNoticeDuration: TimeInterval = 60
+
     private func cloudyTimeline(sourceID: String, now: Date, variant: WidgetImageVariant) -> Timeline<NekoWidgetEntry>? {
         let isProfile = sourceID.hasPrefix(CloudyWindowStore.profilePrefix)
         guard sourceID == WidgetPhotoSource.personalLibraryID || isProfile else { return nil }
@@ -344,14 +347,20 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         }
         let likes = readLikeState()
         let defaults = UserDefaults(suiteName: SharedContainer.appGroupIdentifier)
-        let entries = plan.prefix(2).map { planned in
+        var entries: [NekoWidgetEntry] = []
+        for planned in plan.prefix(2) {
             // A tag tap that could not be saved says so for that photo (11/14, A2).
-            if planned.isCloudy, CloudyWindowRevealFailure.matches(
-                scopeID: sourceID, selectionID: planned.selection.id, in: defaults) {
-                return NekoWidgetEntry.stuck(.revealFailed, at: planned.date, imageVariant: variant,
-                                             photoSourceIdentifier: sourceID)
+            // 11/21: only for a moment; the cloudy photo and its tag come back
+            // after it, so the tap can be tried again the same day.
+            let revealFailed = planned.isCloudy && CloudyWindowRevealFailure.matches(
+                scopeID: sourceID, selectionID: planned.selection.id, in: defaults)
+            if revealFailed {
+                entries.append(NekoWidgetEntry.stuck(.revealFailed, at: planned.date, imageVariant: variant,
+                                                     photoSourceIdentifier: sourceID))
             }
-            var entry = NekoWidgetEntry(date: planned.date, localIdentifier: planned.photo.photoID,
+            let date = revealFailed
+                ? planned.date.addingTimeInterval(Self.revealFailureNoticeDuration) : planned.date
+            var entry = NekoWidgetEntry(date: date, localIdentifier: planned.photo.photoID,
                 cacheFilename: (planned.isCloudy ? planned.photo.cloudy : planned.photo.clear).filename(for: variant),
                 imageVariant: variant, photoSourceIdentifier: sourceID, familySourceDigest: nil,
                 usesFamilySpecificImage: true, windowDisplayName: "くもりのまど",
@@ -359,7 +368,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                 isLikeInteractionEnabled: false, isBookmarked: false, isBookmarkInteractionEnabled: false,
                 familyHeartStatus: .hidden, familyActionsRequireApp: false, emptyStateReason: .none)
             entry.cloudyWindowSelection = planned.selection
-            return entry
+            entries.append(entry)
         }
         // 11/20: never only a later entry. Without today's photo (its image
         // is being prepared again), today says so until WidgetKit asks again.

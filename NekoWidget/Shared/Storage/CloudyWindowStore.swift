@@ -293,6 +293,9 @@ private struct CloudyWindowState: Codable {
     /// A photo of only such cats never makes a date day. Optional: older
     /// saves have none.
     var departedProfileIDs: Set<String>? = nil
+    /// 11/21: the time zone (identifier) the selection and 節目 days were
+    /// counted in. Optional: older saves count in the current zone.
+    var dayTimeZone: String? = nil
 }
 
 /// All experiment metadata and derived files are local. Every operation is
@@ -385,8 +388,19 @@ struct CloudyWindowStore: Sendable {
     /// Day number (in `timeZone`) and civil date without Calendar, so a pass
     /// over the whole library stays cheap (days from civil, H. Hinnant).
     static func dayNumber(_ date: Date) -> Int {
-        let offset = Double(timeZone.secondsFromGMT(for: date))
+        dayNumber(date, in: timeZone)
+    }
+
+    static func dayNumber(_ date: Date, in zone: TimeZone) -> Int {
+        let offset = Double(zone.secondsFromGMT(for: date))
         return Int(((date.timeIntervalSince1970 + offset) / 86_400).rounded(.down))
+    }
+
+    /// 11/21: the start of a day number's date in `timeZone`.
+    static func dayStart(dayNumber: Int) -> Date? {
+        let date = civil(dayNumber: dayNumber)
+        return calendar.date(from: DateComponents(year: date.year, month: date.month, day: date.day))
+            .map { calendar.startOfDay(for: $0) }
     }
 
     static func civil(dayNumber: Int) -> (year: Int, month: Int, day: Int) {
@@ -578,6 +592,8 @@ struct CloudyWindowStore: Sendable {
             // a locked iPhone) starts again, so the window cannot stay
             // unreadable for good.
             var state = try readRecoveringDamage()
+            // 11/21: the stored days first, then this sync's days of the current zone.
+            rebaseDays(&state, now: now)
             let relevant = Set(authority?.candidates.map { $0.item.localIdentifier } ?? [])
                 .union(state.photos.map(\.photoID))
                 .union(state.albumArrival.map { [$0.photoID] } ?? [])
@@ -694,6 +710,18 @@ struct CloudyWindowStore: Sendable {
             let state = try read()
             return Set(state.photos.map(\.photoID))
                 .union(state.selections.filter { $0.day >= yesterday }.map(\.photoID))
+        }) ?? []
+    }
+
+    /// 11/21: the photos given to a window for yesterday, today or
+    /// tomorrow. A background refresh keeps these when Photos changed them
+    /// (a favorite, an edit), so the day's photo stays all day.
+    func photoIDsChosenRecently(now: Date = .now) -> Set<String> {
+        guard internalPresentation else { return [] }
+        let yesterday = Self.calendar.startOfDay(for: now).addingTimeInterval(-86_400)
+        return (try? authorityStore.withAuthoritySnapshot(now: now) { _ in
+            let state = try read()
+            return Set(state.selections.filter { $0.day >= yesterday }.map(\.photoID))
         }) ?? []
     }
 
@@ -1075,6 +1103,7 @@ struct CloudyWindowStore: Sendable {
         guard internalPresentation else { return }
         try authorityStore.withAuthoritySnapshot(now: now) { _ in
             var state = try read()
+            rebaseDays(&state, now: now)
             let today = Self.calendar.startOfDay(for: now)
             var changed = false
             for index in state.selections.indices where state.selections[index].day == today
@@ -1428,7 +1457,47 @@ struct CloudyWindowStore: Sendable {
         valid(photo, in: state, authority: authority) || stale(photo, in: state, authority: authority)
     }
 
+    /// 11/21: a selection's day is the start of a day in the zone it was
+    /// chosen in. After a time-zone change every day is counted again in the
+    /// new zone, so each date keeps its photo and its cleared state instead
+    /// of today's photo being chosen again. When the local date went back
+    /// (flying west), the days move back by as much: the photo already given
+    /// for today stays today's until the local day passes it, and such a
+    /// moved day keeps its photo but not its date words (they were another
+    /// day's, as when an old cloudy entry is cleared today). Birthdays and
+    /// the days a cat came home keep their dates.
+    private func rebaseDays(_ state: inout CloudyWindowState, now: Date) {
+        let zone = Self.timeZone
+        guard let stored = state.dayTimeZone, stored != zone.identifier else {
+            if state.dayTimeZone == nil { state.dayTimeZone = zone.identifier }
+            return
+        }
+        state.dayTimeZone = zone.identifier
+        guard let old = TimeZone(identifier: stored) else { return }
+        let back = max(0, Self.dayNumber(now, in: old) - Self.dayNumber(now, in: zone))
+        for index in state.selections.indices {
+            let number = Self.dayNumber(state.selections[index].day, in: old) - back
+            guard let day = Self.dayStart(dayNumber: number) else { continue }
+            state.selections[index].day = day
+            if back > 0 {
+                state.selections[index].albumPeriod = nil
+                state.selections[index].dayKind = nil
+                state.selections[index].milestone = nil
+            }
+        }
+        if let marks = state.profileMilestones {
+            state.profileMilestones = marks.mapValues { days in
+                days.map { mark in
+                    var moved = mark
+                    if let day = Self.dayStart(dayNumber: Self.dayNumber(mark.day, in: old)) { moved.day = day }
+                    return moved
+                }
+            }
+        }
+    }
+
     private func reconcile(_ state: inout CloudyWindowState, authority: PersonalRediscoverySnapshot?, now: Date) {
+        rebaseDays(&state, now: now)
         let given = protectedSelections(in: state, now: now)
         let keptPhotos = state.photos.filter { photo in
             valid(photo, in: state, authority: authority)
