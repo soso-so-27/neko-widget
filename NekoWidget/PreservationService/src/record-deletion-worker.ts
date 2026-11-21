@@ -5,6 +5,7 @@ import { RecordRecoveryCopy } from './record-recovery-copy';
 import { OwnerRecoveryCopy } from './owner-recovery-copy';
 import { OwnerArchiveRecovery } from './owner-archive-recovery';
 import { RecordPhysicalDeletion, type RecordDeletionJob } from './record-physical-deletion';
+import { S3RecoveryCopy } from './s3-recovery-copy';
 import { S3VersionPurge } from './s3-version-purge';
 import { ServiceError } from './contracts';
 
@@ -35,7 +36,12 @@ export default {
       || !env.ARCHIVE || !env.DB || (enabled && env.ERASER_S3_ACCESS_KEY_ID === env.RECOVERY_S3_ACCESS_KEY_ID)) {
       throw unavailable();
     }
-    const s3 = configuredS3(env);
+    const s3 = review === undefined ? configuredS3(env) : new S3RecoveryCopy({
+      enabled: env.RECOVERY_COPY_ENABLED ?? '', region: env.RECOVERY_S3_REGION ?? '', bucket: env.RECOVERY_S3_BUCKET ?? '',
+      expectedAccountId: env.RECOVERY_S3_ACCOUNT_ID ?? '', accessKeyId: env.RECOVERY_S3_ACCESS_KEY_ID ?? '',
+      secretAccessKey: env.RECOVERY_S3_SECRET_ACCESS_KEY ?? '', sessionToken: env.RECOVERY_S3_SESSION_TOKEN ?? '',
+      readOnly: true,
+    });
     const keys = envelopeKeyCustody({ enabled: true,
       wrapper: boundKeyWrapper(env.KEY_WRAPPER, env.KEY_WRAPPER_CALLER_SECRET) });
     const records = new RecordRecoveryCopy(keys, s3);
