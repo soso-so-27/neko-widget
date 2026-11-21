@@ -65,7 +65,7 @@ class WidgetStuckWordsTests(unittest.TestCase):
         self.assertIn("CloudyWindowRevealFailure.clear(in: defaults)", intent)
         provider = read("NekoWidgetWidget/NekoWidgetTimelineProvider.swift")
         cloudy = section(provider, "private func cloudyTimeline(", "private func personalRediscoveryTimeline(")
-        self.assertIn("planned.isCloudy, CloudyWindowRevealFailure.matches(", cloudy)
+        self.assertIn("planned.isCloudy && CloudyWindowRevealFailure.matches(", cloudy)
         self.assertIn(".stuck(.revealFailed", cloudy)
         app = read("NekoWidget/App/NekoWidgetApp.swift")
         self.assertIn("CloudyWindowRevealFailure.clear(in:", app)

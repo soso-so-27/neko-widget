@@ -200,6 +200,9 @@ struct AppRootView: View {
         .task {
             widgetInstallationChecker.refresh()
             await viewModel.start()
+            // 11/21: the Widget's photos are refreshed while the app stays
+            // closed (a scene-based app gets no app-delegate background call).
+            PersonalWidgetBackgroundRefresh.schedule()
         }
         .task {
             // 11/20: 「まどと家族の手帳のデータを消す」 accepted but its local
@@ -247,6 +250,7 @@ struct AppRootView: View {
                 // goes on; coming back does not start it again.
                 break
             case .background:
+                PersonalWidgetBackgroundRefresh.schedule()
                 // Vision batches are intentionally cancellable. Do not keep decoding photos
                 // after the user leaves the app; the next active transition resumes
                 // where this pass stopped (ScanResumePolicy).
@@ -892,6 +896,7 @@ struct AppRootView: View {
         var result: [String: [PhotoPresentation]] = [:]
         for profile in identity.profiles {
             result[profile.id.uuidString] = (projection.confirmedByProfile[profile.id] ?? [])
+                .filter { profilePhotoIsPresent($0, assetsByIdentifier: assetsByIdentifier) }
                 .map { identifier in
                     profilePhotoPresentation(
                         assetsByIdentifier[identifier],
@@ -945,7 +950,12 @@ struct AppRootView: View {
             CatCareStore.shared.state ?? CatCareState(), into: identity)
         let profiles = displayedIdentity.profiles.map { profile -> CatProfilePresentation in
             let confirmedIdentifiers = projection.confirmedByProfile[profile.id] ?? []
-            let confirmed = confirmedIdentifiers
+            // 11/21: counted and shown only while still in Photos; the stored
+            // choice stays (limited access or iCloud: missing is not deleted).
+            let presentIdentifiers = confirmedIdentifiers.filter {
+                profilePhotoIsPresent($0, assetsByIdentifier: assetsByIdentifier)
+            }
+            let confirmed = presentIdentifiers
                 .map { identifier in
                     catProfilePhotoPresentation(
                         assetsByIdentifier[identifier],
@@ -978,7 +988,7 @@ struct AppRootView: View {
                         .contains(link.localIdentifier)
                 let linkedProfilePhotoCount = Set(
                     link.lastKnownAssetLocalIdentifiers
-                ).intersection(confirmedIdentifiers).count
+                ).intersection(presentIdentifiers).count
                 return CatProfilePhotoAlbumLinkPresentation(
                     identifier: link.localIdentifier,
                     title: option?.title,
@@ -1280,6 +1290,16 @@ struct AppRootView: View {
             isConfidentCat: membership?.decision == .included
                 || viewModel.isConfidentCatForPicks(asset)
         )
+    }
+
+    /// 11/21: a cat's photo the app can read now: a read record, or a photo
+    /// of the cat's linked album that PhotoKit just listed.
+    private func profilePhotoIsPresent(
+        _ identifier: String,
+        assetsByIdentifier: [String: AssetRecord]
+    ) -> Bool {
+        assetsByIdentifier[identifier] != nil
+            || viewModel.profilePhotoAlbumAssetDates[identifier] != nil
     }
 
     private func profilePhotoCreationDate(
