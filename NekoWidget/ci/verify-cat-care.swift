@@ -368,6 +368,7 @@ struct VerifyCatCare {
         try check(CatCareLimits.normalizedMicrochip("392 1410-0012 3456") == "392141000123456", "chip normalizes")
         try check(CatCareLimits.normalizedMicrochip("") == "", "empty chip is allowed")
         try check(CatCareLimits.normalizedMicrochip("12345") == nil, "short chip is rejected")
+        try check(CatCareLimits.normalizedMicrochip("３９２　１４１０ー０００１２３４５６") == "392141000123456", "full-width chip digits are accepted")
         try check(CatCareLimits.normalizedMicrochip("39214100012345a") == nil, "letters are rejected")
         let tomorrow = CatCareDay(year: 2026, month: 10, day: 21)!
         try check(!CatCareLimits.isValidWeight(grams: 4200, on: tomorrow, today: day), "future weight rejected")
@@ -480,6 +481,27 @@ struct VerifyCatCare {
         state.cats[0].weights.markDeleted(first.id, at: t1, by: "d")
         for source in CatCareMemoWeights.sources(weights, cats: state.cats) { CatCareImport.apply(source, to: &state, now: t1) }
         try check(state.cats[0].weights.count == 2 && state.cats[0].activeWeights.count == 1, "deleted weight stays deleted")
+
+        // 11/21: a corrected memo corrects its weight; a day after today is never kept.
+        let future = CatCareDay(year: 2099, month: 1, day: 1)!
+        var memo = CatCareState(deviceID: "d", now: t0)
+        memo.cats = [CatCareRecord(catID: tool)]
+        func apply(_ grams: Int, _ on: CatCareDay) {
+            CatCareImport.apply(.init(tool: "PhotoMemo", catID: tool, profileID: nil,
+                                      weights: [("m", on, grams)]), to: &memo, now: t1)
+        }
+        apply(4100, future)
+        try check(memo.cats[0].weights.isEmpty, "a future day is not imported")
+        apply(4100, day)
+        apply(4150, day)
+        try check(memo.cats[0].activeWeights.map(\.grams) == [4150], "a corrected memo corrects its weight")
+        memo.cats[0].weights[0].grams = 4000
+        memo.cats[0].weights[0].editedBy = "d"
+        apply(4300, day)
+        try check(memo.cats[0].activeWeights.map(\.grams) == [4000], "a weight changed here is kept")
+        memo.cats[0].weights[0].editedBy = "import:PhotoMemo"
+        apply(4300, future)
+        try check(memo.cats[0].activeWeights.isEmpty, "a memo moved to a future day takes its weight away")
     }
 
     static func lostCat() throws {

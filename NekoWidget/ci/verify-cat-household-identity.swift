@@ -1059,12 +1059,19 @@ enum CatHouseholdIdentityVerifier {
         let repeated = try decoded.applying(to: withNewPhotoSettings, expectedRevision: withNewPhotoSettings.mutationRevision)
         try require(repeated == withNewPhotoSettings, "repeat import overwrote photo settings or duplicated profiles")
 
+        // 11/21: a household with a cat takes the file's cats beside it.
         var other = empty
-        other.upsertProfile(CatProfile(displayName: "既存の猫"))
-        do {
-            _ = try decoded.applying(to: other, expectedRevision: other.mutationRevision)
-            throw VerificationError.failed("import overwrote an existing profile")
-        } catch CatProfileTransferError.existingSettings { }
+        let resident = CatProfile(displayName: "既存の猫")
+        other.upsertProfile(resident)
+        let merged = try decoded.applying(to: other, expectedRevision: other.mutationRevision)
+        try require(Set(merged.profiles.map(\.id)) == Set([resident.id, profile.id, withoutDates.id]),
+                    "import did not add the file's cats beside the existing one")
+        try require(merged.profiles.first { $0.id == resident.id } == other.profiles.first { $0.id == resident.id },
+                    "import changed an existing profile")
+        var full = empty
+        for index in 0..<CatProfileLimit.maximumLiving { full.upsertProfile(CatProfile(displayName: "猫\(index)")) }
+        let unchanged = try decoded.applying(to: full, expectedRevision: full.mutationRevision)
+        try require(unchanged.profiles.count == CatProfileLimit.maximumLiving, "import went past the living limit")
         var deletedProfiles = empty
         deletedProfiles.mode = .profiled
         var selectedAlbum = CatCandidateCurationState.empty

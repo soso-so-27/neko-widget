@@ -133,6 +133,9 @@ final class CatCareStore: ObservableObject {
             AppRecordDataset.committed(fileURL)
             #endif
             didSave?(previous, next)
+            // 11/21: a photo no longer used (picked again, removed, or its
+            // entry or cat deleted) leaves this iPhone with the change.
+            removePhotoFiles(Self.usedPhotoNames(previous).subtracting(Self.usedPhotoNames(next)))
             return true
         } catch {
             reload()
@@ -150,7 +153,11 @@ final class CatCareStore: ObservableObject {
         importFromTools(care: CareHandoffStore.shared.personalPlanForImport, evacuation: EvacuationStore.shared.plan,
                         preparedness: CatPreparednessStore.shared.records)
         adoptToolPhotos()
+        if !sweptLeftoverPhotos { sweptLeftoverPhotos = true; removeLeftoverPhotos() }
     }
+
+    /// Once per launch (removeLeftoverPhotos).
+    private var sweptLeftoverPhotos = false
 
     /// 11/9: 見分ける写真 are chosen here only. A photo a tool kept before
     /// (迷子 → 避難 → 預ける, the first that has one) is copied in once, for a
@@ -282,6 +289,54 @@ final class CatCareStore: ObservableObject {
             return CatCarePhotoRef(fileName: name, sourceAssetID: sourceAssetID, origin: origin)
         } catch {
             return nil
+        }
+    }
+
+    /// 11/21: the app's copies that the records use. A deleted cat or entry
+    /// uses none; a proof kept apart for the family (detached) still does.
+    static func usedPhotoNames(_ state: CatCareState?) -> Set<String> {
+        Set((state?.cats ?? []).filter { $0.deletedAt == nil }.flatMap { cat in
+            [cat.facePhoto?.value?.fileName, cat.bodyPhoto?.value?.fileName].compactMap { $0 }
+                + cat.vaccinations.filter { $0.deletedAt == nil }.compactMap { $0.proof?.fileName }
+                + (cat.detachedVaccinations ?? []).compactMap { $0.proof?.fileName }
+        })
+    }
+
+    /// 11/21: a photo picked on a sheet that was then closed or picked again.
+    /// Removed only when no record uses it.
+    func discardPhoto(_ ref: CatCarePhotoRef?) {
+        guard let ref, canSave, loadedURL == fileURL else { return }
+        removePhotoFiles([ref.fileName])
+    }
+
+    /// 11/21: copies left by older builds (re-picked or removed photos, deleted
+    /// cats). Only a day after they were written, so a photo picked on a sheet
+    /// still open, or one a restore is bringing back, is never touched.
+    func removeLeftoverPhotos(now: Date = Date()) {
+        guard canSave, loadedURL == fileURL, let directory = fileURL?.deletingLastPathComponent() else { return }
+        let used = Self.usedPhotoNames(state)
+        let manager = FileManager.default
+        var leftover: [String] = []
+        for folder in [directory, directory.appendingPathComponent("photos", isDirectory: true)] {
+            let names = (try? manager.contentsOfDirectory(atPath: folder.path)) ?? []
+            for name in names where name.hasSuffix(".jpg") && UUID(uuidString: String(name.dropLast(4))) != nil
+                && !used.contains(name) {
+                let written = (try? manager.attributesOfItem(atPath: folder.appendingPathComponent(name).path))?[.modificationDate] as? Date
+                if let written, now.timeIntervalSince(written) > 24 * 60 * 60 { leftover.append(name) }
+            }
+        }
+        removePhotoFiles(Set(leftover))
+    }
+
+    private func removePhotoFiles(_ names: Set<String>) {
+        guard !names.isEmpty, let directory = fileURL?.deletingLastPathComponent() else { return }
+        let used = Self.usedPhotoNames(state)
+        for name in names where !used.contains(name) && !name.contains("/") && name.hasSuffix(".jpg") {
+            for url in [directory.appendingPathComponent(name),
+                        directory.appendingPathComponent("photos", isDirectory: true).appendingPathComponent(name)]
+            where FileManager.default.fileExists(atPath: url.path) {
+                try? FileManager.default.removeItem(at: url)
+            }
         }
     }
 

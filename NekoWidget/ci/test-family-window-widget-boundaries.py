@@ -7757,7 +7757,9 @@ class IdentifyingPhotosOnePlace1109Tests(unittest.TestCase):
         # A chosen or cropped photo is a clean copy kept by 「この子のこと」.
         self.assertIn("guard let ref = store.savePhoto(jpeg, sourceAssetID: assetID, origin: .photos) else { return false }",
                       sheet)
-        self.assertIn("guard let catID = store.ensureRecord(for: subject)?.catID else { onSaved(false); return false }", sheet)
+        self.assertIn("guard let catID = store.ensureRecord(for: subject)?.catID else {"
+                      "\n            store.discardPhoto(ref); onSaved(false); return false", sheet)
+        self.assertIn("if !saved { store.discardPhoto(ref) }", sheet)
         self.assertIn("let saved = store.setIdentifyingPhoto(ref, role, catID: catID)", sheet)
         self.assertIn("LostCatPhotoCropView(image: request.image) { data in", detail)
         self.assertIn("guard let jpeg = CatCareFormat.cleanJPEG(data),", detail)

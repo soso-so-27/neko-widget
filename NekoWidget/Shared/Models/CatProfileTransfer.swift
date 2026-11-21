@@ -111,10 +111,17 @@ struct CatProfileTransfer: Codable, Equatable, Sendable {
     /// 11/14: a file brings in at most `CatProfileLimit.maximumLiving` cats,
     /// the first ones in the file's order. The file itself is not changed;
     /// its photos that only belong to cats left out are not offered.
-    /// Import only fills an empty household, so every cat counts as living.
+    /// 11/21: a cat whose 旅立った日 the file carries is not a living cat and
+    /// is always kept (as CatProfileLimit counts).
     func limitedToCatProfileLimit() -> (transfer: Self, wasLimited: Bool) {
-        guard profiles.count > CatProfileLimit.maximumLiving else { return (self, false) }
-        let kept = Array(profiles.prefix(CatProfileLimit.maximumLiving))
+        let departed = Set((farewellDays ?? [:]).keys)
+        var living = 0
+        let kept = profiles.filter { entry in
+            if departed.contains(entry.id.uuidString) { return true }
+            living += 1
+            return living <= CatProfileLimit.maximumLiving
+        }
+        guard kept.count < profiles.count else { return (self, false) }
         let keptIDs = Set(kept.map(\.id))
         let keptPhotos = photos.map { all in
             all.compactMap { photo -> Photo? in
@@ -220,20 +227,37 @@ struct CatProfileTransfer: Codable, Equatable, Sendable {
            profiles.allSatisfy({ entry in existing.contains(entry) }) {
             return current // Re-reading the same file never duplicates or clears settings.
         }
-        guard current.profiles.isEmpty, current.memberships.isEmpty,
-              current.globalExcludedAssets.isEmpty,
-              legacyCuration.sourceAlbumIdentifier == nil, legacyCuration.excludedAssets.isEmpty,
+        // Settings from before cat profiles are never guessed into cats.
+        guard legacyCuration.sourceAlbumIdentifier == nil, legacyCuration.excludedAssets.isEmpty,
               legacyLifeReference == nil,
               current.legacyUnscoped?.lifeReference == nil,
               current.legacyUnscoped?.sourceAlbumIdentifier == nil,
-              current.legacyUnscoped?.legacyExcludedAssetIdentifiers.isEmpty != false else {
+              current.legacyUnscoped?.legacyExcludedAssetIdentifiers.isEmpty != false,
+              !current.profiles.isEmpty || (current.memberships.isEmpty && current.globalExcludedAssets.isEmpty) else {
             throw CatProfileTransferError.existingSettings
         }
+        // 11/21: a household with cats takes the file's other cats beside
+        // its own (a cat added before the file was read no longer blocks
+        // it). A cat already here is never changed; the living cats stay
+        // within CatProfileLimit, the file's order deciding who comes.
+        let present = Set(current.profiles.map(\.id))
+        let departedInFile = Set((farewellDays ?? [:]).keys)
+        let departedHere = Set((current.farewellDays ?? [:]).keys)
+        var living = current.profiles.filter { !departedHere.contains($0.id.uuidString) }.count
         var proposed = current
-        for entry in profiles { proposed.upsertProfile(entry.profile(at: date), at: date) }
-        if let farewellDays, !farewellDays.isEmpty {
-            // Only an empty household reaches here; the file's days are its days.
-            proposed.farewellDays = (proposed.farewellDays ?? [:]).merging(farewellDays) { _, file in file }
+        var added: Set<String> = []
+        for entry in profiles where !present.contains(entry.id) {
+            if !departedInFile.contains(entry.id.uuidString) {
+                guard living < CatProfileLimit.maximumLiving else { continue }
+                living += 1
+            }
+            proposed.upsertProfile(entry.profile(at: date), at: date)
+            added.insert(entry.id.uuidString)
+        }
+        let incomingDays = (farewellDays ?? [:]).filter { added.contains($0.key) }
+        if !incomingDays.isEmpty {
+            // Only for cats this file brought; a day recorded here stays.
+            proposed.farewellDays = (proposed.farewellDays ?? [:]).merging(incomingDays) { here, _ in here }
             proposed = proposed.normalized()
         }
         return proposed
@@ -281,10 +305,10 @@ extension CatProfileTransfer {
             guard !result.globalExcludedAssets.contains(where: { $0.localIdentifier == identifier }) else {
                 throw CatProfileTransferError.existingSettings
             }
-            for profileID in photo.profileIDs {
-                guard result.profiles.contains(where: { $0.id == profileID }) else {
-                    throw CatProfileTransferError.changedState
-                }
+            // 11/21: a cat the file had but the household could not take
+            // (the living limit) gets no photos; the others still do. The
+            // revision check on saving still stops an import over changes.
+            for profileID in photo.profileIDs where result.profiles.contains(where: { $0.id == profileID }) {
                 let decision = result.membershipDecision(for: identifier, profileID: profileID)
                 guard decision != .excluded else { throw CatProfileTransferError.existingSettings }
                 if decision == .included { continue }

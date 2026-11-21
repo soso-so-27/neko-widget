@@ -14,6 +14,9 @@ enum VeterinaryCapture {
     enum Shot {
         case photo(UIImage)
         case video(URL)
+        /// 11/21: taken, but the copy could not be kept (little space left).
+        /// Said on screen, unlike closing the camera.
+        case failed
     }
 
     struct Saved {
@@ -67,6 +70,8 @@ enum VeterinaryCapture {
     /// Saves the shot to the photo library, then makes the memo's copy.
     static func save(_ shot: Shot) async throws -> Saved {
         switch shot {
+        case .failed:
+            throw Failure.notSaved
         case let .photo(image):
             guard let original = image.jpegData(compressionQuality: 0.92),
                   let small = copy(of: original) else { throw Failure.notSaved }
@@ -190,7 +195,7 @@ struct VeterinaryCameraView: UIViewControllerRepresentable {
                     .appendingPathComponent("neko-vet-video-" + UUID().uuidString)
                     .appendingPathExtension(movie.pathExtension.isEmpty ? "mov" : movie.pathExtension)
                 do { try FileManager.default.copyItem(at: movie, to: copy); done(.video(copy)) }
-                catch { done(nil) }
+                catch { try? FileManager.default.removeItem(at: copy); done(.failed) }
             } else if let image = info[.originalImage] as? UIImage {
                 done(.photo(image))
             } else {
