@@ -27,6 +27,7 @@ const versionID = (ref: RecoveryObject | RecoveryVersion) => `${ref.key}\0${ref.
 const attemptLimit = 16;
 const reviewRecords = 13;
 const reviewUnmatchedVersions = 755;
+const dayMs = 86_400_000;
 
 export class RecordPhysicalDeletion {
   constructor(private readonly d: Dependencies) {}
@@ -135,7 +136,7 @@ export class RecordPhysicalDeletion {
     const unlinked: RecoveryVersion[] = [];
     let unresolvedVersions = 0;
     let olderTargetBodies = 0;
-    let orphanBodies = 0;
+    const orphans: RecoveryVersion[] = [];
     for (const item of physical.s3Versions) {
       const kind = item.key.split('/')[3];
       if (item.deleteMarker || !['photo','record','manifest','owner'].includes(kind ?? '')) throw unavailable();
@@ -174,24 +175,24 @@ export class RecordPhysicalDeletion {
               || known.sha256 !== copy.photo.sha256 || known.bytes !== copy.photo.bytes) throw unavailable();
           }
           const revision = wanted.get(entry.recordId);
-          if (revision === undefined) return null;
+          if (revision === undefined) return { item, target: false };
           if (copy.deleted || copy.revision >= revision) throw unavailable();
-          return item;
+          return { item, target: true };
         }));
         for (const result of findings) {
           if (result.status === 'rejected') unresolvedVersions++;
-          else if (result.value) {
+          else if (result.value.target) {
             olderTargetBodies++;
-            targets.push(result.value);
-          } else orphanBodies++;
+            targets.push(result.value.item);
+          } else orphans.push(result.value.item);
         }
       }
     }
     const r2 = physical.r2Objects.filter(item => wanted.has(item.key.split('/')[2] ?? ''));
-    return { r2, s3: targets, physical, protectedPages: pages.size, olderTargetBodies, orphanBodies, unresolvedVersions };
+    return { r2, s3: targets, physical, protectedPages: pages.size, olderTargetBodies, orphans, unresolvedVersions };
   }
 
-  async review(expected: string) {
+  private async reviewPlan(expected: string) {
     const started = this.d.now();
     const scope = await this.reviewScope(expected);
     const known = await this.d.db.prepare(`SELECT record_object_key AS key,record_version_id AS version
@@ -200,13 +201,81 @@ export class RecordPhysicalDeletion {
       WHERE owner_id=? AND photo_object_key IS NOT NULL`).bind(scope.owner,scope.owner).all<{key:string;version:string}>();
     const registered = new Set(known.results.map(item => `${item.key}\0${item.version}`));
     const proof = await this.scan(scope.jobs, scope.generation, registered);
-    const { protectedPages, olderTargetBodies, orphanBodies, unresolvedVersions } = proof;
+    const { protectedPages, olderTargetBodies, unresolvedVersions } = proof;
+    const orphanBodies = proof.orphans.length;
     if (protectedPages + olderTargetBodies + orphanBodies + unresolvedVersions !== reviewUnmatchedVersions) throw unavailable();
     const remaining = await inventoryOwnerCloudStorage(this.d.bucket, this.d.inventory, scope.owner);
     if ((await this.reviewScope(expected)).generation !== scope.generation) throw unavailable();
     this.stillPresent(proof.physical.r2Objects, [], remaining.r2Objects, r2Id);
     this.stillPresent(proof.physical.s3Versions, [], remaining.s3Versions, s3Id);
-    return { protectedPages, olderTargetBodies, orphanBodies, unresolvedVersions, durationMs: this.d.now() - started };
+    return { scope, proof, summary: { protectedPages, olderTargetBodies, orphanBodies, unresolvedVersions,
+      durationMs: this.d.now() - started } };
+  }
+
+  async review(expected: string) {
+    return (await this.reviewPlan(expected)).summary;
+  }
+
+  async eraseReviewed(expected: string, expiresAt: number) {
+    const eraser = this.d.eraser;
+    if (!eraser) throw unavailable();
+    const started = this.d.now();
+    const { scope, proof, summary } = await this.reviewPlan(expected);
+    const deadline = Math.min(expiresAt, ...scope.jobs.map(job => job.requested_at + 30 * dayMs));
+    const s3 = [...proof.s3, ...proof.orphans];
+    const group = 4;
+    const required = Math.max(60_000, 2 * summary.durationMs)
+      + 30_000 * (Math.ceil(proof.r2.length / group) + Math.ceil(s3.length / group));
+    if (summary.unresolvedVersions || summary.orphanBodies > reviewUnmatchedVersions
+      || !Number.isSafeInteger(deadline) || this.d.now() + required > deadline) throw unavailable();
+
+    // Only exact R2 keys already queued by those terminal records. Check all
+    // live references, including references outside the owner's record IDs.
+    const r2 = await this.d.db.prepare(`SELECT p.object_key,
+      EXISTS(SELECT 1 FROM pa_records r WHERE r.photo_key=p.object_key) AS referenced
+      FROM pa_pending_deletes p LIMIT ?`).bind(reviewRecords + 1).all<{object_key:string;referenced:number}>();
+    const r2Keys = new Set(proof.r2.map(item => item.key));
+    if (r2.results.length !== reviewRecords || r2Keys.size !== reviewRecords
+      || r2.results.some(item => item.referenced || !r2Keys.has(item.object_key))) throw unavailable();
+    // The manifest stays in memory. Scope, generations and immutable version
+    // identities must still agree immediately before destruction starts.
+    const current = await inventoryOwnerCloudStorage(this.d.bucket, this.d.inventory, scope.owner);
+    this.stillPresent(proof.physical.r2Objects, [], current.r2Objects, r2Id);
+    this.stillPresent(proof.physical.s3Versions, [], current.s3Versions, s3Id);
+    const check = async () => {
+      if ((await this.reviewScope(expected)).generation !== scope.generation || this.d.now() >= deadline) throw unavailable();
+    };
+    await check();
+    const erase = async <T>(items: T[], remove: (item: T) => Promise<unknown>) => {
+      for(let offset=0; offset<items.length; offset+=group) {
+        await check();
+        const results = await Promise.allSettled(items.slice(offset,offset+group).map(remove));
+        if (results.some(result => result.status === 'rejected')) throw unavailable();
+      }
+    };
+    let requestsConfirmed = true;
+    try {
+      await erase(proof.r2, item => requestManifestPhotoDeletion(this.d.bucket, scope.owner, item));
+      await erase(s3, item => eraser.requestExactVersionDeletion(scope.owner, item));
+    } catch { requestsConfirmed = false; }
+
+    const after = await inventoryOwnerCloudStorage(this.d.bucket, this.d.inventory, scope.owner);
+    const r2IDs = new Set(after.r2Objects.map(r2Id));
+    const s3IDs = new Set(after.s3Versions.map(s3Id));
+    const r2Removed = proof.r2.filter(item => !r2IDs.has(r2Id(item))).length;
+    const s3Removed = s3.filter(item => !s3IDs.has(s3Id(item))).length;
+    const orphanVersionsRemoved = proof.orphans.filter(item => !s3IDs.has(s3Id(item))).length;
+    let retainedReadable = false;
+    try {
+      this.stillPresent(proof.physical.r2Objects, proof.r2, after.r2Objects, r2Id);
+      this.stillPresent(proof.physical.s3Versions, s3, after.s3Versions, s3Id);
+      await check();
+      const restored = await this.d.archive.assembleQuarantineCandidate(scope.owner, this.d.now(), after.s3Versions);
+      await check();
+      retainedReadable = restored.status === 'ready-for-quarantine' && restored.owner.generation === scope.generation;
+    } catch { retainedReadable = false; }
+    return { ...summary, totalDurationMs:this.d.now()-started, requestsConfirmed, r2Removed, s3Removed, orphanVersionsRemoved,
+      retainedReadable, targetsRemaining:proof.r2.length+s3.length-r2Removed-s3Removed };
   }
 
   async step(job: RecordDeletionJob): Promise<'processing' | 'complete'> {
