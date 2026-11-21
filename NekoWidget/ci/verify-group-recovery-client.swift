@@ -148,6 +148,9 @@ private actor AutoRelay: GroupHTTPTransport {
         }
         guard path.hasSuffix("/complete") else { throw TestFailure.failed }
         completions += 1
+        guard body["expectedRevision"] as? Int == packet.roster.revision else {
+            return .init(status: 409, data: Data(#"{"error":{"code":"stale_revision"}}"#.utf8))
+        }
         return try reply(["operationId":body["operationId"]!, "windowId":packet.roster.windowID, "state":"recoveryCommitted"])
     }
 }
@@ -300,8 +303,13 @@ private actor AutoRelay: GroupHTTPTransport {
         try check(try await provider.advanceAutomatically(window:providerView, now:Int(Date().timeIntervalSince1970) + 86_401) == "waitingForReceipt")
         try check(await automatic.counts().1 == 2)
         try await automatic.install(autoPage(received:true))
+        let operation = draft.operationID.uuidString.lowercased()
+        let completionSlot = "p5-complete:" + GroupWire.base64(GroupCanonical.hash(Data(("staging" + window + operation).utf8)))
+        let staleCompletion = try JSONSerialization.data(withJSONObject: ["operationId": operation, "expectedRevision": 0])
+        try providerSecrets.write(staleCompletion, account: completionSlot, createOnly: true)
         try check(try await provider.advanceAutomatically(window:providerView) == "recoveryCommitted")
         try check(await automatic.counts().2 == 1)
+        try check(try providerSecrets.read(completionSlot) == nil)
         let identity = GroupDeviceIdentity(personPrivateKey: root.rawRepresentation, personPublicKey: root.publicKey.rawRepresentation,
             signingPrivateKey: device.rawRepresentation, agreementPrivateKey: hpke.rawRepresentation, windowCertificates: [:], registered: false)
         let deliverySecrets = RecoverySecrets()

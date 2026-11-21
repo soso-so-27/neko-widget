@@ -22,6 +22,14 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertFalse(app.links["client-upgrade-store"].exists)
         XCTAssertFalse(app.buttons["upgrade-fixture-426"].isHittable)
         captureScreenshot(named: "client-upgrade-required-over-settings")
+        let close = app.buttons["client-upgrade-close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        close.tap()
+        let settingsAction = app.buttons["upgrade-fixture-426"]
+        let restored = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: settingsAction)
+        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 5), .completed)
+        XCTAssertFalse(message.exists)
+        XCTAssertTrue(app.staticTexts["通常のエラー"].exists)
         app.terminate()
     }
 

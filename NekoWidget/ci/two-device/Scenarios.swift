@@ -51,7 +51,135 @@ struct Family {
         ("S23", "まど: A's photo stops after its reservation, D joins, A sends again: sealed anew, delivered once to all", s23),
         ("S24", "まど: the Share Extension client lists and sends using the host snapshot", s24),
         ("S25", "editing and deleting a care memo leaves the other device's cat page intact", s25),
+        ("S26", "まど: opening the list renews the key after a member leaves", s26),
+        ("S27", "the family can read while a new member's key is pending", s27),
+        ("S28", "a newer offline edit is reasserted once after an older edit arrives", s28),
+        ("S29", "the share destination returns after unlock and goes away after clearing data", s29),
     ]
+
+    static func s29(_ relay: Relay) async throws -> String? {
+        let billing = try await relay.bootstrapBilling()
+        try await relay.grantPlus(billing)
+        let a = try await Device.make("A", relay: relay, cloud: PersonCloud(), billing: billing)
+        let window = try await a.client.createWindow(name: "合成のまど", ownerDisplayName: "合成のA", operationID: UUID())
+        let original = a.keychain.store(Device.namespace)
+        let snapshot = MemorySecrets(), checkpoints = MemorySecrets()
+        let availability = ShareSnapshotAvailability()
+        let publisher = GroupSharePublishingStore(original: original, makeSnapshot: { availability.isUnlocked ? snapshot : nil })
+        publisher.refreshSnapshot()
+        try expect(try snapshot.read("identity") == nil, "a locked start does not publish credentials")
+        availability.unlock()
+        // An unsuccessful open has the same ten-second retry window as the host app.
+        try await Task.sleep(for: .milliseconds(10_100))
+        publisher.refreshSnapshot()
+        let share = try GroupShareClientFactory.make(endpoint: relay.endpoint, snapshot: snapshot, checkpoints: checkpoints,
+            transport: relay.transport, outboxDirectory: a.support.appendingPathComponent("share-after-unlock"))
+        try expect(try await share.windows().map(\.id) == [window.id], "opening after unlock publishes the existing destination")
+        try checkpoints.write(try required(snapshot.read("window:" + window.id), "shared window"), account: "window:" + window.id, createOnly: false)
+        publisher.clearSnapshot()
+        try expect(try Set(snapshot.accounts(prefix: "")) == ["host-confirmed-empty"], "clearing data leaves only the non-secret empty marker")
+        let reader = GroupShareReadingStore(snapshot: snapshot, checkpoints: checkpoints)
+        do {
+            _ = try reader.read("window:" + window.id)
+            throw E2EFailure(description: "the stale checkpoint recovered a removed share destination")
+        } catch GroupClientError.notMember { }
+        return "the host's publishing store and extension's reader ran with a simulated protected-data transition"
+    }
+
+    private final class ShareSnapshotAvailability: @unchecked Sendable {
+        private let lock = NSLock()
+        private var unlocked = false
+        var isUnlocked: Bool { lock.withLock { unlocked } }
+        func unlock() { lock.withLock { unlocked = true } }
+    }
+
+    static func s26(_ relay: Relay) async throws -> String? {
+        let billing = try await relay.bootstrapBilling()
+        try await relay.grantPlus(billing)
+        let a = try await Device.make("A", relay: relay, cloud: PersonCloud(), billing: billing)
+        let window = try await a.client.createWindow(name: "合成のまど", ownerDisplayName: "合成のA", operationID: UUID())
+        let invite = try await a.client.createInvitation(windowID: window.id, operation: GroupOperation(expectedRevision: window.revision))
+        let link = try required(URL(string: invite.shareText).flatMap { GroupInvitationLink(url: $0)?.url }, "group invite")
+        func join(_ name: String) async throws -> Device {
+            let device = try await Device.make(name, relay: relay, cloud: PersonCloud())
+            let inviteID = try await device.client.stageInvitation(url: link)
+            let request = try await device.client.apply(invitationID: inviteID, displayName: name, operationID: UUID())
+            _ = try await a.client.reconcileAdmissions()
+            try expect(try await device.client.joinStatus(requestID: request.id).state == .approved, "the synthetic member was approved")
+            return device
+        }
+        let b = try await join("B"), c = try await join("C")
+        let membership = try await c.client.window(id: window.id)
+        try await c.client.leave(windowID: window.id, operation: GroupOperation(expectedRevision: membership.revision))
+        let list = try await a.client.windows()
+        try expect(list.contains { $0.id == window.id && $0.state == .rotationRequired }, "the list sees the outstanding renewal")
+        let renewed = await a.client.renewPendingKeys(listed: list)
+        try expect(renewed.contains { $0.id == window.id && $0.state == .active }, "opening the list renewed the key")
+        _ = try await b.client.window(id: window.id)
+        let sent = try await b.client.sendPhoto(normalizedJPEG: windowJPEG(), windowID: window.id, operationID: UUID())
+        try expect(try await a.syncWindow(window.id).shown.contains(sent.id), "a remaining member's new photo is delivered")
+        return "the list's production client calls and the local Worker are real; the UIKit list is outside this driver"
+    }
+
+    static func s27(_ relay: Relay) async throws -> String? {
+        let f = try await makeFamily(relay)
+        let invitation = try await f.a.service.createInvitation(operationID: UUID())
+        let c = try await Device.make("C", relay: relay, cloud: PersonCloud())
+        c.rememberName("合成のC")
+        let preview = try await c.service.previewInvitation(invitation.link)
+        _ = try await c.service.join(preview, operationID: UUID())
+        try expect(await c.pass() == .pendingApproval, "C is waiting for approval")
+
+        let a = try required(f.a.service.notebook, "A has a notebook")
+        let b = try required(f.b.service.notebook, "B has a notebook")
+        let target = FamilyNotebookTarget(familyCatID: f.cat, field: .water)
+        let held = FamilyNotebookTarget(familyCatID: f.cat, field: .allergyText)
+        _ = try b.edit(target: target, value: .text("承認直前に届いた記録"), author: required(f.b.service.author, "B has an author"))
+        try await settle("B writes before C is approved", [f.b]) { try b.pendingOperations().isEmpty }
+        let request = try required(try await f.a.service.pendingRequests().first, "A sees C's request")
+        try await f.a.service.decide(requestID: request.id, approve: true, operationID: UUID())
+        let operation = try a.edit(target: held, value: .text("鍵待ちで書いた記録"), author: required(f.a.service.author, "A has an author"))
+        try await settle("A reads B's record while C remains offline", [f.a, f.b]) {
+            try a.snapshot().fieldState(for: target)?.operation.value == .text("承認直前に届いた記録")
+        }
+        try expect(try a.pendingOperations().contains { $0.id == operation.id }, "A's new edit is kept in the outbox")
+        try expect(try b.snapshot().fieldState(for: held) == nil, "B does not receive the held edit before the keys are ready")
+        try await settle("the held edit reaches the family once C opens", [c, f.a, f.b]) {
+            try c.inFamily && a.pendingOperations().isEmpty && b.snapshot().fieldState(for: held)?.operation.id == operation.id
+        }
+        return "production notebook clients and the local Worker ran; the waiting message itself is outside this driver"
+    }
+
+    static func s28(_ relay: Relay) async throws -> String? {
+        let f = try await makeFamily(relay)
+        let a = try required(f.a.service.notebook, "A has a notebook")
+        let b = try required(f.b.service.notebook, "B has a notebook")
+        let authorA = try required(f.a.service.author, "A has an author")
+        let authorB = try required(f.b.service.author, "B has an author")
+        let target = FamilyNotebookTarget(familyCatID: f.cat, field: .water)
+        let now = Date()
+        let baseline = try a.edit(target: target, value: .text("初期値"), author: authorA, editedAt: now.addingTimeInterval(-30))
+        try await settle("both devices have the initial value", [f.a, f.b]) {
+            try b.snapshot().fieldState(for: target)?.operation.id == baseline.id
+        }
+        let offline = try a.edit(target: target, value: .text("新しい水の記録"), author: authorA, editedAt: now)
+        _ = try b.edit(target: target, value: .text("一つ前の記録"), author: authorB, editedAt: now.addingTimeInterval(-20))
+        let older = try b.edit(target: target, value: .text("古い水の記録"), author: authorB, editedAt: now.addingTimeInterval(-10))
+        try expect(older.version.clock > offline.version.clock, "the older content has the higher logical clock")
+        try await settle("B sends the older content while A stays offline", [f.b]) { try b.pendingOperations().isEmpty }
+        try await settle("A reasserts its newer content when it reconnects", [f.a, f.b]) {
+            try b.snapshot().fieldState(for: target)?.operation.value == offline.value
+        }
+        let winner = try required(try b.snapshot().fieldState(for: target)?.operation, "B received A's newer edit")
+        try expect(winner.id != offline.id && winner.version.clock > older.version.clock, "A sent a fresh, higher-clock operation")
+        for _ in 0..<3 {
+            _ = await f.a.pass()
+            _ = await f.b.pass()
+            try expect(try a.snapshot().fieldState(for: target)?.operation.id == winner.id, "A stays on the same operation")
+            try expect(try b.snapshot().fieldState(for: target)?.operation.id == winner.id, "B stays on the same operation")
+        }
+        return "the stores and relay ran with synthetic edit times and an explicit reconnect"
+    }
 
     static func s24(_ relay: Relay) async throws -> String? {
         let billing = try await relay.bootstrapBilling()
