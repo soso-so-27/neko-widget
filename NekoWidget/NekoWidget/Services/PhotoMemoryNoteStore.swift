@@ -416,18 +416,46 @@ actor PhotoMemoryNoteStore {
 
     func photoURL(for id: UUID) throws -> URL? {
         guard let record = try record(id: id) else { return nil }
-        let name = record.note.photoFile ?? record.note.id.uuidString + ".jpg"
-        guard UUID(uuidString: String(name.dropLast(4))) != nil, name.hasSuffix(".jpg"),
-              name == URL(fileURLWithPath: name).lastPathComponent else { throw PhotoMemoryNoteStoreError.corruptedState }
+        guard let name = Self.photoName(of: record.note) else { throw PhotoMemoryNoteStoreError.corruptedState }
         let url = try resolvedFileURL().deletingLastPathComponent().appendingPathComponent(name)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// The copied photo's file name, or nil when the stored name is not one
+    /// this store writes (`<UUID>.jpg`, no folder).
+    nonisolated static func photoName(of note: PhotoMemoryNote) -> String? {
+        let name = note.photoFile ?? note.id.uuidString + ".jpg"
+        guard name.hasSuffix(".jpg"), UUID(uuidString: String(name.dropLast(4))) != nil,
+              name == URL(fileURLWithPath: name).lastPathComponent else { return nil }
+        return name
+    }
+
+    /// 11/21: the memo list reads the file once. A memo whose photo name is
+    /// broken is still listed, without its photo; the others are unaffected.
+    func recordsWithPhotos() throws -> (records: [PhotoMemoryNoteRecord], photos: [UUID: URL]) {
+        Self.commitLock.lock()
+        defer { Self.commitLock.unlock() }
+        let url = try resolvedFileURL()
+        let records = Self.sortedRecords(try load(from: url))
+        let directory = url.deletingLastPathComponent()
+        var photos: [UUID: URL] = [:]
+        for record in records {
+            guard let name = Self.photoName(of: record.note) else { continue }
+            let file = directory.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: file.path) { photos[record.id] = file }
+        }
+        return (records, photos)
     }
 
     /// These APIs need no photo access. A missing original never deletes text.
     func records() throws -> [PhotoMemoryNoteRecord] {
         Self.commitLock.lock()
         defer { Self.commitLock.unlock() }
-        return try load(from: resolvedFileURL()).notes.map {
+        return Self.sortedRecords(try load(from: resolvedFileURL()))
+    }
+
+    private static func sortedRecords(_ state: State) -> [PhotoMemoryNoteRecord] {
+        state.notes.map {
             PhotoMemoryNoteRecord(photoIdentifier: $0.key, note: $0.value)
         }.sorted {
             if $0.note.updatedAt != $1.note.updatedAt {
@@ -636,6 +664,7 @@ actor PhotoMemoryNoteStore {
         state.archiveBindings?[binding.photoIdentifier] = binding
         if weight != nil || old?.weight != nil { state.schemaVersion = 4 }
         try commit(state, to: url)
+        if note == nil { removePhotoIfUnnamed(of: old, at: url) }
         return note.map { PhotoMemoryNoteRecord(photoIdentifier: binding.photoIdentifier, note: $0) }
     }
 
@@ -706,8 +735,21 @@ actor PhotoMemoryNoteStore {
         }
         if weight != nil || existing?.weight != nil { state.schemaVersion = 4 }
         try commit(state, to: url)
+        if note == nil { removePhotoIfUnnamed(of: existing, at: url) }
         // Do not expose a new revision until the atomic write succeeds.
         return note
+    }
+
+    /// 11/21: a deleted memo's copied photo leaves this iPhone with it, only
+    /// when the saved file, read again after the deletion, names it nowhere
+    /// (another memo, or the copy 保存 carries). Unreadable: nothing is removed.
+    /// Called inside commitLock, after a successful commit.
+    private func removePhotoIfUnnamed(of deleted: PhotoMemoryNote?, at url: URL) {
+        guard let deleted, let name = Self.photoName(of: deleted),
+              let saved = try? load(from: url) else { return }
+        guard !saved.notes.values.contains(where: { $0.photoFile == name || $0.id.uuidString + ".jpg" == name }) else { return }
+        let file = url.deletingLastPathComponent().appendingPathComponent(name)
+        if FileManager.default.fileExists(atPath: file.path) { try? FileManager.default.removeItem(at: file) }
     }
 
     private static func normalizedText(_ text: String) throws -> String {

@@ -281,6 +281,12 @@ enum GroupWindowKept {
         let photoID: String
         var receiptNumber: String? = nil
         let sentAt: Date
+        /// 11/21: the team's answer (GroupReportReply's raw value, never
+        /// "none") and when it came, so a report whose draft was cleaned up
+        /// or went with the deleted app still shows it. Optional: copies
+        /// kept before have none, and older versions ignore them.
+        var reply: String? = nil
+        var repliedAt: Date? = nil
     }
 
     /// 11/20: 「まどと家族の手帳のデータを消す」 removes these; the report copies stay.
@@ -315,15 +321,27 @@ enum GroupWindowKept {
         keep(next, windowID: windowID, in: store)
     }
 
+    /// Reports the relay took: they carry its receipt number, given when
+    /// the report reaches it. 11/21: a copy kept when a report was made but
+    /// never reached the relay (the app deleted before it was sent) is not
+    /// one; its draft went with the app, so it no longer covers the photo,
+    /// which stays reportable again instead of hidden with nothing listed.
     static func reports(windowID: String, in store: (any GroupSecretStore)?) -> [Report] {
+        allReports(windowID: windowID, in: store).filter { $0.receiptNumber != nil }
+    }
+
+    /// Every kept copy, including reports made here and not yet sent.
+    static func allReports(windowID: String, in store: (any GroupSecretStore)?) -> [Report] {
         guard let store, GroupCanonical.validID(windowID),
               let data = try? store.read(reportsAccount(windowID)),
               let reports = try? JSONDecoder().decode([Report].self, from: data) else { return [] }
         return reports.filter { GroupCanonical.validID($0.photoID) }
     }
 
-    /// One reported photo; a receipt number learned later is added to it.
+    /// One reported photo; a receipt number or an answer learned later is
+    /// added to it. Nothing passed (nil, or "none") never erases what is kept.
     static func keepReport(photoID: String, receiptNumber: String?, sentAt: Date,
+                           reply: String? = nil, repliedAt: Date? = nil,
                            windowID: String, in store: (any GroupSecretStore)?) {
         guard let store, GroupCanonical.validID(windowID), GroupCanonical.validID(photoID) else { return }
         let account = reportsAccount(windowID)
@@ -334,11 +352,16 @@ enum GroupWindowKept {
                 reports = saved
             }
         } catch { return }
+        let reply = reply.flatMap { $0 == "none" || $0.isEmpty || $0.utf8.count > 32 ? nil : $0 }
         if let index = reports.firstIndex(where: { $0.photoID == photoID }) {
-            guard let receiptNumber, reports[index].receiptNumber != receiptNumber else { return }
-            reports[index].receiptNumber = receiptNumber
+            var next = reports[index]
+            if let receiptNumber { next.receiptNumber = receiptNumber }
+            if let reply { next.reply = reply; next.repliedAt = repliedAt ?? next.repliedAt }
+            guard next != reports[index] else { return }
+            reports[index] = next
         } else {
-            reports.append(Report(photoID: photoID, receiptNumber: receiptNumber, sentAt: sentAt))
+            reports.append(Report(photoID: photoID, receiptNumber: receiptNumber, sentAt: sentAt,
+                                  reply: reply, repliedAt: reply == nil ? nil : repliedAt))
         }
         guard let data = try? JSONEncoder().encode(Array(reports.suffix(limit))) else { return }
         try? store.write(data, account: account, createOnly: false)

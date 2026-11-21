@@ -31,6 +31,7 @@ struct ToolOutputVerifier {
         try careMemoPlainText()
         try lostCatOldDraftDecodes()
         try lostCatContactedOffices()
+        try lostCatDaysKeepTheirDay()
         try lostCatFoundPost()
         try lostCatEndingKeepsTheCat()
         try lostCatSearchingNeedsAFlyerOrAnOffice()
@@ -346,6 +347,28 @@ struct ToolOutputVerifier {
         try check(log.contactedOffices?.contains { $0.office == "futureOffice" } == true, "an unknown office is kept")
         let empty = try JSONDecoder().decode(LostCatIncidentLog.self, from: Data("{}".utf8))
         try check(empty.isEmpty, "every log field is optional")
+    }
+
+    /// 11/21: a day marked in another time zone shows the same day here;
+    /// an older draft without the day keeps its saved instant.
+    static func lostCatDaysKeepTheirDay() throws {
+        let calendar = LostCatText.calendar
+        let noon = calendar.date(from: DateComponents(year: 2026, month: 11, day: 8, hour: 12))!
+        var log = LostCatIncidentLog()
+        log.contactedOffices = [LostCatContactedOffice(office: "police", contactedAt: noon, contactedOn: "2026-11-09")]
+        log.savedNextCheckAt = noon; log.nextCheckOn = "2026-11-10"
+        try check(LostCatText.day(log.contactedAt(.police)!) == "11月9日"
+                  && LostCatText.day(log.nextCheckAt!) == "11月10日", "a saved day stays that day")
+        log.contactedOffices = [LostCatContactedOffice(office: "police", contactedAt: noon)]
+        log.nextCheckOn = nil
+        try check(log.contactedAt(.police) == noon && log.nextCheckAt == noon, "older drafts keep the instant")
+        log.nextCheckAt = noon
+        try check(log.nextCheckOn == "2026-11-08" && log.savedNextCheckAt == noon, "setting writes the day")
+        let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(log)) as? [String: Any]
+        try check(json?["nextCheckAt"] != nil && json?["savedNextCheckAt"] == nil && json?["nextCheckOn"] as? String == "2026-11-08",
+                  "the saved key is unchanged")
+        let old = try JSONDecoder().decode(LostCatIncidentLog.self, from: Data(#"{"nextCheckAt":10}"#.utf8))
+        try check(old.nextCheckAt == Date(timeIntervalSinceReferenceDate: 10) && old.nextCheckOn == nil, "an older log reads")
     }
 
     /// 「連絡済み 3/4・次に確かめる日 11月9日」 on the guide row.

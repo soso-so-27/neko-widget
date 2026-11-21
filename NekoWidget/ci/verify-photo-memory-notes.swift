@@ -38,6 +38,7 @@ enum PhotoMemoryNoteVerifier {
         try await verifiesMigrationFailureAndRetry(at: root.appendingPathComponent("migration-failure/state.json"))
         try await verifiesRecordsAndContext(at: root.appendingPathComponent("records/state.json"))
         try await verifiesRecordIntegrity(at: root.appendingPathComponent("integrity/state.json"))
+        try await verifiesListReadAndPhotoCleanup(at: root.appendingPathComponent("list-photos/state.json"))
         try await verifiesWeightPersistence(at: root.appendingPathComponent("weight/state.json"))
         try await verifiesMissingPartitionNeverReplacesRecords(at: root.appendingPathComponent("partition-failure/state.json"))
         try await verifiesWaitingMemosRelinkLater(at: root.appendingPathComponent("waiting/state.json"))
@@ -623,6 +624,38 @@ enum PhotoMemoryNoteVerifier {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(fixture).write(to: url)
         return fixture
+    }
+
+    /// 11/21: one read lists every memo even when one photo name is broken,
+    /// and a deleted memo's photo goes only when no other memo names it.
+    private static func verifiesListReadAndPhotoCleanup(at url: URL) async throws {
+        let store = PhotoMemoryNoteStore(fileURL: url)
+        let a = try await saved(store, text: "壊れた名前", id: "photo-a")
+        let b = try await saved(store, text: "写真つき", id: "photo-b")
+        let c = try await saved(store, text: "同じ写真", id: "photo-c")
+        let d = try await saved(store, text: "同じ写真の別メモ", id: "photo-d")
+        var snapshot = try JSONDecoder().decode(PhotoMemoryNoteSnapshot.self, from: Data(contentsOf: url))
+        snapshot.notes["photo-a"]?.photoFile = "../broken.jpg"
+        snapshot.notes["photo-d"]?.photoFile = c.id.uuidString + ".jpg"
+        try JSONEncoder().encode(snapshot).write(to: url, options: .atomic)
+        let directory = url.deletingLastPathComponent()
+        let bPhoto = directory.appendingPathComponent(b.id.uuidString + ".jpg")
+        let cPhoto = directory.appendingPathComponent(c.id.uuidString + ".jpg")
+        try Data([0xFF, 0xD8, 0xFF]).write(to: bPhoto)
+        try Data([0xFF, 0xD8, 0xFF]).write(to: cPhoto)
+        let listed = try await store.recordsWithPhotos()
+        try require(listed.records.count == 4 && listed.photos[a.id] == nil
+                    && listed.photos[b.id] == bPhoto && listed.photos[c.id] == cPhoto && listed.photos[d.id] == cPhoto,
+                    "one broken photo name hid the memo list or its photos")
+        guard let dNow = try await store.record(id: d.id), let bNow = try await store.record(id: b.id) else {
+            throw Failure.failed("listed memo missing")
+        }
+        try await store.delete(id: dNow.id, expectedRevision: dNow.note.revision)
+        try require(FileManager.default.fileExists(atPath: cPhoto.path), "a photo another memo names was deleted")
+        try await store.delete(id: bNow.id, expectedRevision: bNow.note.revision)
+        try require(!FileManager.default.fileExists(atPath: bPhoto.path), "a deleted memo left its photo")
+        let remaining = try await store.recordsWithPhotos().records.count
+        try require(remaining == 2, "deleting changed other memos")
     }
 
     private static func saved(
