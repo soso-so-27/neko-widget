@@ -3916,7 +3916,7 @@ class EvacuationCatCareTests(unittest.TestCase):
         # A fuller starter list; adding never edits what the owner already has.
         for item in ("ワクチン証明の控え", "首輪・迷子札", "洗濯ネット", "ハーネス・リード"):
             self.assertIn(item, plan)
-        add = section(plan, "mutating func addRecommendedSupplies()", "mutating func removeCat(")
+        add = section(plan, "mutating func addRecommendedSupplies(", "mutating func removeCat(")
         self.assertIn("!titles.contains(title)", add)
         self.assertNotIn("supplies[", add)
         self.assertIn('"\\(cats)個（1匹に1つ）"', plan)
@@ -3968,7 +3968,8 @@ class EvacuationCatCareTests(unittest.TestCase):
             self.assertIn(name, verify)
         # The review counts from when the plan was made, and leads to the checklist.
         self.assertIn("let made = createdAt ?? earliestKnownDate ?? now", plan)
-        self.assertIn("let start = max(made, lastReadyDate ?? made)", plan)
+        # 11/21: 「チェックをやり直す」 starts the half-year again (test-tools-1121d.py).
+        self.assertIn("let start = max(made, lastReadyDate ?? made, reviewRestartedAt ?? made)", plan)
         self.assertIn("if createdAt == nil { createdAt = earliestKnownDate ?? now }", plan)
         update = section(store, "func update(_ change:", "func retrySave()")
         self.assertIn("stamp(&next)", update)
@@ -4147,7 +4148,8 @@ class EvacuationRoundTwoTests(unittest.TestCase):
         self.assertIn("EvacuationExpiryLine(item: item)", packing)
         state = section(self.view, "private var packingState: (value: String, filled: Bool, problem: Bool) {",
                         "private var catsState: String {")
-        self.assertIn('if let expiry = store.plan.expiryState() { return (expiry, true, expiry.contains("期限切れ")) }', state)
+        # 11/21: a departed cat's items are left out (test-tools-1121d.py).
+        self.assertIn('if let expiry = store.plan.expiryState(departed: departed) { return (expiry, true, expiry.contains("期限切れ")) }', state)
         # Only food, water, medicine and 療法食 offer it; it is optional.
         editor = section(self.view, "private struct EvacuationSupplyEditor: View {", "private struct EvacuationCatsView: View {")
         self.assertIn("if let item, item.canHaveExpiry {", editor)
@@ -4269,7 +4271,7 @@ class EvacuationRoundTwoTests(unittest.TestCase):
         self.assertNotIn("onDisappear", now)
         self.assertNotIn("carriedIDs", now)
         self.assertIn("@Published var takenIDs: Set<UUID> = []", self.store)
-        taken = section(self.plan, "mutating func recordTaken(", "mutating func clearChecks()")
+        taken = section(self.plan, "mutating func recordTaken(", "mutating func clearChecks(")
         self.assertIn("guard supplies.contains(where: { $0.id == id }) else { return }", taken)
         self.assertIn("lastCheckedAt = now", taken)
         self.assertNotIn("carriedIDs", taken)
@@ -6338,7 +6340,7 @@ class VeterinaryRoundOneTests(unittest.TestCase):
         # The screen: three fields, written before or after the memo is finished.
         for text in ('title: "先生の話"', 'title: "出た薬"', 'Toggle("次に行く日を記録"', 'Text("診察のあと")',
                      'textRow("先生の話・出た薬", "stethoscope", [doctorNote, prescription])',
-                     "adopt(try await store.saveResults(draft,"):
+                     "adoptSaved(try await store.saveResults(draft,"):
             self.assertIn(text, self.view)
         # 11/12: starting a new memo says where the current one goes and
         # what stays fixed (it was 「診察を終える」, 349).

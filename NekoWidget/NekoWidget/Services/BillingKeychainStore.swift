@@ -244,6 +244,48 @@ enum BillingKeychainStore {
         }
     }
 
+    /// 11/21c: after a reinstall the Keychain keeps the previous
+    /// installation's credential while the installation marker is new, and
+    /// nothing could ever be bought again. Compare-and-swap only: the stored
+    /// item must still be exactly `retained`, which must belong to another
+    /// installation than `candidate`. The old credential is never re-bound
+    /// to the new installation; it is replaced by a fresh pending one. The
+    /// caller proves first that this Apple ID has no current Plus purchase.
+    /// A retry (or a second caller) gets the pending winner of the same
+    /// installation back, never a second identity.
+    static func replaceRetainedCredential(
+        _ retained: BillingCredential,
+        withPending candidate: BillingCredential
+    ) throws -> BillingCredential {
+        try withLock {
+            let retained = try retained.validated()
+            let candidate = try candidate.validated()
+            guard candidate.phase == .pendingBootstrap,
+                  retained.installationMarker != candidate.installationMarker
+            else { throw BillingClientError.malformedCredential }
+
+            let current = try loadUnlocked()
+            if let current, current.installationMarker == candidate.installationMarker {
+                // Already replaced for this installation: reuse that winner.
+                return current
+            }
+            guard current == retained else {
+                throw BillingClientError.credentialChanged
+            }
+            let status = SecItemUpdate(
+                itemQuery() as CFDictionary,
+                try encodedAttributes(for: candidate) as CFDictionary
+            )
+            guard status == errSecSuccess else {
+                throw mappedWriteError(status)
+            }
+            guard try loadUnlocked() == candidate else {
+                throw BillingClientError.credentialChanged
+            }
+            return candidate
+        }
+    }
+
     static func loadRecoveryAttempt() throws -> BillingAccountRecoveryAttempt? {
         try withLock { try loadRecoveryAttemptUnlocked() }
     }

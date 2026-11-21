@@ -83,13 +83,32 @@ enum GroupSafetyError: Error, Equatable, Sendable {
         case .dailyLimit: "きょうはこれ以上通報できません。明日お試しください。"
         case .rateLimited: "少し待ってから、もう一度お試しください。"
         case .disabled: "いまは通報できません。"
-        case .unknownOutcome, .offline: "送れたかどうか分かりませんでした。「もう一度送る」を押してください。"
+        case .unknownOutcome: "送れたかどうか分かりませんでした。「もう一度送る」を押してください。"
+        // 11/21e: the same words as the rest of the まど for no connection.
+        case .offline: "接続できません。電波のあるところで、もう一度お試しください。"
         case .authenticationRequired: GroupClockSkew.isLikely ? GroupClockSkew.message : "まどを開き直してから、もう一度お試しください。"
         case .invalidResponse: "いまは使えません。少し待ってから、もう一度お試しください。"
         case .blockSelf: "自分はブロックできません。"
         case .storageUnavailable: "通報を保存できませんでした。iPhoneの空き容量を確かめて、もう一度お試しください。"
         case .evidenceUnavailable: "この写真を読み込めませんでした。写真を開き直してください。"
         }
+    }
+
+    /// 11/21e: the same failures, said for a block or unblock (not a report).
+    var blockMessage: String {
+        switch self {
+        case .blockSelf: "自分はブロックできません。"
+        case .offline: GroupSafetyError.offline.message
+        case .rateLimited, .authenticationRequired: message
+        case .notAuthorized, .notFound: "このまどでは、いまはブロックを変えられません。"
+        case .storageUnavailable: "ブロックを保存できませんでした。iPhoneの空き容量を確かめて、もう一度お試しください。"
+        default: "ブロックを変えられませんでした。少し待ってから、もう一度お試しください。"
+        }
+    }
+
+    /// 11/21e: no connection or a busy relay: the report waits and goes later.
+    var isConnectionTrouble: Bool {
+        [.offline, .unknownOutcome, .rateLimited].contains(self)
     }
 }
 
@@ -126,6 +145,14 @@ protocol GroupReportingService: AnyObject {
     func setBlock(windowID: String, participantID: String, active: Bool, operationID: UUID) async throws
     /// Sends blocks and unblocks still waiting for this window (automatic).
     func sendPendingBlocks(windowID: String) async
+    /// 11/21e: why the last availability check failed (nil: it did not, or
+    /// none ran). Connection trouble still lets a report be kept and sent later.
+    var availabilityProblem: GroupSafetyError? { get }
+    /// 11/21e: automatic. Reports that did not reach the team go again, when
+    /// the relay can still take them without a new tap.
+    func sendUnsentReports() async
+    /// 11/21e: automatic. Reads the team's answers to this person's reports.
+    func refreshReplies() async
 }
 
 extension GroupReportingService {
@@ -138,6 +165,9 @@ extension GroupReportingService {
         try await resumeReport(draftID: draftID)
     }
     func sendPendingBlocks(windowID: String) async {}
+    var availabilityProblem: GroupSafetyError? { nil }
+    func sendUnsentReports() async {}
+    func refreshReplies() async {}
 }
 
 /// What the screens hold.
@@ -150,7 +180,10 @@ final class GroupSafety: ObservableObject {
     @Published private(set) var records: [String: [GroupReportRecord]] = [:]
     @Published private(set) var pendingBlocks: [String: [GroupPendingBlock]] = [:]
     @Published var failure: GroupSafetyError?
+    /// 11/21e: the failure came from a block or unblock (said in its words).
+    @Published private(set) var failureIsBlock = false
     @Published private(set) var isWorking = false
+    private var catchingUp = false
     let service: any GroupReportingService
 
     init(service: any GroupReportingService) {
@@ -184,6 +217,7 @@ final class GroupSafety: ObservableObject {
         } catch {
             // An unreadable local record must never uncover a reported photo.
             unreadableSuppression.insert(windowID)
+            failureIsBlock = false
             failure = .storageUnavailable
         }
         let nextRecords = await service.reports(windowID: windowID)
@@ -192,7 +226,63 @@ final class GroupSafety: ObservableObject {
             let nextBlocks = try await service.pendingBlocks(windowID: windowID)
             if pendingBlocks[windowID] != nextBlocks { pendingBlocks[windowID] = nextBlocks }
         }
-        catch { failure = error as? GroupSafetyError ?? .storageUnavailable }
+        catch { failureIsBlock = false; failure = error as? GroupSafetyError ?? .storageUnavailable }
+    }
+
+    /// 11/21e: what the alerts say: a block's failure in block words.
+    var failureMessage: String {
+        guard let failure else { return "" }
+        return failureIsBlock ? failure.blockMessage : failure.message
+    }
+
+    /// 11/21e: this person's newest report of the photo when none reached the
+    /// team (not sent yet, or refused), so 「この写真を通報」 stays and resumes it.
+    /// Nil when there is none, or one was received.
+    func unsentReport(_ photoID: String, in windowID: String) -> GroupReportRecord? {
+        let mine = (records[windowID] ?? []).filter { $0.photoID == photoID }
+        guard !mine.contains(where: { $0.progress == .received || $0.progress == .alreadyReported }) else { return nil }
+        return mine.max { $0.sentAt < $1.sentAt }
+    }
+
+    /// 11/21e: coming to the front and the まど list (automatic, quiet):
+    /// unsent reports go again, the team's answers are read, and the listed
+    /// windows' records load, whichever window was opened last.
+    func catchUp(windowIDs: [String]) async {
+        guard !catchingUp else { return }
+        catchingUp = true
+        defer { catchingUp = false }
+        await SharingPersonAction.automatic {
+            await service.sendUnsentReports()
+            await service.refreshReplies()
+        }
+        for windowID in windowIDs { await loadRecords(windowID: windowID) }
+    }
+
+    /// 11/21e: blocking and unblocking, said in block words. An unblock the
+    /// relay refuses as not found (the person, or this iPhone's place in the
+    /// window, is gone there) has no block left to lift: it counts as done,
+    /// so the person is not left hidden here. False: refused, kept as it was.
+    @discardableResult
+    func setBlock(windowID: String, participantID: String, active: Bool, operationID: UUID = UUID()) async -> Bool {
+        let service = service
+        // 1115s: the person's own action, outside the automatic budget.
+        return await SharingPersonAction.run {
+            isWorking = true
+            defer { isWorking = false }
+            var done = true
+            do {
+                try await service.setBlock(windowID: windowID, participantID: participantID,
+                                           active: active, operationID: operationID)
+            } catch GroupSafetyError.notFound where !active {
+                // Nothing to lift on the relay.
+            } catch {
+                failureIsBlock = true
+                failure = error as? GroupSafetyError ?? .unknownOutcome
+                done = false
+            }
+            await load(windowID: windowID)
+            return done
+        }
     }
 
     /// A photo this person reported stays covered on their iPhone, whatever
@@ -223,6 +313,7 @@ final class GroupSafety: ObservableObject {
                 await load(windowID: windowID)
                 return value
             } catch {
+                failureIsBlock = false
                 failure = error as? GroupSafetyError ?? .unknownOutcome
                 await load(windowID: windowID)
                 return nil

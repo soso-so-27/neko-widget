@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import Security
 import StoreKit
 #if canImport(UIKit)
 import UIKit
@@ -111,13 +112,45 @@ struct PlusVerifiedEntitlement: Equatable, Sendable {
     let accessUntilDate: Date
     let authorityStaleAt: Date
     let serverEvaluatedAt: Date
+    /// 11/21: the same deadline on the iPhone's monotonic clock, so moving
+    /// the clock back while the app runs cannot keep an answer longer. Nil
+    /// only for values made outside a server read (checks).
+    var monotonicDeadline: ContinuousClock.Instant? = nil
 
     /// Both Apple's access boundary and the server observation freshness bound
     /// are authoritative. Neither may be used to extend the other.
     var expirationDate: Date { min(accessUntilDate, authorityStaleAt) }
 
     func isUsable(at date: Date = .now) -> Bool {
-        status.grantsAccess && date >= serverEvaluatedAt && expirationDate > date
+        if let monotonicDeadline, ContinuousClock.now >= monotonicDeadline { return false }
+        return status.grantsAccess && date >= serverEvaluatedAt && expirationDate > date
+    }
+
+    /// 11/21: an iPhone clock a little behind the server made a paid member
+    /// not Plus (`serverEvaluatedAt` was "in the future"). The server's own
+    /// 300 s signed-request window and `BillingAuthoritativeEntitlement`'s
+    /// 5-minute skew rule already bound how far behind a device that gets an
+    /// answer can be; this is the same bound.
+    static let maximumDeviceClockLag: TimeInterval = 5 * 60
+
+    /// A validated server answer in the iPhone's own clock. When the server
+    /// is ahead, all three server times move back by that same lag, so each
+    /// deadline falls at the same real moment the server meant: never later,
+    /// never rounded. A device clock ahead of the server is left as is (its
+    /// deadlines only come earlier). Nil when the lag is beyond the bound.
+    static func received(plan: PlusProductPlan, status: BillingAuthoritativeEntitlementStatus,
+                         accessUntilMs: Int, authorityStaleAtMs: Int, evaluatedAtMs: Int,
+                         receivedAt: Date, receivedInstant: ContinuousClock.Instant) -> PlusVerifiedEntitlement? {
+        let evaluated = Date(timeIntervalSince1970: Double(evaluatedAtMs) / 1_000)
+        let lag = evaluated.timeIntervalSince(receivedAt)
+        guard lag.isFinite, lag <= maximumDeviceClockLag else { return nil }
+        let shift = max(0, lag)
+        let accessUntil = Date(timeIntervalSince1970: Double(accessUntilMs) / 1_000).addingTimeInterval(-shift)
+        let staleAt = Date(timeIntervalSince1970: Double(authorityStaleAtMs) / 1_000).addingTimeInterval(-shift)
+        let remaining = max(0, min(accessUntil, staleAt).timeIntervalSince(receivedAt))
+        return PlusVerifiedEntitlement(plan: plan, status: status, accessUntilDate: accessUntil,
+            authorityStaleAt: staleAt, serverEvaluatedAt: evaluated.addingTimeInterval(-shift),
+            monotonicDeadline: receivedInstant.advanced(by: .seconds(remaining)))
     }
 }
 
@@ -207,6 +240,53 @@ private enum PlusPurchaseRecordingFailure: Error {
     case invalidAcknowledgement
 }
 
+/// 11/21: Apple's Ask to Buy waiting, kept across launches. Presentation
+/// guard only: it never grants Plus, and it ends by itself after 24 hours,
+/// so it can never lock the buy button. A later approval still arrives as
+/// a transaction (`Transaction.updates`) and is recorded as usual.
+struct PlusAskToBuyPendingRecord: Codable, Equatable, Sendable {
+    static let lifetime: TimeInterval = 24 * 60 * 60
+
+    let productID: String
+    let since: Date
+
+    /// A clock moved back before `since` also ends it (never a longer wait).
+    static func isCurrent(since: Date, now: Date) -> Bool {
+        let age = now.timeIntervalSince(since)
+        return age.isFinite && age >= 0 && age < lifetime
+    }
+
+    /// App-only, device-only Keychain item, as the authority cache. A read or
+    /// write failure only loses the guard (the button is offered as before).
+    private static var query: [CFString: Any] {
+        [kSecClass: kSecClassGenericPassword,
+         kSecAttrService: "jp.nekowidget.billing.ask-to-buy-pending.v1.host",
+         kSecAttrAccount: "primary", kSecAttrSynchronizable: kCFBooleanFalse as Any]
+    }
+
+    static func load() -> Self? {
+        var request = query
+        request[kSecReturnData] = true; request[kSecMatchLimit] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(request as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data, data.count <= 1_024 else { return nil }
+        return try? JSONDecoder().decode(Self.self, from: data)
+    }
+
+    func save() {
+        guard let data = try? JSONEncoder().encode(self) else { return }
+        let attributes: [CFString: Any] = [kSecValueData: data,
+                                           kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        let status = SecItemUpdate(Self.query as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            var item = Self.query; attributes.forEach { item[$0.key] = $0.value }
+            SecItemAdd(item as CFDictionary, nil)
+        }
+    }
+
+    static func clear() { SecItemDelete(query as CFDictionary) }
+}
+
 @MainActor
 final class PlusPurchaseStore: ObservableObject {
     /// One live observer and one transaction recorder for the production app.
@@ -226,7 +306,14 @@ final class PlusPurchaseStore: ObservableObject {
     let membershipActions = MembershipActionAccess(enforcementEnabled: MembershipAccessContext.enforcementConfigured)
     @Published private(set) var isPurchasing = false
     @Published private(set) var isRestoring = false
-    @Published private(set) var pendingProductID: String?
+    /// 11/21: kept across launches (`PlusAskToBuyPendingRecord`), so the
+    /// buy button stays off while Apple's Ask to Buy waits. Cleared by the
+    /// matching transaction, or after `PlusAskToBuyPendingRecord.lifetime`
+    /// (a declined or lapsed request sends nothing).
+    @Published private(set) var pendingProductID: String? {
+        didSet { if pendingProductID != oldValue { persistPendingAskToBuy() } }
+    }
+    private var pendingAskToBuySince: Date?
     @Published private(set) var awaitingServerConfirmation = false
     /// Presentation eligibility only; this never grants an entitlement.
     @Published private(set) var canStartNewPurchase = false
@@ -356,6 +443,7 @@ final class PlusPurchaseStore: ObservableObject {
             return
         }
 
+        restorePendingAskToBuy()
         startTransactionUpdatesListener()
         startStorefrontUpdatesListener()
         startSubscriptionStatusUpdatesListener()
@@ -1019,6 +1107,7 @@ final class PlusPurchaseStore: ObservableObject {
 
     private func performCurrentEntitlementReconciliation() async {
         canStartNewPurchase = false
+        expirePendingAskToBuyIfDue()
         let eligibilityGeneration = purchaseEligibilityGeneration
         let scan = await scanCurrentEntitlements()
 
@@ -1150,17 +1239,19 @@ final class PlusPurchaseStore: ObservableObject {
                   let authorityStaleAtMs = authority.authorityStaleAtMs
             else { throw BillingClientError.invalidServerResponse }
 
-            let entitlement = PlusVerifiedEntitlement(
-                plan: plan,
-                status: authority.status,
-                accessUntilDate: Date(
-                    timeIntervalSince1970: Double(accessUntilMs) / 1_000
-                ),
-                authorityStaleAt: Date(
-                    timeIntervalSince1970: Double(authorityStaleAtMs) / 1_000
-                ),
-                serverEvaluatedAt: Date(timeIntervalSince1970: Double(authority.evaluatedAtMs) / 1_000)
-            )
+            // 11/21: the validated answer in this iPhone's clock (a clock a
+            // little behind no longer reads as "not Plus"). Never extended.
+            let receivedAt = Date()
+            guard let entitlement = PlusVerifiedEntitlement.received(
+                plan: plan, status: authority.status,
+                accessUntilMs: accessUntilMs, authorityStaleAtMs: authorityStaleAtMs,
+                evaluatedAtMs: authority.evaluatedAtMs,
+                receivedAt: receivedAt, receivedInstant: ContinuousClock.now
+            ) else {
+                // Beyond the bound: no answer about Plus, not a denial.
+                markServerConfirmationIndeterminate()
+                return .indeterminate
+            }
             guard entitlement.isUsable() else {
                 discardCachedAuthority()
                 entitlementState = .inactive
@@ -1170,7 +1261,7 @@ final class PlusPurchaseStore: ObservableObject {
             if var cache = purchaseCache, cache.context == expectedContext {
                 cache.authority = PlusCachedAuthority(status: authority.status.rawValue, productID: productID,
                     accessUntil: entitlement.accessUntilDate, authorityStaleAt: entitlement.authorityStaleAt,
-                    serverEvaluatedAt: entitlement.serverEvaluatedAt, receivedAt: .now)
+                    serverEvaluatedAt: entitlement.serverEvaluatedAt, receivedAt: receivedAt)
                 purchaseCache = cache
                 PlusAuthorityKeychainCache.save(cache)
             }
@@ -1204,6 +1295,38 @@ final class PlusPurchaseStore: ObservableObject {
         entitlementState = .indeterminate(
             lastServerConfirmed: entitlementState.lastServerConfirmed
         )
+    }
+
+    /// 11/21: the Ask to Buy wait is written only by the live store; injected
+    /// stores (checks) keep it in memory. Its start time is never renewed.
+    private func persistPendingAskToBuy() {
+        if let pendingProductID {
+            let since = pendingAskToBuySince ?? Date()
+            pendingAskToBuySince = since
+            if usesLiveCache { PlusAskToBuyPendingRecord(productID: pendingProductID, since: since).save() }
+        } else {
+            pendingAskToBuySince = nil
+            if usesLiveCache { PlusAskToBuyPendingRecord.clear() }
+        }
+    }
+
+    /// At launch: a wait from the last run comes back with its first time.
+    private func restorePendingAskToBuy() {
+        guard usesLiveCache, pendingProductID == nil,
+              let record = PlusAskToBuyPendingRecord.load() else { return }
+        guard configuration.plan(for: record.productID) != nil,
+              PlusAskToBuyPendingRecord.isCurrent(since: record.since, now: Date())
+        else { PlusAskToBuyPendingRecord.clear(); return }
+        pendingAskToBuySince = record.since
+        pendingProductID = record.productID
+    }
+
+    /// A declined or unanswered request sends nothing; after the 24 hours
+    /// the button may be offered again (eligibility is re-checked).
+    private func expirePendingAskToBuyIfDue() {
+        guard pendingProductID != nil, let since = pendingAskToBuySince,
+              !PlusAskToBuyPendingRecord.isCurrent(since: since, now: Date()) else { return }
+        pendingProductID = nil
     }
 
     private func currentCacheContext(environment: String) -> PlusCacheContext? {
@@ -1254,9 +1377,13 @@ final class PlusPurchaseStore: ObservableObject {
             guard let plan = configuration.plan(for: authority.productID),
                   let status = BillingAuthoritativeEntitlementStatus(rawValue: authority.status)
             else { entitlementState = .checking; return }
+            // 11/21: from here on the monotonic clock also bounds it (the
+            // time left now, never more than the stored deadline gives).
+            let remaining = max(0, min(authority.accessUntil, authority.authorityStaleAt).timeIntervalSinceNow)
             entitlementState = .indeterminate(lastServerConfirmed: PlusVerifiedEntitlement(plan: plan, status: status,
                 accessUntilDate: authority.accessUntil, authorityStaleAt: authority.authorityStaleAt,
-                serverEvaluatedAt: max(authority.serverEvaluatedAt, authority.receivedAt)))
+                serverEvaluatedAt: max(authority.serverEvaluatedAt, authority.receivedAt),
+                monotonicDeadline: ContinuousClock.now.advanced(by: .seconds(remaining))))
         }
     }
 
@@ -1292,7 +1419,15 @@ final class PlusPurchaseStore: ObservableObject {
             let existing = try BillingKeychainStore.load()
             let marker = try BillingInstallationMarkerStore.loadExisting()
             guard entitlementState.lastServerConfirmed == nil else { return false }
-            if let existing {
+            // 11/21c: a credential kept in the Keychain from an earlier
+            // installation (a reinstall) is no account for this one. Like no
+            // credential at all, only the scan below (no current Plus
+            // purchase on this Apple ID) makes a new purchase possible; the
+            // purchase then replaces it (`replaceRetainedCredential`).
+            let retainedFromAnotherInstallation = try existing.map {
+                try $0.validated().installationMarker != marker?.uuidString.lowercased()
+            } ?? false
+            if let existing, !retainedFromAnotherInstallation {
                 guard let marker else { return false }
                 _ = try BillingSandboxOwnerEnrollment.readExistingPending(
                     credential: existing, installationMarker: marker

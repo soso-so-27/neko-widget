@@ -28,6 +28,11 @@ final class ProductionGroupReporting: GroupReportingService {
     private var availabilityUntil = Date.distantPast
     private var availabilityIdentity: String?
     private var inFlight = Set<String>()
+    /// 11/21e: why the last availability check failed, and when.
+    private(set) var availabilityProblem: GroupSafetyError?
+    private var availabilityFailedAt: Date?
+    private var lastReplyCheckAt: Date?
+    private var lastUnsentPassAt: Date?
 
     init(endpoint: URL, secrets: any GroupSecretStore, transport: any GroupHTTPTransport,
          directory: URL, publicKey: Data, reportsDisabled: Bool = false, kept: (any GroupSecretStore)? = nil,
@@ -64,9 +69,21 @@ final class ProductionGroupReporting: GroupReportingService {
         guard !reportsDisabled, Date() < availabilityUntil, let current = try? identity() else { return false }
         return availabilityIdentity == (try? current.deviceID)
     }
+    /// The screens' check (opening a photo, each swipe, the members screen).
+    /// 11/21e: a check still valid (60 s) is reused, and after a failure an
+    /// automatic one waits 20 s, so swiping through photos no longer spends
+    /// the automatic call budget (one call a photo). A tap always asks.
+    /// Preparing and sending a report always ask the relay (`checkAvailability`).
     func refreshAvailability() async {
+        if isAvailable { return }
+        if !reportsDisabled, !SharingAutoCallBudget.isPersonAction, let failed = availabilityFailedAt,
+           Date().timeIntervalSince(failed) < SharingForegroundGap.seconds { return }
+        await checkAvailability()
+    }
+    private func checkAvailability() async {
         guard !reportsDisabled else {
             availabilityUntil = .distantPast; availabilityIdentity = nil
+            availabilityProblem = .disabled
             return
         }
         do {
@@ -76,6 +93,7 @@ final class ProductionGroupReporting: GroupReportingService {
             let result = try GroupWire.decode(Availability.self, data)
             guard result.protocolVersion == 3, result.reportingAvailable else {
                 availabilityUntil = .distantPast; availabilityIdentity = nil
+                availabilityProblem = .disabled; availabilityFailedAt = Date()
                 return
             }
             try sameIdentity(actor)
@@ -83,7 +101,19 @@ final class ProductionGroupReporting: GroupReportingService {
             // This is an affordance, never authority. Every mutation checks the
             // live gates again. A failed check immediately closes the affordance.
             availabilityUntil = Date().addingTimeInterval(60)
-        } catch { availabilityUntil = .distantPast; availabilityIdentity = nil }
+            availabilityProblem = nil; availabilityFailedAt = nil
+        } catch {
+            availabilityUntil = .distantPast; availabilityIdentity = nil
+            availabilityProblem = error as? GroupSafetyError ?? .unknownOutcome
+            availabilityFailedAt = Date()
+        }
+    }
+    /// 11/21e: what a mutation throws when the live check did not open:
+    /// no connection or a busy relay is said as such (the report waits and
+    /// can go again); anything else is the closed intake, as before.
+    private func availabilityRefusal() -> GroupSafetyError {
+        guard let problem = availabilityProblem, problem.isConnectionTrouble else { return .disabled }
+        return problem
     }
     private func identity() throws -> GroupDeviceIdentity {
         guard let data = try secrets.read("identity"),
@@ -180,7 +210,11 @@ final class ProductionGroupReporting: GroupReportingService {
         let scope = "prepare:" + windowID + ":" + photoID
         guard inFlight.insert(scope).inserted else { throw GroupSafetyError.conflict }
         defer { inFlight.remove(scope) }
-        await refreshAvailability(); guard isAvailable else { throw GroupSafetyError.disabled }
+        // 11/21e: without a connection the report is still made and kept
+        // (encrypted on this iPhone for the team only) and goes later; the
+        // relay checks every gate when it is sent. A closed intake makes nothing.
+        await checkAvailability()
+        guard isAvailable || availabilityRefusal().isConnectionTrouble else { throw GroupSafetyError.disabled }
         let actor = try identity(), participantID = try participant(windowID: windowID, actor: actor, allowingFormer: true)
         if let saved = try store.all().first(where: {
             $0.personID == actor.personID && $0.deviceID == (try? actor.deviceID) && $0.record.windowID == windowID
@@ -206,6 +240,7 @@ final class ProductionGroupReporting: GroupReportingService {
             ciphertextSHA256: digest, reporterConsent: .init(version: 1, acceptedAt: Int(consent.acceptedAt.timeIntervalSince1970))))
         let commit = try GroupWire.encode(Commit(operationID: UUID().uuidString.lowercased()))
         let id = UUID().uuidString.lowercased()
+        pruneDrafts()
         let record = GroupReportRecord(id: id, windowID: windowID, photoID: photoID, senderName: senderName,
             reason: reason, progress: .preparing, reply: .none, sentAt: Date(), repliedAt: nil)
         try store.write(.init(endpoint: endpoint.absoluteString, personID: actor.personID, deviceID: actor.deviceID,
@@ -312,7 +347,7 @@ final class ProductionGroupReporting: GroupReportingService {
                 (draft, actor) = try owned(draftID)
             }
             guard Date().timeIntervalSince(draft.record.sentAt) < 172_800 else { throw GroupSafetyError.unknownOutcome }
-            await refreshAvailability(); guard isAvailable else { throw GroupSafetyError.disabled }
+            await checkAvailability(); guard isAvailable else { throw availabilityRefusal() }
             draft.record.progress = .sending; try store.write(draft)
             let base = "/v3/group-windows/" + draft.record.windowID + "/reports/"
             if draft.receipt == nil {
@@ -455,6 +490,89 @@ final class ProductionGroupReporting: GroupReportingService {
         if committed { keepCopy(draft.record) }
         return draft.record
     }
+    /// This identity's drafts on this relay.
+    private func ownDrafts() -> [GroupReportDraft] {
+        guard let actor = try? identity(), let deviceID = try? actor.deviceID, let all = try? store.all() else { return [] }
+        return all.filter { $0.endpoint == endpoint.absoluteString && $0.personID == actor.personID && $0.deviceID == deviceID }
+    }
+    /// 11/21e: automatic (coming to the front, the まど list). A report that did
+    /// not reach the team goes again with its same saved bytes, only while the
+    /// relay can take it without a new tap: already reserved, or its consent
+    /// is still fresh. An older one waits for the person's 「もう一度送る」
+    /// (consent is the tap, never renewed here). Stops at the first sign of
+    /// no connection, so an offline iPhone spends one call at most.
+    func sendUnsentReports() async {
+        guard !reportsDisabled else { return }
+        let now = Date()
+        // Not again within 20 s (the list, coming to the front and opening a まど all ask).
+        if let last = lastUnsentPassAt, now.timeIntervalSince(last) < SharingForegroundGap.seconds { return }
+        lastUnsentPassAt = now
+        for draft in ownDrafts() where [.retryable, .preparing, .sending].contains(draft.record.progress)
+            && !inFlight.contains(draft.record.id) && now.timeIntervalSince(draft.record.sentAt) < 172_800 {
+            if Task.isCancelled { return }
+            if draft.receipt == nil {
+                guard let saved = try? GroupWire.decode(Reserve.self, draft.reserveBody),
+                      now.timeIntervalSince1970 - Double(saved.reporterConsent.acceptedAt) < Self.consentRenewal else { continue }
+            }
+            do { _ = try await submitReport(draftID: draft.record.id) }
+            catch let error as GroupSafetyError where error.isConnectionTrouble || error == .disabled { return }
+            catch { continue }
+        }
+    }
+    /// 11/21e: automatic. The team's answers to received reports, read when
+    /// the list shows or the app comes to the front, not only after a photo
+    /// was opened. At most once a minute (a tap on the list reads at once),
+    /// ten reports a pass, newest first; a report whose evidence time ended
+    /// more than 30 days ago is not asked again.
+    func refreshReplies() async {
+        guard !reportsDisabled else { return }
+        if let last = lastReplyCheckAt, Date().timeIntervalSince(last) < 60 { return }
+        lastReplyCheckAt = Date()
+        let oldest = Date().timeIntervalSince1970 - 30 * 86_400
+        let waiting = ownDrafts().filter { draft in
+            guard draft.record.progress == .received, draft.receipt != nil, !inFlight.contains(draft.record.id) else { return false }
+            guard let ends = draft.receipt?.contentExpiresAt else { return true }
+            return Double(ends) > oldest
+        }.sorted { $0.record.sentAt > $1.record.sentAt }.prefix(10)
+        for draft in waiting {
+            if Task.isCancelled { return }
+            do { _ = try await refreshReport(draftID: draft.record.id) }
+            catch let error as GroupSafetyError where error.isConnectionTrouble || error == .disabled { return }
+            catch { continue }
+        }
+    }
+    /// 11/21e: drafts are not kept forever (at 256 no new report could be
+    /// made). Only when the store is nearly full, and only drafts whose
+    /// removal uncovers nothing: a failed draft another draft of the same
+    /// photo replaced; then, oldest first, finished ones
+    /// (answered, refused or expired, settled more than 30 days ago) whose
+    /// photo stays covered by this iPhone's Keychain copy. A draft still
+    /// waiting to be sent or answered is never removed.
+    private func pruneDrafts() {
+        guard let all = try? store.all(), all.count >= Self.draftsBeforePruning else { return }
+        let here = endpoint.absoluteString
+        var removable: [String] = []
+        let failed: Set<GroupReportProgress> = [.expired, .unavailable, .authenticationRequired, .alreadyReported]
+        for draft in all where draft.endpoint == here && failed.contains(draft.record.progress) {
+            if all.contains(where: { other in other.record.id != draft.record.id && other.endpoint == here
+                && other.record.windowID == draft.record.windowID && other.record.photoID == draft.record.photoID
+                && other.record.sentAt > draft.record.sentAt }) { removable.append(draft.record.id) }
+        }
+        let settledBefore = Date().addingTimeInterval(-30 * 86_400)
+        let finished = all.filter { draft in
+            guard draft.endpoint == here, !removable.contains(draft.record.id) else { return false }
+            let answered = draft.record.progress == .received && draft.record.reply != .none
+                && (draft.record.repliedAt ?? .distantFuture) < settledBefore
+            let refused = failed.contains(draft.record.progress) && draft.record.sentAt < settledBefore
+            guard answered || refused else { return false }
+            return GroupWindowKept.reports(windowID: draft.record.windowID, in: kept).contains { $0.photoID == draft.record.photoID }
+        }.sorted { ($0.record.repliedAt ?? $0.record.sentAt) < ($1.record.repliedAt ?? $1.record.sentAt) }
+        removable += finished.map(\.record.id)
+        let excess = all.count - Self.draftsAfterPruning
+        for id in removable.prefix(max(excess, 0)) { try? store.remove(id) }
+    }
+    static let draftsBeforePruning = 224
+    static let draftsAfterPruning = 192
     private struct BlockBody: Codable { let operationID: String; let active: Bool }
     private func blockPath(_ windowID: String, _ participantID: String) -> String {
         "/v3/group-windows/" + windowID + "/blocks/" + participantID

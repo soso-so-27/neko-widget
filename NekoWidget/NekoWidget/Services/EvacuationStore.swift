@@ -282,8 +282,9 @@ final class EvacuationStore: ObservableObject {
     func followCatsAndMedicines() {
         guard loadError == nil, saveError == nil else { return }
         var next = plan
-        next.followCatCount(departed: CatFarewell.departedIdentifiers())
-        next.followMedicines(medicineNames())
+        let departed = CatFarewell.departedIdentifiers()
+        next.followCatCount(departed: departed)
+        next.followMedicines(medicineNames(), departed: departed)
         guard next != plan else { return }
         update { $0 = next }
     }
@@ -383,7 +384,9 @@ final class EvacuationStore: ObservableObject {
     func bookRecords() throws -> [EvacuationShareRecord] {
         guard loadError == nil, saveError == nil else { throw EvacuationStorageError.unreadable }
         func trimmed(_ value: String?) -> String { (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
-        let needed = plan.supplies.filter(\.isNeeded)
+        // 11/21: a departed cat's items stay in the plan, not on the paper.
+        let departed = CatFarewell.departedIdentifiers()
+        let needed = plan.activeSupplies(departed: departed)
         let supplies = needed.map { item -> (String, String) in
             let owner = plan.cats.first { $0.id == item.catID }.map { "（\($0.displayName)）" } ?? ""
             let title = (trimmed(item.title).isEmpty ? "名前のない持ち物" : item.title) + owner
@@ -419,7 +422,7 @@ final class EvacuationStore: ObservableObject {
         disclosure.medical = true
         disclosure.catCare = true
         disclosure.withOwnerPhoto = true
-        for cat in plan.livingCats(departed: CatFarewell.departedIdentifiers()) {
+        for cat in plan.livingCats(departed: departed) {
             var record = try shareRecord(catID: cat.id, disclosure: disclosure)
             record.showsReviewDate = false
             records.append(record)
@@ -534,7 +537,12 @@ enum EvacuationNotice {
             let content = UNMutableNotificationContent()
             content.title = "ねこのまど"
             content.body = notice.body
-            let parts = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: notice.date)
+            // 11/21: the day in 西暦 with the calendar named, so a notice also
+            // fires on an iPhone set to the 和暦 or 仏暦 calendar.
+            var gregorian = Calendar(identifier: .gregorian)
+            gregorian.timeZone = .current
+            var parts = gregorian.dateComponents([.year, .month, .day, .hour, .minute], from: notice.date)
+            parts.calendar = gregorian
             try? await center.add(UNNotificationRequest(identifier: notice.id, content: content,
                 trigger: UNCalendarNotificationTrigger(dateMatching: parts, repeats: false)))
         }

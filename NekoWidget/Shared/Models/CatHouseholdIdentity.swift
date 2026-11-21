@@ -817,50 +817,67 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
         // 11/20: with one cat left, the single-cat rule would make every
         // detected photo hers, including the deleted cat's. Those photos get
         // her 「この子ではない」 instead; she can still be given one by hand.
-        memberships.append(contentsOf: Self.membershipsKeepingApart(
+        // 11/21: every remaining cat gets it, not only a last one: deleting
+        // one of three wrote nothing, so deleting the next handed the first
+        // deleted cat's photos to the one left (3→2→1). Not
+        // `singleCatProfileID` either: the family-notebook pause of the rule
+        // can end later, and the photos must stay apart then too.
+        let keptApart = Self.membershipsKeepingApart(
             removedCatPhotos,
-            // Not `singleCatProfileID`: the family-notebook pause of the rule
-            // can end later, and the photos must stay apart then too.
-            from: profiles.count == 1 ? profiles.first?.id : nil,
+            from: profiles.map(\.id),
             in: self,
             at: date
-        ))
+        )
+        // A 「わからない」 record (written for the cats not chosen in
+        // 「写っている猫を選ぶ」) is replaced, not kept beside it.
+        let replaced = Set(keptApart.map {
+            MembershipKey(assetLocalIdentifier: $0.assetLocalIdentifier, profileID: $0.profileID)
+        })
+        memberships.removeAll {
+            replaced.contains(MembershipKey(assetLocalIdentifier: $0.assetLocalIdentifier, profileID: $0.profileID))
+        }
+        memberships.append(contentsOf: keptApart)
         mode = .profiled
         updatedAt = max(updatedAt, max(createdAt, date))
         self = normalized()
     }
 
     /// The 「この子ではない」 decisions that keep a deleted cat's photos off
-    /// the only remaining cat (11/20). A photo she already has a decision
-    /// for, or that her linked album holds, is left as it is.
+    /// the remaining cats (11/20, 11/21: every remaining cat). A photo a cat
+    /// already has a yes or no for, or that her linked album holds, is left
+    /// as it is; a 「わからない」 is not a decision and gets the no.
     static func membershipsKeepingApart(
         _ removedCatPhotos: Set<String>,
-        from remainingProfileID: UUID?,
+        from remainingProfileIDs: [UUID],
         in state: CatHouseholdIdentityState,
         at date: Date
     ) -> [CatAssetProfileMembership] {
-        guard let remainingProfileID, !removedCatPhotos.isEmpty else { return [] }
-        let decided = Set(state.memberships.lazy
-            .filter { $0.profileID == remainingProfileID }
-            .map(\.assetLocalIdentifier))
-        let remaining = state.profiles.first { $0.id == remainingProfileID }
-        let linked = Set(remaining?.photoAlbumLink?.lastKnownAssetLocalIdentifiers ?? [])
+        guard !removedCatPhotos.isEmpty else { return [] }
         let globallyExcluded = Set(state.globalExcludedAssets.map(\.localIdentifier))
-        return removedCatPhotos
-            .subtracting(decided)
-            .subtracting(linked)
-            .subtracting(globallyExcluded)
-            .sorted()
-            .map {
-                CatAssetProfileMembership(
-                    assetLocalIdentifier: $0,
-                    profileID: remainingProfileID,
-                    decision: .excluded,
-                    subjectBoundingBox: nil,
-                    isSimilarityReference: false,
-                    decidedAt: date
-                )
-            }
+        var result: [CatAssetProfileMembership] = []
+        for remainingProfileID in remainingProfileIDs {
+            let decided = Set(state.memberships.lazy
+                .filter { $0.profileID == remainingProfileID && $0.decision != .unknown }
+                .map(\.assetLocalIdentifier))
+            let remaining = state.profiles.first { $0.id == remainingProfileID }
+            let linked = Set(remaining?.photoAlbumLink?.lastKnownAssetLocalIdentifiers ?? [])
+            result += removedCatPhotos
+                .subtracting(decided)
+                .subtracting(linked)
+                .subtracting(globallyExcluded)
+                .sorted()
+                .map {
+                    CatAssetProfileMembership(
+                        assetLocalIdentifier: $0,
+                        profileID: remainingProfileID,
+                        decision: .excluded,
+                        subjectBoundingBox: nil,
+                        isSimilarityReference: false,
+                        decidedAt: date
+                    )
+                }
+        }
+        return result
     }
 
     /// Selecting a cover never creates identity membership. Temporary Photos
@@ -1035,10 +1052,17 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
         value.createdAt = catIdentityTimestamp(value.createdAt)
         value.updatedAt = catIdentityTimestamp(max(value.createdAt, value.updatedAt))
 
+        // 11/21 並べ替え: the array's order is the cats' order. It is kept
+        // as it is (a duplicate keeps its first place), never re-sorted:
+        // re-sorting by createdAt undid every reorder on save. Files written
+        // before this were saved in createdAt order, so they keep that order;
+        // an older build re-sorts on its next save, which only loses the order.
         var profilesByID: [UUID: CatProfile] = [:]
+        var profileOrder: [UUID] = []
         for profile in profiles.map({ $0.normalized() }) {
             guard let previous = profilesByID[profile.id] else {
                 profilesByID[profile.id] = profile
+                profileOrder.append(profile.id)
                 continue
             }
             if profile.updatedAt > previous.updatedAt
@@ -1047,12 +1071,7 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
                 profilesByID[profile.id] = profile
             }
         }
-        value.profiles = profilesByID.values.sorted {
-            if $0.createdAt == $1.createdAt {
-                return $0.id.uuidString < $1.id.uuidString
-            }
-            return $0.createdAt < $1.createdAt
-        }
+        value.profiles = profileOrder.compactMap { profilesByID[$0] }
 
         var exclusionsByIdentifier: [String: ExcludedCatAsset] = [:]
         for input in globalExcludedAssets

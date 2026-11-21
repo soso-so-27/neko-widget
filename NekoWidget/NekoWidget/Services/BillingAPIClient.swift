@@ -156,10 +156,17 @@ actor BillingAccountBootstrapCoordinator {
         BillingCredential
     ) throws -> Void
     typealias InstallationMarkerLoader = @Sendable () throws -> UUID
+    /// 11/21c: compare-and-swap of a credential retained from another
+    /// installation (after a reinstall) for a fresh pending one.
+    typealias RetainedCredentialReplacer = @Sendable (
+        BillingCredential,
+        BillingCredential
+    ) throws -> BillingCredential
 
     private let apiClient: any BillingAPIClientProtocol
     private let loadCredential: CredentialLoader
     private let insertPendingCredential: PendingCredentialInserter
+    private let replaceRetainedCredential: RetainedCredentialReplacer
     private let saveRegisteredCredential: RegisteredCredentialSaver
     private let loadInstallationMarker: InstallationMarkerLoader
     private var existingInFlight: Task<BillingCredential, Error>?
@@ -178,11 +185,15 @@ actor BillingAccountBootstrapCoordinator {
         },
         loadInstallationMarker: @escaping InstallationMarkerLoader = {
             try BillingInstallationMarkerStore.loadOrCreate()
+        },
+        replaceRetainedCredential: @escaping RetainedCredentialReplacer = {
+            try BillingKeychainStore.replaceRetainedCredential($0, withPending: $1)
         }
     ) {
         self.apiClient = apiClient
         self.loadCredential = loadCredential
         self.insertPendingCredential = insertPendingCredential
+        self.replaceRetainedCredential = replaceRetainedCredential
         self.saveRegisteredCredential = saveRegisteredCredential
         self.loadInstallationMarker = loadInstallationMarker
     }
@@ -241,17 +252,34 @@ actor BillingAccountBootstrapCoordinator {
     ) async throws -> BillingCredential {
         let installationMarker = try loadInstallationMarker()
         let markerValue = installationMarker.uuidString.lowercased()
+        let retained: BillingCredential?
         if let existing = try loadCredential() {
-            return try await resume(existing, markerValue: markerValue)
+            guard try existing.validated().installationMarker != markerValue else {
+                return try await resume(existing, markerValue: markerValue)
+            }
+            // 11/21c: kept in the Keychain from an earlier installation
+            // (a reinstall). The authorization below proves this Apple ID
+            // has no current Plus purchase (one would need recovery, which
+            // can prove it), so it is replaced, never re-bound.
+            retained = existing
+        } else {
+            retained = nil
         }
 
         let candidate = try BillingCredential.pending(
             installationMarker: installationMarker
         ).validated()
         try authorization.validatedForBootstrap()
-        // SecItemAdd elects one winner across coordinator instances before the
-        // first await/network request. Losers reuse its key and request ID.
-        let pending = try insertPendingCredential(candidate).validated()
+        // SecItemAdd (or the compare-and-swap) elects one winner across
+        // coordinator instances before the first await/network request.
+        // Losers reuse its key and request ID; a failed createAccount is
+        // resumed with the same pending request next time.
+        let pending: BillingCredential
+        if let retained {
+            pending = try replaceRetainedCredential(retained, candidate).validated()
+        } else {
+            pending = try insertPendingCredential(candidate).validated()
+        }
         return try await resume(pending, markerValue: markerValue)
     }
 

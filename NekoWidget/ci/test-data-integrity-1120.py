@@ -207,7 +207,10 @@ class StoredFieldTests(unittest.TestCase):
             (LIKES, "struct SharedLikeRecord: Codable"): [
                 "localIdentifier", "isLiked", "likedAt", "changedAt", "isReceivedMemoryImport"],
             (EVACUATION, "struct EvacuationSupply: Codable"): [
-                "id", "title", "quantity", "location", "catID", "isNeeded", "expiresAt", "expiresOn"],
+                # 11/21: expirySetAt (when the 期限 was set) only places a
+                # late notice; an older build dropping it loses that notice.
+                "id", "title", "quantity", "location", "catID", "isNeeded", "expiresAt", "expiresOn",
+                "expirySetAt"],
         }
         for (text, header), expected in pins.items():
             fields = stored_fields(text, header)

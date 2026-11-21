@@ -257,7 +257,11 @@ struct VeterinaryVisitsView: View {
             // Copies of photos no longer used are removed out of sight; a
             // failure is retried on the next load, never shown (11/8).
             _ = try? await store.cleanupPending()
-        } catch { self.error = veterinaryErrorMessage(error); ready = false }
+        } catch {
+            // 11/21: a failed reload keeps the memo that is open (and what is
+            // being written in it); only the first load has nothing to show.
+            self.error = veterinaryErrorMessage(error)
+        }
     }
 
     private var detachedPhotoRows: some View {
@@ -398,10 +402,22 @@ private struct VeterinaryConsultationView: View {
             if !isPage {
                 ToolbarItem(placement: .cancellationAction) { Button("閉じる") { close() }.disabled(busy) }
             }
+            if isPage && blocksLeaving {
+                // 11/21: text that could not be saved; going back asks first.
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { close() } label: { Label("戻る", systemImage: "chevron.backward") }
+                        .labelStyle(.titleAndIcon).disabled(busy)
+                        .accessibilityIdentifier("vet-back")
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) { moreMenu }
         }
+        .navigationBarBackButtonHidden(isPage && blocksLeaving)
         .toolBottomBar { bottomBar }
     }
+    /// 11/21: written text that is not saved (too long, or a failed save).
+    /// The page's back button then asks before leaving, as 「閉じる」 does.
+    private var blocksLeaving: Bool { changes && (tooLong || error != nil) }
     /// 11/12: delete is not part of writing the memo; it sits in 「…」.
     private var moreMenu: some View {
         ToolMoreMenu(destructiveTitle: "この診察メモを削除", itemIdentifier: "vet-delete",
@@ -864,7 +880,7 @@ private struct VeterinaryConsultationView: View {
             Button("書いた内容を消して閉じる", role: .destructive) { dismiss() }; Button("画面に戻る", role: .cancel) {}
         } message: {
             Text(tooLong
-                 ? "500文字を超えた欄があると保存できません。短くしてから閉じてください。"
+                 ? "「\(longRowTitle ?? "")」は長すぎて保存できていません。短くしてから閉じてください。"
                  : (error ?? "保存できませんでした。") + " 画面に戻って、もう一度お試しください。")
         }
         .confirmationDialog("新しい診察メモを始めますか？", isPresented: $finishing, titleVisibility: .visible) {
@@ -904,32 +920,75 @@ private struct VeterinaryConsultationView: View {
         }
     }
 
+    /// 11/21: a field over 500 characters keeps its last saved text in the
+    /// record (the screen keeps what was typed); every other field still saves.
+    private static func savable(_ text: String, else saved: String) -> String {
+        text.count > 500 ? saved : text
+    }
     private func save(completing: Bool = false) async {
-        guard var draft = visit, !busy, completing || changes, !tooLong else { return }
+        // Finishing closes 「診察の前に」 for good: never with a field too long to save.
+        guard var draft = visit, !busy, completing || changes, !(completing && tooLong) else { return }
         let base = draft
-        busy = true; defer { busy = false }
-        draft.doctorNote = doctorNote.isEmpty ? nil : doctorNote
-        draft.prescription = prescription.isEmpty ? nil : prescription
+        let note = Self.savable(doctorNote, else: base.doctorNote ?? "")
+        draft.doctorNote = note.isEmpty ? nil : note
+        let medicine = Self.savable(prescription, else: base.prescription ?? "")
+        draft.prescription = medicine.isEmpty ? nil : medicine
         draft.nextVisitOn = hasNextVisit ? VeterinaryVisit.day(nextVisitDay) : nil
-        do {
-            if draft.completedAt != nil {
-                // A finished memo: only 「診察のあと」 is saved.
-                adopt(try await store.saveResults(draft, expectedRevision: draft.revision, base: base)); error = nil
-                return
-            }
-            draft.observations = observations; draft.questions = questions
+        if draft.completedAt == nil {
+            draft.observations = Self.savable(observations, else: base.observations)
+            draft.questions = Self.savable(questions, else: base.questions)
             draft.startedOn = hasStartedDay ? VeterinaryVisit.day(startedDay) : nil
             if completing { draft.completedAt = Date() }
-            adopt(try await store.save(draft, expectedRevision: draft.revision, base: base)); error = nil
+        }
+        // Only a field that is too long changed: nothing to write yet.
+        guard completing || draft != base else { return }
+        busy = true; defer { busy = false }
+        do {
+            if draft.completedAt != nil, base.completedAt != nil {
+                // A finished memo: only 「診察のあと」 is saved.
+                adoptSaved(try await store.saveResults(draft, expectedRevision: draft.revision, base: base), sent: draft)
+                error = nil
+                return
+            }
+            adoptSaved(try await store.save(draft, expectedRevision: draft.revision, base: base), sent: draft)
+            error = nil
             if completing { onFinished?() }
         }
         catch { self.error = veterinaryErrorMessage(error) }
     }
+    /// 11/21: after a save, a field is written back only when it still holds
+    /// what was sent and the saved record differs (another device's change).
+    /// What was typed during the save, and text being composed with the
+    /// Japanese keyboard, is never replaced.
+    private func adoptSaved(_ value: VeterinaryVisit, sent: VeterinaryVisit) {
+        visit = value
+        if observations == sent.observations, value.observations != observations { observations = value.observations }
+        if questions == sent.questions, value.questions != questions { questions = value.questions }
+        if doctorNote == (sent.doctorNote ?? ""), (value.doctorNote ?? "") != doctorNote { doctorNote = value.doctorNote ?? "" }
+        if prescription == (sent.prescription ?? ""), (value.prescription ?? "") != prescription {
+            prescription = value.prescription ?? ""
+        }
+        let started = hasStartedDay ? VeterinaryVisit.day(startedDay) : nil
+        if started == sent.startedOn, value.startedOn != started {
+            hasStartedDay = value.startedOn != nil
+            if let day = value.startedOn { startedDay = Self.date(day) ?? startedDay }
+        }
+        let next = hasNextVisit ? VeterinaryVisit.day(nextVisitDay) : nil
+        if next == sent.nextVisitOn, value.nextVisitOn != next {
+            hasNextVisit = value.nextVisitOn != nil
+            if let day = value.nextVisitOn { nextVisitDay = Self.date(day) ?? nextVisitDay }
+        }
+    }
     private func adopt(_ value: VeterinaryVisit) {
-        visit = value; observations = value.observations; questions = value.questions
+        visit = value
+        // 11/21: a field is set only when its text differs, so a field being
+        // written in (and its Japanese composition) is not touched for nothing.
+        if observations != value.observations { observations = value.observations }
+        if questions != value.questions { questions = value.questions }
         hasStartedDay = value.startedOn != nil
         if let day = value.startedOn { startedDay = Self.date(day) ?? startedDay }
-        doctorNote = value.doctorNote ?? ""; prescription = value.prescription ?? ""
+        if doctorNote != (value.doctorNote ?? "") { doctorNote = value.doctorNote ?? "" }
+        if prescription != (value.prescription ?? "") { prescription = value.prescription ?? "" }
         hasNextVisit = value.nextVisitOn != nil
         if let day = value.nextVisitOn { nextVisitDay = Self.date(day) ?? nextVisitDay }
     }

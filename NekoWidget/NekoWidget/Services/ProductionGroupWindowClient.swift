@@ -45,6 +45,8 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     private var verifiedListEntries: [String: VerifiedListEntry] = [:]
     private var heartOperations = Set<UUID>()
     private var reconcilingAdmissions = false
+    /// 11/21e: one key renewal pass at a time (`renewPendingKeys`).
+    private var renewingKeys = false
     /// 1115s: the last list read, so registering notifications right after
     /// the admission check does not read the same list again.
     private var recentWindows: (at: Date, windows: [GroupWindow])?
@@ -445,6 +447,8 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     private func register(_ initial: GroupDeviceIdentity) async throws -> GroupDeviceIdentity {
         var value = initial
         var body = try secrets.read("registration-request")
+        // 11/21e: a request kept from an earlier try (its challenge lasts five minutes).
+        let kept = body != nil
         if body == nil {
             guard let root = value.personPrivateKey else { throw GroupClientError.authenticationRequired }
             let input = try GroupAPIModel.IdentityChallengeInput(signingPublicKey: value.signingKey.publicKey.rawRepresentation,
@@ -465,7 +469,11 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         catch GroupClientError.invitationExpired {
             // A definite expired, uncommitted challenge can be replaced on the
             // next explicit attempt. Never discard keys or infer a new person.
-            try secrets.remove("registration-request"); throw GroupClientError.authenticationRequired
+            try secrets.remove("registration-request")
+            // 11/21e: a kept request whose challenge ran out is made again at
+            // once with the same keys (once: the fresh one is not kept).
+            if kept { return try await register(initial) }
+            throw GroupClientError.authenticationRequired
         }
         guard reply.personID == value.personID, reply.deviceID == (try value.deviceID), reply.state == "registered" else { throw GroupClientError.invalidResponse }
         value.registered = true; try save(value, "identity"); try secrets.remove("registration-request")
@@ -1059,20 +1067,39 @@ extension ProductionGroupWindowClient {
         if let saved = attempts[invitationID] {
             guard saved.personID == identity.personID, saved.deviceID == (try identity.deviceID),
                   saved.windowID == capability.windowID else { throw GroupProtocolError.invalidSignature }
-            attempt = saved
+            // 11/21e: a name typed again after a try that never reached the
+            // relay (nothing kept to resend) replaces the first one. A kept
+            // request is resent as it was, so the relay never sees two names.
+            if let typed = try? GroupWire.name(displayName), typed != saved.displayName,
+               try pending(saved.operationID, intent: Self.applyIntent(invitationID, saved.displayName)) == nil {
+                attempt = .init(invitationID: invitationID, windowID: capability.windowID, personID: identity.personID,
+                    deviceID: try identity.deviceID, operationID: operationID, displayName: typed)
+                attempts[invitationID] = attempt; try save(attempts, "join-attempts")
+            } else {
+                attempt = saved
+            }
         } else {
             attempt = .init(invitationID: invitationID, windowID: capability.windowID, personID: identity.personID,
                 deviceID: try identity.deviceID, operationID: operationID, displayName: try GroupWire.name(displayName))
             attempts[invitationID] = attempt; try save(attempts, "join-attempts")
         }
         let name = attempt.displayName, operationID = attempt.operationID
-        let intent = "apply:\(invitationID):" + GroupWire.base64(GroupCanonical.hash(Data(name.utf8)))
+        let intent = Self.applyIntent(invitationID, name)
         let path = "/v3/group-windows/\(capability.windowID)/join-requests", body: Data
-        if let stored = try pending(operationID, intent: intent) { body = stored.body }
+        let resent: Bool
+        if let stored = try pending(operationID, intent: intent) { body = stored.body; resent = true }
         else {
+            resent = false
             guard capability.expiresAt > Date() else { throw GroupClientError.invitationExpired }
-            let challenge = try GroupWire.decode(GroupAPIModel.JoinChallenge.self, await signed("/v3/group-windows/\(capability.windowID)/invitation-challenges",
-                GroupAPIModel.InvitationInput(invitationID: invitationID)))
+            let challenge: GroupAPIModel.JoinChallenge
+            do {
+                challenge = try GroupWire.decode(GroupAPIModel.JoinChallenge.self, await signed("/v3/group-windows/\(capability.windowID)/invitation-challenges",
+                    GroupAPIModel.InvitationInput(invitationID: invitationID)))
+            } catch GroupClientError.notMember {
+                // 11/21e: the relay no longer has this link (deleted): said as a
+                // link that cannot be used, not as "not a member".
+                throw GroupClientError.invitationRevoked
+            }
             let ownerID = GroupWire.base64(GroupCanonical.hash(capability.ownerRoot))
             guard challenge.ownerIdentityPublicKey == capability.ownerRoot, challenge.ownerPersonID == ownerID else { throw GroupProtocolError.invalidSignature }
             let device = try identity.certificate(windowID: capability.windowID)
@@ -1096,6 +1123,12 @@ extension ProductionGroupWindowClient {
             // valid) starts from a fresh challenge.
             try? operations.remove("op:" + operationID.uuidString.lowercased())
             attempts.removeValue(forKey: invitationID); try? save(attempts, "join-attempts")
+            // 11/21e: only the kept request's challenge ran out; the link itself
+            // is still good. Asked again at once with a fresh challenge (once:
+            // a fresh request is not `resent`), instead of saying the link expired.
+            if resent, capability.expiresAt > Date() {
+                return try await apply(invitationID: invitationID, displayName: displayName, operationID: UUID())
+            }
             throw GroupClientError.invitationExpired
         }
         guard reply.windowID == capability.windowID, reply.invitationID == invitationID, reply.personID == identity.personID,
@@ -1108,6 +1141,9 @@ extension ProductionGroupWindowClient {
         joins[invitationID] = reply.requestID; try save(joins, "join-index")
         attempts.removeValue(forKey: invitationID); try save(attempts, "join-attempts")
         return result
+    }
+    private static func applyIntent(_ invitationID: String, _ name: String) -> String {
+        "apply:\(invitationID):" + GroupWire.base64(GroupCanonical.hash(Data(name.utf8)))
     }
     func resumableJoin(invitationID: String) async throws -> GroupJoinRequest? {
         let actor = try identity()
@@ -1206,7 +1242,13 @@ extension ProductionGroupWindowClient {
                 }
             } catch { continue }
         }
-        for item in try await windows() where item.canManage && item.state == .active && item.deliveryStatus != .paused {
+        // 11/21e: a window waiting for its key after someone left goes on first.
+        var listed = try await windows()
+        let renewedKeys = await renewPendingKeys(listed: listed)
+        if !renewedKeys.isEmpty {
+            listed = listed.map { item in renewedKeys.first(where: { $0.id == item.id }) ?? item }
+        }
+        for item in listed where item.canManage && item.state == .active && item.deliveryStatus != .paused {
             if Task.isCancelled { break }
             do {
                 for request in try await pendingRequests(windowID: item.id) where request.admissionPaused != true {
@@ -1405,6 +1447,47 @@ extension ProductionGroupWindowClient {
     }
     func rotate(windowID: String, operation: GroupOperation) async throws -> GroupWindow {
         try await changeMembership(windowID: windowID, kind: "rotate", targetID: windowID, operation: operation)
+    }
+    /// 11/21e: after someone leaves, the relay holds photos and hearts until
+    /// the creator's iPhone renews the key. Every window this iPhone created
+    /// is renewed here (coming to the front, the list, a notification), not
+    /// only the one opened. Only the creator renews (`canManage`, and the
+    /// signed roster is checked again in `changeMembership`). Nothing is sent
+    /// for a window that is not waiting. A newer revision reads the window
+    /// again, at most three tries. Failures stay quiet: the next pass retries.
+    @discardableResult
+    func renewPendingKeys(listed: [GroupWindow]? = nil) async -> [GroupWindow] {
+        guard !renewingKeys else { return [] }
+        renewingKeys = true; defer { renewingKeys = false }
+        let candidates: [GroupWindow]
+        if let listed { candidates = listed }
+        else { guard let fresh = try? await recentOrFreshWindows() else { return [] }; candidates = fresh }
+        var renewed: [GroupWindow] = []
+        for item in candidates where item.canManage && item.state == .rotationRequired {
+            if Task.isCancelled { break }
+            if let window = await renewKey(windowID: item.id, revision: item.revision) { renewed.append(window) }
+        }
+        if !renewed.isEmpty { recentWindows = nil }
+        return renewed
+    }
+    private func renewKey(windowID: String, revision: Int) async -> GroupWindow? {
+        var expected = revision
+        for _ in 0..<3 {
+            if Task.isCancelled { return nil }
+            do {
+                return try await rotate(windowID: windowID, operation: GroupOperation(expectedRevision: expected))
+            } catch GroupClientError.staleRevision {
+                // Another pass (or the open window) may have renewed it already.
+                guard let latest = try? await window(id: windowID) else { return nil }
+                guard latest.canManage, latest.state == .rotationRequired else {
+                    return latest.state == .active ? latest : nil
+                }
+                expected = latest.revision
+            } catch {
+                return nil
+            }
+        }
+        return nil
     }
     func renameWindow(windowID: String, name: String, expectedNameRevision: Int,
                       operation: GroupOperation) async throws -> GroupWindow {
