@@ -99,6 +99,7 @@ private actor ReportingEcho: GroupHTTPTransport {
     private var nonces = Set<String>()
     private var loss: ReportingLoss = .none
     private var available = true
+    private var connected = true
     private var reserve: Data?
     private var uploaded: Data?
     private var committed: Data?
@@ -121,6 +122,7 @@ private actor ReportingEcho: GroupHTTPTransport {
     }
     func lose(_ value: ReportingLoss) { loss = value }
     func setAvailable(_ value: Bool) { available = value }
+    func setConnected(_ value: Bool) { connected = value }
     func wrongReceipt(on value: String?) { wrongReceiptOn = value }
     func setReceiptNumber(_ value: String?) { number = value }
     func overrideReceiptNumber(_ value: String, on phase: String) { numberOverrides[phase] = value }
@@ -184,6 +186,7 @@ private actor ReportingEcho: GroupHTTPTransport {
         try require(key.isValidSignature(GroupWire.bytes(signature, count: 64), for: transcript), "real HTTP signature")
         try require(nonces.insert(nonce).inserted, "retry has a fresh request nonce")
         requests.append(.init(path: path, method: method, body: body, deviceID: device))
+        if !connected { throw GroupClientError.offline }
         if path == "/v3/group-identities/reporting-availability" {
             try require(method == "GET" && body.isEmpty, "availability sends no evidence")
             try after("availability")
@@ -356,6 +359,7 @@ private struct VerifyGroupReporting {
         try await reportingPhase("former report and device-local suppression") { try await formerSuppression(root, jpeg) }
         try await reportingPhase("blocking") { try await blocking(root, jpeg) }
         try await reportingPhase("consent renewed by the person's tap") { try await consentRenewal(root, jpeg) }
+        try await reportingPhase("offline draft catches up or resumes from the photo") { try await offlineDraft(root, jpeg) }
         try await reportingPhase("OFF") { try await disabled(root, jpeg) }
         print("Group reporting native adapter checks passed: exact evidence, durable retries, signed requests, identity/status, receipt numbers, evidence expiry, blocks and OFF.")
     }
@@ -682,6 +686,40 @@ private struct VerifyGroupReporting {
             _ = try await service.resumeReport(draftID: id, consent: .init(acceptedAt: Date().addingTimeInterval(-400)))
         }
     }
+    private static func offlineDraft(_ root: URL, _ jpeg: Data) async throws {
+        for automatic in [true, false] {
+            let env = try ReportingEnvironment(root: root, name: automatic ? "offline-automatic" : "offline-photo", jpeg: jpeg)
+            let service = try env.service()
+            await env.echo.setConnected(false)
+            let id = try await env.prepare(service)
+            try await fails(.offline, "no connection at submit") { _ = try await service.submitReport(draftID: id) }
+            let saved = try env.draft(id)
+            try require(saved.record.progress == .retryable && saved.ciphertext != nil, "the offline report remains encrypted and retryable")
+            try require(await env.mutationLog().isEmpty, "an offline draft has not reserved evidence")
+
+            let reopened = try env.service()
+            let safety = GroupSafety(service: reopened)
+            await safety.loadRecords(windowID: env.windowID)
+            try require(safety.unsentReport(env.photoID, in: env.windowID)?.id == id, "the photo offers the same draft after reopening")
+            await env.echo.setConnected(true)
+            if automatic {
+                await safety.catchUp(windowIDs: [env.windowID])
+            } else {
+                let shown = safety.unsentReport(env.photoID, in: env.windowID)
+                guard let shown else { throw ReportingCheckFailure.failed("photo menu has no draft") }
+                _ = try await reopened.resumeReport(draftID: shown.id, consent: .init(acceptedAt: Date()))
+                await safety.loadRecords(windowID: env.windowID)
+            }
+            let received = try env.draft(id)
+            try require(received.record.progress == .received && received.ciphertext == nil, "the original draft was delivered")
+            try require(safety.unsentReport(env.photoID, in: env.windowID) == nil, "the photo stops offering a delivered draft")
+            try require(try env.all().count == 1 && env.evidence.reads() == 1, "one draft and one evidence read")
+            let requests = await env.mutationLog()
+            try require(requests.map(\.method) == ["POST", "PUT", "POST"], "one reserve, upload and commit")
+            try require(received.commitBody == saved.commitBody && requests[1].body == saved.ciphertext, "retry keeps evidence and commit intent")
+        }
+    }
+
     private static func ownerOff(_ root: URL, _ jpeg: Data) async throws {
         let env = try ReportingEnvironment(root: root, name: "owner-off", jpeg: jpeg)
         let enabled = try env.service()

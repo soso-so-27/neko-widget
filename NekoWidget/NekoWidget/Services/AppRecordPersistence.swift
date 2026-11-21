@@ -2982,6 +2982,9 @@ private actor AppRecordFixtureServer {
                 headerFields: ["Content-Type": "application/json"])!)
         }
         func failure(_ code: String, _ status: Int) throws -> (Data, URLResponse) { try response(["error": ["code": code]], status) }
+        if request.httpMethod == "DELETE", url.path == "/v1/auth/session" {
+            return (Data(), HTTPURLResponse(url: url, statusCode: 204, httpVersion: nil, headerFields: nil)!)
+        }
         if accountReadsUnavailable, ["/v1/membership", "/v1/usage"].contains(url.path) {
             return try failure("SESSION_INVALID", 401)
         }
@@ -3426,6 +3429,54 @@ private final class AppRecordFixture {
               try Data(contentsOf: manifest) == bytes else { throw ToolBackupError.storage }
         Self.measurementSummary += "; backgroundComparison=PASS; editingLease=PASS; pauseDuringACK=PASS; localBytesUnchanged=PASS"
     }
+    func verifyPartialSaveAndSignOut() async throws {
+        Self.preparationPhase = "写真一枚が読めない状態から保存"
+        let notesURL = AppRecordDataset.directory("PhotoMemoryNotes").appendingPathComponent("state.json")
+        let notes = try AppRecordJSON.read(notesURL)
+        let snapshot = try JSONDecoder().decode(PhotoMemoryNoteSnapshot.self, from: notes)
+        guard let name = snapshot.notes["fixture-local-only"]?.photoFile else { throw ToolBackupError.invalid }
+        let damagedPhoto = notesURL.deletingLastPathComponent().appendingPathComponent(name)
+        let badJPEG = Data([0x00, 0x01, 0x02])
+        try ToolBackupFiles.write(badJPEG, to: damagedPhoto)
+        await server.useIndexVersion(4)
+        await persistence.enable()
+        guard persistence.title == "一部を保存できませんでした",
+              persistence.detail == "1件のほかは、保存しました。",
+              try AppRecordJSON.read(notesURL) == notes, try Data(contentsOf: damagedPhoto) == badJPEG else {
+            throw ToolBackupError.storage
+        }
+
+        Self.preparationPhase = "正常な写真とメモを保存先から読み戻す"
+        let client = authenticationClient()
+        guard let owner = try await client.sessionOwnerID() else { throw ToolBackupError.invalid }
+        let headID = AppRecordHead.id(origin: configuration.origin!.absoluteString, owner: owner)
+        let head = try AppRecordHead.decode(await client.detail(headID).document)
+        let record = try await client.detail(head.snapshotID).record
+        let restored = try await ToolBackupTransfer.restore(record, client: client) { _, _ in }
+        let paths = Set(restored.index.files.map(\.path))
+        guard paths.contains("PhotoMemoryNotes/state.json"), !paths.contains("PhotoMemoryNotes/" + name),
+              paths.contains(where: { $0.hasPrefix("CareHandoff/") && $0.hasSuffix(".jpg") }) else { throw ToolBackupError.storage }
+
+        Self.preparationPhase = "サインアウト後は自動保存を再開しない"
+        let account = ManagedPreservationCoordinator(configuration: configuration, client: authenticationClient(), purpose: .account)
+        account.signOut()
+        for _ in 0..<100 {
+            if !account.isBusy && !persistence.enabled { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        guard !account.isBusy, !persistence.enabled, persistence.title == "自動保存はオフです",
+              try await authenticationClient().sessionOwnerID() == nil else { throw ToolBackupError.storage }
+        let writes = await server.savedMeasurement().1
+        let repository = try CareHandoffRepository(directory: AppRecordDataset.directory("CareHandoff"))
+        var plan = repository.committed; plan.contact += " サインアウト後の端末の編集"
+        try repository.commit(plan, newPhotos: [:])
+        await persistence.retry()
+        guard await server.savedMeasurement().1 == writes, !persistence.enabled,
+              try AppRecordJSON.read(notesURL) == notes else { throw ToolBackupError.storage }
+        let reopened = AppRecordPersistence(configuration: configuration, client: authenticationClient())
+        guard !reopened.enabled else { throw ToolBackupError.storage }
+    }
+
     func verifySettingsSessionInterference() async throws {
         Self.preparationPhase = "一項目変更の往復を計測"
         await server.useUninterruptedMetadataBatches()
@@ -4093,6 +4144,14 @@ struct AppRecordPersistenceFixtureView: View {
                     try await probe.verifyResponsiveSaveAndPause { result = "保存中の停止を確認できます" }
                     result = "保存の回数・片づけの分離・編集の集約を確認しました"
                 } catch { result = "効率の検査失敗: " + AppRecordFixture.preparationPhase }
+                return
+            }
+            if CommandLine.arguments.contains("--app-records-partial-signout-probe") {
+                do {
+                    let probe = try await AppRecordFixture.make()
+                    try await probe.verifyPartialSaveAndSignOut()
+                    result = "写真の一部を保存し、サインアウトで自動保存を止めました"
+                } catch { result = "一部保存とサインアウトの検査失敗: \(AppRecordFixture.preparationPhase)" }
                 return
             }
             if CommandLine.arguments.contains("--app-records-session-probe") {

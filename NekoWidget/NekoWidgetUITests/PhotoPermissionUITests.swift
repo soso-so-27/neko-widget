@@ -1677,6 +1677,11 @@ final class SoloMemoriesUITests: XCTestCase {
     func testAutomaticSaveSettingsDoNotInvalidateSession() {
         continueAfterFailure = false
         let app = XCUIApplication()
+        app.launchArguments = ["--app-records-ui-fixture", "--app-records-partial-signout-probe",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["写真の一部を保存し、サインアウトで自動保存を止めました"].waitForExistence(timeout: 90), app.debugDescription)
+        app.terminate()
         app.launchArguments = ["--app-records-ui-fixture", "--app-records-session-probe",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
