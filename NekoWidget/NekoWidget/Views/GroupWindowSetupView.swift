@@ -437,6 +437,8 @@ struct GroupWindowScreenCapabilities: Equatable, Sendable {
 
 struct GroupWindowMembersView: View {
     @ObservedObject var model: GroupWindowMembersModel
+    /// 11/21e: this person's reports here, for 「通報への返答」.
+    @ObservedObject private var safety = GroupSafety.shared
     var capabilities: GroupWindowScreenCapabilities = .full
     /// After leaving: closes the window the members screen was opened from.
     var onLeft: (() -> Void)? = nil
@@ -618,7 +620,9 @@ struct GroupWindowMembersView: View {
     /// Replies to this person's reports only. The policy, the standards and
     /// the contact page live in 設定 › サポート, not here as well.
     @ViewBuilder private var safetySection: some View {
-        let reports = GroupSafety.shared.service.isAvailable
+        // 11/21e: shown whenever this person has reports here (their answers
+        // are read on the list itself), not only within a minute of a photo.
+        let reports = safety.service.isAvailable || !(safety.records[model.windowID] ?? []).isEmpty
         Section {
             if reports {
                 NavigationLink("通報への返答") { GroupReportsView(windowID: model.windowID) }
@@ -628,6 +632,7 @@ struct GroupWindowMembersView: View {
             // 11/8: the photo's 「…」 offers ブロック and 通報 only.
             Text("困る写真は、写真の「…」から通報・ブロックできます。")
         }
+        .task { await safety.loadRecords(windowID: model.windowID) }
     }
 
     /// Shown while the creator's Plus is not active. Everything stays; only
@@ -1046,7 +1051,7 @@ private struct GroupHiddenMemberDialogs: ViewModifier {
             }
             .alert("まど", isPresented: failureShown) {
                 Button("閉じる", role: .cancel) {}
-            } message: { Text(safety.failure?.message ?? "") }
+            } message: { Text(safety.failureMessage) }
             .task { await reload() }
     }
 

@@ -323,6 +323,8 @@ final class GroupWindowScreenModel: ObservableObject {
             await GroupSafety.shared.loadRecords(windowID: windowID)
             // 11/20: a block or unblock not sent yet goes before anything else.
             await GroupSafety.shared.sendPendingBlocks(windowID: windowID)
+            // 11/21e: a report that did not reach the team goes again (quiet).
+            if !background { let id = windowID; Task { await GroupSafety.shared.catchUp(windowIDs: [id]) } }
             var triedNew = false
             defer {
                 // The まど tab's badge and the list's new marks read again (11/7, W1).
@@ -540,7 +542,13 @@ final class GroupWindowScreenModel: ObservableObject {
     func deliver(_ prepared: PreparedPhoto, memo: String) async {
         // 1115s: the person's own action, outside the automatic budget.
         await SharingPersonAction.run {
-            guard canSend, let me = window?.myParticipantID else { return }
+            guard canSend, let me = window?.myParticipantID else {
+                // 11/21e: the window stopped or ended while the confirm sheet
+                // was open: its state is said, never nothing. A window that
+                // only waits (paused, key renewal) keeps the photo to resend.
+                if !isSending && !isPreparing { holdUndeliverable(prepared, memo: memo) }
+                return
+            }
             isSending = true
             sendCompleted = false
             // Only this photo's own retry clears its row; a different photo sent
@@ -588,6 +596,24 @@ final class GroupWindowScreenModel: ObservableObject {
                 if message == nil, !isGone { message = reason }
             }
         }
+    }
+
+    /// 11/21e: 「届ける」 pressed after the window stopped taking photos.
+    private func holdUndeliverable(_ prepared: PreparedPhoto, memo: String) {
+        // A window this iPhone is no longer in already says so on its page.
+        if isFormer || isGone { return }
+        if window?.state == .closed {
+            message = GroupWindowPresentation.message(for: GroupWindowManagementError.closed)
+            return
+        }
+        if isPaused {
+            message = GroupWindowPresentation.message(for: GroupSubscriptionError.windowPaused)
+        } else if window?.state == .rotationRequired {
+            message = GroupWindowPresentation.message(for: GroupClientError.rotationPending)
+        } else {
+            message = "このまどには、いま写真を届けられません。"
+        }
+        failedDelivery = FailedDelivery(photo: prepared, memo: memo)
     }
 
     /// After a failed send: what happened to that photo, and what to do next.
@@ -2004,9 +2030,12 @@ private struct GroupPhotoDetail: View {
                             // 11/8: they are the only two (「表示しない」 is ブロック now).
                             // When the report service cannot be reached, reporting
                             // hands over to the support contact instead of vanishing.
-                            if !safety.hasReported(current.id, in: model.windowID) {
+                            // 11/21e: a report that did not reach the team keeps this
+                            // item, which resumes it (never a dead end).
+                            if !safety.hasReported(current.id, in: model.windowID)
+                                || safety.unsentReport(current.id, in: model.windowID) != nil {
                                 Button("この写真を通報", systemImage: "exclamationmark.bubble") {
-                                    if safety.service.isAvailable { reportTarget = current } else { showsReportUnavailable = true }
+                                    openReport(current)
                                 }
                                 .accessibilityIdentifier("group-photo-report")
                             }
@@ -2024,7 +2053,8 @@ private struct GroupPhotoDetail: View {
                     .accessibilityLabel("この写真の操作")
                     .accessibilityIdentifier("group-photo-menu")
                     .simultaneousGesture(TapGesture().onEnded {
-                        Task { await safety.load(windowID: model.windowID) }
+                        // 11/21e: the person's tap, outside the automatic budget.
+                        Task { await SharingPersonAction.run { await safety.load(windowID: model.windowID) } }
                     })
                 }
                 ToolbarItem(placement: .topBarLeading) {
@@ -2074,6 +2104,25 @@ private struct GroupPhotoDetail: View {
         .announcesWhenShown(model.actionMessage)
         .task(id: selection) { await safety.load(windowID: model.windowID) }
         .onChange(of: selection) { _, _ in model.actionMessage = nil }
+    }
+
+    /// 11/21e: the report sheet opens when the relay takes reports, when a
+    /// report of this photo is waiting, or when only the connection is
+    /// missing (the report is kept and goes later). The tap asks the relay
+    /// itself, outside the automatic budget that viewing photos uses.
+    private func openReport(_ entry: GroupWindowLocalPhotoStore.Entry) {
+        if safety.service.isAvailable || safety.unsentReport(entry.id, in: model.windowID) != nil {
+            reportTarget = entry
+            return
+        }
+        Task {
+            await SharingPersonAction.run { await safety.service.refreshAvailability() }
+            if safety.service.isAvailable || safety.service.availabilityProblem?.isConnectionTrouble == true {
+                reportTarget = entry
+            } else {
+                showsReportUnavailable = true
+            }
+        }
     }
 
     private func neighbor(of entry: GroupWindowLocalPhotoStore.Entry) -> String? {
@@ -2363,6 +2412,10 @@ final class GroupWindowListModel: ObservableObject {
             message = unreadable.isEmpty ? nil : GroupWindowPresentation.message(for: GroupClientError.invalidResponse)
             hasLoaded = true
             GroupWindowListNavigation.shared.rememberListed(windows)
+            renewPendingKeys()
+            // 11/21e: unsent reports and the team's answers, for every window.
+            let listedIDs = windows.map(\.id)
+            Task { await GroupSafety.shared.catchUp(windowIDs: listedIDs) }
             if GroupWidgetCache.keepOnly(windowIDs: Set(windows.map(\.id)).union(unreadable)) {
                 WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
             }
@@ -2377,6 +2430,19 @@ final class GroupWindowListModel: ObservableObject {
 #endif
             message = GroupWindowPresentation.message(for: error)
             hasLoaded = true
+        }
+    }
+
+    /// 11/21e: a window this iPhone created that waits for its key after
+    /// someone left is renewed from the list, without opening it. Quiet and
+    /// in the background; the list shows the renewed window when it is done.
+    private func renewPendingKeys() {
+        let waiting = windows.filter { $0.canManage && $0.state == .rotationRequired }
+        guard !waiting.isEmpty, let production = client as? ProductionGroupWindowClient else { return }
+        Task { [weak self] in
+            let renewed = await production.renewPendingKeys(listed: waiting)
+            guard let self, !renewed.isEmpty else { return }
+            self.windows = self.windows.map { item in renewed.first(where: { $0.id == item.id }) ?? item }
         }
     }
 
@@ -3137,7 +3203,7 @@ struct GroupHiddenMembersView: View {
         }
         .alert("まど", isPresented: Binding(get: { safety.failure != nil }, set: { if !$0 { safety.failure = nil } })) {
             Button("閉じる", role: .cancel) {}
-        } message: { Text(safety.failure?.message ?? "") }
+        } message: { Text(safety.failureMessage) }
         // 11/8: 「表示しない」 is ブロック now. People hidden before 11/8 are
         // still listed here, still hidden, and shown again only from here.
         .navigationTitle("ブロックした人")
@@ -3160,12 +3226,9 @@ struct GroupHiddenMembersView: View {
     static func restore(_ member: GroupWindowLocalPhotoStore.HiddenMember, windowID: String) async -> Bool {
         let safety = GroupSafety.shared
         if member.blocked == true {
-            let service = safety.service
-            let lifted = await safety.run(windowID: windowID) {
-                try await service.setBlock(windowID: windowID, participantID: member.id,
-                                           active: false, operationID: UUID())
-            }
-            guard lifted != nil else { return false }
+            // 11/21e: said in block words; an unblock with nothing left to
+            // lift on the relay shows the person again (GroupSafety.setBlock).
+            guard await safety.setBlock(windowID: windowID, participantID: member.id, active: false) else { return false }
         }
         await GroupWindowLocalPhotoStore.shared.unhide(memberID: member.id, windowID: windowID)
         await GroupWidgetCache.refreshKept(windowID: windowID)
@@ -3481,7 +3544,10 @@ struct GroupReportSheet: View {
                     }
                     if let record, record.progress == .retryable {
                         Section {
-                            Text(GroupSafetyError.unknownOutcome.message).font(.footnote).foregroundStyle(.secondary)
+                            // 11/21e: no connection is said as such; the report waits.
+                            Text(safety.service.availabilityProblem == .offline
+                                 ? GroupSafetyError.offline.message : GroupSafetyError.unknownOutcome.message)
+                                .font(.footnote).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -3507,9 +3573,16 @@ struct GroupReportSheet: View {
             }
             .alert("通報", isPresented: Binding(get: { safety.failure != nil }, set: { if !$0 { safety.failure = nil } })) {
                 Button("閉じる", role: .cancel) {}
-            } message: { Text(safety.failure?.message ?? "") }
+            } message: { Text(safety.failureMessage) }
         }
         .interactiveDismissDisabled(safety.isWorking)
+        .task {
+            // 11/21e: a report of this photo that did not reach the team is
+            // resumed here (its reason fixed), not started again.
+            guard record == nil, let waiting = safety.unsentReport(entry.id, in: windowID) else { return }
+            record = waiting
+            if waiting.isKeptCopy != true { reason = waiting.reason }
+        }
     }
 
     /// The first tap fixes the photo, reason and consent; a retry sends the
@@ -3574,7 +3647,8 @@ struct GroupReportsView: View {
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
-                    if record.progress == .retryable {
+                    // 11/21e: a report stopped by the relay can be sent again too.
+                    if [.retryable, .authenticationRequired, .unavailable].contains(record.progress) {
                         Button {
                             running = record.id
                             Task {
@@ -3693,15 +3767,13 @@ private struct GroupPhotoSafetyDialogs: ViewModifier {
                 if let pending = safety.pendingBlocks[windowID]?.first {
                     Button("もう一度試す") {
                         Task {
-                            _ = await safety.run(windowID: windowID) {
-                                try await safety.service.setBlock(windowID: windowID, participantID: pending.participantID,
-                                    active: pending.active, operationID: pending.id)
-                            }
+                            await safety.setBlock(windowID: windowID, participantID: pending.participantID,
+                                                  active: pending.active, operationID: pending.id)
                         }
                     }
                 }
                 Button("閉じる", role: .cancel) {}
-            } message: { Text(safety.failure?.message ?? "") }
+            } message: { Text(safety.failureMessage) }
     }
 
     private var blockQuestion: String {
@@ -3715,16 +3787,12 @@ private struct GroupPhotoSafetyDialogs: ViewModifier {
 
     private func block() {
         guard let current else { return }
-        let service = safety.service
         let windowID = windowID
         Task {
             // The block takes effect on this iPhone first; the server is told
             // next. A failed call shows its own message and the local block stays.
             await afterBlock(current)
-            _ = await safety.run(windowID: windowID) {
-                try await service.setBlock(windowID: windowID, participantID: current.senderParticipantID,
-                                           active: true, operationID: UUID())
-            }
+            await safety.setBlock(windowID: windowID, participantID: current.senderParticipantID, active: true)
         }
     }
 }
