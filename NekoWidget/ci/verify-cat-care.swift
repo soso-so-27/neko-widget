@@ -368,7 +368,7 @@ struct VerifyCatCare {
         try check(CatCareLimits.normalizedMicrochip("392 1410-0012 3456") == "392141000123456", "chip normalizes")
         try check(CatCareLimits.normalizedMicrochip("") == "", "empty chip is allowed")
         try check(CatCareLimits.normalizedMicrochip("12345") == nil, "short chip is rejected")
-        try check(CatCareLimits.normalizedMicrochip("３９２　１４１０ー０００１２３４５６") == "392141000123456", "full-width chip digits are accepted")
+        try check(CatCareLimits.normalizedMicrochip("３９２　１４１０ー００１２　３４５６") == "392141000123456", "full-width chip digits are accepted")
         try check(CatCareLimits.normalizedMicrochip("39214100012345a") == nil, "letters are rejected")
         let tomorrow = CatCareDay(year: 2026, month: 10, day: 21)!
         try check(!CatCareLimits.isValidWeight(grams: 4200, on: tomorrow, today: day), "future weight rejected")
