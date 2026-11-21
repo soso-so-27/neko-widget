@@ -68,6 +68,13 @@ enum CatProfileDeletionCleanup {
         let evacuation = EvacuationStore.shared
         if keepsCareRecord {
             guard let careCatID else { return }
+            // The record no longer names the deleted profile.
+            CatCareStore.shared.update { state in
+                for index in state.cats.indices where state.cats[index].catID == careCatID
+                    && state.cats[index].profileID == profile {
+                    state.cats[index].profileID = nil
+                }
+            }
             if care.plan.cats.contains(where: { matches($0.profileID) }) {
                 care.update { plan in
                     for index in plan.cats.indices where matches(plan.cats[index].profileID) {
@@ -1107,6 +1114,7 @@ struct CatCareDetailView: View {
                 // cat does not come back as a page of its own.
                 CatProfileDeletionCleanup.run(profileID: profile.identifier, careCatID: catID,
                                               keepsCareRecord: shared)
+                if shared { familyNotebook.forgetDeletedProfile(profile.identifier) }
                 // The family's cat keeps its 旅立った日, under the key its
                 // page uses from now on; a cat that is gone keeps none.
                 let day = CatFarewell.days(farewellJSON)[subject.key]
@@ -2006,6 +2014,8 @@ struct CatCareListEntrySheet: View {
     @State private var confirmsDiscard = false
     /// 11/21: photos picked on this sheet; any not kept leave with it.
     @State private var pickedHere: [CatCarePhotoRef] = []
+    /// 11/21: a picked photo still being read; 追加 waits for it.
+    @State private var loadingProof = false
 
     var body: some View {
         NavigationStack {
@@ -2081,7 +2091,7 @@ struct CatCareListEntrySheet: View {
                     Button("キャンセル") { if hasChanges { confirmsDiscard = true } else { close() } }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(editor.entryID == nil ? "追加" : "保存") { save() }.disabled(saved)
+                    Button(editor.entryID == nil ? "追加" : "保存") { save() }.disabled(saved || loadingProof)
                 }
                 if let entryID = editor.entryID {
                     ToolbarItem(placement: .bottomBar) {
@@ -2121,7 +2131,9 @@ struct CatCareListEntrySheet: View {
             }
             .onChange(of: proofItem) { _, item in
                 guard let item else { return }
+                loadingProof = true
                 Task {
+                    defer { loadingProof = false }
                     if let data = try? await item.loadTransferable(type: Data.self),
                        let jpeg = CatCareFormat.cleanJPEG(data) {
                         if let made = store.savePhoto(jpeg, sourceAssetID: item.itemIdentifier, origin: .photos) {
@@ -2146,7 +2158,9 @@ struct CatCareListEntrySheet: View {
         case .weight:
             guard let entry = record.weights.first(where: { $0.id == entryID }) else { return }
             date = dateOf(entry.measuredOn)
-            gramsText = String(format: "%.2f", Double(entry.grams) / 1000)
+            // 11/21: three places when the grams need them (4.235 kg was
+            // shown as 4.24 and saved back as 4,240 g).
+            gramsText = String(format: entry.grams % 10 == 0 ? "%.2f" : "%.3f", Double(entry.grams) / 1000)
         case .medication:
             guard let entry = record.medications.first(where: { $0.id == entryID }) else { return }
             name = entry.name; dose = entry.dose; schedule = entry.schedule

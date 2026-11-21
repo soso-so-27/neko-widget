@@ -364,7 +364,8 @@ final class EvacuationStore: ObservableObject {
         var attachments: [(String, UIImage)] = []
         if disclosure.catCare {
             for vaccination in care?.activeVaccinations ?? [] {
-                guard let proof = vaccination.proof, let url = CatCareStore.shared.photoURL(proof),
+                // 11/21: a proof restored apart from its row counts too.
+                guard let proof = care?.vaccinationProof(vaccination.id), let url = CatCareStore.shared.photoURL(proof),
                       let image = UIImage(contentsOfFile: url.path) else { continue }
                 attachments.append(("\(vaccination.kind)の証明", image))
             }

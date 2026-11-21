@@ -103,9 +103,14 @@ actor GroupShareService: GroupShareServing {
         guard let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             throw GroupClientError.unavailable
         }
+        // 11/21: the reading store answers only `identity` and `window:*` and
+        // throws for anything else, so the "device taken off" marks (11/20)
+        // are kept in the share side's own store; without this every list and
+        // send from the share sheet failed with authenticationRequired.
         let client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: secrets,
             transport: GroupShareTransport(transport: GroupURLSessionTransport()),
-            outboxDirectory: root.appendingPathComponent(namespace + ".share-outbox", isDirectory: true))
+            outboxDirectory: root.appendingPathComponent(namespace + ".share-outbox", isDirectory: true),
+            revocations: checkpoints)
         return GroupShareService(client: client, snapshot: snapshot, moderation: MomentModerationService())
     }
 

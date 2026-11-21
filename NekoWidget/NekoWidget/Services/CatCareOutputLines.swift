@@ -84,7 +84,7 @@ enum CatCareSummary {
         }
         fields.append(("飲んでいる薬", medications.isEmpty ? empty : medications.joined(separator: "\n")))
         let vaccinations = (record?.activeVaccinations ?? []).prefix(3).map {
-            "\($0.kind)（\(CatCareFormat.day($0.givenOn))）" + ($0.proof != nil ? " 証明あり" : "")
+            "\($0.kind)（\(CatCareFormat.day($0.givenOn))）" + (record?.vaccinationProof($0.id) != nil ? " 証明あり" : "")
         }
         fields.append(("ワクチン", vaccinations.isEmpty
                        ? (record?.vaccinationStatus == CatCareVaccinationStatus.none ? "受けていない" : empty)
@@ -245,7 +245,7 @@ enum CatCareSummary {
         let vaccinations = (record?.activeVaccinations ?? []).prefix(4).map { entry in
             var line = "\(entry.kind)（\(CatCareFormat.day(entry.givenOn))）"
             if let next = entry.nextDueOn { line += " 次回 \(CatCareFormat.day(next))" }
-            if entry.proof != nil { line += " 証明あり" }
+            if record?.vaccinationProof(entry.id) != nil { line += " 証明あり" }
             return line
         }
         fields.append(("ワクチン", vaccinations.isEmpty

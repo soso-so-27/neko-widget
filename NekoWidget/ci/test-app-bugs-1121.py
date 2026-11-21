@@ -98,5 +98,26 @@ class ImportBesideACatTests(unittest.TestCase):
         self.assertIn("pinned.pinSingleCatPhotoBeforeAnotherProfile(shownPhotoIdentifier: shown?.photo)", body)
 
 
+SHARE = (ROOT / "NekoWidgetShareExtension/GroupShareService.swift").read_text(encoding="utf-8")
+ACCESS = (ROOT / "NekoWidget/Services/GroupShareAccess.swift").read_text(encoding="utf-8")
+TRANSFER = (ROOT / "Shared/Models/CatProfileTransfer.swift").read_text(encoding="utf-8")
+
+
+class ShareSheetStillWorksTests(unittest.TestCase):
+    """The share side's reading store throws for any account but identity and
+    window:*; the revoked-device marks must live in a store that answers nil."""
+
+    def test_revocation_marks_are_not_read_from_the_reading_store(self):
+        start = SHARE.index("let client = try ProductionGroupWindowClient(")
+        self.assertIn("revocations: checkpoints)", SHARE[start:start + 400])
+        self.assertIn('guard account == "identity" || account.hasPrefix("window:"),', ACCESS)
+
+
+class TransferKeepsFarewellDaysTests(unittest.TestCase):
+    def test_decode_keeps_the_days(self):
+        start = TRANSFER.index("func withImportedNames() throws -> Self {")
+        self.assertIn("value.farewellDays = farewellDays", TRANSFER[start:start + 900])
+
+
 if __name__ == "__main__":
     unittest.main()

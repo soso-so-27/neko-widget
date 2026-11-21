@@ -372,6 +372,16 @@ final class FamilyNotebookPrototype: ObservableObject {
         reload()
     }
 
+    /// 11/21: this iPhone's profile of a family cat was deleted. The family's
+    /// cat is its own page again (it can be linked to a cat here later, its
+    /// photo and 旅立った日 show); no copy is made, nothing is sent.
+    func forgetDeletedProfile(_ profile: String) {
+        guard isReal, hasFamily, let store, let snapshot, let id = UUID(uuidString: profile),
+              let mapping = snapshot.activeMappings.first(where: { $0.recordID == nil && $0.profileID == id }) else { return }
+        _ = try? store.setLocalProfile(nil, forFamilyCat: mapping.familyCatID)
+        reload()
+    }
+
     /// Called after a service pass, including a failed network pass when a
     /// retained local copy is available. No prototype store is consulted.
     /// A background pass stays quiet; only a check the person asked for says

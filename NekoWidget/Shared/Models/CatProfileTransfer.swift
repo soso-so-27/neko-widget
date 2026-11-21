@@ -155,7 +155,10 @@ struct CatProfileTransfer: Codable, Equatable, Sendable {
             entries[index] = Entry(id: entries[index].id, name: name,
                                    dates: entries[index].dates, primaryKind: entries[index].primaryKind)
         }
-        let value = Self(format: format, version: version, profiles: entries, photos: photos)
+        var value = Self(format: format, version: version, profiles: entries, photos: photos)
+        // 11/21: the file's 旅立った日 come along (they were dropped here, so
+        // a departed cat arrived as a living one).
+        value.farewellDays = farewellDays
         try value.validate()
         return value
     }
