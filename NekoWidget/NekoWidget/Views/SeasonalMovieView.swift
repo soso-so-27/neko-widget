@@ -674,7 +674,10 @@ struct SeasonalMovieView: View {
         backgroundTime.begin { exportTask?.cancel() }
         exportTask = Task {
             do {
-                try await freezeRecipe(.export)
+                // 11/21: keeping the movie as it is helps, but a record that
+                // could not be written never refuses the movie on screen.
+                try? await freezeRecipe(.export)
+                try Task.checkCancellation()
                 let (url, omitted) = try await SeasonalMovieExportService.shared.exportOmittingUnavailableScenes(
                     presentation,
                     soundEnabled: includesSound

@@ -64,6 +64,11 @@ enum AppStoreListing {
 import SwiftUI
 
 struct ClientUpgradeRequiredView: View {
+    /// 11/21: in the app the notice closes, so the lost-cat, evacuation and vet
+    /// tools and the person's own photos stay reachable; only the server
+    /// features keep saying the same sentence where they are entered.
+    var onClose: (() -> Void)? = nil
+
     var body: some View {
         VStack(spacing: 24) {
             Text(ClientUpgradeRequirement.message)
@@ -72,6 +77,10 @@ struct ClientUpgradeRequiredView: View {
             if let url = AppStoreListing.pageURL {
                 Link("App Store を開く", destination: url)
                     .accessibilityIdentifier("client-upgrade-store")
+            }
+            if let onClose {
+                Button("閉じる", action: onClose)
+                    .accessibilityIdentifier("client-upgrade-close")
             }
         }
         .padding(32)

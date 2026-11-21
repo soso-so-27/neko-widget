@@ -540,7 +540,7 @@ struct ShowcasePhotoView: View {
                     .accessibilityIdentifier("showcase-gallery-preparing")
             } else if store.hasCorruptManifest {
                 ContentUnavailableView("見せる写真を読み込めませんでした", systemImage: "exclamationmark.triangle")
-            } else if !store.allEntries(in: scopeID).isEmpty {
+            } else if !store.allEntries(in: scopeID).isEmpty && !ShowcasePhotoStore.canReadPhotos {
                 // Chosen, but this iPhone cannot show them now.
                 ContentUnavailableView("写真を表示できません", systemImage: "photo",
                                        description: Text("写真へのアクセスを確かめてください。"))
@@ -549,6 +549,13 @@ struct ShowcasePhotoView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("showcase-gallery-settings")
+            } else if !store.allEntries(in: scopeID).isEmpty {
+                // 11/21: only photos hidden in Photos (or lost copies) are left;
+                // the edit screen takes them out and lets the owner choose again.
+                ContentUnavailableView("写真を表示できません", systemImage: "photo")
+                Button("写真を選ぶ") { showsPreparation = true }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("showcase-gallery-reselect")
             } else if failedScopes.contains(scopeID) {
                 ContentUnavailableView("猫の写真が見つかると、おすすめを出します", systemImage: "photo")
                 Button("写真を選ぶ") { showsPreparation = true }
@@ -1119,8 +1126,16 @@ struct ShowcasePreparationView: View {
                             LimitNote(AppLimitCopy.items("見せる写真", ShowcasePhotoStore.maximumCount, unit: "枚"))
                         }
                         if shown.count < allEntries.count {
-                            Text("表示できない写真は省いています")
-                                .font(.footnote).foregroundStyle(.secondary)
+                            // 11/21: they still take places among the nine; one tap takes them out.
+                            HStack {
+                                Text("表示できない写真は省いています")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                                Spacer(minLength: 8)
+                                Button("外す") { removeUnavailable() }
+                                    .font(.footnote)
+                                    .accessibilityLabel("表示できない写真を外す")
+                                    .accessibilityIdentifier("showcase-preparation-remove-unavailable")
+                            }
                         }
                         if canReselect {
                             // 11/8: was the only item of a 「…」 menu.
@@ -1214,13 +1229,20 @@ struct ShowcasePreparationView: View {
         VStack(alignment: .leading, spacing: 12) {
             if !allEntries.isEmpty {
                 // Chosen before, but not viewable now: say so, and the way out.
+                // 11/21: they can always be taken out, so choosing again is
+                // never a dead end (「取り消す」 brings them back).
                 Text("写真を表示できません").font(.headline)
-                Text("写真へのアクセスを確かめてください。")
-                    .foregroundStyle(.secondary)
-                Button("設定を開く") {
-                    if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                if !ShowcasePhotoStore.canReadPhotos {
+                    Text("写真へのアクセスを確かめてください。")
+                        .foregroundStyle(.secondary)
+                    Button("設定を開く") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
-                .buttonStyle(.borderedProminent)
+                Button("外して選び直す") { removeUnavailable() }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("showcase-preparation-remove-unavailable")
             } else if eligibleCandidates.isEmpty {
                 Text("見せられる猫の写真がありません").font(.headline)
                 Text("「写真」タブで猫の写真が見つかると選べます。")
@@ -1342,6 +1364,11 @@ struct ShowcasePreparationView: View {
                 }
             }
         }
+    }
+
+    private func removeUnavailable() {
+        do { try store.removeUnavailable(in: scopeID) }
+        catch { errorMessage = "写真を変更できませんでした。もう一度お試しください。" }
     }
 
     private func change(_ action: () throws -> Void) {

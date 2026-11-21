@@ -3,7 +3,7 @@
 
 Stored days, ages and year works use Calendar.nekoGregorian
 (Shared/Models/NekoCalendar.swift). Calendar.current is only for relative
-checks (today, same day) and the notification triggers that match in it.
+checks (today, same day).
 """
 from pathlib import Path
 import re
@@ -54,10 +54,9 @@ class GregorianDatesTests(unittest.TestCase):
         self.assertIn("recorded.date()", care)
         self.assertIn("day.date() ?? Date()", care)
         album = source("NekoWidget/Views/AlbumPrototypeView.swift")
-        # Only the notification trigger, which matches in the iPhone's own calendar.
-        self.assertEqual(lines_with(album, "Calendar.current"), [
-            "let parts = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: date)",
-        ])
+        # 11/21: the notification trigger is 西暦 too, with its calendar set.
+        self.assertEqual(lines_with(album, "Calendar.current"), [])
+        self.assertIn("parts.calendar = calendar", album)
         for needle in ("static func yearArrivalDate", "static func arrivedYears", "static func photos(inYear",
                        "private var arrivalDay: String"):
             body = album[album.index(needle):]

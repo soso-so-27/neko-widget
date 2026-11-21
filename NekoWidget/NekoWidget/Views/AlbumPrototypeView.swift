@@ -357,8 +357,10 @@ struct AlbumPrototypeView: View {
             if enabledAt == 0 { enabledAt = Date().timeIntervalSince1970 }
         }
         // The one place the app asks for notifications about works: here,
-        // and only when a work is on its way.
-        .task { await AlbumArrivalNotice.askIfNeeded() }
+        // and only when a work is on its way. 11/21: also when the work is
+        // found while the album is already open (a launch into this tab).
+        .task { await AlbumArrivalNotice.albumAppeared() }
+        .onDisappear { AlbumArrivalNotice.albumDisappeared() }
         // Ready before the tap: opening the newest work should not wait.
         .task(id: latestPreparationKey) {
             guard let key = latestPreparationKey else { return }
@@ -1090,7 +1092,13 @@ struct MonthlyStoryView: View {
     // MARK: Building the pages
 
     private func build(_ key: MonthlyStoryPreparationKey) async {
-        guard let result = await Self.prepare(key), !Task.isCancelled else { return }
+        // 11/21: an overtaken build tries again, and the wait always ends.
+        var prepared: (pages: [Page], backdrop: Color?)?
+        for _ in 0..<3 where prepared == nil {
+            prepared = await Self.prepare(key)
+            guard !Task.isCancelled else { return }
+        }
+        let result = prepared ?? (pages: [], backdrop: nil)
         // The body also compares this key to its current inputs, so an old
         // completion cannot expose an old photo while SwiftUI replaces a task.
         withAnimation(.easeOut(duration: 0.3)) {
@@ -1317,6 +1325,9 @@ enum AlbumArrivalNotice {
     /// on later in Settings, the notices are set on the next return to the
     /// app, not only after new photos are read.
     @MainActor private static var permissionWhenSet: UNAuthorizationStatus?
+    /// 11/21: the album is on screen, so a notice found to be waiting now asks
+    /// there, not only on the next visit to the tab.
+    @MainActor private static var albumIsShown = false
     private static let monthID = "album-arrival.month"
     private static let yearID = "album-arrival.year"
 #if DEBUG || INTERNAL_PRESENTATION
@@ -1354,6 +1365,7 @@ enum AlbumArrivalNotice {
         permissionWhenSet = permission
         if permission == .notDetermined {
             waitingForPermission = (month, year)
+            if albumIsShown { Task { await askIfNeeded() } }
             return
         }
         guard await isAllowed(center) else { return }
@@ -1372,6 +1384,20 @@ enum AlbumArrivalNotice {
     static func permissionChangedSinceSet() async -> Bool {
         guard let permissionWhenSet else { return false }
         return await UNUserNotificationCenter.current().notificationSettings().authorizationStatus != permissionWhenSet
+    }
+
+    /// The album tab is shown: a 「作品がとどきました」 already on the lock
+    /// screen has led here, so it is taken away (11/21), and the ask below runs.
+    @MainActor
+    static func albumAppeared() async {
+        albumIsShown = true
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [monthID, yearID])
+        await askIfNeeded()
+    }
+
+    @MainActor
+    static func albumDisappeared() {
+        albumIsShown = false
     }
 
     /// From the album tab: ask once when a work is on its way, then set its
@@ -1414,8 +1440,12 @@ enum AlbumArrivalNotice {
     }
 
     private static func calendarTrigger(_ date: Date) -> UNCalendarNotificationTrigger {
-        // The iPhone's own calendar on both sides: the trigger matches in it.
-        let parts = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        // 11/21: 西暦 on both sides, and the components say so. Without a
+        // calendar, 和暦 or 仏暦 components (no era) never matched.
+        let calendar = Calendar.nekoGregorian
+        var parts = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        parts.calendar = calendar
+        parts.timeZone = calendar.timeZone
         return UNCalendarNotificationTrigger(dateMatching: parts, repeats: false)
     }
 
@@ -1483,6 +1513,9 @@ private struct YearBookView: View {
     @State private var monthCount = 0
     @State private var isBuilt = false
     @State private var cardShare = StoryCardShareState<UIImage>()
+    /// 11/21: a share picture that could not be made ends its spinner.
+    @State private var shareFailed: StoryCardShareInput?
+    @State private var shareAttempt = 0
 
     private var paper: Color { MonthlyBookView.paper }
     private var ink: Color { MonthlyBookView.ink }
@@ -1506,6 +1539,8 @@ private struct YearBookView: View {
                 .accessibilityLabel("画像を共有")
                 .accessibilityIdentifier("year-book-share")
                 .simultaneousGesture(TapGesture().onEnded { UsageCounter.shared.count(.nineExported) })  // Usage (11/7): ShareLink reports no completion
+            } else if shareFailed == input {
+                BookShareRetryButton(ink: ink) { shareAttempt += 1 }
             } else {
                 ProgressView()
                     .frame(width: 44, height: 44)
@@ -1603,7 +1638,8 @@ private struct YearBookView: View {
         .statusBarHidden()
         .accessibilityIdentifier("year-book")
         .onAppear { if !isBuilt { build() } }
-        .task(id: shareInput) {
+        .task(id: BookShareTaskID(input: shareInput, attempt: shareAttempt)) {
+            shareFailed = nil
             guard let request = cardShare.begin(shareInput) else { return }
             var images: [UIImage] = []
             for photo in request.input.photos.prefix(9) {
@@ -1611,8 +1647,10 @@ private struct YearBookView: View {
                 if let image = await MonthlyStoryView.thumbnail(photo.localIdentifier, side: 600) { images.append(image) }
             }
             guard !Task.isCancelled else { return }
-            cardShare.complete(BestNineComposer.image(images, title: nil),
-                               for: request, isCancelled: Task.isCancelled)
+            let image = BestNineComposer.image(images, title: nil)
+            if cardShare.complete(image, for: request, isCancelled: Task.isCancelled), image == nil {
+                shareFailed = request.input
+            }
         }
     }
 
@@ -1949,6 +1987,31 @@ private struct YearStoryContentView: View {
     }
 }
 
+/// 11/21: the book's build and share tasks restart on 「もう一度試す」.
+private struct BookBuildID: Hashable {
+    let key: MonthlyStoryPreparationKey
+    let attempt: Int
+}
+
+private struct BookShareTaskID: Hashable {
+    let input: StoryCardShareInput?
+    let attempt: Int
+}
+
+/// In place of the share button when its picture could not be made: one tap tries again.
+private struct BookShareRetryButton: View {
+    let ink: Color
+    let retry: () -> Void
+
+    var body: some View {
+        Button(action: retry) {
+            Image(systemName: "arrow.clockwise").font(.headline).foregroundStyle(ink)
+                .frame(width: 44, height: 44)
+        }
+        .accessibilityLabel("共有する画像をもう一度作る")
+    }
+}
+
 /// Test builds only: the month's work as a book. Nothing is drawn to look
 /// like paper or cloth: the photos, white space and one serif. The pages are
 /// the story's own, laid out flat, and turn sideways at the reader's pace.
@@ -1973,6 +2036,12 @@ struct MonthlyBookView: View {
     @State private var shownKey: MonthlyStoryPreparationKey?
     @State private var index = 0
     @State private var cardShare = StoryCardShareState<UIImage>()
+    /// 11/21: every wait ends: a month that could not be built says so once,
+    /// with a retry; so does a share picture that could not be made.
+    @State private var failedKey: MonthlyStoryPreparationKey?
+    @State private var buildAttempt = 0
+    @State private var shareFailed: StoryCardShareInput?
+    @State private var shareAttempt = 0
     @Environment(\.requestReview) private var requestReview
     /// Asked once, ever: at the last page of a month's work, the moment the
     /// app has given the most (11/6). Apple decides whether it is shown.
@@ -1986,6 +2055,12 @@ struct MonthlyBookView: View {
     }
 
     private var isShown: Bool { shownKey == key }
+
+    /// 11/21: new cat photos rebuild the same month behind the open page,
+    /// instead of a spinner and page 1.
+    private var showsLeaves: Bool {
+        shownKey?.letter.periodIdentifier == letter.periodIdentifier && !leaves.isEmpty
+    }
 
     private var shareInput: StoryCardShareInput? {
         guard isShown, let nine = leaves.first(where: { if case .nine = $0 { return true } else { return false } }),
@@ -2028,7 +2103,7 @@ struct MonthlyBookView: View {
     var body: some View {
         ZStack {
             Self.paper.ignoresSafeArea()
-            if isShown, !leaves.isEmpty {
+            if showsLeaves {
                 PageCurlView(pages: leaves.enumerated().map { position, leaf in
                     leafView(leaf, shown: position == index)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2057,6 +2132,15 @@ struct MonthlyBookView: View {
                     }
                     .buttonStyle(.borderedProminent)
                 }
+            } else if failedKey == key {
+                VStack(spacing: 12) {
+                    Text("作品を開けませんでした")
+                    Button("もう一度試す") {
+                        failedKey = nil
+                        buildAttempt += 1
+                    }
+                    .buttonStyle(.bordered)
+                }
             } else {
                 ProgressView()
             }
@@ -2078,7 +2162,7 @@ struct MonthlyBookView: View {
                 }
                 .padding(.horizontal, 8)
                 Spacer()
-                if isShown, !leaves.isEmpty {
+                if showsLeaves {
                     // 11/7: the first page says how to turn; the number is readable.
                     if index == 0, leaves.count > 1 {
                         Text("めくる ›")
@@ -2095,13 +2179,27 @@ struct MonthlyBookView: View {
         .environment(\.colorScheme, .light)
         .statusBarHidden()
         .accessibilityIdentifier("monthly-book")
-        .task(id: key) {
-            guard let result = await MonthlyStoryView.prepare(key), !Task.isCancelled else { return }
-            leaves = Self.leaves(from: result.pages, month: letter.monthNumber)
-            index = 0
-            shownKey = key
+        .task(id: BookBuildID(key: key, attempt: buildAttempt)) {
+            let current = key
+            // A build that another one overtook (nil, not cancelled) tries
+            // again; one that still cannot finish says so instead of spinning.
+            for _ in 0..<3 {
+                if let result = await MonthlyStoryView.prepare(current) {
+                    guard !Task.isCancelled else { return }
+                    let next = Self.leaves(from: result.pages, month: letter.monthNumber)
+                    let samePeriod = shownKey?.letter.periodIdentifier == current.letter.periodIdentifier
+                    leaves = next
+                    index = samePeriod ? min(index, max(0, next.count - 1)) : 0
+                    shownKey = current
+                    failedKey = nil
+                    return
+                }
+                guard !Task.isCancelled else { return }
+            }
+            failedKey = current
         }
-        .task(id: shareInput) {
+        .task(id: BookShareTaskID(input: shareInput, attempt: shareAttempt)) {
+            shareFailed = nil
             guard let request = cardShare.begin(shareInput) else { return }
             var images: [UIImage] = []
             for photo in request.input.photos.prefix(9) {
@@ -2109,8 +2207,10 @@ struct MonthlyBookView: View {
                 if let image = await MonthlyStoryView.thumbnail(photo.localIdentifier, side: 600) { images.append(image) }
             }
             guard !Task.isCancelled else { return }
-            cardShare.complete(BestNineComposer.image(images, title: nil),
-                               for: request, isCancelled: Task.isCancelled)
+            let image = BestNineComposer.image(images, title: nil)
+            if cardShare.complete(image, for: request, isCancelled: Task.isCancelled), image == nil {
+                shareFailed = request.input
+            }
         }
     }
 
@@ -2127,6 +2227,8 @@ struct MonthlyBookView: View {
                 .accessibilityLabel("画像を共有")
                 .accessibilityIdentifier("monthly-book-share")
                 .simultaneousGesture(TapGesture().onEnded { UsageCounter.shared.count(.nineExported) })  // Usage (11/7): ShareLink reports no completion
+            } else if shareFailed == input {
+                BookShareRetryButton(ink: Self.ink) { shareAttempt += 1 }
             } else {
                 ProgressView()
                     .frame(width: 44, height: 44)

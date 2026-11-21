@@ -2799,7 +2799,9 @@ struct MainTabView: View {
             return
         }
         let now = Date()
-        let calendar = Calendar.current
+        // 11/21: 西暦, so 12/6 「1年の作品」 is set on 和暦/仏暦 iPhones too
+        // (the year number is passed to yearDelivery, which counts in 西暦).
+        let calendar = Calendar.nekoGregorian
         var arrival: CloudyWindowAlbumArrival?
         if enabled, monthlyWindowCollectionKey.canBuild,
            completedMonthlyWindowCollectionKey == monthlyWindowCollectionKey {

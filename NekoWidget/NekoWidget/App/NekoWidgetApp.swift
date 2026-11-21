@@ -244,11 +244,14 @@ private struct SharingRuntimeSelfTestRootView: View {
 
 
 /// Independent of navigation/sheet state; ordinary errors keep their current UI.
+/// 11/21: shown once per launch and closable. Only server requests stop
+/// (ClientUpgradeRequirement.checkAllowed); everything on this iPhone keeps working.
 @MainActor
 private final class ClientUpgradePresenter {
     static let shared = ClientUpgradePresenter()
     private var observers: [NSObjectProtocol] = []
     private var windows: [UIWindow] = []
+    private var isClosed = false
 
     func start() {
         guard observers.isEmpty else { return }
@@ -259,15 +262,24 @@ private final class ClientUpgradePresenter {
         }
     }
 
+    private func close() {
+        isClosed = true
+        for window in windows {
+            window.isHidden = true
+            window.windowScene?.windows.first { $0.windowLevel == .normal && !$0.isHidden }?.makeKey()
+        }
+        windows.removeAll()
+    }
+
     private func presentIfRequired() {
-        guard ClientUpgradeRequirement.shared.isRequired else { return }
+        guard ClientUpgradeRequirement.shared.isRequired, !isClosed else { return }
         windows.removeAll { $0.windowScene?.activationState == .unattached }
         for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
             where scene.activationState == .foregroundActive {
             guard !windows.contains(where: { $0.windowScene === scene }) else { continue }
             let window = UIWindow(windowScene: scene)
             window.windowLevel = .alert + 1
-            window.rootViewController = UIHostingController(rootView: ClientUpgradeRequiredView())
+            window.rootViewController = UIHostingController(rootView: ClientUpgradeRequiredView(onClose: { [weak self] in self?.close() }))
             window.makeKeyAndVisible()
             windows.append(window)
         }
