@@ -135,6 +135,7 @@ import { drainGroupAdmissionNotifications } from './group-admission-push';
 import { drainGroupNotifications } from './group-push';
 import { ownerTrialFamilyPushEnvironment, ownerTrialRequest } from './owner-two-device-trial';
 import { cleanupExpiredGroupRecovery } from './group-recovery-expiry';
+import { monitorReportDeadlines, withReportDeadlineHeartbeat } from './report-deadline-monitor';
 
 export async function route(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   beginReadDiagnostic(request);
@@ -700,7 +701,8 @@ function productionIntakeClosed(env: Env): boolean {
 
 function scheduleFamilyPhotoMaintenance(env: Env, ctx: ExecutionContext): void {
   // Keep each cleanup eligible even if another job fails or report intake is closed.
-  ctx.waitUntil(protectedGroupRead(env, () => advanceFamilyPhotoReportDeadlines(env.DB, env.GROUP_MODERATION_RUNTIME_ENABLED === 'YES')));
+  ctx.waitUntil(protectedGroupRead(env, () => withReportDeadlineHeartbeat(env, 'family',
+    () => advanceFamilyPhotoReportDeadlines(env.DB, env.GROUP_MODERATION_RUNTIME_ENABLED === 'YES'))));
   ctx.waitUntil(cleanupFamilyPhotoReportEvidence(env));
   ctx.waitUntil(cleanupFamilyRepresentativePhotos(env));
 }
@@ -726,7 +728,8 @@ export default {
       if (env.GROUP_REPORT_RUNTIME_ENABLED === 'YES' && env.GROUP_MODERATION_RUNTIME_ENABLED === 'YES'
           && reportIngestionRuntimeEnabled(env)) {
         const open = loadRuntimeGate(env).then(reportIngestionGateOpen);
-        ctx.waitUntil(open.then(enabled => enabled ? protectedGroupRead(env, () => runGroupReportOperations(env)) : undefined));
+        ctx.waitUntil(open.then(enabled => enabled ? protectedGroupRead(env,
+          () => withReportDeadlineHeartbeat(env, 'group', () => runGroupReportOperations(env))) : undefined));
         ctx.waitUntil(open.then(enabled => enabled ? runGroupReportCleanup(env) : undefined));
       }
       return;
@@ -741,7 +744,7 @@ export default {
       ctx.waitUntil(advanceIdentityDeletion(env));
       // Staging retains its existing schedule. Production uses the dedicated trigger.
       if (env.ENVIRONMENT !== 'production') {
-        ctx.waitUntil(protectedGroupRead(env, () => runGroupReportOperations(env)));
+        ctx.waitUntil(protectedGroupRead(env, () => withReportDeadlineHeartbeat(env, 'group', () => runGroupReportOperations(env))));
         scheduleFamilyPhotoMaintenance(env, ctx);
       }
       ctx.waitUntil(runMomentCleanup(env));
@@ -751,6 +754,11 @@ export default {
       ctx.waitUntil(env.DB.prepare('DELETE FROM family_notebook_daily_usage WHERE day<(unixepoch()+32400)/86400-1').run());
       ctx.waitUntil(runGroupRelayCleanup(env));
     } else if (controller.cron === APNS_DRAIN_CRON) {
+      if (env.REPORT_DEADLINE_MONITOR_ENABLED === 'YES') ctx.waitUntil((async () => {
+        const groupExpected = env.GROUP_REPORT_RUNTIME_ENABLED === 'YES' && reportIngestionRuntimeEnabled(env)
+          && reportIngestionGateOpen(await loadRuntimeGate(env));
+        await monitorReportDeadlines(env, groupExpected);
+      })());
       if(env.GROUP_RECOVERY_CATALOG_ENABLED==='YES')ctx.waitUntil(cleanupExpiredGroupRecovery(env.DB,Math.floor(Date.now()/1000)));
       if(deletionRequired(env))ctx.waitUntil(env.DB.prepare('SELECT 1 FROM group_identity_deletion_acceptance LIMIT 1').first()
         .then(pending=>pending?advanceIdentityDeletion(env):undefined));
