@@ -248,11 +248,16 @@ final class GroupWindowMembersModel: ObservableObject {
             let results = (try? await client.reconcileAdmissions()) ?? []
             admissionResults = results.filter { $0.windowID == windowID && !$0.joinedLocally }
             var latest = transform(try await client.window(id: windowID))
-            if latest.state == .rotationRequired, latest.canManage,
-               let renewed = try? await client.rotate(
-                   windowID: windowID, operation: GroupOperation(expectedRevision: latest.revision)) {
+            if latest.state == .rotationRequired, latest.canManage {
                 // Someone left: renewing the key here lets the window go on.
-                latest = transform(renewed)
+                do {
+                    let renewed = try await client.rotate(
+                        windowID: windowID, operation: GroupOperation(expectedRevision: latest.revision))
+                    latest = transform(renewed)
+                } catch GroupClientError.staleRevision {
+                    // 11/21s: renewed meanwhile by another pass: the window as it is now.
+                    if let fresh = try? await client.window(id: windowID) { latest = transform(fresh) }
+                } catch {}
             }
             var requests: [GroupJoinRequest] = []
             if latest.canManage {

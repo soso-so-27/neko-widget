@@ -186,6 +186,7 @@ python3 ci/test-cat-1121n.py
 python3 ci/test-photo-1121o.py
 python3 ci/test-vet-1121q.py
 python3 ci/test-family2-1121r.py
+python3 ci/test-mado3-1121s.py
 python3 ci/test-family-cat-link.py
 python3 ci/test-family-cat-order.py
 python3 ci/test-record-commit-notice-hang.py

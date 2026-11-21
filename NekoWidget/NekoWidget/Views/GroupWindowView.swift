@@ -294,11 +294,16 @@ final class GroupWindowScreenModel: ObservableObject {
         defer { isSyncing = false }
         do {
             var latest = try await client.window(id: windowID)
-            if !background, latest.state == .rotationRequired, latest.canManage,
-               let renewed = try? await client.rotate(
-                   windowID: windowID, operation: GroupOperation(expectedRevision: latest.revision)) {
+            if !background, latest.state == .rotationRequired, latest.canManage {
                 // Someone left: the creator's iPhone renews the key, so the window goes on.
-                latest = renewed
+                do {
+                    latest = try await client.rotate(
+                        windowID: windowID, operation: GroupOperation(expectedRevision: latest.revision))
+                } catch GroupClientError.staleRevision {
+                    // 11/21s: renewed meanwhile by the list's or a notification's
+                    // pass (the relay takes one): the window as it is now.
+                    if let fresh = try? await client.window(id: windowID) { latest = fresh }
+                } catch {}
             }
             window = latest
             // 11/20: names for blocks kept across a reinstall (GroupWindowKept).
@@ -315,6 +320,14 @@ final class GroupWindowScreenModel: ObservableObject {
             for photo in photos { merged[photo.id] = photo.hearts }
             hearts = merged
             heartablePhotoIDs = listed
+            // 11/21s: a photo the relay stopped listing well before its time
+            // was taken down (the moderation team, or its sender's data
+            // deleted): it leaves the home screen with this pass (opening,
+            // a notification, the background refresh), not later.
+            if let production = client as? ProductionGroupWindowClient {
+                let until = await production.listedUntil(windowID: windowID, photoIDs: listed)
+                GroupWidgetCache.noteListedPhotos(windowID: windowID, listed: until)
+            }
             // The relay's list may predate a tap still on its way; keep the tap.
             for (photoID, wanted) in pendingHearts { applyMyHeart(wanted, to: photoID) }
             await store.saveHearts(hearts, windowID: windowID)
@@ -394,7 +407,9 @@ final class GroupWindowScreenModel: ObservableObject {
         }
         guard let windowName = window?.name ?? GroupWidgetCache.entry(windowID: windowID)?.windowName else { return }
         let safety = GroupSafety.shared
-        let newest = entries.first { !$0.isHidden && !safety.hasReported($0.id, in: windowID) }
+        // 11/21s: nor a photo the relay took down (GroupWidgetCache.noteListedPhotos).
+        let withdrawn = GroupWidgetCache.withdrawnPhotoIDs(windowID: windowID)
+        let newest = entries.first { !$0.isHidden && !safety.hasReported($0.id, in: windowID) && !withdrawn.contains($0.id) }
         var imageURL: URL?
         if let newest { imageURL = await store.imageURL(photoID: newest.id, windowID: windowID) }
         // A foreground hide may happen while the photo is looked up above.
@@ -2658,8 +2673,9 @@ extension GroupWidgetCache {
         let store = GroupWindowLocalPhotoStore.shared
         let safety = GroupSafety.shared
         await safety.loadRecords(windowID: windowID)
+        let withdrawn = withdrawnPhotoIDs(windowID: windowID)
         let newest = await store.entries(windowID: windowID)
-            .first { !$0.isHidden && !safety.hasReported($0.id, in: windowID) }
+            .first { !$0.isHidden && !safety.hasReported($0.id, in: windowID) && !withdrawn.contains($0.id) }
         var jpeg: Data?
         if let newest, let url = await store.imageURL(photoID: newest.id, windowID: windowID) {
             jpeg = try? Data(contentsOf: url)
@@ -3693,7 +3709,8 @@ struct GroupReportsView: View {
         }
         switch record.progress {
         case .preparing, .sending: return "送っています。"
-        case .retryable: return "まだ送れていません。"
+        // 11/21s: not sent yet (offline, the app closed): said as such, with 「もう一度送る」.
+        case .retryable: return "未送信です。"
         case .expired: return "時間がたったため、送れませんでした。"
         case .alreadyReported: return "この写真はもう通報しています。"
         case .authenticationRequired, .unavailable: return "送れませんでした。"

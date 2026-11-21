@@ -134,7 +134,7 @@ actor GroupShareService: GroupShareServing {
         // identity or turn a leftover legacy pairing credential into authority.
         guard try snapshot.read("identity") != nil else {
             guard try snapshot.read("host-confirmed-empty") == Data([1]) else { throw GroupClientError.authenticationRequired }
-            clearOwnCopies()
+            await clearOwnCopies()
             return []
         }
         return try await client.windows()
@@ -162,13 +162,16 @@ actor GroupShareService: GroupShareServing {
 
     /// 11/21m: the app holds no まど (a fresh app, or 「データを消す」): what
     /// this extension kept for them goes now, not after 30 days.
-    private func clearOwnCopies() {
+    private func clearOwnCopies() async {
         if let checkpoints {
             for account in (try? checkpoints.accounts(prefix: "")) ?? [] { try? checkpoints.remove(account) }
         }
         if let outbox, let files = try? FileManager.default.contentsOfDirectory(at: outbox, includingPropertiesForKeys: nil) {
             for file in files where file.pathExtension == "json" { try? FileManager.default.removeItem(at: file) }
         }
+        // 11/21s: and its request records (share-outbox/http-operations, with
+        // encrypted bodies), at the same moment, not after 30 days.
+        if outbox != nil { await client.removeShareExtensionOperations() }
     }
 }
 #endif

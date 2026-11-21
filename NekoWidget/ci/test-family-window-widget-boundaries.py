@@ -3548,7 +3548,7 @@ class GroupWidgetCacheTests(unittest.TestCase):
 
         screen = source("NekoWidget/Views/GroupWindowView.swift")
         home = section(screen, "    func updateHomeScreenPhoto() async {", "private func receive(")
-        self.assertIn("entries.first { !$0.isHidden && !safety.hasReported($0.id, in: windowID) }", home)
+        self.assertIn("entries.first { !$0.isHidden && !safety.hasReported($0.id, in: windowID) && !withdrawn.contains($0.id) }", home)
         self.assertIn("GroupWidgetCache.update(", home)
         self.assertIn('WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")', home)
 
@@ -6189,7 +6189,7 @@ class GroupWindowAuditFixTests(unittest.TestCase):
         self.assertIn("latest.state == .rotationRequired, latest.canManage", sync)
         self.assertIn("client.rotate(", sync)
         members = source("NekoWidget/Views/GroupWindowSetupView.swift")
-        self.assertIn("try? await client.rotate(", section(members, "    func load(reportsFailure: Bool = true) async {", "func createInvitation()"))
+        self.assertIn("try await client.rotate(", section(members, "    func load(reportsFailure: Bool = true) async {", "func createInvitation()"))
         self.assertIn("func rotate(windowID: String, operation: GroupOperation) async throws -> GroupWindow",
                       source("NekoWidget/Services/GroupWindowContract.swift"))
 
