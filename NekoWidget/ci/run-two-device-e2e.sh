@@ -45,6 +45,7 @@ sources=(
   NekoWidget/Services/FamilyNotebookCatCareBridge.swift NekoWidget/Services/FamilyNotebookToolBridge.swift
   NekoWidget/Services/FamilyNotebookCatLink.swift NekoWidget/Services/SharingAutoCheckPolicy.swift
   NekoWidget/Services/GroupWindowLocalPhotoStore.swift
+  NekoWidget/Services/GroupShareAccess.swift NekoWidgetShareExtension/GroupShareService.swift
   ci/two-device/Harness.swift ci/two-device/Scenarios.swift ci/two-device/RevokedDevice.swift
 )
 echo "Compiling the two-device driver (${#sources[@]} files)" >&2

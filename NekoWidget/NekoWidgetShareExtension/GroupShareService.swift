@@ -73,6 +73,18 @@ struct GroupShareTransport: GroupHTTPTransport {
     }
 }
 
+enum GroupShareClientFactory {
+    static func make(endpoint: URL, snapshot: any GroupSecretStore, checkpoints: any GroupSecretStore,
+                     transport: any GroupHTTPTransport, outboxDirectory: URL) throws -> ProductionGroupWindowClient {
+        let secrets = GroupShareReadingStore(snapshot: snapshot, checkpoints: checkpoints)
+        // The reading store cannot access device revocation marks.
+        let client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: secrets,
+            transport: GroupShareTransport(transport: transport), outboxDirectory: outboxDirectory,
+            revocations: checkpoints)
+        return client
+    }
+}
+
 #if os(iOS)
 actor GroupShareService: GroupShareServing {
     private let client: ProductionGroupWindowClient
@@ -99,18 +111,12 @@ actor GroupShareService: GroupShareServing {
         }
         let snapshot = GroupShareKeychain(namespace: namespace + "." + installation, accessGroup: accessGroup)
         let checkpoints = try GroupKeychainStore(namespace: namespace + "." + installation + ".share-checkpoints")
-        let secrets = GroupShareReadingStore(snapshot: snapshot, checkpoints: checkpoints)
         guard let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             throw GroupClientError.unavailable
         }
-        // 11/21: the reading store answers only `identity` and `window:*` and
-        // throws for anything else, so the "device taken off" marks (11/20)
-        // are kept in the share side's own store; without this every list and
-        // send from the share sheet failed with authenticationRequired.
-        let client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: secrets,
-            transport: GroupShareTransport(transport: GroupURLSessionTransport()),
-            outboxDirectory: root.appendingPathComponent(namespace + ".share-outbox", isDirectory: true),
-            revocations: checkpoints)
+        let client = try GroupShareClientFactory.make(endpoint: endpoint, snapshot: snapshot, checkpoints: checkpoints,
+            transport: GroupURLSessionTransport(),
+            outboxDirectory: root.appendingPathComponent(namespace + ".share-outbox", isDirectory: true))
         return GroupShareService(client: client, snapshot: snapshot, moderation: MomentModerationService())
     }
 
