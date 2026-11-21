@@ -152,6 +152,9 @@ extension Notification.Name {
     /// Posted on the main thread each time the iPhone is unlocked. Stores that
     /// could not read their records while it was locked read them again.
     static let appRecordsReadableAgain = Notification.Name("neko.app-records.readable-again.v1")
+    /// 11/21: the 保存 account was signed out of, or its deletion was asked
+    /// for. Automatic saving on this iPhone turns off; nothing is deleted.
+    static let appRecordAccountEnded = Notification.Name("neko.app-records.account-ended.v1")
 }
 
 enum AppRecordEditingError: Error { case inProgress }
@@ -968,6 +971,12 @@ final class AppRecordPersistence: ObservableObject {
         var requiredManifests: [String]? = nil
         var requiredDatasetID: UUID? = nil
         var filteredNotebookSnapshotID: UUID? = nil
+        /// 11/21: what the last published save had to leave out ("Tool" or
+        /// "Tool/photo.jpg"), so the screen never says 保存済み for it and a
+        /// later pass tries it again. Optional: older settings read as nil.
+        var unsaved: [String]? = nil
+        /// The same for the prepared, not yet published capture.
+        var pendingUnsaved: [String]? = nil
 
         var needsNotebookBackupUpdate: Bool {
             snapshotID != nil && filteredNotebookSnapshotID != snapshotID
@@ -982,6 +991,17 @@ final class AppRecordPersistence: ObservableObject {
     static let intakePausedTitle = "いまは新しく保存できません"
     static let intakePausedDetail = "保存の受付を一時的に止めています。保存した記録は開けます。受付が戻ると、自動で続けます。"
     static let intakePausedRowValue = "受付を停止中"
+    /// 11/21: a published save that had to leave something out. Never 保存済み.
+    static let partlySavedTitle = "一部を保存できませんでした"
+    static func partlySavedDetail(_ count: Int) -> String { "\(count)件のほかは、保存しました。" }
+    /// The saved state for the person: 保存済み only when nothing was left out.
+    private func showSaved(_ value: Binding) {
+        if let unsaved = value.unsaved, !unsaved.isEmpty {
+            title = Self.partlySavedTitle; detail = Self.partlySavedDetail(unsaved.count)
+        } else { title = "保存済み"; detail = nil }
+    }
+    /// Whether the last pass published a save (whole, or all but what it names).
+    var isSaved: Bool { title == "保存済み" || title == Self.partlySavedTitle }
     /// The last attempt failed and nothing has been saved since.
     @Published private(set) var failing = false
     /// The failure was the connection, so the next attempt comes without anyone pressing anything.
@@ -1009,6 +1029,7 @@ final class AppRecordPersistence: ObservableObject {
     private var datasetObserver: NSObjectProtocol?
     private var editingObserver: NSObjectProtocol?
     private var readableObserver: NSObjectProtocol?
+    private var accountObserver: NSObjectProtocol?
     private var requested = true
     private var waitingForEditor = false
     private var nextAttempt = Date.distantPast
@@ -1021,6 +1042,9 @@ final class AppRecordPersistence: ObservableObject {
     private var lastPassProgressed = false
     private var firstEditAt: Date?
     private var saveAfter = Date.distantPast
+    /// 11/21: an unchanged dataset tries what a save left out again once per
+    /// launch, then at most every six hours (any record change tries at once).
+    private var unsavedRetryAt = Date.distantPast
     private var cleanupTask: Task<Void, Never>?
     private var cleanupYield = false
     private var cleanupRequiredForCapacity = false
@@ -1103,9 +1127,8 @@ final class AppRecordPersistence: ObservableObject {
         // A cleanup failure is not an upload failure. Keep its retry scheduled,
         // including when the last retirement ID was already durably removed.
         requested = true
-        if cleanup, saved {
-            title = "保存済み"
-            detail = "変更は保存されています。"
+        if cleanup, saved, let accepted {
+            showSaved(accepted.binding)
             nextAttempt = Task.isCancelled ? .distantPast : Date().addingTimeInterval(60)
         } else if error is CancellationError || Task.isCancelled {
             // Leaving the app stops a save; it is not a failure, and the next open goes on with it.
@@ -1142,6 +1165,9 @@ final class AppRecordPersistence: ObservableObject {
         }
         readableObserver = NotificationCenter.default.addObserver(forName: .appRecordsReadableAgain, object: nil, queue: nil) { [weak self] _ in
             Task { @MainActor in self?.loadBindingIfUnread() }
+        }
+        accountObserver = NotificationCenter.default.addObserver(forName: .appRecordAccountEnded, object: nil, queue: nil) { [weak self] _ in
+            Task { @MainActor in self?.accountEnded() }
         }
         loadBindingIfUnread()
     }
@@ -1395,6 +1421,22 @@ final class AppRecordPersistence: ObservableObject {
             title = "自動保存はオフです"
         } catch { report(error) }
     }
+    /// 11/21: signed out of, or deleting, the 保存 account. Saving cannot go
+    /// on without it and its 「やめる」 button is gone with the sign-in, so it
+    /// turns off here the same way as that button: the settings keep their
+    /// owner and history, saved and local records stay, and signing in again
+    /// shows 「保存を始める」. Turning off cannot fail into a retry loop: the
+    /// in-memory state is off even if the settings cannot be written now.
+    func accountEnded() {
+        guard enabled else { return }
+        pause()
+        if (try? binding())?.enabled == true {
+            // The settings could not be written now: still off in this run,
+            // with no error shown for a save nobody can resume here.
+            enabled = false; requested = false
+            title = "自動保存はオフです"; detail = nil
+        }
+    }
     func retry() async { flushEdits(); requested = true; conflict = false; nextAttempt = .distantPast; await synchronize() }
     func resolveConflict(useRemote: Bool) async {
         let intent = saveIntent.ticket()
@@ -1432,12 +1474,13 @@ final class AppRecordPersistence: ObservableObject {
                 try saveIntent.require(intent)
                 value.fingerprint = try await AppRecordBackground.fingerprint()
                 value.pending = nil; value.pendingFingerprint = nil; value.pendingBase = nil
+                value.unsaved = nil; value.pendingUnsaved = nil
             } else {
                 guard try await AppRecordBackground.fingerprint() == fingerprint else { throw ToolBackupError.changed }
                 // An earlier immutable snapshot may already have been retired
                 // by another device. Rebase through a newly validated ID.
                 value.pending = nil; value.pendingFingerprint = nil; value.pendingBase = nil; value.pendingPrevious = nil
-                value.fingerprint = nil
+                value.fingerprint = nil; value.pendingUnsaved = nil
             }
             value.revision = remote.0.revision; value.snapshotID = remote.1.snapshotID
             value.filteredNotebookSnapshotID = saved.index.containsFamilyNotebookProjections ? nil : saved.id
@@ -1644,7 +1687,11 @@ final class AppRecordPersistence: ObservableObject {
             try saveIntent.require(intent)
             // An unchanged saved dataset must still clear a previously ended plan
             // after fresh server confirmation, before the saved fast return.
-            if planEnded {
+            // 11/21: settings that never saved (a new iPhone) go on to look for
+            // a saved copy first: reading it back needs no Plus (the server
+            // asks for Plus only to save). Nothing is sent before the same
+            // membership check further down.
+            if planEnded, value.revision != nil || value.pending != nil {
                 let resumed = try await saveMembership(checkpoint)
                 try saveIntent.require(intent)
                 try await require(value, checkpoint)
@@ -1703,6 +1750,7 @@ final class AppRecordPersistence: ObservableObject {
                         value.filteredNotebookSnapshotID = capture.id
                     }
                     value.fingerprint = value.pendingFingerprint; value.pending = nil
+                    value.unsaved = pendingCapture?.skipped ?? value.pendingUnsaved; value.pendingUnsaved = nil
                     if let previous = value.pendingPrevious { value.retiring = Array(Set((value.retiring ?? []) + [previous])) }
                     value.pendingPrevious = nil
                     value.pendingFingerprint = nil; value.pendingBase = nil; try write(value, intent: intent)
@@ -1727,6 +1775,7 @@ final class AppRecordPersistence: ObservableObject {
                     value.filteredNotebookSnapshotID = saved.filteredFamilyNotebook == true || !saved.index.containsFamilyNotebookProjections ? saved.id : nil
                     value.fingerprint = try await AppRecordBackground.fingerprint(); value.pending = nil
                     try saveIntent.require(intent)
+                    value.unsaved = nil; value.pendingUnsaved = nil
                     value.pendingFingerprint = nil; value.pendingBase = nil; try write(value, intent: intent)
                     title = "復元しました"; detail = "いつもの画面で記録を使えます。"; return
                 } else { throw ManagedPreservationError.conflict }
@@ -1735,10 +1784,12 @@ final class AppRecordPersistence: ObservableObject {
                 accepted = try await acceptedSave(value, checkpoint: checkpoint)
                 try saveIntent.require(intent)
             }
-            if value.fingerprint == currentFingerprint, value.pending == nil, !value.needsNotebookBackupUpdate {
+            // 11/21: what the last save left out is tried again (see unsavedRetryAt).
+            let retriesUnsaved = !(value.unsaved ?? []).isEmpty && Date() >= unsavedRetryAt
+            if value.fingerprint == currentFingerprint, value.pending == nil, !value.needsNotebookBackupUpdate, !retriesUnsaved {
                 guard await stillSaved(accepted) else { throw ToolBackupError.changed }
                 try saveIntent.require(intent)
-                title = "保存済み"; detail = nil; transientFailures = 0; rateLimitedQuietPasses = 0; failureStreak = AppRecordFailureStreak()
+                showSaved(value); transientFailures = 0; rateLimitedQuietPasses = 0; failureStreak = AppRecordFailureStreak()
                 enqueueCleanup(value, remote: remote, checkpoint: checkpoint)
                 return
             }
@@ -1747,6 +1798,12 @@ final class AppRecordPersistence: ObservableObject {
             if (value.retiring ?? []).count >= 6 {
                 enqueueCleanup(value, remote: remote, checkpoint: checkpoint, requiredForCapacity: true)
                 requested = true
+                // 11/21: the change is not saved yet; never leave 保存済み on
+                // screen. A running cleanup holds the next pass by itself
+                // (synchronize waits for it); one that failed waits for its
+                // own retry instead of a full pass every second.
+                title = "保存待ちの変更があります"; detail = nil
+                if cleanupTask == nil { nextAttempt = max(Date().addingTimeInterval(5), cleanupNextAttempt) }
                 return
             }
             cleanup = false
@@ -1766,12 +1823,12 @@ final class AppRecordPersistence: ObservableObject {
                 try saveIntent.require(intent)
             } else { previous = nil }
             if let previous, !previous.containsFamilyNotebookProjections, value.needsNotebookBackupUpdate,
-               value.fingerprint == currentFingerprint, value.pending == nil {
+               value.fingerprint == currentFingerprint, value.pending == nil, !retriesUnsaved {
                 guard await stillSaved(accepted) else { throw ToolBackupError.changed }
                 try saveIntent.require(intent)
                 value.filteredNotebookSnapshotID = previous.snapshotID
                 try write(value, intent: intent)
-                title = "保存済み"; detail = nil; transientFailures = 0; rateLimitedQuietPasses = 0; failureStreak = AppRecordFailureStreak()
+                showSaved(value); transientFailures = 0; rateLimitedQuietPasses = 0; failureStreak = AppRecordFailureStreak()
                 enqueueCleanup(value, remote: remote, checkpoint: checkpoint)
                 return
             }
@@ -1811,7 +1868,7 @@ final class AppRecordPersistence: ObservableObject {
                 guard try await AppRecordBackground.fingerprint() == currentFingerprint else { throw ToolBackupError.changed }
                 try saveIntent.require(intent)
                 value.pending = saved.id; value.pendingFingerprint = currentFingerprint; value.pendingBase = value.revision
-                value.pendingPrevious = remote?.1.snapshotID
+                value.pendingPrevious = remote?.1.snapshotID; value.pendingUnsaved = saved.skipped
                 try await require(value, checkpoint); try write(value, intent: intent)
                 try saveIntent.require(intent)
             }
@@ -1845,6 +1902,8 @@ final class AppRecordPersistence: ObservableObject {
             try saveIntent.require(intent)
             value.revision = revision; value.snapshotID = saved.id; value.fingerprint = value.pendingFingerprint
             value.filteredNotebookSnapshotID = saved.id
+            value.unsaved = saved.skipped ?? value.pendingUnsaved; value.pendingUnsaved = nil
+            if !(value.unsaved ?? []).isEmpty { unsavedRetryAt = Date().addingTimeInterval(6 * 3600) }
             if let previous = value.pendingPrevious { value.retiring = Array(Set((value.retiring ?? []) + [previous])) }
             value.pendingPrevious = nil
             value.pending = nil; value.pendingFingerprint = nil; value.pendingBase = nil; try write(value, intent: intent)
@@ -1854,8 +1913,8 @@ final class AppRecordPersistence: ObservableObject {
             releaseUploadedPayload(saved.id, owner: value.owner)
             let isSaved = await stillSaved(accepted)
             try saveIntent.require(intent)
-            title = isSaved ? "保存済み" : "保存待ちの変更があります"
-            detail = nil; transientFailures = 0; rateLimitedQuietPasses = 0; failureStreak = AppRecordFailureStreak()
+            if isSaved { showSaved(value) } else { title = "保存待ちの変更があります"; detail = nil }
+            transientFailures = 0; rateLimitedQuietPasses = 0; failureStreak = AppRecordFailureStreak()
             if !isSaved { requested = true }
             // The already validated immutable index belongs to this exact CAS.
             cachedIndex = (try indexKey(value, revision: revision, head: head), saved.index)
@@ -2274,8 +2333,8 @@ struct AppRecordSettingsView: View {
             guard !exporter.preparing else { return }
             linkPlusIfStarting()
         }
-        .onChange(of: persistence.title) { _, title in
-            guard title == "保存済み", !exporter.preparing else { return }
+        .onChange(of: persistence.title) { _, _ in
+            guard persistence.isSaved, !exporter.preparing else { return }
             authentication.refreshUsage()
         }
         .onChange(of: authentication.membership?.linked) { _, _ in linkPlusIfStarting() }
@@ -2299,11 +2358,12 @@ struct AppRecordSettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: ASAuthorizationAppleIDProvider.credentialRevokedNotification)
             .receive(on: DispatchQueue.main)) { _ in exporter.invalidate() }
         .confirmationDialog("このiPhoneの記録で保存を続けますか？", isPresented: $confirmsLocal, titleVisibility: .visible) {
-            Button("このiPhoneの記録を使う") {
+            // 11/21: the other saved copy is deleted from the save server; say so and mark it red.
+            Button("このiPhoneの記録を使う", role: .destructive) {
                 running = "このiPhoneの記録を使う"
                 Task { await SharingPersonAction.run { await persistence.resolveConflict(useRemote: false) } }
             }
-        } message: { Text("このiPhoneの記録で、これからの保存を続けます。ほかのiPhoneで保存した記録は、使わなくなります。") }
+        } message: { Text("ほかのiPhoneで保存した記録は削除され、元に戻せません。") }
         .confirmationDialog("ほかのiPhoneで保存した記録に切り替えますか？", isPresented: $confirmsRemote, titleVisibility: .visible) {
             // 11/7: this iPhone's records are replaced; say so and mark it red.
             Button("ほかのiPhoneの記録を使う", role: .destructive) {
@@ -2340,7 +2400,7 @@ struct AppRecordSettingsView: View {
                     .disabled(authentication.membershipRestoring)
                     .accessibilityIdentifier("app-record-membership-restore")
             } else if plusEnded {
-                Label("止まっています", systemImage: "icloud.slash")
+                Label(persistence.title == "復元しました" ? "復元しました" : "止まっています", systemImage: "icloud.slash")
                     .accessibilityIdentifier("app-record-save-status")
                 Text("Plusが終わったため、新しい保存は止まっています。保存したものは12か月のあいだ書き出せます。")
                 if offersPlus { plusOfferButton }
@@ -2537,7 +2597,10 @@ struct AppRecordSettingsView: View {
             authentication.connectMembership(consent: true)
             return
         }
-        guard membership.canSave else { return }
+        // 11/21: Plus that ended still lets this account's saved copy come back
+        // (the server asks for Plus only to save): starting goes on, restores
+        // what is saved, and then shows that new saving waits for Plus.
+        guard membership.canSave || (membership.linked && !persistence.enabled) else { return }
         starting = false
         // 1115v-4: after the person's 「保存を始める」 (or the Plus they just bought).
         Task { await SharingPersonAction.run { await persistence.enable() } }
@@ -2590,8 +2653,15 @@ enum AppRecordCapture {
         try ToolBackupFiles.protect(source)
         defer { try? FileManager.default.removeItem(at: source) }
         let previouslyStoredPhotos = Set(previous?.files.filter { $0.path.hasSuffix(".jpg") }.map(\.path) ?? [])
+        // 11/21: a record or photo that cannot be read no longer stops every
+        // later save. It is left out only when no saved copy has it (so no
+        // saved data can be retired with it), the rest is saved, the screen
+        // says so, and the next pass tries it again.
+        let previouslyStoredTools = Set(previous?.files.compactMap { $0.path.split(separator: "/").first.map(String.init) } ?? [])
+        var skipped: [String] = []
         var preparedAny = false
         for (tool, manifest) in ToolBackupIndex.automaticSaveManifests {
+          do {
             let record: (URL, Data)? = try AppRecordEditingLease.whileIdle {
                 try Task.checkCancellation()
                 let live = tool == "CatIdentity" ? AppRecordDataset.identityURL() : AppRecordDataset.directory(tool).appendingPathComponent(manifest)
@@ -2668,21 +2738,46 @@ enum AppRecordCapture {
                 state["entries"] = entries
                 bytes = try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys])
             }
+            var brokenPhotos = Set<String>()
             for name in try ToolBackupFiles.manifestPhotoNames(tool: tool, data: bytes) {
                 try ToolBackupIndex.validatePath(tool + "/" + name)
                 if indexVersion == 4, previouslyStoredPhotos.contains(tool + "/" + name) { continue }
-                let photo = try AppRecordEditingLease.whileIdle {
-                    try Task.checkCancellation()
-                    return try ToolBackupFiles.read(ToolBackupFiles.sourcePhotoURL(tool: tool, directory: live.deletingLastPathComponent(), name: name), maximum: 20 * 1024 * 1024)
+                let photo: Data
+                do {
+                    photo = try AppRecordEditingLease.whileIdle {
+                        try Task.checkCancellation()
+                        return try ToolBackupFiles.read(ToolBackupFiles.sourcePhotoURL(tool: tool, directory: live.deletingLastPathComponent(), name: name), maximum: 20 * 1024 * 1024)
+                    }
+                } catch let failure where isBrokenItem(failure) && !previouslyStoredPhotos.contains(tool + "/" + name) {
+                    brokenPhotos.insert(name); continue
+                }
+                // The server's JPEG rule: a photo that cannot be sent even as
+                // a plain copy is left out the same way (capture would stop).
+                if !previouslyStoredPhotos.contains(tool + "/" + name),
+                   !PreservationJPEGEnvelope.accepts(photo), PreservationJPEGEnvelope.conforming(photo) == nil {
+                    brokenPhotos.insert(name); continue
                 }
                 try ToolBackupFiles.write(photo, to: source.appendingPathComponent(tool + "/" + name))
+            }
+            if !brokenPhotos.isEmpty {
+                // Only the saved copy loses the reference; the record on this
+                // iPhone keeps naming the photo and is read again next time.
+                bytes = try droppingPhotos(brokenPhotos, from: bytes)
+                guard try ToolBackupFiles.manifestPhotoNames(tool: tool, data: bytes).isDisjoint(with: brokenPhotos) else { throw ToolBackupError.invalid }
             }
             let destination = source.appendingPathComponent(tool + "/" + manifest)
             try ToolBackupFiles.protect(destination.deletingLastPathComponent())
             if indexVersion == 4 && ["PhotoMemoryNotes", "VeterinaryVisits", "CatCare"].contains(tool) {
                 try AppRecordJSON.write(bytes, to: destination, options: [.atomic, .completeFileProtection])
             } else { try ToolBackupFiles.write(bytes, to: destination) }
+            skipped += brokenPhotos.sorted().map { tool + "/" + $0 }
             preparedAny = true
+          } catch let failure where isBrokenItem(failure) && !previouslyStoredTools.contains(tool) {
+            // Never in a saved copy: leave the whole record out of this one.
+            try? FileManager.default.removeItem(at: source.appendingPathComponent(tool, isDirectory: true))
+            guard !FileManager.default.fileExists(atPath: source.appendingPathComponent(tool, isDirectory: true).path) else { throw failure }
+            skipped.append(tool)
+          }
         }
         if !preparedAny && previous?.containsFamilyNotebook == true {
             // Older snapshots can contain only a shared notebook. Publish an
@@ -2705,8 +2800,64 @@ enum AppRecordCapture {
         }
         try await ToolBackupValidation.validate(saved.index, at: ToolBackupFiles.directory(saved.id), authenticatedPhotos: reusable)
         saved.filteredFamilyNotebook = true
+        saved.skipped = skipped.isEmpty ? nil : skipped.sorted()
         try ToolBackupFiles.write(JSONEncoder().encode(saved), to: ToolBackupFiles.directory(saved.id).appendingPathComponent("pending.json"))
         return saved
+    }
+    /// A failure that waiting does not change: the item itself is unreadable.
+    /// Cancellation, editing, a change under the capture, locked files, a
+    /// full disk and anything from the network are not; they stop the pass.
+    static func isBrokenItem(_ failure: Error) -> Bool {
+        if failure is CancellationError || failure is AppRecordEditingError || failure is URLError
+            || failure is ManagedPreservationError { return false }
+        if let tool = failure as? ToolBackupError { return [.invalid, .capacity].contains(tool) }
+        let ns = failure as NSError
+        if ns.domain == NSCocoaErrorDomain {
+            return [NSFileReadNoSuchFileError, NSFileNoSuchFileError, NSFileReadCorruptFileError,
+                    NSFileReadInapplicableStringEncodingError, NSPropertyListReadCorruptError].contains(ns.code)
+                || failure is DecodingError
+        }
+        if ns.domain == NSPOSIXErrorDomain { return ns.code == Int(ENOENT) }
+        return failure is DecodingError
+    }
+    /// The saved copy of a record without the named photos. An object that is
+    /// only a photo reference (a "fileName" or "imageFileName" holding one of
+    /// them, e.g. a cat's face photo or a kept photo) and a detached photo go
+    /// as a whole; any other field naming one becomes null. Nothing else changes.
+    static func droppingPhotos(_ names: Set<String>, from bytes: Data) throws -> Data {
+        func holds(_ value: Any) -> Bool {
+            if let text = value as? String { return names.contains(text) }
+            if let object = value as? [String: Any] { return object.values.contains(where: holds) }
+            if let array = value as? [Any] { return array.contains(where: holds) }
+            return false
+        }
+        /// Nil: the value goes (left out of an array, null in an object).
+        func strip(_ value: Any, key: String) -> Any? {
+            if let object = value as? [String: Any] {
+                if object.contains(where: { field, inner in
+                    guard ["fileName", "imageFileName"].contains(field), let text = inner as? String else { return false }
+                    return names.contains(text)
+                }) {
+                    return nil
+                }
+                var result: [String: Any] = [:]
+                for (field, inner) in object {
+                    if let text = inner as? String, names.contains(text) { result[field] = NSNull(); continue }
+                    result[field] = strip(inner, key: field) ?? NSNull()
+                }
+                return result
+            }
+            if let array = value as? [Any] {
+                return array.compactMap { element -> Any? in
+                    if key == "detachedPhotos", holds(element) { return nil }
+                    if let text = element as? String, names.contains(text) { return nil }
+                    return strip(element, key: key)
+                }
+            }
+            return value
+        }
+        let object = try JSONSerialization.jsonObject(with: bytes, options: [.fragmentsAllowed])
+        return try JSONSerialization.data(withJSONObject: strip(object, key: "") ?? NSNull(), options: [.sortedKeys, .fragmentsAllowed])
     }
 }
 
