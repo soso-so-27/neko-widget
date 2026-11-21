@@ -105,7 +105,7 @@ class ShareExtensionTests(unittest.TestCase):
         destinations = section(SHARE_SERVICE, "func destinations() async throws -> [GroupWindow] {", "func send(")
         self.assertLess(destinations.index('guard try snapshot.read("host-confirmed-empty") == Data([1])'),
                         destinations.index("clearOwnCopies()"))
-        clear = section(SHARE_SERVICE, "private func clearOwnCopies() {", "\n    }\n")
+        clear = section(SHARE_SERVICE, "private func clearOwnCopies() async {", "\n    }\n")
         self.assertIn('where file.pathExtension == "json"', clear)
 
 

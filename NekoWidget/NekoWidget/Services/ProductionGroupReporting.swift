@@ -414,8 +414,19 @@ final class ProductionGroupReporting: GroupReportingService {
         guard GroupCanonical.validID(windowID) else { throw GroupSafetyError.invalidResponse }
         // Keep this iPhone's hide intent after leaving/erasing an identity.
         // Actual report/status access below remains bound to its original actor.
-        let local = Set(try store.all().filter {
-            $0.endpoint == endpoint.absoluteString && $0.record.windowID == windowID
+        // 11/21s: a report this identity has not sent yet is listed in
+        // 「通報への返答」 with 「もう一度送る」 and covers its photo. One left by
+        // another identity (a fresh start, a deletion) that never reached the
+        // team can no longer be sent or listed, so it does not cover the photo
+        // forever, as after a reinstall; one that reached the team still does.
+        // An identity that cannot be read covers everything (thrown).
+        let actor: GroupDeviceIdentity?
+        do { actor = try identity() } catch GroupSafetyError.authenticationRequired { actor = nil }
+        let deviceID = try actor?.deviceID
+        let local = Set(try store.all().filter { draft in
+            guard draft.endpoint == endpoint.absoluteString, draft.record.windowID == windowID else { return false }
+            if let actor, draft.personID == actor.personID, draft.deviceID == deviceID { return true }
+            return [.received, .alreadyReported].contains(draft.record.progress)
         }.map { $0.record.photoID })
         // 11/20: and after the app was deleted and installed again.
         return local.union(GroupWindowKept.reports(windowID: windowID, in: kept).map(\.photoID))
