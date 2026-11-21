@@ -324,6 +324,31 @@ final class AppLimitsTests: XCTestCase {
                                                          limit: LostCatFlyerRenderer.featuresLimit))
     }
 
+    @MainActor
+    func testPreparednessReopensUnderFamilyCatAfterProfileDeletion() throws {
+        let profile = UUID().uuidString.lowercased(), familyCat = UUID()
+        let key = "guest-tool-" + familyCat.uuidString
+        let store = CatPreparednessStore(directory: directory)
+        var prepared = CatPreparednessRecord()
+        prepared.name = "合成ねこ"
+        prepared.identifyingFeatures = "あごだけ白い"
+        let photo = UUID().uuidString + ".jpg"
+        let pixels = Data([0xff, 0xd8, 0xff, 0xd9])
+        try pixels.write(to: directory.appendingPathComponent(photo))
+        prepared.face = .init(localIdentifier: "synthetic-face", imageFileName: photo)
+        try store.save(prepared, for: profile)
+
+        XCTAssertTrue(CatPreparednessStore.move(fromProfileID: profile, toCatID: familyCat, store: store))
+        let reopened = CatPreparednessStore(directory: directory)
+        let moved = reopened.record(for: key)
+        XCTAssertNil(reopened.records[profile])
+        XCTAssertEqual(moved.name, prepared.name)
+        XCTAssertEqual(moved.identifyingFeatures, prepared.identifyingFeatures)
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(reopened.photoURL(moved.face))), pixels)
+        XCTAssertTrue(CatPreparednessStore.move(fromProfileID: profile, toCatID: familyCat, store: reopened))
+        XCTAssertEqual(reopened.record(for: key), moved)
+    }
+
     // MARK: - 3. Tools take as many cats as can exist
 
     func testToolPlansKeepTheirSavedCatsAndAddUpToTheLimit() throws {
