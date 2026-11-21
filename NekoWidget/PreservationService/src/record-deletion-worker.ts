@@ -13,6 +13,8 @@ interface RecordErasureEnv extends Env {
   RECORD_PHYSICAL_DELETION_ENABLED?: string;
   RECORD_PHYSICAL_DELETION_REVIEW_AT?: string;
   RECORD_PHYSICAL_DELETION_REVIEW_SCOPE_SHA256?: string;
+  RECORD_PHYSICAL_DELETION_APPLY_REVIEWED?: string;
+  RECORD_PHYSICAL_DELETION_EXPIRES_AT?: string;
   ERASER_S3_ACCESS_KEY_ID?: string;
   ERASER_S3_SECRET_ACCESS_KEY?: string;
   ERASER_S3_SESSION_TOKEN?: string;
@@ -26,12 +28,17 @@ export default {
   async scheduled(event: ScheduledEvent, env: RecordErasureEnv): Promise<void> {
     const enabled = env.RECORD_PHYSICAL_DELETION_ENABLED === 'YES';
     const review = env.RECORD_PHYSICAL_DELETION_REVIEW_SCOPE_SHA256;
+    const apply = env.RECORD_PHYSICAL_DELETION_APPLY_REVIEWED === 'YES';
     if (!enabled && review === undefined) return;
     const unavailable = () => new ServiceError('RECORD_ERASURE_NOT_CONFIGURED', 503);
-    if (review !== undefined && (enabled || env.RECORD_PHYSICAL_DELETION_ENABLED !== 'NO'
+    if (apply && (review === undefined || !enabled || !env.ERASER_S3_SESSION_TOKEN)) throw unavailable();
+    if (review !== undefined && (enabled !== apply || (!apply && env.RECORD_PHYSICAL_DELETION_ENABLED !== 'NO')
       || !/^[a-f0-9]{64}$/u.test(review)
       || !/^[0-9]{13}$/u.test(env.RECORD_PHYSICAL_DELETION_REVIEW_AT ?? ''))) throw unavailable();
     if (review !== undefined && event.scheduledTime !== Number(env.RECORD_PHYSICAL_DELETION_REVIEW_AT)) return;
+    const expiresAt = Number(env.RECORD_PHYSICAL_DELETION_EXPIRES_AT);
+    if (apply && (!Number.isSafeInteger(expiresAt) || expiresAt <= Date.now()
+      || expiresAt > event.scheduledTime + 14 * 60_000)) throw unavailable();
     if (!env.KEY_WRAPPER || !env.KEY_WRAPPER_CALLER_SECRET || !env.IDENTITY_INDEX_SECRET
       || !env.ARCHIVE || !env.DB || (enabled && env.ERASER_S3_ACCESS_KEY_ID === env.RECOVERY_S3_ACCESS_KEY_ID)) {
       throw unavailable();
@@ -54,8 +61,13 @@ export default {
         ...(env.ERASER_S3_SESSION_TOKEN ? { sessionToken: env.ERASER_S3_SESSION_TOKEN } : {}) }) } : {}),
     });
     if (review !== undefined) {
-      // Review removes no object and does not claim, retry or close queue rows.
       try {
+        if (apply) {
+          const result = await executor.eraseReviewed(review,expiresAt);
+          console.info(JSON.stringify({ event:'preservation_record_erasure_approved_v1',...result }));
+          return;
+        }
+        // Review does not claim, retry or close queue rows.
         const result = await executor.review(review);
         console.info(JSON.stringify({ event: 'preservation_record_erasure_review_v2', ...result }));
       } catch {

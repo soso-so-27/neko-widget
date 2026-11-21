@@ -654,8 +654,36 @@ it('reviews one fixed deletion backlog and reports the four counts using the pre
   } });
   const objectsBefore = await binding.ARCHIVE.list({ prefix: `personal/${owner}/` });
   expect(objectsBefore.objects).toHaveLength(0);
+  const simulatedPages: RecoveryObject[] = [];
+  let trustSimulatedPages = false;
+  let changeBeforeErasure = false;
+  let inventoryPasses = 0;
+  const erased: string[] = [];
   const review = new RecordPhysicalDeletion({ db, bucket: binding.ARCHIVE, archive: recovery,
     records: remote.recovery, inventory: remote.s3, now: f.options.now });
+  const approved = new RecordPhysicalDeletion({ db, bucket: binding.ARCHIVE, records: remote.recovery,
+    inventory: { referenceForListedVersion: item => remote.s3.referenceForListedVersion(item),
+      getVerified: ref => remote.s3.getVerified(ref), async listOwnerVersionsPage(ownerId, cursor) {
+      const page = await remote.s3.listOwnerVersionsPage(ownerId,cursor);
+      if (changeBeforeErasure && cursor === undefined && ++inventoryPasses === 3) {
+        page.versions.push({ key:`recovery/v1/${owner}/record/${crypto.randomUUID()}`,
+          versionId:'changed-before-erasure',bytes:4,deleteMarker:false });
+      }
+      return page;
+    } }, now: f.options.now, archive: { async assembleQuarantineCandidate(ownerId, now, inventory) {
+      const result = await recovery.assembleQuarantineCandidate(ownerId, now, inventory);
+      if (trustSimulatedPages && result.status === 'ready-for-quarantine' && result.erasureEvidence) {
+        result.erasureEvidence.pages.push(...simulatedPages);
+      }
+      return result;
+    } },
+    eraser: { async requestExactVersionDeletion(ownerId, item) {
+      expect(ownerId).toBe(owner);
+      const identity = `${item.key}:${item.versionId}`;
+      expect(remote.objects.delete(identity)).toBe(true);
+      erased.push(identity);
+    } },
+  });
   const copyBody = async (ref: RecoveryObject) => remote.s3.putVersioned(
     `recovery/v1/${owner}/record/${crypto.randomUUID()}`, await remote.s3.getVerified(ref));
   const putRecord = async (withPhoto = true) => {
@@ -685,7 +713,7 @@ it('reviews one fixed deletion backlog and reports the four counts using the pre
     expect(protectedPages).toBeGreaterThan(0);
     const unresolvedVersions = 755 - protectedPages - 2;
     for (let index = 0; index < unresolvedVersions; index++) {
-      await remote.s3.putVersioned(`recovery/v1/${owner}/record/${crypto.randomUUID()}`, photo);
+      simulatedPages.push(await remote.s3.putVersioned(`recovery/v1/${owner}/record/${crypto.randomUUID()}`, photo));
     }
     const s3Count = remote.objects.size;
     const r2Count = (await binding.ARCHIVE.list({ prefix: `personal/${owner}/` })).objects.length;
@@ -695,6 +723,32 @@ it('reviews one fixed deletion backlog and reports the four counts using the pre
     });
     expect(remote.objects.size).toBe(s3Count);
     expect((await binding.ARCHIVE.list({ prefix: `personal/${owner}/` })).objects).toHaveLength(r2Count);
+    await expect(approved.eraseReviewed(scope,f.options.now()+14*60_000))
+      .rejects.toMatchObject({code:'RECORD_ERASURE_SCOPE_UNVERIFIED'});
+    expect(erased).toHaveLength(0);
+    expect((await binding.ARCHIVE.list({ prefix: `personal/${owner}/` })).objects).toHaveLength(r2Count);
+
+    // Earlier assertions use real encrypted pages. Delegate the bulk synthetic
+    // pages to the archive verifier's trusted interface for the success case.
+    trustSimulatedPages = true;
+    await expect(approved.eraseReviewed(scope,f.options.now()+1000))
+      .rejects.toMatchObject({code:'RECORD_ERASURE_SCOPE_UNVERIFIED'});
+    expect(erased).toHaveLength(0);
+    changeBeforeErasure = true;
+    await expect(approved.eraseReviewed(scope,f.options.now()+14*60_000))
+      .rejects.toMatchObject({code:'RECORD_ERASURE_SCOPE_UNVERIFIED'});
+    changeBeforeErasure = false;
+    expect(erased).toHaveLength(0);
+    expect((await binding.ARCHIVE.list({ prefix: `personal/${owner}/` })).objects).toHaveLength(r2Count);
+    await expect(approved.eraseReviewed(scope,f.options.now()+14*60_000)).resolves.toMatchObject({
+      protectedPages:protectedPages+unresolvedVersions,olderTargetBodies:1,orphanBodies:1,unresolvedVersions:0,
+      requestsConfirmed:true,r2Removed:13,s3Removed:28,orphanVersionsRemoved:1,retainedReadable:true,targetsRemaining:0,
+    });
+    expect(remote.objects.size).toBe(s3Count-28);
+    expect((await binding.ARCHIVE.list({ prefix: `personal/${owner}/` })).objects).toHaveLength(0);
+    await expect(archive.read(f.session.token,kept.id)).resolves.toMatchObject({
+      document:{...document,photoFile:null},
+    });
   } finally {
     await binding.DB.prepare('UPDATE pa_recovery_write_policy SET owner_snapshot_required=0 WHERE singleton=1').run();
   }
