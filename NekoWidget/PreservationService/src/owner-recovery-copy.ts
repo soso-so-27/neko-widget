@@ -955,7 +955,8 @@ export class OwnerRecoveryCopy {
    * Activation needs fresh Apple reauthentication, billing verification,
    * durable revocation/deletion replay and complete record validation.
    */
-  async selectRecoveredOwner(ownerId: string, references: RecoveryObject[], now: number): Promise<
+  async selectRecoveredOwner(ownerId: string, references: RecoveryObject[], now: number,
+    observeInventoryPage?: (object: RecoveryObject) => void): Promise<
     { status: 'reauth-required'; image: OwnerRecoveryImage } |
     { status: 'disabled' } |
     { status: 'missing' | 'quarantined' }> {
@@ -967,7 +968,8 @@ export class OwnerRecoveryCopy {
     // An owner may have many historical versions. Bound concurrent downloads
     // instead of letting an S3 listing fan out into an unbounded Worker burst.
     const images: OwnerRecoveryImage[] = [];
-    for (const reference of references) images.push(await this.read(ownerId, reference));
+    const audit = observeInventoryPage ? { verified: observeInventoryPage, nodes: new Map(), bytes: 0 } : undefined;
+    for (const reference of references) images.push(await this.read(ownerId, reference, undefined, audit));
     const generations = new Map<number, OwnerRecoveryImage>();
     for (const item of images) {
       const previous = generations.get(item.generation);
@@ -1117,20 +1119,21 @@ export class OwnerRecoveryCopy {
    * Acknowledgement compares the complete logical inventory hash and verifies
    * the exact root page; explicit recovery expands and verifies every page.
    */
-  async read(ownerId: string, reference: RecoveryObject, expected?: OwnerRecoveryImage): Promise<OwnerRecoveryImage> {
+  async read(ownerId: string, reference: RecoveryObject, expected?: OwnerRecoveryImage,
+    audit?: import('./immutable-record-tree').InventoryTreeAudit): Promise<OwnerRecoveryImage> {
     try {
       const payload = await this.readWire(ownerId,reference);
       let records: OwnerRecoveryImage['records'];
       if (payload.version === 3) {
         const tree = new ImmutableRecordTree(ownerId,'owner-inventory-v1',this.keys,this.s3);
-        await tree.verifyRoot(payload.recordsTree);
         if (expected) {
+          await tree.verifyRoot(payload.recordsTree);
           valid(expected);
           if (expected.ownerId !== ownerId || payload.recordsTree.count !== expected.records.length
             || payload.recordsTree.hash !== await tree.logicalHash(expected.records.map(record=>({key:record.recordId.replaceAll('-',''),value:record})))) throw unavailable();
           records = expected.records;
         } else {
-          records = (await tree.entries(payload.recordsTree)).map(entry=>{
+          records = (await tree.entries(payload.recordsTree, audit)).map(entry=>{
             const record = entry.value as OwnerRecoveryImage['records'][number];
             if (!record || record.recordId?.replaceAll('-','') !== entry.key) throw unavailable();
             return record;

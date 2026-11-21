@@ -10,6 +10,8 @@ import { ServiceError } from './contracts';
 
 interface RecordErasureEnv extends Env {
   RECORD_PHYSICAL_DELETION_ENABLED?: string;
+  RECORD_PHYSICAL_DELETION_REVIEW_AT?: string;
+  RECORD_PHYSICAL_DELETION_REVIEW_SCOPE_SHA256?: string;
   ERASER_S3_ACCESS_KEY_ID?: string;
   ERASER_S3_SECRET_ACCESS_KEY?: string;
   ERASER_S3_SESSION_TOKEN?: string;
@@ -20,11 +22,18 @@ const dayMs = 86_400_000;
 // Worker continues to write the queue and has no permanent deletion capability.
 export default {
   fetch(): Response { return new Response(null, { status: 404 }); },
-  async scheduled(_event: ScheduledEvent, env: RecordErasureEnv): Promise<void> {
-    if (env.RECORD_PHYSICAL_DELETION_ENABLED !== 'YES') return;
+  async scheduled(event: ScheduledEvent, env: RecordErasureEnv): Promise<void> {
+    const enabled = env.RECORD_PHYSICAL_DELETION_ENABLED === 'YES';
+    const review = env.RECORD_PHYSICAL_DELETION_REVIEW_SCOPE_SHA256;
+    if (!enabled && review === undefined) return;
+    const unavailable = () => new ServiceError('RECORD_ERASURE_NOT_CONFIGURED', 503);
+    if (review !== undefined && (enabled || env.RECORD_PHYSICAL_DELETION_ENABLED !== 'NO'
+      || !/^[a-f0-9]{64}$/u.test(review)
+      || !/^[0-9]{13}$/u.test(env.RECORD_PHYSICAL_DELETION_REVIEW_AT ?? ''))) throw unavailable();
+    if (review !== undefined && event.scheduledTime !== Number(env.RECORD_PHYSICAL_DELETION_REVIEW_AT)) return;
     if (!env.KEY_WRAPPER || !env.KEY_WRAPPER_CALLER_SECRET || !env.IDENTITY_INDEX_SECRET
-      || !env.ARCHIVE || !env.DB || env.ERASER_S3_ACCESS_KEY_ID === env.RECOVERY_S3_ACCESS_KEY_ID) {
-      throw new ServiceError('RECORD_ERASURE_NOT_CONFIGURED', 503);
+      || !env.ARCHIVE || !env.DB || (enabled && env.ERASER_S3_ACCESS_KEY_ID === env.RECOVERY_S3_ACCESS_KEY_ID)) {
+      throw unavailable();
     }
     const s3 = configuredS3(env);
     const keys = envelopeKeyCustody({ enabled: true,
@@ -33,11 +42,22 @@ export default {
     const owners = new OwnerRecoveryCopy(keys, s3, env.IDENTITY_INDEX_SECRET);
     const executor = new RecordPhysicalDeletion({ db: env.DB, bucket: env.ARCHIVE, records,
       archive: new OwnerArchiveRecovery(s3, owners, records), inventory: s3, now: Date.now,
-      eraser: new S3VersionPurge({ enabled: 'YES', region: env.RECOVERY_S3_REGION ?? '',
+      ...(enabled ? { eraser: new S3VersionPurge({ enabled: 'YES', region: env.RECOVERY_S3_REGION ?? '',
         bucket: env.RECOVERY_S3_BUCKET ?? '', expectedAccountId: env.RECOVERY_S3_ACCOUNT_ID ?? '',
         accessKeyId: env.ERASER_S3_ACCESS_KEY_ID ?? '', secretAccessKey: env.ERASER_S3_SECRET_ACCESS_KEY ?? '',
-        ...(env.ERASER_S3_SESSION_TOKEN ? { sessionToken: env.ERASER_S3_SESSION_TOKEN } : {}) }),
+        ...(env.ERASER_S3_SESSION_TOKEN ? { sessionToken: env.ERASER_S3_SESSION_TOKEN } : {}) }) } : {}),
     });
+    if (review !== undefined) {
+      // Review removes no object and does not claim, retry or close queue rows.
+      try {
+        const result = await executor.review(review);
+        console.info(JSON.stringify({ event: 'preservation_record_erasure_review_v2', ...result }));
+      } catch {
+        // Provider and database exceptions may contain private reference data.
+        throw new ServiceError('RECORD_ERASURE_REVIEW_BLOCKED', 503);
+      }
+      return;
+    }
     const now = Date.now();
     const job = await env.DB.prepare(`UPDATE pa_record_physical_delete_queue SET next_attempt_at=?
       WHERE rowid=(SELECT rowid FROM pa_record_physical_delete_queue WHERE next_attempt_at<=?

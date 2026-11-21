@@ -55,6 +55,14 @@ interface RecordPayload {
   photoCopy: RecoveryObject | null;
 }
 
+function parseRecordPayload(raw: Uint8Array, ownerId: string, recordId: string): RecordPayload {
+  const payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw)) as RecordPayload;
+  if (!payload || Object.keys(payload).sort().join(',') !==
+    'deleted,initialFingerprint,initialOperation,metadataBase64,ownerId,photoBytes,photoCopy,photoKey,quotaBytes,recordId,revision,version'
+    || payload.version !== 1 || payload.ownerId !== ownerId || payload.recordId !== recordId) throw unavailable();
+  return payload;
+}
+
 function encoded(bytes: Uint8Array): string {
   if (bytes.length > maxMetadataBytes) throw unavailable();
   let raw = '';
@@ -156,6 +164,30 @@ function validImage(image: StoredRecordImage): void {
 export class RecordRecoveryCopy {
   constructor(private readonly keys: KeyCustody, private readonly s3: S3RecoveryCopy) {}
 
+  /** Authenticates a record copy without opening the nested document or reading a photo. */
+  async inspectUncommittedCopy(ownerId: string, recordId: string, sealed: Uint8Array): Promise<{
+    revision: number; deleted: boolean; photo: RecoveryObject | null;
+  }> {
+    if (!idPattern.test(ownerId) || !recordIdPattern.test(recordId)) throw unavailable();
+    const opened = await this.keys.open(sealed, { ownerId, purpose: 'record', recordId: `${recordId}/document` });
+    let metadata: Uint8Array | null = null;
+    try {
+      const p = parseRecordPayload(opened, ownerId, recordId);
+      if (p.photoCopy !== null && !validCopy(p.photoCopy, ownerId, 'photo')) throw unavailable();
+      metadata = p.metadataBase64 === null ? null : decoded(p.metadataBase64);
+      if (!Number.isSafeInteger(p.revision) || p.revision < 1 || !hex.test(p.initialFingerprint)
+        || !idPattern.test(p.initialOperation) || typeof p.deleted !== 'boolean'
+        || !Number.isSafeInteger(p.photoBytes) || p.photoBytes < 0
+        || !Number.isSafeInteger(p.quotaBytes) || p.quotaBytes < 0
+        || p.deleted !== (metadata === null) || (p.photoKey === null) !== (p.photoCopy === null)
+        || (p.photoKey === null && p.photoBytes !== 0)
+        || (p.photoKey !== null && (!p.photoKey.startsWith(`personal/${ownerId}/${recordId}/`)
+          || !photoKeyPattern.test(p.photoKey) || p.deleted || p.photoBytes < 1))
+        || p.quotaBytes !== (metadata?.length ?? 0) + (p.photoCopy?.bytes ?? 0)) throw unavailable();
+      return { revision: p.revision, deleted: p.deleted, photo: p.photoCopy };
+    } finally { opened.fill(0); metadata?.fill(0); }
+  }
+
   /** Recovery envelopes contain the original sealed D1 metadata, not its JSON.
    * Authenticate that inner owner/record binding before deriving tool edges.
    * No photo read, additional S3 request or ciphertext rewrite is performed. */
@@ -243,11 +275,10 @@ export class RecordRecoveryCopy {
       const sealed = await this.s3.getVerified(copied.record);
       const opened = await this.keys.open(sealed,
         { ownerId, purpose: 'record', recordId: `${recordId}/document` });
-      const payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(opened)) as RecordPayload;
-      if (!payload || Object.keys(payload).sort().join(',') !==
-        'deleted,initialFingerprint,initialOperation,metadataBase64,ownerId,photoBytes,photoCopy,photoKey,quotaBytes,recordId,revision,version'
-        || payload.version !== 1 || payload.ownerId !== ownerId || payload.recordId !== recordId
-        || !sameCopy(payload.photoCopy, copied.photo)) throw unavailable();
+      let payload: RecordPayload;
+      try { payload = parseRecordPayload(opened, ownerId, recordId); }
+      finally { opened.fill(0); }
+      if (!sameCopy(payload.photoCopy, copied.photo)) throw unavailable();
       const photoCiphertext = copied.photo === null ? null : await this.s3.getVerified(copied.photo);
       const image: StoredRecordImage = { ownerId, recordId, revision: payload.revision,
         initialFingerprint: payload.initialFingerprint, initialOperation: payload.initialOperation,
@@ -307,8 +338,9 @@ export class RecordRecoveryCopy {
     try {
       const sealed = await this.s3.getVerified(marker);
       const opened = await this.keys.open(sealed, { ownerId, purpose: 'recovery' });
-      const payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(opened)) as
-        CommitPayload | DeleteIntentPayload;
+      let payload: CommitPayload | DeleteIntentPayload;
+      try { payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(opened)); }
+      finally { opened.fill(0); }
       if (!payload || payload.version !== 1 || payload.ownerId !== ownerId
         || !recordIdPattern.test(payload.recordId)
         || !Number.isSafeInteger(payload.revision) || payload.revision < 1
@@ -350,7 +382,18 @@ export class RecordRecoveryCopy {
     if (!idPattern.test(ownerId) || !recordIdPattern.test(recordId)) throw unavailable();
     const inspected: DiscoveredRecordManifest[] = [];
     for (const marker of markers) inspected.push(await this.inspectManifest(ownerId, marker));
-    const related = inspected.filter(item => item.recordId === recordId);
+    return this.readInspectedHistory(ownerId, recordId, inspected.filter(item => item.recordId === recordId));
+  }
+
+  /** Internal callers must supply manifests returned by inspectManifest for this owner. */
+  async readInspectedHistory(ownerId: string, recordId: string, related: DiscoveredRecordManifest[]): Promise<
+    { status: 'ready'; image: StoredRecordImage } | { status: 'quarantined' }> {
+    if (related.some(item => item.recordId !== recordId)) throw unavailable();
+    const read = async (commit: DiscoveredRecordCommit) => {
+      const image = await this.read(ownerId, recordId, commit);
+      if (image.revision !== commit.revision) throw unavailable();
+      return image;
+    };
     const commits = related.filter((item): item is DiscoveredRecordCommit => item.kind === 'commit');
     const intents = related.filter((item): item is DiscoveredDeleteIntent => item.kind === 'delete-intent');
     const byRevision = new Map<number, DiscoveredRecordCommit>();
@@ -376,14 +419,14 @@ export class RecordRecoveryCopy {
     // Preserve and verify the chain of authenticated references. A confirmed
     // tombstone can be restored after the superseded payloads are erased.
     if (intents.length > 0 && intents.every(intent => matchesCommittedTombstone(head, intent))) {
-      const tombstone = await this.readCommitted(ownerId, recordId, head);
+      const tombstone = await read(head);
       if (!tombstone.deleted) return { status: 'quarantined' };
       return { status: 'ready', image: tombstone };
     }
     let latest: StoredRecordImage | null = null;
     for (const commit of ordered) {
       if (latest?.deleted) return { status: 'quarantined' };
-      const next = await this.readCommitted(ownerId, recordId, commit);
+      const next = await read(commit);
       latest?.metadata?.fill(0);
       latest?.photoCiphertext?.fill(0);
       latest = next;
