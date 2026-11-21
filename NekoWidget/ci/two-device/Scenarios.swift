@@ -49,7 +49,102 @@ struct Family {
         ("S21", "member B writes, then leaves at once: A receives the write", s21),
         ("S22", "B's new iPhone runs the notebook as recovered B and deletes its own other identity: B stays", s22),
         ("S23", "まど: A's photo stops after its reservation, D joins, A sends again: sealed anew, delivered once to all", s23),
+        ("S24", "まど: the Share Extension client lists and sends using the host snapshot", s24),
+        ("S25", "editing and deleting a care memo leaves the other device's cat page intact", s25),
     ]
+
+    static func s24(_ relay: Relay) async throws -> String? {
+        let billing = try await relay.bootstrapBilling()
+        try await relay.grantPlus(billing)
+        let a = try await Device.make("A", relay: relay, cloud: PersonCloud(), billing: billing)
+        let b = try await Device.make("B", relay: relay, cloud: PersonCloud())
+        let window = try await a.client.createWindow(name: "合成のまど", ownerDisplayName: "合成のA", operationID: UUID())
+        let invite = try await a.client.createInvitation(windowID: window.id,
+            operation: GroupOperation(expectedRevision: window.revision))
+        let link = try required(URL(string: invite.shareText).flatMap { GroupInvitationLink(url: $0)?.url }, "share invitation")
+        let inviteID = try await b.client.stageInvitation(url: link)
+        let request = try await b.client.apply(invitationID: inviteID, displayName: "合成のB", operationID: UUID())
+        _ = try await a.client.reconcileAdmissions()
+        let status = try await b.client.joinStatus(requestID: request.id)
+        try expect(status.state == .approved, "B joined A's window")
+
+        let host = a.keychain.store(Device.namespace)
+        let snapshot = MemorySecrets(), checkpoints = MemorySecrets()
+        for account in ["identity", "window:" + window.id] {
+            let stored = try required(host.read(account), "host has the share record")
+            let shared = try required(GroupShareAccess.redacted(stored, account: account), "host can publish the share record")
+            try snapshot.write(shared, account: account, createOnly: true)
+        }
+        let share = try GroupShareClientFactory.make(endpoint: relay.endpoint, snapshot: snapshot, checkpoints: checkpoints,
+            transport: relay.transport, outboxDirectory: a.support.appendingPathComponent("share-outbox"))
+        Log.step("A opens the Photos share sheet's destinations")
+        try expect(try await share.windows().map(\.id) == [window.id], "the Share Extension can list its destination")
+        let jpeg = try windowJPEG()
+        let current = try await share.window(id: window.id)
+        try expect(current.state == .active && current.deliveryStatus == .active, "the Share Extension can write to the destination")
+        try GroupJPEG.validate(jpeg)
+        let operation = try await share.sharePhotoOperation(jpeg: jpeg, caption: nil, windowID: window.id, proposed: UUID())
+        let sent = try await share.sendPhoto(normalizedJPEG: jpeg, windowID: window.id, operationID: operation)
+        try await share.finishSharePhoto(operationID: operation, photoID: sent.id)
+        let received = try await b.syncWindow(window.id)
+        try expect(received.shown == [sent.id], "B sees the committed photo from the Share Extension")
+        return "the Share Extension's client factory, checkpoint store, and route filter are real; Photos UI and on-device moderation are outside this driver"
+    }
+
+    static func s25(_ relay: Relay) async throws -> String? {
+        let f = try await makeFamily(relay)
+        let a = try required(f.a.service.notebook, "A has a notebook")
+        let b = try required(f.b.service.notebook, "B has a notebook")
+        let author = try required(f.a.service.author, "A has an author")
+        let catWater = FamilyNotebookTarget(familyCatID: f.cat, field: .water)
+        _ = try a.edit(target: catWater, value: .text("猫のページの水"), author: author)
+        try await settle("B reads the cat page", [f.a, f.b]) {
+            try b.snapshot().fieldState(for: catWater)?.operation.value == .text("猫のページの水")
+        }
+        let page = try b.snapshot().operations.filter { $0.target.familyCatID == f.cat && $0.target.collection == .cat }
+        let empty = CareHandoffPlan()
+        var memo = empty
+        var cat = CareCat()
+        cat.toolCatID = f.tool
+        cat.profileID = f.profile.uuidString
+        cat.name = "預けるときの名前"
+        cat.water = "預けるときの水"
+        memo.cats = [cat]
+
+        @discardableResult func recordChange(_ before: CareHandoffPlan, _ after: CareHandoffPlan) throws -> FamilyNotebookImportPlan {
+            let snapshot = try a.snapshot()
+            let diff = try FamilyNotebookToolBridge.changes(
+                before: .init(handoff: FamilyNotebookToolBridge.selected(before, snapshot: snapshot)),
+                after: .init(handoff: FamilyNotebookToolBridge.selected(after, snapshot: snapshot)), snapshot: snapshot)
+            try a.applyLocalChanges(diff, author: author)
+            return diff
+        }
+
+        let seed = try recordChange(empty, memo)
+        let water = try required(seed.entries.first { $0.target.collection == .handoff && $0.target.field == .water }?.target,
+            "the care memo has a water field of its own")
+        try await settle("B reads the care memo", [f.a, f.b]) {
+            try b.snapshot().fieldState(for: water)?.operation.value == .text("預けるときの水")
+        }
+        Log.step("A edits the memo and B's cat page is unchanged")
+        var changed = memo
+        changed.cats[0].name = "編集したメモの名前"
+        changed.cats[0].water = "編集したメモの水"
+        try recordChange(memo, changed)
+        try await settle("B reads the updated memo", [f.a, f.b]) {
+            try b.snapshot().fieldState(for: water)?.operation.value == .text("編集したメモの水")
+        }
+        try expect(try b.snapshot().operations.filter { $0.target.familyCatID == f.cat && $0.target.collection == .cat } == page,
+            "editing the memo leaves every cat-page operation intact")
+
+        Log.step("A deletes the memo and B keeps the cat page")
+        try recordChange(changed, empty)
+        let row = FamilyNotebookTarget(familyCatID: f.cat, collection: .handoff, recordID: water.recordID, field: nil)
+        try await settle("B reads the memo removal", [f.a, f.b]) { try b.snapshot().fieldState(for: row)?.isDeleted == true }
+        try expect(try b.snapshot().operations.filter { $0.target.familyCatID == f.cat && $0.target.collection == .cat } == page,
+            "deleting the memo leaves the cat and every cat-page operation intact")
+        return "the tool bridge, two encrypted notebook clients and local Worker are real; the UIKit editor itself is outside this driver"
+    }
 
     // MARK: Common steps
 
