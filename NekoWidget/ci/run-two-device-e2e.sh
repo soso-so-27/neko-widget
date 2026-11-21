@@ -49,6 +49,6 @@ sources=(
   ci/two-device/Harness.swift ci/two-device/Scenarios.swift ci/two-device/RevokedDevice.swift
 )
 echo "Compiling the two-device driver (${#sources[@]} files)" >&2
-xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+xcrun --sdk macosx swiftc -D NEKO_TWO_DEVICE_E2E -parse-as-library -target "$(uname -m)-apple-macos14.0" \
   "${sources[@]}" -o "$build/two-device-e2e"
 "$build/two-device-e2e"

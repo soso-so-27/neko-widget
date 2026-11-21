@@ -73,6 +73,7 @@ struct GroupShareTransport: GroupHTTPTransport {
     }
 }
 
+#if os(iOS) || NEKO_TWO_DEVICE_E2E
 enum GroupShareClientFactory {
     static func make(endpoint: URL, snapshot: any GroupSecretStore, checkpoints: any GroupSecretStore,
                      transport: any GroupHTTPTransport, outboxDirectory: URL) throws -> ProductionGroupWindowClient {
@@ -84,6 +85,7 @@ enum GroupShareClientFactory {
         return client
     }
 }
+#endif
 
 #if os(iOS)
 actor GroupShareService: GroupShareServing {
