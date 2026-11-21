@@ -882,7 +882,9 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         rows = section(view, "    private var valueRows: some View {", "    private var purchaseBlock: some View {")
         self.assertIn("Text(value.0).font(.subheadline)", rows)
         self.assertNotIn(".headline", rows)
-        self.assertEqual(len(re.findall(r'^        \("', view, re.M)), 4)
+        # 11/22: the first row names the movie only while it ships.
+        self.assertEqual(len(re.findall(r'^        \("', view, re.M)), 3)
+        self.assertIn('(SeasonalMovieRelease.isAvailable ? "月の作品、季節のムービー" : "月の作品、1年の作品", "rectangle.stack"),', view)
         # Guideline 3.1.2: the price once, under the button, with 自動更新, as a headline.
         model = source("NekoWidget/Services/MembershipOfferModel.swift")
         monthly = section(model, "static let startTitle", "enum MembershipRestoreFailure")
@@ -932,8 +934,9 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         # The offer lists four values, in this order, without the memo line.
         view = source("NekoWidget/Views/MembershipOfferView.swift")
         values = section(view, "static let values = [", "    ]\n")
+        # 11/22: the first row is 「月の作品、1年の作品」 while the movie is hidden.
+        self.assertIn('(SeasonalMovieRelease.isAvailable ? "月の作品、季節のムービー" : "月の作品、1年の作品", "rectangle.stack"),', values)
         self.assertEqual(re.findall(r'\("([^"]+)", "[^"]+"\)', values), [
-            "月の作品、季節のムービー",
             "まどを作って、家族と写真を届け合う",
             "家族の手帳を作って、家族と一緒に書く",
             "猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる",

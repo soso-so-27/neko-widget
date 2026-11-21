@@ -1035,7 +1035,8 @@ struct MainTabView: View {
             // 11/15: notifications turned on in Settings set a waiting work's
             // notice now. New photos already set it after they are read.
             if await AlbumArrivalNotice.permissionChangedSinceSet() { synchronizeAlbumArrival() }
-            await seasonalMovieArchive.load()
+            // 11/22: 1.0 has no seasonal movie; its stored records stay unread.
+            if SeasonalMovieRelease.isAvailable { await seasonalMovieArchive.load() }
         }
     }
 
@@ -2924,7 +2925,8 @@ struct MainTabView: View {
             sourceIsAvailable = false
         }
         let videoCatalogDigest: Int
-        if hasPhotoAccess, sourceIsAvailable, !isScanning, scenePhase == .active, let interval {
+        if SeasonalMovieRelease.isAvailable, hasPhotoAccess, sourceIsAvailable, !isScanning,
+           scenePhase == .active, let interval {
             videoCatalogDigest = seasonalMovieVideoCatalogDigest.digest(for: .init(
                 quarter: interval,
                 sourceAlbumIdentifier: sourceAlbumIdentifier,
@@ -2936,7 +2938,8 @@ struct MainTabView: View {
             videoCatalogDigest = 0
         }
         return SeasonalMoviePreparationKey(
-            canPrepare: hasPhotoAccess
+            canPrepare: SeasonalMovieRelease.isAvailable
+                && hasPhotoAccess
                 && sourceIsAvailable
                 && !isScanning
                 && scenePhase == .active,
@@ -2949,6 +2952,8 @@ struct MainTabView: View {
 
     @MainActor
     private func prepareSeasonalMovie() async {
+        // 11/22: hidden in 1.0, so no movie is built and nothing is written.
+        guard SeasonalMovieRelease.isAvailable else { return }
         guard hasPhotoAccess else {
             seasonalMovie = nil
             completedSeasonalMoviePreparationKey = nil
@@ -3046,6 +3051,7 @@ struct MainTabView: View {
     /// newest first. The archive never rewrites a quarter it already has.
     @MainActor
     private func backfillEarlierSeasonalMovies() async {
+        guard SeasonalMovieRelease.isAvailable else { return }
         let builder = SeasonalMovieBuilder()
         guard let latest = builder.completedQuarter(containing: Date()) else { return }
         let photos = albumEligibleCatPhotos
@@ -3125,6 +3131,8 @@ struct MainTabView: View {
     /// Only this transient projection changes with the current source. Frozen
     /// archive recipes remain intact and can reappear when access is restored.
     private var currentSeasonalMovieRecords: [SeasonalMovieArchiveRecord] {
+        // 11/22: every card, row, badge and the tab's mark read this list.
+        guard SeasonalMovieRelease.isAvailable else { return [] }
         guard hasPhotoAccess, photoPresentationVersion.canPresent,
               photoSourceStatus != .unavailable else { return [] }
         let currentPhotos = Dictionary(scopedCatPhotos(for: .everyone).map { ($0.localIdentifier, $0) },
@@ -3147,6 +3155,7 @@ struct MainTabView: View {
 
     @MainActor
     private func resolveSeasonalMovieArchiveVideos() async {
+        guard SeasonalMovieRelease.isAvailable else { return }
         let key = seasonalMovieArchiveValidationKey
         guard key.access.canPresent else {
             accessibleSeasonalMovieVideoIdentifiers = []
