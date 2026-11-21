@@ -48,7 +48,7 @@ def main() -> None:
         'localFrame < overlayVisibleFrameCount',
         '.dateTime.month(.wide)',
         "duration: Double(totalFrameCount) / Double(Self.frameRate)",
-        "FileProtectionType.complete",
+        "FileProtectionType.completeUnlessOpen",
         "func cleanupExport(at outputURL: URL)",
         "func cleanupStaleExports(",
         "static func cleanupStaleExports(",
