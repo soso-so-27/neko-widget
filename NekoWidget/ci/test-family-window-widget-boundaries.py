@@ -6414,7 +6414,7 @@ class VeterinaryRoundOneTests(unittest.TestCase):
         self.assertNotIn("通院", readable)
 
     def test_started_day_previous_visit_and_past_rows(self) -> None:
-        self.assertIn('Text("書き始めた日 \\(DayText.japanese(VeterinaryVisit.day(started)))")', self.view)
+        self.assertIn('Text("書き始めた日 \\(DayText.japanese(started))")', self.view)
         finished = section(self.view, "private func looksFinished(", "/// A past memo is named")
         self.assertIn("7 * 24 * 60 * 60", finished)
         self.assertIn('Text("前の診察は終わりましたか？")', self.view)

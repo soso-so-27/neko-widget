@@ -62,7 +62,10 @@ final class ProductionGroupReporting: GroupReportingService {
     /// The person's own report: photo, receipt number and date only.
     private func keepCopy(_ record: GroupReportRecord) {
         GroupWindowKept.keepReport(photoID: record.photoID, receiptNumber: record.receiptNumber,
-                                   sentAt: record.sentAt, windowID: record.windowID, in: kept)
+                                   sentAt: record.sentAt,
+                                   // 11/21: the team's answer stays with the kept copy.
+                                   reply: record.reply == .none ? nil : record.reply.rawValue,
+                                   repliedAt: record.repliedAt, windowID: record.windowID, in: kept)
     }
 
     var isAvailable: Bool {
@@ -439,8 +442,9 @@ final class ProductionGroupReporting: GroupReportingService {
         return GroupWindowKept.reports(windowID: windowID, in: kept).compactMap { report -> GroupReportRecord? in
             guard let number = report.receiptNumber, !local.contains(report.photoID) else { return nil }
             return GroupReportRecord(id: "kept-" + report.photoID, windowID: windowID, photoID: report.photoID,
-                senderName: "", reason: .other, progress: .received, reply: .none, sentAt: report.sentAt,
-                repliedAt: nil, receiptNumber: number, isKeptCopy: true)
+                senderName: "", reason: .other, progress: .received,
+                reply: report.reply.flatMap(GroupReportReply.init(rawValue:)) ?? .none, sentAt: report.sentAt,
+                repliedAt: report.repliedAt, receiptNumber: number, isKeptCopy: true)
         }
     }
     func refreshReport(draftID: String) async throws -> GroupReportRecord {

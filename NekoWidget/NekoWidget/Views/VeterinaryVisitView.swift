@@ -495,8 +495,9 @@ private struct VeterinaryConsultationView: View {
                 ToolPurpose(text: "先生に見せる診察メモを作ります。")
                 if visit.completedAt != nil { Text("診察済み").font(.caption).foregroundStyle(.secondary) }
                 // The day the memo was started (11/8).
-                if let started = visit.createdAt {
-                    Text("書き始めた日 \(DayText.japanese(VeterinaryVisit.day(started)))")
+                // 11/21: the stored day, so a time-zone change never moves it.
+                if let started = visit.createdDay {
+                    Text("書き始めた日 \(DayText.japanese(started))")
                         .font(.caption).foregroundStyle(.secondary)
                         .accessibilityIdentifier("vet-started-day")
                 }

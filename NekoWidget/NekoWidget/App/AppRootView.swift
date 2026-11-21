@@ -1752,10 +1752,11 @@ private final class PhotoPresentationCache: ObservableObject {
             catPhotos: catPhotos,
             likedPhotos: likedPhotos,
             catAssets: catAssets,
+            // 11/21: a photo saved twice keeps its first copy (it used to
+            // stop the app at every launch).
             assetsByIdentifier: Dictionary(
-                uniqueKeysWithValues: sourceSnapshot.assets.map {
-                    ($0.localIdentifier, $0)
-                }
+                sourceSnapshot.assets.map { ($0.localIdentifier, $0) },
+                uniquingKeysWith: { first, _ in first }
             )
         )
         cachedKey = key

@@ -41,8 +41,11 @@ struct SendGroupWidgetHeartIntent: AppIntent {
         }
 #if NEKO_HOST_APP
         if let client = GroupWindowClientProvider.production,
-           (try? await client.setHeart(photoID: photoID, windowID: windowID,
-                                       active: true, operationID: UUID())) != nil {
+           // 11/21: the tap is the person's own action (not the automatic call budget).
+           (try? await SharingPersonAction.run({
+               try await client.setHeart(photoID: photoID, windowID: windowID,
+                                         active: true, operationID: UUID())
+           })) != nil {
             try? GroupWidgetCache.markMyHeart(windowID: windowID, photoID: photoID)
         }
 #endif
