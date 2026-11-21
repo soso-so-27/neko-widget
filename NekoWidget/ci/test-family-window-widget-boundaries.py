@@ -5815,7 +5815,9 @@ class GroupWidgetHeartTests(unittest.TestCase):
         # 11/20: the heart is marked sent only after the relay took it. A
         # failure (or a run in the extension) leaves the 「ハートを送る」 button.
         self.assertEqual(intent.count("markMyHeart("), 1)
-        sent = section(host, "operationID: UUID())) != nil {", "}")
+        # 11/21: sent as the person's own action, not on the automatic call budget.
+        self.assertIn("SharingPersonAction.run({", host)
+        sent = section(host, "})) != nil {", "}")
         self.assertIn("try? GroupWidgetCache.markMyHeart(windowID: windowID, photoID: photoID)", sent)
         self.assertIn("extension SendGroupWidgetHeartIntent: ForegroundContinuableIntent {}", intent)
         view = source("NekoWidgetWidget/NekoWidgetView.swift")
