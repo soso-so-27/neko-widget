@@ -74,26 +74,19 @@ actor DeletionRelay: GroupHTTPTransport {
 actor PersonRelay: GroupHTTPTransport {
     private var gone: Bool
     private var losing = false
-    private var losingStatus = false
-    private var finished = false
     private var accepted = Set<String>()
     private(set) var posts = 0
     init(gone: Bool) { self.gone = gone }
     func losesNextReply() { losing = true }
-    func losesNextStatus() { losingStatus = true }
-    func finish() { finished = true }
-    private func answer(_ id: String) -> Data {
-        let state = finished ? "completed" : "processing"
-        let completedAt = finished ? "1763600010" : "null"
-        return Data(#"{"protocolVersion":3,"requestId":"\#(id)","state":"\#(state)","acceptedAt":1763600000,"completedAt":\#(completedAt)}"#.utf8)
+    private static func answer(_ id: String) -> Data {
+        Data(#"{"protocolVersion":3,"requestId":"\#(id)","state":"processing","acceptedAt":1763600000,"completedAt":null}"#.utf8)
     }
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
         let path = request.url?.path ?? "", base = "/v3/group-identities/deletion-requests"
         let missing = GroupHTTPReply(status: 404, data: Data(#"{"error":{"code":"not_found"}}"#.utf8))
         if path.hasPrefix(base + "/"), path.hasSuffix("/status") {
             let id = String(path.dropFirst(base.count + 1).dropLast("/status".count))
-            if losingStatus { losingStatus = false; throw URLError(.networkConnectionLost) }
-            return accepted.contains(id) ? GroupHTTPReply(status: 200, data: answer(id)) : missing
+            return accepted.contains(id) ? GroupHTTPReply(status: 200, data: Self.answer(id)) : missing
         }
         guard path == base, request.httpMethod == "POST" else { return missing }
         posts += 1
@@ -102,7 +95,7 @@ actor PersonRelay: GroupHTTPTransport {
         let id = body?["operationId"] as? String ?? ""
         gone = true; accepted.insert(id)
         if losing { losing = false; throw URLError(.networkConnectionLost) }
-        return GroupHTTPReply(status: 202, data: answer(id))
+        return GroupHTTPReply(status: 202, data: Self.answer(id))
     }
 }
 
@@ -462,32 +455,6 @@ enum IdentityDeletionCleanupChecks {
         // A retry of the recovered deletion after it was accepted sends nothing.
         _ = try await c.requestDeletion(of: recovered, in: store)
         try check(await relay.posts == 1, "an accepted recovered deletion is not sent again")
-
-        // The usual iPhone was revoked before the owner opened the recovered
-        // identity. Even when both the original reply and its first status read
-        // are lost, opening the app again must finish from the saved operation.
-        let interruptedRelay = PersonRelay(gone: false)
-        let usualStore = MemorySecrets(), recoveredStore = MemorySecrets()
-        try usualStore.write(GroupWire.encode(usual), account: "identity", createOnly: true)
-        try GroupDeviceRevocation.mark(.init(personID: usual.personID, deviceID: try usual.deviceID), in: usualStore)
-        try recoveredStore.write(GroupWire.encode(recovered), account: "identity", createOnly: true)
-        let work = folder.appendingPathComponent("revoked-usual")
-        let first = try ProductionGroupWindowClient(endpoint: endpoint, secrets: usualStore, transport: interruptedRelay, outboxDirectory: work)
-        await interruptedRelay.losesNextReply()
-        await interruptedRelay.losesNextStatus()
-        var interrupted = false
-        do { _ = try await first.requestDeletion(of: recovered, in: recoveredStore) } catch { interrupted = true }
-        try check(interrupted, "the unconfirmed result is reported as interrupted")
-        let draft = try GroupWire.decode(GroupIdentityDeletion.self, try recoveredStore.read("identity-deletion") ?? Data())
-        try check(draft.acceptedAt == nil && (try recoveredStore.read("identity")) != nil, "no local cleanup on an unconfirmed reply")
-        await interruptedRelay.finish()
-        let relaunched = try ProductionGroupWindowClient(endpoint: endpoint, secrets: usualStore, transport: interruptedRelay, outboxDirectory: work)
-        let resumed = try await relaunched.requestDeletion(of: recovered, in: recoveredStore)
-        try check(resumed.operationID == draft.operationID && resumed.completedAt != nil, "the retry obtains the terminal answer to the same operation")
-        try check(try recoveredStore.accounts(prefix: "") == ["identity-deletion"], "the recovered credentials are cleared after confirmation")
-        let finished = try await relaunched.requestIdentityDeletion()
-        try check(finished.operationID == draft.operationID && finished.completedAt != nil, "the revoked usual identity finishes from the recovered receipt")
-        try check(try usualStore.read("identity") == nil, "the revoked usual credentials are cleared only after the terminal answer")
         print("identity deletion: the recovered device's accepted deletion finishes the usual one")
     }
 

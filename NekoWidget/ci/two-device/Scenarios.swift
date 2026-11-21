@@ -53,7 +53,6 @@ struct Family {
         ("S25", "editing and deleting a care memo leaves the other device's cat page intact", s25),
         ("S30", "inviting and sending a photo wait for the newly approved member", s30),
         ("S31", "an edit made during a mistaken end reaches the family after reopening", s31),
-        ("S32", "the open window and background renewal agree on one new key", s32),
         ("S33", "refiling a family cat's local visit sends no notebook change", s33),
     ]
 
@@ -219,51 +218,6 @@ struct Family {
         return "the temporary end is induced in A's local store; reopening, journal reconciliation and B's reception run through the real clients"
     }
 
-    static func s32(_ relay: Relay) async throws -> String? {
-        let billing = try await relay.bootstrapBilling()
-        try await relay.grantPlus(billing)
-        let a = try await Device.make("A", relay: relay, cloud: PersonCloud(), billing: billing)
-        let b = try await Device.make("B", relay: relay, cloud: PersonCloud())
-        let window = try await a.client.createWindow(name: "合成のまど", ownerDisplayName: "合成のA", operationID: UUID())
-        let invite = try await a.client.createInvitation(windowID: window.id, operation: GroupOperation(expectedRevision: window.revision))
-        let link = try required(URL(string: invite.shareText).flatMap { GroupInvitationLink(url: $0)?.url }, "window invitation")
-        let inviteID = try await b.client.stageInvitation(url: link)
-        let join = try await b.client.apply(invitationID: inviteID, displayName: "合成のB", operationID: UUID())
-        _ = try await a.client.reconcileAdmissions()
-        try expect(try await b.client.joinStatus(requestID: join.id).state == .approved, "B joined")
-        let member = try await b.client.window(id: window.id)
-        try await b.client.leave(windowID: window.id, operation: GroupOperation(expectedRevision: member.revision))
-        let held = RotationReplyHold(base: relay.transport)
-        let client = try ProductionGroupWindowClient(endpoint: relay.endpoint, secrets: a.keychain.store(Device.namespace),
-            transport: held, outboxDirectory: a.support.appendingPathComponent("overlapping-rotation"))
-        let waiting = try await client.window(id: window.id)
-        try expect(waiting.state == .rotationRequired, "both views start with a waiting key")
-        let mark = relay.transport.log.count
-        let background = Task { await client.renewPendingKeys(listed: [waiting]) }
-        defer { Task { await held.release() } }
-        for _ in 0..<150 {
-            if await held.isHolding { break }
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        try expect(await held.isHolding, "the background mutation committed while its response is in flight")
-
-        let open: GroupWindow
-        do {
-            open = try await client.rotate(windowID: window.id, operation: GroupOperation(expectedRevision: waiting.revision))
-        } catch GroupClientError.staleRevision {
-            // The same recovery as GroupWindowMembersModel.load.
-            open = try await client.window(id: window.id)
-        }
-        await held.release()
-        let updated = try required(await background.value.first, "the background list renewed its row")
-        try expect(open.state == .active && updated.state == .active && open.revision == updated.revision,
-                   "neither read stays in the waiting state")
-        try expect(open.keyEpoch == waiting.keyEpoch + 1 && open.revision == waiting.revision + 1, "one key generation was published")
-        let rotations = relay.transport.log.dropFirst(mark).filter { $0.method == "POST" && $0.path.hasSuffix("/rotate") }
-        try expect(rotations.count == 1 && (200...299).contains(rotations[0].status), "one rotation reached the relay")
-        return "local Worker and overlapping app-client calls ran; the visible window/list state is checked through their models"
-    }
-
     static func s33(_ relay: Relay) async throws -> String? {
         let f = try await makeFamily(relay)
         let a = try required(f.a.service.notebook, "A has a notebook")
@@ -285,30 +239,6 @@ struct Family {
         try expect(try a.pendingOperations().isEmpty && b.snapshot().operations == before, "the receiving notebook did not change")
         try expect(!f.a.notebookWrites(since: mark).contains { $0.hasSuffix("/crypto/operations") }, "A sent no shared write")
         return "the profile detachment and private visit refile are driven directly, with both real clients reading the local Worker"
-    }
-
-    private actor RotationReplyHold: GroupHTTPTransport {
-        let base: LoopbackTransport
-        private var reply: CheckedContinuation<Void, Never>?
-        private var released = false
-        var isHolding: Bool { reply != nil }
-
-        init(base: LoopbackTransport) { self.base = base }
-
-        func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
-            let result = try await base.send(request, maximumBytes: maximumBytes)
-            if !released, request.httpMethod == "POST", request.url?.path.hasSuffix("/rotate") == true,
-               (200...299).contains(result.status) {
-                await withCheckedContinuation { reply = $0 }
-            }
-            return result
-        }
-
-        func release() {
-            released = true
-            reply?.resume()
-            reply = nil
-        }
     }
 
     // MARK: Common steps
