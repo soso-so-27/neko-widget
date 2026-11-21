@@ -777,8 +777,20 @@ final class FamilyNotebookPrototype: ObservableObject {
     /// failure is said only when the person asked (11/5: the alert repeated).
     func applyFamilyWrites(reportsFailure: Bool = false) {
         if isReal {
-            guard hasFamily, let snapshot, let care = CatCareStore.shared.state, CatCareStore.shared.canSave else { return }
+            guard hasFamily, var snapshot, let care = CatCareStore.shared.state, CatCareStore.shared.canSave else { return }
             do {
+                // 11/21: the notebook came back after a mistaken end. What
+                // 「この子のこと」 got meanwhile goes into the notebook first
+                // (FamilyNotebookCatCareBridge.editsWhileEnded); the family's
+                // values used to be put over it. Not saved: nothing is put over
+                // it, the next pass tries again.
+                if let since = snapshot.endedEditsSince, let store {
+                    let plan = try? FamilyNotebookCatCareBridge.editsWhileEnded(care, snapshot: snapshot, since: since)
+                    try store.recordEditsWhileEnded(plan, author: writer())
+                    reload()
+                    guard let next = self.snapshot, next.endedEditsSince == nil else { return }
+                    snapshot = next
+                }
                 let next = try FamilyNotebookCatCareBridge.apply(snapshot, to: care)
                 applyingRemote = true; defer { applyingRemote = false }
                 if next != care {
@@ -1426,6 +1438,13 @@ struct FamilyNotebookView: View {
                                 }.buttonStyle(.bordered).disabled(sharing.isWorking)
                             }
                         }
+                    }
+                } else if sharing.requestsElsewhere {
+                    // 11/21: the request is for an invitation sent from
+                    // another iPhone, the only one that can answer it.
+                    Section("参加を待っている人") {
+                        Text(FamilyNotebookWords.requestElsewhere)
+                            .accessibilityIdentifier("family-notebook-request-elsewhere")
                     }
                 }
             }
@@ -2861,6 +2880,8 @@ enum FamilyNotebookWords {
     /// 11/21: a newly approved person has not opened the app yet; what is
     /// written here stays and goes to the family after.
     static let awaitsNewMember = "新しい家族がアプリを開くと、書いたことが家族に届きます。"
+    /// 11/21: someone waits on an invitation sent from another iPhone.
+    static let requestElsewhere = "別のiPhoneで送った招待です。そのiPhoneで受け入れてください。"
 
     /// 11/19: the family stopped listing this person (taken out, or ended).
     static let sharingEnded = "この手帳の共有は終わりました。"

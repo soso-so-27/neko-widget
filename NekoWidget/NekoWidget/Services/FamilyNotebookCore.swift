@@ -339,6 +339,9 @@ struct FamilyNotebookSnapshot: Equatable, Sendable {
     var opaqueOperations: [FamilyNotebookOpaqueOperation] = []
     /// Set only together with `sharingEnded` (nil: active, or ended before 11/18).
     var endedReason: FamilyNotebookEndReason? = nil
+    /// 11/21: a mistaken end came back; 「この子のこと」 writing from this time
+    /// on is taken in before the family's values are projected (nil: none).
+    var endedEditsSince: Date? = nil
     var retainedOperationCount: Int { operations.count + opaqueOperations.count }
 
     var unsharedCatIDs: Set<UUID> {

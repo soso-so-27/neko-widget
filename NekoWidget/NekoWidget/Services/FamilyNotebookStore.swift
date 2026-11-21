@@ -38,6 +38,12 @@ final class FamilyNotebookStore: @unchecked Sendable {
         var opaqueOperations: [FamilyNotebookOpaqueOperation]?
         // 11/18: absent before; an older reader ignores it.
         var endedReason: FamilyNotebookEndReason?
+        // 11/21: absent before; an older reader ignores both. When sharing
+        // ended (kept while it stays ended), and after a mistaken end came
+        // back, from when 「この子のこと」 may hold writing the notebook never
+        // got (FamilyNotebookCatCareBridge.editsWhileEnded), until it is taken in.
+        var endedAt: Date?
+        var endedEditsSince: Date?
         // Runtime only. On disk these stay in the old reader's opaque array.
         var adoptionPlaintexts: [UUID: Data] = [:]
         static let pendingAdoptionPrefix = "compat-adoption-v1:pending:"
@@ -54,6 +60,7 @@ final class FamilyNotebookStore: @unchecked Sendable {
         private enum CodingKeys: String, CodingKey {
             case schemaVersion, familyID, revision, clock, operations, outboxIDs
             case acknowledgements, mappings, ledgerKeys, sharingEnded, farewellDecisions, opaqueOperations, endedReason
+            case endedAt, endedEditsSince
         }
 
         // Backup fingerprints compare encoded bytes. Set iteration order can
@@ -87,6 +94,8 @@ final class FamilyNotebookStore: @unchecked Sendable {
             try values.encodeIfPresent(farewellDecisions, forKey: .farewellDecisions)
             try values.encodeIfPresent(retained.isEmpty ? opaqueOperations : retained, forKey: .opaqueOperations)
             try values.encodeIfPresent(endedReason, forKey: .endedReason)
+            try values.encodeIfPresent(endedAt, forKey: .endedAt)
+            try values.encodeIfPresent(endedEditsSince, forKey: .endedEditsSince)
         }
 
         func promotingAdoptionOperations() throws -> State {
@@ -123,7 +132,8 @@ final class FamilyNotebookStore: @unchecked Sendable {
                   mappings: mappings, ledgerKeys: ledgerKeys, outbox: operations.filter { outboxIDs.contains($0.id) },
                   acknowledgements: acknowledgements, sharingEnded: sharingEnded == true,
                   farewellDecisions: farewellDecisions ?? [], opaqueOperations: opaqueOperations ?? [],
-                  endedReason: sharingEnded == true ? endedReason : nil)
+                  endedReason: sharingEnded == true ? endedReason : nil,
+                  endedEditsSince: sharingEnded == true ? nil : endedEditsSince)
         }
     }
 
@@ -163,7 +173,7 @@ final class FamilyNotebookStore: @unchecked Sendable {
     @discardableResult
     func endSharing(reason: FamilyNotebookEndReason) throws -> FamilyNotebookSnapshot {
         try transaction { state in
-            if state.sharingEnded != true { state.endedReason = reason }
+            if state.sharingEnded != true { state.endedReason = reason; state.endedAt = Date() }
             state.schemaVersion = state.opaqueOperations?.isEmpty == false ? 3 : 2
             state.sharingEnded = true
         }
@@ -184,8 +194,32 @@ final class FamilyNotebookStore: @unchecked Sendable {
             else { throw FamilyNotebookError.sharingEnded }
             state.sharingEnded = nil; state.endedReason = nil
             state.schemaVersion = state.opaqueOperations?.isEmpty == false ? 3 : 1
+            // 11/21: 「この子のこと」 was saved on its own meanwhile; from the
+            // end on, what differs is taken in before the family's values are
+            // put over it (recordEditsWhileEnded). Ended before this was kept:
+            // no lower bound (only writing newer than the family's counts).
+            let since = state.endedAt ?? .distantPast
+            state.endedEditsSince = min(state.endedEditsSince ?? since, since)
+            state.endedAt = nil
         }
         return try snapshot()
+    }
+
+    /// 11/21: the writing 「この子のこと」 got while this copy was ended by
+    /// mistake (`plan`, from FamilyNotebookCatCareBridge.editsWhileEnded),
+    /// as normal edits with their own edit times, and the mark of that period
+    /// goes in the same transaction. nil: nothing could be worked out, the
+    /// mark goes (the family's values are projected as before).
+    func recordEditsWhileEnded(_ plan: FamilyNotebookImportPlan?, author: FamilyNotebookAuthor) throws {
+        if let plan {
+            guard !plan.entries.contains(where: { $0.target.field == .farewellDay }) else { throw FamilyNotebookError.consentRequired }
+        }
+        try transaction { state in
+            guard state.sharingEnded != true else { throw FamilyNotebookError.sharingEnded }
+            guard state.endedEditsSince != nil else { return }
+            if let plan { try applyLocal(plan, author: author, state: &state) }
+            state.endedEditsSince = nil
+        }
     }
 
     /// 11/15: which cat of this iPhone a family cat is (nil: none). Only the
@@ -237,23 +271,28 @@ final class FamilyNotebookStore: @unchecked Sendable {
         try transaction { state in
             guard plan.familyID == familyID else { throw FamilyNotebookError.familyMismatch }
             guard state.sharingEnded != true else { throw FamilyNotebookError.sharingEnded }
-            for mapping in plan.mappings {
-                if state.mappings.contains(mapping) { continue }
-                if let old = state.snapshot.activeMappings.first(where: { $0.sourceKey == mapping.sourceKey }) {
-                    guard old == mapping else { throw FamilyNotebookError.mappingConflict }
-                } else { state.mappings.append(mapping) }
-            }
-            for entry in plan.entries {
-                try FamilyNotebookCore.validate(target: entry.target, value: entry.value)
-                if state.operations.contains(where: { $0.target.removes(entry.target) }) { continue }
-                let current = state.snapshot.fieldState(for: entry.target)
-                if let current, current.operation.value == entry.value,
-                   !entry.reassertSameValue || entry.editedAt <= current.operation.editedAt { continue }
-                let operation = try makeOperation(state: state, target: entry.target, value: entry.value,
-                    author: author, editedAt: entry.editedAt)
-                state.operations = try FamilyNotebookCore.merge(state.operations, [operation])
-                state.clock = operation.version.clock; state.outboxIDs.insert(operation.id)
-            }
+            try applyLocal(plan, author: author, state: &state)
+        }
+    }
+
+    private func applyLocal(_ plan: FamilyNotebookImportPlan, author: FamilyNotebookAuthor, state: inout State) throws {
+        guard plan.familyID == familyID else { throw FamilyNotebookError.familyMismatch }
+        for mapping in plan.mappings {
+            if state.mappings.contains(mapping) { continue }
+            if let old = state.snapshot.activeMappings.first(where: { $0.sourceKey == mapping.sourceKey }) {
+                guard old == mapping else { throw FamilyNotebookError.mappingConflict }
+            } else { state.mappings.append(mapping) }
+        }
+        for entry in plan.entries {
+            try FamilyNotebookCore.validate(target: entry.target, value: entry.value)
+            if state.operations.contains(where: { $0.target.removes(entry.target) }) { continue }
+            let current = state.snapshot.fieldState(for: entry.target)
+            if let current, current.operation.value == entry.value,
+               !entry.reassertSameValue || entry.editedAt <= current.operation.editedAt { continue }
+            let operation = try makeOperation(state: state, target: entry.target, value: entry.value,
+                author: author, editedAt: entry.editedAt)
+            state.operations = try FamilyNotebookCore.merge(state.operations, [operation])
+            state.clock = operation.version.clock; state.outboxIDs.insert(operation.id)
         }
     }
 
@@ -313,7 +352,13 @@ final class FamilyNotebookStore: @unchecked Sendable {
     /// seen both, so every iPhone settles on the newer one by the usual rule.
     /// The order of merge itself is unchanged (wall time never picks a winner
     /// there); equal times leave it to that order. Both values stay in history.
+    ///
+    /// 11/21 (点検): an imported value is as new as its source's date, not the
+    /// moment it was copied in (Store.applyImport keeps both), so a copy of
+    /// old writing never wins over a newer edit. One target that cannot be
+    /// written again is skipped: it never stops the rest of what was received.
     private func reassertNewerOwnEdits(touching incoming: [FamilyNotebookOperation], state: inout State) throws {
+        func written(_ operation: FamilyNotebookOperation) -> Date { operation.importedSourceEditedAt ?? operation.editedAt }
         let targets = Set(incoming.filter { $0.version.deviceID != deviceID }.map(\.target))
         for target in targets {
             guard let field = target.field, ![FamilyNotebookField.sharingEnded, .farewellDay, .representativePhoto].contains(field),
@@ -321,12 +366,15 @@ final class FamilyNotebookStore: @unchecked Sendable {
                   current.operation.version.deviceID != deviceID,
                   let own = current.history.filter({ $0.operation.version.deviceID == deviceID })
                       .max(by: { $0.operation.version < $1.operation.version }),
-                  own.isConcurrentConflict, own.operation.editedAt > current.operation.editedAt,
+                  own.isConcurrentConflict, written(own.operation) > written(current.operation),
                   let value = own.operation.value else { continue }
-            let again = try makeOperation(state: state, target: target, value: value,
-                                          author: own.operation.author, editedAt: own.operation.editedAt)
-            state.operations = try FamilyNotebookCore.merge(state.operations, [again])
-            state.clock = again.version.clock; state.outboxIDs.insert(again.id)
+            do {
+                let again = try makeOperation(state: state, target: target, value: value, author: own.operation.author,
+                                              editedAt: own.operation.editedAt,
+                                              importedSourceEditedAt: own.operation.importedSourceEditedAt)
+                state.operations = try FamilyNotebookCore.merge(state.operations, [again])
+                state.clock = again.version.clock; state.outboxIDs.insert(again.id)
+            } catch { continue }
         }
     }
 
