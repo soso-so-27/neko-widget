@@ -405,6 +405,8 @@ struct CatHomeView: View {
             if let cat = self.cats.first(where: { $0.id == route.catID }) { carePage(cat) }
         }
         .onAppear { Task { await states.refresh() } }
+        // 11/21: a cat's deletion cleanup that could not finish goes on.
+        .onAppear { CatProfileDeletionCleanup.retryPending(existingProfiles: presentation.profiles.map(\.identifier)) }
         // 11/17: the family's photos of the family cats with no cat here, read
         // when the tab shows them and when the notebook brings something
         // (at most once a minute per cat; never while off).
@@ -503,9 +505,9 @@ struct CatHomeView: View {
         switch cat.kind {
         case let .profile(profile):
             // 11/21: never a deleted record (a cat brought back by a file).
-            careStore.state?.cats.first { $0.profileID?.uuidString == profile.identifier && $0.deletedAt == nil }
+            UUID(uuidString: profile.identifier).flatMap { careStore.state?.record(profileID: $0) }
         case let .toolCat(id):
-            careStore.state?.cats.first { $0.catID == id && $0.deletedAt == nil }
+            careStore.state?.record(catID: id)
         }
     }
 
@@ -582,7 +584,18 @@ struct CatHomeView: View {
         .sensoryFeedback(.selection, trigger: settledPageID) { old, new in
             old != nil && new != nil && old != new
         }
-        .onAppear { if pageID == nil { pageID = current.id } }
+        .onAppear {
+            // 11/21: a page whose cat is gone (deleted) is not kept either.
+            if pageID == nil || (pageID != Self.addPageID && !cats.contains(where: { $0.id == pageID })) { pageID = current.id }
+        }
+        // 11/21: the page's cat was deleted: the cat that took its place (or
+        // the one before it) is the page, so VoiceOver reads a page again.
+        .onChange(of: cats.map(\.id)) { old, new in
+            guard let shown = pageID, shown != Self.addPageID, !new.contains(shown), !new.isEmpty else { return }
+            let next = new[min(old.firstIndex(of: shown) ?? 0, new.count - 1)]
+            pageID = next
+            storedCatID = next
+        }
     }
 
     private func page(_ cat: CatHomeCat, index: Int, cats: [CatHomeCat], metrics: CatHomeMetrics) -> CatHomePage {
