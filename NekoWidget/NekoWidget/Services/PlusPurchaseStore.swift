@@ -1419,7 +1419,15 @@ final class PlusPurchaseStore: ObservableObject {
             let existing = try BillingKeychainStore.load()
             let marker = try BillingInstallationMarkerStore.loadExisting()
             guard entitlementState.lastServerConfirmed == nil else { return false }
-            if let existing {
+            // 11/21c: a credential kept in the Keychain from an earlier
+            // installation (a reinstall) is no account for this one. Like no
+            // credential at all, only the scan below (no current Plus
+            // purchase on this Apple ID) makes a new purchase possible; the
+            // purchase then replaces it (`replaceRetainedCredential`).
+            let retainedFromAnotherInstallation = try existing.map {
+                try $0.validated().installationMarker != marker?.uuidString.lowercased()
+            } ?? false
+            if let existing, !retainedFromAnotherInstallation {
                 guard let marker else { return false }
                 _ = try BillingSandboxOwnerEnrollment.readExistingPending(
                     credential: existing, installationMarker: marker

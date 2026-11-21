@@ -8,6 +8,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 STORE = (ROOT / "NekoWidget/Services/PlusPurchaseStore.swift").read_text(encoding="utf-8")
 CORE = (ROOT / "NekoWidget/Services/BillingClientCore.swift").read_text(encoding="utf-8")
 SERVER_AUTH = (ROOT / "SharingService/src/billing-auth.ts").read_text(encoding="utf-8")
+CLIENT = (ROOT / "NekoWidget/Services/BillingAPIClient.swift").read_text(encoding="utf-8")
+KEYCHAIN = (ROOT / "NekoWidget/Services/BillingKeychainStore.swift").read_text(encoding="utf-8")
+OFFER = (ROOT / "NekoWidget/Services/MembershipOfferModel.swift").read_text(encoding="utf-8")
+SERVER_BILLING = (ROOT / "SharingService/src/billing.ts").read_text(encoding="utf-8")
 
 
 def section(text: str, start: str, end: str) -> str:
@@ -106,6 +110,71 @@ class AskToBuyPendingTests(unittest.TestCase):
         self.assertIn("pendingProductID == nil,", purchase)
         self.assertIn("pendingProductID = product.id", purchase)
         self.assertTrue(re.search(r"case \.pending:\s*pendingProductID = product\.id\s*return \.pending", purchase))
+
+
+class ReinstallCanBuyAgainTests(unittest.TestCase):
+    """A credential kept in the Keychain from an earlier installation."""
+
+    def setUp(self) -> None:
+        self.swap = section(KEYCHAIN, "static func replaceRetainedCredential(",
+                            "static func loadRecoveryAttempt()")
+        self.fresh = section(CLIENT, "private func loadOrCreateFreshCredential(", "private func resume(")
+
+    def test_keychain_swap_is_compare_and_swap_under_the_lock(self) -> None:
+        swap = self.swap
+        self.assertIn("try withLock {", swap)
+        self.assertIn("candidate.phase == .pendingBootstrap", swap)
+        self.assertIn("retained.installationMarker != candidate.installationMarker", swap)
+        # Idempotent: a winner for this installation is returned, not replaced.
+        self.assertLess(swap.index("current.installationMarker == candidate.installationMarker"),
+                        swap.index("guard current == retained else"))
+        self.assertLess(swap.index("guard current == retained else"), swap.index("SecItemUpdate("))
+        self.assertIn("throw BillingClientError.credentialChanged", swap)
+        self.assertIn("guard try loadUnlocked() == candidate else", swap)
+        for forbidden in ("SecItemDelete", "SecItemAdd", "registered", "billingAccountID"):
+            self.assertNotIn(forbidden, swap)
+
+    def test_fresh_path_replaces_only_after_the_no_purchase_proof(self) -> None:
+        fresh = self.fresh
+        same = fresh.index("guard try existing.validated().installationMarker != markerValue else {")
+        self.assertLess(same, fresh.index("return try await resume(existing, markerValue: markerValue)"))
+        proof = fresh.index("try authorization.validatedForBootstrap()")
+        self.assertLess(proof, fresh.index("replaceRetainedCredential(retained, candidate)"))
+        self.assertLess(proof, fresh.index("insertPendingCredential(candidate)"))
+        self.assertIn("return try await resume(pending, markerValue: markerValue)", fresh)
+        # Never re-bound: no credential is rewritten with this marker.
+        self.assertNotIn("installationMarker = markerValue", fresh)
+        self.assertNotIn("installationMarker: markerValue", fresh)
+        resume = section(CLIENT, "private func resume(", "private func completeBootstrap(")
+        self.assertIn("guard existing.installationMarker == markerValue else {", resume)
+        self.assertIn("throw BillingClientError.installationChanged", resume)
+        # A current purchase never reaches the swap: the scan sends it to recovery.
+        authorizer = (ROOT / "NekoWidget/Services/BillingFreshAccountAuthorization.swift").read_text(encoding="utf-8")
+        self.assertIn("throw BillingClientError.billingAccountRecoveryRequired", authorizer)
+        prepare = section(CLIENT, "func prepareAccountForExplicitPurchase()", "func recordVerifiedTransactionEvent(")
+        self.assertIn("error == .billingCredentialMissing || error == .installationChanged", prepare)
+        self.assertIn(".authorizeAfterCurrentEntitlementScan()", prepare)
+        # A createAccount lost after the swap is resumed with the same request.
+        self.assertIn("const existing = await loadBootstrap(env, clientRequestId);", SERVER_BILLING)
+
+    def test_store_offers_purchase_for_a_retained_credential_only_after_scan(self) -> None:
+        fresh = section(STORE, "private func hasFreshLocalPurchaseEligibility() async -> Bool {",
+                        "private func scanCurrentEntitlements()")
+        retained = fresh.index("let retainedFromAnotherInstallation")
+        self.assertLess(retained, fresh.index("if let existing, !retainedFromAnotherInstallation {"))
+        self.assertLess(fresh.index("if let existing, !retainedFromAnotherInstallation {"),
+                        fresh.index(".authorizeAfterCurrentEntitlementScan()"))
+        self.assertIn("try authorization.validatedForBootstrap()", fresh)
+        self.assertIn("guard try BillingKeychainStore.load() == existing,", fresh)
+
+    def test_restore_without_any_purchase_is_nothing_to_restore(self) -> None:
+        client = OFFER[OFFER.index("private final class MembershipStoreKitClient"):]
+        restore = section(client, "func restore() async -> MembershipOfferActionResult {",
+                          "private static func periodText(")
+        catch = restore[restore.index("} catch {"):]
+        self.assertIn("(error as? BillingClientError) == .billingAccountRecoveryUnavailable", catch)
+        self.assertIn("BillingFreshAccountAuthorizer().authorizeAfterCurrentEntitlementScan()", catch)
+        self.assertLess(catch.index("return .nothingToRestore"), catch.index("return .restoreFailed(.recovering(error))"))
 
 
 if __name__ == "__main__":
