@@ -73,7 +73,7 @@ struct EvacuationPreparationView: View {
                             EvacuationCatsView(profiles: profiles, otherPhotos: allPhotos, store: store, reuseStore: reuseStore)
                         } label: {
                             ToolValueRow(title: "猫の情報", systemImage: "cat", value: catsState,
-                                         filled: !store.plan.cats.isEmpty)
+                                         filled: !livingCats.isEmpty)
                         }
                         .accessibilityIdentifier("evacuation-cats-open")
                         NavigationLink { EvacuationDestinationsView(profiles: profiles, store: store) } label: {
@@ -198,9 +198,10 @@ struct EvacuationPreparationView: View {
     /// the nearest 期限 first (red once past) when one is near (round 2,
     /// 「フードの期限まであと12日」); 「なし」 with no item on the list.
     private var packingState: (value: String, filled: Bool, problem: Bool) {
-        let needed = store.plan.supplies.filter(\.isNeeded)
+        let departed = CatFarewell.departedIdentifiers()
+        let needed = store.plan.activeSupplies(departed: departed)
         if needed.isEmpty { return (ToolEmptyValue.none, false, false) }
-        if let expiry = store.plan.expiryState() { return (expiry, true, expiry.contains("期限切れ")) }
+        if let expiry = store.plan.expiryState(departed: departed) { return (expiry, true, expiry.contains("期限切れ")) }
         let ready = needed.filter { store.plan.carriedIDs.contains($0.id) }.count
         return ("\(ready) / \(needed.count)", true, false)
     }
@@ -290,7 +291,8 @@ private struct EvacuationSaveNotice: View {
 private struct EvacuationPackingView: View {
     @ObservedObject var store: EvacuationStore
     @State private var resetRequested = false
-    private var needed: [EvacuationSupply] { store.plan.supplies.filter(\.isNeeded) }
+    /// 11/21: without the items kept for a departed cat.
+    private var needed: [EvacuationSupply] { store.plan.activeSupplies(departed: CatFarewell.departedIdentifiers()) }
     private var confirmedCount: Int { needed.filter { store.plan.carriedIDs.contains($0.id) }.count }
 
     var body: some View {
@@ -373,7 +375,9 @@ private struct EvacuationNowView: View {
     @ObservedObject var store: EvacuationStore
     @State private var showing: EvacuationPreviewItem?
     @State private var showError: String?
-    private var needed: [EvacuationSupply] { store.plan.supplies.filter(\.isNeeded) }
+    /// 11/21: without the items kept for a departed cat, and without the cat.
+    private var needed: [EvacuationSupply] { store.plan.activeSupplies(departed: CatFarewell.departedIdentifiers()) }
+    private var livingCats: [EvacuationCat] { store.plan.livingCats(departed: CatFarewell.departedIdentifiers()) }
     private var takenCount: Int { needed.filter { store.takenIDs.contains($0.id) }.count }
 
     var body: some View {
@@ -405,9 +409,9 @@ private struct EvacuationNowView: View {
                 Text("持ち出すもの  \(takenCount) / \(needed.count)")
                     .accessibilityIdentifier("evacuation-now-count")
             }
-            if !store.plan.cats.isEmpty {
+            if !livingCats.isEmpty {
                 Section {
-                    ForEach(store.plan.cats) { cat in
+                    ForEach(livingCats) { cat in
                         Button("\(name(of: cat))を見せる") { show(cat) }
                             .disabled(store.saveError != nil)
                             .accessibilityIdentifier("evacuation-now-show-\(cat.id.uuidString)")
@@ -484,7 +488,7 @@ private struct EvacuationSuppliesEditor: View {
     var body: some View {
         List {
             Section {
-                ForEach(store.plan.supplies) { item in
+                ForEach(shownSupplies) { item in
                     NavigationLink { EvacuationSupplyEditor(id: item.id, store: store) } label: {
                         VStack(alignment: .leading) {
                             Text(item.title.isEmpty ? "名前のない持ち物" : item.title)
@@ -515,13 +519,20 @@ private struct EvacuationSuppliesEditor: View {
             .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
     }
 
+    /// 11/21: the items kept for a departed cat stay in the plan, not here.
+    private var shownSupplies: [EvacuationSupply] {
+        let gone = store.plan.departedCatIDs(departed: CatFarewell.departedIdentifiers())
+        return store.plan.supplies.filter { !($0.catID.map(gone.contains) ?? false) }
+    }
+
     /// Adds what is missing; nothing already on the list is changed. A cat with
     /// medicine in 「この子のこと」 gets its own medicine item.
     private func addRecommended() {
         let medicines = store.medicineNames()
+        let departed = CatFarewell.departedIdentifiers()
         store.update { plan in
-            plan.addRecommendedSupplies()
-            plan.followMedicines(medicines)
+            plan.addRecommendedSupplies(departed: departed)
+            plan.followMedicines(medicines, departed: departed)
         }
     }
 }
@@ -536,6 +547,12 @@ private struct EvacuationSupplyEditor: View {
     @FocusState private var nameFocused: Bool
     @AppStorage(EvacuationNotice.settingKey) private var noticeSetting = 0
     private var item: EvacuationSupply? { store.plan.supplies.first { $0.id == id } }
+    /// 11/21: 「誰の持ち物」 offers the living cats (and the item's own cat, so
+    /// the choice it has is never lost).
+    private var ownerChoices: [EvacuationCat] {
+        let departed = CatFarewell.departedIdentifiers()
+        return store.plan.cats.filter { !$0.isDeparted(departed) || $0.id == item?.catID }
+    }
     /// A new 期限 does not undo the item's check: it is when the stock runs
     /// out, not a change to what is packed. The first one turns the notices on.
     private func setExpiry(_ date: Date?) {
@@ -565,7 +582,7 @@ private struct EvacuationSupplyEditor: View {
                     TextField("置き場所（例：玄関の防災バッグ）", text: value(\.location, fallback: ""))
                     Picker("誰の持ち物", selection: value(\.catID, fallback: Optional<UUID>.none)) {
                         Text("家で共通").tag(Optional<UUID>.none)
-                        ForEach(store.plan.cats) { Text($0.displayName).tag(Optional($0.id)) }
+                        ForEach(ownerChoices) { Text($0.displayName).tag(Optional($0.id)) }
                     }
                     Toggle("チェックリストに入れる", isOn: value(\.isNeeded, fallback: true))
                 } footer: { Text("直した持ち物は、チェックが外れます。") }
@@ -1146,7 +1163,9 @@ private struct EvacuationDestinationsView: View {
 
     /// Contacts are shared by every cat; any cat's 「この子のこと」 edits them.
     private var contactSubject: CatCareSubject? {
-        guard let cat = store.plan.cats.first else { return nil }
+        // 11/21: a living cat's page first; a departed cat's only when it is the one there is.
+        guard let cat = store.plan.livingCats(departed: CatFarewell.departedIdentifiers()).first
+                ?? store.plan.cats.first else { return nil }
         if let profile = profiles.first(where: { $0.identifier == cat.profileID }) { return .profile(profile) }
         return .toolCat(id: cat.toolCatID ?? cat.id, name: cat.name)
     }

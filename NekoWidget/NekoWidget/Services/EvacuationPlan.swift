@@ -54,14 +54,19 @@ struct EvacuationSupply: Codable, Equatable, Identifiable {
     /// 11/20: the 期限 as a calendar day, 西暦 "2027-05-20", so a time-zone
     /// change never moves the day or its notice. Absent in older files.
     var expiresOn: String?
+    /// 11/21: when the 期限 was last set. A 期限 set less than 14 days ahead
+    /// gets its one notice the next 9:00 after this (EvacuationPlan.notices).
+    /// Absent in older files, which keep the 14-days-before notice only.
+    var expirySetAt: Date?
 
     /// Sets (or clears) the 期限 to the day `date` falls on in `calendar`.
-    mutating func setExpiry(_ date: Date?, calendar: Calendar = .current) {
-        guard let date else { expiresAt = nil; expiresOn = nil; return }
+    mutating func setExpiry(_ date: Date?, calendar: Calendar = .current, now: Date = Date()) {
+        guard let date else { expiresAt = nil; expiresOn = nil; expirySetAt = nil; return }
         let parts = Self.gregorian(calendar).dateComponents([.year, .month, .day], from: date)
         guard let year = parts.year, let month = parts.month, let day = parts.day else { return }
         expiresOn = String(format: "%04d-%02d-%02d", year, month, day)
         expiresAt = calendar.startOfDay(for: date)
+        expirySetAt = now
     }
 
     /// The start of the 期限 day in `calendar`: the stored day when there is
@@ -177,6 +182,10 @@ struct EvacuationPlan: Codable, Equatable {
     var createdAt: Date?
     /// The last time an item was checked: 「最後に見直した日」 (lastReadyDate).
     var lastCheckedAt: Date?
+    /// 11/21: 「チェックをやり直す」 and 「見直しを始める」 start the half-year
+    /// again from that day. Optional: older plans have none (older versions
+    /// ignore it).
+    var reviewRestartedAt: Date?
     /// 11/20: 「見直しの時期に知らせる」 (1: on, 2: turned off), kept with the
     /// plan so 保存 brings the choice back with the 期限 after a restore or a
     /// reinstall. Optional: plans saved before (and by older versions, which
@@ -208,11 +217,12 @@ struct EvacuationPlan: Codable, Equatable {
     /// Adds recommended items that are not on the list yet. Existing items,
     /// their amounts and places are never changed. Returns how many were added.
     @discardableResult
-    mutating func addRecommendedSupplies() -> Int {
+    mutating func addRecommendedSupplies(departed: Set<String> = []) -> Int {
         let titles = Set(supplies.map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines) })
+        let count = max(livingCats(departed: departed).count, 1)
         var added = 0
         for title in Self.recommendedSupplies where !titles.contains(title) && supplies.count < Self.maximumSupplies {
-            supplies.append(EvacuationSupply(title: title, quantity: Self.recommendedQuantity(title, cats: max(cats.count, 1))))
+            supplies.append(EvacuationSupply(title: title, quantity: Self.recommendedQuantity(title, cats: count)))
             added += 1
         }
         return added
@@ -224,6 +234,18 @@ struct EvacuationPlan: Codable, Equatable {
     /// built alone by the CI checks, without the app's views).
     func livingCats(departed: Set<String>) -> [EvacuationCat] {
         cats.filter { !$0.isDeparted(departed) }
+    }
+
+    /// 11/21: the cats whose 旅立った日 is recorded, by their id in this plan.
+    func departedCatIDs(departed: Set<String>) -> Set<UUID> {
+        Set(cats.filter { $0.isDeparted(departed) }.map(\.id))
+    }
+
+    /// 11/21: the checklist: items on it, without those kept for a departed
+    /// cat (they stay in the plan, only no longer shown, counted or reminded).
+    func activeSupplies(departed: Set<String>) -> [EvacuationSupply] {
+        let gone = departedCatIDs(departed: departed)
+        return supplies.filter { $0.isNeeded && !($0.catID.map(gone.contains) ?? false) }
     }
 
     mutating func removeCat(_ id: UUID, departed: Set<String> = []) {
@@ -253,8 +275,9 @@ struct EvacuationPlan: Codable, Equatable {
 
     /// Each cat's medicines from 「この子のこと」 have one item. An item this app
     /// made (「薬：」) follows the current names; one the owner renamed stays.
-    mutating func followMedicines(_ medicines: [UUID: [String]]) {
-        for cat in cats {
+    mutating func followMedicines(_ medicines: [UUID: [String]], departed: Set<String> = []) {
+        // 11/21: a departed cat's medicine is not added (an item kept stays).
+        for cat in livingCats(departed: departed) {
             let names = (medicines[cat.id] ?? []).filter { !$0.isEmpty }
             guard !names.isEmpty else { continue }
             let title = "薬：" + names.joined(separator: "・")
@@ -286,10 +309,12 @@ struct EvacuationPlan: Codable, Equatable {
     }
 
     /// 「見直しを始める」 and 「チェックをやり直す」: every item is checked again.
-    mutating func clearChecks() {
+    mutating func clearChecks(now: Date = Date()) {
         carriedIDs = []
         checkStartedAt = nil
         lastCheckedAt = nil
+        // 11/21: starting again is a review; the half-year counts from today.
+        reviewRestartedAt = now
     }
 
     /// 「最後に見直した日」 (11/8): the one date shown, on the list, the memo and
@@ -316,19 +341,20 @@ struct EvacuationPlan: Codable, Equatable {
     func reviewIsDue(now: Date = Date(), dismissedAt: Date) -> Bool {
         let halfYear: TimeInterval = 182 * 24 * 60 * 60
         let made = createdAt ?? earliestKnownDate ?? now
-        let start = max(made, lastReadyDate ?? made)
+        let start = max(made, lastReadyDate ?? made, reviewRestartedAt ?? made)
         return now.timeIntervalSince(start) > halfYear && now.timeIntervalSince(dismissedAt) > halfYear
     }
 
     /// The item on the list whose 期限 comes first, when it is within 30 days or past.
-    func nearestExpiry(now: Date = Date(), calendar: Calendar = .current) -> EvacuationSupply? {
-        supplies.filter { $0.isNeeded && $0.expiryText(now: now, calendar: calendar) != nil }
+    func nearestExpiry(now: Date = Date(), calendar: Calendar = .current,
+                       departed: Set<String> = []) -> EvacuationSupply? {
+        activeSupplies(departed: departed).filter { $0.expiryText(now: now, calendar: calendar) != nil }
             .min { ($0.expiryDate(calendar: calendar) ?? .distantFuture) < ($1.expiryDate(calendar: calendar) ?? .distantFuture) }
     }
 
     /// The hub's step 1 line: 「フードの期限まであと12日」.
-    func expiryState(now: Date = Date(), calendar: Calendar = .current) -> String? {
-        guard let item = nearestExpiry(now: now, calendar: calendar),
+    func expiryState(now: Date = Date(), calendar: Calendar = .current, departed: Set<String> = []) -> String? {
+        guard let item = nearestExpiry(now: now, calendar: calendar, departed: departed),
               let text = item.expiryText(now: now, calendar: calendar) else { return nil }
         let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let name = title.isEmpty ? "持ち物" : title
@@ -340,7 +366,7 @@ struct EvacuationPlan: Codable, Equatable {
     /// Nil for a plan never saved.
     func reviewDueDate(dismissedAt: Date) -> Date? {
         guard let made = createdAt ?? earliestKnownDate else { return nil }
-        let start = max(made, lastReadyDate ?? made, dismissedAt)
+        let start = max(made, lastReadyDate ?? made, reviewRestartedAt ?? made, dismissedAt)
         return start.addingTimeInterval(182 * 24 * 60 * 60)
     }
 
@@ -359,26 +385,33 @@ struct EvacuationPlan: Codable, Equatable {
             result.append(EvacuationScheduledNotice(id: EvacuationScheduledNotice.reviewID, date: at,
                                                     body: "避難の備えを見直す時期です。"))
         }
-        // 11/21: an item kept for a departed cat sets no notice.
-        let departedCats = Set(cats.filter { $0.isDeparted(departed) }.map(\.id))
-        let days = Set(supplies.filter { $0.isNeeded && !($0.catID.map(departedCats.contains) ?? false) }
-            .compactMap { item -> Date? in
-                guard let expiry = item.expiryDate(calendar: calendar) else { return nil }
-                return calendar.date(byAdding: .day, value: -EvacuationScheduledNotice.expiryDaysBefore, to: expiry)
-            })
-        // 11/21: days already past are dropped before the limit, so they
-        // never take the places of the days still ahead.
-        let ahead = days.compactMap { day -> (Date, Date)? in
-            guard let at = calendar.date(bySettingHour: EvacuationScheduledNotice.hour, minute: 0, second: 0, of: day),
-                  at > now else { return nil }
-            return (day, at)
-        }.sorted { $0.0 < $1.0 }
-        for (day, at) in ahead.prefix(EvacuationScheduledNotice.expiryLimit) {
+        // 11/21: an item kept for a departed cat sets no notice (activeSupplies).
+        // 14 days before each 期限, at 9:00. A 期限 set less than 14 days
+        // ahead gets one the next 9:00 after it was set, on or before its day
+        // (it said 「14日前に知らせます」 and set none). One per day: the
+        // nearest 期限 of the day is the one counted.
+        var byDay: [Date: (at: Date, daysLeft: Int)] = [:]
+        for item in activeSupplies(departed: departed) {
+            guard let expiry = item.expiryDate(calendar: calendar),
+                  let before = calendar.date(byAdding: .day, value: -EvacuationScheduledNotice.expiryDaysBefore, to: expiry),
+                  var at = calendar.date(bySettingHour: EvacuationScheduledNotice.hour, minute: 0, second: 0, of: before)
+            else { continue }
+            if let set = item.expirySetAt, set > at, let late = nineOClock(onOrAfter: set) { at = late }
+            // Days already past are dropped before the limit, so they never
+            // take the places of the days still ahead; none after the 期限.
+            guard at > now, let end = calendar.date(byAdding: .day, value: 1, to: expiry), at < end else { continue }
+            let day = calendar.startOfDay(for: at)
+            let left = max(calendar.dateComponents([.day], from: day, to: expiry).day ?? 0, 0)
+            if let kept = byDay[day], kept.daysLeft <= left { continue }
+            byDay[day] = (at, left)
+        }
+        let ahead = byDay.sorted { $0.key < $1.key }
+        for (day, value) in ahead.prefix(EvacuationScheduledNotice.expiryLimit) {
             let parts = calendar.dateComponents([.year, .month, .day], from: day)
             let id = EvacuationScheduledNotice.expiryPrefix
                 + String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
-            result.append(EvacuationScheduledNotice(id: id, date: at,
-                body: "持ち出すものの期限まであと\(EvacuationScheduledNotice.expiryDaysBefore)日です。"))
+            result.append(EvacuationScheduledNotice(id: id, date: value.at,
+                body: value.daysLeft == 0 ? "持ち出すものの期限は今日です。" : "持ち出すものの期限まであと\(value.daysLeft)日です。"))
         }
         return result
     }

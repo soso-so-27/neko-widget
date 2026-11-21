@@ -243,9 +243,19 @@ struct ToolOutputVerifier {
         try check(days("1月3日〜1月5日") == ["1/3（日）", "1/4（月）", "1/5（火）"], "a date half a year back is next year's")
         try check(days("2027年2月27日〜3月1日") == ["2/27（土）", "2/28（日）", "3/1（月）"], "a year written is used")
         try check(days("11/8〜11/8") == ["11/8（日）"], "one day")
-        for period in ["11月10日まで", "11月3日から3日間", "", "土曜の朝から月曜の夜", "11/1〜12/31", "2/30〜3/2"] {
+        // 11/21: nights and days, and 「1.5」 is not January 5.
+        try check(days("11/3から2泊3日") == ["11/3（火）", "11/4（水）", "11/5（木）"], "2泊3日 is three days")
+        try check(days("11月3日から2泊") == ["11/3（火）", "11/4（水）", "11/5（木）"], "2泊 ends the day after the second night")
+        try check(days("11月3日から3日間") == ["11/3（火）", "11/4（水）", "11/5（木）"], "3日間 counts the first day")
+        try check(days("11/3〜5日（2泊3日）") == ["11/3（火）", "11/4（水）", "11/5（木）"], "an end day said with the nights")
+        try check(days("11.3〜11.5") == ["11/3（火）", "11/4（水）", "11/5（木）"], "dates with a dot")
+        try check(days("12/30から1.5日") == nil, "1.5日 is not January 5")
+        try check(days("約1.5週間 11/3〜11/5") == ["11/3（火）", "11/4（水）", "11/5（木）"], "a number before the dates is not one")
+        try check(days("11/3〜11/5 ごはん1.5杯") == ["11/3（火）", "11/4（水）", "11/5（木）"], "a number after the dates is not one")
+        for period in ["11月10日まで", "", "土曜の朝から月曜の夜", "11/1〜12/31", "2/30〜3/2", "1.5", "11/3から0泊"] {
             try check(days(period) == nil, "not a range: \(period)")
         }
+        try careMemoOldStayExpires(calendar: calendar)
         let blank = CareCheckTable(period: "11月10日まで", catNames: ["むぎ", "あめ"], medicine: false, now: now, calendar: calendar)
         try check(blank.days == Array(repeating: "", count: 7), "7 blank rows when the period is not a range")
         try check(blank.catNames == ["むぎ", "あめ"], "one block a cat")
@@ -260,6 +270,43 @@ struct ToolOutputVerifier {
         try check(CareCheckTable.hasMedicine(record), "a written medicine")
         record.medications[1].deletedAt = t0
         try check(!CareCheckTable.hasMedicine(record), "a deleted medicine is not one")
+    }
+
+    /// 11/21: 14 days after a memo, only the period and the request it handed
+    /// over are emptied; text typed since, a stay still ahead, and a plan
+    /// saved before (nothing recorded) are kept.
+    static func careMemoOldStayExpires(calendar: Calendar) throws {
+        let made = calendar.date(from: DateComponents(year: 2026, month: 11, day: 1, hour: 9))!
+        let later = made.addingTimeInterval(20 * 24 * 60 * 60)
+        var plan = CareHandoffPlan()
+        plan.period = "11/3〜11/5"; plan.request = "写真を送ってください"
+        plan.lastMadeAt = made; plan.madePeriod = plan.period; plan.madeRequest = plan.request
+        try check(!plan.requestIsStale(now: made.addingTimeInterval(13 * 24 * 60 * 60), calendar: calendar), "not before 14 days")
+        var handed = plan
+        try check(handed.clearStaleRequest(now: later, calendar: calendar), "an old trip expires")
+        try check(handed.period.isEmpty && handed.request.isEmpty && handed.lastMadeAt == nil, "the handed text is emptied")
+        var typed = plan
+        typed.period = "12/20から2泊"; typed.request = "夜は窓を閉めてください"
+        _ = typed.clearStaleRequest(now: later, calendar: calendar)
+        try check(typed.period == "12/20から2泊" && typed.request == "夜は窓を閉めてください", "the next stay typed since stays")
+        var half = plan
+        half.request = "夜は窓を閉めてください"
+        _ = half.clearStaleRequest(now: later, calendar: calendar)
+        try check(half.period.isEmpty && half.request == "夜は窓を閉めてください", "only the unchanged text expires")
+        var ahead = plan
+        ahead.period = "12/1〜12/3"; ahead.madePeriod = ahead.period
+        try check(!ahead.requestIsStale(now: later, calendar: calendar), "a stay still ahead is not old")
+        try check(!ahead.clearStaleRequest(now: later, calendar: calendar) && ahead.period == "12/1〜12/3", "and stays")
+        var older = plan
+        older.madePeriod = nil; older.madeRequest = nil
+        _ = older.clearStaleRequest(now: later, calendar: calendar)
+        try check(older.period == "11/3〜11/5" && older.request == "写真を送ってください", "a plan saved before keeps its text")
+        let json = try JSONEncoder().encode(plan)
+        try check(try JSONDecoder().decode(CareHandoffPlan.self, from: json) == plan, "the new fields round-trip")
+        var object = try JSONSerialization.jsonObject(with: json) as! [String: Any]
+        object.removeValue(forKey: "madePeriod"); object.removeValue(forKey: "madeRequest")
+        let back = try JSONDecoder().decode(CareHandoffPlan.self, from: JSONSerialization.data(withJSONObject: object))
+        try check(back.madePeriod == nil && back.period == plan.period, "a plan without them still opens")
     }
 
     /// Round 2 (11/8): 「文字で送る」. The same rows as the PDF, as text to paste.

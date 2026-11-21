@@ -42,15 +42,20 @@ final class CareHandoffStore: ObservableObject {
         repository.retryPhotoCleanup()
         pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
     }
-    /// 11/8: remembers what this memo included and when it was made.
+    /// 11/8: remembers what this memo included and when it was made; 11/21:
+    /// with the period and the request it handed over (only they expire).
     func recordMade(health: Bool, contacts: Bool, at date: Date = Date()) {
-        update { $0.includesHealth = health; $0.includesContacts = contacts; $0.lastMadeAt = date }
+        update {
+            $0.includesHealth = health; $0.includesContacts = contacts; $0.lastMadeAt = date
+            $0.madePeriod = $0.period; $0.madeRequest = $0.request
+        }
     }
-    /// 11/8: 14 days after the last memo, the period and the request start
-    /// empty. A cat shared in the family notebook keeps its own.
+    /// 11/8: 14 days after the last memo, the period and the request it
+    /// handed over start empty (CareHandoffPlan.clearStaleRequest): never
+    /// text typed since, nor a stay still ahead. A shared cat keeps its own.
     func clearStaleRequest(now: Date = Date()) {
         guard plan.requestIsStale(now: now) else { return }
-        update { $0.period = ""; $0.request = ""; $0.lastMadeAt = nil }
+        update { _ = $0.clearStaleRequest(now: now) }
     }
     func receiveFamilyChanges() throws {
         // A failed local save is still an editor's draft; do not replace it.
