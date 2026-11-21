@@ -158,6 +158,59 @@ enum FamilyNotebookCatCareBridge {
             changes: .init(familyID: snapshot.familyID, entries: entries.filter { !initialTargets.contains($0.target) }, mappings: now.mappings))
     }
 
+    /// 11/21: what was written in 「この子のこと」 while the notebook was ended
+    /// by mistake (FamilyNotebookStore.resumeSharingAfterUnconfirmedEnd keeps
+    /// `since`, when it ended). Nothing reached the notebook then, and the next
+    /// projection (`apply`) put the family's values over it. Compared with the
+    /// family's values as `apply` would put them, every item changed here
+    /// since the end becomes a normal edit with its own edit time, except one
+    /// the family wrote later (its value stays) and one the notebook already
+    /// has. Items added here meanwhile go in; ones deleted here go as deleted
+    /// unless the family deleted them. Linked cats only, as `localChanges`.
+    static func editsWhileEnded(_ care: CatCareState, snapshot: FamilyNotebookSnapshot,
+                                since: Date) throws -> FamilyNotebookImportPlan {
+        var projected = try apply(snapshot, to: care)
+        for mapping in snapshot.activeMappings where mapping.recordID == nil {
+            guard let local = mapping.toolCatID,
+                  let index = projected.cats.firstIndex(where: { $0.catID == local && $0.deletedAt == nil }) else { continue }
+            let cat = mapping.familyCatID
+            projected.cats[index].weights = familyItems(projected.cats[index].weights, .weight, cat: cat, local: local, snapshot: snapshot)
+            projected.cats[index].medications = familyItems(projected.cats[index].medications, .medication, cat: cat, local: local, snapshot: snapshot)
+            projected.cats[index].vaccinations = familyItems(projected.cats[index].vaccinations, .vaccination, cat: cat, local: local, snapshot: snapshot)
+            projected.cats[index].meals = familyItems(projected.cats[index].meals, .meal, cat: cat, local: local, snapshot: snapshot)
+        }
+        let changes = try localChanges(projected, care, snapshot: snapshot).changes
+        let entries = changes.entries.filter { entry in
+            guard entry.editedAt >= since, entry.target.field != .farewellDay else { return false }
+            if snapshot.operations.contains(where: {
+                $0.target == entry.target && $0.value == entry.value && $0.editedAt == entry.editedAt
+            }) { return false }
+            guard let current = snapshot.fieldState(for: entry.target) else { return true }
+            return !current.isDeleted && entry.editedAt > (current.operation.importedSourceEditedAt ?? current.operation.editedAt)
+        }
+        return .init(familyID: changes.familyID, entries: entries, mappings: changes.mappings)
+    }
+
+    /// The items of one list as the family has them: an item without a
+    /// notebook record was made here; one deleted here but not by the family
+    /// is still the family's.
+    private static func familyItems<T: CatCareListEntry>(_ items: [T], _ collection: FamilyNotebookCollection, cat: UUID,
+                                                         local: UUID, snapshot: FamilyNotebookSnapshot) -> [T] {
+        var records: [UUID: UUID] = [:]
+        for mapping in snapshot.activeMappings where mapping.familyCatID == cat {
+            if let record = mapping.recordID, let id = localRecordID(mapping, cat: local, collection: collection) { records[id] = record }
+        }
+        return items.compactMap { item -> T? in
+            guard let record = records[item.id] else { return nil }
+            var copy = item
+            if copy.deletedAt != nil, snapshot.fieldState(for: .init(familyCatID: cat, collection: collection,
+                                                                      recordID: record, field: nil))?.isDeleted != true {
+                copy.deletedAt = nil
+            }
+            return copy
+        }
+    }
+
     /// `person` and `profiles`: this iPhone's person and its cats' pages. A
     /// family cat this person put in from one of these pages
     /// (FamilyNotebookCatOrigin) comes back as that page, not as a second cat.

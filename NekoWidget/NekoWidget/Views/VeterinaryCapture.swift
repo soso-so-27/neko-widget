@@ -98,6 +98,19 @@ enum VeterinaryCapture {
         }
     }
 
+    /// The movies a shot keeps until it is in the photo library.
+    static let moviePrefix = "neko-vet-video-"
+
+    /// 11/21: movies of shots never saved (the app closed while saving).
+    /// Called before the camera opens, never while a shot is being saved.
+    static func removeLeftoverMovies() {
+        let manager = FileManager.default
+        let names = (try? manager.contentsOfDirectory(atPath: manager.temporaryDirectory.path)) ?? []
+        for name in names where name.hasPrefix(moviePrefix) {
+            try? manager.removeItem(at: manager.temporaryDirectory.appendingPathComponent(name))
+        }
+    }
+
     /// The memo's copy: at most 2048 px on the long side, upright, without
     /// the photo's other details (place and so on).
     static func copy(of original: Data) -> Data? {
@@ -189,13 +202,24 @@ struct VeterinaryCameraView: UIViewControllerRepresentable {
         func imagePickerController(_ picker: UIImagePickerController,
                                    didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
             if let movie = info[.mediaURL] as? URL {
-                // The camera's file goes away after this call; keep a copy
-                // until it is saved to the photo library.
-                let copy = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("neko-vet-video-" + UUID().uuidString)
+                // The camera's file goes away after this call; keep it until
+                // it is saved to the photo library. 11/21: moved, not copied
+                // (a copy needs the space twice and left the camera's file
+                // behind); copied only when it cannot be moved.
+                let manager = FileManager.default
+                let copy = manager.temporaryDirectory
+                    .appendingPathComponent(VeterinaryCapture.moviePrefix + UUID().uuidString)
                     .appendingPathExtension(movie.pathExtension.isEmpty ? "mov" : movie.pathExtension)
-                do { try FileManager.default.copyItem(at: movie, to: copy); done(.video(copy)) }
-                catch { try? FileManager.default.removeItem(at: copy); done(.failed) }
+                do {
+                    do { try manager.moveItem(at: movie, to: copy) }
+                    catch { try manager.copyItem(at: movie, to: copy); try? manager.removeItem(at: movie) }
+                    done(.video(copy))
+                } catch {
+                    // Not kept: nothing of it stays behind, and it is said on screen.
+                    try? manager.removeItem(at: copy)
+                    try? manager.removeItem(at: movie)
+                    done(.failed)
+                }
             } else if let image = info[.originalImage] as? UIImage {
                 done(.photo(image))
             } else {

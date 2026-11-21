@@ -125,6 +125,34 @@ final class CatPreparednessStore: ObservableObject {
         }
     }
 
+    /// 11/21: the record under `old` goes to `new`: written there first, then
+    /// taken from `old`. A record already at `new` is never overwritten (the
+    /// old one then stays as it is). Its photos stay where they are: the
+    /// record still names them, so nothing is deleted.
+    func move(from old: String, to new: String) throws {
+        guard old != new, let record = records[old], records[new] == nil else { return }
+        var copied = records
+        copied[new] = record
+        try persist(copied)
+        var next = records
+        next.removeValue(forKey: old)
+        try persist(next)
+    }
+
+    /// For CatProfileDeletionCleanup (a family cat's profile deleted): its
+    /// 迷子の備え follows the family's cat (the key 迷子のとき uses for it).
+    /// True when nothing is left to move.
+    static func move(fromProfileID profileID: String, toCatID catID: UUID,
+                     store: CatPreparednessStore? = nil) -> Bool {
+        let store = store ?? .shared
+        let newKey = "guest-tool-" + catID.uuidString
+        var done = true
+        for key in Set([profileID, profileID.uppercased(), profileID.lowercased()]) where store.records[key] != nil {
+            do { try store.move(from: key, to: newKey) } catch { done = false }
+        }
+        return done
+    }
+
     private func persist(_ next: [String: CatPreparednessRecord]) throws {
         guard !hasCorruptManifest else { throw CocoaError(.fileReadCorruptFile) }
         try AppRecordDataset.requireWritable(manifest)

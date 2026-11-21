@@ -492,6 +492,82 @@ actor VeterinaryVisitStore {
         try commit(state); try? cleanup(&state)
     }
 
+    /// 11/21: a family cat whose profile was deleted lives on under the
+    /// family's cat ID (CatProfileDeletionCleanup). Every memo and detached
+    /// photo filed under `from` moves to `to` in one write, each with a new
+    /// revision, so an editor still open on the old cat cannot save over it.
+    /// Text, photos and dates stay as they were. Two open memos (one per
+    /// cat): an empty one gives way; when both have writing, the one edited
+    /// earlier is kept as finished (これまでの診察メモ). The family sees only
+    /// that, never the move itself: the memos are compared as if they had
+    /// always been filed under `to`, so nothing old is sent again.
+    /// Memos this build cannot read stay as they were. Returns how many moved.
+    @discardableResult
+    func refile(from old: UUID, to new: UUID) throws -> Int {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        guard old != new else { return 0 }
+        var state = try load()
+        let moving = Set(state.visits.filter { $0.catID == old }.map(\.id))
+        let photos = (state.detachedPhotos ?? []).filter { $0.catID == old }
+        guard !moving.isEmpty || !photos.isEmpty else { return 0 }
+        // What the family compares against: the same memos, already here.
+        let unchanged = state.visits.map { moving.contains($0.id) ? Self.filed($0, under: new, revision: $0.revision) : $0 }
+        var next = state.visits.map { moving.contains($0.id) ? Self.filed($0, under: new, revision: UUID()) : $0 }
+        func isOpen(_ visit: VeterinaryVisit) -> Bool { visit.completedAt == nil && visit.familyRecordID == nil }
+        let open = next.filter { $0.catID == new && isOpen($0) }
+        if open.count > 1 {
+            // At most one from each cat: the store allows one open memo per cat.
+            if let blank = open.first(where: Self.isBlank) {
+                next.removeAll { $0.id == blank.id }
+            } else if let earlier = open.min(by: { ($0.lastEditedAt ?? .distantPast) < ($1.lastEditedAt ?? .distantPast) }),
+                      let index = next.firstIndex(where: { $0.id == earlier.id }) {
+                next[index].completedAt = VeterinaryVisit.now(); next[index].revision = UUID()
+            }
+        }
+        for visit in next where visit.catID == new { try validate(visit) }
+        state.visits = next
+        if state.detachedPhotos != nil {
+            state.detachedPhotos = state.detachedPhotos?.map { photo in
+                guard photo.catID == old else { return photo }
+                return VeterinaryDetachedPhoto(visitID: photo.visitID, catID: new, entry: photo.entry,
+                                               familyPhotoLink: photo.familyPhotoLink)
+            }
+        }
+        try commit(state, familyBefore: unchanged)
+        return moving.count + photos.count
+    }
+
+    /// For CatProfileDeletionCleanup (a family cat's profile deleted): its
+    /// memos follow the family's cat. True when nothing is left to move.
+    static func refile(fromProfileID profileID: String, toCatID catID: UUID,
+                       store: VeterinaryVisitStore = .shared) async -> Bool {
+        guard let old = UUID(uuidString: profileID) else { return true }
+        do { _ = try await store.refile(from: old, to: catID); return true } catch { return false }
+    }
+
+    /// A memo nothing was written in yet (no row, no photo, no day).
+    nonisolated static func isBlank(_ visit: VeterinaryVisit) -> Bool {
+        visit.entries.isEmpty && visit.observations.isEmpty && visit.questions.isEmpty
+            && visit.startedOn == nil && !visit.hasResults && visit.familyRecordID == nil
+    }
+
+    /// The same memo under another cat: every saved field is carried over.
+    nonisolated static func filed(_ visit: VeterinaryVisit, under catID: UUID, revision: UUID) -> VeterinaryVisit {
+        var moved = VeterinaryVisit(id: visit.id, catID: catID, catName: visit.catName, revision: revision,
+            startedOn: visit.startedOn, observations: visit.observations, questions: visit.questions,
+            entries: visit.entries, completedAt: visit.completedAt)
+        moved.familyRecordID = visit.familyRecordID
+        moved.familyDetached = visit.familyDetached
+        moved.familyPhotoLink = visit.familyPhotoLink
+        moved.doctorNote = visit.doctorNote
+        moved.prescription = visit.prescription
+        moved.nextVisitOn = visit.nextVisitOn
+        moved.createdAt = visit.createdAt
+        moved.updatedAt = visit.updatedAt
+        moved.createdOn = visit.createdOn
+        return moved
+    }
+
     func cleanupPending() throws -> Bool {
         Self.lock.lock(); defer { Self.lock.unlock() }
         var state = try load(); try cleanup(&state)
@@ -661,7 +737,10 @@ actor VeterinaryVisitStore {
                 kCGImageSourceThumbnailMaxPixelSize: 64] as CFDictionary) != nil else { throw VeterinaryVisitError.corrupted }
 #endif
     }
-    private func commit(_ state: State, familyProjection: Bool = false, projectedBeforeReconnecting: State? = nil) throws {
+    /// `familyBefore`: what the family compares this write against, when it
+    /// is not the file as it was (a refile, which moves no shared value).
+    private func commit(_ state: State, familyProjection: Bool = false, projectedBeforeReconnecting: State? = nil,
+                        familyBefore: [VeterinaryVisit]? = nil) throws {
         var state = state
         // Only entries still in a memo keep their video length.
         if let videos = state.videoSeconds {
@@ -694,7 +773,7 @@ actor VeterinaryVisitStore {
         }
         guard bytes.count <= AppRecordJSON.maximumBytes else { throw VeterinaryVisitError.storage }
         #if os(iOS)
-        if !familyProjection { try FamilyNotebookToolSharing.visitsChanged(before: load().visits, after: state.visits, directory: directory) }
+        if !familyProjection { try FamilyNotebookToolSharing.visitsChanged(before: familyBefore ?? load().visits, after: state.visits, directory: directory) }
         #endif
         try write(bytes, to: url)
         NotificationCenter.default.post(name: Notification.Name("neko.app-records.committed.v1"), object: directory)

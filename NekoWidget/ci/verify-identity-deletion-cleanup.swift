@@ -67,6 +67,38 @@ actor DeletionRelay: GroupHTTPTransport {
     }
 }
 
+/// 11/21s: one person on the relay. The first deletion request removes the
+/// person; afterwards a signed request of that person is refused. The status
+/// answers only a request the relay accepted (by its receipt). The first
+/// reply can be lost after the deletion was made.
+actor PersonRelay: GroupHTTPTransport {
+    private var gone: Bool
+    private var losing = false
+    private var accepted = Set<String>()
+    private(set) var posts = 0
+    init(gone: Bool) { self.gone = gone }
+    func losesNextReply() { losing = true }
+    private static func answer(_ id: String) -> Data {
+        Data(#"{"protocolVersion":3,"requestId":"\#(id)","state":"processing","acceptedAt":1763600000,"completedAt":null}"#.utf8)
+    }
+    func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
+        let path = request.url?.path ?? "", base = "/v3/group-identities/deletion-requests"
+        let missing = GroupHTTPReply(status: 404, data: Data(#"{"error":{"code":"not_found"}}"#.utf8))
+        if path.hasPrefix(base + "/"), path.hasSuffix("/status") {
+            let id = String(path.dropFirst(base.count + 1).dropLast("/status".count))
+            return accepted.contains(id) ? GroupHTTPReply(status: 200, data: Self.answer(id)) : missing
+        }
+        guard path == base, request.httpMethod == "POST" else { return missing }
+        posts += 1
+        guard !gone else { return GroupHTTPReply(status: 401, data: Data(#"{"error":{"code":"invalid_authentication"}}"#.utf8)) }
+        let body = try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
+        let id = body?["operationId"] as? String ?? ""
+        gone = true; accepted.insert(id)
+        if losing { losing = false; throw URLError(.networkConnectionLost) }
+        return GroupHTTPReply(status: 202, data: Self.answer(id))
+    }
+}
+
 private func registered(_ identity: GroupDeviceIdentity) -> GroupDeviceIdentity {
     var value = identity; value.registered = true; return value
 }
@@ -365,6 +397,67 @@ enum IdentityDeletionCleanupChecks {
         print("identity deletion: only the deleted person's recovered device, link and notebook copies; another person's and unknown ones stay")
     }
 
+    /// 11/21s: the usual device was taken off and the recovered device (the
+    /// same person) deleted the person. The usual deletion finishes from that
+    /// accepted record, sends nothing the relay can no longer take, and a
+    /// lost reply is answered by the receipt; nothing is assumed.
+    static func recoveredDeviceChecks(_ folder: URL) async throws {
+        let usual = registered(.firstDevice())
+        let recovered = GroupDeviceIdentity(personPrivateKey: usual.personPrivateKey, personPublicKey: usual.personPublicKey,
+            signingPrivateKey: Curve25519.Signing.PrivateKey().rawRepresentation,
+            agreementPrivateKey: Curve25519.KeyAgreement.PrivateKey().rawRepresentation, windowCertificates: [:], registered: true)
+
+        // The person is already gone and this receipt was never sent: an error, not "done".
+        do {
+            let relay = PersonRelay(gone: true)
+            let secrets = MemorySecrets(), store = MemorySecrets()
+            try secrets.write(GroupWire.encode(usual), account: "identity", createOnly: true)
+            let c = try ProductionGroupWindowClient(endpoint: endpoint, secrets: secrets, transport: relay,
+                outboxDirectory: folder.appendingPathComponent("gone-" + UUID().uuidString))
+            var failed = false
+            do { _ = try await c.requestDeletion(of: recovered, in: store) } catch { failed = true }
+            try check(failed, "a deletion the relay never accepted is not taken as done")
+            try check(try secrets.read("identity-deletion") == nil, "and is not adopted")
+        }
+
+        let relay = PersonRelay(gone: false)
+        let secrets = MemorySecrets(), store = MemorySecrets()
+        try secrets.write(GroupWire.encode(usual), account: "identity", createOnly: true)
+        try store.write(GroupWire.encode(recovered), account: "identity", createOnly: true)
+        // An earlier try of the usual deletion the relay never accepted.
+        let earlier = GroupIdentityDeletion(operationID: UUID(), receipt: GroupWire.base64(Data(repeating: 3, count: 32)),
+                                            acceptedAt: nil, completedAt: nil, personID: usual.personID)
+        try secrets.write(GroupWire.encode(earlier), account: "identity-deletion", createOnly: true)
+        let c = try ProductionGroupWindowClient(endpoint: endpoint, secrets: secrets, transport: relay,
+            outboxDirectory: folder.appendingPathComponent("recovered-" + UUID().uuidString))
+
+        // The relay deletes the person but the reply is lost: the receipt answers.
+        await relay.losesNextReply()
+        let accepted = try await c.requestDeletion(of: recovered, in: store)
+        try check(accepted.acceptedAt != nil, "a lost reply is answered by the receipt")
+        try check(await relay.posts == 1, "never a second request")
+        try check(try store.accounts(prefix: "") == ["identity-deletion"], "the recovered device's keys go")
+        let adopted = try GroupWire.decode(GroupIdentityDeletion.self, try secrets.read("identity-deletion") ?? Data())
+        try check(adopted.operationID == accepted.operationID && adopted.acceptedAt != nil && adopted.personID == usual.personID,
+                  "the usual record is the accepted one")
+        try check(try secrets.read("identity-deletion-history:" + earlier.operationID.uuidString.lowercased()) != nil,
+                  "the earlier unaccepted record is kept in its history")
+
+        // The usual deletion: done from that record, nothing sent.
+        let done = try await c.requestIdentityDeletion()
+        try check(done.operationID == accepted.operationID && done.acceptedAt != nil, "the usual deletion is done")
+        try check(await relay.posts == 1, "the person already gone is not asked again")
+        try check(try secrets.read("identity") == nil, "the usual keys go")
+        // Its status is the relay's answer by that receipt.
+        let status = try await c.identityDeletionStatus()
+        try check(status?.operationID == accepted.operationID && status?.acceptedAt != nil, "the status comes from the relay")
+
+        // A retry of the recovered deletion after it was accepted sends nothing.
+        _ = try await c.requestDeletion(of: recovered, in: store)
+        try check(await relay.posts == 1, "an accepted recovered deletion is not sent again")
+        print("identity deletion: the recovered device's accepted deletion finishes the usual one")
+    }
+
     static func main() async {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("identity-deletion-" + UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -372,6 +465,7 @@ enum IdentityDeletionCleanupChecks {
             try await clientChecks(folder)
             try await interruptedChecks(folder)
             try await transportChecks(folder)
+            try await recoveredDeviceChecks(folder)
             try localDataChecks(folder)
             print("Identity deletion clean-up checks passed")
         } catch {

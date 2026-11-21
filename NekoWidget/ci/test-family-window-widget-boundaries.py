@@ -3550,7 +3550,7 @@ class GroupWidgetCacheTests(unittest.TestCase):
 
         screen = source("NekoWidget/Views/GroupWindowView.swift")
         home = section(screen, "    func updateHomeScreenPhoto() async {", "private func receive(")
-        self.assertIn("entries.first { !$0.isHidden && !safety.hasReported($0.id, in: windowID) }", home)
+        self.assertIn("entries.first { !$0.isHidden && !safety.hasReported($0.id, in: windowID) && !withdrawn.contains($0.id) }", home)
         self.assertIn("GroupWidgetCache.update(", home)
         self.assertIn('WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")', home)
 
@@ -4722,7 +4722,9 @@ class CareHandoffRoundTwoTests(unittest.TestCase):
         display = section(self.view, "private struct CareDisplayView: View {", "private struct CareActivitySheet")
         self.assertIn("CareActivitySheet(items: $0.files, text: record.plainText)", display)
         sheet = section(self.view, "private struct CareActivitySheet", "/// The tool's one safety sentence")
-        self.assertIn("(items as [Any]) + (text.isEmpty ? [] : [text])", sheet)
+        # 11/21: the text goes only where text is sent; elsewhere the file alone.
+        self.assertIn("(items as [Any]) + (text.isEmpty ? [] : [CareMemoText(text)])", sheet)
+        self.assertIn("[.copyToPasteboard, .message, .mail]", sheet)
         # The text is built from the same rows as the PDF and the image.
         record = section(self.exporter, "struct CareHandoffShareRecord {", "@MainActor")
         self.assertIn("CareHandoffDisclosure.plainText(heading: heading, common: commonFields,", record)
@@ -6189,7 +6191,7 @@ class GroupWindowAuditFixTests(unittest.TestCase):
         self.assertIn("latest.state == .rotationRequired, latest.canManage", sync)
         self.assertIn("client.rotate(", sync)
         members = source("NekoWidget/Views/GroupWindowSetupView.swift")
-        self.assertIn("try? await client.rotate(", section(members, "    func load(reportsFailure: Bool = true) async {", "func createInvitation()"))
+        self.assertIn("try await client.rotate(", section(members, "    func load(reportsFailure: Bool = true) async {", "func createInvitation()"))
         self.assertIn("func rotate(windowID: String, operation: GroupOperation) async throws -> GroupWindow",
                       source("NekoWidget/Services/GroupWindowContract.swift"))
 
@@ -6787,7 +6789,9 @@ class VeterinaryRoundTwoTests(unittest.TestCase):
         self.assertIn("picker.sourceType = .camera", camera)
         self.assertIn("picker.mediaTypes = [UTType.image.identifier, UTType.movie.identifier]", camera)
         self.assertIn("picker.videoMaximumDuration = VeterinaryCapture.maximumVideoSeconds", camera)
-        self.assertIn("FileManager.default.copyItem(at: movie, to: copy)", camera)
+        # 11/21: the camera's movie is moved (copied only when it cannot be).
+        self.assertIn("try manager.moveItem(at: movie, to: copy)", camera)
+        self.assertIn("catch { try manager.copyItem(at: movie, to: copy); try? manager.removeItem(at: movie) }", camera)
         save = section(self.capture, "static func save(_ shot: Shot) async throws -> Saved {", "/// The memo's copy")
         self.assertIn("request.addResource(with: .photo, data: original, options: nil)", save)
         self.assertIn("request.addResource(with: .video, fileURL: url, options: options)", save)
@@ -6886,7 +6890,9 @@ class VeterinaryRoundTwoTests(unittest.TestCase):
         self.assertIn('return ToolSheetRow(row: ToolValueRow(title: "体重", systemImage: "scalemass",', weight_row)
         self.assertIn("value: weight ?? ToolEmptyValue.unwritten, filled: weight != nil)) {\n            weighing = true", weight_row)
         self.assertIn('"vet-row-weight"', weight_row)
-        self.assertIn("CatCareListEntrySheet(editor: CatCareListEditor(kind: .weight), catID: nil) { result in", self.view)
+        # 11/21: the sheet stays open when the weight could not be saved.
+        self.assertIn("CatCareListEntrySheet(editor: CatCareListEditor(kind: .weight), catID: nil,\n"
+                      "                                      saving: { result in recordWeight(result, visit) })", self.view)
         record = section(self.view, "private func recordWeight(", "private func recordSection(")
         self.assertIn("CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString)", record)
         self.assertIn("catCareStore.ensureRecord(profileID: visit.catID, name: profile?.displayName)", record)

@@ -1486,6 +1486,10 @@ extension ProductionGroupWindowClient {
                 guard latest.canManage, latest.state == .rotationRequired else {
                     return latest.state == .active ? latest : nil
                 }
+                // 11/21s: the same revision again means this iPhone's own
+                // roster could not be read, not a newer one: retrying spends
+                // calls on every pass and cannot succeed. The next pass asks again.
+                guard latest.revision != expected else { return nil }
                 expected = latest.revision
             } catch {
                 return nil
@@ -1769,6 +1773,16 @@ extension ProductionGroupWindowClient {
             catch GroupProtocolError.invalidSignature { continue }
             photoMetadata[windowID + ":" + row.id] = row
             result.append(photo)
+        }
+        return result
+    }
+    /// 11/21s: until when the relay holds each of these photos for this
+    /// iPhone, from the list `photos(windowID:)` just read (GroupWidgetCache.noteListedPhotos).
+    func listedUntil(windowID: String, photoIDs: Set<String>) -> [String: Date] {
+        var result: [String: Date] = [:]
+        for photoID in photoIDs {
+            guard let row = photoMetadata[windowID + ":" + photoID], row.accessExpiresAt > 0 else { continue }
+            result[photoID] = Date(timeIntervalSince1970: TimeInterval(row.accessExpiresAt))
         }
         return result
     }
@@ -2187,7 +2201,10 @@ extension ProductionGroupWindowClient {
     /// the deletion record stays. Received photos are not touched here.
     func requestIdentityDeletion() async throws -> GroupIdentityDeletion {
         var record: GroupIdentityDeletion
-        if let saved = try identityDeletion(), saved.completedAt == nil { record = saved }
+        // 11/21s: also an accepted deletion of the person this iPhone's
+        // identity still names (its recovered device deleted that person,
+        // requestDeletion(of:in:)): done, and never sent again.
+        if let saved = try identityDeletion(), saved.completedAt == nil || deletesCurrentPerson(saved) { record = saved }
         else {
             try? secrets.remove(Self.deletionAccount)
             record = .init(operationID: UUID(),
@@ -2230,17 +2247,22 @@ extension ProductionGroupWindowClient {
             try store.write(GroupWire.encode(record), account: Self.deletionAccount, createOnly: true)
         }
         if record.acceptedAt == nil {
-            guard recovered.registered, try !isRevoked(recovered) else { throw GroupClientError.authenticationRequired }
-            let input = DeletionInput(operationID: record.operationID.uuidString.lowercased(), receipt: record.receipt)
-            let reply = try GroupWire.decode(DeletionReply.self,
-                await raw(Self.deletionPath, body: GroupWire.encode(input), identity: recovered))
-            guard reply.protocolVersion == 3, reply.requestID == record.operationID.uuidString.lowercased(),
-                  ["processing", "completed"].contains(reply.state),
-                  (reply.state == "completed") == (reply.completedAt != nil) else { throw GroupClientError.invalidResponse }
-            record.acceptedAt = Date(timeIntervalSince1970: TimeInterval(reply.acceptedAt))
-            record.completedAt = reply.completedAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+            do {
+                guard recovered.registered, try !isRevoked(recovered) else { throw GroupClientError.authenticationRequired }
+                let input = DeletionInput(operationID: record.operationID.uuidString.lowercased(), receipt: record.receipt)
+                record = try answered(GroupWire.decode(DeletionReply.self,
+                    await raw(Self.deletionPath, body: GroupWire.encode(input), identity: recovered)), record)
+            } catch {
+                // 11/21s: a lost reply (or the person already gone, so its
+                // device can no longer sign) is answered by this record's own
+                // receipt, never by a second request. Not accepted there: the
+                // first failure is said, and the next try asks again.
+                guard let latest = try? await deletionAnswer(record), latest.acceptedAt != nil else { throw error }
+                record = latest
+            }
             try store.write(GroupWire.encode(record), account: Self.deletionAccount, createOnly: false)
         }
+        adoptDeletion(record, of: recovered)
         // Accepted: the recovered device's keys go; a Keychain error here is
         // tried again by the next deletion, never shown as a failure.
         for account in (try? store.accounts(prefix: "")) ?? [] where account != Self.deletionAccount {
@@ -2297,6 +2319,20 @@ extension ProductionGroupWindowClient {
         return complete
     }
 
+    /// 11/21s: the share extension's HTTP journal (requests kept for an exact
+    /// resend, with their encrypted bodies), cleared when the app says it
+    /// holds no まど (「データを消す」): called only by GroupShareService, whose
+    /// client has the extension's own `share-outbox`. Whether everything went.
+    @discardableResult
+    func removeShareExtensionOperations() -> Bool {
+        guard let accounts = try? operations.accounts(prefix: "") else { return false }
+        var complete = true
+        for account in accounts {
+            do { try operations.remove(account) } catch { complete = false }
+        }
+        return complete
+    }
+
     /// 11/20: the local clean-up of the accepted deletion is done.
     func markIdentityDeletionLocalCleanupDone() throws {
         guard var record = try identityDeletion(), record.acceptedAt != nil, record.localDataRemovedAt == nil else { return }
@@ -2306,22 +2342,63 @@ extension ProductionGroupWindowClient {
 
     /// Asks with the receipt alone; no device key is needed or sent.
     func identityDeletionStatus() async throws -> GroupIdentityDeletion? {
-        guard var record = try identityDeletion() else { return nil }
+        guard let record = try identityDeletion() else { return nil }
+        let latest = try await deletionAnswer(record)
+        try save(latest, Self.deletionAccount)
+        return latest
+    }
+
+    /// The relay's answer about `record`, asked with its receipt alone.
+    private func deletionAnswer(_ record: GroupIdentityDeletion) async throws -> GroupIdentityDeletion {
         var request = try GroupHTTPRequest.make(endpoint: endpoint,
             path: Self.deletionPath + "/" + record.operationID.uuidString.lowercased() + "/status", body: nil, identity: nil)
         request.setValue("Bearer " + record.receipt, forHTTPHeaderField: "Authorization")
         let reply = try GroupHTTPRequest.check(await transport.send(request, maximumBytes: 4096))
-        try apply(GroupWire.decode(DeletionReply.self, reply), to: &record)
-        return record
+        return try answered(GroupWire.decode(DeletionReply.self, reply), record)
     }
 
-    private func apply(_ reply: DeletionReply, to record: inout GroupIdentityDeletion) throws {
+    private func answered(_ reply: DeletionReply, _ record: GroupIdentityDeletion) throws -> GroupIdentityDeletion {
         guard reply.protocolVersion == 3, reply.requestID == record.operationID.uuidString.lowercased(),
               ["processing", "completed"].contains(reply.state),
               (reply.state == "completed") == (reply.completedAt != nil) else { throw GroupClientError.invalidResponse }
-        record.acceptedAt = Date(timeIntervalSince1970: TimeInterval(reply.acceptedAt))
-        record.completedAt = reply.completedAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+        var next = record
+        next.acceptedAt = Date(timeIntervalSince1970: TimeInterval(reply.acceptedAt))
+        next.completedAt = reply.completedAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+        return next
+    }
+
+    private func apply(_ reply: DeletionReply, to record: inout GroupIdentityDeletion) throws {
+        record = try answered(reply, record)
         try save(record, Self.deletionAccount)
+    }
+
+    /// 11/21s: `record` is an accepted deletion of the person this client's
+    /// identity still names.
+    private func deletesCurrentPerson(_ record: GroupIdentityDeletion) -> Bool {
+        guard record.acceptedAt != nil, let personID = record.personID,
+              let current = try? load(GroupDeviceIdentity.self, "identity") else { return false }
+        return current.personID == personID
+    }
+
+    /// 11/21s: the recovered device deleted the same person as this client's
+    /// identity (its usual device was taken off and can no longer sign).
+    /// The relay's accepted answer, with its receipt, becomes this client's
+    /// own deletion record, so requestIdentityDeletion() finishes from it and
+    /// the status is asked with that receipt. An earlier record of this
+    /// client the relay never accepted is kept in its history.
+    private func adoptDeletion(_ record: GroupIdentityDeletion, of recovered: GroupDeviceIdentity) {
+        guard record.acceptedAt != nil,
+              let current = try? load(GroupDeviceIdentity.self, "identity"),
+              current.personID == recovered.personID else { return }
+        var adopted = record
+        adopted.personID = recovered.personID
+        if let own = try? identityDeletion() {
+            if own.acceptedAt != nil { return }
+            if own.operationID != adopted.operationID {
+                try? save(own, "identity-deletion-history:" + own.operationID.uuidString.lowercased())
+            }
+        }
+        try? save(adopted, Self.deletionAccount)
     }
 
     /// Every item is tried (11/20); false: one could not be listed or removed.

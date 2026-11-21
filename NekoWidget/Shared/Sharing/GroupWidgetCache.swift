@@ -32,6 +32,14 @@ enum GroupWidgetCache {
         /// 11/20: windows this iPhone saw go (left, ended, data deleted),
         /// newest last, at most `maximumEndedWindows`.
         var endedWindowIDs: [String]? = nil
+        /// 11/21s: per window, the photos the relay listed at the last full
+        /// read and the time before which it still holds each for this iPhone.
+        /// Optional: older catalogs decode, older apps ignore it.
+        var listedPhotos: [String: [String: Date]]? = nil
+        /// 11/21s: per window, photos the relay stopped listing well before
+        /// that time (taken down by the moderation team, or their sender's
+        /// data deleted). They stay in the app but not on the home screen.
+        var withdrawnPhotos: [String: [String]]? = nil
     }
 
     /// 11/20: a Widget whose window has no entry here. Only a window the app
@@ -241,6 +249,8 @@ enum GroupWidgetCache {
             let removed = catalog.entries.first(where: { $0.windowID == windowID })
             catalog.entries.removeAll { $0.windowID == windowID }
             catalog.listedWindowIDs?.removeAll { $0 == windowID }
+            catalog.listedPhotos?[windowID] = nil
+            catalog.withdrawnPhotos?[windowID] = nil
             if isValidID(windowID) {
                 let ended = (catalog.endedWindowIDs ?? []).filter { $0 != windowID } + [windowID]
                 catalog.endedWindowIDs = Array(ended.suffix(maximumEndedWindows))
@@ -277,6 +287,73 @@ enum GroupWidgetCache {
         }
         return !gone.isEmpty || listChanged
     }
+
+    /// 11/21s: after a full read of one window's photos (`listed`: each photo
+    /// and the relay's `accessExpiresAt` for this iPhone). A photo listed at
+    /// the last read that is missing now, well before that time, was taken
+    /// down: it leaves the home screen. One listed again (a restriction
+    /// lifted, an unblock) comes back. Returns whether that window's
+    /// taken-down photos changed. Nothing is known before the first read, so
+    /// nothing is taken off then.
+    @discardableResult
+    static func noteListedPhotos(windowID: String, listed: [String: Date], now: Date = Date()) -> Bool {
+        guard isValidID(windowID), let directory = directory() else { return false }
+        return withCatalogLock {
+            var catalog = loadCatalog()
+            let previous = catalog.listedPhotos?[windowID] ?? [:]
+            let before = catalog.withdrawnPhotos?[windowID] ?? []
+            let next = withdrawn(previous: previous, before: before, listed: listed, now: now)
+            let kept = listedPhotosToKeep(listed, now: now)
+            // Not written again when only the 7-day bound moved on: an earlier
+            // (shorter) time is the careful one. A shorter time is written.
+            if next == before, Set(kept.keys) == Set(previous.keys),
+               kept.allSatisfy({ $0.value >= (previous[$0.key] ?? .distantFuture) }) { return false }
+            var allListed = catalog.listedPhotos ?? [:]
+            allListed[windowID] = kept.isEmpty ? nil : kept
+            catalog.listedPhotos = allListed
+            var allWithdrawn = catalog.withdrawnPhotos ?? [:]
+            allWithdrawn[windowID] = next.isEmpty ? nil : next
+            catalog.withdrawnPhotos = allWithdrawn
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            guard (try? write(JSONEncoder().encode(catalog),
+                              to: directory.appendingPathComponent("catalog.json"))) != nil else { return false }
+            return next != before
+        }
+    }
+
+    /// 11/21s: photos of this window that are not shown on the home screen.
+    static func withdrawnPhotoIDs(windowID: String) -> Set<String> {
+        Set(loadCatalog().withdrawnPhotos?[windowID] ?? [])
+    }
+
+    /// The taken-down photos after a read: the earlier ones not listed again,
+    /// then each photo listed last time that is missing now although the
+    /// relay should still hold it for more than `withdrawalMargin`.
+    static func withdrawn(previous: [String: Date], before: [String], listed: [String: Date], now: Date) -> [String] {
+        var result = before.filter { listed[$0] == nil }
+        let ending = now.addingTimeInterval(withdrawalMargin)
+        for (photoID, until) in previous.sorted(by: { $0.key < $1.key })
+        where listed[photoID] == nil && until > ending && !result.contains(photoID) {
+            result.append(photoID)
+        }
+        return Array(result.suffix(maximumWithdrawnPhotos))
+    }
+
+    /// What is kept from a read. Each time is at most 7 days from now:
+    /// receiving the photo after this read can shorten the relay's hold for
+    /// this iPhone to 7 days from then, so a later time is never relied on.
+    static func listedPhotosToKeep(_ listed: [String: Date], now: Date) -> [String: Date] {
+        let bound = now.addingTimeInterval(7 * 86_400)
+        let valid = listed.filter { isValidID($0.key) }.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+        return Dictionary(valid.prefix(maximumListedPhotos).map { ($0.key, min($0.value, bound)) },
+                          uniquingKeysWith: { first, _ in first })
+    }
+
+    /// A photo missing within this time of its end may simply have ended
+    /// (and the two clocks may differ a little).
+    static let withdrawalMargin: TimeInterval = 3_600
+    private static let maximumListedPhotos = 200
+    private static let maximumWithdrawnPhotos = 100
 
     /// Written by builds with group windows on. The Widget then offers group
     /// windows only, as the app does (the two-person window is not shown).

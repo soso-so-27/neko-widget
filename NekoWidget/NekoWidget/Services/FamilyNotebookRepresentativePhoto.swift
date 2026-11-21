@@ -339,6 +339,19 @@ actor FamilyNotebookRepresentativePhotoClient {
             return pending
         }
     }
+    /// 11/21: one delivery of this client let go (delivered, replaced, or
+    /// refused for good); a sealed copy (up to ~200 KB) used to stay for good.
+    func discardDelivery(_ operationID: UUID) throws {
+        try journal.remove(pendingPrefix + operationID.uuidString.lowercased())
+    }
+    /// 11/21: every delivery in `journal` (any family of this identity's
+    /// folder) except `kept` is let go. Reports, choices and the cache stay.
+    static func discardDeliveries(in journal: any GroupSecretStore, except kept: Set<UUID>) throws {
+        for account in try journal.accounts(prefix: "op:fp:p:") {
+            if let id = account.split(separator: ":").last.flatMap({ UUID(uuidString: String($0)) }), kept.contains(id) { continue }
+            try journal.remove(account)
+        }
+    }
     private var base: String { "/v3/family-notebooks/" + familyID.uuidString.lowercased() + "/representative-photos" }
     /// `trace` (a delivery only): the reply's status as `traced`, or the
     /// fixed code of a send that got no reply.
