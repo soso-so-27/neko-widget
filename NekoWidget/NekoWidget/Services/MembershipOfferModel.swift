@@ -880,7 +880,17 @@ private final class MembershipStoreKitClient {
                     await purchases.refreshAfterForegroundEntry()
                     if purchases.entitlementState.grantsPlus { return .completed }
                     outcome = .indeterminate
-                } catch { return .restoreFailed(.recovering(error)) }
+                } catch {
+                    // 11/21c: no Plus purchase on this Apple ID at all (the
+                    // same scan that allows a fresh purchase): nothing to
+                    // restore, not 「お問い合わせ」. A purchase that exists
+                    // but cannot be proven keeps the contact answer.
+                    if (error as? BillingClientError) == .billingAccountRecoveryUnavailable,
+                       (try? await BillingFreshAccountAuthorizer().authorizeAfterCurrentEntitlementScan()) != nil {
+                        return .nothingToRestore
+                    }
+                    return .restoreFailed(.recovering(error))
+                }
             }
             switch outcome {
             case .entitlementFound: return .completed
