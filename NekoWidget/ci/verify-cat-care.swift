@@ -24,6 +24,8 @@ struct VerifyCatCare {
         try absenceAnswers()
         try identifyingPhotos()
         try gregorianDays()
+        try liveRecordsOnly()
+        try memoWeightsFollowTheMemo()
         print("Cat care (この子のこと) model, merge, import and decoding checks passed")
     }
 
@@ -464,6 +466,67 @@ struct VerifyCatCare {
         try check(household.household.ownerContact?.value == "090-0000-0000", "household contact kept")
         try check(household.household.backupContact?.value == "母 080-2222-2222", "backup contact filled")
         try check(household.household.vet?.value.name == "ねこ動物病院", "vet filled")
+    }
+
+    /// 11/21 (1121n): every lookup reads the live record; a deleted ID comes
+    /// back only through liveRecordIndex, never as a second record.
+    static func liveRecordsOnly() throws {
+        let cat = UUID(), profile = UUID()
+        var state = CatCareState(deviceID: "d", now: t0)
+        var old = CatCareRecord(catID: cat, profileID: profile)
+        old.coat = .init(value: "deleted coat", editedAt: t0, editedBy: "d")
+        old.deletedAt = t0
+        state.cats = [old]
+        try check(state.liveIndex(catID: cat) == nil && state.record(profileID: profile) == nil, "a deleted record is not found")
+        // A tool never fills or remakes a deleted cat, by its ID or its profile.
+        CatCareImport.apply(.init(tool: "CareHandoff", catID: cat, profileID: nil, water: "w"), to: &state, now: t1)
+        CatCareImport.apply(.init(tool: "Evacuation", catID: UUID(), profileID: profile, marks: "m"), to: &state, now: t1)
+        try check(state.cats.count == 1 && state.cats[0].water == nil && state.cats[0].marks == nil, "a tool leaves a deleted cat alone")
+        // A live record for the same profile is the one a tool fills.
+        state.cats.append(CatCareRecord(catID: UUID(), profileID: profile))
+        CatCareImport.apply(.init(tool: "Evacuation", catID: UUID(), profileID: profile, marks: "m"), to: &state, now: t1)
+        try check(state.cats[1].marks?.value == "m" && state.cats[0].marks == nil, "the live record, not the deleted one")
+        // The owner opens the deleted cat's page: one record, empty, live.
+        let index = state.liveRecordIndex(catID: cat, profileID: nil)
+        try check(state.cats.filter { $0.catID == cat }.count == 1, "never two records with one ID")
+        try check(state.cats[index].deletedAt == nil && state.cats[index].coat == nil, "it starts again empty")
+        try check(state.liveRecordIndex(catID: cat, profileID: nil) == index, "a live one is returned as it is")
+        let encoded = try CatCareDecoding.encode(state)
+        _ = try CatCareDecoding.backupState(encoded)
+    }
+
+    /// 11/21 (1121n): a memo moved to another cat or whose weight was cleared
+    /// takes its weight away; a weight changed here and one whose memo names
+    /// no live cat stay.
+    static func memoWeightsFollowTheMemo() throws {
+        let a = UUID(), b = UUID(), gone = UUID()
+        var state = CatCareState(deviceID: "d", now: t0)
+        state.cats = [CatCareRecord(catID: a), CatCareRecord(catID: b)]
+        var memos = [CatCareMemoWeight(noteID: "m", catID: a, grams: 4200, measuredOn: "2026-10-20"),
+                     CatCareMemoWeight(noteID: "n", catID: a, grams: 4300, measuredOn: "2026-10-19")]
+        for source in CatCareMemoWeights.sources(memos, cats: state.cats) { CatCareImport.apply(source, to: &state, now: t1) }
+        try check(state.cats[0].activeWeights.count == 2, "both memos give a weight")
+        // m moves to b; n's weight is cleared.
+        memos = [CatCareMemoWeight(noteID: "m", catID: b, grams: 4200, measuredOn: "2026-10-20")]
+        let stale = CatCareMemoWeights.stale(memos, cleared: ["n"], cats: state.cats)
+        try check(stale.count == 2 && stale.allSatisfy { $0.catID == a }, "the old cat's weights are stale")
+        for item in stale { state.cats[0].weights.markDeleted(item.weightID, at: t1, by: "import:PhotoMemo") }
+        for source in CatCareMemoWeights.sources(memos, cats: state.cats) { CatCareImport.apply(source, to: &state, now: t1) }
+        try check(state.cats[0].activeWeights.isEmpty && state.cats[1].activeWeights.map(\.grams) == [4200], "the weight moved")
+        // Back to a: the weight the memo took away comes back.
+        memos = [CatCareMemoWeight(noteID: "m", catID: a, grams: 4200, measuredOn: "2026-10-20")]
+        for item in CatCareMemoWeights.stale(memos, cleared: [], cats: state.cats) {
+            let i = state.cats.firstIndex { $0.catID == item.catID }!
+            state.cats[i].weights.markDeleted(item.weightID, at: t1, by: "import:PhotoMemo")
+        }
+        for source in CatCareMemoWeights.sources(memos, cats: state.cats) { CatCareImport.apply(source, to: &state, now: t1) }
+        try check(state.cats[0].activeWeights.count == 1 && state.cats[1].activeWeights.isEmpty, "and back again")
+        // Changed here: kept. Named for a cat with no record here: kept.
+        state.cats[0].weights[state.cats[0].weights.firstIndex { $0.deletedAt == nil }!].editedBy = "d"
+        try check(CatCareMemoWeights.stale([], cleared: ["m"], cats: state.cats).isEmpty, "a weight changed here stays")
+        let other = CatCareMemoWeight(noteID: "m", catID: gone, grams: 4200, measuredOn: "2026-10-20")
+        state.cats[0].weights[state.cats[0].weights.firstIndex { $0.deletedAt == nil }!].editedBy = "import:PhotoMemo"
+        try check(CatCareMemoWeights.stale([other], cleared: [], cats: state.cats).isEmpty, "an ID no live cat has takes nothing")
     }
 
     static func memoWeights() throws {

@@ -216,6 +216,44 @@ struct CatProfileTransfer: Codable, Equatable, Sendable {
         return roundTrip == date
     }
 
+    /// 11/21: what reading this file into `current` really does. The
+    /// preview, its result message and `applying` all use this one plan, so
+    /// the screen never says a cat is added that is not (one already here,
+    /// one the living limit leaves out) or a date changes that does not.
+    struct ImportPlan: Equatable, Sendable {
+        /// Cats that come in, in the file's order.
+        var added: [Entry] = []
+        /// Cats of the file already here: never changed by it.
+        var alreadyHere: [Entry] = []
+        /// Cats the living limit (CatProfileLimit) leaves out.
+        var leftOut: [Entry] = []
+        /// 旅立った日 that come in: only the added cats'.
+        var farewellDays: [String: CatFarewellDay] = [:]
+    }
+
+    func importPlan(into current: CatHouseholdIdentityState) -> ImportPlan {
+        var plan = ImportPlan()
+        // 11/21: a household with cats takes the file's other cats beside
+        // its own (a cat added before the file was read no longer blocks
+        // it). A cat already here is never changed; the living cats stay
+        // within CatProfileLimit, the file's order deciding who comes.
+        let present = Set(current.profiles.map(\.id))
+        let departedInFile = Set((farewellDays ?? [:]).keys)
+        let departedHere = Set((current.farewellDays ?? [:]).keys)
+        var living = current.profiles.filter { !departedHere.contains($0.id.uuidString) }.count
+        for entry in profiles {
+            if present.contains(entry.id) { plan.alreadyHere.append(entry); continue }
+            if !departedInFile.contains(entry.id.uuidString) {
+                guard living < CatProfileLimit.maximumLiving else { plan.leftOut.append(entry); continue }
+                living += 1
+            }
+            plan.added.append(entry)
+        }
+        let added = Set(plan.added.map(\.id.uuidString))
+        plan.farewellDays = (farewellDays ?? [:]).filter { added.contains($0.key) }
+        return plan
+    }
+
     func applying(to current: CatHouseholdIdentityState, expectedRevision: Int,
                   legacyCuration: CatCandidateCurationState = .empty,
                   legacyLifeReference: CatLifeReference? = nil,
@@ -239,28 +277,14 @@ struct CatProfileTransfer: Codable, Equatable, Sendable {
               !current.profiles.isEmpty || (current.memberships.isEmpty && current.globalExcludedAssets.isEmpty) else {
             throw CatProfileTransferError.existingSettings
         }
-        // 11/21: a household with cats takes the file's other cats beside
-        // its own (a cat added before the file was read no longer blocks
-        // it). A cat already here is never changed; the living cats stay
-        // within CatProfileLimit, the file's order deciding who comes.
-        let present = Set(current.profiles.map(\.id))
-        let departedInFile = Set((farewellDays ?? [:]).keys)
-        let departedHere = Set((current.farewellDays ?? [:]).keys)
-        var living = current.profiles.filter { !departedHere.contains($0.id.uuidString) }.count
+        let plan = importPlan(into: current)
         var proposed = current
-        var added: Set<String> = []
-        for entry in profiles where !present.contains(entry.id) {
-            if !departedInFile.contains(entry.id.uuidString) {
-                guard living < CatProfileLimit.maximumLiving else { continue }
-                living += 1
-            }
+        for entry in plan.added {
             proposed.upsertProfile(entry.profile(at: date), at: date)
-            added.insert(entry.id.uuidString)
         }
-        let incomingDays = (farewellDays ?? [:]).filter { added.contains($0.key) }
-        if !incomingDays.isEmpty {
+        if !plan.farewellDays.isEmpty {
             // Only for cats this file brought; a day recorded here stays.
-            proposed.farewellDays = (proposed.farewellDays ?? [:]).merging(incomingDays) { here, _ in here }
+            proposed.farewellDays = (proposed.farewellDays ?? [:]).merging(plan.farewellDays) { here, _ in here }
             proposed = proposed.normalized()
         }
         return proposed
@@ -276,6 +300,9 @@ struct CatProfileImportPreview: Identifiable {
     let isUnchanged: Bool
     /// The file had more cats than can be added; the first ones are shown.
     var wasLimited = false
+    /// 11/21: what the import really does (CatProfileTransfer.importPlan):
+    /// the screen lists only the cats it adds.
+    var plan = CatProfileTransfer.ImportPlan()
     var photoCandidates: [UUID: [CatProfileTransferCandidate]] = [:]
     /// Empty by default, even when exactly one metadata candidate exists.
     var selectedPhotoIdentifiers: [UUID: String] = [:]

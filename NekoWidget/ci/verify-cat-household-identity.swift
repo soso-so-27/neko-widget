@@ -32,6 +32,7 @@ enum CatHouseholdIdentityVerifier {
         try verifiesReorderedProfilesKeepTheirOrder()
         try verifiesDeletedCatsPhotosStayOffTheRemainingCats()
         try verifiesPortablePhotoTransferNeedsExplicitConfirmation()
+        try verifiesImportPlanSaysWhatApplyingDoes()
         try await verifiesProfileTransferCommitConflict()
         try await verifiesProtectedAtomicStore()
         try await verifiesFailedIdentityLoadsPreserveBytesAndAllowExplicitReread()
@@ -1277,6 +1278,32 @@ enum CatHouseholdIdentityVerifier {
         } catch CatProfileTransferError.existingSettings { }
         try require(excluded.membershipDecision(for: "new-device-photo", profileID: cat.id) == .excluded,
                     "failed import changed its input")
+    }
+
+    /// 11/21 (1121n): the preview lists what `applying` really adds: a cat
+    /// already here is not changed, a cat over the living limit stays out.
+    private static func verifiesImportPlanSaysWhatApplyingDoes() throws {
+        let here = CatProfile(displayName: "いる猫")
+        var current = CatHouseholdIdentityState.legacyUnscoped(lifeReference: nil, curation: .empty)
+        current.upsertProfile(here)
+        for index in 1..<CatProfileLimit.maximumLiving { current.upsertProfile(CatProfile(displayName: "猫\(index)")) }
+        var changedHere = here
+        changedHere.displayName = "別の名前"
+        let newcomer = CatProfile(displayName: "来る猫")
+        let transfer = try CatProfileTransfer(profiles: [changedHere, newcomer])
+        let plan = transfer.importPlan(into: current)
+        try require(plan.added.isEmpty && plan.alreadyHere.map(\.id) == [here.id] && plan.leftOut.map(\.id) == [newcomer.id],
+                    "a full household adds nothing; the cat here is not changed")
+        let applied = try transfer.applying(to: current, expectedRevision: current.mutationRevision)
+        try require(applied == current, "applying did more than the plan said")
+        var roomy = CatHouseholdIdentityState.legacyUnscoped(lifeReference: nil, curation: .empty)
+        roomy.upsertProfile(here)
+        let roomyPlan = transfer.importPlan(into: roomy)
+        try require(roomyPlan.added.map(\.id) == [newcomer.id] && roomyPlan.leftOut.isEmpty, "the new cat comes")
+        let roomyApplied = try transfer.applying(to: roomy, expectedRevision: roomy.mutationRevision)
+        try require(Set(roomyApplied.profiles.map(\.id)) == [here.id, newcomer.id]
+                    && roomyApplied.profiles.first { $0.id == here.id }?.displayName == "いる猫",
+                    "applying followed the plan")
     }
 
     private static func verifiesProfileTransferCommitConflict() async throws {

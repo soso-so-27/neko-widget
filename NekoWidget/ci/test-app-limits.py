@@ -106,7 +106,7 @@ class CatLimitTests(unittest.TestCase):
         self.assertIn("entry.name.count <= CatNameText.storedMaximumCharacters,", TRANSFER)
         self.assertIn("let (transfer, wasLimited) = try CatProfileTransfer.decode(data).limitedToCatProfileLimit()",
                       VIEW_MODEL)
-        self.assertIn("wasLimited: wasLimited,", VIEW_MODEL)
+        self.assertIn("wasLimited: wasLimited || !plan.leftOut.isEmpty,", VIEW_MODEL)
         self.assertIn("if item.wasLimited { LimitNote(AppLimitCopy.catProfilesImported) }", TRANSFER_VIEW)
         self.assertIn('static let catProfilesImported = "\\(CatProfileLimit.maximumLiving)匹まで読み込みました。"', ROWS)
 

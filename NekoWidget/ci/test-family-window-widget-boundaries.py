@@ -5672,7 +5672,10 @@ class ReviewBRestTests(unittest.TestCase):
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
         self.assertIn("let isCurrent = inbox.pending?.id == invitation.id", setup)
         care_page = section(care, "private func takeFamilyWrites() {", "private func apply(")
-        self.assertIn("fresh[keyPath: path] != storedDraft[keyPath: path]", care_page)
+        # 11/21 (1121n): one rule for the family's writes, shared with autosave.
+        self.assertIn("draft.takingOthersWrites(fresh, untouchedSince: savedDraft, stored: storedDraft)", care_page)
+        taking = section(care, "func takingOthersWrites(", "/// Writes only fields that changed")
+        self.assertIn("fresh[keyPath: path] != stored[keyPath: path]", taking)
 
 
 class CodexWiringTests(unittest.TestCase):

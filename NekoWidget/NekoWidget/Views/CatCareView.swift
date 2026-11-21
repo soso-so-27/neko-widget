@@ -17,7 +17,7 @@ extension CatCareStore {
                                   grams: weight.value.grams, measuredOn: weight.value.measuredOn,
                                   fallbackDate: record.note.context?.capturedAt ?? record.note.writtenAt)
             }
-        })
+        }, cleared: Set(records.filter { $0.note.weight == nil }.map { $0.note.id.uuidString }))
     }
 }
 
@@ -59,55 +59,130 @@ enum CatCareUnfinishedMicrochip {
 /// page, not a second one made from the tools.
 @MainActor
 enum CatProfileDeletionCleanup {
+    /// 11/21: a cleanup not finished yet (a store could not be written, the
+    /// iPhone was locked, the app closed). Every step can run again, so the
+    /// whole cleanup is tried again when the この子 tab opens, until done.
+    struct Pending: Codable, Equatable {
+        var profileID: String
+        var careCatID: UUID?
+        var keepsCareRecord: Bool
+    }
+
+    static let pendingKey = "catProfileDeletionCleanup.pending.v1"
+    static var defaults: UserDefaults = .standard
+    private static var running: Set<String> = []
+
     static func run(profileID: String, careCatID: UUID?, keepsCareRecord: Bool) {
-        guard let profile = UUID(uuidString: profileID) else { return }
+        let job = Pending(profileID: profileID, careCatID: careCatID, keepsCareRecord: keepsCareRecord)
+        var all = pending()
+        all.removeAll { $0.profileID.caseInsensitiveCompare(profileID) == .orderedSame }
+        all.append(job)
+        store(all)
+        Task { await finish(job) }
+    }
+
+    /// When the この子 tab opens. A cat with the same profile again (brought
+    /// back from a file) is a cat now: its job is dropped, nothing is removed.
+    static func retryPending(existingProfiles: [String]) {
+        for job in pending() {
+            if existingProfiles.contains(where: { $0.caseInsensitiveCompare(job.profileID) == .orderedSame }) {
+                forget(profileID: job.profileID)
+            } else {
+                Task { await finish(job) }
+            }
+        }
+    }
+
+    /// A cat profile made again with this identifier (a file read back).
+    static func forget(profileID: String) {
+        let all = pending()
+        let rest = all.filter { $0.profileID.caseInsensitiveCompare(profileID) != .orderedSame }
+        if rest != all { store(rest) }
+    }
+
+    static func pending() -> [Pending] {
+        guard let data = defaults.data(forKey: pendingKey) else { return [] }
+        return (try? JSONDecoder().decode([Pending].self, from: data)) ?? []
+    }
+
+    private static func store(_ all: [Pending]) {
+        if all.isEmpty { defaults.removeObject(forKey: pendingKey); return }
+        if let data = try? JSONEncoder().encode(all) { defaults.set(data, forKey: pendingKey) }
+    }
+
+    private static func finish(_ job: Pending) async {
+        guard running.insert(job.profileID.uppercased()).inserted else { return }
+        defer { running.remove(job.profileID.uppercased()) }
+        guard pending().contains(job) else { return }
+        if await perform(job) { forget(profileID: job.profileID) }
+    }
+
+    /// True when every step is done (a step with nothing left to do is done).
+    private static func perform(_ job: Pending) async -> Bool {
+        let profileID = job.profileID, careCatID = job.careCatID
+        guard let profile = UUID(uuidString: profileID) else { return true }
         func matches(_ value: String?) -> Bool {
             value.flatMap(UUID.init(uuidString:)) == profile
         }
         let care = CareHandoffStore.shared
         let evacuation = EvacuationStore.shared
+        let keepsCareRecord = job.keepsCareRecord
+        var done = true
         if keepsCareRecord {
-            guard let careCatID else { return }
+            guard let careCatID else { return true }
             // The record no longer names the deleted profile.
-            CatCareStore.shared.update { state in
+            done = CatCareStore.shared.update { state in
                 for index in state.cats.indices where state.cats[index].catID == careCatID
                     && state.cats[index].profileID == profile {
                     state.cats[index].profileID = nil
                 }
-            }
+            } && done
             if care.plan.cats.contains(where: { matches($0.profileID) }) {
-                care.update { plan in
+                done = care.update { plan in
                     for index in plan.cats.indices where matches(plan.cats[index].profileID) {
                         plan.cats[index].profileID = nil
                         plan.cats[index].toolCatID = careCatID
                     }
-                }
+                } && done
             }
             if evacuation.plan.cats.contains(where: { matches($0.profileID) }) {
-                evacuation.update { plan in
+                done = evacuation.update { plan in
                     for index in plan.cats.indices where matches(plan.cats[index].profileID) {
                         plan.cats[index].profileID = nil
                         plan.cats[index].toolCatID = careCatID
                     }
-                }
+                } && done
             }
-            return
+            // 11/21: the 迷子のとき draft follows the family's cat too (its key
+            // is now the household cat ID), so its page reaches it. Moved,
+            // never dropped: one already there is left as it is.
+            let lost = LostCatDraftStore.shared
+            let newKey = "guest-tool-" + careCatID.uuidString
+            for key in Set([profileID, profileID.uppercased(), profileID.lowercased()]) {
+                guard let draft = lost.drafts[key] else { continue }
+                guard lost.drafts[newKey] == nil else { continue }
+                do {
+                    try lost.save(draft, for: newKey)
+                    try lost.delete(for: key)
+                } catch { done = false }
+            }
+            return done
         }
         if care.plan.cats.contains(where: { matches($0.profileID) }) {
-            care.update { $0.cats.removeAll { matches($0.profileID) } }
+            done = care.update { $0.cats.removeAll { matches($0.profileID) } } && done
         }
         let evacuationIDs = evacuation.plan.cats.filter { matches($0.profileID) }.map(\.id)
         if !evacuationIDs.isEmpty {
             let departed = CatFarewell.departedIdentifiers()
-            evacuation.update { plan in evacuationIDs.forEach { plan.removeCat($0, departed: departed) } }
+            done = evacuation.update { plan in evacuationIDs.forEach { plan.removeCat($0, departed: departed) } } && done
         }
         for key in Set([profileID, profileID.uppercased()]) {
-            try? CatPreparednessStore.shared.delete(for: key)
-            try? LostCatDraftStore.shared.delete(for: key)
+            do { try CatPreparednessStore.shared.delete(for: key) } catch { done = false }
+            do { try LostCatDraftStore.shared.delete(for: key) } catch { done = false }
         }
         let ids = Set([careCatID, profile].compactMap { $0 })
         let now = Date()
-        CatCareStore.shared.update { state in
+        done = CatCareStore.shared.update { state in
             for index in state.cats.indices where state.cats[index].deletedAt == nil
                 && (ids.contains(state.cats[index].catID) || state.cats[index].profileID == profile) {
                 state.cats[index].deletedAt = now
@@ -120,14 +195,14 @@ enum CatProfileDeletionCleanup {
                 }
                 state.cats[index].detachedVaccinations = nil
             }
-        }
+        } && done
         let vet = VeterinaryVisitStore.shared
-        Task {
-            guard let visits = try? await vet.visits() else { return }
-            for visit in visits where ids.contains(visit.catID) {
-                try? await vet.delete(visitID: visit.id, expectedRevision: visit.revision)
+        do {
+            for visit in try await vet.visits() where ids.contains(visit.catID) {
+                try await vet.delete(visitID: visit.id, expectedRevision: visit.revision)
             }
-        }
+        } catch { done = false }
+        return done
     }
 }
 
@@ -336,7 +411,6 @@ struct CatCareDetailView: View {
     @State private var storedDraft = CatCareDraft()
     @State private var catID: UUID?
     @State private var autosave: Task<Void, Never>?
-    @State private var saveFailed = false
     /// Autosave did not go through. Said once on the screen, not as an alert
     /// each time typing stops (11/5); the next save that works clears it.
     @State private var autosaveFailed = false
@@ -408,7 +482,7 @@ struct CatCareDetailView: View {
             if phase != .active { autosave?.cancel(); save() }
         }
         .onDisappear { autosave?.cancel(); save() }
-        .appRecordEditing(retainWhileHidden: draft != savedDraft || editing != nil || saveFailed || autosaveFailed
+        .appRecordEditing(retainWhileHidden: draft != savedDraft || editing != nil || autosaveFailed
                           || showsNameEditor || isSavingName || showsKeyPhotoPicker
                           || photoRole != nil || cropRequest != nil)
         .familyNotebookToolSync(enabled: sharedWithFamily)
@@ -418,6 +492,11 @@ struct CatCareDetailView: View {
             if let cat = familyPhotoCatID, showsFamilyPhoto { await familyPhotos.read([cat]) }
         }
         .onChange(of: familyNotebook.familyWritesToCatCare) { _, _ in takeFamilyWrites() }
+        // 11/21: memo weights reach a family cat's and a tool cat's page too
+        // (a profile's page reads them where it opens, CatProfileDetailView).
+        .task(id: catID) {
+            if catID != nil, !isProfile { await store.importMemoWeights() }
+        }
         .toolbar {
             // 11/12 (round 2): deleting the cat sits in 「…」, as deleting does
             // in every tool (it was the page's last red row).
@@ -455,15 +534,8 @@ struct CatCareDetailView: View {
                 ToolbarItem(placement: .topBarTrailing) { FamilyNotebookButton(shared: sharedWithFamily) }
             }
         }
-        .alert("保存できませんでした", isPresented: $saveFailed) {
-            Button("閉じる", role: .cancel) {}
-        } message: {
-            Text("少し待ってから、もう一度お試しください。")
-        }
         .sheet(item: $editing) { editor in
-            CatCareListEntrySheet(editor: editor, catID: catID) { result in
-                apply(result)
-            }
+            CatCareListEntrySheet(editor: editor, catID: catID, saving: { result in apply(result) })
         }
         .sheet(item: $photoRole) { role in
             CatCareIdentifyingPhotoSheet(subject: subject, role: role) { photoFailed = !$0 }
@@ -1321,18 +1393,26 @@ struct CatCareDetailView: View {
         }
         // 11/20: a cat no longer in the file stores nothing; that is not saved.
         var written = false
+        // 11/21: only what was changed on this page since it last read the
+        // store; a family member's newer write to another field stays.
+        let base = savedDraft
         let saved = store.update { state in
-            guard let index = state.cats.firstIndex(where: { $0.catID == catID }) else { return }
+            guard let index = state.liveIndex(catID: catID) else { return }
             value.write(to: &state.cats[index], household: &state.household,
-                        by: state.deviceID, now: Date())
+                        by: state.deviceID, now: Date(), since: base)
             written = true
         } && written
         // What was actually stored: an unfinished chip number stays out of it.
-        if saved { savedDraft = value }
         if saved { UsageCounter.shared.count(.catCareEdited) }  // Usage (11/7): each autosave that stored a change
         if saved, let state = store.state, let record = state.record(catID: catID) {
-            storedDraft = CatCareDraft(record: record, household: state.household)
-        }
+            // 11/21: a field not changed here that someone else changed
+            // meanwhile now shows their value (it was not written over).
+            let fresh = CatCareDraft(record: record, household: state.household)
+            savedDraft = value.takingOthersWrites(fresh, untouchedSince: base, stored: storedDraft)
+            let shown = draft.takingOthersWrites(fresh, untouchedSince: base, stored: storedDraft)
+            storedDraft = fresh
+            if shown != draft { draft = shown }
+        } else if saved { savedDraft = value }
         autosaveFailed = !saved
     }
 
@@ -1341,34 +1421,16 @@ struct CatCareDetailView: View {
     private func takeFamilyWrites() {
         guard let catID, let state = store.state, let record = state.record(catID: catID) else { return }
         let fresh = CatCareDraft(record: record, household: state.household)
-        var next = draft
-        // Taken: an item untouched here whose stored value someone else changed.
-        func take<Value: Equatable>(_ path: WritableKeyPath<CatCareDraft, Value>) {
-            if draft[keyPath: path] == savedDraft[keyPath: path], fresh[keyPath: path] != storedDraft[keyPath: path] {
-                next[keyPath: path] = fresh[keyPath: path]
-            }
-        }
-        take(\.sex); take(\.neutered); take(\.indoorOnly); take(\.allergyStatus); take(\.conditionsStatus)
-        take(\.microchipStatus); take(\.vaccinationStatus); take(\.vetStatus)
-        let texts: [WritableKeyPath<CatCareDraft, String>] = [
-            \.coat, \.marks, \.microchip, \.conditions, \.allergyText, \.specialDiet, \.water, \.litter,
-            \.temperament, \.ownerContact, \.backupContact, \.vetName, \.vetPhone]
-        for path in texts { take(path) }
+        let next = draft.takingOthersWrites(fresh, untouchedSince: savedDraft, stored: storedDraft)
         savedDraft = fresh
         storedDraft = fresh
         draft = next
     }
 
-    private func apply(_ result: CatCareListEditor.Result) {
-        guard let catID else { return }
-        // 11/20: a full list refuses the new record; the list then says so
-        // where 「追加」 was (limitSentence). A missing cat is a failure.
-        var applied: Bool?
-        let saved = store.update { state in
-            guard let index = state.cats.firstIndex(where: { $0.catID == catID }) else { return }
-            applied = result.apply(to: &state.cats[index], by: state.deviceID, now: Date())
-        }
-        if !saved || applied == nil { saveFailed = true }
+    /// 11/21: nil once saved; else the sheet stays open with this line.
+    private func apply(_ result: CatCareListEditor.Result) -> String? {
+        guard let catID else { return CatCareListEditor.saveFailedSentence }
+        return store.applyEntry(result, catID: catID)
     }
 }
 
@@ -1631,46 +1693,79 @@ struct CatCareDraft: Equatable {
         vetPhone = vetStatus == .recorded ? effectiveVet?.phone ?? "" : ""
     }
 
+    /// This draft with someone else's writes taken in: each field left as it
+    /// was at `base` whose stored value moved from `stored` to `fresh`.
+    func takingOthersWrites(_ fresh: CatCareDraft, untouchedSince base: CatCareDraft,
+                            stored: CatCareDraft) -> CatCareDraft {
+        var next = self
+        func take<Value: Equatable>(_ path: WritableKeyPath<CatCareDraft, Value>) {
+            if self[keyPath: path] == base[keyPath: path], fresh[keyPath: path] != stored[keyPath: path] {
+                next[keyPath: path] = fresh[keyPath: path]
+            }
+        }
+        take(\.sex); take(\.neutered); take(\.indoorOnly); take(\.allergyStatus); take(\.conditionsStatus)
+        take(\.microchipStatus); take(\.vaccinationStatus); take(\.vetStatus)
+        let texts: [WritableKeyPath<CatCareDraft, String>] = [
+            \.coat, \.marks, \.microchip, \.conditions, \.allergyText, \.specialDiet, \.water, \.litter,
+            \.temperament, \.ownerContact, \.backupContact, \.vetName, \.vetPhone]
+        for path in texts { take(path) }
+        return next
+    }
+
     /// Writes only fields that changed, so each keeps its own who/when.
-    func write(to r: inout CatCareRecord, household h: inout CatCareHousehold, by: String, now: Date) {
-        func set<V: Codable & Equatable & Sendable>(_ field: inout CatCareStamped<V>?, _ value: V, empty: V) {
+    /// 11/21: `base` is what the page opened with (or last stored). A field
+    /// left as it was there is not written, so a family member's write that
+    /// arrived meanwhile is never put back to the page's older value.
+    func write(to r: inout CatCareRecord, household h: inout CatCareHousehold, by: String, now: Date,
+               since base: CatCareDraft? = nil) {
+        func changed<V: Equatable>(_ path: KeyPath<CatCareDraft, V>) -> Bool {
+            guard let base else { return true }
+            return self[keyPath: path] != base[keyPath: path]
+        }
+        func set<V: Codable & Equatable & Sendable>(_ field: inout CatCareStamped<V>?, _ value: V, empty: V,
+                                                    changed: Bool) {
+            guard changed else { return }
             if field?.value == value || (field == nil && value == empty) { return }
             field = .init(value: value, editedAt: now, editedBy: by)
         }
         func text(_ value: String) -> String { CatCareLimits.clippedText(value.trimmingCharacters(in: .whitespacesAndNewlines)) }
-        set(&r.sex, sex, empty: .unknown)
-        set(&r.neutered, neutered, empty: .unknown)
-        set(&r.indoorOnly, indoorOnly, empty: .unknown)
-        set(&r.coat, text(coat), empty: "")
-        set(&r.marks, text(marks), empty: "")
+        set(&r.sex, sex, empty: .unknown, changed: changed(\.sex))
+        set(&r.neutered, neutered, empty: .unknown, changed: changed(\.neutered))
+        set(&r.indoorOnly, indoorOnly, empty: .unknown, changed: changed(\.indoorOnly))
+        set(&r.coat, text(coat), empty: "", changed: changed(\.coat))
+        set(&r.marks, text(marks), empty: "", changed: changed(\.marks))
         let chip = microchipStatus == .recorded ? microchip : ""
-        if (microchipStatus, chip) != (r.microchipStatus, r.microchipStatus == .recorded ? r.microchip?.value ?? "" : "") {
+        if changed(\.microchipStatus) || changed(\.microchip),
+           (microchipStatus, chip) != (r.microchipStatus, r.microchipStatus == .recorded ? r.microchip?.value ?? "" : "") {
             r.setMicrochip(status: microchipStatus, number: chip, editedAt: now, editedBy: by)
         }
         // A vaccination in the list is the answer; the toggle only speaks for an empty list.
-        if r.activeVaccinations.isEmpty, vaccinationStatus != .recorded, vaccinationStatus != r.vaccinationStatus {
+        if changed(\.vaccinationStatus),
+           r.activeVaccinations.isEmpty, vaccinationStatus != .recorded, vaccinationStatus != r.vaccinationStatus {
             r.setVaccinationStatus(vaccinationStatus, editedAt: now, editedBy: by)
         }
         // 「あり」 with 「なし」 typed in is the none choice; 「あり」 with nothing typed keeps what was saved.
         let details = conditionsStatus == .recorded ? text(conditions) : ""
         let status: CatCareConditionsStatus = CatCareConditionsStatus.reading(details) == CatCareConditionsStatus.none
             ? CatCareConditionsStatus.none : conditionsStatus
-        if (status, details) != (r.conditionsStatus, r.conditionsStatus == .recorded ? r.conditions?.value ?? "" : "") {
+        if changed(\.conditionsStatus) || changed(\.conditions),
+           (status, details) != (r.conditionsStatus, r.conditionsStatus == .recorded ? r.conditions?.value ?? "" : "") {
             r.setConditions(status: status, text: details, editedAt: now, editedBy: by)
         }
         set(&r.allergy, CatCareAllergy(status: allergyStatus, text: allergyStatus == .recorded ? text(allergyText) : ""),
-            empty: CatCareAllergy())
-        set(&r.specialDiet, text(specialDiet), empty: "")
-        set(&r.water, text(water), empty: "")
-        set(&r.litter, text(litter), empty: "")
-        set(&r.temperament, text(temperament), empty: "")
-        set(&h.ownerContact, text(ownerContact), empty: "")
-        set(&h.backupContact, text(backupContact), empty: "")
+            empty: CatCareAllergy(), changed: changed(\.allergyStatus) || changed(\.allergyText))
+        set(&r.specialDiet, text(specialDiet), empty: "", changed: changed(\.specialDiet))
+        set(&r.water, text(water), empty: "", changed: changed(\.water))
+        set(&r.litter, text(litter), empty: "", changed: changed(\.litter))
+        set(&r.temperament, text(temperament), empty: "", changed: changed(\.temperament))
+        set(&h.ownerContact, text(ownerContact), empty: "", changed: changed(\.ownerContact))
+        set(&h.backupContact, text(backupContact), empty: "", changed: changed(\.backupContact))
         let vet = vetStatus == .recorded ? (text(vetName), text(vetPhone)) : ("", "")
         let effectiveVet = r.vetOverride?.value ?? h.vet?.value
         let savedStatus = r.vetStatus(household: h)
         let savedVet = savedStatus == .recorded ? (effectiveVet?.name ?? "", effectiveVet?.phone ?? "") : ("", "")
-        if vetStatus != savedStatus || vet != savedVet {
+        if changed(\.vetStatus) || changed(\.vetName) || changed(\.vetPhone),
+           vetStatus != savedStatus || vet != savedVet {
             // Edit the same value the family/page reads. A received cat's vet
             // never overwrites unrelated cats' household-wide fallback.
             if r.vetOverride != nil {
@@ -1694,6 +1789,9 @@ struct CatCareListEditor: Identifiable {
     /// The record being changed; nil adds a new one.
     var entryID: UUID? = nil
 
+    static let saveFailedSentence = "保存できませんでした。もう一度お試しください。"
+    static let deletedMeanwhileSentence = "この記録は削除されています。"
+
     enum Result {
         case weight(grams: Int, day: CatCareDay, replacing: UUID? = nil)
         case medication(name: String, dose: String, schedule: String, replacing: UUID? = nil)
@@ -1701,10 +1799,44 @@ struct CatCareListEditor: Identifiable {
         case meal(time: String, food: String, amount: String, replacing: UUID? = nil)
         case delete(kind: Kind, entryID: UUID)
 
+        var kind: Kind {
+            switch self {
+            case .weight: .weight
+            case .medication: .medication
+            case .vaccination: .vaccination
+            case .meal: .meal
+            case let .delete(kind, _): kind
+            }
+        }
+
+        /// The entry being changed, when this changes one.
+        var replacing: UUID? {
+            switch self {
+            case let .weight(_, _, id), let .medication(_, _, _, id), let .vaccination(_, _, _, id), let .meal(_, _, _, id): id
+            case .delete: nil
+            }
+        }
+
+        /// 11/21: the entry this changes was deleted meanwhile (by the family
+        /// or on another iPhone). A deletion is final in the family's
+        /// notebook, so the change is not written into it; the sheet says so.
+        func editsDeletedEntry(in r: CatCareRecord) -> Bool {
+            guard let id = replacing else { return false }
+            let deletedAt: Date?? = switch kind {
+            case .weight: r.weights.first { $0.id == id }.map(\.deletedAt)
+            case .medication: r.medications.first { $0.id == id }.map(\.deletedAt)
+            case .vaccination: r.vaccinations.first { $0.id == id }.map(\.deletedAt)
+            case .meal: r.meals.first { $0.id == id }.map(\.deletedAt)
+            }
+            return deletedAt.map { $0 != nil } ?? false
+        }
+
         /// False when a new record was refused because the list is full
-        /// (11/20: counted without deleted records, as the list shows them).
+        /// (11/20: counted without deleted records, as the list shows them),
+        /// or when the entry it changes was deleted (editsDeletedEntry).
         @discardableResult
         func apply(to r: inout CatCareRecord, by: String, now: Date) -> Bool {
+            if editsDeletedEntry(in: r) { return false }
             switch self {
             case let .weight(grams, day, replacing):
                 if let index = replacing.flatMap({ id in r.weights.firstIndex { $0.id == id } }) {
@@ -1751,7 +1883,13 @@ struct CatCareListEditor: Identifiable {
                 switch kind {
                 case .weight: r.weights.markDeleted(entryID, at: now, by: by)
                 case .medication: r.medications.markDeleted(entryID, at: now, by: by)
-                case .vaccination: r.vaccinations.markDeleted(entryID, at: now, by: by)
+                case .vaccination:
+                    // 11/21: its proof photo is named no more, so the file
+                    // leaves too (only when no saved copy names it).
+                    if r.vaccinations.contains(where: { $0.id == entryID && $0.deletedAt == nil }) {
+                        r.replaceVaccinationProof(nil, for: entryID)
+                    }
+                    r.vaccinations.markDeleted(entryID, at: now, by: by)
                 case .meal: r.meals.markDeleted(entryID, at: now, by: by)
                 }
             }
@@ -1853,7 +1991,7 @@ struct CatCareListView: View {
                         }, remove: {
                             guard let catID else { return }
                             store.update { state in
-                                guard let i = state.cats.firstIndex(where: { $0.catID == catID }) else { return }
+                                guard let i = state.liveIndex(catID: catID) else { return }
                                 state.cats[i].removeUnmatchedVaccinationProof(photo)
                             }
                         })
@@ -1918,7 +2056,7 @@ struct CatCareListView: View {
     private func delete(_ id: UUID) {
         guard let catID else { return }
         store.update { state in
-            guard let index = state.cats.firstIndex(where: { $0.catID == catID }) else { return }
+            guard let index = state.liveIndex(catID: catID) else { return }
             CatCareListEditor.Result.delete(kind: kind, entryID: id)
                 .apply(to: &state.cats[index], by: state.deviceID, now: Date())
         }
@@ -1987,8 +2125,21 @@ struct CatCareListEntrySheet: View {
 
     let editor: CatCareListEditor
     let catID: UUID?
-    let onSave: (CatCareListEditor.Result) -> Void
+    /// 11/21: nil once saved; else one line, and the sheet stays open with
+    /// what was typed (a failed save closed it and lost the words).
+    let saving: (CatCareListEditor.Result) -> String?
     @Environment(\.dismiss) private var dismiss
+
+    init(editor: CatCareListEditor, catID: UUID?, saving: @escaping (CatCareListEditor.Result) -> String?) {
+        self.editor = editor
+        self.catID = catID
+        self.saving = saving
+    }
+
+    /// A caller that reports its own outcome (the vet memo's weight).
+    init(editor: CatCareListEditor, catID: UUID?, onSave: @escaping (CatCareListEditor.Result) -> Void) {
+        self.init(editor: editor, catID: catID, saving: { result in onSave(result); return nil })
+    }
     @ObservedObject private var store = CatCareStore.shared
 
     @State private var date = Date()
@@ -2201,6 +2352,7 @@ struct CatCareListEntrySheet: View {
         guard !saved else { return }
         guard let day = CatCareDay(date: date) else { message = "日付を確かめてください。"; return }
         let replacing = editor.entryID
+        let result: CatCareListEditor.Result
         switch editor.kind {
         case .weight:
             // kg, as in the photo memo. Full-width digits and a comma also work.
@@ -2213,19 +2365,21 @@ struct CatCareListEntrySheet: View {
                   case let grams = Int((kilograms * 1000).rounded()),
                   CatCareLimits.isValidWeight(grams: grams, on: day, today: today)
             else { message = "体重はkgの数字で入れてください（例：4.2）。"; return }
-            onSave(.weight(grams: grams, day: day, replacing: replacing))
+            result = .weight(grams: grams, day: day, replacing: replacing)
         case .medication:
             guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { message = "薬の名前を入れてください。"; return }
-            onSave(.medication(name: name, dose: dose, schedule: schedule, replacing: replacing))
+            result = .medication(name: name, dose: dose, schedule: schedule, replacing: replacing)
         case .vaccination:
             guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { message = "種類を入れてください。"; return }
-            onSave(.vaccination(kind: name, day: day, proof: proof, replacing: replacing))
+            result = .vaccination(kind: name, day: day, proof: proof, replacing: replacing)
         case .meal:
             guard ![name, food, amount].allSatisfy({ $0.trimmingCharacters(in: .whitespaces).isEmpty }) else {
                 message = "時間・フード・量のどれかを入れてください。"; return
             }
-            onSave(.meal(time: name, food: food, amount: amount, replacing: replacing))
+            result = .meal(time: name, food: food, amount: amount, replacing: replacing)
         }
+        // 11/21: not saved: the sheet stays open with what was typed.
+        if let failure = saving(result) { message = failure; return }
         saved = true
         // Photos picked here and not kept (picked again before saving) leave.
         pickedHere.filter { $0 != proof }.forEach { store.discardPhoto($0) }
@@ -2256,10 +2410,26 @@ extension CatCareStore {
         }
     }
 
+    /// 11/21: one entry of a list added, changed or deleted, the same way from
+    /// every page. Nil when it was saved; else the one line its sheet shows,
+    /// and the sheet stays open with what was typed.
+    func applyEntry(_ result: CatCareListEditor.Result, catID: UUID) -> String? {
+        var applied: Bool?
+        var deletedMeanwhile = false
+        let saved = update { state in
+            guard let index = state.liveIndex(catID: catID) else { return }
+            if result.editsDeletedEntry(in: state.cats[index]) { deletedMeanwhile = true; return }
+            applied = result.apply(to: &state.cats[index], by: state.deviceID, now: Date())
+        }
+        if deletedMeanwhile { return CatCareListEditor.deletedMeanwhileSentence }
+        guard saved, let applied else { return CatCareListEditor.saveFailedSentence }
+        return applied ? nil : result.kind.limitSentence
+    }
+
     /// One 見分ける写真 set or taken off, saved at once (not with the typed draft).
     func setIdentifyingPhoto(_ ref: CatCarePhotoRef?, _ role: CatCarePhotoRole, catID: UUID) -> Bool {
         update { state in
-            guard let index = state.cats.firstIndex(where: { $0.catID == catID }) else { return }
+            guard let index = state.liveIndex(catID: catID) else { return }
             state.cats[index].setIdentifyingPhoto(role, ref, editedAt: Date(), editedBy: state.deviceID)
         }
     }

@@ -29,7 +29,11 @@ class CatDeletionCleanupTests(unittest.TestCase):
         kept = body[body.index("if keepsCareRecord {"):body.index("care.update { $0.cats.removeAll")]
         self.assertIn("plan.cats[index].toolCatID = careCatID", kept)
         self.assertIn("return", kept)
-        self.assertNotIn("delete(", kept)
+        # 11/21 (1121n): its 迷子のとき draft moves to the family cat's key;
+        # the old key goes only after the copy is saved, nothing else goes.
+        self.assertEqual(kept.count("delete("), 1)
+        self.assertLess(kept.index("try lost.save(draft, for: newKey)"), kept.index("try lost.delete(for: key)"))
+        self.assertIn("guard lost.drafts[newKey] == nil else { continue }", kept)
         # A deleted cat names no photo, so its files can leave.
         self.assertIn("state.cats[index].facePhoto = nil", body)
         self.assertIn("state.cats[index].detachedVaccinations = nil", body)

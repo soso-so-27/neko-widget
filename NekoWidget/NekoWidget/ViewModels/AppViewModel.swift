@@ -1892,13 +1892,17 @@ final class AppViewModel: ObservableObject {
             legacyCuration: catCandidateCuration, legacyLifeReference: settings.catLifeReference
         )
         let candidates = transferPhotoCandidates(transfer)
+        // 11/21: the same plan `applying` follows: only cats that come in are
+        // listed, and a cat the living limit leaves out says so.
+        let plan = transfer.importPlan(into: reconciled)
         return CatProfileImportPreview(
             transfer: transfer,
             expectedIdentityRevision: current.mutationRevision,
             expectedCurationRevision: catCandidateCuration.mutationRevision,
             expectedLegacyReference: settings.catLifeReference,
             isUnchanged: proposed == reconciled,
-            wasLimited: wasLimited,
+            wasLimited: wasLimited || !plan.leftOut.isEmpty,
+            plan: plan,
             photoCandidates: Dictionary(uniqueKeysWithValues: (transfer.photos ?? []).map { photo in
                 (photo.id, candidates.filter { $0.metadata == photo.metadata })
             })
@@ -1956,6 +1960,9 @@ final class AppViewModel: ObservableObject {
                 }
                 // 11/20: a file's 旅立った日 reaches the screens.
                 if committed.farewellDays != nil { AppRecordLinkRetry.shared.syncFarewell() }
+                // 11/21: a cat back from the file is a cat again: a deletion
+                // cleanup still waiting for it never runs over it.
+                for entry in preview.plan.added { CatProfileDeletionCleanup.forget(profileID: entry.id.uuidString) }
                 result = .success(true)
             } catch {
                 // Do not put names, dates, file contents or external URLs into logs.
