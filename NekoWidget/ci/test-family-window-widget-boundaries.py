@@ -5332,8 +5332,9 @@ class WindowCreationEntryTests(unittest.TestCase):
         window = source("NekoWidget/Views/GroupWindowView.swift")
         self.assertNotIn("グループのまど", window)
         create = section(window, "struct GroupWindowCreateScreen: View {", "struct GroupWindowListSection: View {")
-        # 11/14 (A2): the new window's members screen offers 「ホーム画面に置く」.
-        self.assertIn("GroupWindowMembersScreen(client: model.client, windowID: createdWindowID, offersWidgetPlacement: true)", create)
+        # 11/22 (A5): the new window first offers its invitation, then opens.
+        self.assertIn("GroupWindowFirstInviteScreen(client: model.client, windowID: createdWindowID)", create)
+        self.assertIn("GroupWindowScreen(client: model.client, windowID: createdWindowID)", create)
 
     def test_create_says_it_is_making_and_puts_the_keyboard_away(self) -> None:
         window = source("NekoWidget/Views/GroupWindowView.swift")
