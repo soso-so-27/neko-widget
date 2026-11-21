@@ -484,6 +484,37 @@ struct CatCareState: Codable, Equatable, Sendable {
     func record(catID: UUID) -> CatCareRecord? {
         cats.first { $0.catID == catID && $0.deletedAt == nil }
     }
+
+    /// 11/21: every lookup of a cat's record agrees: the live one only. A
+    /// deleted record is never shown or written into.
+    func liveIndex(catID: UUID) -> Int? {
+        cats.firstIndex { $0.catID == catID && $0.deletedAt == nil }
+    }
+
+    func liveIndex(profileID: UUID) -> Int? {
+        cats.firstIndex { $0.profileID == profileID && $0.deletedAt == nil }
+    }
+
+    func record(profileID: UUID) -> CatCareRecord? {
+        liveIndex(profileID: profileID).map { cats[$0] }
+    }
+
+    /// 11/21: the one way a cat's record is made for a page the owner
+    /// opened. A deleted record with the same ID starts again empty in its
+    /// place (two records with one ID made every 保存 fail); what it held
+    /// was deleted and stays so. A live one is returned as it is.
+    @discardableResult
+    mutating func liveRecordIndex(catID: UUID, profileID: UUID?) -> Int {
+        if let live = liveIndex(catID: catID) { return live }
+        let fresh = CatCareRecord(catID: catID, profileID: profileID)
+        if let deleted = cats.firstIndex(where: { $0.catID == catID }) {
+            cats[deleted] = fresh
+            cats.removeAll { $0.catID == catID && $0.deletedAt != nil }
+            return cats.firstIndex { $0.catID == catID }!
+        }
+        cats.append(fresh)
+        return cats.count - 1
+    }
 }
 
 // MARK: - Limits
@@ -682,12 +713,17 @@ enum CatCareImport {
     static func apply(_ source: CatCareImportSource, to state: inout CatCareState, now: Date) {
         let by = "import:" + source.tool
         let index: Int
-        if let found = state.cats.firstIndex(where: { $0.catID == source.catID }) {
+        // 11/21: the live record first. A deleted one is never filled, and a
+        // tool does not make a deleted cat again (only the owner's page can).
+        if let found = state.liveIndex(catID: source.catID) {
             index = found
-        } else if let profileID = source.profileID,
-                  let found = state.cats.firstIndex(where: { $0.profileID == profileID }) {
+        } else if state.cats.contains(where: { $0.catID == source.catID }) {
+            return
+        } else if let profileID = source.profileID, let found = state.liveIndex(profileID: profileID) {
             // The same recognized cat seen by a tool without a shared cat ID.
             index = found
+        } else if let profileID = source.profileID, state.cats.contains(where: { $0.profileID == profileID }) {
+            return
         } else {
             state.cats.append(CatCareRecord(catID: source.catID, profileID: source.profileID))
             index = state.cats.count - 1
@@ -718,8 +754,11 @@ enum CatCareImport {
                                      order: order, editedAt: now, editedBy: by))
             }
         }
-        // One weight per photo memo, ever.
+        // One weight per photo memo, ever. 11/21: one taken away here by the
+        // memo itself (the memo moved to another cat or lost its weight) may come
+        // back when the memo does; one the owner deleted never does.
         let known = Set(r.weights.compactMap { entry -> String? in
+            if entry.deletedAt != nil, entry.editedBy == by { return nil }
             if case let .photoMemo(noteID) = entry.source { return noteID }
             return nil
         })
@@ -807,6 +846,30 @@ enum CatCareMemoWeights {
             }
             guard !mine.isEmpty else { return nil }
             return CatCareImportSource(tool: "PhotoMemo", catID: cat.catID, profileID: cat.profileID, weights: mine)
+        }
+    }
+
+    /// 11/21: a weight a memo brought that the memo no longer gives this cat:
+    /// the memo's weight was cleared (`cleared`: memos read with no weight),
+    /// or the memo now names another cat that has a record here. Only a
+    /// weight not changed here; a memo not read, one with no cat chosen, or
+    /// one naming an ID no live cat has (a deleted profile) takes nothing away.
+    static func stale(_ weights: [CatCareMemoWeight], cleared: Set<String>,
+                      cats: [CatCareRecord]) -> [(catID: UUID, weightID: UUID)] {
+        let live = cats.filter { $0.deletedAt == nil }
+        let named = Dictionary(weights.compactMap { weight in weight.catID.map { (weight.noteID, $0) } },
+                               uniquingKeysWith: { first, _ in first })
+        return live.flatMap { cat in
+            cat.weights.compactMap { entry -> (catID: UUID, weightID: UUID)? in
+                guard entry.deletedAt == nil, entry.editedBy == "import:PhotoMemo",
+                      case let .photoMemo(noteID) = entry.source else { return nil }
+                if cleared.contains(noteID) { return (cat.catID, entry.id) }
+                guard let owner = named[noteID], owner != cat.catID, owner != cat.profileID else { return nil }
+                let movedToAnother = live.contains { other in
+                    other.catID != cat.catID && (other.catID == owner || other.profileID == owner)
+                }
+                return movedToAnother ? (cat.catID, entry.id) : nil
+            }
         }
     }
 }

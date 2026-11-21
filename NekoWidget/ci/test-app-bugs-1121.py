@@ -29,7 +29,11 @@ class CatDeletionCleanupTests(unittest.TestCase):
         kept = body[body.index("if keepsCareRecord {"):body.index("care.update { $0.cats.removeAll")]
         self.assertIn("plan.cats[index].toolCatID = careCatID", kept)
         self.assertIn("return", kept)
-        self.assertNotIn("delete(", kept)
+        # 11/21 (1121n): its 迷子のとき draft moves to the family cat's key;
+        # the old key goes only after the copy is saved, nothing else goes.
+        self.assertEqual(kept.count("delete("), 1)
+        self.assertLess(kept.index("try lost.save(draft, for: newKey)"), kept.index("try lost.delete(for: key)"))
+        self.assertIn("guard lost.drafts[newKey] == nil else { continue }", kept)
         # A deleted cat names no photo, so its files can leave.
         self.assertIn("state.cats[index].facePhoto = nil", body)
         self.assertIn("state.cats[index].detachedVaccinations = nil", body)
@@ -60,9 +64,11 @@ class RecoveredPersonDeletionTests(unittest.TestCase):
 
     def test_only_another_person(self):
         start = FACTORY.index("static func deleteRecoveredPerson(")
-        body = FACTORY[start:start + 1600]
-        self.assertIn("recovered.personID != usual", body)
-        self.assertIn("GroupIdentityDeletionLocalData.remove(record)", body)
+        body = FACTORY[start:FACTORY.index("static let recoveredDeletionAccount")]
+        # 11/21: the same person only when the usual device was taken off.
+        self.assertIn("if recovered.personID == usual {", body)
+        self.assertIn("GroupDeviceRevocation.isMarked(", body)
+        self.assertIn("GroupIdentityDeletionLocalData.remove(record, keepsSharedCopies: record.personID != usual)", body)
 
 
 STORE = (ROOT / "NekoWidget/Services/CatCareStore.swift").read_text(encoding="utf-8")
@@ -110,7 +116,7 @@ class ShareSheetStillWorksTests(unittest.TestCase):
     def test_revocation_marks_are_not_read_from_the_reading_store(self):
         start = SHARE.index("let client = try ProductionGroupWindowClient(")
         self.assertIn("revocations: checkpoints)", SHARE[start:start + 400])
-        self.assertIn('guard account == "identity" || account.hasPrefix("window:"),', ACCESS)
+        self.assertIn('guard account == "identity" || account.hasPrefix("window:") else { throw GroupClientError.authenticationRequired }', ACCESS)
 
 
 class TransferKeepsFarewellDaysTests(unittest.TestCase):

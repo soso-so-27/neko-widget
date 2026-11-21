@@ -21,12 +21,11 @@ final class PhotoMemoryNoteLibraryPresentation: ObservableObject {
         let token = UUID()
         request = token
         do {
-            let result = try await store.records()
-            var photos: [UUID: URL] = [:]
-            for record in result { photos[record.id] = try await store.photoURL(for: record.id) }
+            // 11/21: one read for the list and its photos.
+            let result = try await store.recordsWithPhotos()
             guard request == token, !Task.isCancelled else { return }
-            records = result
-            savedPhotos = photos
+            records = result.records
+            savedPhotos = result.photos
             failed = false
             isLoaded = true
         } catch {

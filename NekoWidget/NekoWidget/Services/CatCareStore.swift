@@ -220,12 +220,20 @@ final class CatCareStore: ObservableObject {
 
     /// Adds weights written in photo memos. Each memo adds at most one weight,
     /// ever; a weight the owner deleted here is not brought back.
-    func importWeights(_ weights: [CatCareMemoWeight]) {
+    /// 11/21: `cleared` are memos read with no weight any more; the weight
+    /// such a memo brought, or one whose memo now names another cat, goes
+    /// (CatCareMemoWeights.stale), unless it was changed here.
+    func importWeights(_ weights: [CatCareMemoWeight], cleared: Set<String> = []) {
         guard let cats = state?.cats else { return }
         let sources = CatCareMemoWeights.sources(weights, cats: cats)
-        guard !sources.isEmpty else { return }
+        let stale = CatCareMemoWeights.stale(weights, cleared: cleared, cats: cats)
+        guard !sources.isEmpty || !stale.isEmpty else { return }
         update { state in
             let now = Date()
+            for item in stale {
+                guard let index = state.liveIndex(catID: item.catID) else { continue }
+                state.cats[index].weights.markDeleted(item.weightID, at: now, by: "import:PhotoMemo")
+            }
             for source in sources { CatCareImport.apply(source, to: &state, now: now) }
         }
     }
@@ -423,21 +431,22 @@ final class CatCareStore: ObservableObject {
     /// it can have 「この子のこと」 too. Found by the shared tool ID first.
     func ensureRecord(toolCatID: UUID, profileIdentifier: String?, name: String) -> CatCareRecord? {
         let profileID = profileIdentifier.flatMap(UUID.init(uuidString:))
-        if let found = state?.cats.first(where: { $0.catID == toolCatID && $0.deletedAt == nil })
-            ?? profileID.flatMap({ id in state?.cats.first { $0.profileID == id && $0.deletedAt == nil } }) {
+        if let found = state?.record(catID: toolCatID) ?? profileID.flatMap({ state?.record(profileID: $0) }) {
             return found
         }
         var created: CatCareRecord?
-        update { state in
-            var record = CatCareRecord(catID: toolCatID, profileID: profileID)
+        // 11/21: a record that was not written is not handed out.
+        guard update({ state in
+            // 11/21: never a second record with a deleted one's ID (保存
+            // refused the file every time): liveRecordIndex is the one way.
+            let index = state.liveRecordIndex(catID: toolCatID, profileID: profileID)
             let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
-                record.name = .init(value: CatCareLimits.clippedText(trimmed, limit: CatCareLimits.storedNameCharacters),
-                                    editedAt: Date(), editedBy: state.deviceID)
+                state.cats[index].name = .init(value: CatCareLimits.clippedText(trimmed, limit: CatCareLimits.storedNameCharacters),
+                                               editedAt: Date(), editedBy: state.deviceID)
             }
-            state.cats.append(record)
-            created = record
-        }
+            created = state.cats[index]
+        }) else { return nil }
         return created
     }
 
@@ -468,18 +477,19 @@ final class CatCareStore: ObservableObject {
     }
 
     func ensureRecord(profileID: UUID, name: String?) -> CatCareRecord? {
-        if let found = state?.cats.first(where: { $0.profileID == profileID && $0.deletedAt == nil }) {
+        if let found = state?.record(profileID: profileID) {
             return found
         }
         var created: CatCareRecord?
-        update { state in
+        // 11/21: a record that was not written is not handed out.
+        guard update({ state in
             var record = CatCareRecord(catID: UUID(), profileID: profileID)
             if let name, !name.isEmpty {
                 record.name = .init(value: name, editedAt: Date(), editedBy: state.deviceID)
             }
             state.cats.append(record)
             created = record
-        }
+        }) else { return nil }
         return created
     }
 

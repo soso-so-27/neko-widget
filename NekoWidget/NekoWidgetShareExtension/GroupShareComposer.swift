@@ -27,6 +27,8 @@ final class GroupShareComposerModel: ObservableObject {
     private var operationID = UUID()
     private var attemptedCaption: String?
     private var attemptedWindowID: String?
+    /// An earlier try of this operation may have reached the relay.
+    private var resultUnknown = false
 
     init(jpeg: Data, service: any GroupShareServing, onEmpty: @escaping () -> Void = {}) {
         self.jpeg = jpeg
@@ -70,6 +72,8 @@ final class GroupShareComposerModel: ObservableObject {
     }
 
     var canEdit: Bool { !sending && attemptedWindowID == nil }
+    /// The list itself could not be read (no window chosen yet).
+    var listFailed: Bool { !loading && selected == nil && message != nil }
     var captionError: String? { GroupPhotoCaption.validationMessage(for: caption) }
 
     func send() async {
@@ -89,9 +93,33 @@ final class GroupShareComposerModel: ObservableObject {
             delivered = true
         } catch {
             message = Self.message(for: error)
+            // 11/21m: a clear refusal (the window, the photo or today's limit)
+            // means nothing was delivered: another window can be chosen, or
+            // the person goes back. An unknown result keeps the same window,
+            // caption and operation, so a retry can never send it twice.
+            if Self.isRefusal(error), !resultUnknown {
+                attemptedWindowID = nil
+                attemptedCaption = nil
+                operationID = UUID()
+            } else if !Self.isRefusal(error) {
+                resultUnknown = true
+            }
         }
         upgradeRequired = ClientUpgradeRequirement.shared.isRequired
         sending = false
+    }
+
+    /// The relay or this iPhone refused before anything was delivered.
+    static func isRefusal(_ error: Error) -> Bool {
+        switch error {
+        case is ClientUpgradeRequiredError: return true
+        case MomentSharingError.invalidPayload, MomentSharingError.payloadTooLarge,
+             MomentSharingError.sensitiveContent, MomentSharingError.moderationUnavailable: return true
+        case GroupSubscriptionError.windowPaused, GroupSubscriptionError.ownerPlusRequired: return true
+        case GroupClientError.notMember, GroupClientError.authenticationRequired,
+             GroupClientError.staleEpoch, GroupClientError.rotationPending, GroupClientError.dailyLimit: return true
+        default: return false
+        }
     }
 
     static func message(for error: Error) -> String {
@@ -129,6 +157,12 @@ struct GroupShareComposer: View {
             else { composer }
         }
         .task { await model.load() }
+        // 11/21m: a list that could not be read (the iPhone was locked, the
+        // app had not handed it over yet) is read again when the share sheet
+        // comes back to the front, not only after 「もう一度試す」.
+        .onReceive(NotificationCenter.default.publisher(for: .NSExtensionHostDidBecomeActive)) { _ in
+            if model.listFailed { Task { await model.load() } }
+        }
     }
 
     private var composer: some View {

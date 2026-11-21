@@ -1457,7 +1457,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("guard let richerDraft else", main)
         self.assertIn(".task(id: scenePhase)", main)
         self.assertIn(
-            "guard completedSeasonalMoviePreparationKey != preparationKey else { return }",
+            "guard completedSeasonalMoviePreparationKey != preparationKey else {\n            await backfillEarlierSeasonalMovies()\n            return\n        }",
             main,
         )
         self.assertIn("photoPresentationVersion: photoPresentationVersion", main)
@@ -3063,7 +3063,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('private static let nowaWindowID = "black-cats"', app_root)
         # The title says 「見つかりました」 from the first cat; the count keeps
         # 「まだ探しています」 until the scan is final.
-        self.assertIn("return scan.displayedCatCount > 0 || scan.hasFinalResult", onboarding)
+        self.assertIn("return scan.displayedCatCount > 0\n            ? OnboardingPresentationCopy.scanFoundTitle", onboarding)
         self.assertIn("if !scan.hasFinalResult {\n                Text(OnboardingPresentationCopy.scanStillSearching)", onboarding)
         self.assertNotIn("scanCountLead", onboarding + presentation)
 
@@ -5672,7 +5672,10 @@ class ReviewBRestTests(unittest.TestCase):
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
         self.assertIn("let isCurrent = inbox.pending?.id == invitation.id", setup)
         care_page = section(care, "private func takeFamilyWrites() {", "private func apply(")
-        self.assertIn("fresh[keyPath: path] != storedDraft[keyPath: path]", care_page)
+        # 11/21 (1121n): one rule for the family's writes, shared with autosave.
+        self.assertIn("draft.takingOthersWrites(fresh, untouchedSince: savedDraft, stored: storedDraft)", care_page)
+        taking = section(care, "func takingOthersWrites(", "/// Writes only fields that changed")
+        self.assertIn("fresh[keyPath: path] != stored[keyPath: path]", taking)
 
 
 class CodexWiringTests(unittest.TestCase):
@@ -5812,7 +5815,9 @@ class GroupWidgetHeartTests(unittest.TestCase):
         # 11/20: the heart is marked sent only after the relay took it. A
         # failure (or a run in the extension) leaves the 「ハートを送る」 button.
         self.assertEqual(intent.count("markMyHeart("), 1)
-        sent = section(host, "operationID: UUID())) != nil {", "}")
+        # 11/21: sent as the person's own action, not on the automatic call budget.
+        self.assertIn("SharingPersonAction.run({", host)
+        sent = section(host, ")) != nil {", "}")
         self.assertIn("try? GroupWidgetCache.markMyHeart(windowID: windowID, photoID: photoID)", sent)
         self.assertIn("extension SendGroupWidgetHeartIntent: ForegroundContinuableIntent {}", intent)
         view = source("NekoWidgetWidget/NekoWidgetView.swift")
@@ -6411,7 +6416,7 @@ class VeterinaryRoundOneTests(unittest.TestCase):
         self.assertNotIn("通院", readable)
 
     def test_started_day_previous_visit_and_past_rows(self) -> None:
-        self.assertIn('Text("書き始めた日 \\(DayText.japanese(VeterinaryVisit.day(started)))")', self.view)
+        self.assertIn('Text("書き始めた日 \\(DayText.japanese(started))")', self.view)
         finished = section(self.view, "private func looksFinished(", "/// A past memo is named")
         self.assertIn("7 * 24 * 60 * 60", finished)
         self.assertIn('Text("前の診察は終わりましたか？")', self.view)
@@ -7502,7 +7507,7 @@ class ScreenTextTrimTests(unittest.TestCase):
         no_work = section(album, "private var noWorkYet: some View {", "/// This year's twelve books")
         self.assertIn("if catPhotos.isEmpty {", no_work)
         self.assertEqual(album.count('"まだ作品はありません"'), 1)
-        self.assertIn("if letters.isEmpty && lettersAreFinal { noWorkYet }", album)
+        self.assertIn("if letters.isEmpty && lettersAreFinal {\n                        noWorkYet", album)
         self.assertIn('return "\(month)月の作品は、\(nextMonth)月1日にとどきます。"', album)
         self.assertIn("Calendar(identifier: .gregorian)", section(album, "static func noWorkLine(", "static func cover("))
         self.assertIn('"この月は写真が少なく、作品はありません。"', album)
@@ -7557,8 +7562,10 @@ class LostCatRoundTwoTests(unittest.TestCase):
         self.assertIn("static let schemaVersion = 1", draft)
         self.assertIn("var incident: LostCatIncidentLog? = nil", draft)
         log = section(self.model, "struct LostCatIncidentLog: Codable, Equatable, Sendable {", "enum LostCatText {")
-        for field in ("var contactedOffices: [LostCatContactedOffice]? = nil", "var nextCheckAt: Date? = nil",
-                      "var foundMessage: String? = nil"):
+        # 11/21: the next day is saved under the same key, with its day beside it.
+        self.assertIn('savedNextCheckAt = "nextCheckAt"', log)
+        for field in ("var contactedOffices: [LostCatContactedOffice]? = nil", "var savedNextCheckAt: Date? = nil",
+                      "var nextCheckOn: String? = nil", "var foundMessage: String? = nil"):
             self.assertIn(field, log)
         self.assertNotIn("init(from decoder", self.model)
         # The readable backup names every new field in Japanese, and the offices as words.

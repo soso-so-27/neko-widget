@@ -542,6 +542,8 @@ struct MainTabView: View {
     @State private var monthlyWindowCollection: MonthlyWindowCollectionPresentation?
     @State private var completedMonthlyWindowCollectionKey: MonthlyWindowCollectionKey?
     @StateObject private var seasonalMovieArchive = SeasonalMovieArchiveLibrary()
+    /// A plain box on purpose: remembering a tried quarter never redraws.
+    @State private var seasonalMovieBackfill = SeasonalMovieBackfill()
     @State private var validatedSeasonalMovieArchiveKey: SeasonalMovieArchiveValidationKey?
     @State private var accessibleSeasonalMovieVideoIdentifiers = Set<String>()
     @AppStorage(MonthlyWindowReadReceipt.storageKey)
@@ -893,7 +895,8 @@ struct MainTabView: View {
             if Version1.isOn, hasPhotoAccess,
                let current = currentMonthlyWindowCollection?.letters.first(where: { $0.periodIdentifier == letter.periodIdentifier }) {
                 AlbumWorkGate(month: current.monthNumber, arrival: current.workArrivalDate, cover: current.coverPhoto) {
-                    MonthlyStoryView(letter: current, catPhotos: catPhotos,
+                    // 11/21: own works use own photos only (まど photos stay out).
+                    MonthlyStoryView(letter: current, catPhotos: albumWorkPhotos,
                         assignments: currentPhotoLibraryAssignments, profileNames: currentPhotoLibraryProfileNames)
                 }
             } else {
@@ -918,7 +921,9 @@ struct MainTabView: View {
             deepLinkedFamilyWindowIsPresented = true
         }
         .onChange(of: photosPath) { _, path in
-            guard path.isEmpty else { return }
+            // 11/21: the launch's tab choice waits for the まど arrivals; a
+            // person who already opened something is not moved away from it.
+            guard path.isEmpty else { didApplyInitialTab = true; return }
             widgetOpenedPhotoIdentifier = nil
             widgetShownAt = nil
         }
@@ -998,6 +1003,7 @@ struct MainTabView: View {
             memoriesPath = NavigationPath()
         }
         .onChange(of: memoriesPath.count) { _, count in
+            if count > 0 { didApplyInitialTab = true }  // 11/21: as photosPath
             if count == 0 { albumHighlightsReferenceDate = Date() }
         }
         .task(id: householdAlbumCatalogKey) {
@@ -1067,13 +1073,16 @@ struct MainTabView: View {
         AlbumPrototypeView(
             letters: hasPhotoAccess ? albumMonthlyWindowLetters : [],
             movies: hasPhotoAccess ? currentSeasonalMovieRecords : [],
-            catPhotos: hasPhotoAccess ? catPhotos : [],
+            // 11/21: the same photos the monthly works are built from, so a
+            // photo received in a まど never becomes an own work or its cover.
+            catPhotos: hasPhotoAccess ? albumWorkPhotos : [],
             assignments: currentPhotoLibraryAssignments,
             profileNames: currentPhotoLibraryProfileNames,
             openMovie: { memoriesPath.append(MemoriesRoute.seasonalMovie($0)) },
             hasPhotoAccess: hasPhotoAccess,
             requestPhotoAccess: requestPhotoAccess,
-            lettersAreFinal: albumMonthlyWindowLettersAreFinal
+            lettersAreFinal: albumMonthlyWindowLettersAreFinal,
+            lettersAreLoading: albumMonthlyWindowLettersAreLoading
         )
     }
 
@@ -1095,6 +1104,13 @@ struct MainTabView: View {
     private var albumMonthlyWindowLettersAreFinal: Bool {
         monthlyWindowCollection != nil || photoSourceStatus == .unavailable
             || cachedMonthlyWindowSnapshot?.letters.isEmpty == true
+    }
+
+    /// 11/21: until the first build ends while the photos are still read,
+    /// searched or about to be built (not after a failed search).
+    private var albumMonthlyWindowLettersAreLoading: Bool {
+        !albumMonthlyWindowLettersAreFinal && hasPhotoAccess
+            && (photoLibraryLoadSucceeded == nil || isScanning || monthlyWindowCollectionKey.canBuild)
     }
 
     private var cachedMonthlyWindowSnapshot: MonthlyWindowCollectionSnapshot? {
@@ -1440,7 +1456,7 @@ struct MainTabView: View {
     }
 
     private var currentPhotoLibraryProfileNames: [String: String] {
-        photoLibraryProfileNames ?? Dictionary(uniqueKeysWithValues: catProfilesPresentation.profiles.map { ($0.identifier, $0.displayName) })
+        photoLibraryProfileNames ?? Dictionary(catProfilesPresentation.profiles.map { ($0.identifier, $0.displayName) }, uniquingKeysWith: { first, _ in first })
     }
 
     private var photoLibraryRegisteredIdentifiers: Set<String> { Set(currentPhotoLibraryProfileNames.keys) }
@@ -1564,7 +1580,7 @@ struct MainTabView: View {
 
     /// 11/7: a checkmark on the chosen cat, as in the favorites filter.
     private func photoLibraryCatButton(_ title: String, identifier: String?) -> some View {
-        Button { photoLibraryProfileIdentifier = identifier } label: {
+        Button { photoLibraryProfileIdentifier = identifier; didApplyInitialTab = true } label: {
             if photoLibraryProfileIdentifier == identifier {
                 Label(title, systemImage: "checkmark")
             } else {
@@ -2562,6 +2578,15 @@ struct MainTabView: View {
         }
     }
 
+    /// 11/21: what the album's works, covers and arrivals draw from: own
+    /// photos (albumEligibleCatPhotos) without the photos the person took out
+    /// of the cats (the built letters were already refreshed without them).
+    private var albumWorkPhotos: [PhotoPresentation] {
+        let excluded = excludedCatCandidateIdentifiers
+        let photos = albumEligibleCatPhotos
+        return excluded.isEmpty ? photos : photos.filter { !excluded.contains($0.localIdentifier) }
+    }
+
     private var householdAlbumCatalogKey: HouseholdAlbumCatalogKey {
         let timeZone = TimeZone.current
         var calendar = Calendar(identifier: .gregorian)
@@ -2802,6 +2827,7 @@ struct MainTabView: View {
         // 11/21: 西暦, so 12/6 「1年の作品」 is set on 和暦/仏暦 iPhones too
         // (the year number is passed to yearDelivery, which counts in 西暦).
         let calendar = Calendar.nekoGregorian
+        let eligiblePhotos = albumWorkPhotos
         var arrival: CloudyWindowAlbumArrival?
         if enabled, monthlyWindowCollectionKey.canBuild,
            completedMonthlyWindowCollectionKey == monthlyWindowCollectionKey {
@@ -2814,10 +2840,10 @@ struct MainTabView: View {
                         == CloudyWindowStore.calendar.startOfDay(for: delivery),
                       let previous = calendar.date(byAdding: .month, value: -1, to: interval.start) else { continue }
                 guard case let .ready(letter) = MonthlyWindowBuilder().build(
-                    from: albumEligibleCatPhotos, monthContaining: previous),
+                    from: eligiblePhotos, monthContaining: previous),
                     albumPrototypeEnabledAt > 0, interval.start.timeIntervalSince1970 > albumPrototypeEnabledAt,
                     !Set(albumPrototypeOpened.split(separator: ",").map(String.init)).contains(letter.periodIdentifier),
-                    let cover = AlbumPrototype.cover(of: letter, from: catPhotos),
+                    let cover = AlbumPrototype.cover(of: letter, from: eligiblePhotos),
                     !receivedPhotoIdentifiers.contains(cover.localIdentifier) else { continue }
                 arrival = .init(period: letter.periodIdentifier, availableAt: interval.start,
                                 photoID: cover.localIdentifier)
@@ -2831,13 +2857,13 @@ struct MainTabView: View {
            completedMonthlyWindowCollectionKey == monthlyWindowCollectionKey {
             if let next = AlbumArrivalNotice.nextMonthDelivery(after: now),
                case let .ready(letter) = MonthlyWindowBuilder().build(
-                   from: albumEligibleCatPhotos, monthContaining: next.month),
+                   from: eligiblePhotos, monthContaining: next.month),
                !Set(albumPrototypeOpened.split(separator: ",").map(String.init)).contains(letter.periodIdentifier) {
                 monthNotice = (next.month, next.at)
             }
             let year = calendar.component(.year, from: now)
             if let at = AlbumArrivalNotice.yearDelivery(year), now < at,
-               AlbumPrototype.arrivedYears(from: catPhotos, now: at, deliverNow: true).contains(year) {
+               AlbumPrototype.arrivedYears(from: eligiblePhotos, now: at, deliverNow: true).contains(year) {
                 yearNotice = (year, at)
             }
         }
@@ -2936,7 +2962,10 @@ struct MainTabView: View {
             }
             return
         }
-        guard completedSeasonalMoviePreparationKey != preparationKey else { return }
+        guard completedSeasonalMoviePreparationKey != preparationKey else {
+            await backfillEarlierSeasonalMovies()
+            return
+        }
 
         let now = Date()
         let builder = SeasonalMovieBuilder()
@@ -3007,6 +3036,53 @@ struct MainTabView: View {
         completedSeasonalMoviePreparationKey = videoBatch.hadLocallyUnavailableMedia
             ? nil
             : preparationKey
+        await backfillEarlierSeasonalMovies()
+    }
+
+    /// 11/21: only the newest finished quarter was ever built, so after a
+    /// restore or reinstall the earlier quarters with cat photos had no
+    /// movie. After the newest one, each missing earlier quarter gets its
+    /// photo movie (the cheap stage, no video pass), one at a time and
+    /// newest first. The archive never rewrites a quarter it already has.
+    @MainActor
+    private func backfillEarlierSeasonalMovies() async {
+        let builder = SeasonalMovieBuilder()
+        guard let latest = builder.completedQuarter(containing: Date()) else { return }
+        let photos = albumEligibleCatPhotos
+        let dates = photos.compactMap(\.creationDate)
+        let counts = await Task.detached(priority: .utility) {
+            SeasonalMovieBackfill.photoCounts(of: dates, before: latest.start)
+        }.value
+        guard !Task.isCancelled, !counts.isEmpty else { return }
+        let recorded = Set(seasonalMovieArchive.records.map(\.periodID))
+        let probableCatIdentifiers = Set(photos.lazy.filter { !$0.isConfidentCat }.map(\.localIdentifier))
+        let service = SeasonalMovieCandidateService()
+        var reference = latest.start
+        for _ in 0..<SeasonalMovieBackfill.maximumQuarters {
+            guard !Task.isCancelled,
+                  let quarter = builder.completedQuarter(containing: reference) else { return }
+            reference = quarter.start
+            let periodID = SeasonalMovieBackfill.periodID(of: quarter.start)
+            let count = counts[periodID] ?? 0
+            let attempt = "\(periodID.id)|\(count)"
+            guard count >= SeasonalMovieBuilder.minimumDistinctSceneCount,
+                  !recorded.contains(periodID),
+                  !seasonalMovieBackfill.tried.contains(attempt) else { continue }
+            seasonalMovieBackfill.tried.insert(attempt)
+            let candidates = await service.photoCandidates(photos, in: quarter)
+            guard !Task.isCancelled else { return }
+            if case let .ready(presentation) = builder.buildMostRecent(
+                from: candidates,
+                through: quarter.end,
+                probableCatIdentifiers: probableCatIdentifiers
+            ) {
+                // A failed save stops here; the next preparation tries again.
+                guard await seasonalMovieArchive.recordDraft(presentation) != nil else {
+                    seasonalMovieBackfill.tried.remove(attempt)
+                    return
+                }
+            }
+        }
     }
 
     private var currentMonthlyWindowCollection: MonthlyWindowCollectionPresentation? {
@@ -3815,5 +3891,30 @@ private struct PhotoThemeTile: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(width: 64, alignment: .top)
+    }
+}
+
+/// 11/21: which earlier finished quarters a movie may be built for.
+final class SeasonalMovieBackfill {
+    /// Ten years of quarters at most (the archive keeps 80 records).
+    static let maximumQuarters = 40
+    /// "<period>|<photo count>": a quarter that could not be built is tried
+    /// again only after its photos change.
+    var tried = Set<String>()
+
+    static func periodID(of quarterStart: Date) -> SeasonalMoviePeriodID {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let components = calendar.dateComponents([.year, .month], from: quarterStart)
+        return SeasonalMoviePeriodID(year: components.year ?? 0,
+                                     quarter: ((components.month ?? 1) - 1) / 3 + 1)
+    }
+
+    static func photoCounts(of dates: [Date], before end: Date) -> [SeasonalMoviePeriodID: Int] {
+        var counts: [SeasonalMoviePeriodID: Int] = [:]
+        for date in dates where date < end {
+            counts[periodID(of: date), default: 0] += 1
+        }
+        return counts
     }
 }

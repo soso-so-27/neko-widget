@@ -125,13 +125,47 @@ final class GroupShareKeychain: GroupSecretStore, Sendable {
 
 /// Publish only records already read/written by the host's ordinary client.
 /// A publication failure never changes the host record or its completed action.
-final class GroupSharePublishingStore: GroupSecretStore, Sendable {
+final class GroupSharePublishingStore: GroupSecretStore, @unchecked Sendable {
     let original: any GroupSecretStore
-    let snapshot: any GroupSecretStore
+    /// 11/21m: the share copy's store, once it can be opened. The app may
+    /// start in the background while the iPhone is locked (a silent push);
+    /// the installation file cannot be read then. Instead of no share copy
+    /// for that whole launch, it is opened at the first access after unlock
+    /// and every destination is published then.
+    private let makeSnapshot: @Sendable () -> (any GroupSecretStore)?
+    private let lock = NSLock()
+    private var opened: (any GroupSecretStore)?
+    private var lastAttempt: Date?
+
     init(original: any GroupSecretStore, snapshot: any GroupSecretStore) {
         self.original = original
-        self.snapshot = snapshot
+        self.makeSnapshot = { snapshot }
+        self.opened = snapshot
     }
+    init(original: any GroupSecretStore, makeSnapshot: @escaping @Sendable () -> (any GroupSecretStore)?) {
+        self.original = original
+        self.makeSnapshot = makeSnapshot
+    }
+
+    /// The share copy's store, opening it when it could not be opened before
+    /// (at most every 10 s). Nil while it still cannot be opened.
+    var snapshot: (any GroupSecretStore)? {
+        lock.lock()
+        if let opened { lock.unlock(); return opened }
+        if let lastAttempt, Date().timeIntervalSince(lastAttempt) < 10 { lock.unlock(); return nil }
+        lastAttempt = Date()
+        lock.unlock()
+        guard let made = makeSnapshot() else { return nil }
+        lock.lock()
+        let first = opened == nil
+        if first { opened = made }
+        let current = opened ?? made
+        lock.unlock()
+        // Seed every existing destination once, now that the copy opens.
+        if first { refreshSnapshot() }
+        return current
+    }
+
     /// Seed existing destinations after an update, even when the app opens in
     /// Photos. A locked/unavailable Keychain must not disable the host client.
     func refreshSnapshot() {
@@ -142,8 +176,22 @@ final class GroupSharePublishingStore: GroupSecretStore, Sendable {
         guard let accounts = try? original.accounts(prefix: "window:") else { return }
         for account in accounts { _ = try? read(account) }
     }
+
+    /// 11/21m: 「データを消す」: everything in the share copy goes at once
+    /// (also a copy no longer in the app's own store), and the extension is
+    /// told the app holds nothing, so it clears its own checkpoints and
+    /// unsent copies the next time it opens.
+    func clearSnapshot() {
+        guard let snapshot else { return }
+        for account in (try? snapshot.accounts(prefix: "")) ?? [] where account != "host-confirmed-empty" {
+            try? snapshot.remove(account)
+        }
+        try? snapshot.write(Data([1]), account: "host-confirmed-empty", createOnly: false)
+    }
+
     private func publish(_ data: Data?, account: String) {
         guard account == "identity" || account.hasPrefix("window:") else { return }
+        guard let snapshot else { return }
         do {
             if account == "identity" {
                 if data == nil {
@@ -195,8 +243,14 @@ final class GroupShareReadingStore: GroupSecretStore, Sendable {
         self.checkpoints = checkpoints
     }
     func read(_ account: String) throws -> Data? {
-        guard account == "identity" || account.hasPrefix("window:"),
-              let host = try snapshot.read(account) else { throw GroupClientError.authenticationRequired }
+        guard account == "identity" || account.hasPrefix("window:") else { throw GroupClientError.authenticationRequired }
+        guard let host = try snapshot.read(account) else {
+            // 11/21m: one window the app has not handed over yet is left out
+            // of the list (a failure of that window alone), never the whole
+            // list. Without the person's own record nothing is readable.
+            if account.hasPrefix("window:") { throw GroupClientError.notMember }
+            throw GroupClientError.authenticationRequired
+        }
         if account == "identity" {
             let identity = try GroupWire.decode(GroupDeviceIdentity.self, host)
             guard identity.registered, identity.personPrivateKey == nil else { throw GroupClientError.authenticationRequired }

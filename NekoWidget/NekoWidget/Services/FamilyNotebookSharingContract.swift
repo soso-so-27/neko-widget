@@ -109,7 +109,10 @@ enum FamilySharingError: Error, Equatable, Sendable {
     var message: String {
         switch self {
         case .invitationExpired: "この招待は期限が切れています。招待した人に、新しい招待リンクを送ってもらってください。"
-        case .invitationRevoked: "この招待は取り消されています。"
+        // 11/21: a newer invitation, an approval or the family changing ends
+        // a link (the relay keeps one open invitation, bound to the family's
+        // generation). Not an old app: say so and how to get a working one.
+        case .invitationRevoked: "この招待リンクはもう使えません。招待した人に、新しい招待リンクを送ってもらってください。"
         case .invitationUsed: "この招待はもう使われています。"
         case .alreadyInFamily: "参加できる家族の手帳は1つまでです。いまの手帳から抜けると参加できます。"
         case .memberLimit: "この手帳は、もう人数がいっぱいです。"

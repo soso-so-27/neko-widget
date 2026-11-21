@@ -102,6 +102,7 @@ private struct VerifyGroupWindowChoicesSurviveReinstall {
         try await olderInstall(root, jpeg)
         try await keychainFailure(root, jpeg)
         try bound()
+        try keptAnswersAndUnsentCopies()
         print("group window choices survive reinstall: ok")
     }
 
@@ -303,6 +304,31 @@ private struct VerifyGroupWindowChoicesSurviveReinstall {
     }
 
     /// Each list keeps the newest 500 IDs; the oldest goes first.
+    /// 11/21: the team's answer is kept with the receipt; a report made but
+    /// never taken by the relay does not cover its photo after reinstall.
+    static func keptAnswersAndUnsentCopies() throws {
+        let kept = MemoryKeychain()
+        let windowID = syntheticID(50), answered = syntheticID(51), unsent = syntheticID(52)
+        let sent = Date(timeIntervalSince1970: 1_800_000_000), replied = Date(timeIntervalSince1970: 1_800_086_400)
+        GroupWindowKept.keepReport(photoID: answered, receiptNumber: nil, sentAt: sent, windowID: windowID, in: kept)
+        GroupWindowKept.keepReport(photoID: answered, receiptNumber: "R-0123-4567-89", sentAt: sent, windowID: windowID, in: kept)
+        GroupWindowKept.keepReport(photoID: answered, receiptNumber: "R-0123-4567-89", sentAt: sent,
+                                   reply: "restricted", repliedAt: replied, windowID: windowID, in: kept)
+        // A later call without an answer (or "none") never erases it.
+        GroupWindowKept.keepReport(photoID: answered, receiptNumber: nil, sentAt: sent, reply: "none", windowID: windowID, in: kept)
+        GroupWindowKept.keepReport(photoID: unsent, receiptNumber: nil, sentAt: sent, windowID: windowID, in: kept)
+        let reports = GroupWindowKept.reports(windowID: windowID, in: kept)
+        try require(reports == [.init(photoID: answered, receiptNumber: "R-0123-4567-89", sentAt: sent,
+                                      reply: "restricted", repliedAt: replied)], "the answer is kept with the receipt")
+        try require(GroupWindowKept.allReports(windowID: windowID, in: kept).map(\.photoID) == [answered, unsent],
+                    "the unsent copy is still kept, but covers nothing")
+        // A copy kept by an older version (no answer fields) still reads.
+        let older = #"[{"photoID":"\#(answered)","receiptNumber":"R-0123-4567-89","sentAt":0}]"#
+        try kept.write(Data(older.utf8), account: "reports:" + windowID, createOnly: false)
+        try require(GroupWindowKept.reports(windowID: windowID, in: kept).first?.reply == nil
+                    && GroupWindowKept.reports(windowID: windowID, in: kept).count == 1, "an older copy reads")
+    }
+
     static func bound() throws {
         let kept = MemoryKeychain()
         let windowID = syntheticID(40)

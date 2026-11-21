@@ -355,8 +355,9 @@ private actor Relay: GroupHTTPTransport {
         let back = try next.snapshot()
         try check(!back.sharingEnded && back.endedReason == nil && back.operations == gone.operations && back.mappings == gone.mappings,
                   "a verified roster reopens the same copy with its history")
-        try check(back.outbox.isEmpty, "what waited before the end leaves the outbox")
-        try check(try next.pendingOperations().isEmpty, "what waited before the end is not sent by itself")
+        // 11/21: the end was a mistake, so what waited to be sent waits again.
+        try check(back.outbox.count >= gone.outbox.count, "what waited before the end stays in the outbox")
+        try check(try next.pendingOperations().isEmpty == back.outbox.isEmpty, "what waited before the end is sent again")
         try check(try reopened.activate(family: family, admittedGeneration: 4).snapshot() == back, "the reopened participation activates again")
         try check(try !reopened.mayResume(family: family, admittedGeneration: 4), "an active notebook has nothing to reopen")
         // A leave after reopening is final again.

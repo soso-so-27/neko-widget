@@ -14,6 +14,15 @@ final class ShareMemoryStore: GroupSecretStore, @unchecked Sendable {
     func accounts(prefix: String) throws -> [String] { lock.lock(); defer { lock.unlock() }; return values.keys.filter { $0.hasPrefix(prefix) } }
 }
 
+final class ShareFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    var isOn: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return value }
+        set { lock.lock(); value = newValue; lock.unlock() }
+    }
+}
+
 func requireRejection(_ operation: () throws -> Void) {
     do { try operation(); preconditionFailure("Expected rejection") } catch { }
 }
@@ -32,6 +41,20 @@ actor ShareStub: GroupShareServing {
         if failOnce { failOnce = false; throw GroupClientError.offline }
     }
     func attempts() -> [(String, UUID, String?)] { calls }
+}
+
+/// 11/21m: answers each send with the next result (nil: delivered).
+actor ScriptedShareStub: GroupShareServing {
+    let values: [GroupWindow]
+    var results: [Error?]
+    var calls: [(String, UUID)] = []
+    init(_ values: [GroupWindow], results: [Error?]) { self.values = values; self.results = results }
+    func destinations() async throws -> [GroupWindow] { values }
+    func send(jpeg: Data, caption: String?, windowID: String, operationID: UUID) async throws {
+        calls.append((windowID, operationID))
+        if !results.isEmpty, let error = results.removeFirst() { throw error }
+    }
+    func attempts() -> [(String, UUID)] { calls }
 }
 
 @main struct GroupShareChecks {
@@ -98,6 +121,32 @@ actor ShareStub: GroupShareServing {
         let finalAttempts = await service.attempts()
         precondition(finalAttempts.count == 2)
         print("PASS active: preview, caption bounds, exact retry, committed success only")
+
+        // 11/21m: a refusal frees the window choice and starts a new operation;
+        // after an unknown result the same window and operation stay.
+        let refusing = ScriptedShareStub([active], results: [GroupClientError.dailyLimit, nil])
+        let refused = GroupShareComposerModel(jpeg: Data([1]), service: refusing)
+        await refused.load()
+        refused.select(active)
+        await refused.send()
+        precondition(!refused.delivered && refused.message != nil && refused.canEdit)
+        refused.back()
+        precondition(refused.selected == nil)
+        refused.select(active)
+        await refused.send()
+        let refusedCalls = await refusing.attempts()
+        precondition(refused.delivered && refusedCalls.count == 2 && refusedCalls[0].1 != refusedCalls[1].1)
+        let uncertain = ScriptedShareStub([active], results: [GroupClientError.offline, GroupClientError.dailyLimit, nil])
+        let held = GroupShareComposerModel(jpeg: Data([1]), service: uncertain)
+        await held.load()
+        held.select(active)
+        await held.send()
+        await held.send()
+        precondition(!held.canEdit)
+        await held.send()
+        let heldCalls = await uncertain.attempts()
+        precondition(held.delivered && heldCalls.count == 3 && Set(heldCalls.map(\.1)).count == 1)
+        print("PASS refusal: choose again or go back; an unknown result keeps the same operation")
 
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("group-share-synthetic-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -176,6 +225,33 @@ actor ShareStub: GroupShareServing {
         try publisher.remove("window:" + windowID)
         requireRejection { _ = try reader.read("window:" + windowID) }
         print("PASS credentials: owner root/billing excluded, host unchanged, revocation beats extension checkpoint")
+
+        // 11/21m: a window not handed over yet concerns that window alone.
+        do { _ = try reader.read("window:" + GroupWire.randomID()); preconditionFailure("Expected rejection") }
+        catch let error as GroupClientError { precondition(error == .notMember) }
+        // The share copy that cannot open yet (locked) opens later and seeds.
+        let lockedOriginal = ShareMemoryStore(), lateSnapshot = ShareMemoryStore()
+        try lockedOriginal.write(GroupWire.encode(identity), account: "identity", createOnly: false)
+        try lockedOriginal.write(GroupWire.encode(record), account: "window:" + windowID, createOnly: false)
+        let unlocked = ShareFlag()
+        let deferred = GroupSharePublishingStore(original: lockedOriginal, makeSnapshot: {
+            unlocked.isOn ? lateSnapshot as any GroupSecretStore : nil
+        })
+        _ = try deferred.read("identity")
+        let nothingYet = try lateSnapshot.accounts(prefix: "")
+        precondition(nothingYet.isEmpty && deferred.snapshot == nil)
+        unlocked.isOn = true
+        precondition(deferred.snapshot == nil)  // asked again at most every 10 s
+        let reopened = GroupSharePublishingStore(original: lockedOriginal, makeSnapshot: { lateSnapshot })
+        _ = try reopened.read("identity")
+        let seededWindow = try lateSnapshot.read("window:" + windowID), seededIdentity = try lateSnapshot.read("identity")
+        precondition(seededWindow != nil && seededIdentity != nil)
+        // 「データを消す」 leaves nothing behind but the marker.
+        try lateSnapshot.write(Data([9]), account: "window:stale", createOnly: false)
+        reopened.clearSnapshot()
+        let left = try lateSnapshot.accounts(prefix: "")
+        precondition(left == ["host-confirmed-empty"])
+        print("PASS share copy: one missing window, opening after unlock, cleared at once")
 
         let path = "/v3/group-windows/" + windowID
         precondition(GroupShareTransport.allows(method: "GET", path: path))

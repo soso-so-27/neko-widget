@@ -83,11 +83,17 @@ struct CatProfileTransferView: View {
             NavigationStack {
                 List {
                     Section {
-                        Text(item.isUnchanged ? "名前と日付はもう入っています。" : "この内容をこのiPhoneに登録します。")
+                        if !item.plan.added.isEmpty {
+                            Text("この内容をこのiPhoneに登録します。")
+                        } else if item.plan.leftOut.isEmpty {
+                            Text("名前と日付はもう入っています。")
+                        }
                         // 11/14: a file with more than 10 cats brings the first 10.
                         if item.wasLimited { LimitNote(AppLimitCopy.catProfilesImported) }
                     }
-                    ForEach(item.transfer.profiles) { profile in
+                    // 11/21: only the cats this file adds (a cat already here
+                    // is not changed, one over the limit does not come).
+                    ForEach(item.plan.added) { profile in
                         Section(profile.name) {
                             Text(dateText("誕生日", profile.dates.birthday, approximate: profile.dates.birthdayIsApproximate))
                             Text(dateText("迎えた日", profile.dates.adoptionDay, approximate: profile.dates.adoptionDayIsApproximate))
@@ -117,7 +123,8 @@ struct CatProfileTransferView: View {
                                 Task { @MainActor in
                                     switch await actions.importProfileDates(confirmed) {
                                     case let .success(changed):
-                                        pendingNotice = (changed ? "猫の名前と日付、選んだ写真がどの子かを引き継ぎました。" : "今の内容と同じだったので、変わったところはありません。")
+                                        pendingNotice = Self.resultNotice(changed: changed, addsCats: !item.plan.added.isEmpty,
+                                                                          choosesPhotos: !confirmed.selectedPhotoIdentifiers.isEmpty)
                                             + (item.wasLimited ? AppLimitCopy.catProfilesImported : "")
                                     case let .failure(error):
                                         pendingNotice = (error is NekoWidgetError
@@ -150,6 +157,17 @@ struct CatProfileTransferView: View {
         )) {
             Button("閉じる", role: .cancel) { notice = nil }
         } message: { Text(notice ?? "") }
+    }
+
+    /// 11/21: says only what this import changed (it said 「名前と日付」
+    /// when only photos came in).
+    static func resultNotice(changed: Bool, addsCats: Bool, choosesPhotos: Bool) -> String {
+        guard changed else { return "今の内容と同じだったので、変わったところはありません。" }
+        switch (addsCats, choosesPhotos) {
+        case (true, true): return "猫の名前と日付、選んだ写真がどの子かを引き継ぎました。"
+        case (true, false): return "猫の名前と日付を引き継ぎました。"
+        default: return "選んだ写真がどの子かを引き継ぎました。"
+        }
     }
 
     private func dateText(_ title: String, _ date: CatLifeDate?, approximate: Bool) -> String {

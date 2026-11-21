@@ -463,8 +463,12 @@ final class GroupAdmissionService: ObservableObject {
         else {
             guard let windows = try? await client.windows() else { return }
             // 11/20: the same list the まど tab keeps, so a Widget of a window
-            // that went says so even before the tab is opened.
-            if GroupWidgetCache.keepOnly(windowIDs: Set(windows.map(\.id))) {
+            // that went says so even before the tab is opened. 11/21m: a window
+            // the relay still lists but this read could not verify (a passing
+            // failure) is kept, as the まど tab keeps it: only a window the
+            // relay no longer lists has ended.
+            let unreadable = await client.unreadableWindowIDs()
+            if GroupWidgetCache.keepOnly(windowIDs: Set(windows.map(\.id)).union(unreadable)) {
                 WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
             }
             ids = windows.filter { $0.state != .closed }.map(\.id)

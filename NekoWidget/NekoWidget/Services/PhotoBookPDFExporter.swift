@@ -161,6 +161,9 @@ struct PhotoLibraryJPEGExporter {
 enum PhotoBookPDFExportError: LocalizedError, Equatable {
     case invalidSelection(minimum: Int, maximum: Int, actual: Int)
     case selectedPhotosUnavailable(expected: Int, actual: Int)
+    /// 11/21: every selected photo is still there, but none could be read in
+    /// time (iCloud or the connection), so choosing again would not help.
+    case photosNotReadable
     case photoUnavailable(page: Int)
     case imageUnavailable(page: Int)
     case couldNotCreatePDF
@@ -171,12 +174,45 @@ enum PhotoBookPDFExportError: LocalizedError, Equatable {
             "PDFには\(minimum)〜\(maximum)枚を選んでください（今は\(actual)枚です）。"
         case let .selectedPhotosUnavailable(expected, actual):
             "選んだ\(expected)枚のうち、\(actual)枚しか見つかりませんでした。選び直してください。"
+        case .photosNotReadable:
+            "写真を読み込めませんでした。iCloudとの接続を確かめて、もう一度お試しください。"
         case let .photoUnavailable(page):
             "\(page)ページ目の写真が見つかりませんでした。"
         case let .imageUnavailable(page):
             "\(page)ページ目の画像を読み込めませんでした。"
         case .couldNotCreatePDF:
             "PDFを作れませんでした。"
+        }
+    }
+}
+
+/// 11/21: an export cut short by the app being closed leaves its UUID folder
+/// in the app's own temporary export folders. At launch nothing can still be
+/// sharing it; only folders older than `minimumAge` are removed, off the main
+/// thread. Nothing outside these folders, and no saved copy, is touched.
+enum StaleExportFolderSweep {
+    static let folderNames = ["PhotoBookExports", "PhotoMemoryNoteExports", "ReadablePreservationExports"]
+    static let minimumAge: TimeInterval = 60 * 60
+
+    static func removeStaleFolders(
+        fileManager: FileManager = .default,
+        now: Date = Date(),
+        minimumAge: TimeInterval = minimumAge
+    ) {
+        let temporaryDirectory = fileManager.temporaryDirectory.standardizedFileURL
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey, .contentModificationDateKey]
+        for name in folderNames {
+            let root = temporaryDirectory.appendingPathComponent(name, isDirectory: true)
+            guard let items = try? fileManager.contentsOfDirectory(
+                at: root, includingPropertiesForKeys: Array(keys), options: []
+            ) else { continue }
+            for item in items where UUID(uuidString: item.lastPathComponent) != nil {
+                guard let values = try? item.resourceValues(forKeys: keys),
+                      values.isDirectory == true, values.isSymbolicLink != true,
+                      let modified = values.contentModificationDate,
+                      now.timeIntervalSince(modified) >= minimumAge else { continue }
+                try? fileManager.removeItem(at: item)
+            }
         }
     }
 }
@@ -306,6 +342,7 @@ struct PhotoBookPDFExporter {
         // time, is left out; each photo has its own page, so no gap is left.
         let waitStartedAt = ProcessInfo.processInfo.systemUptime
         var omittedPhotoCount = 0
+        var unreadablePhotoCount = 0
         do {
             for candidate in selected {
                 try Task.checkCancellation()
@@ -319,6 +356,7 @@ struct PhotoBookPDFExporter {
                 guard let image = await image(for: asset, timeout: timeout) else {
                     try Task.checkCancellation()
                     omittedPhotoCount += 1
+                    unreadablePhotoCount += 1
                     continue
                 }
                 try Task.checkCancellation()
@@ -339,6 +377,7 @@ struct PhotoBookPDFExporter {
                 pdfContext.endPDFPage()
             }
             guard omittedPhotoCount < selected.count else {
+                if unreadablePhotoCount > 0 { throw PhotoBookPDFExportError.photosNotReadable }
                 throw PhotoBookPDFExportError.selectedPhotosUnavailable(
                     expected: selected.count,
                     actual: 0

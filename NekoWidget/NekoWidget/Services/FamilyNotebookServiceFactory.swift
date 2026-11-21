@@ -84,21 +84,83 @@ enum FamilyNotebookServiceFactory {
     /// the link. nil when there is none, or when it is the usual person (the
     /// usual deletion covers it). Called before the usual deletion, so a
     /// failure stops before anything else is deleted and can be tried again.
+    ///
+    /// 11/21 (点検): the relay's acceptance comes first, then the clean-up,
+    /// and a second try finishes what the first began:
+    /// - an accepted record (its keys already went) is cleaned up again, never
+    ///   asked for again with keys that are no longer there;
+    /// - a request whose reply was lost is asked about by its receipt when the
+    ///   signed retry fails (the person may already be gone on the relay), so
+    ///   it no longer stops every later deletion;
+    /// - the same person as the usual one is deleted by the recovered device
+    ///   when the usual device was taken off (it can no longer sign);
+    /// - the names and choices every identity here shares stay while the usual
+    ///   person remains; the usual deletion removes them.
     static func deleteRecoveredPerson(_ client: ProductionGroupWindowClient) async throws -> GroupIdentityDeletion? {
         guard recoveryRuntimeCarried else { return nil }
         let namespace = GroupWindowClientProvider.namespace
         let links = try GroupKeychainStore(namespace: namespace + recoveryLinkSuffix)
         guard let bytes = try links.read(FamilyNotebookIdentityChoice.linkAccount) else { return nil }
         let link = try GroupWire.decode(FamilyNotebookIdentityChoice.Link.self, bytes)
-        let usual = try await client.existingPersonID()
         guard link.scope.utf8.count == 64,
-              link.scope.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
-              let recovered = try await recoveredIdentity(client),
-              recovered.personID != usual else { return nil }
+              link.scope.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { return nil }
+        let usual = try await client.existingPersonID(), usualDevice = try await client.existingDeviceID()
         let store = try GroupKeychainStore(namespace: namespace + ".recovery." + link.scope)
-        let record = try await client.requestDeletion(of: recovered, in: store)
+        let saved = try store.read(recoveredDeletionAccount).map { try GroupWire.decode(GroupIdentityDeletion.self, $0) }
+        let record: GroupIdentityDeletion
+        if let saved, saved.acceptedAt != nil, saved.personID == link.personID {
+            record = saved
+        } else {
+            guard let recovered = try await recoveredIdentity(client) else { return nil }
+            if recovered.personID == usual {
+                // The usual deletion covers the same person, unless its
+                // device was taken off and can no longer sign it.
+                guard let usualDevice, try GroupDeviceRevocation.isMarked(
+                    GroupDeviceRevocation.Pair(personID: recovered.personID, deviceID: usualDevice), in: client.revocations) else { return nil }
+            }
+            do { record = try await client.requestDeletion(of: recovered, in: store) }
+            catch {
+                guard let saved, saved.acceptedAt == nil, saved.personID == recovered.personID,
+                      let answered = try? await recoveredDeletionStatus(saved, store: store), answered.acceptedAt != nil
+                else { throw error }
+                record = answered
+            }
+        }
+        guard record.acceptedAt != nil else { return record }
+        _ = await GroupIdentityDeletionLocalData.remove(record, keepsSharedCopies: record.personID != usual)
         try? links.remove(FamilyNotebookIdentityChoice.linkAccount)
-        _ = await GroupIdentityDeletionLocalData.remove(record)
+        return record
+    }
+
+    /// Where ProductionGroupWindowClient.requestDeletion(of:in:) keeps the
+    /// recovered person's deletion record in its store (its `deletionAccount`).
+    static let recoveredDeletionAccount = "identity-deletion"
+
+    /// 11/21: the relay's answer about a recovered person's deletion whose
+    /// reply was lost, by its receipt (no signature: the person may already
+    /// be gone). Accepted: the record is kept with the answer and the
+    /// recovered device's keys go, as requestDeletion(of:in:) does.
+    private static func recoveredDeletionStatus(_ saved: GroupIdentityDeletion,
+                                                store: any GroupSecretStore) async throws -> GroupIdentityDeletion {
+        struct Reply: Decodable {
+            let protocolVersion: Int; let requestID: String; let state: String; let acceptedAt: Int; let completedAt: Int?
+        }
+        guard let endpoint = SharingAPIConfiguration.current.baseURL else { throw FamilySharingError.serviceUnavailable }
+        let id = saved.operationID.uuidString.lowercased()
+        var request = try GroupHTTPRequest.make(endpoint: endpoint,
+            path: "/v3/group-identities/deletion-requests/" + id + "/status", body: nil, identity: nil)
+        request.setValue("Bearer " + saved.receipt, forHTTPHeaderField: "Authorization")
+        let reply = try GroupWire.decode(Reply.self, GroupHTTPRequest.check(
+            await GroupURLSessionTransport().send(request, maximumBytes: 4096)))
+        guard reply.protocolVersion == 3, reply.requestID == id, ["processing", "completed"].contains(reply.state),
+              (reply.state == "completed") == (reply.completedAt != nil) else { throw FamilySharingError.unknownOutcome }
+        var record = saved
+        record.acceptedAt = Date(timeIntervalSince1970: TimeInterval(reply.acceptedAt))
+        record.completedAt = reply.completedAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+        try store.write(GroupWire.encode(record), account: recoveredDeletionAccount, createOnly: false)
+        for account in (try? store.accounts(prefix: "")) ?? [] where account != recoveredDeletionAccount {
+            try? store.remove(account)
+        }
         return record
     }
 
@@ -239,7 +301,11 @@ enum GroupIdentityDeletionLocalData {
     }
 
     /// Whether every step went. A failed step never stops the others.
-    static func remove(_ deletion: GroupIdentityDeletion) async -> Bool {
+    /// `keepsSharedCopies` (11/21): another person's identity stays here
+    /// whatever the stores say (the usual one, after the recovered person's
+    /// deletion): the copies every identity shares stay; its own deletion
+    /// removes them.
+    static func remove(_ deletion: GroupIdentityDeletion, keepsSharedCopies: Bool = false) async -> Bool {
         guard deletion.acceptedAt != nil else { return false }
         // A record from before 11/20 names no one: the client already removed
         // its own keys, and nothing else can be told to be that person's.
@@ -258,11 +324,14 @@ enum GroupIdentityDeletionLocalData {
             UserDefaults.standard.removeObject(forKey: FamilyNotebookLocalBinding.key)
             UserDefaults.standard.removeObject(forKey: FamilyNotebookLocalBinding.legacyKey)
         }
+        // 11/21: the copy the screens hold goes with it, before its files.
+        FamilyNotebookPrototype.shared.forgetRemovedCopy(scopes: removed)
         let outcome = local.removeAfterIdentityDeletion(endpoint: endpoint, personID: person, deviceID: deletion.deviceID,
                                                         linkSuffix: FamilyNotebookServiceFactory.recoveryLinkSuffix)
         var complete = outcome.complete
         removeDefaults(prefixes: [personDefaultsPrefix(person)])
-        if !outcome.otherIdentityRemains {
+        let othersRemain = outcome.otherIdentityRemains || keepsSharedCopies
+        if !othersRemain {
             for key in defaultsKeys { UserDefaults.standard.removeObject(forKey: key) }
             for key in sharedDefaultsKeys { UserDefaults.standard.removeObject(forKey: key) }
             removeDefaults(prefixes: sharedDefaultsPrefixes)
@@ -273,7 +342,7 @@ enum GroupIdentityDeletionLocalData {
         if !(await removeDeletedPersonSyncedRoot(personID: person)) { complete = false }
         // 11/20: the same window choices in the kept windows' list
         // (windows.json), after the notebook's stores went.
-        if !outcome.otherIdentityRemains, !(await GroupWindowLocalPhotoStore.shared.forgetIdentityChoices()) {
+        if !othersRemain, !(await GroupWindowLocalPhotoStore.shared.forgetIdentityChoices()) {
             complete = false
         }
         // The notebook's screens read again (the identity that remains, if any).

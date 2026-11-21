@@ -172,9 +172,11 @@ final class FamilyNotebookStore: @unchecked Sendable {
 
     /// 11/18: reopen a copy that ended only because the directory stopped
     /// listing the family (or ended before reasons were kept). The caller has
-    /// verified the family again. History, mappings and acknowledgements stay;
-    /// what was waiting to be sent does not start again by itself: those edits
-    /// stay in this iPhone's history, and only new writing is sent.
+    /// verified the family again (the same family and admission, a roster
+    /// listing this device). History, mappings and acknowledgements stay.
+    /// 11/21: so does what was waiting to be sent: the end was a mistake, and
+    /// those edits are this person's writing (they used to stay unsent for
+    /// good). Nothing was queued while it was ended.
     @discardableResult
     func resumeSharingAfterUnconfirmedEnd() throws -> FamilyNotebookSnapshot {
         try transaction { state in
@@ -182,7 +184,6 @@ final class FamilyNotebookStore: @unchecked Sendable {
             else { throw FamilyNotebookError.sharingEnded }
             state.sharingEnded = nil; state.endedReason = nil
             state.schemaVersion = state.opaqueOperations?.isEmpty == false ? 3 : 1
-            state.outboxIDs = []
         }
         return try snapshot()
     }
@@ -300,6 +301,32 @@ final class FamilyNotebookStore: @unchecked Sendable {
             state.operations = try FamilyNotebookCore.merge(state.operations, known)
             state.clock = max(state.clock, known.map(\.version.clock).max() ?? 0)
             if !opaque.isEmpty { state.opaqueOperations = opaque; state.schemaVersion = 3 }
+            try reassertNewerOwnEdits(touching: known, state: &state)
+        }
+    }
+
+    /// 11/21: an edit of this iPhone made without seeing another one (offline)
+    /// lost to it only because the other iPhone had seen more of the notebook
+    /// (a higher clock), even when it was the older edit, and the tools took
+    /// the older value without a word. Now this iPhone, and only it (the
+    /// author of the newer edit), writes its value again as an edit that has
+    /// seen both, so every iPhone settles on the newer one by the usual rule.
+    /// The order of merge itself is unchanged (wall time never picks a winner
+    /// there); equal times leave it to that order. Both values stay in history.
+    private func reassertNewerOwnEdits(touching incoming: [FamilyNotebookOperation], state: inout State) throws {
+        let targets = Set(incoming.filter { $0.version.deviceID != deviceID }.map(\.target))
+        for target in targets {
+            guard let field = target.field, ![FamilyNotebookField.sharingEnded, .farewellDay, .representativePhoto].contains(field),
+                  let current = state.snapshot.fieldState(for: target), !current.isDeleted,
+                  current.operation.version.deviceID != deviceID,
+                  let own = current.history.filter({ $0.operation.version.deviceID == deviceID })
+                      .max(by: { $0.operation.version < $1.operation.version }),
+                  own.isConcurrentConflict, own.operation.editedAt > current.operation.editedAt,
+                  let value = own.operation.value else { continue }
+            let again = try makeOperation(state: state, target: target, value: value,
+                                          author: own.operation.author, editedAt: own.operation.editedAt)
+            state.operations = try FamilyNotebookCore.merge(state.operations, [again])
+            state.clock = again.version.clock; state.outboxIDs.insert(again.id)
         }
     }
 

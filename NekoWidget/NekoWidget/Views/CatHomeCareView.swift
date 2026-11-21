@@ -191,28 +191,15 @@ private struct CatHomeCareListPage: View {
     let catID: UUID
     @ObservedObject private var store = CatCareStore.shared
     @State private var editing: CatCareListEditor?
-    @State private var saveFailed = false
 
     var body: some View {
         CatCareListView(kind: kind, catID: catID, editing: $editing)
             .sheet(item: $editing) { editor in
-                CatCareListEntrySheet(editor: editor, catID: catID) { result in apply(result) }
+                // 11/21: a failed save keeps the sheet open with one line.
+                CatCareListEntrySheet(editor: editor, catID: catID, saving: { result in
+                    store.applyEntry(result, catID: catID)
+                })
             }
-            .alert("保存できませんでした", isPresented: $saveFailed) {
-                Button("閉じる", role: .cancel) {}
-            } message: {
-                Text("少し待ってから、もう一度お試しください。")
-            }
-    }
-
-    private func apply(_ result: CatCareListEditor.Result) {
-        // 11/20: as in 「この子のこと」: a full list says so where 「追加」 was.
-        var applied: Bool?
-        let saved = store.update { state in
-            guard let index = state.cats.firstIndex(where: { $0.catID == catID }) else { return }
-            applied = result.apply(to: &state.cats[index], by: state.deviceID, now: Date())
-        }
-        if !saved || applied == nil { saveFailed = true }
     }
 }
 

@@ -113,6 +113,13 @@ struct OfficialWindowState: Codable, Sendable {
               (try? catalog.validate(at: date, expectedChannelID: windowID, expectedCatID: expectedCatID)) != nil else { return [] }
         return catalog.widgetPhotos(at: date)
     }
+    /// 11/21m: every photo the current catalog allows at `date` (newest
+    /// first), for a Widget whose newest image has not arrived yet.
+    func availablePhotos(at date: Date) -> [OfficialCatPhoto] {
+        guard isSubscribed, let catalog,
+              (try? catalog.validate(at: date, expectedChannelID: windowID, expectedCatID: expectedCatID)) != nil else { return [] }
+        return catalog.availablePhotos(at: date)
+    }
 
     private enum CodingKeys: String, CodingKey {
         case windowID, subscriptionID, endpoint, catalog, checkedAt, imageRevision
