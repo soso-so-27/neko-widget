@@ -12,7 +12,11 @@ final class ShareViewController: UIViewController {
             extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
             return
         }
-        let loading = UIHostingController(rootView: ProgressView("読み込んでいます"))
+        // 11/21m: a photo still coming from iCloud can be stopped here.
+        let loading = UIHostingController(rootView: VStack(spacing: 20) {
+            ProgressView("読み込んでいます")
+            Button("キャンセル") { [weak self] in self?.cancel() }
+        }.padding())
         install(loading)
         operation = Task { await prepare() }
     }
@@ -31,7 +35,19 @@ final class ShareViewController: UIViewController {
                 showError("写真は1枚だけ選んでください。")
                 return
             }
-            let photo = try await MomentShareIngressService().prepare(from: provider)
+            let photo: MomentShareIngressPhoto
+            do {
+                photo = try await MomentShareIngressService().prepare(from: provider)
+            } catch is CancellationError {
+                return
+            } catch {
+                // 11/21m: the photo itself could not be read (an iCloud
+                // download that failed, an unreadable file): say so, not
+                // that a delivery is uncertain. Nothing was sent.
+                guard !Task.isCancelled else { return }
+                showError(GroupShareComposerModel.message(for: MomentSharingError.invalidPayload))
+                return
+            }
             try Task.checkCancellation()
             let model = GroupShareComposerModel(jpeg: photo.canonicalJPEG,
                 service: try GroupShareService.live(), onEmpty: { GroupShareCreateRequest.record() })

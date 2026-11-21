@@ -802,5 +802,25 @@ private struct RecoveryCatalogRefusal: GroupHTTPTransport {
     await notebookAdapter.checkWaiting()
     try check(notebookAdapter.items[0].state == .ready(operationID: notebookID, deviceID: "synthetic-new"))
     try check(await steps.confirms == 1)
+
+    // 11/21m: a second tap never leaves the first row at 「確認しています」;
+    // one まど ready does not close a screen where another still waits.
+    let first = UUID(), second = UUID()
+    let slow = GroupRecoverySyntheticSession(states: [first: .notStarted(operationID: first),
+                                                      second: .notStarted(operationID: second)],
+                                             devices: [], delay: .milliseconds(200))
+    let twoRows = GroupRecoveryAdapter(contexts: [.init(
+        candidate: .init(summary: .init(rootID: "synthetic-root-two", windowIDs: ["w-a", "w-b"], notebookIDs: []),
+                         openableWindowNames: []),
+        session: slow,
+        items: [.init(windowID: "w-a", name: nil, state: .notStarted(operationID: first)),
+                .init(windowID: "w-b", name: nil, state: .ready(operationID: second, deviceID: "synthetic-new"))])])
+    await twoRows.handle(.perform(.submitSameOperation(first)))
+    try check(twoRows.items[0].state == .checking(operationID: first))
+    await twoRows.handle(.perform(.complete))
+    try check(!twoRows.dismissed)
+    await twoRows.handle(.perform(.queryStatus(first)))
+    await twoRows.handle(.dismiss)
+    try check(twoRows.items[0].state == .unavailable(operationID: first) && twoRows.dismissed)
     print("recovery live screen model: PASS (builder catalog/identity, timeout, late answer, synthetic flow, close)")
 }

@@ -83,7 +83,9 @@ private func recoveryPersonAction<T>(_ work: () async throws -> T) async rethrow
             guard let self, !Task.isCancelled, self.generation == token else { return }
             self.timer?.cancel(); self.timer = nil; self.task = nil
             switch result {
-            case .success(let contexts) where !contexts.isEmpty:
+            // 11/21m: candidates with nothing to bring over are the same
+            // answer as none (never an empty list).
+            case .success(let contexts) where contexts.contains(where: { !$0.items.isEmpty }):
                 self.adapter = GroupRecoveryAdapter(contexts: contexts); self.phase = .ready
             case .success:
                 self.phase = .noRoots
@@ -129,75 +131,93 @@ struct GroupRecoveryLiveBuilder: Sendable {
     func contexts(roots: [Data]) async throws -> [GroupRecoveryAdapter.Context] {
         var contexts: [GroupRecoveryAdapter.Context] = []
         var seen: Set<Data> = []
+        // 11/21m: each candidate on its own. One the relay refuses (or whose
+        // key cannot be read) no longer hides the others; only when none
+        // works is that first failure the answer.
+        var firstFailure: Error?
         for root in roots {
             try Task.checkCancellation()
-            let key = try Curve25519.Signing.PrivateKey(rawRepresentation: root)
-            guard seen.insert(key.publicKey.rawRepresentation).inserted else { continue }
-            let scope = GroupCanonical.hash(key.publicKey.rawRepresentation).map { String(format: "%02x", $0) }.joined()
-            let (journal, secrets) = try stores(scope)
-            let client = try GroupRecoveryClient(endpoint: endpoint, environment: environment, root: root,
-                transport: transport, journal: journal, secrets: secrets, enabled: true)
-            // The relay answers this only while its recovery gate is on (else 503).
-            let catalog = try await client.catalog()
-            let identity = try Self.deviceIdentity(root: key, secrets: secrets, journal: journal, revocations: revocations)
-            var drafts: [GroupRecoveryClient.Draft] = []
-            for window in catalog.windows.prefix(Self.windowLimit) {
-                // Journaled: a retry reuses the same operationID for this root and まど.
-                drafts.append(try await client.prepare(windowID: window.windowID,
-                    signingPublicKey: identity.signingKey.publicKey.rawRepresentation,
-                    hpkePublicKey: identity.agreementKey.publicKey.rawRepresentation, model: model))
+            do {
+                if let made = try await makeContext(root: root, seen: &seen) { contexts.append(made) }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch GroupRecoveryClient.Failure.serverDisabled {
+                throw GroupRecoveryClient.Failure.serverDisabled
+            } catch {
+                if firstFailure == nil { firstFailure = error }
             }
-            let base = GroupRecoveryClientSession(client: client, identity: identity,
-                drafts: Dictionary(drafts.map { ($0.operationID, $0) }, uniquingKeysWith: { first, _ in first }))
-            // P5: a waiting まど receives its keys on the same Draft and operation.
-            var session: any GroupRecoverySession = GroupRecoveryKeyDeliverySession(base: base, source: GroupRecoveryClientKeySource(base: base))
-            let devices = catalog.devices.map {
-                GroupRecoveryDevice(id: $0.deviceID, modelName: $0.model ?? "iPhone",
-                                    registeredAt: Date(timeIntervalSince1970: TimeInterval($0.registeredAt)))
-            }
-            var items: [GroupRecoveryWindowItem] = []
-            for draft in drafts {
-                let state: GroupRecoveryRegistrationState
-                do {
-                    // Resumes a saved fresh generation first; never creates another.
-                    state = try await session.run(.queryStatus(draft.operationID))
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch GroupRecoveryClient.Failure.serverDisabled {
-                    throw GroupRecoveryClient.Failure.serverDisabled
-                } catch {
-                    state = .unavailable(operationID: draft.operationID)
-                }
-                items.append(.init(windowID: draft.windowID, name: nil, state: state, devices: devices))
-            }
-            // 11/19 (機種変更 水準2): the person's family notebook, one row.
-            let familyIDs = catalog.notebooks.compactMap { UUID(uuidString: $0.familyID) }
-            if let notebook, let family = familyIDs.first {
-                let deviceID = try identity.deviceID
-                let wrapped = GroupRecoveryNotebookSession(base: session,
-                    operationID: GroupRecoveryNotebookSession.operationID(personID: catalog.personID, family: family),
-                    deviceID: deviceID,
-                    steps: notebook(.init(scope: scope, personID: catalog.personID, familyIDs: familyIDs,
-                                          hasWindows: !catalog.windows.isEmpty)))
-                let state: GroupRecoveryRegistrationState
-                do {
-                    state = try await wrapped.run(.queryStatus(wrapped.operationID))
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch {
-                    state = .unavailable(operationID: wrapped.operationID)
-                }
-                items.append(.init(windowID: "notebook-" + family.uuidString.lowercased(), name: nil, state: state,
-                                   devices: devices, notebook: true))
-                session = wrapped
-            }
-            try Task.checkCancellation()
-            contexts.append(.init(candidate: .init(summary: .init(rootID: catalog.personID,
-                windowIDs: catalog.windows.map(\.windowID), notebookIDs: catalog.notebooks.map(\.familyID)),
-                openableWindowNames: [], usedOnThisIPhone: usualRoot == root), session: session, items: items))
         }
+        if !contexts.contains(where: { !$0.items.isEmpty }), let firstFailure { throw firstFailure }
         // Display order only: the one used on this iPhone first (never a pick).
         return contexts.filter { $0.candidate.usedOnThisIPhone } + contexts.filter { !$0.candidate.usedOnThisIPhone }
+    }
+
+    /// One candidate's context; nil for a root already listed.
+    private func makeContext(root: Data, seen: inout Set<Data>) async throws -> GroupRecoveryAdapter.Context? {
+        let key = try Curve25519.Signing.PrivateKey(rawRepresentation: root)
+        guard seen.insert(key.publicKey.rawRepresentation).inserted else { return nil }
+        let scope = GroupCanonical.hash(key.publicKey.rawRepresentation).map { String(format: "%02x", $0) }.joined()
+        let (journal, secrets) = try stores(scope)
+        let client = try GroupRecoveryClient(endpoint: endpoint, environment: environment, root: root,
+            transport: transport, journal: journal, secrets: secrets, enabled: true)
+        // The relay answers this only while its recovery gate is on (else 503).
+        let catalog = try await client.catalog()
+        let identity = try Self.deviceIdentity(root: key, secrets: secrets, journal: journal, revocations: revocations)
+        var drafts: [GroupRecoveryClient.Draft] = []
+        for window in catalog.windows.prefix(Self.windowLimit) {
+            // Journaled: a retry reuses the same operationID for this root and まど.
+            drafts.append(try await client.prepare(windowID: window.windowID,
+                signingPublicKey: identity.signingKey.publicKey.rawRepresentation,
+                hpkePublicKey: identity.agreementKey.publicKey.rawRepresentation, model: model))
+        }
+        let base = GroupRecoveryClientSession(client: client, identity: identity,
+            drafts: Dictionary(drafts.map { ($0.operationID, $0) }, uniquingKeysWith: { first, _ in first }))
+        // P5: a waiting まど receives its keys on the same Draft and operation.
+        var session: any GroupRecoverySession = GroupRecoveryKeyDeliverySession(base: base, source: GroupRecoveryClientKeySource(base: base))
+        let devices = catalog.devices.map {
+            GroupRecoveryDevice(id: $0.deviceID, modelName: $0.model ?? "iPhone",
+                                registeredAt: Date(timeIntervalSince1970: TimeInterval($0.registeredAt)))
+        }
+        var items: [GroupRecoveryWindowItem] = []
+        for draft in drafts {
+            let state: GroupRecoveryRegistrationState
+            do {
+                // Resumes a saved fresh generation first; never creates another.
+                state = try await session.run(.queryStatus(draft.operationID))
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch GroupRecoveryClient.Failure.serverDisabled {
+                throw GroupRecoveryClient.Failure.serverDisabled
+            } catch {
+                state = .unavailable(operationID: draft.operationID)
+            }
+            items.append(.init(windowID: draft.windowID, name: nil, state: state, devices: devices))
+        }
+        // 11/19 (機種変更 水準2): the person's family notebook, one row.
+        let familyIDs = catalog.notebooks.compactMap { UUID(uuidString: $0.familyID) }
+        if let notebook, let family = familyIDs.first {
+            let deviceID = try identity.deviceID
+            let wrapped = GroupRecoveryNotebookSession(base: session,
+                operationID: GroupRecoveryNotebookSession.operationID(personID: catalog.personID, family: family),
+                deviceID: deviceID,
+                steps: notebook(.init(scope: scope, personID: catalog.personID, familyIDs: familyIDs,
+                                      hasWindows: !catalog.windows.isEmpty)))
+            let state: GroupRecoveryRegistrationState
+            do {
+                state = try await wrapped.run(.queryStatus(wrapped.operationID))
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                state = .unavailable(operationID: wrapped.operationID)
+            }
+            items.append(.init(windowID: "notebook-" + family.uuidString.lowercased(), name: nil, state: state,
+                               devices: devices, notebook: true))
+            session = wrapped
+        }
+        try Task.checkCancellation()
+        return GroupRecoveryAdapter.Context(candidate: .init(summary: .init(rootID: catalog.personID,
+            windowIDs: catalog.windows.map(\.windowID), notebookIDs: catalog.notebooks.map(\.familyID)),
+            openableWindowNames: [], usedOnThisIPhone: usualRoot == root), session: session, items: items)
     }
 
     /// 11/20: the one discard on the spot, only for a recovered device that
@@ -347,6 +367,8 @@ struct GroupRecoveryKeyStatus: Sendable {
 /// The calls the new iPhone makes for one operation. The real one is the P3/P5
 /// client with the saved Draft; captures use the synthetic key source.
 protocol GroupRecoveryKeySource: Sendable {
+    /// 11/21m: ready from this iPhone's own installed copy, without a call.
+    func installed(_ operationID: UUID) async -> GroupRecoveryRegistrationState?
     func resume(_ operationID: UUID) async throws -> GroupRecoveryRegistrationState?
     func status(_ operationID: UUID) async throws -> GroupRecoveryKeyStatus
     func receivedDeviceID(_ operationID: UUID) async throws -> String?
@@ -354,8 +376,16 @@ protocol GroupRecoveryKeySource: Sendable {
     func finish(_ operationID: UUID) async throws -> GroupRecoveryRegistrationState
 }
 
+extension GroupRecoveryKeySource {
+    func installed(_ operationID: UUID) async -> GroupRecoveryRegistrationState? { nil }
+}
+
 struct GroupRecoveryClientKeySource: GroupRecoveryKeySource {
     let base: GroupRecoveryClientSession
+    func installed(_ id: UUID) async -> GroupRecoveryRegistrationState? {
+        guard let draft = base.drafts[id] else { return nil }
+        return (try? await base.client.installed(draft, identity: base.identity))?.state
+    }
     private func draft(_ id: UUID) throws -> GroupRecoveryClient.Draft {
         guard let draft = base.drafts[id] else { throw GroupRecoveryClient.Failure.invalidResponse }
         return draft
@@ -402,6 +432,8 @@ actor GroupRecoveryKeyDeliverySession: GroupRecoverySession {
     }
     func run(_ action: GroupRecoveryRetryAction) async throws -> GroupRecoveryRegistrationState {
         guard case .queryStatus(let id) = action else { return try await base.run(action) }
+        // 11/21m: already installed here: nothing is sent again.
+        if let installed = await source.installed(id) { return installed }
         // Resumes a saved fresh generation first; never creates another.
         if let resumed = try await source.resume(id) { return resumed }
         let status = try await source.status(id)

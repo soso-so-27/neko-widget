@@ -92,12 +92,18 @@ actor GroupShareService: GroupShareServing {
     private let client: ProductionGroupWindowClient
     private let snapshot: any GroupSecretStore
     private let moderation: any MomentModerating
+    /// 11/21m: this extension's own copies, cleared once the app says it holds
+    /// nothing (「データを消す」): its checkpoints and its unsent sealed photos.
+    private let checkpoints: (any GroupSecretStore)?
+    private let outbox: URL?
 
     init(client: ProductionGroupWindowClient, snapshot: any GroupSecretStore,
-         moderation: any MomentModerating) {
+         moderation: any MomentModerating, checkpoints: (any GroupSecretStore)? = nil, outbox: URL? = nil) {
         self.client = client
         self.snapshot = snapshot
         self.moderation = moderation
+        self.checkpoints = checkpoints
+        self.outbox = outbox
     }
 
     static func live() throws -> GroupShareService {
@@ -116,10 +122,11 @@ actor GroupShareService: GroupShareServing {
         guard let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             throw GroupClientError.unavailable
         }
+        let outbox = root.appendingPathComponent(namespace + ".share-outbox", isDirectory: true)
         let client = try GroupShareClientFactory.make(endpoint: endpoint, snapshot: snapshot, checkpoints: checkpoints,
-            transport: GroupURLSessionTransport(),
-            outboxDirectory: root.appendingPathComponent(namespace + ".share-outbox", isDirectory: true))
-        return GroupShareService(client: client, snapshot: snapshot, moderation: MomentModerationService())
+            transport: GroupURLSessionTransport(), outboxDirectory: outbox)
+        return GroupShareService(client: client, snapshot: snapshot, moderation: MomentModerationService(),
+                                 checkpoints: checkpoints, outbox: outbox)
     }
 
     func destinations() async throws -> [GroupWindow] {
@@ -127,6 +134,7 @@ actor GroupShareService: GroupShareServing {
         // identity or turn a leftover legacy pairing credential into authority.
         guard try snapshot.read("identity") != nil else {
             guard try snapshot.read("host-confirmed-empty") == Data([1]) else { throw GroupClientError.authenticationRequired }
+            clearOwnCopies()
             return []
         }
         return try await client.windows()
@@ -150,6 +158,17 @@ actor GroupShareService: GroupShareServing {
         let delivered = try await client.sendPhoto(normalizedJPEG: jpeg, caption: caption,
             windowID: windowID, operationID: retainedOperation)
         try await client.finishSharePhoto(operationID: retainedOperation, photoID: delivered.id)
+    }
+
+    /// 11/21m: the app holds no まど (a fresh app, or 「データを消す」): what
+    /// this extension kept for them goes now, not after 30 days.
+    private func clearOwnCopies() {
+        if let checkpoints {
+            for account in (try? checkpoints.accounts(prefix: "")) ?? [] { try? checkpoints.remove(account) }
+        }
+        if let outbox, let files = try? FileManager.default.contentsOfDirectory(at: outbox, includingPropertiesForKeys: nil) {
+            for file in files where file.pathExtension == "json" { try? FileManager.default.removeItem(at: file) }
+        }
     }
 }
 #endif

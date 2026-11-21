@@ -149,17 +149,22 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                 return Timeline(entries: [officialEntry(now: now, variant: variant, sourceID: source.id)], policy: .never)
             }
             let store = OfficialWindowStore.forWindow(definition)
+            var refreshFailed = false
             if !context.isPreview {
-                try? await OfficialWindowClient.shared.refresh(store: store)
+                do { try await OfficialWindowClient.shared.refresh(store: store) } catch { refreshFailed = true }
             }
             let date = Date()
-            let entry = officialEntry(now: date, variant: variant, sourceID: source.id)
+            let entry = officialEntry(now: date, variant: variant, sourceID: source.id, refreshFailed: refreshFailed)
             let state = store.snapshot()
             var entries = [entry]
+            // 11/21m: an earlier photo kept while the newest one has not arrived.
+            let keptEarlier = entry.officialPhoto.map { !state.widgetPhotos(at: date).contains($0) } ?? false
             if let photo = entry.officialPhoto, let catalog = state.catalog {
                 // A terminal empty entry bounds the photo even when iOS delays
                 // the next network refresh. Never loop expired public photos.
-                let expiry = catalog.widgetDeadline(for: photo)
+                // A kept earlier photo is bounded by its own expiry and the
+                // catalog's, not by the day it was the newest.
+                let expiry = keptEarlier ? min(photo.expiresAt, catalog.validUntil) : catalog.widgetDeadline(for: photo)
                 entries.append(.empty(at: expiry, imageVariant: variant,
                                       photoSourceIdentifier: source.id,
                                       windowDisplayName: store.displayName))
@@ -178,6 +183,8 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                 }
             }
             var refresh = date.addingTimeInterval(60 * 60)
+            // 11/21m: the newest photo is still on its way: ask again sooner.
+            if refreshFailed || keptEarlier { refresh = date.addingTimeInterval(15 * 60) }
             if windowID == "black-cats", Version1.isOn {
                 refresh = min(refresh, OfficialWindowCatalog.nextBlackCatCutover(after: date))
                 if let deadline = state.catalog?.validUntil, deadline > date {
@@ -430,7 +437,13 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                       imageVariant: variant, photoSourceIdentifier: sourceID)
     }
 
-    private func officialEntry(now: Date, variant: WidgetImageVariant, sourceID: String) -> NekoWidgetEntry {
+    /// `refreshFailed`: this timeline's network check did not finish (slow or
+    /// no connection). 11/21m: then, and when today's photo is listed but its
+    /// image has not arrived, the newest photo the current catalog still
+    /// allows and that is already on this iPhone stays. Only a catalog that
+    /// verifiably lists no photo for now shows the empty state.
+    private func officialEntry(now: Date, variant: WidgetImageVariant, sourceID: String,
+                               refreshFailed: Bool = false) -> NekoWidgetEntry {
         guard let windowID = PublicWindowDefinition.windowID(from: sourceID),
               let definition = OfficialWindowConfiguration.definition(for: windowID) else {
             return .empty(at: now, imageVariant: variant, photoSourceIdentifier: sourceID,
@@ -446,9 +459,14 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         )
         // A failed new-image download need not blank a valid older photo that
         // the current catalog still permits. The entry keeps that photo's ID.
-        guard let photo = state.widgetPhotos(at: now).first(where: {
-            store.imageURL(for: $0) != nil
-        }) else { return entry }
+        let listed = state.widgetPhotos(at: now)
+        var shown = listed.first(where: { store.imageURL(for: $0) != nil })
+        if shown == nil, refreshFailed || !listed.isEmpty {
+            // Still within the catalog's allowlist and each photo's own
+            // expiry (availablePhotos); a withdrawn photo is never shown.
+            shown = state.availablePhotos(at: now).first(where: { store.imageURL(for: $0) != nil })
+        }
+        guard let photo = shown else { return entry }
         entry = NekoWidgetEntry(
             date: now, localIdentifier: nil, cacheFilename: photo.imageFilename,
             imageVariant: variant, photoSourceIdentifier: sourceID,

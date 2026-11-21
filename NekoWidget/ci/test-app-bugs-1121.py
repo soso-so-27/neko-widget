@@ -110,7 +110,7 @@ class ShareSheetStillWorksTests(unittest.TestCase):
     def test_revocation_marks_are_not_read_from_the_reading_store(self):
         start = SHARE.index("let client = try ProductionGroupWindowClient(")
         self.assertIn("revocations: checkpoints)", SHARE[start:start + 400])
-        self.assertIn('guard account == "identity" || account.hasPrefix("window:"),', ACCESS)
+        self.assertIn('guard account == "identity" || account.hasPrefix("window:") else { throw GroupClientError.authenticationRequired }', ACCESS)
 
 
 class TransferKeepsFarewellDaysTests(unittest.TestCase):

@@ -179,6 +179,7 @@ python3 ci/test-mado-1121e.py
 python3 ci/test-save-1121g.py
 python3 ci/test-widget-1121h.py
 python3 ci/test-wall-1121i.py
+python3 ci/test-mado2-1121m.py
 python3 ci/test-family-cat-link.py
 python3 ci/test-family-cat-order.py
 python3 ci/test-record-commit-notice-hang.py

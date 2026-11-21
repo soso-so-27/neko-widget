@@ -317,7 +317,27 @@ actor GroupRecoveryClient {
         var registered = identity; registered.registered = true
         try secrets.write(GroupWire.encode(registered), account: "identity", createOnly: false)
         try secrets.write(GroupWire.encode(local), account: "window:" + draft.windowID, createOnly: false)
+        // 11/21m: committed and installed: the saved 「新しく続ける」 is not
+        // sent again at every check (installed() answers from now on).
+        try? journal.remove(key)
         return Registration(state: .ready(operationID: draft.operationID, deviceID: reply.deviceID), model: draft.model, registeredAt: nil)
+    }
+
+    /// 11/21m: this まど is already on this iPhone for the draft's device (a
+    /// finished key delivery or 「新しく続ける」, verified when it was
+    /// installed). A check then answers ready from here without sending
+    /// anything again, also after the window moved on to a newer roster.
+    func installed(_ draft: Draft, identity: GroupDeviceIdentity) throws -> Registration? {
+        let deviceID = try recoveryDevice(draft, identity: identity)
+        guard let secrets, let savedIdentity = try secrets.read("identity"),
+              let savedWindow = try secrets.read("window:" + draft.windowID) else { return nil }
+        let current = try GroupWire.decode(GroupDeviceIdentity.self, savedIdentity)
+        let local = try GroupWire.decode(GroupLocalWindow.self, savedWindow)
+        guard current.registered, current.personPublicKey == identity.personPublicKey, try current.deviceID == deviceID,
+              local.anchor.windowID == draft.windowID, !local.left, local.closed != true,
+              let head = try local.verified(), let me = head.device(id: deviceID), me.member.personID == personID,
+              local.keys[String(head.roster.keyEpoch)]?.count == 32 else { return nil }
+        return Registration(state: .ready(operationID: draft.operationID, deviceID: deviceID), model: draft.model, registeredAt: nil)
     }
     struct KeyDeliveryProgress: Sendable {
         let state: String
@@ -745,8 +765,14 @@ actor GroupRecoveryProviderClient {
         let operation = operationID.uuidString.lowercased()
         let slot = "p5-complete:" + GroupWire.base64(GroupCanonical.hash(Data((environment + window.id + operation).utf8)))
         let body: Data
-        if let saved = try secrets.read(slot) { body = saved }
+        // 11/21m: a body saved for an earlier roster is refused by the relay
+        // at every check (the new iPhone would wait forever): it is made
+        // again for the current roster. The same roster keeps the same body.
+        struct SavedBody: Decodable { let expectedRevision: Int }
+        if let saved = try secrets.read(slot),
+           (try? GroupWire.decode(SavedBody.self, saved))?.expectedRevision == head.roster.revision { body = saved }
         else {
+            try secrets.remove(slot)
             let list = try await pending(windowID: window.id)
             guard let item = list.items.first(where: { $0.operationID == operation }),
                   let recipient = item.proof.verified(head: head, environment: environment),
@@ -800,6 +826,8 @@ actor GroupRecoveryProviderClient {
         struct Reply: Decodable { let state: String; let operationID: String; let windowID: String }
         let reply = try GroupWire.decode(Reply.self, await request("/v3/group-windows/" + window.id + "/recovery/" + operation + "/complete", body: body, identity: identity))
         guard reply.state == "recoveryCommitted", reply.operationID == operation, reply.windowID == window.id else { throw GroupRecoveryClient.Failure.invalidResponse }
+        // 11/21m: done; this body is never sent again.
+        try? secrets.remove(slot)
         return reply.state
     }
 
