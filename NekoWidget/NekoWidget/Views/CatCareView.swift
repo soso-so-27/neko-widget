@@ -166,6 +166,9 @@ enum CatProfileDeletionCleanup {
                     try lost.delete(for: key)
                 } catch { done = false }
             }
+            // 11/21: the cat's 病院 memos and 迷子の備え follow it too.
+            done = await VeterinaryVisitStore.refile(fromProfileID: profileID, toCatID: careCatID) && done
+            done = CatPreparednessStore.move(fromProfileID: profileID, toCatID: careCatID) && done
             return done
         }
         if care.plan.cats.contains(where: { matches($0.profileID) }) {
