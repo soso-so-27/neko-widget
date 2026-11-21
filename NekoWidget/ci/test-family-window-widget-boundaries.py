@@ -5691,7 +5691,8 @@ class CodexWiringTests(unittest.TestCase):
         self.assertIn("if case .payerPlusUnverified(isPayer: true) = pause {", notebook)
         self.assertNotIn("確認できたら自動で戻ります", notebook)
         saving = source("NekoWidget/Services/AppRecordPersistence.swift")
-        self.assertIn("ほかのiPhoneで保存した記録は、使わなくなります。", saving)
+        # 11/21: the other saved copy is deleted; the confirmation says so.
+        self.assertIn("ほかのiPhoneで保存した記録は削除され、元に戻せません。", saving)
 
 
 class SensitiveCheckOptionalTests(unittest.TestCase):
