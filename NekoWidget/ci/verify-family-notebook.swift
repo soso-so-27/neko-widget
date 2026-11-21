@@ -287,8 +287,21 @@ struct VerifyFamilyNotebook {
         struct Header: Decodable { let schemaVersion: Int }
         try check(try JSONDecoder().decode(Header.self, from: Data(contentsOf: root.appendingPathComponent("absent/family-notebook.json"))).schemaVersion == 1,
                   "a reopened notebook is an active schema-1 file again")
+        // 11/21 (1121r): from the end on, what 「この子のこと」 got is taken in
+        // once (recordEditsWhileEnded), and the mark goes with it.
+        try check(ended.endedEditsSince == nil && resumed.endedEditsSince != nil && resumed.endedEditsSince! <= Date(),
+                  "a reopened copy marks from when it ended")
+        try reopenedFile.recordEditsWhileEnded(.init(familyID: family, entries: [.init(ledgerKey: "while-ended",
+            target: name, value: .text("終わっている間に"), editedAt: day.addingTimeInterval(60))], mappings: []), author: a)
+        let taken = try reopenedFile.snapshot()
+        try check(taken.endedEditsSince == nil && taken.fieldState(for: name)?.operation.value == .text("終わっている間に")
+                  && taken.outbox.count == 2, "the writing while ended goes in as a normal edit, once")
+        try reopenedFile.recordEditsWhileEnded(.init(familyID: family, entries: [.init(ledgerKey: "again",
+            target: name, value: .text("二度目"), editedAt: day.addingTimeInterval(90))], mappings: []), author: a)
+        try check(try reopenedFile.snapshot() == taken, "without the mark nothing more is taken in")
         let fresh = try reopenedFile.edit(target: water, value: .text("戻ってから"), author: a, editedAt: day)
-        try check(try reopenedFile.pendingOperations().map(\.id) == [queued.id, fresh.id], "new writing after reopening is sent")
+        try check(try reopenedFile.pendingOperations().map(\.id).count == 3 && reopenedFile.pendingOperations().first?.id == queued.id
+                  && reopenedFile.pendingOperations().last?.id == fresh.id, "new writing after reopening is sent")
 
         // Ended before 11/18: no reason saved. The same rule as an absence end.
         let (legacy, _, _) = try prepared("legacy")
@@ -383,6 +396,29 @@ struct VerifyFamilyNotebook {
         let count = try left.snapshot().operations.count
         try left.receiveRetaining(right.snapshot().operations.map { .known($0) })
         try check(try left.snapshot().operations.count == count, "a replay writes nothing again")
+
+        // 11/21 (1121r): a copy of old writing (an import) counts from its
+        // source date, never from when it was copied in.
+        let importer = try store(path.appendingPathComponent("c"), "device-c")
+        let other = try store(path.appendingPathComponent("d"), "device-d")
+        for index in 0..<5 { _ = try other.edit(target: water, value: .text("水 \(index)"), author: b, editedAt: day) }
+        let family0 = try other.edit(target: name, value: .text("家族の名前"), author: b, editedAt: day)
+        _ = try importer.applyImport(.init(familyID: family, entries: [.init(ledgerKey: "old-source-name", target: name,
+            value: .text("古い取り込み"), editedAt: day.addingTimeInterval(-86_400))], mappings: []), author: a,
+            now: day.addingTimeInterval(600))
+        try importer.receiveRetaining(other.snapshot().operations.map { .known($0) })
+        try check(try importer.snapshot().fieldState(for: name)?.operation.id == family0.id,
+                  "an old source copied in later does not win over a newer edit")
+        try check(try importer.snapshot().operations.filter { $0.target == name && $0.version.deviceID == "device-c" }.count == 1,
+                  "the old copy is not written again")
+        // A value cleared here later is what stays newer: the clear, not the old text.
+        let clearer = try store(path.appendingPathComponent("e"), "device-e")
+        _ = try clearer.edit(target: name, value: .text("消す前"), author: a, editedAt: day.addingTimeInterval(500))
+        let cleared = try clearer.edit(target: name, value: .clear, author: a, editedAt: day.addingTimeInterval(700))
+        try clearer.receiveRetaining(other.snapshot().operations.map { .known($0) })
+        try check(try clearer.snapshot().fieldState(for: name)?.operation.value == .clear
+                  && clearer.snapshot().fieldState(for: name)?.operation.id != cleared.id,
+                  "a later clear is written again, never the text before it")
     }
 
     static func deletion(_ path: URL) throws {

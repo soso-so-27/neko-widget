@@ -35,6 +35,9 @@ final class FamilyNotebookSharing: ObservableObject {
     /// (11/15, 1115q: an automatic pass does not repeat one just made).
     private(set) var lastReadAt: Date?
     @Published private(set) var requests: [FamilyNotebookJoinRequest] = []
+    /// 11/21: someone waits on an invitation sent from another iPhone of
+    /// this person; only that iPhone can answer, so the notebook says so.
+    @Published private(set) var requestsElsewhere = false
     @Published private(set) var ownJoinResults: [FamilyNotebookAdmissionClient.JoinResult] = []
     /// 11/16: writing of this iPhone has not reached the family for a while
     /// (FamilyNotebookSendHealth): the notebook shows one line and 「もう一度」.
@@ -122,6 +125,8 @@ final class FamilyNotebookSharing: ObservableObject {
                 // list at once (11/15: they stayed with 受け入れる under them).
                 let nextRequests = next.membership == nil ? [] : try await real.pendingRequests()
                 if nextRequests != requests { requests = nextRequests }
+                let elsewhere = next.membership != nil && real.requestsElsewhere > 0
+                if elsewhere != requestsElsewhere { requestsElsewhere = elsewhere }
                 // 11/19: the family is known: the notebook's push registration
                 // follows the notification permission and token (GroupAdmissionService).
                 #if canImport(UIKit)
@@ -162,6 +167,7 @@ final class FamilyNotebookSharing: ObservableObject {
     func restartSession() {
         (service as? ProductionFamilyNotebookSharingService)?.restartSession()
         state = .checking; pause = nil; requests = []; ownJoinResults = []; readFailed = false; awaitsNewMember = false
+        requestsElsewhere = false
     }
 
     /// 11/20 (GroupIdentityDeletionLocalData): restartSession, then waits (up
@@ -306,6 +312,7 @@ final class FamilyNotebookSharing: ObservableObject {
         do {
             let next = try await real.pendingRequests()
             if next != requests { requests = next }
+            if (real.requestsElsewhere > 0) != requestsElsewhere { requestsElsewhere = real.requestsElsewhere > 0 }
             return true
         } catch {
             return false

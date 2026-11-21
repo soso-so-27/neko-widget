@@ -26,7 +26,17 @@ actor FamilyNotebookAdmissionClient {
         let proofSignature: Data?
         let expiresAt: Int64
     }
-    struct Requests: Sendable { let generation: Int64; let requests: [Request] }
+    struct Requests: Sendable {
+        let generation: Int64; let requests: [Request]
+        /// 11/21: waiting on an invitation this person made on another iPhone
+        /// (its secret stays on that iPhone, so the request cannot be read or
+        /// answered here). A count only: nothing of them is shown or trusted.
+        var elsewhere = 0
+    }
+    private struct WireInvitations: Decodable {
+        struct Row: Decodable { let invitationID: UUID; let inviterPersonID: String }
+        let schemaVersion: Int; let familyID: UUID; let invitations: [Row]
+    }
     private struct WireRequests: Decodable {
         struct Row: Decodable {
             let request: Request?
@@ -132,7 +142,23 @@ actor FamilyNotebookAdmissionClient {
         let verified = candidates.filter { request in
             byID[request.requestID]?.count == 1 && (try? requestName(request, family: family)) != nil
         }
-        return .init(generation: value.generation, requests: verified)
+        var result = Requests(generation: value.generation, requests: verified)
+        // 11/21: the relay lists requests to the inviter on any of their
+        // iPhones (and to the payer), but only the inviting iPhone holds the
+        // invitation's secret. Elsewhere they were left out without a word.
+        let unheld = candidates.filter { byID[$0.requestID]?.count == 1 && (try? secrets.read(secretAccount($0.invitationID))) == nil }
+        if !unheld.isEmpty, let own = try? await ownInvitations(family) {
+            result.elsewhere = unheld.filter { own.contains($0.invitationID) }.count
+        }
+        return result
+    }
+    /// The invitations this person made (any iPhone), from the relay's list.
+    private func ownInvitations(_ family: UUID) async throws -> Set<UUID> {
+        let value = try GroupWire.decode(WireInvitations.self, await wire.read(root(family) + "/invitations"))
+        guard value.schemaVersion == 1, value.familyID == family, value.invitations.count <= 64 else {
+            throw FamilyNotebookTransportError.invalidResponse
+        }
+        return Set(value.invitations.filter { $0.inviterPersonID == identity.personID }.map(\.invitationID))
     }
     func requestName(_ request: Request, family: UUID) throws -> String {
         guard request.identityPublicKey.count == 32, request.signingPublicKey.count == 32, request.hpkePublicKey.count == 32,

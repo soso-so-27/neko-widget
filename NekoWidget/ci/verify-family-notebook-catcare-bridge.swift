@@ -198,7 +198,70 @@ enum FamilyNotebookCatCareBridgeVerifier {
         print("Family cat origin: reinstall, adding again, other person, old notebooks and old readers passed")
     }
 
+    /// 11/21 (1121r): what 「この子のこと」 got while the notebook was ended by
+    /// mistake is taken in when it comes back, instead of the family's values
+    /// being put over it; the family's newer writing still wins.
+    static func editsWhileEnded() throws {
+        let fixture = FamilyNotebookMigrationVerifier.Fixture()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("family-ended-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        func require(_ value: Bool, _ message: String) throws { try FamilyNotebookMigrationVerifier.require(value, message) }
+        let family = UUID(), cat = UUID()
+        let sender = FamilyNotebookAuthor(personID: "sender", displayName: "家族")
+        let me = FamilyNotebookAuthor(personID: "receiver", displayName: "わたし")
+        let source = try FamilyNotebookStore(directory: root.appendingPathComponent("source"), familyID: family, deviceID: "sender-device")
+        var chosen = fixture.care; chosen.cats = [fixture.care.cats[0]]
+        let link = FamilyNotebookLocalMapping(sourceKey: "cat:" + fixture.toolA.uuidString.lowercased(), familyCatID: cat,
+            profileID: fixture.profileA, toolCatID: fixture.toolA)
+        _ = try source.applyImport(FamilyNotebookMigration.prepare(source: .init(catCare: .init(state: chosen, unreadableCatCount: 0)),
+            familyID: family, mappings: [link]).plan, author: sender)
+        let here = try FamilyNotebookStore(directory: root.appendingPathComponent("here"), familyID: family, deviceID: "here-device")
+        _ = try here.receive(source.snapshot().operations)
+        let links = try FamilyNotebookCatCareBridge.mappings(for: here.snapshot())
+        _ = try here.applyImport(.init(familyID: family, entries: [], mappings: links), author: me)
+        var empty = fixture.care; empty.cats = []
+        let shown = try FamilyNotebookCatCareBridge.apply(here.snapshot(), to: empty)
+        try require(shown.cats.count == 1, "the family's cat is shown here")
+        try require(try FamilyNotebookCatCareBridge.editsWhileEnded(shown, snapshot: here.snapshot(), since: .distantPast).entries.isEmpty,
+                    "nothing written here: nothing to take in")
+        // Ended by mistake; 「この子のこと」 is saved on its own meanwhile.
+        _ = try here.endSharing(reason: .absentFromDirectory)
+        let later = Date().addingTimeInterval(60)
+        var edited = shown
+        edited.cats[0].water = .init(value: "終わっている間に", editedAt: later, editedBy: "local")
+        edited.cats[0].weights.append(CatCareWeight(measuredOn: CatCareDay(year: 2026, month: 11, day: 20)!, grams: 4500,
+                                                    editedAt: later, editedBy: "local"))
+        // The family wrote meanwhile: an older edit of the same item, a newer one of another.
+        _ = try source.edit(target: .init(familyCatID: cat, field: .water), value: .text("家族の古い水"), author: sender,
+                            editedAt: later.addingTimeInterval(-30))
+        _ = try source.edit(target: .init(familyCatID: cat, field: .litter), value: .text("家族の砂"), author: sender,
+                            editedAt: later.addingTimeInterval(30))
+        let resumed = try here.resumeSharingAfterUnconfirmedEnd()
+        try require(resumed.endedEditsSince != nil, "coming back marks the period")
+        let since = resumed.endedEditsSince!
+        _ = try here.receive(source.snapshot().operations)
+        let plan = try FamilyNotebookCatCareBridge.editsWhileEnded(edited, snapshot: here.snapshot(), since: since)
+        let water = FamilyNotebookTarget(familyCatID: cat, field: .water)
+        try require(plan.entries.contains { $0.target == water && $0.value == .text("終わっている間に") }, "the edit made while ended is taken in")
+        try require(plan.entries.contains { $0.target.collection == .weight && $0.target.field == .grams && $0.value == .integer(4500) },
+                    "an item added while ended goes in")
+        try require(!plan.entries.contains { $0.target.field == .litter }, "the family's newer value is not written over")
+        try require(!plan.entries.contains { $0.editedAt < since }, "nothing from before the end")
+        try here.recordEditsWhileEnded(plan, author: me)
+        let after = try here.snapshot()
+        try require(after.endedEditsSince == nil, "the mark goes with the edits")
+        try require(after.fieldState(for: water)?.operation.value == .text("終わっている間に"), "the edit wins over the family's older one")
+        let projected = try FamilyNotebookCatCareBridge.apply(after, to: edited)
+        try require(projected.cats[0].water?.value == "終わっている間に" && projected.cats[0].litter?.value == "家族の砂",
+                    "projection keeps the edit and takes the family's newer one")
+        try require(projected.cats[0].activeWeights.contains { $0.grams == 4500 }, "the new item stays")
+        try require(try FamilyNotebookCatCareBridge.editsWhileEnded(projected, snapshot: after, since: since).entries.isEmpty,
+                    "taken in once")
+        print("Family notebook: writing while ended by mistake is taken in on return; newer family writing still wins")
+    }
+
     static func run() throws {
+        try editsWhileEnded()
         try originAfterReinstall()
         try adoptionDays()
         try absenceAnswers()
