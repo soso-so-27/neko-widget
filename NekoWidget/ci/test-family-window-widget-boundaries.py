@@ -2936,10 +2936,12 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("closeTitle != nil && windowName == nil", guide)
         self.assertIn('[(image: "onboarding-widget-change-source", text: OnboardingPresentationCopy.widgetChangeSourceStep)]', guide)
         self.assertIn("return placementSteps + cloudy + changeSource", guide)
-        # 11/10: place first, then come back. The hint is on the screen. 11/12:
-        # the button checks nothing, so it says the person goes out to place
-        # it, not that it was placed.
-        self.assertIn('static let widgetAction = "ホーム画面で置いてきます"', presentation)
+        # 11/22: 「つぎへ」 walks through the steps; the last one waits for
+        # the Widget instead of a button that seemed to place it. The button
+        # never says it was placed.
+        self.assertIn('static let widgetNextAction = "つぎへ"', presentation)
+        self.assertIn('static let widgetWaitingText = "ホーム画面に置くのを待っています"', presentation)
+        self.assertNotIn("widgetAction", presentation)
         self.assertNotIn('"置きました"', presentation)
         # 11/12: the guide's last step uses the Widget's own words.
         self.assertIn('[(image: "onboarding-widget-cloudy", text: OnboardingPresentationCopy.widgetCloudyStep)]', guide)
@@ -2949,8 +2951,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("「タップで、きょうの1枚」を押すと", presentation)
         for text in (guide, presentation):
             self.assertNotIn("札を押すと", text)
-        self.assertIn('"追加してアプリへ戻ると、自動で確認します。"', presentation)
-        self.assertIn("Text(OnboardingPresentationCopy.widgetReturnHint)", guide)
+        # 11/22: the waiting state replaces the return hint.
+        self.assertNotIn("widgetReturnHint", presentation + guide)
+        self.assertIn("Text(OnboardingPresentationCopy.widgetWaitingText)", guide)
         self.assertNotIn("猫を登録すると", guide)
         self.assertNotIn("hasCats", guide)
         self.assertIn(
@@ -8844,16 +8847,18 @@ class MainTabsLook1112Tests(unittest.TestCase):
         self.assertEqual(viewer.count(".background(Self.controlsBand)"), 2)
         self.assertNotIn(".background(.bar)", viewer)
         self.assertNotIn(".background(.ultraThinMaterial)", viewer)
-        deliver = section(self.browser, "private struct DeliverButtonEmphasis: ViewModifier {", "\n}\n")
-        self.assertIn("content.buttonStyle(.bordered).tint(Color.primary)", deliver)
+        # 11/22: 「まどに届ける」 is always the blue main action (grey read as off).
+        self.assertNotIn("DeliverButtonEmphasis", self.browser)
+        self.assertNotIn("knowsAnyWindow", self.browser)
 
     def test_memo_hint_sits_where_writing_starts(self) -> None:
         note = source("NekoWidget/Views/PhotoNoteInput.swift")
         body = section(note, "struct PhotoNoteInput: View {", "#if DEBUG")
-        self.assertLess(body.index("TextEditor(text: $text)"), body.index('Text("このあと、どうなった？")'))
-        self.assertIn(".overlay(alignment: .topLeading) {", body)
-        self.assertIn(".allowsHitTesting(false)", body)
-        self.assertLess(body.index('Text("このあと、どうなった？")'), body.index("Text(audience)"))
+        # 11/22: no faint question in the empty box; who sees it stays under
+        # the box beside the count.
+        self.assertNotIn("このあと、どうなった？", body)
+        self.assertNotIn("photo-note-writing-hint", body)
+        self.assertLess(body.index("TextEditor(text: $text)"), body.index("Text(audience)"))
         self.assertLess(body.index("Text(audience)"), body.index('文字")'))
         # The CI photo fixtures are still filled into this file.
         for name in ("GRAY", "ORANGE", "TUXEDO"):

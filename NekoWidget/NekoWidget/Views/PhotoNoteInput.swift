@@ -12,25 +12,14 @@ struct PhotoNoteInput: View {
     var minimumHeight: CGFloat = 140
 
     var body: some View {
-        // 11/12 (review 17): the question sits where writing starts, faint,
-        // and who sees it goes under the box beside the count.
+        // Who sees it goes under the box beside the count. 11/22: no faint
+        // question in the empty box.
         VStack(alignment: .leading, spacing: 8) {
             TextEditor(text: $text)
                 .frame(minHeight: minimumHeight)
                 .focused(focus)
                 .accessibilityLabel("メモ")
                 .accessibilityIdentifier(identifier)
-                .overlay(alignment: .topLeading) {
-                    if text.isEmpty {
-                        Text("このあと、どうなった？")
-                            .foregroundStyle(.tertiary)
-                            // TextEditor's own inset, so the hint sits on the first line.
-                            .padding(.top, 8)
-                            .padding(.leading, 5)
-                            .allowsHitTesting(false)
-                            .accessibilityIdentifier("photo-note-writing-hint")
-                    }
-                }
             HStack(spacing: 8) {
                 Text(audience)
                 Spacer(minLength: 8)

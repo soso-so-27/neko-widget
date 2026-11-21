@@ -1528,7 +1528,7 @@ struct AppRootView: View {
         )
     }
 
-    /// 「ホーム画面で置いてきます」 or 「あとで」 on the Widget guide (or a
+    /// 「あとで」 on the Widget guide (or a
     /// purchase on a resumed Plus page). The first run ends in the 写真 tab,
     /// where the found cats are (11/10); Plus is offered later, once.
     private func completeOnboarding() {

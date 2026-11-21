@@ -156,11 +156,11 @@ enum OnboardingPresentationCopy {
     /// The last step when the guide is opened from 設定 (11/12): how to change
     /// what the placed Widget shows.
     static let widgetChangeSourceStep = "出す写真を変えるには、ウィジェットを長押しして「ウィジェットを編集」→「表示する写真」。まども選べます。"
-    /// Said under the steps (11/10): place first, then come back.
-    static let widgetReturnHint = "追加してアプリへ戻ると、自動で確認します。"
-    /// 11/12: the button checks nothing, so it says the person goes out to
-    /// the Home Screen, not that the Widget is placed.
-    static let widgetAction = "ホーム画面で置いてきます"
+    /// 11/22: the guide's button walks through the steps. On the last step
+    /// there is no button: the app waits for the Widget and shows 「置けました」
+    /// when the person comes back with it placed.
+    static let widgetNextAction = "つぎへ"
+    static let widgetWaitingText = "ホーム画面に置くのを待っています"
     /// The last step of the guide, in the Widget's own words: its tag reads
     /// 「タップで、きょうの1枚」 (NekoWidgetView), never 「札」.
     static let widgetCloudyStep = "置いたら、そのままくもりのまどです。「タップで、きょうの1枚」を押すと、きょうの写真が出ます。"
