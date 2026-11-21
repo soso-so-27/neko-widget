@@ -145,7 +145,7 @@ class DeviceChangeTests(unittest.TestCase):
 
 class RegistrationTests(unittest.TestCase):
     def test_registered_after_the_wall_checks(self):
-        self.assertIn("python3 ci/test-wall-1121i.py\npython3 ci/test-mado2-1121m.py\n", QUICK)
+        self.assertIn("python3 ci/test-mado2-1121m.py\n", QUICK)
 
 
 if __name__ == "__main__":

@@ -5817,7 +5817,7 @@ class GroupWidgetHeartTests(unittest.TestCase):
         self.assertEqual(intent.count("markMyHeart("), 1)
         # 11/21: sent as the person's own action, not on the automatic call budget.
         self.assertIn("SharingPersonAction.run({", host)
-        sent = section(host, "})) != nil {", "}")
+        sent = section(host, ")) != nil {", "}")
         self.assertIn("try? GroupWidgetCache.markMyHeart(windowID: windowID, photoID: photoID)", sent)
         self.assertIn("extension SendGroupWidgetHeartIntent: ForegroundContinuableIntent {}", intent)
         view = source("NekoWidgetWidget/NekoWidgetView.swift")
