@@ -45,6 +45,12 @@ def require(condition, message):
         raise ValueError(message)
 
 
+def valid_production_audience(value):
+    return (isinstance(value, str)
+            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{7,127}", value) is not None
+            and "staging" not in value.lower())
+
+
 def public_url(value, *, synthetic=False):
     require(isinstance(value, str) and value == value.strip() and not any(c.isspace() for c in value), "URL must be canonical")
     parsed = urlsplit(value)
@@ -89,8 +95,7 @@ def settings(contract, *, synthetic=False):
         require(urlsplit(values[name]).path in ("", "/"), "Service origins cannot contain a path")
     require(len({urlsplit(values[key]).netloc for key in ("APP_PRIVACY_URL", "APP_SUPPORT_URL", "SHARING_COMMUNITY_STANDARDS_URL")}) == 1,
             "Public documents must use the same reviewed site")
-    require(re.fullmatch(r"[A-Za-z0-9_-]{8,128}", values["MANAGED_PRESERVATION_MEMBERSHIP_AUDIENCE"]) is not None
-            and "staging" not in values["MANAGED_PRESERVATION_MEMBERSHIP_AUDIENCE"].lower(), "Production audience required")
+    require(valid_production_audience(values["MANAGED_PRESERVATION_MEMBERSHIP_AUDIENCE"]), "Production audience required")
     key = values["SHARING_MODERATION_PUBLIC_KEY"]
     require(isinstance(key, str) and bool(key.strip()), "App Store candidate requires SHARING_MODERATION_PUBLIC_KEY")
     require(re.fullmatch(r"[A-Za-z0-9_-]{43}", key) is not None, "Canonical recipient key required")

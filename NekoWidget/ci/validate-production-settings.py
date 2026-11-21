@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from production_candidate import valid_production_audience
+
 ROOT = Path(__file__).resolve().parents[1]
 FLAGS = {
     "OWNER_INTERNAL_REPORTS_DISABLED": "NO",
@@ -39,7 +41,7 @@ def verify(settings, *, allow_unconfigured=False):
         assert "$(" not in value, name
     assert settings.get("PLUS_BILLING_API_BASE_URL", "").rstrip("/") == settings.get("SHARING_API_BASE_URL", "").rstrip("/"), "billing/group credential origins differ"
     audience = settings.get("MANAGED_PRESERVATION_MEMBERSHIP_AUDIENCE", "")
-    assert (allow_unconfigured and not audience) or (8 <= len(audience) <= 128 and "staging" not in audience.lower()), "production audience required"
+    assert (allow_unconfigured and not audience) or valid_production_audience(audience), "production audience required"
     key = settings.get("SHARING_MODERATION_PUBLIC_KEY", "")
     if not key and allow_unconfigured:
         return
