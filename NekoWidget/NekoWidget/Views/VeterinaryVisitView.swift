@@ -926,7 +926,8 @@ private struct VeterinaryConsultationView: View {
         text.count > 500 ? saved : text
     }
     private func save(completing: Bool = false) async {
-        guard var draft = visit, !busy, completing || changes else { return }
+        // Finishing closes 「診察の前に」 for good: never with a field too long to save.
+        guard var draft = visit, !busy, completing || changes, !(completing && tooLong) else { return }
         let base = draft
         let note = Self.savable(doctorNote, else: base.doctorNote ?? "")
         draft.doctorNote = note.isEmpty ? nil : note
