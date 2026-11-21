@@ -198,7 +198,19 @@ final class ReviewScreenshotUITests: XCTestCase {
             return nil
         }
         let catCard = app.descendants(matching: .any)["tools-cat-" + Self.mike].firstMatch
-        let catPage = anyIdentifier(app, ["cat-profile-rename", "cat-care-family-notebook", "cat-care-part-basics"])
+        let catPage = anyIdentifier(app, ["cat-profile-rename", "cat-care-part-basics"])
+        // 11/22: 家族の手帳 is the last row of the cat's card on この子 (it was
+        // a button in the bar of 「この子のこと」).
+        shot("27_family_notebook", app) {
+            _ = chooseHomeCat(app, Self.mike)
+            let family = app.descendants(matching: .any)["cat-home-care-family-notebook"].firstMatch
+            guard family.waitForExistence(timeout: 10), reveal(family, app) else { return "family notebook entry not shown" }
+            family.tap()
+            guard app.navigationBars["家族の手帳"].waitForExistence(timeout: 10) else { return "family notebook did not open" }
+            settle(1)
+            return nil
+        }
+        if app.navigationBars["家族の手帳"].exists { closeTop(app) }
         shot("11_cat_care_top", app) {
             _ = chooseHomeCat(app, Self.mike)
             guard catCard.waitForExistence(timeout: 10), reveal(catCard, app) else { return "「この子のこと」 card not found" }
@@ -207,16 +219,6 @@ final class ReviewScreenshotUITests: XCTestCase {
             settle(1)
             return nil
         }
-        shot("27_family_notebook", app) {
-            let family = app.buttons["cat-care-family-notebook"]
-            guard family.waitForExistence(timeout: 5), family.isHittable else { return "family notebook entry not shown" }
-            family.tap()
-            guard app.navigationBars["家族の手帳"].waitForExistence(timeout: 10) else { return "family notebook did not open" }
-            settle(1)
-            return nil
-        }
-        if app.navigationBars["家族の手帳"].exists { closeTop(app) }
-        _ = catPage.waitForExistence(timeout: 5)
         shot("11_cat_care_bottom", app) {
             guard catPage.exists else { return "「この子のこと」 not shown" }
             // 11/12 (round 2): deleting moved to 「…」; 家の情報 is the last part.

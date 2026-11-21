@@ -5461,22 +5461,17 @@ class CatPageSharedLabelTests(unittest.TestCase):
         care = source("NekoWidget/Views/CatCareView.swift")
         # 11/15: only while this iPhone is in the family (not a left copy).
         self.assertIn("familyNotebook.activeFamilyCats.contains { $0.toolID == catID }", care)
-        # 11/20: no initials; the same button as any family member's, and
-        # nothing inside the notebook (the faces were hard to read).
-        self.assertIn("FamilyNotebookButton(shared: sharedWithFamily)", care)
+        # 11/20: no initials (the faces were hard to read). 11/22: no family
+        # button in the bar of 「この子のこと」 at all: 家族の手帳 is the last
+        # row of the cat's card on この子 (one place).
         self.assertNotIn("家族の手帳で共有しています", care)
         notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
         detail = source("NekoWidget/Views/CatProfilePhotoCurationViews.swift")
         for text in (care, notebook, detail):
             self.assertNotIn("FamilyFaces", text)
-        self.assertIn("FamilyNotebookButton(shared: familyNames != nil)", detail)
-        button = section(notebook, "struct FamilyNotebookButton: View {", "private struct FamilyNotebookToolSyncModifier")
-        self.assertIn('Label("家族の手帳", systemImage: shared || model.hasFamily ? "person.2.fill" : "person.badge.plus")',
-                      button)
-        # 11/20: on iOS 26, a gap between the button and 「…」 (two controls).
-        for text in (care, detail):
-            self.assertIn("if #available(iOS 26.0, *) {\n", text)
-            self.assertIn("ToolbarSpacer(.fixed, placement: .topBarTrailing)", text)
+            self.assertNotIn("FamilyNotebookButton", text)
+        home_care = source("NekoWidget/Views/CatHomeCareView.swift")
+        self.assertIn('CatHomeCareRow(title: "家族の手帳", value: value)', home_care)
         # The old note showed for every cat once the person had a family.
         self.assertNotIn("家族と一緒に書いています。", care)
 
@@ -6979,8 +6974,8 @@ class NavigationAfterActionTests(unittest.TestCase):
         self.assertNotIn("CatCareDetailView(toolCatID: cat.toolID, name: cat.name)", notebook)
         self.assertIn("if joined == .joined { onJoined?(); dismiss() }", notebook)
         care = source("NekoWidget/Views/CatCareView.swift")
-        self.assertIn("if !insideCatPage, !insideFamilyNotebook,\n"
-                      "               sharedWithFamily || Version1.familyNotebook || familyNotebook.hasFamily {", care)
+        # 11/22: the family button left the cat's page (CatHomeFamilyNotebookRow).
+        self.assertNotIn("FamilyNotebookButton(", care)
         root_view = source("NekoWidget/App/AppRootView.swift")
         self.assertIn("FamilyNotebookJoinView(link: $0.url, onJoined: { joinedFamilyFromLink = true })", root_view)
         self.assertIn(".sheet(isPresented: $showsFamilyNotebook) { FamilyNotebookView() }", root_view)
