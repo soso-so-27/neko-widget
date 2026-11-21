@@ -29,6 +29,8 @@ enum CatHouseholdIdentityVerifier {
         try verifiesRevisionPolicyRejectsStaleState()
         try verifiesCodableRoundTrip()
         try verifiesProfileTransferBoundaries()
+        try verifiesReorderedProfilesKeepTheirOrder()
+        try verifiesDeletedCatsPhotosStayOffTheRemainingCats()
         try verifiesPortablePhotoTransferNeedsExplicitConfirmation()
         try await verifiesProfileTransferCommitConflict()
         try await verifiesProtectedAtomicStore()
@@ -1009,6 +1011,102 @@ enum CatHouseholdIdentityVerifier {
                 "store stale-save error was incorrect"
             )
         }
+    }
+
+    /// 11/21 並べ替え: the array's order is the cats' order, through
+    /// normalization, a commit, the saved JSON and the transfer file. A file
+    /// without a new order (saved in createdAt order) keeps that order.
+    private static func verifiesReorderedProfilesKeepTheirOrder() throws {
+        let a = fixedUUID("00000000-0000-0000-0000-0000000000A1")
+        let b = fixedUUID("00000000-0000-0000-0000-0000000000A2")
+        let c = fixedUUID("00000000-0000-0000-0000-0000000000A3")
+        var state = emptyProfiledState()
+        for (index, id) in [a, b, c].enumerated() {
+            let created = Date(timeIntervalSince1970: Double(100 + index))
+            state.upsertProfile(CatProfile(id: id, displayName: "合成ねこ\(index)", createdAt: created,
+                                           updatedAt: created), at: created)
+        }
+        try require(state.profiles.map(\.id) == [a, b, c], "cats were not kept in the order they were added")
+        var reordered = state
+        reordered.profiles = [c, a, b].compactMap { id in state.profiles.first { $0.id == id } }
+        reordered = reordered.normalized()
+        try require(reordered.profiles.map(\.id) == [c, a, b], "normalization undid a reorder")
+        try require(reordered != state, "a reorder was treated as no change")
+        let committed = try CatHouseholdIdentityRevisionPolicy.committing(
+            reordered, replacing: state, expectedMutationRevision: state.mutationRevision,
+            at: Date(timeIntervalSince1970: 900))
+        try require(committed.profiles.map(\.id) == [c, a, b], "a commit undid a reorder")
+        let decoded = try JSONDecoder().decode(CatHouseholdIdentityState.self,
+                                               from: JSONEncoder().encode(committed)).normalized()
+        try require(decoded.profiles.map(\.id) == [c, a, b], "a reload undid a reorder")
+        try require(decoded == decoded.normalized(), "a reordered file is not stable under normalization")
+        var renamed = decoded
+        renamed.upsertProfile(CatProfile(id: a, displayName: "合成ねこ改", createdAt: Date(timeIntervalSince1970: 100)),
+                              at: Date(timeIntervalSince1970: 950))
+        try require(renamed.profiles.map(\.id) == [c, a, b], "editing a cat moved it")
+        let d = fixedUUID("00000000-0000-0000-0000-0000000000A4")
+        renamed.upsertProfile(CatProfile(id: d, displayName: "合成ねこ3", createdAt: Date(timeIntervalSince1970: 50)),
+                              at: Date(timeIntervalSince1970: 960))
+        try require(renamed.profiles.map(\.id) == [c, a, b, d], "a new cat did not come last")
+        var duplicated = decoded
+        duplicated.profiles.append(decoded.profiles[0])
+        try require(duplicated.normalized().profiles.map(\.id) == [c, a, b], "a duplicate moved a cat")
+        let transfer = try CatProfileTransfer(profiles: committed.profiles)
+        let imported = try CatProfileTransfer.decode(transfer.encoded())
+            .applying(to: emptyProfiledState(), expectedRevision: 0, at: Date(timeIntervalSince1970: 990))
+        try require(imported.profiles.map(\.id) == [c, a, b], "the transfer file lost the order")
+    }
+
+    /// 11/21: a photo chosen for a deleted cat never becomes the photo of a
+    /// cat that is left: not at 2→1 when 「写っている猫を選ぶ」 wrote
+    /// 「わからない」 for the other cat, and not at 3→2→1. A photo no cat
+    /// was chosen for still follows the single-cat rule.
+    private static func verifiesDeletedCatsPhotosStayOffTheRemainingCats() throws {
+        let mugi = fixedUUID("00000000-0000-0000-0000-0000000000B1")
+        let ame = fixedUUID("00000000-0000-0000-0000-0000000000B2")
+        let sora = fixedUUID("00000000-0000-0000-0000-0000000000B3")
+        let detected: Set<String> = ["for-sora", "for-ame", "both", "nobody", "album"]
+        var state = emptyProfiledState()
+        for (index, id) in [mugi, ame, sora].enumerated() {
+            state.upsertProfile(CatProfile(id: id, displayName: "合成ねこ\(index)"))
+        }
+        state.setProfilePhotoAlbumLink(profileID: mugi, localIdentifier: "mugi-album",
+                                       assetLocalIdentifiers: ["album"])
+        // As 「写っている猫を選ぶ」 writes it: yes for the chosen, わからない for the others.
+        func choose(_ photo: String, _ chosen: Set<UUID>) {
+            for id in [mugi, ame, sora] {
+                state.setManualMembership(assetLocalIdentifier: photo, profileID: id,
+                                          decision: chosen.contains(id) ? .included : .unknown)
+            }
+        }
+        choose("for-sora", [sora])
+        choose("for-ame", [ame])
+        choose("both", [mugi, sora])
+        state.setManualMembership(assetLocalIdentifier: "album", profileID: sora, decision: .included)
+
+        state.removeProfile(id: sora)  // 3→2
+        try require(state.membershipDecision(for: "for-sora", profileID: mugi) == .excluded
+                    && state.membershipDecision(for: "for-sora", profileID: ame) == .excluded,
+                    "a deleted cat's photo was left undecided for the cats left")
+        try require(state.membershipDecision(for: "both", profileID: mugi) == .included,
+                    "a cat's own yes was replaced")
+        try require(state.membershipDecision(for: "album", profileID: mugi) == .unknown
+                    && state.confirmsAsset("album", for: mugi), "a linked album photo was taken off its cat")
+        try require(state.memberships.filter {
+            $0.assetLocalIdentifier == "for-sora" && $0.profileID == mugi
+        }.count == 1, "the わからない was kept beside the new decision")
+
+        state.removeProfile(id: ame)  // 2→1
+        try require(state.singleCatProfileID == mugi, "one cat was not left")
+        let mugiPhotos = state.effectiveAssetIdentifiers(for: mugi, detectedCatAssetIdentifiers: detected)
+        try require(mugiPhotos == ["both", "nobody", "album"],
+                    "the last cat's photos were \(mugiPhotos.sorted()), not her own and the unassigned one")
+        try require(state.effectiveProfileIDs(for: "for-sora", isDetectedCatPhoto: true).isEmpty
+                    && state.effectiveProfileIDs(for: "for-ame", isDetectedCatPhoto: true).isEmpty,
+                    "a deleted cat's photo became the last cat's")
+        // She can still be given one by hand.
+        state.setManualMembership(assetLocalIdentifier: "for-ame", profileID: mugi, decision: .included)
+        try require(state.confirmsAsset("for-ame", for: mugi), "a photo could not be given to the last cat")
     }
 
     private static func emptyProfiledState() -> CatHouseholdIdentityState {

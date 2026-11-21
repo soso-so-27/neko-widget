@@ -94,7 +94,10 @@ final class SingleCatPhotosTests: XCTestCase {
         var (three, ids) = household(["mugi", "ame", "sora"])
         three.setManualMembership(assetLocalIdentifier: "a", profileID: ids[2], decision: .included)
         three.removeProfile(id: ids[2])
-        XCTAssertTrue(three.memberships.isEmpty)
+        // 11/21: each remaining cat gets 「この子ではない」, so deleting the
+        // next cat never hands the photo to the one left (3→2→1).
+        XCTAssertEqual(three.membershipDecision(for: "a", profileID: ids[0]), .excluded)
+        XCTAssertEqual(three.membershipDecision(for: "a", profileID: ids[1]), .excluded)
 
         var (one, only) = household(["mugi"])
         one.setManualMembership(assetLocalIdentifier: "a", profileID: only[0], decision: .included)
