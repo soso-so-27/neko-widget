@@ -103,6 +103,9 @@ enum OnboardingPresentationCopy {
     /// land here with nothing about it. One quiet line, not a button: the
     /// link itself opens the join screen over this page.
     static let purposeInvitationLine = "招待を受けた方は、届いたリンクをもう一度開いてください。"
+    /// 11/22 (A7): a new iPhone saw only the ordinary first run; restoring
+    /// was 設定 → 自動保存. One quiet button opens that same screen.
+    static let purposeRestoreAction = "前のiPhoneから戻す"
 
     // The promise is said once, on page one (and on Home's card for anyone
     // who skipped). Page two is the windows and the Photos dialog only: its

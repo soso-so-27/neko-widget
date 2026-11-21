@@ -88,6 +88,8 @@ struct AppRootView: View {
     private let familyNotebookOpenInbox = FamilyNotebookOpenInbox.shared
     @State private var onboardingInvitation: GroupInvitationLink?
     @State private var firstRunPhoto: PhotoPresentation?
+    /// 11/22 (A7): 自動保存 over the first run's page one, for a new iPhone.
+    @State private var showsOnboardingRestore = false
     @State private var startsInPhotosAfterOnboarding = false
     @State private var officialWindowRoute: OfficialWindowRoute?
     @State private var officialWindowPresentationID = UUID()
@@ -328,6 +330,28 @@ struct AppRootView: View {
                 }
             }
         }
+        // 11/22 (A7): 「前のiPhoneから戻す」 on page one opens the very screen
+        // of 設定 → 自動保存 (「Appleで続ける」 restores). Closing it returns to
+        // page one; the first run goes on as before.
+        .sheet(isPresented: $showsOnboardingRestore, onDismiss: {
+            // A link opened while this sheet was up could not be shown over
+            // it; offer it now, as after the Plus sheet.
+            guard OnboardingPresentationPersistence.requiresPresentation(completedVersion: onboardingCompletedVersion),
+                  let invitation = invitationInbox.pending else { return }
+            onboardingInvitation = nil
+            DispatchQueue.main.async { onboardingInvitation = invitation }
+        }) {
+            NavigationStack {
+                AppRecordSettingsView(profileTransfer: (actions: catProfilesActions,
+                                                        hasProfiles: !viewModel.catProfiles.isEmpty))
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("閉じる") { showsOnboardingRestore = false }
+                                .accessibilityIdentifier("onboarding-restore-close")
+                        }
+                    }
+            }
+        }
         .sheet(item: $officialWindowRoute) { route in
             NavigationStack {
                 Group {
@@ -541,7 +565,10 @@ struct AppRootView: View {
                 // is still the next step (it was skipped by this tap).
                 firstRunPhoto = photo
             },
-            openNowaWindow: openNowaWindowFromOnboarding
+            openNowaWindow: openNowaWindowFromOnboarding,
+            // The same condition as 設定's 自動保存 row.
+            openRestore: ManagedPreservationConfiguration.current.isEnabled
+                ? { showsOnboardingRestore = true } : nil
         )
         // A first run saved on the Plus page resumes it over the person's own
         // cat, as everywhere else, never the cat symbol (11/10).
