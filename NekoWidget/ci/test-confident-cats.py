@@ -160,7 +160,7 @@ class WorkTests(unittest.TestCase):
         self.assertIn("guard entry.value >= 9, confidentYears.contains(year) else { return false }", PROTOTYPE)
         self.assertEqual(PROTOTYPE.count("from: catPhotos).filter(\\.isConfidentCat)")
                          + PROTOTYPE.count(".filter(\\.isConfidentCat), count: 1).first"), 2)
-        self.assertIn("AlbumPrototype.arrivedYears(from: catPhotos, now: at, deliverNow: true).contains(year)", MAIN)
+        self.assertIn("AlbumPrototype.arrivedYears(from: eligiblePhotos, now: at, deliverNow: true).contains(year)", MAIN)
         self.assertNotIn("source.sorted { AlbumPrototype.score($0) > AlbumPrototype.score($1) }", PROTOTYPE)
 
     def test_monthly_window(self):
@@ -176,7 +176,8 @@ class WorkTests(unittest.TestCase):
     def test_seasonal_movie(self):
         self.assertIn("probableCatIdentifiers: Set<String>", MOVIE)
         self.assertIn("return .unavailable(.notEnoughDistinctScenes(available: 0))", MOVIE)
-        self.assertEqual(MAIN.count("probableCatIdentifiers: probableCatIdentifiers"), 2)
+        # 11/21: + the earlier quarters (backfillEarlierSeasonalMovies).
+        self.assertEqual(MAIN.count("probableCatIdentifiers: probableCatIdentifiers"), 3)
         self.assertIn(".filter { !$0.isConfidentCat }.map(\\.localIdentifier))", MAIN)
 
     def test_showcase_recommendation(self):
