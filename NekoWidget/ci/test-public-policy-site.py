@@ -120,7 +120,7 @@ class PublicPolicySiteTests(unittest.TestCase):
 
     @unittest.skipUnless(GUIDE_PAGE.is_file(), "guide source awaits separately approved #716; fixture is checked")
     def test_published_guide_source_contract(self):
-        self.assert_guide_contract(GUIDE_PAGE.read_text(encoding="utf-8"), content_revision="2026-11-11")
+        self.assert_guide_contract(GUIDE_PAGE.read_text(encoding="utf-8"), content_revision="2026-11-21")
 
     def test_expected_pages_and_mobile_metadata_exist(self):
         for page in PAGES:
@@ -174,7 +174,7 @@ class PublicPolicySiteTests(unittest.TestCase):
         visible_revision = f"最終更新日：{year}年{month}月{day}日"
         for page in PAGES[1:]:
             # 11/19: the privacy page describes the family notebook's representative photo.
-            pinned = {"privacy": "最終更新日：2026年11月19日", "support": "最終更新日：2026年11月11日", "guide": "最終更新日：2026年11月11日"}
+            pinned = {"privacy": "最終更新日：2026年11月21日", "support": "最終更新日：2026年11月11日", "guide": "最終更新日：2026年11月21日"}
             expected = pinned.get(page.parent.name, visible_revision)
             self.assertIn(expected, "".join(self.parsed(page).text), page)
 
