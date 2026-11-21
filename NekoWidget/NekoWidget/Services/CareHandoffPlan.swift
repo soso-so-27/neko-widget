@@ -100,6 +100,11 @@ struct CareHandoffPlan: Codable, Equatable {
     /// 11/8: when the last memo was made. 14 days later the period and the
     /// request start empty, so an old trip is not handed over again.
     var lastMadeAt: Date? = nil
+    /// 11/21: the period and the request as that memo handed them over. Only
+    /// that text expires: what was typed after it (the next stay) is never
+    /// emptied. Optional: older plans have none, and then nothing expires.
+    var madePeriod: String? = nil
+    var madeRequest: String? = nil
     /// Round 2 (11/8): 「家の中のこと」, once for the household, never per cat.
     /// No address or keys. Optional so older plans still open.
     var houseFoodPlace: String? = nil
@@ -181,9 +186,25 @@ struct CareHandoffPlan: Codable, Equatable {
         if family.isEmpty { self[keyPath: planKey] = value; return }
         for index in family { cats[index].familyContext?[keyPath: key] = value }
     }
-    func requestIsStale(now: Date = Date()) -> Bool {
-        guard let lastMadeAt else { return false }
-        return now.timeIntervalSince(lastMadeAt) > Self.staleRequestAge
+    /// 14 days after the last memo, unless its period is a stay still ahead
+    /// (a memo made early for a trip is not old yet).
+    func requestIsStale(now: Date = Date(), calendar: Calendar = CareCheckTable.calendar) -> Bool {
+        guard let lastMadeAt, now.timeIntervalSince(lastMadeAt) > Self.staleRequestAge else { return false }
+        if let stay = CareCheckTable.range(period: period, now: lastMadeAt, calendar: calendar),
+           stay.end >= calendar.startOfDay(for: now) { return false }
+        return true
+    }
+    /// 11/8, 11/21: empties the period and the request of an old trip, only
+    /// where they are still the text the last memo handed over. Text typed
+    /// since, and a plan saved before 11/21 (nothing recorded), stay as they
+    /// are. A cat shared in the family notebook keeps its own. True if changed.
+    @discardableResult
+    mutating func clearStaleRequest(now: Date = Date(), calendar: Calendar = CareCheckTable.calendar) -> Bool {
+        guard requestIsStale(now: now, calendar: calendar) else { return false }
+        if let madePeriod, period == madePeriod { period = "" }
+        if let madeRequest, request == madeRequest { request = "" }
+        lastMadeAt = nil; madePeriod = nil; madeRequest = nil
+        return true
     }
 
     func validate() throws {
@@ -549,8 +570,22 @@ struct CareCheckTable: Equatable {
     /// 「11/3（月）」 for each day from the first date in the period to the
     /// second, or nil when the period is not such a range (one date, no
     /// date, or longer than a month). A year left out is this year's; a date
-    /// half a year back is next year's. The end may leave out the month.
+    /// half a year back is next year's. The end may leave out the month, or be
+    /// said as nights or days: 「11/3から2泊3日」, 「11/3から3日間」 (11/21).
     static func days(period: String, now: Date, calendar: Calendar) -> [String]? {
+        guard let stay = range(period: period, now: now, calendar: calendar),
+              let count = calendar.dateComponents([.day], from: stay.start, to: stay.end).day else { return nil }
+        let weekdays = ["日", "月", "火", "水", "木", "金", "土"]
+        return (0...count).compactMap { offset in
+            guard let day = calendar.date(byAdding: .day, value: offset, to: stay.start) else { return nil }
+            return "\(calendar.component(.month, from: day))/\(calendar.component(.day, from: day))"
+                + "（\(weekdays[calendar.component(.weekday, from: day) - 1])）"
+        }
+    }
+
+    /// The first and the last day of the stay the period names (the start of
+    /// each day), or nil when it names no range of up to a month.
+    static func range(period: String, now: Date, calendar: Calendar) -> (start: Date, end: Date)? {
         let text = String(String.UnicodeScalarView(period.unicodeScalars.map { scalar -> Unicode.Scalar in
             switch scalar.value {
             case 0xFF10...0xFF19: return Unicode.Scalar(scalar.value - 0xFF10 + 0x30) ?? scalar
@@ -559,12 +594,28 @@ struct CareCheckTable: Equatable {
             default: return scalar
             }
         }))
-        guard let full = try? NSRegularExpression(pattern: #"(?:(\d{4})\s*[年/.\-]\s*)?(\d{1,2})\s*[月/.\-]\s*(\d{1,2})"#),
-              let dayOnly = try? NSRegularExpression(pattern: #"(\d{1,2})\s*日(?!間)"#) else { return nil }
+        guard let full = try? NSRegularExpression(pattern: #"(?:(\d{4})\s*[年/.\-]\s*)?(\d{1,2})\s*([月/.\-])\s*(\d{1,2})"#),
+              // 「3日」 as the last day, never the 「3日」 of 「2泊3日」 or 「3日間」.
+              let dayOnly = try? NSRegularExpression(pattern: #"(?<![泊\d.])(\d{1,2})\s*日(?!間)"#),
+              let nights = try? NSRegularExpression(pattern: #"(?<![\d.])(\d{1,2})\s*泊"#),
+              let dayCount = try? NSRegularExpression(pattern: #"(?<![\d.])(\d{1,2})\s*日間"#) else { return nil }
         let whole = text as NSString
         func number(_ match: NSTextCheckingResult, _ group: Int) -> Int? {
             let range = match.range(at: group)
             return range.location == NSNotFound ? nil : Int(whole.substring(with: range))
+        }
+        /// 11/21: 「1.5」 is a number, not January 5: a month and day joined by
+        /// 「.」 (no year) count only when they stand alone, as in 「11.3〜11.5」.
+        func isDate(_ match: NSTextCheckingResult) -> Bool {
+            guard match.range(at: 1).location == NSNotFound, whole.substring(with: match.range(at: 3)) == "." else { return true }
+            let before = match.range.location > 0 ? whole.substring(with: NSRange(location: match.range.location - 1, length: 1)) : ""
+            if before.rangeOfCharacter(from: CharacterSet(charactersIn: "0123456789.")) != nil { return false }
+            let after = whole.substring(from: NSMaxRange(match.range)).trimmingCharacters(in: .whitespaces)
+            return after.isEmpty || ["〜", "～", "~", "-", "ー", "–", "—", "(", "（", "、", ",", "・", "/", "から", "まで", "\n"]
+                .contains { after.hasPrefix($0) }
+        }
+        func firstDate(in range: NSRange) -> NSTextCheckingResult? {
+            full.matches(in: text, range: range).first(where: isDate)
         }
         func date(_ year: Int, _ month: Int, _ day: Int) -> Date? {
             guard (1...12).contains(month), (1...31).contains(day),
@@ -573,8 +624,8 @@ struct CareCheckTable: Equatable {
             else { return nil }
             return value
         }
-        guard let first = full.firstMatch(in: text, range: NSRange(location: 0, length: whole.length)),
-              let startMonth = number(first, 2), let startDay = number(first, 3) else { return nil }
+        guard let first = firstDate(in: NSRange(location: 0, length: whole.length)),
+              let startMonth = number(first, 2), let startDay = number(first, 4) else { return nil }
         let today = calendar.startOfDay(for: now)
         var startYear = number(first, 1) ?? calendar.component(.year, from: today)
         guard var start = date(startYear, startMonth, startDay) else { return nil }
@@ -585,7 +636,7 @@ struct CareCheckTable: Equatable {
         }
         let rest = NSRange(location: NSMaxRange(first.range), length: whole.length - NSMaxRange(first.range))
         var end: Date?
-        if let second = full.firstMatch(in: text, range: rest), let month = number(second, 2), let day = number(second, 3) {
+        if let second = firstDate(in: rest), let month = number(second, 2), let day = number(second, 4) {
             let year = number(second, 1) ?? startYear
             end = date(year, month, day)
             if number(second, 1) == nil, let value = end, value < start { end = date(year + 1, month, day) }
@@ -594,14 +645,15 @@ struct CareCheckTable: Equatable {
             if end.map({ $0 < start }) ?? true, let nextMonth = calendar.date(byAdding: .month, value: 1, to: start) {
                 end = date(calendar.component(.year, from: nextMonth), calendar.component(.month, from: nextMonth), day)
             }
+        } else if let second = nights.firstMatch(in: text, range: rest), let count = number(second, 1), count > 0 {
+            // 「2泊」: the day after the second night.
+            end = calendar.date(byAdding: .day, value: count, to: start)
+        } else if let second = dayCount.firstMatch(in: text, range: rest), let count = number(second, 1), count > 0 {
+            // 「3日間」: the first day is one of them.
+            end = calendar.date(byAdding: .day, value: count - 1, to: start)
         }
         guard let end, let count = calendar.dateComponents([.day], from: start, to: end).day,
               (0..<longestPeriod).contains(count) else { return nil }
-        let weekdays = ["日", "月", "火", "水", "木", "金", "土"]
-        return (0...count).compactMap { offset in
-            guard let day = calendar.date(byAdding: .day, value: offset, to: start) else { return nil }
-            return "\(calendar.component(.month, from: day))/\(calendar.component(.day, from: day))"
-                + "（\(weekdays[calendar.component(.weekday, from: day) - 1])）"
-        }
+        return (start, end)
     }
 }

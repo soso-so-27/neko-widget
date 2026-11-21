@@ -24,6 +24,9 @@ struct VerifyEvacuationPlan {
         try noticeChoiceTravelsWithThePlan()
         try departedCats()
         try pastDaysTakeNoPlace()
+        try redoingTheCheckIsAReview()
+        try lateExpiryGetsOneNotice()
+        try departedCatsEverywhere()
         print("Evacuation plan (避難に備える) decoding and rule checks passed")
     }
 
@@ -226,7 +229,7 @@ struct VerifyEvacuationPlan {
         var honolulu = Calendar(identifier: .gregorian); honolulu.timeZone = TimeZone(identifier: "Pacific/Honolulu")!
         var london = Calendar(identifier: .gregorian); london.timeZone = TimeZone(identifier: "Europe/London")!
         var item = EvacuationSupply(title: "フード")
-        item.setExpiry(day(2026, 12, 20, hour: 0), calendar: tokyo)
+        item.setExpiry(day(2026, 12, 20, hour: 0), calendar: tokyo, now: day(2026, 11, 1))
         try check(item.expiresOn == "2026-12-20", "the day is stored")
         try check(item.expiresAt == day(2026, 12, 20, hour: 0), "expiresAt is still the day's start for older builds")
         for calendar in [tokyo, honolulu, london] {
@@ -325,7 +328,7 @@ struct VerifyEvacuationPlan {
         try check(expiry[0].body == "持ち出すものの期限まであと14日です。", "expiry text")
         plan.supplies[medicine].expiresAt = day(2026, 11, 15)
         try check(plan.notices(now: now, dismissedAt: never, calendar: tokyo).filter { $0.id.hasPrefix("evacuation.expiry.") }.count == 1,
-                  "a 期限 within 14 days has no notice (the list shows it)")
+                  "a 期限 saved without the day it was set: no late notice (lateExpiryGetsOneNotice)")
         plan.supplies[medicine].isNeeded = false
         plan.supplies[medicine].expiresAt = day(2027, 2, 1)
         try check(plan.notices(now: now, dismissedAt: never, calendar: tokyo).filter { $0.id.hasPrefix("evacuation.expiry.") }.count == 1,
@@ -404,5 +407,113 @@ struct VerifyEvacuationPlan {
         let notices = plan.notices(now: day(2026, 11, 9), dismissedAt: Date(timeIntervalSince1970: 0), calendar: tokyo)
         try check(notices.filter { $0.id.hasPrefix("evacuation.expiry.") }.map(\.id) == ["evacuation.expiry.2027-02-15"],
                   "the day ahead is set though many days are past")
+    }
+
+    /// 11/21: 「チェックをやり直す」 on a plan older than half a year starts
+    /// the half-year again; the note does not come straight back.
+    static func redoingTheCheckIsAReview() throws {
+        let never = Date(timeIntervalSince1970: 0)
+        var plan = EvacuationPlan()
+        plan.createdAt = t0
+        plan.lastCheckedAt = t0.addingTimeInterval(60)
+        let redo = t0.addingTimeInterval(halfYear + 3600)
+        try check(plan.reviewIsDue(now: redo, dismissedAt: never), "due before the redo")
+        plan.clearChecks(now: redo)
+        try check(plan.lastReadyDate == nil && plan.reviewRestartedAt == redo, "the checks are cleared, the day is kept")
+        try check(!plan.reviewIsDue(now: redo.addingTimeInterval(60), dismissedAt: never), "not shown again right after")
+        try check(plan.reviewIsDue(now: redo.addingTimeInterval(halfYear + 60), dismissedAt: never), "half a year after the redo")
+        try check(plan.reviewDueDate(dismissedAt: never) == redo.addingTimeInterval(halfYear), "the notice counts from it too")
+        let back = try JSONDecoder().decode(EvacuationPlan.self, from: JSONEncoder().encode(plan))
+        try check(back == plan, "it round-trips")
+        var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(plan)) as! [String: Any]
+        object.removeValue(forKey: "reviewRestartedAt")
+        let older = try JSONDecoder().decode(EvacuationPlan.self, from: JSONSerialization.data(withJSONObject: object))
+        try older.validate()
+        try check(older.reviewRestartedAt == nil, "a plan without it still opens")
+    }
+
+    /// 11/21: a 期限 set less than 14 days ahead gets one notice, the next
+    /// 9:00 after it was set (it said 「14日前に知らせます」 and set none).
+    static func lateExpiryGetsOneNotice() throws {
+        let never = Date(timeIntervalSince1970: 0)
+        func expiryNotices(_ plan: EvacuationPlan, _ now: Date) -> [EvacuationScheduledNotice] {
+            plan.notices(now: now, dismissedAt: never, calendar: tokyo).filter { $0.id.hasPrefix("evacuation.expiry.") }
+        }
+        var plan = EvacuationPlan()
+        let setAt = day(2026, 11, 9, hour: 20)
+        var food = EvacuationSupply(title: "フード")
+        food.setExpiry(day(2026, 11, 19, hour: 0), calendar: tokyo, now: setAt)
+        plan.supplies = [food]
+        var expiry = expiryNotices(plan, setAt)
+        try check(expiry.map(\.id) == ["evacuation.expiry.2026-11-10"], "the next morning")
+        try check(expiry.first?.date == day(2026, 11, 10, hour: 9), "at 9:00")
+        try check(expiry.first?.body == "持ち出すものの期限まであと9日です。", "the days that are left")
+        // Set before 9:00: the same morning.
+        food.setExpiry(day(2026, 11, 19, hour: 0), calendar: tokyo, now: day(2026, 11, 9, hour: 7))
+        plan.supplies = [food]
+        expiry = expiryNotices(plan, day(2026, 11, 9, hour: 7))
+        try check(expiry.map(\.date) == [day(2026, 11, 9, hour: 9)], "the same morning")
+        // Once that morning has passed, it is not set again (no notice each day).
+        try check(expiryNotices(plan, day(2026, 11, 12)).isEmpty, "one notice only")
+        // On the day itself, and none for a 期限 already past.
+        food.setExpiry(day(2026, 11, 10, hour: 0), calendar: tokyo, now: setAt)
+        plan.supplies = [food]
+        try check(expiryNotices(plan, setAt).map(\.body) == ["持ち出すものの期限は今日です。"], "the day itself")
+        food.setExpiry(day(2026, 11, 8, hour: 0), calendar: tokyo, now: setAt)
+        plan.supplies = [food]
+        try check(expiryNotices(plan, setAt).isEmpty, "none after the 期限")
+        // A 期限 far enough ahead keeps its notice 14 days before.
+        food.setExpiry(day(2026, 12, 20, hour: 0), calendar: tokyo, now: setAt)
+        plan.supplies = [food]
+        expiry = expiryNotices(plan, setAt)
+        try check(expiry.map(\.id) == ["evacuation.expiry.2026-12-06"] && expiry[0].body == "持ち出すものの期限まであと14日です。",
+                  "14 days before as before")
+        // Two on the same morning: one notice, the nearest 期限 counted.
+        var water = EvacuationSupply(title: "水")
+        water.setExpiry(day(2026, 11, 13, hour: 0), calendar: tokyo, now: setAt)
+        food.setExpiry(day(2026, 11, 19, hour: 0), calendar: tokyo, now: setAt)
+        plan.supplies = [food, water]
+        try check(expiryNotices(plan, setAt).map(\.body) == ["持ち出すものの期限まであと3日です。"], "one a day, the nearest")
+        // Clearing forgets the day; a file without it (older build) still reads.
+        var cleared = food
+        cleared.setExpiry(nil)
+        try check(cleared.expirySetAt == nil, "clearing clears it")
+        var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(food)) as! [String: Any]
+        object.removeValue(forKey: "expirySetAt")
+        let older = try JSONDecoder().decode(EvacuationSupply.self, from: JSONSerialization.data(withJSONObject: object))
+        try check(older.expirySetAt == nil && older.expiresOn == food.expiresOn, "an item without it still opens")
+    }
+
+    /// 11/21: a departed cat's items stay in the plan, but are not on the
+    /// checklist, not named as the nearest 期限, and no medicine item is made
+    /// for it; recommended amounts count the living cats.
+    static func departedCatsEverywhere() throws {
+        var plan = EvacuationPlan()
+        var living = EvacuationCat(); living.profileID = "A0000000-0000-0000-0000-000000000011"
+        var gone = EvacuationCat(); gone.profileID = "A0000000-0000-0000-0000-000000000012"
+        plan.cats = [living, gone]
+        let departed: Set<String> = [gone.profileID!]
+        try check(plan.departedCatIDs(departed: departed) == [gone.id], "the departed cat's id")
+        plan.followMedicines([living.id: ["A錠"], gone.id: ["B錠"]], departed: departed)
+        try check(plan.supplies.contains { $0.catID == living.id } && !plan.supplies.contains { $0.catID == gone.id },
+                  "no medicine item for the departed cat")
+        var kept = EvacuationSupply(title: "薬：B錠", quantity: "5日分以上", catID: gone.id)
+        kept.expiresAt = day(2026, 11, 12)
+        plan.supplies.append(kept)
+        let now = day(2026, 11, 9)
+        try check(!plan.activeSupplies(departed: departed).contains { $0.id == kept.id }, "not on the checklist")
+        try check(plan.activeSupplies(departed: []).contains { $0.id == kept.id }, "without days it is")
+        try check(plan.supplies.contains { $0.id == kept.id }, "kept in the plan")
+        try check(plan.expiryState(now: now, calendar: tokyo, departed: departed) == nil, "not named as the nearest 期限")
+        try check(plan.expiryState(now: now, calendar: tokyo) == "薬：B錠の期限まであと3日", "without days it is named")
+        // A medicine item already kept is not renamed for a departed cat.
+        plan.followMedicines([gone.id: ["C錠"]], departed: departed)
+        try check(plan.supplies.first { $0.id == kept.id }?.title == "薬：B錠", "a kept item is left as it is")
+        // Recommended amounts count the living cats only.
+        var fresh = EvacuationPlan()
+        fresh.supplies = []
+        fresh.cats = [living, gone]
+        fresh.addRecommendedSupplies(departed: departed)
+        try check(fresh.supplies.first { $0.title == "キャリー" }?.quantity == "1個", "one carrier for one living cat")
     }
 }
