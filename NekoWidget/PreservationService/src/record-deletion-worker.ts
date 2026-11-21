@@ -6,11 +6,11 @@ import { OwnerRecoveryCopy } from './owner-recovery-copy';
 import { OwnerArchiveRecovery } from './owner-archive-recovery';
 import { RecordPhysicalDeletion, type RecordDeletionJob } from './record-physical-deletion';
 import { S3VersionPurge } from './s3-version-purge';
-import { ServiceError, sha256 } from './contracts';
+import { ServiceError } from './contracts';
 
 interface RecordErasureEnv extends Env {
   RECORD_PHYSICAL_DELETION_ENABLED?: string;
-  RECORD_PHYSICAL_DELETION_REVIEW_OFFSET?: string;
+  RECORD_PHYSICAL_DELETION_REVIEW_AT?: string;
   RECORD_PHYSICAL_DELETION_REVIEW_SCOPE_SHA256?: string;
   ERASER_S3_ACCESS_KEY_ID?: string;
   ERASER_S3_SECRET_ACCESS_KEY?: string;
@@ -22,14 +22,15 @@ const dayMs = 86_400_000;
 // Worker continues to write the queue and has no permanent deletion capability.
 export default {
   fetch(): Response { return new Response(null, { status: 404 }); },
-  async scheduled(_event: ScheduledEvent, env: RecordErasureEnv): Promise<void> {
+  async scheduled(event: ScheduledEvent, env: RecordErasureEnv): Promise<void> {
     const enabled = env.RECORD_PHYSICAL_DELETION_ENABLED === 'YES';
-    const review = env.RECORD_PHYSICAL_DELETION_REVIEW_OFFSET;
+    const review = env.RECORD_PHYSICAL_DELETION_REVIEW_SCOPE_SHA256;
     if (!enabled && review === undefined) return;
     const unavailable = () => new ServiceError('RECORD_ERASURE_NOT_CONFIGURED', 503);
     if (review !== undefined && (enabled || env.RECORD_PHYSICAL_DELETION_ENABLED !== 'NO'
-      || !/^(?:[0-9]|1[0-2])$/u.test(review)
-      || !/^[a-f0-9]{64}$/u.test(env.RECORD_PHYSICAL_DELETION_REVIEW_SCOPE_SHA256 ?? ''))) throw unavailable();
+      || !/^[a-f0-9]{64}$/u.test(review)
+      || !/^[0-9]{13}$/u.test(env.RECORD_PHYSICAL_DELETION_REVIEW_AT ?? ''))) throw unavailable();
+    if (review !== undefined && event.scheduledTime !== Number(env.RECORD_PHYSICAL_DELETION_REVIEW_AT)) return;
     if (!env.KEY_WRAPPER || !env.KEY_WRAPPER_CALLER_SECRET || !env.IDENTITY_INDEX_SECRET
       || !env.ARCHIVE || !env.DB || (enabled && env.ERASER_S3_ACCESS_KEY_ID === env.RECOVERY_S3_ACCESS_KEY_ID)) {
       throw unavailable();
@@ -48,14 +49,13 @@ export default {
     });
     if (review !== undefined) {
       // Review removes no object and does not claim, retry or close queue rows.
-      const ordinal = Number(review);
-      const scope = await env.DB.prepare(`SELECT owner_id,record_id,tombstone_revision,requested_at
-        FROM pa_record_physical_delete_queue ORDER BY requested_at,owner_id,record_id LIMIT 14`).all<RecordDeletionJob>();
-      if (scope.results.length !== 13 || await sha256(JSON.stringify(scope.results.map(item => [
-        item.owner_id,item.record_id,item.tombstone_revision,item.requested_at,
-      ]))) !== env.RECORD_PHYSICAL_DELETION_REVIEW_SCOPE_SHA256) throw unavailable();
-      const result = await executor.review(scope.results[ordinal]!);
-      console.info(JSON.stringify({ event: 'preservation_record_erasure_review_v1', ordinal, ...result }));
+      try {
+        const result = await executor.review(review);
+        console.info(JSON.stringify({ event: 'preservation_record_erasure_review_v2', ...result }));
+      } catch {
+        // Provider and database exceptions may contain private reference data.
+        throw new ServiceError('RECORD_ERASURE_REVIEW_BLOCKED', 503);
+      }
       return;
     }
     const now = Date.now();

@@ -4,7 +4,7 @@ import { expect, it } from 'vitest';
 import { DurableAuth } from '../src/auth';
 import { ArchiveStore, cleanupArchive } from '../src/storage';
 import { encodePhoto } from '../src/documents';
-import { randomToken, ServiceError, type ArchiveDocument, type KeyCustody } from '../src/contracts';
+import { randomToken, ServiceError, sha256, type ArchiveDocument, type KeyCustody } from '../src/contracts';
 import { RecordRecoveryCopy } from '../src/record-recovery-copy';
 import { OwnerRecoveryCopy } from '../src/owner-recovery-copy';
 import { type RecoveryObject, type RecoveryVersion, type RecoveryVersionCursor, S3RecoveryCopy } from '../src/s3-recovery-copy';
@@ -612,14 +612,11 @@ it('erases only committed target payloads across all pages and confirms their ab
   const orphan = await remote.s3.putVersioned(`recovery/v1/${ownerId}/photo/${crypto.randomUUID()}`, photo);
   const targetR2 = () => binding.ARCHIVE.list({ prefix: `personal/${ownerId}/${id}/` });
   const before = (await targetR2()).objects.map(object => object.key);
-  expect(await executor.review(job!)).toMatchObject({ unresolvedVersions: 1 });
   await expect(executor.step(job!)).rejects.toMatchObject({ code: 'RECORD_ERASURE_SCOPE_UNVERIFIED' });
   expect((await targetR2()).objects.map(object => object.key)).toEqual(before);
   expect(erased).toEqual([]);
   remote.objects.delete(`${orphan.key}:${orphan.versionId}`);
 
-  expect(await executor.review(job!)).toEqual({ r2Targets: 1, s3Targets: 3,
-    protectedPages: 0, authenticatedUncommittedCopies: 1, unresolvedVersions: 0 });
   expect(await readJob()).toEqual(job);
   expect((await targetR2()).objects.map(object => object.key)).toEqual(before);
   expect(erased).toEqual([]);
@@ -638,6 +635,70 @@ it('erases only committed target payloads across all pages and confirms their ab
     status: 'ready-for-quarantine', verifiedRecords: 2,
   });
 });
+
+it('reviews one fixed deletion backlog and reports the four counts using the pre-queue schema', async () => {
+  await binding.DB.prepare('DELETE FROM pa_pending_deletes').run();
+  const authority = await syntheticKeyAuthority();
+  const f = await fixture({ keys: envelopeKeyCustody({ enabled: true, wrapper: authority.make() }) });
+  const owner = f.session.ownerId, remote = syntheticRecovery(f.options.keys);
+  const owners = new OwnerRecoveryCopy(f.options.keys, remote.s3, f.authOptions.identityIndexSecret, { pagedWrites: true });
+  const archive = new ArchiveStore({ ...f.options, recovery: remote.recovery, ownerRecovery: owners, requireOwnerRecovery: true });
+  const recovery = new OwnerArchiveRecovery(remote.s3, owners, remote.recovery);
+  const db = new Proxy(binding.DB, { get(target, key) {
+    if (key !== 'prepare') throw new Error('Only SELECT is available during review');
+    return (sql: string) => {
+      expect(sql).toMatch(/^SELECT /);
+      expect(sql).not.toMatch(/physical_delete_(queue|candidates)/);
+      return target.prepare(sql);
+    };
+  } });
+  const objectsBefore = await binding.ARCHIVE.list({ prefix: `personal/${owner}/` });
+  expect(objectsBefore.objects).toHaveLength(0);
+  const review = new RecordPhysicalDeletion({ db, bucket: binding.ARCHIVE, archive: recovery,
+    records: remote.recovery, inventory: remote.s3, now: f.options.now });
+  const copyBody = async (ref: RecoveryObject) => remote.s3.putVersioned(
+    `recovery/v1/${owner}/record/${crypto.randomUUID()}`, await remote.s3.getVerified(ref));
+  const putRecord = async (withPhoto = true) => {
+    const id = crypto.randomUUID();
+    const request = withPhoto ? f.request() : f.request({ photoBase64: null, document: { ...document, photoFile: null } });
+    await archive.put(f.session.token, id, request);
+    const body = await binding.DB.prepare(`SELECT record_object_key AS key,record_version_id AS versionId,
+      record_bytes AS bytes,record_sha256 AS sha256 FROM pa_record_recovery_versions WHERE owner_id=? AND record_id=?`)
+      .bind(owner,id).first<RecoveryObject>();
+    if (!body) throw new Error('Missing test recovery body');
+    return { id, body };
+  };
+
+  try {
+    const kept = await putRecord(false), first = await putRecord();
+    await copyBody(kept.body);
+    await copyBody(first.body);
+    const jobs = [first.id];
+    for (let index = 1; index < 13; index++) jobs.push((await putRecord()).id);
+    for (const id of jobs) await archive.remove(f.session.token, id, 1);
+    const scope = await sha256(JSON.stringify(jobs.sort().map(id => [owner,id,2,f.options.now()])));
+    const listed = remote.references.map(ref => ({ ...ref, deleteMarker: false }));
+    const graph = await recovery.assembleQuarantineCandidate(owner, f.options.now(), listed);
+    expect(graph.status).toBe('ready-for-quarantine');
+    if (graph.status !== 'ready-for-quarantine') throw new Error('Missing test recovery graph');
+    const protectedPages = graph.erasureEvidence!.pages.length;
+    expect(protectedPages).toBeGreaterThan(0);
+    const unresolvedVersions = 755 - protectedPages - 2;
+    for (let index = 0; index < unresolvedVersions; index++) {
+      await remote.s3.putVersioned(`recovery/v1/${owner}/record/${crypto.randomUUID()}`, photo);
+    }
+    const s3Count = remote.objects.size;
+    const r2Count = (await binding.ARCHIVE.list({ prefix: `personal/${owner}/` })).objects.length;
+    await expect(review.review('0'.repeat(64))).rejects.toMatchObject({ code: 'RECORD_ERASURE_SCOPE_UNVERIFIED' });
+    await expect(review.review(scope)).resolves.toEqual({
+      protectedPages, olderTargetBodies: 1, orphanBodies: 1, unresolvedVersions, durationMs: 0,
+    });
+    expect(remote.objects.size).toBe(s3Count);
+    expect((await binding.ARCHIVE.list({ prefix: `personal/${owner}/` })).objects).toHaveLength(r2Count);
+  } finally {
+    await binding.DB.prepare('UPDATE pa_recovery_write_policy SET owner_snapshot_required=0 WHERE singleton=1').run();
+  }
+}, 30_000);
 
 it('backfills existing tombstones only when they were in the R2 cleanup backlog', async () => {
   const f = await fixture();
