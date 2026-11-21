@@ -217,6 +217,7 @@ final class GroupSafety: ObservableObject {
         } catch {
             // An unreadable local record must never uncover a reported photo.
             unreadableSuppression.insert(windowID)
+            failureIsBlock = false
             failure = .storageUnavailable
         }
         let nextRecords = await service.reports(windowID: windowID)
@@ -225,7 +226,7 @@ final class GroupSafety: ObservableObject {
             let nextBlocks = try await service.pendingBlocks(windowID: windowID)
             if pendingBlocks[windowID] != nextBlocks { pendingBlocks[windowID] = nextBlocks }
         }
-        catch { failure = error as? GroupSafetyError ?? .storageUnavailable }
+        catch { failureIsBlock = false; failure = error as? GroupSafetyError ?? .storageUnavailable }
     }
 
     /// 11/21e: what the alerts say: a block's failure in block words.
