@@ -78,6 +78,30 @@ enum FamilyNotebookServiceFactory {
             recoveryStore: { try GroupKeychainStore(namespace: namespace + ".recovery." + $0) },
             usualPersonID: usual, usualDeviceID: usualDevice, revocations: client.revocations)
     }
+    /// 11/21: deleting this person's data also deletes the recovered person
+    /// the family notebook uses after 機種変更 (another person than the usual
+    /// one on the relay), then that person's notebook data on this iPhone and
+    /// the link. nil when there is none, or when it is the usual person (the
+    /// usual deletion covers it). Called before the usual deletion, so a
+    /// failure stops before anything else is deleted and can be tried again.
+    static func deleteRecoveredPerson(_ client: ProductionGroupWindowClient) async throws -> GroupIdentityDeletion? {
+        guard recoveryRuntimeCarried else { return nil }
+        let namespace = GroupWindowClientProvider.namespace
+        let links = try GroupKeychainStore(namespace: namespace + recoveryLinkSuffix)
+        guard let bytes = try links.read(FamilyNotebookIdentityChoice.linkAccount) else { return nil }
+        let link = try GroupWire.decode(FamilyNotebookIdentityChoice.Link.self, bytes)
+        let usual = try await client.existingPersonID()
+        guard link.scope.utf8.count == 64,
+              link.scope.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
+              let recovered = try await recoveredIdentity(client),
+              recovered.personID != usual else { return nil }
+        let store = try GroupKeychainStore(namespace: namespace + ".recovery." + link.scope)
+        let record = try await client.requestDeletion(of: recovered, in: store)
+        try? links.remove(FamilyNotebookIdentityChoice.linkAccount)
+        _ = await GroupIdentityDeletionLocalData.remove(record)
+        return record
+    }
+
     /// 11/19: internal builds as before; the App Store build only with 機種変更's
     /// client (SharingAPIConfiguration.groupRecoveryRuntimeEnabled).
     private static var recoveryRuntimeCarried: Bool {
