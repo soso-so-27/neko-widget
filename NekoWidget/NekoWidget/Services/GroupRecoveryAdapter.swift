@@ -58,7 +58,17 @@ struct GroupRecoveryClientSession: GroupRecoverySession {
             selectedRootID = contexts[0].candidate.id; items = contexts[0].items; rootChoice = []
         }
     }
-    private func cancel() { generation = UUID(); task?.cancel(); timer?.cancel(); task = nil; timer = nil }
+    /// The row a tap is checking now. 11/21m: when another tap (or closing)
+    /// stops it, that row says it could not be checked (its 「もう一度」
+    /// asks again) instead of 「確認しています」 for good.
+    private var checkingID: UUID?
+    private func cancel() {
+        generation = UUID(); task?.cancel(); timer?.cancel(); task = nil; timer = nil
+        if let id = checkingID, items.contains(where: { $0.state == .checking(operationID: id) }) {
+            set(id, state: .unavailable(operationID: id))
+        }
+        checkingID = nil
+    }
 
     // P5: while this screen is open, a まど that waits for its keys is checked
     // again on its own, every SharingForegroundGap.seconds and at most
@@ -122,7 +132,12 @@ struct GroupRecoveryClientSession: GroupRecoverySession {
             guard let context = contexts[root] else { return }
             cancel(); selectedRootID = root; items = context.items; rootChoice = []; dismissed = false
             return
-        case .perform(.complete): cancel(); dismissed = true; return
+        case .perform(.complete):
+            // 11/21m: one まど ready closes the screen only when nothing else
+            // here still needs the person (another まど waiting, or asking).
+            // Otherwise the list stays, with that まど shown as ready.
+            if items.allSatisfy({ $0.state.canOpen }) { cancel(); dismissed = true }
+            return
         default: break
         }
         guard !dismissed, let root = selectedRootID, let session = contexts[root]?.session else { return }
@@ -148,7 +163,7 @@ struct GroupRecoveryClientSession: GroupRecoverySession {
         default: return
         }
         cancel(); let token = generation
-        set(id, state: .checking(operationID: id))
+        set(id, state: .checking(operationID: id)); checkingID = id
         timer = Task { [weak self, timeout] in
             do { try await Task.sleep(for: timeout) } catch { return }
             guard let self, self.generation == token, self.selectedRootID == root else { return }
@@ -160,7 +175,7 @@ struct GroupRecoveryClientSession: GroupRecoverySession {
                 let result = try await session.run(action)
                 guard let self, !Task.isCancelled, self.generation == token, self.selectedRootID == root,
                       self.operation(result) == id else { return }
-                self.timer?.cancel(); self.set(id, state: result)
+                self.timer?.cancel(); self.checkingID = nil; self.set(id, state: result)
             } catch {
                 guard let self, !Task.isCancelled, self.generation == token, self.selectedRootID == root else { return }
                 if case GroupRecoveryClient.Failure.deviceLimit = error {

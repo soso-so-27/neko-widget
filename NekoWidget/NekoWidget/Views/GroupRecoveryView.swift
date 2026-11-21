@@ -79,6 +79,22 @@ struct GroupRecoveryWindowList: View {
 
     var body: some View {
         List {
+            // 11/21m: nothing to bring over is said, never an empty list.
+            if items.isEmpty {
+                Text(GroupRecoveryWords.inNothing).foregroundStyle(.secondary)
+            }
+            // 11/21m: a まど already on this iPhone stays in the list (marked),
+            // so a list of ready まど is never empty.
+            ForEach(items.filter { GroupRecoveryPresentation.rowStatus(for: $0) == nil }) { item in
+                HStack(spacing: 8) {
+                    Text(item.displayName).font(.body.weight(.semibold))
+                    Spacer(minLength: 0)
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                }
+                .frame(minHeight: 44, alignment: .leading)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("group-recovery-window-\(item.windowID)")
+            }
             ForEach(items.filter { GroupRecoveryPresentation.rowStatus(for: $0) != nil }) { item in
                 NavigationLink {
                     GroupRecoveryStateView(state: item.screenState, devices: item.devices, send: send)
@@ -109,6 +125,7 @@ struct GroupRecoveryStateView: View {
     @State private var asksName = false
     @State private var removing: GroupRecoveryDevice?
     @State private var choosing: GroupRecoveryRootCandidate?
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         Group {
@@ -119,9 +136,11 @@ struct GroupRecoveryStateView: View {
                 case .rootChoice: rootChoice(screen)
                 }
             } else {
-                // ready：この画面は閉じて、まどを開く。
+                // ready：この画面は閉じて、まどを開く。11/21m: まどが複数で、ほかがまだの
+                // ときは一覧に戻る（空の画面のまま残さない）。
                 Color.clear.onAppear {
                     if let registration = state.registrationState { send(.perform(registration.nextAction)) }
+                    dismiss()
                 }
             }
         }

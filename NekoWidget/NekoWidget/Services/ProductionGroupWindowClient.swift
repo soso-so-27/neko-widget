@@ -137,10 +137,14 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         self.revocations = privateStore
 #if os(iOS) && !NEKO_SHARE_EXTENSION
         if Bundle.main.object(forInfoDictionaryKey: "GroupShareExtensionEnabled") as? String == "YES",
-           let accessGroup = GroupShareAccess.accessGroup,
-           let installation = try? GroupShareInstallation.prepareInHost() {
-            self.secrets = GroupSharePublishingStore(original: privateStore,
-                snapshot: GroupShareKeychain(namespace: namespace + "." + installation, accessGroup: accessGroup))
+           let accessGroup = GroupShareAccess.accessGroup {
+            // 11/21m: started in the background while locked, the installation
+            // file cannot be read yet; the share copy opens after unlock
+            // instead of staying off for this whole launch.
+            self.secrets = GroupSharePublishingStore(original: privateStore, makeSnapshot: {
+                guard let installation = try? GroupShareInstallation.prepareInHost() else { return nil }
+                return GroupShareKeychain(namespace: namespace + "." + installation, accessGroup: accessGroup)
+            })
         } else {
             self.secrets = privateStore
         }
@@ -2331,6 +2335,11 @@ extension ProductionGroupWindowClient {
             && !account.hasPrefix("identity-deletion-history:") {
             do { try secrets.remove(account) } catch { removed = false }
         }
+#if os(iOS) && !NEKO_SHARE_EXTENSION
+        // 11/21m: the share extension's copy goes at once too, not only the
+        // records mirrored from this store.
+        (secrets as? GroupSharePublishingStore)?.clearSnapshot()
+#endif
         return removed
     }
 }

@@ -335,7 +335,8 @@ class DeadEnds1120Tests(unittest.TestCase):
         # The background refresh keeps the same list as the まど tab.
         service = read("NekoWidget/Services/MomentBackgroundRefreshService.swift")
         refresh = section(service, "func refreshWidgetPhotos(windowID: String? = nil) async {", "func receive(")
-        self.assertIn("GroupWidgetCache.keepOnly(windowIDs: Set(windows.map(\\.id)))", refresh)
+        # 11/21m: and keeps a window it could not verify, as the tab does.
+        self.assertIn("GroupWidgetCache.keepOnly(windowIDs: Set(windows.map(\\.id)).union(unreadable))", refresh)
 
     def test_6_widget_reload_does_not_wait_for_the_cloudy_window(self):
         app = read("NekoWidget/ViewModels/AppViewModel.swift")

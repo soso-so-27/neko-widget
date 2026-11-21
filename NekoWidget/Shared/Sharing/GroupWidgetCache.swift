@@ -198,8 +198,12 @@ enum GroupWidgetCache {
         } else {
             catalog.entries.append(entry)
         }
-        let dropped = catalog.entries.dropFirst(maximumWindows).compactMap(\.imageFileName)
-        catalog.entries = Array(catalog.entries.prefix(maximumWindows))
+        // 11/21m: a person is in at most `maximumWindows` windows (the relay's
+        // limit), so more entries means one of them went (left on another
+        // iPhone, ended) and the list has not been read since. The window
+        // written now is never the one pushed off: a window the relay no
+        // longer lists goes first, then the oldest other entry.
+        let dropped = evicted(from: &catalog, keeping: windowID)
         try write(JSONEncoder().encode(catalog), to: directory.appendingPathComponent("catalog.json"))
         if let old = previous?.imageFileName, old != imageFileName {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(old))
@@ -208,6 +212,24 @@ enum GroupWidgetCache {
         for name in dropped where name != imageFileName {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
         }
+    }
+
+    /// Removes entries beyond `maximumWindows` and returns their image files.
+    /// `windowID` (the entry just written) always stays.
+    private static func evicted(from catalog: inout Catalog, keeping windowID: String) -> [String] {
+        var dropped: [String] = []
+        let listed = catalog.listedWindowIDs
+        while catalog.entries.count > maximumWindows {
+            var candidate: Int?
+            if let listed {
+                candidate = catalog.entries.firstIndex { $0.windowID != windowID && !listed.contains($0.windowID) }
+            }
+            if candidate == nil { candidate = catalog.entries.firstIndex { $0.windowID != windowID } }
+            guard let index = candidate else { break }
+            if let name = catalog.entries[index].imageFileName { dropped.append(name) }
+            catalog.entries.remove(at: index)
+        }
+        return dropped
     }
 
     /// After leaving a window, its home-screen photo goes too. 11/20: the
