@@ -39,6 +39,29 @@ describe('private, versioned S3 recovery-object transport', () => {
       .toThrowError(/RECOVERY_COPY_UNAVAILABLE/);
   });
 
+  it('uses a temporary review token only for listing and exact-version reads', async () => {
+    const methods: string[] = [];
+    const copy = new S3RecoveryCopy({ ...config, readOnly: true, sessionToken: 'temporary-session' }, async (input, init) => {
+      const url = new URL(String(input));
+      expect(new Headers(init?.headers).get('x-amz-security-token')).toBe('temporary-session');
+      methods.push(init!.method!);
+      if (url.searchParams.has('versions')) return new Response(`<ListVersionsResult>
+        <Name>${config.bucket}</Name><Prefix>recovery/v1/${owner}/</Prefix>
+        <EncodingType>url</EncodingType><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated>
+        <Version><Key>${key}</Key><VersionId>fixed</VersionId><Size>5</Size></Version>
+        </ListVersionsResult>`);
+      expect(url.searchParams.get('versionId')).toBe('fixed');
+      return new Response(init?.method === 'HEAD' ? null : data as BodyInit, { headers: {
+        'x-amz-checksum-sha256': await digest(data), 'x-amz-checksum-type': 'FULL_OBJECT',
+        'content-length': String(data.length), 'x-amz-version-id': 'fixed',
+      } });
+    });
+    const [listed] = (await copy.listOwnerVersionsPage(owner)).versions;
+    expect(await copy.getVerified(await copy.referenceForListedVersion(listed!))).toEqual(data);
+    await expect(copy.putVersioned(key, data)).rejects.toMatchObject({ code: 'RECOVERY_COPY_UNAVAILABLE' });
+    expect(methods).toEqual(['GET', 'HEAD', 'GET']);
+  });
+
   it('accepts the owner bootstrap kind under the same fixed-account version contract', async () => {
     const ownerKey = `recovery/v1/${owner}/owner/00000000-0000-4000-8000-000000000008`;
     const copy = new S3RecoveryCopy(config, async (input, init) => {

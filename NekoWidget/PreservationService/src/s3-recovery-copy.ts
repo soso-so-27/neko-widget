@@ -16,10 +16,11 @@ export interface S3RecoveryConfig {
   accessKeyId?: string;
   secretAccessKey?: string;
   sessionToken?: string;
+  readOnly?: true;
 }
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 type BoundConfig = { region: string; bucket: string; accountId: string; access: string;
-  secret: string };
+  secret: string; sessionToken?: string };
 export type RecoveryObject = { key: string; sha256: string; bytes: number; versionId: string };
 export type RecoveryVersion = { key: string; versionId: string; deleteMarker: boolean; bytes: number | null };
 export type RecoveryVersionCursor = { keyMarker: string; versionIdMarker?: string };
@@ -54,10 +55,12 @@ const decodedKey = (value: unknown): string => {
 function configured(config: S3RecoveryConfig): BoundConfig {
   if (config.enabled !== 'YES' || !regionPattern.test(config.region ?? '')
     || !bucketPattern.test(config.bucket ?? '') || !/^[0-9]{12}$/u.test(config.expectedAccountId ?? '')
-    || !config.accessKeyId || !config.secretAccessKey || config.sessionToken) throw unavailable();
-  // Worker bindings are static: a copied human/STS session would expire without refresh.
+    || !config.accessKeyId || !config.secretAccessKey || !!config.sessionToken !== (config.readOnly === true)) throw unavailable();
+  // The short-lived review session can only list and read exact versions.
+  // Always-on recovery still rejects temporary credentials.
   return { region: config.region!, bucket: config.bucket!, accountId: config.expectedAccountId!,
-    access: config.accessKeyId, secret: config.secretAccessKey };
+    access: config.accessKeyId, secret: config.secretAccessKey,
+    ...(config.sessionToken ? { sessionToken: config.sessionToken } : {}) };
 }
 function objectUrl(config: BoundConfig, key: string, versionId?: string): string {
   if (!recoveryKeyPattern.test(key)) throw unavailable();
@@ -122,6 +125,7 @@ export class S3RecoveryCopy {
   }
 
   async withOwnerWriteGroup<T>(ownerId: string, action: (copy: S3RecoveryCopy) => Promise<T>): Promise<T> {
+    if (this.config.sessionToken) throw unavailable();
     if (!this.writeLease?.withOwnerWriteGroup) return action(this);
     const config = this.config;
     return this.writeLease.withOwnerWriteGroup(ownerId, lease => action(new S3RecoveryCopy({
@@ -133,9 +137,11 @@ export class S3RecoveryCopy {
 
   private async request(method: 'PUT' | 'HEAD' | 'GET', key: string,
     headers: Record<string, string>, body?: Uint8Array, versionId?: string): Promise<Response> {
+    if (this.config.sessionToken && (method === 'PUT' || versionId === undefined)) throw unavailable();
     const url = objectUrl(this.config, key, versionId);
     const signer = new AwsV4Signer({ url, method, service: 's3', region: this.config.region,
       accessKeyId: this.config.access, secretAccessKey: this.config.secret,
+      ...(this.config.sessionToken ? { sessionToken: this.config.sessionToken } : {}),
       allHeaders: true, headers: { 'x-amz-expected-bucket-owner': this.config.accountId, ...headers },
       ...(body ? { body: body as BodyInit } : {}) });
     const signed = await signer.sign();
@@ -242,6 +248,7 @@ export class S3RecoveryCopy {
     try {
       const signer = new AwsV4Signer({ url, method: 'GET', service: 's3', region: this.config.region,
         accessKeyId: this.config.access, secretAccessKey: this.config.secret,
+        ...(this.config.sessionToken ? { sessionToken: this.config.sessionToken } : {}),
         allHeaders: true,
         headers: { 'x-amz-expected-bucket-owner': this.config.accountId } });
       const signed = await signer.sign();
