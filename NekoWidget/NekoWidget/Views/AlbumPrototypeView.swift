@@ -1987,6 +1987,10 @@ private struct YearStoryContentView: View {
     }
 }
 
+/// Test builds only: the month's work as a book. Nothing is drawn to look
+/// like paper or cloth: the photos, white space and one serif. The pages are
+/// the story's own, laid out flat, and turn sideways at the reader's pace.
+#endif
 /// 11/21: the book's build and share tasks restart on 「もう一度試す」.
 private struct BookBuildID: Hashable {
     let key: MonthlyStoryPreparationKey
@@ -2012,10 +2016,6 @@ private struct BookShareRetryButton: View {
     }
 }
 
-/// Test builds only: the month's work as a book. Nothing is drawn to look
-/// like paper or cloth: the photos, white space and one serif. The pages are
-/// the story's own, laid out flat, and turn sideways at the reader's pace.
-#endif
 struct MonthlyBookView: View {
     let letter: MonthlyWindowPresentation
     let catPhotos: [PhotoPresentation]
