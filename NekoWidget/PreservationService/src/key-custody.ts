@@ -28,7 +28,7 @@ interface Header {
 }
 const validKeyID = (value: unknown): value is string => typeof value === 'string'
   && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u.test(value);
-async function contextHash(context: Parameters<KeyCustody['seal']>[1]): Promise<string> {
+export async function keyContextHash(context: Parameters<KeyCustody['seal']>[1]): Promise<string> {
   if (!context || typeof context !== 'object' || Array.isArray(context)
       || Object.keys(context).some(key => !['ownerId', 'purpose', 'recordId'].includes(key))
       || !ownerPattern.test(context.ownerId)
@@ -37,6 +37,26 @@ async function contextHash(context: Parameters<KeyCustody['seal']>[1]): Promise<
         ? typeof context.recordId !== 'string' || !recordPattern.test(context.recordId)
         : context.recordId !== undefined)) throw unavailable();
   return sha256(JSON.stringify(['neko-preservation-context-v1', context.ownerId, context.purpose, context.recordId ?? null]));
+}
+
+function envelopePreamble(envelope: Uint8Array): { length: number; header: Header } {
+  if (!(envelope instanceof Uint8Array) || envelope.length < 25
+      || envelope.length > MAX_PLAINTEXT + MAX_HEADER + 24
+      || !MAGIC.every((value, index) => envelope[index] === value)) throw unavailable();
+  const length = new DataView(envelope.buffer, envelope.byteOffset, envelope.byteLength).getUint32(4);
+  if (length < 1 || length > MAX_HEADER || envelope.length <= 8 + length + 16
+      || envelope.length - 8 - length - 16 > MAX_PLAINTEXT) throw unavailable();
+  const encoded = new TextDecoder('utf-8', { fatal: true }).decode(envelope.subarray(8, 8 + length));
+  const header = JSON.parse(encoded) as Header;
+  if (!header || header.version !== 1 || header.algorithm !== 'A256GCM' || !validKeyID(header.keyId)
+      || Object.keys(header).sort().join(',') !== 'algorithm,contextSHA256,iv,keyId,version,wrappedKey'
+      || JSON.stringify(header) !== encoded || !/^[a-f0-9]{64}$/u.test(header.contextSHA256)) throw unavailable();
+  return { length, header };
+}
+
+/** Selects a possible decryption context. The header grants no authority. */
+export function unverifiedEnvelopeContext(envelope: Uint8Array): string {
+  return envelopePreamble(envelope).header.contextSHA256;
 }
 async function dataKey(raw: Uint8Array, usage: 'encrypt' | 'decrypt'): Promise<CryptoKey> {
   if (!(raw instanceof Uint8Array) || raw.length !== 32) throw unavailable();
@@ -54,7 +74,7 @@ export function envelopeKeyCustody(options: { enabled?: boolean; wrapper: KeyWra
       try {
         enabled();
         if (!(plaintext instanceof Uint8Array) || !plaintext.length || plaintext.length > MAX_PLAINTEXT) throw unavailable();
-        const contextSHA256 = await contextHash(context);
+        const contextSHA256 = await keyContextHash(context);
         raw = crypto.getRandomValues(new Uint8Array(32));
         const key = await dataKey(raw, 'encrypt');
         const wrapped = await options.wrapper.wrap(raw, contextSHA256);
@@ -82,17 +102,8 @@ export function envelopeKeyCustody(options: { enabled?: boolean; wrapper: KeyWra
       let raw: Uint8Array | undefined;
       try {
         enabled();
-        if (!(envelope instanceof Uint8Array) || envelope.length < 25
-            || envelope.length > MAX_PLAINTEXT + MAX_HEADER + 24
-            || !MAGIC.every((value, index) => envelope[index] === value)) throw unavailable();
-        const length = new DataView(envelope.buffer, envelope.byteOffset, envelope.byteLength).getUint32(4);
-        if (length < 1 || length > MAX_HEADER || envelope.length <= 8 + length + 16
-            || envelope.length - 8 - length - 16 > MAX_PLAINTEXT) throw unavailable();
-        const encoded = new TextDecoder('utf-8', { fatal: true }).decode(envelope.subarray(8, 8 + length));
-        const header = JSON.parse(encoded) as Header;
-        if (!header || header.version !== 1 || header.algorithm !== 'A256GCM' || !validKeyID(header.keyId)
-            || Object.keys(header).sort().join(',') !== 'algorithm,contextSHA256,iv,keyId,version,wrappedKey'
-            || JSON.stringify(header) !== encoded || header.contextSHA256 !== await contextHash(context)) throw unavailable();
+        const { length, header } = envelopePreamble(envelope);
+        if (header.contextSHA256 !== await keyContextHash(context)) throw unavailable();
         const wrapped = from64(header.wrappedKey, 4096); const iv = from64(header.iv, 12);
         if (iv.length !== 12) throw unavailable();
         raw = await options.wrapper.unwrap(header.keyId, wrapped, header.contextSHA256);

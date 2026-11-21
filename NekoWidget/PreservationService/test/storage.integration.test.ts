@@ -10,6 +10,8 @@ import { OwnerRecoveryCopy } from '../src/owner-recovery-copy';
 import { type RecoveryObject, type RecoveryVersion, type RecoveryVersionCursor, S3RecoveryCopy } from '../src/s3-recovery-copy';
 import { OwnerArchiveRecovery } from '../src/owner-archive-recovery';
 import { RecordPhysicalDeletion, type RecordDeletionJob } from '../src/record-physical-deletion';
+import { envelopeKeyCustody } from '../src/key-custody';
+import { syntheticKeyAuthority } from './key-fixture';
 import worker, { route, type Services, type Env } from '../src/index';
 import { PilotControl } from '../src/pilot-control';
 import { IntakeControl } from '../src/intake-control';
@@ -19,13 +21,13 @@ const photo = new Uint8Array([255, 216, 255, 217]); // Synthetic, injected valid
 const document: ArchiveDocument = { formatVersion: 1, text: 'ひざで寝た日', capturedAt: '2023-03-02T05:00:00.000Z',
   writtenAt: null, updatedAt: null, catNames: ['むぎ', 'そら'], photoFile: 'photo.jpg' };
 
-async function fixture(overrides: { quotaBytes?: number; maximumRecords?: number } = {}) {
+async function fixture(overrides: { quotaBytes?: number; maximumRecords?: number; keys?: KeyCustody } = {}) {
   await binding.DB.prepare(`UPDATE pa_recovery_write_policy SET delete_intent_required=0
     WHERE singleton=1`).run();
   let now = 1_790_035_200_000;
   let state: 'active' | 'expired' | 'unknown' | 'grace' = 'active';
   const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
-  const keys: KeyCustody = {
+  const keys: KeyCustody = overrides.keys ?? {
     async seal(value, context) {
       const iv = crypto.getRandomValues(new Uint8Array(12));
       const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(JSON.stringify(context)) }, key, value as BufferSource);
@@ -573,7 +575,8 @@ it('resumes a committed deletion before capturing the owner inventory that requi
 });
 
 it('erases only committed target payloads across all pages and confirms their absence before dequeuing', async () => {
-  const f = await fixture();
+  const authority = await syntheticKeyAuthority();
+  const f = await fixture({ keys: envelopeKeyCustody({ enabled: true, wrapper: authority.make() }) });
   const remote = syntheticRecovery(f.options.keys);
   const ownerRecovery = new OwnerRecoveryCopy(f.options.keys, remote.s3, f.authOptions.identityIndexSecret);
   const recovery = new OwnerArchiveRecovery(remote.s3, ownerRecovery, remote.recovery);
@@ -585,6 +588,10 @@ it('erases only committed target payloads across all pages and confirms their ab
   const recordPayloads = new Set(remote.references.filter(ref => /\/(photo|record)\//.test(ref.key))
     .map(ref => `${ref.key}:${ref.versionId}`));
   expect(recordPayloads.size).toBe(2);
+  const oldRecord = remote.references.find(ref => ref.key.includes('/record/'))!;
+  const interrupted = await remote.s3.putVersioned(`recovery/v1/${ownerId}/record/${crypto.randomUUID()}`,
+    await remote.s3.getVerified(oldRecord));
+  recordPayloads.add(`${interrupted.key}:${interrupted.versionId}`);
   await archive.put(f.session.token, kept, f.request());
   await archive.remove(f.session.token, id, 1);
   const job = await readJob();
@@ -605,14 +612,23 @@ it('erases only committed target payloads across all pages and confirms their ab
   const orphan = await remote.s3.putVersioned(`recovery/v1/${ownerId}/photo/${crypto.randomUUID()}`, photo);
   const targetR2 = () => binding.ARCHIVE.list({ prefix: `personal/${ownerId}/${id}/` });
   const before = (await targetR2()).objects.map(object => object.key);
+  expect(await executor.review(job!)).toMatchObject({ unresolvedVersions: 1 });
   await expect(executor.step(job!)).rejects.toMatchObject({ code: 'RECORD_ERASURE_SCOPE_UNVERIFIED' });
   expect((await targetR2()).objects.map(object => object.key)).toEqual(before);
   expect(erased).toEqual([]);
   remote.objects.delete(`${orphan.key}:${orphan.versionId}`);
 
+  expect(await executor.review(job!)).toEqual({ r2Targets: 1, s3Targets: 3,
+    protectedPages: 0, authenticatedUncommittedCopies: 1, unresolvedVersions: 0 });
+  expect(await readJob()).toEqual(job);
+  expect((await targetR2()).objects.map(object => object.key)).toEqual(before);
+  expect(erased).toEqual([]);
+
   expect(await executor.step(job!)).toBe('processing');
   expect(await readJob()).toEqual(job);
   expect((await targetR2()).objects).toHaveLength(0);
+  expect(await executor.step(job!)).toBe('processing');
+  expect(await readJob()).toEqual(job);
   providerRemoves = true;
   expect(await executor.step(job!)).toBe('complete');
   expect(new Set(erased)).toEqual(recordPayloads);

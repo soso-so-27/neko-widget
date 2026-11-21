@@ -7,6 +7,11 @@ export type TreeDiffFrame = { before:TreeRef|null; after:TreeRef };
 type Leaf = { version: 1; ownerId: string; tree: string; prefix: string; entries: TreeEntry[] };
 type Branch = { version: 1; ownerId: string; tree: string; prefix: string; children: TreeRef[] };
 export type TreeNode = Leaf | Branch;
+export type InventoryTreeAudit = {
+  verified: (object: RecoveryObject) => void;
+  nodes: Map<string, TreeNode>;
+  bytes: number;
+};
 type Node = TreeNode;
 type Expected = { prefix: string; count: number; hash: string; entries?: TreeEntry[]; children?: Expected[] };
 const bad = () => new ServiceError('IMMUTABLE_TREE_UNAVAILABLE',503);
@@ -161,12 +166,22 @@ export class ImmutableRecordTree {
     if(previous && previous.prefix!=='')throw bad();
     return this.store(await this.expected(entries),previous);
   }
-  async entries(root: TreeRef): Promise<TreeEntry[]> {
+  async entries(root: TreeRef, audit?: InventoryTreeAudit): Promise<TreeEntry[]> {
     if(root.prefix!=='' || root.count>maximumMaterializedEntries)throw bad();
     const output:TreeEntry[]=[];const seen=new Set<string>();
     const walk=async(ref:TreeRef):Promise<void>=>{
       if(seen.has(ref.object.key))throw bad();seen.add(ref.object.key);
-      const node=await this.readNode(ref);
+      const key = audit ? canonicalJSON(ref) : '';
+      let node = audit?.nodes.get(key);
+      if (!node) {
+        node = await this.readNode(ref);
+        // Share immutable pages across historical snapshots for this proof only.
+        if (audit && audit.bytes + ref.object.bytes <= 8 * 1024 * 1024) {
+          audit.nodes.set(key, node);
+          audit.bytes += ref.object.bytes;
+        }
+      }
+      audit?.verified(ref.object);
       if('entries' in node)output.push(...node.entries);
       else for(const child of node.children)await walk(child);
       if(output.length>maximumMaterializedEntries)throw bad();
