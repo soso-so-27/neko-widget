@@ -403,7 +403,8 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 try self.check(ticket)
                 try await self.client.reloadSessionFromSecureStorage()
                 let available: Bool
-                if observingOnly { available = try await self.client.observeSessionIfAvailable() }
+                // 11/21: expired access is renewed quietly (no false 「通信できませんでした」).
+                if observingOnly { available = try await self.client.observeSessionRenewingExpired() }
                 else { available = try await self.client.prepareSessionIfAvailable() }
                 try self.check(ticket)
                 if available { try await self.loadPresentation(ticket) }
@@ -470,7 +471,17 @@ final class ManagedPreservationCoordinator: ObservableObject {
         cancelCurrentWork()
         clearAccountPresentation()
         run { ticket in
-            try await self.client.signOut()
+            // 11/21: automatic saving cannot go on signed out; it turns off
+            // (records stay) and starts again from 「保存を始める」 after sign-in.
+            // The sign-in on this iPhone is gone even when telling the server fails.
+            do { try await self.client.signOut() }
+            catch {
+                if (try? await self.client.hasSession()) != true {
+                    NotificationCenter.default.post(name: .appRecordAccountEnded, object: nil)
+                }
+                throw error
+            }
+            NotificationCenter.default.post(name: .appRecordAccountEnded, object: nil)
             try self.check(ticket)
             self.statusMessage = "サインアウトしました。保存した記録は消えていません。"
         }
@@ -492,6 +503,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         run { ticket in
             do {
                 try await self.client.requestAccountDeletion()
+                NotificationCenter.default.post(name: .appRecordAccountEnded, object: nil)
                 try self.check(ticket)
                 self.clearAccountPresentation()
                 self.accountDeletionState = try await self.client.savedDeletionState()

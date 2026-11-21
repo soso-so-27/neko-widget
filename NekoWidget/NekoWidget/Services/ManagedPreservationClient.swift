@@ -552,6 +552,13 @@ struct ManagedPreservationLinkChallenge: Codable, Sendable {
 
 /// One device proof, scoped to the server's exact one-use challenge and route.
 enum PreservationDeviceProof {
+    /// 11/21: how far this iPhone's clock may be from the save server's. The
+    /// server takes a proof dated at most 30 s ahead of its own clock that
+    /// lasts at most 120 s (device-proof.ts, clockTolerance 0). Dating the
+    /// proof 30 s back keeps it valid with this iPhone up to 60 s ahead, and
+    /// still valid for 30 s after sending with it up to 60 s behind.
+    static let clockSkew: TimeInterval = 60
+    static let backdate: Int64 = 30
     struct PublicKey: Codable, Equatable, Sendable {
         let kty: String; let crv: String; let x: String; let y: String
     }
@@ -578,7 +585,7 @@ enum PreservationDeviceProof {
               nonce.range(of: #"^[A-Za-z0-9_-]{43}$"#, options: .regularExpression) != nil else {
             throw ManagedPreservationError.invalidResponse
         }
-        let issued = Int64(now.timeIntervalSince1970.rounded(.down))
+        let issued = Int64(now.timeIntervalSince1970.rounded(.down)) - backdate
         let end = min(issued + 120, Int64(expiresAt.timeIntervalSince1970.rounded(.down)))
         guard end > issued else { throw ManagedPreservationError.authenticationRequired }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -783,6 +790,30 @@ actor ManagedPreservationClient {
         return true
     }
 
+    /// 11/21: opening the 自動保存 screen after the 15-minute access ran out
+    /// renews it quietly instead of reporting a failed connection. Only
+    /// expired access is renewed here: a credential that has expired cannot
+    /// be the one an in-flight save is still using.
+    func observeSessionRenewingExpired() async throws -> Bool {
+        do { return try observeSessionIfAvailable() }
+        catch ManagedPreservationError.unavailable {
+            guard let current = try store.load(), current.isRenewable, current.expiresAt <= sessionNow() else {
+                throw ManagedPreservationError.unavailable
+            }
+            return try await prepareSessionIfAvailable()
+        }
+    }
+
+    /// The access lifetime counted on this iPhone's clock: never longer than
+    /// the server's 15 minutes from now, so a clock running behind cannot
+    /// keep using access the server has already ended.
+    private func locallyTimed(_ value: ManagedPreservationSessionStore.Credential) -> ManagedPreservationSessionStore.Credential {
+        let latest = sessionNow().addingTimeInterval(15 * 60)
+        guard value.expiresAt > latest else { return value }
+        return .init(token: value.token, ownerId: value.ownerId, expiresAt: latest,
+                     deviceGrant: value.deviceGrant, devicePrivateKey: value.devicePrivateKey)
+    }
+
     func accountObservationOwnerID() throws -> String {
         try Task.checkCancellation()
         guard loaded, let credential, credential.expiresAt > sessionNow(),
@@ -838,11 +869,12 @@ actor ManagedPreservationClient {
                   renewed.idleExpiresAt > sessionNow(),
                   renewed.idleExpiresAt.timeIntervalSince(sessionNow()) <= 31 * 86400,
                   value.expiresAt > sessionNow(),
-                  value.expiresAt.timeIntervalSince(sessionNow()) <= 16 * 60 else {
+                  value.expiresAt.timeIntervalSince(sessionNow()) <= 16 * 60 + PreservationDeviceProof.clockSkew else {
                 throw ManagedPreservationError.invalidResponse
             }
             value.deviceGrant = .init(grantId: renewed.grantId, idleExpiresAt: renewed.idleExpiresAt, appleUserID: user)
             value.devicePrivateKey = key
+            value = locallyTimed(value)
             _ = try value.validated()
             try requireDeviceItem(captured, epoch: expectedEpoch)
             guard try store.save(value, replacing: captured) else { throw ManagedPreservationError.staleSession }
@@ -868,7 +900,8 @@ actor ManagedPreservationClient {
         let data = try await request("POST", path: "/v1/auth/session-challenges", body: body)
         try Task.checkCancellation()
         let issued: DeviceChallenge = try decode(data)
-        guard issued.expiresAt > sessionNow(), issued.expiresAt.timeIntervalSince(sessionNow()) <= 330 else {
+        guard issued.expiresAt > sessionNow(),
+              issued.expiresAt.timeIntervalSince(sessionNow()) <= 330 + PreservationDeviceProof.clockSkew else {
             throw ManagedPreservationError.invalidResponse
         }
         return DeviceExchange(grantId: grant.grantId, challengeId: issued.challengeId,
@@ -1179,7 +1212,8 @@ actor ManagedPreservationClient {
         guard !value.challengeId.isEmpty, value.challengeId.utf8.count <= 256,
               !value.challengeProof.isEmpty, value.challengeProof.utf8.count <= 1024,
               !value.nonce.isEmpty, value.nonce.utf8.count <= 1024,
-              value.expiresAt > sessionNow(), value.expiresAt.timeIntervalSince(sessionNow()) <= 330 else {
+              value.expiresAt > sessionNow(),
+              value.expiresAt.timeIntervalSince(sessionNow()) <= 330 + PreservationDeviceProof.clockSkew else {
             throw ManagedPreservationError.invalidResponse
         }
         let state = UUID().uuidString
@@ -1224,9 +1258,11 @@ actor ManagedPreservationClient {
         }
         value.devicePrivateKey = pending.deviceKey
         _ = try value.validated()
-        guard value.expiresAt > sessionNow(), value.expiresAt.timeIntervalSince(sessionNow()) <= 16 * 60 else {
+        guard value.expiresAt > sessionNow(),
+              value.expiresAt.timeIntervalSince(sessionNow()) <= 16 * 60 + PreservationDeviceProof.clockSkew else {
             throw ManagedPreservationError.authenticationStepFailed(.sessionExpired)
         }
+        value = locallyTimed(value)
         try Task.checkCancellation()
         guard try store.deletionReceipt() == nil, try store.save(value, replacing: pending.replacing) else {
             throw ManagedPreservationError.staleSession

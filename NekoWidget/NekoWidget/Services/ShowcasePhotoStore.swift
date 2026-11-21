@@ -90,19 +90,28 @@ final class ShowcasePhotoStore: ObservableObject {
         if !corrupt { purgeOrphanedImages() }
     }
 
+    /// Full or limited access; without it only restored copies show.
+    static var canReadPhotos: Bool {
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        return status == .authorized || status == .limited
+    }
+
     var availableEntries: [Entry] {
-        guard PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized
-                || PHPhotoLibrary.authorizationStatus(for: .readWrite) == .limited else {
+        guard Self.canReadPhotos else {
             return entries.filter { $0.isRestoredCopy == true && FileManager.default.fileExists(atPath: directory.appendingPathComponent($0.imageFileName).path) }
         }
         let result = PHAsset.fetchAssets(
             withLocalIdentifiers: entries.map(\.photoIdentifier), options: nil
         )
-        var accessible = Set<String>()
+        // 11/21: only a photo hidden in the Photos app stays out. One Photos
+        // no longer returns (deleted, outside a limited selection, not yet in
+        // iCloud) shows from its kept copy, so it can still be seen and removed;
+        // missing is not the same as deleted, so it is never removed here.
+        var hidden = Set<String>()
         result.enumerateObjects { asset, _, _ in
-            if !asset.isHidden { accessible.insert(asset.localIdentifier) }
+            if asset.isHidden { hidden.insert(asset.localIdentifier) }
         }
-        return entries.filter { ($0.isRestoredCopy == true || accessible.contains($0.photoIdentifier))
+        return entries.filter { ($0.isRestoredCopy == true || !hidden.contains($0.photoIdentifier))
             && FileManager.default.fileExists(atPath: directory
                 .appendingPathComponent($0.imageFileName).path) }
     }
@@ -309,6 +318,22 @@ final class ShowcasePhotoStore: ObservableObject {
         scope.initialized = true
         scope.excluded.insert(entry.photoIdentifier)
         next.scopes[entry.scopeID] = scope
+        try commit(next, undoable: true)
+    }
+
+    /// 11/21: the photos of this set that cannot be shown now (hidden in
+    /// Photos, a lost copy, or no access) still take places among the nine.
+    /// The owner can take them out in one tap; 「取り消す」 brings them back.
+    func removeUnavailable(in scopeID: String) throws {
+        let shown = Set(availableEntries(in: scopeID).map(\.id))
+        let gone = allEntries(in: scopeID).filter { !shown.contains($0.id) }
+        guard !gone.isEmpty else { return }
+        var next = state
+        next.entries.removeAll { entry in gone.contains(entry) }
+        var scope = next.scopes[scopeID] ?? ScopeState()
+        scope.initialized = true
+        for entry in gone { scope.excluded.insert(entry.photoIdentifier) }
+        next.scopes[scopeID] = scope
         try commit(next, undoable: true)
     }
 

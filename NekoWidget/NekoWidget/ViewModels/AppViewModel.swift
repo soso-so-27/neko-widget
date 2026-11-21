@@ -433,6 +433,7 @@ final class AppViewModel: ObservableObject {
         readablePhotoResolution?.task.cancel()
         readablePhotoResolution = nil
         readablePhotoProjection.invalidate()
+        limitedSelectionRefreshPending = false
         presentationSourceResolutionRevision &+= 1
         cachedPresentationSnapshot = nil
         currentAsset = nil
@@ -446,6 +447,30 @@ final class AppViewModel: ObservableObject {
         WidgetCenter.shared.reloadAllTimelines()
     }
 
+    /// 11/21: a still-limited selection is read again on every return to
+    /// the app and every library change. The selection already known stays
+    /// until the new one is known (resolveReadablePhotoProjectionIfNeeded
+    /// replaces it), so the lists, PDF choices, the Widget's photos and
+    /// today's photo are not emptied for a moment and chosen again. A real
+    /// change of permission still goes through invalidateReadablePhotoProjection.
+    private var limitedSelectionRefreshPending = false
+
+    private func requestLimitedSelectionRefresh() {
+        guard authorizationStatus == .limited else { return }
+        guard readablePhotoProjection.isResolved else {
+            // Nothing known yet, nothing to keep: a read under way may predate
+            // this change, so it starts again (no Widget suspension needed).
+            readablePhotoResolution?.task.cancel()
+            readablePhotoResolution = nil
+            readablePhotoProjection.invalidate()
+            return
+        }
+        // A read started before this change may hold the old selection.
+        readablePhotoResolution?.task.cancel()
+        readablePhotoResolution = nil
+        limitedSelectionRefreshPending = true
+    }
+
     private func updatePhotoReadAuthority() {
         invalidateReadablePhotoProjection()
         // Full authorization needs no library-wide query. Normal scan progress
@@ -457,16 +482,19 @@ final class AppViewModel: ObservableObject {
 
     private func resolveReadablePhotoProjectionIfNeeded() async -> Bool {
         guard canReadPhotos else { return false }
-        if readablePhotoProjection.isResolved { return true }
+        if readablePhotoProjection.isResolved, !limitedSelectionRefreshPending { return true }
 #if DEBUG
         if isUIFixture {
             readablePhotoProjection.resolve(Set(snapshot.assets.map(\.localIdentifier)),
                 generation: readablePhotoProjection.generation)
+            limitedSelectionRefreshPending = false
             return true
         }
 #endif
         guard authorizationStatus == .limited else { return false }
         let generation = readablePhotoProjection.generation
+        // The selection shown until this read finishes (nil: none known yet).
+        let previousIdentifiers = readablePhotoProjection.identifiers
         let task: Task<Set<String>?, Never>
         if let pending = readablePhotoResolution, pending.generation == generation {
             task = pending.task
@@ -489,11 +517,24 @@ final class AppViewModel: ObservableObject {
         let currentStatus = authorizationService.status
         guard currentStatus == .limited else {
             authorizationStatus = currentStatus
-            return readablePhotoProjection.isResolved
+            return readablePhotoProjection.isResolved && !limitedSelectionRefreshPending
+        }
+        // Another caller already applied this read, or a newer read replaced
+        // it (requestLimitedSelectionRefresh): only the current read applies.
+        guard let current = readablePhotoResolution, current.task == task else {
+            return readablePhotoProjection.isResolved && !limitedSelectionRefreshPending
         }
         readablePhotoResolution = nil
+        // A cancelled read keeps the selection already known.
         guard let identifiers else { return false }
+        limitedSelectionRefreshPending = false
+        if previousIdentifiers == identifiers { return true }
         guard readablePhotoProjection.resolve(identifiers, generation: generation) else { return false }
+        if previousIdentifiers != nil {
+            // Same permission, another selection: every cache keyed by the
+            // presentation version (lists, Widget authority) reads it again.
+            presentationSourceResolutionRevision &+= 1
+        }
         cachedPresentationSnapshot = nil
         return true
     }
@@ -547,8 +588,8 @@ final class AppViewModel: ObservableObject {
             return
         }
         // A limited selection can shrink without changing authorizationStatus.
-        // Revoke the old projection before scheduling any asynchronous work.
-        if previousStatus == .limited { self.invalidateReadablePhotoProjection() }
+        // 11/21: it is read again; the known selection stays until then.
+        if previousStatus == .limited { self.requestLimitedSelectionRefresh() }
         Task { [weak self] in await self?.refreshPhotoSourceAlbums() }
     }
 
@@ -687,7 +728,14 @@ final class AppViewModel: ObservableObject {
                 self?.chooseCurrentAssetIfNeeded()
             }
         }
-        updatePhotoReadAuthority()
+        // 11/21: launching reads nothing yet and changes no permission, so the
+        // Widget keeps its photos (no suspension). start() publishes the
+        // checked authority, or clears it when the permission is gone.
+        if authorizationStatus == .authorized {
+            readablePhotoProjection.allowFullLibrary()
+        } else if !canReadPhotos {
+            widgetPhotoLibraryLoadSucceeded = false
+        }
     }
 
     deinit {
@@ -977,7 +1025,8 @@ final class AppViewModel: ObservableObject {
         // Limited selections may change while inactive even if the status is
         // still .limited. A normal authorized activation needs no extra fetch.
         if refreshLimitedAccess, isLimitedAccess, readablePhotoProjection.isResolved {
-            invalidateReadablePhotoProjection()
+            // 11/21: read again, but keep the known selection until then.
+            requestLimitedSelectionRefresh()
         }
         let likesChanged = synchronizeSharedLikes(
             importLegacyLikes: true,

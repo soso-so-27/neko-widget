@@ -1536,7 +1536,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("SeasonalMovieExportService.shared.export", view)
         self.assertIn("meaningfulPlaybackSceneCount = 2", view)
         self.assertIn("try? await freezeRecipe(.meaningfulPlayback)", view)
-        self.assertIn("try await freezeRecipe(.export)", view)
+        # 11/21: a record that could not be kept never refuses the export.
+        self.assertIn("try? await freezeRecipe(.export)", view)
         self.assertIn("Live Photoは、保存した動画では静止画になります。", view)
         # 11/8: said once (before saving), not again while it is prepared.
         self.assertEqual(view.count("Live Photoは、保存した動画では静止画になります。"), 1)
@@ -5691,7 +5692,8 @@ class CodexWiringTests(unittest.TestCase):
         self.assertIn("if case .payerPlusUnverified(isPayer: true) = pause {", notebook)
         self.assertNotIn("確認できたら自動で戻ります", notebook)
         saving = source("NekoWidget/Services/AppRecordPersistence.swift")
-        self.assertIn("ほかのiPhoneで保存した記録は、使わなくなります。", saving)
+        # 11/21: the other saved copy is deleted; the confirmation says so.
+        self.assertIn("ほかのiPhoneで保存した記録は削除され、元に戻せません。", saving)
 
 
 class SensitiveCheckOptionalTests(unittest.TestCase):

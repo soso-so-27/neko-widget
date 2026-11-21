@@ -472,6 +472,10 @@ enum ToolBackupFiles {
         var sourceSnapshotID: UUID? = nil
         // Local receipt only. A missing value is an older capture.
         var filteredFamilyNotebook: Bool? = nil
+        /// 11/21: local receipt only. What an automatic capture left out
+        /// ("Tool" or "Tool/photo.jpg"): never saved before and unreadable
+        /// now. Nil for a whole capture and for older receipts.
+        var skipped: [String]? = nil
     }
     static var root: URL {
 #if os(iOS)

@@ -838,10 +838,13 @@ actor SeasonalMovieExportService {
             isDirectory: true
         )
         do {
+            // 11/21: completeUnlessOpen, not complete: an export the iPhone
+            // locks in the middle of keeps writing its open file (and may
+            // create it), then is unreadable again once closed while locked.
             try fileManager.createDirectory(
                 at: directory,
                 withIntermediateDirectories: true,
-                attributes: [.protectionKey: FileProtectionType.complete]
+                attributes: [.protectionKey: FileProtectionType.completeUnlessOpen]
             )
             var values = URLResourceValues()
             values.isExcludedFromBackup = true
@@ -867,7 +870,9 @@ actor SeasonalMovieExportService {
             isDirectory: false
         )
         do {
-            try data.write(to: url, options: [.atomic, .completeFileProtection])
+            // The app's own bundled sound, no one's data: readable after a
+            // lock, so a locked iPhone does not stop the export (11/21).
+            try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
             var values = URLResourceValues()
             values.isExcludedFromBackup = true
             var mutableURL = url
@@ -882,14 +887,16 @@ actor SeasonalMovieExportService {
         guard fileManager.fileExists(atPath: outputURL.path) else {
             throw SeasonalMovieExportError.encodingFailed
         }
-        try fileManager.setAttributes(
-            [.protectionKey: FileProtectionType.complete],
+        // Already completeUnlessOpen and out of backup through its folder;
+        // a finished movie is not thrown away when the iPhone is locked now.
+        try? fileManager.setAttributes(
+            [.protectionKey: FileProtectionType.completeUnlessOpen],
             ofItemAtPath: outputURL.path
         )
         var values = URLResourceValues()
         values.isExcludedFromBackup = true
         var mutableURL = outputURL
-        try mutableURL.setResourceValues(values)
+        try? mutableURL.setResourceValues(values)
     }
 
     private static func exportRoot(fileManager: FileManager) -> URL {
