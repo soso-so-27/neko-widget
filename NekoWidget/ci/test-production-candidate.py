@@ -278,6 +278,19 @@ class ProductionCandidateTests(unittest.TestCase):
         contract = copy.deepcopy(self.contract); contract["values"].pop("APP_SUPPORT_URL")
         with self.assertRaises(ValueError): candidate.settings(contract, synthetic=True)
 
+    def test_preservation_audience_matches_the_client_and_server_wire_format(self):
+        key = "MANAGED_PRESERVATION_MEMBERSHIP_AUDIENCE"
+        contract = copy.deepcopy(self.contract)
+        contract["values"][key] = "neko.app:production_1"
+        self.assertEqual(candidate.settings(contract, synthetic=True)[key], contract["values"][key])
+        validator = candidate.module("validate-production-settings")
+        for value in ("-neko-prod", "_neko-prod", "neko prod", "neko:Staging", "a" * 7, "a" * 129):
+            contract["values"][key] = value
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                candidate.settings(contract, synthetic=True)
+            with self.subTest(value=value), self.assertRaisesRegex(AssertionError, "production audience required"):
+                validator.verify({**self.settings, key: value})
+
     def test_every_target_rejects_internal_tools_and_mismatched_mode(self):
         for relative, _, _ in candidate.TARGETS.values():
             path = self.app / relative / "Info.plist"
