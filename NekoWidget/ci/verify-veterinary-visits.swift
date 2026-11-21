@@ -70,6 +70,7 @@ import CoreGraphics
         defer { try? FileManager.default.removeItem(at: suiteRoot) }
         try await verifyLedgerRecovery(root: suiteRoot.appendingPathComponent("ledger-recovery"))
         try await verifiesFamilyPhotoRestore(root: suiteRoot.appendingPathComponent("family-photo"))
+        try await verifiesRefile(suiteRoot.appendingPathComponent("refile"))
         let concurrentStore = VeterinaryVisitStore(directory: suiteRoot.appendingPathComponent("concurrent-edit"))
         let base = try await concurrentStore.current(catID: UUID(), catName: "同じ猫") { try $0() }
         var remote = base; remote.questions = "家族が書いた質問"
@@ -270,6 +271,51 @@ import CoreGraphics
 #else
         return Data([0xff, 0xd8, 0xff, 0xe0, 1, 0xff, 0xd9])
 #endif
+    }
+
+    /// 11/21: a family cat's profile deleted: every memo moves to the
+    /// family's cat at once, an empty memo there gives way, an editor still
+    /// open on the old cat cannot save, and nothing else changes.
+    private static func verifiesRefile(_ root: URL) async throws {
+        let store = VeterinaryVisitStore(directory: root)
+        let profile = UUID(), family = UUID(), other = UUID()
+        var past = try await store.current(catID: profile, catName: "むぎ") { try $0() }
+        past.observations = "前回の様子"; past.completedAt = VeterinaryVisit.now()
+        past = try await store.save(past, expectedRevision: past.revision)
+        var open = try await store.current(catID: profile, catName: "むぎ") { try $0() }
+        open.questions = "せきのこと"
+        open = try await store.save(open, expectedRevision: open.revision)
+        let blank = try await store.current(catID: family, catName: "むぎ") { try $0() }
+        let untouched = try await store.current(catID: other, catName: "そら") { try $0() }
+        try require(try await store.refile(from: profile, to: family) == 2, "not every memo of the cat moved")
+        let after = try await VeterinaryVisitStore(directory: root).visits()
+        try require(!after.contains { $0.catID == profile }, "a memo stayed under the deleted profile")
+        try require(!after.contains { $0.id == blank.id }, "the empty memo on the family cat stayed beside the open one")
+        try require(after.contains(untouched), "another cat's memo changed")
+        guard let movedPast = after.first(where: { $0.id == past.id }),
+              let movedOpen = after.first(where: { $0.id == open.id }) else { throw Failure(message: "a memo was lost in the move") }
+        try require(movedPast.catID == family && movedPast.observations == past.observations
+            && movedPast.completedAt == past.completedAt && movedPast.createdAt == past.createdAt, "the finished memo changed")
+        try require(movedOpen.catID == family && movedOpen.questions == open.questions && movedOpen.completedAt == nil
+            && movedOpen.revision != open.revision, "the open memo changed or kept its revision")
+        do { _ = try await store.save(open, expectedRevision: open.revision); throw Failure(message: "an editor on the old cat saved") }
+        catch VeterinaryVisitError.changed {}
+        try require(try await store.current(catID: family, catName: "むぎ") { _ in
+            throw Failure(message: "a new memo was made beside the moved one") } == movedOpen, "the family cat did not open the moved memo")
+        try require(try await store.refile(from: profile, to: family) == 0, "a second move changed something")
+        try require(await VeterinaryVisitStore.refile(fromProfileID: "not-a-profile", toCatID: family, store: store), "an unknown key was not done")
+        // Both cats written in: the one edited earlier is kept as finished.
+        let second = UUID(), secondFamily = UUID()
+        var mine = try await store.current(catID: second, catName: "こむぎ") { try $0() }
+        mine.observations = "先に書いたこと"
+        mine = try await store.save(mine, expectedRevision: mine.revision)
+        var theirs = try await store.current(catID: secondFamily, catName: "こむぎ") { try $0() }
+        theirs.observations = "あとで書いたこと"
+        theirs = try await store.save(theirs, expectedRevision: theirs.revision)
+        try require(await VeterinaryVisitStore.refile(fromProfileID: second.uuidString, toCatID: secondFamily, store: store), "the move failed")
+        let both = try await VeterinaryVisitStore(directory: root).visits().filter { $0.catID == secondFamily }
+        try require(both.count == 2 && both.filter { $0.completedAt == nil }.count == 1, "two open memos for one cat, or one was lost")
+        try require(both.contains { $0.id == mine.id && $0.observations == mine.observations }, "the earlier memo lost its writing")
     }
 
     private static func verifiesFamilyPhotoRestore(root: URL) async throws {
