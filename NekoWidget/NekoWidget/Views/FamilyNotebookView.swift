@@ -530,6 +530,16 @@ final class FamilyNotebookPrototype: ObservableObject {
         refreshUnlinked()
     }
 
+    /// 11/21: 「データを消す」 removed the notebook folders `scopes` of the
+    /// deleted person. A copy held here from one of them is let go at once
+    /// (as for a taken-off pair): it used to stay open and empty until the
+    /// next launch (a missing file reads as an empty notebook), and a save of
+    /// 「この子のこと」 wrote into it again.
+    func forgetRemovedCopy(scopes: Set<String>) {
+        guard isReal, let store, store.localDirectory.pathComponents.contains(where: { scopes.contains($0) }) else { return }
+        detachRevoked()
+    }
+
     private func openRealBinding() {
         do {
             if let binding = try FamilyNotebookLocalBinding.load(support: AppRecordDataset.support) {
@@ -1345,6 +1355,13 @@ struct FamilyNotebookView: View {
             // One state line at most (11/19 UI/UX 整理).
             if let pause = sharing.pause {
                 pausedSection(pause)
+            } else if sharing.awaitsNewMember {
+                // 11/21: writing waits until the newly approved person is in
+                // (reading goes on); one line instead of silence.
+                Section {
+                    Label(FamilyNotebookWords.awaitsNewMember, systemImage: "person.badge.clock")
+                        .accessibilityIdentifier("family-notebook-awaits-member")
+                }
             } else if sharing.showsUnsentLine {
                 unsentSection
             } else if sharing.state == .checking && sharing.readFailed {
@@ -2163,6 +2180,12 @@ struct FamilyNotebookInviteView: View {
     /// share sheet once it is ready; the button shows progress meanwhile.
     @State private var creating = false
     @State private var sharesInvitation = false
+    /// 11/21: when the last link made on this iPhone stops by itself. The
+    /// relay keeps one open invitation per family: a new one ends the one
+    /// before, so a second open of this sheet says so.
+    @AppStorage(FamilyNotebookInviteView.lastLinkKey) private var lastLinkExpiresAt: Double = 0
+    static let lastLinkKey = "familyNotebook.lastInvitationExpiresAt"
+    static let replacesEarlierLink = "新しく送ると、前に送った招待リンクは使えなくなります。"
 
     var body: some View {
         NavigationStack {
@@ -2186,6 +2209,12 @@ struct FamilyNotebookInviteView: View {
                     Text(GroupWindowPresentation.invitationLifetimeCaption)
                         .font(.footnote).foregroundStyle(.secondary)
                         .accessibilityIdentifier("family-notebook-invitation-lifetime")
+                    if invitation == nil, lastLinkExpiresAt > Date.now.timeIntervalSince1970 {
+                        Text(Self.replacesEarlierLink)
+                            .font(.footnote).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .accessibilityIdentifier("family-notebook-invitation-replaces")
+                    }
                 }
                 // 11/19 (UI/UX 整理): that invited people are free is said
                 // before making the notebook and on the invitation itself.
@@ -2243,6 +2272,7 @@ struct FamilyNotebookInviteView: View {
                 await sharing.perform(readsAfter: false) { made = try await service.createInvitation(operationID: $0) }
                 guard let made else { return }
                 invitation = made
+                lastLinkExpiresAt = made.expiresAt.timeIntervalSince1970
                 sharesInvitation = true
             }
         }
@@ -2269,6 +2299,8 @@ struct FamilyNotebookJoinView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var preview: FamilyInvitationPreview?
     @State private var result: FamilyJoinResult?
+    /// 11/21: the invitation could not be read (the error, if any, is shown).
+    @State private var previewFailed = false
     @State private var displayName = GroupDisplayName.remembered
     /// The keyboard goes away when 「参加する」 is pressed, so the progress shows (11/6).
     @FocusState private var typingName: Bool
@@ -2289,7 +2321,9 @@ struct FamilyNotebookJoinView: View {
                 Spacer()
                 if let preview {
                     FamilyNotebookInvitationCard(from: preview.inviterName, cats: preview.catNames)
-                } else {
+                } else if !previewFailed {
+                    // 11/21: a link that could not be read (used, replaced)
+                    // no longer spins here without end.
                     ProgressView()
                 }
                 Text("この子のこと・病院・預けるときを、一緒に書きます。")
@@ -2381,6 +2415,7 @@ struct FamilyNotebookJoinView: View {
                 await sharing.refresh()
                 do { preview = try await sharing.service.previewInvitation(link) }
                 catch {
+                    previewFailed = true
                     // Already waiting, or already in this family: the used link
                     // is not an error to this person (11/19).
                     if sharing.state != .pendingApproval && !(inFamily && !otherFamilyLink) {
@@ -2526,9 +2561,14 @@ struct FamilyNotebookCatSelectionView: View {
         Task {
             do {
                 // 「同じ子」: linked to the family cat, never a second one.
+                // 11/21: only cats still chosen; a cat linked here leaves the
+                // choice, so 「決める」 again after a failure goes on with the
+                // rest instead of failing on the link already made.
+                linkedCats = linkedCats.filter { selected.contains($0.key) }
                 for (record, family) in linkedCats {
                     guard let profile = shown?.first(where: { $0.catID == record })?.profileID else { continue }
                     try await model.link(family, toProfile: profile)
+                    linkedCats[record] = nil; selected.remove(record)
                 }
                 let rest = selected.subtracting(linkedCats.keys)
                 if !rest.isEmpty { try await model.sharePersonalCats(rest) }
@@ -2818,6 +2858,9 @@ enum FamilyNotebookWords {
     /// notebook, the invitation, Settings' row).
     static let awaitingApproval = "家族が受け入れるのを待っています"
     static let receiving = "家族の手帳を受け取っています"
+    /// 11/21: a newly approved person has not opened the app yet; what is
+    /// written here stays and goes to the family after.
+    static let awaitsNewMember = "新しい家族がアプリを開くと、書いたことが家族に届きます。"
 
     /// 11/19: the family stopped listing this person (taken out, or ended).
     static let sharingEnded = "この手帳の共有は終わりました。"

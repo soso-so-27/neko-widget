@@ -22,6 +22,9 @@ final class FamilyNotebookSharing: ObservableObject {
     /// the state is still `.checking`, the notebook says 「つながりませんでした」
     /// with 「もう一度」 instead of waiting without end.
     @Published private(set) var readFailed = false
+    /// 11/21: a newly approved person is not signed in yet, so writing waits
+    /// for everyone; the notebook says so in one line (reading goes on).
+    @Published private(set) var awaitsNewMember = false
     private var refreshing = false
     /// A whole read or a requests read is running (11/19: the device push waits for it).
     var isReading: Bool { refreshing }
@@ -110,6 +113,8 @@ final class FamilyNotebookSharing: ObservableObject {
             }
             if nextPause != pause { pause = nextPause }
             if let real = service as? ProductionFamilyNotebookSharingService {
+                let waits = real.awaitingNewMember && next.membership != nil
+                if waits != awaitsNewMember { awaitsNewMember = waits }
                 if ownJoinResults != real.lastJoinResults { ownJoinResults = real.lastJoinResults }
                 FamilyNotebookPrototype.shared.attachReal(real, reportsFailure: reportsFailure)
                 // Read even while keys follow a change: an approval itself
@@ -156,7 +161,7 @@ final class FamilyNotebookSharing: ObservableObject {
     /// device still waiting for its keys, and the recovery screen closed).
     func restartSession() {
         (service as? ProductionFamilyNotebookSharingService)?.restartSession()
-        state = .checking; pause = nil; requests = []; ownJoinResults = []; readFailed = false
+        state = .checking; pause = nil; requests = []; ownJoinResults = []; readFailed = false; awaitsNewMember = false
     }
 
     /// 11/20 (GroupIdentityDeletionLocalData): restartSession, then waits (up

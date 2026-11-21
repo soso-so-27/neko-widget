@@ -239,10 +239,19 @@ enum FamilyNotebookCatCareBridge {
             }
             if !state.cats.contains(where: { $0.catID == local }) { state.cats.append(.init(catID: local, profileID: mapping.profileID)) }
             guard let index = state.cats.firstIndex(where: { $0.catID == local }), state.cats[index].deletedAt == nil else { continue }
+            let household = state.household.vet?.value
             for field in fields {
                 guard let resolved = snapshot.fieldState(for: .init(familyCatID: cat, field: field)), !resolved.isDeleted,
                       let value = resolved.operation.value else { continue }
-                try put(value, field, into: &state.cats[index], operation: resolved.operation)
+                try put(value, field, into: &state.cats[index], operation: resolved.operation, household: household)
+            }
+            // 11/21: an own vet that this projection made only because the
+            // family had the household's 病院 (older apps did so on adding the
+            // cat) is let go while it still equals it, so the 病院 page's later
+            // changes reach this cat again instead of staying frozen.
+            if let household, let own = state.cats[index].vetOverride, own.editedBy.hasPrefix("family:"),
+               own.value == household {
+                state.cats[index].vetOverride = nil
             }
             for collection in lists {
                 for item in snapshot.activeMappings where item.familyCatID == cat && item.recordID != nil {
@@ -309,7 +318,7 @@ enum FamilyNotebookCatCareBridge {
         return date
     }
     private static func put(_ value: FamilyNotebookValue, _ field: FamilyNotebookField, into record: inout CatCareRecord,
-                            operation: FamilyNotebookOperation) throws {
+                            operation: FamilyNotebookOperation, household: CatCareVet? = nil) throws {
         func stamp<T: Codable & Equatable & Sendable>(_ value: T) -> CatCareStamped<T> {
             .init(value: value, editedAt: operation.editedAt, editedBy: "family:" + operation.author.personID)
         }
@@ -350,10 +359,16 @@ enum FamilyNotebookCatCareBridge {
             }
             record.allergy = stamp(result)
         case .vetName, .vetPhone, .vetNote:
-            var vet = record.vetOverride?.value ?? CatCareVet()
+            // 11/21: a cat that follows the household's 病院 keeps following
+            // it while the family's value is the same; only a different one
+            // becomes this cat's own (it used to always, freezing the value
+            // the cat had when it was added to the notebook).
+            let follows = record.vetOverride?.value == nil
+            var vet = record.vetOverride?.value ?? household ?? CatCareVet()
             if field == .vetName { vet.name = try text(value) }
             if field == .vetPhone { vet.phone = try text(value) }
             if field == .vetNote { vet.note = try text(value) }
+            if follows && vet == (household ?? CatCareVet()) { break }
             record.vetOverride = stamp(Optional(vet))
         default: break
         }

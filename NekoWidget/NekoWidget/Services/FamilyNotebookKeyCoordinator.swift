@@ -8,6 +8,14 @@ struct FamilyNotebookKeyMaterial: Sendable {
     let keys: [Int: Data]
     let ready: Bool
     let moreWork: Bool
+    /// 11/21: the roster is verified at the relay's epoch, this device is in
+    /// it and every epoch's key is held: what the family wrote can be read
+    /// even while writing waits (`ready` false). Never a reason to write.
+    var readable = false
+    /// 11/21: writing waits for someone the relay lists but the signed roster
+    /// does not yet (a newly approved person who has not opened the app, or
+    /// whose approving iPhone has not signed them in yet).
+    var awaitsMember = false
 }
 
 /// App identity keys only. Production construction supplies an app-private
@@ -380,7 +388,12 @@ actor FamilyNotebookKeyCoordinator {
         }
         observe(currentState, keys: keys.count)
         guard currentState.ready else {
-            return .init(current: current, history: history, keys: keys, ready: false, moreWork: true)
+            // 11/21: an approved person not in the signed roster yet stops
+            // writing for everyone (the relay's `ready`); reading goes on with
+            // the keys held. Only the approving iPhone can sign them in.
+            let unsigned = !Set(currentState.people).isSubset(of: Set(current.roster.members.map(\.personID)))
+            return .init(current: current, history: history, keys: keys, ready: false, moreWork: true,
+                         readable: keys.count == contexts.count, awaitsMember: unsigned)
         }
         // Only fully verified keys are sent, and only to devices in the current
         // verified roster. An invalid envelope never overwrites a saved key.
@@ -419,7 +432,7 @@ actor FamilyNotebookKeyCoordinator {
         observe(currentState, keys: keys.count)
         let complete = keys.count == contexts.count
         return .init(current: current, history: history, keys: keys, ready: currentState.ready && complete,
-                     moreWork: !complete || dispatch.index < total)
+                     moreWork: !complete || dispatch.index < total, readable: complete)
     }
 }
 
