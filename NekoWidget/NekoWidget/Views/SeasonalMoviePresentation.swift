@@ -1,6 +1,18 @@
 import CoreGraphics
 import Foundation
 
+/// 11/22 (owner's decision): the seasonal movie does not ship in 1.0. It is
+/// hidden, not removed: the code and any archive already on an iPhone stay, so
+/// a later version can turn it back on here. Internal builds keep it on so its
+/// tests and work go on.
+enum SeasonalMovieRelease {
+    #if DEBUG || INTERNAL_PRESENTATION
+    static let isAvailable = true
+    #else
+    static let isAvailable = false
+    #endif
+}
+
 enum SeasonalMovieSoundtrackContract {
     static let volume: Float = 0.55
     static let fadeInDuration: TimeInterval = 0.25

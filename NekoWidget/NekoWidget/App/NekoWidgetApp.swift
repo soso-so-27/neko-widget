@@ -58,12 +58,15 @@ struct NekoWidgetApp: App {
             Task.detached(priority: .background) {
                 StaleExportFolderSweep.removeStaleFolders()
             }
-            Task {
-                // A seasonal movie share sheet also cannot survive relaunch.
-                // The service validates the exact managed UUID directory.
-                try? await SeasonalMovieExportService.shared.cleanupStaleExports(
-                    olderThan: 0
-                )
+            // 11/22: 1.0 makes no seasonal movie, so it has nothing to clean.
+            if SeasonalMovieRelease.isAvailable {
+                Task {
+                    // A seasonal movie share sheet also cannot survive relaunch.
+                    // The service validates the exact managed UUID directory.
+                    try? await SeasonalMovieExportService.shared.cleanupStaleExports(
+                        olderThan: 0
+                    )
+                }
             }
         }
 #if DEBUG

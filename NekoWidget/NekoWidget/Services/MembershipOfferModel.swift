@@ -37,7 +37,8 @@ enum PlusOfferContext: Equatable, Sendable {
         switch self {
         case .onboarding: "Plusについて見る"
         case let .monthlySummary(month?) where (1...12).contains(month): "Plusで\(month)月の作品を見る"
-        case .monthlySummary: "Plusで作品とムービーを見る"
+        // 11/22: 1.0 has no seasonal movie; nil is then the year's work only.
+        case .monthlySummary: SeasonalMovieRelease.isAvailable ? "Plusで作品とムービーを見る" : "Plusで作品を見る"
         case .createWindow: "まどを作る"
         case .continueWindow: "このまどを続ける"
         case .createFamily: "家族の手帳を作る"
@@ -57,7 +58,8 @@ enum PlusOfferContext: Equatable, Sendable {
         case .onboarding: nil
         case .settings: nil
         case let .monthlySummary(month?) where (1...12).contains(month): "\(month)月の作品ができています。Plusで開けます。"
-        case .monthlySummary: "季節のムービーができています。Plusで見られます。"
+        case .monthlySummary: SeasonalMovieRelease.isAvailable
+            ? "季節のムービーができています。Plusで見られます。" : "作品ができています。Plusで開けます。"
         case .createWindow: "まどを作ると、家族のホーム画面に写真を届けられます。Plusがいるのは作る人だけです。"
         case .continueWindow: "このまどは、作った人のPlusで続きます。"
         case .createFamily: "お世話の記録を、家族で一緒に書けます。Plusがいるのは作る人だけです。"

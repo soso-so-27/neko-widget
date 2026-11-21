@@ -1222,7 +1222,7 @@ struct LikedPhotosView: View {
         .membershipFeature(.browseAlbums, hasContent: hasPhotoAccess && !isPreparingAlbums
             && (!months.isEmpty || !seasonalMovies.isEmpty || albumSections.contains(where: { $0.id != .all })))
         }
-        .navigationTitle(showsHighlightArchive ? "おすすめ" : showsReflectionArchive ? "月の作品・季節のムービー" : navigationTitleOverride ?? "アルバム")
+        .navigationTitle(showsHighlightArchive ? "おすすめ" : showsReflectionArchive ? Self.reflectionsTitle : navigationTitleOverride ?? "アルバム")
         // The same small title as every other tab.
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
@@ -1351,11 +1351,11 @@ struct LikedPhotosView: View {
                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
                 }.buttonStyle(.plain).accessibilityIdentifier("albums-seasonal-movie")
             }
-            if seasonalMovies.isEmpty {
+            if seasonalMovies.isEmpty && SeasonalMovieRelease.isAvailable {
                 Label("季節のムービーは、いろいろな日の写真が2か月分たまるとできます。", systemImage: "film")
                     .font(.subheadline).foregroundStyle(.secondary)
             }
-            NavigationLink("これまでの月の作品・季節のムービー", value: MemoriesRoute.reflectionsArchive)
+            NavigationLink("これまでの" + Self.reflectionsTitle, value: MemoriesRoute.reflectionsArchive)
                 .font(.subheadline).frame(minHeight: 44)
         }
         .accessibilityIdentifier("memories-summaries-section")
@@ -1369,12 +1369,14 @@ struct LikedPhotosView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("猫の写真がひと月に5枚ほどたまると、その月の作品がとどきます。")
                     .font(.subheadline).foregroundStyle(.secondary)
-                Text("いろいろな日の写真が2か月分たまると、季節のムービーができます。")
-                    .font(.subheadline).foregroundStyle(.secondary)
+                if SeasonalMovieRelease.isAvailable {
+                    Text("いろいろな日の写真が2か月分たまると、季節のムービーができます。")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
                 if summaryNeedsPlus {
                     HStack(spacing: 6) {
                         plusMark
-                        Text("月の作品と季節のムービーは、Plusで見られます。")
+                        Text(SeasonalMovieRelease.isAvailable ? "月の作品と季節のムービーは、Plusで見られます。" : "月の作品は、Plusで見られます。")
                     }
                 }
             }
@@ -1386,6 +1388,9 @@ struct LikedPhotosView: View {
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("memories-summaries-upcoming")
     }
+
+    /// 11/22: names the movie only while it ships (SeasonalMovieRelease).
+    static let reflectionsTitle = SeasonalMovieRelease.isAvailable ? "月の作品・季節のムービー" : "月の作品"
 
     private var plusMark: some View {
         Text("Plus").font(.caption2.bold())
@@ -1463,7 +1468,7 @@ struct LikedPhotosView: View {
     }
     private var reflectionArchive: some View {
         LazyVStack(alignment: .leading, spacing: 12) {
-            if !hasPeriodCollections { ContentUnavailableView("月の作品・ムービーはありません", systemImage: "photo.stack") }
+            if !hasPeriodCollections { ContentUnavailableView(SeasonalMovieRelease.isAvailable ? "月の作品・ムービーはありません" : "月の作品はありません", systemImage: "photo.stack") }
             if hasPeriodCollections {
                 ForEach(months) { monthLink($0, isLatest: $0.id == months.first?.id, showsCover: false) }
                 ForEach(seasonalMovies) { movieLink($0, isLatest: $0.id == seasonalMovies.first?.id, showsCover: false) }

@@ -183,7 +183,9 @@ class WordingPass1112Tests(unittest.TestCase):
         self.assertIn('"この名前で手帳を作る"', notebook)
         self.assertIn('"\\(member.displayName)さんを家族の手帳から外しますか？"', notebook)
         self.assertIn('"\\(presentation.monthNumber)月の作品"', source("NekoWidget/Views/MonthlyWindowView.swift"))
-        self.assertIn('"これまでの月の作品・季節のムービー"', source("NekoWidget/Views/LikedPhotosView.swift"))
+        # 11/22: the archive names the movie only while it ships.
+        self.assertIn('static let reflectionsTitle = SeasonalMovieRelease.isAvailable ? "月の作品・季節のムービー" : "月の作品"',
+                      source("NekoWidget/Views/LikedPhotosView.swift"))
         self.assertIn('return "このまどは終わりました。"', source("NekoWidget/Views/GroupWindowSetupView.swift"))
         self.assertIn('"前のまど"', source("NekoWidgetWidget/NekoWidgetConfigurationIntent.swift"))
         self.assertIn('Text("Plusをやめたあとも、12か月のあいだは読み出しと書き出しができます。このiPhoneの記録は残ります。")',
@@ -1224,7 +1226,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('"memories-monthly-window"', album_root)
         self.assertIn('"albums-seasonal-movie"', album_root)
         # The album root opens one combined archive of months and movies (#397).
-        self.assertIn('NavigationLink("これまでの月の作品・季節のムービー", value: MemoriesRoute.reflectionsArchive)', album_root)
+        self.assertIn('NavigationLink("これまでの" + Self.reflectionsTitle, value: MemoriesRoute.reflectionsArchive)', album_root)
         self.assertIn("ForEach(months)", album_root)
         self.assertIn("ForEach(seasonalMovies)", album_root)
         self.assertIn("sections: albumSections", album_root)
@@ -1263,7 +1265,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("memories-section-jump-bar", memory_view)
         self.assertNotIn("Array(photos.prefix(6))", memory_view)
         self.assertNotIn("NavigationLink(value: MemoriesRoute.favorites)", memory_view)
-        self.assertIn('NavigationLink("これまでの月の作品・季節のムービー", value: MemoriesRoute.reflectionsArchive)', memory_view)
+        self.assertIn('NavigationLink("これまでの" + Self.reflectionsTitle, value: MemoriesRoute.reflectionsArchive)', memory_view)
         self.assertIn("albumsView().periodArchive(showsMovies: false)", main_tab)
         self.assertIn("albumsView().periodArchive(showsMovies: true)", main_tab)
         destinations = section(
@@ -8091,10 +8093,11 @@ class PresubmitFixes1110Tests(unittest.TestCase):
         for row in rows:
             self.assertIn(row, values)
         # 11/11: the daily Widget photo is free; 11/13: a new memo too. Exactly these four rows.
+        # 11/22: the first row names the movie only while it ships.
+        self.assertIn('(SeasonalMovieRelease.isAvailable ? "月の作品、季節のムービー" : "月の作品、1年の作品", "rectangle.stack"),', values)
         self.assertEqual(
             re.findall(r'\("([^"]+)", "[^"]+"\)', values),
-            ["月の作品、季節のムービー",
-             "まどを作って、家族と写真を届け合う", "家族の手帳を作って、家族と一緒に書く",
+            ["まどを作って、家族と写真を届け合う", "家族の手帳を作って、家族と一緒に書く",
              "猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる"])
         self.assertLess(values.index(rows[0]), values.index(rows[1]))
         self.assertLess(values.index(rows[1]), values.index(rows[2]))
